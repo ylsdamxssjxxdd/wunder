@@ -3,7 +3,7 @@ use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,14 +17,28 @@ use wunder_server::schemas::StreamEvent;
 use wunder_server::user_tools::UserMcpServer;
 
 use crate::args::GlobalArgs;
+use crate::render::FinalEvent;
 use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 
 const MAX_LOG_ENTRIES: usize = 1200;
-const MAX_DRAIN_MESSAGES_PER_TICK: usize = 400;
+const MAX_DRAIN_MESSAGES_PER_TICK_BASE: usize = 400;
+const MAX_DRAIN_MESSAGES_PER_TICK_CATCHUP: usize = 1400;
+const STREAM_CATCHUP_ENTER_DEPTH: usize = 120;
+const STREAM_CATCHUP_EXIT_DEPTH: usize = 48;
+const STREAM_CATCHUP_ENTER_HOLD: Duration = Duration::from_millis(120);
+const STREAM_CATCHUP_EXIT_HOLD: Duration = Duration::from_millis(260);
 const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
 const MAX_PERSISTED_HISTORY: usize = 200;
 const MAX_HISTORY_ENTRY_CHARS: usize = 4000;
+const MAX_PERSISTED_POPUP_RECENTS: usize = 120;
+const PASTE_BURST_CHAR_GAP: Duration = Duration::from_millis(28);
+const PASTE_BURST_ENTER_GAP: Duration = Duration::from_millis(36);
+const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 16;
+const STATUSLINE_ITEM_KEYS: &[&str] = &[
+    "running", "usage", "scroll", "mouse", "focus", "context", "session", "model", "mode",
+    "approval", "agent", "attach",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogKind {
@@ -63,6 +77,7 @@ struct WrappedInputLine {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MouseMode {
+    Auto,
     Scroll,
     Select,
 }
@@ -82,6 +97,11 @@ struct ResumePickerState {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 struct InputHistoryStore {
     entries: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+struct PopupRecentStore {
+    items: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,6 +127,7 @@ pub struct TuiApp {
     history: Vec<String>,
     history_cursor: Option<usize>,
     history_draft: String,
+    pending_attachments: Vec<crate::attachments::PreparedAttachment>,
     pending_paste: VecDeque<String>,
     workspace_files: Vec<IndexedFile>,
     active_assistant: Option<usize>,
@@ -116,6 +137,7 @@ pub struct TuiApp {
     approval_queue: VecDeque<ApprovalRequest>,
     active_approval: Option<ApprovalRequest>,
     approval_mode: String,
+    agent_id_override: Option<String>,
     ctrl_c_hint_deadline: Option<Instant>,
     model_name: String,
     tool_call_mode: String,
@@ -128,6 +150,8 @@ pub struct TuiApp {
     stream_saw_final: bool,
     stream_received_content_delta: bool,
     stream_tool_markup_open: bool,
+    turn_final_answer: String,
+    turn_final_stop_reason: Option<String>,
     transcript_offset_from_bottom: u16,
     session_stats_dirty: bool,
     shortcuts_visible: bool,
@@ -136,6 +160,17 @@ pub struct TuiApp {
     transcript_selected: Option<usize>,
     resume_picker: Option<ResumePickerState>,
     tool_phase_notice_emitted: bool,
+    stream_catchup_mode: bool,
+    stream_catchup_enter_since: Option<Instant>,
+    stream_catchup_exit_since: Option<Instant>,
+    key_char_burst_len: usize,
+    key_char_burst_last_at: Option<Instant>,
+    statusline_items: Vec<String>,
+    mouse_passthrough_until: Option<Instant>,
+    app_hints: Vec<String>,
+    skill_hints: Vec<String>,
+    enabled_skill_names: HashSet<String>,
+    popup_recents: Vec<String>,
 }
 
 impl TuiApp {
@@ -148,6 +183,12 @@ impl TuiApp {
             session_override.unwrap_or_else(|| runtime.resolve_session(global.session.as_deref()));
         runtime.save_session(&session_id).ok();
         let display_language = crate::locale::resolve_cli_language(&global);
+        let initial_agent_id_override = global
+            .agent
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
 
         let mut app = Self {
             runtime,
@@ -166,6 +207,7 @@ impl TuiApp {
             history: Vec::new(),
             history_cursor: None,
             history_draft: String::new(),
+            pending_attachments: Vec::new(),
             pending_paste: VecDeque::new(),
             workspace_files: Vec::new(),
             active_assistant: None,
@@ -175,6 +217,7 @@ impl TuiApp {
             approval_queue: VecDeque::new(),
             active_approval: None,
             approval_mode: "full_auto".to_string(),
+            agent_id_override: initial_agent_id_override,
             ctrl_c_hint_deadline: None,
             model_name: "<none>".to_string(),
             tool_call_mode: "tool_call".to_string(),
@@ -187,28 +230,88 @@ impl TuiApp {
             stream_saw_final: false,
             stream_received_content_delta: false,
             stream_tool_markup_open: false,
+            turn_final_answer: String::new(),
+            turn_final_stop_reason: None,
             transcript_offset_from_bottom: 0,
             session_stats_dirty: false,
             shortcuts_visible: false,
-            mouse_mode: MouseMode::Scroll,
+            mouse_mode: MouseMode::Auto,
             focus_area: FocusArea::Input,
             transcript_selected: None,
             resume_picker: None,
             tool_phase_notice_emitted: false,
+            stream_catchup_mode: false,
+            stream_catchup_enter_since: None,
+            stream_catchup_exit_since: None,
+            key_char_burst_len: 0,
+            key_char_burst_last_at: None,
+            statusline_items: Vec::new(),
+            mouse_passthrough_until: None,
+            app_hints: Vec::new(),
+            skill_hints: Vec::new(),
+            enabled_skill_names: HashSet::new(),
+            popup_recents: Vec::new(),
         };
         app.load_persisted_history();
+        app.load_popup_recents();
+        app.load_statusline_items();
+        if !app.global.attachments.is_empty() {
+            for raw in app.global.attachments.clone() {
+                match crate::attachments::prepare_attachment_from_path(&app.runtime, raw.as_str())
+                    .await
+                {
+                    Ok(prepared) => app.pending_attachments.push(prepared),
+                    Err(err) => {
+                        if app.is_zh_language() {
+                            app.push_log(LogKind::Error, format!("预加载附件失败: {raw} ({err})"));
+                        } else {
+                            app.push_log(
+                                LogKind::Error,
+                                format!("failed to preload attachment: {raw} ({err})"),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         app.workspace_files = tokio::task::spawn_blocking({
             let root = app.runtime.launch_dir.clone();
             move || build_workspace_file_index(&root)
         })
         .await
         .unwrap_or_default();
+        app.reload_popup_catalogs().await;
         app.sync_model_status().await;
         app.reload_session_stats().await;
         app.push_log(
             LogKind::Info,
             "wunder-cli tui mode. type /help for commands.".to_string(),
         );
+        if !app.pending_attachments.is_empty() {
+            app.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    app.display_language.as_str(),
+                    "已预加载附件队列（下一轮自动发送）",
+                    "preloaded attachment queue (auto-sent on next turn)",
+                ),
+            );
+            let lines = app
+                .pending_attachments
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    crate::attachments::summarize_attachment(
+                        item,
+                        index,
+                        app.display_language.as_str(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            for line in lines {
+                app.push_log(LogKind::Info, line);
+            }
+        }
         Ok(app)
     }
 
@@ -221,6 +324,55 @@ impl TuiApp {
     }
 
     pub fn status_line(&self) -> String {
+        let parts = self.status_line_parts();
+        if self.statusline_items.is_empty() {
+            let running = parts
+                .get("running")
+                .cloned()
+                .unwrap_or_else(|| "-".to_string());
+            let usage = parts.get("usage").cloned().unwrap_or_default();
+            let scroll = parts.get("scroll").cloned().unwrap_or_default();
+            let mouse = parts.get("mouse").cloned().unwrap_or_default();
+            let focus = parts.get("focus").cloned().unwrap_or_default();
+            let context = parts
+                .get("context")
+                .cloned()
+                .unwrap_or_else(|| "-".to_string());
+            return format!("  {running}{usage}{scroll}{mouse}{focus}    {context}");
+        }
+
+        let mut items = Vec::new();
+        for key in &self.statusline_items {
+            if let Some(value) = parts.get(key.as_str()) {
+                let value = value.trim();
+                if !value.is_empty() {
+                    items.push(value.to_string());
+                }
+            }
+        }
+        if items.is_empty() {
+            if self.is_zh_language() {
+                return "  状态栏：已配置空项，输入 /statusline reset 恢复默认".to_string();
+            }
+            return "  status line: empty selection, run /statusline reset".to_string();
+        }
+        format!("  {}", items.join(" | "))
+    }
+
+    pub fn shortcuts_visible(&self) -> bool {
+        self.shortcuts_visible
+    }
+
+    pub fn mouse_capture_enabled(&self) -> bool {
+        match self.mouse_mode {
+            MouseMode::Auto => !self.mouse_passthrough_active(),
+            MouseMode::Scroll => true,
+            MouseMode::Select => false,
+        }
+    }
+
+    fn status_line_parts(&self) -> std::collections::HashMap<&'static str, String> {
+        let mut parts = std::collections::HashMap::new();
         let context_summary = if let Some(max_context) = self.model_max_context {
             let percent_left = crate::context_left_percent(
                 self.session_stats.context_used_tokens,
@@ -235,33 +387,33 @@ impl TuiApp {
         } else {
             let used = self.session_stats.context_used_tokens.max(0);
             if self.is_zh_language() {
-                format!("已用上下文 {used}")
+                format!("{used} 上下文已用")
             } else {
                 format!("{used} context used")
             }
         };
         let running_hint = if self.resume_picker.is_some() {
             if self.is_zh_language() {
-                "会话恢复面板"
+                "会话恢复面板".to_string()
             } else {
-                "resume picker"
+                "resume picker".to_string()
             }
         } else if self.active_approval.is_some() {
             if self.is_zh_language() {
-                "待审批"
+                "待审批".to_string()
             } else {
-                "approval pending"
+                "approval pending".to_string()
             }
         } else if self.busy {
             if self.is_zh_language() {
-                "执行中..."
+                "执行中...".to_string()
             } else {
-                "working..."
+                "working...".to_string()
             }
         } else if self.is_zh_language() {
-            "快捷键"
+            "快捷键".to_string()
         } else {
-            "shortcuts"
+            "shortcuts".to_string()
         };
         let usage_hint = self
             .last_usage
@@ -284,48 +436,69 @@ impl TuiApp {
             String::new()
         };
         let mouse_hint = match self.mouse_mode {
+            MouseMode::Auto => {
+                if self.is_zh_language() {
+                    if self.mouse_passthrough_active() {
+                        " | 鼠标自动(选择中)".to_string()
+                    } else {
+                        " | 鼠标自动".to_string()
+                    }
+                } else if self.mouse_passthrough_active() {
+                    " | mouse auto(selecting)".to_string()
+                } else {
+                    " | mouse auto".to_string()
+                }
+            }
             MouseMode::Scroll => {
                 if self.is_zh_language() {
-                    " | 鼠标滚轮"
+                    " | 鼠标滚轮".to_string()
                 } else {
-                    " | mouse scroll"
+                    " | mouse scroll".to_string()
                 }
             }
             MouseMode::Select => {
                 if self.is_zh_language() {
-                    " | 鼠标选择"
+                    " | 鼠标选择".to_string()
                 } else {
-                    " | mouse select"
+                    " | mouse select".to_string()
                 }
             }
         };
         let focus_hint = match self.focus_area {
             FocusArea::Input => {
                 if self.is_zh_language() {
-                    " | 输入焦点"
+                    " | 输入焦点".to_string()
                 } else {
-                    " | focus input"
+                    " | focus input".to_string()
                 }
             }
             FocusArea::Transcript => {
                 if self.is_zh_language() {
-                    " | 输出焦点"
+                    " | 输出焦点".to_string()
                 } else {
-                    " | focus output"
+                    " | focus output".to_string()
                 }
             }
         };
-        format!(
-            "  {running_hint}{usage_hint}{scroll_hint}{mouse_hint}{focus_hint} (F2/F3)    {context_summary}"
-        )
-    }
-
-    pub fn shortcuts_visible(&self) -> bool {
-        self.shortcuts_visible
-    }
-
-    pub fn mouse_capture_enabled(&self) -> bool {
-        self.mouse_mode == MouseMode::Scroll
+        parts.insert("running", running_hint);
+        parts.insert("usage", usage_hint);
+        parts.insert("scroll", scroll_hint);
+        parts.insert("mouse", mouse_hint);
+        parts.insert("focus", focus_hint);
+        parts.insert("context", context_summary);
+        parts.insert("session", format!("session={}", self.session_id));
+        parts.insert(
+            "agent",
+            format!("agent={}", self.agent_id_override.as_deref().unwrap_or("-")),
+        );
+        parts.insert(
+            "attach",
+            format!("attach={}", self.pending_attachments.len()),
+        );
+        parts.insert("model", format!("model={}", self.model_name));
+        parts.insert("mode", format!("mode={}", self.tool_call_mode));
+        parts.insert("approval", format!("approval={}", self.approval_mode));
+        parts
     }
 
     fn input_history_file(&self) -> PathBuf {
@@ -378,6 +551,158 @@ impl TuiApp {
             return;
         };
         let _ = fs::write(path, payload);
+    }
+
+    fn popup_recent_file(&self) -> PathBuf {
+        let mut name = self
+            .runtime
+            .user_id
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+            .collect::<String>();
+        if name.trim_matches('_').is_empty() {
+            name = "cli_user".to_string();
+        }
+        self.runtime
+            .temp_root
+            .join(format!("sessions/popup_recent_{name}.json"))
+    }
+
+    fn load_popup_recents(&mut self) {
+        let path = self.popup_recent_file();
+        let Ok(text) = fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(store) = serde_json::from_str::<PopupRecentStore>(&text) else {
+            return;
+        };
+        self.popup_recents = dedupe_case_insensitive(store.items)
+            .into_iter()
+            .map(|item| item.trim().to_string())
+            .filter(|item| !item.is_empty())
+            .take(MAX_PERSISTED_POPUP_RECENTS)
+            .collect();
+    }
+
+    fn persist_popup_recents(&self) {
+        let path = self.popup_recent_file();
+        if let Some(parent) = path.parent() {
+            if fs::create_dir_all(parent).is_err() {
+                return;
+            }
+        }
+        let store = PopupRecentStore {
+            items: self.popup_recents.clone(),
+        };
+        let Ok(payload) = serde_json::to_vec_pretty(&store) else {
+            return;
+        };
+        let _ = fs::write(path, payload);
+    }
+
+    fn mark_popup_recent(&mut self, token: &str) {
+        let cleaned = token.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+        self.popup_recents
+            .retain(|item| !item.eq_ignore_ascii_case(cleaned));
+        self.popup_recents.insert(0, cleaned.to_string());
+        if self.popup_recents.len() > MAX_PERSISTED_POPUP_RECENTS {
+            self.popup_recents.truncate(MAX_PERSISTED_POPUP_RECENTS);
+        }
+        self.persist_popup_recents();
+    }
+
+    fn statusline_file(&self) -> PathBuf {
+        let mut name = self
+            .runtime
+            .user_id
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+            .collect::<String>();
+        if name.trim_matches('_').is_empty() {
+            name = "cli_user".to_string();
+        }
+        self.runtime
+            .temp_root
+            .join(format!("config/statusline_{name}.json"))
+    }
+
+    fn load_statusline_items(&mut self) {
+        let path = self.statusline_file();
+        let Ok(text) = fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&text) else {
+            return;
+        };
+        let Some(items) = value.get("items").and_then(Value::as_array) else {
+            return;
+        };
+        let mut seen = std::collections::HashSet::new();
+        self.statusline_items = items
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(normalize_statusline_item)
+            .filter(|item| seen.insert(item.clone()))
+            .collect();
+    }
+
+    fn persist_statusline_items(&self) {
+        let path = self.statusline_file();
+        if let Some(parent) = path.parent() {
+            if fs::create_dir_all(parent).is_err() {
+                return;
+            }
+        }
+        let payload = json!({ "items": self.statusline_items });
+        let Ok(text) = serde_json::to_vec_pretty(&payload) else {
+            return;
+        };
+        let _ = fs::write(path, text);
+    }
+
+    async fn reload_popup_catalogs(&mut self) {
+        let config = self.runtime.state.config_store.get().await;
+        let payload = self
+            .runtime
+            .state
+            .user_tool_store
+            .load_user_tools(&self.runtime.user_id);
+        let enabled_skill_names = payload
+            .skills
+            .enabled
+            .into_iter()
+            .map(|name| name.trim().to_ascii_lowercase())
+            .filter(|name| !name.is_empty())
+            .collect::<HashSet<_>>();
+        let mut app_hints = Vec::new();
+        for service in config.a2a.services {
+            let name = service.name.trim();
+            if !name.is_empty() {
+                app_hints.push(format!("${name}"));
+            }
+        }
+        for server in payload.mcp_servers {
+            let name = server.name.trim();
+            if !name.is_empty() {
+                app_hints.push(format!("${name}"));
+            }
+        }
+        app_hints.sort_by_key(|value| value.to_ascii_lowercase());
+        app_hints.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        self.app_hints = app_hints;
+
+        let (_, specs) = crate::load_user_skill_specs(&self.runtime).await;
+        let mut skill_hints = specs
+            .into_iter()
+            .map(|spec| format!("#{}", spec.name))
+            .collect::<Vec<_>>();
+        skill_hints.sort_by_key(|value| value.to_ascii_lowercase());
+        skill_hints.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        self.skill_hints = skill_hints;
+        self.enabled_skill_names = enabled_skill_names;
     }
 
     pub fn selected_transcript_index(&self) -> Option<usize> {
@@ -459,21 +784,22 @@ impl TuiApp {
 
     pub fn shortcuts_lines(&self) -> Vec<String> {
         let mouse_mode = match self.mouse_mode {
+            MouseMode::Auto => "auto",
             MouseMode::Scroll => "scroll",
             MouseMode::Select => "select/copy",
         };
         if self.is_zh_language() {
-            let mouse_mode = if self.mouse_mode == MouseMode::Scroll {
-                "滚轮"
-            } else {
-                "选择/复制"
+            let mouse_mode = match self.mouse_mode {
+                MouseMode::Auto => "自动",
+                MouseMode::Scroll => "滚轮",
+                MouseMode::Select => "选择/复制",
             };
             return vec![
                 "Esc / ?               关闭快捷键面板".to_string(),
                 "Enter                 发送消息".to_string(),
                 "Shift+Enter / Ctrl+J  插入换行".to_string(),
                 "Ctrl+V / Shift+Insert 粘贴剪贴板文本".to_string(),
-                "Right Click           粘贴剪贴板文本（scroll 模式）".to_string(),
+                "Right Click           粘贴剪贴板文本（auto/scroll 模式）".to_string(),
                 "Left / Right          光标左右移动".to_string(),
                 "Ctrl+B / Ctrl+F       光标左右移动".to_string(),
                 "Alt+B / Alt+F         按词移动".to_string(),
@@ -485,11 +811,12 @@ impl TuiApp {
                 "Up / Down             历史消息（多行时为上下移动）".to_string(),
                 "F3                   切换输入/输出焦点".to_string(),
                 "(输出焦点) arrows     选择会话日志条目".to_string(),
-                "Tab                   补全 slash 命令".to_string(),
+                "(输出焦点) Enter      回填选中用户消息到输入区".to_string(),
+                "Tab                   补全 slash/@/$/#".to_string(),
                 "PgUp/PgDn             滚动输出区".to_string(),
                 "Mouse Wheel           滚动输出区".to_string(),
                 "Shift+Drag            选择/复制（取决于终端）".to_string(),
-                format!("F2                   切换鼠标模式 ({mouse_mode})"),
+                format!("F2                   可选: 切换鼠标模式 ({mouse_mode})"),
                 "Ctrl+N / Ctrl+L       新会话 / 清空输出".to_string(),
                 "Ctrl+C                中断 / 双击退出".to_string(),
             ];
@@ -499,7 +826,7 @@ impl TuiApp {
             "Enter                 send message".to_string(),
             "Shift+Enter / Ctrl+J  insert newline".to_string(),
             "Ctrl+V / Shift+Insert paste clipboard text".to_string(),
-            "Right Click           paste clipboard text (scroll mode)".to_string(),
+            "Right Click           paste clipboard text (auto/scroll mode)".to_string(),
             "Left / Right          move cursor".to_string(),
             "Ctrl+B / Ctrl+F       move cursor".to_string(),
             "Alt+B / Alt+F         move by word".to_string(),
@@ -511,11 +838,12 @@ impl TuiApp {
             "Up / Down             history (or move line in multiline)".to_string(),
             "F3                   toggle input/output focus".to_string(),
             "(output focus) arrows select transcript entries".to_string(),
-            "Tab                   complete slash command".to_string(),
+            "(output focus) Enter  load selected user message to input".to_string(),
+            "Tab                   complete slash/@/$/#".to_string(),
             "PgUp/PgDn             scroll transcript".to_string(),
             "Mouse Wheel           scroll transcript".to_string(),
             "Shift+Drag            select/copy (terminal bypass, if supported)".to_string(),
-            format!("F2                   toggle mouse mode ({mouse_mode})"),
+            format!("F2                   optional: toggle mouse mode ({mouse_mode})"),
             "Ctrl+N / Ctrl+L       new session / clear transcript".to_string(),
             "Ctrl+C                interrupt / double-tap exit".to_string(),
         ]
@@ -538,8 +866,10 @@ impl TuiApp {
         if self.mouse_mode == mode {
             return;
         }
+        self.mouse_passthrough_until = None;
         self.mouse_mode = mode;
         let notice = match mode {
+            MouseMode::Auto => "mouse mode: auto (wheel + temporary selection passthrough)",
             MouseMode::Scroll => "mouse mode: scroll (wheel enabled)",
             MouseMode::Select => "mouse mode: select/copy (wheel disabled)",
         };
@@ -549,10 +879,29 @@ impl TuiApp {
     fn toggle_mouse_mode(&mut self) {
         let next = if self.mouse_mode == MouseMode::Scroll {
             MouseMode::Select
+        } else if self.mouse_mode == MouseMode::Select {
+            MouseMode::Auto
         } else {
             MouseMode::Scroll
         };
         self.set_mouse_mode(next);
+    }
+
+    fn mouse_passthrough_active(&self) -> bool {
+        self.mouse_passthrough_until
+            .map(|deadline| Instant::now() < deadline)
+            .unwrap_or(false)
+    }
+
+    fn activate_mouse_passthrough(&mut self) {
+        if self.mouse_mode != MouseMode::Auto {
+            return;
+        }
+        self.mouse_passthrough_until = Some(Instant::now() + Duration::from_millis(2600));
+    }
+
+    fn clear_mouse_passthrough(&mut self) {
+        self.mouse_passthrough_until = None;
     }
 
     fn set_focus_area(&mut self, focus: FocusArea) {
@@ -812,6 +1161,12 @@ impl TuiApp {
         if let Some(query) = token.strip_prefix('@') {
             return self.mention_popup_lines(query, 7);
         }
+        if let Some(query) = token.strip_prefix('$') {
+            return self.app_popup_lines(query, 7);
+        }
+        if let Some(query) = token.strip_prefix('#') {
+            return self.skill_popup_lines(query, 7);
+        }
 
         Vec::new()
     }
@@ -839,6 +1194,20 @@ impl TuiApp {
                 " Files "
             };
         }
+        if token.starts_with('$') {
+            return if self.is_zh_language() {
+                " 应用 "
+            } else {
+                " Apps "
+            };
+        }
+        if token.starts_with('#') {
+            return if self.is_zh_language() {
+                " 技能 "
+            } else {
+                " Skills "
+            };
+        }
         if self.is_zh_language() {
             " 命令 "
         } else {
@@ -847,34 +1216,146 @@ impl TuiApp {
     }
 
     fn mention_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
-        let query = query.trim();
-        if query.is_empty() {
-            return self
-                .workspace_files
-                .iter()
-                .take(limit)
-                .map(|item| format!("@{}", item.path))
-                .collect();
+        self.mention_popup_tokens(query, limit)
+    }
+
+    fn app_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
+        self.app_popup_tokens(query, limit)
+    }
+
+    fn skill_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
+        self.skill_popup_tokens(query, limit)
+            .into_iter()
+            .map(|token| self.decorate_skill_popup_line(token.as_str()))
+            .collect()
+    }
+
+    fn mention_popup_tokens(&self, query: &str, limit: usize) -> Vec<String> {
+        let lowered = query.trim().to_ascii_lowercase();
+        let mut tokens = self.collect_recent_popup_tokens('@', lowered.as_str(), limit, |token| {
+            self.workspace_token_exists(token)
+        });
+        for item in &self.workspace_files {
+            if tokens.len() >= limit {
+                break;
+            }
+            if !lowered.is_empty() && !item.lowered.contains(lowered.as_str()) {
+                continue;
+            }
+            let token = format!("@{}", item.path);
+            if !contains_token_case_insensitive(&tokens, token.as_str()) {
+                tokens.push(token);
+            }
         }
-        let lowered = query.to_ascii_lowercase();
+        tokens
+    }
+
+    fn app_popup_tokens(&self, query: &str, limit: usize) -> Vec<String> {
+        let lowered = query.trim().to_ascii_lowercase();
+        self.rank_catalog_tokens(&self.app_hints, '$', lowered.as_str(), limit)
+    }
+
+    fn skill_popup_tokens(&self, query: &str, limit: usize) -> Vec<String> {
+        let lowered = query.trim().to_ascii_lowercase();
+        self.rank_catalog_tokens(&self.skill_hints, '#', lowered.as_str(), limit)
+    }
+
+    fn rank_catalog_tokens(
+        &self,
+        catalog: &[String],
+        prefix: char,
+        lowered_query: &str,
+        limit: usize,
+    ) -> Vec<String> {
+        let mut tokens = self.collect_recent_popup_tokens(prefix, lowered_query, limit, |token| {
+            catalog.iter().any(|item| item.eq_ignore_ascii_case(token))
+        });
+        for item in catalog {
+            if tokens.len() >= limit {
+                break;
+            }
+            if !lowered_query.is_empty() && !item.to_ascii_lowercase().contains(lowered_query) {
+                continue;
+            }
+            if !contains_token_case_insensitive(&tokens, item) {
+                tokens.push(item.clone());
+            }
+        }
+        tokens
+    }
+
+    fn collect_recent_popup_tokens<F>(
+        &self,
+        prefix: char,
+        lowered_query: &str,
+        limit: usize,
+        exists: F,
+    ) -> Vec<String>
+    where
+        F: Fn(&str) -> bool,
+    {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let mut output = Vec::new();
+        for item in &self.popup_recents {
+            if output.len() >= limit {
+                break;
+            }
+            if !popup_token_matches(item, prefix, lowered_query) {
+                continue;
+            }
+            if !exists(item.as_str()) {
+                continue;
+            }
+            if !contains_token_case_insensitive(&output, item) {
+                output.push(item.clone());
+            }
+        }
+        output
+    }
+
+    fn workspace_token_exists(&self, token: &str) -> bool {
+        let Some(path) = token.strip_prefix('@') else {
+            return false;
+        };
         self.workspace_files
             .iter()
-            .filter(|item| item.lowered.contains(&lowered))
-            .take(limit)
-            .map(|item| format!("@{}", item.path))
-            .collect()
+            .any(|item| item.path.eq_ignore_ascii_case(path))
+    }
+
+    fn is_skill_enabled_token(&self, token: &str) -> bool {
+        let Some(name) = token.strip_prefix('#') else {
+            return false;
+        };
+        let lowered = name.trim().to_ascii_lowercase();
+        self.enabled_skill_names.contains(lowered.as_str())
+    }
+
+    fn decorate_skill_popup_line(&self, token: &str) -> String {
+        if self.is_skill_enabled_token(token) {
+            return token.to_string();
+        }
+        let skill_name = token.strip_prefix('#').unwrap_or(token).trim();
+        if self.is_zh_language() {
+            format!("{token}  [未启用，可用 /skills enable {skill_name}]")
+        } else {
+            format!("{token}  [disabled, run /skills enable {skill_name}]")
+        }
     }
 
     pub async fn drain_stream_events(&mut self) {
         self.flush_pending_paste();
         self.drain_approval_requests();
+        let drain_budget = self.stream_drain_budget();
 
         let mut drained = 0usize;
         loop {
             let Some(receiver) = self.stream_rx.as_mut() else {
+                self.reset_stream_catchup_state();
                 break;
             };
-            if drained >= MAX_DRAIN_MESSAGES_PER_TICK {
+            if drained >= drain_budget {
                 break;
             }
             match receiver.try_recv() {
@@ -888,6 +1369,7 @@ impl TuiApp {
                     self.stream_received_content_delta = false;
                     self.stream_tool_markup_open = false;
                     self.session_stats_dirty = true;
+                    self.reset_stream_catchup_state();
                     break;
                 }
             }
@@ -934,6 +1416,51 @@ impl TuiApp {
         self.approval_queue.push_back(request);
     }
 
+    fn reset_stream_catchup_state(&mut self) {
+        self.stream_catchup_mode = false;
+        self.stream_catchup_enter_since = None;
+        self.stream_catchup_exit_since = None;
+    }
+
+    fn stream_drain_budget(&mut self) -> usize {
+        let Some(receiver) = self.stream_rx.as_ref() else {
+            self.reset_stream_catchup_state();
+            return MAX_DRAIN_MESSAGES_PER_TICK_BASE;
+        };
+        let depth = receiver.len();
+        let now = Instant::now();
+        if self.stream_catchup_mode {
+            if depth <= STREAM_CATCHUP_EXIT_DEPTH {
+                if let Some(since) = self.stream_catchup_exit_since {
+                    if now.saturating_duration_since(since) >= STREAM_CATCHUP_EXIT_HOLD {
+                        self.reset_stream_catchup_state();
+                    }
+                } else {
+                    self.stream_catchup_exit_since = Some(now);
+                }
+            } else {
+                self.stream_catchup_exit_since = None;
+            }
+        } else if depth >= STREAM_CATCHUP_ENTER_DEPTH {
+            if let Some(since) = self.stream_catchup_enter_since {
+                if now.saturating_duration_since(since) >= STREAM_CATCHUP_ENTER_HOLD {
+                    self.stream_catchup_mode = true;
+                    self.stream_catchup_exit_since = None;
+                }
+            } else {
+                self.stream_catchup_enter_since = Some(now);
+            }
+        } else {
+            self.stream_catchup_enter_since = None;
+        }
+
+        if self.stream_catchup_mode {
+            MAX_DRAIN_MESSAGES_PER_TICK_CATCHUP
+        } else {
+            MAX_DRAIN_MESSAGES_PER_TICK_BASE
+        }
+    }
+
     fn flush_pending_paste(&mut self) {
         while let Some(chunk) = self.pending_paste.pop_front() {
             self.insert_text_at_cursor(chunk.as_str());
@@ -962,6 +1489,35 @@ impl TuiApp {
         }
     }
 
+    fn observe_plain_char_event(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.key_char_burst_last_at {
+            if now.saturating_duration_since(last) <= PASTE_BURST_CHAR_GAP {
+                self.key_char_burst_len = self.key_char_burst_len.saturating_add(1);
+            } else {
+                self.key_char_burst_len = 1;
+            }
+        } else {
+            self.key_char_burst_len = 1;
+        }
+        self.key_char_burst_last_at = Some(now);
+    }
+
+    fn reset_plain_char_burst(&mut self) {
+        self.key_char_burst_len = 0;
+        self.key_char_burst_last_at = None;
+    }
+
+    fn should_treat_enter_as_paste_newline(&self) -> bool {
+        let Some(last) = self.key_char_burst_last_at else {
+            return false;
+        };
+        if Instant::now().saturating_duration_since(last) > PASTE_BURST_ENTER_GAP {
+            return false;
+        }
+        self.key_char_burst_len >= PASTE_BURST_ENTER_CHAR_THRESHOLD
+    }
+
     pub async fn on_key(&mut self, key: KeyEvent) -> Result<()> {
         if self
             .ctrl_c_hint_deadline
@@ -970,13 +1526,18 @@ impl TuiApp {
         {
             self.ctrl_c_hint_deadline = None;
         }
+        if self.mouse_mode == MouseMode::Auto && self.mouse_passthrough_active() {
+            self.clear_mouse_passthrough();
+        }
 
         if self.active_approval.is_some() {
+            self.reset_plain_char_burst();
             self.handle_approval_key(key);
             return Ok(());
         }
 
         if is_paste_shortcut(key) {
+            self.reset_plain_char_burst();
             self.focus_area = FocusArea::Input;
             self.paste_from_system_clipboard();
             return Ok(());
@@ -1009,6 +1570,7 @@ impl TuiApp {
                     return Ok(());
                 }
                 KeyCode::Char('\u{0016}') => {
+                    self.reset_plain_char_burst();
                     self.focus_area = FocusArea::Input;
                     self.paste_from_system_clipboard();
                     return Ok(());
@@ -1018,6 +1580,7 @@ impl TuiApp {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.reset_plain_char_burst();
             match key.code {
                 KeyCode::Char('c') | KeyCode::Char('d') => {
                     self.handle_ctrl_c();
@@ -1094,6 +1657,7 @@ impl TuiApp {
         }
 
         if key.modifiers.contains(KeyModifiers::ALT) {
+            self.reset_plain_char_burst();
             match key.code {
                 KeyCode::Char('b') => {
                     self.move_cursor_word_left();
@@ -1124,6 +1688,7 @@ impl TuiApp {
         }
 
         if self.shortcuts_visible {
+            self.reset_plain_char_burst();
             if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
                 self.shortcuts_visible = false;
             }
@@ -1131,11 +1696,13 @@ impl TuiApp {
         }
 
         if self.has_resume_picker() {
+            self.reset_plain_char_burst();
             self.handle_resume_picker_key(key).await?;
             return Ok(());
         }
 
         if self.focus_area == FocusArea::Transcript {
+            self.reset_plain_char_burst();
             if self.handle_transcript_focus_key(key) {
                 return Ok(());
             }
@@ -1154,9 +1721,19 @@ impl TuiApp {
                         .modifiers
                         .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
                 {
+                    self.observe_plain_char_event();
                     self.insert_char_at_cursor('\n');
                     return Ok(());
                 }
+                if self.config_wizard.is_none()
+                    && !self.input.trim_start().starts_with('/')
+                    && self.should_treat_enter_as_paste_newline()
+                {
+                    self.insert_char_at_cursor('\n');
+                    self.observe_plain_char_event();
+                    return Ok(());
+                }
+                self.reset_plain_char_burst();
 
                 let raw_line = std::mem::take(&mut self.input);
                 self.input_cursor = 0;
@@ -1166,12 +1743,15 @@ impl TuiApp {
                 }
             }
             KeyCode::Backspace => {
+                self.reset_plain_char_burst();
                 self.backspace_at_cursor();
             }
             KeyCode::Delete => {
+                self.reset_plain_char_burst();
                 self.delete_at_cursor();
             }
             KeyCode::Left => {
+                self.reset_plain_char_burst();
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.move_cursor_word_left();
                 } else {
@@ -1179,6 +1759,7 @@ impl TuiApp {
                 }
             }
             KeyCode::Right => {
+                self.reset_plain_char_burst();
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.move_cursor_word_right();
                 } else {
@@ -1186,21 +1767,27 @@ impl TuiApp {
                 }
             }
             KeyCode::Tab => {
+                self.reset_plain_char_burst();
                 self.apply_first_suggestion();
             }
             KeyCode::F(2) => {
+                self.reset_plain_char_burst();
                 self.toggle_mouse_mode();
             }
             KeyCode::F(3) => {
+                self.reset_plain_char_burst();
                 self.toggle_focus_area();
             }
             KeyCode::PageUp => {
+                self.reset_plain_char_burst();
                 self.scroll_transcript_up(8);
             }
             KeyCode::PageDown => {
+                self.reset_plain_char_burst();
                 self.scroll_transcript_down(8);
             }
             KeyCode::Home => {
+                self.reset_plain_char_burst();
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.scroll_transcript_to_top();
                 } else {
@@ -1208,6 +1795,7 @@ impl TuiApp {
                 }
             }
             KeyCode::End => {
+                self.reset_plain_char_burst();
                 if key.modifiers.contains(KeyModifiers::CONTROL) {
                     self.scroll_transcript_to_bottom();
                 } else {
@@ -1215,6 +1803,7 @@ impl TuiApp {
                 }
             }
             KeyCode::Up => {
+                self.reset_plain_char_burst();
                 if self.should_use_multiline_navigation() {
                     self.move_cursor_up();
                 } else {
@@ -1222,6 +1811,7 @@ impl TuiApp {
                 }
             }
             KeyCode::Down => {
+                self.reset_plain_char_burst();
                 if self.should_use_multiline_navigation() {
                     self.move_cursor_down();
                 } else {
@@ -1230,8 +1820,10 @@ impl TuiApp {
             }
             KeyCode::Char('?') => {
                 if self.input.trim().is_empty() && self.config_wizard.is_none() {
+                    self.reset_plain_char_burst();
                     self.shortcuts_visible = true;
                 } else {
+                    self.observe_plain_char_event();
                     self.insert_char_at_cursor('?');
                 }
             }
@@ -1239,10 +1831,11 @@ impl TuiApp {
                 if matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
                     || is_altgr(key.modifiers)
                 {
+                    self.observe_plain_char_event();
                     self.insert_char_at_cursor(ch);
                 }
             }
-            _ => {}
+            _ => self.reset_plain_char_burst(),
         }
         Ok(())
     }
@@ -1365,8 +1958,14 @@ impl TuiApp {
             return false;
         }
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
+            KeyCode::Esc => {
                 self.focus_area = FocusArea::Input;
+                true
+            }
+            KeyCode::Enter => {
+                if !self.prefill_selected_user_message() {
+                    self.focus_area = FocusArea::Input;
+                }
                 true
             }
             KeyCode::Up => {
@@ -1406,6 +2005,122 @@ impl TuiApp {
                 true
             }
             _ => false,
+        }
+    }
+
+    fn prefill_selected_user_message(&mut self) -> bool {
+        let Some(index) = self.transcript_selected else {
+            return false;
+        };
+        let Some(entry) = self.logs.get(index) else {
+            return false;
+        };
+        let Some(text) = backtrack_user_text(entry) else {
+            return false;
+        };
+        self.input = text;
+        self.input_cursor = self.input.len();
+        self.history_cursor = None;
+        self.focus_area = FocusArea::Input;
+        self.push_log(
+            LogKind::Info,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "已回填选中用户消息，可继续编辑后发送",
+                "selected user message loaded into input; edit and send",
+            ),
+        );
+        true
+    }
+
+    fn handle_backtrack_slash(&mut self, args: &str) {
+        let candidates = collect_recent_user_logs(&self.logs, 20);
+        if candidates.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "当前会话没有可回溯的用户消息",
+                    "no user turns available for backtrack in this session",
+                ),
+            );
+            return;
+        }
+
+        let cleaned = args.trim();
+        if cleaned.is_empty() {
+            let first = candidates.first().cloned().unwrap_or_default();
+            self.prefill_backtrack_text(first.as_str(), 1);
+            return;
+        }
+
+        if cleaned.eq_ignore_ascii_case("list") {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "最近用户消息（1 为最新）:",
+                    "recent user turns (1 is latest):",
+                ),
+            );
+            for (index, item) in candidates.iter().enumerate() {
+                self.push_log(
+                    LogKind::Info,
+                    format!(
+                        "{:>2}. {}",
+                        index + 1,
+                        backtrack_preview_line(item.as_str(), 120)
+                    ),
+                );
+            }
+            return;
+        }
+
+        let index = cleaned.parse::<usize>().ok().filter(|value| *value >= 1);
+        let Some(index) = index else {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /backtrack [list|index]",
+                    "usage: /backtrack [list|index]",
+                ),
+            );
+            return;
+        };
+        let Some(selected) = candidates.get(index.saturating_sub(1)) else {
+            if self.is_zh_language() {
+                self.push_log(LogKind::Error, format!("回溯索引超出范围: {index}"));
+            } else {
+                self.push_log(
+                    LogKind::Error,
+                    format!("backtrack index out of range: {index}"),
+                );
+            }
+            return;
+        };
+        self.prefill_backtrack_text(selected, index);
+    }
+
+    fn prefill_backtrack_text(&mut self, text: &str, index: usize) {
+        let cleaned = text.trim();
+        if cleaned.is_empty() {
+            return;
+        }
+        self.input = cleaned.to_string();
+        self.input_cursor = self.input.len();
+        self.history_cursor = None;
+        self.focus_area = FocusArea::Input;
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!("已回填用户消息 #{index} 到输入区，可继续编辑后发送"),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("loaded user turn #{index} into input; edit and send"),
+            );
         }
     }
 
@@ -1476,7 +2191,11 @@ impl TuiApp {
         self.stream_saw_final = false;
         self.stream_received_content_delta = false;
         self.stream_tool_markup_open = false;
+        self.turn_final_answer.clear();
+        self.turn_final_stop_reason = None;
         self.tool_phase_notice_emitted = false;
+        self.reset_stream_catchup_state();
+        self.reset_plain_char_burst();
         self.approval_rx = None;
         self.active_approval = None;
         self.approval_queue.clear();
@@ -1583,13 +2302,23 @@ impl TuiApp {
             return;
         }
 
-        if self.mouse_mode != MouseMode::Scroll {
-            return;
-        }
-        match mouse.kind {
-            MouseEventKind::ScrollUp => self.scroll_transcript_up(3),
-            MouseEventKind::ScrollDown => self.scroll_transcript_down(3),
-            _ => {}
+        match self.mouse_mode {
+            MouseMode::Select => {}
+            MouseMode::Scroll => match mouse.kind {
+                MouseEventKind::ScrollUp => self.scroll_transcript_up(3),
+                MouseEventKind::ScrollDown => self.scroll_transcript_down(3),
+                _ => {}
+            },
+            MouseMode::Auto => match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left)
+                | MouseEventKind::Drag(MouseButton::Left) => {
+                    // In auto mode, a left-drag gesture opens a short native-selection window.
+                    self.activate_mouse_passthrough();
+                }
+                MouseEventKind::ScrollUp => self.scroll_transcript_up(3),
+                MouseEventKind::ScrollDown => self.scroll_transcript_down(3),
+                _ => {}
+            },
         }
     }
 
@@ -1608,6 +2337,7 @@ impl TuiApp {
 
         self.scroll_transcript_to_bottom();
         self.push_history(prompt.trim());
+        self.track_popup_tokens_from_text(prompt.as_str());
 
         if prompt.trim_start().starts_with('/') {
             return self.handle_slash_command(prompt.trim().to_string()).await;
@@ -1627,12 +2357,34 @@ impl TuiApp {
         self.stream_saw_final = false;
         self.stream_received_content_delta = false;
         self.stream_tool_markup_open = false;
+        self.turn_final_answer.clear();
+        self.turn_final_stop_reason = None;
         self.tool_phase_notice_emitted = false;
+        let request_attachments =
+            crate::attachments::to_request_attachments(&self.pending_attachments);
         let user_echo = prompt.clone();
-        self.start_stream_request(prompt, user_echo).await
+        self.start_stream_request(prompt, user_echo, request_attachments)
+            .await?;
+        if !self.pending_attachments.is_empty() {
+            self.pending_attachments.clear();
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "已消费待发送附件队列",
+                    "queued attachments consumed",
+                ),
+            );
+        }
+        Ok(())
     }
 
-    async fn start_stream_request(&mut self, prompt: String, user_echo: String) -> Result<()> {
+    async fn start_stream_request(
+        &mut self,
+        prompt: String,
+        user_echo: String,
+        attachments: Option<Vec<wunder_server::schemas::AttachmentPayload>>,
+    ) -> Result<()> {
         if self.busy {
             self.push_log(
                 LogKind::Error,
@@ -1647,15 +2399,23 @@ impl TuiApp {
         self.busy = true;
         self.active_assistant = None;
         self.active_reasoning = None;
+        self.turn_final_answer.clear();
+        self.turn_final_stop_reason = None;
 
         let (approval_tx, approval_rx) = new_approval_channel();
         self.approval_rx = Some(approval_rx);
         self.approval_queue.clear();
         self.active_approval = None;
 
-        let mut request =
-            crate::build_wunder_request(&self.runtime, &self.global, &prompt, &self.session_id)
-                .await?;
+        let mut request = crate::build_wunder_request(
+            &self.runtime,
+            &self.global,
+            &prompt,
+            &self.session_id,
+            self.agent_id_override.as_deref(),
+            attachments,
+        )
+        .await?;
         request.approval_tx = Some(approval_tx);
         let orchestrator = self.runtime.state.orchestrator.clone();
         let (tx, rx) = mpsc::unbounded_channel::<StreamMessage>();
@@ -1703,17 +2463,22 @@ impl TuiApp {
             .map(|index| index.saturating_add(1))
             .unwrap_or(0);
         let token = &self.input[token_start..cursor];
-        let Some(query) = token.strip_prefix('@') else {
+        let suggestions = if let Some(query) = token.strip_prefix('@') {
+            self.mention_popup_tokens(query, 1)
+        } else if let Some(query) = token.strip_prefix('$') {
+            self.app_popup_tokens(query, 1)
+        } else if let Some(query) = token.strip_prefix('#') {
+            self.skill_popup_tokens(query, 1)
+        } else {
             return;
         };
-
-        let suggestions = self.mention_popup_lines(query, 1);
         let Some(first) = suggestions.first() else {
             return;
         };
         let replacement = format!("{first} ");
         self.input.replace_range(token_start..cursor, &replacement);
         self.input_cursor = token_start.saturating_add(replacement.len());
+        self.mark_popup_recent(first);
     }
 
     fn should_use_multiline_navigation(&self) -> bool {
@@ -1786,6 +2551,14 @@ impl TuiApp {
             self.history = self.history.split_off(keep_from);
         }
         self.persist_history();
+    }
+
+    fn track_popup_tokens_from_text(&mut self, text: &str) {
+        for raw in text.split_whitespace() {
+            if let Some(token) = normalize_popup_token(raw) {
+                self.mark_popup_recent(token.as_str());
+            }
+        }
     }
 
     fn insert_char_at_cursor(&mut self, ch: char) {
@@ -2093,6 +2866,8 @@ impl TuiApp {
                 self.stream_saw_final = false;
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
+                self.turn_final_answer.clear();
+                self.turn_final_stop_reason = None;
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
             }
@@ -2103,6 +2878,13 @@ impl TuiApp {
                         "stream ended without model output or final answer".to_string(),
                     );
                 }
+                let final_event = self.notification_final_event();
+                crate::emit_turn_complete_notification(
+                    &self.runtime,
+                    self.session_id.as_str(),
+                    &final_event,
+                    "tui",
+                );
                 self.busy = false;
                 self.active_assistant = None;
                 self.active_reasoning = None;
@@ -2114,9 +2896,29 @@ impl TuiApp {
                 self.stream_saw_final = false;
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
+                self.turn_final_answer.clear();
+                self.turn_final_stop_reason = None;
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
             }
+        }
+    }
+
+    fn notification_final_event(&self) -> FinalEvent {
+        let answer = if !self.turn_final_answer.trim().is_empty() {
+            self.turn_final_answer.clone()
+        } else {
+            self.logs
+                .iter()
+                .rev()
+                .find(|entry| matches!(entry.kind, LogKind::Assistant))
+                .map(|entry| entry.text.clone())
+                .unwrap_or_default()
+        };
+        FinalEvent {
+            answer,
+            usage: None,
+            stop_reason: self.turn_final_stop_reason.clone(),
         }
     }
 
@@ -2267,6 +3069,10 @@ impl TuiApp {
             }
             "final" => {
                 self.stream_saw_final = true;
+                self.turn_final_stop_reason = payload
+                    .get("stop_reason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
                 if let Some(reasoning) = payload.get("reasoning").and_then(Value::as_str) {
                     let cleaned_reasoning = sanitize_reasoning_text(reasoning);
                     if !cleaned_reasoning.is_empty() {
@@ -2280,7 +3086,9 @@ impl TuiApp {
                     .unwrap_or_default();
                 if !answer.trim().is_empty() {
                     self.stream_saw_output = true;
-                    self.merge_final_answer(answer);
+                    let cleaned = sanitize_assistant_text(answer);
+                    self.turn_final_answer = cleaned.clone();
+                    self.merge_final_answer(cleaned.as_str());
                 }
                 self.stream_tool_markup_open = false;
                 self.last_usage = payload
@@ -2302,6 +3110,18 @@ impl TuiApp {
             );
             return Ok(());
         };
+
+        if self.busy && !command.command.available_during_task() {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "助手仍在运行，该命令需等待当前轮次完成后再执行",
+                    "assistant is still running; wait for the current turn to finish before running this command",
+                ),
+            );
+            return Ok(());
+        }
 
         match command.command {
             SlashCommand::Help => {
@@ -2356,6 +3176,24 @@ impl TuiApp {
             SlashCommand::Approvals => {
                 self.handle_approvals_slash(command.args).await?;
             }
+            SlashCommand::Plan => {
+                self.handle_plan_slash(command.args).await?;
+            }
+            SlashCommand::Personality => {
+                self.handle_personality_slash(command.args).await?;
+            }
+            SlashCommand::Init => {
+                self.handle_init_slash(command.args)?;
+            }
+            SlashCommand::Agent => {
+                self.handle_agent_slash(command.args).await?;
+            }
+            SlashCommand::Attach => {
+                self.handle_attach_slash(command.args).await?;
+            }
+            SlashCommand::Notify => {
+                self.handle_notify_slash(command.args)?;
+            }
             SlashCommand::Diff => {
                 self.handle_diff_slash().await?;
             }
@@ -2364,6 +3202,36 @@ impl TuiApp {
             }
             SlashCommand::Mention => {
                 self.handle_mention_slash(command.args).await?;
+            }
+            SlashCommand::Skills => {
+                self.handle_skills_slash(command.args).await?;
+            }
+            SlashCommand::Apps => {
+                self.handle_apps_slash(command.args).await?;
+            }
+            SlashCommand::Ps => {
+                self.handle_ps_slash(command.args);
+            }
+            SlashCommand::Clean => {
+                self.handle_clean_slash(command.args);
+            }
+            SlashCommand::Fork => {
+                self.handle_fork_slash(command.args).await?;
+            }
+            SlashCommand::Rename => {
+                self.handle_rename_slash(command.args).await?;
+            }
+            SlashCommand::Compact => {
+                self.handle_compact_slash().await?;
+            }
+            SlashCommand::Backtrack => {
+                self.handle_backtrack_slash(command.args);
+            }
+            SlashCommand::DebugConfig => {
+                self.show_debug_config_snapshot().await?;
+            }
+            SlashCommand::Statusline => {
+                self.handle_statusline_slash(command.args);
             }
             SlashCommand::Mcp => {
                 self.handle_mcp_slash(command.args).await?;
@@ -2396,6 +3264,11 @@ impl TuiApp {
             "launch_dir": self.runtime.launch_dir,
             "temp_root": self.runtime.temp_root,
             "user_id": self.runtime.user_id,
+            "agent_id_override": self.agent_id_override.clone(),
+            "queued_attachments": self.pending_attachments.len(),
+            "turn_notification": crate::serialize_turn_notification(
+                &self.runtime.load_turn_notification_config()
+            ),
             "workspace_root": config.workspace.root,
             "storage_backend": config.storage.backend,
             "db_path": config.storage.db_path,
@@ -2576,10 +3449,16 @@ impl TuiApp {
     fn handle_mouse_slash(&mut self, args: &str) {
         let cleaned = args.trim();
         if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
-            let mode = if self.mouse_mode == MouseMode::Scroll {
-                crate::locale::tr(self.display_language.as_str(), "滚轮", "scroll")
-            } else {
-                crate::locale::tr(self.display_language.as_str(), "选择", "select")
+            let mode = match self.mouse_mode {
+                MouseMode::Auto => {
+                    crate::locale::tr(self.display_language.as_str(), "自动", "auto")
+                }
+                MouseMode::Scroll => {
+                    crate::locale::tr(self.display_language.as_str(), "滚轮", "scroll")
+                }
+                MouseMode::Select => {
+                    crate::locale::tr(self.display_language.as_str(), "选择", "select")
+                }
             };
             if self.is_zh_language() {
                 self.push_log(LogKind::Info, format!("鼠标模式: {mode}"));
@@ -2590,13 +3469,17 @@ impl TuiApp {
                 LogKind::Info,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "用法: /mouse [scroll|select]  （F2 切换）",
-                    "usage: /mouse [scroll|select]  (F2 to toggle)",
+                    "用法: /mouse [auto|scroll|select]  （F2 可切换）",
+                    "usage: /mouse [auto|scroll|select]  (F2 optional)",
                 ),
             );
             return;
         }
 
+        if cleaned.eq_ignore_ascii_case("auto") {
+            self.set_mouse_mode(MouseMode::Auto);
+            return;
+        }
         if cleaned.eq_ignore_ascii_case("scroll") {
             self.set_mouse_mode(MouseMode::Scroll);
             return;
@@ -2612,7 +3495,7 @@ impl TuiApp {
         self.push_log(LogKind::Error, format!("invalid /mouse args: {cleaned}"));
         self.push_log(
             LogKind::Info,
-            "usage: /mouse [scroll|select]  (F2 to toggle)".to_string(),
+            "usage: /mouse [auto|scroll|select]  (F2 optional)".to_string(),
         );
     }
 
@@ -3019,7 +3902,472 @@ impl TuiApp {
         } else {
             format!("/review {focus}")
         };
-        self.start_stream_request(prompt, user_echo).await
+        self.start_stream_request(prompt, user_echo, None).await
+    }
+
+    async fn handle_plan_slash(&mut self, args: &str) -> Result<()> {
+        if self.busy {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "助手仍在运行，请等待完成后再执行 /plan",
+                    "assistant is still running, wait for completion before running /plan",
+                ),
+            );
+            return Ok(());
+        }
+        let prompt = crate::build_plan_prompt_with_language(self.display_language.as_str(), args);
+        let cleaned = args.trim();
+        let user_echo = if cleaned.is_empty() {
+            "/plan".to_string()
+        } else {
+            format!("/plan {cleaned}")
+        };
+        self.start_stream_request(prompt, user_echo, None).await
+    }
+
+    async fn handle_personality_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+            let mode = self
+                .runtime
+                .load_personality_mode()
+                .unwrap_or_else(|| "balanced".to_string());
+            if self.is_zh_language() {
+                self.push_log(LogKind::Info, format!("当前回答风格: {mode}"));
+                self.push_log(
+                    LogKind::Info,
+                    "可选: concise | balanced | detailed | clear".to_string(),
+                );
+            } else {
+                self.push_log(LogKind::Info, format!("current response style: {mode}"));
+                self.push_log(
+                    LogKind::Info,
+                    "options: concise | balanced | detailed | clear".to_string(),
+                );
+            }
+            return Ok(());
+        }
+
+        if cleaned.eq_ignore_ascii_case("clear")
+            || cleaned.eq_ignore_ascii_case("none")
+            || cleaned.eq_ignore_ascii_case("off")
+        {
+            self.runtime.clear_personality_mode()?;
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "回答风格已清除（恢复 balanced）",
+                    "response style cleared (fallback to balanced)",
+                ),
+            );
+            return Ok(());
+        }
+
+        let Some(mode) = crate::normalize_personality_mode(cleaned) else {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /personality [show|concise|balanced|detailed|clear]",
+                    "usage: /personality [show|concise|balanced|detailed|clear]",
+                ),
+            );
+            return Ok(());
+        };
+        self.runtime.save_personality_mode(mode)?;
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("回答风格已更新: {mode}"));
+        } else {
+            self.push_log(LogKind::Info, format!("response style updated: {mode}"));
+        }
+        Ok(())
+    }
+
+    fn handle_init_slash(&mut self, args: &str) -> Result<()> {
+        let force = args.trim().eq_ignore_ascii_case("force");
+        if !args.trim().is_empty() && !force {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /init [force]",
+                    "usage: /init [force]",
+                ),
+            );
+            return Ok(());
+        }
+
+        let path = self.runtime.launch_dir.join("AGENTS.md");
+        if path.exists() && !force {
+            if self.is_zh_language() {
+                self.push_log(
+                    LogKind::Info,
+                    format!("AGENTS.md 已存在: {}", path.to_string_lossy()),
+                );
+                self.push_log(LogKind::Info, "如需覆盖请使用: /init force".to_string());
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("AGENTS.md already exists: {}", path.to_string_lossy()),
+                );
+                self.push_log(LogKind::Info, "use /init force to overwrite".to_string());
+            }
+            return Ok(());
+        }
+
+        fs::write(
+            &path,
+            crate::init_agents_template_text(self.display_language.as_str()),
+        )?;
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!("已生成 AGENTS.md: {}", path.to_string_lossy()),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("generated AGENTS.md: {}", path.to_string_lossy()),
+            );
+        }
+        Ok(())
+    }
+
+    async fn handle_agent_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+            let active = self.agent_id_override.as_deref().unwrap_or("-");
+            if self.is_zh_language() {
+                self.push_log(LogKind::Info, format!("当前 agent_id 覆盖: {active}"));
+                self.push_log(
+                    LogKind::Info,
+                    "用法: /agent [show|list|clear|<agent_id>]".to_string(),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("current agent_id override: {active}"),
+                );
+                self.push_log(
+                    LogKind::Info,
+                    "usage: /agent [show|list|clear|<agent_id>]".to_string(),
+                );
+            }
+            return Ok(());
+        }
+        if cleaned.eq_ignore_ascii_case("list") {
+            let active = self
+                .agent_id_override
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .or_else(|| {
+                    self.global
+                        .agent
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string)
+                });
+            let agents = crate::collect_recent_agent_ids(&self.runtime, 120).await?;
+            if agents.is_empty() {
+                self.push_log(
+                    LogKind::Info,
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "最近会话没有可用 agent_id，直接用 /agent <agent_id> 设置即可",
+                        "no agent_id found in recent sessions, use /agent <agent_id> directly",
+                    ),
+                );
+                return Ok(());
+            }
+            if self.is_zh_language() {
+                self.push_log(LogKind::Info, "最近 agent 列表:".to_string());
+            } else {
+                self.push_log(LogKind::Info, "recent agents:".to_string());
+            }
+            for (index, agent) in agents.iter().enumerate() {
+                let marker = if active
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(agent))
+                {
+                    "*"
+                } else {
+                    " "
+                };
+                self.push_log(LogKind::Info, format!("{marker} {:>2}. {agent}", index + 1));
+            }
+            return Ok(());
+        }
+        if cleaned.eq_ignore_ascii_case("clear")
+            || cleaned.eq_ignore_ascii_case("none")
+            || cleaned.eq_ignore_ascii_case("default")
+        {
+            self.agent_id_override = None;
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "agent_id 覆盖已清除",
+                    "agent_id override cleared",
+                ),
+            );
+            return Ok(());
+        }
+        self.agent_id_override = Some(cleaned.to_string());
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("agent_id 覆盖已更新: {cleaned}"));
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("agent_id override updated: {cleaned}"),
+            );
+        }
+        Ok(())
+    }
+
+    async fn handle_attach_slash(&mut self, args: &str) -> Result<()> {
+        let action = match crate::attachments::parse_attach_action(args) {
+            Ok(action) => action,
+            Err(_) => {
+                self.push_log(
+                    LogKind::Info,
+                    crate::attachments::attach_usage(self.display_language.as_str()),
+                );
+                return Ok(());
+            }
+        };
+
+        match action {
+            crate::attachments::AttachAction::Show => {
+                if self.pending_attachments.is_empty() {
+                    self.push_log(
+                        LogKind::Info,
+                        crate::locale::tr(
+                            self.display_language.as_str(),
+                            "当前没有待发送附件",
+                            "no queued attachments",
+                        ),
+                    );
+                } else {
+                    self.push_log(
+                        LogKind::Info,
+                        crate::locale::tr(
+                            self.display_language.as_str(),
+                            "待发送附件:",
+                            "queued attachments:",
+                        ),
+                    );
+                    let lines = self
+                        .pending_attachments
+                        .iter()
+                        .enumerate()
+                        .map(|(index, item)| {
+                            crate::attachments::summarize_attachment(
+                                item,
+                                index,
+                                self.display_language.as_str(),
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    for line in lines {
+                        self.push_log(LogKind::Info, line);
+                    }
+                }
+                self.push_log(
+                    LogKind::Info,
+                    crate::attachments::attach_usage(self.display_language.as_str()),
+                );
+            }
+            crate::attachments::AttachAction::Clear => {
+                self.pending_attachments.clear();
+                self.push_log(
+                    LogKind::Info,
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "附件队列已清空",
+                        "attachment queue cleared",
+                    ),
+                );
+            }
+            crate::attachments::AttachAction::Drop(index) => {
+                let drop_index = index.saturating_sub(1);
+                if drop_index >= self.pending_attachments.len() {
+                    if self.is_zh_language() {
+                        self.push_log(LogKind::Error, format!("附件编号超出范围: {index}"));
+                    } else {
+                        self.push_log(
+                            LogKind::Error,
+                            format!("attachment index out of range: {index}"),
+                        );
+                    }
+                    return Ok(());
+                }
+                let removed = self.pending_attachments.remove(drop_index);
+                let removed_name = removed
+                    .payload
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or("attachment");
+                if self.is_zh_language() {
+                    self.push_log(LogKind::Info, format!("已移除附件: {removed_name}"));
+                } else {
+                    self.push_log(LogKind::Info, format!("attachment removed: {removed_name}"));
+                }
+            }
+            crate::attachments::AttachAction::Add(path) => {
+                let prepared = match crate::attachments::prepare_attachment_from_path(
+                    &self.runtime,
+                    path.as_str(),
+                )
+                .await
+                {
+                    Ok(prepared) => prepared,
+                    Err(err) => {
+                        self.push_log(LogKind::Error, err.to_string());
+                        return Ok(());
+                    }
+                };
+                if let Some(existing) = self
+                    .pending_attachments
+                    .iter()
+                    .position(|item| item.source.eq_ignore_ascii_case(prepared.source.as_str()))
+                {
+                    self.pending_attachments.remove(existing);
+                }
+                self.pending_attachments.push(prepared);
+                if let Some(last) = self.pending_attachments.last() {
+                    if self.is_zh_language() {
+                        self.push_log(
+                            LogKind::Info,
+                            format!(
+                                "附件已加入队列（下一轮自动发送）: {}",
+                                crate::attachments::summarize_attachment(
+                                    last,
+                                    self.pending_attachments.len().saturating_sub(1),
+                                    self.display_language.as_str()
+                                )
+                            ),
+                        );
+                    } else {
+                        self.push_log(
+                            LogKind::Info,
+                            format!(
+                                "attachment queued (auto-send on next turn): {}",
+                                crate::attachments::summarize_attachment(
+                                    last,
+                                    self.pending_attachments.len().saturating_sub(1),
+                                    self.display_language.as_str()
+                                )
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_notify_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+            let config = self.runtime.load_turn_notification_config();
+            if self.is_zh_language() {
+                self.push_log(
+                    LogKind::Info,
+                    format!(
+                        "当前回合通知: {}",
+                        crate::describe_turn_notification(&config, self.display_language.as_str())
+                    ),
+                );
+                self.push_log(
+                    LogKind::Info,
+                    "用法: /notify [show|off|bell|<command...>]".to_string(),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!(
+                        "current turn notification: {}",
+                        crate::describe_turn_notification(&config, self.display_language.as_str())
+                    ),
+                );
+                self.push_log(
+                    LogKind::Info,
+                    "usage: /notify [show|off|bell|<command...>]".to_string(),
+                );
+            }
+            return Ok(());
+        }
+
+        if cleaned.eq_ignore_ascii_case("off")
+            || cleaned.eq_ignore_ascii_case("clear")
+            || cleaned.eq_ignore_ascii_case("none")
+        {
+            self.runtime.clear_turn_notification_config()?;
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "回合通知已关闭",
+                    "turn notifications disabled",
+                ),
+            );
+            return Ok(());
+        }
+        if cleaned.eq_ignore_ascii_case("bell") {
+            let config = crate::runtime::TurnNotificationConfig::Bell;
+            self.runtime.save_turn_notification_config(&config)?;
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "回合通知已切换为 BEL 铃声",
+                    "turn notifications set to BEL",
+                ),
+            );
+            return Ok(());
+        }
+
+        let argv = shell_words::split(cleaned)
+            .map_err(|err| anyhow!("parse /notify args failed: {err}"))?;
+        if argv.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /notify [show|off|bell|<command...>]",
+                    "usage: /notify [show|off|bell|<command...>]",
+                ),
+            );
+            return Ok(());
+        }
+        let config = crate::runtime::TurnNotificationConfig::Command { argv };
+        self.runtime.save_turn_notification_config(&config)?;
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!(
+                    "回合通知已更新: {}",
+                    crate::describe_turn_notification(&config, self.display_language.as_str())
+                ),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!(
+                    "turn notification updated: {}",
+                    crate::describe_turn_notification(&config, self.display_language.as_str())
+                ),
+            );
+        }
+        Ok(())
     }
 
     async fn handle_mention_slash(&mut self, args: &str) -> Result<()> {
@@ -3041,6 +4389,535 @@ impl TuiApp {
             self.push_log(LogKind::Info, path);
         }
         Ok(())
+    }
+
+    async fn handle_skills_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("list") {
+            self.show_skills_catalog().await;
+            return Ok(());
+        }
+        if cleaned.eq_ignore_ascii_case("root") {
+            let root = self
+                .runtime
+                .state
+                .user_tool_store
+                .get_skill_root(&self.runtime.user_id);
+            if self.is_zh_language() {
+                self.push_log(
+                    LogKind::Info,
+                    format!("技能目录: {}", root.to_string_lossy()),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("skill root: {}", root.to_string_lossy()),
+                );
+            }
+            return Ok(());
+        }
+
+        let mut parts = cleaned.splitn(2, char::is_whitespace);
+        let action = parts.next().unwrap_or_default();
+        let value = parts.next().unwrap_or_default().trim();
+        if action.eq_ignore_ascii_case("enable") {
+            self.toggle_skill_state(value, true).await?;
+            return Ok(());
+        }
+        if action.eq_ignore_ascii_case("disable") {
+            self.toggle_skill_state(value, false).await?;
+            return Ok(());
+        }
+
+        self.push_log(
+            LogKind::Info,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "用法: /skills [list|enable <name>|disable <name>|root]",
+                "usage: /skills [list|enable <name>|disable <name>|root]",
+            ),
+        );
+        Ok(())
+    }
+
+    async fn show_skills_catalog(&mut self) {
+        let payload = self
+            .runtime
+            .state
+            .user_tool_store
+            .load_user_tools(&self.runtime.user_id);
+        let enabled_set = payload
+            .skills
+            .enabled
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        let (skill_root, specs) = crate::load_user_skill_specs(&self.runtime).await;
+
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!("技能目录: {}", skill_root.to_string_lossy()),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("skill root: {}", skill_root.to_string_lossy()),
+            );
+        }
+
+        if specs.is_empty() {
+            if self.is_zh_language() {
+                self.push_log(
+                    LogKind::Info,
+                    format!("在 {} 未找到技能", skill_root.to_string_lossy()),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("no skills found in {}", skill_root.to_string_lossy()),
+                );
+            }
+            return;
+        }
+
+        for spec in specs {
+            let state = if enabled_set.contains(&spec.name) {
+                crate::locale::tr(self.display_language.as_str(), "启用", "enabled")
+            } else {
+                crate::locale::tr(self.display_language.as_str(), "禁用", "disabled")
+            };
+            self.push_log(
+                LogKind::Info,
+                format!("{} [{}] {}", spec.name, state, spec.path),
+            );
+        }
+    }
+
+    async fn toggle_skill_state(&mut self, target: &str, enable: bool) -> Result<()> {
+        let skill_name = target.trim().to_string();
+        if skill_name.is_empty() {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "技能名称不能为空",
+                    "skill name cannot be empty",
+                ),
+            );
+            return Ok(());
+        }
+
+        if enable {
+            let (_, specs) = crate::load_user_skill_specs(&self.runtime).await;
+            let known = specs
+                .into_iter()
+                .map(|spec| spec.name)
+                .collect::<std::collections::HashSet<_>>();
+            if !known.contains(&skill_name) {
+                if self.is_zh_language() {
+                    self.push_log(LogKind::Error, format!("未找到技能: {skill_name}"));
+                } else {
+                    self.push_log(LogKind::Error, format!("skill not found: {skill_name}"));
+                }
+                return Ok(());
+            }
+        }
+
+        let payload = self
+            .runtime
+            .state
+            .user_tool_store
+            .load_user_tools(&self.runtime.user_id);
+        let mut enabled = payload.skills.enabled;
+        enabled.retain(|name| name.trim() != skill_name.as_str());
+        if enable {
+            enabled.push(skill_name.clone());
+        }
+        let enabled = normalize_name_list_for_tui(enabled);
+        self.runtime.state.user_tool_store.update_skills(
+            &self.runtime.user_id,
+            enabled,
+            payload.skills.shared,
+        )?;
+        self.runtime
+            .state
+            .user_tool_manager
+            .clear_skill_cache(Some(&self.runtime.user_id));
+        self.reload_popup_catalogs().await;
+
+        if enable {
+            if self.is_zh_language() {
+                self.push_log(LogKind::Info, format!("技能已启用: {skill_name}"));
+            } else {
+                self.push_log(LogKind::Info, format!("skill enabled: {skill_name}"));
+            }
+        } else if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("技能已禁用: {skill_name}"));
+        } else {
+            self.push_log(LogKind::Info, format!("skill disabled: {skill_name}"));
+        }
+        Ok(())
+    }
+
+    async fn handle_apps_slash(&mut self, args: &str) -> Result<()> {
+        for line in
+            crate::execute_apps_command(&self.runtime, self.display_language.as_str(), args).await?
+        {
+            self.push_log(LogKind::Info, line);
+        }
+        self.reload_popup_catalogs().await;
+        Ok(())
+    }
+
+    fn handle_ps_slash(&mut self, args: &str) {
+        let cleaned = args.trim();
+        if !cleaned.is_empty() {
+            if self.is_zh_language() {
+                self.push_log(LogKind::Error, format!("无效的 /ps 参数: {cleaned}"));
+                self.push_log(LogKind::Info, "用法: /ps".to_string());
+            } else {
+                self.push_log(LogKind::Error, format!("invalid /ps args: {cleaned}"));
+                self.push_log(LogKind::Info, "usage: /ps".to_string());
+            }
+            return;
+        }
+        let sessions = crate::collect_active_monitor_sessions(&self.runtime);
+        if sessions.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "当前没有活动中的后台会话",
+                    "no active background sessions",
+                ),
+            );
+            return;
+        }
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("活动后台会话: {}", sessions.len()));
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("active background sessions: {}", sessions.len()),
+            );
+        }
+        for entry in sessions {
+            self.push_log(
+                LogKind::Info,
+                crate::format_monitor_session_line(&entry, self.display_language.as_str()),
+            );
+        }
+    }
+
+    fn handle_clean_slash(&mut self, args: &str) {
+        let cleaned = args.trim();
+        if !cleaned.is_empty() {
+            if self.is_zh_language() {
+                self.push_log(LogKind::Error, format!("无效的 /clean 参数: {cleaned}"));
+                self.push_log(LogKind::Info, "用法: /clean".to_string());
+            } else {
+                self.push_log(LogKind::Error, format!("invalid /clean args: {cleaned}"));
+                self.push_log(LogKind::Info, "usage: /clean".to_string());
+            }
+            return;
+        }
+        let sessions = crate::collect_active_monitor_sessions(&self.runtime);
+        if sessions.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "当前没有活动中的后台会话",
+                    "no active background sessions",
+                ),
+            );
+            return;
+        }
+
+        let mut cancelled = 0usize;
+        for entry in sessions {
+            let Some(session_id) = entry.get("session_id").and_then(Value::as_str) else {
+                continue;
+            };
+            if self.runtime.state.monitor.cancel(session_id) {
+                cancelled = cancelled.saturating_add(1);
+            }
+        }
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("已发送取消请求: {cancelled}"));
+        } else {
+            self.push_log(LogKind::Info, format!("cancel requests sent: {cancelled}"));
+        }
+    }
+
+    async fn handle_fork_slash(&mut self, args: &str) -> Result<()> {
+        if self.busy {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "助手仍在运行，请等待完成后再执行 /fork",
+                    "assistant is still running, wait for completion before running /fork",
+                ),
+            );
+            return Ok(());
+        }
+        let title = args.trim();
+        let (new_session, copied) = crate::fork_session_with_history(
+            &self.runtime,
+            self.session_id.as_str(),
+            (!title.is_empty()).then_some(title),
+        )
+        .await?;
+        self.switch_to_existing_session(new_session.as_str())
+            .await?;
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!("已分叉会话: {new_session}（复制 {copied} 条历史）"),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("forked session: {new_session} (copied {copied} history entries)"),
+            );
+        }
+        Ok(())
+    }
+
+    async fn handle_rename_slash(&mut self, args: &str) -> Result<()> {
+        let title = args.trim();
+        if title.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /rename <title>",
+                    "usage: /rename <title>",
+                ),
+            );
+            return Ok(());
+        }
+        let saved =
+            crate::rename_session_title(&self.runtime, self.session_id.as_str(), title).await?;
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("会话已重命名: {saved}"));
+        } else {
+            self.push_log(LogKind::Info, format!("session renamed: {saved}"));
+        }
+        Ok(())
+    }
+
+    async fn handle_compact_slash(&mut self) -> Result<()> {
+        if self.busy {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "助手仍在运行，请等待完成后再执行 /compact",
+                    "assistant is still running, wait for completion before running /compact",
+                ),
+            );
+            return Ok(());
+        }
+        let (new_session, summary) = crate::compact_session_into_branch(
+            &self.runtime,
+            self.session_id.as_str(),
+            self.display_language.as_str(),
+        )
+        .await?;
+        self.switch_to_existing_session(new_session.as_str())
+            .await?;
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("已创建压缩分支会话: {new_session}"));
+            self.push_log(
+                LogKind::Info,
+                format!("摘要长度: {} 字符", summary.chars().count()),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("created compacted branch session: {new_session}"),
+            );
+            self.push_log(
+                LogKind::Info,
+                format!("summary size: {} chars", summary.chars().count()),
+            );
+        }
+        Ok(())
+    }
+
+    async fn show_debug_config_snapshot(&mut self) -> Result<()> {
+        let payload = crate::collect_debug_config_payload(
+            &self.runtime,
+            &self.global,
+            self.session_id.as_str(),
+        )
+        .await;
+        for line in serde_json::to_string_pretty(&payload)?.lines() {
+            self.push_log(LogKind::Info, line.to_string());
+        }
+        Ok(())
+    }
+
+    fn handle_statusline_slash(&mut self, args: &str) {
+        let cleaned = args.trim();
+        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
+            if self.statusline_items.is_empty() {
+                self.push_log(
+                    LogKind::Info,
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "状态栏方案: 默认",
+                        "status line preset: default",
+                    ),
+                );
+            } else if self.is_zh_language() {
+                self.push_log(
+                    LogKind::Info,
+                    format!("状态栏方案: {}", self.statusline_items.join(", ")),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("status line preset: {}", self.statusline_items.join(", ")),
+                );
+            }
+            self.push_log(
+                LogKind::Info,
+                if self.is_zh_language() {
+                    format!("预览: {}", self.status_line().trim())
+                } else {
+                    format!("preview: {}", self.status_line().trim())
+                },
+            );
+            self.push_log(
+                LogKind::Info,
+                if self.is_zh_language() {
+                    format!("可选项: {}", STATUSLINE_ITEM_KEYS.join(", "))
+                } else {
+                    format!("available: {}", STATUSLINE_ITEM_KEYS.join(", "))
+                },
+            );
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /statusline [show|set <items>|reset]",
+                    "usage: /statusline [show|set <items>|reset]",
+                ),
+            );
+            return;
+        }
+
+        if cleaned.eq_ignore_ascii_case("reset") {
+            self.statusline_items.clear();
+            self.persist_statusline_items();
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "状态栏已恢复默认",
+                    "status line preset reset to default",
+                ),
+            );
+            return;
+        }
+
+        let mut parts = cleaned.splitn(2, char::is_whitespace);
+        let action = parts.next().unwrap_or_default();
+        let value = parts.next().unwrap_or_default().trim();
+        if !action.eq_ignore_ascii_case("set") {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "无效的 /statusline 参数",
+                    "invalid /statusline args",
+                ),
+            );
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /statusline [show|set <items>|reset]",
+                    "usage: /statusline [show|set <items>|reset]",
+                ),
+            );
+            return;
+        }
+        if value.is_empty() {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "请提供至少一个状态栏项",
+                    "please provide at least one status line item",
+                ),
+            );
+            return;
+        }
+
+        let mut unknown = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut selected = Vec::new();
+        for token in value.split(|ch: char| ch == ',' || ch == '|' || ch.is_whitespace()) {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            match normalize_statusline_item(trimmed) {
+                Some(item) => {
+                    if seen.insert(item.clone()) {
+                        selected.push(item);
+                    }
+                }
+                None => unknown.push(trimmed.to_string()),
+            }
+        }
+        if !unknown.is_empty() {
+            self.push_log(
+                LogKind::Error,
+                if self.is_zh_language() {
+                    format!("未知状态栏项: {}", unknown.join(", "))
+                } else {
+                    format!("unknown status line items: {}", unknown.join(", "))
+                },
+            );
+            self.push_log(
+                LogKind::Info,
+                if self.is_zh_language() {
+                    format!("可选项: {}", STATUSLINE_ITEM_KEYS.join(", "))
+                } else {
+                    format!("available: {}", STATUSLINE_ITEM_KEYS.join(", "))
+                },
+            );
+            return;
+        }
+        if selected.is_empty() {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "未解析到有效状态栏项",
+                    "no valid status line items parsed",
+                ),
+            );
+            return;
+        }
+        self.statusline_items = selected;
+        self.persist_statusline_items();
+        if self.is_zh_language() {
+            self.push_log(
+                LogKind::Info,
+                format!("状态栏已更新: {}", self.statusline_items.join(", ")),
+            );
+        } else {
+            self.push_log(
+                LogKind::Info,
+                format!("status line updated: {}", self.statusline_items.join(", ")),
+            );
+        }
     }
 
     async fn handle_mcp_slash(&mut self, args: &str) -> Result<()> {
@@ -3332,6 +5209,15 @@ impl TuiApp {
                 )
             },
         );
+        let personality_mode = self
+            .runtime
+            .load_personality_mode()
+            .unwrap_or_else(|| "balanced".to_string());
+        if self.is_zh_language() {
+            self.push_log(LogKind::Info, format!("- 回答风格: {personality_mode}"));
+        } else {
+            self.push_log(LogKind::Info, format!("- personality: {personality_mode}"));
+        }
         self.push_log(
             LogKind::Info,
             crate::locale::tr(
@@ -3369,6 +5255,8 @@ impl TuiApp {
         self.stream_received_content_delta = false;
         self.stream_tool_markup_open = false;
         self.tool_phase_notice_emitted = false;
+        self.reset_stream_catchup_state();
+        self.reset_plain_char_burst();
         self.approval_rx = None;
         self.active_approval = None;
         self.approval_queue.clear();
@@ -3398,6 +5286,17 @@ impl TuiApp {
                 format!("- session: {}", self.session_id)
             },
             if is_zh {
+                format!(
+                    "- agent_id 覆盖: {}",
+                    self.agent_id_override.as_deref().unwrap_or("-")
+                )
+            } else {
+                format!(
+                    "- agent_id_override: {}",
+                    self.agent_id_override.as_deref().unwrap_or("-")
+                )
+            },
+            if is_zh {
                 format!("- 模型: {}", self.model_name)
             } else {
                 format!("- model: {}", self.model_name)
@@ -3413,6 +5312,28 @@ impl TuiApp {
                 format!("- approval_mode: {}", self.approval_mode)
             },
             if is_zh {
+                format!("- 待发送附件: {}", self.pending_attachments.len())
+            } else {
+                format!("- queued_attachments: {}", self.pending_attachments.len())
+            },
+            if is_zh {
+                format!(
+                    "- 回合通知: {}",
+                    crate::describe_turn_notification(
+                        &self.runtime.load_turn_notification_config(),
+                        self.display_language.as_str()
+                    )
+                )
+            } else {
+                format!(
+                    "- turn_notify: {}",
+                    crate::describe_turn_notification(
+                        &self.runtime.load_turn_notification_config(),
+                        self.display_language.as_str()
+                    )
+                )
+            },
+            if is_zh {
                 format!("- 最大轮次: {}", self.model_max_rounds)
             } else {
                 format!("- max_rounds: {}", self.model_max_rounds)
@@ -3424,16 +5345,28 @@ impl TuiApp {
                 } else {
                     "- mouse_mode:"
                 },
-                if self.mouse_mode == MouseMode::Scroll {
-                    if is_zh {
-                        "scroll(滚轮)"
-                    } else {
-                        "scroll"
+                match self.mouse_mode {
+                    MouseMode::Auto => {
+                        if is_zh {
+                            "auto(自动)"
+                        } else {
+                            "auto"
+                        }
                     }
-                } else if is_zh {
-                    "select(选择)"
-                } else {
-                    "select"
+                    MouseMode::Scroll => {
+                        if is_zh {
+                            "scroll(滚轮)"
+                        } else {
+                            "scroll"
+                        }
+                    }
+                    MouseMode::Select => {
+                        if is_zh {
+                            "select(选择)"
+                        } else {
+                            "select"
+                        }
+                    }
                 }
             ),
             if is_zh {
@@ -3714,6 +5647,106 @@ pub(super) fn log_prefix(kind: LogKind) -> &'static str {
     }
 }
 
+fn backtrack_user_text(entry: &LogEntry) -> Option<String> {
+    if entry.kind != LogKind::User {
+        return None;
+    }
+    let text = entry.text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.to_string())
+}
+
+fn collect_recent_user_logs(logs: &[LogEntry], limit: usize) -> Vec<String> {
+    logs.iter()
+        .rev()
+        .filter_map(backtrack_user_text)
+        .take(limit)
+        .collect()
+}
+
+fn backtrack_preview_line(text: &str, max_chars: usize) -> String {
+    let cleaned = text.trim();
+    if cleaned.chars().count() <= max_chars {
+        return cleaned.to_string();
+    }
+    let mut out = cleaned.chars().take(max_chars).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+fn normalize_popup_token(raw: &str) -> Option<String> {
+    let cleaned = raw
+        .trim_matches(|ch: char| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '"' | '\''
+                        | '`'
+                        | ','
+                        | '.'
+                        | ';'
+                        | ':'
+                        | ')'
+                        | '('
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '<'
+                        | '>'
+                        | '\n'
+                        | '\r'
+                )
+        })
+        .trim();
+    let first = cleaned.chars().next()?;
+    if !matches!(first, '@' | '$' | '#') {
+        return None;
+    }
+    let rest = cleaned[first.len_utf8()..].trim();
+    if rest.is_empty() {
+        return None;
+    }
+    let normalized_rest = if first == '@' {
+        rest.replace('\\', "/")
+    } else {
+        rest.to_string()
+    };
+    Some(format!("{first}{normalized_rest}"))
+}
+
+fn popup_token_matches(token: &str, prefix: char, lowered_query: &str) -> bool {
+    let Some(rest) = token.strip_prefix(prefix) else {
+        return false;
+    };
+    if lowered_query.is_empty() {
+        return true;
+    }
+    rest.to_ascii_lowercase().contains(lowered_query)
+}
+
+fn contains_token_case_insensitive(values: &[String], target: &str) -> bool {
+    values.iter().any(|item| item.eq_ignore_ascii_case(target))
+}
+
+fn dedupe_case_insensitive(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for item in values {
+        let cleaned = item.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let key = cleaned.to_ascii_lowercase();
+        if seen.insert(key) {
+            output.push(cleaned.to_string());
+        }
+    }
+    output
+}
+
 fn format_mcp_server_lines_for_tui(
     server: &UserMcpServer,
     is_zh: bool,
@@ -3882,6 +5915,45 @@ fn mcp_auth_key_label_for_tui(key: &str, is_zh: bool) -> &'static str {
             }
         }
     }
+}
+
+fn normalize_statusline_item(raw: &str) -> Option<String> {
+    let key = raw.trim().to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    let normalized = match key.as_str() {
+        "running" | "run" | "status" | "状态" | "运行" => "running",
+        "usage" | "token" | "tokens" | "用量" | "token占用" => "usage",
+        "scroll" | "滚动" => "scroll",
+        "mouse" | "鼠标" => "mouse",
+        "focus" | "焦点" => "focus",
+        "context" | "ctx" | "上下文" => "context",
+        "session" | "sid" | "会话" => "session",
+        "agent" | "agent_id" | "智能体" => "agent",
+        "model" | "模型" => "model",
+        "mode" | "tool_call_mode" | "工具模式" | "模式" => "mode",
+        "approval" | "approvals" | "审批" | "授权" => "approval",
+        "attach" | "attachments" | "附件" => "attach",
+        _ => return None,
+    };
+    Some(normalized.to_string())
+}
+
+fn normalize_name_list_for_tui(values: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut output = Vec::new();
+    for value in values {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if !seen.insert(cleaned.to_string()) {
+            continue;
+        }
+        output.push(cleaned.to_string());
+    }
+    output
 }
 
 fn is_paste_shortcut(key: KeyEvent) -> bool {
@@ -4801,9 +6873,15 @@ fn localize_cli_notice(language: &str, text: &str) -> String {
         "- max_context: auto probe unavailable (or keep existing)" => {
             "- max_context: 自动探测不可用（或保留现有值）".to_string()
         }
+        "mouse mode: auto (wheel + temporary selection passthrough)" => {
+            "鼠标模式：auto（滚轮 + 临时选择透传）".to_string()
+        }
         "mouse mode: scroll (wheel enabled)" => "鼠标模式：scroll（启用滚轮）".to_string(),
         "mouse mode: select/copy (wheel disabled)" => {
             "鼠标模式：select/copy（禁用滚轮）".to_string()
+        }
+        "usage: /mouse [auto|scroll|select]  (F2 optional)" => {
+            "用法: /mouse [auto|scroll|select]  （F2 可切换）".to_string()
         }
         "usage: /mouse [scroll|select]  (F2 to toggle)" => {
             "用法: /mouse [scroll|select]  （F2 切换）".to_string()
@@ -5099,5 +7177,58 @@ cdef";
         let value = serde_json::json!({ "message": "你".repeat(400) });
         let output = compact_json(&value);
         assert!(output.ends_with("..."));
+    }
+
+    #[test]
+    fn backtrack_user_text_returns_trimmed_user_content() {
+        let entry = LogEntry {
+            kind: LogKind::User,
+            text: "  hello world  ".to_string(),
+        };
+        assert_eq!(backtrack_user_text(&entry), Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn backtrack_user_text_ignores_non_user_or_empty() {
+        let assistant_entry = LogEntry {
+            kind: LogKind::Assistant,
+            text: "hello".to_string(),
+        };
+        assert_eq!(backtrack_user_text(&assistant_entry), None);
+
+        let empty_user_entry = LogEntry {
+            kind: LogKind::User,
+            text: "   ".to_string(),
+        };
+        assert_eq!(backtrack_user_text(&empty_user_entry), None);
+    }
+
+    #[test]
+    fn collect_recent_user_logs_returns_latest_first() {
+        let logs = vec![
+            LogEntry {
+                kind: LogKind::User,
+                text: "first".to_string(),
+            },
+            LogEntry {
+                kind: LogKind::Assistant,
+                text: "reply".to_string(),
+            },
+            LogEntry {
+                kind: LogKind::User,
+                text: "second".to_string(),
+            },
+        ];
+        assert_eq!(
+            collect_recent_user_logs(&logs, 5),
+            vec!["second".to_string(), "first".to_string()]
+        );
+    }
+
+    #[test]
+    fn backtrack_preview_line_truncates() {
+        let preview = backtrack_preview_line("abcdefghij", 5);
+        assert_eq!(preview, "abcde...");
+        assert_eq!(backtrack_preview_line("abcd", 8), "abcd");
     }
 }

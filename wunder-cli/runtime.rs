@@ -27,6 +27,17 @@ struct SessionMeta {
     updated_at: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TurnNotificationConfig {
+    #[default]
+    Off,
+    Bell,
+    Command {
+        argv: Vec<String>,
+    },
+}
+
 impl CliRuntime {
     pub async fn init(global: &GlobalArgs) -> Result<Self> {
         let launch_dir = std::env::current_dir().context("read current directory failed")?;
@@ -104,6 +115,14 @@ impl CliRuntime {
         self.temp_root.join("config/extra_prompt.txt")
     }
 
+    pub fn personality_file(&self) -> PathBuf {
+        self.temp_root.join("config/personality_mode.txt")
+    }
+
+    pub fn turn_notification_file(&self) -> PathBuf {
+        self.temp_root.join("config/turn_notification.json")
+    }
+
     pub fn load_extra_prompt(&self) -> Option<String> {
         let path = self.extra_prompt_file();
         let text = fs::read_to_string(path).ok()?;
@@ -126,6 +145,60 @@ impl CliRuntime {
 
     pub fn clear_extra_prompt(&self) -> Result<()> {
         let path = self.extra_prompt_file();
+        if let Err(err) = fs::remove_file(path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(err.into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn load_personality_mode(&self) -> Option<String> {
+        let text = fs::read_to_string(self.personality_file()).ok()?;
+        let cleaned = text.trim();
+        if cleaned.is_empty() {
+            None
+        } else {
+            Some(cleaned.to_string())
+        }
+    }
+
+    pub fn save_personality_mode(&self, mode: &str) -> Result<()> {
+        let cleaned = mode.trim();
+        if cleaned.is_empty() {
+            return Err(anyhow!("personality mode is empty"));
+        }
+        fs::write(self.personality_file(), cleaned.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn clear_personality_mode(&self) -> Result<()> {
+        let path = self.personality_file();
+        if let Err(err) = fs::remove_file(path) {
+            if err.kind() != std::io::ErrorKind::NotFound {
+                return Err(err.into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn load_turn_notification_config(&self) -> TurnNotificationConfig {
+        let path = self.turn_notification_file();
+        let Ok(text) = fs::read_to_string(path) else {
+            return TurnNotificationConfig::Off;
+        };
+        serde_json::from_str(&text).unwrap_or_default()
+    }
+
+    pub fn save_turn_notification_config(&self, config: &TurnNotificationConfig) -> Result<()> {
+        let path = self.turn_notification_file();
+        let payload = serde_json::to_vec_pretty(config)?;
+        fs::write(path, payload)?;
+        Ok(())
+    }
+
+    pub fn clear_turn_notification_config(&self) -> Result<()> {
+        let path = self.turn_notification_file();
         if let Err(err) = fs::remove_file(path) {
             if err.kind() != std::io::ErrorKind::NotFound {
                 return Err(err.into());

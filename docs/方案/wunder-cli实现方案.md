@@ -177,6 +177,7 @@ CLI 初始化时设置：
 - `--model <name>`
 - `--tool-call-mode <tool_call|function_call>`
 - `--session <id>`
+- `--agent <id>`
 - `--json`
 - `--lang <lang>`
 - `--config <path>`
@@ -192,7 +193,7 @@ CLI 初始化时设置：
 - `tool run|list`：工具直调/列表。
 - `exec`（别名 `e`）：命令执行快捷入口（映射 `执行命令` 工具）。
 - `mcp list|get|add|remove|enable|disable|login|logout`：本地 MCP 配置与鉴权管理。
-- `skills list|enable|disable`：本地 skills 启用状态管理。
+- `skills list|enable|disable|upload|remove|root`：本地 skills 启用状态与目录管理。
 - `config show|set-tool-call-mode`：查看/设置运行配置。
 - 交互内置命令 `/config`：向导依次输入 `base_url / api_key / model / max_context`（max_context 可留空自动探测），自动写入 override 并设为默认模型。
 - `doctor`：运行时环境诊断。
@@ -209,20 +210,50 @@ CLI 初始化时设置：
 ## 7.4 交互态快捷命令
 
 - `/help`：展示交互命令帮助（命令 + 说明）。
-- `/status`：查看当前运行状态（session/model/tool_call_mode/workspace/db）。
+- `/status`：查看当前运行状态（session/model/tool_call_mode/approval/turn_notify/workspace/db）。
 - `/model [name]`：查看当前模型，或切换默认模型。
 - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换工具调用协议。
+- `/approvals [show|suggest|auto_edit|full_auto]`：查看或切换审批模式。
+- `/diff`：显示当前 workspace 的 git 变更摘要。
+- `/review [focus]`：基于当前 git 变更发起评审。
+- `/mention <query>`：快速搜索 workspace 文件路径。
+- `/mcp [name|list]`：查看 MCP 服务器配置与鉴权状态。
+- `/skills [list|enable <name>|disable <name>|root]`：查看与切换本地技能启用状态。
+- `/apps [list|info <name>|connect|install|enable|disable|disconnect|auth|logout|remove|test]`：查看并管理连接器（重点覆盖本地 MCP 连接器，`info` 支持详情查看）。
+- `/ps` / `/clean`：查看或取消活动后台会话。
+- `/fork [title]` / `/rename <title>` / `/compact`：会话分叉、重命名与摘要分支压缩。
+- `/backtrack [list|index]`：列出或回填最近用户消息，快速编辑重发。
+- `/plan [topic]`：先让模型输出编号执行计划，再等待确认。
+- `/personality [show|concise|balanced|detailed|clear]`：查看或切换回答风格偏好。
+- `/init [force]`：在当前目录生成（或覆盖）`AGENTS.md` 模板。
+- `/agent [show|list|clear|<agent_id>]`：查看/列出并切换当前会话 `agent_id` 覆盖。
+- `/attach [list|clear|drop <index>|<path>]`：管理“下一轮自动发送”的本地附件队列。
+- `/notify [show|off|bell|<command...>]`：配置回合完成通知（BEL 或外部命令钩子）。
+- `/debug-config`：输出运行时配置层级与最终生效值。
+- `/statusline [show|set <items>|reset]`：配置 TUI 状态栏显示项并持久化。
 - `/session`：查看当前会话统计（已占用上下文/总上下文、模型调用次数、工具调用次数、token 使用）。
 - `/system [set <extra_prompt>|clear]`：查看当前系统提示词，可设置/清空额外提示词（持久化到 `WUNDER_TEMP/config/extra_prompt.txt`）。
 - `/new`：新建会话并切换。
-- `/mouse [scroll|select]`：切换鼠标模式（`scroll` 支持滚轮；`select` 关闭鼠标捕获以便框选复制）。
+- `/mouse [auto|scroll|select]`：切换鼠标模式（默认 `auto`，减少手动切换；`scroll` 固定滚轮优先；`select` 固定选择复制）。
 - `/config`：TUI 与 `chat` 行式模式都支持向导式配置（`base_url -> api_key -> model -> max_context`），`max_context` 可留空自动探测。
 - `/config <base_url> <api_key> <model> [max_context]`：支持一行完成模型配置，方便脚本化。
 - `/config show`：打印当前运行配置（含 `max_context/context_used/context_left_percent`）。
 - `/exit`：退出交互。
 - TUI 顶部状态栏对齐 codex 风格（`shortcuts` + `xx% context left`）；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
-- 支持 `?` 快捷键面板与 `Ctrl+N/Ctrl+L/Ctrl+C` 快捷操作（新会话/清屏/退出）；`F2` 可切换鼠标滚轮/复制模式。
+- 支持 `?` 快捷键面板与 `Ctrl+N/Ctrl+L/Ctrl+C` 快捷操作（新会话/清屏/退出）；`F2` 仅作为可选鼠标模式切换，不再是必需操作。
 - 在 TUI 中，输入区已对齐 codex 快捷键：`Shift+Enter`/`Ctrl+J` 换行，`Left/Right/Home/End` + `Up/Down` 移动光标，`Ctrl+A/E/W/U/K` 与 `Alt+B/F/Left/Right` 用于行内/按词导航与删除。
+- 输入提示补全支持 `@` 文件、`$` 应用连接器、`#` 技能（Tab 选首项）；候选按最近使用优先并持久化到 `WUNDER_TEMP/sessions`。
+- `#` 技能补全会标记未启用状态并提示 `/skills enable <name>`。
+- `agent_id` 可通过 `--agent` 或交互态 `/agent` 覆盖，并支持 `/agent list` 快速发现最近会话中的 agent。
+- `--attach <path>`（可重复）可预加载附件；`/attach` 支持会话内增删查，下一轮请求自动消费。
+- 图片附件会自动编码为 data URL；文档/代码附件优先 doc2md 转 Markdown，不支持时尝试 UTF-8 文本回退。
+- `/notify` 支持持久化通知策略（`off/bell/command`），回合完成后可触发 BEL 或执行外部命令（附带 JSON payload）。
+- `/status`、`/debug-config`、`/system` 会展示 `agent_id`、personality、turn_notify 等关键上下文，便于排查。
+- 回答风格可通过 `/personality` 持久化，运行时会自动合并到请求级 `agent_prompt`。
+- 输出焦点支持回溯编辑：选中用户消息后按 Enter 可回填到输入区并继续编辑。
+- 输入区支持 Windows 粘贴 burst 防误提交（连续字符后 Enter 优先视为换行）与右键粘贴。
+- 忙碌态命令门控：运行中仅放行安全只读类 slash 命令，避免误触发会话结构变更。
+- 流式输出采用自适应 drain/backpressure 策略，缓解高频事件下的渲染堆积。
 - 未识别 `/xxx` 指令会明确提示 unknown command，并引导使用 `/help`。
 
 ## 8. 交互与事件输出
@@ -312,7 +343,7 @@ CLI 初始化时设置：
 - `/config <base_url> <api_key> <model> [max_context|auto]` 优先按行内参数解析，不会误进入交互向导。
 - 无 prompts 目录时仍可运行（提示词由二进制内嵌提供）。
 - TUI 输入区会按面板宽度自动折行，并在按键长按（Repeat）时保持光标移动顺滑。
-- TUI 支持 codex 风格快捷提示与面板：顶部显示 `shortcuts`，`?` 打开快捷键面板，`Ctrl+N/Ctrl+L/Ctrl+C` 可直接操作；`F2` 切换鼠标滚轮/复制模式。
+- TUI 支持 codex 风格快捷提示与面板：顶部显示 `shortcuts`，`?` 打开快捷键面板，`Ctrl+N/Ctrl+L/Ctrl+C` 可直接操作；默认 `auto` 鼠标模式可同时兼顾滚轮与选择，`F2` 仅作可选切换。
 
 ---
 

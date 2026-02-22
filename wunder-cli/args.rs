@@ -44,6 +44,14 @@ pub struct GlobalArgs {
     #[arg(long, global = true)]
     pub session: Option<String>,
 
+    /// Agent id override / 智能体 ID 覆盖（用于请求级 agent_id）。
+    #[arg(long = "agent", global = true)]
+    pub agent: Option<String>,
+
+    /// Attach local file/image for next request (repeatable) / 为下一轮请求附加本地文件或图片（可重复）。
+    #[arg(long = "attach", global = true)]
+    pub attachments: Vec<String>,
+
     /// Output stream events as JSONL / 以 JSONL 输出流事件。
     #[arg(long, global = true, default_value_t = false)]
     pub json: bool,

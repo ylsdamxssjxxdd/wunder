@@ -2562,8 +2562,10 @@
 - `wunder-cli tool run <name> --args <json>`：直接工具调用。
 - `wunder-cli exec|e <command...>`：命令执行快捷入口。
 - `wunder-cli mcp list|get|add|remove|enable|disable|login|logout`：本地 MCP 配置与鉴权管理。
-- `wunder-cli skills list|enable|disable`：本地 skills 启用状态管理。
+- `wunder-cli skills list|enable|disable|upload|remove|root`：本地 skills 启用状态与文件管理。
 - `wunder-cli config show|set-tool-call-mode|set-approval-mode`：查看/设置运行配置。
+- `wunder-cli --agent <agent_id>`：设置当前运行默认 `agent_id` 覆盖（可在交互态 `/agent` 再切换）。
+- `wunder-cli --attach <path>`（可重复）：预加载本地文件/图片附件，下一轮请求自动携带。
 - `wunder-cli completion <bash|zsh|fish|powershell>`：生成 shell 自动补全脚本。
 - `wunder-cli doctor`：运行时环境诊断。
 - 无子命令且终端可用时，默认进入 codex 风格 TUI（顶部状态栏 + 会话区 + 命令提示 + 输入区）。
@@ -2571,23 +2573,43 @@
 
 - 交互态内置 codex 风格 slash 命令：
   - `/help`：输出命令帮助清单（含描述）。
-  - `/status`：输出会话状态（session/model/tool_call_mode/workspace/db）。
+  - `/status`：输出会话状态（session/model/tool_call_mode/approval/turn_notify/workspace/db）。
   - `/model [name]`：查看当前模型，或切换默认模型。
   - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换调用协议。
   - `/approvals [show|suggest|auto_edit|full_auto]`：查看或切换审批模式。
   - `/diff`：显示当前 workspace 的 git 变更摘要。
   - `/review [focus]`：基于当前 git 变更自动生成代码评审请求并调用模型分析。
   - `/mention <query>`：快速搜索 workspace 文件路径。
+  - `/mcp [name|list]`：查看 MCP 服务器配置与鉴权状态（含 login/logout 指引）。
+  - `/skills [list|enable <name>|disable <name>|root]`：查看与切换本地技能启用状态。
+  - `/apps [list|info <name>|connect|install|enable|disable|disconnect|auth|logout|remove|test]`：查看并管理 A2A/MCP 连接器（`info` 输出连接器详情，`test` 在 GET=405 时会自动补充 POST 探测）。
+  - `/ps` / `/clean`：查看或取消后台会话。
+  - `/fork [title]` / `/rename <title>` / `/compact`：会话分叉、重命名与摘要分支压缩。
+  - `/backtrack [list|index]`：列出或回填最近用户消息（1 为最新），便于编辑后重发。
+  - `/plan [topic]`：先让模型给出编号执行计划，再等待确认。
+  - `/personality [show|concise|balanced|detailed|clear]`：查看或切换回答风格偏好。
+  - `/init [force]`：在当前目录生成（或强制覆盖）`AGENTS.md` 模板。
+  - `/agent [show|list|clear|<agent_id>]`：查看/列出并切换当前会话 `agent_id` 覆盖。
+  - `/attach [list|clear|drop <index>|<path>]`：管理“下一轮自动发送”的本地附件队列（文件/图片）。
+  - `/notify [show|off|bell|<command...>]`：配置回合完成通知（BEL 或外部命令钩子）。
+  - `/debug-config`：输出运行时配置分层、路径与最终生效值。
+  - `/statusline [show|set <items>|reset]`：配置 TUI 底部状态栏显示项。
   - `/config`：TUI 与 `chat` 行式模式统一为向导式配置（`base_url -> api_key -> model -> max_context`），并支持 `/config <base_url> <api_key> <model> [max_context]` 一行配置。
   - `/config show`：输出当前运行配置。
-  - `/new` / `/session` / `/system` / `/mouse` / `/exit`：会话与系统提示词控制（`/session` 输出上下文与调用统计，`/mouse` 切换滚轮/复制模式）。
+  - `/new` / `/session` / `/system` / `/mouse` / `/exit`：会话与系统提示词控制（`/session` 输出上下文与调用统计，`/mouse` 切换 auto/scroll/select 鼠标模式）。
 - 审批链路：当 `approval_mode` 生效且触发写文件/命令执行策略时，CLI/TUI 会弹出审批请求（一次同意 / 会话同意 / 拒绝），再决定是否执行工具调用。
 - TUI 顶部状态栏突出 `xx% context left`，隐藏低价值 mode/state 字段；会话区支持 PgUp/PgDn/Home/End 与鼠标滚轮滚动。
 - TUI 多行编辑体验已对齐 codex 快捷键：`Shift+Enter`/`Ctrl+J` 换行，`Ctrl+B/F` 字符移动，`Alt+B/F/Left/Right` 按词导航，`Ctrl+W`/`Alt+Backspace`/`Alt+Delete` 按词删除。
 - 输入区会根据视口宽度自动折行，并在按键长按（`KeyEventKind::Repeat`）时保持光标移动流畅。
-- TUI 支持粘贴事件（`Event::Paste`）批量写入输入框，并支持 `@` 文件提示补全（Tab 选首项）。
+- 输入区支持 Windows 粘贴 burst 防误提交（连续字符后 Enter 默认视为换行），并支持右键粘贴与 `Ctrl+V`/`Shift+Insert`。
+- TUI 支持粘贴事件（`Event::Paste`）批量写入输入框，并支持 `@` 文件、`$` 应用连接器、`#` 技能提示补全（Tab 选首项）；补全候选会按最近使用优先排序并持久化。
+- `#` 技能补全会提示未启用状态，并附带 `/skills enable <name>` 快捷操作指引。
+- `/status`、`/system`、`/debug-config` 会显示 `agent_id` 覆盖、personality 与 turn_notify 配置，便于排查请求上下文。
+- `/attach` 附件支持：图片会自动转为 data URL；文档/代码文件优先走 doc2md 转 Markdown（不支持时回退 UTF-8 文本）。
+- 输出焦点下按 Enter 可将选中的用户消息回填到输入区，便于回溯编辑后重发。
 - Ctrl+C 策略：忙碌态优先发起中断，空闲态双击 Ctrl+C 才退出，避免误退出。
-- 鼠标模式可通过 `F2` 或 `/mouse [scroll|select]` 切换：`scroll` 启用滚轮滚动，`select` 关闭捕获以便直接框选复制。
+- 忙碌态命令门控：TUI 会区分“运行中可执行/不可执行”的 slash 命令，避免关键操作在任务执行中误触发。
+- 鼠标模式支持 `auto/scroll/select`：默认 `auto`（滚轮可用 + 临时选择透传），也可通过 `F2` 或 `/mouse [auto|scroll|select]` 手动切换。
 - 对于未识别的 `/xxx` 输入，CLI 会提示 unknown command 并引导 `/help`。
 - CLI 提示词优先读取 `prompts/zh|en` 文件（可通过 `WUNDER_PROMPTS_ROOT` 指向包含 `prompts/` 的根目录）。
 - 流式偏移读取在空会话下回落为 `0`，不再因 `MAX(event_id)=NULL` 触发告警。

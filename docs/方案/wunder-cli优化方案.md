@@ -212,3 +212,71 @@
 - **技能管理增强**：新增 `skills upload/remove/root`，并增强 `skills list --json`，支持技能包上传、删除和路径可视化管理，体验对齐 codex 的“本地技能可管理”方向。
 - **MCP 管理补齐**：新增 `wunder-cli mcp login/logout`（写入或清除 `auth` 凭据），`mcp list/get` 同步展示鉴权状态与快捷操作指引。
 - **TUI `/mcp` 对齐**：交互态新增 `/mcp [name|list]`，可在 TUI 中查看 MCP 服务器配置与鉴权状态，补齐 codex 风格的“会话内 MCP 可见性”。
+
+## 8. 本轮 1-8 全量优化交付（2026-02-21）
+
+> 目标：按“可直接交付使用”的标准，将 codex 关键体验差距一次性压缩，覆盖命令面、会话治理、调试可观测、输入稳定性与 TUI 性能。
+
+1. **命令面补齐（Slash Surface）**  
+   已补齐：`/skills`、`/apps`、`/ps`、`/clean`、`/fork`、`/rename`、`/compact`、`/backtrack`、`/plan`、`/personality`、`/init`、`/agent`、`/notify`、`/debug-config`、`/statusline`（line-chat 与 TUI 一致识别）。
+   同步补齐输入补全触发：`@` 文件、`$` 连接器、`#` 技能（Tab 首项补全）。
+
+2. **输入稳定性（Windows 粘贴场景）**  
+   已落地粘贴 burst 防误提交：连续字符后紧跟 Enter 时优先视为换行，降低多行粘贴时误发送概率。
+
+3. **流式性能治理（长输出场景）**  
+   已实现自适应 drain/backpressure：依据 backlog 深度在普通/追赶模式间切换，降低输出高峰下 UI 卡顿感。
+
+4. **会话分支治理（Fork / Compact）**  
+   `/fork` 支持复制历史生成新分支会话；`/compact` 支持以摘要形式创建轻量分支并自动切换。
+   同时在 TUI 输出焦点下支持 Enter 回填选中用户消息，实现基础 backtrack 编辑链路。
+
+5. **后台任务可观测与控制（PS / Clean）**  
+   `/ps` 可查看活动后台会话；`/clean` 可批量发送取消请求，形成“可见 + 可控”闭环。
+
+6. **配置调试可观测（Debug Config）**  
+   `/debug-config` 输出运行时路径、环境变量、最终生效配置与来源层级（CLI/config/default），便于问题定位。
+
+7. **状态栏可配置化（Statusline）**  
+   支持 `/statusline show|set|reset`，并按用户持久化；可配置项包含运行态、token 用量、滚动、焦点、上下文、会话、agent、模型、审批、附件队列等。
+
+8. **连接器与技能治理对齐（Apps / Skills）**  
+   `/apps` 已支持 list/info/connect/install/enable/disable/disconnect/auth/logout/remove/test（含 GET=405 时 POST 探测）；`/skills` 支持 list/root/enable/disable，TUI 内可直接操作。
+
+9. **输入补全排序与引导（Popup UX）**  
+   `@/$/#` 候选会按“最近使用优先”排序并持久化；`#` 技能候选会标记未启用状态并给出 `/skills enable <name>` 指引。
+
+10. **通知 Hook 与 Agent 发现（Turn Completion）**  
+   新增 `/notify [show|off|bell|<command...>]` 持久化回合完成通知；支持 BEL 与外部脚本命令（附带 JSON payload 与环境变量）。  
+   `/agent list` 可快速列出最近会话中的 `agent_id`，便于在 TUI/line-chat 中快速切换。
+
+11. **附件流初版对齐（Attachment Workflow）**  
+   新增 `--attach <path>`（可重复）与 `/attach [list|clear|drop <index>|<path>]`，支持在 line-chat/TUI 中预加载“下一轮自动发送”附件队列。  
+   图片自动编码为 data URL，文档/代码优先走 doc2md 转 Markdown，不支持时回退 UTF-8 文本解析。
+
+## 9. 与 codex 现阶段剩余差距（复审）
+
+- **仍有优势可借鉴**：`plan/personality` 的深度状态机与上下文约束、附件拖拽/回填细节、编辑器往返回填、更完整沙盒权限可视化。  
+- **已按当前策略不对齐**：sandbox-mode（本项目明确不引入）。  
+- **下一步建议**：优先补齐附件拖拽/粘贴图像与通知“焦点感知/平台通知”细化，再评估高级 transcript 虚拟化（避免过早复杂化）。  
+
+## 10. 下一轮对齐计划（已排期）
+
+### P0（优先直接体感）
+
+1. 输入框状态机继续对齐：补齐 Command/File/Skill 三类 popup 与粘贴上下文门控。  
+2. `apps` 从只读升级为可操作（connect/install/disconnect/auth/test）。  
+3. 忙碌态 slash 命令门控：区分“运行中可执行/不可执行”，减少误触。  
+4. 鼠标与焦点继续简化：默认 auto 模式下尽量减少 F2/F3 依赖，保持滚轮+选择兼顾。  
+
+### P1（能力补齐）
+
+1. 会话回溯编辑（backtrack）深化：支持更细粒度定位与跨会话回溯。  
+2. 命令面深化：`/plan`、`/personality`、`/init`、`/agent` 增加更强语义（模板化计划、风格分层、项目级 AGENTS 模板、agent 快捷选择）。  
+3. 通知能力深化：增加“仅失焦通知”、平台原生通知（OSC9/Toast）与失败重试策略。  
+
+### P2（性能与长期稳定）
+
+1. Transcript 虚拟化与分段渲染，降低长会话重绘成本。  
+2. 工具输出折叠/按需展开，减少大输出阻塞。  
+3. 附件与多模态链路（本地图片/远程 URL/占位符重排）全流程补齐。  
