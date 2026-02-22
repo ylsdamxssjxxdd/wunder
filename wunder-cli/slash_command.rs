@@ -7,9 +7,11 @@ pub enum SlashCommand {
     Approvals,
     Plan,
     Personality,
+    Edit,
     Init,
     Agent,
     Attach,
+    Branches,
     Notify,
     Diff,
     Review,
@@ -51,7 +53,7 @@ struct SlashCommandDoc {
     description: &'static str,
 }
 
-const SLASH_COMMAND_DOCS: [SlashCommandDoc; 34] = [
+const SLASH_COMMAND_DOCS: [SlashCommandDoc; 36] = [
     SlashCommandDoc {
         command: SlashCommand::Model,
         usage: "/model [name]",
@@ -78,6 +80,11 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 34] = [
         description: "show or switch response style preference",
     },
     SlashCommandDoc {
+        command: SlashCommand::Edit,
+        usage: "/edit [draft]",
+        description: "open external editor and load prompt draft",
+    },
+    SlashCommandDoc {
         command: SlashCommand::Init,
         usage: "/init [force]",
         description: "create AGENTS.md template in current workspace",
@@ -93,8 +100,13 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 34] = [
         description: "queue local file/image attachments for next turn",
     },
     SlashCommandDoc {
+        command: SlashCommand::Branches,
+        usage: "/branches [tree|list|switch <session_id>]",
+        description: "show session branch tree and switch session",
+    },
+    SlashCommandDoc {
         command: SlashCommand::Notify,
-        usage: "/notify [show|off|bell|<command...>]",
+        usage: "/notify [show|off|bell|osc9|when <always|unfocused>|<command...>]",
         description: "configure turn-complete notifications",
     },
     SlashCommandDoc {
@@ -114,8 +126,8 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 34] = [
     },
     SlashCommandDoc {
         command: SlashCommand::Mcp,
-        usage: "/mcp [name|list]",
-        description: "list configured MCP servers and auth status",
+        usage: "/mcp [list|get <name>|add <name> <endpoint> [transport]|enable <name>|disable <name>|remove <name>|login <name> [bearer-token|token|api-key] <secret>|logout <name>|test <name>|<name>]",
+        description: "list/manage MCP servers and auth status",
     },
     SlashCommandDoc {
         command: SlashCommand::Skills,
@@ -242,7 +254,9 @@ impl SlashCommand {
                 | SlashCommand::Clean
                 | SlashCommand::Backtrack
                 | SlashCommand::Personality
+                | SlashCommand::Edit
                 | SlashCommand::Attach
+                | SlashCommand::Branches
                 | SlashCommand::Notify
                 | SlashCommand::Statusline
                 | SlashCommand::Exit
@@ -273,9 +287,11 @@ pub fn parse_slash_command(input: &str) -> Option<ParsedSlashCommand<'_>> {
         "approvals" => (SlashCommand::Approvals, remaining),
         "plan" => (SlashCommand::Plan, remaining),
         "personality" | "style" => (SlashCommand::Personality, remaining),
+        "edit" => (SlashCommand::Edit, remaining),
         "init" => (SlashCommand::Init, remaining),
         "agent" => (SlashCommand::Agent, remaining),
         "attach" => (SlashCommand::Attach, remaining),
+        "branches" | "branch" => (SlashCommand::Branches, remaining),
         "notify" => (SlashCommand::Notify, remaining),
         "diff" => (SlashCommand::Diff, remaining),
         "review" => (SlashCommand::Review, remaining),
@@ -406,9 +422,11 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
         "approvals" => SlashCommand::Approvals,
         "plan" => SlashCommand::Plan,
         "personality" | "style" => SlashCommand::Personality,
+        "edit" => SlashCommand::Edit,
         "init" => SlashCommand::Init,
         "agent" => SlashCommand::Agent,
         "attach" => SlashCommand::Attach,
+        "branches" | "branch" => SlashCommand::Branches,
         "notify" => SlashCommand::Notify,
         "diff" => SlashCommand::Diff,
         "review" => SlashCommand::Review,
@@ -446,14 +464,16 @@ fn localized_description(entry: &SlashCommandDoc, language: &str) -> String {
         SlashCommand::Approvals => "查看或切换审批模式",
         SlashCommand::Plan => "先让模型输出步骤化执行计划",
         SlashCommand::Personality => "查看或切换回答风格偏好",
+        SlashCommand::Edit => "用外部编辑器编辑并回填输入草稿",
         SlashCommand::Init => "在当前目录生成 AGENTS.md 模板",
         SlashCommand::Agent => "查看或切换当前 agent_id 覆盖",
         SlashCommand::Attach => "为下一轮请求挂载本地文件/图片附件",
+        SlashCommand::Branches => "查看会话分支树并切换会话",
         SlashCommand::Notify => "配置回合完成通知方式",
         SlashCommand::Diff => "显示当前工作区 git 变更摘要",
         SlashCommand::Review => "基于当前 git 变更发起评审",
         SlashCommand::Mention => "在工作区内搜索文件",
-        SlashCommand::Mcp => "列出当前 MCP 配置与鉴权状态",
+        SlashCommand::Mcp => "列出并管理 MCP 配置与鉴权状态",
         SlashCommand::Skills => "列出并管理本地技能",
         SlashCommand::Apps => "管理应用连接器（A2A/MCP）",
         SlashCommand::Ps => "列出活动中的后台会话",
@@ -561,7 +581,7 @@ mod tests {
     fn popup_lines_show_mcp_usage_for_argument_entry() {
         let lines = popup_lines_with_language("mcp list", 7, "en-US");
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("/mcp [name|list]"));
+        assert!(lines[0].contains("/mcp [list|get <name>"));
     }
 
     #[test]
@@ -614,11 +634,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_edit_command() {
+        let parsed = parse_slash_command("/edit fix parser flow").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Edit);
+        assert_eq!(parsed.args, "fix parser flow");
+    }
+
+    #[test]
+    fn parse_branches_alias_command() {
+        let parsed = parse_slash_command("/branch tree").expect("command should parse");
+        assert_eq!(parsed.command, SlashCommand::Branches);
+        assert_eq!(parsed.args, "tree");
+    }
+
+    #[test]
     fn busy_task_availability_matrix_smoke() {
         assert!(SlashCommand::Apps.available_during_task());
         assert!(SlashCommand::Backtrack.available_during_task());
         assert!(SlashCommand::Personality.available_during_task());
+        assert!(SlashCommand::Edit.available_during_task());
         assert!(SlashCommand::Attach.available_during_task());
+        assert!(SlashCommand::Branches.available_during_task());
         assert!(SlashCommand::Notify.available_during_task());
         assert!(SlashCommand::Status.available_during_task());
         assert!(!SlashCommand::Review.available_during_task());

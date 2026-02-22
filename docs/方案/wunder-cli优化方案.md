@@ -280,3 +280,17 @@
 1. Transcript 虚拟化与分段渲染，降低长会话重绘成本。  
 2. 工具输出折叠/按需展开，减少大输出阻塞。  
 3. 附件与多模态链路（本地图片/远程 URL/占位符重排）全流程补齐。  
+
+## 11. 本轮补齐（2026-02-22）
+
+- **编辑器与分支治理补齐**：新增 `/edit [draft]`（line-chat + TUI）与 `/branches [tree|list|switch <session_id>]`，支持外部编辑器回填和会话分支树切换。  
+- **Diff 闭环增强**：`/diff` 扩展为 `summary/files/show/hunks/stage/unstage/revert`，line-chat 与 TUI 统一支持“查看 + 操作”闭环。  
+- **通知对齐 codex 细节**：`/notify` 新增 `osc9` 与 `when <always|unfocused>`；TUI 接入终端焦点事件，失焦触发通知可用。  
+- **MCP 管理全链路补齐**：`/mcp` 在 line-chat 与 TUI 均支持管理（`add/get/enable/disable/remove/login/logout/test/list`），CLI 子命令同步新增 `mcp test`。  
+- **调试可观测增强**：`/debug-config` 增加 `source_chain`，可同时看到最终值与分层来源链（CLI/config/runtime/default）。  
+- **长会话稳态优化**：在日志条数上限之外新增总字符预算裁剪，减少极端长输出导致的滚动与重绘退化。  
+- **Transcript 虚拟化落地**：TUI 会话区按“视口高度 + 当前滚动偏移”仅渲染可见窗口，替换逐帧全量日志构建；同时补齐前缀宽度感知换行统计，长会话滚动与输入响应更稳定。  
+- **line-chat 稳定性修复**：修复交互模式部分 slash 命令触发主线程栈溢出的问题（如 `/status`、`/model`、`/system`、`/apps list` 等），通过对高栈占用分支进行异步调度与调用解耦，确保 line-chat 命令面稳定可用。  
+- **slash 调度稳态增强**：对 line-chat slash 分发表达式中的高成本异步分支统一增加堆分配 future（`Box::pin`）与关键路径解耦，降低未来新增命令时再次触发栈压力的风险。  
+- **回归冒烟矩阵扩展**：新增中英双语命令矩阵回归（status/model/system/mcp/skills/apps/debug-config/statusline 等）并纳入日常验证，确保功能扩展后交互稳定性可持续。  
+- **稳定性回归自动化**：新增 `tests/wunder_cli_line_chat_smoke.rs` 并接入 `cargo test --all-targets`，覆盖 `/status`、`/model`、`/system`、`/mcp list`、`/skills list`、`/apps list` 的中英 line-chat 回归，避免栈溢出问题回归。  

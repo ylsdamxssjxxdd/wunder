@@ -22,6 +22,7 @@ use crate::runtime::CliRuntime;
 use crate::slash_command::{self, ParsedSlashCommand, SlashCommand};
 
 const MAX_LOG_ENTRIES: usize = 1200;
+const MAX_LOG_TOTAL_CHARS: usize = 320_000;
 const MAX_DRAIN_MESSAGES_PER_TICK_BASE: usize = 400;
 const MAX_DRAIN_MESSAGES_PER_TICK_CATCHUP: usize = 1400;
 const STREAM_CATCHUP_ENTER_DEPTH: usize = 120;
@@ -54,6 +55,20 @@ pub enum LogKind {
 pub struct LogEntry {
     pub kind: LogKind,
     pub text: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TranscriptRenderEntry<'a> {
+    pub global_index: usize,
+    pub kind: LogKind,
+    pub text: &'a str,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptRenderWindow<'a> {
+    pub entries: Vec<TranscriptRenderEntry<'a>>,
+    pub local_scroll: u16,
+    pub total_lines: usize,
 }
 
 enum StreamMessage {
@@ -163,6 +178,7 @@ pub struct TuiApp {
     stream_catchup_mode: bool,
     stream_catchup_enter_since: Option<Instant>,
     stream_catchup_exit_since: Option<Instant>,
+    terminal_focused: bool,
     key_char_burst_len: usize,
     key_char_burst_last_at: Option<Instant>,
     statusline_items: Vec<String>,
@@ -243,6 +259,7 @@ impl TuiApp {
             stream_catchup_mode: false,
             stream_catchup_enter_since: None,
             stream_catchup_exit_since: None,
+            terminal_focused: true,
             key_char_burst_len: 0,
             key_char_burst_last_at: None,
             statusline_items: Vec::new(),
@@ -361,6 +378,10 @@ impl TuiApp {
 
     pub fn shortcuts_visible(&self) -> bool {
         self.shortcuts_visible
+    }
+
+    pub fn set_terminal_focus(&mut self, focused: bool) {
+        self.terminal_focused = focused;
     }
 
     pub fn mouse_capture_enabled(&self) -> bool {
@@ -854,12 +875,20 @@ impl TuiApp {
     }
 
     pub fn set_transcript_viewport(&mut self, viewport_width: u16, viewport_height: u16) {
-        self.transcript_viewport_width = viewport_width.max(1);
+        let next_width = viewport_width.max(1);
         self.transcript_viewport_height = viewport_height.max(1);
+        if self.transcript_viewport_width != next_width {
+            self.transcript_viewport_width = next_width;
+            self.invalidate_transcript_metrics();
+        }
     }
 
     pub fn set_transcript_rendered_lines(&mut self, rendered_lines: usize) {
         self.transcript_rendered_lines = rendered_lines.min(u16::MAX as usize) as u16;
+    }
+
+    fn invalidate_transcript_metrics(&mut self) {
+        self.transcript_rendered_lines = 0;
     }
 
     fn set_mouse_mode(&mut self, mode: MouseMode) {
@@ -1022,18 +1051,33 @@ impl TuiApp {
         (display, cursor_x, cursor_y)
     }
 
-    pub fn visible_logs(&self, max_entries: usize) -> Vec<LogEntry> {
-        let len = self.logs.len();
-        if len <= max_entries {
-            return self.logs.clone();
-        }
-        self.logs[len - max_entries..].to_vec()
-    }
+    pub fn transcript_render_window(&self, viewport_height: u16) -> TranscriptRenderWindow<'_> {
+        let width = usize::from(self.transcript_viewport_width.max(1));
+        let line_counts = self
+            .logs
+            .iter()
+            .map(|entry| wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width))
+            .collect::<Vec<_>>();
+        let window = compute_transcript_window_spec(
+            line_counts.as_slice(),
+            viewport_height,
+            self.transcript_offset_from_bottom,
+        );
+        let entries = self.logs[window.start_entry..window.end_entry_exclusive]
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| TranscriptRenderEntry {
+                global_index: window.start_entry + index,
+                kind: entry.kind,
+                text: entry.text.as_str(),
+            })
+            .collect::<Vec<_>>();
 
-    pub fn transcript_scroll(&self, viewport_height: u16) -> u16 {
-        let max_scroll = self.max_transcript_scroll(viewport_height);
-        let offset = self.transcript_offset_from_bottom.min(max_scroll);
-        max_scroll.saturating_sub(offset)
+        TranscriptRenderWindow {
+            entries,
+            local_scroll: window.local_scroll,
+            total_lines: window.total_lines,
+        }
     }
 
     fn scroll_transcript_up(&mut self, lines: u16) {
@@ -1101,10 +1145,9 @@ impl TuiApp {
         let width = usize::from(self.transcript_viewport_width.max(1));
         let mut start_line = 0u16;
         for (index, entry) in self.logs.iter().enumerate() {
-            let line_count =
-                wrapped_visual_line_count(visual_log_text(entry.kind, &entry.text).as_str(), width)
-                    .max(1)
-                    .min(u16::MAX as usize) as u16;
+            let line_count = wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width)
+                .max(1)
+                .min(u16::MAX as usize) as u16;
             let end_line = start_line.saturating_add(line_count.saturating_sub(1));
             if index == selected_index {
                 let mut target_scroll = current_scroll;
@@ -1133,9 +1176,7 @@ impl TuiApp {
         let total = self
             .logs
             .iter()
-            .map(|entry| {
-                wrapped_visual_line_count(visual_log_text(entry.kind, &entry.text).as_str(), width)
-            })
+            .map(|entry| wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width))
             .sum::<usize>();
         total.min(u16::MAX as usize) as u16
     }
@@ -1588,6 +1629,7 @@ impl TuiApp {
                 }
                 KeyCode::Char('l') => {
                     self.logs.clear();
+                    self.invalidate_transcript_metrics();
                     self.active_assistant = None;
                     self.active_reasoning = None;
                     self.transcript_offset_from_bottom = 0;
@@ -2205,6 +2247,7 @@ impl TuiApp {
         self.focus_area = FocusArea::Input;
         self.resume_picker = None;
         self.logs.clear();
+        self.invalidate_transcript_metrics();
 
         let restored = self.restore_transcript_from_history(history);
         self.session_stats = crate::SessionStatsSnapshot::default();
@@ -2884,6 +2927,7 @@ impl TuiApp {
                     self.session_id.as_str(),
                     &final_event,
                     "tui",
+                    Some(self.terminal_focused),
                 );
                 self.busy = false;
                 self.active_assistant = None;
@@ -3182,6 +3226,9 @@ impl TuiApp {
             SlashCommand::Personality => {
                 self.handle_personality_slash(command.args).await?;
             }
+            SlashCommand::Edit => {
+                self.handle_edit_slash(command.args)?;
+            }
             SlashCommand::Init => {
                 self.handle_init_slash(command.args)?;
             }
@@ -3191,11 +3238,14 @@ impl TuiApp {
             SlashCommand::Attach => {
                 self.handle_attach_slash(command.args).await?;
             }
+            SlashCommand::Branches => {
+                self.handle_branches_slash(command.args).await?;
+            }
             SlashCommand::Notify => {
                 self.handle_notify_slash(command.args)?;
             }
             SlashCommand::Diff => {
-                self.handle_diff_slash().await?;
+                self.handle_diff_slash(command.args).await?;
             }
             SlashCommand::Review => {
                 self.handle_review_slash(command.args).await?;
@@ -3833,23 +3883,67 @@ impl TuiApp {
         Ok(())
     }
 
-    async fn handle_diff_slash(&mut self) -> Result<()> {
+    async fn handle_diff_slash(&mut self, args: &str) -> Result<()> {
         let root = self.runtime.launch_dir.clone();
         let language = self.display_language.clone();
-        let lines = tokio::task::spawn_blocking(move || {
-            crate::git_diff_summary_lines_with_language(root.as_path(), language.as_str())
+        let action = match crate::parse_diff_slash_action(args) {
+            Ok(action) => action,
+            Err(err) => {
+                self.push_log(LogKind::Error, err.to_string());
+                return Ok(());
+            }
+        };
+        let lines = tokio::task::spawn_blocking(move || match action {
+            crate::DiffSlashAction::Summary => {
+                crate::git_diff_summary_lines_with_language(root.as_path(), language.as_str())
+                    .unwrap_or_else(|err| vec![err.to_string()])
+            }
+            crate::DiffSlashAction::Files => {
+                crate::diff_files_lines_with_language(root.as_path(), language.as_str())
+            }
+            crate::DiffSlashAction::Show(target) => crate::diff_file_lines_with_language(
+                root.as_path(),
+                target.as_str(),
+                language.as_str(),
+            ),
+            crate::DiffSlashAction::Hunks(target) => crate::diff_hunk_lines_with_language(
+                root.as_path(),
+                target.as_str(),
+                language.as_str(),
+            ),
+            crate::DiffSlashAction::Stage(target) => {
+                match crate::run_git_file_action(root.as_path(), target.as_str(), "stage") {
+                    Ok(()) => vec![crate::locale::tr(
+                        language.as_str(),
+                        "已 stage 目标文件",
+                        "file staged",
+                    )],
+                    Err(err) => vec![format!("[error] {err}")],
+                }
+            }
+            crate::DiffSlashAction::Unstage(target) => {
+                match crate::run_git_file_action(root.as_path(), target.as_str(), "unstage") {
+                    Ok(()) => vec![crate::locale::tr(
+                        language.as_str(),
+                        "已取消 stage",
+                        "file unstaged",
+                    )],
+                    Err(err) => vec![format!("[error] {err}")],
+                }
+            }
+            crate::DiffSlashAction::Revert(target) => {
+                match crate::run_git_file_action(root.as_path(), target.as_str(), "revert") {
+                    Ok(()) => vec![crate::locale::tr(
+                        language.as_str(),
+                        "已回滚目标文件到 HEAD",
+                        "file reverted to HEAD",
+                    )],
+                    Err(err) => vec![format!("[error] {err}")],
+                }
+            }
         })
         .await
-        .unwrap_or_else(|_| {
-            Ok(vec![
-                crate::locale::tr(self.display_language.as_str(), "变更摘要", "diff"),
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "[错误] diff 任务已取消",
-                    "[error] diff task cancelled",
-                ),
-            ])
-        })?;
+        .map_err(|err| anyhow!("diff task cancelled: {err}"))?;
         for line in lines {
             self.push_log(LogKind::Info, line);
         }
@@ -4274,6 +4368,77 @@ impl TuiApp {
         Ok(())
     }
 
+    fn handle_edit_slash(&mut self, args: &str) -> Result<()> {
+        let seed = if args.trim().is_empty() {
+            self.input.clone()
+        } else {
+            args.trim().to_string()
+        };
+        let edited = match crate::open_external_editor(&self.runtime, Some(seed.as_str())) {
+            Ok(text) => text,
+            Err(err) => {
+                self.push_log(LogKind::Error, err.to_string());
+                return Ok(());
+            }
+        };
+        let cleaned = edited.trim().to_string();
+        if cleaned.is_empty() {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "编辑结果为空，已取消",
+                    "editor output is empty, cancelled",
+                ),
+            );
+            return Ok(());
+        }
+        self.input = cleaned;
+        self.input_cursor = self.input.len();
+        self.focus_area = FocusArea::Input;
+        self.push_log(
+            LogKind::Info,
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "已将编辑器内容回填到输入框",
+                "editor content loaded into input box",
+            ),
+        );
+        Ok(())
+    }
+
+    async fn handle_branches_slash(&mut self, args: &str) -> Result<()> {
+        let cleaned = args.trim();
+        if let Some(rest) = cleaned.strip_prefix("switch ") {
+            return self.resume_to_session(rest.trim()).await;
+        }
+        if !cleaned.is_empty()
+            && !cleaned.eq_ignore_ascii_case("tree")
+            && !cleaned.eq_ignore_ascii_case("list")
+        {
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "用法: /branches [tree|list|switch <session_id>]",
+                    "usage: /branches [tree|list|switch <session_id>]",
+                ),
+            );
+            return Ok(());
+        }
+        let view_tree = !cleaned.eq_ignore_ascii_case("list");
+        let lines = crate::collect_branch_view_rows(
+            &self.runtime,
+            self.display_language.as_str(),
+            view_tree,
+        )
+        .await?;
+        for line in lines {
+            self.push_log(LogKind::Info, line);
+        }
+        Ok(())
+    }
+
     fn handle_notify_slash(&mut self, args: &str) -> Result<()> {
         let cleaned = args.trim();
         if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("show") {
@@ -4288,7 +4453,8 @@ impl TuiApp {
                 );
                 self.push_log(
                     LogKind::Info,
-                    "用法: /notify [show|off|bell|<command...>]".to_string(),
+                    "用法: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]"
+                        .to_string(),
                 );
             } else {
                 self.push_log(
@@ -4300,7 +4466,8 @@ impl TuiApp {
                 );
                 self.push_log(
                     LogKind::Info,
-                    "usage: /notify [show|off|bell|<command...>]".to_string(),
+                    "usage: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]"
+                        .to_string(),
                 );
             }
             return Ok(());
@@ -4321,34 +4488,94 @@ impl TuiApp {
             );
             return Ok(());
         }
-        if cleaned.eq_ignore_ascii_case("bell") {
-            let config = crate::runtime::TurnNotificationConfig::Bell;
+
+        if let Some(raw_when) = cleaned.strip_prefix("when ") {
+            let Some(when) = crate::parse_turn_notification_when(raw_when) else {
+                self.push_log(
+                    LogKind::Info,
+                    crate::locale::tr(
+                        self.display_language.as_str(),
+                        "用法: /notify when <always|unfocused>",
+                        "usage: /notify when <always|unfocused>",
+                    ),
+                );
+                return Ok(());
+            };
+            let existing = self.runtime.load_turn_notification_config();
+            let updated = crate::apply_notification_when(existing, when);
+            self.runtime.save_turn_notification_config(&updated)?;
+            self.push_log(
+                LogKind::Info,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "通知触发时机已更新",
+                    "notification trigger condition updated",
+                ),
+            );
+            self.push_log(
+                LogKind::Info,
+                crate::describe_turn_notification(&updated, self.display_language.as_str()),
+            );
+            return Ok(());
+        }
+
+        if cleaned.eq_ignore_ascii_case("bell") || cleaned.eq_ignore_ascii_case("osc9") {
+            let config = if cleaned.eq_ignore_ascii_case("bell") {
+                crate::runtime::TurnNotificationConfig::Bell {
+                    when: crate::runtime::TurnNotificationWhen::Always,
+                }
+            } else {
+                crate::runtime::TurnNotificationConfig::Osc9 {
+                    when: crate::runtime::TurnNotificationWhen::Always,
+                }
+            };
             self.runtime.save_turn_notification_config(&config)?;
             self.push_log(
                 LogKind::Info,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "回合通知已切换为 BEL 铃声",
-                    "turn notifications set to BEL",
+                    "回合通知方式已更新",
+                    "turn notification backend updated",
                 ),
+            );
+            self.push_log(
+                LogKind::Info,
+                crate::describe_turn_notification(&config, self.display_language.as_str()),
             );
             return Ok(());
         }
 
-        let argv = shell_words::split(cleaned)
+        let mut argv = shell_words::split(cleaned)
             .map_err(|err| anyhow!("parse /notify args failed: {err}"))?;
         if argv.is_empty() {
             self.push_log(
                 LogKind::Info,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "用法: /notify [show|off|bell|<command...>]",
-                    "usage: /notify [show|off|bell|<command...>]",
+                    "用法: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]",
+                    "usage: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]",
                 ),
             );
             return Ok(());
         }
-        let config = crate::runtime::TurnNotificationConfig::Command { argv };
+        let mut when = crate::runtime::TurnNotificationWhen::Always;
+        if argv.len() >= 2 && argv[argv.len() - 2].eq_ignore_ascii_case("--when") {
+            if let Some(parsed) = crate::parse_turn_notification_when(argv[argv.len() - 1].as_str())
+            {
+                when = parsed;
+                argv.truncate(argv.len() - 2);
+            }
+        } else if let Some(last) = argv.last() {
+            if let Some(parsed) = crate::parse_turn_notification_when(last.as_str()) {
+                when = parsed;
+                argv.truncate(argv.len() - 1);
+            }
+        }
+        if argv.is_empty() {
+            self.push_log(LogKind::Error, "notify command is empty".to_string());
+            return Ok(());
+        }
+        let config = crate::runtime::TurnNotificationConfig::Command { argv, when };
         self.runtime.save_turn_notification_config(&config)?;
         if self.is_zh_language() {
             self.push_log(
@@ -4922,26 +5149,330 @@ impl TuiApp {
 
     async fn handle_mcp_slash(&mut self, args: &str) -> Result<()> {
         let cleaned = args.trim();
+        let language = self.display_language.clone();
         let is_zh = self.is_zh_language();
-        if cleaned.eq_ignore_ascii_case("help") {
+
+        let usage = crate::locale::tr(
+            language.as_str(),
+            "用法: /mcp [list|get <name>|add <name> <endpoint> [transport]|enable <name>|disable <name>|remove <name>|login <name> [bearer-token|token|api-key] <secret>|logout <name>|test <name>|<name>]",
+            "usage: /mcp [list|get <name>|add <name> <endpoint> [transport]|enable <name>|disable <name>|remove <name>|login <name> [bearer-token|token|api-key] <secret>|logout <name>|test <name>|<name>]",
+        );
+        if cleaned.eq_ignore_ascii_case("help") || cleaned.eq_ignore_ascii_case("?") {
+            self.push_log(LogKind::Info, usage.to_string());
             self.push_log(
                 LogKind::Info,
                 crate::locale::tr(
-                    self.display_language.as_str(),
-                    "用法: /mcp [name|list]",
-                    "usage: /mcp [name|list]",
-                ),
-            );
-            self.push_log(
-                LogKind::Info,
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "示例: /mcp 或 /mcp my-server",
-                    "examples: /mcp or /mcp my-server",
+                    language.as_str(),
+                    "示例: /mcp list, /mcp add docs https://example.com/mcp, /mcp login docs --bearer-token <TOKEN>",
+                    "examples: /mcp list, /mcp add docs https://example.com/mcp, /mcp login docs --bearer-token <TOKEN>",
                 ),
             );
             return Ok(());
         }
+
+        let values = if cleaned.is_empty() {
+            Vec::new()
+        } else {
+            match shell_words::split(cleaned) {
+                Ok(values) => values,
+                Err(err) => {
+                    self.push_log(
+                        LogKind::Error,
+                        if is_zh {
+                            format!("解析 /mcp 参数失败: {err}")
+                        } else {
+                            format!("parse /mcp args failed: {err}")
+                        },
+                    );
+                    self.push_log(LogKind::Info, usage.to_string());
+                    return Ok(());
+                }
+            }
+        };
+        let action = values
+            .first()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .unwrap_or_default();
+
+        if action == "add" {
+            if values.len() < 3 || values.len() > 4 {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let name = values[1].trim();
+            let endpoint = values[2].trim();
+            let transport = values
+                .get(3)
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("streamable-http");
+            if name.is_empty() || endpoint.is_empty() {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let mut payload = self
+                .runtime
+                .state
+                .user_tool_store
+                .load_user_tools(&self.runtime.user_id);
+            payload
+                .mcp_servers
+                .retain(|server| !server.name.trim().eq_ignore_ascii_case(name));
+            payload.mcp_servers.push(UserMcpServer {
+                name: name.to_string(),
+                endpoint: endpoint.to_string(),
+                allow_tools: Vec::new(),
+                shared_tools: Vec::new(),
+                enabled: true,
+                transport: transport.to_string(),
+                description: String::new(),
+                display_name: String::new(),
+                headers: Default::default(),
+                auth: None,
+                tool_specs: Vec::new(),
+            });
+            self.runtime
+                .state
+                .user_tool_store
+                .update_mcp_servers(&self.runtime.user_id, payload.mcp_servers)?;
+            self.reload_popup_catalogs().await;
+            if is_zh {
+                self.push_log(LogKind::Info, format!("已添加 MCP 服务器: {name}"));
+            } else {
+                self.push_log(LogKind::Info, format!("mcp server added: {name}"));
+            }
+            return Ok(());
+        }
+
+        if action == "enable" || action == "disable" {
+            if values.len() != 2 {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let target = values[1].trim();
+            if target.is_empty() {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let enabled = action == "enable";
+            let mut payload = self
+                .runtime
+                .state
+                .user_tool_store
+                .load_user_tools(&self.runtime.user_id);
+            let Some(index) = find_mcp_server_index_for_tui(&payload.mcp_servers, target) else {
+                if is_zh {
+                    self.push_log(LogKind::Error, format!("未找到 MCP 服务器: {target}"));
+                } else {
+                    self.push_log(LogKind::Error, format!("mcp server not found: {target}"));
+                }
+                return Ok(());
+            };
+            payload.mcp_servers[index].enabled = enabled;
+            self.runtime
+                .state
+                .user_tool_store
+                .update_mcp_servers(&self.runtime.user_id, payload.mcp_servers)?;
+            self.reload_popup_catalogs().await;
+            if is_zh {
+                self.push_log(
+                    LogKind::Info,
+                    format!(
+                        "MCP 服务器已{}: {target}",
+                        if enabled { "启用" } else { "禁用" }
+                    ),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!(
+                        "mcp server {}: {target}",
+                        if enabled { "enabled" } else { "disabled" }
+                    ),
+                );
+            }
+            return Ok(());
+        }
+
+        if action == "remove" {
+            if values.len() != 2 {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let target = values[1].trim();
+            if target.is_empty() {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let mut payload = self
+                .runtime
+                .state
+                .user_tool_store
+                .load_user_tools(&self.runtime.user_id);
+            let before = payload.mcp_servers.len();
+            payload
+                .mcp_servers
+                .retain(|server| !server.name.trim().eq_ignore_ascii_case(target));
+            if before == payload.mcp_servers.len() {
+                if is_zh {
+                    self.push_log(LogKind::Error, format!("未找到 MCP 服务器: {target}"));
+                } else {
+                    self.push_log(LogKind::Error, format!("mcp server not found: {target}"));
+                }
+                return Ok(());
+            }
+            self.runtime
+                .state
+                .user_tool_store
+                .update_mcp_servers(&self.runtime.user_id, payload.mcp_servers)?;
+            self.reload_popup_catalogs().await;
+            if is_zh {
+                self.push_log(LogKind::Info, format!("已移除 MCP 服务器: {target}"));
+            } else {
+                self.push_log(LogKind::Info, format!("mcp server removed: {target}"));
+            }
+            return Ok(());
+        }
+
+        if action == "login" {
+            if values.len() < 3 || values.len() > 4 {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let target = values[1].trim();
+            if target.is_empty() {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let (auth_key, auth_value) = if values.len() == 3 {
+                ("bearer_token", values[2].clone())
+            } else {
+                let Some(key) = mcp_auth_key_from_alias_for_tui(values[2].as_str()) else {
+                    if is_zh {
+                        self.push_log(
+                            LogKind::Error,
+                            format!(
+                                "非法鉴权类型: {}（支持 bearer-token/token/api-key）",
+                                values[2]
+                            ),
+                        );
+                    } else {
+                        self.push_log(
+                            LogKind::Error,
+                            format!(
+                                "invalid auth type: {} (supported: bearer-token/token/api-key)",
+                                values[2]
+                            ),
+                        );
+                    }
+                    return Ok(());
+                };
+                (key, values[3].clone())
+            };
+            let auth_value = auth_value.trim().to_string();
+            if auth_value.is_empty() {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let mut payload = self
+                .runtime
+                .state
+                .user_tool_store
+                .load_user_tools(&self.runtime.user_id);
+            let Some(index) = find_mcp_server_index_for_tui(&payload.mcp_servers, target) else {
+                if is_zh {
+                    self.push_log(LogKind::Error, format!("未找到 MCP 服务器: {target}"));
+                } else {
+                    self.push_log(LogKind::Error, format!("mcp server not found: {target}"));
+                }
+                return Ok(());
+            };
+            payload.mcp_servers[index].auth = Some(json!({
+                auth_key: auth_value,
+            }));
+            self.runtime
+                .state
+                .user_tool_store
+                .update_mcp_servers(&self.runtime.user_id, payload.mcp_servers)?;
+            self.reload_popup_catalogs().await;
+            let auth_name = mcp_auth_key_label_for_tui(auth_key, is_zh);
+            if is_zh {
+                self.push_log(
+                    LogKind::Info,
+                    format!("已更新 MCP 鉴权凭据: {target} ({auth_name})"),
+                );
+            } else {
+                self.push_log(
+                    LogKind::Info,
+                    format!("mcp auth updated: {target} ({auth_name})"),
+                );
+            }
+            return Ok(());
+        }
+
+        if action == "logout" {
+            if values.len() != 2 {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let target = values[1].trim();
+            if target.is_empty() {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let mut payload = self
+                .runtime
+                .state
+                .user_tool_store
+                .load_user_tools(&self.runtime.user_id);
+            let Some(index) = find_mcp_server_index_for_tui(&payload.mcp_servers, target) else {
+                if is_zh {
+                    self.push_log(LogKind::Error, format!("未找到 MCP 服务器: {target}"));
+                } else {
+                    self.push_log(LogKind::Error, format!("mcp server not found: {target}"));
+                }
+                return Ok(());
+            };
+            payload.mcp_servers[index].auth = None;
+            self.runtime
+                .state
+                .user_tool_store
+                .update_mcp_servers(&self.runtime.user_id, payload.mcp_servers)?;
+            self.reload_popup_catalogs().await;
+            if is_zh {
+                self.push_log(LogKind::Info, format!("已清除 MCP 鉴权凭据: {target}"));
+            } else {
+                self.push_log(LogKind::Info, format!("mcp auth cleared: {target}"));
+            }
+            return Ok(());
+        }
+
+        if action == "test" {
+            if values.len() != 2 {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            let lines = crate::execute_apps_command(
+                &self.runtime,
+                language.as_str(),
+                format!("test {}", values[1].trim()).as_str(),
+            )
+            .await?;
+            for line in lines {
+                self.push_log(LogKind::Info, line);
+            }
+            return Ok(());
+        }
+
+        let lookup_target = if action == "get" || action == "info" {
+            if values.len() != 2 {
+                self.push_log(LogKind::Error, usage.to_string());
+                return Ok(());
+            }
+            values[1].trim().to_string()
+        } else {
+            cleaned.to_string()
+        };
 
         let mut payload = self
             .runtime
@@ -4964,7 +5495,7 @@ impl TuiApp {
             return Ok(());
         }
 
-        if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("list") {
+        if cleaned.is_empty() || action == "list" {
             self.push_log(
                 LogKind::Info,
                 crate::locale::tr(self.display_language.as_str(), "MCP 配置", "mcp"),
@@ -4977,16 +5508,20 @@ impl TuiApp {
             return Ok(());
         }
 
-        let Some(server) = payload
-            .mcp_servers
-            .into_iter()
-            .find(|item| item.name.trim().eq_ignore_ascii_case(cleaned))
+        let Some(index) =
+            find_mcp_server_index_for_tui(&payload.mcp_servers, lookup_target.as_str())
         else {
             if is_zh {
-                self.push_log(LogKind::Error, format!("未找到 MCP 服务器: {cleaned}"));
+                self.push_log(
+                    LogKind::Error,
+                    format!("未找到 MCP 服务器: {}", lookup_target.as_str()),
+                );
                 self.push_log(LogKind::Info, "提示: 用 /mcp 列出所有服务器".to_string());
             } else {
-                self.push_log(LogKind::Error, format!("mcp server not found: {cleaned}"));
+                self.push_log(
+                    LogKind::Error,
+                    format!("mcp server not found: {}", lookup_target.as_str()),
+                );
                 self.push_log(
                     LogKind::Info,
                     "hint: run /mcp to list all servers".to_string(),
@@ -4994,6 +5529,7 @@ impl TuiApp {
             }
             return Ok(());
         };
+        let server = payload.mcp_servers.swap_remove(index);
 
         self.push_log(
             LogKind::Info,
@@ -5423,6 +5959,31 @@ impl TuiApp {
                 Some(active)
             };
         }
+        self.invalidate_transcript_metrics();
+    }
+
+    fn pop_oldest_log_entry(&mut self) {
+        if self.logs.is_empty() {
+            return;
+        }
+        self.logs.remove(0);
+        if let Some(index) = self.active_assistant.as_mut() {
+            *index = index.saturating_sub(1);
+        }
+        if let Some(index) = self.active_reasoning.as_mut() {
+            *index = index.saturating_sub(1);
+        }
+        if let Some(index) = self.transcript_selected.as_mut() {
+            *index = index.saturating_sub(1);
+        }
+        self.invalidate_transcript_metrics();
+    }
+
+    fn total_log_chars(&self) -> usize {
+        self.logs
+            .iter()
+            .map(|entry| entry.text.chars().count())
+            .sum()
     }
 
     fn emit_tool_phase_notice(&mut self) {
@@ -5436,6 +5997,7 @@ impl TuiApp {
                 let cleaned = sanitize_assistant_text(entry.text.as_str());
                 if !cleaned.is_empty() && !looks_like_tool_payload(cleaned.as_str()) {
                     entry.text = cleaned;
+                    self.invalidate_transcript_metrics();
                     has_meaningful_assistant = true;
                 }
             }
@@ -5465,6 +6027,7 @@ impl TuiApp {
         let index = self.ensure_assistant_entry();
         if let Some(entry) = self.logs.get_mut(index) {
             merge_stream_text(&mut entry.text, delta);
+            self.invalidate_transcript_metrics();
         }
     }
 
@@ -5482,6 +6045,7 @@ impl TuiApp {
                 return;
             }
             entry.text = cleaned;
+            self.invalidate_transcript_metrics();
         }
     }
 
@@ -5494,6 +6058,7 @@ impl TuiApp {
         let index = self.ensure_reasoning_entry();
         if let Some(entry) = self.logs.get_mut(index) {
             merge_stream_text(&mut entry.text, cleaned.as_str());
+            self.invalidate_transcript_metrics();
         }
     }
 
@@ -5508,6 +6073,7 @@ impl TuiApp {
             if is_equivalent_text(entry.text.as_str(), cleaned.as_str()) {
                 if cleaned.chars().count() >= entry.text.chars().count() {
                     entry.text = cleaned;
+                    self.invalidate_transcript_metrics();
                 }
                 return;
             }
@@ -5516,10 +6082,12 @@ impl TuiApp {
                 .starts_with(compact_text_for_compare(entry.text.as_str()).as_str())
             {
                 entry.text = cleaned;
+                self.invalidate_transcript_metrics();
                 return;
             }
 
             merge_stream_text(&mut entry.text, cleaned.as_str());
+            self.invalidate_transcript_metrics();
         }
     }
 
@@ -5534,6 +6102,7 @@ impl TuiApp {
             let current = entry.text.trim();
             if current.is_empty() {
                 entry.text = cleaned;
+                self.invalidate_transcript_metrics();
                 return;
             }
 
@@ -5548,6 +6117,7 @@ impl TuiApp {
                 .starts_with(compact_text_for_compare(current).as_str())
             {
                 entry.text = cleaned;
+                self.invalidate_transcript_metrics();
                 return;
             }
 
@@ -5555,6 +6125,7 @@ impl TuiApp {
                 entry.text.push('\n');
             }
             entry.text.push_str(cleaned.as_str());
+            self.invalidate_transcript_metrics();
         }
     }
 
@@ -5569,6 +6140,7 @@ impl TuiApp {
             let current = entry.text.trim();
             if current.is_empty() {
                 entry.text = cleaned;
+                self.invalidate_transcript_metrics();
                 return;
             }
 
@@ -5578,6 +6150,7 @@ impl TuiApp {
             {
                 if cleaned.chars().count() > current.chars().count() {
                     entry.text = cleaned;
+                    self.invalidate_transcript_metrics();
                 }
                 return;
             }
@@ -5586,6 +6159,7 @@ impl TuiApp {
                 .starts_with(compact_text_for_compare(current).as_str())
             {
                 entry.text = cleaned;
+                self.invalidate_transcript_metrics();
                 return;
             }
 
@@ -5596,6 +6170,7 @@ impl TuiApp {
                 entry.text.push('\n');
             }
             entry.text.push_str(cleaned.as_str());
+            self.invalidate_transcript_metrics();
         }
     }
 
@@ -5606,17 +6181,12 @@ impl TuiApp {
             text
         };
         self.logs.push(LogEntry { kind, text });
-        if self.logs.len() > MAX_LOG_ENTRIES {
-            self.logs.remove(0);
-            if let Some(index) = self.active_assistant.as_mut() {
-                *index = index.saturating_sub(1);
-            }
-            if let Some(index) = self.active_reasoning.as_mut() {
-                *index = index.saturating_sub(1);
-            }
-            if let Some(index) = self.transcript_selected.as_mut() {
-                *index = index.saturating_sub(1);
-            }
+        self.invalidate_transcript_metrics();
+        while self.logs.len() > MAX_LOG_ENTRIES {
+            self.pop_oldest_log_entry();
+        }
+        while self.logs.len() > 1 && self.total_log_chars() > MAX_LOG_TOTAL_CHARS {
+            self.pop_oldest_log_entry();
         }
 
         if self.logs.is_empty() {
@@ -5632,8 +6202,75 @@ impl TuiApp {
     }
 }
 
-fn visual_log_text(kind: LogKind, text: &str) -> String {
-    format!("{}{text}", log_prefix(kind))
+#[derive(Debug, Clone, Copy)]
+struct TranscriptWindowSpec {
+    start_entry: usize,
+    end_entry_exclusive: usize,
+    local_scroll: u16,
+    total_lines: usize,
+}
+
+fn compute_transcript_window_spec(
+    line_counts: &[usize],
+    viewport_height: u16,
+    offset_from_bottom: u16,
+) -> TranscriptWindowSpec {
+    if line_counts.is_empty() {
+        return TranscriptWindowSpec {
+            start_entry: 0,
+            end_entry_exclusive: 0,
+            local_scroll: 0,
+            total_lines: 0,
+        };
+    }
+
+    let viewport = usize::from(viewport_height.max(1));
+    let total_lines = line_counts.iter().copied().sum::<usize>();
+    let max_scroll = total_lines.saturating_sub(viewport);
+    let offset = usize::from(offset_from_bottom).min(max_scroll);
+    let top_line = max_scroll.saturating_sub(offset);
+
+    let mut cumulative = 0usize;
+    let mut start_entry = 0usize;
+    let mut start_line = 0usize;
+    for (index, count) in line_counts.iter().copied().enumerate() {
+        let next = cumulative.saturating_add(count);
+        if top_line < next {
+            start_entry = index;
+            start_line = cumulative;
+            break;
+        }
+        cumulative = next;
+        start_entry = index.saturating_add(1);
+        start_line = cumulative;
+    }
+
+    if start_entry >= line_counts.len() {
+        start_entry = line_counts.len().saturating_sub(1);
+        start_line = total_lines.saturating_sub(line_counts[start_entry]);
+    }
+
+    let local_scroll_lines = top_line.saturating_sub(start_line);
+    let needed_lines = local_scroll_lines
+        .saturating_add(viewport)
+        .saturating_add(1);
+
+    let mut end_entry_exclusive = start_entry;
+    let mut rendered_lines = 0usize;
+    while end_entry_exclusive < line_counts.len() && rendered_lines < needed_lines {
+        rendered_lines = rendered_lines.saturating_add(line_counts[end_entry_exclusive]);
+        end_entry_exclusive = end_entry_exclusive.saturating_add(1);
+    }
+    if end_entry_exclusive <= start_entry {
+        end_entry_exclusive = start_entry.saturating_add(1).min(line_counts.len());
+    }
+
+    TranscriptWindowSpec {
+        start_entry,
+        end_entry_exclusive,
+        local_scroll: local_scroll_lines.min(u16::MAX as usize) as u16,
+        total_lines,
+    }
 }
 
 pub(super) fn log_prefix(kind: LogKind) -> &'static str {
@@ -5645,6 +6282,10 @@ pub(super) fn log_prefix(kind: LogKind) -> &'static str {
         LogKind::Tool => "tool> ",
         LogKind::Error => "error> ",
     }
+}
+
+fn wrapped_log_visual_line_count(kind: LogKind, text: &str, width: usize) -> usize {
+    wrapped_visual_line_count_parts(log_prefix(kind), text, width)
 }
 
 fn backtrack_user_text(entry: &LogEntry) -> Option<String> {
@@ -5875,6 +6516,30 @@ fn format_mcp_auth_state_for_tui(server: &UserMcpServer, is_zh: bool) -> String 
     }
 }
 
+fn find_mcp_server_index_for_tui(servers: &[UserMcpServer], target: &str) -> Option<usize> {
+    let cleaned = target.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    servers
+        .iter()
+        .position(|server| server.name.trim().eq_ignore_ascii_case(cleaned))
+}
+
+fn mcp_auth_key_from_alias_for_tui(raw: &str) -> Option<&'static str> {
+    match raw
+        .trim()
+        .trim_start_matches('-')
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "bearer-token" | "bearer_token" | "bearer" => Some("bearer_token"),
+        "token" => Some("token"),
+        "api-key" | "api_key" | "apikey" => Some("api_key"),
+        _ => None,
+    }
+}
+
 fn detect_mcp_auth_key_for_tui(server: &UserMcpServer) -> Option<&'static str> {
     let Some(Value::Object(map)) = server.auth.as_ref() else {
         return None;
@@ -6065,15 +6730,15 @@ fn read_system_clipboard_text() -> Result<Option<String>> {
     }
 }
 
-fn wrapped_visual_line_count(text: &str, width: usize) -> usize {
+fn wrapped_visual_line_count_parts(prefix: &str, text: &str, width: usize) -> usize {
     let width = width.max(1);
-    if text.is_empty() {
+    if prefix.is_empty() && text.is_empty() {
         return 1;
     }
 
     let mut line_count = 1usize;
     let mut line_columns = 0usize;
-    for ch in text.chars() {
+    for ch in prefix.chars().chain(text.chars()) {
         if ch == '\n' {
             line_count = line_count.saturating_add(1);
             line_columns = 0;
@@ -6089,6 +6754,11 @@ fn wrapped_visual_line_count(text: &str, width: usize) -> usize {
     }
 
     line_count
+}
+
+#[cfg(test)]
+fn wrapped_visual_line_count(text: &str, width: usize) -> usize {
+    wrapped_visual_line_count_parts("", text, width)
 }
 
 fn move_cursor_vertical(text: &str, width: usize, cursor: usize, delta: i8) -> usize {
@@ -7054,6 +7724,40 @@ cdef";
         assert_eq!(wrapped_visual_line_count("abcdef", 3), 2);
         assert_eq!(wrapped_visual_line_count("ab\ncd", 8), 2);
         assert_eq!(wrapped_visual_line_count("\u{4f60}\u{597d}\u{5417}", 4), 2);
+    }
+
+    #[test]
+    fn transcript_window_tail_view_uses_bottom_entries() {
+        let counts = vec![2, 2, 2, 2];
+        let window = compute_transcript_window_spec(&counts, 3, 0);
+        assert_eq!(window.total_lines, 8);
+        assert_eq!(window.start_entry, 2);
+        assert_eq!(window.end_entry_exclusive, 4);
+        assert_eq!(window.local_scroll, 1);
+    }
+
+    #[test]
+    fn transcript_window_scrolled_up_returns_expected_slice() {
+        let counts = vec![2, 2, 2, 2];
+        let window = compute_transcript_window_spec(&counts, 3, 2);
+        assert_eq!(window.start_entry, 1);
+        assert_eq!(window.end_entry_exclusive, 4);
+        assert_eq!(window.local_scroll, 1);
+    }
+
+    #[test]
+    fn transcript_window_limits_rendered_entries() {
+        let counts = vec![1; 200];
+        let window = compute_transcript_window_spec(&counts, 6, 95);
+        assert_eq!(window.start_entry, 99);
+        assert_eq!(window.end_entry_exclusive, 106);
+        assert_eq!(window.local_scroll, 0);
+        assert!(
+            window
+                .end_entry_exclusive
+                .saturating_sub(window.start_entry)
+                < counts.len()
+        );
     }
 
     #[test]

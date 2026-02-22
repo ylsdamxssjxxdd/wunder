@@ -81,6 +81,12 @@ async fn run_loop(
                 Event::Paste(text) => {
                     app.on_paste(text);
                 }
+                Event::FocusGained => {
+                    app.set_terminal_focus(true);
+                }
+                Event::FocusLost => {
+                    app.set_terminal_focus(false);
+                }
                 _ => {}
             }
         }

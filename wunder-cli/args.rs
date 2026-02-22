@@ -249,6 +249,9 @@ pub enum McpSubcommand {
 
     #[command(about = "Clear auth credentials for an MCP server / 清除 MCP 服务器鉴权凭据")]
     Logout(McpNameCommand),
+
+    #[command(about = "Test MCP server connectivity / 测试 MCP 服务器连通性")]
+    Test(McpNameCommand),
 }
 
 #[derive(Debug, Args)]

@@ -20,21 +20,23 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         .block(Block::default().borders(Borders::NONE));
     frame.render_widget(status, vertical[0]);
 
+    let transcript_viewport = inner_rect(vertical[1]);
+    app.set_transcript_viewport(transcript_viewport.width, transcript_viewport.height);
     let selected_transcript = app.selected_transcript_index();
-    let transcript_lines: Vec<Line> = app
-        .visible_logs(usize::MAX)
+    let render_window = app.transcript_render_window(transcript_viewport.height);
+    let transcript_total_lines = render_window.total_lines;
+    let transcript_scroll = render_window.local_scroll;
+    let transcript_lines: Vec<Line> = render_window
+        .entries
         .into_iter()
-        .enumerate()
-        .map(|(index, entry)| {
+        .map(|entry| {
             log_line(
                 entry.kind,
                 entry.text,
-                selected_transcript.is_some_and(|selected| selected == index),
+                selected_transcript.is_some_and(|selected| selected == entry.global_index),
             )
         })
         .collect();
-    let transcript_viewport = inner_rect(vertical[1]);
-    app.set_transcript_viewport(transcript_viewport.width, transcript_viewport.height);
     let transcript_text = Text::from(transcript_lines);
     let transcript_title = if app.transcript_focus_active() {
         if is_zh {
@@ -54,8 +56,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
                 .borders(Borders::ALL),
         )
         .wrap(Wrap { trim: false });
-    app.set_transcript_rendered_lines(transcript.line_count(transcript_viewport.width));
-    let transcript_scroll = app.transcript_scroll(transcript_viewport.height);
+    app.set_transcript_rendered_lines(transcript_total_lines);
     frame.render_widget(transcript.scroll((transcript_scroll, 0)), vertical[1]);
 
     let input_index = if popup_lines.is_empty() { 2 } else { 3 };
@@ -296,7 +297,7 @@ fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh:
     frame.render_widget(widget, popup);
 }
 
-fn log_line(kind: LogKind, text: String, selected: bool) -> Line<'static> {
+fn log_line(kind: LogKind, text: &str, selected: bool) -> Line<'static> {
     let style = match kind {
         LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
         LogKind::User => Style::default().fg(Color::LightBlue),

@@ -32,10 +32,27 @@ struct SessionMeta {
 pub enum TurnNotificationConfig {
     #[default]
     Off,
-    Bell,
+    Bell {
+        #[serde(default)]
+        when: TurnNotificationWhen,
+    },
+    Osc9 {
+        #[serde(default)]
+        when: TurnNotificationWhen,
+    },
     Command {
         argv: Vec<String>,
+        #[serde(default)]
+        when: TurnNotificationWhen,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TurnNotificationWhen {
+    #[default]
+    Always,
+    Unfocused,
 }
 
 impl CliRuntime {

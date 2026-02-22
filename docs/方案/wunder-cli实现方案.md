@@ -192,7 +192,7 @@ CLI 初始化时设置：
 - `resume [SESSION_ID] [PROMPT]`：恢复会话，支持 `--last`，终端场景默认进入 TUI。
 - `tool run|list`：工具直调/列表。
 - `exec`（别名 `e`）：命令执行快捷入口（映射 `执行命令` 工具）。
-- `mcp list|get|add|remove|enable|disable|login|logout`：本地 MCP 配置与鉴权管理。
+- `mcp list|get|add|remove|enable|disable|login|logout|test`：本地 MCP 配置、鉴权与连通性管理。
 - `skills list|enable|disable|upload|remove|root`：本地 skills 启用状态与目录管理。
 - `config show|set-tool-call-mode`：查看/设置运行配置。
 - 交互内置命令 `/config`：向导依次输入 `base_url / api_key / model / max_context`（max_context 可留空自动探测），自动写入 override 并设为默认模型。
@@ -214,21 +214,23 @@ CLI 初始化时设置：
 - `/model [name]`：查看当前模型，或切换默认模型。
 - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换工具调用协议。
 - `/approvals [show|suggest|auto_edit|full_auto]`：查看或切换审批模式。
-- `/diff`：显示当前 workspace 的 git 变更摘要。
+- `/diff [summary|files|show <index|path>|hunks <index|path>|stage <index|path>|unstage <index|path>|revert <index|path>]`：查看/操作当前 workspace 变更。
 - `/review [focus]`：基于当前 git 变更发起评审。
 - `/mention <query>`：快速搜索 workspace 文件路径。
-- `/mcp [name|list]`：查看 MCP 服务器配置与鉴权状态。
+- `/mcp [list|get <name>|add <name> <endpoint> [transport]|enable <name>|disable <name>|remove <name>|login <name> [bearer-token|token|api-key] <secret>|logout <name>|test <name>|<name>]`：查看并管理 MCP 服务器配置与鉴权状态。
 - `/skills [list|enable <name>|disable <name>|root]`：查看与切换本地技能启用状态。
 - `/apps [list|info <name>|connect|install|enable|disable|disconnect|auth|logout|remove|test]`：查看并管理连接器（重点覆盖本地 MCP 连接器，`info` 支持详情查看）。
 - `/ps` / `/clean`：查看或取消活动后台会话。
 - `/fork [title]` / `/rename <title>` / `/compact`：会话分叉、重命名与摘要分支压缩。
+- `/branches [tree|list|switch <session_id>]`：查看会话分支树并切换会话。
 - `/backtrack [list|index]`：列出或回填最近用户消息，快速编辑重发。
 - `/plan [topic]`：先让模型输出编号执行计划，再等待确认。
 - `/personality [show|concise|balanced|detailed|clear]`：查看或切换回答风格偏好。
+- `/edit [draft]`：打开外部编辑器编辑草稿并回填输入框。
 - `/init [force]`：在当前目录生成（或覆盖）`AGENTS.md` 模板。
 - `/agent [show|list|clear|<agent_id>]`：查看/列出并切换当前会话 `agent_id` 覆盖。
 - `/attach [list|clear|drop <index>|<path>]`：管理“下一轮自动发送”的本地附件队列。
-- `/notify [show|off|bell|<command...>]`：配置回合完成通知（BEL 或外部命令钩子）。
+- `/notify [show|off|bell|osc9|when <always|unfocused>|<command...>]`：配置回合完成通知（BEL/OSC9/命令钩子，支持仅失焦触发）。
 - `/debug-config`：输出运行时配置层级与最终生效值。
 - `/statusline [show|set <items>|reset]`：配置 TUI 状态栏显示项并持久化。
 - `/session`：查看当前会话统计（已占用上下文/总上下文、模型调用次数、工具调用次数、token 使用）。
@@ -247,13 +249,15 @@ CLI 初始化时设置：
 - `agent_id` 可通过 `--agent` 或交互态 `/agent` 覆盖，并支持 `/agent list` 快速发现最近会话中的 agent。
 - `--attach <path>`（可重复）可预加载附件；`/attach` 支持会话内增删查，下一轮请求自动消费。
 - 图片附件会自动编码为 data URL；文档/代码附件优先 doc2md 转 Markdown，不支持时尝试 UTF-8 文本回退。
-- `/notify` 支持持久化通知策略（`off/bell/command`），回合完成后可触发 BEL 或执行外部命令（附带 JSON payload）。
-- `/status`、`/debug-config`、`/system` 会展示 `agent_id`、personality、turn_notify 等关键上下文，便于排查。
+- `/notify` 支持持久化通知策略（`off/bell/osc9/command`）与 `when=always|unfocused`，回合完成后可触发 BEL、OSC9 或外部命令（附带 JSON payload）。
+- `/status`、`/debug-config`、`/system` 会展示 `agent_id`、personality、turn_notify 等关键上下文；`/debug-config` 额外输出 `source_chain`（最终值 + 来源链）便于排查覆盖关系。
 - 回答风格可通过 `/personality` 持久化，运行时会自动合并到请求级 `agent_prompt`。
 - 输出焦点支持回溯编辑：选中用户消息后按 Enter 可回填到输入区并继续编辑。
 - 输入区支持 Windows 粘贴 burst 防误提交（连续字符后 Enter 优先视为换行）与右键粘贴。
 - 忙碌态命令门控：运行中仅放行安全只读类 slash 命令，避免误触发会话结构变更。
 - 流式输出采用自适应 drain/backpressure 策略，缓解高频事件下的渲染堆积。
+- TUI 跟踪终端焦点（FocusGained/FocusLost），可与 `/notify when unfocused` 联动，减少前台干扰。
+- 会话日志新增总字符预算裁剪（除条数上限外再控总体文本量），长会话下滚动与重绘更稳定。
 - 未识别 `/xxx` 指令会明确提示 unknown command，并引导使用 `/help`。
 
 ## 8. 交互与事件输出

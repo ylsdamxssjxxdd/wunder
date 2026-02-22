@@ -21,7 +21,7 @@ use clap::Parser;
 use clap_complete::generate;
 use futures::StreamExt;
 use render::{FinalEvent, StreamRenderer};
-use runtime::{CliRuntime, TurnNotificationConfig};
+use runtime::{CliRuntime, TurnNotificationConfig, TurnNotificationWhen};
 use serde_json::{json, Value};
 use slash_command::{ParsedSlashCommand, SlashCommand};
 use std::collections::{HashMap, HashSet};
@@ -219,6 +219,7 @@ async fn run_chat_loop(
     let mut first = first_prompt
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
+    let mut queued_prompt: Option<String> = None;
     println!(
         "{}",
         locale::tr(
@@ -250,7 +251,7 @@ async fn run_chat_loop(
     }
 
     loop {
-        let input = if let Some(prompt) = first.take() {
+        let input = if let Some(prompt) = first.take().or_else(|| queued_prompt.take()) {
             prompt
         } else {
             let line = read_line("wunder> ")?;
@@ -268,14 +269,17 @@ async fn run_chat_loop(
 
         if trimmed.starts_with('/') {
             if let Some(command) = slash_command::parse_slash_command(trimmed) {
-                let should_exit = handle_chat_slash_command(
+                // Box the large slash-dispatch future to avoid oversized stack frames
+                // when line-chat executes command-heavy match branches.
+                let should_exit = Box::pin(handle_chat_slash_command(
                     runtime,
                     global,
                     &mut session_id,
                     &mut agent_id_override,
                     &mut pending_attachments,
+                    &mut queued_prompt,
                     command,
-                )
+                ))
                 .await?;
                 if should_exit {
                     break;
@@ -325,6 +329,7 @@ async fn handle_chat_slash_command(
     session_id: &mut String,
     agent_id_override: &mut Option<String>,
     pending_attachments: &mut Vec<attachments::PreparedAttachment>,
+    queued_prompt: &mut Option<String>,
     command: ParsedSlashCommand<'_>,
 ) -> Result<bool> {
     let language = locale::resolve_cli_language(global);
@@ -336,22 +341,28 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Status => {
-            print_runtime_status(
+            Box::pin(print_runtime_status(
                 runtime,
                 global,
                 session_id.as_str(),
                 agent_id_override.as_deref(),
                 pending_attachments.len(),
-            )
+            ))
             .await?;
             Ok(false)
         }
         SlashCommand::Session => {
-            print_session_stats(runtime, global, session_id.as_str()).await?;
+            Box::pin(print_session_stats(runtime, global, session_id.as_str())).await?;
             Ok(false)
         }
         SlashCommand::System => {
-            handle_slash_system(runtime, global, session_id.as_str(), command.args).await?;
+            Box::pin(handle_slash_system(
+                runtime,
+                global,
+                session_id.as_str(),
+                command.args,
+            ))
+            .await?;
             Ok(false)
         }
         SlashCommand::Mouse => {
@@ -366,7 +377,13 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Resume => {
-            handle_slash_resume(runtime, global, session_id, command.args).await?;
+            Box::pin(handle_slash_resume(
+                runtime,
+                global,
+                session_id,
+                command.args,
+            ))
+            .await?;
             Ok(false)
         }
         SlashCommand::New => {
@@ -380,27 +397,101 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Config => {
-            config_setup_from_slash(runtime, global, command.args).await?;
+            Box::pin(config_setup_from_slash(runtime, global, command.args)).await?;
             Ok(false)
         }
         SlashCommand::ConfigShow => {
-            config_show(runtime, global).await?;
+            Box::pin(config_show(runtime, global)).await?;
             Ok(false)
         }
         SlashCommand::Model => {
-            handle_slash_model(runtime, global, command.args).await?;
+            Box::pin(handle_slash_model(runtime, global, command.args)).await?;
             Ok(false)
         }
         SlashCommand::ToolCallMode => {
-            handle_slash_tool_call_mode(runtime, global, command.args).await?;
+            Box::pin(handle_slash_tool_call_mode(runtime, global, command.args)).await?;
             Ok(false)
         }
         SlashCommand::Approvals => {
-            handle_slash_approvals(runtime, global, command.args).await?;
+            Box::pin(handle_slash_approvals(runtime, global, command.args)).await?;
             Ok(false)
         }
         SlashCommand::Diff => {
-            print_git_diff_summary(runtime.launch_dir.as_path(), language.as_str())?;
+            match parse_diff_slash_action(command.args) {
+                Ok(DiffSlashAction::Summary) => {
+                    print_git_diff_summary(runtime.launch_dir.as_path(), language.as_str())?;
+                }
+                Ok(DiffSlashAction::Files) => {
+                    for row in diff_files_lines_with_language(
+                        runtime.launch_dir.as_path(),
+                        language.as_str(),
+                    ) {
+                        println!("{row}");
+                    }
+                }
+                Ok(DiffSlashAction::Show(target)) => {
+                    for row in diff_file_lines_with_language(
+                        runtime.launch_dir.as_path(),
+                        target.as_str(),
+                        language.as_str(),
+                    ) {
+                        println!("{row}");
+                    }
+                }
+                Ok(DiffSlashAction::Hunks(target)) => {
+                    for row in diff_hunk_lines_with_language(
+                        runtime.launch_dir.as_path(),
+                        target.as_str(),
+                        language.as_str(),
+                    ) {
+                        println!("{row}");
+                    }
+                }
+                Ok(DiffSlashAction::Stage(target)) => {
+                    match run_git_file_action(
+                        runtime.launch_dir.as_path(),
+                        target.as_str(),
+                        "stage",
+                    ) {
+                        Ok(()) => println!(
+                            "{}",
+                            locale::tr(language.as_str(), "已 stage 目标文件", "file staged")
+                        ),
+                        Err(err) => println!("[error] {err}"),
+                    }
+                }
+                Ok(DiffSlashAction::Unstage(target)) => {
+                    match run_git_file_action(
+                        runtime.launch_dir.as_path(),
+                        target.as_str(),
+                        "unstage",
+                    ) {
+                        Ok(()) => println!(
+                            "{}",
+                            locale::tr(language.as_str(), "已取消 stage", "file unstaged")
+                        ),
+                        Err(err) => println!("[error] {err}"),
+                    }
+                }
+                Ok(DiffSlashAction::Revert(target)) => {
+                    match run_git_file_action(
+                        runtime.launch_dir.as_path(),
+                        target.as_str(),
+                        "revert",
+                    ) {
+                        Ok(()) => println!(
+                            "{}",
+                            locale::tr(
+                                language.as_str(),
+                                "已回滚目标文件到 HEAD",
+                                "file reverted to HEAD"
+                            )
+                        ),
+                        Err(err) => println!("[error] {err}"),
+                    }
+                }
+                Err(err) => println!("[error] {err}"),
+            }
             Ok(false)
         }
         SlashCommand::Review => {
@@ -419,30 +510,34 @@ async fn handle_chat_slash_command(
                     return Ok(false);
                 }
             };
-            run_prompt_once(
+            Box::pin(run_prompt_once(
                 runtime,
                 global,
                 prompt.as_str(),
                 session_id,
                 agent_id_override.as_deref(),
                 None,
-            )
+            ))
             .await?;
             Ok(false)
         }
         SlashCommand::Plan => {
-            handle_slash_plan(
+            Box::pin(handle_slash_plan(
                 runtime,
                 global,
                 session_id.as_str(),
                 command.args,
                 agent_id_override.as_deref(),
-            )
+            ))
             .await?;
             Ok(false)
         }
         SlashCommand::Personality => {
-            handle_slash_personality(runtime, global, command.args).await?;
+            Box::pin(handle_slash_personality(runtime, global, command.args)).await?;
+            Ok(false)
+        }
+        SlashCommand::Edit => {
+            handle_slash_edit(runtime, global, queued_prompt, command.args)?;
             Ok(false)
         }
         SlashCommand::Init => {
@@ -450,11 +545,33 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Agent => {
-            handle_slash_agent(runtime, global, agent_id_override, command.args).await?;
+            Box::pin(handle_slash_agent(
+                runtime,
+                global,
+                agent_id_override,
+                command.args,
+            ))
+            .await?;
             Ok(false)
         }
         SlashCommand::Attach => {
-            handle_slash_attach(runtime, global, pending_attachments, command.args).await?;
+            Box::pin(handle_slash_attach(
+                runtime,
+                global,
+                pending_attachments,
+                command.args,
+            ))
+            .await?;
+            Ok(false)
+        }
+        SlashCommand::Branches => {
+            Box::pin(handle_slash_branches(
+                runtime,
+                global,
+                session_id,
+                command.args,
+            ))
+            .await?;
             Ok(false)
         }
         SlashCommand::Notify => {
@@ -480,39 +597,51 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Skills => {
-            handle_slash_skills(runtime, global, command.args).await?;
+            Box::pin(handle_slash_skills(runtime, global, command.args)).await?;
             Ok(false)
         }
         SlashCommand::Apps => {
-            handle_slash_apps(runtime, global, command.args).await?;
+            Box::pin(handle_slash_apps(runtime, global, command.args)).await?;
             Ok(false)
         }
         SlashCommand::Ps => {
-            print_background_sessions(runtime, global).await?;
+            Box::pin(print_background_sessions(runtime, global)).await?;
             Ok(false)
         }
         SlashCommand::Clean => {
-            cancel_background_sessions(runtime, global).await?;
+            Box::pin(cancel_background_sessions(runtime, global)).await?;
             Ok(false)
         }
         SlashCommand::Fork => {
-            handle_slash_fork(runtime, global, session_id, command.args).await?;
+            Box::pin(handle_slash_fork(runtime, global, session_id, command.args)).await?;
             Ok(false)
         }
         SlashCommand::Rename => {
-            handle_slash_rename(runtime, global, session_id.as_str(), command.args).await?;
+            Box::pin(handle_slash_rename(
+                runtime,
+                global,
+                session_id.as_str(),
+                command.args,
+            ))
+            .await?;
             Ok(false)
         }
         SlashCommand::Compact => {
-            handle_slash_compact(runtime, global, session_id).await?;
+            Box::pin(handle_slash_compact(runtime, global, session_id)).await?;
             Ok(false)
         }
         SlashCommand::Backtrack => {
-            handle_slash_backtrack(runtime, global, session_id.as_str(), command.args).await?;
+            Box::pin(handle_slash_backtrack(
+                runtime,
+                global,
+                session_id.as_str(),
+                command.args,
+            ))
+            .await?;
             Ok(false)
         }
         SlashCommand::DebugConfig => {
-            print_debug_config(runtime, global, session_id.as_str()).await?;
+            Box::pin(print_debug_config(runtime, global, session_id.as_str())).await?;
             Ok(false)
         }
         SlashCommand::Statusline => {
@@ -527,20 +656,7 @@ async fn handle_chat_slash_command(
             Ok(false)
         }
         SlashCommand::Mcp => {
-            let target = command.args.trim();
-            if target.is_empty() || target.eq_ignore_ascii_case("list") {
-                mcp_list(runtime, global, McpListCommand { json: false }).await?;
-            } else {
-                mcp_get(
-                    runtime,
-                    global,
-                    McpGetCommand {
-                        name: target.to_string(),
-                        json: false,
-                    },
-                )
-                .await?;
-            }
+            Box::pin(handle_slash_mcp(runtime, global, command.args)).await?;
             Ok(false)
         }
         SlashCommand::Exit | SlashCommand::Quit => Ok(true),
@@ -2052,6 +2168,237 @@ async fn handle_slash_apps(runtime: &CliRuntime, global: &GlobalArgs, args: &str
     Ok(())
 }
 
+async fn handle_slash_mcp(runtime: &CliRuntime, global: &GlobalArgs, args: &str) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let usage = locale::tr(
+        language.as_str(),
+        "用法: /mcp [list|get <name>|add <name> <endpoint> [transport]|enable <name>|disable <name>|remove <name>|login <name> [bearer-token|token|api-key] <secret>|logout <name>|test <name>|<name>]",
+        "usage: /mcp [list|get <name>|add <name> <endpoint> [transport]|enable <name>|disable <name>|remove <name>|login <name> [bearer-token|token|api-key] <secret>|logout <name>|test <name>|<name>]",
+    );
+    let cleaned = args.trim();
+    if cleaned.is_empty() || cleaned.eq_ignore_ascii_case("list") {
+        mcp_list(runtime, global, McpListCommand { json: false }).await?;
+        return Ok(());
+    }
+    if cleaned.eq_ignore_ascii_case("help") || cleaned == "?" {
+        println!("{usage}");
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "示例: /mcp list, /mcp add docs https://example.com/mcp, /mcp login docs --bearer-token <TOKEN>",
+                "examples: /mcp list, /mcp add docs https://example.com/mcp, /mcp login docs --bearer-token <TOKEN>",
+            )
+        );
+        return Ok(());
+    }
+
+    let values = match shell_words::split(cleaned) {
+        Ok(values) if !values.is_empty() => values,
+        Ok(_) => {
+            mcp_list(runtime, global, McpListCommand { json: false }).await?;
+            return Ok(());
+        }
+        Err(err) => {
+            println!(
+                "{}",
+                if is_zh {
+                    format!("[错误] 解析 /mcp 参数失败: {err}")
+                } else {
+                    format!("[error] parse /mcp args failed: {err}")
+                }
+            );
+            println!("{usage}");
+            return Ok(());
+        }
+    };
+
+    let action = values[0].trim().to_ascii_lowercase();
+    match action.as_str() {
+        "list" => {
+            mcp_list(runtime, global, McpListCommand { json: false }).await?;
+        }
+        "get" | "info" => {
+            if values.len() != 2 {
+                println!("{usage}");
+                return Ok(());
+            }
+            mcp_get(
+                runtime,
+                global,
+                McpGetCommand {
+                    name: values[1].trim().to_string(),
+                    json: false,
+                },
+            )
+            .await?;
+        }
+        "add" => {
+            if values.len() < 3 || values.len() > 4 {
+                println!("{usage}");
+                return Ok(());
+            }
+            let name = values[1].trim();
+            let endpoint = values[2].trim();
+            let transport = values
+                .get(3)
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("streamable-http");
+            if name.is_empty() || endpoint.is_empty() {
+                println!("{usage}");
+                return Ok(());
+            }
+            mcp_add(
+                runtime,
+                global,
+                McpAddCommand {
+                    name: name.to_string(),
+                    endpoint: endpoint.to_string(),
+                    transport: transport.to_string(),
+                    allow_tools: Vec::new(),
+                    description: None,
+                    display_name: None,
+                    enabled: true,
+                },
+            )
+            .await?;
+        }
+        "enable" | "disable" => {
+            if values.len() != 2 {
+                println!("{usage}");
+                return Ok(());
+            }
+            let name = values[1].trim();
+            if name.is_empty() {
+                println!("{usage}");
+                return Ok(());
+            }
+            mcp_toggle(
+                runtime,
+                global,
+                McpNameCommand {
+                    name: name.to_string(),
+                },
+                action == "enable",
+            )
+            .await?;
+        }
+        "remove" | "disconnect" => {
+            if values.len() != 2 {
+                println!("{usage}");
+                return Ok(());
+            }
+            let name = values[1].trim();
+            if name.is_empty() {
+                println!("{usage}");
+                return Ok(());
+            }
+            mcp_remove(
+                runtime,
+                global,
+                McpNameCommand {
+                    name: name.to_string(),
+                },
+            )
+            .await?;
+        }
+        "login" => {
+            if values.len() < 3 || values.len() > 4 {
+                println!("{usage}");
+                return Ok(());
+            }
+            let name = values[1].trim();
+            if name.is_empty() {
+                println!("{usage}");
+                return Ok(());
+            }
+            let (auth_key, secret) = if values.len() == 3 {
+                ("bearer_token", values[2].trim().to_string())
+            } else {
+                let alias = values[2].trim().trim_start_matches('-');
+                let Some(auth_key) = app_auth_key_from_alias(alias) else {
+                    println!("{usage}");
+                    return Ok(());
+                };
+                (auth_key, values[3].trim().to_string())
+            };
+            if secret.is_empty() {
+                println!("{usage}");
+                return Ok(());
+            }
+            let command = match auth_key {
+                "token" => McpLoginCommand {
+                    name: name.to_string(),
+                    bearer_token: None,
+                    token: Some(secret),
+                    api_key: None,
+                },
+                "api_key" => McpLoginCommand {
+                    name: name.to_string(),
+                    bearer_token: None,
+                    token: None,
+                    api_key: Some(secret),
+                },
+                _ => McpLoginCommand {
+                    name: name.to_string(),
+                    bearer_token: Some(secret),
+                    token: None,
+                    api_key: None,
+                },
+            };
+            mcp_login(runtime, global, command).await?;
+        }
+        "logout" => {
+            if values.len() != 2 {
+                println!("{usage}");
+                return Ok(());
+            }
+            let name = values[1].trim();
+            if name.is_empty() {
+                println!("{usage}");
+                return Ok(());
+            }
+            mcp_logout(
+                runtime,
+                global,
+                McpNameCommand {
+                    name: name.to_string(),
+                },
+            )
+            .await?;
+        }
+        "test" => {
+            if values.len() != 2 {
+                println!("{usage}");
+                return Ok(());
+            }
+            let target = values[1].trim();
+            if target.is_empty() {
+                println!("{usage}");
+                return Ok(());
+            }
+            let app_args = format!("test {target}");
+            for line in execute_apps_command(runtime, language.as_str(), app_args.as_str()).await? {
+                println!("{line}");
+            }
+        }
+        _ => {
+            mcp_get(
+                runtime,
+                global,
+                McpGetCommand {
+                    name: cleaned.to_string(),
+                    json: false,
+                },
+            )
+            .await?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn collect_active_monitor_sessions(runtime: &CliRuntime) -> Vec<Value> {
     let mut sessions = runtime.state.monitor.list_sessions(true);
     sessions.sort_by(|left, right| {
@@ -2622,6 +2969,7 @@ pub(crate) async fn collect_debug_config_payload(
         .cloned()
         .filter(|value| !value.trim().is_empty());
     let resolved_model = runtime.resolve_model_name(global.model.as_deref()).await;
+    let model_from_cli_owned = model_from_cli.map(str::to_string);
 
     let model_source = if model_from_cli.is_some() {
         "cli"
@@ -2646,18 +2994,32 @@ pub(crate) async fn collect_debug_config_payload(
     } else {
         "default(tool_call)"
     };
-    let tool_call_mode = global
+    let tool_mode_from_cli = global
         .tool_call_mode
-        .map(|mode| mode.as_str().to_string())
-        .or_else(|| {
-            resolved_model
-                .as_ref()
-                .and_then(|name| config.llm.models.get(name))
-                .and_then(|model| model.tool_call_mode.clone())
-        })
+        .as_ref()
+        .map(|mode| mode.as_str().to_string());
+    let tool_mode_from_model = resolved_model
+        .as_ref()
+        .and_then(|name| config.llm.models.get(name))
+        .and_then(|model| model.tool_call_mode.clone())
+        .filter(|value| !value.trim().is_empty());
+    let tool_call_mode = tool_mode_from_cli
+        .clone()
+        .or_else(|| tool_mode_from_model.clone())
         .unwrap_or_else(|| "tool_call".to_string());
 
     let approval_mode = resolve_effective_approval_mode(&config, global.approval_mode);
+    let approval_mode_from_cli = global
+        .approval_mode
+        .as_ref()
+        .map(|mode| mode.as_str().to_string());
+    let approval_mode_from_config = config
+        .security
+        .approval_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     let approval_mode_source = if global.approval_mode.is_some() {
         "cli"
     } else if config
@@ -2672,11 +3034,45 @@ pub(crate) async fn collect_debug_config_payload(
     } else {
         "default(full_auto)"
     };
-    let personality_mode = runtime
-        .load_personality_mode()
+    let personality_from_store = runtime.load_personality_mode();
+    let personality_mode = personality_from_store
+        .clone()
         .unwrap_or_else(|| "balanced".to_string());
     let turn_notification = runtime.load_turn_notification_config();
     let notification_payload = serialize_turn_notification(&turn_notification);
+    let turn_notification_file_exists = runtime.turn_notification_file().exists();
+    let turn_notification_source = if turn_notification_file_exists {
+        "runtime.turn_notification_file"
+    } else {
+        "default(off)"
+    };
+
+    let source_chain = json!({
+        "model": [
+            {"layer": "cli", "value": model_from_cli_owned},
+            {"layer": "config.llm.default", "value": model_from_default},
+            {"layer": "config.llm.models[0]", "value": model_from_catalog},
+            {"layer": "builtin", "value": "none"},
+        ],
+        "tool_call_mode": [
+            {"layer": "cli", "value": tool_mode_from_cli},
+            {"layer": "config.llm.models.<active>.tool_call_mode", "value": tool_mode_from_model},
+            {"layer": "builtin", "value": "tool_call"},
+        ],
+        "approval_mode": [
+            {"layer": "cli", "value": approval_mode_from_cli},
+            {"layer": "config.security.approval_mode", "value": approval_mode_from_config},
+            {"layer": "builtin", "value": "full_auto"},
+        ],
+        "personality_mode": [
+            {"layer": "runtime.personality_file", "value": personality_from_store},
+            {"layer": "builtin", "value": "balanced"},
+        ],
+        "turn_notification": [
+            {"layer": "runtime.turn_notification_file", "value": if turn_notification_file_exists { notification_payload.clone() } else { Value::Null }},
+            {"layer": "builtin", "value": json!({"type": "off"})},
+        ],
+    });
 
     json!({
         "runtime": {
@@ -2708,7 +3104,9 @@ pub(crate) async fn collect_debug_config_payload(
             "approval_mode_source": approval_mode_source,
             "personality_mode": personality_mode,
             "turn_notification": notification_payload,
+            "turn_notification_source": turn_notification_source,
             "exec_policy_mode": config.security.exec_policy_mode,
+            "source_chain": source_chain,
         },
         "checks": {
             "override_exists": runtime.temp_root.join("config/wunder.override.yaml").exists(),
@@ -2779,7 +3177,13 @@ async fn handle_slash_system(
         return Ok(());
     }
 
-    let prompt = build_current_system_prompt(runtime, global).await?;
+    let runtime_cloned = runtime.clone();
+    let global_cloned = global.clone();
+    let prompt = tokio::task::spawn(async move {
+        build_current_system_prompt(&runtime_cloned, &global_cloned).await
+    })
+    .await
+    .map_err(|err| anyhow!("build system prompt task cancelled: {err}"))??;
     let extra = runtime.load_extra_prompt();
     println!("{}", locale::tr(language.as_str(), "系统提示词", "system"));
     println!(
@@ -3269,6 +3673,300 @@ async fn handle_slash_attach(
     Ok(())
 }
 
+fn handle_slash_edit(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    queued_prompt: &mut Option<String>,
+    args: &str,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let seed = if args.trim().is_empty() {
+        queued_prompt.clone().unwrap_or_default()
+    } else {
+        args.trim().to_string()
+    };
+    let edited = match open_external_editor(runtime, Some(seed.as_str())) {
+        Ok(text) => text,
+        Err(err) => {
+            if is_zh {
+                println!("[错误] 外部编辑器失败: {err}");
+            } else {
+                println!("[error] external editor failed: {err}");
+            }
+            return Ok(());
+        }
+    };
+    let cleaned = edited.trim().to_string();
+    if cleaned.is_empty() {
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "编辑结果为空，已取消",
+                "editor output is empty, cancelled",
+            )
+        );
+        return Ok(());
+    }
+    *queued_prompt = Some(cleaned.clone());
+    if is_zh {
+        println!(
+            "已从外部编辑器加载草稿（{} 字符），回车将直接发送",
+            cleaned.chars().count()
+        );
+    } else {
+        println!(
+            "loaded draft from external editor ({} chars), press Enter to send",
+            cleaned.chars().count()
+        );
+    }
+    Ok(())
+}
+
+async fn handle_slash_branches(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    session_id: &mut String,
+    args: &str,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let is_zh = locale::is_zh_language(language.as_str());
+    let cleaned = args.trim();
+    if let Some(rest) = cleaned.strip_prefix("switch ") {
+        let target = rest.trim();
+        if target.is_empty() {
+            println!(
+                "{}",
+                locale::tr(
+                    language.as_str(),
+                    "用法: /branches [tree|list|switch <session_id>]",
+                    "usage: /branches [tree|list|switch <session_id>]",
+                )
+            );
+            return Ok(());
+        }
+        if !session_exists(runtime, target).await? {
+            if is_zh {
+                println!("未找到会话: {target}");
+            } else {
+                println!("session not found: {target}");
+            }
+            return Ok(());
+        }
+        *session_id = target.to_string();
+        runtime.save_session(session_id).ok();
+        if is_zh {
+            println!("已切换到会话: {session_id}");
+        } else {
+            println!("switched to session: {session_id}");
+        }
+        return Ok(());
+    }
+
+    if !cleaned.is_empty()
+        && !cleaned.eq_ignore_ascii_case("list")
+        && !cleaned.eq_ignore_ascii_case("tree")
+    {
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "用法: /branches [tree|list|switch <session_id>]",
+                "usage: /branches [tree|list|switch <session_id>]",
+            )
+        );
+        return Ok(());
+    }
+
+    let view_tree = !cleaned.eq_ignore_ascii_case("list");
+    let rows = collect_branch_view_rows(runtime, language.as_str(), view_tree).await?;
+    for row in rows {
+        println!("{row}");
+    }
+    Ok(())
+}
+
+pub(crate) fn open_external_editor(runtime: &CliRuntime, seed: Option<&str>) -> Result<String> {
+    let editor = std::env::var("VISUAL")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("EDITOR")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                "notepad".to_string()
+            } else {
+                "vi".to_string()
+            }
+        });
+
+    let mut parts = shell_words::split(editor.as_str())
+        .with_context(|| format!("parse editor command failed: {editor}"))?;
+    if parts.is_empty() {
+        return Err(anyhow!("editor command is empty"));
+    }
+    let program = parts.remove(0);
+
+    let dir = runtime.temp_root.join("editor");
+    fs::create_dir_all(&dir)?;
+    let draft_path = dir.join(format!("draft_{}.md", uuid::Uuid::new_v4().simple()));
+    fs::write(
+        &draft_path,
+        seed.unwrap_or_default().replace("\r\n", "\n").as_bytes(),
+    )?;
+
+    let status = std::process::Command::new(program.as_str())
+        .args(parts)
+        .arg(draft_path.as_os_str())
+        .status()
+        .with_context(|| format!("launch editor failed: {editor}"))?;
+    if !status.success() {
+        return Err(anyhow!("editor exited with status: {status}"));
+    }
+
+    let text = fs::read_to_string(&draft_path)
+        .with_context(|| format!("read editor draft failed: {}", draft_path.to_string_lossy()))?;
+    if let Err(err) = fs::remove_file(&draft_path) {
+        tracing::debug!(
+            "remove editor draft failed: {}, {}",
+            draft_path.display(),
+            err
+        );
+    }
+    Ok(text)
+}
+
+#[derive(Debug, Clone)]
+struct BranchViewItem {
+    session_id: String,
+    parent_session_id: Option<String>,
+    title: String,
+    updated_at: f64,
+}
+
+async fn collect_branch_items(runtime: &CliRuntime, limit: usize) -> Result<Vec<BranchViewItem>> {
+    let user_store = runtime.state.user_store.clone();
+    let user_id = runtime.user_id.clone();
+    let limit = limit.clamp(1, 800) as i64;
+    tokio::task::spawn_blocking(move || -> Result<Vec<BranchViewItem>> {
+        let (records, _) = user_store.list_chat_sessions(&user_id, None, None, 0, limit)?;
+        Ok(records
+            .into_iter()
+            .map(|record| {
+                let title = normalize_session_title(&record);
+                let parent_session_id = record
+                    .parent_session_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned);
+                BranchViewItem {
+                    session_id: record.session_id,
+                    parent_session_id,
+                    title,
+                    updated_at: record.updated_at.max(record.last_message_at),
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|err| anyhow!("list branch sessions cancelled: {err}"))?
+}
+
+pub(crate) async fn collect_branch_view_rows(
+    runtime: &CliRuntime,
+    language: &str,
+    tree_view: bool,
+) -> Result<Vec<String>> {
+    let mut items = collect_branch_items(runtime, 300).await?;
+    if items.is_empty() {
+        return Ok(vec![locale::tr(
+            language,
+            "暂无会话分支记录",
+            "no session branch records",
+        )]);
+    }
+    items.sort_by(|left, right| {
+        right
+            .updated_at
+            .partial_cmp(&left.updated_at)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    if !tree_view {
+        let mut rows = vec![locale::tr(language, "会话分支列表", "session branches")];
+        for item in items {
+            let parent = item.parent_session_id.unwrap_or_else(|| "-".to_string());
+            rows.push(format!(
+                "- {} <- {} | {}",
+                item.session_id, parent, item.title
+            ));
+        }
+        return Ok(rows);
+    }
+
+    use std::collections::{HashMap, HashSet};
+    let mut by_parent: HashMap<Option<String>, Vec<BranchViewItem>> = HashMap::new();
+    let mut all_ids = HashSet::new();
+    for item in &items {
+        all_ids.insert(item.session_id.clone());
+    }
+    for item in items {
+        let parent = item
+            .parent_session_id
+            .as_ref()
+            .filter(|value| all_ids.contains(value.as_str()))
+            .cloned();
+        by_parent.entry(parent).or_default().push(item);
+    }
+    for children in by_parent.values_mut() {
+        children.sort_by(|left, right| {
+            right
+                .updated_at
+                .partial_cmp(&left.updated_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
+
+    let mut rows = vec![locale::tr(language, "会话分支树", "session branch tree")];
+    let roots = by_parent.remove(&None).unwrap_or_default();
+    for root in roots {
+        rows.push(format!("{}  {}", root.session_id, root.title));
+        append_branch_children_rows(&mut rows, &by_parent, root.session_id.as_str(), "");
+    }
+    Ok(rows)
+}
+
+fn append_branch_children_rows(
+    rows: &mut Vec<String>,
+    by_parent: &std::collections::HashMap<Option<String>, Vec<BranchViewItem>>,
+    parent: &str,
+    prefix: &str,
+) {
+    let key = Some(parent.to_string());
+    let Some(children) = by_parent.get(&key) else {
+        return;
+    };
+    let total = children.len();
+    for (index, child) in children.iter().enumerate() {
+        let is_last = index + 1 == total;
+        let connector = if is_last { "└─" } else { "├─" };
+        rows.push(format!(
+            "{prefix}{connector} {}  {}",
+            child.session_id, child.title
+        ));
+        let mut next_prefix = String::from(prefix);
+        next_prefix.push_str(if is_last { "   " } else { "│  " });
+        append_branch_children_rows(rows, by_parent, child.session_id.as_str(), &next_prefix);
+    }
+}
+
 fn handle_slash_notify(runtime: &CliRuntime, global: &GlobalArgs, args: &str) -> Result<()> {
     let language = locale::resolve_cli_language(global);
     let is_zh = locale::is_zh_language(language.as_str());
@@ -3280,14 +3978,14 @@ fn handle_slash_notify(runtime: &CliRuntime, global: &GlobalArgs, args: &str) ->
                 "当前回合通知: {}",
                 describe_turn_notification(&config, language.as_str())
             );
-            println!("用法: /notify [show|off|bell|<command...>]");
+            println!("用法: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]");
             println!("示例: /notify powershell -NoProfile -Command \"Write-Output done\"");
         } else {
             println!(
                 "current turn notification: {}",
                 describe_turn_notification(&config, language.as_str())
             );
-            println!("usage: /notify [show|off|bell|<command...>]");
+            println!("usage: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]");
             println!("example: /notify powershell -NoProfile -Command \"Write-Output done\"");
         }
         return Ok(());
@@ -3309,34 +4007,87 @@ fn handle_slash_notify(runtime: &CliRuntime, global: &GlobalArgs, args: &str) ->
         return Ok(());
     }
 
-    if cleaned.eq_ignore_ascii_case("bell") {
-        let config = TurnNotificationConfig::Bell;
+    if let Some(raw_when) = cleaned.strip_prefix("when ") {
+        let Some(when) = parse_turn_notification_when(raw_when) else {
+            println!(
+                "{}",
+                locale::tr(
+                    language.as_str(),
+                    "用法: /notify when <always|unfocused>",
+                    "usage: /notify when <always|unfocused>",
+                )
+            );
+            return Ok(());
+        };
+        let existing = runtime.load_turn_notification_config();
+        let updated = apply_notification_when(existing, when);
+        runtime.save_turn_notification_config(&updated)?;
+        println!(
+            "{}",
+            locale::tr(
+                language.as_str(),
+                "通知触发时机已更新",
+                "notification trigger condition updated",
+            )
+        );
+        println!(
+            "{}",
+            describe_turn_notification(&updated, language.as_str())
+        );
+        return Ok(());
+    }
+
+    if cleaned.eq_ignore_ascii_case("bell") || cleaned.eq_ignore_ascii_case("osc9") {
+        let when = TurnNotificationWhen::Always;
+        let config = if cleaned.eq_ignore_ascii_case("bell") {
+            TurnNotificationConfig::Bell { when }
+        } else {
+            TurnNotificationConfig::Osc9 { when }
+        };
         runtime.save_turn_notification_config(&config)?;
         println!(
             "{}",
             locale::tr(
                 language.as_str(),
-                "回合通知已切换为 BEL 铃声",
-                "turn notifications set to BEL",
+                "回合通知方式已更新",
+                "turn notification backend updated",
             )
         );
+        println!("{}", describe_turn_notification(&config, language.as_str()));
         return Ok(());
     }
 
-    let argv =
+    let mut argv =
         shell_words::split(cleaned).map_err(|err| anyhow!("parse /notify args failed: {err}"))?;
     if argv.is_empty() {
         println!(
             "{}",
             locale::tr(
                 language.as_str(),
-                "用法: /notify [show|off|bell|<command...>]",
-                "usage: /notify [show|off|bell|<command...>]",
+                "用法: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]",
+                "usage: /notify [show|off|bell|osc9|when <always|unfocused>|<command...>]",
             )
         );
         return Ok(());
     }
-    let config = TurnNotificationConfig::Command { argv };
+
+    let mut when = TurnNotificationWhen::Always;
+    if argv.len() >= 2 && argv[argv.len() - 2].eq_ignore_ascii_case("--when") {
+        if let Some(parsed) = parse_turn_notification_when(argv[argv.len() - 1].as_str()) {
+            when = parsed;
+            argv.truncate(argv.len() - 2);
+        }
+    } else if let Some(last) = argv.last() {
+        if let Some(parsed) = parse_turn_notification_when(last.as_str()) {
+            when = parsed;
+            argv.truncate(argv.len() - 1);
+        }
+    }
+    if argv.is_empty() {
+        return Err(anyhow!("notify command is empty"));
+    }
+
+    let config = TurnNotificationConfig::Command { argv, when };
     runtime.save_turn_notification_config(&config)?;
     if is_zh {
         println!(
@@ -3358,15 +4109,30 @@ pub(crate) fn describe_turn_notification(
 ) -> String {
     match config {
         TurnNotificationConfig::Off => locale::tr(language, "关闭", "off"),
-        TurnNotificationConfig::Bell => locale::tr(language, "BEL 铃声", "BEL"),
-        TurnNotificationConfig::Command { argv } => {
+        TurnNotificationConfig::Bell { when } => format!(
+            "{}{}",
+            locale::tr(language, "BEL 铃声", "BEL"),
+            describe_notification_when_suffix(when, language)
+        ),
+        TurnNotificationConfig::Osc9 { when } => format!(
+            "{}{}",
+            locale::tr(language, "OSC9 终端通知", "OSC9"),
+            describe_notification_when_suffix(when, language)
+        ),
+        TurnNotificationConfig::Command { argv, when } => {
             let rendered = argv.join(" ");
             if rendered.trim().is_empty() {
                 locale::tr(language, "自定义命令(空)", "command(empty)")
             } else if locale::is_zh_language(language) {
-                format!("命令: {rendered}")
+                format!(
+                    "命令: {rendered}{}",
+                    describe_notification_when_suffix(when, language)
+                )
             } else {
-                format!("command: {rendered}")
+                format!(
+                    "command: {rendered}{}",
+                    describe_notification_when_suffix(when, language)
+                )
             }
         }
     }
@@ -3375,11 +4141,70 @@ pub(crate) fn describe_turn_notification(
 pub(crate) fn serialize_turn_notification(config: &TurnNotificationConfig) -> Value {
     match config {
         TurnNotificationConfig::Off => json!({ "type": "off" }),
-        TurnNotificationConfig::Bell => json!({ "type": "bell" }),
-        TurnNotificationConfig::Command { argv } => json!({
+        TurnNotificationConfig::Bell { when } => json!({
+            "type": "bell",
+            "when": when_to_str(when),
+        }),
+        TurnNotificationConfig::Osc9 { when } => json!({
+            "type": "osc9",
+            "when": when_to_str(when),
+        }),
+        TurnNotificationConfig::Command { argv, when } => json!({
             "type": "command",
             "argv": argv,
+            "when": when_to_str(when),
         }),
+    }
+}
+
+fn when_to_str(when: &TurnNotificationWhen) -> &'static str {
+    match when {
+        TurnNotificationWhen::Always => "always",
+        TurnNotificationWhen::Unfocused => "unfocused",
+    }
+}
+
+pub(crate) fn parse_turn_notification_when(raw: &str) -> Option<TurnNotificationWhen> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "always" | "all" => Some(TurnNotificationWhen::Always),
+        "unfocused" | "blur" | "background" => Some(TurnNotificationWhen::Unfocused),
+        _ => None,
+    }
+}
+
+fn describe_notification_when_suffix(when: &TurnNotificationWhen, language: &str) -> String {
+    match when {
+        TurnNotificationWhen::Always => String::new(),
+        TurnNotificationWhen::Unfocused => {
+            if locale::is_zh_language(language) {
+                "（仅失焦）".to_string()
+            } else {
+                " (unfocused only)".to_string()
+            }
+        }
+    }
+}
+
+fn notification_when(config: &TurnNotificationConfig) -> TurnNotificationWhen {
+    match config {
+        TurnNotificationConfig::Off => TurnNotificationWhen::Always,
+        TurnNotificationConfig::Bell { when } => when.clone(),
+        TurnNotificationConfig::Osc9 { when } => when.clone(),
+        TurnNotificationConfig::Command { when, .. } => when.clone(),
+    }
+}
+
+pub(crate) fn apply_notification_when(
+    config: TurnNotificationConfig,
+    when: TurnNotificationWhen,
+) -> TurnNotificationConfig {
+    match config {
+        TurnNotificationConfig::Off => TurnNotificationConfig::Off,
+        TurnNotificationConfig::Bell { .. } => TurnNotificationConfig::Bell { when },
+        TurnNotificationConfig::Osc9 { .. } => TurnNotificationConfig::Osc9 { when },
+        TurnNotificationConfig::Command { argv, .. } => {
+            TurnNotificationConfig::Command { argv, when }
+        }
     }
 }
 
@@ -3428,7 +4253,7 @@ async fn handle_slash_model(runtime: &CliRuntime, global: &GlobalArgs, args: &st
     let is_zh = locale::is_zh_language(language.as_str());
     let target = args.trim();
     if target.is_empty() {
-        show_model_status(runtime, global).await?;
+        Box::pin(show_model_status(runtime, global)).await?;
         return Ok(());
     }
 
@@ -3471,7 +4296,7 @@ async fn handle_slash_model(runtime: &CliRuntime, global: &GlobalArgs, args: &st
     } else {
         println!("model set: {target}");
     }
-    show_model_status(runtime, global).await?;
+    Box::pin(show_model_status(runtime, global)).await?;
     Ok(())
 }
 
@@ -3815,6 +4640,7 @@ async fn handle_mcp(runtime: &CliRuntime, global: &GlobalArgs, command: McpComma
         McpSubcommand::Disable(cmd) => mcp_toggle(runtime, global, cmd, false).await,
         McpSubcommand::Login(cmd) => mcp_login(runtime, global, cmd).await,
         McpSubcommand::Logout(cmd) => mcp_logout(runtime, global, cmd).await,
+        McpSubcommand::Test(cmd) => mcp_test(runtime, global, cmd).await,
     }
 }
 
@@ -4235,6 +5061,27 @@ async fn mcp_logout(
         println!("已清除 MCP 鉴权凭据: {}", command.name.trim());
     } else {
         println!("mcp auth cleared: {}", command.name.trim());
+    }
+    Ok(())
+}
+
+async fn mcp_test(
+    runtime: &CliRuntime,
+    global: &GlobalArgs,
+    command: McpNameCommand,
+) -> Result<()> {
+    let language = locale::resolve_cli_language(global);
+    let target = command.name.trim();
+    if target.is_empty() {
+        return Err(anyhow!(locale::tr(
+            language.as_str(),
+            "MCP 名称不能为空",
+            "mcp name is required",
+        )));
+    }
+    let args = format!("test {target}");
+    for line in execute_apps_command(runtime, language.as_str(), args.as_str()).await? {
+        println!("{line}");
     }
     Ok(())
 }
@@ -5656,12 +6503,19 @@ pub(crate) fn emit_turn_complete_notification(
     session_id: &str,
     final_event: &FinalEvent,
     source: &str,
+    terminal_focused: Option<bool>,
 ) {
     let config = runtime.load_turn_notification_config();
     if matches!(config, TurnNotificationConfig::Off) {
         return;
     }
+    if matches!(notification_when(&config), TurnNotificationWhen::Unfocused)
+        && terminal_focused.unwrap_or(true)
+    {
+        return;
+    }
 
+    let summary = truncate_preview(&final_event.answer, 180);
     let payload = json!({
         "type": "agent-turn-complete",
         "source": source,
@@ -5669,7 +6523,7 @@ pub(crate) fn emit_turn_complete_notification(
         "user_id": runtime.user_id,
         "cwd": runtime.launch_dir,
         "stop_reason": final_event.stop_reason,
-        "answer_preview": truncate_preview(&final_event.answer, 180),
+        "answer_preview": summary,
         "ts": SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|value| value.as_secs_f64())
@@ -5679,11 +6533,20 @@ pub(crate) fn emit_turn_complete_notification(
 
     match config {
         TurnNotificationConfig::Off => {}
-        TurnNotificationConfig::Bell => {
+        TurnNotificationConfig::Bell { .. } => {
             eprint!("\u{0007}");
             let _ = io::stderr().flush();
         }
-        TurnNotificationConfig::Command { argv } => {
+        TurnNotificationConfig::Osc9 { .. } => {
+            let message = if summary.trim().is_empty() {
+                "wunder-cli turn complete".to_string()
+            } else {
+                summary
+            };
+            eprint!("\u{1b}]9;{message}\u{1b}\\");
+            let _ = io::stderr().flush();
+        }
+        TurnNotificationConfig::Command { argv, .. } => {
             if argv.is_empty() {
                 return;
             }
@@ -5755,7 +6618,7 @@ async fn run_prompt_once(
         } else {
             println!("{}", response.answer);
         }
-        emit_turn_complete_notification(runtime, session_id, &final_event, "line-chat");
+        emit_turn_complete_notification(runtime, session_id, &final_event, "line-chat", None);
         return Ok(final_event);
     }
 
@@ -5769,7 +6632,7 @@ async fn run_prompt_once(
         }
     }
     renderer.finish();
-    emit_turn_complete_notification(runtime, session_id, &final_event, "line-chat");
+    emit_turn_complete_notification(runtime, session_id, &final_event, "line-chat", None);
     Ok(final_event)
 }
 
@@ -5990,6 +6853,260 @@ pub(crate) fn print_git_diff_summary(
 ) -> Result<()> {
     for line in git_diff_summary_lines_with_language(workspace_root, language)? {
         println!("{line}");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DiffSlashAction {
+    Summary,
+    Files,
+    Show(String),
+    Hunks(String),
+    Stage(String),
+    Unstage(String),
+    Revert(String),
+}
+
+pub(crate) fn parse_diff_slash_action(args: &str) -> Result<DiffSlashAction> {
+    let cleaned = args.trim();
+    if cleaned.is_empty()
+        || cleaned.eq_ignore_ascii_case("summary")
+        || cleaned.eq_ignore_ascii_case("status")
+    {
+        return Ok(DiffSlashAction::Summary);
+    }
+    if cleaned.eq_ignore_ascii_case("files") || cleaned.eq_ignore_ascii_case("tree") {
+        return Ok(DiffSlashAction::Files);
+    }
+
+    let mut parts = cleaned.splitn(2, char::is_whitespace);
+    let action = parts.next().unwrap_or_default().to_ascii_lowercase();
+    let value = parts.next().unwrap_or_default().trim().to_string();
+    if value.is_empty() {
+        if action == "show" || action == "file" {
+            return Err(anyhow!("usage: /diff show <index|path>"));
+        }
+        if action == "hunks" || action == "hunk" {
+            return Err(anyhow!("usage: /diff hunks <index|path>"));
+        }
+        if action == "stage" {
+            return Err(anyhow!("usage: /diff stage <index|path>"));
+        }
+        if action == "unstage" {
+            return Err(anyhow!("usage: /diff unstage <index|path>"));
+        }
+        if action == "revert" || action == "discard" {
+            return Err(anyhow!("usage: /diff revert <index|path>"));
+        }
+    }
+
+    match action.as_str() {
+        "show" | "file" => Ok(DiffSlashAction::Show(value)),
+        "hunks" | "hunk" => Ok(DiffSlashAction::Hunks(value)),
+        "stage" => Ok(DiffSlashAction::Stage(value)),
+        "unstage" => Ok(DiffSlashAction::Unstage(value)),
+        "revert" | "discard" => Ok(DiffSlashAction::Revert(value)),
+        _ => Ok(DiffSlashAction::Show(cleaned.to_string())),
+    }
+}
+
+pub(crate) fn git_changed_files_with_status(
+    workspace_root: &std::path::Path,
+) -> Result<Vec<(String, String)>> {
+    let Some(status_output) = run_git(workspace_root, ["status", "--porcelain"]) else {
+        return Err(anyhow!("git status --porcelain failed"));
+    };
+    let mut rows = Vec::new();
+    for row in status_output.lines() {
+        if row.trim().is_empty() {
+            continue;
+        }
+        let status = row.chars().take(2).collect::<String>();
+        let path = row.get(3..).unwrap_or("").trim();
+        if path.is_empty() {
+            continue;
+        }
+        let path = path.replace('\\', "/");
+        let path = path
+            .split(" -> ")
+            .last()
+            .map(str::trim)
+            .unwrap_or(path.as_str())
+            .to_string();
+        rows.push((status, path));
+    }
+    Ok(rows)
+}
+
+pub(crate) fn git_changed_files(workspace_root: &std::path::Path) -> Result<Vec<String>> {
+    Ok(git_changed_files_with_status(workspace_root)?
+        .into_iter()
+        .map(|(_, path)| path)
+        .collect())
+}
+
+pub(crate) fn resolve_diff_target(workspace_root: &std::path::Path, value: &str) -> Result<String> {
+    let cleaned = value.trim();
+    if cleaned.is_empty() {
+        return Err(anyhow!("diff target is empty"));
+    }
+    let changed = git_changed_files(workspace_root)?;
+    if let Ok(index) = cleaned.parse::<usize>() {
+        if index == 0 || index > changed.len() {
+            return Err(anyhow!("diff index out of range: {index}"));
+        }
+        return Ok(changed[index - 1].clone());
+    }
+    if changed
+        .iter()
+        .any(|path| path.eq_ignore_ascii_case(cleaned))
+    {
+        return Ok(cleaned.replace('\\', "/"));
+    }
+    if let Some(path) = changed.iter().find(|path| {
+        path.to_ascii_lowercase()
+            .contains(cleaned.to_ascii_lowercase().as_str())
+    }) {
+        return Ok(path.clone());
+    }
+    Ok(cleaned.replace('\\', "/"))
+}
+
+pub(crate) fn diff_file_lines_with_language(
+    workspace_root: &std::path::Path,
+    target: &str,
+    language: &str,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let resolved = match resolve_diff_target(workspace_root, target) {
+        Ok(path) => path,
+        Err(err) => {
+            lines.push(locale::tr(language, "文件 diff", "file diff"));
+            lines.push(format!("[error] {err}"));
+            return lines;
+        }
+    };
+    lines.push(locale::tr(language, "文件 diff", "file diff"));
+    lines.push(format!("- target: {resolved}"));
+    let output = run_git(workspace_root, ["diff", "--", resolved.as_str()])
+        .or_else(|| {
+            run_git(
+                workspace_root,
+                ["diff", "--cached", "--", resolved.as_str()],
+            )
+        })
+        .unwrap_or_default();
+    if output.trim().is_empty() {
+        lines.push(locale::tr(
+            language,
+            "- 当前目标没有可显示的 diff",
+            "- no diff output for target",
+        ));
+        return lines;
+    }
+    lines.extend(
+        truncate_chars(output.as_str(), 16_000)
+            .lines()
+            .map(ToString::to_string),
+    );
+    lines
+}
+
+pub(crate) fn diff_hunk_lines_with_language(
+    workspace_root: &std::path::Path,
+    target: &str,
+    language: &str,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    let resolved = match resolve_diff_target(workspace_root, target) {
+        Ok(path) => path,
+        Err(err) => {
+            lines.push(locale::tr(language, "diff hunk 列表", "diff hunk list"));
+            lines.push(format!("[error] {err}"));
+            return lines;
+        }
+    };
+    let diff = run_git(workspace_root, ["diff", "--", resolved.as_str()])
+        .or_else(|| {
+            run_git(
+                workspace_root,
+                ["diff", "--cached", "--", resolved.as_str()],
+            )
+        })
+        .unwrap_or_default();
+    lines.push(locale::tr(language, "diff hunk 列表", "diff hunk list"));
+    lines.push(format!("- target: {resolved}"));
+    let mut index = 0usize;
+    for row in diff.lines() {
+        if row.starts_with("@@") {
+            index = index.saturating_add(1);
+            lines.push(format!("{index:>2}. {row}"));
+        }
+    }
+    if index == 0 {
+        lines.push(locale::tr(
+            language,
+            "- 没有可见 hunk（可能文件只在 staged 或无变更）",
+            "- no visible hunks found",
+        ));
+    }
+    lines
+}
+
+pub(crate) fn diff_files_lines_with_language(
+    workspace_root: &std::path::Path,
+    language: &str,
+) -> Vec<String> {
+    let mut lines = vec![locale::tr(language, "变更文件树", "changed files")];
+    let rows = match git_changed_files_with_status(workspace_root) {
+        Ok(rows) => rows,
+        Err(err) => {
+            lines.push(format!("[error] {err}"));
+            return lines;
+        }
+    };
+    if rows.is_empty() {
+        lines.push(locale::tr(
+            language,
+            "- 当前没有检测到变更",
+            "- no changed files detected",
+        ));
+        return lines;
+    }
+    for (index, (status, path)) in rows.into_iter().enumerate() {
+        lines.push(format!("{:>2}. [{status}] {path}", index + 1));
+    }
+    lines
+}
+
+pub(crate) fn run_git_file_action(
+    workspace_root: &std::path::Path,
+    target: &str,
+    action: &str,
+) -> Result<()> {
+    let resolved = resolve_diff_target(workspace_root, target)?;
+    let mut command = std::process::Command::new("git");
+    command.current_dir(workspace_root);
+    match action {
+        "stage" => {
+            command.args(["add", "--", resolved.as_str()]);
+        }
+        "unstage" => {
+            command.args(["restore", "--staged", "--", resolved.as_str()]);
+        }
+        "revert" => {
+            command.args(["restore", "--", resolved.as_str()]);
+        }
+        _ => return Err(anyhow!("unknown diff file action: {action}")),
+    }
+    let output = command.output().context("execute git action failed")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err(anyhow!("git action failed for {resolved}"));
+        }
+        return Err(anyhow!("{stderr}"));
     }
     Ok(())
 }
@@ -6334,5 +7451,56 @@ mod tests {
     fn preview_backtrack_line_truncates_text() {
         assert_eq!(preview_backtrack_line("abcdef", 4), "abcd...");
         assert_eq!(preview_backtrack_line("abc", 10), "abc");
+    }
+
+    #[test]
+    fn parse_turn_notification_when_supports_aliases() {
+        assert_eq!(
+            parse_turn_notification_when("always"),
+            Some(TurnNotificationWhen::Always)
+        );
+        assert_eq!(
+            parse_turn_notification_when("blur"),
+            Some(TurnNotificationWhen::Unfocused)
+        );
+        assert_eq!(parse_turn_notification_when("unknown"), None);
+    }
+
+    #[test]
+    fn apply_notification_when_updates_variant_payload() {
+        let command = TurnNotificationConfig::Command {
+            argv: vec!["echo".to_string(), "done".to_string()],
+            when: TurnNotificationWhen::Always,
+        };
+        let updated = apply_notification_when(command, TurnNotificationWhen::Unfocused);
+        assert_eq!(
+            updated,
+            TurnNotificationConfig::Command {
+                argv: vec!["echo".to_string(), "done".to_string()],
+                when: TurnNotificationWhen::Unfocused,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_diff_slash_action_supports_subcommands() {
+        assert_eq!(
+            parse_diff_slash_action("files").expect("files action"),
+            DiffSlashAction::Files
+        );
+        assert_eq!(
+            parse_diff_slash_action("show 2").expect("show action"),
+            DiffSlashAction::Show("2".to_string())
+        );
+        assert_eq!(
+            parse_diff_slash_action("stage src/main.rs").expect("stage action"),
+            DiffSlashAction::Stage("src/main.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_diff_slash_action_reports_usage_for_missing_target() {
+        let err = parse_diff_slash_action("stage").expect_err("stage should require target");
+        assert!(err.to_string().contains("usage: /diff stage <index|path>"));
     }
 }
