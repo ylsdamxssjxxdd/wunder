@@ -29,8 +29,8 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let transcript_lines: Vec<Line> = render_window
         .entries
         .into_iter()
-        .map(|entry| {
-            log_line(
+        .flat_map(|entry| {
+            log_lines(
                 entry.kind,
                 entry.text,
                 selected_transcript.is_some_and(|selected| selected == entry.global_index),
@@ -297,7 +297,7 @@ fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh:
     frame.render_widget(widget, popup);
 }
 
-fn log_line(kind: LogKind, text: &str, selected: bool) -> Line<'static> {
+fn log_lines(kind: LogKind, text: &str, selected: bool) -> Vec<Line<'static>> {
     let style = match kind {
         LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
         LogKind::User => Style::default().fg(Color::LightBlue),
@@ -317,8 +317,17 @@ fn log_line(kind: LogKind, text: &str, selected: bool) -> Line<'static> {
         style
     };
 
-    Line::from(Span::styled(
-        format!("{}{text}", super::app::log_prefix(kind)),
-        style,
-    ))
+    let mut lines = Vec::new();
+    let mut segments = text.split('\n');
+    let prefix = super::app::helpers::log_prefix(kind);
+    if let Some(first) = segments.next() {
+        lines.push(Line::from(Span::styled(format!("{prefix}{first}"), style)));
+    }
+    for segment in segments {
+        lines.push(Line::from(Span::styled(segment.to_string(), style)));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(prefix.to_string(), style)));
+    }
+    lines
 }
