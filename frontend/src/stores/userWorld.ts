@@ -1,0 +1,652 @@
+import { defineStore } from 'pinia';
+
+import {
+  createOrGetUserWorldConversation,
+  listUserWorldContacts,
+  listUserWorldConversations,
+  listUserWorldMessages,
+  markUserWorldRead,
+  openUserWorldSocket,
+  sendUserWorldMessage,
+  streamUserWorldEvents
+} from '@/api/userWorld';
+import { useAuthStore } from '@/stores/auth';
+import { consumeSseStream } from '@/utils/sse';
+import { createWsMultiplexer } from '@/utils/ws';
+
+type UserWorldMessage = {
+  message_id: number;
+  conversation_id: string;
+  sender_user_id: string;
+  content: string;
+  content_type?: string;
+  client_msg_id?: string | null;
+  created_at: number;
+};
+
+type UserWorldConversation = {
+  conversation_id: string;
+  conversation_type: string;
+  peer_user_id: string;
+  last_read_message_id?: number | null;
+  unread_count_cache: number;
+  pinned?: boolean;
+  muted?: boolean;
+  updated_at?: number;
+  last_message_at?: number;
+  last_message_id?: number | null;
+  last_message_preview?: string | null;
+};
+
+type UserWorldContact = {
+  user_id: string;
+  username: string;
+  status?: string;
+  unit_id?: string | null;
+  conversation_id?: string | null;
+  last_message_preview?: string | null;
+  last_message_at?: number | null;
+  unread_count?: number;
+};
+
+type WsError = Error & {
+  phase?: string;
+};
+
+const DEFAULT_TRANSPORT: 'ws' | 'sse' = 'ws';
+const WATCH_RETRY_DELAY_MS = 1000;
+const MAX_WATCH_CONVERSATIONS = 30;
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+const parseEventPayload = (dataText: string): Record<string, unknown> => {
+  try {
+    return asRecord(JSON.parse(dataText));
+  } catch {
+    return {};
+  }
+};
+
+const toNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const isTimeoutError = (value: unknown): boolean => {
+  const code = String((value as { code?: unknown })?.code || '').trim().toUpperCase();
+  return code === 'ECONNABORTED';
+};
+
+const nowId = (): string => `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const wsClient = createWsMultiplexer(() => openUserWorldSocket(), {
+  idleTimeoutMs: 30000,
+  connectTimeoutMs: 10000
+});
+
+let wsUnavailableUntil = 0;
+let wsRequestSeq = 0;
+
+const watchRuntime = new Map<
+  string,
+  {
+    controller: AbortController;
+    requestId: string;
+    transport: 'ws' | 'sse';
+  }
+>();
+
+const buildRequestId = () => {
+  wsRequestSeq = (wsRequestSeq + 1) % 1_000_000;
+  return `uw_req_${Date.now().toString(36)}_${wsRequestSeq}`;
+};
+
+const markWsUnavailable = (ttlMs = 60000) => {
+  wsUnavailableUntil = Date.now() + Math.max(5000, ttlMs);
+};
+
+const resolveTransport = (): 'ws' | 'sse' => {
+  if (typeof WebSocket === 'undefined') {
+    return 'sse';
+  }
+  if (wsUnavailableUntil && Date.now() < wsUnavailableUntil) {
+    return 'sse';
+  }
+  const stored = localStorage.getItem('user_world_stream_transport');
+  if (stored === 'ws' || stored === 'sse') {
+    return stored;
+  }
+  return DEFAULT_TRANSPORT;
+};
+
+export const useUserWorldStore = defineStore('user-world', {
+  state: () => ({
+    contacts: [] as UserWorldContact[],
+    conversations: [] as UserWorldConversation[],
+    activeConversationId: '' as string,
+    messagesByConversation: {} as Record<string, UserWorldMessage[]>,
+    unreadByConversation: {} as Record<string, number>,
+    loading: false,
+    sending: false,
+    initialized: false,
+    error: '' as string,
+    streamTransport: DEFAULT_TRANSPORT as 'ws' | 'sse'
+  }),
+  getters: {
+    activeConversation(state): UserWorldConversation | null {
+      return (
+        state.conversations.find((item) => item.conversation_id === state.activeConversationId) || null
+      );
+    },
+    activeMessages(state): UserWorldMessage[] {
+      return state.messagesByConversation[state.activeConversationId] || [];
+    }
+  },
+  actions: {
+    async bootstrap(force = false) {
+      if (this.initialized && !force) {
+        return;
+      }
+      this.loading = true;
+      this.error = '';
+      try {
+        await Promise.all([this.refreshContacts(), this.refreshConversations()]);
+        if (!this.activeConversationId && this.conversations.length) {
+          this.activeConversationId = this.conversations[0].conversation_id;
+        }
+        if (this.activeConversationId) {
+          await this.loadMessages(this.activeConversationId);
+          await this.markConversationRead(this.activeConversationId);
+        }
+        await this.syncConversationWatchers();
+        this.initialized = true;
+      } catch (error) {
+        const source = error as { message?: string };
+        this.error = source?.message || 'user world bootstrap failed';
+        throw error;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async refreshContacts(keyword = '') {
+      const params: Record<string, unknown> = { offset: 0, limit: 500 };
+      if (keyword.trim()) {
+        params.keyword = keyword.trim();
+      }
+      const response = await listUserWorldContacts(params);
+      const data = asRecord(response.data?.data);
+      const items = Array.isArray(data.items) ? (data.items as UserWorldContact[]) : [];
+      this.contacts = items.map((item) => ({
+        ...item,
+        unread_count: toNumber(item.unread_count)
+      }));
+    },
+
+    async refreshConversations() {
+      const response = await listUserWorldConversations({ offset: 0, limit: 500 });
+      const data = asRecord(response.data?.data);
+      const items = Array.isArray(data.items) ? (data.items as UserWorldConversation[]) : [];
+      this.conversations = items.map((item) => ({
+        ...item,
+        unread_count_cache: toNumber(item.unread_count_cache)
+      }));
+      this.unreadByConversation = this.conversations.reduce<Record<string, number>>((acc, item) => {
+        acc[item.conversation_id] = toNumber(item.unread_count_cache);
+        return acc;
+      }, {});
+      await this.syncConversationWatchers();
+    },
+
+    async openConversationByPeer(peerUserId: string) {
+      const peer = peerUserId.trim();
+      if (!peer) return;
+      const response = await createOrGetUserWorldConversation({ peer_user_id: peer });
+      const conversation = asRecord(response.data?.data) as unknown as UserWorldConversation;
+      if (!conversation?.conversation_id) return;
+      this.upsertConversation(conversation);
+      await this.setActiveConversation(conversation.conversation_id);
+      await this.syncConversationWatchers();
+    },
+
+    async setActiveConversation(conversationId: string) {
+      const cleaned = String(conversationId || '').trim();
+      if (!cleaned) return;
+      this.activeConversationId = cleaned;
+      await this.loadMessages(cleaned);
+      await this.markConversationRead(cleaned);
+    },
+
+    async loadMessages(conversationId: string, options: { beforeMessageId?: number } = {}) {
+      const cleaned = String(conversationId || '').trim();
+      if (!cleaned) return;
+      const params: Record<string, unknown> = { limit: 100 };
+      if (Number.isFinite(options.beforeMessageId) && Number(options.beforeMessageId) > 0) {
+        params.before_message_id = Number(options.beforeMessageId);
+      }
+      const response = await listUserWorldMessages(cleaned, params);
+      const data = asRecord(response.data?.data);
+      const items = Array.isArray(data.items) ? (data.items as UserWorldMessage[]) : [];
+      const normalized = items
+        .map((item) => ({
+          ...item,
+          message_id: toNumber(item.message_id),
+          created_at: toNumber(item.created_at)
+        }))
+        .sort((left, right) => left.message_id - right.message_id);
+      this.messagesByConversation[cleaned] = normalized;
+    },
+
+    async sendToActiveConversation(content: string) {
+      const text = content.trim();
+      if (!text || !this.activeConversationId) return;
+      const conversationId = this.activeConversationId;
+      this.sending = true;
+      this.error = '';
+      const clientMsgId = nowId();
+      try {
+        const transport = resolveTransport();
+        this.streamTransport = transport;
+        localStorage.setItem('user_world_stream_transport', transport);
+        let sentByWs = false;
+        if (transport === 'ws') {
+          const requestId = buildRequestId();
+          let ackMessage: UserWorldMessage | null = null;
+          try {
+            await wsClient.request({
+              requestId,
+              sessionId: conversationId,
+              message: {
+                type: 'send',
+                request_id: requestId,
+                payload: {
+                  conversation_id: conversationId,
+                  content: text,
+                  content_type: 'text',
+                  client_msg_id: clientMsgId
+                }
+              },
+              onEvent: (eventType, dataText) => {
+                if (eventType === 'ack') {
+                  const payload = parseEventPayload(dataText);
+                  const data = asRecord(payload.data || payload);
+                  const message = asRecord(data.message);
+                  if (message.message_id) {
+                    ackMessage = message as unknown as UserWorldMessage;
+                  }
+                } else if (eventType.startsWith('uw.')) {
+                  this.applyRealtimeEvent(conversationId, eventType, dataText);
+                }
+              }
+            });
+          } catch (error) {
+            const wsError = error as WsError;
+            if (wsError?.phase === 'connect') {
+              markWsUnavailable();
+            }
+          }
+          if (ackMessage) {
+            this.upsertMessage(conversationId, ackMessage);
+            sentByWs = true;
+          }
+        }
+        if (sentByWs) return;
+        const response = await sendUserWorldMessage(conversationId, {
+          content: text,
+          content_type: 'text',
+          client_msg_id: clientMsgId
+        });
+        const data = asRecord(response.data?.data);
+        const message = asRecord(data.message) as unknown as UserWorldMessage;
+        if (message?.message_id) {
+          this.upsertMessage(conversationId, message);
+        }
+      } catch (error) {
+        if (isTimeoutError(error)) {
+          try {
+            await this.loadMessages(conversationId);
+            const list = this.messagesByConversation[conversationId] || [];
+            const delivered = list.some((item) => item.client_msg_id && item.client_msg_id === clientMsgId);
+            if (delivered) {
+              return;
+            }
+          } catch {
+            // ignore secondary refresh failure
+          }
+        }
+        const source = error as { message?: string };
+        this.error = source?.message || 'send user world message failed';
+        throw error;
+      } finally {
+        this.sending = false;
+      }
+    },
+
+    async markConversationRead(conversationId: string) {
+      const cleaned = String(conversationId || '').trim();
+      if (!cleaned) return;
+      try {
+        const latestMessageId = this.resolveLatestMessageId(cleaned);
+        const payload =
+          latestMessageId > 0 ? { last_read_message_id: latestMessageId } : { last_read_message_id: null };
+        const transport = resolveTransport();
+        if (transport === 'ws') {
+          const requestId = buildRequestId();
+          await wsClient.request({
+            requestId,
+            message: {
+              type: 'read',
+              request_id: requestId,
+              payload: {
+                conversation_id: cleaned,
+                last_read_message_id: payload.last_read_message_id
+              }
+            },
+            onEvent: (eventType, dataText) => {
+              if (eventType.startsWith('uw.')) {
+                this.applyRealtimeEvent(cleaned, eventType, dataText);
+              }
+            }
+          });
+        } else {
+          await markUserWorldRead(cleaned, payload);
+        }
+      } catch {
+        // ignore read failures to avoid blocking main flow
+      }
+      this.unreadByConversation[cleaned] = 0;
+      const conversation = this.conversations.find((item) => item.conversation_id === cleaned);
+      if (conversation) {
+        conversation.unread_count_cache = 0;
+      }
+      const contact = this.contacts.find((item) => item.conversation_id === cleaned);
+      if (contact) {
+        contact.unread_count = 0;
+      }
+    },
+
+    async syncConversationWatchers() {
+      const recentIds = this.conversations
+        .slice(0, MAX_WATCH_CONVERSATIONS)
+        .map((item) => item.conversation_id)
+        .filter((item) => Boolean(String(item || '').trim()));
+      const targetIds = new Set(recentIds);
+      if (this.activeConversationId) {
+        targetIds.add(this.activeConversationId);
+      }
+      Array.from(watchRuntime.keys()).forEach((conversationId) => {
+        if (!targetIds.has(conversationId)) {
+          this.stopConversationWatch(conversationId);
+        }
+      });
+      for (const conversationId of targetIds) {
+        if (!watchRuntime.has(conversationId)) {
+          this.startConversationWatch(conversationId);
+        }
+      }
+    },
+
+    stopConversationWatch(conversationId: string) {
+      const runtime = watchRuntime.get(conversationId);
+      if (!runtime) return;
+      runtime.controller.abort();
+      watchRuntime.delete(conversationId);
+      if (runtime.transport === 'ws') {
+        wsClient.sendCancel(runtime.requestId, conversationId);
+      }
+    },
+
+    stopAllWatchers() {
+      Array.from(watchRuntime.keys()).forEach((conversationId) => {
+        this.stopConversationWatch(conversationId);
+      });
+      wsClient.close(1000, 'user-world-stop');
+    },
+
+    startConversationWatch(conversationId: string) {
+      const cleaned = String(conversationId || '').trim();
+      if (!cleaned) return;
+      const controller = new AbortController();
+      const transport = resolveTransport();
+      if (transport === 'ws') {
+        this.startWsWatch(cleaned, controller);
+        return;
+      }
+      this.startSseWatch(cleaned, controller);
+    },
+
+    startWsWatch(conversationId: string, controller: AbortController) {
+      const requestId = buildRequestId();
+      watchRuntime.set(conversationId, {
+        controller,
+        requestId,
+        transport: 'ws'
+      });
+      const afterEventId = this.resolveLastEventId(conversationId);
+      wsClient
+        .request({
+          requestId,
+          sessionId: conversationId,
+          message: {
+            type: 'watch',
+            request_id: requestId,
+            payload: {
+              conversation_id: conversationId,
+              after_event_id: afterEventId
+            }
+          },
+          closeOnFinal: false,
+          signal: controller.signal,
+          onEvent: (eventType, dataText, eventId) => {
+            this.updateLastEventId(conversationId, eventId);
+            if (eventType.startsWith('uw.')) {
+              this.applyRealtimeEvent(conversationId, eventType, dataText);
+            }
+          }
+        })
+        .catch((error: WsError) => {
+          if (controller.signal.aborted) return;
+          watchRuntime.delete(conversationId);
+          if (error?.phase === 'connect') {
+            markWsUnavailable();
+            this.startSseWatch(conversationId, controller);
+            return;
+          }
+          window.setTimeout(() => {
+            if (controller.signal.aborted || watchRuntime.has(conversationId)) return;
+            this.startConversationWatch(conversationId);
+          }, WATCH_RETRY_DELAY_MS);
+        });
+    },
+
+    startSseWatch(conversationId: string, controller: AbortController) {
+      const requestId = buildRequestId();
+      watchRuntime.set(conversationId, {
+        controller,
+        requestId,
+        transport: 'sse'
+      });
+      const run = async () => {
+        while (!controller.signal.aborted) {
+          try {
+            const response = await streamUserWorldEvents(conversationId, {
+              signal: controller.signal,
+              afterEventId: this.resolveLastEventId(conversationId),
+              limit: 200
+            });
+            if (!response.ok) {
+              throw new Error(`sse status ${response.status}`);
+            }
+            await consumeSseStream(response, (eventType, dataText, eventId) => {
+              this.updateLastEventId(conversationId, eventId);
+              if (eventType.startsWith('uw.')) {
+                this.applyRealtimeEvent(conversationId, eventType, dataText);
+              }
+            });
+          } catch {
+            if (controller.signal.aborted) {
+              return;
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, WATCH_RETRY_DELAY_MS));
+          }
+        }
+      };
+      run().finally(() => {
+        if (watchRuntime.get(conversationId)?.requestId === requestId) {
+          watchRuntime.delete(conversationId);
+        }
+      });
+    },
+
+    applyRealtimeEvent(conversationId: string, eventType: string, dataText: string) {
+      const payload = parseEventPayload(dataText);
+      if (eventType === 'uw.message') {
+        const message = asRecord(payload.message) as unknown as UserWorldMessage;
+        if (message?.message_id) {
+          this.upsertMessage(conversationId, message);
+        }
+        return;
+      }
+      if (eventType === 'uw.read') {
+        const targetConversationId = String(payload.conversation_id || conversationId).trim();
+        const userId = String(payload.user_id || '').trim();
+        const unread = toNumber(payload.unread_count);
+        const authStore = useAuthStore();
+        if (targetConversationId) {
+          if (userId && authStore.user?.id && userId === authStore.user.id) {
+            this.unreadByConversation[targetConversationId] = unread;
+            const conversation = this.conversations.find(
+              (item) => item.conversation_id === targetConversationId
+            );
+            if (conversation) {
+              conversation.unread_count_cache = unread;
+            }
+          }
+        }
+      }
+    },
+
+    upsertConversation(conversation: UserWorldConversation) {
+      const item: UserWorldConversation = {
+        ...conversation,
+        unread_count_cache: toNumber(conversation.unread_count_cache)
+      };
+      const index = this.conversations.findIndex(
+        (entry) => entry.conversation_id === item.conversation_id
+      );
+      if (index >= 0) {
+        this.conversations[index] = { ...this.conversations[index], ...item };
+      } else {
+        this.conversations.unshift(item);
+      }
+      this.unreadByConversation[item.conversation_id] = toNumber(item.unread_count_cache);
+    },
+
+    upsertMessage(conversationId: string, message: UserWorldMessage) {
+      const cleaned = String(conversationId || message.conversation_id || '').trim();
+      if (!cleaned) return;
+      const normalized: UserWorldMessage = {
+        ...message,
+        conversation_id: cleaned,
+        message_id: toNumber(message.message_id),
+        created_at: toNumber(message.created_at)
+      };
+      const list = this.messagesByConversation[cleaned] || [];
+      const byClientMsgId =
+        normalized.client_msg_id && String(normalized.client_msg_id).trim()
+          ? list.findIndex((item) => item.client_msg_id === normalized.client_msg_id)
+          : -1;
+      const index =
+        byClientMsgId >= 0 ? byClientMsgId : list.findIndex((item) => item.message_id === normalized.message_id);
+      if (index >= 0) {
+        list[index] = { ...list[index], ...normalized };
+      } else {
+        list.push(normalized);
+      }
+      list.sort((left, right) => {
+        const leftId = toNumber(left.message_id);
+        const rightId = toNumber(right.message_id);
+        if (leftId > 0 && rightId > 0 && leftId !== rightId) {
+          return leftId - rightId;
+        }
+        return toNumber(left.created_at) - toNumber(right.created_at);
+      });
+      this.messagesByConversation[cleaned] = list;
+
+      const authStore = useAuthStore();
+      const currentUserId = String(authStore.user?.id || '').trim();
+      const isIncoming = normalized.sender_user_id && normalized.sender_user_id !== currentUserId;
+      const isActive = this.activeConversationId === cleaned;
+      if (isIncoming && !isActive) {
+        this.unreadByConversation[cleaned] = toNumber(this.unreadByConversation[cleaned]) + 1;
+      } else if (isActive) {
+        this.unreadByConversation[cleaned] = 0;
+      }
+
+      const conversation = this.conversations.find((item) => item.conversation_id === cleaned);
+      if (conversation) {
+        conversation.last_message_at = normalized.created_at;
+        conversation.last_message_id = normalized.message_id;
+        conversation.last_message_preview = normalized.content;
+        conversation.updated_at = normalized.created_at;
+        conversation.unread_count_cache = toNumber(this.unreadByConversation[cleaned]);
+      }
+
+      const peerId = conversation?.peer_user_id || '';
+      const contact = this.contacts.find((item) => item.user_id === peerId || item.conversation_id === cleaned);
+      if (contact) {
+        contact.conversation_id = cleaned;
+        contact.last_message_at = normalized.created_at;
+        contact.last_message_preview = normalized.content;
+        contact.unread_count = toNumber(this.unreadByConversation[cleaned]);
+      }
+      this.sortConversations();
+      this.sortContacts();
+    },
+
+    sortConversations() {
+      this.conversations.sort((left, right) => {
+        const leftPinned = left.pinned ? 1 : 0;
+        const rightPinned = right.pinned ? 1 : 0;
+        if (leftPinned !== rightPinned) {
+          return rightPinned - leftPinned;
+        }
+        return toNumber(right.last_message_at) - toNumber(left.last_message_at);
+      });
+    },
+
+    sortContacts() {
+      this.contacts.sort((left, right) => {
+        const leftTs = toNumber(left.last_message_at);
+        const rightTs = toNumber(right.last_message_at);
+        if (leftTs !== rightTs) {
+          return rightTs - leftTs;
+        }
+        return String(left.username || '').localeCompare(String(right.username || ''));
+      });
+    },
+
+    resolveLatestMessageId(conversationId: string): number {
+      const list = this.messagesByConversation[conversationId] || [];
+      if (!list.length) return 0;
+      return toNumber(list[list.length - 1].message_id);
+    },
+
+    resolveLastEventId(conversationId: string): number {
+      const key = `user_world_event_id:${conversationId}`;
+      const value = Number(localStorage.getItem(key) || 0);
+      return Number.isFinite(value) ? Math.max(0, value) : 0;
+    },
+
+    updateLastEventId(conversationId: string, eventId: string) {
+      const next = Number(eventId || 0);
+      if (!Number.isFinite(next) || next <= 0) return;
+      const key = `user_world_event_id:${conversationId}`;
+      const current = this.resolveLastEventId(conversationId);
+      if (next > current) {
+        localStorage.setItem(key, String(next));
+      }
+    }
+  }
+});

@@ -11,6 +11,8 @@ use crate::storage::{
     StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
     UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
+    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
     VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
@@ -167,6 +169,71 @@ impl SqliteStorage {
         value
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty())
+    }
+
+    fn normalize_user_world_pair(user_a: &str, user_b: &str) -> Option<(String, String)> {
+        let a = user_a.trim();
+        let b = user_b.trim();
+        if a.is_empty() || b.is_empty() || a == b {
+            return None;
+        }
+        if a <= b {
+            Some((a.to_string(), b.to_string()))
+        } else {
+            Some((b.to_string(), a.to_string()))
+        }
+    }
+
+    fn parse_json_column(value: Option<String>) -> Value {
+        value
+            .as_deref()
+            .and_then(Self::json_from_str)
+            .unwrap_or(Value::Null)
+    }
+
+    fn map_user_world_conversation_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<UserWorldConversationRecord> {
+        Ok(UserWorldConversationRecord {
+            conversation_id: row.get(0)?,
+            conversation_type: row.get(1)?,
+            participant_a: row.get(2)?,
+            participant_b: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+            last_message_at: row.get(6)?,
+            last_message_id: row.get(7)?,
+            last_message_preview: row.get(8)?,
+        })
+    }
+
+    fn map_user_world_member_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<UserWorldMemberRecord> {
+        Ok(UserWorldMemberRecord {
+            conversation_id: row.get(0)?,
+            user_id: row.get(1)?,
+            peer_user_id: row.get(2)?,
+            last_read_message_id: row.get(3)?,
+            unread_count_cache: row.get(4)?,
+            pinned: row.get::<_, i64>(5)? != 0,
+            muted: row.get::<_, i64>(6)? != 0,
+            updated_at: row.get(7)?,
+        })
+    }
+
+    fn map_user_world_message_row(
+        row: &rusqlite::Row<'_>,
+    ) -> rusqlite::Result<UserWorldMessageRecord> {
+        Ok(UserWorldMessageRecord {
+            message_id: row.get(0)?,
+            conversation_id: row.get(1)?,
+            sender_user_id: row.get(2)?,
+            content: row.get(3)?,
+            content_type: row.get(4)?,
+            client_msg_id: row.get(5)?,
+            created_at: row.get(6)?,
+        })
     }
 
     fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
@@ -740,6 +807,61 @@ impl StorageBackend for SqliteStorage {
               ON chat_sessions (user_id, updated_at);
             CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent
               ON chat_sessions (user_id, parent_session_id, updated_at);
+            CREATE TABLE IF NOT EXISTS user_world_conversations (
+              conversation_id TEXT PRIMARY KEY,
+              conversation_type TEXT NOT NULL,
+              participant_a TEXT NOT NULL,
+              participant_b TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL,
+              last_message_at REAL NOT NULL,
+              last_message_id INTEGER,
+              last_message_preview TEXT
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_user_world_conversations_participants
+              ON user_world_conversations (participant_a, participant_b);
+            CREATE INDEX IF NOT EXISTS idx_user_world_conversations_updated
+              ON user_world_conversations (updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_user_world_conversations_last_message
+              ON user_world_conversations (last_message_at DESC);
+            CREATE TABLE IF NOT EXISTS user_world_members (
+              conversation_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              peer_user_id TEXT NOT NULL,
+              last_read_message_id INTEGER,
+              unread_count_cache INTEGER NOT NULL DEFAULT 0,
+              pinned INTEGER NOT NULL DEFAULT 0,
+              muted INTEGER NOT NULL DEFAULT 0,
+              updated_at REAL NOT NULL,
+              PRIMARY KEY (conversation_id, user_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_world_members_user_updated
+              ON user_world_members (user_id, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS user_world_messages (
+              message_id INTEGER PRIMARY KEY AUTOINCREMENT,
+              conversation_id TEXT NOT NULL,
+              sender_user_id TEXT NOT NULL,
+              content TEXT NOT NULL,
+              content_type TEXT NOT NULL,
+              client_msg_id TEXT,
+              created_at REAL NOT NULL
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_user_world_messages_client
+              ON user_world_messages (conversation_id, client_msg_id);
+            CREATE INDEX IF NOT EXISTS idx_user_world_messages_conversation
+              ON user_world_messages (conversation_id, message_id DESC);
+            CREATE TABLE IF NOT EXISTS user_world_events (
+              conversation_id TEXT NOT NULL,
+              event_id INTEGER NOT NULL,
+              event_type TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              created_time REAL NOT NULL,
+              PRIMARY KEY (conversation_id, event_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_world_events_created_time
+              ON user_world_events (created_time);
+            CREATE INDEX IF NOT EXISTS idx_user_world_events_conversation
+              ON user_world_events (conversation_id, event_id);
             CREATE TABLE IF NOT EXISTS session_runs (
               run_id TEXT PRIMARY KEY,
               session_id TEXT NOT NULL,
@@ -3859,6 +3981,519 @@ impl StorageBackend for SqliteStorage {
             params![cleaned_user, cleaned_session],
         )?;
         Ok(affected as i64)
+    }
+
+    fn resolve_or_create_user_world_direct_conversation(
+        &self,
+        user_a: &str,
+        user_b: &str,
+        now: f64,
+    ) -> Result<UserWorldConversationRecord> {
+        self.ensure_initialized()?;
+        let (participant_a, participant_b) = Self::normalize_user_world_pair(user_a, user_b)
+            .ok_or_else(|| anyhow::anyhow!("invalid user pair"))?;
+        let now = if now.is_finite() && now > 0.0 {
+            now
+        } else {
+            Self::now_ts()
+        };
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        let existing = tx
+            .query_row(
+                "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
+                 last_message_at, last_message_id, last_message_preview \
+                 FROM user_world_conversations WHERE participant_a = ? AND participant_b = ?",
+                params![participant_a, participant_b],
+                Self::map_user_world_conversation_row,
+            )
+            .optional()?;
+        if let Some(record) = existing {
+            tx.commit()?;
+            return Ok(record);
+        }
+
+        let conversation_id = format!("uwc_{}", uuid::Uuid::new_v4().simple());
+        tx.execute(
+            "INSERT INTO user_world_conversations (conversation_id, conversation_type, participant_a, participant_b, \
+             created_at, updated_at, last_message_at, last_message_id, last_message_preview) \
+             VALUES (?, 'direct', ?, ?, ?, ?, ?, NULL, NULL)",
+            params![
+                conversation_id,
+                participant_a,
+                participant_b,
+                now,
+                now,
+                now
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO user_world_members (conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, \
+             pinned, muted, updated_at) VALUES (?, ?, ?, NULL, 0, 0, 0, ?)",
+            params![conversation_id, participant_a, participant_b, now],
+        )?;
+        tx.execute(
+            "INSERT INTO user_world_members (conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, \
+             pinned, muted, updated_at) VALUES (?, ?, ?, NULL, 0, 0, 0, ?)",
+            params![conversation_id, participant_b, participant_a, now],
+        )?;
+        let record = tx
+            .query_row(
+                "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
+                 last_message_at, last_message_id, last_message_preview \
+                 FROM user_world_conversations WHERE conversation_id = ?",
+                params![conversation_id],
+                Self::map_user_world_conversation_row,
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("user world conversation missing after insert"))?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    fn get_user_world_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<UserWorldConversationRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = conversation_id.trim();
+        if cleaned.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
+                 last_message_at, last_message_id, last_message_preview \
+                 FROM user_world_conversations WHERE conversation_id = ?",
+                params![cleaned],
+                Self::map_user_world_conversation_row,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn get_user_world_member(
+        &self,
+        conversation_id: &str,
+        user_id: &str,
+    ) -> Result<Option<UserWorldMemberRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_conversation = conversation_id.trim();
+        let cleaned_user = user_id.trim();
+        if cleaned_conversation.is_empty() || cleaned_user.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        let row = conn
+            .query_row(
+                "SELECT conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, pinned, muted, updated_at \
+                 FROM user_world_members WHERE conversation_id = ? AND user_id = ?",
+                params![cleaned_conversation, cleaned_user],
+                Self::map_user_world_member_row,
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_user_world_conversations(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserWorldConversationSummaryRecord>, i64)> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let conn = self.open()?;
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM user_world_members WHERE user_id = ?",
+            params![cleaned_user],
+            |row| row.get(0),
+        )?;
+
+        let mut sql = "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, m.last_read_message_id, \
+                       m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
+                       c.last_message_at, c.last_message_id, c.last_message_preview \
+                       FROM user_world_members m \
+                       JOIN user_world_conversations c ON c.conversation_id = m.conversation_id \
+                       WHERE m.user_id = ? \
+                       ORDER BY m.pinned DESC, c.last_message_at DESC, m.updated_at DESC"
+            .to_string();
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
+        if limit > 0 {
+            sql.push_str(" LIMIT ? OFFSET ?");
+            params_list.push(SqlValue::from(limit));
+            params_list.push(SqlValue::from(offset.max(0)));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(params_from_iter(params_list.iter()), |row| {
+                Ok(UserWorldConversationSummaryRecord {
+                    conversation_id: row.get(0)?,
+                    conversation_type: row.get(1)?,
+                    peer_user_id: row.get(2)?,
+                    last_read_message_id: row.get(3)?,
+                    unread_count_cache: row.get(4)?,
+                    pinned: row.get::<_, i64>(5)? != 0,
+                    muted: row.get::<_, i64>(6)? != 0,
+                    updated_at: row.get(7)?,
+                    last_message_at: row.get(8)?,
+                    last_message_id: row.get(9)?,
+                    last_message_preview: row.get(10)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<UserWorldConversationSummaryRecord>, _>>()?;
+        Ok((rows, total))
+    }
+
+    fn list_user_world_messages(
+        &self,
+        conversation_id: &str,
+        before_message_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<UserWorldMessageRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = conversation_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let safe_limit = if limit <= 0 { 50 } else { limit.min(200) };
+        let mut sql = "SELECT message_id, conversation_id, sender_user_id, content, content_type, client_msg_id, created_at \
+                       FROM user_world_messages WHERE conversation_id = ?"
+            .to_string();
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned.to_string())];
+        if let Some(before_id) = before_message_id.filter(|value| *value > 0) {
+            sql.push_str(" AND message_id < ?");
+            params_list.push(SqlValue::from(before_id));
+        }
+        sql.push_str(" ORDER BY message_id DESC LIMIT ?");
+        params_list.push(SqlValue::from(safe_limit));
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                params_from_iter(params_list.iter()),
+                Self::map_user_world_message_row,
+            )?
+            .collect::<std::result::Result<Vec<UserWorldMessageRecord>, _>>()?;
+        Ok(rows)
+    }
+
+    fn send_user_world_message(
+        &self,
+        conversation_id: &str,
+        sender_user_id: &str,
+        content: &str,
+        content_type: &str,
+        client_msg_id: Option<&str>,
+        now: f64,
+    ) -> Result<UserWorldSendMessageResult> {
+        self.ensure_initialized()?;
+        let cleaned_conversation = conversation_id.trim();
+        let cleaned_sender = sender_user_id.trim();
+        let cleaned_content = content.trim();
+        if cleaned_conversation.is_empty()
+            || cleaned_sender.is_empty()
+            || cleaned_content.is_empty()
+        {
+            return Err(anyhow::anyhow!("invalid message payload"));
+        }
+        let normalized_content_type = {
+            let cleaned = content_type.trim();
+            if cleaned.is_empty() {
+                "text"
+            } else {
+                cleaned
+            }
+        };
+        let cleaned_client_msg = client_msg_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let now = if now.is_finite() && now > 0.0 {
+            now
+        } else {
+            Self::now_ts()
+        };
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+
+        let conversation_row = tx
+            .query_row(
+                "SELECT participant_a, participant_b FROM user_world_conversations WHERE conversation_id = ?",
+                params![cleaned_conversation],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("conversation not found"))?;
+        let participant_a = conversation_row.0;
+        let participant_b = conversation_row.1;
+        if cleaned_sender != participant_a && cleaned_sender != participant_b {
+            return Err(anyhow::anyhow!("sender is not a member of conversation"));
+        }
+
+        if let Some(client_msg_id) = cleaned_client_msg.as_deref() {
+            if let Some(existing) = tx
+                .query_row(
+                    "SELECT message_id, conversation_id, sender_user_id, content, content_type, client_msg_id, created_at \
+                     FROM user_world_messages WHERE conversation_id = ? AND client_msg_id = ?",
+                    params![cleaned_conversation, client_msg_id],
+                    Self::map_user_world_message_row,
+                )
+                .optional()?
+            {
+                tx.commit()?;
+                return Ok(UserWorldSendMessageResult {
+                    message: existing,
+                    inserted: false,
+                    event: None,
+                });
+            }
+        }
+
+        tx.execute(
+            "INSERT INTO user_world_messages (conversation_id, sender_user_id, content, content_type, client_msg_id, created_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![
+                cleaned_conversation,
+                cleaned_sender,
+                cleaned_content,
+                normalized_content_type,
+                cleaned_client_msg,
+                now
+            ],
+        )?;
+        let message_id = tx.last_insert_rowid();
+        let preview = cleaned_content.chars().take(120).collect::<String>();
+        tx.execute(
+            "UPDATE user_world_conversations SET updated_at = ?, last_message_at = ?, last_message_id = ?, last_message_preview = ? \
+             WHERE conversation_id = ?",
+            params![now, now, message_id, preview, cleaned_conversation],
+        )?;
+
+        let peer_user = if cleaned_sender == participant_a {
+            participant_b.as_str()
+        } else {
+            participant_a.as_str()
+        };
+        tx.execute(
+            "UPDATE user_world_members SET last_read_message_id = ?, unread_count_cache = 0, updated_at = ? \
+             WHERE conversation_id = ? AND user_id = ?",
+            params![message_id, now, cleaned_conversation, cleaned_sender],
+        )?;
+        tx.execute(
+            "UPDATE user_world_members SET unread_count_cache = COALESCE(unread_count_cache, 0) + 1, updated_at = ? \
+             WHERE conversation_id = ? AND user_id = ?",
+            params![now, cleaned_conversation, peer_user],
+        )?;
+
+        let message = tx
+            .query_row(
+                "SELECT message_id, conversation_id, sender_user_id, content, content_type, client_msg_id, created_at \
+                 FROM user_world_messages WHERE message_id = ?",
+                params![message_id],
+                Self::map_user_world_message_row,
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("message missing after insert"))?;
+
+        let next_event_id: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(event_id), 0) + 1 FROM user_world_events WHERE conversation_id = ?",
+            params![cleaned_conversation],
+            |row| row.get(0),
+        )?;
+        let payload = json!({
+            "conversation_id": message.conversation_id,
+            "message": {
+                "message_id": message.message_id,
+                "conversation_id": message.conversation_id,
+                "sender_user_id": message.sender_user_id,
+                "content": message.content,
+                "content_type": message.content_type,
+                "client_msg_id": message.client_msg_id,
+                "created_at": message.created_at,
+            }
+        });
+        tx.execute(
+            "INSERT INTO user_world_events (conversation_id, event_id, event_type, payload, created_time) VALUES (?, ?, ?, ?, ?)",
+            params![
+                cleaned_conversation,
+                next_event_id,
+                "uw.message",
+                Self::json_to_string(&payload),
+                now
+            ],
+        )?;
+        tx.commit()?;
+        Ok(UserWorldSendMessageResult {
+            message,
+            inserted: true,
+            event: Some(UserWorldEventRecord {
+                conversation_id: cleaned_conversation.to_string(),
+                event_id: next_event_id,
+                event_type: "uw.message".to_string(),
+                payload,
+                created_time: now,
+            }),
+        })
+    }
+
+    fn mark_user_world_read(
+        &self,
+        conversation_id: &str,
+        user_id: &str,
+        last_read_message_id: Option<i64>,
+        now: f64,
+    ) -> Result<Option<UserWorldReadResult>> {
+        self.ensure_initialized()?;
+        let cleaned_conversation = conversation_id.trim();
+        let cleaned_user = user_id.trim();
+        if cleaned_conversation.is_empty() || cleaned_user.is_empty() {
+            return Ok(None);
+        }
+        let now = if now.is_finite() && now > 0.0 {
+            now
+        } else {
+            Self::now_ts()
+        };
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current_member = tx
+            .query_row(
+                "SELECT conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, pinned, muted, updated_at \
+                 FROM user_world_members WHERE conversation_id = ? AND user_id = ?",
+                params![cleaned_conversation, cleaned_user],
+                Self::map_user_world_member_row,
+            )
+            .optional()?;
+        let Some(mut member) = current_member else {
+            tx.commit()?;
+            return Ok(None);
+        };
+
+        let max_message_id: Option<i64> = tx.query_row(
+            "SELECT MAX(message_id) FROM user_world_messages WHERE conversation_id = ?",
+            params![cleaned_conversation],
+            |row| row.get(0),
+        )?;
+        let resolved_target = match last_read_message_id.filter(|value| *value > 0) {
+            Some(target) => max_message_id.map(|max_id| target.min(max_id)),
+            None => max_message_id,
+        };
+        let current_last = member.last_read_message_id.unwrap_or(0);
+        let next_last = resolved_target.unwrap_or(0).max(current_last);
+        let unread_count: i64 = if next_last > 0 {
+            tx.query_row(
+                "SELECT COUNT(*) FROM user_world_messages \
+                 WHERE conversation_id = ? AND sender_user_id <> ? AND message_id > ?",
+                params![cleaned_conversation, cleaned_user, next_last],
+                |row| row.get(0),
+            )?
+        } else {
+            tx.query_row(
+                "SELECT COUNT(*) FROM user_world_messages \
+                 WHERE conversation_id = ? AND sender_user_id <> ?",
+                params![cleaned_conversation, cleaned_user],
+                |row| row.get(0),
+            )?
+        };
+
+        tx.execute(
+            "UPDATE user_world_members SET last_read_message_id = ?, unread_count_cache = ?, updated_at = ? \
+             WHERE conversation_id = ? AND user_id = ?",
+            params![
+                if next_last > 0 { Some(next_last) } else { None },
+                unread_count,
+                now,
+                cleaned_conversation,
+                cleaned_user
+            ],
+        )?;
+
+        let prev_last_read_message_id = member.last_read_message_id;
+        let prev_unread_count = member.unread_count_cache;
+        member.last_read_message_id = if next_last > 0 { Some(next_last) } else { None };
+        member.unread_count_cache = unread_count;
+        member.updated_at = now;
+
+        let changed = member.last_read_message_id != prev_last_read_message_id
+            || member.unread_count_cache != prev_unread_count;
+        if !changed {
+            tx.commit()?;
+            return Ok(Some(UserWorldReadResult {
+                member,
+                event: None,
+            }));
+        }
+
+        let next_event_id: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(event_id), 0) + 1 FROM user_world_events WHERE conversation_id = ?",
+            params![cleaned_conversation],
+            |row| row.get(0),
+        )?;
+        let payload = json!({
+            "conversation_id": cleaned_conversation,
+            "user_id": cleaned_user,
+            "last_read_message_id": member.last_read_message_id,
+            "unread_count": member.unread_count_cache,
+        });
+        tx.execute(
+            "INSERT INTO user_world_events (conversation_id, event_id, event_type, payload, created_time) VALUES (?, ?, ?, ?, ?)",
+            params![
+                cleaned_conversation,
+                next_event_id,
+                "uw.read",
+                Self::json_to_string(&payload),
+                now
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Some(UserWorldReadResult {
+            member,
+            event: Some(UserWorldEventRecord {
+                conversation_id: cleaned_conversation.to_string(),
+                event_id: next_event_id,
+                event_type: "uw.read".to_string(),
+                payload,
+                created_time: now,
+            }),
+        }))
+    }
+
+    fn list_user_world_events(
+        &self,
+        conversation_id: &str,
+        after_event_id: i64,
+        limit: i64,
+    ) -> Result<Vec<UserWorldEventRecord>> {
+        self.ensure_initialized()?;
+        let cleaned = conversation_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let safe_limit = if limit <= 0 { 100 } else { limit.min(500) };
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT conversation_id, event_id, event_type, payload, created_time \
+             FROM user_world_events WHERE conversation_id = ? AND event_id > ? \
+             ORDER BY event_id ASC LIMIT ?",
+        )?;
+        let rows = stmt
+            .query_map(params![cleaned, after_event_id.max(0), safe_limit], |row| {
+                Ok(UserWorldEventRecord {
+                    conversation_id: row.get(0)?,
+                    event_id: row.get(1)?,
+                    event_type: row.get(2)?,
+                    payload: Self::parse_json_column(row.get::<_, Option<String>>(3)?),
+                    created_time: row.get(4)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<UserWorldEventRecord>, _>>()?;
+        Ok(rows)
     }
 
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()> {

@@ -6,6 +6,7 @@ import AdminLayout from '@/layouts/AdminLayout.vue';
 import LoginView from '@/views/LoginView.vue';
 import RegisterView from '@/views/RegisterView.vue';
 import ChatView from '@/views/ChatView.vue';
+import UserWorldView from '@/views/UserWorldView.vue';
 import PortalView from '@/views/PortalView.vue';
 import ExternalAppView from '@/views/ExternalAppView.vue';
 import WorkspaceView from '@/views/WorkspaceView.vue';
@@ -143,6 +144,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'desktop-cron', component: CronManagerView },
       { path: 'channels', name: 'desktop-channels', component: ChannelManagerView },
       { path: 'chat', name: 'desktop-chat', component: ChatView },
+      { path: 'user-world', name: 'desktop-user-world', component: UserWorldView },
       { path: 'workspace', name: 'desktop-workspace', component: WorkspaceView },
       { path: 'settings', name: 'desktop-settings', component: SettingsView },
       { path: 'containers', redirect: '/desktop/system?section=containers' },
@@ -162,6 +164,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'cron', component: CronManagerView },
       { path: 'channels', name: 'channels', component: ChannelManagerView },
       { path: 'chat', name: 'chat', component: ChatView },
+      { path: 'user-world', name: 'user-world', component: UserWorldView },
       { path: 'workspace', name: 'workspace', component: WorkspaceView },
       { path: 'settings', name: 'settings', component: SettingsView },
       { path: 'profile', name: 'profile', component: ProfileView }
@@ -179,6 +182,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'demo-cron', component: CronManagerView, meta: { demo: true } },
       { path: 'channels', name: 'demo-channels', component: ChannelManagerView, meta: { demo: true } },
       { path: 'chat', name: 'demo-chat', component: ChatView, meta: { demo: true } },
+      { path: 'user-world', name: 'demo-user-world', component: UserWorldView, meta: { demo: true } },
       { path: 'workspace', name: 'demo-workspace', component: WorkspaceView, meta: { demo: true } },
       { path: 'settings', name: 'demo-settings', component: SettingsView, meta: { demo: true } },
       { path: 'profile', name: 'demo-profile', component: ProfileView, meta: { demo: true } }

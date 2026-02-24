@@ -254,6 +254,79 @@ pub struct ChatSessionRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct UserWorldConversationRecord {
+    pub conversation_id: String,
+    pub conversation_type: String,
+    pub participant_a: String,
+    pub participant_b: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+    pub last_message_at: f64,
+    pub last_message_id: Option<i64>,
+    pub last_message_preview: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserWorldConversationSummaryRecord {
+    pub conversation_id: String,
+    pub conversation_type: String,
+    pub peer_user_id: String,
+    pub last_read_message_id: Option<i64>,
+    pub unread_count_cache: i64,
+    pub pinned: bool,
+    pub muted: bool,
+    pub updated_at: f64,
+    pub last_message_at: f64,
+    pub last_message_id: Option<i64>,
+    pub last_message_preview: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserWorldMemberRecord {
+    pub conversation_id: String,
+    pub user_id: String,
+    pub peer_user_id: String,
+    pub last_read_message_id: Option<i64>,
+    pub unread_count_cache: i64,
+    pub pinned: bool,
+    pub muted: bool,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserWorldMessageRecord {
+    pub message_id: i64,
+    pub conversation_id: String,
+    pub sender_user_id: String,
+    pub content: String,
+    pub content_type: String,
+    pub client_msg_id: Option<String>,
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserWorldEventRecord {
+    pub conversation_id: String,
+    pub event_id: i64,
+    pub event_type: String,
+    pub payload: Value,
+    pub created_time: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserWorldSendMessageResult {
+    pub message: UserWorldMessageRecord,
+    pub inserted: bool,
+    pub event: Option<UserWorldEventRecord>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserWorldReadResult {
+    pub member: UserWorldMemberRecord,
+    pub event: Option<UserWorldEventRecord>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentThreadRecord {
     pub thread_id: String,
     pub user_id: String,
@@ -857,6 +930,56 @@ pub trait StorageBackend: Send + Sync {
         last_message_at: f64,
     ) -> Result<()>;
     fn delete_chat_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
+
+    fn resolve_or_create_user_world_direct_conversation(
+        &self,
+        user_a: &str,
+        user_b: &str,
+        now: f64,
+    ) -> Result<UserWorldConversationRecord>;
+    fn get_user_world_conversation(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<UserWorldConversationRecord>>;
+    fn get_user_world_member(
+        &self,
+        conversation_id: &str,
+        user_id: &str,
+    ) -> Result<Option<UserWorldMemberRecord>>;
+    fn list_user_world_conversations(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserWorldConversationSummaryRecord>, i64)>;
+    fn list_user_world_messages(
+        &self,
+        conversation_id: &str,
+        before_message_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<UserWorldMessageRecord>>;
+    fn send_user_world_message(
+        &self,
+        conversation_id: &str,
+        sender_user_id: &str,
+        content: &str,
+        content_type: &str,
+        client_msg_id: Option<&str>,
+        now: f64,
+    ) -> Result<UserWorldSendMessageResult>;
+    fn mark_user_world_read(
+        &self,
+        conversation_id: &str,
+        user_id: &str,
+        last_read_message_id: Option<i64>,
+        now: f64,
+    ) -> Result<Option<UserWorldReadResult>>;
+    fn list_user_world_events(
+        &self,
+        conversation_id: &str,
+        after_event_id: i64,
+        limit: i64,
+    ) -> Result<Vec<UserWorldEventRecord>>;
 
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()>;
     fn get_channel_account(
