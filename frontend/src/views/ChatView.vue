@@ -1,5 +1,5 @@
 <template>
-  <div class="chat-shell">
+  <div class="chat-shell" :style="chatShellStyle">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand">
@@ -428,7 +428,7 @@
             :panel="activeInquiryPanel.panel"
             @update:selected="handleInquirySelection"
           />
-          <div class="composer-shell">
+          <div ref="composerShellRef" class="composer-shell">
             <PlanPanel
               v-if="activePlan"
               :plan="activePlan"
@@ -685,6 +685,11 @@ const draftKey = ref(0);
 const composerKey = computed(() =>
   chatStore.activeSessionId ? `session-${chatStore.activeSessionId}` : `draft-${draftKey.value}`
 );
+const composerShellRef = ref(null);
+const composerPaddingPx = ref(176);
+const chatShellStyle = computed(() => ({
+  '--chat-composer-space': `${composerPaddingPx.value}px`
+}));
 const inquirySelection = ref([]);
 const historyListRef = ref(null);
 const historyScrollTop = ref(0);
@@ -729,6 +734,7 @@ const EXTERNAL_SESSION_SYNC_HIDDEN_MS = 8000;
 let externalSessionSyncTimer = null;
 let externalSessionSyncRunning = false;
 let externalSessionSyncStopped = false;
+let composerResizeObserver = null;
 
 const normalizeToolItemName = (item) => {
   if (!item) return '';
@@ -2016,9 +2022,41 @@ const updateCompactLayout = () => {
   if (typeof window === 'undefined') return;
   if (window.matchMedia) {
     isCompactLayout.value = window.matchMedia('(max-width: 960px)').matches;
-    return;
+  } else {
+    isCompactLayout.value = window.innerWidth <= 960;
   }
-  isCompactLayout.value = window.innerWidth <= 960;
+  updateComposerPadding();
+};
+
+const updateComposerPadding = () => {
+  if (typeof window === 'undefined') return;
+  const composerHeight = composerShellRef.value?.offsetHeight || 0;
+  const viewport = window.innerHeight || 900;
+  const minPadding = 132;
+  const maxPadding = Math.max(180, Math.floor(viewport * 0.34));
+  const nextPadding = Math.max(minPadding, Math.min(maxPadding, Math.round(composerHeight + 44)));
+  if (composerPaddingPx.value !== nextPadding) {
+    composerPaddingPx.value = nextPadding;
+  }
+};
+
+const initComposerResizeObserver = () => {
+  if (typeof window === 'undefined' || typeof ResizeObserver === 'undefined') return;
+  if (composerResizeObserver) {
+    composerResizeObserver.disconnect();
+  }
+  composerResizeObserver = new ResizeObserver(() => {
+    updateComposerPadding();
+  });
+  if (composerShellRef.value) {
+    composerResizeObserver.observe(composerShellRef.value);
+  }
+};
+
+const destroyComposerResizeObserver = () => {
+  if (!composerResizeObserver) return;
+  composerResizeObserver.disconnect();
+  composerResizeObserver = null;
 };
 
 
@@ -2168,6 +2206,9 @@ onMounted(async () => {
   scheduleWorkspaceResourceHydration();
   stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceRefresh);
   updateCompactLayout();
+  await nextTick();
+  initComposerResizeObserver();
+  updateComposerPadding();
   externalSessionSyncStopped = false;
   scheduleExternalSessionSync(true);
   window.addEventListener('resize', updateCompactLayout);
@@ -2177,6 +2218,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  destroyComposerResizeObserver();
   window.removeEventListener('resize', updateCompactLayout);
   window.removeEventListener('beforeunload', handleBeforeUnload);
   document.removeEventListener('visibilitychange', handleVisibilityChange);

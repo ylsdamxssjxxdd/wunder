@@ -1,7 +1,9 @@
 .chat-shell .input-container {
-  padding: 8px 12px 10px;
+  padding: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--chat-border);
   background: rgba(15, 23, 42, 0.6);
+  flex-shrink: 0;
+  max-height: min(44vh, 320px);
 }
 
 .chat-shell .composer-shell {
@@ -180,7 +182,8 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
   margin-bottom: 8px;
-  overflow-x: auto;
+  max-height: min(18vh, 120px);
+  overflow: auto;
 }
 
 .chat-shell .upload-preview-list {
@@ -535,10 +538,11 @@
   color: var(--chat-text);
   resize: none;
   min-height: 40px;
-  max-height: 220px;
+  max-height: 180px;
   overflow-y: auto;
   font-size: 14px;
   outline: none;
+  line-height: 1.5;
 }
 
 .chat-shell .input-icon-btn {
