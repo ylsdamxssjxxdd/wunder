@@ -1485,7 +1485,7 @@ fn choice_labeled_regex() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r#"(?i)(?:答案|最终答案|选择|选项|answer|final\s*answer)\s*(?:[:：]|is|为)\s*[\(\[\{<"'`*_~]*([ABCD])(?:\s|[\)\]\}>"'`*_~\.,，。!！?？:：;；]|$)"#,
+            r#"(?i)(?:答案|最终答案|选择|选项|answer|final\s*answer)\s*(?:[:：]|is|为|是)\s*[\(\[\{<"'`*_~]*([ABCD])(?:\s|[\)\]\}>"'`*_~\.,，。!！?？:：;；]|$)"#,
         )
         .ok()
     })
@@ -1496,7 +1496,7 @@ fn choice_line_labeled_regex() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| {
         Regex::new(
-            r#"(?i)^(?:答案|最终答案|选择|选项|answer|final\s*answer)\s*(?::|：|is|为)\s*[\(\[\{<"'`*_~]*([ABCD])[\s\)\]\}>"'`*_~\.,，。!！?？:：;；]*$"#,
+            r#"(?i)^(?:答案|最终答案|选择|选项|answer|final\s*answer)\s*(?::|：|is|为|是)\s*[\(\[\{<"'`*_~]*([ABCD])[\s\)\]\}>"'`*_~\.,，。!！?？:：;；]*$"#,
         )
         .ok()
     })
@@ -1590,6 +1590,7 @@ mod tests {
     #[test]
     fn normalize_choice_answer_supports_localized_answer_prefix() {
         assert_eq!(normalize_choice_answer("答案：C"), "C");
+        assert_eq!(normalize_choice_answer("答案是 **B**"), "B");
         assert_eq!(normalize_choice_answer("Final Answer: a"), "A");
     }
 
