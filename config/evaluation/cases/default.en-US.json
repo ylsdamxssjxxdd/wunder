@@ -290,13 +290,15 @@
     {
       "id": "complex_skill_compression_img",
       "dimension": "complex",
-      "prompt": "Create a skill for compressing an image named compression_img, and save it to eval/{run_id}/outputs/compression_img.",
+      "prompt": "Create an image-compression skill document at eval/{run_id}/outputs/compression_img/SKILL.md, and the file content must include the skill name compression_img.",
       "checker": {
-        "type": "file_exists",
-        "path": "eval/{run_id}/outputs/compression_img"
+        "type": "file_contains",
+        "path": "eval/{run_id}/outputs/compression_img/SKILL.md",
+        "text": "compression_img"
       },
       "tags": [
-        "skill"
+        "skill",
+        "file"
       ]
     }
   ]
