@@ -7,142 +7,254 @@
       "id": "tool_list_files",
       "dimension": "tool",
       "prompt": "List files under eval/{run_id}/fixtures/list. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "list_files" },
-      "prerequisites": ["list_files"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "list_files"
+      },
+      "prerequisites": [
+        "list_files"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "tool_read_file",
       "dimension": "tool",
       "prompt": "Read eval/{run_id}/fixtures/alpha.txt. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "read_file" },
-      "prerequisites": ["read_file"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "read_file"
+      },
+      "prerequisites": [
+        "read_file"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "tool_search_content",
       "dimension": "tool",
       "prompt": "Search for beta in eval/{run_id}/fixtures/alpha.txt. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "search_content" },
-      "prerequisites": ["search_content"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "search_content"
+      },
+      "prerequisites": [
+        "search_content"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "tool_write_file",
       "dimension": "tool",
       "prompt": "Write \"wunder-eval\" into eval/{run_id}/outputs/tool_write.txt. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "write_file" },
-      "prerequisites": ["write_file"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "write_file"
+      },
+      "prerequisites": [
+        "write_file"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "tool_replace_text",
       "dimension": "tool",
       "prompt": "Replace hello with hi in eval/{run_id}/outputs/replace.txt. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "replace_text" },
-      "prerequisites": ["replace_text"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "replace_text"
+      },
+      "prerequisites": [
+        "replace_text"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "tool_edit_file",
       "dimension": "tool",
       "prompt": "Use edit_file to replace the first line of eval/{run_id}/outputs/edit.txt with edited. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "edit_file" },
-      "prerequisites": ["edit_file"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "edit_file"
+      },
+      "prerequisites": [
+        "edit_file"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "tool_execute_command",
       "dimension": "tool",
       "prompt": "Run `pwd` in eval/{run_id} via execute_command. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "execute_command" },
-      "prerequisites": ["execute_command"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "execute_command"
+      },
+      "prerequisites": [
+        "execute_command"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "tool_ptc",
       "dimension": "tool",
       "prompt": "Use ptc to write \"ptc-ok\" into eval/{run_id}/outputs/ptc.txt. Only output the tool call.",
-      "checker": { "type": "tool_called", "tool": "ptc" },
-      "prerequisites": ["ptc"],
-      "tags": ["builtin"]
+      "checker": {
+        "type": "tool_called",
+        "tool": "ptc"
+      },
+      "prerequisites": [
+        "ptc"
+      ],
+      "tags": [
+        "builtin"
+      ]
     },
     {
       "id": "common_1",
       "dimension": "common",
       "prompt": "Common sense 1: What is the capital of France? A) Berlin B) Paris C) Madrid D) Rome. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "B" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "common_2",
       "dimension": "common",
       "prompt": "Common sense 2: What is the chemical formula of water? A) CO2 B) H2O C) O2 D) NaCl. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "B" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "common_3",
       "dimension": "common",
       "prompt": "Common sense 3: Earth orbits the Sun in about? A) 24 hours B) 7 days C) 365 days D) 12 hours. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "C" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "C"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "common_4",
       "dimension": "common",
       "prompt": "Common sense 4: Who wrote Pride and Prejudice? A) Austen B) Shelley C) Dickens D) Shakespeare. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "A" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "A"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "common_5",
       "dimension": "common",
       "prompt": "Common sense 5: The sun rises in the? A) South B) North C) West D) East. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "D" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "D"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "logic_1",
       "dimension": "logic",
       "prompt": "Logic 1: Sequence 2, 6, 12, 20, ? Next number is? A) 28 B) 30 C) 32 D) 34. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "B" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "logic_2",
       "dimension": "logic",
       "prompt": "Logic 2: A regular hexagon has how many diagonals? A) 6 B) 9 C) 12 D) 15. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "B" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "logic_3",
       "dimension": "logic",
       "prompt": "Logic 3: From 1 to 100, how many times does digit 9 appear? A) 18 B) 19 C) 20 D) 21. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "C" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "C"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "logic_4",
       "dimension": "logic",
       "prompt": "Logic 4: Legal rule: A contract with an illegal subject matter is void. Scenario: A and B agree to trade illegal goods. Which is correct? A) The contract is valid B) The contract is void C) The contract is voidable D) The contract is pending validity. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "B" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "B"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "logic_5",
       "dimension": "logic",
       "prompt": "Logic 5: The product of four consecutive integers plus one is always? A) Composite B) Prime C) Perfect square D) Cannot determine. Only output A/B/C/D.",
-      "checker": { "type": "choice", "answer": "B" },
-      "tags": ["mcq"]
+      "checker": {
+        "type": "choice",
+        "answer": "C"
+      },
+      "tags": [
+        "mcq"
+      ]
     },
     {
       "id": "complex_summary",
       "dimension": "complex",
       "prompt": "Read eval/{run_id}/fixtures/alpha.txt, extract the word beta and write it to eval/{run_id}/outputs/complex_summary.txt. The content must include beta.",
-      "checker": { "type": "file_contains", "path": "eval/{run_id}/outputs/complex_summary.txt", "text": "beta" },
-      "tags": ["file"]
+      "checker": {
+        "type": "file_contains",
+        "path": "eval/{run_id}/outputs/complex_summary.txt",
+        "text": "beta"
+      },
+      "tags": [
+        "file"
+      ]
     },
     {
       "id": "complex_report_json",
@@ -151,23 +263,41 @@
       "checker": {
         "type": "json_contains",
         "path": "eval/{run_id}/outputs/report.json",
-        "required": { "status": "ok", "count": 3 }
+        "required": {
+          "status": "ok",
+          "count": 3
+        }
       },
-      "tags": ["file", "json"]
+      "tags": [
+        "file",
+        "json"
+      ]
     },
     {
       "id": "complex_heart_png",
       "dimension": "complex",
       "prompt": "Use python to draw a heart and save it to eval/{run_id}/outputs/heart.png (file name must be heart.png).",
-      "checker": { "type": "file_exists", "path": "eval/{run_id}/outputs/heart.png" },
-      "tags": ["file", "image", "python"]
+      "checker": {
+        "type": "file_exists",
+        "path": "eval/{run_id}/outputs/heart.png"
+      },
+      "tags": [
+        "file",
+        "image",
+        "python"
+      ]
     },
     {
       "id": "complex_skill_compression_img",
       "dimension": "complex",
       "prompt": "Create a skill for compressing an image named compression_img, and save it to eval/{run_id}/outputs/compression_img.",
-      "checker": { "type": "file_exists", "path": "eval/{run_id}/outputs/compression_img" },
-      "tags": ["skill"]
+      "checker": {
+        "type": "file_exists",
+        "path": "eval/{run_id}/outputs/compression_img"
+      },
+      "tags": [
+        "skill"
+      ]
     }
   ]
 }

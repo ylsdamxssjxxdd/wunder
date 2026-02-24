@@ -1014,12 +1014,7 @@ fn evaluate_checker(
 ) -> (bool, Value) {
     match &case.checker {
         EvaluationChecker::Choice { answer: expected } => {
-            let normalized = answer
-                .trim()
-                .chars()
-                .next()
-                .map(|ch| ch.to_ascii_uppercase().to_string())
-                .unwrap_or_default();
+            let normalized = normalize_choice_answer(answer);
             let expected = expected.trim().to_ascii_uppercase();
             let passed = !normalized.is_empty() && normalized == expected;
             (
@@ -1160,6 +1155,99 @@ fn evaluate_checker(
             }
         }
     }
+}
+
+fn normalize_choice_answer(answer: &str) -> String {
+    let cleaned = strip_reasoning_tags(&strip_tool_calls(answer));
+    if cleaned.is_empty() {
+        return String::new();
+    }
+
+    if let Some(regex) = choice_labeled_regex() {
+        if let Some(captures) = regex.captures_iter(&cleaned).last() {
+            if let Some(choice) = captures.get(1) {
+                return choice.as_str().to_ascii_uppercase();
+            }
+        }
+    }
+
+    let lines: Vec<&str> = cleaned
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    for line in lines.iter().rev() {
+        if let Some(choice) = extract_choice_from_line(line, false) {
+            return choice;
+        }
+    }
+
+    if lines.len() == 1 {
+        if let Some(choice) = extract_choice_from_line(lines[0], true) {
+            return choice;
+        }
+    }
+
+    String::new()
+}
+
+fn strip_reasoning_tags(answer: &str) -> String {
+    let mut stripped = answer.trim().to_string();
+    if let Some(regex) = think_block_regex() {
+        stripped = regex.replace_all(&stripped, "\n").to_string();
+    }
+    if let Some(regex) = think_tag_regex() {
+        stripped = regex.replace_all(&stripped, " ").to_string();
+    }
+    if let Some(regex) = xml_tag_regex() {
+        stripped = regex.replace_all(&stripped, " ").to_string();
+    }
+    stripped.trim().to_string()
+}
+
+fn extract_choice_from_line(line: &str, allow_loose_token: bool) -> Option<String> {
+    let candidate = line
+        .trim()
+        .trim_start_matches(|ch: char| "-*>`".contains(ch))
+        .trim();
+    if candidate.is_empty() {
+        return None;
+    }
+
+    if let Some(regex) = choice_line_labeled_regex() {
+        if let Some(captures) = regex.captures(candidate) {
+            if let Some(choice) = captures.get(1) {
+                return Some(choice.as_str().to_ascii_uppercase());
+            }
+        }
+    }
+
+    if let Some(regex) = choice_standalone_regex() {
+        if let Some(captures) = regex.captures(candidate) {
+            if let Some(choice) = captures.get(1) {
+                return Some(choice.as_str().to_ascii_uppercase());
+            }
+        }
+    }
+
+    if allow_loose_token && candidate.len() <= 32 {
+        if let Some(regex) = choice_token_regex() {
+            let mut found = None;
+            for capture in regex.captures_iter(candidate) {
+                let Some(choice) = capture.get(1) else {
+                    continue;
+                };
+                let upper = choice.as_str().to_ascii_uppercase();
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(upper);
+            }
+            return found;
+        }
+    }
+
+    None
 }
 
 fn tool_available(name: &str, allowed: &HashSet<String>) -> bool {
@@ -1375,6 +1463,60 @@ fn tool_call_block_regex() -> Option<&'static Regex> {
         .as_ref()
 }
 
+fn think_block_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?is)<think\b[^>]*>.*?</think\s*>").ok())
+        .as_ref()
+}
+
+fn think_tag_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?is)</?think\b[^>]*>").ok())
+        .as_ref()
+}
+
+fn xml_tag_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?is)</?[a-z][^>]*>").ok())
+        .as_ref()
+}
+
+fn choice_labeled_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"(?i)(?:答案|最终答案|选择|选项|answer|final\s*answer)\s*(?:[:：]|is|为)\s*[\(\[\{<"'`*_~]*([ABCD])(?:\s|[\)\]\}>"'`*_~\.,，。!！?？:：;；]|$)"#,
+        )
+        .ok()
+    })
+    .as_ref()
+}
+
+fn choice_line_labeled_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(
+            r#"(?i)^(?:答案|最终答案|选择|选项|answer|final\s*answer)\s*(?::|：|is|为)\s*[\(\[\{<"'`*_~]*([ABCD])[\s\)\]\}>"'`*_~\.,，。!！?？:：;；]*$"#,
+        )
+        .ok()
+    })
+    .as_ref()
+}
+
+fn choice_standalone_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?i)^[\s\(\[\{<"'`*_~]*([ABCD])[\s\)\]\}>"'`*_~\.,，。!！?？:：;；]*$"#).ok()
+    })
+    .as_ref()
+}
+
+fn choice_token_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"(?i)\b([ABCD])\b").ok())
+        .as_ref()
+}
+
 fn tool_block_regex() -> Option<&'static Regex> {
     static RE: OnceLock<Option<Regex>> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r"(?is)<tool\b[^>]*>(?P<payload>.*?)</tool\s*>").ok())
@@ -1433,4 +1575,38 @@ fn dimension_weight(weights: &DimensionWeights, dimension: EvaluationDimension) 
 
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_choice_answer;
+
+    #[test]
+    fn normalize_choice_answer_strips_think_and_reads_final_line() {
+        let answer = "<think>\n先分析题目，再给出答案。\n</think>\n\nB";
+        assert_eq!(normalize_choice_answer(answer), "B");
+    }
+
+    #[test]
+    fn normalize_choice_answer_supports_localized_answer_prefix() {
+        assert_eq!(normalize_choice_answer("答案：C"), "C");
+        assert_eq!(normalize_choice_answer("Final Answer: a"), "A");
+    }
+
+    #[test]
+    fn normalize_choice_answer_accepts_plain_choice_letter() {
+        assert_eq!(normalize_choice_answer("d"), "D");
+    }
+
+    #[test]
+    fn normalize_choice_answer_rejects_option_echo_without_selection() {
+        let answer = "A) 2 B) 3 C) 4 D) 5";
+        assert_eq!(normalize_choice_answer(answer), "");
+    }
+
+    #[test]
+    fn normalize_choice_answer_rejects_instruction_pattern() {
+        let answer = "Please only output Answer: A/B/C/D.";
+        assert_eq!(normalize_choice_answer(answer), "");
+    }
 }

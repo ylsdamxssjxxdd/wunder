@@ -235,12 +235,26 @@
 }
 
 .portal-shell .user-meta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   background: transparent;
   border: none;
   padding: 0;
   cursor: pointer;
   text-align: left;
   color: inherit;
+}
+
+.portal-shell .user-meta-icon {
+  display: none;
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+  line-height: 1;
+  align-items: center;
+  justify-content: center;
+  color: var(--portal-text);
 }
 
 .portal-shell .user-name {
@@ -1115,6 +1129,34 @@
 .portal-section--apps {
   margin-top: 32px;
   min-height: 0;
+}
+
+@media (max-width: 1280px) {
+  .portal-shell .brand-title {
+    display: none;
+  }
+
+  .portal-shell .user-meta {
+    display: none;
+  }
+
+  .portal-shell .user-meta-icon {
+    display: inline-flex;
+  }
+
+  .portal-shell .user-meta-btn {
+    width: 32px;
+    height: 32px;
+    justify-content: center;
+    border: 1px solid var(--portal-border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+  }
+
+  :root[data-user-theme='light'] .portal-shell .user-meta-btn {
+    border-color: rgba(15, 23, 42, 0.14);
+    background: rgba(15, 23, 42, 0.04);
+  }
 }
 
 @media (min-width: 960px) {

@@ -109,13 +109,16 @@
           <ThemeToggle />
           <div class="topbar-user">
             <button
-              class="user-meta user-meta-btn"
+              class="user-meta-btn"
               type="button"
               :aria-label="t('user.profile.enter')"
               @click="handleOpenProfile"
             >
-              <div class="user-name">{{ currentUser?.username || t('user.guest') }}</div>
-              <div class="user-level">{{ t('user.unitLabel', { unit: currentUserUnitLabel }) }}</div>
+              <i class="fa-solid fa-user user-meta-icon" aria-hidden="true"></i>
+              <div class="user-meta">
+                <div class="user-name">{{ currentUser?.username || t('user.guest') }}</div>
+                <div class="user-level">{{ t('user.unitLabel', { unit: currentUserUnitLabel }) }}</div>
+              </div>
             </button>
             <button class="logout-btn" type="button" @click="handleLogout">
               {{ t('nav.logout') }}
