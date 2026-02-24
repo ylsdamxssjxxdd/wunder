@@ -911,10 +911,7 @@ fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, payload: &Value) {
         Value::Object(map) => {
             if let Some(tool_calls) = map.get("tool_calls").or_else(|| map.get("tool_call")) {
                 update_stream_tool_calls(acc, tool_calls);
-            } else if map.contains_key("function")
-                || map.contains_key("name")
-                || map.contains_key("arguments")
-            {
+            } else if looks_like_stream_tool_call_item(map) {
                 merge_stream_tool_call_item(acc, payload);
             }
 
@@ -927,6 +924,31 @@ fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, payload: &Value) {
         }
         _ => {}
     }
+}
+
+fn looks_like_stream_tool_call_item(map: &serde_json::Map<String, Value>) -> bool {
+    if map.contains_key("function") {
+        return true;
+    }
+
+    let has_name = map.get("name").is_some_and(Value::is_string);
+    let has_arguments = map.contains_key("arguments");
+    if has_name && has_arguments {
+        return true;
+    }
+
+    let has_index_or_id = map.contains_key("index")
+        || map.contains_key("id")
+        || map.contains_key("tool_call_id")
+        || map.contains_key("toolCallId")
+        || map.contains_key("call_id")
+        || map.contains_key("callId");
+    let is_function_type = map
+        .get("type")
+        .and_then(Value::as_str)
+        .map(|value| value.eq_ignore_ascii_case("function"))
+        .unwrap_or(false);
+    has_arguments && (has_index_or_id || is_function_type)
 }
 
 fn merge_stream_tool_call_item(acc: &mut Vec<StreamToolCall>, item: &Value) {
@@ -1439,6 +1461,32 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn process_sse_event_block_ignores_assistant_name_metadata_in_delta() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let done = process_sse_event_block(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hello\",\"role\":\"assistant\",\"name\":\"MiniMax AI\",\"audio_content\":\"\"}}]}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect("process minimax-style delta");
+
+        assert!(!done);
+        assert_eq!(combined, "hello");
+        assert!(reasoning.is_empty());
+        assert!(usage.is_none());
+        assert!(finalize_stream_tool_calls(&tool_calls).is_none());
+    }
+
     #[test]
     fn update_stream_tool_calls_merges_delta_and_snapshot_without_duplicates() {
         let mut acc = Vec::new();
@@ -1485,6 +1533,21 @@ mod tests {
             finalized[0]["function"]["arguments"],
             "{\"path\":\"demo.txt\"}"
         );
+    }
+
+    #[test]
+    fn update_stream_tool_calls_ignores_assistant_name_metadata() {
+        let mut acc = Vec::new();
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "content": "<think>...</think>",
+                "role": "assistant",
+                "name": "MiniMax AI",
+                "audio_content": ""
+            }),
+        );
+        assert!(finalize_stream_tool_calls(&acc).is_none());
     }
 
     #[tokio::test]

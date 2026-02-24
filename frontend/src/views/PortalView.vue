@@ -15,6 +15,12 @@
                 class="agent-card agent-card--compact agent-card--default agent-card--clickable"
                 role="button"
                 tabindex="0"
+                @mouseenter="queueAgentPrefetch(null)"
+                @focus="queueAgentPrefetch(null)"
+                @mouseleave="cancelAgentPrefetch(null)"
+                @blur="cancelAgentPrefetch(null)"
+                @mousedown="queueAgentPrefetch(null, true)"
+                @touchstart.passive="queueAgentPrefetch(null, true)"
                 @click="enterDefaultChat"
                 @keydown.enter="enterDefaultChat"
               >
@@ -66,6 +72,12 @@
                 class="agent-card agent-card--compact agent-card--clickable"
                 role="button"
                 tabindex="0"
+                @mouseenter="queueAgentPrefetch(agent)"
+                @focus="queueAgentPrefetch(agent)"
+                @mouseleave="cancelAgentPrefetch(agent)"
+                @blur="cancelAgentPrefetch(agent)"
+                @mousedown="queueAgentPrefetch(agent, true)"
+                @touchstart.passive="queueAgentPrefetch(agent, true)"
                 @click="enterAgent(agent)"
                 @keydown.enter="enterAgent(agent)"
               >
@@ -126,6 +138,12 @@
                 class="agent-card agent-card--compact agent-card--clickable"
                 role="button"
                 tabindex="0"
+                @mouseenter="queueAgentPrefetch(agent)"
+                @focus="queueAgentPrefetch(agent)"
+                @mouseleave="cancelAgentPrefetch(agent)"
+                @blur="cancelAgentPrefetch(agent)"
+                @mousedown="queueAgentPrefetch(agent, true)"
+                @touchstart.passive="queueAgentPrefetch(agent, true)"
                 @click="enterAgent(agent)"
                 @keydown.enter="enterAgent(agent)"
               >
@@ -350,16 +368,21 @@ import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
+import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
 import { resolveUserBasePath } from '@/utils/basePath';
+import { prefetchWorkspaceTree } from '@/utils/workspaceTreeCache';
 
 const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
+const chatStore = useChatStore();
 const { t } = useI18n();
 const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
+const PORTAL_PREFETCH_HOVER_DELAY_MS = 120;
+const PORTAL_PREFETCH_COOLDOWN_MS = 12 * 1000;
 const DONE_ACK_CACHE_KEY = 'wunder.portal.done_ack';
 const TRANSIENT_STATE_CACHE_KEY = 'wunder.portal.transient_state';
 const AGENT_LIST_CACHE_KEY = 'wunder.portal.agent_list';
@@ -386,6 +409,9 @@ const acknowledgedDoneStateSignatures = ref<Record<string, string>>(readDoneAckC
 const configuredChannelsByAgent = ref<Record<string, string[]>>({});
 const agentCopyOptions = ref<Array<{ id: string; name: string }>>([]);
 let runningTimer = null;
+const agentPrefetchTimers = new Map<string, number>();
+const agentPrefetchInFlight = new Map<string, Promise<void>>();
+const agentPrefetchLastAt = new Map<string, number>();
 
 type AgentListCachePayload = {
   cachedAt: number;
@@ -693,6 +719,8 @@ onBeforeUnmount(() => {
     clearInterval(runningTimer);
     runningTimer = null;
   }
+  clearAgentPrefetchTimers();
+  agentPrefetchInFlight.clear();
 });
 
 const agents = computed(() => agentStore.agents || []);
@@ -773,6 +801,83 @@ const isAgentWaiting = (agentId) => {
 const normalizeAgentKey = (agentId) => {
   const key = String(agentId || '').trim();
   return key || DEFAULT_AGENT_KEY;
+};
+
+const clearAgentPrefetchTimer = (agentKey) => {
+  const timer = agentPrefetchTimers.get(agentKey);
+  if (timer) {
+    clearTimeout(timer);
+    agentPrefetchTimers.delete(agentKey);
+  }
+};
+
+const clearAgentPrefetchTimers = () => {
+  agentPrefetchTimers.forEach((timer) => {
+    clearTimeout(timer);
+  });
+  agentPrefetchTimers.clear();
+};
+
+const resolveAgentPrefetchMeta = (agent) => {
+  const agentId = String(agent?.id || '').trim();
+  return {
+    agentId,
+    agentKey: normalizeAgentKey(agentId)
+  };
+};
+
+const runAgentPrefetch = (agentId, agentKey) => {
+  const now = Date.now();
+  const lastAt = agentPrefetchLastAt.get(agentKey) || 0;
+  if (now - lastAt < PORTAL_PREFETCH_COOLDOWN_MS) {
+    return agentPrefetchInFlight.get(agentKey) || Promise.resolve();
+  }
+
+  const existing = agentPrefetchInFlight.get(agentKey);
+  if (existing) {
+    return existing;
+  }
+
+  agentPrefetchLastAt.set(agentKey, now);
+  const request = Promise.allSettled([
+    chatStore.prefetchAgentSessions(agentId).then((sessions) => {
+      const targetSessionId = chatStore.resolveInitialSessionId(agentId, sessions);
+      if (!targetSessionId) return null;
+      return chatStore.preloadSessionDetail(targetSessionId).catch(() => null);
+    }),
+    prefetchWorkspaceTree({
+      agentId,
+      path: '',
+      sortBy: 'name',
+      sortOrder: 'asc'
+    })
+  ])
+    .then(() => undefined)
+    .finally(() => {
+      agentPrefetchInFlight.delete(agentKey);
+    });
+
+  agentPrefetchInFlight.set(agentKey, request);
+  return request;
+};
+
+const queueAgentPrefetch = (agent, immediate = false) => {
+  const { agentId, agentKey } = resolveAgentPrefetchMeta(agent);
+  clearAgentPrefetchTimer(agentKey);
+  if (immediate) {
+    void runAgentPrefetch(agentId, agentKey);
+    return;
+  }
+  const timer = window.setTimeout(() => {
+    agentPrefetchTimers.delete(agentKey);
+    void runAgentPrefetch(agentId, agentKey);
+  }, PORTAL_PREFETCH_HOVER_DELAY_MS);
+  agentPrefetchTimers.set(agentKey, timer);
+};
+
+const cancelAgentPrefetch = (agent) => {
+  const { agentKey } = resolveAgentPrefetchMeta(agent);
+  clearAgentPrefetchTimer(agentKey);
 };
 
 const cleanupTransientAgentStates = (now) => {
@@ -1251,13 +1356,27 @@ const saveAgent = async () => {
 const enterAgent = (agent) => {
   const agentId = agent?.id;
   if (!agentId) return;
+  queueAgentPrefetch(agent, true);
   acknowledgeAgentDoneState(agentId);
-  router.push(`${basePath.value}/chat?agent_id=${encodeURIComponent(agentId)}`);
+  router.push({
+    path: `${basePath.value}/chat`,
+    query: {
+      agent_id: String(agentId),
+      container_id: String(getAgentSandboxContainerId(agent))
+    }
+  });
 };
 
 const enterDefaultChat = () => {
+  queueAgentPrefetch(null, true);
   acknowledgeAgentDoneState(DEFAULT_AGENT_KEY);
-  router.push({ path: `${basePath.value}/chat`, query: { entry: 'default' } });
+  router.push({
+    path: `${basePath.value}/chat`,
+    query: {
+      entry: 'default',
+      container_id: String(getAgentSandboxContainerId(null))
+    }
+  });
 };
 
 const toggleMoreApps = () => {

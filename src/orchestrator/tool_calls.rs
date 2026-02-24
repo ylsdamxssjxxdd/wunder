@@ -137,6 +137,14 @@ fn extract_prefixed_tool_name(prefix: &str) -> Option<String> {
         return None;
     }
 
+    if let Some(name) = extract_tool_name_from_partial_json_prefix(trimmed) {
+        return Some(name);
+    }
+
+    if trimmed.ends_with(':') || trimmed.ends_with('\u{FF1A}') {
+        return None;
+    }
+
     if let Some(token) = trimmed.split_whitespace().last() {
         let cleaned = clean_tool_call_name(token);
         if is_tool_name_token(cleaned.as_str()) {
@@ -157,6 +165,98 @@ fn extract_prefixed_tool_name(prefix: &str) -> Option<String> {
     None
 }
 
+fn extract_tool_name_from_partial_json_prefix(prefix: &str) -> Option<String> {
+    let start = prefix.rfind('{')?;
+    let snippet = prefix.get(start..)?.trim();
+    if snippet.is_empty() {
+        return None;
+    }
+
+    let snippet_lower = snippet.to_ascii_lowercase();
+    if !(snippet_lower.contains("\"name\"")
+        && (snippet_lower.contains("\"arguments\"")
+            || snippet_lower.contains("\"args\"")
+            || snippet_lower.contains("\"parameters\"")
+            || snippet_lower.contains("\"params\"")
+            || snippet_lower.contains("\"input\"")
+            || snippet_lower.contains("\"payload\"")))
+    {
+        return None;
+    }
+
+    let mut candidate = snippet.to_string();
+    if candidate.ends_with(':') || candidate.ends_with('\u{FF1A}') {
+        candidate.push_str("{}");
+    } else if candidate.ends_with(',') {
+        candidate.push_str("\"_\":null");
+    }
+    candidate = close_unbalanced_json(candidate);
+
+    let value = serde_json::from_str::<Value>(candidate.as_str()).ok()?;
+    let map = value.as_object()?;
+    let name_value = map
+        .get("name")
+        .or_else(|| map.get("tool"))
+        .or_else(|| map.get("tool_name"))
+        .or_else(|| map.get("toolName"))
+        .or_else(|| map.get("function_name"))
+        .or_else(|| map.get("functionName"))?;
+    let name = match name_value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    };
+    let cleaned = clean_tool_call_name(name.as_str());
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(cleaned)
+}
+
+fn close_unbalanced_json(mut text: String) -> String {
+    let mut stack: Vec<char> = Vec::new();
+    let mut in_string = false;
+    let mut escape = false;
+    for ch in text.chars() {
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
+            }
+            if ch == '\\' {
+                escape = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            continue;
+        }
+        match ch {
+            '{' | '[' => stack.push(ch),
+            '}' => {
+                if stack.last().copied() == Some('{') {
+                    stack.pop();
+                }
+            }
+            ']' => {
+                if stack.last().copied() == Some('[') {
+                    stack.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    while let Some(opening) = stack.pop() {
+        text.push(if opening == '{' { '}' } else { ']' });
+    }
+    text
+}
+
 fn is_tool_name_token(cleaned: &str) -> bool {
     if cleaned.is_empty() || cleaned.len() > 64 {
         return false;
@@ -172,7 +272,19 @@ fn is_tool_name_token(cleaned: &str) -> bool {
     let lowered = cleaned.to_ascii_lowercase();
     if matches!(
         lowered.as_str(),
-        "tool" | "tool_call" | "function_call" | "json" | "bash" | "shell"
+        "tool"
+            | "tool_call"
+            | "function_call"
+            | "json"
+            | "bash"
+            | "shell"
+            | "name"
+            | "arguments"
+            | "args"
+            | "parameters"
+            | "params"
+            | "input"
+            | "payload"
     ) {
         return false;
     }
@@ -1011,6 +1123,32 @@ mod tests {
     fn test_extract_prefixed_tool_name_supports_fullwidth_colon() {
         let name = extract_prefixed_tool_name("prefix\u{FF1A}read_file ");
         assert_eq!(name.as_deref(), Some("read_file"));
+    }
+
+    #[test]
+    fn test_extract_prefixed_tool_name_rejects_json_argument_key() {
+        let name = extract_prefixed_tool_name("\"arguments\":");
+        assert!(name.is_none());
+    }
+
+    #[test]
+    fn test_extract_prefixed_tool_name_reads_name_from_partial_json_prefix() {
+        let name = extract_prefixed_tool_name(r#"{"name":"编辑文件","arguments":"#);
+        assert_eq!(name.as_deref(), Some("编辑文件"));
+    }
+
+    #[test]
+    fn test_parse_tool_call_malformed_payload_prefers_declared_name_over_arguments() {
+        let content = r#"<tool_call>
+{"name":"编辑文件","arguments":{"edits":[{"newText":"edited","oldText":"第一行内容"}],"path":"eval/run/outputs/edit.txt"}]}
+</tool_call>"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "编辑文件");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("eval/run/outputs/edit.txt")
+        );
     }
 
     #[test]

@@ -1578,8 +1578,99 @@ const resolveToolCategory = (toolName, payload) => {
 
 const sessionRuntime = new Map();
 const sessionMessages = new Map();
+const sessionListCache = new Map();
+const sessionListCacheInFlight = new Map();
+const sessionDetailPrefetchInFlight = new Map();
+const sessionDetailWarmState = new Map();
+
+const SESSION_LIST_CACHE_TTL_MS = 15 * 1000;
+const SESSION_DETAIL_WARM_TTL_MS = 20 * 1000;
 
 const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
+
+const cloneSerializable = (value, fallback) => {
+  if (typeof structuredClone === 'function') {
+    try {
+      return structuredClone(value);
+    } catch (error) {
+      // Fallback to JSON clone when structuredClone fails.
+    }
+  }
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return fallback;
+  }
+};
+
+const cloneSessionList = (sessions) => {
+  const cloned = cloneSerializable(Array.isArray(sessions) ? sessions : [], []);
+  return Array.isArray(cloned) ? cloned : [];
+};
+
+const filterSessionsByAgent = (agentId, sourceSessions = []) => {
+  const normalizedAgentId = String(agentId || '').trim();
+  return (Array.isArray(sourceSessions) ? sourceSessions : []).filter((session) => {
+    const sessionAgentId = String(session?.agent_id || '').trim();
+    return normalizedAgentId ? sessionAgentId === normalizedAgentId : !sessionAgentId;
+  });
+};
+
+const resolveInitialSessionIdFromList = (agentId, sourceSessions = []) => {
+  const sessions = filterSessionsByAgent(agentId, sourceSessions);
+  if (!sessions.length) return '';
+  const mainSession = sessions.find((session) => session.is_main);
+  if (mainSession?.id) {
+    return mainSession.id;
+  }
+  const persistedSessionId = resolvePersistedSessionId(agentId);
+  if (persistedSessionId && sessions.some((session) => session.id === persistedSessionId)) {
+    return persistedSessionId;
+  }
+  return sessions[0]?.id || '';
+};
+
+const resolveSessionListCacheKey = (agentId) => normalizeAgentKey(agentId);
+
+const readSessionListCache = (agentId) => {
+  const cacheKey = resolveSessionListCacheKey(agentId);
+  const cached = sessionListCache.get(cacheKey);
+  if (!cached) return null;
+  if (!Number.isFinite(cached.cachedAt) || Date.now() - cached.cachedAt > SESSION_LIST_CACHE_TTL_MS) {
+    sessionListCache.delete(cacheKey);
+    return null;
+  }
+  return cloneSessionList(cached.sessions);
+};
+
+const writeSessionListCache = (agentId, sessions) => {
+  const cacheKey = resolveSessionListCacheKey(agentId);
+  sessionListCache.set(cacheKey, {
+    cachedAt: Date.now(),
+    sessions: cloneSessionList(sessions)
+  });
+};
+
+const markSessionDetailWarm = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return;
+  sessionDetailWarmState.set(sessionKey, Date.now() + SESSION_DETAIL_WARM_TTL_MS);
+};
+
+const isSessionDetailWarm = (sessionId) => {
+  const sessionKey = resolveSessionKey(sessionId);
+  if (!sessionKey) return false;
+  const warmUntil = Number(sessionDetailWarmState.get(sessionKey));
+  if (!Number.isFinite(warmUntil)) {
+    sessionDetailWarmState.delete(sessionKey);
+    return false;
+  }
+  if (warmUntil <= Date.now()) {
+    sessionDetailWarmState.delete(sessionKey);
+    return false;
+  }
+  return true;
+};
 
 const ensureRuntime = (sessionId) => {
   const key = resolveSessionKey(sessionId);
@@ -2923,6 +3014,77 @@ export const useChatStore = defineStore('chat', {
     setLastSessionId(agentId, sessionId) {
       persistAgentSession(agentId, sessionId);
     },
+    hasSessionMessages(sessionId) {
+      const cached = getSessionMessages(sessionId);
+      return Array.isArray(cached) && cached.length > 0;
+    },
+    getCachedSessions(agentId) {
+      const cached = readSessionListCache(agentId);
+      if (cached) return cached;
+      return filterSessionsByAgent(agentId, this.sessions);
+    },
+    resolveInitialSessionId(agentId, sourceSessions = null) {
+      const targetSessions = Array.isArray(sourceSessions) ? sourceSessions : this.getCachedSessions(agentId);
+      return resolveInitialSessionIdFromList(agentId, targetSessions);
+    },
+    async prefetchAgentSessions(agentId) {
+      const normalizedAgentId = String(agentId ?? '').trim();
+      const cached = readSessionListCache(normalizedAgentId);
+      if (cached) {
+        return cached;
+      }
+      const cacheKey = resolveSessionListCacheKey(normalizedAgentId);
+      const inFlight = sessionListCacheInFlight.get(cacheKey);
+      if (inFlight) {
+        return inFlight;
+      }
+      const request = (async () => {
+        const params = { agent_id: normalizedAgentId };
+        const { data } = await listSessions(params);
+        const sessions = sortSessionsByActivity(data?.data?.items || []);
+        writeSessionListCache(normalizedAgentId, sessions);
+        return cloneSessionList(sessions);
+      })().finally(() => {
+        sessionListCacheInFlight.delete(cacheKey);
+      });
+      sessionListCacheInFlight.set(cacheKey, request);
+      return request;
+    },
+    async preloadSessionDetail(sessionId) {
+      const targetId = resolveSessionKey(sessionId);
+      if (!targetId) return null;
+      if (isSessionDetailWarm(targetId) && getSessionMessages(targetId)?.length) {
+        return this.sessions.find((session) => session.id === targetId) || null;
+      }
+      const inFlight = sessionDetailPrefetchInFlight.get(targetId);
+      if (inFlight) {
+        return inFlight;
+      }
+      const request = (async () => {
+        const [sessionRes, eventsRes] = await Promise.all([
+          getSession(targetId),
+          getSessionEvents(targetId).catch(() => null)
+        ]);
+        const payload = sessionRes?.data;
+        const sessionDetail = payload?.data || null;
+        const rounds = eventsRes?.data?.data?.rounds || [];
+        const workflowState = buildSessionWorkflowState();
+        const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
+        let messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
+        dismissStaleInquiryPanels(messages);
+        const greetingMessages = ensureGreetingMessage(messages, {
+          createdAt: sessionDetail?.created_at,
+          greeting: this.greetingOverride
+        });
+        cacheSessionMessages(targetId, greetingMessages);
+        markSessionDetailWarm(targetId);
+        return sessionDetail;
+      })().finally(() => {
+        sessionDetailPrefetchInFlight.delete(targetId);
+      });
+      sessionDetailPrefetchInFlight.set(targetId, request);
+      return request;
+    },
     getSnapshotForSession(sessionId) {
       const snapshot = readChatSnapshot();
       if (!snapshot || snapshot.sessionId !== String(sessionId || '')) {
@@ -2987,12 +3149,17 @@ export const useChatStore = defineStore('chat', {
         await this.refreshStreamTransportPolicy();
       }
       const params: { agent_id?: string } = {};
+      let requestedAgentId: string | null = null;
 
       if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
-        params.agent_id = String(options.agent_id ?? '');
+        requestedAgentId = String(options.agent_id ?? '');
+        params.agent_id = requestedAgentId;
       }
       const { data } = await listSessions(Object.keys(params).length ? params : undefined);
       this.sessions = sortSessionsByActivity(data.data.items || []);
+      if (requestedAgentId !== null) {
+        writeSessionListCache(requestedAgentId, this.sessions);
+      }
       syncDemoChatCache({ sessions: this.sessions });
       return this.sessions;
     },
@@ -3029,6 +3196,7 @@ export const useChatStore = defineStore('chat', {
       const session = data.data;
       this.sessions.unshift(session);
       this.sessions = applyMainSession(this.sessions, session.agent_id, session.id);
+      writeSessionListCache(session.agent_id, filterSessionsByAgent(session.agent_id, this.sessions));
       this.activeSessionId = session.id;
       this.draftAgentId = String(session.agent_id || '').trim();
       this.messages = ensureGreetingMessage([], {
@@ -3055,6 +3223,7 @@ export const useChatStore = defineStore('chat', {
       const apiAgentId = agentId || DEFAULT_AGENT_KEY;
       await setDefaultSession(apiAgentId, { session_id: targetId });
       this.sessions = applyMainSession(this.sessions, agentId, targetId);
+      writeSessionListCache(agentId, filterSessionsByAgent(agentId, this.sessions));
       persistAgentSession(agentId, targetId);
       return targetId;
     },
@@ -3104,6 +3273,7 @@ export const useChatStore = defineStore('chat', {
         sessionDetail?.agent_id ??
         this.sessions.find((item) => item.id === sessionId)?.agent_id ??
         this.draftAgentId;
+      writeSessionListCache(resolvedAgentId, filterSessionsByAgent(resolvedAgentId, this.sessions));
       persistActiveSession(sessionId, resolvedAgentId);
       this.draftToolOverrides = null;
       const rounds = eventsRes?.data?.data?.rounds || [];
@@ -3123,6 +3293,7 @@ export const useChatStore = defineStore('chat', {
         greeting: this.greetingOverride
       });
       cacheSessionMessages(sessionId, this.messages);
+      markSessionDetailWarm(sessionId);
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
       const pendingMessage = [...this.messages]
         .reverse()
@@ -3147,6 +3318,8 @@ export const useChatStore = defineStore('chat', {
       setSessionLoading(this, targetId, false);
       sessionRuntime.delete(resolveSessionKey(targetId));
       sessionMessages.delete(resolveSessionKey(targetId));
+      sessionDetailWarmState.delete(resolveSessionKey(targetId));
+      sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
       await deleteSessionApi(targetId);
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
       if (targetSession?.is_main) {
@@ -3174,6 +3347,7 @@ export const useChatStore = defineStore('chat', {
         });
         persistAgentSession(targetAgentId, fallback?.id || '');
       }
+      writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, this.sessions));
       if (this.activeSessionId === targetId) {
         const nextSession = this.sessions.find((item) => {
           const agentId = String(item.agent_id || '').trim();

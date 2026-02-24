@@ -139,8 +139,9 @@
               :class="['history-container', { virtual: historyVirtual }]"
               @scroll="handleHistoryScroll"
             >
+              <div v-if="historyInitialLoading" class="history-skeleton" aria-hidden="true"></div>
               <div
-                v-if="!historySessions.length"
+                v-else-if="!historySessions.length"
                 class="history-empty"
                 :title="t('chat.history.empty')"
                 :aria-label="t('chat.history.empty')"
@@ -215,6 +216,9 @@
 
         <section class="chat-panel">
           <div ref="messagesContainerRef" class="messages-container" @click="handleMessageClick">
+            <div v-if="messageInitialLoading" class="message-skeleton-list" aria-hidden="true">
+              <div v-for="index in 4" :key="`message-skeleton-${index}`" class="message-skeleton-item"></div>
+            </div>
             <div
               v-for="(message, index) in chatStore.messages"
               :key="resolveMessageKey(message, index)"
@@ -546,8 +550,9 @@
             :class="['history-container', { virtual: historyVirtual }]"
             @scroll="handleHistoryScroll"
           >
+            <div v-if="historyInitialLoading" class="history-skeleton" aria-hidden="true"></div>
             <div
-              v-if="!historySessions.length"
+              v-else-if="!historySessions.length"
               class="history-empty"
               :title="t('chat.history.empty')"
               :aria-label="t('chat.history.empty')"
@@ -694,6 +699,7 @@ const imagePreviewTitle = ref('');
 const workspaceDialogVisible = ref(false);
 const historyDialogVisible = ref(false);
 const manualDraftPending = ref(false);
+const bootstrappingSession = ref(true);
 const featureMenuVisible = ref(false);
 const featureMenuRef = ref(null);
 const cronDialogVisible = ref(false);
@@ -789,6 +795,7 @@ const activeSession = computed(
 );
 const routeAgentId = computed(() => String(route.query.agent_id || '').trim());
 const routeEntry = computed(() => String(route.query.entry || '').trim().toLowerCase());
+const routeContainerId = computed(() => normalizeSandboxContainerId(route.query.container_id));
 const activeAgentId = computed(
   () => activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || ''
 );
@@ -800,9 +807,15 @@ const normalizeSandboxContainerId = (value) => {
   if (!Number.isFinite(parsed)) return 1;
   return Math.min(10, Math.max(1, parsed));
 };
-const activeSandboxContainerId = computed(() =>
-  normalizeSandboxContainerId(activeAgent.value?.sandbox_container_id)
-);
+const activeSandboxContainerId = computed(() => {
+  const agentContainer = activeAgent.value?.sandbox_container_id;
+  const cleaned =
+    agentContainer === null || agentContainer === undefined ? '' : String(agentContainer).trim();
+  if (cleaned) {
+    return normalizeSandboxContainerId(agentContainer);
+  }
+  return routeContainerId.value;
+});
 const canManageActiveAgent = computed(() => Boolean(String(activeAgentId.value || '').trim()));
 const activeAgentLabel = computed(
   () => activeAgent.value?.name || activeAgentId.value || ''
@@ -879,54 +892,119 @@ const historyPaddingTop = computed(() =>
 const historyPaddingBottom = computed(() =>
   historyVirtual.value ? Math.max(0, (historyTotal.value - historyEndIndex.value) * HISTORY_ROW_HEIGHT) : 0
 );
+const historyInitialLoading = computed(
+  () => bootstrappingSession.value && historySourceSessions.value.length === 0
+);
+const messageInitialLoading = computed(
+  () =>
+    bootstrappingSession.value &&
+    Boolean(chatStore.activeSessionId) &&
+    chatStore.messages.length <= 1
+);
 let pendingAssistantCenter = false;
 let pendingAssistantCenterCount = 0;
 let pendingEnterBottomScroll = true;
 
-const resolveInitialSessionId = (agentId) => {
-  const mainSession = chatStore.sessions.find((session) => session.is_main);
+const resolveInitialSessionId = (agentId, sourceSessions = chatStore.sessions) => {
+  const normalizedAgentId = String(agentId || '').trim();
+  const sessions = (Array.isArray(sourceSessions) ? sourceSessions : []).filter((session) => {
+    const sessionAgentId = String(session?.agent_id || '').trim();
+    return normalizedAgentId ? sessionAgentId === normalizedAgentId : !sessionAgentId;
+  });
+  const mainSession = sessions.find((session) => session.is_main);
   if (mainSession?.id) {
     return mainSession.id;
   }
-  const persisted = chatStore.getLastSessionId?.(agentId) || '';
-  if (persisted && chatStore.sessions.some((session) => session.id === persisted)) {
+  const persisted = chatStore.getLastSessionId?.(normalizedAgentId) || '';
+  if (persisted && sessions.some((session) => session.id === persisted)) {
     return persisted;
   }
-  return chatStore.sessions[0]?.id || '';
+  return sessions[0]?.id || '';
+};
+
+const hasSessionsForAgent = (agentId, sourceSessions = chatStore.sessions) => {
+  const normalizedAgentId = String(agentId || '').trim();
+  return (Array.isArray(sourceSessions) ? sourceSessions : []).some((session) => {
+    const sessionAgentId = String(session?.agent_id || '').trim();
+    return normalizedAgentId ? sessionAgentId === normalizedAgentId : !sessionAgentId;
+  });
 };
 
 const openAgentSession = async (agentId) => {
   const normalizedAgentId = String(agentId || '').trim();
-  const currentAgentId = String(
-    activeSession.value?.agent_id || chatStore.draftAgentId || ''
-  ).trim();
+  const cachedSessions = chatStore.getCachedSessions?.(normalizedAgentId) || [];
+  if (cachedSessions.length) {
+    chatStore.sessions = cachedSessions;
+  }
+  const optimisticSourceSessions = cachedSessions.length > 0 ? cachedSessions : chatStore.sessions;
+  const optimisticSessionId = resolveInitialSessionId(normalizedAgentId, optimisticSourceSessions);
+  const hasWarmSessionList = hasSessionsForAgent(normalizedAgentId, optimisticSourceSessions);
+  const currentAgentId = String(activeSession.value?.agent_id || chatStore.draftAgentId || '').trim();
   const switchingAgent = currentAgentId !== normalizedAgentId;
-  if (switchingAgent) {
+  if (switchingAgent && !optimisticSessionId) {
     manualDraftPending.value = true;
     chatStore.openDraftSession({ agent_id: normalizedAgentId });
   } else {
     manualDraftPending.value = false;
   }
-  await chatStore.loadSessions({ agent_id: normalizedAgentId });
-  const targetId = resolveInitialSessionId(normalizedAgentId);
-  if (targetId) {
-    if (chatStore.activeSessionId !== targetId) {
-      await chatStore.loadSessionDetail(targetId);
+
+  let optimisticDetailPromise: Promise<unknown> | null = null;
+  const hasOptimisticCache = optimisticSessionId
+    ? Boolean(chatStore.hasSessionMessages?.(optimisticSessionId))
+    : false;
+  if (
+    optimisticSessionId &&
+    (chatStore.activeSessionId !== optimisticSessionId || !hasOptimisticCache)
+  ) {
+    optimisticDetailPromise = chatStore.loadSessionDetail(optimisticSessionId).catch(() => null);
+    if (!hasOptimisticCache) {
+      await optimisticDetailPromise;
+    }
+  }
+
+  const reconcileSessions = async (sessions, awaitOptimistic = false) => {
+    const targetId = resolveInitialSessionId(normalizedAgentId, sessions);
+    if (targetId) {
+      if (chatStore.activeSessionId !== targetId) {
+        await chatStore.loadSessionDetail(targetId);
+      } else if (awaitOptimistic && optimisticDetailPromise) {
+        await optimisticDetailPromise;
+      }
+      return true;
+    }
+
+    manualDraftPending.value = true;
+    chatStore.openDraftSession({ agent_id: normalizedAgentId });
+    return false;
+  };
+
+  const sessionsPromise = chatStore.loadSessions({ agent_id: normalizedAgentId });
+  if (hasWarmSessionList) {
+    void sessionsPromise.then((sessions) => reconcileSessions(sessions)).catch(() => null);
+    if (!optimisticSessionId && !switchingAgent) {
+      manualDraftPending.value = true;
+      chatStore.openDraftSession({ agent_id: normalizedAgentId });
     }
     return;
   }
-  manualDraftPending.value = true;
-  chatStore.openDraftSession({ agent_id: normalizedAgentId });
+
+  const sessions = await sessionsPromise;
+  await reconcileSessions(sessions, true);
 };
 
 const init = async () => {
-  if (demoMode.value || !authStore.user) {
-    await authStore.loadProfile();
-  }
-  const initialAgentId = routeEntry.value === 'default' ? '' : routeAgentId.value;
-  await openAgentSession(initialAgentId);
-  if (routeEntry.value === 'default') {
-    router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
+  bootstrappingSession.value = true;
+  try {
+    if (demoMode.value || !authStore.user) {
+      await authStore.loadProfile();
+    }
+    const initialAgentId = routeEntry.value === 'default' ? '' : routeAgentId.value;
+    await openAgentSession(initialAgentId);
+    if (routeEntry.value === 'default') {
+      router.replace({ path: route.path, query: { ...route.query, entry: undefined } });
+    }
+  } finally {
+    bootstrappingSession.value = false;
   }
 };
 

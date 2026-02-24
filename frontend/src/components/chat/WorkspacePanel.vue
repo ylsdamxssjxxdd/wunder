@@ -70,7 +70,14 @@
 
     <div
       ref="listRef"
-      :class="['workspace-list', { dragover: draggingOver, virtual: workspaceVirtual }]"
+      :class="[
+        'workspace-list',
+        {
+          dragover: draggingOver,
+          virtual: workspaceVirtual,
+          refreshing: loading && displayEntries.length > 0
+        }
+      ]"
       @scroll="handleListScroll"
       @dragenter="handleListDragEnter"
       @dragover="handleListDragOver"
@@ -78,7 +85,7 @@
       @drop="handleListDrop"
       @contextmenu.prevent="openContextMenu($event, null)"
     >
-      <div v-if="loading" class="workspace-empty">{{ t('common.loading') }}</div>
+      <div v-if="loading && displayEntries.length === 0" class="workspace-skeleton" aria-hidden="true"></div>
       <div v-else-if="displayEntries.length === 0" class="workspace-empty">{{ emptyText }}</div>
       <template v-else>
         <div
@@ -282,6 +289,13 @@ import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import vscodeIconsTheme from '@/assets/vscode-icons-theme.json';
 import { showApiError } from '@/utils/apiError';
+import {
+  buildWorkspaceTreeCacheKey,
+  cloneWorkspaceEntries,
+  normalizeWorkspacePath,
+  readWorkspaceTreeCache,
+  writeWorkspaceTreeCache
+} from '@/utils/workspaceTreeCache';
 
 const props = defineProps({
   agentId: {
@@ -803,11 +817,6 @@ let autoRefreshTimer = null;
 let autoRefreshPending = false;
 let stopWorkspaceRefreshListener = null;
 
-const normalizeWorkspacePath = (path) => {
-  if (!path) return '';
-  return String(path).replace(/\\/g, '/').replace(/^\/+/, '');
-};
-
 const joinWorkspacePath = (basePath, name) =>
   normalizeWorkspacePath([basePath, name].filter(Boolean).join('/'));
 
@@ -1076,6 +1085,20 @@ const promptInput = async (message: string, options: PromptInputOptions = {}) =>
 };
 
 const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSearch = false } = {}) => {
+  const currentPath = normalizeWorkspacePath(path);
+  const cacheKey = buildWorkspaceTreeCacheKey(
+    normalizedAgentId.value,
+    currentPath,
+    state.sortBy,
+    state.sortOrder
+  );
+  const cachedTree = readWorkspaceTreeCache(cacheKey);
+  const hasCachedEntries = Boolean(cachedTree && Array.isArray(cachedTree.entries) && cachedTree.entries.length > 0);
+  if (cachedTree) {
+    state.path = normalizeWorkspacePath(cachedTree.path);
+    state.parent = cachedTree.parent ? normalizeWorkspacePath(cachedTree.parent) : null;
+    state.entries = cloneWorkspaceEntries(cachedTree.entries);
+  }
   state.loading = true;
   if (resetSearch) {
     state.searchMode = false;
@@ -1087,7 +1110,6 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
   state.renamingPath = '';
   state.renamingValue = '';
   resetWorkspaceSelection();
-  const currentPath = normalizeWorkspacePath(path);
   try {
     const { data } = await fetchWunderWorkspaceContent(withAgentParams({
       path: currentPath,
@@ -1102,6 +1124,11 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     const parentPath = getWorkspaceParentPath(normalizedPath);
     state.parent = parentPath ? parentPath : null;
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
+    writeWorkspaceTreeCache(cacheKey, {
+      path: normalizedPath,
+      parent: state.parent,
+      entries: state.entries
+    });
     if (state.expanded.size) {
       const filtered = new Set();
       state.expanded.forEach((value: string) => {
@@ -1115,7 +1142,9 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     return true;
   } catch (error) {
     showApiError(error, t('workspace.loadFailed'));
-    state.entries = [];
+    if (!hasCachedEntries) {
+      state.entries = [];
+    }
     return false;
   } finally {
     state.loading = false;
