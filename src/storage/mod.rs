@@ -259,6 +259,9 @@ pub struct UserWorldConversationRecord {
     pub conversation_type: String,
     pub participant_a: String,
     pub participant_b: String,
+    pub group_id: Option<String>,
+    pub group_name: Option<String>,
+    pub member_count: Option<i64>,
     pub created_at: f64,
     pub updated_at: f64,
     pub last_message_at: f64,
@@ -271,6 +274,9 @@ pub struct UserWorldConversationSummaryRecord {
     pub conversation_id: String,
     pub conversation_type: String,
     pub peer_user_id: String,
+    pub group_id: Option<String>,
+    pub group_name: Option<String>,
+    pub member_count: Option<i64>,
     pub last_read_message_id: Option<i64>,
     pub unread_count_cache: i64,
     pub pinned: bool,
@@ -291,6 +297,20 @@ pub struct UserWorldMemberRecord {
     pub pinned: bool,
     pub muted: bool,
     pub updated_at: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserWorldGroupRecord {
+    pub group_id: String,
+    pub conversation_id: String,
+    pub group_name: String,
+    pub owner_user_id: String,
+    pub member_count: i64,
+    pub unread_count_cache: i64,
+    pub updated_at: f64,
+    pub last_message_at: f64,
+    pub last_message_id: Option<i64>,
+    pub last_message_preview: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -937,6 +957,13 @@ pub trait StorageBackend: Send + Sync {
         user_b: &str,
         now: f64,
     ) -> Result<UserWorldConversationRecord>;
+    fn create_user_world_group(
+        &self,
+        owner_user_id: &str,
+        group_name: &str,
+        member_user_ids: &[String],
+        now: f64,
+    ) -> Result<UserWorldConversationRecord>;
     fn get_user_world_conversation(
         &self,
         conversation_id: &str,
@@ -980,6 +1007,13 @@ pub trait StorageBackend: Send + Sync {
         after_event_id: i64,
         limit: i64,
     ) -> Result<Vec<UserWorldEventRecord>>;
+    fn list_user_world_groups(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserWorldGroupRecord>, i64)>;
+    fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>>;
 
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()>;
     fn get_channel_account(

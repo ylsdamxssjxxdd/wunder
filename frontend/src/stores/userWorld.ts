@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia';
 
 import {
+  createUserWorldGroup,
   createOrGetUserWorldConversation,
   listUserWorldContacts,
   listUserWorldConversations,
+  listUserWorldGroups,
   listUserWorldMessages,
   markUserWorldRead,
   openUserWorldSocket,
@@ -28,12 +30,28 @@ type UserWorldConversation = {
   conversation_id: string;
   conversation_type: string;
   peer_user_id: string;
+  group_id?: string | null;
+  group_name?: string | null;
+  member_count?: number | null;
   last_read_message_id?: number | null;
   unread_count_cache: number;
   pinned?: boolean;
   muted?: boolean;
   updated_at?: number;
   last_message_at?: number;
+  last_message_id?: number | null;
+  last_message_preview?: string | null;
+};
+
+type UserWorldGroup = {
+  group_id: string;
+  conversation_id: string;
+  group_name: string;
+  owner_user_id: string;
+  member_count: number;
+  unread_count_cache: number;
+  updated_at: number;
+  last_message_at: number;
   last_message_id?: number | null;
   last_message_preview?: string | null;
 };
@@ -133,6 +151,7 @@ const resolveTransport = (): 'ws' | 'sse' => {
 export const useUserWorldStore = defineStore('user-world', {
   state: () => ({
     contacts: [] as UserWorldContact[],
+    groups: [] as UserWorldGroup[],
     conversations: [] as UserWorldConversation[],
     activeConversationId: '' as string,
     messagesByConversation: {} as Record<string, UserWorldMessage[]>,
@@ -161,7 +180,7 @@ export const useUserWorldStore = defineStore('user-world', {
       this.loading = true;
       this.error = '';
       try {
-        await Promise.all([this.refreshContacts(), this.refreshConversations()]);
+        await Promise.all([this.refreshContacts(), this.refreshConversations(), this.refreshGroups()]);
         if (!this.activeConversationId && this.conversations.length) {
           this.activeConversationId = this.conversations[0].conversation_id;
         }
@@ -194,13 +213,33 @@ export const useUserWorldStore = defineStore('user-world', {
       }));
     },
 
+    async refreshGroups() {
+      const response = await listUserWorldGroups({ offset: 0, limit: 500 });
+      const data = asRecord(response.data?.data);
+      const items = Array.isArray(data.items) ? (data.items as UserWorldGroup[]) : [];
+      this.groups = items
+        .map((item) => ({
+          ...item,
+          member_count: toNumber(item.member_count),
+          unread_count_cache: toNumber(item.unread_count_cache),
+          updated_at: toNumber(item.updated_at),
+          last_message_at: toNumber(item.last_message_at),
+          last_message_id: item.last_message_id ? toNumber(item.last_message_id) : item.last_message_id
+        }))
+        .sort((left, right) => toNumber(right.last_message_at) - toNumber(left.last_message_at));
+    },
+
     async refreshConversations() {
       const response = await listUserWorldConversations({ offset: 0, limit: 500 });
       const data = asRecord(response.data?.data);
       const items = Array.isArray(data.items) ? (data.items as UserWorldConversation[]) : [];
       this.conversations = items.map((item) => ({
         ...item,
-        unread_count_cache: toNumber(item.unread_count_cache)
+        unread_count_cache: toNumber(item.unread_count_cache),
+        member_count:
+          item.member_count === null || item.member_count === undefined
+            ? item.member_count
+            : toNumber(item.member_count)
       }));
       this.unreadByConversation = this.conversations.reduce<Record<string, number>>((acc, item) => {
         acc[item.conversation_id] = toNumber(item.unread_count_cache);
@@ -218,6 +257,29 @@ export const useUserWorldStore = defineStore('user-world', {
       this.upsertConversation(conversation);
       await this.setActiveConversation(conversation.conversation_id);
       await this.syncConversationWatchers();
+    },
+
+    async createGroupConversation(groupName: string, memberUserIds: string[]) {
+      const name = groupName.trim();
+      const members = memberUserIds
+        .map((item) => String(item || '').trim())
+        .filter((item) => Boolean(item));
+      if (!name || !members.length) {
+        return null;
+      }
+      const response = await createUserWorldGroup({
+        group_name: name,
+        member_user_ids: members
+      });
+      const conversation = asRecord(response.data?.data) as unknown as UserWorldConversation;
+      if (!conversation?.conversation_id) {
+        return null;
+      }
+      this.upsertConversation(conversation);
+      await Promise.all([this.refreshConversations(), this.refreshGroups()]);
+      await this.setActiveConversation(conversation.conversation_id);
+      await this.syncConversationWatchers();
+      return conversation;
     },
 
     async setActiveConversation(conversationId: string) {
@@ -401,6 +463,10 @@ export const useUserWorldStore = defineStore('user-world', {
       if (contact) {
         contact.unread_count = 0;
       }
+      const group = this.groups.find((item) => item.conversation_id === cleaned);
+      if (group) {
+        group.unread_count_cache = 0;
+      }
     },
 
     async syncConversationWatchers() {
@@ -555,6 +621,10 @@ export const useUserWorldStore = defineStore('user-world', {
             if (conversation) {
               conversation.unread_count_cache = unread;
             }
+            const group = this.groups.find((item) => item.conversation_id === targetConversationId);
+            if (group) {
+              group.unread_count_cache = unread;
+            }
           }
         }
       }
@@ -563,7 +633,11 @@ export const useUserWorldStore = defineStore('user-world', {
     upsertConversation(conversation: UserWorldConversation) {
       const item: UserWorldConversation = {
         ...conversation,
-        unread_count_cache: toNumber(conversation.unread_count_cache)
+        unread_count_cache: toNumber(conversation.unread_count_cache),
+        member_count:
+          conversation.member_count === null || conversation.member_count === undefined
+            ? conversation.member_count
+            : toNumber(conversation.member_count)
       };
       const index = this.conversations.findIndex(
         (entry) => entry.conversation_id === item.conversation_id
@@ -574,6 +648,39 @@ export const useUserWorldStore = defineStore('user-world', {
         this.conversations.unshift(item);
       }
       this.unreadByConversation[item.conversation_id] = toNumber(item.unread_count_cache);
+      if (item.conversation_type === 'group') {
+        const groupId = String(item.group_id || '').trim();
+        const groupIndex = this.groups.findIndex((entry) => entry.conversation_id === item.conversation_id);
+        if (groupIndex >= 0) {
+          this.groups[groupIndex] = {
+            ...this.groups[groupIndex],
+            group_id: groupId || this.groups[groupIndex].group_id,
+            conversation_id: item.conversation_id,
+            group_name: String(item.group_name || this.groups[groupIndex].group_name || '').trim(),
+            unread_count_cache: toNumber(item.unread_count_cache),
+            member_count: toNumber(item.member_count || this.groups[groupIndex].member_count),
+            updated_at: toNumber(item.updated_at || this.groups[groupIndex].updated_at),
+            last_message_at: toNumber(item.last_message_at || this.groups[groupIndex].last_message_at),
+            last_message_id: item.last_message_id ?? this.groups[groupIndex].last_message_id,
+            last_message_preview: item.last_message_preview ?? this.groups[groupIndex].last_message_preview
+          };
+        } else {
+          this.groups.unshift({
+            group_id: groupId || `group:${item.conversation_id}`,
+            conversation_id: item.conversation_id,
+            group_name: String(item.group_name || '').trim() || item.conversation_id,
+            owner_user_id: '',
+            member_count: toNumber(item.member_count),
+            unread_count_cache: toNumber(item.unread_count_cache),
+            updated_at: toNumber(item.updated_at),
+            last_message_at: toNumber(item.last_message_at),
+            last_message_id: item.last_message_id,
+            last_message_preview: item.last_message_preview || null
+          });
+        }
+      }
+      this.sortConversations();
+      this.sortGroups();
     },
 
     upsertMessage(conversationId: string, message: UserWorldMessage) {
@@ -634,8 +741,17 @@ export const useUserWorldStore = defineStore('user-world', {
         contact.last_message_preview = normalized.content;
         contact.unread_count = toNumber(this.unreadByConversation[cleaned]);
       }
+      const group = this.groups.find((item) => item.conversation_id === cleaned);
+      if (group) {
+        group.last_message_at = normalized.created_at;
+        group.last_message_id = normalized.message_id;
+        group.last_message_preview = normalized.content;
+        group.updated_at = normalized.created_at;
+        group.unread_count_cache = toNumber(this.unreadByConversation[cleaned]);
+      }
       this.sortConversations();
       this.sortContacts();
+      this.sortGroups();
     },
 
     removeMessageByClientMsgId(conversationId: string, clientMsgId: string) {
@@ -668,6 +784,43 @@ export const useUserWorldStore = defineStore('user-world', {
         }
         return String(left.username || '').localeCompare(String(right.username || ''));
       });
+    },
+
+    sortGroups() {
+      this.groups.sort((left, right) => {
+        const leftTs = toNumber(left.last_message_at);
+        const rightTs = toNumber(right.last_message_at);
+        if (leftTs !== rightTs) {
+          return rightTs - leftTs;
+        }
+        return String(left.group_name || '').localeCompare(String(right.group_name || ''));
+      });
+    },
+
+    resolveConversationTitle(conversation: UserWorldConversation | null | undefined): string {
+      if (!conversation) return '';
+      if (conversation.conversation_type === 'group') {
+        const groupName = String(conversation.group_name || '').trim();
+        if (groupName) return groupName;
+        const group = this.groups.find((item) => item.conversation_id === conversation.conversation_id);
+        if (group?.group_name) {
+          return group.group_name;
+        }
+        return conversation.conversation_id;
+      }
+      const peerId = String(conversation.peer_user_id || '').trim();
+      if (!peerId) return conversation.conversation_id;
+      const contact = this.contacts.find((item) => item.user_id === peerId);
+      if (contact?.username) {
+        return contact.username;
+      }
+      return peerId;
+    },
+
+    resolveConversationUnread(conversationId: string): number {
+      const cleaned = String(conversationId || '').trim();
+      if (!cleaned) return 0;
+      return toNumber(this.unreadByConversation[cleaned]);
     },
 
     resolveLatestMessageId(conversationId: string): number {

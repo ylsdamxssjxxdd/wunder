@@ -21,6 +21,10 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/user_world/contacts", get(list_contacts))
         .route(
+            "/wunder/user_world/groups",
+            get(list_groups).post(create_group),
+        )
+        .route(
             "/wunder/user_world/conversations",
             get(list_conversations).post(create_or_get_conversation),
         )
@@ -55,6 +59,13 @@ struct ListQuery {
 #[derive(Debug, Deserialize)]
 struct ConversationCreateRequest {
     peer_user_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroupCreateRequest {
+    group_name: String,
+    #[serde(default)]
+    member_user_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -121,6 +132,45 @@ async fn create_or_get_conversation(
         .resolve_or_create_direct_conversation(
             &resolved.user.user_id,
             payload.peer_user_id.trim(),
+            now_ts(),
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": item })))
+}
+
+async fn list_groups(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ListQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let (offset, limit) = normalize_pagination(query.offset, query.limit);
+    let (items, total) = state
+        .user_world
+        .list_groups(&resolved.user.user_id, offset, limit)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": limit
+        }
+    })))
+}
+
+async fn create_group(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<GroupCreateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let item = state
+        .user_world
+        .create_group(
+            &resolved.user.user_id,
+            payload.group_name.trim(),
+            &payload.member_user_ids,
             now_ts(),
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;

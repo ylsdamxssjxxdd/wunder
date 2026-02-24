@@ -11,8 +11,8 @@ use crate::storage::{
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
     UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
     UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
-    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
-    VectorDocumentRecord, VectorDocumentSummaryRecord,
+    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
+    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -287,6 +287,29 @@ impl PostgresStorage {
         }
     }
 
+    fn normalize_user_world_members(
+        owner_user_id: &str,
+        member_user_ids: &[String],
+    ) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut output = Vec::new();
+        let owner = owner_user_id.trim();
+        if !owner.is_empty() {
+            seen.insert(owner.to_string());
+            output.push(owner.to_string());
+        }
+        for raw in member_user_ids {
+            let cleaned = raw.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            if seen.insert(cleaned.to_string()) {
+                output.push(cleaned.to_string());
+            }
+        }
+        output
+    }
+
     fn parse_json_column(value: Option<String>) -> Value {
         value
             .as_deref()
@@ -300,11 +323,29 @@ impl PostgresStorage {
             conversation_type: row.get(1),
             participant_a: row.get(2),
             participant_b: row.get(3),
-            created_at: row.get(4),
-            updated_at: row.get(5),
-            last_message_at: row.get(6),
-            last_message_id: row.get(7),
-            last_message_preview: row.get(8),
+            group_id: row.get(4),
+            group_name: row.get(5),
+            member_count: row.get(6),
+            created_at: row.get(7),
+            updated_at: row.get(8),
+            last_message_at: row.get(9),
+            last_message_id: row.get(10),
+            last_message_preview: row.get(11),
+        }
+    }
+
+    fn map_user_world_group_row(row: &tokio_postgres::Row) -> UserWorldGroupRecord {
+        UserWorldGroupRecord {
+            group_id: row.get(0),
+            conversation_id: row.get(1),
+            group_name: row.get(2),
+            owner_user_id: row.get(3),
+            member_count: row.get(4),
+            unread_count_cache: row.get(5),
+            updated_at: row.get(6),
+            last_message_at: row.get(7),
+            last_message_id: row.get(8),
+            last_message_preview: row.get(9),
         }
     }
 
@@ -1075,6 +1116,18 @@ impl StorageBackend for PostgresStorage {
                   ON user_world_conversations (updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_user_world_conversations_last_message
                   ON user_world_conversations (last_message_at DESC);
+                CREATE TABLE IF NOT EXISTS user_world_groups (
+                  group_id TEXT PRIMARY KEY,
+                  conversation_id TEXT NOT NULL UNIQUE,
+                  group_name TEXT NOT NULL,
+                  owner_user_id TEXT NOT NULL,
+                  created_at DOUBLE PRECISION NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_user_world_groups_conversation
+                  ON user_world_groups (conversation_id);
+                CREATE INDEX IF NOT EXISTS idx_user_world_groups_owner
+                  ON user_world_groups (owner_user_id, updated_at DESC);
                 CREATE TABLE IF NOT EXISTS user_world_members (
                   conversation_id TEXT NOT NULL,
                   user_id TEXT NOT NULL,
@@ -1088,6 +1141,8 @@ impl StorageBackend for PostgresStorage {
                 );
                 CREATE INDEX IF NOT EXISTS idx_user_world_members_user_updated
                   ON user_world_members (user_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_user_world_members_conversation
+                  ON user_world_members (conversation_id);
                 CREATE TABLE IF NOT EXISTS user_world_messages (
                   message_id BIGSERIAL PRIMARY KEY,
                   conversation_id TEXT NOT NULL,
@@ -4168,9 +4223,11 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
         let existing = tx.query_opt(
-            "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
-             last_message_at, last_message_id, last_message_preview \
-             FROM user_world_conversations WHERE participant_a = $1 AND participant_b = $2",
+            "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+             NULL::TEXT AS group_id, NULL::TEXT AS group_name, 2::BIGINT AS member_count, \
+             c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+             FROM user_world_conversations c \
+             WHERE c.conversation_type = 'direct' AND c.participant_a = $1 AND c.participant_b = $2",
             &[&participant_a, &participant_b],
         )?;
         if let Some(row) = existing {
@@ -4197,12 +4254,74 @@ impl StorageBackend for PostgresStorage {
         )?;
         let row = tx
             .query_opt(
-                "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
-                 last_message_at, last_message_id, last_message_preview \
-                 FROM user_world_conversations WHERE conversation_id = $1",
+                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+                 NULL::TEXT AS group_id, NULL::TEXT AS group_name, 2::BIGINT AS member_count, \
+                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_conversations c WHERE c.conversation_id = $1",
                 &[&conversation_id],
             )?
             .ok_or_else(|| anyhow!("user world conversation missing after insert"))?;
+        let record = Self::map_user_world_conversation_row(&row);
+        tx.commit()?;
+        Ok(record)
+    }
+
+    fn create_user_world_group(
+        &self,
+        owner_user_id: &str,
+        group_name: &str,
+        member_user_ids: &[String],
+        now: f64,
+    ) -> Result<UserWorldConversationRecord> {
+        self.ensure_initialized()?;
+        let owner = owner_user_id.trim();
+        let name = group_name.trim();
+        if owner.is_empty() || name.is_empty() {
+            return Err(anyhow!("owner_user_id/group_name is required"));
+        }
+        let members = Self::normalize_user_world_members(owner, member_user_ids);
+        if members.len() < 2 {
+            return Err(anyhow!("group requires at least 2 users"));
+        }
+        let now = if now.is_finite() && now > 0.0 {
+            now
+        } else {
+            Self::now_ts()
+        };
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let conversation_id = format!("uwc_{}", uuid::Uuid::new_v4().simple());
+        let group_id = format!("uwg_{}", uuid::Uuid::new_v4().simple());
+        tx.execute(
+            "INSERT INTO user_world_conversations (conversation_id, conversation_type, participant_a, participant_b, \
+             created_at, updated_at, last_message_at, last_message_id, last_message_preview) \
+             VALUES ($1, 'group', $2, $3, $4, $5, $6, NULL, NULL)",
+            &[&conversation_id, &owner, &group_id, &now, &now, &now],
+        )?;
+        tx.execute(
+            "INSERT INTO user_world_groups (group_id, conversation_id, group_name, owner_user_id, created_at, updated_at) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+            &[&group_id, &conversation_id, &name, &owner, &now, &now],
+        )?;
+        for member_user_id in &members {
+            tx.execute(
+                "INSERT INTO user_world_members (conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, \
+                 pinned, muted, updated_at) VALUES ($1, $2, '', NULL, 0, 0, 0, $3)",
+                &[&conversation_id, member_user_id, &now],
+            )?;
+        }
+        let member_count = members.len() as i64;
+        let row = tx
+            .query_opt(
+                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+                 g.group_id, g.group_name, $1::BIGINT AS member_count, \
+                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_conversations c \
+                 JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
+                 WHERE c.conversation_id = $2",
+                &[&member_count, &conversation_id],
+            )?
+            .ok_or_else(|| anyhow!("user world group missing after insert"))?;
         let record = Self::map_user_world_conversation_row(&row);
         tx.commit()?;
         Ok(record)
@@ -4219,9 +4338,15 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
-             last_message_at, last_message_id, last_message_preview \
-             FROM user_world_conversations WHERE conversation_id = $1",
+            "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+             g.group_id, g.group_name, \
+             CASE WHEN c.conversation_type = 'group' THEN \
+                (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = c.conversation_id) \
+             ELSE NULL END AS member_count, \
+             c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+             FROM user_world_conversations c \
+             LEFT JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
+             WHERE c.conversation_id = $1",
             &[&cleaned],
         )?;
         Ok(row.map(|row| Self::map_user_world_conversation_row(&row)))
@@ -4268,11 +4393,16 @@ impl StorageBackend for PostgresStorage {
             let safe_limit = limit.max(1);
             let safe_offset = offset.max(0);
             conn.query(
-                "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, m.last_read_message_id, \
-                 m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
+                "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, \
+                 g.group_id, g.group_name, \
+                 CASE WHEN c.conversation_type = 'group' THEN \
+                    (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = c.conversation_id) \
+                 ELSE NULL END AS member_count, \
+                 m.last_read_message_id, m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
                  c.last_message_at, c.last_message_id, c.last_message_preview \
                  FROM user_world_members m \
                  JOIN user_world_conversations c ON c.conversation_id = m.conversation_id \
+                 LEFT JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
                  WHERE m.user_id = $1 \
                  ORDER BY m.pinned DESC, c.last_message_at DESC, m.updated_at DESC \
                  LIMIT $2 OFFSET $3",
@@ -4280,11 +4410,16 @@ impl StorageBackend for PostgresStorage {
             )?
         } else {
             conn.query(
-                "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, m.last_read_message_id, \
-                 m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
+                "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, \
+                 g.group_id, g.group_name, \
+                 CASE WHEN c.conversation_type = 'group' THEN \
+                    (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = c.conversation_id) \
+                 ELSE NULL END AS member_count, \
+                 m.last_read_message_id, m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
                  c.last_message_at, c.last_message_id, c.last_message_preview \
                  FROM user_world_members m \
                  JOIN user_world_conversations c ON c.conversation_id = m.conversation_id \
+                 LEFT JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
                  WHERE m.user_id = $1 \
                  ORDER BY m.pinned DESC, c.last_message_at DESC, m.updated_at DESC",
                 &[&cleaned_user],
@@ -4296,14 +4431,17 @@ impl StorageBackend for PostgresStorage {
                 conversation_id: row.get(0),
                 conversation_type: row.get(1),
                 peer_user_id: row.get(2),
-                last_read_message_id: row.get(3),
-                unread_count_cache: row.get(4),
-                pinned: row.get::<_, i32>(5) != 0,
-                muted: row.get::<_, i32>(6) != 0,
-                updated_at: row.get(7),
-                last_message_at: row.get(8),
-                last_message_id: row.get(9),
-                last_message_preview: row.get(10),
+                group_id: row.get(3),
+                group_name: row.get(4),
+                member_count: row.get(5),
+                last_read_message_id: row.get(6),
+                unread_count_cache: row.get(7),
+                pinned: row.get::<_, i32>(8) != 0,
+                muted: row.get::<_, i32>(9) != 0,
+                updated_at: row.get(10),
+                last_message_at: row.get(11),
+                last_message_id: row.get(12),
+                last_message_preview: row.get(13),
             });
         }
         Ok((output, total))
@@ -4382,15 +4520,18 @@ impl StorageBackend for PostgresStorage {
         };
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        let conversation_row = tx
-            .query_opt(
-                "SELECT participant_a, participant_b FROM user_world_conversations WHERE conversation_id = $1",
-                &[&cleaned_conversation],
-            )?
-            .ok_or_else(|| anyhow!("conversation not found"))?;
-        let participant_a: String = conversation_row.get(0);
-        let participant_b: String = conversation_row.get(1);
-        if cleaned_sender != participant_a && cleaned_sender != participant_b {
+        let conversation_exists = tx.query_opt(
+            "SELECT 1 FROM user_world_conversations WHERE conversation_id = $1",
+            &[&cleaned_conversation],
+        )?;
+        if conversation_exists.is_none() {
+            return Err(anyhow!("conversation not found"));
+        }
+        let member_exists = tx.query_opt(
+            "SELECT 1 FROM user_world_members WHERE conversation_id = $1 AND user_id = $2",
+            &[&cleaned_conversation, &cleaned_sender],
+        )?;
+        if member_exists.is_none() {
             return Err(anyhow!("sender is not a member of conversation"));
         }
 
@@ -4429,11 +4570,6 @@ impl StorageBackend for PostgresStorage {
              last_message_preview = $4 WHERE conversation_id = $5",
             &[&now, &now, &message_id, &preview, &cleaned_conversation],
         )?;
-        let peer_user = if cleaned_sender == participant_a {
-            participant_b.as_str()
-        } else {
-            participant_a.as_str()
-        };
         tx.execute(
             "UPDATE user_world_members SET last_read_message_id = $1, unread_count_cache = 0, updated_at = $2 \
              WHERE conversation_id = $3 AND user_id = $4",
@@ -4441,8 +4577,8 @@ impl StorageBackend for PostgresStorage {
         )?;
         tx.execute(
             "UPDATE user_world_members SET unread_count_cache = COALESCE(unread_count_cache, 0) + 1, updated_at = $1 \
-             WHERE conversation_id = $2 AND user_id = $3",
-            &[&now, &cleaned_conversation, &peer_user],
+             WHERE conversation_id = $2 AND user_id <> $3",
+            &[&now, &cleaned_conversation, &cleaned_sender],
         )?;
 
         let message_row = tx.query_one(
@@ -4630,6 +4766,82 @@ impl StorageBackend for PostgresStorage {
                 payload: Self::parse_json_column(payload_text),
                 created_time: row.get(4),
             });
+        }
+        Ok(output)
+    }
+
+    fn list_user_world_groups(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserWorldGroupRecord>, i64)> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let mut conn = self.conn()?;
+        let total_row = conn.query_one(
+            "SELECT COUNT(*) FROM user_world_groups g \
+             JOIN user_world_members m ON m.conversation_id = g.conversation_id \
+             WHERE m.user_id = $1",
+            &[&cleaned_user],
+        )?;
+        let total: i64 = total_row.get(0);
+        let rows = if limit > 0 {
+            let safe_limit = limit.max(1);
+            let safe_offset = offset.max(0);
+            conn.query(
+                "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+                 (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
+                 m.unread_count_cache, m.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_groups g \
+                 JOIN user_world_members m ON m.conversation_id = g.conversation_id \
+                 JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
+                 WHERE m.user_id = $1 \
+                 ORDER BY m.pinned DESC, c.last_message_at DESC, g.updated_at DESC \
+                 LIMIT $2 OFFSET $3",
+                &[&cleaned_user, &safe_limit, &safe_offset],
+            )?
+        } else {
+            conn.query(
+                "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+                 (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
+                 m.unread_count_cache, m.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_groups g \
+                 JOIN user_world_members m ON m.conversation_id = g.conversation_id \
+                 JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
+                 WHERE m.user_id = $1 \
+                 ORDER BY m.pinned DESC, c.last_message_at DESC, g.updated_at DESC",
+                &[&cleaned_user],
+            )?
+        };
+        let mut output = Vec::with_capacity(rows.len());
+        for row in rows {
+            output.push(Self::map_user_world_group_row(&row));
+        }
+        Ok((output, total))
+    }
+
+    fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>> {
+        self.ensure_initialized()?;
+        let cleaned_conversation = conversation_id.trim();
+        if cleaned_conversation.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT user_id FROM user_world_members WHERE conversation_id = $1 ORDER BY user_id ASC",
+            &[&cleaned_conversation],
+        )?;
+        let mut output = Vec::with_capacity(rows.len());
+        for row in rows {
+            let user_id: String = row.get(0);
+            if user_id.trim().is_empty() {
+                continue;
+            }
+            output.push(user_id);
         }
         Ok(output)
     }

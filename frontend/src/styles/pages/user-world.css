@@ -35,7 +35,7 @@
 
 .user-world-main {
   display: grid;
-  grid-template-columns: minmax(260px, 360px) 1fr;
+  grid-template-columns: minmax(300px, 380px) 1fr;
   gap: 12px;
   flex: 1;
   min-height: 0;
@@ -70,6 +70,62 @@
   color: var(--uw-text);
   padding: 8px 10px;
   outline: none;
+}
+
+.user-world-tabbar {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--uw-border);
+}
+
+.user-world-tab-btn {
+  border: 1px solid var(--uw-border);
+  background: transparent;
+  color: var(--uw-muted);
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.user-world-tab-btn:hover {
+  color: var(--uw-text);
+  border-color: rgba(var(--uw-primary-rgb), 0.42);
+}
+
+.user-world-tab-btn.active {
+  color: #fff;
+  border-color: rgba(var(--uw-primary-rgb), 0.5);
+  background: rgba(var(--uw-primary-rgb), 0.38);
+}
+
+:root[data-user-theme='light'] .user-world-tab-btn.active {
+  color: #0f172a;
+}
+
+.user-world-group-toolbar {
+  padding: 8px 12px 0;
+}
+
+.user-world-group-create {
+  width: 100%;
+  border: 1px solid rgba(var(--uw-primary-rgb), 0.34);
+  background: rgba(var(--uw-primary-rgb), 0.14);
+  color: var(--uw-text);
+  border-radius: 10px;
+  height: 34px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.user-world-group-create:hover {
+  background: rgba(var(--uw-primary-rgb), 0.22);
 }
 
 .user-world-contact-list {
@@ -216,6 +272,10 @@
 .user-world-chat-title {
   font-size: 16px;
   font-weight: 700;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .user-world-chat-subtitle {
@@ -304,6 +364,96 @@
   color: var(--uw-muted);
   padding: 18px;
   text-align: center;
+}
+
+.user-world-group-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.user-world-group-label {
+  font-size: 13px;
+  color: var(--uw-muted);
+}
+
+.user-world-group-input {
+  width: 100%;
+  border: 1px solid var(--uw-border);
+  border-radius: 10px;
+  height: 36px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  background: var(--uw-input);
+  color: var(--uw-text);
+}
+
+.user-world-group-members {
+  border: 1px solid var(--uw-border);
+  border-radius: 10px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.user-world-group-member-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+  border-radius: 8px;
+}
+
+.user-world-group-member-item:hover {
+  background: rgba(var(--uw-primary-rgb), 0.1);
+}
+
+.user-world-group-member-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-world-group-member-id {
+  font-size: 12px;
+  color: var(--uw-muted);
+}
+
+.user-world-group-empty {
+  padding: 10px 0;
+}
+
+.dialog-footer {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.user-world-dialog-btn {
+  border: 1px solid var(--uw-border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--uw-text);
+  height: 34px;
+  min-width: 72px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.user-world-dialog-btn.muted {
+  color: var(--uw-muted);
+}
+
+.user-world-dialog-btn.primary {
+  background: var(--uw-primary);
+  border-color: rgba(var(--uw-primary-rgb), 0.45);
+  color: #fff;
+}
+
+.user-world-dialog-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 @media (max-width: 900px) {

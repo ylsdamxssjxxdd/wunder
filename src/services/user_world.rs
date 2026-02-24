@@ -1,7 +1,7 @@
 use crate::storage::{
     StorageBackend, UserAccountRecord, UserWorldConversationRecord,
-    UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldMemberRecord,
-    UserWorldMessageRecord, UserWorldReadResult,
+    UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
+    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
 };
 use anyhow::{anyhow, Result};
 use serde::Serialize;
@@ -31,10 +31,27 @@ pub struct UserWorldConversationView {
     pub conversation_id: String,
     pub conversation_type: String,
     pub peer_user_id: String,
+    pub group_id: Option<String>,
+    pub group_name: Option<String>,
+    pub member_count: Option<i64>,
     pub last_read_message_id: Option<i64>,
     pub unread_count_cache: i64,
     pub pinned: bool,
     pub muted: bool,
+    pub updated_at: f64,
+    pub last_message_at: f64,
+    pub last_message_id: Option<i64>,
+    pub last_message_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserWorldGroupView {
+    pub group_id: String,
+    pub conversation_id: String,
+    pub group_name: String,
+    pub owner_user_id: String,
+    pub member_count: i64,
+    pub unread_count_cache: i64,
     pub updated_at: f64,
     pub last_message_at: f64,
     pub last_message_id: Option<i64>,
@@ -113,6 +130,11 @@ impl UserWorldService {
                 .list_user_world_conversations(cleaned_user, 0, MAX_CONTACT_FETCH)?;
         let mut conversation_map = HashMap::new();
         for item in conversations {
+            if !item.conversation_type.eq_ignore_ascii_case("direct")
+                || item.peer_user_id.trim().is_empty()
+            {
+                continue;
+            }
             conversation_map.insert(item.peer_user_id.clone(), item);
         }
         let mut contacts = users
@@ -166,6 +188,50 @@ impl UserWorldService {
             .get_user_world_member(&conversation.conversation_id, cleaned_user)?
             .ok_or_else(|| anyhow!("conversation member missing"))?;
         Ok(Self::map_conversation_view(&conversation, &member))
+    }
+
+    pub fn create_group(
+        &self,
+        owner_user_id: &str,
+        group_name: &str,
+        member_user_ids: &[String],
+        now: f64,
+    ) -> Result<UserWorldConversationView> {
+        let owner = owner_user_id.trim();
+        if owner.is_empty() {
+            return Err(anyhow!("owner_user_id is empty"));
+        }
+        let cleaned_name = group_name.trim();
+        if cleaned_name.is_empty() {
+            return Err(anyhow!("group_name is required"));
+        }
+        let conversation =
+            self.storage
+                .create_user_world_group(owner, cleaned_name, member_user_ids, now)?;
+        let member = self
+            .storage
+            .get_user_world_member(&conversation.conversation_id, owner)?
+            .ok_or_else(|| anyhow!("conversation member missing"))?;
+        Ok(Self::map_conversation_view(&conversation, &member))
+    }
+
+    pub fn list_groups(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserWorldGroupView>, i64)> {
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let (items, total) = self.storage.list_user_world_groups(
+            cleaned_user,
+            offset.max(0),
+            normalize_limit(limit, DEFAULT_LIST_LIMIT, 500),
+        )?;
+        let output = items.iter().map(Self::map_group).collect::<Vec<_>>();
+        Ok((output, total))
     }
 
     pub fn list_conversations(
@@ -253,10 +319,7 @@ impl UserWorldService {
             .storage
             .get_user_world_conversation(cleaned_conversation)?
             .ok_or_else(|| anyhow!("conversation not found"))?;
-        if cleaned_user != conversation.participant_a && cleaned_user != conversation.participant_b
-        {
-            return Err(anyhow!("forbidden"));
-        }
+        self.ensure_member(cleaned_user, cleaned_conversation)?;
         let send_result = self.storage.send_user_world_message(
             cleaned_conversation,
             cleaned_user,
@@ -267,14 +330,11 @@ impl UserWorldService {
         )?;
         let event = send_result.event.as_ref().map(Self::map_realtime_event);
         if let Some(event) = event.clone() {
-            self.publish_to_users(
-                &[
-                    conversation.participant_a.clone(),
-                    conversation.participant_b.clone(),
-                ],
-                event,
-            )
-            .await;
+            let recipients = self
+                .storage
+                .list_user_world_member_user_ids(&conversation.conversation_id)
+                .unwrap_or_default();
+            self.publish_to_users(&recipients, event).await;
         }
         Ok(UserWorldSendView {
             message: Self::map_message(&send_result.message),
@@ -299,10 +359,7 @@ impl UserWorldService {
             .storage
             .get_user_world_conversation(cleaned_conversation)?
             .ok_or_else(|| anyhow!("conversation not found"))?;
-        if cleaned_user != conversation.participant_a && cleaned_user != conversation.participant_b
-        {
-            return Err(anyhow!("forbidden"));
-        }
+        self.ensure_member(cleaned_user, cleaned_conversation)?;
         let read_result = self.storage.mark_user_world_read(
             cleaned_conversation,
             cleaned_user,
@@ -314,14 +371,11 @@ impl UserWorldService {
         };
         let event = read_result.event.as_ref().map(Self::map_realtime_event);
         if let Some(event) = event.clone() {
-            self.publish_to_users(
-                &[
-                    conversation.participant_a.clone(),
-                    conversation.participant_b.clone(),
-                ],
-                event,
-            )
-            .await;
+            let recipients = self
+                .storage
+                .list_user_world_member_user_ids(&conversation.conversation_id)
+                .unwrap_or_default();
+            self.publish_to_users(&recipients, event).await;
         }
         Ok(Some(Self::map_read_view(read_result, event)))
     }
@@ -417,6 +471,9 @@ impl UserWorldService {
             conversation_id: summary.conversation_id.clone(),
             conversation_type: summary.conversation_type.clone(),
             peer_user_id: summary.peer_user_id.clone(),
+            group_id: summary.group_id.clone(),
+            group_name: summary.group_name.clone(),
+            member_count: summary.member_count,
             last_read_message_id: summary.last_read_message_id,
             unread_count_cache: summary.unread_count_cache,
             pinned: summary.pinned,
@@ -436,6 +493,9 @@ impl UserWorldService {
             conversation_id: conversation.conversation_id.clone(),
             conversation_type: conversation.conversation_type.clone(),
             peer_user_id: member.peer_user_id.clone(),
+            group_id: conversation.group_id.clone(),
+            group_name: conversation.group_name.clone(),
+            member_count: conversation.member_count,
             last_read_message_id: member.last_read_message_id,
             unread_count_cache: member.unread_count_cache,
             pinned: member.pinned,
@@ -444,6 +504,21 @@ impl UserWorldService {
             last_message_at: conversation.last_message_at,
             last_message_id: conversation.last_message_id,
             last_message_preview: conversation.last_message_preview.clone(),
+        }
+    }
+
+    fn map_group(item: &UserWorldGroupRecord) -> UserWorldGroupView {
+        UserWorldGroupView {
+            group_id: item.group_id.clone(),
+            conversation_id: item.conversation_id.clone(),
+            group_name: item.group_name.clone(),
+            owner_user_id: item.owner_user_id.clone(),
+            member_count: item.member_count,
+            unread_count_cache: item.unread_count_cache,
+            updated_at: item.updated_at,
+            last_message_at: item.last_message_at,
+            last_message_id: item.last_message_id,
+            last_message_preview: item.last_message_preview.clone(),
         }
     }
 

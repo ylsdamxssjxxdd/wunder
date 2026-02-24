@@ -50,10 +50,12 @@
 
 ### 4.0.2 用户世界（User World）接口
 
-- 目标：支持“用户↔用户”直接聊天，默认可见联系人，WebSocket 优先，SSE 兜底。
+- 目标：支持“用户↔用户”单聊 + 群聊，默认可见联系人，WebSocket 优先，SSE 兜底。
 - 鉴权：使用用户端 Bearer Token（与 `/wunder/chat/*` 一致）。
 - 接口清单：
   - `GET /wunder/user_world/contacts`：联系人列表（支持 `keyword/offset/limit`）
+  - `GET /wunder/user_world/groups`：当前用户群聊列表（支持 `offset/limit`）
+  - `POST /wunder/user_world/groups`：创建群聊（`group_name/member_user_ids[]`）
   - `POST /wunder/user_world/conversations`：按 `peer_user_id` 获取或创建 direct 会话
   - `GET /wunder/user_world/conversations`：当前用户会话列表
   - `GET /wunder/user_world/conversations/{conversation_id}`：会话详情（需成员权限）
@@ -72,6 +74,7 @@
   - 发送者身份以 Token 用户为准，不允许伪造。
   - 仅会话成员可读写与订阅事件。
   - 支持 `client_msg_id` 幂等去重（同会话内唯一）。
+  - 会话对象在群聊场景返回 `group_id/group_name/member_count`；单聊场景返回 `peer_user_id`。
 
 ### 4.1 `/wunder` 请求
 

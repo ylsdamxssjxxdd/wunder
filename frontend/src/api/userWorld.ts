@@ -90,6 +90,14 @@ const buildWsUrl = (path: string, params: URLSearchParams): string => {
 export const listUserWorldContacts = (params: QueryParams = {}) =>
   api.get('/user_world/contacts', { params, timeout: 60000 });
 
+export const listUserWorldGroups = (params: QueryParams = {}) =>
+  api.get('/user_world/groups', { params, timeout: 60000 });
+
+export const createUserWorldGroup = (payload: {
+  group_name: string;
+  member_user_ids: string[];
+}) => api.post('/user_world/groups', payload, { timeout: 60000 });
+
 export const createOrGetUserWorldConversation = (payload: { peer_user_id: string }) =>
   api.post('/user_world/conversations', payload, { timeout: 60000 });
 

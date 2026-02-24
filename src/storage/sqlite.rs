@@ -12,8 +12,8 @@ use crate::storage::{
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
     UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
     UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
-    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
-    VectorDocumentRecord, VectorDocumentSummaryRecord,
+    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
+    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -184,6 +184,29 @@ impl SqliteStorage {
         }
     }
 
+    fn normalize_user_world_members(
+        owner_user_id: &str,
+        member_user_ids: &[String],
+    ) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut output = Vec::new();
+        let owner = owner_user_id.trim();
+        if !owner.is_empty() {
+            seen.insert(owner.to_string());
+            output.push(owner.to_string());
+        }
+        for raw in member_user_ids {
+            let cleaned = raw.trim();
+            if cleaned.is_empty() {
+                continue;
+            }
+            if seen.insert(cleaned.to_string()) {
+                output.push(cleaned.to_string());
+            }
+        }
+        output
+    }
+
     fn parse_json_column(value: Option<String>) -> Value {
         value
             .as_deref()
@@ -199,11 +222,29 @@ impl SqliteStorage {
             conversation_type: row.get(1)?,
             participant_a: row.get(2)?,
             participant_b: row.get(3)?,
-            created_at: row.get(4)?,
-            updated_at: row.get(5)?,
-            last_message_at: row.get(6)?,
-            last_message_id: row.get(7)?,
-            last_message_preview: row.get(8)?,
+            group_id: row.get(4)?,
+            group_name: row.get(5)?,
+            member_count: row.get(6)?,
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+            last_message_at: row.get(9)?,
+            last_message_id: row.get(10)?,
+            last_message_preview: row.get(11)?,
+        })
+    }
+
+    fn map_user_world_group_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserWorldGroupRecord> {
+        Ok(UserWorldGroupRecord {
+            group_id: row.get(0)?,
+            conversation_id: row.get(1)?,
+            group_name: row.get(2)?,
+            owner_user_id: row.get(3)?,
+            member_count: row.get(4)?,
+            unread_count_cache: row.get(5)?,
+            updated_at: row.get(6)?,
+            last_message_at: row.get(7)?,
+            last_message_id: row.get(8)?,
+            last_message_preview: row.get(9)?,
         })
     }
 
@@ -824,6 +865,18 @@ impl StorageBackend for SqliteStorage {
               ON user_world_conversations (updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_user_world_conversations_last_message
               ON user_world_conversations (last_message_at DESC);
+            CREATE TABLE IF NOT EXISTS user_world_groups (
+              group_id TEXT PRIMARY KEY,
+              conversation_id TEXT NOT NULL UNIQUE,
+              group_name TEXT NOT NULL,
+              owner_user_id TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_user_world_groups_conversation
+              ON user_world_groups (conversation_id);
+            CREATE INDEX IF NOT EXISTS idx_user_world_groups_owner
+              ON user_world_groups (owner_user_id, updated_at DESC);
             CREATE TABLE IF NOT EXISTS user_world_members (
               conversation_id TEXT NOT NULL,
               user_id TEXT NOT NULL,
@@ -837,6 +890,8 @@ impl StorageBackend for SqliteStorage {
             );
             CREATE INDEX IF NOT EXISTS idx_user_world_members_user_updated
               ON user_world_members (user_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_user_world_members_conversation
+              ON user_world_members (conversation_id);
             CREATE TABLE IF NOT EXISTS user_world_messages (
               message_id INTEGER PRIMARY KEY AUTOINCREMENT,
               conversation_id TEXT NOT NULL,
@@ -4002,9 +4057,11 @@ impl StorageBackend for SqliteStorage {
 
         let existing = tx
             .query_row(
-                "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
-                 last_message_at, last_message_id, last_message_preview \
-                 FROM user_world_conversations WHERE participant_a = ? AND participant_b = ?",
+                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+                 NULL AS group_id, NULL AS group_name, 2 AS member_count, \
+                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_conversations c \
+                 WHERE c.conversation_type = 'direct' AND c.participant_a = ? AND c.participant_b = ?",
                 params![participant_a, participant_b],
                 Self::map_user_world_conversation_row,
             )
@@ -4040,14 +4097,77 @@ impl StorageBackend for SqliteStorage {
         )?;
         let record = tx
             .query_row(
-                "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
-                 last_message_at, last_message_id, last_message_preview \
-                 FROM user_world_conversations WHERE conversation_id = ?",
+                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+                 NULL AS group_id, NULL AS group_name, 2 AS member_count, \
+                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_conversations c WHERE c.conversation_id = ?",
                 params![conversation_id],
                 Self::map_user_world_conversation_row,
             )
             .optional()?
             .ok_or_else(|| anyhow::anyhow!("user world conversation missing after insert"))?;
+        tx.commit()?;
+        Ok(record)
+    }
+
+    fn create_user_world_group(
+        &self,
+        owner_user_id: &str,
+        group_name: &str,
+        member_user_ids: &[String],
+        now: f64,
+    ) -> Result<UserWorldConversationRecord> {
+        self.ensure_initialized()?;
+        let owner = owner_user_id.trim();
+        let name = group_name.trim();
+        if owner.is_empty() || name.is_empty() {
+            return Err(anyhow::anyhow!("owner_user_id/group_name is required"));
+        }
+        let members = Self::normalize_user_world_members(owner, member_user_ids);
+        if members.len() < 2 {
+            return Err(anyhow::anyhow!("group requires at least 2 users"));
+        }
+        let now = if now.is_finite() && now > 0.0 {
+            now
+        } else {
+            Self::now_ts()
+        };
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let conversation_id = format!("uwc_{}", uuid::Uuid::new_v4().simple());
+        let group_id = format!("uwg_{}", uuid::Uuid::new_v4().simple());
+        tx.execute(
+            "INSERT INTO user_world_conversations (conversation_id, conversation_type, participant_a, participant_b, \
+             created_at, updated_at, last_message_at, last_message_id, last_message_preview) \
+             VALUES (?, 'group', ?, ?, ?, ?, ?, NULL, NULL)",
+            params![conversation_id, owner, group_id, now, now, now],
+        )?;
+        tx.execute(
+            "INSERT INTO user_world_groups (group_id, conversation_id, group_name, owner_user_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+            params![group_id, conversation_id, name, owner, now, now],
+        )?;
+        for member_user_id in &members {
+            tx.execute(
+                "INSERT INTO user_world_members (conversation_id, user_id, peer_user_id, last_read_message_id, unread_count_cache, \
+                 pinned, muted, updated_at) VALUES (?, ?, '', NULL, 0, 0, 0, ?)",
+                params![conversation_id, member_user_id, now],
+            )?;
+        }
+        let member_count = members.len() as i64;
+        let record = tx
+            .query_row(
+                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+                 g.group_id, g.group_name, ? AS member_count, \
+                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_conversations c \
+                 JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
+                 WHERE c.conversation_id = ?",
+                params![member_count, conversation_id],
+                Self::map_user_world_conversation_row,
+            )
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("user world group missing after insert"))?;
         tx.commit()?;
         Ok(record)
     }
@@ -4064,9 +4184,15 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT conversation_id, conversation_type, participant_a, participant_b, created_at, updated_at, \
-                 last_message_at, last_message_id, last_message_preview \
-                 FROM user_world_conversations WHERE conversation_id = ?",
+                "SELECT c.conversation_id, c.conversation_type, c.participant_a, c.participant_b, \
+                 g.group_id, g.group_name, \
+                 CASE WHEN c.conversation_type = 'group' THEN \
+                    (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = c.conversation_id) \
+                 ELSE NULL END AS member_count, \
+                 c.created_at, c.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_conversations c \
+                 LEFT JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
+                 WHERE c.conversation_id = ?",
                 params![cleaned],
                 Self::map_user_world_conversation_row,
             )
@@ -4115,11 +4241,16 @@ impl StorageBackend for SqliteStorage {
             |row| row.get(0),
         )?;
 
-        let mut sql = "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, m.last_read_message_id, \
-                       m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
+        let mut sql = "SELECT c.conversation_id, c.conversation_type, m.peer_user_id, \
+                       g.group_id, g.group_name, \
+                       CASE WHEN c.conversation_type = 'group' THEN \
+                         (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = c.conversation_id) \
+                       ELSE NULL END AS member_count, \
+                       m.last_read_message_id, m.unread_count_cache, m.pinned, m.muted, m.updated_at, \
                        c.last_message_at, c.last_message_id, c.last_message_preview \
                        FROM user_world_members m \
                        JOIN user_world_conversations c ON c.conversation_id = m.conversation_id \
+                       LEFT JOIN user_world_groups g ON g.conversation_id = c.conversation_id \
                        WHERE m.user_id = ? \
                        ORDER BY m.pinned DESC, c.last_message_at DESC, m.updated_at DESC"
             .to_string();
@@ -4136,14 +4267,17 @@ impl StorageBackend for SqliteStorage {
                     conversation_id: row.get(0)?,
                     conversation_type: row.get(1)?,
                     peer_user_id: row.get(2)?,
-                    last_read_message_id: row.get(3)?,
-                    unread_count_cache: row.get(4)?,
-                    pinned: row.get::<_, i64>(5)? != 0,
-                    muted: row.get::<_, i64>(6)? != 0,
-                    updated_at: row.get(7)?,
-                    last_message_at: row.get(8)?,
-                    last_message_id: row.get(9)?,
-                    last_message_preview: row.get(10)?,
+                    group_id: row.get(3)?,
+                    group_name: row.get(4)?,
+                    member_count: row.get(5)?,
+                    last_read_message_id: row.get(6)?,
+                    unread_count_cache: row.get(7)?,
+                    pinned: row.get::<_, i64>(8)? != 0,
+                    muted: row.get::<_, i64>(9)? != 0,
+                    updated_at: row.get(10)?,
+                    last_message_at: row.get(11)?,
+                    last_message_id: row.get(12)?,
+                    last_message_preview: row.get(13)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserWorldConversationSummaryRecord>, _>>()?;
@@ -4222,17 +4356,25 @@ impl StorageBackend for SqliteStorage {
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-        let conversation_row = tx
+        let conversation_exists: Option<i64> = tx
             .query_row(
-                "SELECT participant_a, participant_b FROM user_world_conversations WHERE conversation_id = ?",
+                "SELECT 1 FROM user_world_conversations WHERE conversation_id = ?",
                 params![cleaned_conversation],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| row.get(0),
             )
-            .optional()?
-            .ok_or_else(|| anyhow::anyhow!("conversation not found"))?;
-        let participant_a = conversation_row.0;
-        let participant_b = conversation_row.1;
-        if cleaned_sender != participant_a && cleaned_sender != participant_b {
+            .optional()?;
+        if conversation_exists.is_none() {
+            return Err(anyhow::anyhow!("conversation not found"));
+        }
+
+        let exists: Option<i64> = tx
+            .query_row(
+                "SELECT 1 FROM user_world_members WHERE conversation_id = ? AND user_id = ?",
+                params![cleaned_conversation, cleaned_sender],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if exists.is_none() {
             return Err(anyhow::anyhow!("sender is not a member of conversation"));
         }
 
@@ -4275,11 +4417,6 @@ impl StorageBackend for SqliteStorage {
             params![now, now, message_id, preview, cleaned_conversation],
         )?;
 
-        let peer_user = if cleaned_sender == participant_a {
-            participant_b.as_str()
-        } else {
-            participant_a.as_str()
-        };
         tx.execute(
             "UPDATE user_world_members SET last_read_message_id = ?, unread_count_cache = 0, updated_at = ? \
              WHERE conversation_id = ? AND user_id = ?",
@@ -4287,8 +4424,8 @@ impl StorageBackend for SqliteStorage {
         )?;
         tx.execute(
             "UPDATE user_world_members SET unread_count_cache = COALESCE(unread_count_cache, 0) + 1, updated_at = ? \
-             WHERE conversation_id = ? AND user_id = ?",
-            params![now, cleaned_conversation, peer_user],
+             WHERE conversation_id = ? AND user_id <> ?",
+            params![now, cleaned_conversation, cleaned_sender],
         )?;
 
         let message = tx
@@ -4494,6 +4631,73 @@ impl StorageBackend for SqliteStorage {
             })?
             .collect::<std::result::Result<Vec<UserWorldEventRecord>, _>>()?;
         Ok(rows)
+    }
+
+    fn list_user_world_groups(
+        &self,
+        user_id: &str,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<UserWorldGroupRecord>, i64)> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        if cleaned_user.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let conn = self.open()?;
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM user_world_groups g \
+             JOIN user_world_members m ON m.conversation_id = g.conversation_id \
+             WHERE m.user_id = ?",
+            params![cleaned_user],
+            |row| row.get(0),
+        )?;
+
+        let mut sql = "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+                       (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
+                       m.unread_count_cache, m.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                       FROM user_world_groups g \
+                       JOIN user_world_members m ON m.conversation_id = g.conversation_id \
+                       JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
+                       WHERE m.user_id = ? \
+                       ORDER BY m.pinned DESC, c.last_message_at DESC, g.updated_at DESC"
+            .to_string();
+        let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
+        if limit > 0 {
+            sql.push_str(" LIMIT ? OFFSET ?");
+            params_list.push(SqlValue::from(limit));
+            params_list.push(SqlValue::from(offset.max(0)));
+        }
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                params_from_iter(params_list.iter()),
+                Self::map_user_world_group_row,
+            )?
+            .collect::<std::result::Result<Vec<UserWorldGroupRecord>, _>>()?;
+        Ok((rows, total))
+    }
+
+    fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>> {
+        self.ensure_initialized()?;
+        let cleaned_conversation = conversation_id.trim();
+        if cleaned_conversation.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT user_id FROM user_world_members WHERE conversation_id = ? ORDER BY user_id ASC",
+        )?;
+        let rows = stmt.query_map(params![cleaned_conversation], |row| row.get::<_, String>(0))?;
+        let mut output = Vec::new();
+        for row in rows {
+            let user_id = row?;
+            if user_id.trim().is_empty() {
+                continue;
+            }
+            output.push(user_id);
+        }
+        Ok(output)
     }
 
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()> {
