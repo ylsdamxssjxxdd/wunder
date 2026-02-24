@@ -148,7 +148,7 @@ cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
 - Admin override path: `data/config/wunder.override.yaml` (runtime override file, safe to regenerate).
 
 ## Skills & MCP
-- Skills are loaded from `skills/` and `EVA_SKILLS/` by default, and can be enabled in `config/wunder.yaml` or via admin UI.
+- Skills are loaded from `skills/` by default, and can be enabled in `config/wunder.yaml` or via admin UI.
 - MCP servers are configured in `config/wunder.yaml` or `data/config/wunder.override.yaml`, and managed in admin UI.
 - server / cli / desktop share the same tool protocol and orchestration core for easier cross-form migration.
 
@@ -169,7 +169,6 @@ web/                 # admin frontend (debug/governance)
 config/              # base configuration
 prompts/             # system/tool/memory prompts
 skills/              # built-in skills
-EVA_SKILLS/          # skills directory
 knowledge/           # knowledge base
 scripts/             # dev & maintenance scripts
 docs/                # design/API/plan documents

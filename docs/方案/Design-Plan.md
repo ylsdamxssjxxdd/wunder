@@ -158,7 +158,7 @@ See `docs/方案/API-Documentation.md`.
 - Model config panel with multiple configs and default selection.
 - Debug panel supports model selection.
 - Prompt page includes custom/shared tools and extra prompt.
-- Skills upload and delete for EVA_SKILLS.
+- Skills upload and delete for skills.
 - Knowledge base CRUD and Markdown file editing.
 - Workspace explorer with tree view, search, batch ops, drag & drop.
 - Attachment upload for files/images with doc2md parsing.
@@ -168,7 +168,7 @@ See `docs/方案/API-Documentation.md`.
 
 - Shared sandbox service runs `wunder-server` in `sandbox` mode in a separate container, sharing the same image and workspace mounts.
 - Exposes `/sandboxes/execute_tool` for command/ptc execution; ptc still invokes `python3` inside the container.
-- The sandbox mounts the repo (readonly), user workspace (rw), EVA_SKILLS (readonly).
+- The sandbox mounts the repo (readonly), user workspace (rw), skills (readonly).
 - At runtime, `WUNDER_SANDBOX_ENDPOINT` is preferred and the client falls back between common `sandbox`/`127.0.0.1` endpoints to avoid IP issues in intranet docker compose deployments (no need to publish port 9001).
 
 ## 6. Suggested directory structure
@@ -188,7 +188,6 @@ wunder/
   frontend/           # user Vue3 frontend
   config/             # base config (wunder.yaml, i18n, fonts)
   skills/             # built-in skills
-  EVA_SKILLS/         # skills directory
   knowledge/          # shared knowledge bases
   workspaces/         # per-user workspaces
   data/               # overrides/logs/user tools
@@ -297,7 +296,6 @@ mcp:
 skills:
   paths:
     - ./skills
-    - ./EVA_SKILLS
   enabled: ["skill_a", "skill_b"]
 
 tools:
@@ -331,7 +329,7 @@ storage:
 security:
   api_key: ylsdamxssjxxdd
   allow_commands: ["*"]
-  allow_paths: ["./EVA_SKILLS", "./skills"]
+  allow_paths: ["./skills"]
   deny_globs: ["**/.git/**"]
 
 sandbox:

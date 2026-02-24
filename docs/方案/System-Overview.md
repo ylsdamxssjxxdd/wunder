@@ -83,7 +83,7 @@ wunder abstracts all capabilities as "tools" and uses prompt injection + tool pr
 | --- | --- | --- | --- | --- |
 | Built-in | `src/services/tools.rs` | Direct tool name | Admin enable list | File ops, commands, ptc |
 | MCP | `config/wunder.yaml` + overrides + `/wunder/admin/mcp` | `server@tool` | Admin enable + allow_tools | External services (incl. `wunder@excute`/`wunder@doc2md`) |
-| Skills | `skills/`, `EVA_SKILLS/`, user skills | Skill name | Admin/user enable | Codified workflows |
+| Skills | `skills/`, user skills | Skill name | Admin/user enable | Codified workflows |
 | Knowledge | `knowledge/` or user knowledge | Knowledge base tool | Admin/user config | Local knowledge retrieval |
 | Custom tools | `data/user_tools/<user_id>` | `user_id@tool` | User config | Personal capabilities |
 | Shared tools | Shared user config | `owner_id@tool` | Shared flag | Cross-user reuse |
@@ -183,7 +183,6 @@ prompts/             # prompt templates
 data/config/         # admin overrides (wunder.override.yaml)
 workspaces/     # per-user workspaces
 skills/              # built-in skills
-EVA_SKILLS/          # skills directory
 knowledge/           # shared knowledge base
 temp_dir/            # temp files (/wunder/temp_dir/*)
 web/                 # debug frontend

@@ -148,7 +148,7 @@ cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
 - 管理端覆写配置路径：`data/config/wunder.override.yaml`（运行态覆盖文件，可重建）。
 
 ## Skills 与 MCP
-- Skills 默认从 `skills/` 与 `EVA_SKILLS/` 加载，可通过 `config/wunder.yaml` 或管理端启用。
+- Skills 默认从 `skills/` 加载，可通过 `config/wunder.yaml` 或管理端启用。
 - MCP 服务可在 `config/wunder.yaml` 或 `data/config/wunder.override.yaml` 配置，并由管理端维护工具清单。
 - server / cli / desktop 共享同一套工具协议与编排能力，降低跨形态迁移成本。
 
@@ -169,7 +169,6 @@ web/                 # 管理员侧前端（调试/治理）
 config/              # 基础配置
 prompts/             # system/tool/memory 提示词
 skills/              # 内置技能
-EVA_SKILLS/          # 技能目录
 knowledge/           # 知识库
 scripts/             # 开发与维护脚本
 docs/                # 设计/API/方案文档

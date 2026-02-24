@@ -62,7 +62,6 @@ security: # 安全与权限配置
   allow_commands: # 命令执行白名单，'*' 表示允许执行任意命令（生产环境建议收敛）
     - '*'
   allow_paths: # 允许工具访问的额外目录白名单（超出工作区范围的路径）
-    - ./EVA_SKILLS
     - ./skills
   deny_globs: # 拒绝访问的路径通配规则（用于阻断敏感目录）
     - '**/.git/**'
@@ -193,8 +192,6 @@ gateway: # 网关控制层配置（节点接入/控制面 WS）
 skills: # Skills 技能配置
   paths: # 技能扫描路径列表（支持相对路径）
     - ./skills
-    - ./EVA_SKILLS
-    - EVA_SKILLS
   enabled: # 默认启用的技能名称列表
     - 技能创建器
 

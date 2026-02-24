@@ -620,7 +620,7 @@
   - `ok`：是否删除成功
   - `name`：已删除技能名称
   - `message`：删除说明
-- 说明：仅允许删除 `EVA_SKILLS` 目录内的技能。
+- 说明：仅允许删除 `skills` 目录内的技能。
 
 ### 4.1.5.1 `/wunder/admin/skills/content`
 

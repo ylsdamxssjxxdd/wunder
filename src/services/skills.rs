@@ -43,7 +43,7 @@ pub fn load_skills(
     config: &Config,
     load_entrypoints: bool,
     only_enabled: bool,
-    include_eva: bool,
+    include_repo_skills: bool,
 ) -> SkillRegistry {
     let mut registry = SkillRegistry::default();
     let enabled: Vec<String> = config
@@ -58,10 +58,10 @@ pub fn load_skills(
     }
 
     let mut scan_paths = config.skills.paths.clone();
-    if include_eva {
-        let eva_root = Path::new("EVA_SKILLS");
-        if eva_root.exists() && !scan_paths.iter().any(|item| item == "EVA_SKILLS") {
-            scan_paths.push("EVA_SKILLS".to_string());
+    if include_repo_skills {
+        let skills_root = Path::new("skills");
+        if skills_root.exists() && !scan_paths.iter().any(|item| item == "skills") {
+            scan_paths.push("skills".to_string());
         }
     }
 

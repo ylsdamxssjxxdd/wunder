@@ -519,9 +519,11 @@ fn apply_desktop_defaults(
 
     let launch_skills = workspace_root.join("skills");
     let repo_skills = repo_root.join("skills");
-    let repo_eva_skills = repo_root.join("EVA_SKILLS");
-    let mut skill_paths = vec![launch_skills, repo_skills, repo_eva_skills];
+    let mut skill_paths = vec![launch_skills, repo_skills];
     for existing in &config.skills.paths {
+        if is_legacy_eva_skills_path(existing) {
+            continue;
+        }
         let resolved = resolve_maybe_relative_path(existing, repo_root, workspace_root);
         skill_paths.push(resolved);
     }
@@ -530,9 +532,13 @@ fn apply_desktop_defaults(
         .map(|path| path.to_string_lossy().to_string())
         .collect();
 
-    let mut allow_paths = Vec::new();
-    allow_paths.extend(config.security.allow_paths.iter().cloned());
-    allow_paths.push(repo_root.join("EVA_SKILLS").to_string_lossy().to_string());
+    let mut allow_paths = config
+        .security
+        .allow_paths
+        .iter()
+        .filter(|path| !is_legacy_eva_skills_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
     allow_paths.push(repo_root.join("skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
@@ -605,6 +611,12 @@ fn resolve_maybe_relative_path(raw: &str, repo_root: &Path, workspace_root: &Pat
         return workspace_candidate;
     }
     repo_root.join(path)
+}
+
+fn is_legacy_eva_skills_path(raw: &str) -> bool {
+    let normalized = raw.replace('\\', "/").to_ascii_lowercase();
+    let trimmed = normalized.trim();
+    trimmed == "eva_skills" || trimmed == "./eva_skills" || trimmed.ends_with("/eva_skills")
 }
 
 fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {

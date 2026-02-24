@@ -969,9 +969,9 @@ async fn admin_a2a_card(
 async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let mut scan_paths = config.skills.paths.clone();
-    let eva_skills = Path::new("EVA_SKILLS");
-    if eva_skills.exists() && !scan_paths.iter().any(|item| item == "EVA_SKILLS") {
-        scan_paths.push("EVA_SKILLS".to_string());
+    let skills_dir = Path::new("skills");
+    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
+        scan_paths.push("skills".to_string());
     }
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths.clone();
@@ -1000,9 +1000,9 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
 
 fn resolve_admin_skill_spec(config: &Config, name: &str) -> Result<SkillSpec, Response> {
     let mut scan_paths = config.skills.paths.clone();
-    let eva_skills = Path::new("EVA_SKILLS");
-    if eva_skills.exists() && !scan_paths.iter().any(|item| item == "EVA_SKILLS") {
-        scan_paths.push("EVA_SKILLS".to_string());
+    let skills_dir = Path::new("skills");
+    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
+        scan_paths.push("skills".to_string());
     }
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths;
@@ -1054,9 +1054,9 @@ async fn admin_skills_content(
     }
     let config = state.config_store.get().await;
     let mut scan_paths = config.skills.paths.clone();
-    let eva_skills = Path::new("EVA_SKILLS");
-    if eva_skills.exists() && !scan_paths.iter().any(|item| item == "EVA_SKILLS") {
-        scan_paths.push("EVA_SKILLS".to_string());
+    let skills_dir = Path::new("skills");
+    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
+        scan_paths.push("skills".to_string());
     }
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths;
@@ -1280,9 +1280,9 @@ async fn admin_skills_update(
     }
     state.reload_skills(&updated).await;
     let mut scan_paths = updated.skills.paths.clone();
-    let eva_skills = Path::new("EVA_SKILLS");
-    if eva_skills.exists() && !scan_paths.iter().any(|item| item == "EVA_SKILLS") {
-        scan_paths.push("EVA_SKILLS".to_string());
+    let skills_dir = Path::new("skills");
+    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
+        scan_paths.push("skills".to_string());
     }
     let mut scan_config = updated.clone();
     scan_config.skills.paths = scan_paths.clone();
@@ -1322,12 +1322,12 @@ async fn admin_skills_delete(
     }
     let config = state.config_store.get().await;
     let mut scan_paths = config.skills.paths.clone();
-    let eva_skills = Path::new("EVA_SKILLS");
-    let eva_root = eva_skills
+    let skills_dir = Path::new("skills");
+    let skills_root = skills_dir
         .canonicalize()
-        .unwrap_or_else(|_| eva_skills.to_path_buf());
-    if eva_skills.exists() && !scan_paths.iter().any(|item| item == "EVA_SKILLS") {
-        scan_paths.push("EVA_SKILLS".to_string());
+        .unwrap_or_else(|_| skills_dir.to_path_buf());
+    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
+        scan_paths.push("skills".to_string());
     }
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths;
@@ -1343,15 +1343,15 @@ async fn admin_skills_delete(
             i18n::t("error.skill_file_not_found"),
         ));
     }
-    if !eva_root.exists() {
+    if !skills_root.exists() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.skills_dir_missing"),
         ));
     }
-    let skill_dir = skill_path.parent().unwrap_or(&eva_root).to_path_buf();
+    let skill_dir = skill_path.parent().unwrap_or(&skills_root).to_path_buf();
     let skill_dir = skill_dir.canonicalize().unwrap_or(skill_dir);
-    if skill_dir != eva_root && !skill_dir.starts_with(&eva_root) {
+    if skill_dir != skills_root && !skill_dir.starts_with(&skills_root) {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.skill_delete_restricted"),
@@ -1423,7 +1423,7 @@ async fn admin_skills_upload(
             i18n::t("error.skill_upload_zip_only"),
         ));
     }
-    let skill_root = Path::new("EVA_SKILLS").to_path_buf();
+    let skill_root = Path::new("skills").to_path_buf();
     tokio::fs::create_dir_all(&skill_root)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;

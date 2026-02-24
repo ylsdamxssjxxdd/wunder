@@ -192,7 +192,6 @@ desktop 默认配置建议：
 - Skills 搜索路径：
   1) 工作目录下 `skills/`
   2) 项目内置 `skills/`
-  3) 项目内置 `EVA_SKILLS/`
 
 ## 5.5 工具调用模式切换（重点）
 

@@ -308,8 +308,8 @@
     "zh-CN": "删除技能失败: {detail}"
   },
   "error.skill_delete_restricted": {
-    "en-US": "Only skills under EVA_SKILLS can be deleted",
-    "zh-CN": "仅支持删除 EVA_SKILLS 目录内的技能"
+    "en-US": "Only skills under the skills directory can be deleted",
+    "zh-CN": "仅支持删除 skills 目录内的技能"
   },
   "error.skill_delete_update_failed": {
     "en-US": "Skill deleted but failed to update config: {detail}",
@@ -340,8 +340,8 @@
     "zh-CN": "仅支持上传 .zip 或 .skill 压缩包"
   },
   "error.skills_dir_missing": {
-    "en-US": "EVA_SKILLS directory not found",
-    "zh-CN": "EVA_SKILLS 目录不存在"
+    "en-US": "skills directory not found",
+    "zh-CN": "skills 目录不存在"
   },
   "error.system_prompt_failed": {
     "en-US": "Failed to build system prompt: {detail}",

@@ -279,7 +279,7 @@
 - `GET` Response: `paths`, `enabled`, `skills`
 - `POST` Body: `enabled`, `paths` (optional)
 - `DELETE` Query: `name`
-- Note: only skills under `EVA_SKILLS` can be deleted.
+- Note: only skills under `skills` can be deleted.
 
 ### 4.1.5.1 `/wunder/admin/skills/content`
 

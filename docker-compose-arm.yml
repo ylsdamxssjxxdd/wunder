@@ -186,9 +186,11 @@ services:
       - FRONTEND_UMASK=${FRONTEND_UMASK:-022}
       - FRONTEND_PORT=${FRONTEND_PORT:-18001}
       - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
+      - FRONTEND_WAIT_BACKEND_TIMEOUT_S=${FRONTEND_WAIT_BACKEND_TIMEOUT_S:-900}
+      - FRONTEND_WAIT_BACKEND_INTERVAL_MS=${FRONTEND_WAIT_BACKEND_INTERVAL_MS:-1000}
     # Force a safe umask so build artifacts remain readable by nginx.
     entrypoint: ["sh", "-lc", "umask ${FRONTEND_UMASK:-022}; exec \"$@\"", "--"]
-    command: ["sh", "-c", "npm install && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"]
+    command: ["sh", "-c", "npm install && node ./scripts/wait-backend.mjs && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"]
     # command: ["sh", "-c", "npm install && npm run build"]
 
   # wunder-nginx:
