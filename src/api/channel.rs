@@ -39,7 +39,7 @@ struct WhatsappVerifyQuery {
 struct WechatVerifyQuery {
     #[serde(default)]
     account_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "msgsignature")]
     msg_signature: Option<String>,
     #[serde(default)]
     signature: Option<String>,
@@ -55,7 +55,7 @@ struct WechatVerifyQuery {
 struct WechatWebhookQuery {
     #[serde(default)]
     account_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "msgsignature")]
     msg_signature: Option<String>,
     #[serde(default)]
     signature: Option<String>,
@@ -69,7 +69,7 @@ struct WechatWebhookQuery {
 struct WechatMpVerifyQuery {
     #[serde(default)]
     account_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "msgsignature")]
     msg_signature: Option<String>,
     #[serde(default)]
     signature: Option<String>,
@@ -85,7 +85,7 @@ struct WechatMpVerifyQuery {
 struct WechatMpWebhookQuery {
     #[serde(default)]
     account_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "msgsignature")]
     msg_signature: Option<String>,
     #[serde(default)]
     signature: Option<String>,
@@ -422,19 +422,20 @@ async fn wechat_webhook(
         .as_deref()
         .or(query.signature.as_deref())
         .map(str::trim)
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "missing signature"))?;
     let timestamp = query
         .timestamp
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_default();
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "missing timestamp"))?;
     let nonce = query
         .nonce
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or_default();
+        .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "missing nonce"))?;
     let account_hint = query
         .account_id
         .clone()
@@ -445,27 +446,19 @@ async fn wechat_webhook(
         account_hint.as_deref(),
         timestamp,
         nonce,
-        signature,
+        Some(signature),
         encrypted.as_deref(),
         to_user_name.as_deref(),
     )
     .await?;
 
     let xml_payload = if let Some(encrypted_text) = encrypted.as_deref() {
-        let signature = signature
-            .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "missing signature"))?;
         let token = wechat_cfg
             .token
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "wechat token missing"))?;
-        if timestamp.is_empty() || nonce.is_empty() {
-            return Err(error_response(
-                StatusCode::BAD_REQUEST,
-                "missing timestamp or nonce",
-            ));
-        }
         if !wechat::verify_signature(token, timestamp, nonce, encrypted_text, signature) {
             return Err(error_response(
                 StatusCode::UNAUTHORIZED,
@@ -483,6 +476,18 @@ async fn wechat_webhook(
         wechat::decrypt_payload(encrypted_text, encoding_key, wechat_cfg.corp_id.as_deref())
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?
     } else {
+        let token = wechat_cfg
+            .token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| error_response(StatusCode::BAD_REQUEST, "wechat token missing"))?;
+        if !wechat::verify_callback_signature(token, timestamp, nonce, signature) {
+            return Err(error_response(
+                StatusCode::UNAUTHORIZED,
+                "wechat signature mismatch",
+            ));
+        }
         raw_xml.clone()
     };
 
@@ -1011,10 +1016,11 @@ async fn resolve_wechat_account(
 
     let signature = signature.map(str::trim).filter(|value| !value.is_empty());
     let encrypted = encrypted.map(str::trim).filter(|value| !value.is_empty());
-    if let (Some(signature), Some(encrypted)) = (signature, encrypted) {
-        let timestamp = timestamp.trim();
-        let nonce = nonce.trim();
+    let timestamp = timestamp.trim();
+    let nonce = nonce.trim();
+    if let Some(signature) = signature {
         if !timestamp.is_empty() && !nonce.is_empty() {
+            let mut signature_matches: Vec<(String, WechatConfig)> = Vec::new();
             for record in &records {
                 let account_cfg = ChannelAccountConfig::from_value(&record.config);
                 let Some(wechat_cfg) = account_cfg.wechat else {
@@ -1025,14 +1031,50 @@ async fn resolve_wechat_account(
                     .as_deref()
                     .map(str::trim)
                     .filter(|value| !value.is_empty());
-                if token
+                let matched = token
                     .map(|token| {
-                        wechat::verify_signature(token, timestamp, nonce, encrypted, signature)
+                        if let Some(encrypted) = encrypted {
+                            wechat::verify_signature(token, timestamp, nonce, encrypted, signature)
+                        } else {
+                            wechat::verify_callback_signature(token, timestamp, nonce, signature)
+                        }
                     })
-                    .unwrap_or(false)
-                {
-                    return Ok((record.account_id.clone(), wechat_cfg));
+                    .unwrap_or(false);
+                if matched {
+                    signature_matches.push((record.account_id.clone(), wechat_cfg));
                 }
+            }
+            if signature_matches.is_empty() {
+                return Err(error_response(
+                    StatusCode::UNAUTHORIZED,
+                    "wechat signature mismatch",
+                ));
+            }
+            if let [item] = signature_matches.as_slice() {
+                return Ok(item.clone());
+            }
+            if signature_matches.len() > 1 {
+                if let Some(encrypted) = encrypted {
+                    if let Some(selected) =
+                        select_wechat_account_by_agent_id(&signature_matches, encrypted)
+                    {
+                        return Ok(selected);
+                    }
+                }
+                if let Some(to_user_name) = to_user_name
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    if let Some(selected) =
+                        select_wechat_account_by_to_user_name(&signature_matches, to_user_name)
+                    {
+                        return Ok(selected);
+                    }
+                }
+                return Err(error_response(
+                    StatusCode::BAD_REQUEST,
+                    "multiple wechat accounts matched signature",
+                ));
             }
         }
     }
@@ -1073,6 +1115,76 @@ async fn resolve_wechat_account(
         StatusCode::BAD_REQUEST,
         "missing account_id",
     ))
+}
+
+fn select_wechat_account_by_to_user_name(
+    candidates: &[(String, WechatConfig)],
+    to_user_name: &str,
+) -> Option<(String, WechatConfig)> {
+    let mut matched = candidates.iter().filter(|(_, cfg)| {
+        cfg.corp_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|corp_id| corp_id.eq_ignore_ascii_case(to_user_name))
+            .unwrap_or(false)
+    });
+    let first = matched.next()?.clone();
+    if matched.next().is_none() {
+        return Some(first);
+    }
+    None
+}
+
+fn select_wechat_account_by_agent_id(
+    candidates: &[(String, WechatConfig)],
+    encrypted: &str,
+) -> Option<(String, WechatConfig)> {
+    let mut matched = candidates.iter().filter(|(_, cfg)| {
+        let encoding_key = cfg
+            .encoding_aes_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let Some(encoding_key) = encoding_key else {
+            return false;
+        };
+        let xml = match wechat::decrypt_payload(encrypted, encoding_key, cfg.corp_id.as_deref()) {
+            Ok(value) => value,
+            Err(_) => return false,
+        };
+        let inbound_agent_id = parse_wechat_inbound_agent_id(&xml);
+        let expected_agent_id = parse_wechat_config_agent_id(cfg);
+        matches!(
+            (inbound_agent_id, expected_agent_id),
+            (Some(inbound), Some(expected)) if inbound == expected
+        )
+    });
+    let first = matched.next()?.clone();
+    if matched.next().is_none() {
+        return Some(first);
+    }
+    None
+}
+
+fn parse_wechat_inbound_agent_id(xml_payload: &str) -> Option<i64> {
+    let fields = wechat::parse_xml_fields(xml_payload).ok()?;
+    fields
+        .get("AgentID")
+        .or_else(|| fields.get("AgentId"))
+        .or_else(|| fields.get("agentid"))
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<i64>().ok())
+}
+
+fn parse_wechat_config_agent_id(config: &WechatConfig) -> Option<i64> {
+    config
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .and_then(|value| value.parse::<i64>().ok())
 }
 
 async fn resolve_wechat_mp_account(

@@ -1814,11 +1814,12 @@
 
 - 方法：`GET/POST`
 - 鉴权：
-  - `GET`/`POST` 安全模式下使用 `msg_signature/timestamp/nonce` + `wechat.token` 校验签名。
-  - 使用加密模式时需配置 `wechat.encoding_aes_key` 进行 AES-CBC 解密。
+  - `GET` URL 验证使用 `msg_signature/timestamp/nonce/echostr` + `wechat.token` 校验签名。
+  - `POST` 回调统一要求签名参数 + `timestamp` + `nonce` + `wechat.token`；支持 `msg_signature/msgsignature/signature` 参数名。
+  - `POST` 明文模式（无 `<Encrypt>`）校验回调签名；加密模式（有 `<Encrypt>`）校验消息签名并用 `wechat.encoding_aes_key` 执行 AES-CBC 解密。
 - Query：
   - `account_id`：可选，优先指定渠道账号。
-  - `msg_signature` 或 `signature`、`timestamp`、`nonce`：企业微信回调签名参数（兼容不同模式参数名）。
+  - `msg_signature` / `msgsignature` / `signature`、`timestamp`、`nonce`：企业微信回调签名参数（兼容不同模式参数名）。
   - `echostr`：仅 `GET` URL 验证时使用。
 - Header：
   - `x-channel-account`：可选，覆盖 `account_id`。
@@ -1826,14 +1827,16 @@
   - 传入 `msg_signature/timestamp/nonce/echostr` 后返回解密后的明文字符串。
 - 消息回调（POST）：
   - 入参为企业微信 XML（支持明文或 `<Encrypt>` 加密包）。
-  - 当前支持 `MsgType=text` 与 `MsgType=voice`（优先取 `Recognition` 语音识别结果）；`event` 仅处理可映射文本的场景（如菜单点击）。
+  - 当前支持 `MsgType=text/voice/image/file/location`；其中 `voice` 优先取 `Recognition`，`event` 仅处理可映射文本的场景（如菜单点击）。
   - `enter_agent/subscribe/unsubscribe` 等事件会忽略并直接返回 `success`。
   - 成功返回纯文本 `success`（非 JSON），避免企业微信重复回调。
   - 文本消息采用异步处理：服务端先快速回 `success`，再在后台完成模型调用与出站回包，规避渠道侧 5 秒超时重试。
+  - 多账号场景下会优先按签名匹配账号，若命中多个候选则尝试按解密后的 `AgentID` 精确归属。
 - 出站投递：
   - 当 `ChannelAccount.config.wechat.corp_id/agent_id/secret` 可用时，调用企业微信 API 直连发送文本：
     - 先请求 `/cgi-bin/gettoken`
     - 再请求 `/cgi-bin/message/send`
+  - 长文本会按企业微信上限（2048 字节）自动分片发送。
   - 服务端会缓存企业微信 `access_token`（提前刷新），降低 token 接口压力和发送延迟。
   - `peer.kind=user` -> `touser`
   - `peer.kind=group` -> `toparty`

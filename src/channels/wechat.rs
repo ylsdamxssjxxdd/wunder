@@ -21,6 +21,7 @@ pub const WECHAT_CHANNEL: &str = "wechat";
 const TOKEN_REFRESH_LEEWAY_S: u64 = 300;
 const TOKEN_MIN_REUSE_S: u64 = 60;
 const TOKEN_FALLBACK_EXPIRES_S: u64 = 7200;
+const WECHAT_TEXT_MAX_BYTES: usize = 2048;
 
 #[derive(Debug, Clone)]
 struct CachedToken {
@@ -52,6 +53,29 @@ pub fn verify_signature(
         return false;
     }
     let mut parts = [token, timestamp, nonce, encrypted];
+    parts.sort_unstable();
+    let mut hasher = Sha1::new();
+    for part in parts {
+        hasher.update(part.as_bytes());
+    }
+    let digest = hex::encode(hasher.finalize());
+    digest.eq_ignore_ascii_case(signature)
+}
+
+pub fn verify_callback_signature(
+    token: &str,
+    timestamp: &str,
+    nonce: &str,
+    signature: &str,
+) -> bool {
+    let token = token.trim();
+    let timestamp = timestamp.trim();
+    let nonce = nonce.trim();
+    let signature = signature.trim();
+    if token.is_empty() || timestamp.is_empty() || nonce.is_empty() || signature.is_empty() {
+        return false;
+    }
+    let mut parts = [token, timestamp, nonce];
     parts.sort_unstable();
     let mut hasher = Sha1::new();
     for part in parts {
@@ -103,7 +127,7 @@ pub fn decrypt_payload(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        if !receive_id.is_empty() && !receive_id.eq_ignore_ascii_case(expected) {
+        if receive_id != expected {
             return Err(anyhow!("wechat payload receive_id mismatch"));
         }
     }
@@ -171,22 +195,120 @@ pub fn extract_inbound_messages(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| anyhow!("invalid wechat payload: missing FromUserName"))?;
+    let mut attachments = Vec::new();
+    let mut location = None;
     let (message_type, content) = match msg_type.as_str() {
-        "text" => (
-            "text".to_string(),
-            fields
+        "text" => {
+            let text = fields
                 .get("Content")
                 .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-        ),
-        "voice" => (
-            "text".to_string(),
-            fields
+                .filter(|value| !value.is_empty());
+            ("text".to_string(), text)
+        }
+        "voice" => {
+            let recognition = fields
                 .get("Recognition")
                 .or_else(|| fields.get("Content"))
                 .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
-        ),
+                .filter(|value| !value.is_empty());
+            if recognition.is_none() {
+                if let Some(media_id) = fields
+                    .get("MediaId")
+                    .or_else(|| fields.get("MediaID"))
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    attachments.push(crate::channels::types::ChannelAttachment {
+                        kind: "voice".to_string(),
+                        url: format!("wecom://media/{media_id}"),
+                        mime: None,
+                        size: None,
+                        name: None,
+                    });
+                }
+            }
+            (
+                "text".to_string(),
+                recognition.or_else(|| Some("[voice]".to_string())),
+            )
+        }
+        "image" => {
+            if let Some(url) = fields
+                .get("PicUrl")
+                .or_else(|| fields.get("ImageUrl"))
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                attachments.push(crate::channels::types::ChannelAttachment {
+                    kind: "image".to_string(),
+                    url,
+                    mime: None,
+                    size: None,
+                    name: None,
+                });
+            } else if let Some(media_id) = fields
+                .get("MediaId")
+                .or_else(|| fields.get("MediaID"))
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                attachments.push(crate::channels::types::ChannelAttachment {
+                    kind: "image".to_string(),
+                    url: format!("wecom://media/{media_id}"),
+                    mime: None,
+                    size: None,
+                    name: None,
+                });
+            }
+            ("image".to_string(), Some("[image]".to_string()))
+        }
+        "file" => {
+            if let Some(media_id) = fields
+                .get("MediaId")
+                .or_else(|| fields.get("MediaID"))
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                attachments.push(crate::channels::types::ChannelAttachment {
+                    kind: "file".to_string(),
+                    url: format!("wecom://media/{media_id}"),
+                    mime: None,
+                    size: None,
+                    name: fields
+                        .get("FileName")
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty()),
+                });
+            }
+            ("file".to_string(), Some("[file]".to_string()))
+        }
+        "location" => {
+            let lat = fields
+                .get("Location_X")
+                .or_else(|| fields.get("Latitude"))
+                .and_then(|value| value.trim().parse::<f64>().ok());
+            let lng = fields
+                .get("Location_Y")
+                .or_else(|| fields.get("Longitude"))
+                .and_then(|value| value.trim().parse::<f64>().ok());
+            if let (Some(lat), Some(lng)) = (lat, lng) {
+                location = Some(crate::channels::types::ChannelLocation {
+                    lat,
+                    lng,
+                    address: fields
+                        .get("Label")
+                        .or_else(|| fields.get("Poiname"))
+                        .map(|value| value.trim().to_string())
+                        .filter(|value| !value.is_empty()),
+                });
+                (
+                    "location".to_string(),
+                    Some(format!("[location] {lat},{lng}")),
+                )
+            } else {
+                return Ok(Vec::new());
+            }
+        }
         "event" => {
             let event = fields
                 .get("Event")
@@ -212,7 +334,10 @@ pub fn extract_inbound_messages(
         }
         _ => return Ok(Vec::new()),
     };
-    let content = content.ok_or_else(|| anyhow!("invalid wechat payload: missing content"))?;
+    let content = content.filter(|value| !value.trim().is_empty());
+    if content.is_none() && attachments.is_empty() && location.is_none() {
+        return Err(anyhow!("invalid wechat payload: missing content"));
+    }
     let message_id = fields
         .get("MsgId")
         .or_else(|| fields.get("MsgID"))
@@ -238,9 +363,9 @@ pub fn extract_inbound_messages(
             name: None,
         }),
         message_type,
-        text: Some(content),
-        attachments: Vec::new(),
-        location: None,
+        text: content,
+        attachments,
+        location,
         ts,
         meta: Some(json!({ "wechat": fields })),
     }])
@@ -276,52 +401,57 @@ pub async fn send_outbound(
                 .map(|attachment| format!("[{}] {}", attachment.kind, attachment.url))
         })
         .unwrap_or_else(|| "(empty message)".to_string());
+    let chunks = split_text_by_utf8_bytes(&text, WECHAT_TEXT_MAX_BYTES);
+    let duplicate_check_enabled = chunks.len() == 1;
     let peer_id = outbound.peer.id.trim();
     if peer_id.is_empty() {
         return Err(anyhow!("wechat outbound peer id missing"));
     }
-
-    let mut payload = json!({
-        "msgtype": "text",
-        "agentid": agent_id,
-        "text": { "content": text },
-        "safe": 0,
-        "enable_duplicate_check": 1,
-        "duplicate_check_interval": 1800,
-    });
     let peer_kind = outbound.peer.kind.trim().to_ascii_lowercase();
-    if peer_kind == "group" {
-        if let Some(map) = payload.as_object_mut() {
-            map.insert("toparty".to_string(), Value::String(peer_id.to_string()));
-        }
-    } else if peer_kind == "tag" {
-        if let Some(map) = payload.as_object_mut() {
-            map.insert("totag".to_string(), Value::String(peer_id.to_string()));
-        }
-    } else if let Some(map) = payload.as_object_mut() {
-        map.insert("touser".to_string(), Value::String(peer_id.to_string()));
-    }
-
     let send_url = format!("{base_url}/cgi-bin/message/send");
-    let response = http
-        .post(send_url)
-        .query(&[("access_token", access_token.as_str())])
-        .json(&payload)
-        .send()
-        .await?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(anyhow!("wechat outbound failed: {status} {body}"));
-    }
-    let body: Value = response.json().await?;
-    let errcode = body.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
-    if errcode != 0 {
-        let errmsg = body
-            .get("errmsg")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        return Err(anyhow!("wechat outbound failed: {errmsg}"));
+    for chunk in chunks {
+        let mut payload = json!({
+            "msgtype": "text",
+            "agentid": agent_id,
+            "text": { "content": chunk },
+            "safe": 0,
+        });
+        if duplicate_check_enabled && let Some(map) = payload.as_object_mut() {
+            map.insert("enable_duplicate_check".to_string(), json!(1));
+            map.insert("duplicate_check_interval".to_string(), json!(1800));
+        }
+        if peer_kind == "group" {
+            if let Some(map) = payload.as_object_mut() {
+                map.insert("toparty".to_string(), Value::String(peer_id.to_string()));
+            }
+        } else if peer_kind == "tag" {
+            if let Some(map) = payload.as_object_mut() {
+                map.insert("totag".to_string(), Value::String(peer_id.to_string()));
+            }
+        } else if let Some(map) = payload.as_object_mut() {
+            map.insert("touser".to_string(), Value::String(peer_id.to_string()));
+        }
+
+        let response = http
+            .post(&send_url)
+            .query(&[("access_token", access_token.as_str())])
+            .json(&payload)
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!("wechat outbound failed: {status} {body}"));
+        }
+        let body: Value = response.json().await?;
+        let errcode = body.get("errcode").and_then(Value::as_i64).unwrap_or(-1);
+        if errcode != 0 {
+            let errmsg = body
+                .get("errmsg")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            return Err(anyhow!("wechat outbound failed: {errmsg}"));
+        }
     }
     Ok(())
 }
@@ -480,6 +610,31 @@ fn store_cached_token(cache_key: &str, token: &str, expires_in: u64) {
     }
 }
 
+fn split_text_by_utf8_bytes(text: &str, max_bytes: usize) -> Vec<String> {
+    if max_bytes == 0 {
+        return vec![text.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_bytes = 0usize;
+    for ch in text.chars() {
+        let ch_bytes = ch.len_utf8();
+        if current_bytes + ch_bytes > max_bytes && !current.is_empty() {
+            chunks.push(std::mem::take(&mut current));
+            current_bytes = 0;
+        }
+        current.push(ch);
+        current_bytes += ch_bytes;
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    if chunks.is_empty() {
+        chunks.push(String::new());
+    }
+    chunks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +654,23 @@ mod tests {
         let signature = hex::encode(hasher.finalize());
         assert!(verify_signature(
             token, timestamp, nonce, encrypted, &signature
+        ));
+    }
+
+    #[test]
+    fn verify_callback_signature_with_sorted_parts() {
+        let token = "token";
+        let timestamp = "1710000000";
+        let nonce = "abc";
+        let mut parts = [token, timestamp, nonce];
+        parts.sort_unstable();
+        let mut hasher = Sha1::new();
+        for part in parts {
+            hasher.update(part.as_bytes());
+        }
+        let signature = hex::encode(hasher.finalize());
+        assert!(verify_callback_signature(
+            token, timestamp, nonce, &signature
         ));
     }
 
@@ -528,5 +700,15 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].text.as_deref(), Some("测试语音"));
         assert!(messages[0].message_id.is_some());
+    }
+
+    #[test]
+    fn split_text_by_utf8_bytes_keeps_boundaries() {
+        let text = "hello世界";
+        let chunks = split_text_by_utf8_bytes(text, 5);
+        assert_eq!(
+            chunks,
+            vec!["hello".to_string(), "世".to_string(), "界".to_string()]
+        );
     }
 }

@@ -373,6 +373,10 @@ const route = useRoute();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const { t } = useI18n();
+const RUNNING_REFRESH_MS = 6000;
+const DEFAULT_AGENT_KEY = '__default__';
+const DONE_ACK_CACHE_KEY = 'wunder.portal.done_ack';
+const TRANSIENT_STATE_CACHE_KEY = 'wunder.portal.transient_state';
 const searchQuery = ref('');
 const showSharedAgents = ref(false);
 const showMoreApps = ref(false);
@@ -386,17 +390,13 @@ const waitingAgentIds = ref<string[]>([]);
 const externalLinks = ref<any[]>([]);
 const externalLoading = ref(false);
 const cronAgentIds = ref<Set<string>>(new Set());
-const transientAgentStates = ref<
-  Record<string, { state: 'done' | 'error'; until: number; signature: string }>
->({});
+type TransientAgentStateEntry = { state: 'done' | 'error'; until: number | null; signature: string };
+
+const transientAgentStates = ref<Record<string, TransientAgentStateEntry>>(readTransientStateCache());
 const acknowledgedDoneStateSignatures = ref<Record<string, string>>(readDoneAckCache());
 const configuredChannelsByAgent = ref<Record<string, string[]>>({});
 const agentCopyOptions = ref<Array<{ id: string; name: string }>>([]);
 let runningTimer = null;
-
-const RUNNING_REFRESH_MS = 6000;
-const DEFAULT_AGENT_KEY = '__default__';
-const DONE_ACK_CACHE_KEY = 'wunder.portal.done_ack';
 
 function readDoneAckCache(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -427,9 +427,49 @@ function writeDoneAckCache(value: Record<string, string>) {
   }
 }
 
+function readTransientStateCache(): Record<string, TransientAgentStateEntry> {
+  if (typeof window === 'undefined') return {};
+  const now = Date.now();
+  try {
+    const raw = window.sessionStorage.getItem(TRANSIENT_STATE_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const output: Record<string, TransientAgentStateEntry> = {};
+    Object.entries(parsed as Record<string, { state?: string; until?: number; signature?: string }>).forEach(
+      ([agentId, entry]) => {
+        const key = String(agentId || '').trim();
+        if (!key || !entry) return;
+        const state = String(entry.state || '').trim().toLowerCase();
+        const signature = String(entry.signature || '').trim();
+        if (!signature) return;
+        if (state === 'done') {
+          output[key] = { state: 'done', until: null, signature };
+          return;
+        }
+        if (state !== 'error') return;
+        const until = Number(entry.until);
+        if (!Number.isFinite(until) || until <= now) return;
+        output[key] = { state: 'error', until, signature };
+      }
+    );
+    return output;
+  } catch (error) {
+    return {};
+  }
+}
+
+function writeTransientStateCache(value: Record<string, TransientAgentStateEntry>) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(TRANSIENT_STATE_CACHE_KEY, JSON.stringify(value));
+  } catch (error) {
+    // Ignore quota/private-mode errors and keep runtime state only.
+  }
+}
+
 type AgentCardState = 'idle' | 'waiting' | 'running' | 'done' | 'error';
 
-const TRANSIENT_DONE_TTL_MS = 15000;
 const TRANSIENT_ERROR_TTL_MS = 30000;
 
 const CHANNEL_ICON_META = {
@@ -636,15 +676,20 @@ const normalizeAgentKey = (agentId) => {
 
 const cleanupTransientAgentStates = (now) => {
   const current = transientAgentStates.value || {};
-  const next: Record<string, { state: 'done' | 'error'; until: number; signature: string }> = {};
+  const next: Record<string, TransientAgentStateEntry> = {};
   Object.entries(current).forEach(([agentId, entry]) => {
     if (!entry) return;
-    if (typeof entry.until !== 'number' || entry.until <= now) return;
     if (typeof entry.signature !== 'string' || !entry.signature.trim()) return;
-    if (entry.state !== 'done' && entry.state !== 'error') return;
-    next[agentId] = entry;
+    if (entry.state === 'done') {
+      next[agentId] = { state: 'done', until: null, signature: entry.signature };
+      return;
+    }
+    if (entry.state !== 'error') return;
+    if (typeof entry.until !== 'number' || entry.until <= now) return;
+    next[agentId] = { state: 'error', until: entry.until, signature: entry.signature };
   });
   transientAgentStates.value = next;
+  writeTransientStateCache(next);
 };
 
 const resolveAgentCardState = (agentId): AgentCardState => {
@@ -652,12 +697,13 @@ const resolveAgentCardState = (agentId): AgentCardState => {
   if (isAgentWaiting(key)) return 'waiting';
   if (isAgentRunning(key)) return 'running';
   const transient = transientAgentStates.value[key];
-  if (transient && transient.until > Date.now()) {
+  if (transient) {
     const acknowledgedSignature = acknowledgedDoneStateSignatures.value[key];
     if (transient.state === 'done' && acknowledgedSignature === transient.signature) {
       return 'idle';
     }
-    return transient.state;
+    if (transient.state === 'done') return 'done';
+    if (typeof transient.until === 'number' && transient.until > Date.now()) return 'error';
   }
   return 'idle';
 };
@@ -688,13 +734,18 @@ const acknowledgeAgentDoneState = (agentId) => {
   const key = normalizeAgentKey(agentId);
   const transient = transientAgentStates.value[key];
   if (!transient || transient.state !== 'done') return;
-  if (transient.until <= Date.now()) return;
   const nextAcknowledgedDone = {
     ...acknowledgedDoneStateSignatures.value,
     [key]: transient.signature
   };
+  const nextTransient = {
+    ...transientAgentStates.value
+  };
+  delete nextTransient[key];
+  transientAgentStates.value = nextTransient;
   acknowledgedDoneStateSignatures.value = nextAcknowledgedDone;
   writeDoneAckCache(nextAcknowledgedDone);
+  writeTransientStateCache(nextTransient);
 };
 
 const dialogTitle = computed(() =>
@@ -1020,9 +1071,12 @@ const loadRunningAgents = async () => {
 
     const setTransient = (agentId, state: 'done' | 'error', signature: string) => {
       if (!agentId) return;
-      const ttl = state === 'error' ? TRANSIENT_ERROR_TTL_MS : TRANSIENT_DONE_TTL_MS;
       const nextSignature = signature.trim() || `${state}|${agentId}|${now}`;
-      nextTransient[agentId] = { state, until: now + ttl, signature: nextSignature };
+      nextTransient[agentId] = {
+        state,
+        until: state === 'error' ? now + TRANSIENT_ERROR_TTL_MS : null,
+        signature: nextSignature
+      };
       if (state !== 'done') {
         delete nextAcknowledgedDone[agentId];
       } else if (nextAcknowledgedDone[agentId] && nextAcknowledgedDone[agentId] !== nextSignature) {
@@ -1049,6 +1103,7 @@ const loadRunningAgents = async () => {
 
     transientAgentStates.value = nextTransient;
     acknowledgedDoneStateSignatures.value = nextAcknowledgedDone;
+    writeTransientStateCache(nextTransient);
     writeDoneAckCache(nextAcknowledgedDone);
   } catch (error) {
     // Keep the last known state to avoid flickering to idle when the polling request fails.
