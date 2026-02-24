@@ -286,6 +286,16 @@
   white-space: nowrap;
 }
 
+.portal-shell .logout-icon {
+  display: none;
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+  line-height: 1;
+  align-items: center;
+  justify-content: center;
+}
+
 .portal-shell .logout-btn:hover {
   color: var(--portal-primary);
   border-color: rgba(106, 217, 255, 0.45);
@@ -1353,20 +1363,31 @@
 @media (max-width: 900px) {
   .portal-shell .topbar-actions {
     width: 100%;
-    justify-content: space-between;
-    gap: 8px;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
   }
 
   .portal-shell .topbar-nav {
-    flex: 1 1 auto;
-    width: 100%;
+    flex: 1 1 0;
+    width: auto;
     flex-wrap: nowrap;
+    min-width: 0;
     overflow-x: auto;
-    padding-bottom: 4px;
+    padding-bottom: 0;
   }
 
   .portal-shell .topbar-user {
-    margin-left: auto;
+    margin-left: 0;
+    flex: 0 0 auto;
+    padding: 4px 6px;
+    gap: 6px;
+  }
+
+  .portal-shell .logout-btn {
+    min-height: 34px;
+    padding: 0 10px;
   }
 
   .portal-section-header,
@@ -1433,13 +1454,15 @@
 
   .portal-shell .topbar-actions {
     width: 100%;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 8px;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
   }
 
   .portal-shell .topbar-nav {
-    width: 100%;
+    width: auto;
+    flex: 1 1 0;
+    min-width: 0;
   }
 
   .portal-shell .topbar-panel-btn.icon-only,
@@ -1450,14 +1473,26 @@
   }
 
   .portal-shell .topbar-user {
-    width: 100%;
-    justify-content: space-between;
-    padding: 6px 8px;
+    width: auto;
+    justify-content: flex-start;
+    padding: 4px 6px;
   }
 
   .portal-shell .logout-btn {
+    display: inline-flex;
+    align-items: center;
     min-height: 40px;
-    padding: 0 12px;
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .portal-shell .logout-btn .logout-text {
+    display: none;
+  }
+
+  .portal-shell .logout-icon {
+    display: inline-flex;
   }
 
   .portal-section-title {
@@ -1512,11 +1547,12 @@
   }
 
   .portal-shell .topbar-user {
-    width: 100%;
+    width: auto;
   }
 
   .portal-shell .logout-btn {
     min-height: 44px;
+    width: 44px;
   }
 
   .portal-search {

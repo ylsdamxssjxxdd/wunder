@@ -51,7 +51,8 @@
           :aria-label="t('nav.logout')"
           @click="handleLogout"
         >
-          {{ t('nav.logout') }}
+          <i class="fa-solid fa-right-from-bracket logout-icon" aria-hidden="true"></i>
+          <span class="logout-text">{{ t('nav.logout') }}</span>
         </button>
       </div>
     </div>

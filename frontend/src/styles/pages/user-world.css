@@ -8,7 +8,11 @@
   --uw-primary-rgb: 106, 217, 255;
   --uw-input: rgba(255, 255, 255, 0.06);
   --uw-bubble: rgba(255, 255, 255, 0.05);
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: radial-gradient(circle at 20% 20%, rgba(var(--uw-primary-rgb), 0.14), transparent 34%),
     linear-gradient(135deg, #0c1529, #111c33 45%, var(--uw-bg));
   color: var(--uw-text);
@@ -33,9 +37,11 @@
   display: grid;
   grid-template-columns: minmax(260px, 360px) 1fr;
   gap: 12px;
-  min-height: calc(100vh - 72px);
-  padding: 12px;
+  flex: 1;
+  min-height: 0;
+  padding: 12px 12px 8px;
   box-sizing: border-box;
+  overflow: hidden;
 }
 
 .user-world-sidebar,
@@ -67,6 +73,8 @@
 }
 
 .user-world-contact-list {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 8px;
 }
@@ -301,6 +309,6 @@
 @media (max-width: 900px) {
   .user-world-main {
     grid-template-columns: 1fr;
-    min-height: calc(100vh - 64px);
+    padding: 10px 10px 6px;
   }
 }
