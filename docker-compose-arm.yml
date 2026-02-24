@@ -6,6 +6,7 @@ x-rust-build: &rust-build
 
 services:
   wunder-server:
+    container_name: wunder-server
     build: *rust-build
     privileged: true
     security_opt:
@@ -32,6 +33,8 @@ services:
       - WUNDER_TEMP_DIR_ROOT=${WUNDER_TEMP_DIR_ROOT:-/app/temp_dir}
       - WUNDER_HOST=${WUNDER_HOST:-0.0.0.0}
       - WUNDER_PORT=${WUNDER_PORT:-18000}
+      - WUNDER_MCP_HOST=${WUNDER_MCP_HOST:-extra-mcp}
+      - WUNDER_MCP_PORT=${WUNDER_MCP_PORT:-9010}
       - WUNDER_API_KEY=${WUNDER_API_KEY:-ylsdamxssjxxdd}
       - WUNDER_LOG_LEVEL=${WUNDER_LOG_LEVEL:-info}
       - FONTCONFIG_FILE=/app/config/fonts.conf
@@ -45,6 +48,8 @@ services:
     depends_on:
       wunder-sandbox:
         condition: service_started
+      extra-mcp:
+        condition: service_started
       wunder-postgres:
         condition: service_healthy
       wunder-weaviate:
@@ -52,6 +57,7 @@ services:
     restart: always
 
   wunder-sandbox:
+    container_name: wunder-sandbox
     build: *rust-build
     privileged: true
     security_opt:
@@ -92,7 +98,8 @@ services:
       retries: 20
     restart: always
 
-  wunder-mcp:
+  extra-mcp:
+    container_name: extra-mcp
     build: *rust-build
     image: wunder-arm
     pull_policy: never
@@ -110,10 +117,11 @@ services:
       - MCP_TRANSPORT=streamable-http
       - MCP_HOST=0.0.0.0
       - MCP_PORT=${MCP_PORT:-9010}
-    command: ["bash", "-lc", "python3 -m mcp_server.main"]
+    command: ["bash", "-lc", "python3 -m extra_mcp.main"]
     restart: always
 
   wunder-postgres:
+    container_name: wunder-postgres
     image: postgres:16
     privileged: true
     security_opt:
@@ -137,6 +145,7 @@ services:
     restart: always
 
   wunder-weaviate:
+    container_name: wunder-weaviate
     image: semitechnologies/weaviate:1.27.0
     platform: linux/arm64
     privileged: true

@@ -112,6 +112,18 @@ mcp: # MCP 工具配置
             required: # 必填字段列表
               - source_url
             type: object # Schema 类型
+    - name: extra_mcp # standalone extra_mcp service for db/kb tools
+      endpoint: http://${WUNDER_MCP_HOST:-127.0.0.1}:${WUNDER_MCP_PORT:-9010}/mcp # extra_mcp endpoint
+      allow_tools: [] # empty means allow all tools on this server
+      enabled: false # keep disabled by default
+      transport: streamable-http # streamable-http/sse
+      description: standalone extra_mcp service for db_query / kb_query
+      display_name: Wunder MCP
+      headers:
+        Authorization: Bearer ${WUNDER_API_KEY}
+      auth: null
+      tool_specs: [] # fill from admin MCP refresh on first connect
+
 a2a: # A2A 配置
   timeout_s: 120 # A2A 请求超时秒数
   services: # A2A 服务列表

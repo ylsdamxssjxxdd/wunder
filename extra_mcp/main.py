@@ -3,7 +3,7 @@
 FastMCP server entrypoint for the wunder MCP service.
 
 Database configuration:
-  MCP_CONFIG_PATH (optional JSON config file, default: mcp_server/mcp_config.json)
+  MCP_CONFIG_PATH (optional JSON config file, default: extra_mcp/mcp_config.json)
   Database settings are read from mcp_config.json (single DB or database.targets).
 
 Optional MCP runtime:
@@ -12,7 +12,7 @@ Optional MCP runtime:
   MCP_PORT (default: 8000)
 
 Run:
-  python3 -m mcp_server.main
+  python3 -m extra_mcp.main
 """
 
 from __future__ import annotations
@@ -25,14 +25,14 @@ from .tools import register_all
 
 def build_server() -> FastMCP:
     runtime = get_mcp_runtime_config()
-    mcp = FastMCP("wunder_mcp", host=runtime.host, port=runtime.port)
+    mcp = FastMCP("extra_mcp", host=runtime.host, port=runtime.port)
     register_all(mcp)
     return mcp
 
 
 def main() -> None:
     runtime = get_mcp_runtime_config()
-    mcp = FastMCP("wunder_mcp", host=runtime.host, port=runtime.port)
+    mcp = FastMCP("extra_mcp", host=runtime.host, port=runtime.port)
     register_all(mcp)
     mcp.run(transport=runtime.transport)
 

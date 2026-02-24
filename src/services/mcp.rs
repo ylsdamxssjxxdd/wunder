@@ -393,7 +393,7 @@ impl WunderMcpServer {
 
 async fn create_doc2md_temp_dir() -> Result<PathBuf, std::io::Error> {
     let mut root = std::env::temp_dir();
-    root.push("wunder_mcp_doc2md");
+    root.push("wunder_builtin_mcp_doc2md");
     root.push(Uuid::new_v4().simple().to_string());
     tokio::fs::create_dir_all(&root).await?;
     Ok(root)
