@@ -1829,6 +1829,7 @@
   - 入参为企业微信 XML（支持明文或 `<Encrypt>` 加密包）。
   - 当前支持 `MsgType=text/voice/image/file/location`；其中 `voice` 优先取 `Recognition`，`event` 仅处理可映射文本的场景（如菜单点击）。
   - `enter_agent/subscribe/unsubscribe` 等事件会忽略并直接返回 `success`。
+  - 当签名校验失败时返回 `401 wechat signature mismatch`。
   - 成功返回纯文本 `success`（非 JSON），避免企业微信重复回调。
   - 文本消息采用异步处理：服务端先快速回 `success`，再在后台完成模型调用与出站回包，规避渠道侧 5 秒超时重试。
   - 多账号场景下会优先按签名匹配账号，若命中多个候选则尝试按解密后的 `AgentID` 精确归属。

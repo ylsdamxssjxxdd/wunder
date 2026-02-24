@@ -32,11 +32,6 @@
                     <div class="agent-card-desc">{{ t('portal.card.defaultDesc') }}</div>
                   </div>
                 </div>
-                <div v-if="shouldShowAgentStatusPill(DEFAULT_AGENT_KEY)" class="agent-card-status">
-                  <div :class="agentStatusPillClass(DEFAULT_AGENT_KEY)">
-                    <span>{{ agentStatusLabel(DEFAULT_AGENT_KEY) }}</span>
-                  </div>
-                </div>
                 <div class="agent-card-meta agent-card-meta--updated">
                   <span>{{ t('portal.card.defaultMeta') }}</span>
                   <span class="agent-card-meta-right">
@@ -86,11 +81,6 @@
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
-                  </div>
-                </div>
-                <div v-if="shouldShowAgentStatusPill(agent.id)" class="agent-card-status">
-                  <div :class="agentStatusPillClass(agent.id)">
-                    <span>{{ agentStatusLabel(agent.id) }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
@@ -151,11 +141,6 @@
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
                     <div class="agent-card-desc">{{ agent.description || t('portal.agent.noDesc') }}</div>
-                  </div>
-                </div>
-                <div v-if="shouldShowAgentStatusPill(agent.id)" class="agent-card-status">
-                  <div :class="agentStatusPillClass(agent.id)">
-                    <span>{{ agentStatusLabel(agent.id) }}</span>
                   </div>
                 </div>
                 <div class="agent-card-meta agent-card-meta--updated">
@@ -377,6 +362,10 @@ const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
 const DONE_ACK_CACHE_KEY = 'wunder.portal.done_ack';
 const TRANSIENT_STATE_CACHE_KEY = 'wunder.portal.transient_state';
+const AGENT_LIST_CACHE_KEY = 'wunder.portal.agent_list';
+const RUNNING_STATE_CACHE_KEY = 'wunder.portal.running_state';
+const AGENT_LIST_CACHE_TTL_MS = 10 * 60 * 1000;
+const RUNNING_STATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const searchQuery = ref('');
 const showSharedAgents = ref(false);
 const showMoreApps = ref(false);
@@ -397,6 +386,18 @@ const acknowledgedDoneStateSignatures = ref<Record<string, string>>(readDoneAckC
 const configuredChannelsByAgent = ref<Record<string, string[]>>({});
 const agentCopyOptions = ref<Array<{ id: string; name: string }>>([]);
 let runningTimer = null;
+
+type AgentListCachePayload = {
+  cachedAt: number;
+  owned: unknown[];
+  shared: unknown[];
+};
+
+type RunningStateCachePayload = {
+  cachedAt: number;
+  running: string[];
+  waiting: string[];
+};
 
 function readDoneAckCache(): Record<string, string> {
   if (typeof window === 'undefined') return {};
@@ -467,6 +468,101 @@ function writeTransientStateCache(value: Record<string, TransientAgentStateEntry
     // Ignore quota/private-mode errors and keep runtime state only.
   }
 }
+
+function readAgentListCache(): AgentListCachePayload | null {
+  if (typeof window === 'undefined') return null;
+  const now = Date.now();
+  try {
+    const raw = window.sessionStorage.getItem(AGENT_LIST_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AgentListCachePayload>;
+    const cachedAt = Number(parsed?.cachedAt);
+    if (!Number.isFinite(cachedAt) || now - cachedAt > AGENT_LIST_CACHE_TTL_MS) return null;
+    const owned = Array.isArray(parsed?.owned) ? parsed.owned : [];
+    const shared = Array.isArray(parsed?.shared) ? parsed.shared : [];
+    return { cachedAt, owned, shared };
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeAgentListCache(owned: unknown[], shared: unknown[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: AgentListCachePayload = {
+      cachedAt: Date.now(),
+      owned: Array.isArray(owned) ? owned : [],
+      shared: Array.isArray(shared) ? shared : []
+    };
+    window.sessionStorage.setItem(AGENT_LIST_CACHE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    // Ignore quota/private-mode errors and keep runtime state only.
+  }
+}
+
+function readRunningStateCache(): RunningStateCachePayload | null {
+  if (typeof window === 'undefined') return null;
+  const now = Date.now();
+  try {
+    const raw = window.sessionStorage.getItem(RUNNING_STATE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RunningStateCachePayload>;
+    const cachedAt = Number(parsed?.cachedAt);
+    if (!Number.isFinite(cachedAt) || now - cachedAt > RUNNING_STATE_CACHE_TTL_MS) return null;
+    const running = Array.isArray(parsed?.running)
+      ? parsed.running.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    const waiting = Array.isArray(parsed?.waiting)
+      ? parsed.waiting.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    return { cachedAt, running, waiting };
+  } catch (error) {
+    return null;
+  }
+}
+
+function writeRunningStateCache(running: string[], waiting: string[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload: RunningStateCachePayload = {
+      cachedAt: Date.now(),
+      running: Array.from(
+        new Set(
+          (Array.isArray(running) ? running : []).map((item) => String(item || '').trim()).filter(Boolean)
+        )
+      ),
+      waiting: Array.from(
+        new Set(
+          (Array.isArray(waiting) ? waiting : []).map((item) => String(item || '').trim()).filter(Boolean)
+        )
+      )
+    };
+    window.sessionStorage.setItem(RUNNING_STATE_CACHE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    // Ignore quota/private-mode errors and keep runtime state only.
+  }
+}
+
+const hydrateAgentListFromCache = () => {
+  if (agentStore.agents?.length || agentStore.sharedAgents?.length) return;
+  const cached = readAgentListCache();
+  if (!cached) return;
+  const owned = Array.isArray(cached.owned) ? cached.owned : [];
+  const shared = Array.isArray(cached.shared) ? cached.shared : [];
+  agentStore.agents = owned;
+  agentStore.sharedAgents = shared;
+  agentStore.hydrateMap(owned, shared);
+};
+
+const hydrateRunningStateFromCache = () => {
+  const cached = readRunningStateCache();
+  if (!cached) return;
+  runningAgentIds.value = cached.running;
+  waitingAgentIds.value = cached.waiting;
+};
+
+hydrateAgentListFromCache();
+hydrateRunningStateFromCache();
 
 type AgentCardState = 'idle' | 'waiting' | 'running' | 'done' | 'error';
 
@@ -545,7 +641,8 @@ const formatAgentCopyLabel = (agent) => {
 };
 
 const loadAgents = async () => {
-  await agentStore.loadAgents();
+  const payload = await agentStore.loadAgents();
+  writeAgentListCache(payload?.owned || [], payload?.shared || []);
 };
 
 const loadAgentCopyOptions = async () => {
@@ -568,15 +665,19 @@ const initPortal = async () => {
     if (!authStore.user) {
       await authStore.loadProfile();
     }
-    await loadAgents();
-    await Promise.all([
-      loadAgentCopyOptions(),
-      loadCatalog(),
+    const results = await Promise.allSettled([
+      loadAgents(),
       loadExternalApps(),
       loadCronAgentIds(),
       loadRunningAgents(),
       loadConfiguredChannels()
     ]);
+    const loadAgentsResult = results[0];
+    const hasAnyAgents =
+      (agentStore.agents?.length || 0) > 0 || (agentStore.sharedAgents?.length || 0) > 0;
+    if (!hasAnyAgents && loadAgentsResult?.status === 'rejected') {
+      showApiError(loadAgentsResult.reason, t('common.requestFailed'));
+    }
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }
@@ -710,15 +811,6 @@ const resolveAgentCardState = (agentId): AgentCardState => {
 
 const agentAvatarStatusClass = (agentId) => `agent-card-avatar--${resolveAgentCardState(agentId)}`;
 
-const agentStatusPillClass = (agentId) => {
-  const state = resolveAgentCardState(agentId);
-  if (state === 'waiting') return 'agent-card-waiting';
-  if (state === 'running') return 'agent-card-running';
-  if (state === 'done') return 'agent-card-done';
-  if (state === 'error') return 'agent-card-error';
-  return 'agent-card-idle';
-};
-
 const agentStatusLabel = (agentId) => {
   const state = resolveAgentCardState(agentId);
   if (state === 'waiting') return t('portal.card.waiting');
@@ -727,8 +819,6 @@ const agentStatusLabel = (agentId) => {
   if (state === 'error') return t('portal.card.error');
   return t('portal.card.idle');
 };
-
-const shouldShowAgentStatusPill = (agentId) => resolveAgentCardState(agentId) !== 'idle';
 
 const acknowledgeAgentDoneState = (agentId) => {
   const key = normalizeAgentKey(agentId);
@@ -1053,6 +1143,7 @@ const loadRunningAgents = async () => {
     });
     runningAgentIds.value = Array.from(running);
     waitingAgentIds.value = Array.from(waiting);
+    writeRunningStateCache(runningAgentIds.value, waitingAgentIds.value);
 
     const now = Date.now();
     cleanupTransientAgentStates(now);

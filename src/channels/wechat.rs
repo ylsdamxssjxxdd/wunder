@@ -416,9 +416,11 @@ pub async fn send_outbound(
             "text": { "content": chunk },
             "safe": 0,
         });
-        if duplicate_check_enabled && let Some(map) = payload.as_object_mut() {
-            map.insert("enable_duplicate_check".to_string(), json!(1));
-            map.insert("duplicate_check_interval".to_string(), json!(1800));
+        if duplicate_check_enabled {
+            if let Some(map) = payload.as_object_mut() {
+                map.insert("enable_duplicate_check".to_string(), json!(1));
+                map.insert("duplicate_check_interval".to_string(), json!(1800));
+            }
         }
         if peer_kind == "group" {
             if let Some(map) = payload.as_object_mut() {

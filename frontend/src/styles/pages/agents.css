@@ -345,123 +345,6 @@
   justify-content: center;
 }
 
-.agent-card-status {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
-
-.agent-card-running {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(106, 217, 255, 0.35);
-  background: rgba(15, 23, 42, 0.6);
-  color: var(--portal-primary);
-  font-size: 12px;
-  font-weight: 600;
-  --agent-pulse-color: rgba(106, 217, 255, 0.6);
-  animation: agentRunningTagGlow 1.6s ease-in-out infinite;
-}
-
-.agent-card-idle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(148, 163, 184, 0.3);
-  background: rgba(15, 23, 42, 0.6);
-  color: #94a3b8;
-  font-size: 12px;
-  font-weight: 600;
-  --agent-pulse-color: rgba(148, 163, 184, 0.5);
-}
-
-.agent-card-waiting {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(251, 191, 36, 0.35);
-  background: rgba(15, 23, 42, 0.65);
-  color: #fbbf24;
-  font-size: 12px;
-  font-weight: 600;
-  --agent-pulse-color: rgba(251, 191, 36, 0.6);
-}
-
-.agent-card-done {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(34, 197, 94, 0.35);
-  background: rgba(15, 23, 42, 0.6);
-  color: #22c55e;
-  font-size: 12px;
-  font-weight: 600;
-  --agent-pulse-color: rgba(34, 197, 94, 0.55);
-}
-
-.agent-card-error {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  background: rgba(15, 23, 42, 0.6);
-  color: #f87171;
-  font-size: 12px;
-  font-weight: 600;
-  --agent-pulse-color: rgba(248, 113, 113, 0.55);
-}
-
-.agent-running-dot,
-.agent-waiting-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 0 0 var(--agent-pulse-color, rgba(106, 217, 255, 0.6));
-  animation: agentPulse 1.6s ease-out infinite;
-}
-
-@keyframes agentPulse {
-  0% {
-    box-shadow: 0 0 0 0 var(--agent-pulse-color, rgba(106, 217, 255, 0.55));
-  }
-  70% {
-    box-shadow: 0 0 0 10px rgba(106, 217, 255, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(106, 217, 255, 0);
-  }
-}
-
-:root[data-user-theme='light'] .agent-card-running {
-  background: rgba(59, 130, 246, 0.08);
-  border-color: rgba(59, 130, 246, 0.3);
-  color: #2563eb;
-  --agent-pulse-color: rgba(37, 99, 235, 0.55);
-}
-
-:root[data-user-theme='light'] .agent-card-idle {
-  background: rgba(148, 163, 184, 0.14);
-  border-color: rgba(148, 163, 184, 0.35);
-  color: #64748b;
-  --agent-pulse-color: rgba(100, 116, 139, 0.45);
-}
-
 @keyframes agentRunningPulseRing {
   0% {
     transform: scale(0.92);
@@ -513,37 +396,6 @@
   50% {
     transform: translateY(-1px);
   }
-}
-
-@keyframes agentRunningTagGlow {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
-  }
-  50% {
-    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.14);
-  }
-}
-
-:root[data-user-theme='light'] .agent-card-waiting {
-  background: rgba(251, 191, 36, 0.18);
-  border-color: rgba(251, 191, 36, 0.42);
-  color: #d97706;
-  --agent-pulse-color: rgba(217, 119, 6, 0.55);
-}
-
-:root[data-user-theme='light'] .agent-card-done {
-  background: rgba(34, 197, 94, 0.16);
-  border-color: rgba(34, 197, 94, 0.42);
-  color: #16a34a;
-  --agent-pulse-color: rgba(22, 163, 74, 0.58);
-}
-
-:root[data-user-theme='light'] .agent-card-error {
-  background: rgba(239, 68, 68, 0.16);
-  border-color: rgba(239, 68, 68, 0.42);
-  color: #b91c1c;
-  --agent-pulse-color: rgba(185, 28, 28, 0.52);
 }
 
 :root[data-user-theme='light'] .agent-card {
@@ -1173,11 +1025,6 @@
   .agent-card {
     padding: 14px;
   }
-
-  .agent-card-status {
-    top: 10px;
-    right: 10px;
-  }
 }
 
 @media (max-width: 720px) {
@@ -1215,14 +1062,6 @@
   .agent-card-desc {
     font-size: 12px;
   }
-
-  .agent-card-running,
-  .agent-card-waiting,
-  .agent-card-done,
-  .agent-card-error {
-    font-size: 11px;
-    padding: 2px 7px;
-  }
 }
 
 @media (max-width: 560px) {
@@ -1234,12 +1073,6 @@
   .agent-card {
     min-height: 0;
     padding: 13px;
-  }
-
-  .agent-card-status {
-    position: static;
-    align-items: flex-start;
-    margin-top: 2px;
   }
 
   .agent-card-meta--updated {
