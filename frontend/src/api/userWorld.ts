@@ -54,7 +54,7 @@ const buildWsProtocols = (token: string | null, options: OpenSocketOptions = {})
     append(options.protocols);
   }
   append('wunder');
-  if (token) {
+  if (token && !options.allowQueryToken) {
     append(`wunder-auth.${token}`);
   }
   return protocols;

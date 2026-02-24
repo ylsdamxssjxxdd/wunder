@@ -55,7 +55,6 @@ type WsError = Error & {
 
 const DEFAULT_TRANSPORT: 'ws' | 'sse' = 'ws';
 const WATCH_RETRY_DELAY_MS = 1000;
-const MAX_WATCH_CONVERSATIONS = 30;
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -91,7 +90,7 @@ const createTimeoutSignal = (timeoutMs: number): { signal: AbortSignal; cleanup:
 
 const nowId = (): string => `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-const wsClient = createWsMultiplexer(() => openUserWorldSocket(), {
+const wsClient = createWsMultiplexer(() => openUserWorldSocket({ allowQueryToken: true }), {
   idleTimeoutMs: 30000,
   connectTimeoutMs: 10000
 });
@@ -256,6 +255,18 @@ export const useUserWorldStore = defineStore('user-world', {
       this.sending = true;
       this.error = '';
       const clientMsgId = nowId();
+      const authStore = useAuthStore();
+      const currentUserId = String(authStore.user?.id || '').trim();
+      const optimisticMessage: UserWorldMessage = {
+        message_id: -Math.floor(Date.now()),
+        conversation_id: conversationId,
+        sender_user_id: currentUserId,
+        content: text,
+        content_type: 'text',
+        client_msg_id: clientMsgId,
+        created_at: Date.now() / 1000
+      };
+      this.upsertMessage(conversationId, optimisticMessage);
       try {
         const transport = resolveTransport();
         this.streamTransport = transport;
@@ -268,7 +279,7 @@ export const useUserWorldStore = defineStore('user-world', {
         if (transport === 'ws') {
           const requestId = buildRequestId();
           let ackMessage: UserWorldMessage | null = null;
-          const timeout = createTimeoutSignal(12000);
+          const timeout = createTimeoutSignal(3500);
           try {
             await wsClient.request({
               requestId,
@@ -334,6 +345,7 @@ export const useUserWorldStore = defineStore('user-world', {
             // ignore secondary refresh failure
           }
         }
+        this.removeMessageByClientMsgId(conversationId, clientMsgId);
         const source = error as { message?: string };
         this.error = source?.message || 'send user world message failed';
         throw error;
@@ -392,13 +404,15 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async syncConversationWatchers() {
-      const recentIds = this.conversations
-        .slice(0, MAX_WATCH_CONVERSATIONS)
-        .map((item) => item.conversation_id)
-        .filter((item) => Boolean(String(item || '').trim()));
-      const targetIds = new Set(recentIds);
-      if (this.activeConversationId) {
-        targetIds.add(this.activeConversationId);
+      const targetIds = new Set<string>();
+      const activeId = String(this.activeConversationId || '').trim();
+      if (activeId) {
+        targetIds.add(activeId);
+      } else {
+        const firstId = String(this.conversations[0]?.conversation_id || '').trim();
+        if (firstId) {
+          targetIds.add(firstId);
+        }
       }
       Array.from(watchRuntime.keys()).forEach((conversationId) => {
         if (!targetIds.has(conversationId)) {
@@ -628,6 +642,16 @@ export const useUserWorldStore = defineStore('user-world', {
       }
       this.sortConversations();
       this.sortContacts();
+    },
+
+    removeMessageByClientMsgId(conversationId: string, clientMsgId: string) {
+      const cleanedConversation = String(conversationId || '').trim();
+      const cleanedClientMsgId = String(clientMsgId || '').trim();
+      if (!cleanedConversation || !cleanedClientMsgId) return;
+      const list = this.messagesByConversation[cleanedConversation] || [];
+      const nextList = list.filter((item) => item.client_msg_id !== cleanedClientMsgId);
+      if (nextList.length === list.length) return;
+      this.messagesByConversation[cleanedConversation] = nextList;
     },
 
     sortConversations() {
