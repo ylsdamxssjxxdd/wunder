@@ -194,9 +194,9 @@ const handleSend = async () => {
   if (!canSend.value) return;
   const message = draft.value.trim();
   if (!message) return;
+  draft.value = '';
   try {
     await userWorldStore.sendToActiveConversation(message);
-    draft.value = '';
     await scrollToBottom();
   } catch (error) {
     draft.value = message;

@@ -264,6 +264,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(admin_user_accounts_seed),
         )
         .route(
+            "/wunder/admin/user_accounts/test/cleanup",
+            post(admin_user_accounts_cleanup),
+        )
+        .route(
             "/wunder/admin/user_accounts/{user_id}",
             patch(admin_user_accounts_update).delete(admin_user_accounts_delete),
         )
@@ -423,6 +427,7 @@ const MAX_ORG_UNIT_LEVEL: i32 = 4;
 const DEFAULT_TEST_USER_PASSWORD: &str = "Test@123456";
 const DEFAULT_TEST_USER_PREFIX: &str = "test_user";
 const MAX_TEST_USERS_PER_UNIT: i64 = 200;
+const TEST_USER_CLEANUP_BATCH_SIZE: i64 = 200;
 
 fn format_lsp_diagnostics(diagnostics: &[LspDiagnostic]) -> Option<Value> {
     if diagnostics.is_empty() {
@@ -4036,6 +4041,118 @@ async fn admin_user_accounts_seed(
             "per_unit": per_unit,
             "password": DEFAULT_TEST_USER_PASSWORD,
         }
+    })))
+}
+
+fn is_seed_test_user(record: &UserAccountRecord) -> bool {
+    if !record.is_demo {
+        return false;
+    }
+    let cleaned = record.user_id.trim();
+    cleaned.starts_with(DEFAULT_TEST_USER_PREFIX)
+        && cleaned.as_bytes().get(DEFAULT_TEST_USER_PREFIX.len()) == Some(&b'_')
+}
+
+async fn admin_user_accounts_cleanup(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+) -> Result<Json<Value>, Response> {
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let scoped_unit_ids = actor.scope_unit_ids.as_ref().map(|set| {
+        let mut items = set.iter().cloned().collect::<Vec<_>>();
+        items.sort();
+        items
+    });
+
+    let mut offset = 0;
+    let mut target_user_ids = Vec::new();
+    loop {
+        let (batch, total) = state
+            .user_store
+            .list_users(
+                Some(DEFAULT_TEST_USER_PREFIX),
+                scoped_unit_ids.as_deref(),
+                offset,
+                TEST_USER_CLEANUP_BATCH_SIZE,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if batch.is_empty() {
+            break;
+        }
+        target_user_ids.extend(
+            batch
+                .into_iter()
+                .filter(is_seed_test_user)
+                .map(|record| record.user_id),
+        );
+        offset += TEST_USER_CLEANUP_BATCH_SIZE;
+        if offset >= total {
+            break;
+        }
+    }
+    target_user_ids.sort();
+    target_user_ids.dedup();
+
+    let matched_users = target_user_ids.len() as i64;
+    let mut deleted_users = 0;
+    let mut failed = Vec::new();
+    let mut cancelled_sessions = 0;
+    let mut deleted_sessions = 0;
+    let mut deleted_chat_records = 0;
+    let mut deleted_tool_records = 0;
+    let mut workspace_deleted = 0;
+    let mut user_tools_deleted = 0;
+
+    for user_id in target_user_ids {
+        match state.user_store.delete_user(&user_id) {
+            Ok(affected) if affected > 0 => {
+                deleted_users += affected;
+            }
+            Ok(_) => {
+                continue;
+            }
+            Err(err) => {
+                failed.push(json!({
+                    "user_id": user_id,
+                    "error": err.to_string(),
+                }));
+                continue;
+            }
+        }
+        let _ = state.user_store.set_user_tool_access(&user_id, None);
+        let _ = state.user_store.set_user_agent_access(&user_id, None, None);
+        let monitor_result = state.monitor.purge_user_sessions(&user_id);
+        cancelled_sessions += monitor_result.get("cancelled").copied().unwrap_or(0);
+        deleted_sessions += monitor_result.get("deleted").copied().unwrap_or(0);
+        let purge_result = state.workspace.purge_user_data(&user_id);
+        deleted_chat_records += purge_result.chat_records;
+        deleted_tool_records += purge_result.tool_records;
+        if purge_result.workspace_deleted {
+            workspace_deleted += 1;
+        }
+        let tool_root = state.user_tool_store.get_user_dir(&user_id);
+        if tool_root.exists() && std::fs::remove_dir_all(&tool_root).is_ok() {
+            user_tools_deleted += 1;
+        }
+    }
+
+    Ok(Json(json!({
+        "ok": true,
+        "prefix": DEFAULT_TEST_USER_PREFIX,
+        "matched": matched_users,
+        "deleted_users": deleted_users,
+        "failed": failed.len(),
+        "failed_items": failed,
+        "cancelled_sessions": cancelled_sessions,
+        "deleted_sessions": deleted_sessions,
+        "deleted_chat_records": deleted_chat_records,
+        "deleted_tool_records": deleted_tool_records,
+        "workspace_deleted": workspace_deleted,
+        "user_tools_deleted": user_tools_deleted,
     })))
 }
 

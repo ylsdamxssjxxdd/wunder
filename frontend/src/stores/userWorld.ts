@@ -78,6 +78,17 @@ const isTimeoutError = (value: unknown): boolean => {
   return code === 'ECONNABORTED';
 };
 
+const createTimeoutSignal = (timeoutMs: number): { signal: AbortSignal; cleanup: () => void } => {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => {
+    controller.abort();
+  }, Math.max(1000, timeoutMs));
+  return {
+    signal: controller.signal,
+    cleanup: () => window.clearTimeout(timer)
+  };
+};
+
 const nowId = (): string => `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
 const wsClient = createWsMultiplexer(() => openUserWorldSocket(), {
@@ -114,7 +125,7 @@ const resolveTransport = (): 'ws' | 'sse' => {
     return 'sse';
   }
   const stored = localStorage.getItem('user_world_stream_transport');
-  if (stored === 'ws' || stored === 'sse') {
+  if (stored === 'ws') {
     return stored;
   }
   return DEFAULT_TRANSPORT;
@@ -248,15 +259,21 @@ export const useUserWorldStore = defineStore('user-world', {
       try {
         const transport = resolveTransport();
         this.streamTransport = transport;
-        localStorage.setItem('user_world_stream_transport', transport);
+        if (transport === 'ws') {
+          localStorage.setItem('user_world_stream_transport', 'ws');
+        } else {
+          localStorage.removeItem('user_world_stream_transport');
+        }
         let sentByWs = false;
         if (transport === 'ws') {
           const requestId = buildRequestId();
           let ackMessage: UserWorldMessage | null = null;
+          const timeout = createTimeoutSignal(12000);
           try {
             await wsClient.request({
               requestId,
               sessionId: conversationId,
+              signal: timeout.signal,
               message: {
                 type: 'send',
                 request_id: requestId,
@@ -285,6 +302,8 @@ export const useUserWorldStore = defineStore('user-world', {
             if (wsError?.phase === 'connect') {
               markWsUnavailable();
             }
+          } finally {
+            timeout.cleanup();
           }
           if (ackMessage) {
             this.upsertMessage(conversationId, ackMessage);
@@ -333,22 +352,28 @@ export const useUserWorldStore = defineStore('user-world', {
         const transport = resolveTransport();
         if (transport === 'ws') {
           const requestId = buildRequestId();
-          await wsClient.request({
-            requestId,
-            message: {
-              type: 'read',
-              request_id: requestId,
-              payload: {
-                conversation_id: cleaned,
-                last_read_message_id: payload.last_read_message_id
+          const timeout = createTimeoutSignal(8000);
+          try {
+            await wsClient.request({
+              requestId,
+              signal: timeout.signal,
+              message: {
+                type: 'read',
+                request_id: requestId,
+                payload: {
+                  conversation_id: cleaned,
+                  last_read_message_id: payload.last_read_message_id
+                }
+              },
+              onEvent: (eventType, dataText) => {
+                if (eventType.startsWith('uw.')) {
+                  this.applyRealtimeEvent(cleaned, eventType, dataText);
+                }
               }
-            },
-            onEvent: (eventType, dataText) => {
-              if (eventType.startsWith('uw.')) {
-                this.applyRealtimeEvent(cleaned, eventType, dataText);
-              }
-            }
-          });
+            });
+          } finally {
+            timeout.cleanup();
+          }
         } else {
           await markUserWorldRead(cleaned, payload);
         }

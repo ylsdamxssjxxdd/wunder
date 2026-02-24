@@ -1348,8 +1348,8 @@
     "zh-CN": "最终回复内容。"
   },
   "tool.spec.final.description": {
-    "en-US": "Final response to return to the user.",
-    "zh-CN": "返回给用户的最终回复。"
+    "en-US": "Final response to return to the user. If you produce images/files/reports, include Markdown image or link syntax in content (for example `![Radar Chart](/workspaces/demo_user//radar_chart.png)` or `![Essay](/workspaces/demo_user//essay.docx)`) so users can preview images in the frontend or click to download files.",
+    "zh-CN": "返回给用户的最终回复。若有图片/文件/报告等产出，必须在 content 中用 Markdown 语法将图片或链接展示出来，例如：![雷达图](/workspaces/demo_user//radar_chart.png) 或 ![xx作文](/workspaces/demo_user//美好的一天.docx)，这样用户就能在前端看到图片或点击链接下载文件。"
   },
   "tool.spec.list.args.path": {
     "en-US": "Optional. Directory to list, relative to the workspace root. Empty uses the current directory.",

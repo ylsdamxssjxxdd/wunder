@@ -58,6 +58,7 @@ const ensureUserAccountElements = () => {
     "userAccountSearchInput",
     "userAccountRefreshBtn",
     "userAccountSeedBtn",
+    "userAccountCleanupBtn",
     "userAccountCreateBtn",
     "userAccountTableBody",
     "userAccountEmpty",
@@ -540,6 +541,7 @@ const submitCreateUser = async () => {
 };
 
 let seedBusy = false;
+let cleanupBusy = false;
 
 const setSeedBusy = (busy) => {
   seedBusy = busy;
@@ -551,6 +553,13 @@ const setSeedBusy = (busy) => {
   }
   if (elements.userAccountSeedCount) {
     elements.userAccountSeedCount.disabled = busy;
+  }
+};
+
+const setCleanupBusy = (busy) => {
+  cleanupBusy = busy;
+  if (elements.userAccountCleanupBtn) {
+    elements.userAccountCleanupBtn.disabled = busy;
   }
 };
 
@@ -626,6 +635,38 @@ const submitSeedUsers = async () => {
     notify(t("userAccounts.toast.seedFailed", { status: error.message }), "error");
   } finally {
     setSeedBusy(false);
+  }
+};
+
+const requestCleanupTestUsers = async () => {
+  if (cleanupBusy || seedBusy) {
+    return;
+  }
+  const confirmed = window.confirm(t("userAccounts.cleanup.confirm"));
+  if (!confirmed) {
+    return;
+  }
+  setCleanupBusy(true);
+  const wunderBase = getWunderBase();
+  const endpoint = `${wunderBase}/admin/user_accounts/test/cleanup`;
+  try {
+    const response = await fetch(endpoint, { method: "POST" });
+    if (!response.ok) {
+      notify(t("userAccounts.toast.cleanupFailed", { status: response.status }), "error");
+      return;
+    }
+    const payload = await response.json();
+    const deleted = Number(payload?.deleted_users) || 0;
+    if (deleted > 0) {
+      notify(t("userAccounts.toast.cleanupSuccess", { deleted }), "success");
+    } else {
+      notify(t("userAccounts.toast.cleanupEmpty"), "info");
+    }
+    await loadUserAccounts();
+  } catch (error) {
+    notify(t("userAccounts.toast.cleanupFailed", { status: error.message }), "error");
+  } finally {
+    setCleanupBusy(false);
   }
 };
 
@@ -939,6 +980,7 @@ export const initUserAccountsPanel = () => {
     }
   });
   elements.userAccountSeedBtn.addEventListener("click", openSeedModal);
+  elements.userAccountCleanupBtn.addEventListener("click", requestCleanupTestUsers);
   elements.userAccountCreateBtn.addEventListener("click", openCreateModal);
   elements.userAccountModalClose?.addEventListener("click", () => closeModal(elements.userAccountModal));
   elements.userAccountModalCancel.addEventListener("click", () => closeModal(elements.userAccountModal));
@@ -973,6 +1015,7 @@ export const initUserAccountsPanel = () => {
     state.userAccounts.pagination.page = state.userAccounts.pagination.page + 1;
     await loadUserAccounts();
   });
+  setCleanupBusy(false);
 };
 
 

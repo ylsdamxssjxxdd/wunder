@@ -317,6 +317,7 @@ export const elements = {
   userAccountSearchInput: document.getElementById("userAccountSearchInput"),
   userAccountRefreshBtn: document.getElementById("userAccountRefreshBtn"),
   userAccountSeedBtn: document.getElementById("userAccountSeedBtn"),
+  userAccountCleanupBtn: document.getElementById("userAccountCleanupBtn"),
   userAccountCreateBtn: document.getElementById("userAccountCreateBtn"),
   userAccountTableBody: document.getElementById("userAccountTableBody"),
   userAccountEmpty: document.getElementById("userAccountEmpty"),
