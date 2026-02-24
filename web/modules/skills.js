@@ -175,7 +175,7 @@ const getActiveSkill = () =>
 
 const isSkillDeletable = (skill) => {
   const normalized = normalizeSkillPath(skill?.path).toLowerCase();
-  return /(^|\/)eva_skills(\/|$)/.test(normalized);
+  return /(^|\/)skills(\/|$)/.test(normalized);
 };
 
 const extractErrorMessage = async (response) => resolveApiErrorMessage(response, "");
