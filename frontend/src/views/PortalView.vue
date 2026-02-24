@@ -209,7 +209,7 @@
                   @keydown.enter="openExternalApp(link)"
                 >
                   <div class="agent-card-head">
-                    <div class="agent-card-default-icon" aria-hidden="true">
+                    <div class="agent-card-avatar agent-card-avatar--idle agent-card-avatar--external" aria-hidden="true">
                       <i
                         class="agent-card-default-icon-svg"
                         :class="['fa-solid', resolveExternalIcon(link.icon)]"

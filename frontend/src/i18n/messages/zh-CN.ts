@@ -164,6 +164,7 @@ export default {
   'userWorld.chat.emptyConversation': '请选择左侧用户开始聊天',
   'userWorld.input.placeholder': '输入消息，按 Enter 发送',
   'userWorld.input.send': '发送',
+  'userWorld.unit.ungrouped': '未分配单位',
   'toolManager.title': '工具管理',
   'toolManager.subtitle': '查看管理员开放工具，并配置你的 MCP、技能与知识库',
   'toolManager.section.title': '工具分类',

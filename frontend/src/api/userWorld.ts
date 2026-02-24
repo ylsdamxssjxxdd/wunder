@@ -23,6 +23,24 @@ const buildUrl = (path: string): string => {
   return `${base.replace(/\/$/, '')}${path}`;
 };
 
+const resolveDevProxyWsBase = (apiPathPrefix: string): string => {
+  const fallbackTarget = 'http://127.0.0.1:18000';
+  const raw = String((import.meta as { env?: Record<string, unknown> }).env?.VITE_DEV_PROXY_TARGET || fallbackTarget)
+    .trim();
+  try {
+    const url = new URL(raw, window.location.origin);
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const targetPath = url.pathname.replace(/\/$/, '');
+    if (!targetPath || apiPathPrefix.startsWith(targetPath)) {
+      return `${protocol}//${url.host}${apiPathPrefix}`;
+    }
+    return `${protocol}//${url.host}${targetPath}${apiPathPrefix}`;
+  } catch {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//127.0.0.1:18000${apiPathPrefix}`;
+  }
+};
+
 const resolveWsBase = (): string => {
   const base = resolveApiBase() || api.defaults.baseURL || '';
   const trimmed = base.replace(/\/$/, '');
@@ -33,6 +51,9 @@ const resolveWsBase = (): string => {
     return trimmed.replace(/^http/i, 'ws');
   }
   if (trimmed.startsWith('/')) {
+    if (import.meta.env.DEV && window.location.port === '18001') {
+      return resolveDevProxyWsBase(trimmed);
+    }
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     return `${protocol}//${window.location.host}${trimmed}`;
   }

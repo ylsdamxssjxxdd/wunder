@@ -81,7 +81,7 @@
 
 .agent-card-head {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 12px;
   min-width: 0;
 }
@@ -97,6 +97,7 @@
   width: 36px;
   height: 36px;
   flex: 0 0 36px;
+  margin-top: 18px;
   aspect-ratio: 1 / 1;
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.35);
@@ -172,23 +173,23 @@
   color: #f87171;
 }
 
+.agent-card-avatar--external,
 .agent-card-default-icon {
-  width: 34px;
-  height: 34px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   color: var(--portal-primary);
 }
 
 .agent-card-default-icon-svg {
-  width: 20px;
-  height: 20px;
-  font-size: 20px;
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
   line-height: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+.agent-card-default-icon-svg::before {
+  line-height: 1;
 }
 
 .agent-card-title {
@@ -493,6 +494,7 @@
   color: #4f46e5;
 }
 
+:root[data-user-theme='light'] .agent-card-avatar--external,
 :root[data-user-theme='light'] .agent-card-default-icon {
   color: #2563eb;
 }

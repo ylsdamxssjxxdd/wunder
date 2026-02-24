@@ -487,15 +487,9 @@ export const useUserWorldStore = defineStore('user-world', {
         .catch((error: WsError) => {
           if (controller.signal.aborted) return;
           watchRuntime.delete(conversationId);
-          if (error?.phase === 'connect') {
-            markWsUnavailable();
-            this.startSseWatch(conversationId, controller);
-            return;
-          }
-          window.setTimeout(() => {
-            if (controller.signal.aborted || watchRuntime.has(conversationId)) return;
-            this.startConversationWatch(conversationId);
-          }, WATCH_RETRY_DELAY_MS);
+          markWsUnavailable(error?.phase === 'connect' ? 180000 : 120000);
+          this.startSseWatch(conversationId, controller);
+          return;
         });
     },
 

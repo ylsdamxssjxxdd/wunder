@@ -164,6 +164,7 @@ export default {
   'userWorld.chat.emptyConversation': 'Select a user on the left to chat',
   'userWorld.input.placeholder': 'Type a message, press Enter to send',
   'userWorld.input.send': 'Send',
+  'userWorld.unit.ungrouped': 'Unassigned Unit',
   'toolManager.title': 'Tool Manager',
   'toolManager.subtitle': 'View admin tools and configure MCP, skills, and knowledge',
   'toolManager.section.title': 'Tool Categories',
