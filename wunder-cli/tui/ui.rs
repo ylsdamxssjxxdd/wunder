@@ -121,6 +121,8 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
 
     if let Some(lines) = app.approval_modal_lines() {
         draw_approval_modal(frame, frame.area(), input_area, lines, is_zh);
+    } else if let Some(lines) = app.inquiry_modal_lines() {
+        draw_inquiry_modal(frame, frame.area(), input_area, lines, is_zh);
     }
 }
 
@@ -152,7 +154,7 @@ fn draw_shortcuts_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh
     };
 
     frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(lines.join("\n"))
+    let widget = Paragraph::new(build_modal_lines(lines))
         .block(
             Block::default()
                 .title(if is_zh { " 快捷键 " } else { " Shortcuts " })
@@ -318,7 +320,7 @@ fn draw_approval_modal(
     };
 
     frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(lines.join("\n"))
+    let widget = Paragraph::new(build_modal_lines(lines))
         .block(
             Block::default()
                 .title(if is_zh { " 审批 " } else { " Approval " })
@@ -329,13 +331,97 @@ fn draw_approval_modal(
     frame.render_widget(widget, popup);
 }
 
+fn draw_inquiry_modal(
+    frame: &mut Frame,
+    area: Rect,
+    input_area: Rect,
+    lines: Vec<String>,
+    is_zh: bool,
+) {
+    if area.width < 24 || area.height < 8 {
+        return;
+    }
+    let max_line_width = lines
+        .iter()
+        .map(|line| line.chars().count() as u16)
+        .max()
+        .unwrap_or(0);
+    let horizontal_bounds = if input_area.width > 0 {
+        input_area
+    } else {
+        area
+    };
+    let width = max_line_width
+        .saturating_add(6)
+        .max(56)
+        .min(horizontal_bounds.width.saturating_sub(2))
+        .max(1);
+    let content_height = lines.len() as u16;
+    let height = content_height
+        .saturating_add(4)
+        .max(10)
+        .min(area.height.saturating_sub(2));
+
+    let x = horizontal_bounds.x + horizontal_bounds.width.saturating_sub(width) / 2;
+    let y = input_area.y.saturating_sub(height);
+    let popup = Rect {
+        x,
+        y,
+        width,
+        height,
+    };
+
+    frame.render_widget(Clear, popup);
+    let widget = Paragraph::new(lines.join("\n"))
+        .block(
+            Block::default()
+                .title(if is_zh {
+                    " 问询面板 "
+                } else {
+                    " Inquiry Panel "
+                })
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::White).bg(Color::Black)),
+        )
+        .wrap(Wrap { trim: false });
+    frame.render_widget(widget, popup);
+}
+
+fn build_modal_lines(lines: Vec<String>) -> Vec<Line<'static>> {
+    lines
+        .into_iter()
+        .map(|line| {
+            if let Some(rest) = line.strip_prefix("> ") {
+                Line::from(Span::styled(
+                    format!("> {rest}"),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else if let Some(rest) = line.strip_prefix('>') {
+                Line::from(Span::styled(
+                    format!(">{rest}"),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::LightCyan)
+                        .add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(Span::styled(line, Style::default().fg(Color::White)))
+            }
+        })
+        .collect()
+}
+
 fn log_lines(kind: LogKind, text: &str, selected: bool) -> Vec<Line<'static>> {
+    let bright_blue = Color::Rgb(120, 205, 255);
     let style = match kind {
         LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::User => Style::default().fg(Color::LightBlue),
+        LogKind::User => Style::default().fg(bright_blue),
         LogKind::Assistant => Style::default().fg(Color::Green),
         LogKind::Reasoning => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::Tool => Style::default().fg(Color::LightBlue),
+        LogKind::Tool => Style::default().fg(bright_blue),
         LogKind::Error => Style::default()
             .fg(Color::Gray)
             .add_modifier(Modifier::BOLD),

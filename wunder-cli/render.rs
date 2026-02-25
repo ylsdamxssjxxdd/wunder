@@ -92,72 +92,28 @@ impl StreamRenderer {
                     .map(compact_json)
                     .unwrap_or_else(|| compact_json(payload));
                 println!("[tool_result] {tool} {result}");
-            }
-            "question_panel" => {
-                self.ensure_newline();
-                let question = payload
-                    .get("question")
-                    .or_else(|| payload.get("prompt"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("Choose a route to continue")
-                    .trim();
-                println!("[question_panel] {question}");
-                if let Some(routes) = payload
-                    .get("routes")
-                    .or_else(|| payload.get("options"))
-                    .or_else(|| payload.get("choices"))
-                    .and_then(Value::as_array)
-                {
-                    for (index, route) in routes.iter().enumerate() {
-                        let (label, description, recommended) = match route {
-                            Value::String(value) => {
-                                (value.trim().to_string(), String::new(), false)
-                            }
-                            Value::Object(map) => {
-                                let label = map
-                                    .get("label")
-                                    .or_else(|| map.get("title"))
-                                    .or_else(|| map.get("name"))
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("")
-                                    .trim()
-                                    .to_string();
-                                let description = map
-                                    .get("description")
-                                    .or_else(|| map.get("detail"))
-                                    .or_else(|| map.get("desc"))
-                                    .or_else(|| map.get("summary"))
-                                    .and_then(Value::as_str)
-                                    .unwrap_or("")
-                                    .trim()
-                                    .to_string();
-                                let recommended = map
-                                    .get("recommended")
-                                    .or_else(|| map.get("preferred"))
-                                    .and_then(Value::as_bool)
-                                    .unwrap_or(false);
-                                (label, description, recommended)
-                            }
-                            _ => (String::new(), String::new(), false),
-                        };
-                        if label.is_empty() {
-                            continue;
-                        }
-                        let recommended_tag = if recommended { " (recommended)" } else { "" };
-                        if description.is_empty() {
-                            println!("  {}. {}{}", index + 1, label, recommended_tag);
-                        } else {
-                            println!(
-                                "  {}. {}{}: {}",
-                                index + 1,
-                                label,
-                                recommended_tag,
-                                description
-                            );
+                let tool_key = tool.trim().to_ascii_lowercase();
+                let is_question_tool = tool_key == "question_panel"
+                    || tool_key == "ask_panel"
+                    || tool.contains("问询面板");
+                if is_question_tool {
+                    for panel_payload in [
+                        payload.get("data"),
+                        payload.get("result"),
+                        payload.get("result").and_then(|value| value.get("data")),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    {
+                        if render_question_panel_lines(panel_payload) {
+                            break;
                         }
                     }
                 }
-                println!("  choose by typing route number(s), e.g. 1 or 1,3");
+            }
+            "question_panel" => {
+                self.ensure_newline();
+                let _ = render_question_panel_lines(payload);
             }
             "error" => {
                 self.ensure_newline();
@@ -201,6 +157,123 @@ impl StreamRenderer {
             self.line_open = false;
         }
     }
+}
+
+fn render_question_panel_lines(payload: &Value) -> bool {
+    let question = payload
+        .get("question")
+        .or_else(|| payload.get("prompt"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    let routes = payload
+        .get("routes")
+        .or_else(|| payload.get("options"))
+        .or_else(|| payload.get("choices"))
+        .and_then(Value::as_array);
+    let has_routes = routes.map(|value| !value.is_empty()).unwrap_or(false);
+    if !has_routes && question.is_empty() {
+        return false;
+    }
+
+    let is_zh = looks_like_zh(question.as_str())
+        || routes
+            .map(|items| {
+                items.iter().any(|item| {
+                    item.get("label")
+                        .or_else(|| item.get("title"))
+                        .or_else(|| item.get("name"))
+                        .and_then(Value::as_str)
+                        .map(looks_like_zh)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+    let display_question = if question.is_empty() {
+        if is_zh {
+            "请选择一条路线继续"
+        } else {
+            "Choose a route to continue"
+        }
+    } else {
+        question.as_str()
+    };
+    println!("[question_panel] {display_question}");
+
+    if let Some(routes) = routes {
+        for (index, route) in routes.iter().enumerate() {
+            let (label, description, recommended) = match route {
+                Value::String(value) => (value.trim().to_string(), String::new(), false),
+                Value::Object(map) => {
+                    let label = map
+                        .get("label")
+                        .or_else(|| map.get("title"))
+                        .or_else(|| map.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let description = map
+                        .get("description")
+                        .or_else(|| map.get("detail"))
+                        .or_else(|| map.get("desc"))
+                        .or_else(|| map.get("summary"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    let recommended = map
+                        .get("recommended")
+                        .or_else(|| map.get("preferred"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    (label, description, recommended)
+                }
+                _ => (String::new(), String::new(), false),
+            };
+            if label.is_empty() {
+                continue;
+            }
+            let recommended_tag = if recommended {
+                if is_zh {
+                    "（推荐）"
+                } else {
+                    " (recommended)"
+                }
+            } else {
+                ""
+            };
+            if description.is_empty() {
+                println!("  {}. {}{}", index + 1, label, recommended_tag);
+            } else {
+                let separator = if is_zh { "：" } else { ": " };
+                println!(
+                    "  {}. {}{}{}{}",
+                    index + 1,
+                    label,
+                    recommended_tag,
+                    separator,
+                    description
+                );
+            }
+        }
+    }
+
+    if is_zh {
+        println!("  输入序号选择，例如 1 或 1,3");
+    } else {
+        println!("  choose by typing route number(s), e.g. 1 or 1,3");
+    }
+    true
+}
+
+fn looks_like_zh(text: &str) -> bool {
+    text.chars().any(|ch| {
+        ('\u{4e00}'..='\u{9fff}').contains(&ch)
+            || ('\u{3400}'..='\u{4dbf}').contains(&ch)
+            || ('\u{20000}'..='\u{2a6df}').contains(&ch)
+    })
 }
 
 fn parse_final(event: &StreamEvent) -> Option<FinalEvent> {

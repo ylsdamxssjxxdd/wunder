@@ -6646,56 +6646,73 @@ fn should_interactive_approvals(global: &GlobalArgs) -> bool {
 async fn handle_stdio_approvals(mut rx: ApprovalRequestRx, language: String) {
     let is_zh = locale::is_zh_language(language.as_str());
     while let Some(request) = rx.recv().await {
-        eprintln!();
+        let summary = compact_approval_prompt_text(request.summary.as_str(), 180, is_zh);
+        println!();
         if is_zh {
-            eprintln!("[审批] {}", request.summary);
+            println!("[审批] {summary}");
         } else {
-            eprintln!("[approval] {}", request.summary);
+            println!("[approval] {summary}");
         }
         if is_zh {
-            eprintln!("- 工具: {}", request.tool);
+            println!("- 工具: {}", request.tool);
         } else {
-            eprintln!("- tool: {}", request.tool);
+            println!("- tool: {}", request.tool);
         }
-        let args = serde_json::to_string(&request.args).unwrap_or_else(|_| "{}".to_string());
-        if !args.trim().is_empty() && args != "{}" {
+        let response = loop {
             if is_zh {
-                eprintln!("- 参数: {}", truncate_for_stderr(args, 600, is_zh));
+                println!("审批选项:");
+                println!("  1) 仅本次批准");
+                println!("  2) 本会话批准");
+                println!("  3) 拒绝");
+                println!("请输入 1/2/3（也可用 y/a/n）:");
             } else {
-                eprintln!("- args: {}", truncate_for_stderr(args, 600, is_zh));
+                println!("Approval options:");
+                println!("  1) approve once");
+                println!("  2) approve for session");
+                println!("  3) deny");
+                println!("choose 1/2/3 (or y/a/n):");
             }
-        }
-        if is_zh {
-            eprintln!("审批选项:");
-            eprintln!("  1) 仅本次批准");
-            eprintln!("  2) 本会话批准");
-            eprintln!("  3) 拒绝");
-            eprintln!("请输入 1/2/3（也可用 y/a/n）:");
-        } else {
-            eprintln!("Approval options:");
-            eprintln!("  1) approve once");
-            eprintln!("  2) approve for session");
-            eprintln!("  3) deny");
-            eprintln!("choose 1/2/3 (or y/a/n):");
-        }
+            io::stdout().flush().ok();
 
-        let choice = tokio::task::spawn_blocking(|| {
-            let mut buffer = String::new();
-            std::io::stdin().read_line(&mut buffer).ok();
-            buffer
-        })
-        .await
-        .ok()
-        .unwrap_or_default();
+            let choice = tokio::task::spawn_blocking(|| {
+                let mut buffer = String::new();
+                std::io::stdin().read_line(&mut buffer).ok();
+                buffer
+            })
+            .await
+            .ok()
+            .unwrap_or_default();
 
-        let response = match choice.trim().to_ascii_lowercase().as_str() {
-            "y" | "yes" | "1" => ApprovalResponse::ApproveOnce,
-            "a" | "always" | "2" => ApprovalResponse::ApproveSession,
-            "n" | "no" | "3" => ApprovalResponse::Deny,
-            _ => ApprovalResponse::Deny,
+            let parsed = match choice.trim().to_ascii_lowercase().as_str() {
+                "y" | "yes" | "1" => Some(ApprovalResponse::ApproveOnce),
+                "a" | "always" | "2" => Some(ApprovalResponse::ApproveSession),
+                "n" | "no" | "3" => Some(ApprovalResponse::Deny),
+                _ => None,
+            };
+            if let Some(response) = parsed {
+                break response;
+            }
+            if is_zh {
+                println!("[提示] 输入无效，请输入 1/2/3（或 y/a/n）。");
+            } else {
+                println!("[hint] invalid input, please type 1/2/3 (or y/a/n).");
+            }
+            io::stdout().flush().ok();
         };
         let _ = request.respond_to.send(response);
     }
+}
+
+fn compact_approval_prompt_text(text: &str, max_chars: usize, is_zh: bool) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let compact = normalized
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact = compact.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_for_stderr(compact, max_chars, is_zh)
 }
 
 fn truncate_for_stderr(text: String, max_chars: usize, is_zh: bool) -> String {

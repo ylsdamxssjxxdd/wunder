@@ -206,6 +206,7 @@ pub struct TuiApp {
     transcript_selected: Option<usize>,
     resume_picker: Option<ResumePickerState>,
     active_inquiry_panel: Option<InquiryPanelState>,
+    inquiry_selected_index: usize,
     tool_phase_notice_emitted: bool,
     stream_catchup_mode: bool,
     stream_catchup_enter_since: Option<Instant>,
@@ -300,6 +301,7 @@ impl TuiApp {
             transcript_selected: None,
             resume_picker: None,
             active_inquiry_panel: None,
+            inquiry_selected_index: 0,
             tool_phase_notice_emitted: false,
             stream_catchup_mode: false,
             stream_catchup_enter_since: None,
@@ -441,11 +443,7 @@ impl TuiApp {
     }
 
     pub fn mouse_capture_enabled(&self) -> bool {
-        match self.mouse_mode {
-            MouseMode::Auto => true,
-            MouseMode::Scroll => true,
-            MouseMode::Select => false,
-        }
+        true
     }
 
     fn status_line_parts(&self) -> std::collections::HashMap<&'static str, String> {
@@ -911,40 +909,10 @@ impl TuiApp {
         let request = self.active_approval.as_ref()?;
         let is_zh = self.is_zh_language();
         let selected = self.approval_selected_index.min(2);
-        let mut lines = if is_zh {
-            vec![
-                format!("编号: {}", request.id),
-                format!("工具: {}", request.tool),
-                format!("摘要: {}", request.summary),
-                format!("类型: {:?}", request.kind),
-            ]
-        } else {
-            vec![
-                format!("id: {}", request.id),
-                format!("tool: {}", request.tool),
-                format!("summary: {}", request.summary),
-                format!("kind: {:?}", request.kind),
-            ]
-        };
-
-        let detail = compact_json(&request.detail);
-        if !detail.trim().is_empty() {
-            if is_zh {
-                lines.push(format!("详情: {detail}"));
-            } else {
-                lines.push(format!("detail: {detail}"));
-            }
-        }
-        let args = compact_json(&request.args);
-        if !args.trim().is_empty() {
-            if is_zh {
-                lines.push(format!("参数: {args}"));
-            } else {
-                lines.push(format!("args: {args}"));
-            }
-        }
-
-        lines.push(String::new());
+        let summary = summarize_modal_text(request.summary.as_str(), 110);
+        let detail = summarize_modal_text(compact_json(&request.detail).as_str(), 120);
+        let args = summarize_modal_text(compact_json(&request.args).as_str(), 120);
+        let mut lines = Vec::new();
         if is_zh {
             lines.push("审批选项（上下键选择，Enter确认，或按 1/2/3）:".to_string());
             lines.push(format!(
@@ -956,6 +924,17 @@ impl TuiApp {
                 if selected == 1 { ">" } else { " " }
             ));
             lines.push(format!("{} 3) 拒绝", if selected == 2 { ">" } else { " " }));
+            lines.push(String::new());
+            lines.push(format!("工具: {}", request.tool));
+            lines.push(format!("摘要: {summary}"));
+            lines.push(format!("编号: {}", request.id));
+            lines.push(format!("类型: {:?}", request.kind));
+            if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
+                lines.push(format!("详情: {detail}"));
+            }
+            if !args.trim().is_empty() && args != "{}" && args != "null" {
+                lines.push(format!("参数: {args}"));
+            }
         } else {
             lines.push(
                 "Approval actions (Up/Down select, Enter confirm; or press 1/2/3):".to_string(),
@@ -969,8 +948,125 @@ impl TuiApp {
                 if selected == 1 { ">" } else { " " }
             ));
             lines.push(format!("{} 3) deny", if selected == 2 { ">" } else { " " }));
+            lines.push(String::new());
+            lines.push(format!("tool: {}", request.tool));
+            lines.push(format!("summary: {summary}"));
+            lines.push(format!("id: {}", request.id));
+            lines.push(format!("kind: {:?}", request.kind));
+            if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
+                lines.push(format!("detail: {detail}"));
+            }
+            if !args.trim().is_empty() && args != "{}" && args != "null" {
+                lines.push(format!("args: {args}"));
+            }
         }
         Some(lines)
+    }
+
+    fn parse_inquiry_panel_from_tool_result(&self, payload: &Value) -> Option<InquiryPanelState> {
+        let tool = payload
+            .get("tool")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let tool_key = tool.trim().to_ascii_lowercase();
+        let is_question_tool =
+            tool_key == "question_panel" || tool_key == "ask_panel" || tool.contains("问询面板");
+        if !is_question_tool {
+            return None;
+        }
+        for value in [
+            payload.get("data"),
+            payload.get("result"),
+            payload.get("result").and_then(|value| value.get("data")),
+            payload.get("data").and_then(|value| value.get("result")),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(panel) = self.parse_inquiry_panel_state(value) {
+                return Some(panel);
+            }
+        }
+        None
+    }
+
+    pub fn inquiry_modal_lines(&self) -> Option<Vec<String>> {
+        let panel = self.active_inquiry_panel.as_ref()?;
+        if panel.routes.is_empty() {
+            return None;
+        }
+        let selected = self
+            .inquiry_selected_index
+            .min(panel.routes.len().saturating_sub(1));
+        let mut lines = Vec::new();
+        if self.is_zh_language() {
+            lines.push(format!("问题: {}", panel.question));
+            lines.push(format!(
+                "模式: {}",
+                if panel.multiple { "多选" } else { "单选" }
+            ));
+            lines.push(String::new());
+            lines.push("可选路线（上下键选择，Enter 发送，或按数字键）:".to_string());
+        } else {
+            lines.push(format!("question: {}", panel.question));
+            lines.push(format!(
+                "mode: {}",
+                if panel.multiple { "multiple" } else { "single" }
+            ));
+            lines.push(String::new());
+            lines.push("routes (Up/Down select, Enter send, or press number):".to_string());
+        }
+        for (index, route) in panel.routes.iter().enumerate() {
+            let marker = if index == selected { ">" } else { " " };
+            let mut title = route.label.clone();
+            if route.recommended {
+                if self.is_zh_language() {
+                    title.push_str("（推荐）");
+                } else {
+                    title.push_str(" (recommended)");
+                }
+            }
+            lines.push(format!("{marker} {}. {}", index + 1, title));
+            if let Some(description) = route.description.as_deref() {
+                lines.push(format!("    {description}"));
+            }
+        }
+        lines.push(String::new());
+        lines.push(crate::locale::tr(
+            self.display_language.as_str(),
+            "提示：也可直接输入文字继续；输入多个序号请用逗号分隔（如 1,3）",
+            "tip: you can also type free text; use comma for multi-select (e.g. 1,3)",
+        ));
+        Some(lines)
+    }
+
+    fn is_same_inquiry_panel(&self, left: &InquiryPanelState, right: &InquiryPanelState) -> bool {
+        if left.question.trim() != right.question.trim() || left.routes.len() != right.routes.len()
+        {
+            return false;
+        }
+        left.routes
+            .iter()
+            .zip(right.routes.iter())
+            .all(|(a, b)| a.label == b.label && a.description == b.description)
+    }
+
+    fn activate_inquiry_panel(&mut self, panel: InquiryPanelState, emit_log: bool) {
+        let already_same = self
+            .active_inquiry_panel
+            .as_ref()
+            .map(|existing| self.is_same_inquiry_panel(existing, &panel))
+            .unwrap_or(false);
+        let recommended_index = panel
+            .routes
+            .iter()
+            .position(|route| route.recommended)
+            .unwrap_or(0);
+        self.inquiry_selected_index = recommended_index;
+        self.active_inquiry_panel = Some(panel.clone());
+        if emit_log && !already_same {
+            self.show_inquiry_panel_prompt(&panel);
+        }
     }
 
     fn parse_inquiry_panel_state(&self, payload: &Value) -> Option<InquiryPanelState> {
@@ -1095,6 +1191,46 @@ impl TuiApp {
         self.push_log(LogKind::Tool, hint);
     }
 
+    fn try_handle_inquiry_panel_navigation_key(&mut self, key: KeyEvent) -> Option<Option<String>> {
+        let panel = self.active_inquiry_panel.as_ref()?;
+        if !self.input.trim().is_empty() {
+            return None;
+        }
+        let route_len = panel.routes.len();
+        if route_len == 0 {
+            return None;
+        }
+        match key.code {
+            KeyCode::Up => {
+                self.inquiry_selected_index = self.inquiry_selected_index.saturating_sub(1);
+                Some(None)
+            }
+            KeyCode::Down => {
+                self.inquiry_selected_index =
+                    (self.inquiry_selected_index + 1).min(route_len.saturating_sub(1));
+                Some(None)
+            }
+            KeyCode::Enter => Some(Some((self.inquiry_selected_index + 1).to_string())),
+            KeyCode::Esc => {
+                self.active_inquiry_panel = None;
+                self.inquiry_selected_index = 0;
+                Some(None)
+            }
+            KeyCode::Char(ch)
+                if key.modifiers == KeyModifiers::NONE && ch.is_ascii_digit() && ch != '0' =>
+            {
+                let index = (ch as usize).saturating_sub('1' as usize);
+                if index < route_len {
+                    self.inquiry_selected_index = index;
+                    Some(Some((index + 1).to_string()))
+                } else {
+                    Some(None)
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn parse_inquiry_selection_indexes(
         &self,
         input: &str,
@@ -1174,6 +1310,7 @@ impl TuiApp {
             }
         }
         self.active_inquiry_panel = None;
+        self.inquiry_selected_index = 0;
         Some(lines.join("\n"))
     }
 
@@ -2211,6 +2348,14 @@ impl TuiApp {
             return Ok(());
         }
 
+        if let Some(action) = self.try_handle_inquiry_panel_navigation_key(key) {
+            self.reset_plain_char_burst();
+            if let Some(selection) = action {
+                self.submit_line(selection).await?;
+            }
+            return Ok(());
+        }
+
         if self.focus_area == FocusArea::Transcript {
             self.reset_plain_char_burst();
             if self.handle_transcript_focus_key(key) {
@@ -2757,6 +2902,7 @@ impl TuiApp {
         self.focus_area = FocusArea::Input;
         self.resume_picker = None;
         self.active_inquiry_panel = None;
+        self.inquiry_selected_index = 0;
         self.logs.clear();
         self.invalidate_transcript_metrics();
 
@@ -2903,6 +3049,7 @@ impl TuiApp {
             prompt = converted;
         } else if self.active_inquiry_panel.is_some() && !prompt.trim_start().starts_with('/') {
             self.active_inquiry_panel = None;
+            self.inquiry_selected_index = 0;
         }
 
         self.scroll_transcript_to_bottom();
@@ -2966,6 +3113,7 @@ impl TuiApp {
 
         self.ctrl_c_hint_deadline = None;
         self.active_inquiry_panel = None;
+        self.inquiry_selected_index = 0;
         self.push_log(LogKind::User, user_echo);
         self.busy = true;
         self.active_assistant = None;
@@ -3715,11 +3863,13 @@ impl TuiApp {
                 for line in format_tool_result_lines(tool, payload) {
                     self.push_log(LogKind::Tool, line);
                 }
+                if let Some(panel) = self.parse_inquiry_panel_from_tool_result(payload) {
+                    self.activate_inquiry_panel(panel, true);
+                }
             }
             "question_panel" => {
                 if let Some(panel) = self.parse_inquiry_panel_state(payload) {
-                    self.show_inquiry_panel_prompt(&panel);
-                    self.active_inquiry_panel = Some(panel);
+                    self.activate_inquiry_panel(panel, true);
                 }
             }
             "error" => {
@@ -4045,6 +4195,22 @@ impl TuiApp {
 
         self.logs.len().saturating_sub(1)
     }
+}
+
+fn summarize_modal_text(text: &str, max_chars: usize) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let compact = normalized
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let compact = compact.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (mut output, truncated) = truncate_by_chars(compact.as_str(), max_chars);
+    if truncated {
+        output.push_str("...");
+    }
+    output
 }
 
 #[cfg(test)]
