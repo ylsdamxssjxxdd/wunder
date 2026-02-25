@@ -93,6 +93,72 @@ impl StreamRenderer {
                     .unwrap_or_else(|| compact_json(payload));
                 println!("[tool_result] {tool} {result}");
             }
+            "question_panel" => {
+                self.ensure_newline();
+                let question = payload
+                    .get("question")
+                    .or_else(|| payload.get("prompt"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("Choose a route to continue")
+                    .trim();
+                println!("[question_panel] {question}");
+                if let Some(routes) = payload
+                    .get("routes")
+                    .or_else(|| payload.get("options"))
+                    .or_else(|| payload.get("choices"))
+                    .and_then(Value::as_array)
+                {
+                    for (index, route) in routes.iter().enumerate() {
+                        let (label, description, recommended) = match route {
+                            Value::String(value) => {
+                                (value.trim().to_string(), String::new(), false)
+                            }
+                            Value::Object(map) => {
+                                let label = map
+                                    .get("label")
+                                    .or_else(|| map.get("title"))
+                                    .or_else(|| map.get("name"))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_string();
+                                let description = map
+                                    .get("description")
+                                    .or_else(|| map.get("detail"))
+                                    .or_else(|| map.get("desc"))
+                                    .or_else(|| map.get("summary"))
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_string();
+                                let recommended = map
+                                    .get("recommended")
+                                    .or_else(|| map.get("preferred"))
+                                    .and_then(Value::as_bool)
+                                    .unwrap_or(false);
+                                (label, description, recommended)
+                            }
+                            _ => (String::new(), String::new(), false),
+                        };
+                        if label.is_empty() {
+                            continue;
+                        }
+                        let recommended_tag = if recommended { " (recommended)" } else { "" };
+                        if description.is_empty() {
+                            println!("  {}. {}{}", index + 1, label, recommended_tag);
+                        } else {
+                            println!(
+                                "  {}. {}{}: {}",
+                                index + 1,
+                                label,
+                                recommended_tag,
+                                description
+                            );
+                        }
+                    }
+                }
+                println!("  choose by typing route number(s), e.g. 1 or 1,3");
+            }
             "error" => {
                 self.ensure_newline();
                 let nested_message = payload

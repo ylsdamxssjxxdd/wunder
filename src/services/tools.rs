@@ -332,7 +332,7 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                     "workdir": {"type": "string", "description": t("tool.spec.ptc.args.workdir")},
                     "content": {"type": "string", "description": t("tool.spec.ptc.args.content")}
                 },
-                "required": ["filename", "workdir", "content"]
+                "required": ["filename", "content"]
             }),
         },
         ToolSpec {
@@ -4780,7 +4780,22 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
         .workspace
         .replace_public_root_in_text(context.workspace_id, content);
     let workdir_path = if workdir.is_empty() {
-        context.workspace.ensure_user_root(context.workspace_id)?
+        if context
+            .config
+            .server
+            .mode
+            .trim()
+            .eq_ignore_ascii_case("cli")
+        {
+            let configured_root = context.config.workspace.root.trim();
+            if configured_root.is_empty() {
+                context.workspace.ensure_user_root(context.workspace_id)?
+            } else {
+                PathBuf::from(configured_root)
+            }
+        } else {
+            context.workspace.ensure_user_root(context.workspace_id)?
+        }
     } else {
         context
             .workspace

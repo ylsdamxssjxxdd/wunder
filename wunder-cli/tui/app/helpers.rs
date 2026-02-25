@@ -77,7 +77,7 @@ pub(crate) fn log_prefix(kind: LogKind) -> &'static str {
         LogKind::User => "you> ",
         LogKind::Assistant => "assistant> ",
         LogKind::Reasoning => "think> ",
-        LogKind::Tool => "tool> ",
+        LogKind::Tool => "",
         LogKind::Error => "error> ",
     }
 }

@@ -332,10 +332,10 @@ fn draw_approval_modal(
 fn log_lines(kind: LogKind, text: &str, selected: bool) -> Vec<Line<'static>> {
     let style = match kind {
         LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::User => Style::default().fg(Color::Blue),
+        LogKind::User => Style::default().fg(Color::LightBlue),
         LogKind::Assistant => Style::default().fg(Color::Green),
         LogKind::Reasoning => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::Tool => Style::default().fg(Color::Blue),
+        LogKind::Tool => Style::default().fg(Color::LightBlue),
         LogKind::Error => Style::default()
             .fg(Color::Gray)
             .add_modifier(Modifier::BOLD),

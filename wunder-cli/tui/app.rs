@@ -125,6 +125,20 @@ struct ResumePickerState {
     selected: usize,
 }
 
+#[derive(Debug, Clone)]
+struct InquiryRoute {
+    label: String,
+    description: Option<String>,
+    recommended: bool,
+}
+
+#[derive(Debug, Clone)]
+struct InquiryPanelState {
+    question: String,
+    routes: Vec<InquiryRoute>,
+    multiple: bool,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 struct InputHistoryStore {
     entries: Vec<String>,
@@ -191,6 +205,7 @@ pub struct TuiApp {
     focus_area: FocusArea,
     transcript_selected: Option<usize>,
     resume_picker: Option<ResumePickerState>,
+    active_inquiry_panel: Option<InquiryPanelState>,
     tool_phase_notice_emitted: bool,
     stream_catchup_mode: bool,
     stream_catchup_enter_since: Option<Instant>,
@@ -208,7 +223,8 @@ pub struct TuiApp {
     popup_recents: Vec<String>,
     popup_selected_index: usize,
     popup_signature: String,
-    turn_started_at: Option<Instant>,
+    turn_llm_started_at: Option<Instant>,
+    turn_llm_active_secs: f64,
     turn_output_tokens: u64,
     turn_tool_calls: u64,
     last_turn_elapsed_secs: Option<f64>,
@@ -283,6 +299,7 @@ impl TuiApp {
             focus_area: FocusArea::Input,
             transcript_selected: None,
             resume_picker: None,
+            active_inquiry_panel: None,
             tool_phase_notice_emitted: false,
             stream_catchup_mode: false,
             stream_catchup_enter_since: None,
@@ -300,7 +317,8 @@ impl TuiApp {
             popup_recents: Vec::new(),
             popup_selected_index: 0,
             popup_signature: String::new(),
-            turn_started_at: None,
+            turn_llm_started_at: None,
+            turn_llm_active_secs: 0.0,
             turn_output_tokens: 0,
             turn_tool_calls: 0,
             last_turn_elapsed_secs: None,
@@ -406,6 +424,9 @@ impl TuiApp {
             }
         }
         if items.is_empty() {
+            if self.is_zh_language() {
+                return "  状态栏：已配置空项，输入 /statusline reset 恢复默认".to_string();
+            }
             return "  status line: empty selection, run /statusline reset".to_string();
         }
         format!("  {}", items.join(" | "))
@@ -421,7 +442,7 @@ impl TuiApp {
 
     pub fn mouse_capture_enabled(&self) -> bool {
         match self.mouse_mode {
-            MouseMode::Auto => !self.mouse_passthrough_active(),
+            MouseMode::Auto => true,
             MouseMode::Scroll => true,
             MouseMode::Select => false,
         }
@@ -429,50 +450,131 @@ impl TuiApp {
 
     fn status_line_parts(&self) -> std::collections::HashMap<&'static str, String> {
         let mut parts = std::collections::HashMap::new();
+        let is_zh = self.is_zh_language();
         let context_summary = if let Some(max_context) = self.model_max_context {
             let percent_left = crate::context_left_percent(
                 self.session_stats.context_used_tokens,
                 Some(max_context),
             )
             .unwrap_or(0);
-            format!("context_left={percent_left}%")
+            if is_zh {
+                format!("上下文剩余={percent_left}%")
+            } else {
+                format!("context_left={percent_left}%")
+            }
         } else {
             let used = self.session_stats.context_used_tokens.max(0);
-            format!("context_used={used}")
+            if is_zh {
+                format!("上下文占用={used}")
+            } else {
+                format!("context_used={used}")
+            }
         };
         let running_hint = if self.resume_picker.is_some() {
-            "state=resume_picker".to_string()
+            if is_zh {
+                "状态=会话恢复".to_string()
+            } else {
+                "state=resume_picker".to_string()
+            }
         } else if self.active_approval.is_some() {
-            "state=approval_pending".to_string()
+            if is_zh {
+                "状态=等待审批".to_string()
+            } else {
+                "state=approval_pending".to_string()
+            }
         } else if self.busy {
-            "state=working".to_string()
+            if is_zh {
+                "状态=执行中".to_string()
+            } else {
+                "state=working".to_string()
+            }
+        } else if is_zh {
+            "状态=空闲".to_string()
         } else {
             "state=idle".to_string()
         };
         let usage_hint = self
             .last_usage
             .as_deref()
-            .map(|value| format!("tokens={value}"))
-            .unwrap_or_else(|| "tokens=-".to_string());
+            .map(|value| {
+                if is_zh {
+                    format!("最近tokens={value}")
+                } else {
+                    format!("tokens={value}")
+                }
+            })
+            .unwrap_or_else(|| {
+                if is_zh {
+                    "最近tokens=-".to_string()
+                } else {
+                    "tokens=-".to_string()
+                }
+            });
         let scroll_hint = if self.transcript_offset_from_bottom > 0 {
-            format!("scroll=-{}", self.transcript_offset_from_bottom)
+            if is_zh {
+                format!("滚动=-{}", self.transcript_offset_from_bottom)
+            } else {
+                format!("scroll=-{}", self.transcript_offset_from_bottom)
+            }
+        } else if is_zh {
+            "滚动=0".to_string()
         } else {
             "scroll=0".to_string()
         };
         let mouse_hint = match self.mouse_mode {
             MouseMode::Auto if self.mouse_passthrough_active() => {
-                "mouse=auto(selecting)".to_string()
+                if is_zh {
+                    "鼠标=自动(选择中)".to_string()
+                } else {
+                    "mouse=auto(selecting)".to_string()
+                }
             }
-            MouseMode::Auto => "mouse=auto".to_string(),
-            MouseMode::Scroll => "mouse=scroll".to_string(),
-            MouseMode::Select => "mouse=select".to_string(),
+            MouseMode::Auto => {
+                if is_zh {
+                    "鼠标=自动".to_string()
+                } else {
+                    "mouse=auto".to_string()
+                }
+            }
+            MouseMode::Scroll => {
+                if is_zh {
+                    "鼠标=滚轮".to_string()
+                } else {
+                    "mouse=scroll".to_string()
+                }
+            }
+            MouseMode::Select => {
+                if is_zh {
+                    "鼠标=选择".to_string()
+                } else {
+                    "mouse=select".to_string()
+                }
+            }
         };
         let focus_hint = match self.focus_area {
-            FocusArea::Input => "focus=input".to_string(),
-            FocusArea::Transcript => "focus=output".to_string(),
+            FocusArea::Input => {
+                if is_zh {
+                    "焦点=输入".to_string()
+                } else {
+                    "focus=input".to_string()
+                }
+            }
+            FocusArea::Transcript => {
+                if is_zh {
+                    "焦点=输出".to_string()
+                } else {
+                    "focus=output".to_string()
+                }
+            }
         };
-        let elapsed_secs = self.status_elapsed_secs().unwrap_or(0.0);
-        let speed_tps = self.status_speed_tps().unwrap_or(0.0);
+        let elapsed_label = self
+            .status_elapsed_secs()
+            .map(|value| format!("{value:.2} s"))
+            .unwrap_or_else(|| "-".to_string());
+        let speed_label = self
+            .status_speed_tps()
+            .map(|value| format!("{value:.2} token/s"))
+            .unwrap_or_else(|| "-".to_string());
         let tool_calls = self.status_tool_calls();
 
         parts.insert("running", running_hint);
@@ -481,53 +583,94 @@ impl TuiApp {
         parts.insert("mouse", mouse_hint);
         parts.insert("focus", focus_hint);
         parts.insert("context", context_summary);
-        parts.insert("session", format!("session={}", self.session_id));
-        parts.insert(
-            "agent",
-            format!("agent={}", self.agent_id_override.as_deref().unwrap_or("-")),
-        );
         parts.insert(
             "attach",
-            format!("attach={}", self.pending_attachments.len()),
+            if is_zh {
+                format!("附件={}", self.pending_attachments.len())
+            } else {
+                format!("attach={}", self.pending_attachments.len())
+            },
         );
-        parts.insert("model", format!("model={}", self.model_name));
-        parts.insert("mode", format!("mode={}", self.tool_call_mode));
-        parts.insert("approval", format!("approval={}", self.approval_mode));
-        parts.insert("elapsed", format!("elapsed={elapsed_secs:.2} s"));
-        parts.insert("speed", format!("speed={speed_tps:.2} token/s"));
-        parts.insert("tools", format!("tools={tool_calls}"));
+        parts.insert(
+            "session",
+            if is_zh {
+                format!("会话={}", self.session_id)
+            } else {
+                format!("session={}", self.session_id)
+            },
+        );
+        parts.insert(
+            "agent",
+            if is_zh {
+                format!(
+                    "智能体={}",
+                    self.agent_id_override.as_deref().unwrap_or("-")
+                )
+            } else {
+                format!("agent={}", self.agent_id_override.as_deref().unwrap_or("-"))
+            },
+        );
+        parts.insert(
+            "model",
+            if is_zh {
+                format!("模型={}", self.model_name)
+            } else {
+                format!("model={}", self.model_name)
+            },
+        );
+        parts.insert(
+            "mode",
+            if is_zh {
+                format!("工具模式={}", self.tool_call_mode)
+            } else {
+                format!("mode={}", self.tool_call_mode)
+            },
+        );
+        parts.insert(
+            "approval",
+            if is_zh {
+                format!("审批={}", self.approval_mode)
+            } else {
+                format!("approval={}", self.approval_mode)
+            },
+        );
+        parts.insert(
+            "elapsed",
+            if is_zh {
+                format!("耗时={elapsed_label}")
+            } else {
+                format!("elapsed={elapsed_label}")
+            },
+        );
+        parts.insert(
+            "speed",
+            if is_zh {
+                format!("速度={speed_label}")
+            } else {
+                format!("speed={speed_label}")
+            },
+        );
+        parts.insert(
+            "tools",
+            if is_zh {
+                format!("工具调用={tool_calls}")
+            } else {
+                format!("tools={tool_calls}")
+            },
+        );
         parts
     }
 
     fn status_elapsed_secs(&self) -> Option<f64> {
-        if self.busy {
-            return self
-                .turn_started_at
-                .map(|started| started.elapsed().as_secs_f64());
-        }
         self.last_turn_elapsed_secs
     }
 
     fn status_speed_tps(&self) -> Option<f64> {
-        if self.busy {
-            let Some(started) = self.turn_started_at else {
-                return None;
-            };
-            let elapsed = started.elapsed().as_secs_f64();
-            if elapsed <= f64::EPSILON {
-                return Some(0.0);
-            }
-            return Some(self.turn_output_tokens as f64 / elapsed);
-        }
         self.last_turn_speed_tps
     }
 
     fn status_tool_calls(&self) -> u64 {
-        if self.busy {
-            self.turn_tool_calls
-        } else {
-            self.last_turn_tool_calls
-        }
+        self.last_turn_tool_calls
     }
 
     fn input_history_file(&self) -> PathBuf {
@@ -766,35 +909,272 @@ impl TuiApp {
 
     pub fn approval_modal_lines(&self) -> Option<Vec<String>> {
         let request = self.active_approval.as_ref()?;
+        let is_zh = self.is_zh_language();
         let selected = self.approval_selected_index.min(2);
-        let mut lines = vec![
-            format!("id: {}", request.id),
-            format!("tool: {}", request.tool),
-            format!("summary: {}", request.summary),
-            format!("kind: {:?}", request.kind),
-        ];
+        let mut lines = if is_zh {
+            vec![
+                format!("编号: {}", request.id),
+                format!("工具: {}", request.tool),
+                format!("摘要: {}", request.summary),
+                format!("类型: {:?}", request.kind),
+            ]
+        } else {
+            vec![
+                format!("id: {}", request.id),
+                format!("tool: {}", request.tool),
+                format!("summary: {}", request.summary),
+                format!("kind: {:?}", request.kind),
+            ]
+        };
 
         let detail = compact_json(&request.detail);
         if !detail.trim().is_empty() {
-            lines.push(format!("detail: {detail}"));
+            if is_zh {
+                lines.push(format!("详情: {detail}"));
+            } else {
+                lines.push(format!("detail: {detail}"));
+            }
         }
         let args = compact_json(&request.args);
         if !args.trim().is_empty() {
-            lines.push(format!("args: {args}"));
+            if is_zh {
+                lines.push(format!("参数: {args}"));
+            } else {
+                lines.push(format!("args: {args}"));
+            }
         }
 
         lines.push(String::new());
-        lines.push("Approval actions (Up/Down select, Enter confirm; or press 1/2/3):".to_string());
-        lines.push(format!(
-            "{} 1) approve once",
-            if selected == 0 { ">" } else { " " }
-        ));
-        lines.push(format!(
-            "{} 2) approve for session",
-            if selected == 1 { ">" } else { " " }
-        ));
-        lines.push(format!("{} 3) deny", if selected == 2 { ">" } else { " " }));
+        if is_zh {
+            lines.push("审批选项（上下键选择，Enter确认，或按 1/2/3）:".to_string());
+            lines.push(format!(
+                "{} 1) 仅本次批准",
+                if selected == 0 { ">" } else { " " }
+            ));
+            lines.push(format!(
+                "{} 2) 本会话批准",
+                if selected == 1 { ">" } else { " " }
+            ));
+            lines.push(format!("{} 3) 拒绝", if selected == 2 { ">" } else { " " }));
+        } else {
+            lines.push(
+                "Approval actions (Up/Down select, Enter confirm; or press 1/2/3):".to_string(),
+            );
+            lines.push(format!(
+                "{} 1) approve once",
+                if selected == 0 { ">" } else { " " }
+            ));
+            lines.push(format!(
+                "{} 2) approve for session",
+                if selected == 1 { ">" } else { " " }
+            ));
+            lines.push(format!("{} 3) deny", if selected == 2 { ">" } else { " " }));
+        }
         Some(lines)
+    }
+
+    fn parse_inquiry_panel_state(&self, payload: &Value) -> Option<InquiryPanelState> {
+        let question = payload
+            .get("question")
+            .or_else(|| payload.get("prompt"))
+            .or_else(|| payload.get("title"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let routes = payload
+            .get("routes")
+            .or_else(|| payload.get("options"))
+            .or_else(|| payload.get("choices"))
+            .and_then(Value::as_array)?;
+        let mut normalized_routes = Vec::new();
+        for item in routes {
+            let (label, description, recommended) = match item {
+                Value::String(value) => (value.trim().to_string(), None, false),
+                Value::Object(map) => {
+                    let label = map
+                        .get("label")
+                        .or_else(|| map.get("title"))
+                        .or_else(|| map.get("name"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string();
+                    let description = map
+                        .get("description")
+                        .or_else(|| map.get("detail"))
+                        .or_else(|| map.get("desc"))
+                        .or_else(|| map.get("summary"))
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string);
+                    let recommended = map
+                        .get("recommended")
+                        .or_else(|| map.get("preferred"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    (label, description, recommended)
+                }
+                _ => continue,
+            };
+            if label.is_empty() {
+                continue;
+            }
+            normalized_routes.push(InquiryRoute {
+                label,
+                description,
+                recommended,
+            });
+        }
+        if normalized_routes.is_empty() {
+            return None;
+        }
+        let question = if question.is_empty() {
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "请选择下一步方向",
+                "Choose a route to continue",
+            )
+        } else {
+            question
+        };
+        let multiple = payload
+            .get("multiple")
+            .or_else(|| payload.get("allow_multiple"))
+            .or_else(|| payload.get("multi"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Some(InquiryPanelState {
+            question,
+            routes: normalized_routes,
+            multiple,
+        })
+    }
+
+    fn show_inquiry_panel_prompt(&mut self, panel: &InquiryPanelState) {
+        if self.is_zh_language() {
+            self.push_log(LogKind::Tool, format!("【问询面板】{}", panel.question));
+        } else {
+            self.push_log(LogKind::Tool, format!("[Inquiry Panel] {}", panel.question));
+        }
+        for (index, route) in panel.routes.iter().enumerate() {
+            let badge = if route.recommended {
+                if self.is_zh_language() {
+                    "（推荐）"
+                } else {
+                    " (recommended)"
+                }
+            } else {
+                ""
+            };
+            let line = if let Some(description) = route.description.as_deref() {
+                if self.is_zh_language() {
+                    format!("  {}. {}{}：{}", index + 1, route.label, badge, description)
+                } else {
+                    format!("  {}. {}{}: {}", index + 1, route.label, badge, description)
+                }
+            } else {
+                format!("  {}. {}{}", index + 1, route.label, badge)
+            };
+            self.push_log(LogKind::Tool, line);
+        }
+        let hint = if panel.multiple {
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "输入序号选择，可多选（如 1,3），然后回车发送；也可直接输入文字继续。",
+                "Type route numbers (multi-select, e.g. 1,3) then Enter; or send free text to continue.",
+            )
+        } else {
+            crate::locale::tr(
+                self.display_language.as_str(),
+                "输入序号选择（如 1），然后回车发送；也可直接输入文字继续。",
+                "Type a route number (e.g. 1) then Enter; or send free text to continue.",
+            )
+        };
+        self.push_log(LogKind::Tool, hint);
+    }
+
+    fn parse_inquiry_selection_indexes(
+        &self,
+        input: &str,
+        max_routes: usize,
+    ) -> Option<Vec<usize>> {
+        let normalized = input.replace(['，', '、', ';', '；'], ",");
+        let mut selected = Vec::new();
+        for token in normalized.split(|ch: char| ch == ',' || ch.is_whitespace()) {
+            let trimmed = token.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if !trimmed.chars().all(|ch| ch.is_ascii_digit()) {
+                return None;
+            }
+            let Ok(index) = trimmed.parse::<usize>() else {
+                return Some(Vec::new());
+            };
+            if index == 0 || index > max_routes {
+                return Some(Vec::new());
+            }
+            let normalized_index = index - 1;
+            if !selected.contains(&normalized_index) {
+                selected.push(normalized_index);
+            }
+        }
+        if selected.is_empty() {
+            return None;
+        }
+        Some(selected)
+    }
+
+    fn try_convert_inquiry_input(&mut self, input: &str) -> Option<String> {
+        let panel = self.active_inquiry_panel.clone()?;
+        let selected_indexes = self.parse_inquiry_selection_indexes(input, panel.routes.len())?;
+        if selected_indexes.is_empty() {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "问询面板选择无效：序号超出范围。",
+                    "invalid inquiry selection: index out of range.",
+                ),
+            );
+            return Some(String::new());
+        }
+        if !panel.multiple && selected_indexes.len() > 1 {
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "该问询面板为单选，请只输入一个序号。",
+                    "this inquiry panel is single-select; provide one index only.",
+                ),
+            );
+            return Some(String::new());
+        }
+        let mut lines = Vec::new();
+        if self.is_zh_language() {
+            lines.push("【问询面板选择】".to_string());
+            lines.push(format!("问题：{}", panel.question));
+        } else {
+            lines.push("[Inquiry Panel Selection]".to_string());
+            lines.push(format!("Question: {}", panel.question));
+        }
+        for index in selected_indexes {
+            if let Some(route) = panel.routes.get(index) {
+                if let Some(description) = route.description.as_deref() {
+                    if self.is_zh_language() {
+                        lines.push(format!("- {}：{}", route.label, description));
+                    } else {
+                        lines.push(format!("- {}: {}", route.label, description));
+                    }
+                } else {
+                    lines.push(format!("- {}", route.label));
+                }
+            }
+        }
+        self.active_inquiry_panel = None;
+        Some(lines.join("\n"))
     }
 
     pub fn shortcuts_lines(&self) -> Vec<String> {
@@ -913,7 +1293,7 @@ impl TuiApp {
         self.mouse_passthrough_until = None;
         self.mouse_mode = mode;
         let notice = match mode {
-            MouseMode::Auto => "mouse mode: auto (wheel + temporary selection passthrough)",
+            MouseMode::Auto => "mouse mode: auto (wheel only affects output area)",
             MouseMode::Scroll => "mouse mode: scroll (wheel enabled)",
             MouseMode::Select => "mouse mode: select/copy (wheel disabled)",
         };
@@ -935,13 +1315,6 @@ impl TuiApp {
         self.mouse_passthrough_until
             .map(|deadline| Instant::now() < deadline)
             .unwrap_or(false)
-    }
-
-    fn activate_mouse_passthrough(&mut self) {
-        if self.mouse_mode != MouseMode::Auto {
-            return;
-        }
-        self.mouse_passthrough_until = Some(Instant::now() + Duration::from_millis(2600));
     }
 
     fn clear_mouse_passthrough(&mut self) {
@@ -2070,16 +2443,30 @@ impl TuiApp {
 
         let _ = request.respond_to.send(response);
         match response {
-            ApprovalResponse::ApproveOnce => {
-                self.push_log(LogKind::Info, format!("approved once: {}", request.summary))
-            }
+            ApprovalResponse::ApproveOnce => self.push_log(
+                LogKind::Info,
+                if self.is_zh_language() {
+                    format!("审批通过（仅本次）: {}", request.summary)
+                } else {
+                    format!("approved once: {}", request.summary)
+                },
+            ),
             ApprovalResponse::ApproveSession => self.push_log(
                 LogKind::Info,
-                format!("approved for session: {}", request.summary),
+                if self.is_zh_language() {
+                    format!("审批通过（本会话）: {}", request.summary)
+                } else {
+                    format!("approved for session: {}", request.summary)
+                },
             ),
-            ApprovalResponse::Deny => {
-                self.push_log(LogKind::Info, format!("denied: {}", request.summary))
-            }
+            ApprovalResponse::Deny => self.push_log(
+                LogKind::Info,
+                if self.is_zh_language() {
+                    format!("已拒绝: {}", request.summary)
+                } else {
+                    format!("denied: {}", request.summary)
+                },
+            ),
         };
 
         self.active_approval = self.approval_queue.pop_front();
@@ -2369,6 +2756,7 @@ impl TuiApp {
         self.transcript_selected = None;
         self.focus_area = FocusArea::Input;
         self.resume_picker = None;
+        self.active_inquiry_panel = None;
         self.logs.clear();
         self.invalidate_transcript_metrics();
 
@@ -2480,11 +2868,9 @@ impl TuiApp {
                 _ => {}
             },
             MouseMode::Auto => match mouse.kind {
-                MouseEventKind::Down(MouseButton::Left)
-                | MouseEventKind::Drag(MouseButton::Left) => {
+                MouseEventKind::Drag(MouseButton::Left) => {
                     if self.mouse_in_region(&mouse, self.input_mouse_region) {
-                        // In auto mode, a left-drag gesture over input opens a short native-selection window.
-                        self.activate_mouse_passthrough();
+                        self.focus_area = FocusArea::Input;
                     }
                 }
                 MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
@@ -2506,9 +2892,17 @@ impl TuiApp {
         self.resume_picker = None;
         self.focus_area = FocusArea::Input;
 
-        let prompt = line.trim_end().to_string();
+        let mut prompt = line.trim_end().to_string();
         if prompt.trim().is_empty() {
             return Ok(());
+        }
+        if let Some(converted) = self.try_convert_inquiry_input(prompt.as_str()) {
+            if converted.trim().is_empty() {
+                return Ok(());
+            }
+            prompt = converted;
+        } else if self.active_inquiry_panel.is_some() && !prompt.trim_start().starts_with('/') {
+            self.active_inquiry_panel = None;
         }
 
         self.scroll_transcript_to_bottom();
@@ -2571,6 +2965,7 @@ impl TuiApp {
         }
 
         self.ctrl_c_hint_deadline = None;
+        self.active_inquiry_panel = None;
         self.push_log(LogKind::User, user_echo);
         self.busy = true;
         self.active_assistant = None;
@@ -3045,13 +3440,15 @@ impl TuiApp {
     }
 
     fn begin_turn_metrics(&mut self) {
-        self.turn_started_at = Some(Instant::now());
+        self.turn_llm_started_at = None;
+        self.turn_llm_active_secs = 0.0;
         self.turn_output_tokens = 0;
         self.turn_tool_calls = 0;
     }
 
     fn reset_turn_metrics_snapshot(&mut self) {
-        self.turn_started_at = None;
+        self.turn_llm_started_at = None;
+        self.turn_llm_active_secs = 0.0;
         self.turn_output_tokens = 0;
         self.turn_tool_calls = 0;
         self.last_turn_elapsed_secs = None;
@@ -3059,10 +3456,25 @@ impl TuiApp {
         self.last_turn_tool_calls = 0;
     }
 
+    fn start_llm_active_window(&mut self) {
+        if self.turn_llm_started_at.is_none() {
+            self.turn_llm_started_at = Some(Instant::now());
+        }
+    }
+
+    fn stop_llm_active_window(&mut self) {
+        if let Some(started) = self.turn_llm_started_at.take() {
+            self.turn_llm_active_secs += started.elapsed().as_secs_f64();
+        }
+    }
+
     fn finalize_turn_metrics(&mut self) {
-        let elapsed = self
-            .turn_started_at
-            .map(|started| started.elapsed().as_secs_f64());
+        self.stop_llm_active_window();
+        let elapsed = if self.turn_llm_active_secs > f64::EPSILON {
+            Some(self.turn_llm_active_secs)
+        } else {
+            None
+        };
         self.last_turn_elapsed_secs = elapsed;
         self.last_turn_tool_calls = self.turn_tool_calls;
         self.last_turn_speed_tps = elapsed.map(|seconds| {
@@ -3072,7 +3484,8 @@ impl TuiApp {
                 self.turn_output_tokens as f64 / seconds
             }
         });
-        self.turn_started_at = None;
+        self.turn_llm_started_at = None;
+        self.turn_llm_active_secs = 0.0;
         self.turn_output_tokens = 0;
         self.turn_tool_calls = 0;
     }
@@ -3232,6 +3645,8 @@ impl TuiApp {
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
                 self.tool_phase_notice_emitted = false;
+                self.stop_llm_active_window();
+                self.start_llm_active_window();
             }
             "context_usage" => {
                 if let Some(tokens) = payload.get("context_tokens").and_then(Value::as_i64) {
@@ -3275,6 +3690,7 @@ impl TuiApp {
                 }
             }
             "tool_call" => {
+                self.stop_llm_active_window();
                 self.session_stats.tool_calls = self.session_stats.tool_calls.saturating_add(1);
                 self.turn_tool_calls = self.turn_tool_calls.saturating_add(1);
                 if !self.tool_phase_notice_emitted {
@@ -3300,6 +3716,12 @@ impl TuiApp {
                     self.push_log(LogKind::Tool, line);
                 }
             }
+            "question_panel" => {
+                if let Some(panel) = self.parse_inquiry_panel_state(payload) {
+                    self.show_inquiry_panel_prompt(&panel);
+                    self.active_inquiry_panel = Some(panel);
+                }
+            }
             "error" => {
                 self.push_log(
                     LogKind::Error,
@@ -3307,6 +3729,7 @@ impl TuiApp {
                 );
             }
             "final" => {
+                self.stop_llm_active_window();
                 self.stream_saw_final = true;
                 self.turn_final_stop_reason = payload
                     .get("stop_reason")

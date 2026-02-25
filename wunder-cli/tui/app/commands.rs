@@ -192,9 +192,13 @@ impl TuiApp {
         });
 
         for line in serde_json::to_string_pretty(&payload)?.lines() {
-            self.push_log(LogKind::Info, line.to_string());
+            self.push_config_log(line.to_string());
         }
         Ok(())
+    }
+
+    fn push_config_log(&mut self, text: impl Into<String>) {
+        self.push_log(LogKind::Tool, text.into());
     }
 
     async fn apply_config_from_slash(&mut self, command: ParsedSlashCommand<'_>) -> Result<()> {
@@ -209,8 +213,11 @@ impl TuiApp {
         if values.len() < 3 || values.len() > 4 {
             self.push_log(
                 LogKind::Error,
-                "invalid /config args, expected: /config <base_url> <api_key> <model> [max_context]"
-                    .to_string(),
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "/config 参数不正确，应为：/config <base_url> <api_key> <model> [max_context]",
+                    "invalid /config args, expected: /config <base_url> <api_key> <model> [max_context]",
+                ),
             );
             return Ok(());
         }
@@ -219,7 +226,14 @@ impl TuiApp {
         let api_key = values[1].trim().to_string();
         let model_name = values[2].trim().to_string();
         if base_url.is_empty() || api_key.is_empty() || model_name.is_empty() {
-            self.push_log(LogKind::Error, "config values cannot be empty".to_string());
+            self.push_log(
+                LogKind::Error,
+                crate::locale::tr(
+                    self.display_language.as_str(),
+                    "配置项不能为空",
+                    "config values cannot be empty",
+                ),
+            );
             return Ok(());
         }
 
@@ -241,18 +255,27 @@ impl TuiApp {
 
     fn start_config_wizard(&mut self) {
         self.config_wizard = Some(ConfigWizardState::default());
-        self.push_log(LogKind::Info, "configure llm model (step 1/4)".to_string());
-        self.push_log(
-            LogKind::Info,
-            "input base_url (empty line to cancel)".to_string(),
-        );
+        self.push_config_log(crate::locale::tr(
+            self.display_language.as_str(),
+            "配置模型（第 1/4 步）",
+            "configure llm model (step 1/4)",
+        ));
+        self.push_config_log(crate::locale::tr(
+            self.display_language.as_str(),
+            "请输入 base_url（留空可取消）",
+            "input base_url (empty line to cancel)",
+        ));
     }
 
     pub(super) async fn handle_config_wizard_input(&mut self, input: &str) -> Result<()> {
         let cleaned = input.trim();
         if cleaned.eq_ignore_ascii_case("/cancel") || cleaned.eq_ignore_ascii_case("/exit") {
             self.config_wizard = None;
-            self.push_log(LogKind::Info, "config cancelled".to_string());
+            self.push_config_log(crate::locale::tr(
+                self.display_language.as_str(),
+                "已取消配置",
+                "config cancelled",
+            ));
             return Ok(());
         }
 
@@ -262,37 +285,58 @@ impl TuiApp {
 
         if wizard.base_url.is_none() {
             if cleaned.is_empty() {
-                self.push_log(LogKind::Info, "config cancelled".to_string());
+                self.push_config_log(crate::locale::tr(
+                    self.display_language.as_str(),
+                    "已取消配置",
+                    "config cancelled",
+                ));
                 return Ok(());
             }
             wizard.base_url = Some(cleaned.to_string());
             self.config_wizard = Some(wizard);
-            self.push_log(LogKind::Info, "input api_key (step 2/4)".to_string());
+            self.push_config_log(crate::locale::tr(
+                self.display_language.as_str(),
+                "请输入 api_key（第 2/4 步）",
+                "input api_key (step 2/4)",
+            ));
             return Ok(());
         }
 
         if wizard.api_key.is_none() {
             if cleaned.is_empty() {
-                self.push_log(LogKind::Info, "config cancelled".to_string());
+                self.push_config_log(crate::locale::tr(
+                    self.display_language.as_str(),
+                    "已取消配置",
+                    "config cancelled",
+                ));
                 return Ok(());
             }
             wizard.api_key = Some(cleaned.to_string());
             self.config_wizard = Some(wizard);
-            self.push_log(LogKind::Info, "input model name (step 3/4)".to_string());
+            self.push_config_log(crate::locale::tr(
+                self.display_language.as_str(),
+                "请输入模型名（第 3/4 步）",
+                "input model name (step 3/4)",
+            ));
             return Ok(());
         }
 
         if wizard.model_name.is_none() {
             if cleaned.is_empty() {
-                self.push_log(LogKind::Info, "config cancelled".to_string());
+                self.push_config_log(crate::locale::tr(
+                    self.display_language.as_str(),
+                    "已取消配置",
+                    "config cancelled",
+                ));
                 return Ok(());
             }
             wizard.model_name = Some(cleaned.to_string());
             self.config_wizard = Some(wizard);
-            self.push_log(
-                LogKind::Info,
-                "input max_context (step 4/4, optional; Enter for auto probe)".to_string(),
-            );
+            self.push_config_log(crate::locale::tr(
+                self.display_language.as_str(),
+                "请输入 max_context（第 4/4 步，可选；直接回车自动探测）",
+                "input max_context (step 4/4, optional; Enter for auto probe)",
+            ));
             return Ok(());
         }
 
@@ -301,10 +345,11 @@ impl TuiApp {
             Err(err) => {
                 self.push_log(LogKind::Error, err.to_string());
                 self.config_wizard = Some(wizard);
-                self.push_log(
-                    LogKind::Info,
-                    "input max_context (step 4/4, optional; Enter for auto probe)".to_string(),
-                );
+                self.push_config_log(crate::locale::tr(
+                    self.display_language.as_str(),
+                    "请输入 max_context（第 4/4 步，可选；直接回车自动探测）",
+                    "input max_context (step 4/4, optional; Enter for auto probe)",
+                ));
                 return Ok(());
             }
         };
@@ -336,19 +381,38 @@ impl TuiApp {
 
         self.sync_model_status().await;
         self.reload_session_stats().await;
-        self.push_log(LogKind::Info, "model configured".to_string());
-        self.push_log(LogKind::Info, format!("- provider: {provider}"));
-        self.push_log(LogKind::Info, format!("- base_url: {base_url}"));
-        self.push_log(LogKind::Info, format!("- model: {model_name}"));
-        if let Some(value) = resolved_max_context {
-            self.push_log(LogKind::Info, format!("- max_context: {value}"));
+        self.push_config_log(crate::locale::tr(
+            self.display_language.as_str(),
+            "模型配置完成",
+            "model configured",
+        ));
+        if self.is_zh_language() {
+            self.push_config_log(format!("- 服务商: {provider}"));
+            self.push_config_log(format!("- base_url: {base_url}"));
+            self.push_config_log(format!("- 模型: {model_name}"));
         } else {
-            self.push_log(
-                LogKind::Info,
-                "- max_context: auto probe unavailable (or keep existing)".to_string(),
-            );
+            self.push_config_log(format!("- provider: {provider}"));
+            self.push_config_log(format!("- base_url: {base_url}"));
+            self.push_config_log(format!("- model: {model_name}"));
         }
-        self.push_log(LogKind::Info, "- tool_call_mode: tool_call".to_string());
+        if let Some(value) = resolved_max_context {
+            if self.is_zh_language() {
+                self.push_config_log(format!("- 最大上下文: {value}"));
+            } else {
+                self.push_config_log(format!("- max_context: {value}"));
+            }
+        } else {
+            self.push_config_log(crate::locale::tr(
+                self.display_language.as_str(),
+                "- 最大上下文: 自动探测不可用（或保持原配置）",
+                "- max_context: auto probe unavailable (or keep existing)",
+            ));
+        }
+        if self.is_zh_language() {
+            self.push_config_log("- 工具调用模式: tool_call".to_string());
+        } else {
+            self.push_config_log("- tool_call_mode: tool_call".to_string());
+        }
         Ok(())
     }
 

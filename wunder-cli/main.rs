@@ -6665,14 +6665,19 @@ async fn handle_stdio_approvals(mut rx: ApprovalRequestRx, language: String) {
                 eprintln!("- args: {}", truncate_for_stderr(args, 600, is_zh));
             }
         }
-        eprintln!(
-            "{}",
-            locale::tr(
-                language.as_str(),
-                "是否批准？[y]=本次  [a]=本会话  [n]=拒绝",
-                "approve? [y]=once  [a]=session  [n]=deny",
-            )
-        );
+        if is_zh {
+            eprintln!("审批选项:");
+            eprintln!("  1) 仅本次批准");
+            eprintln!("  2) 本会话批准");
+            eprintln!("  3) 拒绝");
+            eprintln!("请输入 1/2/3（也可用 y/a/n）:");
+        } else {
+            eprintln!("Approval options:");
+            eprintln!("  1) approve once");
+            eprintln!("  2) approve for session");
+            eprintln!("  3) deny");
+            eprintln!("choose 1/2/3 (or y/a/n):");
+        }
 
         let choice = tokio::task::spawn_blocking(|| {
             let mut buffer = String::new();
@@ -6686,6 +6691,7 @@ async fn handle_stdio_approvals(mut rx: ApprovalRequestRx, language: String) {
         let response = match choice.trim().to_ascii_lowercase().as_str() {
             "y" | "yes" | "1" => ApprovalResponse::ApproveOnce,
             "a" | "always" | "2" => ApprovalResponse::ApproveSession,
+            "n" | "no" | "3" => ApprovalResponse::Deny,
             _ => ApprovalResponse::Deny,
         };
         let _ = request.respond_to.send(response);
