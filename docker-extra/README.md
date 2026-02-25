@@ -36,6 +36,12 @@ cargo build --release --bin wunder-server --bin wunder-cli
 cargo build --release --features desktop --bin wunder-desktop
 # build Linux AppImage (requires frontend/dist to exist)
 cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --bundles appimage
+
+# build Electron AppImage (requires frontend/dist + bridge binary)
+cargo build --release --bin wunder-desktop-bridge
+cd wunder-desktop-electron
+npm install
+npm run build:linux:x64
 ```
 
 ### arm（arm64）
@@ -47,6 +53,12 @@ cargo build --release --bin wunder-server --bin wunder-cli
 cargo build --release --features desktop --bin wunder-desktop
 # build Linux AppImage (requires frontend/dist to exist)
 cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --bundles appimage
+
+# build Electron AppImage (requires frontend/dist + bridge binary)
+cargo build --release --bin wunder-desktop-bridge
+cd wunder-desktop-electron
+npm install
+npm run build:linux:arm64
 ```
 
 > NOTE: Linux containers can only produce Linux bundles (AppImage, etc.); Windows MSI must be built on Windows.
@@ -61,6 +73,8 @@ cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --b
 - `wunder-server`
 - `wunder-cli`
 - `wunder-desktop`
+- `wunder-desktop-bridge`
+- Electron AppImage: `wunder-desktop-electron/dist/*.AppImage`
 
 ## 5. 缓存与目录复用说明
 

@@ -1,0 +1,20 @@
+{
+  "name": "wunder-desktop-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Wunder Desktop Electron shell",
+  "main": "src/main.js",
+  "author": "wunder",
+  "scripts": {
+    "prepare:resources": "node scripts/prepare-resources.js",
+    "pack": "npm run prepare:resources && electron-builder --dir",
+    "build:linux": "npm run prepare:resources && electron-builder --linux --x64 --arm64",
+    "build:linux:x64": "npm run prepare:resources && electron-builder --linux --x64",
+    "build:linux:arm64": "npm run prepare:resources && electron-builder --linux --arm64",
+    "build": "npm run prepare:resources && electron-builder"
+  },
+  "devDependencies": {
+    "electron": "38.7.0",
+    "electron-builder": "26.1.0"
+  }
+}

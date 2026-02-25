@@ -22,7 +22,7 @@ wunder 可自托管为 MCP 工具（`/wunder/mcp`），便于跨系统调用。
 | --- | --- | --- | --- |
 | `wunder-server` | 团队协作、多租户、统一网关接入 | `/wunder` 统一 API、用户与单位管理、应用发布、渠道接入、监控与评估 | `workspaces/<user_id>` + PostgreSQL（默认） |
 | `wunder-cli` | 本地开发、自动化脚本、轻量对话 | 交互式 TUI、`ask/chat/resume`、`exec/tool/mcp/skills/config/doctor`、JSONL 事件输出、`tool_call/function_call` 切换 | 启动目录下 `WUNDER_TEMP/`（SQLite + 配置 + 会话） |
-| `wunder-desktop` | 本地普通用户、可视化操作 | Tauri 桌面窗口 + 本地桥接服务、复用用户侧 UI、MCP/Skills/工具管理、WebSocket 优先 + SSE 兜底 | 程序同级 `WUNDER_TEMPD/` + 默认工作目录 `WUNDER_WORK/` |
+| `wunder-desktop` | 本地普通用户、可视化操作 | Tauri 桌面窗口（可选 Electron/AppImage）+ 本地桥接服务、复用用户侧 UI、MCP/Skills/工具管理、WebSocket 优先 + SSE 兜底 | 默认程序同级 `WUNDER_TEMPD/` + `WUNDER_WORK/`（Electron 版使用 userData 路径） |
 
 ## 平台能力矩阵
 ### 用户侧（frontend）
@@ -61,7 +61,7 @@ wunder 可自托管为 MCP 工具（`/wunder/mcp`），便于跨系统调用。
 
 ### 本地形态说明（CLI / Desktop）
 - `wunder-cli`：本地命令行形态，默认将状态写入启动目录下 `WUNDER_TEMP/`。
-- `wunder-desktop`：本地图形界面形态，默认将状态写入程序同级 `WUNDER_TEMPD/`，工作目录为 `WUNDER_WORK/`。
+- `wunder-desktop`：本地图形界面形态，默认将状态写入程序同级 `WUNDER_TEMPD/`，工作目录为 `WUNDER_WORK/`；Electron 版改为 userData 路径（通过 `--temp-root/--workspace` 注入）。
 - 本地形态启动示例统一放在“快速开始”章节，避免与 server 部署流程混淆。
 
 ### 会话控制命令
@@ -130,6 +130,9 @@ cargo run --features desktop --bin wunder-desktop -- --port 0
 
 # 仅桥接模式（不拉起桌面窗口）
 cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
+
+# 仅桥接二进制（无需 Tauri，用于 Electron 壳）
+cargo run --bin wunder-desktop-bridge -- --open
 ```
 
 ## 持久化与目录约定
@@ -143,7 +146,7 @@ cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
 - 构建与依赖缓存（`target/`、`.cargo/`、`frontend/node_modules/`）保持写入仓库目录（bind mount），便于本地清理与管理。
 - 注意：`docker compose down -v` 会删除 `wunder_workspaces` 与 `wunder_logs`；不会删除仓库本地 `data/`。
 - CLI 持久化：`WUNDER_TEMP/`（默认包含 SQLite、配置覆盖、会话状态、用户工具数据）。
-- Desktop 持久化：`WUNDER_TEMPD/`；默认工作目录 `WUNDER_WORK/`。
+- Desktop 持久化：`WUNDER_TEMPD/`；默认工作目录 `WUNDER_WORK/`（Electron 版使用 userData 路径）。
 - 对话历史、工具日志、监控事件等写入数据库（server 默认 PostgreSQL，本地形态默认 SQLite）。
 - 管理端覆写配置路径：`data/config/wunder.override.yaml`（运行态覆盖文件，可重建）。
 
@@ -164,6 +167,7 @@ src/                 # Rust 核心服务（API/调度/工具/存储）
   core/              # 配置/鉴权/i18n/状态
 wunder-cli/          # CLI 运行形态（TUI + 命令）
 wunder-desktop/      # Desktop 运行形态（Tauri + 本地桥接）
+wunder-desktop-electron/ # Electron 桌面壳（可选，AppImage 友好）
 frontend/            # 用户侧前端（Vue3）
 web/                 # 管理员侧前端（调试/治理）
 config/              # 基础配置

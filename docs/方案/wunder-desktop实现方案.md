@@ -2,11 +2,11 @@
 
 ## 0. 目标与约束（对齐本次需求）
 
-- 新增 `wunder-desktop`，面向本地普通用户，保留 `server/cli` 现有形态不受影响。
+- 新增 `wunder-desktop`（Tauri GUI）与 `wunder-desktop-bridge`（无窗口桥接），Electron/AppImage 通过 bridge 壳运行；面向本地普通用户，保留 `server/cli` 现有形态不受影响。
 - 核心能力复用 `src/`：提示词体系、智能体编排链路、工具系统、MCP/Skills、网关能力均沿用。
-- 产物形态：仅交付一个可运行桌面端（`wunder-desktop`）。
-- 持久化目录固定在程序同级：`./WUNDER_TEMPD`（SQLite + 配置 + 会话状态 + 用户工具配置）。
-- 智能体工作目录可由用户选择；默认 `程序所在目录/WUNDER_WORK`。
+- 产物形态：Tauri 桌面窗口 + 可选 Electron AppImage（均复用本地 bridge）。
+- 持久化目录默认程序同级：`./WUNDER_TEMPD`（SQLite + 配置 + 会话状态 + 用户工具配置）；Electron 版本通过 `--temp-root` 指向 `userData/WUNDER_TEMPD`。
+- 智能体工作目录可由用户选择；默认 `程序所在目录/WUNDER_WORK`，Electron 版本通过 `--workspace` 指向 `userData/WUNDER_WORK`。
 - 支持 MCP/Skills 配置与直接工具执行（包括执行命令和内置工具）。
 - 工具调用协议支持 `function_call` 与 `tool_call` 双模式切换。
 - 通讯策略遵循“WebSocket 优先，SSE 兜底”。
@@ -97,9 +97,9 @@
 
 ## 4. 目录与持久化设计
 
-## 4.1 运行目录（固定规则）
+## 4.1 运行目录（默认规则）
 
-以 `wunder-desktop.exe` 所在目录为 `APP_DIR`：
+Tauri 版本以 `wunder-desktop(.exe)` 所在目录为 `APP_DIR`；Electron/AppImage 版本通过 `--temp-root`/`--workspace` 将运行目录落到 `userData`（避免只读目录问题）：
 
 ```text
 APP_DIR/
@@ -125,7 +125,7 @@ APP_DIR/
 
 - 业务持久化不写入 `data/`。
 - SQLite 固定在 `WUNDER_TEMPD/wunder_desktop.sqlite3`。
-- 工作目录默认 `WUNDER_WORK`，支持用户改为任意可访问目录。
+- 工作目录默认 `WUNDER_WORK`，支持用户改为任意可访问目录；Electron 版本通过 `--workspace` 指向 `userData/WUNDER_WORK`。
 
 ## 4.2 环境变量覆盖（desktop 启动时注入）
 
@@ -339,6 +339,7 @@ desktop 默认配置建议：
 ### 13.1 已完成（与本轮目标直接对应）
 
 - `wunder-desktop` 默认启动形态已切到 **Tauri GUI**：双击程序直接打开桌面窗口；保留 `--bridge-only` 作为诊断模式。
+- 新增 `wunder-desktop-bridge`（无窗口桥接）并配套 Electron 桌面壳方案，方便在旧版 Linux 发行版使用 AppImage。
 - release 版本启用 `windows_subsystem = "windows"`，Windows 双击不再弹出终端窗口。
 - 运行后自动创建 `WUNDER_TEMPD` 与默认 `WUNDER_WORK`，并落盘：
   - `WUNDER_TEMPD/wunder_desktop.sqlite3`

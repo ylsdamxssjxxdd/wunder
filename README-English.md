@@ -22,7 +22,7 @@ wunder can expose itself as a self-hosted MCP tool (`/wunder/mcp`) for cross-sys
 | --- | --- | --- | --- |
 | `wunder-server` | Team collaboration, multi-tenant deployment, unified gateway access | Unified `/wunder` API, user/org governance, app publishing, channel access, monitoring & evaluation | `workspaces/<user_id>` + PostgreSQL (default) |
 | `wunder-cli` | Local development, scripting, lightweight chat | Interactive TUI, `ask/chat/resume`, `exec/tool/mcp/skills/config/doctor`, JSONL event output, `tool_call/function_call` switching | `WUNDER_TEMP/` under launch dir (SQLite + config + sessions) |
-| `wunder-desktop` | Local end users, visual operations | Tauri desktop window + local bridge service, reused user UI, MCP/Skills/tool management, WebSocket-first with SSE fallback | `WUNDER_TEMPD/` beside app + default workspace `WUNDER_WORK/` |
+| `wunder-desktop` | Local end users, visual operations | Tauri desktop window (optional Electron/AppImage) + local bridge service, reused user UI, MCP/Skills/tool management, WebSocket-first with SSE fallback | `WUNDER_TEMPD/` beside app + default workspace `WUNDER_WORK/` (Electron uses userData path) |
 
 ## Capability Matrix
 ### User Side (`frontend`)
@@ -61,7 +61,7 @@ wunder can expose itself as a self-hosted MCP tool (`/wunder/mcp`) for cross-sys
 
 ### Local forms at a glance (CLI / Desktop)
 - `wunder-cli`: local terminal form; state is persisted in `WUNDER_TEMP/` under the launch directory.
-- `wunder-desktop`: local GUI form; state is persisted in `WUNDER_TEMPD/` beside the app, with default workspace `WUNDER_WORK/`.
+- `wunder-desktop`: local GUI form; state is persisted in `WUNDER_TEMPD/` beside the app, with default workspace `WUNDER_WORK/` (Electron uses userData via `--temp-root/--workspace`).
 - Startup examples for local forms are grouped in “Quick Start” to keep them clearly separated from server deployment.
 
 ### Session Control Commands
@@ -130,6 +130,9 @@ cargo run --features desktop --bin wunder-desktop -- --port 0
 
 # Bridge-only mode (no desktop window)
 cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
+
+# Bridge-only binary (no Tauri, for Electron shell)
+cargo run --bin wunder-desktop-bridge -- --open
 ```
 
 ## Persistence & Directory Conventions
@@ -143,7 +146,7 @@ cargo run --features desktop --bin wunder-desktop -- --bridge-only --open
 - Build/dependency caches (`target/`, `.cargo/`, `frontend/node_modules/`) stay on the repo bind mount for easier local cleanup/management.
 - Note: `docker compose down -v` deletes `wunder_workspaces` and `wunder_logs` volumes; it won't delete the local `data/` directory in the repo.
 - CLI persistence: `WUNDER_TEMP/` (SQLite, config overrides, sessions, user tool data).
-- Desktop persistence: `WUNDER_TEMPD/`; default workspace `WUNDER_WORK/`.
+- Desktop persistence: `WUNDER_TEMPD/`; default workspace `WUNDER_WORK/` (Electron uses userData path).
 - Chat history, tool logs, and monitor events are persisted to DB (PostgreSQL by default for server, SQLite by default for local forms).
 - Admin override path: `data/config/wunder.override.yaml` (runtime override file, safe to regenerate).
 
@@ -164,6 +167,7 @@ src/                 # Rust core services (API/orchestration/tools/storage)
   core/              # config/auth/i18n/state
 wunder-cli/          # CLI runtime form (TUI + commands)
 wunder-desktop/      # Desktop runtime form (Tauri + local bridge)
+wunder-desktop-electron/ # Electron shell (optional, AppImage friendly)
 frontend/            # user frontend (Vue3)
 web/                 # admin frontend (debug/governance)
 config/              # base configuration

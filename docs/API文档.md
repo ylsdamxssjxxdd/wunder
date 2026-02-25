@@ -2759,6 +2759,7 @@
 
 ### 启动期目录与持久化
 
+- 默认落在 `WUNDER_TEMPD/`（程序同级）；Electron/AppImage 通过 `--temp-root` 指向 `userData/WUNDER_TEMPD`。
 - `WUNDER_TEMPD/wunder_desktop.sqlite3`
 - `WUNDER_TEMPD/config/wunder.override.yaml`
 - `WUNDER_TEMPD/config/desktop.settings.json`

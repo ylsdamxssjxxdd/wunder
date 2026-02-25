@@ -1,0 +1,18 @@
+appId: com.wunder.desktop
+productName: Wunder Desktop
+directories:
+  buildResources: build
+files:
+  - "src/**"
+  - "package.json"
+  - "!**/*.map"
+extraResources:
+  - from: resources
+    to: .
+asarUnpack:
+  - "**/wunder-desktop-bridge*"
+linux:
+  target:
+    - target: AppImage
+  category: Utility
+  executableName: wunder-desktop

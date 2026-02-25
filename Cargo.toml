@@ -18,6 +18,10 @@ name = "wunder-desktop"
 path = "wunder-desktop/main.rs"
 required-features = ["desktop"]
 
+[[bin]]
+name = "wunder-desktop-bridge"
+path = "wunder-desktop/bridge_main.rs"
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
