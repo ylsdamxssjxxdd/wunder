@@ -282,6 +282,44 @@ export const useUserWorldStore = defineStore('user-world', {
       return conversation;
     },
 
+    async dismissConversation(conversationId: string) {
+      const cleaned = String(conversationId || '').trim();
+      if (!cleaned) return;
+
+      const wasActive = this.activeConversationId === cleaned;
+      this.stopConversationWatch(cleaned);
+
+      this.conversations = this.conversations.filter((item) => item.conversation_id !== cleaned);
+      this.groups = this.groups.filter((item) => item.conversation_id !== cleaned);
+      this.contacts = this.contacts.map((item) => {
+        if (item.conversation_id !== cleaned) {
+          return item;
+        }
+        return {
+          ...item,
+          conversation_id: null,
+          unread_count: 0
+        };
+      });
+
+      if (cleaned in this.messagesByConversation) {
+        delete this.messagesByConversation[cleaned];
+      }
+      if (cleaned in this.unreadByConversation) {
+        delete this.unreadByConversation[cleaned];
+      }
+
+      if (wasActive) {
+        this.activeConversationId = '';
+        const nextId = String(this.conversations[0]?.conversation_id || '').trim();
+        if (nextId) {
+          await this.setActiveConversation(nextId);
+        }
+      }
+
+      await this.syncConversationWatchers();
+    },
+
     async setActiveConversation(conversationId: string) {
       const cleaned = String(conversationId || '').trim();
       if (!cleaned) return;

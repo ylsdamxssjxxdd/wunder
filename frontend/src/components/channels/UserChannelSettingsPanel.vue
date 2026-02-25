@@ -15,74 +15,81 @@
 
       <div v-if="creating" class="channel-create-card">
         <div class="channel-create-title">{{ t('channels.create.title') }}</div>
-        <label class="channel-form-field">
-          <span>{{ t('channels.create.channel') }}</span>
-          <select v-model="createForm.channel" class="channel-input" @change="onCreateChannelChange">
-            <option v-for="option in supportedChannelOptions" :key="option.channel" :value="option.channel">
-              {{ option.label }}
-            </option>
-          </select>
-        </label>
-        <label class="channel-form-field">
-          <span>{{ t('channels.create.name') }}</span>
-          <input
-            v-model.trim="createForm.account_name"
-            class="channel-input"
-            type="text"
-            :placeholder="t('channels.create.namePlaceholder')"
-          />
-        </label>
-        <label class="channel-form-field channel-form-checkbox">
-          <input v-model="createForm.enabled" type="checkbox" />
-          <span>{{ t('channels.field.enabled') }}</span>
-        </label>
-
-        <template v-if="isFeishuCreate">
+        <div class="channel-create-body">
           <label class="channel-form-field">
-            <span>{{ t('channels.config.appId') }}</span>
-            <input
-              v-model.trim="createForm.app_id"
-              class="channel-input"
-              type="text"
-              :placeholder="t('channels.config.appIdPlaceholder')"
-              autocomplete="off"
-            />
-          </label>
-          <label class="channel-form-field">
-            <span>{{ t('channels.config.appSecret') }}</span>
-            <input
-              v-model.trim="createForm.app_secret"
-              class="channel-input"
-              type="password"
-              :placeholder="t('channels.config.appSecretPlaceholder')"
-              autocomplete="new-password"
-            />
-          </label>
-          <label class="channel-form-field channel-form-checkbox">
-            <input v-model="createForm.receive_group_chat" type="checkbox" />
-            <span>{{ t('channels.config.receiveGroup') }}</span>
-          </label>
-        </template>
-
-        <template v-else>
-          <label class="channel-form-field">
-            <span>{{ t('channels.field.peerKind') }}</span>
-            <select v-model="createForm.peer_kind" class="channel-input">
-              <option v-if="!isCreateUserOnlyChannel" value="group">{{ t('channels.peerKind.group') }}</option>
-              <option value="user">{{ t('channels.peerKind.user') }}</option>
+            <span>{{ t('channels.create.channel') }}</span>
+            <select v-model="createForm.channel" class="channel-input" @change="onCreateChannelChange">
+              <option v-for="option in supportedChannelOptions" :key="option.channel" :value="option.channel">
+                {{ option.label }}
+              </option>
             </select>
           </label>
-          <label class="channel-form-field channel-form-field-full">
-            <span>{{ t('channels.config.json') }}</span>
-            <textarea
-              v-model="createForm.config_text"
-              class="channel-textarea"
-              :placeholder="t('channels.config.jsonPlaceholder')"
-              rows="5"
+          <label class="channel-form-field">
+            <span>{{ t('channels.create.name') }}</span>
+            <input
+              v-model.trim="createForm.account_name"
+              class="channel-input"
+              type="text"
+              :placeholder="t('channels.create.namePlaceholder')"
             />
           </label>
-          <div class="channel-detail-hint">{{ t('channels.config.jsonHint') }}</div>
-        </template>
+          <div class="channel-create-checks">
+            <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
+              <input v-model="createForm.enabled" type="checkbox" />
+              <span>{{ t('channels.field.enabled') }}</span>
+            </label>
+            <label
+              v-if="isFeishuCreate"
+              class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
+            >
+              <input v-model="createForm.receive_group_chat" type="checkbox" />
+              <span>{{ t('channels.config.receiveGroup') }}</span>
+            </label>
+          </div>
+
+          <template v-if="isFeishuCreate">
+            <label class="channel-form-field">
+              <span>{{ t('channels.config.appId') }}</span>
+              <input
+                v-model.trim="createForm.app_id"
+                class="channel-input"
+                type="text"
+                :placeholder="t('channels.config.appIdPlaceholder')"
+                autocomplete="off"
+              />
+            </label>
+            <label class="channel-form-field">
+              <span>{{ t('channels.config.appSecret') }}</span>
+              <input
+                v-model.trim="createForm.app_secret"
+                class="channel-input"
+                type="password"
+                :placeholder="t('channels.config.appSecretPlaceholder')"
+                autocomplete="new-password"
+              />
+            </label>
+          </template>
+
+          <template v-else>
+            <label class="channel-form-field">
+              <span>{{ t('channels.field.peerKind') }}</span>
+              <select v-model="createForm.peer_kind" class="channel-input">
+                <option v-if="!isCreateUserOnlyChannel" value="group">{{ t('channels.peerKind.group') }}</option>
+                <option value="user">{{ t('channels.peerKind.user') }}</option>
+              </select>
+            </label>
+            <label class="channel-form-field channel-form-field-full">
+              <span>{{ t('channels.config.json') }}</span>
+              <textarea
+                v-model="createForm.config_text"
+                class="channel-textarea"
+                :placeholder="t('channels.config.jsonPlaceholder')"
+                rows="5"
+              />
+            </label>
+            <div class="channel-detail-hint">{{ t('channels.config.jsonHint') }}</div>
+          </template>
+        </div>
 
         <div class="channel-create-actions">
           <button class="channel-action-btn" type="button" :disabled="createSaving" @click="createAccount">

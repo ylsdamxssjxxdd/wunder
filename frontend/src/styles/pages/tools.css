@@ -702,6 +702,29 @@
   box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.08), 0 8px 20px rgba(3, 7, 18, 0.35);
 }
 
+.channel-create-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(2, 6, 23, 0.26);
+}
+
+.channel-create-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.channel-create-body .channel-form-field:not(.channel-form-checkbox) {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(15, 23, 42, 0.22);
+}
+
 .channel-create-title {
   font-size: 12px;
   font-weight: 700;
@@ -924,6 +947,32 @@
   gap: 6px;
 }
 
+.channel-form-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+}
+
+.channel-form-checkbox input[type='checkbox'] {
+  margin: 0;
+  width: 15px;
+  height: 15px;
+  accent-color: #38bdf8;
+}
+
+.channel-form-checkbox > span {
+  color: var(--portal-text);
+  line-height: 1.3;
+}
+
+.channel-form-checkbox--inline {
+  border: 1px solid rgba(77, 216, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.12);
+  padding: 6px 10px;
+}
+
 .channel-form-field-full {
   grid-column: 1 / -1;
 }
@@ -946,6 +995,17 @@
   color: var(--portal-text);
   font-size: 13px;
   outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+select.channel-input {
+  color-scheme: dark;
+  cursor: pointer;
+}
+
+select.channel-input option {
+  background: #0f172a;
+  color: #e2e8f0;
 }
 
 .channel-input::placeholder {
@@ -964,10 +1024,18 @@
   outline: none;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
     "Courier New", monospace;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
 }
 
 .channel-textarea::placeholder {
   color: var(--portal-muted);
+}
+
+.channel-input:focus,
+.channel-textarea:focus {
+  border-color: rgba(77, 216, 255, 0.68);
+  box-shadow: 0 0 0 3px rgba(77, 216, 255, 0.16);
+  background: rgba(15, 23, 42, 0.46);
 }
 
 .channel-form-actions {
@@ -1060,11 +1128,46 @@
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
 }
 
+:root[data-user-theme='light'] .channel-create-body {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(148, 163, 184, 0.34);
+}
+
+:root[data-user-theme='light'] .channel-create-body .channel-form-field:not(.channel-form-checkbox) {
+  background: #ffffff;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
 :root[data-user-theme='light'] .channel-input,
 :root[data-user-theme='light'] .channel-textarea {
   background: #ffffff;
   border-color: rgba(148, 163, 184, 0.35);
   color: var(--portal-text);
+}
+
+:root[data-user-theme='light'] .channel-input:focus,
+:root[data-user-theme='light'] .channel-textarea:focus {
+  background: #ffffff;
+  border-color: rgba(59, 130, 246, 0.52);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+}
+
+:root[data-user-theme='light'] .channel-form-checkbox--inline {
+  border-color: rgba(59, 130, 246, 0.38);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+:root[data-user-theme='light'] .channel-form-checkbox input[type='checkbox'] {
+  accent-color: #2563eb;
+}
+
+:root[data-user-theme='light'] select.channel-input {
+  color-scheme: light;
+}
+
+:root[data-user-theme='light'] select.channel-input option {
+  background: #ffffff;
+  color: #0f172a;
 }
 
 :root[data-user-theme='light'] .channel-binding-item {

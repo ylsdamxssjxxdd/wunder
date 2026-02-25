@@ -127,10 +127,23 @@ watch(
   background: rgba(15, 23, 42, 0.45);
   color: inherit;
   cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
 }
 
 .feature-window-close:hover {
   border-color: rgba(56, 189, 248, 0.7);
+}
+
+:global(:root[data-user-theme='light'] .feature-window-dialog--channel) .feature-window-close {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: rgba(59, 130, 246, 0.1);
+  color: #1d4ed8;
+}
+
+:global(:root[data-user-theme='light'] .feature-window-dialog--channel) .feature-window-close:hover {
+  border-color: rgba(37, 99, 235, 0.55);
+  background: rgba(59, 130, 246, 0.16);
+  color: #1e40af;
 }
 
 .feature-window-body {

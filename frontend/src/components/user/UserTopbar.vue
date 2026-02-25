@@ -133,7 +133,7 @@ const navItems = computed(() => {
       key: 'nav.userWorld',
       label: t('nav.userWorld'),
       path: `${basePath.value}/user-world`,
-      icon: 'fa-user-group'
+      icon: 'fa-globe'
     },
     { key: 'nav.tools', label: t('nav.tools'), path: `${basePath.value}/tools`, icon: 'fa-toolbox' }
   ];

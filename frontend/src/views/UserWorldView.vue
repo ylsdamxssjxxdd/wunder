@@ -3,11 +3,6 @@
     <UserTopbar :title="t('userWorld.title')" :subtitle="t('userWorld.subtitle')" :hide-chat="true" />
     <main class="user-world-main">
       <aside class="user-world-sidebar">
-        <div class="user-world-search">
-          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-          <input v-model.trim="keyword" type="text" :placeholder="searchPlaceholder" />
-        </div>
-
         <div class="user-world-tabbar" role="tablist" :aria-label="t('userWorld.tab.ariaLabel')">
           <button
             v-for="tab in sidebarTabs"
@@ -16,10 +11,12 @@
             :class="{ active: activeTab === tab.value }"
             type="button"
             role="tab"
+            :title="tab.label"
+            :aria-label="tab.label"
             :aria-selected="activeTab === tab.value"
             @click="activeTab = tab.value"
           >
-            {{ tab.label }}
+            <i :class="tab.icon" aria-hidden="true"></i>
           </button>
         </div>
 
@@ -33,28 +30,43 @@
         <div class="user-world-contact-list">
           <template v-if="activeTab === 'chat'">
             <template v-if="chatRows.length">
-              <button
+              <div
                 v-for="row in chatRows"
                 :key="row.conversation_id"
-                class="user-world-contact-item"
-                :class="{ active: activeConversationId === row.conversation_id }"
-                type="button"
-                @click="handleOpenConversation(row.conversation_id)"
+                class="user-world-contact-entry"
               >
-                <div class="user-world-contact-avatar">{{ resolveAvatarLabel(row.title) }}</div>
-                <div class="user-world-contact-main">
-                  <div class="user-world-contact-row">
-                    <span class="user-world-contact-name" :title="row.title">{{ row.title }}</span>
-                    <span class="user-world-contact-time">{{ formatTime(row.last_message_at) }}</span>
+                <button
+                  class="user-world-contact-item"
+                  :class="{ active: activeConversationId === row.conversation_id }"
+                  type="button"
+                  @click="handleOpenConversation(row.conversation_id)"
+                >
+                  <div class="user-world-contact-avatar" :class="{ group: row.is_group }">
+                    {{ resolveAvatarLabel(row.title) }}
                   </div>
-                  <div class="user-world-contact-row">
-                    <span class="user-world-contact-preview">
-                      {{ row.preview || t('userWorld.contact.emptyPreview') }}
-                    </span>
-                    <span v-if="row.unread > 0" class="user-world-contact-unread">{{ row.unread }}</span>
+                  <div class="user-world-contact-main">
+                    <div class="user-world-contact-row">
+                      <span class="user-world-contact-name" :title="row.title">{{ row.title }}</span>
+                      <span class="user-world-contact-time">{{ formatTime(row.last_message_at) }}</span>
+                    </div>
+                    <div class="user-world-contact-row">
+                      <span class="user-world-contact-preview">
+                        {{ row.preview || t('userWorld.contact.emptyPreview') }}
+                      </span>
+                      <span v-if="row.unread > 0" class="user-world-contact-unread">{{ row.unread }}</span>
+                    </div>
                   </div>
-                </div>
-              </button>
+                </button>
+                <button
+                  class="user-world-contact-delete"
+                  type="button"
+                  :title="t('userWorld.chat.deleteConversation')"
+                  :aria-label="t('userWorld.chat.deleteConversation')"
+                  @click.stop="handleDeleteConversation(row.conversation_id)"
+                >
+                  <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                </button>
+              </div>
             </template>
             <div v-else class="user-world-empty">{{ t('userWorld.chat.emptyList') }}</div>
           </template>
@@ -110,33 +122,51 @@
 
           <template v-else>
             <template v-if="groupRows.length">
-              <button
+              <div
                 v-for="group in groupRows"
                 :key="group.group_id"
-                class="user-world-contact-item"
-                :class="{ active: activeConversationId === group.conversation_id }"
-                type="button"
-                @click="handleOpenConversation(group.conversation_id)"
+                class="user-world-contact-entry"
               >
-                <div class="user-world-contact-avatar">{{ resolveAvatarLabel(group.group_name) }}</div>
-                <div class="user-world-contact-main">
-                  <div class="user-world-contact-row">
-                    <span class="user-world-contact-name" :title="group.group_name">{{ group.group_name }}</span>
-                    <span class="user-world-contact-time">{{ formatTime(group.last_message_at) }}</span>
+                <button
+                  class="user-world-contact-item"
+                  :class="{ active: activeConversationId === group.conversation_id }"
+                  type="button"
+                  @click="handleOpenConversation(group.conversation_id)"
+                >
+                  <div class="user-world-contact-avatar group">{{ resolveAvatarLabel(group.group_name) }}</div>
+                  <div class="user-world-contact-main">
+                    <div class="user-world-contact-row">
+                      <span class="user-world-contact-name" :title="group.group_name">{{ group.group_name }}</span>
+                      <span class="user-world-contact-time">{{ formatTime(group.last_message_at) }}</span>
+                    </div>
+                    <div class="user-world-contact-row">
+                      <span class="user-world-contact-preview">
+                        {{ group.last_message_preview || t('userWorld.group.emptyPreview') }}
+                      </span>
+                      <span v-if="group.unread_count_cache > 0" class="user-world-contact-unread">
+                        {{ group.unread_count_cache }}
+                      </span>
+                    </div>
                   </div>
-                  <div class="user-world-contact-row">
-                    <span class="user-world-contact-preview">
-                      {{ group.last_message_preview || t('userWorld.group.emptyPreview') }}
-                    </span>
-                    <span v-if="group.unread_count_cache > 0" class="user-world-contact-unread">
-                      {{ group.unread_count_cache }}
-                    </span>
-                  </div>
-                </div>
-              </button>
+                </button>
+                <button
+                  class="user-world-contact-delete"
+                  type="button"
+                  :title="t('userWorld.chat.deleteConversation')"
+                  :aria-label="t('userWorld.chat.deleteConversation')"
+                  @click.stop="handleDeleteConversation(group.conversation_id)"
+                >
+                  <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                </button>
+              </div>
             </template>
             <div v-else class="user-world-empty">{{ t('userWorld.group.empty') }}</div>
           </template>
+        </div>
+
+        <div class="user-world-search">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <input v-model.trim="keyword" type="text" :placeholder="searchPlaceholder" />
         </div>
       </aside>
 
@@ -345,9 +375,9 @@ const groupMemberKeyword = ref('');
 const selectedGroupMembers = ref<string[]>([]);
 
 const sidebarTabs = computed(() => [
-  { value: 'chat' as SidebarTab, label: t('userWorld.tab.chat') },
-  { value: 'users' as SidebarTab, label: t('userWorld.tab.users') },
-  { value: 'groups' as SidebarTab, label: t('userWorld.tab.groups') }
+  { value: 'chat' as SidebarTab, label: t('userWorld.tab.chat'), icon: 'fa-solid fa-comment-dots' },
+  { value: 'users' as SidebarTab, label: t('userWorld.tab.users'), icon: 'fa-solid fa-users' },
+  { value: 'groups' as SidebarTab, label: t('userWorld.tab.groups'), icon: 'fa-solid fa-comments' }
 ]);
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -403,7 +433,8 @@ const chatRows = computed(() => {
         title,
         preview,
         unread,
-        last_message_at: lastMessageAt
+        last_message_at: lastMessageAt,
+        is_group: conversation.conversation_type === 'group'
       };
     });
   if (!query) {
@@ -597,7 +628,18 @@ const activeConversationSubtitle = computed(() => {
     const count = Number(conversation.member_count || fallback?.member_count || 0);
     return t('userWorld.chat.groupSubtitle', { count: count > 0 ? count : '-' });
   }
-  return t('userWorld.chat.subtitle');
+  const peerUserId = normalizeText(conversation.peer_user_id);
+  if (!peerUserId) {
+    return t('userWorld.chat.subtitle');
+  }
+  const contact = (userWorldStore.contacts as ContactItem[]).find(
+    (item) => normalizeText(item.user_id) === peerUserId
+  );
+  if (!contact) {
+    return t('userWorld.chat.subtitle');
+  }
+  const unitLabel = resolveUnitLabel(normalizeText(contact.unit_id));
+  return t('userWorld.chat.userSubtitle', { unit: unitLabel });
 });
 
 const selectableGroupContacts = computed(() => {
@@ -638,6 +680,17 @@ const scrollToBottom = async () => {
 const handleOpenConversation = async (conversationId: string) => {
   try {
     await userWorldStore.setActiveConversation(conversationId);
+    await scrollToBottom();
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error));
+  }
+};
+
+const handleDeleteConversation = async (conversationId: string) => {
+  const cleaned = normalizeText(conversationId);
+  if (!cleaned) return;
+  try {
+    await userWorldStore.dismissConversation(cleaned);
     await scrollToBottom();
   } catch (error) {
     ElMessage.error(resolveErrorMessage(error));
