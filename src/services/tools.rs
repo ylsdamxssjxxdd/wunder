@@ -68,6 +68,8 @@ const MAX_SESSION_LIST_ITEMS: i64 = 200;
 const MAX_SESSION_HISTORY_ITEMS: i64 = 500;
 const MAX_SESSION_MESSAGE_ITEMS: i64 = 50;
 const SESSION_RESULT_MAX_CHARS: usize = 2000;
+const LOCAL_PTC_TIMEOUT_S: u64 = 60;
+const LOCAL_PTC_DIR_NAME: &str = "ptc_temp";
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const ANNOUNCE_SKIP: &str = "ANNOUNCE_SKIP";
@@ -4388,40 +4390,21 @@ fn decode_utf16_output(bytes: &[u8]) -> Option<String> {
     }
 }
 
-async fn run_command_streaming(
+async fn run_spawned_child_streaming(
     context: &ToolContext<'_>,
-    command: &str,
-    cwd: &Path,
+    mut child: tokio::process::Child,
+    tool_name: &str,
+    command_text: &str,
     timeout: Option<Duration>,
 ) -> Result<CommandRunResult> {
     let chunk_size = resolve_stream_chunk_size(context.config);
-    let tool_name = "执行命令".to_string();
-    let command_text = command.to_string();
-    let (mut cmd, used_direct) =
-        if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
-            (cmd, true)
-        } else {
-            (command_utils::build_shell_command(command, cwd), false)
-        };
-    cmd.kill_on_drop(true);
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
-            let mut cmd = command_utils::build_shell_command(command, cwd);
-            cmd.kill_on_drop(true);
-            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-            cmd.spawn()?
-        }
-        Err(err) => return Err(anyhow!(err)),
-    };
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
     let stdout_task = stdout.map(|stdout| {
         let emitter = context.event_emitter.clone();
-        let tool_name = tool_name.clone();
-        let command_text = command_text.clone();
+        let tool_name = tool_name.to_string();
+        let command_text = command_text.to_string();
         tokio::spawn(async move {
             read_stream_output(
                 stdout,
@@ -4436,8 +4419,8 @@ async fn run_command_streaming(
     });
     let stderr_task = stderr.map(|stderr| {
         let emitter = context.event_emitter.clone();
-        let tool_name = tool_name.clone();
-        let command_text = command_text.clone();
+        let tool_name = tool_name.to_string();
+        let command_text = command_text.to_string();
         tokio::spawn(async move {
             read_stream_output(
                 stderr,
@@ -4478,6 +4461,96 @@ async fn run_command_streaming(
         stderr,
         timed_out,
     })
+}
+
+async fn run_command_streaming(
+    context: &ToolContext<'_>,
+    command: &str,
+    cwd: &Path,
+    timeout: Option<Duration>,
+    tool_name: &str,
+) -> Result<CommandRunResult> {
+    let command_text = command.to_string();
+    let (mut cmd, used_direct) =
+        if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
+            (cmd, true)
+        } else {
+            (command_utils::build_shell_command(command, cwd), false)
+        };
+    cmd.kill_on_drop(true);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
+            let mut cmd = command_utils::build_shell_command(command, cwd);
+            cmd.kill_on_drop(true);
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+            cmd.spawn()?
+        }
+        Err(err) => return Err(anyhow!(err)),
+    };
+    run_spawned_child_streaming(context, child, tool_name, &command_text, timeout).await
+}
+
+async fn run_ptc_python_script_streaming(
+    context: &ToolContext<'_>,
+    script_path: &Path,
+    workdir: &Path,
+    timeout: Option<Duration>,
+) -> Result<CommandRunResult> {
+    #[cfg(windows)]
+    let candidates: &[(&str, &[&str])] = &[("py", &["-3"]), ("python", &[]), ("python3", &[])];
+    #[cfg(not(windows))]
+    let candidates: &[(&str, &[&str])] = &[("python3", &[]), ("python", &[])];
+
+    let tool_name = resolve_tool_name("ptc");
+    let script_text = script_path.to_string_lossy().to_string();
+    let mut last_error: Option<anyhow::Error> = None;
+    for (program, prefix_args) in candidates {
+        let mut cmd = tokio::process::Command::new(program);
+        cmd.args(*prefix_args);
+        cmd.arg(script_path);
+        cmd.current_dir(workdir);
+        cmd.env("PYTHONIOENCODING", "utf-8");
+        cmd.kill_on_drop(true);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut parts = Vec::new();
+        parts.push((*program).to_string());
+        parts.extend(prefix_args.iter().map(|value| (*value).to_string()));
+        parts.push(script_text.clone());
+        let command_text = parts.join(" ");
+
+        match cmd.spawn() {
+            Ok(child) => {
+                return run_spawned_child_streaming(
+                    context,
+                    child,
+                    &tool_name,
+                    &command_text,
+                    timeout,
+                )
+                .await;
+            }
+            Err(err) if command_utils::is_not_found_error(&err) => continue,
+            Err(err) => {
+                let detail = format!("{program}: {err}");
+                last_error = Some(anyhow!(detail));
+                break;
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        anyhow!(
+            "python interpreter not found (tried: {})",
+            candidates
+                .iter()
+                .map(|(program, _)| *program)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }))
 }
 
 async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -4551,6 +4624,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
     }
 
     let mut results = Vec::new();
+    let execute_tool_name = resolve_tool_name("execute_command");
     for raw_line in content.lines() {
         let command = raw_line.trim();
         if command.is_empty() {
@@ -4564,7 +4638,8 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                 "sandbox": false,
             }));
         }
-        let run = run_command_streaming(context, command, &cwd, timeout).await?;
+        let run =
+            run_command_streaming(context, command, &cwd, timeout, &execute_tool_name).await?;
         results.push(json!({
             "command": command,
             "returncode": run.returncode,
@@ -4620,6 +4695,43 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
     }))
 }
 
+fn normalize_ptc_script_name(raw_filename: &str) -> std::result::Result<PathBuf, &'static str> {
+    let filename = raw_filename.trim();
+    if filename.is_empty() {
+        return Err("tool.ptc.filename_required");
+    }
+
+    let mut script_name = PathBuf::from(filename);
+    if script_name.file_name().and_then(|name| name.to_str()) != Some(filename) {
+        return Err("tool.ptc.filename_invalid");
+    }
+    if script_name.extension().is_none() {
+        script_name.set_extension("py");
+    }
+    if !script_name
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("py"))
+        .unwrap_or(false)
+    {
+        return Err("tool.ptc.ext_invalid");
+    }
+
+    Ok(script_name)
+}
+
+fn build_ptc_exec_error(detail: impl Into<String>) -> Value {
+    json!({
+        "ok": false,
+        "data": {},
+        "error": i18n::t_with_params(
+            "tool.ptc.exec_error",
+            &HashMap::from([("detail".to_string(), detail.into())]),
+        ),
+        "sandbox": false,
+    })
+}
+
 async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
@@ -4640,29 +4752,108 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let filename = args
         .get("filename")
         .and_then(Value::as_str)
-        .unwrap_or("ptc.tmp");
+        .unwrap_or_default();
+    let script_name = match normalize_ptc_script_name(filename) {
+        Ok(name) => name,
+        Err(key) => {
+            return Ok(json!({
+                "ok": false,
+                "data": {},
+                "error": i18n::t(key),
+                "sandbox": false,
+            }));
+        }
+    };
+
     let workdir = args.get("workdir").and_then(Value::as_str).unwrap_or("");
     let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+    if content.trim().is_empty() {
+        return Ok(json!({
+            "ok": false,
+            "data": {},
+            "error": i18n::t("tool.ptc.content_required"),
+            "sandbox": false,
+        }));
+    }
+
     let content = context
         .workspace
         .replace_public_root_in_text(context.workspace_id, content);
-    let dir = if workdir.is_empty() {
+    let workdir_path = if workdir.is_empty() {
         context.workspace.ensure_user_root(context.workspace_id)?
     } else {
         context
             .workspace
             .resolve_path(context.workspace_id, workdir)?
     };
-    let file_path = dir.join(filename);
-    let display_path = context
+
+    if let Err(err) = tokio::fs::create_dir_all(&workdir_path).await {
+        return Ok(build_ptc_exec_error(err.to_string()));
+    }
+
+    let ptc_root = context
         .workspace
-        .display_path(context.workspace_id, &file_path);
-    tokio::fs::create_dir_all(&dir).await.ok();
-    tokio::fs::write(&file_path, content).await?;
+        .resolve_path(context.workspace_id, LOCAL_PTC_DIR_NAME)?;
+    if let Err(err) = tokio::fs::create_dir_all(&ptc_root).await {
+        return Ok(build_ptc_exec_error(err.to_string()));
+    }
+
+    let script_path = ptc_root.join(script_name);
+    if let Err(err) = tokio::fs::write(&script_path, content).await {
+        return Ok(build_ptc_exec_error(err.to_string()));
+    }
+
+    let output = match run_ptc_python_script_streaming(
+        context,
+        &script_path,
+        &workdir_path,
+        Some(Duration::from_secs(LOCAL_PTC_TIMEOUT_S)),
+    )
+    .await
+    {
+        Ok(output) => output,
+        Err(err) => return Ok(build_ptc_exec_error(err.to_string())),
+    };
+
+    let data = json!({
+        "path": context
+            .workspace
+            .display_path(context.workspace_id, &script_path),
+        "workdir": context
+            .workspace
+            .display_path(context.workspace_id, &workdir_path),
+        "returncode": output.returncode,
+        "stdout": output.stdout,
+        "stderr": output.stderr,
+    });
+
     context.workspace.mark_tree_dirty(context.workspace_id);
+
+    if output.timed_out {
+        let detail = format!("timeout after {}s", LOCAL_PTC_TIMEOUT_S);
+        return Ok(json!({
+            "ok": false,
+            "data": data,
+            "error": i18n::t_with_params(
+                "tool.ptc.exec_error",
+                &HashMap::from([("detail".to_string(), detail)]),
+            ),
+            "sandbox": false,
+        }));
+    }
+
+    if output.returncode != 0 {
+        return Ok(json!({
+            "ok": false,
+            "data": data,
+            "error": i18n::t("tool.ptc.exec_failed"),
+            "sandbox": false,
+        }));
+    }
+
     Ok(json!({
         "ok": true,
-        "data": { "path": display_path },
+        "data": data,
         "error": "",
         "sandbox": false,
     }))
@@ -6646,6 +6837,24 @@ mod tests {
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].path, "Cargo.toml");
+    }
+
+    #[test]
+    fn normalize_ptc_script_name_accepts_simple_filename() {
+        let script = normalize_ptc_script_name("demo").expect("filename should be normalized");
+        assert_eq!(script, PathBuf::from("demo.py"));
+    }
+
+    #[test]
+    fn normalize_ptc_script_name_rejects_path_segments() {
+        let error = normalize_ptc_script_name("nested/demo.py").expect_err("path must be rejected");
+        assert_eq!(error, "tool.ptc.filename_invalid");
+    }
+
+    #[test]
+    fn normalize_ptc_script_name_rejects_non_python_extension() {
+        let error = normalize_ptc_script_name("demo.txt").expect_err("non-python ext should fail");
+        assert_eq!(error, "tool.ptc.ext_invalid");
     }
 
     #[cfg(windows)]

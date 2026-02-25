@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
+use ratatui::layout::Rect;
 use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
@@ -34,6 +35,8 @@ const CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(1500);
 const MAX_PERSISTED_HISTORY: usize = 200;
 const MAX_HISTORY_ENTRY_CHARS: usize = 4000;
 const MAX_PERSISTED_POPUP_RECENTS: usize = 120;
+const POPUP_VISIBLE_LIMIT: usize = 7;
+const POPUP_MAX_CANDIDATES: usize = 120;
 const PASTE_BURST_CHAR_GAP: Duration = Duration::from_millis(28);
 const PASTE_BURST_ENTER_GAP: Duration = Duration::from_millis(36);
 const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 16;
@@ -45,7 +48,7 @@ use helpers::*;
 
 const STATUSLINE_ITEM_KEYS: &[&str] = &[
     "running", "usage", "scroll", "mouse", "focus", "context", "session", "model", "mode",
-    "approval", "agent", "attach",
+    "approval", "agent", "attach", "elapsed", "speed", "tools",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +79,12 @@ pub struct TranscriptRenderWindow<'a> {
     pub entries: Vec<TranscriptRenderEntry<'a>>,
     pub local_scroll: u16,
     pub total_lines: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PopupView {
+    pub lines: Vec<String>,
+    pub selected_index: Option<usize>,
 }
 
 enum StreamMessage {
@@ -158,6 +167,7 @@ pub struct TuiApp {
     approval_rx: Option<ApprovalRequestRx>,
     approval_queue: VecDeque<ApprovalRequest>,
     active_approval: Option<ApprovalRequest>,
+    approval_selected_index: usize,
     approval_mode: String,
     agent_id_override: Option<String>,
     ctrl_c_hint_deadline: Option<Instant>,
@@ -190,10 +200,20 @@ pub struct TuiApp {
     key_char_burst_last_at: Option<Instant>,
     statusline_items: Vec<String>,
     mouse_passthrough_until: Option<Instant>,
+    transcript_mouse_region: Rect,
+    input_mouse_region: Rect,
     app_hints: Vec<String>,
     skill_hints: Vec<String>,
     enabled_skill_names: HashSet<String>,
     popup_recents: Vec<String>,
+    popup_selected_index: usize,
+    popup_signature: String,
+    turn_started_at: Option<Instant>,
+    turn_output_tokens: u64,
+    turn_tool_calls: u64,
+    last_turn_elapsed_secs: Option<f64>,
+    last_turn_speed_tps: Option<f64>,
+    last_turn_tool_calls: u64,
 }
 
 impl TuiApp {
@@ -239,6 +259,7 @@ impl TuiApp {
             approval_rx: None,
             approval_queue: VecDeque::new(),
             active_approval: None,
+            approval_selected_index: 0,
             approval_mode: "full_auto".to_string(),
             agent_id_override: initial_agent_id_override,
             ctrl_c_hint_deadline: None,
@@ -271,10 +292,20 @@ impl TuiApp {
             key_char_burst_last_at: None,
             statusline_items: Vec::new(),
             mouse_passthrough_until: None,
+            transcript_mouse_region: Rect::default(),
+            input_mouse_region: Rect::default(),
             app_hints: Vec::new(),
             skill_hints: Vec::new(),
             enabled_skill_names: HashSet::new(),
             popup_recents: Vec::new(),
+            popup_selected_index: 0,
+            popup_signature: String::new(),
+            turn_started_at: None,
+            turn_output_tokens: 0,
+            turn_tool_calls: 0,
+            last_turn_elapsed_secs: None,
+            last_turn_speed_tps: None,
+            last_turn_tool_calls: 0,
         };
         app.load_persisted_history();
         app.load_popup_recents();
@@ -350,19 +381,19 @@ impl TuiApp {
     pub fn status_line(&self) -> String {
         let parts = self.status_line_parts();
         if self.statusline_items.is_empty() {
-            let running = parts
-                .get("running")
-                .cloned()
-                .unwrap_or_else(|| "-".to_string());
-            let usage = parts.get("usage").cloned().unwrap_or_default();
-            let scroll = parts.get("scroll").cloned().unwrap_or_default();
-            let mouse = parts.get("mouse").cloned().unwrap_or_default();
-            let focus = parts.get("focus").cloned().unwrap_or_default();
-            let context = parts
-                .get("context")
-                .cloned()
-                .unwrap_or_else(|| "-".to_string());
-            return format!("  {running}{usage}{scroll}{mouse}{focus}    {context}");
+            let mut items = Vec::new();
+            for key in ["session", "elapsed", "speed", "tools", "context"] {
+                if let Some(value) = parts.get(key) {
+                    let value = value.trim();
+                    if !value.is_empty() {
+                        items.push(value.to_string());
+                    }
+                }
+            }
+            if items.is_empty() {
+                return "  -".to_string();
+            }
+            return format!("  {}", items.join(" | "));
         }
 
         let mut items = Vec::new();
@@ -375,9 +406,6 @@ impl TuiApp {
             }
         }
         if items.is_empty() {
-            if self.is_zh_language() {
-                return "  状态栏：已配置空项，输入 /statusline reset 恢复默认".to_string();
-            }
             return "  status line: empty selection, run /statusline reset".to_string();
         }
         format!("  {}", items.join(" | "))
@@ -407,107 +435,46 @@ impl TuiApp {
                 Some(max_context),
             )
             .unwrap_or(0);
-            if self.is_zh_language() {
-                format!("剩余上下文 {percent_left}%")
-            } else {
-                format!("{percent_left}% context left")
-            }
+            format!("context_left={percent_left}%")
         } else {
             let used = self.session_stats.context_used_tokens.max(0);
-            if self.is_zh_language() {
-                format!("{used} 上下文已用")
-            } else {
-                format!("{used} context used")
-            }
+            format!("context_used={used}")
         };
         let running_hint = if self.resume_picker.is_some() {
-            if self.is_zh_language() {
-                "会话恢复面板".to_string()
-            } else {
-                "resume picker".to_string()
-            }
+            "state=resume_picker".to_string()
         } else if self.active_approval.is_some() {
-            if self.is_zh_language() {
-                "待审批".to_string()
-            } else {
-                "approval pending".to_string()
-            }
+            "state=approval_pending".to_string()
         } else if self.busy {
-            if self.is_zh_language() {
-                "执行中...".to_string()
-            } else {
-                "working...".to_string()
-            }
-        } else if self.is_zh_language() {
-            "快捷键".to_string()
+            "state=working".to_string()
         } else {
-            "shortcuts".to_string()
+            "state=idle".to_string()
         };
         let usage_hint = self
             .last_usage
             .as_deref()
-            .map(|value| {
-                if self.is_zh_language() {
-                    format!(" | 最近 tokens {value}")
-                } else {
-                    format!(" | last tokens {value}")
-                }
-            })
-            .unwrap_or_default();
+            .map(|value| format!("tokens={value}"))
+            .unwrap_or_else(|| "tokens=-".to_string());
         let scroll_hint = if self.transcript_offset_from_bottom > 0 {
-            if self.is_zh_language() {
-                format!(" | 滚动 -{}", self.transcript_offset_from_bottom)
-            } else {
-                format!(" | scroll -{}", self.transcript_offset_from_bottom)
-            }
+            format!("scroll=-{}", self.transcript_offset_from_bottom)
         } else {
-            String::new()
+            "scroll=0".to_string()
         };
         let mouse_hint = match self.mouse_mode {
-            MouseMode::Auto => {
-                if self.is_zh_language() {
-                    if self.mouse_passthrough_active() {
-                        " | 鼠标自动(选择中)".to_string()
-                    } else {
-                        " | 鼠标自动".to_string()
-                    }
-                } else if self.mouse_passthrough_active() {
-                    " | mouse auto(selecting)".to_string()
-                } else {
-                    " | mouse auto".to_string()
-                }
+            MouseMode::Auto if self.mouse_passthrough_active() => {
+                "mouse=auto(selecting)".to_string()
             }
-            MouseMode::Scroll => {
-                if self.is_zh_language() {
-                    " | 鼠标滚轮".to_string()
-                } else {
-                    " | mouse scroll".to_string()
-                }
-            }
-            MouseMode::Select => {
-                if self.is_zh_language() {
-                    " | 鼠标选择".to_string()
-                } else {
-                    " | mouse select".to_string()
-                }
-            }
+            MouseMode::Auto => "mouse=auto".to_string(),
+            MouseMode::Scroll => "mouse=scroll".to_string(),
+            MouseMode::Select => "mouse=select".to_string(),
         };
         let focus_hint = match self.focus_area {
-            FocusArea::Input => {
-                if self.is_zh_language() {
-                    " | 输入焦点".to_string()
-                } else {
-                    " | focus input".to_string()
-                }
-            }
-            FocusArea::Transcript => {
-                if self.is_zh_language() {
-                    " | 输出焦点".to_string()
-                } else {
-                    " | focus output".to_string()
-                }
-            }
+            FocusArea::Input => "focus=input".to_string(),
+            FocusArea::Transcript => "focus=output".to_string(),
         };
+        let elapsed_secs = self.status_elapsed_secs().unwrap_or(0.0);
+        let speed_tps = self.status_speed_tps().unwrap_or(0.0);
+        let tool_calls = self.status_tool_calls();
+
         parts.insert("running", running_hint);
         parts.insert("usage", usage_hint);
         parts.insert("scroll", scroll_hint);
@@ -526,7 +493,41 @@ impl TuiApp {
         parts.insert("model", format!("model={}", self.model_name));
         parts.insert("mode", format!("mode={}", self.tool_call_mode));
         parts.insert("approval", format!("approval={}", self.approval_mode));
+        parts.insert("elapsed", format!("elapsed={elapsed_secs:.2} s"));
+        parts.insert("speed", format!("speed={speed_tps:.2} token/s"));
+        parts.insert("tools", format!("tools={tool_calls}"));
         parts
+    }
+
+    fn status_elapsed_secs(&self) -> Option<f64> {
+        if self.busy {
+            return self
+                .turn_started_at
+                .map(|started| started.elapsed().as_secs_f64());
+        }
+        self.last_turn_elapsed_secs
+    }
+
+    fn status_speed_tps(&self) -> Option<f64> {
+        if self.busy {
+            let Some(started) = self.turn_started_at else {
+                return None;
+            };
+            let elapsed = started.elapsed().as_secs_f64();
+            if elapsed <= f64::EPSILON {
+                return Some(0.0);
+            }
+            return Some(self.turn_output_tokens as f64 / elapsed);
+        }
+        self.last_turn_speed_tps
+    }
+
+    fn status_tool_calls(&self) -> u64 {
+        if self.busy {
+            self.turn_tool_calls
+        } else {
+            self.last_turn_tool_calls
+        }
     }
 
     fn input_history_file(&self) -> PathBuf {
@@ -765,48 +766,34 @@ impl TuiApp {
 
     pub fn approval_modal_lines(&self) -> Option<Vec<String>> {
         let request = self.active_approval.as_ref()?;
-        let mut lines = if self.is_zh_language() {
-            vec![
-                format!("编号: {}", request.id),
-                format!("工具: {}", request.tool),
-                format!("摘要: {}", request.summary),
-                format!("类型: {:?}", request.kind),
-            ]
-        } else {
-            vec![
-                format!("id: {}", request.id),
-                format!("tool: {}", request.tool),
-                format!("summary: {}", request.summary),
-                format!("kind: {:?}", request.kind),
-            ]
-        };
+        let selected = self.approval_selected_index.min(2);
+        let mut lines = vec![
+            format!("id: {}", request.id),
+            format!("tool: {}", request.tool),
+            format!("summary: {}", request.summary),
+            format!("kind: {:?}", request.kind),
+        ];
 
         let detail = compact_json(&request.detail);
         if !detail.trim().is_empty() {
-            if self.is_zh_language() {
-                lines.push(format!("详情: {detail}"));
-            } else {
-                lines.push(format!("detail: {detail}"));
-            }
+            lines.push(format!("detail: {detail}"));
         }
         let args = compact_json(&request.args);
         if !args.trim().is_empty() {
-            if self.is_zh_language() {
-                lines.push(format!("参数: {args}"));
-            } else {
-                lines.push(format!("args: {args}"));
-            }
+            lines.push(format!("args: {args}"));
         }
+
         lines.push(String::new());
-        if self.is_zh_language() {
-            lines.push("1/Enter/Y: 仅本次批准".to_string());
-            lines.push("2/A: 本会话批准".to_string());
-            lines.push("3/N/Esc: 拒绝".to_string());
-        } else {
-            lines.push("1/Enter/Y: approve once".to_string());
-            lines.push("2/A: approve for session".to_string());
-            lines.push("3/N/Esc: deny".to_string());
-        }
+        lines.push("Approval actions (Up/Down select, Enter confirm; or press 1/2/3):".to_string());
+        lines.push(format!(
+            "{} 1) approve once",
+            if selected == 0 { ">" } else { " " }
+        ));
+        lines.push(format!(
+            "{} 2) approve for session",
+            if selected == 1 { ">" } else { " " }
+        ));
+        lines.push(format!("{} 3) deny", if selected == 2 { ">" } else { " " }));
         Some(lines)
     }
 
@@ -894,8 +881,29 @@ impl TuiApp {
         self.transcript_rendered_lines = rendered_lines;
     }
 
+    pub fn set_mouse_regions(&mut self, transcript: Rect, input: Rect) {
+        self.transcript_mouse_region = transcript;
+        self.input_mouse_region = input;
+    }
+
     fn invalidate_transcript_metrics(&mut self) {
         self.transcript_rendered_lines = 0;
+    }
+
+    fn mouse_in_region(&self, mouse: &MouseEvent, region: Rect) -> bool {
+        if region.width == 0 || region.height == 0 {
+            return false;
+        }
+        let max_x = region.x.saturating_add(region.width);
+        let max_y = region.y.saturating_add(region.height);
+        mouse.column >= region.x
+            && mouse.column < max_x
+            && mouse.row >= region.y
+            && mouse.row < max_y
+    }
+
+    fn mouse_in_transcript_region(&self, mouse: &MouseEvent) -> bool {
+        self.mouse_in_region(mouse, self.transcript_mouse_region)
     }
 
     fn set_mouse_mode(&mut self, mode: MouseMode) {
@@ -1188,13 +1196,30 @@ impl TuiApp {
             .sum::<usize>()
     }
 
-    pub fn popup_lines(&self) -> Vec<String> {
+    pub fn popup_view(&mut self) -> PopupView {
+        let lines = self.popup_lines_full();
+        self.sync_popup_selection(lines.len());
+        if lines.is_empty() {
+            return PopupView {
+                lines: Vec::new(),
+                selected_index: None,
+            };
+        }
+        let selected = self.popup_selected_index.min(lines.len().saturating_sub(1));
+        let (start, end) = Self::popup_window_bounds(lines.len(), selected);
+        PopupView {
+            lines: lines[start..end].to_vec(),
+            selected_index: Some(selected.saturating_sub(start)),
+        }
+    }
+
+    fn popup_lines_full(&self) -> Vec<String> {
         let trimmed = self.input.trim_start();
         if trimmed.starts_with('/') {
             let body = trimmed.trim_start_matches('/');
             return slash_command::popup_lines_with_language(
                 body,
-                7,
+                POPUP_MAX_CANDIDATES,
                 self.display_language.as_str(),
             );
         }
@@ -1207,16 +1232,78 @@ impl TuiApp {
             .unwrap_or(0);
         let token = &head[token_start..];
         if let Some(query) = token.strip_prefix('@') {
-            return self.mention_popup_lines(query, 7);
+            return self.mention_popup_lines(query, POPUP_MAX_CANDIDATES);
         }
         if let Some(query) = token.strip_prefix('$') {
-            return self.app_popup_lines(query, 7);
+            return self.app_popup_lines(query, POPUP_MAX_CANDIDATES);
         }
         if let Some(query) = token.strip_prefix('#') {
-            return self.skill_popup_lines(query, 7);
+            return self.skill_popup_lines(query, POPUP_MAX_CANDIDATES);
         }
 
         Vec::new()
+    }
+
+    fn popup_signature(&self) -> String {
+        let trimmed = self.input.trim_start();
+        if trimmed.starts_with('/') {
+            return format!("/{}", trimmed.trim_start_matches('/').trim());
+        }
+
+        let cursor = self.input_cursor.min(self.input.len());
+        let head = &self.input[..cursor];
+        let token_start = head
+            .rfind(char::is_whitespace)
+            .map(|index| index.saturating_add(1))
+            .unwrap_or(0);
+        let token = &head[token_start..];
+        if token.starts_with('@') || token.starts_with('$') || token.starts_with('#') {
+            return token.trim().to_string();
+        }
+        String::new()
+    }
+
+    fn sync_popup_selection(&mut self, popup_len: usize) {
+        let signature = self.popup_signature();
+        if self.popup_signature != signature {
+            self.popup_signature = signature;
+            self.popup_selected_index = 0;
+        }
+        if popup_len == 0 {
+            self.popup_selected_index = 0;
+            return;
+        }
+        self.popup_selected_index = self.popup_selected_index.min(popup_len.saturating_sub(1));
+    }
+
+    fn popup_window_bounds(popup_len: usize, selected: usize) -> (usize, usize) {
+        if popup_len <= POPUP_VISIBLE_LIMIT {
+            return (0, popup_len);
+        }
+        let half = POPUP_VISIBLE_LIMIT / 2;
+        let max_start = popup_len.saturating_sub(POPUP_VISIBLE_LIMIT);
+        let start = selected.saturating_sub(half).min(max_start);
+        (start, start.saturating_add(POPUP_VISIBLE_LIMIT))
+    }
+
+    fn move_popup_selection(&mut self, step: isize) -> bool {
+        let lines = self.popup_lines_full();
+        self.sync_popup_selection(lines.len());
+        if lines.is_empty() {
+            return false;
+        }
+        let max_index = lines.len().saturating_sub(1);
+        if step < 0 {
+            self.popup_selected_index = self
+                .popup_selected_index
+                .saturating_sub(step.unsigned_abs());
+        } else {
+            self.popup_selected_index = self
+                .popup_selected_index
+                .saturating_add(step as usize)
+                .min(max_index);
+        }
+        true
     }
 
     pub fn popup_title(&self) -> &'static str {
@@ -1459,6 +1546,7 @@ impl TuiApp {
 
         if self.active_approval.is_none() {
             self.active_approval = Some(request);
+            self.approval_selected_index = 0;
             return;
         }
         self.approval_queue.push_back(request);
@@ -1853,6 +1941,9 @@ impl TuiApp {
             }
             KeyCode::Up => {
                 self.reset_plain_char_burst();
+                if self.move_popup_selection(-1) {
+                    return Ok(());
+                }
                 if self.should_use_multiline_navigation() {
                     self.move_cursor_up();
                 } else {
@@ -1861,6 +1952,9 @@ impl TuiApp {
             }
             KeyCode::Down => {
                 self.reset_plain_char_burst();
+                if self.move_popup_selection(1) {
+                    return Ok(());
+                }
                 if self.should_use_multiline_navigation() {
                     self.move_cursor_down();
                 } else {
@@ -1932,26 +2026,45 @@ impl TuiApp {
     }
 
     fn handle_approval_key(&mut self, key: KeyEvent) {
-        let Some(request) = self.active_approval.take() else {
+        if self.active_approval.is_none() {
             return;
-        };
+        }
+
+        match key.code {
+            KeyCode::Up => {
+                self.approval_selected_index = self.approval_selected_index.saturating_sub(1);
+                return;
+            }
+            KeyCode::Down => {
+                self.approval_selected_index = (self.approval_selected_index + 1).min(2);
+                return;
+            }
+            _ => {}
+        }
 
         let response = match key.code {
-            KeyCode::Esc => Some(ApprovalResponse::Deny),
-            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            KeyCode::Esc | KeyCode::Char('3') | KeyCode::Char('n') | KeyCode::Char('N') => {
+                Some(ApprovalResponse::Deny)
+            }
+            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') => {
                 Some(ApprovalResponse::ApproveOnce)
             }
             KeyCode::Char('2') | KeyCode::Char('a') | KeyCode::Char('A') => {
                 Some(ApprovalResponse::ApproveSession)
             }
-            KeyCode::Char('3') | KeyCode::Char('n') | KeyCode::Char('N') => {
-                Some(ApprovalResponse::Deny)
-            }
+            KeyCode::Enter => Some(match self.approval_selected_index.min(2) {
+                1 => ApprovalResponse::ApproveSession,
+                2 => ApprovalResponse::Deny,
+                _ => ApprovalResponse::ApproveOnce,
+            }),
             _ => None,
         };
 
         let Some(response) = response else {
-            self.active_approval = Some(request);
+            return;
+        };
+
+        let Some(request) = self.active_approval.take() else {
             return;
         };
 
@@ -1970,6 +2083,7 @@ impl TuiApp {
         };
 
         self.active_approval = self.approval_queue.pop_front();
+        self.approval_selected_index = 0;
     }
 
     async fn handle_resume_picker_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -2234,6 +2348,7 @@ impl TuiApp {
         self.history_cursor = None;
         self.config_wizard = None;
         self.last_usage = None;
+        self.reset_turn_metrics_snapshot();
         self.active_assistant = None;
         self.active_reasoning = None;
         self.stream_saw_output = false;
@@ -2248,6 +2363,7 @@ impl TuiApp {
         self.approval_rx = None;
         self.active_approval = None;
         self.approval_queue.clear();
+        self.approval_selected_index = 0;
         self.ctrl_c_hint_deadline = None;
         self.transcript_offset_from_bottom = 0;
         self.transcript_selected = None;
@@ -2355,18 +2471,28 @@ impl TuiApp {
         match self.mouse_mode {
             MouseMode::Select => {}
             MouseMode::Scroll => match mouse.kind {
-                MouseEventKind::ScrollUp => self.scroll_transcript_up(3),
-                MouseEventKind::ScrollDown => self.scroll_transcript_down(3),
+                MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
+                    self.scroll_transcript_up(3)
+                }
+                MouseEventKind::ScrollDown if self.mouse_in_transcript_region(&mouse) => {
+                    self.scroll_transcript_down(3)
+                }
                 _ => {}
             },
             MouseMode::Auto => match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left)
                 | MouseEventKind::Drag(MouseButton::Left) => {
-                    // In auto mode, a left-drag gesture opens a short native-selection window.
-                    self.activate_mouse_passthrough();
+                    if self.mouse_in_region(&mouse, self.input_mouse_region) {
+                        // In auto mode, a left-drag gesture over input opens a short native-selection window.
+                        self.activate_mouse_passthrough();
+                    }
                 }
-                MouseEventKind::ScrollUp => self.scroll_transcript_up(3),
-                MouseEventKind::ScrollDown => self.scroll_transcript_down(3),
+                MouseEventKind::ScrollUp if self.mouse_in_transcript_region(&mouse) => {
+                    self.scroll_transcript_up(3)
+                }
+                MouseEventKind::ScrollDown if self.mouse_in_transcript_region(&mouse) => {
+                    self.scroll_transcript_down(3)
+                }
                 _ => {}
             },
         }
@@ -2451,11 +2577,13 @@ impl TuiApp {
         self.active_reasoning = None;
         self.turn_final_answer.clear();
         self.turn_final_stop_reason = None;
+        self.begin_turn_metrics();
 
         let (approval_tx, approval_rx) = new_approval_channel();
         self.approval_rx = Some(approval_rx);
         self.approval_queue.clear();
         self.active_approval = None;
+        self.approval_selected_index = 0;
 
         let mut request = crate::build_wunder_request(
             &self.runtime,
@@ -2498,10 +2626,19 @@ impl TuiApp {
             if body.contains(char::is_whitespace) {
                 return;
             }
-            if let Some(suggestion) = slash_command::first_command_completion(body) {
-                self.input = format!("/{suggestion} ");
-                self.input_cursor = self.input.len();
-            }
+            let suggestions = slash_command::command_completions(body, POPUP_MAX_CANDIDATES);
+            self.sync_popup_selection(suggestions.len());
+            let Some(suggestion) = suggestions
+                .get(
+                    self.popup_selected_index
+                        .min(suggestions.len().saturating_sub(1)),
+                )
+                .cloned()
+            else {
+                return;
+            };
+            self.input = format!("/{suggestion} ");
+            self.input_cursor = self.input.len();
             return;
         }
 
@@ -2514,21 +2651,28 @@ impl TuiApp {
             .unwrap_or(0);
         let token = &self.input[token_start..cursor];
         let suggestions = if let Some(query) = token.strip_prefix('@') {
-            self.mention_popup_tokens(query, 1)
+            self.mention_popup_tokens(query, POPUP_MAX_CANDIDATES)
         } else if let Some(query) = token.strip_prefix('$') {
-            self.app_popup_tokens(query, 1)
+            self.app_popup_tokens(query, POPUP_MAX_CANDIDATES)
         } else if let Some(query) = token.strip_prefix('#') {
-            self.skill_popup_tokens(query, 1)
+            self.skill_popup_tokens(query, POPUP_MAX_CANDIDATES)
         } else {
             return;
         };
-        let Some(first) = suggestions.first() else {
+        self.sync_popup_selection(suggestions.len());
+        let Some(selected) = suggestions
+            .get(
+                self.popup_selected_index
+                    .min(suggestions.len().saturating_sub(1)),
+            )
+            .cloned()
+        else {
             return;
         };
-        let replacement = format!("{first} ");
+        let replacement = format!("{selected} ");
         self.input.replace_range(token_start..cursor, &replacement);
         self.input_cursor = token_start.saturating_add(replacement.len());
-        self.mark_popup_recent(first);
+        self.mark_popup_recent(selected.as_str());
     }
 
     fn should_use_multiline_navigation(&self) -> bool {
@@ -2900,11 +3044,45 @@ impl TuiApp {
         );
     }
 
+    fn begin_turn_metrics(&mut self) {
+        self.turn_started_at = Some(Instant::now());
+        self.turn_output_tokens = 0;
+        self.turn_tool_calls = 0;
+    }
+
+    fn reset_turn_metrics_snapshot(&mut self) {
+        self.turn_started_at = None;
+        self.turn_output_tokens = 0;
+        self.turn_tool_calls = 0;
+        self.last_turn_elapsed_secs = None;
+        self.last_turn_speed_tps = None;
+        self.last_turn_tool_calls = 0;
+    }
+
+    fn finalize_turn_metrics(&mut self) {
+        let elapsed = self
+            .turn_started_at
+            .map(|started| started.elapsed().as_secs_f64());
+        self.last_turn_elapsed_secs = elapsed;
+        self.last_turn_tool_calls = self.turn_tool_calls;
+        self.last_turn_speed_tps = elapsed.map(|seconds| {
+            if seconds <= f64::EPSILON {
+                0.0
+            } else {
+                self.turn_output_tokens as f64 / seconds
+            }
+        });
+        self.turn_started_at = None;
+        self.turn_output_tokens = 0;
+        self.turn_tool_calls = 0;
+    }
+
     fn handle_stream_message(&mut self, message: StreamMessage) {
         match message {
             StreamMessage::Event(event) => self.apply_stream_event(event),
             StreamMessage::Error(err) => {
                 self.push_log(LogKind::Error, err);
+                self.finalize_turn_metrics();
                 self.busy = false;
                 self.active_assistant = None;
                 self.active_reasoning = None;
@@ -2912,6 +3090,7 @@ impl TuiApp {
                 self.approval_rx = None;
                 self.active_approval = None;
                 self.approval_queue.clear();
+                self.approval_selected_index = 0;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
                 self.stream_received_content_delta = false;
@@ -2936,6 +3115,7 @@ impl TuiApp {
                     "tui",
                     Some(self.terminal_focused),
                 );
+                self.finalize_turn_metrics();
                 self.busy = false;
                 self.active_assistant = None;
                 self.active_reasoning = None;
@@ -2943,6 +3123,7 @@ impl TuiApp {
                 self.approval_rx = None;
                 self.active_approval = None;
                 self.approval_queue.clear();
+                self.approval_selected_index = 0;
                 self.stream_saw_output = false;
                 self.stream_saw_final = false;
                 self.stream_received_content_delta = false;
@@ -3083,12 +3264,19 @@ impl TuiApp {
                     .saturating_add(output_tokens);
                 self.session_stats.total_tokens =
                     self.session_stats.total_tokens.saturating_add(total_tokens);
+                let speed_tokens = if output_tokens > 0 {
+                    output_tokens
+                } else {
+                    total_tokens
+                };
+                self.turn_output_tokens = self.turn_output_tokens.saturating_add(speed_tokens);
                 if total_tokens > 0 {
                     self.last_usage = Some(total_tokens.to_string());
                 }
             }
             "tool_call" => {
                 self.session_stats.tool_calls = self.session_stats.tool_calls.saturating_add(1);
+                self.turn_tool_calls = self.turn_tool_calls.saturating_add(1);
                 if !self.tool_phase_notice_emitted {
                     self.emit_tool_phase_notice();
                 }

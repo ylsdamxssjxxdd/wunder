@@ -348,63 +348,41 @@ pub fn help_lines_with_language(language: &str) -> Vec<String> {
 }
 
 pub fn popup_lines_with_language(prefix: &str, limit: usize, language: &str) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
     let cleaned = prefix.trim();
     let (head, tail) = split_head(cleaned);
-    let width = SLASH_COMMAND_DOCS
-        .iter()
-        .map(|entry| entry.usage.len())
-        .max()
-        .unwrap_or(0);
 
     if !tail.is_empty() {
         if let Some(entry) = command_doc_by_name(head) {
-            return vec![format!(
-                "{usage:<width$}  {description}",
-                usage = entry.usage,
-                description = localized_description(entry, language),
-                width = width,
-            )];
+            return vec![format_popup_line(entry, language)];
         }
         return Vec::new();
     }
 
-    let lookup = head.to_ascii_lowercase();
-    SLASH_COMMAND_DOCS
-        .iter()
-        .filter(|entry| entry.command != SlashCommand::Quit)
-        .filter(|entry| {
-            if lookup.is_empty() {
-                return true;
-            }
-            command_token(entry)
-                .trim_start_matches('/')
-                .to_ascii_lowercase()
-                .contains(lookup.as_str())
-        })
-        .take(limit)
-        .map(|entry| {
-            format!(
-                "{usage:<width$}  {description}",
-                usage = entry.usage,
-                description = localized_description(entry, language),
-                width = width,
-            )
-        })
+    command_entries_for_lookup(head, limit)
+        .into_iter()
+        .map(|entry| format_popup_line(entry, language))
         .collect()
 }
 
-pub fn first_command_completion(prefix: &str) -> Option<String> {
-    let prefix = prefix.trim().to_ascii_lowercase();
-    SLASH_COMMAND_DOCS
-        .iter()
-        .filter(|entry| entry.command != SlashCommand::Quit)
-        .find(|entry| {
-            let token = command_token(entry)
-                .trim_start_matches('/')
-                .to_ascii_lowercase();
-            token.starts_with(prefix.as_str())
-        })
+pub fn command_completions(prefix: &str, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let cleaned = prefix.trim();
+    let (head, tail) = split_head(cleaned);
+    if !tail.is_empty() {
+        return Vec::new();
+    }
+
+    command_entries_for_lookup(head, limit)
+        .into_iter()
         .map(|entry| command_token(entry).trim_start_matches('/').to_string())
+        .collect()
 }
 
 fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
@@ -451,6 +429,49 @@ fn command_doc_by_name(name: &str) -> Option<&'static SlashCommandDoc> {
     SLASH_COMMAND_DOCS
         .iter()
         .find(|entry| entry.command == command)
+}
+
+fn command_entries_for_lookup(lookup: &str, limit: usize) -> Vec<&'static SlashCommandDoc> {
+    let normalized = lookup.trim().trim_start_matches('/').to_ascii_lowercase();
+    let mut prefix_matches = Vec::new();
+    let mut contains_matches = Vec::new();
+
+    for entry in SLASH_COMMAND_DOCS
+        .iter()
+        .filter(|entry| entry.command != SlashCommand::Quit)
+    {
+        let token = command_token(entry)
+            .trim_start_matches('/')
+            .to_ascii_lowercase();
+        if normalized.is_empty() || token.starts_with(normalized.as_str()) {
+            prefix_matches.push(entry);
+        } else if token.contains(normalized.as_str()) {
+            contains_matches.push(entry);
+        }
+    }
+
+    prefix_matches.extend(contains_matches);
+    prefix_matches.truncate(limit);
+    prefix_matches
+}
+
+fn popup_usage(entry: &SlashCommandDoc) -> &'static str {
+    match entry.command {
+        SlashCommand::Mcp => {
+            "/mcp [list|get <name>|add <name> <endpoint>|enable|disable|remove|login|logout|test]"
+        }
+        SlashCommand::Apps => {
+            "/apps [list|info|connect|install|enable|disable|disconnect|auth|logout|remove|test]"
+        }
+        SlashCommand::Notify => "/notify [show|off|bell|osc9|when <always|unfocused>|<command...>]",
+        _ => entry.usage,
+    }
+}
+
+fn format_popup_line(entry: &SlashCommandDoc, language: &str) -> String {
+    let usage = popup_usage(entry);
+    let description = localized_description(entry, language).replace(['\n', '\r'], " ");
+    format!("{usage}  {description}")
 }
 
 fn command_token(entry: &SlashCommandDoc) -> &str {

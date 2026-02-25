@@ -7,7 +7,9 @@ use ratatui::Frame;
 
 pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let is_zh = app.is_zh_language();
-    let popup_lines = app.popup_lines();
+    let popup_view = app.popup_view();
+    let popup_lines = popup_view.lines;
+    let popup_selected = popup_view.selected_index;
     let vertical = build_layout(frame.area(), popup_lines.len());
 
     let status = Paragraph::new(app.status_line())
@@ -62,18 +64,34 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let input_index = if popup_lines.is_empty() { 2 } else { 3 };
 
     if !popup_lines.is_empty() {
-        let popup = Paragraph::new(popup_lines.join("\n"))
-            .block(
-                Block::default()
-                    .title(app.popup_title())
-                    .borders(Borders::ALL)
-                    .style(Style::default().fg(Color::Gray)),
-            )
-            .wrap(Wrap { trim: true });
+        let lines = popup_lines
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| {
+                if popup_selected.is_some_and(|selected| selected == index) {
+                    Line::from(Span::styled(
+                        line,
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::LightCyan)
+                            .add_modifier(Modifier::BOLD),
+                    ))
+                } else {
+                    Line::from(Span::styled(line, Style::default().fg(Color::Gray)))
+                }
+            })
+            .collect::<Vec<_>>();
+        let popup = Paragraph::new(lines).block(
+            Block::default()
+                .title(app.popup_title())
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::Gray)),
+        );
         frame.render_widget(popup, vertical[2]);
     }
 
     let input_area = vertical[input_index];
+    app.set_mouse_regions(vertical[1], input_area);
     let inner = inner_rect(input_area);
     app.set_input_viewport(inner.width);
     let (input_text, cursor_x, cursor_y) = app.input_view(inner.width, inner.height);
@@ -102,7 +120,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     }
 
     if let Some(lines) = app.approval_modal_lines() {
-        draw_approval_modal(frame, frame.area(), lines, is_zh);
+        draw_approval_modal(frame, frame.area(), input_area, lines, is_zh);
     }
 }
 
@@ -259,7 +277,13 @@ fn draw_resume_modal(
     frame.render_widget(widget, popup);
 }
 
-fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh: bool) {
+fn draw_approval_modal(
+    frame: &mut Frame,
+    area: Rect,
+    input_area: Rect,
+    lines: Vec<String>,
+    is_zh: bool,
+) {
     if area.width < 24 || area.height < 8 {
         return;
     }
@@ -268,19 +292,27 @@ fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh:
         .map(|line| line.chars().count() as u16)
         .max()
         .unwrap_or(0);
+    let horizontal_bounds = if input_area.width > 0 {
+        input_area
+    } else {
+        area
+    };
     let width = max_line_width
         .saturating_add(6)
         .max(52)
-        .min(area.width.saturating_sub(2));
+        .min(horizontal_bounds.width.saturating_sub(2))
+        .max(1);
     let content_height = lines.len() as u16;
     let height = content_height
         .saturating_add(4)
         .max(10)
         .min(area.height.saturating_sub(2));
 
+    let x = horizontal_bounds.x + horizontal_bounds.width.saturating_sub(width) / 2;
+    let y = input_area.y.saturating_sub(height);
     let popup = Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
+        x,
+        y,
         width,
         height,
     };
@@ -300,15 +332,13 @@ fn draw_approval_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh:
 fn log_lines(kind: LogKind, text: &str, selected: bool) -> Vec<Line<'static>> {
     let style = match kind {
         LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::User => Style::default().fg(Color::LightBlue),
+        LogKind::User => Style::default().fg(Color::Blue),
         LogKind::Assistant => Style::default().fg(Color::Green),
-        LogKind::Reasoning => Style::default()
-            .fg(Color::LightYellow)
-            .add_modifier(Modifier::DIM),
-        LogKind::Tool => Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::ITALIC),
-        LogKind::Error => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        LogKind::Reasoning => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+        LogKind::Tool => Style::default().fg(Color::Blue),
+        LogKind::Error => Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::BOLD),
     };
 
     let style = if selected {

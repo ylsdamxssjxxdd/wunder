@@ -2640,6 +2640,7 @@ impl TuiApp {
         self.history_cursor = None;
         self.config_wizard = None;
         self.last_usage = None;
+        self.reset_turn_metrics_snapshot();
         self.active_assistant = None;
         self.active_reasoning = None;
         self.stream_saw_output = false;
@@ -2652,6 +2653,7 @@ impl TuiApp {
         self.approval_rx = None;
         self.active_approval = None;
         self.approval_queue.clear();
+        self.approval_selected_index = 0;
         self.ctrl_c_hint_deadline = None;
         self.focus_area = FocusArea::Input;
         self.transcript_selected = None;

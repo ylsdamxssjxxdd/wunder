@@ -408,6 +408,9 @@ pub(super) fn normalize_statusline_item(raw: &str) -> Option<String> {
         "mode" | "tool_call_mode" | "工具模式" | "模式" => "mode",
         "approval" | "approvals" | "审批" | "授权" => "approval",
         "attach" | "attachments" | "附件" => "attach",
+        "elapsed" | "time" | "duration" => "elapsed",
+        "speed" | "rate" | "tps" | "tokenps" | "token_per_sec" => "speed",
+        "tools" | "tool" | "toolcalls" | "tool_calls" => "tools",
         _ => return None,
     };
     Some(normalized.to_string())
