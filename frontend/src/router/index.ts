@@ -5,16 +5,8 @@ import UserLayout from '@/layouts/UserLayout.vue';
 import AdminLayout from '@/layouts/AdminLayout.vue';
 import LoginView from '@/views/LoginView.vue';
 import RegisterView from '@/views/RegisterView.vue';
-import ChatView from '@/views/ChatView.vue';
-import UserWorldView from '@/views/UserWorldView.vue';
-import PortalView from '@/views/PortalView.vue';
+import MessengerView from '@/views/MessengerView.vue';
 import ExternalAppView from '@/views/ExternalAppView.vue';
-import WorkspaceView from '@/views/WorkspaceView.vue';
-import SettingsView from '@/views/SettingsView.vue';
-import ProfileView from '@/views/ProfileView.vue';
-import ToolManagerView from '@/views/ToolManagerView.vue';
-import CronManagerView from '@/views/CronManagerView.vue';
-import ChannelManagerView from '@/views/ChannelManagerView.vue';
 import DesktopSystemSettingsView from '@/views/DesktopSystemSettingsView.vue';
 import AdminLoginView from '@/views/AdminLoginView.vue';
 import AdminUsersView from '@/views/AdminUsersView.vue';
@@ -138,18 +130,18 @@ const routes: RouteRecordRaw[] = [
     component: UserLayout,
     redirect: DESKTOP_HOME_PATH,
     children: [
-      { path: 'home', name: 'desktop-home', component: PortalView },
+      { path: 'home', name: 'desktop-home', component: MessengerView },
       { path: 'external/:linkId', name: 'desktop-external-app', component: ExternalAppView },
-      { path: 'tools', name: 'desktop-tools', component: ToolManagerView },
-      { path: 'cron', name: 'desktop-cron', component: CronManagerView },
-      { path: 'channels', name: 'desktop-channels', component: ChannelManagerView },
-      { path: 'chat', name: 'desktop-chat', component: ChatView },
-      { path: 'user-world', name: 'desktop-user-world', component: UserWorldView },
-      { path: 'workspace', name: 'desktop-workspace', component: WorkspaceView },
-      { path: 'settings', name: 'desktop-settings', component: SettingsView },
+      { path: 'tools', name: 'desktop-tools', component: MessengerView },
+      { path: 'cron', name: 'desktop-cron', component: MessengerView },
+      { path: 'channels', name: 'desktop-channels', component: MessengerView },
+      { path: 'chat', name: 'desktop-chat', component: MessengerView },
+      { path: 'user-world', name: 'desktop-user-world', component: MessengerView },
+      { path: 'workspace', name: 'desktop-workspace', component: MessengerView },
+      { path: 'settings', name: 'desktop-settings', component: MessengerView },
       { path: 'containers', redirect: '/desktop/system?section=containers' },
       { path: 'system', name: 'desktop-system', component: DesktopSystemSettingsView },
-      { path: 'profile', name: 'desktop-profile', component: ProfileView }
+      { path: 'profile', name: 'desktop-profile', component: MessengerView }
     ]
   },
   {
@@ -158,16 +150,16 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     redirect: USER_BEEHIVE_PATH,
     children: [
-      { path: 'home', name: 'home', component: PortalView },
+      { path: 'home', name: 'home', component: MessengerView },
       { path: 'external/:linkId', name: 'external-app', component: ExternalAppView },
-      { path: 'tools', name: 'tools', component: ToolManagerView },
-      { path: 'cron', name: 'cron', component: CronManagerView },
-      { path: 'channels', name: 'channels', component: ChannelManagerView },
-      { path: 'chat', name: 'chat', component: ChatView },
-      { path: 'user-world', name: 'user-world', component: UserWorldView },
-      { path: 'workspace', name: 'workspace', component: WorkspaceView },
-      { path: 'settings', name: 'settings', component: SettingsView },
-      { path: 'profile', name: 'profile', component: ProfileView }
+      { path: 'tools', name: 'tools', component: MessengerView },
+      { path: 'cron', name: 'cron', component: MessengerView },
+      { path: 'channels', name: 'channels', component: MessengerView },
+      { path: 'chat', name: 'chat', component: MessengerView },
+      { path: 'user-world', name: 'user-world', component: MessengerView },
+      { path: 'workspace', name: 'workspace', component: MessengerView },
+      { path: 'settings', name: 'settings', component: MessengerView },
+      { path: 'profile', name: 'profile', component: MessengerView }
     ]
   },
   {
@@ -176,16 +168,16 @@ const routes: RouteRecordRaw[] = [
     meta: { demo: true },
     redirect: '/demo/chat',
     children: [
-      { path: 'home', name: 'demo-home', component: PortalView, meta: { demo: true } },
+      { path: 'home', name: 'demo-home', component: MessengerView, meta: { demo: true } },
       { path: 'external/:linkId', name: 'demo-external-app', component: ExternalAppView, meta: { demo: true } },
-      { path: 'tools', name: 'demo-tools', component: ToolManagerView, meta: { demo: true } },
-      { path: 'cron', name: 'demo-cron', component: CronManagerView, meta: { demo: true } },
-      { path: 'channels', name: 'demo-channels', component: ChannelManagerView, meta: { demo: true } },
-      { path: 'chat', name: 'demo-chat', component: ChatView, meta: { demo: true } },
-      { path: 'user-world', name: 'demo-user-world', component: UserWorldView, meta: { demo: true } },
-      { path: 'workspace', name: 'demo-workspace', component: WorkspaceView, meta: { demo: true } },
-      { path: 'settings', name: 'demo-settings', component: SettingsView, meta: { demo: true } },
-      { path: 'profile', name: 'demo-profile', component: ProfileView, meta: { demo: true } }
+      { path: 'tools', name: 'demo-tools', component: MessengerView, meta: { demo: true } },
+      { path: 'cron', name: 'demo-cron', component: MessengerView, meta: { demo: true } },
+      { path: 'channels', name: 'demo-channels', component: MessengerView, meta: { demo: true } },
+      { path: 'chat', name: 'demo-chat', component: MessengerView, meta: { demo: true } },
+      { path: 'user-world', name: 'demo-user-world', component: MessengerView, meta: { demo: true } },
+      { path: 'workspace', name: 'demo-workspace', component: MessengerView, meta: { demo: true } },
+      { path: 'settings', name: 'demo-settings', component: MessengerView, meta: { demo: true } },
+      { path: 'profile', name: 'demo-profile', component: MessengerView, meta: { demo: true } }
     ]
   },
   {

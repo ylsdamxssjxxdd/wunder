@@ -709,3 +709,301 @@ onMounted(() => {
   refreshAll();
 });
 </script>
+
+<style scoped>
+.channel-manager-page {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+  height: 100%;
+  color: #202020;
+}
+
+.channel-manager-page--dialog {
+  min-height: 0;
+  height: 100%;
+}
+
+.channel-sidebar,
+.channel-content {
+  border: 1px solid #e3e3e3;
+  border-radius: 12px;
+  background: #ffffff;
+  min-height: 0;
+}
+
+.channel-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+}
+
+.channel-sidebar-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.channel-sidebar-title,
+.channel-content-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.channel-sidebar-actions,
+.channel-actions,
+.channel-form-actions,
+.channel-create-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.channel-refresh-btn,
+.channel-action-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #d8d8d8;
+  border-radius: 8px;
+  background: #f7f7f7;
+  color: #4b4b4b;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease, background-color 0.18s ease;
+}
+
+.channel-refresh-btn:hover,
+.channel-action-btn:hover:not(:disabled) {
+  border-color: rgba(19, 152, 127, 0.4);
+  color: #13987f;
+  background: #e8f4f1;
+}
+
+.channel-refresh-btn.subtle {
+  background: #ffffff;
+}
+
+.channel-action-btn:disabled,
+.channel-refresh-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.channel-action-btn.danger {
+  border-color: #f2c8ce;
+  background: #fbeff1;
+  color: #c14053;
+}
+
+.channel-create-card {
+  border: 1px solid #e3e3e3;
+  border-radius: 10px;
+  background: #fafafa;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.channel-create-title,
+.channel-detail-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.channel-create-body,
+.channel-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.channel-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #606060;
+}
+
+.channel-form-field-full {
+  grid-column: 1 / -1;
+}
+
+.channel-form-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: #444444;
+}
+
+.channel-form-checkbox--inline {
+  flex-direction: row;
+}
+
+.channel-create-checks {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.channel-input,
+.channel-textarea {
+  width: 100%;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #202020;
+  font-size: 13px;
+  padding: 7px 10px;
+  outline: none;
+}
+
+.channel-input:focus,
+.channel-textarea:focus {
+  border-color: rgba(19, 152, 127, 0.5);
+  box-shadow: 0 0 0 2px rgba(19, 152, 127, 0.12);
+}
+
+.channel-textarea {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.channel-empty {
+  font-size: 12px;
+  color: #808080;
+  text-align: center;
+  padding: 16px 10px;
+}
+
+.channel-account-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.channel-account-card {
+  border: 1px solid #e3e3e3;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #202020;
+  text-align: left;
+  padding: 9px 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.channel-account-card:hover {
+  background: #f4f7fb;
+}
+
+.channel-account-card.active {
+  background: #e8f4f1;
+  border-color: rgba(19, 152, 127, 0.4);
+}
+
+.channel-account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.channel-account-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.channel-account-status {
+  font-size: 11px;
+  color: #13987f;
+  background: #eaf4f1;
+  border: 1px solid rgba(19, 152, 127, 0.3);
+  border-radius: 999px;
+  padding: 2px 7px;
+}
+
+.channel-account-status.disabled {
+  color: #8d8d8d;
+  border-color: #d6d6d6;
+  background: #f1f1f1;
+}
+
+.channel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  overflow: auto;
+}
+
+.channel-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.channel-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.channel-detail-card {
+  border: 1px solid #e7e7e7;
+  border-radius: 10px;
+  background: #fafafa;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.channel-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.channel-detail-label {
+  font-size: 11px;
+  color: #868686;
+}
+
+.channel-detail-value {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #252525;
+  word-break: break-word;
+}
+
+.channel-detail-hint {
+  font-size: 11px;
+  color: #8a8a8a;
+}
+
+@media (max-width: 980px) {
+  .channel-manager-page {
+    grid-template-columns: 1fr;
+  }
+
+  .channel-create-body,
+  .channel-form,
+  .channel-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

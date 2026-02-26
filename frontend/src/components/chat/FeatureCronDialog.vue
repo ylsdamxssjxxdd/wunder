@@ -656,23 +656,23 @@ watch(
 
 <style scoped>
 :global(.feature-window-dialog--cron.el-dialog) {
-  --fw-text: #e2e8f0;
-  --fw-muted: #94a3b8;
-  --fw-bg: linear-gradient(160deg, #070d1a, #0b1426);
-  --fw-shadow: 0 24px 56px rgba(8, 12, 24, 0.55);
-  --fw-border: rgba(51, 65, 85, 0.72);
-  --fw-border-soft: rgba(51, 65, 85, 0.62);
-  --fw-divider: rgba(51, 65, 85, 0.62);
-  --fw-surface: #0b1527;
-  --fw-surface-alt: #0d182c;
-  --fw-control-bg: #111c31;
-  --fw-control-hover: #162844;
-  --fw-focus-border: rgba(56, 189, 248, 0.65);
-  --fw-focus-ring: rgba(56, 189, 248, 0.18);
-  --fw-accent-border: rgba(77, 216, 255, 0.65);
-  --fw-accent-shadow: rgba(77, 216, 255, 0.35);
-  --fw-danger: #fca5a5;
-  --fw-danger-border: rgba(248, 113, 113, 0.4);
+  --fw-text: #202020;
+  --fw-muted: #808080;
+  --fw-bg: #ffffff;
+  --fw-shadow: 0 18px 42px rgba(15, 23, 42, 0.16);
+  --fw-border: #dfe3ea;
+  --fw-border-soft: #e7e7e7;
+  --fw-divider: #ececec;
+  --fw-surface: #fafafa;
+  --fw-surface-alt: #ffffff;
+  --fw-control-bg: #f7f7f7;
+  --fw-control-hover: #e8f4f1;
+  --fw-focus-border: rgba(19, 152, 127, 0.45);
+  --fw-focus-ring: rgba(19, 152, 127, 0.14);
+  --fw-accent-border: rgba(19, 152, 127, 0.42);
+  --fw-accent-shadow: rgba(19, 152, 127, 0.18);
+  --fw-danger: #c14053;
+  --fw-danger-border: #f2c8ce;
   width: min(96vw, 1080px) !important;
   max-width: 1080px;
   height: min(82vh, 760px);
@@ -684,25 +684,25 @@ watch(
   border-radius: 14px;
   box-shadow: var(--fw-shadow);
   color: var(--fw-text);
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 
 :global(.feature-window-dialog--cron-create.el-dialog) {
-  --fw-text: #e2e8f0;
-  --fw-muted: #94a3b8;
-  --fw-bg: linear-gradient(160deg, #070d1a, #0b1426);
-  --fw-shadow: 0 20px 44px rgba(8, 12, 24, 0.55);
-  --fw-border: rgba(51, 65, 85, 0.72);
-  --fw-border-soft: rgba(51, 65, 85, 0.62);
-  --fw-divider: rgba(51, 65, 85, 0.62);
-  --fw-surface-alt: #0d182c;
-  --fw-control-bg: #111c31;
-  --fw-control-hover: #162844;
-  --fw-focus-border: rgba(56, 189, 248, 0.65);
-  --fw-focus-ring: rgba(56, 189, 248, 0.18);
-  --fw-accent-border: rgba(77, 216, 255, 0.65);
-  --fw-accent-shadow: rgba(77, 216, 255, 0.35);
+  --fw-text: #202020;
+  --fw-muted: #808080;
+  --fw-bg: #ffffff;
+  --fw-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
+  --fw-border: #dfe3ea;
+  --fw-border-soft: #e7e7e7;
+  --fw-divider: #ececec;
+  --fw-surface-alt: #ffffff;
+  --fw-control-bg: #f7f7f7;
+  --fw-control-hover: #e8f4f1;
+  --fw-focus-border: rgba(19, 152, 127, 0.45);
+  --fw-focus-ring: rgba(19, 152, 127, 0.14);
+  --fw-accent-border: rgba(19, 152, 127, 0.42);
+  --fw-accent-shadow: rgba(19, 152, 127, 0.18);
   width: min(94vw, 560px) !important;
   max-width: 560px;
   background: var(--fw-bg);
@@ -710,24 +710,6 @@ watch(
   border-radius: 14px;
   box-shadow: var(--fw-shadow);
   color: var(--fw-text);
-  color-scheme: dark;
-}
-
-:global(:root[data-user-theme='light'] .feature-window-dialog--cron-create.el-dialog) {
-  --fw-text: #0f172a;
-  --fw-muted: #64748b;
-  --fw-bg: linear-gradient(180deg, #ffffff, #f7faff);
-  --fw-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
-  --fw-border: rgba(148, 163, 184, 0.52);
-  --fw-border-soft: rgba(148, 163, 184, 0.36);
-  --fw-divider: rgba(148, 163, 184, 0.42);
-  --fw-surface-alt: #ffffff;
-  --fw-control-bg: #f1f5f9;
-  --fw-control-hover: #e2e8f0;
-  --fw-focus-border: rgba(37, 99, 235, 0.55);
-  --fw-focus-ring: rgba(37, 99, 235, 0.16);
-  --fw-accent-border: rgba(37, 99, 235, 0.42);
-  --fw-accent-shadow: rgba(37, 99, 235, 0.22);
   color-scheme: light;
 }
 
@@ -739,27 +721,6 @@ watch(
 :global(.feature-window-dialog--cron-create .el-dialog__body) {
   padding: 14px 18px 18px;
   color: var(--fw-text);
-}
-
-:global(:root[data-user-theme='light'] .feature-window-dialog--cron.el-dialog) {
-  --fw-text: #0f172a;
-  --fw-muted: #64748b;
-  --fw-bg: linear-gradient(180deg, #ffffff, #f7faff);
-  --fw-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
-  --fw-border: rgba(148, 163, 184, 0.52);
-  --fw-border-soft: rgba(148, 163, 184, 0.36);
-  --fw-divider: rgba(148, 163, 184, 0.42);
-  --fw-surface: #f8fafc;
-  --fw-surface-alt: #ffffff;
-  --fw-control-bg: #f1f5f9;
-  --fw-control-hover: #e2e8f0;
-  --fw-focus-border: rgba(37, 99, 235, 0.55);
-  --fw-focus-ring: rgba(37, 99, 235, 0.16);
-  --fw-accent-border: rgba(37, 99, 235, 0.42);
-  --fw-accent-shadow: rgba(37, 99, 235, 0.22);
-  --fw-danger: #b91c1c;
-  --fw-danger-border: rgba(220, 38, 38, 0.32);
-  color-scheme: light;
 }
 
 :global(.feature-window-dialog--cron .el-dialog__header) {
@@ -1052,6 +1013,7 @@ watch(
 .feature-window-btn.danger {
   border-color: var(--fw-danger-border);
   color: var(--fw-danger);
+  background: #fbeff1;
 }
 
 .feature-window-runs-title {

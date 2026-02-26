@@ -200,7 +200,10 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async refreshContacts(keyword = '') {
-      const params: Record<string, unknown> = { offset: 0, limit: 500 };
+      const params: Record<string, string | number | boolean | null | undefined> = {
+        offset: 0,
+        limit: 500
+      };
       if (keyword.trim()) {
         params.keyword = keyword.trim();
       }
@@ -241,10 +244,10 @@ export const useUserWorldStore = defineStore('user-world', {
             ? item.member_count
             : toNumber(item.member_count)
       }));
-      this.unreadByConversation = this.conversations.reduce<Record<string, number>>((acc, item) => {
+      this.unreadByConversation = this.conversations.reduce((acc: Record<string, number>, item) => {
         acc[item.conversation_id] = toNumber(item.unread_count_cache);
         return acc;
-      }, {});
+      }, {} as Record<string, number>);
       await this.syncConversationWatchers();
     },
 
@@ -331,7 +334,7 @@ export const useUserWorldStore = defineStore('user-world', {
     async loadMessages(conversationId: string, options: { beforeMessageId?: number } = {}) {
       const cleaned = String(conversationId || '').trim();
       if (!cleaned) return;
-      const params: Record<string, unknown> = { limit: 100 };
+      const params: Record<string, string | number | boolean | null | undefined> = { limit: 100 };
       if (Number.isFinite(options.beforeMessageId) && Number(options.beforeMessageId) > 0) {
         params.before_message_id = Number(options.beforeMessageId);
       }

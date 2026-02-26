@@ -1379,3 +1379,234 @@
   font-size: 12px;
 }
 
+/* HuLa-like light style */
+.user-tools-dialog {
+  --user-tools-bg: #ffffff;
+  --user-tools-panel: #f7f7f7;
+  --user-tools-border: #e3e3e3;
+  --user-tools-text: #202020;
+  --user-tools-muted: #808080;
+  --user-tools-accent: #13987f;
+  --user-tools-surface: #fafafa;
+  --user-tools-card: #ffffff;
+  --user-tools-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
+  --user-tools-header: #ffffff;
+  --user-tools-header-accent: #ffffff;
+  --el-dialog-bg-color: #ffffff;
+  --el-text-color-primary: #202020;
+  --el-text-color-regular: #202020;
+  --el-border-color: #e3e3e3;
+  --el-border-color-light: #ededed;
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color: #f7f7f7;
+  --el-bg-color: #ffffff;
+}
+
+.user-tools-dialog.el-dialog {
+  background: #ffffff;
+  border: 1px solid #dfe3ea;
+  border-radius: 12px;
+  box-shadow: var(--user-tools-shadow);
+}
+
+.user-tools-dialog .el-dialog__header {
+  border-bottom: 1px solid #ececec;
+  background: #ffffff;
+}
+
+.user-tools-dialog .el-dialog__body {
+  color: #202020;
+}
+
+.user-tools-dialog .el-dialog__footer {
+  border-top: 1px solid #ececec;
+}
+
+.user-tools-dialog .user-tools-sidebar {
+  background: #f7f7f7;
+  border-color: #e3e3e3;
+  box-shadow: none;
+}
+
+.user-tools-dialog .user-tools-tab {
+  background: #ffffff;
+  border-color: #e3e3e3;
+  color: #202020;
+}
+
+.user-tools-dialog .user-tools-tab:hover {
+  background: #eef6f4;
+  border-color: rgba(19, 152, 127, 0.32);
+}
+
+.user-tools-dialog .user-tools-tab.active {
+  background: #e8f4f1;
+  border-color: rgba(19, 152, 127, 0.45);
+  color: #0f7f69;
+  box-shadow: none;
+}
+
+.user-tools-dialog .icon-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #d7d7d7;
+  border-radius: 8px;
+  background: #f7f7f7;
+  color: #6b6b6b;
+}
+
+.user-tools-dialog .icon-btn:hover {
+  border-color: rgba(19, 152, 127, 0.4);
+  color: #13987f;
+}
+
+.user-tools-dialog .el-input__wrapper,
+.user-tools-dialog .el-textarea__inner,
+.user-tools-dialog .el-select__wrapper {
+  background: #ffffff;
+  border: 1px solid #dcdcdc;
+  box-shadow: none;
+}
+
+.user-tools-dialog .el-input__wrapper.is-focus,
+.user-tools-dialog .el-select__wrapper.is-focused,
+.user-tools-dialog .el-textarea__inner:focus {
+  border-color: rgba(19, 152, 127, 0.46);
+  box-shadow: 0 0 0 2px rgba(19, 152, 127, 0.12);
+}
+
+.user-tools-dialog .list-body,
+.user-tools-dialog .tool-list,
+.user-tools-dialog .skills-list,
+.user-tools-dialog .knowledge-file-list,
+.user-tools-dialog .knowledge-doc-list,
+.user-tools-dialog .knowledge-doc-chunk-list,
+.user-tools-dialog .knowledge-test-result-list,
+.user-tools-dialog .skill-file-tree,
+.user-tools-dialog .skill-editor-body,
+.user-tools-dialog .knowledge-editor-wrapper,
+.user-tools-dialog .knowledge-doc-content,
+.user-tools-dialog .knowledge-doc-modal-content {
+  background: #ffffff;
+  border-color: #e3e3e3;
+  box-shadow: none;
+}
+
+.user-tools-dialog .list-item,
+.user-tools-dialog .tool-item,
+.user-tools-dialog .skill-item,
+.user-tools-dialog .knowledge-file-item,
+.user-tools-dialog .knowledge-doc-item,
+.user-tools-dialog .knowledge-doc-chunk-item,
+.user-tools-dialog .knowledge-test-result-item {
+  background: #ffffff;
+  border-color: #e7e7e7;
+  color: #202020;
+  box-shadow: none;
+}
+
+.user-tools-dialog .list-item:hover,
+.user-tools-dialog .tool-item:hover,
+.user-tools-dialog .skill-item:hover,
+.user-tools-dialog .knowledge-file-item:hover,
+.user-tools-dialog .knowledge-doc-item:hover,
+.user-tools-dialog .knowledge-doc-chunk-item:hover {
+  background: #f4f7fb;
+  border-color: #d9dee6;
+}
+
+.user-tools-dialog .list-item.active,
+.user-tools-dialog .skill-item.active,
+.user-tools-dialog .knowledge-file-item.active,
+.user-tools-dialog .knowledge-doc-item.active,
+.user-tools-dialog .knowledge-doc-chunk-item.selected {
+  background: #e8f4f1;
+  border-color: rgba(19, 152, 127, 0.4);
+}
+
+.user-tools-dialog .knowledge-heading-line {
+  background: #edf5f2;
+  box-shadow: inset 3px 0 0 rgba(19, 152, 127, 0.55);
+}
+
+.user-tools-dialog .user-tools-btn {
+  border-color: rgba(19, 152, 127, 0.36);
+  background: #e8f4f1;
+  color: #0f7f69;
+  box-shadow: none;
+}
+
+.user-tools-dialog .user-tools-btn.secondary {
+  border-color: #d8d8d8;
+  background: #f7f7f7;
+  color: #4b4b4b;
+}
+
+.user-tools-dialog .user-tools-btn.danger {
+  border-color: #f2c8ce;
+  background: #fbeff1;
+  color: #c14053;
+}
+
+.user-tools-dialog .user-tools-btn:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+}
+
+.user-tools-dialog .muted,
+.user-tools-dialog .tips,
+.user-tools-dialog .empty-text,
+.user-tools-dialog .tool-check,
+.user-tools-dialog .knowledge-doc-meta,
+.user-tools-dialog .knowledge-doc-chunk-preview,
+.user-tools-dialog .knowledge-test-result-content,
+.user-tools-dialog .detail-line .label,
+.user-tools-dialog .user-tools-status {
+  color: #808080;
+}
+
+.user-tools-dialog .skill-editor-body,
+.user-tools-dialog .skill-file-tree,
+.user-tools-dialog .knowledge-editor-wrapper,
+.user-tools-dialog .knowledge-doc-content,
+.user-tools-dialog .knowledge-doc-modal-content {
+  background: #f7f7f7;
+  border-color: #dcdcdc;
+}
+
+.user-tools-dialog .skill-editor-highlight {
+  color: #202020;
+}
+
+.user-tools-dialog .skill-editor-highlight .code-token-comment {
+  color: #8a8a8a;
+}
+
+.user-tools-dialog .skill-editor-highlight .code-token-string {
+  color: #0f7f69;
+}
+
+.user-tools-dialog .skill-editor-highlight .code-token-number {
+  color: #c0752a;
+}
+
+.user-tools-dialog .skill-editor-highlight .code-token-keyword {
+  color: #5b74c8;
+}
+
+.user-tools-dialog .skills-section-title {
+  color: #0f7f69;
+  background: #e8f4f1;
+  border-color: rgba(19, 152, 127, 0.35);
+}
+
+.user-tools-dialog .knowledge-doc-content mark,
+.user-tools-dialog .knowledge-doc-modal-content mark {
+  background: #ffe7a8;
+}
+
+.user-tools-dialog .knowledge-doc-chunk-preview,
+.user-tools-dialog .knowledge-test-result-content {
+  color: #5f5f5f;
+}
+

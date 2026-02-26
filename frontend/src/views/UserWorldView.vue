@@ -523,7 +523,7 @@ const chatRows = computed(() => {
   const items = [...conversations.value]
     .sort((left, right) => Number(right.last_message_at || 0) - Number(left.last_message_at || 0))
     .map((conversation) => {
-      const title = userWorldStore.resolveConversationTitle(conversation);
+      const title = userWorldStore.resolveConversationTitle(conversation as any);
       const preview = String(conversation.last_message_preview || '').trim();
       const unread = userWorldStore.resolveConversationUnread(conversation.conversation_id);
       const lastMessageAt = Number(conversation.last_message_at || 0);
@@ -714,7 +714,7 @@ const activePeerUserId = computed(() => {
 });
 
 const activeConversationTitle = computed(() =>
-  userWorldStore.resolveConversationTitle(activeConversation.value || undefined)
+  userWorldStore.resolveConversationTitle((activeConversation.value || undefined) as any)
 );
 
 const activeConversationSubtitle = computed(() => {
@@ -1364,7 +1364,10 @@ const fetchUserWorldResource = async (resource: {
     path: String(resource.relativePath || '')
   })
     .then((response) => {
-      const filename = getFilenameFromHeaders(response.headers, resource.filename || 'download');
+      const filename = getFilenameFromHeaders(
+        response.headers as Record<string, string>,
+        resource.filename || 'download'
+      );
       const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'];
       const blob = normalizeWorkspaceImageBlob(response.data, filename, contentType);
       const objectUrl = URL.createObjectURL(blob);
