@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu } = require('electron')
+const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron')
 const { spawn } = require('child_process')
 const fs = require('fs')
 const http = require('http')
@@ -205,6 +205,19 @@ const stopBridge = () => {
   bridgeProcess = null
 }
 
+const toggleMainDevTools = () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return false
+  }
+  const contents = mainWindow.webContents
+  if (contents.isDevToolsOpened()) {
+    contents.closeDevTools()
+    return false
+  }
+  contents.openDevTools({ mode: 'detach' })
+  return true
+}
+
 const createWindow = async () => {
   const port = await startBridge()
   mainWindow = new BrowserWindow({
@@ -218,6 +231,7 @@ const createWindow = async () => {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, 'preload.js'),
       sandbox: true,
       spellcheck: false,
       backgroundThrottling: false
@@ -249,6 +263,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     try {
+      ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       Menu.setApplicationMenu(null)
       await createWindow()
     } catch (err) {

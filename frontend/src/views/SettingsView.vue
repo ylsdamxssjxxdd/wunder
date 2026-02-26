@@ -32,6 +32,13 @@
             {{ t('desktop.settings.openSystem') }}
           </el-button>
         </el-form-item>
+
+        <el-form-item :label="t('desktop.settings.devtools')">
+          <p class="settings-desktop-hint">{{ t('desktop.settings.devtoolsHint') }}</p>
+          <el-button type="primary" plain :disabled="!devtoolsAvailable" @click="toggleDevTools">
+            {{ t('desktop.settings.openDevtools') }}
+          </el-button>
+        </el-form-item>
       </el-form>
     </el-card>
   </div>
@@ -53,6 +60,12 @@ const { t } = useI18n();
 const router = useRouter();
 
 const desktopMode = computed(() => isDesktopModeEnabled());
+const devtoolsAvailable = computed(() => {
+  if (!desktopMode.value || typeof window === 'undefined') {
+    return false;
+  }
+  return Boolean((window as any).wunderDesktop?.toggleDevTools);
+});
 const toolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
 
 watch(toolCallMode, (value) => {
@@ -74,6 +87,14 @@ const openSystemSettings = () => {
     return;
   }
   router.push('/desktop/system');
+};
+
+const toggleDevTools = async () => {
+  if (!devtoolsAvailable.value) {
+    return;
+  }
+  const api = (window as any).wunderDesktop;
+  await api?.toggleDevTools?.();
 };
 </script>
 
