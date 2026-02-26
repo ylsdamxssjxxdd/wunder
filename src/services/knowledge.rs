@@ -4,6 +4,7 @@ use crate::i18n;
 use crate::llm::{build_llm_client, is_llm_configured, is_llm_model, ChatMessage};
 use anyhow::Result;
 use regex::Regex;
+use reqwest::Client;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -501,22 +502,15 @@ fn build_system_prompt(limit: usize) -> String {
 }
 
 fn build_llm_payload(messages: &[ChatMessage], llm_config: Option<&LlmModelConfig>) -> Value {
-    let mut payload = json!({
-        "model": llm_config.and_then(|config| config.model.clone()).unwrap_or_default(),
+    if let Some(config) = llm_config {
+        let client = build_llm_client(config, Client::new());
+        return client.build_request_payload(messages, false);
+    }
+    json!({
+        "model": "",
         "messages": messages,
         "stream": false,
-    });
-    if let Some(config) = llm_config {
-        if let Some(temp) = config.temperature {
-            payload["temperature"] = json!(temp);
-        }
-        if let Some(max_output) = config.max_output {
-            if max_output > 0 {
-                payload["max_tokens"] = json!(max_output);
-            }
-        }
-    }
-    payload
+    })
 }
 
 fn build_question(base_name: &str, query: &str, candidates: &[KnowledgeSection]) -> String {

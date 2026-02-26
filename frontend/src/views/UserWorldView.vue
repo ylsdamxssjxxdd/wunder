@@ -197,13 +197,19 @@
               :class="{ mine: isMine(message) }"
               :data-sender-id="message.sender_user_id"
             >
-              <div class="user-world-message-bubble">
-                <div class="user-world-message-content">
-                  <div class="user-world-markdown chat-shell">
-                    <div class="markdown-body" v-html="renderUserWorldMessage(message)"></div>
+              <div class="user-world-message-avatar" :class="{ mine: isMine(message) }">
+                {{ resolveAvatarLabel(resolveMessageSenderName(message)) }}
+              </div>
+              <div class="user-world-message-body">
+                <div class="user-world-message-sender">{{ resolveMessageSenderName(message) }}</div>
+                <div class="user-world-message-bubble">
+                  <div class="user-world-message-content">
+                    <div class="user-world-markdown chat-shell">
+                      <div class="markdown-body" v-html="renderUserWorldMessage(message)"></div>
+                    </div>
                   </div>
+                  <div class="user-world-message-time">{{ formatTime(message.created_at) }}</div>
                 </div>
-                <div class="user-world-message-time">{{ formatTime(message.created_at) }}</div>
               </div>
             </div>
           </template>
@@ -1116,6 +1122,16 @@ const resolveAvatarLabel = (name: string): string => {
   const value = String(name || '').trim();
   if (!value) return 'U';
   return value.slice(0, 1).toUpperCase();
+};
+
+const resolveMessageSenderName = (message: MessageItem): string => {
+  const senderId = String(message?.sender_user_id || '').trim();
+  if (!senderId) return t('common.unknown');
+  if (isMine(message)) {
+    return String(authStore.user?.username || senderId).trim() || senderId;
+  }
+  const contact = (userWorldStore.contacts as ContactItem[]).find((item) => item.user_id === senderId);
+  return String(contact?.username || senderId).trim() || senderId;
 };
 
 const resolveUnread = (contact: ContactItem): number => {

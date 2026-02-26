@@ -696,10 +696,11 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（model_type/provider/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
+- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
   - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
+  - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions），`responses` 会改用 `/v1/responses` 协议与流式事件。
 - `POST` 入参：
   - `llm.default`：默认模型配置名称
   - `llm.models`：模型配置映射，用于保存与下发

@@ -6229,6 +6229,7 @@ fn build_cli_llm_model_config(
     LlmModelConfig {
         enable: Some(true),
         provider: Some(provider.to_string()),
+        api_mode: None,
         base_url: Some(base_url.to_string()),
         api_key: Some(api_key.to_string()),
         model: Some(model_name.to_string()),

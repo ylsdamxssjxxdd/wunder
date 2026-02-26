@@ -312,6 +312,8 @@ pub struct LlmModelConfig {
     #[serde(default, alias = "enabled")]
     pub enable: Option<bool>,
     pub provider: Option<String>,
+    #[serde(default)]
+    pub api_mode: Option<String>,
     pub base_url: Option<String>,
     pub api_key: Option<String>,
     pub model: Option<String>,

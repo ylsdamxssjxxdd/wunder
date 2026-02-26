@@ -16,7 +16,7 @@ services:
     platform: linux/arm64
     working_dir: /app
     ports:
-      - "127.0.0.1:${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
+      - "0.0.0.0:${WUNDER_PORT:-18000}:${WUNDER_PORT:-18000}"
     volumes:
       - ./:/app
       - wunder_workspaces:/workspaces

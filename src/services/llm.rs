@@ -24,9 +24,14 @@ const DEFAULT_TOGETHER_BASE_URL: &str = "https://api.together.xyz/v1";
 const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const DEFAULT_LMSTUDIO_BASE_URL: &str = "http://127.0.0.1:1234/v1";
 const CHAT_COMPLETIONS_RESOURCE: &str = "chat/completions";
+const RESPONSES_RESOURCE: &str = "responses";
 const EMBEDDINGS_RESOURCE: &str = "embeddings";
-const OPENAI_COMPAT_RESOURCE_SUFFIXES: [&[&str]; 3] =
-    [&["chat", "completions"], &["embeddings"], &["models"]];
+const OPENAI_COMPAT_RESOURCE_SUFFIXES: [&[&str]; 4] = [
+    &["chat", "completions"],
+    &["responses"],
+    &["embeddings"],
+    &["models"],
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelType {
@@ -38,6 +43,12 @@ pub enum ModelType {
 pub enum ToolCallMode {
     ToolCall,
     FunctionCall,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenAiApiMode {
+    ChatCompletions,
+    Responses,
 }
 
 pub fn normalize_model_type(value: Option<&str>) -> ModelType {
@@ -111,6 +122,7 @@ impl LlmClient {
         messages: &[ChatMessage],
         tools: Option<&[Value]>,
     ) -> Result<LlmResponse> {
+        let api_mode = self.api_mode();
         let response = self
             .http
             .post(self.endpoint())
@@ -144,25 +156,16 @@ impl LlmClient {
                 truncate_text(&body_text, 2048)
             ));
         }
-        let message = body
-            .get("choices")
-            .and_then(|value| value.get(0))
-            .and_then(|value| value.get("message"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        let content = message
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let reasoning = message
-            .get("reasoning_content")
-            .or_else(|| message.get("reasoning"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
-        let tool_calls = extract_tool_calls(&message);
-        let usage = normalize_usage(body.get("usage"));
+        let (content, reasoning, tool_calls) = if matches!(api_mode, OpenAiApiMode::Responses)
+            || body.get("output").is_some()
+            || body.get("response").is_some()
+        {
+            parse_responses_body(&body)
+        } else {
+            parse_chat_completion_body(&body)
+        };
+        let usage = normalize_usage(body.get("usage"))
+            .or_else(|| body.get("response").and_then(|value| normalize_usage(value.get("usage"))));
         Ok(LlmResponse {
             content,
             reasoning,
@@ -319,11 +322,18 @@ impl LlmClient {
             });
         }
     }
+    fn api_mode(&self) -> OpenAiApiMode {
+        resolve_openai_api_mode(&self.config)
+    }
     fn endpoint(&self) -> String {
         let base =
             resolve_base_url(&self.config).unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string());
-        build_openai_resource_endpoint(&base, CHAT_COMPLETIONS_RESOURCE)
-            .unwrap_or_else(|| format!("{DEFAULT_OPENAI_BASE_URL}/{CHAT_COMPLETIONS_RESOURCE}"))
+        let resource = match self.api_mode() {
+            OpenAiApiMode::Responses => RESPONSES_RESOURCE,
+            OpenAiApiMode::ChatCompletions => CHAT_COMPLETIONS_RESOURCE,
+        };
+        build_openai_resource_endpoint(&base, resource)
+            .unwrap_or_else(|| format!("{DEFAULT_OPENAI_BASE_URL}/{resource}"))
     }
 
     fn headers(&self) -> reqwest::header::HeaderMap {
@@ -369,6 +379,23 @@ impl LlmClient {
         include_usage: bool,
         tools: Option<&[Value]>,
     ) -> Value {
+        match self.api_mode() {
+            OpenAiApiMode::Responses => {
+                self.build_responses_payload(messages, stream, include_usage, tools)
+            }
+            OpenAiApiMode::ChatCompletions => {
+                self.build_chat_payload(messages, stream, include_usage, tools)
+            }
+        }
+    }
+
+    fn build_chat_payload(
+        &self,
+        messages: &[ChatMessage],
+        stream: bool,
+        include_usage: bool,
+        tools: Option<&[Value]>,
+    ) -> Value {
         let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
         let mut payload = json!({
             "model": self.config.model.clone().unwrap_or_else(|| "gpt-4".to_string()),
@@ -397,6 +424,220 @@ impl LlmClient {
         }
         payload
     }
+
+    fn build_responses_payload(
+        &self,
+        messages: &[ChatMessage],
+        stream: bool,
+        include_usage: bool,
+        tools: Option<&[Value]>,
+    ) -> Value {
+        let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
+        let input = build_responses_input(messages);
+        let mut payload = json!({
+            "model": self.config.model.clone().unwrap_or_else(|| "gpt-4".to_string()),
+            "input": input,
+            "temperature": temperature,
+            "stream": stream,
+        });
+        if stream && include_usage {
+            payload["stream_options"] = json!({ "include_usage": true });
+        }
+        if let Some(max_output) = self.config.max_output {
+            if max_output > 0 {
+                payload["max_output_tokens"] = json!(max_output);
+            }
+        }
+        if let Some(stop) = &self.config.stop {
+            if !stop.is_empty() {
+                payload["stop"] = json!(stop);
+            }
+        }
+        if let Some(tool_defs) = tools {
+            if !tool_defs.is_empty() {
+                payload["tools"] = Value::Array(tool_defs.to_vec());
+                payload["tool_choice"] = json!("auto");
+            }
+        }
+        payload
+    }
+}
+
+fn build_responses_input(messages: &[ChatMessage]) -> Value {
+    let mut input: Vec<Value> = Vec::new();
+    for message in messages {
+        let role = message.role.trim();
+        if role.eq_ignore_ascii_case("tool") {
+            if let Some(call_id) = message
+                .tool_call_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                let output = extract_content_text(&message.content);
+                input.push(json!({
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": output,
+                }));
+                continue;
+            }
+        }
+
+        let normalized_role = normalize_responses_role(role);
+        let content = convert_responses_content(&message.content);
+        input.push(json!({
+            "role": normalized_role,
+            "content": content,
+        }));
+
+        if let Some(tool_calls) = message.tool_calls.as_ref() {
+            let calls = extract_tool_calls_list(tool_calls);
+            for (idx, call) in calls.iter().enumerate() {
+                if let Some(item) = tool_call_to_responses_item(call, idx) {
+                    input.push(item);
+                }
+            }
+        }
+    }
+    Value::Array(input)
+}
+
+fn normalize_responses_role(role: &str) -> &'static str {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "system" => "system",
+        "assistant" => "assistant",
+        "developer" => "developer",
+        _ => "user",
+    }
+}
+
+fn extract_content_text(content: &Value) -> String {
+    let text = extract_stream_text(Some(content));
+    if !text.is_empty() {
+        return text;
+    }
+    content
+        .as_str()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| content.to_string())
+}
+
+fn convert_responses_content(content: &Value) -> Value {
+    match content {
+        Value::Null => Value::String(String::new()),
+        Value::String(_) => content.clone(),
+        Value::Array(parts) => Value::Array(
+            parts
+                .iter()
+                .filter_map(convert_responses_content_part)
+                .collect(),
+        ),
+        Value::Object(_) => convert_responses_content_part(content)
+            .map(|part| Value::Array(vec![part]))
+            .unwrap_or_else(|| Value::String(content.to_string())),
+        other => Value::String(other.to_string()),
+    }
+}
+
+fn convert_responses_content_part(part: &Value) -> Option<Value> {
+    match part {
+        Value::String(text) => Some(json!({ "type": "input_text", "text": text })),
+        Value::Object(map) => {
+            let raw_type = map
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if matches!(raw_type.as_str(), "input_text" | "input_image" | "input_file") {
+                return Some(part.clone());
+            }
+            if matches!(raw_type.as_str(), "text" | "output_text") {
+                if let Some(text) = map.get("text").and_then(Value::as_str) {
+                    return Some(json!({ "type": "input_text", "text": text }));
+                }
+            }
+            if raw_type == "image_url" || map.contains_key("image_url") || raw_type == "input_image"
+            {
+                let url = map
+                    .get("image_url")
+                    .and_then(|value| match value {
+                        Value::String(text) => Some(text.to_string()),
+                        Value::Object(obj) => obj
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .map(|text| text.to_string()),
+                        _ => None,
+                    })
+                    .or_else(|| map.get("url").and_then(Value::as_str).map(|v| v.to_string()));
+                if let Some(url) = url {
+                    let mut item = json!({ "type": "input_image", "image_url": url });
+                    if let Some(detail) = map.get("detail") {
+                        item["detail"] = detail.clone();
+                    } else {
+                        item["detail"] = json!("auto");
+                    }
+                    return Some(item);
+                }
+            }
+            if let Some(text) = map.get("text").and_then(Value::as_str) {
+                return Some(json!({ "type": "input_text", "text": text }));
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn extract_tool_calls_list(value: &Value) -> Vec<Value> {
+    match value {
+        Value::Array(items) => items.clone(),
+        Value::Object(_) => vec![value.clone()],
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .map(|parsed| extract_tool_calls_list(&parsed))
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Value> {
+    let Value::Object(map) = call else {
+        return None;
+    };
+    let name = map
+        .get("function")
+        .and_then(|value| value.get("name"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("name").and_then(Value::as_str))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let arguments = map
+        .get("function")
+        .and_then(|value| value.get("arguments"))
+        .and_then(Value::as_str)
+        .or_else(|| map.get("arguments").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    let call_id = map
+        .get("id")
+        .or_else(|| map.get("call_id"))
+        .or_else(|| map.get("tool_call_id"))
+        .or_else(|| map.get("toolCallId"))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("call_{}", fallback_index + 1));
+    Some(json!({
+        "type": "function_call",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+    }))
 }
 
 pub fn build_llm_client(config: &LlmModelConfig, http: Client) -> LlmClient {
@@ -570,6 +811,22 @@ fn resolve_base_url(config: &LlmModelConfig) -> Option<String> {
     provider_default_base_url(&provider).map(|value| value.to_string())
 }
 
+fn resolve_openai_api_mode(config: &LlmModelConfig) -> OpenAiApiMode {
+    if let Some(value) = config.api_mode.as_deref() {
+        return normalize_openai_api_mode(Some(value));
+    }
+    if let Some(base_url) = config.base_url.as_deref() {
+        if base_url
+            .to_ascii_lowercase()
+            .trim_end_matches('/')
+            .contains("/responses")
+        {
+            return OpenAiApiMode::Responses;
+        }
+    }
+    OpenAiApiMode::ChatCompletions
+}
+
 fn build_openai_resource_endpoint(base_url: &str, resource: &str) -> Option<String> {
     let normalized_base = normalize_base_url(base_url)?;
     let trimmed = resource.trim_matches('/');
@@ -668,6 +925,166 @@ fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
         output,
         total,
     })
+}
+
+fn parse_chat_completion_body(body: &Value) -> (String, String, Option<Value>) {
+    let message = body
+        .get("choices")
+        .and_then(|value| value.get(0))
+        .and_then(|value| value.get("message"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let reasoning = message
+        .get("reasoning_content")
+        .or_else(|| message.get("reasoning"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let tool_calls = extract_tool_calls(&message);
+    (content, reasoning, tool_calls)
+}
+
+fn parse_responses_body(body: &Value) -> (String, String, Option<Value>) {
+    let response = body.get("response").unwrap_or(body);
+    let (content, reasoning, tool_calls) = extract_responses_output(response);
+    let tool_calls = if tool_calls.is_empty() {
+        None
+    } else {
+        Some(Value::Array(tool_calls))
+    };
+    (content, reasoning, tool_calls)
+}
+
+fn extract_responses_output(response: &Value) -> (String, String, Vec<Value>) {
+    let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+
+    let output_items = response
+        .get("output")
+        .and_then(Value::as_array)
+        .or_else(|| response.as_array());
+    if let Some(items) = output_items {
+        for (idx, item) in items.iter().enumerate() {
+            let item_type = item
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match item_type.as_str() {
+                "message" => {
+                    let text = extract_response_message_text(item);
+                    if !text.is_empty() {
+                        content.push_str(&text);
+                    }
+                }
+                "reasoning" => {
+                    let text = extract_response_reasoning(item);
+                    if !text.is_empty() {
+                        if !reasoning.is_empty() {
+                            reasoning.push('\n');
+                        }
+                        reasoning.push_str(&text);
+                    }
+                }
+                "function_call" => {
+                    if let Some(tool_call) = response_tool_call_to_openai(item, idx) {
+                        tool_calls.push(tool_call);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if content.trim().is_empty() {
+        if let Some(text) = response.get("output_text").and_then(Value::as_str) {
+            content = text.to_string();
+        } else if let Some(text) = response.get("text").and_then(Value::as_str) {
+            content = text.to_string();
+        }
+    }
+
+    (content, reasoning, tool_calls)
+}
+
+fn extract_response_message_text(item: &Value) -> String {
+    if let Some(content) = item.get("content") {
+        let text = extract_stream_text(Some(content));
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    item.get("text")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn extract_response_reasoning(item: &Value) -> String {
+    if let Some(summary) = item.get("summary") {
+        let text = extract_stream_text(Some(summary));
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    item.get("text")
+        .or_else(|| item.get("summary_text"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string()
+}
+
+fn response_tool_call_to_openai(item: &Value, fallback_index: usize) -> Option<Value> {
+    let Value::Object(map) = item else {
+        return None;
+    };
+    let name = map
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            map.get("function")
+                .and_then(|value| value.get("name"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let arguments = map
+        .get("arguments")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            map.get("function")
+                .and_then(|value| value.get("arguments"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("")
+        .to_string();
+    let call_id = map
+        .get("call_id")
+        .or_else(|| map.get("id"))
+        .or_else(|| map.get("tool_call_id"))
+        .or_else(|| map.get("toolCallId"))
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("call_{}", fallback_index + 1));
+    Some(json!({
+        "type": "function",
+        "id": call_id,
+        "function": {
+            "name": name,
+            "arguments": arguments,
+        }
+    }))
 }
 
 fn extract_tool_calls(message: &Value) -> Option<Value> {
@@ -829,6 +1246,17 @@ where
 
     match serde_json::from_str::<Value>(data) {
         Ok(payload) => {
+            if is_responses_stream_payload(&payload) {
+                return process_responses_stream_payload(
+                    &payload,
+                    combined,
+                    reasoning_combined,
+                    usage,
+                    tool_calls_accumulator,
+                    on_delta,
+                )
+                .await;
+            }
             if let Some(new_usage) = normalize_usage(payload.get("usage")) {
                 *usage = Some(new_usage);
             }
@@ -894,9 +1322,120 @@ where
     Ok(false)
 }
 
+fn is_responses_stream_payload(payload: &Value) -> bool {
+    payload.get("type").is_some()
+        || payload.get("output").is_some()
+        || payload.get("response").is_some()
+}
+
+async fn process_responses_stream_payload<F, Fut>(
+    payload: &Value,
+    combined: &mut String,
+    reasoning_combined: &mut String,
+    usage: &mut Option<TokenUsage>,
+    tool_calls_accumulator: &mut Vec<StreamToolCall>,
+    on_delta: &mut F,
+) -> Result<bool>
+where
+    F: FnMut(String, String) -> Fut,
+    Fut: Future<Output = Result<()>>,
+{
+    if let Some(new_usage) = normalize_usage(payload.get("usage")) {
+        *usage = Some(new_usage);
+    }
+
+    let payload_type = payload
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match payload_type.as_str() {
+        "response.output_text.delta" => {
+            let delta = payload.get("delta").and_then(Value::as_str).unwrap_or("");
+            if !delta.is_empty() {
+                combined.push_str(delta);
+                on_delta(delta.to_string(), String::new()).await?;
+            }
+        }
+        "response.output_text.done" => {
+            let text = payload.get("text").and_then(Value::as_str).unwrap_or("");
+            if !text.is_empty() && combined.is_empty() {
+                combined.push_str(text);
+                on_delta(text.to_string(), String::new()).await?;
+            }
+        }
+        "response.reasoning_summary_part.added" => {
+            if !reasoning_combined.is_empty() {
+                reasoning_combined.push_str("\n\n");
+            }
+        }
+        "response.reasoning_summary_text.delta" => {
+            let delta = payload.get("delta").and_then(Value::as_str).unwrap_or("");
+            if !delta.is_empty() {
+                reasoning_combined.push_str(delta);
+                on_delta(String::new(), delta.to_string()).await?;
+            }
+        }
+        "response.output_item.added" => {
+            if let Some(item) = payload.get("item") {
+                update_responses_tool_call_from_item(tool_calls_accumulator, item);
+            }
+        }
+        "response.function_call_arguments.delta" => {
+            update_responses_tool_call_arguments(tool_calls_accumulator, payload);
+        }
+        "response.function_call_arguments.done" => {
+            update_responses_tool_call_arguments(tool_calls_accumulator, payload);
+        }
+        "response.completed" => {
+            if let Some(response) = payload.get("response") {
+                if let Some(new_usage) = normalize_usage(response.get("usage")) {
+                    *usage = Some(new_usage);
+                }
+                let (text, reasoning, tool_calls) = extract_responses_output(response);
+                if combined.is_empty() && !text.is_empty() {
+                    combined.push_str(&text);
+                    on_delta(text, String::new()).await?;
+                }
+                if reasoning_combined.is_empty() && !reasoning.is_empty() {
+                    reasoning_combined.push_str(&reasoning);
+                    on_delta(String::new(), reasoning).await?;
+                }
+                if !tool_calls.is_empty() {
+                    upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
+                }
+            }
+            return Ok(true);
+        }
+        _ => {}
+    }
+
+    if payload_type.is_empty() && payload.get("output").is_some() {
+        let (text, reasoning, tool_calls) = extract_responses_output(payload);
+        if combined.is_empty() && !text.is_empty() {
+            combined.push_str(&text);
+            on_delta(text, String::new()).await?;
+        }
+        if reasoning_combined.is_empty() && !reasoning.is_empty() {
+            reasoning_combined.push_str(&reasoning);
+            on_delta(String::new(), reasoning).await?;
+        }
+        if !tool_calls.is_empty() {
+            upsert_responses_tool_calls(tool_calls_accumulator, &tool_calls);
+        }
+        if let Some(new_usage) = normalize_usage(payload.get("usage")) {
+            *usage = Some(new_usage);
+        }
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 #[derive(Debug, Default, Clone)]
 struct StreamToolCall {
     id: Option<String>,
+    source_id: Option<String>,
     name: String,
     arguments: String,
 }
@@ -923,6 +1462,160 @@ fn update_stream_tool_calls(acc: &mut Vec<StreamToolCall>, payload: &Value) {
             }
         }
         _ => {}
+    }
+}
+
+fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Value) {
+    let Value::Object(map) = item else {
+        return;
+    };
+    let item_type = map
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if item_type != "function_call" {
+        return;
+    }
+    let item_id = map
+        .get("id")
+        .or_else(|| map.get("item_id"))
+        .and_then(Value::as_str);
+    let call_id = map
+        .get("call_id")
+        .or_else(|| map.get("callId"))
+        .and_then(Value::as_str);
+    let name = map
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            map.get("function")
+                .and_then(|value| value.get("name"))
+                .and_then(Value::as_str)
+        });
+    let arguments = map
+        .get("arguments")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            map.get("function")
+                .and_then(|value| value.get("arguments"))
+                .and_then(Value::as_str)
+        });
+    upsert_response_tool_call(acc, item_id, call_id, name, arguments);
+}
+
+fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: &Value) {
+    let item_id = payload.get("item_id").and_then(Value::as_str);
+    let call_id = payload
+        .get("call_id")
+        .or_else(|| payload.get("callId"))
+        .and_then(Value::as_str);
+    let arguments = payload
+        .get("delta")
+        .or_else(|| payload.get("arguments"))
+        .and_then(Value::as_str);
+    if arguments.is_none() && call_id.is_none() && item_id.is_none() {
+        return;
+    }
+    upsert_response_tool_call(acc, item_id, call_id, None, arguments);
+}
+
+fn upsert_responses_tool_calls(acc: &mut Vec<StreamToolCall>, tool_calls: &[Value]) {
+    for call in tool_calls {
+        let Value::Object(map) = call else {
+            continue;
+        };
+        let call_id = map
+            .get("id")
+            .or_else(|| map.get("call_id"))
+            .or_else(|| map.get("tool_call_id"))
+            .or_else(|| map.get("toolCallId"))
+            .and_then(Value::as_str);
+        let function = map.get("function").or_else(|| map.get("function_call"));
+        let name = function
+            .and_then(|value| value.get("name"))
+            .and_then(Value::as_str);
+        let arguments = function
+            .and_then(|value| value.get("arguments"))
+            .and_then(Value::as_str);
+        if name.is_none() && arguments.is_none() && call_id.is_none() {
+            continue;
+        }
+        upsert_response_tool_call(acc, None, call_id, name, arguments);
+    }
+}
+
+fn upsert_response_tool_call(
+    acc: &mut Vec<StreamToolCall>,
+    item_id: Option<&str>,
+    call_id: Option<&str>,
+    name: Option<&str>,
+    arguments: Option<&str>,
+) {
+    let index = find_response_tool_call_index(acc, item_id, call_id).unwrap_or_else(|| {
+        acc.push(StreamToolCall::default());
+        acc.len().saturating_sub(1)
+    });
+    let slot = &mut acc[index];
+    if let Some(item_id) = item_id {
+        let trimmed = item_id.trim();
+        if !trimmed.is_empty() {
+            slot.source_id = Some(trimmed.to_string());
+        }
+    }
+    if let Some(call_id) = call_id {
+        let trimmed = call_id.trim();
+        if !trimmed.is_empty() {
+            slot.id = Some(trimmed.to_string());
+        }
+    }
+    if let Some(name) = name {
+        merge_stream_text_field(&mut slot.name, name);
+    }
+    if let Some(arguments) = arguments {
+        merge_stream_text_field(&mut slot.arguments, arguments);
+    }
+}
+
+fn find_response_tool_call_index(
+    acc: &[StreamToolCall],
+    item_id: Option<&str>,
+    call_id: Option<&str>,
+) -> Option<usize> {
+    if let Some(item_id) = item_id {
+        if let Some(index) = acc
+            .iter()
+            .position(|call| call.source_id.as_deref() == Some(item_id))
+        {
+            return Some(index);
+        }
+    }
+    if let Some(call_id) = call_id {
+        if let Some(index) = acc
+            .iter()
+            .position(|call| call.id.as_deref() == Some(call_id))
+        {
+            return Some(index);
+        }
+    }
+    None
+}
+
+pub fn normalize_openai_api_mode(value: Option<&str>) -> OpenAiApiMode {
+    let raw = value.unwrap_or("").trim();
+    if raw.is_empty() {
+        return OpenAiApiMode::ChatCompletions;
+    }
+    match raw
+        .to_ascii_lowercase()
+        .replace(['-', ' ', '/'], "_")
+        .as_str()
+    {
+        "responses" | "response" | "response_api" | "v1_responses" => OpenAiApiMode::Responses,
+        "chat" | "chat_completions" | "chatcompletion" | "chat_completions_api" => {
+            OpenAiApiMode::ChatCompletions
+        }
+        _ => OpenAiApiMode::ChatCompletions,
     }
 }
 
@@ -962,7 +1655,15 @@ fn merge_stream_tool_call_item(acc: &mut Vec<StreamToolCall>, item: &Value) {
     }
 
     let slot = &mut acc[index];
-    if let Some(id) = map.get("id").and_then(Value::as_str).map(str::trim) {
+    if let Some(id) = map
+        .get("id")
+        .or_else(|| map.get("call_id"))
+        .or_else(|| map.get("callId"))
+        .or_else(|| map.get("tool_call_id"))
+        .or_else(|| map.get("toolCallId"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+    {
         if !id.is_empty() {
             slot.id = Some(id.to_string());
         }
@@ -1023,7 +1724,7 @@ fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
                 "arguments": call.arguments,
             }
         });
-        if let Some(id) = &call.id {
+        if let Some(id) = call.id.as_ref().or(call.source_id.as_ref()) {
             if let Value::Object(ref mut map) = payload {
                 map.insert("id".to_string(), Value::String(id.clone()));
             }
@@ -1160,7 +1861,7 @@ fn normalize_base_url(base_url: &str) -> Option<String> {
     }
 
     let mut base = cleaned_fallback;
-    for suffix in ["/chat/completions", "/embeddings", "/models"] {
+    for suffix in ["/chat/completions", "/responses", "/embeddings", "/models"] {
         if let Some(stripped) = base.strip_suffix(suffix) {
             base = stripped.trim_end_matches('/').to_string();
             break;
@@ -1610,6 +2311,7 @@ mod tests {
         let config = LlmModelConfig {
             enable: Some(true),
             provider: Some("openai_compatible".to_string()),
+            api_mode: None,
             base_url: Some(format!("http://{addr}/v1")),
             api_key: Some("test-key".to_string()),
             model: Some("test-model".to_string()),
