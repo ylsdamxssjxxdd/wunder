@@ -1,0 +1,60 @@
+﻿# Full dependencies for embedded Python (AppImage)
+# Comprehensive list with plotting and office utilities
+requests
+httpx
+urllib3
+certifi
+charset-normalizer
+idna
+pydantic
+typing-extensions
+python-dotenv
+fastapi
+starlette
+uvicorn
+jinja2
+markupsafe
+rich
+loguru
+tqdm
+numpy
+pandas
+scipy
+openpyxl
+xlrd
+xlsxwriter
+python-docx
+python-pptx
+PyPDF2
+beautifulsoup4
+lxml
+markdown
+pygments
+pillow
+psutil
+sqlalchemy
+
+# ML / Data / Visualization
+scikit-learn
+matplotlib
+seaborn
+plotly
+bokeh
+altair
+pyecharts
+pyarrow
+opencv-python-headless
+
+# Databases / Queue
+psycopg[binary]
+pymysql
+pymongo
+redis
+celery
+
+# Office / Document utilities
+pdfplumber
+pypdf
+fpdf2
+odfpy
+msoffcrypto-tool

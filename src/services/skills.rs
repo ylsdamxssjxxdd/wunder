@@ -1,5 +1,6 @@
 // Skills 加载与执行：解析 SKILL.md 元信息，并提供统一执行入口。
 use crate::config::Config;
+use crate::core::python_runtime;
 use crate::i18n;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -145,7 +146,11 @@ pub async fn execute_skill(spec: &SkillSpec, args: &Value, timeout_s: u64) -> Re
             &HashMap::from([("detail".to_string(), i18n::t("error.skill_file_not_found"),)]),
         )));
     }
-    let python_bin = std::env::var("WUNDER_PYTHON_BIN").unwrap_or_else(|_| "python".to_string());
+    let runtime = python_runtime::resolve_python_runtime();
+    let python_bin = runtime
+        .as_ref()
+        .map(|value| value.bin.to_string_lossy().to_string())
+        .unwrap_or_else(|| "python".to_string());
     let mut command = Command::new(python_bin);
     command
         .arg(runner)
@@ -156,6 +161,9 @@ pub async fn execute_skill(spec: &SkillSpec, args: &Value, timeout_s: u64) -> Re
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+    if let Some(runtime) = runtime.as_ref() {
+        python_runtime::apply_python_env(&mut command, runtime);
+    }
     let mut child = command.spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         let payload = serde_json::to_vec(args).unwrap_or_default();

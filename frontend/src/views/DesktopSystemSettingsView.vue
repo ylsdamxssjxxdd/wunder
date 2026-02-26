@@ -183,17 +183,99 @@
                           </el-input>
                         </template>
                       </el-table-column>
-                      <el-table-column :label="t('desktop.common.actions')" width="140" align="center">
+                      <el-table-column :label="t('desktop.seed.cloudWorkspaceId')" min-width="220">
                         <template #default="{ row }">
-                          <el-button
-                            v-if="row.container_id !== 1"
-                            link
-                            type="danger"
-                            @click="removeContainer(row.container_id)"
-                          >
-                            {{ t('desktop.common.remove') }}
-                          </el-button>
-                          <span v-else class="desktop-container-fixed">{{ t('desktop.containers.fixed') }}</span>
+                          <el-input
+                            v-model="row.cloud_workspace_id"
+                            :placeholder="t('desktop.seed.cloudWorkspacePlaceholder')"
+                          />
+                        </template>
+                      </el-table-column>
+                      <el-table-column :label="t('desktop.seed.syncStatus')" min-width="280">
+                        <template #default="{ row }">
+                          <div class="desktop-seed-cell">
+                            <el-tag size="small" :type="seedStatusTagType(row.seed_status)">
+                              {{ seedStatusLabel(row.seed_status) }}
+                            </el-tag>
+                            <template v-if="row.seed_job">
+                              <el-progress
+                                :percentage="Number(row.seed_job.progress.percent || 0)"
+                                :status="row.seed_job.status === 'failed' ? 'exception' : undefined"
+                                :stroke-width="8"
+                              />
+                              <div class="desktop-seed-meta">
+                                <span>
+                                  {{ row.seed_job.progress.processed_files }} / {{ row.seed_job.progress.total_files }}
+                                </span>
+                                <span v-if="row.seed_job.progress.speed_bps > 0">
+                                  {{ formatSeedSpeed(row.seed_job.progress.speed_bps) }}
+                                </span>
+                                <span v-if="row.seed_job.progress.eta_seconds !== null">
+                                  ETA {{ formatSeedEta(row.seed_job.progress.eta_seconds) }}
+                                </span>
+                              </div>
+                              <p v-if="row.seed_job.error" class="desktop-seed-error">
+                                {{ row.seed_job.error }}
+                              </p>
+                            </template>
+                          </div>
+                        </template>
+                      </el-table-column>
+                      <el-table-column :label="t('desktop.common.actions')" width="220" align="center">
+                        <template #default="{ row }">
+                          <div class="desktop-container-actions">
+                            <el-button
+                              link
+                              type="primary"
+                              :loading="seedActionForContainer(row.container_id) === 'start'"
+                              :disabled="isSeedActionBusy(row.container_id)"
+                              @click="startSeedForContainer(row)"
+                            >
+                              {{ t('desktop.seed.start') }}
+                            </el-button>
+                            <el-button
+                              v-if="row.seed_job?.status === 'running'"
+                              link
+                              :loading="seedActionForContainer(row.container_id) === 'pause'"
+                              :disabled="isSeedActionBusy(row.container_id)"
+                              @click="pauseSeedForContainer(row)"
+                            >
+                              {{ t('desktop.seed.pause') }}
+                            </el-button>
+                            <el-button
+                              v-if="row.seed_job?.status === 'paused'"
+                              link
+                              :loading="seedActionForContainer(row.container_id) === 'resume'"
+                              :disabled="isSeedActionBusy(row.container_id)"
+                              @click="resumeSeedForContainer(row)"
+                            >
+                              {{ t('desktop.seed.resume') }}
+                            </el-button>
+                            <el-button
+                              v-if="row.seed_job && row.seed_job.status !== 'done' && row.seed_job.status !== 'canceled'"
+                              link
+                              type="warning"
+                              :loading="seedActionForContainer(row.container_id) === 'cancel'"
+                              :disabled="isSeedActionBusy(row.container_id)"
+                              @click="cancelSeedForContainer(row)"
+                            >
+                              {{ t('desktop.seed.cancel') }}
+                            </el-button>
+                            <el-button
+                              v-if="row.container_id !== 1"
+                              link
+                              type="danger"
+                              @click="removeContainer(row.container_id)"
+                            >
+                              {{ t('desktop.common.remove') }}
+                            </el-button>
+                            <span
+                              v-else
+                              class="desktop-container-fixed"
+                            >
+                              {{ t('desktop.containers.fixed') }}
+                            </span>
+                          </div>
                         </template>
                       </el-table-column>
                     </el-table>
@@ -304,21 +386,25 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRoute, useRouter } from 'vue-router';
 
 import {
+  controlDesktopSeedJob,
   fetchDesktopSettings,
   listDesktopDirectories,
+  listDesktopSeedJobs,
+  startDesktopSeedJob,
   updateDesktopSettings,
-  type DesktopContainerRoot,
   type DesktopDirectoryEntry,
   type DesktopDirectoryListData,
-  type DesktopRemoteGatewaySettings
+  type DesktopRemoteGatewaySettings,
+  type DesktopSeedJob
 } from '@/api/desktop';
 import {
   clearDesktopRemoteApiBaseOverride,
+  getDesktopRemoteApiBaseOverride,
   getDesktopLocalToken,
   isDesktopRemoteAuthMode,
   setDesktopRemoteApiBaseOverride
@@ -336,9 +422,19 @@ type ModelRow = {
   raw: Record<string, unknown>;
 };
 
+type ContainerRow = {
+  container_id: number;
+  root: string;
+  cloud_workspace_id: string;
+  seed_status: string;
+  seed_job: DesktopSeedJob | null;
+};
+
 type PathPickerTarget =
   | { kind: 'workspace' }
   | { kind: 'container'; containerId: number };
+
+type SeedActionKind = 'start' | 'pause' | 'resume' | 'cancel';
 
 const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelRow[] =>
   Object.entries(models || {}).map(([key, raw]) => ({
@@ -379,6 +475,84 @@ const normalizeSection = (value: unknown): SectionKey => {
   return 'model';
 };
 
+const normalizeSeedStatus = (value: unknown): string => {
+  const cleaned = String(value || '').trim().toLowerCase();
+  if (['running', 'paused', 'done', 'failed', 'canceled', 'idle'].includes(cleaned)) {
+    return cleaned;
+  }
+  return 'idle';
+};
+
+const toFiniteNumber = (value: unknown, fallback = 0): number => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+};
+
+const parseSeedJob = (raw: unknown): DesktopSeedJob | null => {
+  const source = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+  if (!source) {
+    return null;
+  }
+
+  const jobId = String(source.job_id || '').trim();
+  const containerId = Number.parseInt(String(source.container_id || ''), 10);
+  if (!jobId || !Number.isFinite(containerId) || containerId <= 0) {
+    return null;
+  }
+
+  const progressRaw =
+    source.progress && typeof source.progress === 'object'
+      ? (source.progress as Record<string, unknown>)
+      : {};
+
+  return {
+    job_id: jobId,
+    container_id: containerId,
+    local_root: String(source.local_root || '').trim(),
+    cloud_workspace_id: String(source.cloud_workspace_id || '').trim(),
+    remote_api_base: String(source.remote_api_base || '').trim(),
+    stage: String(source.stage || '').trim(),
+    status: normalizeSeedStatus(source.status),
+    progress: {
+      percent: Math.min(100, Math.max(0, toFiniteNumber(progressRaw.percent))),
+      processed_files: Math.max(0, Math.round(toFiniteNumber(progressRaw.processed_files))),
+      total_files: Math.max(0, Math.round(toFiniteNumber(progressRaw.total_files))),
+      processed_bytes: Math.max(0, Math.round(toFiniteNumber(progressRaw.processed_bytes))),
+      total_bytes: Math.max(0, Math.round(toFiniteNumber(progressRaw.total_bytes))),
+      speed_bps: Math.max(0, toFiniteNumber(progressRaw.speed_bps)),
+      eta_seconds:
+        progressRaw.eta_seconds === null
+          ? null
+          : (() => {
+              const eta = toFiniteNumber(progressRaw.eta_seconds, -1);
+              return eta >= 0 ? Math.round(eta) : null;
+            })()
+    },
+    current_item: String(source.current_item || '').trim() || undefined,
+    error: String(source.error || '').trim() || undefined,
+    created_at: toFiniteNumber(source.created_at),
+    updated_at: toFiniteNumber(source.updated_at),
+    started_at:
+      source.started_at === null || source.started_at === undefined
+        ? null
+        : toFiniteNumber(source.started_at),
+    finished_at:
+      source.finished_at === null || source.finished_at === undefined
+        ? null
+        : toFiniteNumber(source.finished_at)
+  };
+};
+
+const parseSeedJobs = (raw: unknown): DesktopSeedJob[] => {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item) => parseSeedJob(item))
+    .filter((item): item is DesktopSeedJob => Boolean(item))
+    .sort((left, right) => right.created_at - left.created_at);
+};
+
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
@@ -387,6 +561,7 @@ const loading = ref(false);
 const savingModel = ref(false);
 const savingContainers = ref(false);
 const connectingRemote = ref(false);
+const seedJobsLoading = ref(false);
 
 const activeSection = ref<SectionKey>('model');
 
@@ -396,12 +571,12 @@ const defaultModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
 
 const workspaceRoot = ref('');
-const containerRows = ref<DesktopContainerRoot[]>([]);
+const containerRows = ref<ContainerRow[]>([]);
 
 const remoteServerBaseUrl = ref('');
 const remoteConnected = ref(false);
 
-const canBrowseLocalPaths = computed(() => !remoteConnected.value);
+const canBrowseLocalPaths = computed(() => true);
 const pathPickerVisible = ref(false);
 const pathPickerLoading = ref(false);
 const pathPickerCurrentPath = ref('');
@@ -409,6 +584,10 @@ const pathPickerParentPath = ref('');
 const pathPickerRoots = ref<string[]>([]);
 const pathPickerItems = ref<DesktopDirectoryEntry[]>([]);
 const pathPickerTarget = ref<PathPickerTarget | null>(null);
+const seedActionStates = ref<Record<number, SeedActionKind | undefined>>({});
+
+let seedPollingTimer: number | null = null;
+let seedPollErrorNotified = false;
 
 const currentSection = computed(() => {
   if (activeSection.value === 'containers') {
@@ -437,27 +616,76 @@ const sortContainerRows = () => {
   containerRows.value.sort((left, right) => left.container_id - right.container_id);
 };
 
+const toContainerRow = (item: Partial<ContainerRow>): ContainerRow => ({
+  container_id: Number(item.container_id || 0),
+  root: String(item.root || '').trim(),
+  cloud_workspace_id: String(item.cloud_workspace_id || '').trim(),
+  seed_status: normalizeSeedStatus(item.seed_status),
+  seed_job: item.seed_job || null
+});
+
 const ensureDefaultContainer = () => {
   const workspace = workspaceRoot.value.trim();
   const first = containerRows.value.find((item) => item.container_id === 1);
   if (!first) {
-    containerRows.value.unshift({ container_id: 1, root: workspace });
+    containerRows.value.unshift(
+      toContainerRow({
+        container_id: 1,
+        root: workspace
+      })
+    );
   } else if (workspace) {
     first.root = workspace;
   }
   sortContainerRows();
 };
 
-const parseContainerRows = (raw: unknown): DesktopContainerRoot[] => {
-  if (!Array.isArray(raw)) {
-    return [];
+const parseContainerRows = (mountsRaw: unknown, rootsRaw: unknown): ContainerRow[] => {
+  const map = new Map<number, ContainerRow>();
+
+  if (Array.isArray(mountsRaw)) {
+    mountsRaw.forEach((item) => {
+      const containerId = Number.parseInt(String(item?.container_id), 10);
+      if (!Number.isFinite(containerId) || containerId <= 0) {
+        return;
+      }
+      map.set(
+        containerId,
+        toContainerRow({
+          container_id: containerId,
+          root: String(item?.root || '').trim(),
+          cloud_workspace_id: String(item?.cloud_workspace_id || '').trim(),
+          seed_status: String(item?.seed_status || 'idle').trim()
+        })
+      );
+    });
   }
-  return raw
-    .map((item) => ({
-      container_id: Number.parseInt(String(item?.container_id), 10),
-      root: String(item?.root || '').trim()
-    }))
-    .filter((item) => Number.isFinite(item.container_id) && item.container_id > 0);
+
+  if (Array.isArray(rootsRaw)) {
+    rootsRaw.forEach((item) => {
+      const containerId = Number.parseInt(String(item?.container_id), 10);
+      if (!Number.isFinite(containerId) || containerId <= 0) {
+        return;
+      }
+      const existing = map.get(containerId);
+      const root = String(item?.root || '').trim();
+      if (existing) {
+        if (!existing.root && root) {
+          existing.root = root;
+        }
+      } else {
+        map.set(
+          containerId,
+          toContainerRow({
+            container_id: containerId,
+            root
+          })
+        );
+      }
+    });
+  }
+
+  return Array.from(map.values()).sort((left, right) => left.container_id - right.container_id);
 };
 
 const parseDirectoryListData = (raw: unknown): DesktopDirectoryListData => {
@@ -482,6 +710,199 @@ const parseDirectoryListData = (raw: unknown): DesktopDirectoryListData => {
     roots,
     items
   };
+};
+
+const resolveApiErrorMessage = (error: unknown): string => {
+  const message =
+    (error as { response?: { data?: { message?: unknown } } })?.response?.data?.message ||
+    (error as { message?: unknown })?.message;
+  const cleaned = String(message || '').trim();
+  return cleaned;
+};
+
+const applySeedJobSnapshot = (snapshot: DesktopSeedJob) => {
+  const row = containerRows.value.find((item) => item.container_id === snapshot.container_id);
+  if (!row) {
+    return;
+  }
+  row.seed_job = snapshot;
+  row.seed_status = normalizeSeedStatus(snapshot.status);
+};
+
+const applySeedJobs = (jobs: DesktopSeedJob[]) => {
+  const latestByContainer = new Map<number, DesktopSeedJob>();
+  for (const job of jobs) {
+    if (!latestByContainer.has(job.container_id)) {
+      latestByContainer.set(job.container_id, job);
+    }
+  }
+  containerRows.value.forEach((row) => {
+    const latest = latestByContainer.get(row.container_id);
+    if (latest) {
+      row.seed_job = latest;
+      row.seed_status = normalizeSeedStatus(latest.status);
+      return;
+    }
+    row.seed_job = null;
+    row.seed_status = normalizeSeedStatus(row.seed_status);
+  });
+};
+
+const loadSeedJobs = async (silent = true) => {
+  if (seedJobsLoading.value) {
+    return;
+  }
+  seedJobsLoading.value = true;
+  try {
+    const response = await listDesktopSeedJobs({ limit: 200 });
+    const jobs = parseSeedJobs(response?.data?.data?.items);
+    applySeedJobs(jobs);
+    seedPollErrorNotified = false;
+  } catch (error) {
+    console.error(error);
+    if (!silent || !seedPollErrorNotified) {
+      ElMessage.error(t('desktop.seed.loadFailed'));
+      seedPollErrorNotified = true;
+    }
+  } finally {
+    seedJobsLoading.value = false;
+  }
+};
+
+const stopSeedPolling = () => {
+  if (seedPollingTimer !== null) {
+    window.clearInterval(seedPollingTimer);
+    seedPollingTimer = null;
+  }
+};
+
+const startSeedPolling = () => {
+  if (seedPollingTimer !== null) {
+    return;
+  }
+  seedPollingTimer = window.setInterval(() => {
+    void loadSeedJobs(true);
+  }, 2000);
+};
+
+const ensureSeedPolling = () => {
+  if (activeSection.value !== 'containers') {
+    stopSeedPolling();
+    return;
+  }
+  startSeedPolling();
+  void loadSeedJobs(true);
+};
+
+const setSeedActionState = (containerId: number, action?: SeedActionKind) => {
+  const next = { ...seedActionStates.value };
+  if (action) {
+    next[containerId] = action;
+  } else {
+    delete next[containerId];
+  }
+  seedActionStates.value = next;
+};
+
+const isSeedActionBusy = (containerId: number): boolean =>
+  Boolean(seedActionStates.value[containerId]);
+
+const seedActionForContainer = (containerId: number): SeedActionKind | '' =>
+  seedActionStates.value[containerId] || '';
+
+const runSeedAction = async (
+  containerId: number,
+  action: SeedActionKind,
+  handler: () => Promise<void>
+) => {
+  if (isSeedActionBusy(containerId)) {
+    return;
+  }
+  setSeedActionState(containerId, action);
+  try {
+    await handler();
+  } finally {
+    setSeedActionState(containerId);
+  }
+};
+
+const resolveSeedAccessToken = (): string => {
+  try {
+    return String(localStorage.getItem('access_token') || '').trim();
+  } catch {
+    return '';
+  }
+};
+
+const resolveSeedRemoteApiBase = (): string => {
+  const override = getDesktopRemoteApiBaseOverride().trim();
+  if (override) {
+    return override;
+  }
+  return remoteServerBaseUrl.value.trim();
+};
+
+const seedStatusLabel = (status: string): string => {
+  switch (normalizeSeedStatus(status)) {
+    case 'running':
+      return t('desktop.seed.status.running');
+    case 'paused':
+      return t('desktop.seed.status.paused');
+    case 'done':
+      return t('desktop.seed.status.done');
+    case 'failed':
+      return t('desktop.seed.status.failed');
+    case 'canceled':
+      return t('desktop.seed.status.canceled');
+    default:
+      return t('desktop.seed.status.idle');
+  }
+};
+
+const seedStatusTagType = (status: string): '' | 'success' | 'warning' | 'danger' | 'info' => {
+  switch (normalizeSeedStatus(status)) {
+    case 'running':
+      return 'warning';
+    case 'paused':
+      return 'info';
+    case 'done':
+      return 'success';
+    case 'failed':
+      return 'danger';
+    case 'canceled':
+      return 'info';
+    default:
+      return '';
+  }
+};
+
+const formatSeedSpeed = (speedBps: number): string => {
+  const value = Math.max(0, Number(speedBps) || 0);
+  if (value >= 1024 * 1024) {
+    return `${(value / 1024 / 1024).toFixed(1)} MB/s`;
+  }
+  if (value >= 1024) {
+    return `${(value / 1024).toFixed(1)} KB/s`;
+  }
+  return `${Math.round(value)} B/s`;
+};
+
+const formatSeedEta = (etaSeconds: number | null): string => {
+  if (etaSeconds === null || !Number.isFinite(etaSeconds)) {
+    return '--';
+  }
+  const totalSeconds = Math.max(0, Math.round(etaSeconds));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    return `${minutes}m ${seconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return `${hours}h ${remainingMinutes}m`;
 };
 
 const ensureLocalPathPicker = (): boolean => {
@@ -586,11 +1007,13 @@ const applySettingsData = (data: Record<string, any>) => {
   }
 
   workspaceRoot.value = String(data.workspace_root || '').trim();
-  containerRows.value = parseContainerRows(data.container_roots);
+  containerRows.value = parseContainerRows(data.container_mounts, data.container_roots);
   ensureDefaultContainer();
 
   remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
   refreshRemoteConnected();
+
+  ensureSeedPolling();
 };
 
 const setSection = (section: SectionKey) => {
@@ -605,6 +1028,13 @@ watch(
     activeSection.value = normalizeSection(value);
   },
   { immediate: true }
+);
+
+watch(
+  () => activeSection.value,
+  () => {
+    ensureSeedPolling();
+  }
 );
 
 const addModel = () => {
@@ -626,7 +1056,11 @@ const removeModel = (target: ModelRow) => {
 
 const addContainer = () => {
   const maxId = containerRows.value.reduce((max, item) => Math.max(max, item.container_id), 1);
-  containerRows.value.push({ container_id: maxId + 1, root: '' });
+  containerRows.value.push(
+    toContainerRow({
+      container_id: maxId + 1
+    })
+  );
   sortContainerRows();
 };
 
@@ -637,7 +1071,7 @@ const removeContainer = (containerId: number) => {
   containerRows.value = containerRows.value.filter((item) => item.container_id !== containerId);
 };
 
-const syncWorkspaceFromContainer = (row: DesktopContainerRoot) => {
+const syncWorkspaceFromContainer = (row: ContainerRow) => {
   if (row.container_id === 1) {
     workspaceRoot.value = String(row.root || '').trim();
   }
@@ -735,7 +1169,8 @@ const saveContainerSettings = async () => {
   const normalized = containerRows.value
     .map((item) => ({
       container_id: Number.parseInt(String(item.container_id), 10),
-      root: String(item.root || '').trim()
+      root: String(item.root || '').trim(),
+      cloud_workspace_id: String(item.cloud_workspace_id || '').trim()
     }))
     .filter((item) => Number.isFinite(item.container_id) && item.container_id > 0);
 
@@ -743,7 +1178,7 @@ const saveContainerSettings = async () => {
   if (defaultContainer) {
     defaultContainer.root = workspace;
   } else {
-    normalized.unshift({ container_id: 1, root: workspace });
+    normalized.unshift({ container_id: 1, root: workspace, cloud_workspace_id: '' });
   }
 
   for (const item of normalized) {
@@ -757,7 +1192,7 @@ const saveContainerSettings = async () => {
   try {
     const response = await updateDesktopSettings({
       workspace_root: workspace,
-      container_roots: normalized
+      container_mounts: normalized
     });
     const data = (response?.data?.data || {}) as Record<string, any>;
     applySettingsData(data);
@@ -768,6 +1203,105 @@ const saveContainerSettings = async () => {
   } finally {
     savingContainers.value = false;
   }
+};
+
+const startSeedForContainer = async (row: ContainerRow) => {
+  const localRoot = row.root.trim();
+  if (!localRoot) {
+    ElMessage.warning(t('desktop.containers.pathRequired', { id: row.container_id }));
+    return;
+  }
+
+  const accessToken = resolveSeedAccessToken();
+  if (!accessToken) {
+    ElMessage.warning(t('desktop.seed.accessTokenRequired'));
+    return;
+  }
+
+  const remoteApiBase = resolveSeedRemoteApiBase();
+  if (!remoteApiBase) {
+    ElMessage.warning(t('desktop.seed.remoteBaseRequired'));
+    return;
+  }
+
+  await runSeedAction(row.container_id, 'start', async () => {
+    try {
+      const response = await startDesktopSeedJob({
+        container_id: row.container_id,
+        access_token: accessToken,
+        local_root: localRoot,
+        remote_api_base: remoteApiBase,
+        cloud_workspace_id: row.cloud_workspace_id.trim() || undefined
+      });
+      const snapshot = parseSeedJob(response?.data?.data);
+      if (snapshot) {
+        applySeedJobSnapshot(snapshot);
+      }
+      ensureSeedPolling();
+      ElMessage.success(t('desktop.seed.startSuccess', { id: row.container_id }));
+    } catch (error) {
+      console.error(error);
+      const detail = resolveApiErrorMessage(error);
+      ElMessage.error(detail || t('desktop.seed.startFailed', { id: row.container_id }));
+    }
+  });
+};
+
+const controlSeedForContainer = async (
+  row: ContainerRow,
+  action: 'pause' | 'resume' | 'cancel'
+) => {
+  const jobId = row.seed_job?.job_id?.trim() || '';
+  if (!jobId) {
+    ElMessage.warning(t('desktop.seed.jobMissing', { id: row.container_id }));
+    return;
+  }
+
+  const actionMessages: Record<typeof action, { success: string; failed: string }> = {
+    pause: {
+      success: 'desktop.seed.pauseSuccess',
+      failed: 'desktop.seed.pauseFailed'
+    },
+    resume: {
+      success: 'desktop.seed.resumeSuccess',
+      failed: 'desktop.seed.resumeFailed'
+    },
+    cancel: {
+      success: 'desktop.seed.cancelSuccess',
+      failed: 'desktop.seed.cancelFailed'
+    }
+  };
+
+  await runSeedAction(row.container_id, action, async () => {
+    try {
+      const response = await controlDesktopSeedJob({
+        job_id: jobId,
+        action
+      });
+      const snapshot = parseSeedJob(response?.data?.data);
+      if (snapshot) {
+        applySeedJobSnapshot(snapshot);
+      }
+      ensureSeedPolling();
+      ElMessage.success(t(actionMessages[action].success, { id: row.container_id }));
+    } catch (error) {
+      console.error(error);
+      const detail = resolveApiErrorMessage(error);
+      ElMessage.error(detail || t(actionMessages[action].failed, { id: row.container_id }));
+    }
+  });
+};
+
+const pauseSeedForContainer = async (row: ContainerRow) => {
+  await controlSeedForContainer(row, 'pause');
+};
+
+const resumeSeedForContainer = async (row: ContainerRow) => {
+  await controlSeedForContainer(row, 'resume');
+};
+
+const cancelSeedForContainer = async (row: ContainerRow) => {
+  await controlSeedForContainer(row, 'cancel');
 };
 
 const connectRemoteServer = async () => {
@@ -845,7 +1379,11 @@ const disconnectRemoteServer = async () => {
 
 onMounted(() => {
   refreshRemoteConnected();
-  loadSettings();
+  void loadSettings();
+});
+
+onBeforeUnmount(() => {
+  stopSeedPolling();
 });
 </script>
 
@@ -1044,6 +1582,39 @@ onMounted(() => {
 .desktop-container-fixed {
   font-size: 12px;
   color: var(--portal-muted);
+}
+
+.desktop-container-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.desktop-seed-cell {
+  display: grid;
+  gap: 8px;
+}
+
+.desktop-seed-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--portal-muted);
+  font-size: 12px;
+}
+
+.desktop-seed-error {
+  margin: 0;
+  color: #f97316;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+:root[data-user-theme='light'] .desktop-seed-error {
+  color: #ea580c;
 }
 
 .desktop-path-picker {

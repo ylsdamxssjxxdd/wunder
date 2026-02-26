@@ -414,7 +414,10 @@ async fn download_user_world_file(
         .get_user_world_member(conversation_id, &requester_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if member.is_none() {
-        return Err(error_response(StatusCode::FORBIDDEN, "forbidden".to_string()));
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            "forbidden".to_string(),
+        ));
     }
     let owner_member = state
         .storage

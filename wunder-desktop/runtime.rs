@@ -48,6 +48,8 @@ pub struct DesktopSettings {
     #[serde(default)]
     pub container_roots: HashMap<i32, String>,
     #[serde(default)]
+    pub container_cloud_workspaces: HashMap<i32, String>,
+    #[serde(default)]
     pub language: String,
     #[serde(default)]
     pub llm: Option<LlmConfig>,
@@ -62,6 +64,7 @@ impl Default for DesktopSettings {
             workspace_root: String::new(),
             desktop_token: uuid::Uuid::new_v4().simple().to_string(),
             container_roots: HashMap::new(),
+            container_cloud_workspaces: HashMap::new(),
             language: String::new(),
             llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
@@ -98,6 +101,8 @@ impl DesktopRuntime {
         settings.workspace_root = workspace_root.to_string_lossy().to_string();
         settings.container_roots =
             normalize_desktop_container_roots(&settings.container_roots, &workspace_root, &app_dir);
+        settings.container_cloud_workspaces =
+            normalize_desktop_container_cloud_workspaces(&settings.container_cloud_workspaces);
         ensure_container_root_dirs(&settings.container_roots)?;
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;
@@ -312,6 +317,21 @@ pub(crate) fn normalize_desktop_container_roots(
         }
         let resolved = resolve_workspace_path_input(trimmed, app_dir);
         output.insert(normalized_id, resolved.to_string_lossy().to_string());
+    }
+    output
+}
+
+pub(crate) fn normalize_desktop_container_cloud_workspaces(
+    source: &HashMap<i32, String>,
+) -> HashMap<i32, String> {
+    let mut output = HashMap::new();
+    for (container_id, workspace_id) in source {
+        let normalized_id = wunder_server::storage::normalize_sandbox_container_id(*container_id);
+        let cleaned = workspace_id.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        output.insert(normalized_id, cleaned.to_string());
     }
     output
 }

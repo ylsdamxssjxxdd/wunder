@@ -32,9 +32,10 @@ RUN set -eux; \
     fi
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git \
+    ca-certificates curl git python3 python3-venv python3-pip \
     build-essential pkg-config cmake ninja-build clang perl \
-    libssl-dev \
+    libssl-dev libffi-dev libbz2-dev liblzma-dev libsqlite3-dev \
+    libreadline-dev libncursesw5-dev libgdbm-dev uuid-dev zlib1g-dev libexpat1-dev \
     libgtk-3-dev \
     libayatana-appindicator3-dev \
     librsvg2-dev \

@@ -2680,6 +2680,7 @@
   - 返回字段：
     - `workspace_root`：容器 1 的默认工作目录
     - `container_roots`：数组，元素 `{ container_id, root }`
+    - `container_mounts`：数组，元素 `{ container_id, root, cloud_workspace_id, seed_status }`
     - `language` / `supported_languages`
     - `llm`（`default` + `models`）
     - `remote_gateway`（服务端连接配置，仅含 `enabled` 与 `server_base_url`）
@@ -2689,6 +2690,7 @@
   - 请求字段（均可选）：
     - `workspace_root`：字符串，容器 1 工作目录
     - `container_roots`：数组，元素 `{ container_id, root }`
+    - `container_mounts`：数组，元素 `{ container_id, root, cloud_workspace_id }`
     - `language`：字符串，例如 `zh-CN` / `en-US`
     - `llm`：对象（`default` + `models`）
     - `remote_gateway`：对象（仅 `enabled` 与 `server_base_url`）
@@ -2706,7 +2708,31 @@
     - `parent_path`: parent directory (`null` at filesystem root)
     - `roots`: switchable root entries (Windows returns available drive roots)
     - `items`: child directories under current path, each `{ name, path }`
-  - Constraint: local mode only; returns `BAD_REQUEST` when `remote_gateway.enabled=true`.
+
+- `POST /wunder/desktop/sync/seed/start`
+  - 用途：启动某个容器的本地目录初始化映射（本地 -> 云端）。
+  - 请求字段：
+    - `container_id`：容器 id（默认 1）
+    - `access_token`：云端登录 token（用于上传）
+    - `local_root`：可选，本次任务使用的本地目录（未提供时回退到 settings 中的容器目录）
+    - `remote_api_base`：可选，云端 API 根地址（自动规范为 `.../wunder`）
+    - `cloud_workspace_id`：可选，上传前缀目录
+  - 返回：seed 任务快照（`job_id/stage/status/progress/current_item/error` 等）。
+
+- `GET /wunder/desktop/sync/seed/jobs`
+  - 用途：列出 seed 任务。
+  - Query：
+    - `container_id`：可选，按容器过滤
+    - `limit`：可选，默认 50，最大 500
+
+- `GET /wunder/desktop/sync/seed/jobs/{job_id}`
+  - 用途：读取单个 seed 任务详情。
+
+- `POST /wunder/desktop/sync/seed/control`
+  - 用途：控制 seed 任务。
+  - 请求字段：
+    - `job_id`
+    - `action`：`pause | resume | cancel`
 
 ### desktop 远端接入（一期）
 

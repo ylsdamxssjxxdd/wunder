@@ -5,6 +5,7 @@ use crate::config::{
     is_debug_log_level, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType,
 };
+use crate::core::python_runtime;
 use crate::cron::{handle_cron_action, CronActionRequest};
 use crate::gateway::{GatewayHub, GatewayNodeInvokeRequest};
 use crate::history::HistoryManager;
@@ -315,7 +316,6 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 ]
             }),
         },
-
         ToolSpec {
             name: "a2a观察".to_string(),
             description: t("tool.spec.a2a_observe.description"),
@@ -1442,19 +1442,18 @@ async fn user_world_send_message(
             continue;
         }
         let now = now_ts();
-        let conversation = match user_world
-            .resolve_or_create_direct_conversation(sender, &target, now)
-        {
-            Ok(value) => value,
-            Err(err) => {
-                results.push(json!({
-                    "user_id": target,
-                    "ok": false,
-                    "error": err.to_string()
-                }));
-                continue;
-            }
-        };
+        let conversation =
+            match user_world.resolve_or_create_direct_conversation(sender, &target, now) {
+                Ok(value) => value,
+                Err(err) => {
+                    results.push(json!({
+                        "user_id": target,
+                        "ok": false,
+                        "error": err.to_string()
+                    }));
+                    continue;
+                }
+            };
         let send_result = match user_world
             .send_message(
                 sender,
@@ -4730,6 +4729,37 @@ async fn run_ptc_python_script_streaming(
     let tool_name = resolve_tool_name("ptc");
     let script_text = script_path.to_string_lossy().to_string();
     let mut last_error: Option<anyhow::Error> = None;
+    let mut tried = Vec::new();
+
+    if let Some(runtime) = python_runtime::resolve_python_runtime() {
+        let program = runtime.bin.to_string_lossy().to_string();
+        tried.push(program.clone());
+        let mut cmd = tokio::process::Command::new(&program);
+        cmd.arg(script_path);
+        cmd.current_dir(workdir);
+        cmd.env("PYTHONIOENCODING", "utf-8");
+        python_runtime::apply_python_env(&mut cmd, &runtime);
+        cmd.kill_on_drop(true);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let command_text = format!("{program} {script_text}");
+        match cmd.spawn() {
+            Ok(child) => {
+                return run_spawned_child_streaming(
+                    context,
+                    child,
+                    &tool_name,
+                    &command_text,
+                    timeout,
+                )
+                .await;
+            }
+            Err(err) if command_utils::is_not_found_error(&err) => {}
+            Err(err) => {
+                let detail = format!("{program}: {err}");
+                last_error = Some(anyhow!(detail));
+            }
+        }
+    }
     for (program, prefix_args) in candidates {
         let mut cmd = tokio::process::Command::new(program);
         cmd.args(*prefix_args);
@@ -4744,6 +4774,7 @@ async fn run_ptc_python_script_streaming(
         parts.extend(prefix_args.iter().map(|value| (*value).to_string()));
         parts.push(script_text.clone());
         let command_text = parts.join(" ");
+        tried.push((*program).to_string());
 
         match cmd.spawn() {
             Ok(child) => {
@@ -4765,16 +4796,8 @@ async fn run_ptc_python_script_streaming(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        anyhow!(
-            "python interpreter not found (tried: {})",
-            candidates
-                .iter()
-                .map(|(program, _)| *program)
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    }))
+    Err(last_error
+        .unwrap_or_else(|| anyhow!("python interpreter not found (tried: {})", tried.join(", "))))
 }
 
 async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

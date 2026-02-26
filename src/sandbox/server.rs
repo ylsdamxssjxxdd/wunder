@@ -17,6 +17,7 @@ use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
 use crate::command_utils;
+use crate::core::python_runtime;
 use crate::i18n;
 
 const DEFAULT_WORKSPACE_ROOT: &str = "/workspaces";
@@ -633,10 +634,18 @@ async fn run_python_script(
     workdir: &Path,
     timeout_s: u64,
 ) -> Result<CommandOutput, String> {
-    let mut cmd = Command::new("python3");
+    let runtime = python_runtime::resolve_python_runtime();
+    let python_bin = runtime
+        .as_ref()
+        .map(|value| value.bin.to_string_lossy().to_string())
+        .unwrap_or_else(|| "python3".to_string());
+    let mut cmd = Command::new(python_bin);
     cmd.arg(script_path);
     cmd.current_dir(workdir);
     cmd.env("PYTHONIOENCODING", "utf-8");
+    if let Some(runtime) = runtime.as_ref() {
+        python_runtime::apply_python_env(&mut cmd, runtime);
+    }
     run_command_output(cmd, timeout_s)
         .await
         .map_err(|err| err.detail)

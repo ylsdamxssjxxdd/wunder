@@ -37,6 +37,9 @@ cargo build --release --features desktop --bin wunder-desktop
 # build Linux AppImage (requires frontend/dist to exist)
 cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --bundles appimage
 
+# build Linux AppImage with embedded Python (base requirements)
+ARCH=x86 bash docker-extra/scripts/package_appimage_with_python.sh
+
 # build Electron AppImage (requires frontend/dist + bridge binary)
 cargo build --release --bin wunder-desktop-bridge
 cd wunder-desktop-electron
@@ -53,6 +56,9 @@ cargo build --release --bin wunder-server --bin wunder-cli
 cargo build --release --features desktop --bin wunder-desktop
 # build Linux AppImage (requires frontend/dist to exist)
 cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --bundles appimage
+
+# build Linux AppImage with embedded Python (base requirements)
+bash docker-extra/scripts/package_appimage_with_python.sh
 
 # build Electron AppImage (requires frontend/dist + bridge binary)
 cargo build --release --bin wunder-desktop-bridge

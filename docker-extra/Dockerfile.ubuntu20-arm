@@ -67,6 +67,12 @@ RUN set -eux; \
       mv /sbin/ldconfig.real /sbin/ldconfig; \
     fi
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3-venv python3-pip \
+      libffi-dev libbz2-dev liblzma-dev libsqlite3-dev \
+      libreadline-dev libncursesw5-dev libgdbm-dev uuid-dev zlib1g-dev libexpat1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 
 # Tauri packaging tooling (append-only, keep previous cache layers intact)
 ARG TAURI_CLI_VERSION=2.8.2
@@ -86,7 +92,13 @@ RUN if [ "${INSTALL_TAURI_TOOLS}" = "1" ]; then \
 ARG NODE_VERSION=22.12.0
 ENV APPIMAGE_EXTRACT_AND_RUN=1
 RUN set -eux; \
-    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.xz" -o /tmp/node.tar.xz; \
+    arch="$(dpkg --print-architecture)"; \
+    case "${arch}" in \
+      amd64) node_arch="x64" ;; \
+      arm64) node_arch="arm64" ;; \
+      *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" -o /tmp/node.tar.xz; \
     tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1; \
     rm -f /tmp/node.tar.xz; \
     node -v; \
@@ -100,4 +112,4 @@ WORKDIR /app
 #   cargo build --release --features desktop --bin wunder-desktop
 
 CMD ["/bin/bash"]
-# docker build -t wunder-arm-20 --platform linux/amd64 -f Dockerfile.ubuntu20-arm .
+# docker build -t wunder-arm-20 --platform linux/arm64 -f Dockerfile.ubuntu20-arm .

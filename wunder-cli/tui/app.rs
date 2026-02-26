@@ -1541,12 +1541,7 @@ impl TuiApp {
         }
     }
 
-    fn append_stream_lines(
-        &mut self,
-        kind: LogKind,
-        index: usize,
-        lines: Vec<Line<'static>>,
-    ) {
+    fn append_stream_lines(&mut self, kind: LogKind, index: usize, lines: Vec<Line<'static>>) {
         let Some(entry) = self.logs.get_mut(index) else {
             return;
         };
@@ -1974,9 +1969,7 @@ impl TuiApp {
         };
 
         if selected {
-            let selected_style = base_style
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD);
+            let selected_style = base_style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
             for line in &mut lines {
                 line.style = selected_style.patch(line.style);
             }
@@ -4604,8 +4597,7 @@ fn render_markdown_lines(kind: LogKind, text: &str, width: u16) -> Vec<Line<'sta
         .saturating_sub(prefix_width)
         .max(1);
     let style = log_base_style(kind);
-    let rendered =
-        super::markdown_render::render_markdown_text_with_width(text, Some(wrap_width));
+    let rendered = super::markdown_render::render_markdown_text_with_width(text, Some(wrap_width));
     let mut lines = rendered.lines;
     if lines.is_empty() {
         return vec![Line::from(Span::styled(prefix.to_string(), style))];

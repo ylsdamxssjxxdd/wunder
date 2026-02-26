@@ -164,8 +164,10 @@ impl LlmClient {
         } else {
             parse_chat_completion_body(&body)
         };
-        let usage = normalize_usage(body.get("usage"))
-            .or_else(|| body.get("response").and_then(|value| normalize_usage(value.get("usage"))));
+        let usage = normalize_usage(body.get("usage")).or_else(|| {
+            body.get("response")
+                .and_then(|value| normalize_usage(value.get("usage")))
+        });
         Ok(LlmResponse {
             content,
             reasoning,
@@ -549,7 +551,10 @@ fn convert_responses_content_part(part: &Value) -> Option<Value> {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_ascii_lowercase();
-            if matches!(raw_type.as_str(), "input_text" | "input_image" | "input_file") {
+            if matches!(
+                raw_type.as_str(),
+                "input_text" | "input_image" | "input_file"
+            ) {
                 return Some(part.clone());
             }
             if matches!(raw_type.as_str(), "text" | "output_text") {
@@ -569,7 +574,11 @@ fn convert_responses_content_part(part: &Value) -> Option<Value> {
                             .map(|text| text.to_string()),
                         _ => None,
                     })
-                    .or_else(|| map.get("url").and_then(Value::as_str).map(|v| v.to_string()));
+                    .or_else(|| {
+                        map.get("url")
+                            .and_then(Value::as_str)
+                            .map(|v| v.to_string())
+                    });
                 if let Some(url) = url {
                     let mut item = json!({ "type": "input_image", "image_url": url });
                     if let Some(detail) = map.get("detail") {
@@ -1485,22 +1494,16 @@ fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Va
         .get("call_id")
         .or_else(|| map.get("callId"))
         .and_then(Value::as_str);
-    let name = map
-        .get("name")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            map.get("function")
-                .and_then(|value| value.get("name"))
-                .and_then(Value::as_str)
-        });
-    let arguments = map
-        .get("arguments")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            map.get("function")
-                .and_then(|value| value.get("arguments"))
-                .and_then(Value::as_str)
-        });
+    let name = map.get("name").and_then(Value::as_str).or_else(|| {
+        map.get("function")
+            .and_then(|value| value.get("name"))
+            .and_then(Value::as_str)
+    });
+    let arguments = map.get("arguments").and_then(Value::as_str).or_else(|| {
+        map.get("function")
+            .and_then(|value| value.get("arguments"))
+            .and_then(Value::as_str)
+    });
     upsert_response_tool_call(acc, item_id, call_id, name, arguments);
 }
 

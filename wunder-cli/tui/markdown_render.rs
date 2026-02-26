@@ -1,6 +1,6 @@
 use super::line_utils::line_to_static;
-use super::wrapping::RtOptions;
 use super::wrapping::word_wrap_line;
+use super::wrapping::RtOptions;
 use pulldown_cmark::Alignment;
 use pulldown_cmark::CodeBlockKind;
 use pulldown_cmark::CowStr;
@@ -684,9 +684,7 @@ where
     }
 
     fn is_table_cell_active(&self) -> bool {
-        self.table_state
-            .as_ref()
-            .is_some_and(|state| state.in_cell)
+        self.table_state.as_ref().is_some_and(|state| state.in_cell)
     }
 
     fn append_table_text(&mut self, text: &str) {
