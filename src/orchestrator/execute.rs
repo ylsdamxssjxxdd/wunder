@@ -427,6 +427,7 @@ impl Orchestrator {
                     a2a_store: &self.a2a_store,
                     skills: &skills_snapshot,
                     gateway: Some(self.gateway.clone()),
+                    user_world: Some(self.user_world.clone()),
                     user_tool_manager: Some(self.user_tool_manager.clone()),
                     user_tool_bindings: Some(&user_tool_bindings),
                     user_tool_store: Some(self.user_tool_manager.store()),

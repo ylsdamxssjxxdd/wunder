@@ -3,6 +3,8 @@ use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{json, Value};
 use std::collections::{HashSet, VecDeque};
@@ -11,7 +13,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError, UnboundedReceiver};
-use unicode_width::UnicodeWidthChar;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use wunder_server::approval::{
     new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
 };
@@ -65,18 +67,30 @@ pub enum LogKind {
 pub struct LogEntry {
     pub kind: LogKind,
     pub text: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct TranscriptRenderEntry<'a> {
-    pub global_index: usize,
-    pub kind: LogKind,
-    pub text: &'a str,
+    markdown_cache: Option<MarkdownCache>,
 }
 
 #[derive(Debug, Clone)]
-pub struct TranscriptRenderWindow<'a> {
-    pub entries: Vec<TranscriptRenderEntry<'a>>,
+struct MarkdownCache {
+    width: u16,
+    lines: Vec<Line<'static>>,
+}
+
+#[derive(Debug)]
+struct StreamedMarkdownState {
+    index: usize,
+    wrap_width: usize,
+    collector: super::markdown_stream::MarkdownStreamCollector,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TranscriptRenderEntry {
+    pub global_index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct TranscriptRenderWindow {
+    pub entries: Vec<TranscriptRenderEntry>,
     pub local_scroll: u16,
     pub total_lines: usize,
 }
@@ -231,6 +245,8 @@ pub struct TuiApp {
     last_turn_elapsed_secs: Option<f64>,
     last_turn_speed_tps: Option<f64>,
     last_turn_tool_calls: u64,
+    assistant_markdown_stream: Option<StreamedMarkdownState>,
+    reasoning_markdown_stream: Option<StreamedMarkdownState>,
 }
 
 impl TuiApp {
@@ -326,6 +342,8 @@ impl TuiApp {
             last_turn_elapsed_secs: None,
             last_turn_speed_tps: None,
             last_turn_tool_calls: 0,
+            assistant_markdown_stream: None,
+            reasoning_markdown_stream: None,
         };
         app.load_persisted_history();
         app.load_popup_recents();
@@ -1391,6 +1409,8 @@ impl TuiApp {
         if self.transcript_viewport_width != next_width {
             self.transcript_viewport_width = next_width;
             self.invalidate_transcript_metrics();
+            self.clear_markdown_caches();
+            self.clear_markdown_streams();
         }
     }
 
@@ -1405,6 +1425,190 @@ impl TuiApp {
 
     fn invalidate_transcript_metrics(&mut self) {
         self.transcript_rendered_lines = 0;
+    }
+
+    fn clear_markdown_caches(&mut self) {
+        for entry in &mut self.logs {
+            entry.markdown_cache = None;
+        }
+    }
+
+    fn clear_markdown_streams(&mut self) {
+        self.assistant_markdown_stream = None;
+        self.reasoning_markdown_stream = None;
+    }
+
+    fn clear_markdown_stream_for(&mut self, kind: LogKind, index: usize) {
+        match kind {
+            LogKind::Assistant => {
+                if self
+                    .assistant_markdown_stream
+                    .as_ref()
+                    .is_some_and(|state| state.index == index)
+                {
+                    self.assistant_markdown_stream = None;
+                }
+            }
+            LogKind::Reasoning => {
+                if self
+                    .reasoning_markdown_stream
+                    .as_ref()
+                    .is_some_and(|state| state.index == index)
+                {
+                    self.reasoning_markdown_stream = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn adjust_markdown_stream_indices_after_remove(&mut self, removed_index: usize) {
+        if let Some(state) = self.assistant_markdown_stream.as_mut() {
+            if state.index == removed_index {
+                self.assistant_markdown_stream = None;
+            } else if state.index > removed_index {
+                state.index = state.index.saturating_sub(1);
+            }
+        }
+        if let Some(state) = self.reasoning_markdown_stream.as_mut() {
+            if state.index == removed_index {
+                self.reasoning_markdown_stream = None;
+            } else if state.index > removed_index {
+                state.index = state.index.saturating_sub(1);
+            }
+        }
+    }
+
+    fn stream_markdown_delta(&mut self, kind: LogKind, index: usize, delta: &str) -> bool {
+        let Some(state) = self.ensure_markdown_stream_state(kind, index) else {
+            return false;
+        };
+        if delta.is_empty() {
+            return false;
+        }
+        state.collector.push_delta(delta);
+        if !delta.contains('\n') {
+            return false;
+        }
+        let newly_completed = state.collector.commit_complete_lines();
+        if newly_completed.is_empty() {
+            return false;
+        }
+        self.append_stream_lines(kind, index, newly_completed);
+        true
+    }
+
+    fn ensure_markdown_stream_state(
+        &mut self,
+        kind: LogKind,
+        index: usize,
+    ) -> Option<&mut StreamedMarkdownState> {
+        let wrap_width = markdown_stream_wrap_width(kind, self.transcript_viewport_width);
+        match kind {
+            LogKind::Assistant => {
+                let needs_reset = self
+                    .assistant_markdown_stream
+                    .as_ref()
+                    .is_none_or(|state| state.index != index || state.wrap_width != wrap_width);
+                if needs_reset {
+                    self.assistant_markdown_stream = Some(StreamedMarkdownState {
+                        index,
+                        wrap_width,
+                        collector: super::markdown_stream::MarkdownStreamCollector::new(Some(
+                            wrap_width,
+                        )),
+                    });
+                }
+                self.assistant_markdown_stream.as_mut()
+            }
+            LogKind::Reasoning => {
+                let needs_reset = self
+                    .reasoning_markdown_stream
+                    .as_ref()
+                    .is_none_or(|state| state.index != index || state.wrap_width != wrap_width);
+                if needs_reset {
+                    self.reasoning_markdown_stream = Some(StreamedMarkdownState {
+                        index,
+                        wrap_width,
+                        collector: super::markdown_stream::MarkdownStreamCollector::new(Some(
+                            wrap_width,
+                        )),
+                    });
+                }
+                self.reasoning_markdown_stream.as_mut()
+            }
+            _ => None,
+        }
+    }
+
+    fn append_stream_lines(
+        &mut self,
+        kind: LogKind,
+        index: usize,
+        lines: Vec<Line<'static>>,
+    ) {
+        let Some(entry) = self.logs.get_mut(index) else {
+            return;
+        };
+        let width = self.transcript_viewport_width.max(1);
+        let cache = entry.markdown_cache.get_or_insert(MarkdownCache {
+            width,
+            lines: Vec::new(),
+        });
+        if cache.width != width {
+            cache.width = width;
+            cache.lines.clear();
+        }
+        let add_prefix = cache.lines.is_empty();
+        let mut styled = style_markdown_lines(kind, lines, add_prefix);
+        cache.lines.append(&mut styled);
+    }
+
+    fn finalize_markdown_stream_for(&mut self, kind: LogKind, index: usize) {
+        match kind {
+            LogKind::Assistant => {
+                if let Some(mut state) = self.assistant_markdown_stream.take() {
+                    if state.index == index {
+                        let remaining = state.collector.finalize_and_drain();
+                        if !remaining.is_empty() {
+                            self.append_stream_lines(kind, index, remaining);
+                        }
+                    } else {
+                        self.assistant_markdown_stream = Some(state);
+                    }
+                }
+            }
+            LogKind::Reasoning => {
+                if let Some(mut state) = self.reasoning_markdown_stream.take() {
+                    if state.index == index {
+                        let remaining = state.collector.finalize_and_drain();
+                        if !remaining.is_empty() {
+                            self.append_stream_lines(kind, index, remaining);
+                        }
+                    } else {
+                        self.reasoning_markdown_stream = Some(state);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn finalize_all_markdown_streams(&mut self) {
+        if let Some(mut state) = self.assistant_markdown_stream.take() {
+            let index = state.index;
+            let remaining = state.collector.finalize_and_drain();
+            if !remaining.is_empty() {
+                self.append_stream_lines(LogKind::Assistant, index, remaining);
+            }
+        }
+        if let Some(mut state) = self.reasoning_markdown_stream.take() {
+            let index = state.index;
+            let remaining = state.collector.finalize_and_drain();
+            if !remaining.is_empty() {
+                self.append_stream_lines(LogKind::Reasoning, index, remaining);
+            }
+        }
     }
 
     fn mouse_in_region(&self, mouse: &MouseEvent, region: Rect) -> bool {
@@ -1576,25 +1780,20 @@ impl TuiApp {
         (display, cursor_x, cursor_y)
     }
 
-    pub fn transcript_render_window(&self, viewport_height: u16) -> TranscriptRenderWindow<'_> {
+    pub fn transcript_render_window(&mut self, viewport_height: u16) -> TranscriptRenderWindow {
         let width = usize::from(self.transcript_viewport_width.max(1));
-        let line_counts = self
-            .logs
-            .iter()
-            .map(|entry| wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width))
-            .collect::<Vec<_>>();
+        let mut line_counts = Vec::with_capacity(self.logs.len());
+        for index in 0..self.logs.len() {
+            line_counts.push(self.entry_visual_line_count(index, width));
+        }
         let window = compute_transcript_window_spec(
             line_counts.as_slice(),
             viewport_height,
             self.transcript_offset_from_bottom,
         );
-        let entries = self.logs[window.start_entry..window.end_entry_exclusive]
-            .iter()
-            .enumerate()
-            .map(|(index, entry)| TranscriptRenderEntry {
-                global_index: window.start_entry + index,
-                kind: entry.kind,
-                text: entry.text.as_str(),
+        let entries = (window.start_entry..window.end_entry_exclusive)
+            .map(|index| TranscriptRenderEntry {
+                global_index: index,
             })
             .collect::<Vec<_>>();
 
@@ -1629,7 +1828,7 @@ impl TuiApp {
         self.transcript_offset_from_bottom = 0;
     }
 
-    fn max_transcript_scroll(&self, viewport_height: usize) -> usize {
+    fn max_transcript_scroll(&mut self, viewport_height: usize) -> usize {
         let viewport = viewport_height.max(1);
         self.total_transcript_lines().saturating_sub(viewport)
     }
@@ -1672,9 +1871,8 @@ impl TuiApp {
 
         let width = usize::from(self.transcript_viewport_width.max(1));
         let mut start_line = 0usize;
-        for (index, entry) in self.logs.iter().enumerate() {
-            let line_count =
-                wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width).max(1);
+        for index in 0..self.logs.len() {
+            let line_count = self.entry_visual_line_count(index, width).max(1);
             let end_line = start_line.saturating_add(line_count.saturating_sub(1));
             if index == selected_index {
                 let mut target_scroll = current_scroll;
@@ -1694,16 +1892,111 @@ impl TuiApp {
         }
     }
 
-    fn total_transcript_lines(&self) -> usize {
+    fn total_transcript_lines(&mut self) -> usize {
         if self.transcript_rendered_lines > 0 {
             return self.transcript_rendered_lines;
         }
 
         let width = usize::from(self.transcript_viewport_width.max(1));
-        self.logs
-            .iter()
-            .map(|entry| wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width))
-            .sum::<usize>()
+        let mut total = 0usize;
+        for index in 0..self.logs.len() {
+            total = total.saturating_add(self.entry_visual_line_count(index, width));
+        }
+        total
+    }
+
+    fn entry_visual_line_count(&mut self, index: usize, width: usize) -> usize {
+        let Some(kind) = self.logs.get(index).map(|entry| entry.kind) else {
+            return 1;
+        };
+        let streaming = self.entry_is_streaming(kind, index);
+        let Some(entry) = self.logs.get_mut(index) else {
+            return 1;
+        };
+        if matches!(kind, LogKind::Assistant | LogKind::Reasoning) {
+            if streaming {
+                return entry
+                    .markdown_cache
+                    .as_ref()
+                    .map(|cache| cache.lines.len())
+                    .unwrap_or(1)
+                    .max(1);
+            }
+            ensure_markdown_cache(entry, width as u16);
+            return entry
+                .markdown_cache
+                .as_ref()
+                .map(|cache| cache.lines.len())
+                .unwrap_or(1)
+                .max(1);
+        }
+        wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width)
+    }
+
+    pub fn render_entry_lines(
+        &mut self,
+        index: usize,
+        selected: bool,
+        width: u16,
+    ) -> Vec<Line<'static>> {
+        let Some(kind) = self.logs.get(index).map(|entry| entry.kind) else {
+            return Vec::new();
+        };
+        let streaming = self.entry_is_streaming(kind, index);
+        let Some(entry) = self.logs.get_mut(index) else {
+            return Vec::new();
+        };
+        let base_style = log_base_style(entry.kind);
+        let mut lines = if matches!(entry.kind, LogKind::Assistant | LogKind::Reasoning) {
+            if streaming {
+                entry
+                    .markdown_cache
+                    .as_ref()
+                    .map(|cache| cache.lines.clone())
+                    .unwrap_or_else(|| {
+                        vec![Line::from(Span::styled(
+                            log_prefix(entry.kind).to_string(),
+                            base_style,
+                        ))]
+                    })
+            } else {
+                ensure_markdown_cache(entry, width);
+                entry
+                    .markdown_cache
+                    .as_ref()
+                    .map(|cache| cache.lines.clone())
+                    .unwrap_or_else(|| {
+                        render_plain_lines(entry.kind, entry.text.as_str(), base_style)
+                    })
+            }
+        } else {
+            render_plain_lines(entry.kind, entry.text.as_str(), base_style)
+        };
+
+        if selected {
+            let selected_style = base_style
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD);
+            for line in &mut lines {
+                line.style = selected_style.patch(line.style);
+            }
+        }
+
+        lines
+    }
+
+    fn entry_is_streaming(&self, kind: LogKind, index: usize) -> bool {
+        match kind {
+            LogKind::Assistant => self
+                .assistant_markdown_stream
+                .as_ref()
+                .is_some_and(|state| state.index == index),
+            LogKind::Reasoning => self
+                .reasoning_markdown_stream
+                .as_ref()
+                .is_some_and(|state| state.index == index),
+            _ => false,
+        }
     }
 
     pub fn popup_view(&mut self) -> PopupView {
@@ -3642,6 +3935,7 @@ impl TuiApp {
         match message {
             StreamMessage::Event(event) => self.apply_stream_event(event),
             StreamMessage::Error(err) => {
+                self.finalize_all_markdown_streams();
                 self.push_log(LogKind::Error, err);
                 self.finalize_turn_metrics();
                 self.busy = false;
@@ -3662,6 +3956,7 @@ impl TuiApp {
                 self.session_stats_dirty = true;
             }
             StreamMessage::Done => {
+                self.finalize_all_markdown_streams();
                 if !self.stream_saw_output && !self.stream_saw_final {
                     self.push_log(
                         LogKind::Error,
@@ -3793,6 +4088,7 @@ impl TuiApp {
                 self.stream_received_content_delta = false;
                 self.stream_tool_markup_open = false;
                 self.tool_phase_notice_emitted = false;
+                self.clear_markdown_streams();
                 self.stop_llm_active_window();
                 self.start_llm_active_window();
             }
@@ -3954,6 +4250,7 @@ impl TuiApp {
                 Some(active)
             };
         }
+        self.adjust_markdown_stream_indices_after_remove(index);
         self.invalidate_transcript_metrics();
     }
 
@@ -3971,6 +4268,7 @@ impl TuiApp {
         if let Some(index) = self.transcript_selected.as_mut() {
             *index = index.saturating_sub(1);
         }
+        self.adjust_markdown_stream_indices_after_remove(0);
         self.invalidate_transcript_metrics();
     }
 
@@ -3992,12 +4290,17 @@ impl TuiApp {
                 let cleaned = sanitize_assistant_text(entry.text.as_str());
                 if !cleaned.is_empty() && !looks_like_tool_payload(cleaned.as_str()) {
                     entry.text = cleaned;
+                    entry.markdown_cache = None;
                     self.invalidate_transcript_metrics();
                     has_meaningful_assistant = true;
                 }
             }
             if !has_meaningful_assistant {
+                self.clear_markdown_stream_for(LogKind::Assistant, index);
                 self.remove_log_entry(index);
+            }
+            if has_meaningful_assistant {
+                self.clear_markdown_stream_for(LogKind::Assistant, index);
             }
         }
 
@@ -4020,10 +4323,16 @@ impl TuiApp {
         }
 
         let index = self.ensure_assistant_entry();
-        if let Some(entry) = self.logs.get_mut(index) {
-            merge_stream_text(&mut entry.text, delta);
-            self.invalidate_transcript_metrics();
-        }
+        let appended = if let Some(entry) = self.logs.get_mut(index) {
+            merge_stream_text_with_delta(&mut entry.text, delta)
+        } else {
+            None
+        };
+        let Some(appended) = appended else {
+            return;
+        };
+        self.stream_markdown_delta(LogKind::Assistant, index, appended.as_str());
+        self.invalidate_transcript_metrics();
     }
 
     fn replace_assistant_content(&mut self, content: &str) {
@@ -4033,13 +4342,29 @@ impl TuiApp {
         }
 
         let index = self.ensure_assistant_entry();
+        let streaming_active = self.entry_is_streaming(LogKind::Assistant, index);
+        let mut updated = false;
         if let Some(entry) = self.logs.get_mut(index) {
             if is_equivalent_text(entry.text.as_str(), cleaned.as_str())
                 && entry.text.chars().count() >= cleaned.chars().count()
             {
-                return;
+                updated = false;
+            } else {
+                entry.text = cleaned;
+                entry.markdown_cache = None;
+                updated = true;
             }
-            entry.text = cleaned;
+        }
+        let mut needs_invalidate = updated;
+        if streaming_active {
+            if updated {
+                self.clear_markdown_stream_for(LogKind::Assistant, index);
+            } else {
+                self.finalize_markdown_stream_for(LogKind::Assistant, index);
+                needs_invalidate = true;
+            }
+        }
+        if needs_invalidate {
             self.invalidate_transcript_metrics();
         }
     }
@@ -4051,10 +4376,16 @@ impl TuiApp {
         }
 
         let index = self.ensure_reasoning_entry();
-        if let Some(entry) = self.logs.get_mut(index) {
-            merge_stream_text(&mut entry.text, cleaned.as_str());
-            self.invalidate_transcript_metrics();
-        }
+        let appended = if let Some(entry) = self.logs.get_mut(index) {
+            merge_stream_text_with_delta(&mut entry.text, cleaned.as_str())
+        } else {
+            None
+        };
+        let Some(appended) = appended else {
+            return;
+        };
+        self.stream_markdown_delta(LogKind::Reasoning, index, appended.as_str());
+        self.invalidate_transcript_metrics();
     }
 
     fn merge_reasoning_content(&mut self, reasoning: &str) {
@@ -4064,24 +4395,37 @@ impl TuiApp {
         }
 
         let index = self.ensure_reasoning_entry();
+        let streaming_active = self.entry_is_streaming(LogKind::Reasoning, index);
+        let mut updated = false;
         if let Some(entry) = self.logs.get_mut(index) {
             if is_equivalent_text(entry.text.as_str(), cleaned.as_str()) {
                 if cleaned.chars().count() >= entry.text.chars().count() {
                     entry.text = cleaned;
-                    self.invalidate_transcript_metrics();
+                    entry.markdown_cache = None;
+                    updated = true;
                 }
-                return;
-            }
-
-            if compact_text_for_compare(cleaned.as_str())
+            } else if compact_text_for_compare(cleaned.as_str())
                 .starts_with(compact_text_for_compare(entry.text.as_str()).as_str())
             {
                 entry.text = cleaned;
-                self.invalidate_transcript_metrics();
-                return;
+                entry.markdown_cache = None;
+                updated = true;
+            } else {
+                merge_stream_text(&mut entry.text, cleaned.as_str());
+                entry.markdown_cache = None;
+                updated = true;
             }
-
-            merge_stream_text(&mut entry.text, cleaned.as_str());
+        }
+        let mut needs_invalidate = updated;
+        if streaming_active {
+            if updated {
+                self.clear_markdown_stream_for(LogKind::Reasoning, index);
+            } else {
+                self.finalize_markdown_stream_for(LogKind::Reasoning, index);
+                needs_invalidate = true;
+            }
+        }
+        if needs_invalidate {
             self.invalidate_transcript_metrics();
         }
     }
@@ -4093,33 +4437,44 @@ impl TuiApp {
         }
 
         let index = self.ensure_assistant_entry();
+        let streaming_active = self.entry_is_streaming(LogKind::Assistant, index);
+        let mut updated = false;
         if let Some(entry) = self.logs.get_mut(index) {
             let current = entry.text.trim();
             if current.is_empty() {
                 entry.text = cleaned;
-                self.invalidate_transcript_metrics();
-                return;
-            }
-
-            if is_equivalent_text(current, cleaned.as_str())
+                entry.markdown_cache = None;
+                updated = true;
+            } else if is_equivalent_text(current, cleaned.as_str())
                 || compact_text_for_compare(current)
                     .ends_with(compact_text_for_compare(cleaned.as_str()).as_str())
             {
-                return;
-            }
-
-            if compact_text_for_compare(cleaned.as_str())
+                updated = false;
+            } else if compact_text_for_compare(cleaned.as_str())
                 .starts_with(compact_text_for_compare(current).as_str())
             {
                 entry.text = cleaned;
-                self.invalidate_transcript_metrics();
-                return;
+                entry.markdown_cache = None;
+                updated = true;
+            } else {
+                if !entry.text.ends_with('\n') {
+                    entry.text.push('\n');
+                }
+                entry.text.push_str(cleaned.as_str());
+                entry.markdown_cache = None;
+                updated = true;
             }
-
-            if !entry.text.ends_with('\n') {
-                entry.text.push('\n');
+        }
+        let mut needs_invalidate = updated;
+        if streaming_active {
+            if updated {
+                self.clear_markdown_stream_for(LogKind::Assistant, index);
+            } else {
+                self.finalize_markdown_stream_for(LogKind::Assistant, index);
+                needs_invalidate = true;
             }
-            entry.text.push_str(cleaned.as_str());
+        }
+        if needs_invalidate {
             self.invalidate_transcript_metrics();
         }
     }
@@ -4131,40 +4486,51 @@ impl TuiApp {
         }
 
         let index = self.ensure_assistant_entry();
+        let streaming_active = self.entry_is_streaming(LogKind::Assistant, index);
+        let mut updated = false;
         if let Some(entry) = self.logs.get_mut(index) {
             let current = entry.text.trim();
             if current.is_empty() {
                 entry.text = cleaned;
-                self.invalidate_transcript_metrics();
-                return;
-            }
-
-            if is_equivalent_text(current, cleaned.as_str())
+                entry.markdown_cache = None;
+                updated = true;
+            } else if is_equivalent_text(current, cleaned.as_str())
                 || compact_text_for_compare(current)
                     .ends_with(compact_text_for_compare(cleaned.as_str()).as_str())
             {
                 if cleaned.chars().count() > current.chars().count() {
                     entry.text = cleaned;
-                    self.invalidate_transcript_metrics();
+                    entry.markdown_cache = None;
+                    updated = true;
                 }
-                return;
-            }
-
-            if compact_text_for_compare(cleaned.as_str())
+            } else if compact_text_for_compare(cleaned.as_str())
                 .starts_with(compact_text_for_compare(current).as_str())
             {
                 entry.text = cleaned;
-                self.invalidate_transcript_metrics();
-                return;
-            }
-
-            if !entry.text.ends_with("\n\n") {
-                if !entry.text.ends_with('\n') {
+                entry.markdown_cache = None;
+                updated = true;
+            } else {
+                if !entry.text.ends_with("\n\n") {
+                    if !entry.text.ends_with('\n') {
+                        entry.text.push('\n');
+                    }
                     entry.text.push('\n');
                 }
-                entry.text.push('\n');
+                entry.text.push_str(cleaned.as_str());
+                entry.markdown_cache = None;
+                updated = true;
             }
-            entry.text.push_str(cleaned.as_str());
+        }
+        let mut needs_invalidate = updated;
+        if streaming_active {
+            if updated {
+                self.clear_markdown_stream_for(LogKind::Assistant, index);
+            } else {
+                self.finalize_markdown_stream_for(LogKind::Assistant, index);
+                needs_invalidate = true;
+            }
+        }
+        if needs_invalidate {
             self.invalidate_transcript_metrics();
         }
     }
@@ -4175,7 +4541,11 @@ impl TuiApp {
         } else {
             text
         };
-        self.logs.push(LogEntry { kind, text });
+        self.logs.push(LogEntry {
+            kind,
+            text,
+            markdown_cache: None,
+        });
         self.invalidate_transcript_metrics();
         while self.logs.len() > MAX_LOG_ENTRIES {
             self.pop_oldest_log_entry();
@@ -4195,6 +4565,99 @@ impl TuiApp {
 
         self.logs.len().saturating_sub(1)
     }
+}
+
+fn log_base_style(kind: LogKind) -> Style {
+    let bright_blue = Color::Rgb(120, 205, 255);
+    match kind {
+        LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+        LogKind::User => Style::default().fg(bright_blue),
+        LogKind::Assistant => Style::default().fg(Color::Green),
+        LogKind::Reasoning => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
+        LogKind::Tool => Style::default().fg(bright_blue),
+        LogKind::Error => Style::default()
+            .fg(Color::Gray)
+            .add_modifier(Modifier::BOLD),
+    }
+}
+
+fn render_plain_lines(kind: LogKind, text: &str, style: Style) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut segments = text.split('\n');
+    let prefix = log_prefix(kind);
+    if let Some(first) = segments.next() {
+        lines.push(Line::from(Span::styled(format!("{prefix}{first}"), style)));
+    }
+    for segment in segments {
+        lines.push(Line::from(Span::styled(segment.to_string(), style)));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(prefix.to_string(), style)));
+    }
+    lines
+}
+
+fn render_markdown_lines(kind: LogKind, text: &str, width: u16) -> Vec<Line<'static>> {
+    let prefix = log_prefix(kind);
+    let prefix_width = UnicodeWidthStr::width(prefix);
+    let wrap_width = usize::from(width.max(1))
+        .saturating_sub(prefix_width)
+        .max(1);
+    let style = log_base_style(kind);
+    let rendered =
+        super::markdown_render::render_markdown_text_with_width(text, Some(wrap_width));
+    let mut lines = rendered.lines;
+    if lines.is_empty() {
+        return vec![Line::from(Span::styled(prefix.to_string(), style))];
+    }
+    lines[0]
+        .spans
+        .insert(0, Span::styled(prefix.to_string(), style));
+    for line in &mut lines {
+        line.style = style.patch(line.style);
+    }
+    lines
+}
+
+fn markdown_stream_wrap_width(kind: LogKind, width: u16) -> usize {
+    let prefix = log_prefix(kind);
+    let prefix_width = UnicodeWidthStr::width(prefix);
+    usize::from(width.max(1))
+        .saturating_sub(prefix_width)
+        .max(1)
+}
+
+fn style_markdown_lines(
+    kind: LogKind,
+    mut lines: Vec<Line<'static>>,
+    add_prefix: bool,
+) -> Vec<Line<'static>> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let style = log_base_style(kind);
+    if add_prefix {
+        let prefix = log_prefix(kind);
+        lines[0]
+            .spans
+            .insert(0, Span::styled(prefix.to_string(), style));
+    }
+    for line in &mut lines {
+        line.style = style.patch(line.style);
+    }
+    lines
+}
+
+fn ensure_markdown_cache(entry: &mut LogEntry, width: u16) {
+    let needs_refresh = entry
+        .markdown_cache
+        .as_ref()
+        .is_none_or(|cache| cache.width != width);
+    if !needs_refresh {
+        return;
+    }
+    let lines = render_markdown_lines(entry.kind, entry.text.as_str(), width);
+    entry.markdown_cache = Some(MarkdownCache { width, lines });
 }
 
 fn summarize_modal_text(text: &str, max_chars: usize) -> String {

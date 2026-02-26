@@ -29,6 +29,7 @@ use crate::user_store::UserStore;
 use crate::user_tools::{
     UserToolAlias, UserToolBindings, UserToolKind, UserToolManager, UserToolStore,
 };
+use crate::user_world::UserWorldService;
 use crate::vector_knowledge;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
@@ -67,6 +68,7 @@ const MAX_LSP_DIAGNOSTICS: usize = 20;
 const MAX_SESSION_LIST_ITEMS: i64 = 200;
 const MAX_SESSION_HISTORY_ITEMS: i64 = 500;
 const MAX_SESSION_MESSAGE_ITEMS: i64 = 50;
+const MAX_USER_WORLD_LIST_LIMIT: i64 = 500;
 const SESSION_RESULT_MAX_CHARS: usize = 2000;
 const LOCAL_PTC_TIMEOUT_S: u64 = 60;
 const LOCAL_PTC_DIR_NAME: &str = "ptc_temp";
@@ -120,6 +122,7 @@ pub struct ToolContext<'a> {
     pub a2a_store: &'a A2aStore,
     pub skills: &'a SkillRegistry,
     pub gateway: Option<Arc<GatewayHub>>,
+    pub user_world: Option<Arc<UserWorldService>>,
     pub user_tool_manager: Option<Arc<UserToolManager>>,
     pub user_tool_bindings: Option<&'a UserToolBindings>,
     pub user_tool_store: Option<&'a UserToolStore>,
@@ -277,6 +280,42 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 "required": ["action"]
             }),
         },
+        ToolSpec {
+            name: "用户世界工具".to_string(),
+            description: t("tool.spec.user_world.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.user_world.args.action"),
+                        "enum": ["list_users", "send_message"]
+                    },
+                    "keyword": {"type": "string", "description": t("tool.spec.user_world.args.keyword")},
+                    "offset": {"type": "integer", "description": t("tool.spec.user_world.args.offset"), "minimum": 0},
+                    "limit": {"type": "integer", "description": t("tool.spec.user_world.args.limit"), "minimum": 0},
+                    "user_id": {"type": "string", "description": t("tool.spec.user_world.args.user_id")},
+                    "user_ids": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.user_world.args.user_ids")},
+                    "content": {"type": "string", "description": t("tool.spec.user_world.args.content")},
+                    "content_type": {"type": "string", "description": t("tool.spec.user_world.args.content_type")},
+                    "client_msg_id": {"type": "string", "description": t("tool.spec.user_world.args.client_msg_id")}
+                },
+                "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "send_message"}}},
+                        "then": {
+                            "required": ["content"],
+                            "anyOf": [
+                                {"required": ["user_id"]},
+                                {"required": ["user_ids"]}
+                            ]
+                        }
+                    }
+                ]
+            }),
+        },
+
         ToolSpec {
             name: "a2a观察".to_string(),
             description: t("tool.spec.a2a_observe.description"),
@@ -593,6 +632,7 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("question_panel".to_string(), "问询面板".to_string());
     map.insert("ask_panel".to_string(), "问询面板".to_string());
     map.insert("schedule_task".to_string(), "定时任务".to_string());
+    map.insert("user_world".to_string(), "用户世界工具".to_string());
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
@@ -634,6 +674,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "技能调用" => Some("skill_call"),
         "智能体蜂群" => Some("agent_swarm"),
         "节点调用" => Some("node_invoke"),
+        "用户世界工具" => Some("user_world"),
         _ => None,
     }
 }
@@ -985,6 +1026,7 @@ pub async fn execute_builtin_tool(
             .await
             .map(compact_cron_tool_result)
         }
+        "用户世界工具" => user_world_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }
 }
@@ -1263,6 +1305,188 @@ async fn execute_question_panel_tool(context: &ToolContext<'_>, args: &Value) ->
         "question": question,
         "routes": routes,
         "multiple": payload.multiple
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct UserWorldToolArgs {
+    action: String,
+    #[serde(default)]
+    keyword: Option<String>,
+    #[serde(default)]
+    offset: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
+    user_ids: Option<Vec<String>>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    content_type: Option<String>,
+    #[serde(default)]
+    client_msg_id: Option<String>,
+}
+
+async fn user_world_tool(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: UserWorldToolArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let action = payload.action.trim().to_lowercase();
+    match action.as_str() {
+        "list_users" | "list" | "users" => user_world_list_users(context, &payload).await,
+        "send_message" | "send" | "message" => user_world_send_message(context, &payload).await,
+        _ => Err(anyhow!("未知用户世界工具 action: {action}")),
+    }
+}
+
+async fn user_world_list_users(
+    context: &ToolContext<'_>,
+    payload: &UserWorldToolArgs,
+) -> Result<Value> {
+    let keyword = payload
+        .keyword
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let offset = payload.offset.unwrap_or(0).max(0);
+    let limit = payload.limit.unwrap_or(0);
+    let limit = if limit <= 0 {
+        0
+    } else {
+        limit.clamp(1, MAX_USER_WORLD_LIST_LIMIT)
+    };
+    let user_store = UserStore::new(context.storage.clone());
+    let (users, total) = user_store.list_users(keyword, None, offset, limit)?;
+    let items = users
+        .into_iter()
+        .map(|user| {
+            json!({
+                "user_id": user.user_id,
+                "username": user.username,
+                "status": user.status,
+                "unit_id": user.unit_id
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "action": "list_users",
+        "items": items,
+        "total": total,
+        "offset": offset,
+        "limit": limit
+    }))
+}
+
+async fn user_world_send_message(
+    context: &ToolContext<'_>,
+    payload: &UserWorldToolArgs,
+) -> Result<Value> {
+    let user_world = context
+        .user_world
+        .as_ref()
+        .ok_or_else(|| anyhow!(i18n::t("error.internal_error")))?;
+    let sender = context.user_id.trim();
+    if sender.is_empty() {
+        return Err(anyhow!(i18n::t("error.user_id_required")));
+    }
+    let content = payload.content.as_deref().unwrap_or("").trim();
+    if content.is_empty() {
+        return Err(anyhow!("content is required"));
+    }
+    let content_type = payload
+        .content_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("text");
+    let mut raw_targets = Vec::new();
+    if let Some(user_id) = payload.user_id.as_deref() {
+        raw_targets.push(user_id.to_string());
+    }
+    if let Some(user_ids) = payload.user_ids.as_ref() {
+        raw_targets.extend(user_ids.iter().map(|value| value.to_string()));
+    }
+    let mut targets = Vec::new();
+    let mut seen = HashSet::new();
+    for raw in raw_targets {
+        let cleaned = raw.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if seen.insert(cleaned.to_string()) {
+            targets.push(cleaned.to_string());
+        }
+    }
+    if targets.is_empty() {
+        return Err(anyhow!("user_id or user_ids required"));
+    }
+    let user_store = UserStore::new(context.storage.clone());
+    let mut results = Vec::new();
+    for target in targets {
+        if target == sender {
+            results.push(json!({
+                "user_id": target,
+                "ok": false,
+                "error": "cannot send to self"
+            }));
+            continue;
+        }
+        let exists = user_store.get_user_by_id(&target)?;
+        if exists.is_none() {
+            results.push(json!({
+                "user_id": target,
+                "ok": false,
+                "error": "user not found"
+            }));
+            continue;
+        }
+        let now = now_ts();
+        let conversation = match user_world
+            .resolve_or_create_direct_conversation(sender, &target, now)
+        {
+            Ok(value) => value,
+            Err(err) => {
+                results.push(json!({
+                    "user_id": target,
+                    "ok": false,
+                    "error": err.to_string()
+                }));
+                continue;
+            }
+        };
+        let send_result = match user_world
+            .send_message(
+                sender,
+                &conversation.conversation_id,
+                content,
+                content_type,
+                payload.client_msg_id.as_deref(),
+                now,
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                results.push(json!({
+                    "user_id": target,
+                    "ok": false,
+                    "error": err.to_string()
+                }));
+                continue;
+            }
+        };
+        results.push(json!({
+            "user_id": target,
+            "ok": true,
+            "conversation_id": conversation.conversation_id,
+            "message_id": send_result.message.message_id,
+            "inserted": send_result.inserted
+        }));
+    }
+    Ok(json!({
+        "action": "send_message",
+        "results": results
     }))
 }
 

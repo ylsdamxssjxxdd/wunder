@@ -56,13 +56,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Tauri packaging tooling (append-only, keep previous cache layers intact)
 ARG TAURI_CLI_VERSION=2.8.2
 ARG INSTALL_TAURI_CLI=1
+ARG INSTALL_TAURI_TOOLS=1
 RUN if [ "${INSTALL_TAURI_CLI}" = "1" ]; then \
       cargo install tauri-cli --version ${TAURI_CLI_VERSION} --locked; \
     fi
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    file wget xdg-utils \
-  && rm -rf /var/lib/apt/lists/*
+RUN if [ "${INSTALL_TAURI_TOOLS}" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        file wget xdg-utils \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Electron build tooling (append-only, keep previous cache layers intact)
 ARG NODE_MAJOR=22

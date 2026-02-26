@@ -1479,6 +1479,46 @@
     "en-US": "Schedule tasks: add/update/remove/enable/disable/get/list/run.",
     "zh-CN": "定时任务：add/update/remove/enable/disable/get/list/run。"
   },
+  "tool.spec.user_world.args.action": {
+    "en-US": "Action: list_users/send_message.",
+    "zh-CN": "动作：list_users/send_message。"
+  },
+  "tool.spec.user_world.args.keyword": {
+    "en-US": "Search keyword when listing users.",
+    "zh-CN": "获取用户列表时的关键词。"
+  },
+  "tool.spec.user_world.args.offset": {
+    "en-US": "List offset.",
+    "zh-CN": "列表偏移量。"
+  },
+  "tool.spec.user_world.args.limit": {
+    "en-US": "List limit (0 for all).",
+    "zh-CN": "列表数量上限（0 表示全部）。"
+  },
+  "tool.spec.user_world.args.user_id": {
+    "en-US": "Target user id for sending.",
+    "zh-CN": "发送目标用户 ID。"
+  },
+  "tool.spec.user_world.args.user_ids": {
+    "en-US": "Target user id list for batch sending.",
+    "zh-CN": "批量发送的目标用户 ID 列表。"
+  },
+  "tool.spec.user_world.args.content": {
+    "en-US": "Message content.",
+    "zh-CN": "消息内容。"
+  },
+  "tool.spec.user_world.args.content_type": {
+    "en-US": "Message content type.",
+    "zh-CN": "消息类型。"
+  },
+  "tool.spec.user_world.args.client_msg_id": {
+    "en-US": "Optional client message id for dedupe.",
+    "zh-CN": "可选的客户端消息 ID，用于去重。"
+  },
+  "tool.spec.user_world.description": {
+    "en-US": "User world tool: list users or send direct messages.",
+    "zh-CN": "用户世界工具：获取用户列表或发送私信。"
+  },
   "tool.spec.ptc.args.content": {
     "en-US": "Full Python script content.",
     "zh-CN": "完整的 Python 脚本内容。"

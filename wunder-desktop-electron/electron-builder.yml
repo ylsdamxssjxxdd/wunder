@@ -1,5 +1,6 @@
 appId: com.wunder.desktop
 productName: Wunder Desktop
+icon: build/icon.png
 directories:
   buildResources: build
 files:
@@ -16,3 +17,4 @@ linux:
     - target: AppImage
   category: Utility
   executableName: wunder-desktop
+  icon: build/icon.png

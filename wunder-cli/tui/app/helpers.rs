@@ -959,6 +959,49 @@ pub(super) fn merge_stream_text(existing: &mut String, incoming: &str) {
     existing.push_str(incoming);
 }
 
+pub(super) fn merge_stream_text_with_delta(
+    existing: &mut String,
+    incoming: &str,
+) -> Option<String> {
+    if incoming.is_empty() {
+        return None;
+    }
+    if existing.is_empty() {
+        existing.push_str(incoming);
+        return Some(incoming.to_string());
+    }
+    if existing == incoming {
+        return None;
+    }
+    if incoming.starts_with(existing.as_str()) {
+        let suffix = &incoming[existing.len()..];
+        *existing = incoming.to_string();
+        return if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix.to_string())
+        };
+    }
+    if existing.ends_with(incoming) {
+        return None;
+    }
+
+    let overlap = longest_suffix_prefix_overlap(existing.as_str(), incoming);
+    if overlap > 0 {
+        let suffix = &incoming[overlap..];
+        existing.push_str(suffix);
+        return if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix.to_string())
+        };
+    }
+    // Most streaming providers send raw deltas; when there is no overlap we should
+    // append directly instead of forcing a newline, otherwise output becomes token-per-line.
+    existing.push_str(incoming);
+    Some(incoming.to_string())
+}
+
 pub(super) fn longest_suffix_prefix_overlap(left: &str, right: &str) -> usize {
     let mut len = left.len().min(right.len());
     while len > 0 {

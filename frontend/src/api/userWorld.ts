@@ -151,6 +151,9 @@ export const streamUserWorldEvents = (
   });
 };
 
+export const downloadUserWorldFile = (params: QueryParams = {}) =>
+  api.get('/user_world/files/download', { params, responseType: 'blob' });
+
 export const openUserWorldSocket = (options: OpenSocketOptions = {}): WebSocket => {
   const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
   const params = new URLSearchParams();

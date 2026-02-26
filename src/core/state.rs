@@ -163,6 +163,7 @@ impl AppState {
             lsp_manager.clone(),
             storage.clone(),
             gateway.clone(),
+            user_world.clone(),
         ));
         let swarm_service = Arc::new(SwarmService::new(storage.clone()));
         let team_run_runner = TeamRunRunner::new(

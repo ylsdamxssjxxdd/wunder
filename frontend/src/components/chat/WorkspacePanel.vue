@@ -2,8 +2,8 @@
   <div class="workspace-panel">
     <div class="workspace-header">
       <div class="workspace-title-row">
-        <div class="workspace-title">{{ t('workspace.title') }}</div>
-        <div class="workspace-container-id">{{ normalizedContainerId }}</div>
+        <div class="workspace-title">{{ panelTitle }}</div>
+        <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
       </div>
       <div class="workspace-header-actions">
         <button
@@ -285,7 +285,7 @@ import {
   searchWunderWorkspace,
   uploadWunderWorkspace
 } from '@/api/workspace';
-import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import vscodeIconsTheme from '@/assets/vscode-icons-theme.json';
 import { showApiError } from '@/utils/apiError';
@@ -305,10 +305,20 @@ const props = defineProps({
   containerId: {
     type: [Number, String],
     default: 1
+  },
+  title: {
+    type: String,
+    default: ''
+  },
+  showContainerId: {
+    type: Boolean,
+    default: true
   }
 });
 
 const { t } = useI18n();
+const panelTitle = computed(() => props.title || t('workspace.title'));
+const showContainerId = computed(() => props.showContainerId);
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -1299,6 +1309,7 @@ const clearWorkspaceCurrent = async () => {
     }));
     notifyBatchResult(response.data, t('workspace.action.clear'));
     await reloadWorkspaceView();
+    emitWorkspaceRefresh({ reason: 'workspace-clear' });
   } catch (error) {
     showApiError(error, t('workspace.clear.failed'));
   }
@@ -1588,6 +1599,7 @@ const deleteWorkspaceSelection = async () => {
     );
     notifyBatchResult(response.data, t('common.delete'));
     await reloadWorkspaceView();
+    emitWorkspaceRefresh({ reason: 'workspace-delete' });
   } catch (error) {
     showApiError(error, t('workspace.delete.failed'));
   }

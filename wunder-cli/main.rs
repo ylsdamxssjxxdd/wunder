@@ -4611,6 +4611,7 @@ async fn run_tool_direct(
         a2a_store: &a2a_store,
         skills: &skills_snapshot,
         gateway: Some(runtime.state.gateway.clone()),
+        user_world: Some(runtime.state.user_world.clone()),
         user_tool_manager: Some(runtime.state.user_tool_manager.clone()),
         user_tool_bindings: Some(&bindings),
         user_tool_store: Some(runtime.state.user_tool_manager.store()),

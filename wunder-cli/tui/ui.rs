@@ -1,4 +1,4 @@
-use super::app::{LogKind, TuiApp};
+use super::app::TuiApp;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -32,10 +32,10 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
         .entries
         .into_iter()
         .flat_map(|entry| {
-            log_lines(
-                entry.kind,
-                entry.text,
+            app.render_entry_lines(
+                entry.global_index,
                 selected_transcript.is_some_and(|selected| selected == entry.global_index),
+                transcript_viewport.width,
             )
         })
         .collect();
@@ -412,38 +412,4 @@ fn build_modal_lines(lines: Vec<String>) -> Vec<Line<'static>> {
             }
         })
         .collect()
-}
-
-fn log_lines(kind: LogKind, text: &str, selected: bool) -> Vec<Line<'static>> {
-    let bright_blue = Color::Rgb(120, 205, 255);
-    let style = match kind {
-        LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::User => Style::default().fg(bright_blue),
-        LogKind::Assistant => Style::default().fg(Color::Green),
-        LogKind::Reasoning => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::Tool => Style::default().fg(bright_blue),
-        LogKind::Error => Style::default()
-            .fg(Color::Gray)
-            .add_modifier(Modifier::BOLD),
-    };
-
-    let style = if selected {
-        style.bg(Color::DarkGray).add_modifier(Modifier::BOLD)
-    } else {
-        style
-    };
-
-    let mut lines = Vec::new();
-    let mut segments = text.split('\n');
-    let prefix = super::app::helpers::log_prefix(kind);
-    if let Some(first) = segments.next() {
-        lines.push(Line::from(Span::styled(format!("{prefix}{first}"), style)));
-    }
-    for segment in segments {
-        lines.push(Line::from(Span::styled(segment.to_string(), style)));
-    }
-    if lines.is_empty() {
-        lines.push(Line::from(Span::styled(prefix.to_string(), style)));
-    }
-    lines
 }

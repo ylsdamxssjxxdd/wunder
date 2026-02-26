@@ -1,5 +1,10 @@
 mod app;
+mod line_utils;
+mod markdown;
+mod markdown_render;
+mod markdown_stream;
 mod ui;
+mod wrapping;
 
 use anyhow::Result;
 use app::TuiApp;

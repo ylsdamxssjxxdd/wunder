@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog } = require('electron')
+const { app, BrowserWindow, dialog, Menu } = require('electron')
 const { spawn } = require('child_process')
 const fs = require('fs')
 const http = require('http')
@@ -9,6 +9,11 @@ let mainWindow = null
 let bridgeProcess = null
 let bridgePort = null
 let bridgeWebBase = null
+
+app.commandLine.appendSwitch('log-level', '2')
+if (process.env.WUNDER_DISABLE_GPU === '1') {
+  app.disableHardwareAcceleration()
+}
 
 const repoRoot = path.resolve(__dirname, '..', '..')
 const localResourcesRoot = path.resolve(__dirname, '..', 'resources')
@@ -208,7 +213,19 @@ const createWindow = async () => {
     minWidth: 1024,
     minHeight: 700,
     title: 'Wunder Desktop',
-    show: true
+    show: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+      backgroundThrottling: false
+    }
+  })
+  mainWindow.setMenuBarVisibility(false)
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
   })
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -232,6 +249,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     try {
+      Menu.setApplicationMenu(null)
       await createWindow()
     } catch (err) {
       dialog.showErrorBox('Wunder Desktop', err?.message || String(err))

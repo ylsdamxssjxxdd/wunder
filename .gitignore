@@ -52,3 +52,4 @@ gen/
 wunder-desktop/gen/
 .tmp*
 temp_eval*
+*.fon

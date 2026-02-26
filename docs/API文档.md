@@ -62,6 +62,7 @@
   - `GET /wunder/user_world/conversations/{conversation_id}/messages`：消息分页（`before_message_id/limit`）
   - `POST /wunder/user_world/conversations/{conversation_id}/messages`：发送消息（`content/content_type/client_msg_id`）
   - `POST /wunder/user_world/conversations/{conversation_id}/read`：回写已读（`last_read_message_id`）
+- `GET /wunder/user_world/files/download`：会话内文件/文件夹下载（`conversation_id/owner_user_id/path`，目录会自动打包为 zip，支持 `check=true` 仅校验存在并返回响应头）
   - `GET /wunder/user_world/conversations/{conversation_id}/events`：SSE 事件流（`after_event_id/limit`）
   - `GET /wunder/user_world/ws`：WebSocket 多路复用通道
 - WS 消息类型：
@@ -142,6 +143,7 @@
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
+- 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。
 - 兼容旧入参：未传 `action` 但同时提供 `node_id + command` 时仍按 `invoke` 处理。
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。

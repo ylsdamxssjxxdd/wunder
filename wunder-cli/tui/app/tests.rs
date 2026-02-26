@@ -258,6 +258,7 @@ fn backtrack_user_text_returns_trimmed_user_content() {
     let entry = LogEntry {
         kind: LogKind::User,
         text: "  hello world  ".to_string(),
+        markdown_cache: None,
     };
     assert_eq!(backtrack_user_text(&entry), Some("hello world".to_string()));
 }
@@ -267,12 +268,14 @@ fn backtrack_user_text_ignores_non_user_or_empty() {
     let assistant_entry = LogEntry {
         kind: LogKind::Assistant,
         text: "hello".to_string(),
+        markdown_cache: None,
     };
     assert_eq!(backtrack_user_text(&assistant_entry), None);
 
     let empty_user_entry = LogEntry {
         kind: LogKind::User,
         text: "   ".to_string(),
+        markdown_cache: None,
     };
     assert_eq!(backtrack_user_text(&empty_user_entry), None);
 }
@@ -283,14 +286,17 @@ fn collect_recent_user_logs_returns_latest_first() {
         LogEntry {
             kind: LogKind::User,
             text: "first".to_string(),
+            markdown_cache: None,
         },
         LogEntry {
             kind: LogKind::Assistant,
             text: "reply".to_string(),
+            markdown_cache: None,
         },
         LogEntry {
             kind: LogKind::User,
             text: "second".to_string(),
+            markdown_cache: None,
         },
     ];
     assert_eq!(

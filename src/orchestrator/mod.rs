@@ -38,6 +38,7 @@ use crate::tools::{
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserToolBindings, UserToolManager};
+use crate::user_world::UserWorldService;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local, TimeZone, Utc};
@@ -100,6 +101,7 @@ pub struct Orchestrator {
     storage: Arc<dyn StorageBackend>,
     memory_store: Arc<MemoryStore>,
     memory_queue: Arc<MemoryQueue>,
+    user_world: Arc<UserWorldService>,
     http: reqwest::Client,
 }
 
@@ -116,6 +118,7 @@ impl Orchestrator {
         lsp_manager: Arc<LspManager>,
         storage: Arc<dyn StorageBackend>,
         gateway: Arc<GatewayHub>,
+        user_world: Arc<UserWorldService>,
     ) -> Self {
         let memory_store = Arc::new(MemoryStore::new(storage.clone()));
         Self {
@@ -131,6 +134,7 @@ impl Orchestrator {
             storage,
             memory_store,
             memory_queue: Arc::new(MemoryQueue::new()),
+            user_world,
             http: reqwest::Client::new(),
         }
     }
