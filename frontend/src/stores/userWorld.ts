@@ -96,6 +96,16 @@ const toNumber = (value: unknown): number => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const resolveHttpStatus = (error: unknown): number => {
+  const status = Number((error as { response?: { status?: unknown } })?.response?.status ?? 0);
+  return Number.isFinite(status) ? status : 0;
+};
+
+const isAuthDeniedError = (error: unknown): boolean => {
+  const status = resolveHttpStatus(error);
+  return status === 401 || status === 403;
+};
+
 const isTimeoutError = (value: unknown): boolean => {
   const code = String((value as { code?: unknown })?.code || '').trim().toUpperCase();
   return code === 'ECONNABORTED';
@@ -188,6 +198,8 @@ export const useUserWorldStore = defineStore('user-world', {
     loading: false,
     sending: false,
     initialized: false,
+    permissionDenied: false,
+    permissionDeniedKey: '',
     error: '' as string,
     streamTransport: DEFAULT_TRANSPORT as 'ws' | 'sse',
     dismissedConversationIds: [] as string[],
@@ -257,14 +269,36 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async bootstrap(force = false) {
-      if (this.initialized && !force) {
+      this.ensureDismissedConversationState(force);
+      if (
+        this.permissionDenied &&
+        this.permissionDeniedKey &&
+        this.permissionDeniedKey !== this.dismissedStorageKey
+      ) {
+        this.permissionDenied = false;
+        this.permissionDeniedKey = '';
+      }
+      if (this.initialized && !force && !this.permissionDenied) {
         return;
       }
-      this.ensureDismissedConversationState(force);
+      if (this.permissionDenied && !force) {
+        return;
+      }
       this.loading = true;
       this.error = '';
       try {
-        await Promise.all([this.refreshContacts(), this.refreshConversations(), this.refreshGroups()]);
+        this.permissionDenied = false;
+        this.permissionDeniedKey = '';
+        await this.refreshContacts();
+        if (this.permissionDenied) {
+          this.initialized = true;
+          return;
+        }
+        await Promise.all([this.refreshConversations(), this.refreshGroups()]);
+        if (this.permissionDenied) {
+          this.initialized = true;
+          return;
+        }
         if (!this.activeConversationId && this.conversations.length) {
           this.activeConversationId = this.conversations[0].conversation_id;
         }
@@ -275,6 +309,18 @@ export const useUserWorldStore = defineStore('user-world', {
         await this.syncConversationWatchers();
         this.initialized = true;
       } catch (error) {
+        if (isAuthDeniedError(error)) {
+          this.permissionDenied = true;
+          this.permissionDeniedKey = this.dismissedStorageKey;
+          this.contacts = [];
+          this.groups = [];
+          this.conversations = [];
+          this.unreadByConversation = {};
+          this.activeConversationId = '';
+          this.stopAllWatchers();
+          this.initialized = true;
+          return;
+        }
         const source = error as { message?: string };
         this.error = source?.message || 'user world bootstrap failed';
         throw error;
@@ -284,6 +330,10 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async refreshContacts(keyword = '') {
+      if (this.permissionDenied) {
+        this.contacts = [];
+        return;
+      }
       this.ensureDismissedConversationState();
       const params: Record<string, string | number | boolean | null | undefined> = {
         offset: 0,
@@ -292,72 +342,130 @@ export const useUserWorldStore = defineStore('user-world', {
       if (keyword.trim()) {
         params.keyword = keyword.trim();
       }
-      const response = await listUserWorldContacts(params);
-      const data = asRecord(response.data?.data);
-      const items = Array.isArray(data.items) ? (data.items as UserWorldContact[]) : [];
-      this.contacts = items.map((item) => {
-        const conversationId = normalizeConversationId(item.conversation_id);
-        if (conversationId && this.isConversationDismissed(conversationId)) {
+      try {
+        const response = await listUserWorldContacts(params);
+        const data = asRecord(response.data?.data);
+        const items = Array.isArray(data.items) ? (data.items as UserWorldContact[]) : [];
+        this.contacts = items.map((item) => {
+          const conversationId = normalizeConversationId(item.conversation_id);
+          if (conversationId && this.isConversationDismissed(conversationId)) {
+            return {
+              ...item,
+              conversation_id: null,
+              unread_count: 0
+            };
+          }
           return {
             ...item,
-            conversation_id: null,
-            unread_count: 0
+            unread_count: toNumber(item.unread_count)
           };
+        });
+        this.permissionDenied = false;
+        this.permissionDeniedKey = '';
+      } catch (error) {
+        if (isAuthDeniedError(error)) {
+          this.permissionDenied = true;
+          this.permissionDeniedKey = this.dismissedStorageKey;
+          this.contacts = [];
+          this.groups = [];
+          this.conversations = [];
+          this.unreadByConversation = {};
+          this.activeConversationId = '';
+          this.stopAllWatchers();
+          return;
         }
-        return {
-          ...item,
-          unread_count: toNumber(item.unread_count)
-        };
-      });
+        throw error;
+      }
     },
 
     async refreshGroups() {
+      if (this.permissionDenied) {
+        this.groups = [];
+        return;
+      }
       this.ensureDismissedConversationState();
-      const response = await listUserWorldGroups({ offset: 0, limit: 500 });
-      const data = asRecord(response.data?.data);
-      const items = Array.isArray(data.items) ? (data.items as UserWorldGroup[]) : [];
-      this.groups = items
-        .filter((item) => !this.isConversationDismissed(normalizeConversationId(item.conversation_id)))
-        .map((item) => ({
-          ...item,
-          member_count: toNumber(item.member_count),
-          unread_count_cache: toNumber(item.unread_count_cache),
-          updated_at: toNumber(item.updated_at),
-          last_message_at: toNumber(item.last_message_at),
-          last_message_id: item.last_message_id ? toNumber(item.last_message_id) : item.last_message_id
-        }))
-        .sort((left, right) => toNumber(right.last_message_at) - toNumber(left.last_message_at));
+      try {
+        const response = await listUserWorldGroups({ offset: 0, limit: 500 });
+        const data = asRecord(response.data?.data);
+        const items = Array.isArray(data.items) ? (data.items as UserWorldGroup[]) : [];
+        this.groups = items
+          .filter((item) => !this.isConversationDismissed(normalizeConversationId(item.conversation_id)))
+          .map((item) => ({
+            ...item,
+            member_count: toNumber(item.member_count),
+            unread_count_cache: toNumber(item.unread_count_cache),
+            updated_at: toNumber(item.updated_at),
+            last_message_at: toNumber(item.last_message_at),
+            last_message_id: item.last_message_id ? toNumber(item.last_message_id) : item.last_message_id
+          }))
+          .sort((left, right) => toNumber(right.last_message_at) - toNumber(left.last_message_at));
+        this.permissionDenied = false;
+        this.permissionDeniedKey = '';
+      } catch (error) {
+        if (isAuthDeniedError(error)) {
+          this.permissionDenied = true;
+          this.permissionDeniedKey = this.dismissedStorageKey;
+          this.groups = [];
+          this.conversations = [];
+          this.unreadByConversation = {};
+          this.activeConversationId = '';
+          this.stopAllWatchers();
+          return;
+        }
+        throw error;
+      }
     },
 
     async refreshConversations() {
-      this.ensureDismissedConversationState();
-      const response = await listUserWorldConversations({ offset: 0, limit: 500 });
-      const data = asRecord(response.data?.data);
-      const items = Array.isArray(data.items) ? (data.items as UserWorldConversation[]) : [];
-      this.conversations = items
-        .filter((item) => !this.isConversationDismissed(normalizeConversationId(item.conversation_id)))
-        .map((item) => ({
-          ...item,
-          unread_count_cache: toNumber(item.unread_count_cache),
-          member_count:
-            item.member_count === null || item.member_count === undefined
-              ? item.member_count
-              : toNumber(item.member_count)
-        }));
-      this.unreadByConversation = this.conversations.reduce((acc: Record<string, number>, item) => {
-        acc[item.conversation_id] = toNumber(item.unread_count_cache);
-        return acc;
-      }, {} as Record<string, number>);
-      if (
-        this.activeConversationId &&
-        this.isConversationDismissed(normalizeConversationId(this.activeConversationId))
-      ) {
-        this.activeConversationId = '';
+      if (this.permissionDenied) {
+        this.conversations = [];
+        this.unreadByConversation = {};
+        return;
       }
-      await this.syncConversationWatchers();
+      this.ensureDismissedConversationState();
+      try {
+        const response = await listUserWorldConversations({ offset: 0, limit: 500 });
+        const data = asRecord(response.data?.data);
+        const items = Array.isArray(data.items) ? (data.items as UserWorldConversation[]) : [];
+        this.conversations = items
+          .filter((item) => !this.isConversationDismissed(normalizeConversationId(item.conversation_id)))
+          .map((item) => ({
+            ...item,
+            unread_count_cache: toNumber(item.unread_count_cache),
+            member_count:
+              item.member_count === null || item.member_count === undefined
+                ? item.member_count
+                : toNumber(item.member_count)
+          }));
+        this.unreadByConversation = this.conversations.reduce((acc: Record<string, number>, item) => {
+          acc[item.conversation_id] = toNumber(item.unread_count_cache);
+          return acc;
+        }, {} as Record<string, number>);
+        if (
+          this.activeConversationId &&
+          this.isConversationDismissed(normalizeConversationId(this.activeConversationId))
+        ) {
+          this.activeConversationId = '';
+        }
+        await this.syncConversationWatchers();
+        this.permissionDenied = false;
+        this.permissionDeniedKey = '';
+      } catch (error) {
+        if (isAuthDeniedError(error)) {
+          this.permissionDenied = true;
+          this.permissionDeniedKey = this.dismissedStorageKey;
+          this.conversations = [];
+          this.unreadByConversation = {};
+          this.activeConversationId = '';
+          this.stopAllWatchers();
+          return;
+        }
+        throw error;
+      }
     },
 
     async openConversationByPeer(peerUserId: string, options: OpenConversationByPeerOptions = {}) {
+      if (this.permissionDenied) return null;
       const peer = peerUserId.trim();
       if (!peer) return null;
       const shouldActivate = options.activate !== false;
@@ -409,6 +517,7 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async createGroupConversation(groupName: string, memberUserIds: string[]) {
+      if (this.permissionDenied) return null;
       const name = groupName.trim();
       const members = memberUserIds
         .map((item) => String(item || '').trim())
@@ -475,6 +584,7 @@ export const useUserWorldStore = defineStore('user-world', {
       conversationId: string,
       options: { forceReload?: boolean; waitForLoad?: boolean } = {}
     ) {
+      if (this.permissionDenied) return;
       const cleaned = String(conversationId || '').trim();
       if (!cleaned) return;
       this.clearConversationDismissed(cleaned);
@@ -499,6 +609,7 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async loadMessages(conversationId: string, options: { beforeMessageId?: number } = {}) {
+      if (this.permissionDenied) return;
       const cleaned = String(conversationId || '').trim();
       if (!cleaned) return;
       const params: Record<string, string | number | boolean | null | undefined> = { limit: 100 };
@@ -519,6 +630,7 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async sendToActiveConversation(content: string) {
+      if (this.permissionDenied) return;
       const text = content.trim();
       if (!text || !this.activeConversationId) return;
       const conversationId = this.activeConversationId;

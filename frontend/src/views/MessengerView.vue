@@ -70,7 +70,10 @@
           />
         </label>
         <button
-          v-if="sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'groups'"
+          v-if="
+            sessionHub.activeSection === 'agents' ||
+            (sessionHub.activeSection === 'groups' && !userWorldPermissionDenied)
+          "
           class="messenger-plus-btn"
           type="button"
           :title="sessionHub.activeSection === 'groups' ? t('userWorld.group.create') : t('messenger.action.newAgent')"
@@ -185,59 +188,65 @@
               </div>
             </div>
           </div>
-          <button
-            v-for="contact in filteredContacts"
-            :key="contact.user_id"
-            class="messenger-list-item"
-            :class="{ active: selectedContactUserId === String(contact.user_id || '') }"
-            type="button"
-            @click="selectContact(contact)"
-          >
-            <div class="messenger-list-avatar">{{ avatarLabel(contact.username || contact.user_id) }}</div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ contact.username || contact.user_id }}</span>
-                <span class="messenger-list-time">{{ formatTime(contact.last_message_at) }}</span>
+          <div v-if="userWorldPermissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
+          <template v-else>
+            <button
+              v-for="contact in filteredContacts"
+              :key="contact.user_id"
+              class="messenger-list-item"
+              :class="{ active: selectedContactUserId === String(contact.user_id || '') }"
+              type="button"
+              @click="selectContact(contact)"
+            >
+              <div class="messenger-list-avatar">{{ avatarLabel(contact.username || contact.user_id) }}</div>
+              <div class="messenger-list-main">
+                <div class="messenger-list-row">
+                  <span class="messenger-list-name">{{ contact.username || contact.user_id }}</span>
+                  <span class="messenger-list-time">{{ formatTime(contact.last_message_at) }}</span>
+                </div>
+                <div class="messenger-list-row">
+                  <span class="messenger-list-preview">
+                    {{ contact.last_message_preview || t('messenger.preview.empty') }}
+                  </span>
+                  <span v-if="resolveUnread(contact.unread_count) > 0" class="messenger-list-unread">
+                    {{ resolveUnread(contact.unread_count) }}
+                  </span>
+                </div>
               </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">
-                  {{ contact.last_message_preview || t('messenger.preview.empty') }}
-                </span>
-                <span v-if="resolveUnread(contact.unread_count) > 0" class="messenger-list-unread">
-                  {{ resolveUnread(contact.unread_count) }}
-                </span>
-              </div>
-            </div>
-          </button>
-          <div v-if="!filteredContacts.length" class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
+            </button>
+            <div v-if="!filteredContacts.length" class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
+          </template>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'groups'">
-          <button
-            v-for="group in filteredGroups"
-            :key="group.group_id"
-            class="messenger-list-item"
-            :class="{ active: selectedGroupId === String(group.group_id || '') }"
-            type="button"
-            @click="selectGroup(group)"
-          >
-            <div class="messenger-list-avatar">{{ avatarLabel(group.group_name || group.group_id) }}</div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ group.group_name }}</span>
-                <span class="messenger-list-time">{{ formatTime(group.last_message_at) }}</span>
+          <div v-if="userWorldPermissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
+          <template v-else>
+            <button
+              v-for="group in filteredGroups"
+              :key="group.group_id"
+              class="messenger-list-item"
+              :class="{ active: selectedGroupId === String(group.group_id || '') }"
+              type="button"
+              @click="selectGroup(group)"
+            >
+              <div class="messenger-list-avatar">{{ avatarLabel(group.group_name || group.group_id) }}</div>
+              <div class="messenger-list-main">
+                <div class="messenger-list-row">
+                  <span class="messenger-list-name">{{ group.group_name }}</span>
+                  <span class="messenger-list-time">{{ formatTime(group.last_message_at) }}</span>
+                </div>
+                <div class="messenger-list-row">
+                  <span class="messenger-list-preview">
+                    {{ group.last_message_preview || t('messenger.preview.empty') }}
+                  </span>
+                  <span v-if="resolveUnread(group.unread_count_cache) > 0" class="messenger-list-unread">
+                    {{ resolveUnread(group.unread_count_cache) }}
+                  </span>
+                </div>
               </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">
-                  {{ group.last_message_preview || t('messenger.preview.empty') }}
-                </span>
-                <span v-if="resolveUnread(group.unread_count_cache) > 0" class="messenger-list-unread">
-                  {{ resolveUnread(group.unread_count_cache) }}
-                </span>
-              </div>
-            </div>
-          </button>
-          <div v-if="!filteredGroups.length" class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
+            </button>
+            <div v-if="!filteredGroups.length" class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
+          </template>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'agents'">
@@ -617,7 +626,6 @@
                   {{ t('chat.features.agentSettings') }}
                 </button>
                 <button
-                  v-if="canManageAgentIntegrations"
                   class="messenger-inline-btn"
                   :class="{ active: agentSettingMode === 'cron' }"
                   type="button"
@@ -626,7 +634,6 @@
                   {{ t('chat.features.cron') }}
                 </button>
                 <button
-                  v-if="canManageAgentIntegrations"
                   class="messenger-inline-btn"
                   :class="{ active: agentSettingMode === 'channel' }"
                   type="button"
@@ -644,15 +651,12 @@
                 />
               </div>
 
-              <div
-                v-else-if="agentSettingMode === 'cron' && canManageAgentIntegrations"
-                class="messenger-chat-settings-block"
-              >
+              <div v-else-if="agentSettingMode === 'cron'" class="messenger-chat-settings-block">
                 <AgentCronPanel :agent-id="settingsAgentIdForApi" />
               </div>
 
               <div
-                v-else-if="agentSettingMode === 'channel' && canManageAgentIntegrations"
+                v-else-if="agentSettingMode === 'channel'"
                 class="messenger-chat-settings-block messenger-channel-panel-wrap"
               >
                 <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
@@ -888,8 +892,12 @@
 
         <template v-else>
           <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>
-          <div v-else-if="!sessionHub.activeConversation" class="messenger-chat-empty">
-            {{ t('messenger.empty.selectConversation') }}
+          <div v-else-if="!hasAnyMixedConversations || !sessionHub.activeConversation" class="messenger-chat-empty-state">
+            <div class="messenger-chat-empty-icon">
+              <i class="fa-regular fa-comments" aria-hidden="true"></i>
+            </div>
+            <div class="messenger-chat-empty-title">{{ t('messenger.empty.selectConversation') }}</div>
+            <div class="messenger-chat-empty-subtitle">{{ t('messenger.section.messages.desc') }}</div>
           </div>
 
           <template v-else-if="isAgentConversationActive">
@@ -1068,8 +1076,11 @@
                   <span>{{ formatTime(message.created_at) }}</span>
                 </div>
                 <div class="messenger-message-bubble messenger-markdown">
+                  <div class="markdown-body" v-html="renderWorldMarkdown(message)"></div>
+                </div>
+                <div v-if="hasMessageContent(message.content)" class="messenger-message-extra">
                   <button
-                    class="messenger-bubble-copy-btn"
+                    class="messenger-message-footer-copy"
                     type="button"
                     :title="t('chat.message.copy')"
                     :aria-label="t('chat.message.copy')"
@@ -1077,7 +1088,6 @@
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
-                  <div class="markdown-body" v-html="renderWorldMarkdown(message)"></div>
                 </div>
               </div>
             </div>
@@ -1088,18 +1098,17 @@
         </template>
       </div>
 
-      <button
-        v-if="!showChatSettingsView && showScrollBottomButton"
-        class="messenger-scroll-bottom-btn"
-        type="button"
-        :title="t('chat.toBottom')"
-        :aria-label="t('chat.toBottom')"
-        @click="jumpToMessageBottom"
-      >
-        <i class="fa-solid fa-angles-down" aria-hidden="true"></i>
-      </button>
-
-      <footer v-if="!showChatSettingsView" class="messenger-chat-footer">
+      <footer v-if="!showChatSettingsView" ref="chatFooterRef" class="messenger-chat-footer">
+        <button
+          v-if="showScrollBottomButton"
+          class="messenger-scroll-bottom-btn"
+          type="button"
+          :title="t('chat.toBottom')"
+          :aria-label="t('chat.toBottom')"
+          @click="jumpToMessageBottom"
+        >
+          <i class="fa-solid fa-angles-down" aria-hidden="true"></i>
+        </button>
         <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
           <ChatComposer
             world-style
@@ -1359,7 +1368,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits } from '@/api/auth';
-import { fetchSessionSystemPrompt, fetchRealtimeSystemPrompt } from '@/api/chat';
+import { getSession as getChatSessionApi, fetchSessionSystemPrompt, fetchRealtimeSystemPrompt } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { uploadWunderWorkspace } from '@/api/workspace';
@@ -1456,6 +1465,8 @@ const sectionRouteMap: Record<MessengerSection, string> = {
 };
 const MESSENGER_SEND_KEY_STORAGE_KEY = 'messenger_send_key';
 const MESSENGER_UI_FONT_SIZE_STORAGE_KEY = 'messenger_ui_font_size';
+const AGENT_MAIN_READ_AT_STORAGE_PREFIX = 'messenger_agent_main_read_at';
+const AGENT_MAIN_UNREAD_STORAGE_PREFIX = 'messenger_agent_main_unread';
 
 type AgentLocalCommand = 'new' | 'stop' | 'help' | 'compact';
 
@@ -1562,9 +1573,11 @@ const agentAbilityTooltipOptions = {
 const worldRecentEmojis = ref<string[]>([]);
 const worldHistoryMap = ref<Record<string, string[]>>({});
 const messageListRef = ref<HTMLElement | null>(null);
+const chatFooterRef = ref<HTMLElement | null>(null);
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
+const cronPermissionDenied = ref(false);
 const agentSettingMode = ref<'agent' | 'cron' | 'channel'>('agent');
 const settingsPanelMode = ref<'general' | 'profile' | 'desktop'>('general');
 const rightDockCollapsed = ref(false);
@@ -1599,6 +1612,9 @@ const groupCreating = ref(false);
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440);
 const middlePaneOverlayVisible = ref(false);
 const quickCreatingAgent = ref(false);
+const agentMainReadAtMap = ref<Record<string, number>>({});
+const agentMainUnreadCountMap = ref<Record<string, number>>({});
+const agentUnreadStorageKeys = ref<{ readAt: string; unread: string }>({ readAt: '', unread: '' });
 
 let statusTimer: number | null = null;
 let lifecycleTimer: number | null = null;
@@ -1607,6 +1623,7 @@ let timelinePrefetchTimer: number | null = null;
 let middlePaneOverlayHideTimer: number | null = null;
 let viewportResizeHandler: (() => void) | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
+const agentUnreadRefreshInFlight = new Set<string>();
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
@@ -1694,14 +1711,7 @@ const currentUserId = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
   return String(user?.id || '');
 });
-const canManageAgentIntegrations = computed(() => {
-  const user = authStore.user as Record<string, unknown> | null;
-  if (!user) return false;
-  const roles = Array.isArray(user.roles)
-    ? user.roles.map((item) => String(item || '').trim().toLowerCase())
-    : [];
-  return roles.includes('admin') || roles.includes('super_admin');
-});
+const userWorldPermissionDenied = computed(() => userWorldStore.permissionDenied === true);
 
 const activeSectionTitle = computed(() =>
   sessionHub.activeSection === 'more'
@@ -2133,6 +2143,31 @@ const resolveUnitLabel = (unitId: unknown): string => {
   return cleaned;
 };
 
+const buildCurrentUserFallbackUnitTree = (): UnitTreeNode[] => {
+  const user = authStore.user as Record<string, unknown> | null;
+  const unitId = normalizeUnitText(user?.unit_id || user?.unitId);
+  if (!unitId) return [];
+  const label = normalizeUnitShortLabel(
+    user?.unit_name ||
+      user?.unitName ||
+      user?.unit_display_name ||
+      user?.unitDisplayName ||
+      user?.path_name ||
+      user?.pathName ||
+      user?.unit_path ||
+      user?.unitPath
+  );
+  return [
+    {
+      id: unitId,
+      label: label || unitId,
+      parentId: '',
+      sortOrder: 0,
+      children: []
+    }
+  ];
+};
+
 const normalizeUnitNode = (value: unknown): UnitTreeNode | null => {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
   const unitId = normalizeUnitText(source.unit_id || source.id);
@@ -2491,7 +2526,7 @@ const mixedConversations = computed<MixedConversation[]>(() => {
         agentId,
         title,
         preview,
-        unread: 0,
+        unread: Math.max(0, Math.floor(Number(agentMainUnreadCountMap.value[agentId] || 0))),
         lastAt: Number(latest?.lastAt || main?.lastAt || 0)
       } as MixedConversation;
     })
@@ -2551,6 +2586,8 @@ const filteredMixedConversations = computed(() => {
     return item.title.toLowerCase().includes(text) || item.preview.toLowerCase().includes(text);
   });
 });
+
+const hasAnyMixedConversations = computed(() => mixedConversations.value.length > 0);
 
 const activeConversationTitle = computed(() => {
   const identity = activeConversation.value;
@@ -2736,6 +2773,219 @@ const clearAgentConversationDismissed = (agentId: unknown) => {
   delete next[normalized];
   dismissedAgentConversationMap.value = next;
   persistDismissedAgentConversationState();
+};
+
+const normalizeNumericMap = (value: unknown): Record<string, number> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>((acc, [key, raw]) => {
+    const normalizedKey = normalizeAgentId(key);
+    const numeric = Number(raw);
+    if (!normalizedKey || !Number.isFinite(numeric) || numeric <= 0) {
+      return acc;
+    }
+    acc[normalizedKey] = Math.floor(numeric);
+    return acc;
+  }, {});
+};
+
+const resolveAgentUnreadStorageKeys = (userId: unknown) => {
+  const cleaned = String(userId || '').trim() || 'anonymous';
+  return {
+    readAt: `${AGENT_MAIN_READ_AT_STORAGE_PREFIX}:${cleaned}`,
+    unread: `${AGENT_MAIN_UNREAD_STORAGE_PREFIX}:${cleaned}`
+  };
+};
+
+const persistAgentUnreadState = () => {
+  if (typeof window === 'undefined') return;
+  const { readAt, unread } = agentUnreadStorageKeys.value;
+  if (!readAt || !unread) return;
+  try {
+    window.localStorage.setItem(readAt, JSON.stringify(agentMainReadAtMap.value));
+    window.localStorage.setItem(unread, JSON.stringify(agentMainUnreadCountMap.value));
+  } catch {
+    // ignore localStorage errors
+  }
+};
+
+const ensureAgentUnreadState = (force = false) => {
+  if (typeof window === 'undefined') {
+    agentMainReadAtMap.value = {};
+    agentMainUnreadCountMap.value = {};
+    agentUnreadStorageKeys.value = { readAt: '', unread: '' };
+    return;
+  }
+  const targetKeys = resolveAgentUnreadStorageKeys(currentUserId.value);
+  const currentKeys = agentUnreadStorageKeys.value;
+  if (!force && currentKeys.readAt === targetKeys.readAt && currentKeys.unread === targetKeys.unread) {
+    return;
+  }
+  agentUnreadStorageKeys.value = targetKeys;
+  try {
+    const readRaw = window.localStorage.getItem(targetKeys.readAt);
+    const unreadRaw = window.localStorage.getItem(targetKeys.unread);
+    agentMainReadAtMap.value = readRaw ? normalizeNumericMap(JSON.parse(readRaw)) : {};
+    agentMainUnreadCountMap.value = unreadRaw ? normalizeNumericMap(JSON.parse(unreadRaw)) : {};
+  } catch {
+    agentMainReadAtMap.value = {};
+    agentMainUnreadCountMap.value = {};
+  }
+};
+
+type AgentMainSessionEntry = {
+  agentId: string;
+  sessionId: string;
+  lastAt: number;
+};
+
+const collectMainAgentSessionEntries = (): AgentMainSessionEntry[] => {
+  const grouped = new Map<string, Array<Record<string, unknown>>>();
+  (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).forEach((sessionRaw) => {
+    const session = (sessionRaw || {}) as Record<string, unknown>;
+    const agentId = normalizeAgentId(session.agent_id);
+    if (!grouped.has(agentId)) {
+      grouped.set(agentId, []);
+    }
+    grouped.get(agentId)?.push(session);
+  });
+  return Array.from(grouped.entries())
+    .map(([agentId, sessions]) => {
+      const sorted = [...sessions].sort(
+        (left, right) =>
+          normalizeTimestamp(right.updated_at || right.last_message_at || right.created_at) -
+          normalizeTimestamp(left.updated_at || left.last_message_at || left.created_at)
+      );
+      const main = sorted.find((item) => Boolean(item?.is_main)) || sorted[0];
+      const sessionId = String(main?.id || '').trim();
+      if (!sessionId) {
+        return null;
+      }
+      return {
+        agentId,
+        sessionId,
+        lastAt: normalizeTimestamp(main?.last_message_at || main?.updated_at || main?.created_at)
+      } as AgentMainSessionEntry;
+    })
+    .filter((item): item is AgentMainSessionEntry => Boolean(item));
+};
+
+const setAgentMainUnreadCount = (agentId: string, count: number) => {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const normalizedCount = Math.max(0, Math.floor(Number(count) || 0));
+  const current = Math.max(0, Math.floor(Number(agentMainUnreadCountMap.value[normalizedAgentId] || 0)));
+  if (current === normalizedCount) return;
+  agentMainUnreadCountMap.value = {
+    ...agentMainUnreadCountMap.value,
+    [normalizedAgentId]: normalizedCount
+  };
+};
+
+const setAgentMainReadAt = (agentId: string, timestamp: number) => {
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const normalizedTimestamp = Math.max(0, Math.floor(Number(timestamp) || 0));
+  if (!normalizedTimestamp) return;
+  const current = Math.max(0, Math.floor(Number(agentMainReadAtMap.value[normalizedAgentId] || 0)));
+  if (current >= normalizedTimestamp) return;
+  agentMainReadAtMap.value = {
+    ...agentMainReadAtMap.value,
+    [normalizedAgentId]: normalizedTimestamp
+  };
+};
+
+const trimAgentMainUnreadState = (entries: AgentMainSessionEntry[]) => {
+  const validAgentIds = new Set(entries.map((item) => item.agentId));
+  const trimmedReadAt = Object.entries(agentMainReadAtMap.value).reduce<Record<string, number>>((acc, [key, raw]) => {
+    const agentId = normalizeAgentId(key);
+    if (!validAgentIds.has(agentId)) return acc;
+    const value = Math.max(0, Math.floor(Number(raw) || 0));
+    if (!value) return acc;
+    acc[agentId] = value;
+    return acc;
+  }, {});
+  const trimmedUnread = Object.entries(agentMainUnreadCountMap.value).reduce<Record<string, number>>(
+    (acc, [key, raw]) => {
+      const agentId = normalizeAgentId(key);
+      if (!validAgentIds.has(agentId)) return acc;
+      const value = Math.max(0, Math.floor(Number(raw) || 0));
+      if (!value) return acc;
+      acc[agentId] = value;
+      return acc;
+    },
+    {}
+  );
+  agentMainReadAtMap.value = trimmedReadAt;
+  agentMainUnreadCountMap.value = trimmedUnread;
+};
+
+const refreshAgentMainUnreadCount = async (entry: AgentMainSessionEntry, readAt: number) => {
+  const requestKey = `${entry.agentId}:${entry.sessionId}:${readAt}`;
+  if (agentUnreadRefreshInFlight.has(requestKey)) {
+    return;
+  }
+  agentUnreadRefreshInFlight.add(requestKey);
+  try {
+    const response = await getChatSessionApi(entry.sessionId);
+    const messages = Array.isArray(response?.data?.data?.messages) ? response.data.data.messages : [];
+    const unreadCount = messages.filter((message: Record<string, unknown>) => {
+      if (String(message?.role || '') !== 'assistant') {
+        return false;
+      }
+      const timestamp = normalizeTimestamp(message?.created_at);
+      return timestamp > readAt;
+    }).length;
+    const activeEntries = collectMainAgentSessionEntries();
+    const currentMain = activeEntries.find((item) => item.agentId === entry.agentId);
+    if (!currentMain || currentMain.sessionId !== entry.sessionId) {
+      return;
+    }
+    const currentReadAt = Math.max(0, Math.floor(Number(agentMainReadAtMap.value[entry.agentId] || 0)));
+    if (currentReadAt !== readAt) {
+      return;
+    }
+    if (currentMain.lastAt <= currentReadAt) {
+      setAgentMainUnreadCount(entry.agentId, 0);
+      persistAgentUnreadState();
+      return;
+    }
+    setAgentMainUnreadCount(entry.agentId, unreadCount > 0 ? unreadCount : 1);
+    persistAgentUnreadState();
+  } catch {
+    // unread refresh is best-effort; keep previous value if request fails
+  } finally {
+    agentUnreadRefreshInFlight.delete(requestKey);
+  }
+};
+
+const refreshAgentMainUnreadFromSessions = () => {
+  const entries = collectMainAgentSessionEntries();
+  trimAgentMainUnreadState(entries);
+  const identity = activeConversation.value;
+  entries.forEach((entry) => {
+    const isViewingMain =
+      identity?.kind === 'agent' &&
+      String(identity?.id || '').trim() === entry.sessionId &&
+      normalizeAgentId(identity?.agentId) === entry.agentId;
+    if (isViewingMain) {
+      const targetReadAt = entry.lastAt || Date.now();
+      setAgentMainReadAt(entry.agentId, targetReadAt);
+      setAgentMainUnreadCount(entry.agentId, 0);
+      return;
+    }
+    const readAt = Math.max(0, Math.floor(Number(agentMainReadAtMap.value[entry.agentId] || 0)));
+    if (!readAt) {
+      setAgentMainReadAt(entry.agentId, entry.lastAt || Date.now());
+      setAgentMainUnreadCount(entry.agentId, 0);
+      return;
+    }
+    if (entry.lastAt <= readAt) {
+      setAgentMainUnreadCount(entry.agentId, 0);
+      return;
+    }
+    void refreshAgentMainUnreadCount(entry, readAt);
+  });
+  persistAgentUnreadState();
 };
 
 const loadStoredStringArray = (storageKey: string, maxCount: number): string[] => {
@@ -3555,10 +3805,8 @@ const createAgentQuickly = async () => {
     });
     ElMessage.success(t('portal.agent.createSuccess'));
     const tasks: Promise<unknown>[] = [loadRunningAgents()];
-    if (canManageAgentIntegrations.value) {
+    if (!cronPermissionDenied.value) {
       tasks.push(loadCronAgentIds());
-    } else {
-      cronAgentIds.value = new Set<string>();
     }
     await Promise.all(tasks);
     openCreatedAgentSettings(created?.id);
@@ -3571,6 +3819,10 @@ const createAgentQuickly = async () => {
 
 const handleSearchCreateAction = async () => {
   if (sessionHub.activeSection === 'groups') {
+    if (userWorldPermissionDenied.value) {
+      ElMessage.warning(t('auth.login.noPermission'));
+      return;
+    }
     groupCreateName.value = '';
     groupCreateKeyword.value = '';
     groupCreateMemberIds.value = [];
@@ -3586,10 +3838,6 @@ const openMixedConversation = async (item: MixedConversation) => {
   clearMiddlePaneOverlayHide();
   middlePaneOverlayVisible.value = false;
   if (item.kind === 'agent') {
-    if (item.sourceId) {
-      await openAgentSession(item.sourceId, item.agentId);
-      return;
-    }
     await openAgentById(item.agentId);
     return;
   }
@@ -3611,6 +3859,7 @@ const openWorldConversation = async (
   kind: 'direct' | 'group',
   mode: 'detail' | 'messages' = 'detail'
 ) => {
+  if (userWorldPermissionDenied.value) return;
   if (!conversationId) return;
   const perfTrace = startMessengerPerfTrace('openWorldConversation', {
     conversationId,
@@ -3828,6 +4077,10 @@ const openAgentPromptPreview = async () => {
 };
 
 const openSelectedContactConversation = async () => {
+  if (userWorldPermissionDenied.value) {
+    ElMessage.warning(t('auth.login.noPermission'));
+    return;
+  }
   if (!selectedContact.value) return;
   const perfTrace = startMessengerPerfTrace('openSelectedContactConversation', {
     selectedContactUserId: String(selectedContact.value?.user_id || '').trim()
@@ -3873,6 +4126,10 @@ const openSelectedContactConversation = async () => {
 };
 
 const openSelectedGroupConversation = async () => {
+  if (userWorldPermissionDenied.value) {
+    ElMessage.warning(t('auth.login.noPermission'));
+    return;
+  }
   if (!selectedGroup.value) return;
   const conversationId = String(selectedGroup.value.conversation_id || '').trim();
   if (!conversationId) return;
@@ -3880,6 +4137,10 @@ const openSelectedGroupConversation = async () => {
 };
 
 const submitGroupCreate = async () => {
+  if (userWorldPermissionDenied.value) {
+    ElMessage.warning(t('auth.login.noPermission'));
+    return;
+  }
   const groupName = String(groupCreateName.value || '').trim();
   const members = groupCreateMemberIds.value
     .map((item) => String(item || '').trim())
@@ -3954,6 +4215,12 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
       id: sessionId,
       agentId: targetAgentId || DEFAULT_AGENT_KEY
     });
+    const mainEntry = collectMainAgentSessionEntries().find((item) => item.agentId === targetAgentId);
+    if (mainEntry?.sessionId === sessionId) {
+      setAgentMainReadAt(targetAgentId, mainEntry.lastAt || Date.now());
+      setAgentMainUnreadCount(targetAgentId, 0);
+      persistAgentUnreadState();
+    }
     finishMessengerPerfTrace(perfTrace, 'ok');
   } catch (error) {
     finishMessengerPerfTrace(perfTrace, 'fail', {
@@ -4125,9 +4392,23 @@ const loadOrgUnits = async () => {
     orgUnitTree.value = tree;
     contactUnitExpandedIds.value = retainedExpanded.size > 0 ? retainedExpanded : rootIds;
   } catch {
-    orgUnitPathMap.value = {};
-    orgUnitTree.value = [];
-    contactUnitExpandedIds.value = new Set();
+    if (orgUnitTree.value.length > 0) {
+      return;
+    }
+    const fallbackTree = buildCurrentUserFallbackUnitTree();
+    if (!fallbackTree.length) {
+      orgUnitPathMap.value = {};
+      orgUnitTree.value = [];
+      contactUnitExpandedIds.value = new Set();
+      return;
+    }
+    const fallbackMap: Record<string, string> = {};
+    fallbackTree.forEach((node) => {
+      fallbackMap[node.id] = node.label;
+    });
+    orgUnitPathMap.value = fallbackMap;
+    orgUnitTree.value = fallbackTree;
+    contactUnitExpandedIds.value = new Set(fallbackTree.map((node) => node.id));
   }
 };
 
@@ -4154,10 +4435,8 @@ const toolCategoryLabel = (category: string) => {
 
 const handleAgentSettingsSaved = async () => {
   const tasks: Promise<unknown>[] = [agentStore.loadAgents(), loadRunningAgents()];
-  if (canManageAgentIntegrations.value) {
+  if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
-  } else {
-    cronAgentIds.value = new Set<string>();
   }
   await Promise.allSettled(tasks);
 };
@@ -4165,12 +4444,31 @@ const handleAgentSettingsSaved = async () => {
 const handleAgentDeleted = async () => {
   selectedAgentId.value = DEFAULT_AGENT_KEY;
   const tasks: Promise<unknown>[] = [chatStore.loadSessions(), loadRunningAgents()];
-  if (canManageAgentIntegrations.value) {
+  if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
-  } else {
-    cronAgentIds.value = new Set<string>();
   }
   await Promise.allSettled(tasks);
+};
+
+const clearMessagePanelWhenConversationEmpty = () => {
+  if (sessionHub.activeSection !== 'messages') return;
+  if (hasAnyMixedConversations.value) return;
+  if (sessionHub.activeConversation) {
+    sessionHub.clearActiveConversation();
+  }
+  if (String(userWorldStore.activeConversationId || '').trim()) {
+    userWorldStore.activeConversationId = '';
+  }
+  if (
+    String(chatStore.activeSessionId || '').trim() ||
+    String(chatStore.draftAgentId || '').trim() ||
+    (Array.isArray(chatStore.messages) && chatStore.messages.length > 0)
+  ) {
+    chatStore.activeSessionId = null;
+    chatStore.draftAgentId = '';
+    chatStore.draftToolOverrides = null;
+    chatStore.messages = [];
+  }
 };
 
 const ensureSectionSelection = () => {
@@ -4233,6 +4531,10 @@ const ensureSectionSelection = () => {
 
 const syncAgentConversationFallback = () => {
   if (sessionHub.activeSection !== 'messages') return;
+  if (!hasAnyMixedConversations.value) {
+    clearMessagePanelWhenConversationEmpty();
+    return;
+  }
   if (sessionHub.activeConversation) return;
   const routeConversationId = String(route.query?.conversation_id || '').trim();
   if (routeConversationId || String(userWorldStore.activeConversationId || '').trim()) return;
@@ -4586,8 +4888,10 @@ const resolveHttpStatus = (error: unknown): number => {
   return Number.isFinite(status) ? status : 0;
 };
 
+const isAuthDeniedStatus = (status: number): boolean => status === 401 || status === 403;
+
 const loadCronAgentIds = async () => {
-  if (!canManageAgentIntegrations.value) {
+  if (cronPermissionDenied.value) {
     cronAgentIds.value = new Set<string>();
     return;
   }
@@ -4607,9 +4911,11 @@ const loadCronAgentIds = async () => {
       result.add(normalizeAgentId(resolved));
     });
     cronAgentIds.value = result;
+    cronPermissionDenied.value = false;
   } catch (error) {
     const status = resolveHttpStatus(error);
-    if (status === 401 || status === 403) {
+    if (isAuthDeniedStatus(status)) {
+      cronPermissionDenied.value = true;
       cronAgentIds.value = new Set<string>();
       return;
     }
@@ -4626,10 +4932,8 @@ const refreshAll = async () => {
     loadRunningAgents(),
     loadToolsCatalog()
   ];
-  if (canManageAgentIntegrations.value) {
+  if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
-  } else {
-    cronAgentIds.value = new Set<string>();
   }
   await Promise.allSettled(tasks);
   ensureSectionSelection();
@@ -4680,6 +4984,11 @@ const restoreConversationFromRoute = async () => {
   const query = route.query;
   const queryConversationId = String(query?.conversation_id || '').trim();
   if (queryConversationId) {
+    if (userWorldPermissionDenied.value) {
+      const nextQuery = { ...route.query } as Record<string, any>;
+      delete nextQuery.conversation_id;
+      router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
+    }
     const conversation = userWorldStore.conversations.find(
       (item) => String(item?.conversation_id || '') === queryConversationId
     );
@@ -4728,20 +5037,21 @@ const restoreConversationFromRoute = async () => {
     }
   }
 
-  chatStore.openDraftSession({ agent_id: '' });
-  sessionHub.setActiveConversation({
-    kind: 'agent',
-    id: `draft:${DEFAULT_AGENT_KEY}`,
-    agentId: DEFAULT_AGENT_KEY
-  });
+  clearMessagePanelWhenConversationEmpty();
 };
 
 const bootstrap = async () => {
   bootLoading.value = true;
   try {
     await authStore.loadProfile();
-  } catch {
-    // keep bootstrap resilient when profile endpoint is temporarily unavailable
+  } catch (error) {
+    const status = resolveHttpStatus(error);
+    if (isAuthDeniedStatus(status)) {
+      authStore.logout();
+      bootLoading.value = false;
+      router.replace('/login').catch(() => undefined);
+      return;
+    }
   }
   const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
@@ -4751,10 +5061,8 @@ const bootstrap = async () => {
     loadRunningAgents(),
     loadToolsCatalog()
   ];
-  if (canManageAgentIntegrations.value) {
+  if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
-  } else {
-    cronAgentIds.value = new Set<string>();
   }
   await Promise.allSettled(tasks);
   await restoreConversationFromRoute();
@@ -4799,20 +5107,11 @@ watch(
 watch(
   () => currentUserId.value,
   () => {
+    cronPermissionDenied.value = false;
+    cronAgentIds.value = new Set<string>();
     ensureDismissedAgentConversationState(true);
-  },
-  { immediate: true }
-);
-
-watch(
-  () => canManageAgentIntegrations.value,
-  (enabled) => {
-    if (!enabled) {
-      cronAgentIds.value = new Set<string>();
-      if (agentSettingMode.value !== 'agent') {
-        agentSettingMode.value = 'agent';
-      }
-    }
+    ensureAgentUnreadState(true);
+    refreshAgentMainUnreadFromSessions();
   },
   { immediate: true }
 );
@@ -4838,6 +5137,34 @@ watch(
   ],
   () => {
     syncAgentConversationFallback();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [
+    chatStore.sessions
+      .map((session) =>
+        [
+          String(session?.id || ''),
+          normalizeAgentId(session?.agent_id),
+          session?.is_main ? '1' : '0',
+          String(session?.last_message_at || session?.updated_at || session?.created_at || '')
+        ].join(':')
+      )
+      .join('|'),
+    sessionHub.activeConversationKey
+  ],
+  () => {
+    refreshAgentMainUnreadFromSessions();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [hasAnyMixedConversations.value, sessionHub.activeSection, sessionHub.activeConversationKey],
+  () => {
+    clearMessagePanelWhenConversationEmpty();
   },
   { immediate: true }
 );
@@ -4998,7 +5325,7 @@ onMounted(async () => {
   }, 60_000);
   statusTimer = window.setInterval(() => {
     loadRunningAgents();
-    if (canManageAgentIntegrations.value) {
+    if (!cronPermissionDenied.value) {
       loadCronAgentIds();
     }
   }, 12000);

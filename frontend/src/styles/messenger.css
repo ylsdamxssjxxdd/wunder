@@ -810,7 +810,7 @@
 .messenger-message-extra {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
 }
@@ -818,6 +818,7 @@
 .messenger-message-extra .messenger-message-stats {
   flex: 1;
   margin-top: 0;
+  margin-right: auto;
 }
 
 .messenger-message-footer-copy {
@@ -885,6 +886,7 @@
   padding: 8px 12px 12px;
   flex-shrink: 0;
   overflow: visible;
+  position: relative;
 }
 
 .messenger-world-composer {
@@ -1214,10 +1216,51 @@
   padding: 10px 12px;
 }
 
+.messenger-chat-empty-state {
+  margin: auto;
+  min-height: 220px;
+  width: min(420px, 100%);
+  border: 1px dashed rgba(var(--ui-accent-rgb), 0.35);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #ffffff, var(--ui-accent-soft-3));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #686868;
+  text-align: center;
+  padding: 18px 20px;
+}
+
+.messenger-chat-empty-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.32);
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+}
+
+.messenger-chat-empty-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #3d3d3d;
+}
+
+.messenger-chat-empty-subtitle {
+  font-size: 12px;
+  color: #7a7a7a;
+}
+
 .messenger-scroll-bottom-btn {
   position: absolute;
-  right: 16px;
-  bottom: 84px;
+  right: 12px;
+  top: -42px;
   width: 34px;
   height: 34px;
   border: 1px solid #d9d9d9;
@@ -3572,7 +3615,7 @@
 
   .messenger-scroll-bottom-btn {
     right: 10px;
-    bottom: 78px;
+    top: -40px;
   }
 
   .messenger-cron-body {
@@ -3616,7 +3659,7 @@
 
   .messenger-scroll-bottom-btn {
     right: 8px;
-    bottom: 74px;
+    top: -38px;
   }
 
   .messenger-settings-range {

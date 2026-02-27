@@ -29,11 +29,22 @@
     <div
       class="input-box"
       :class="[{ dragover: dragActive }, { 'input-box--world': worldStyle }]"
+      :style="worldStyle ? worldComposerStyle : undefined"
       @dragenter="handleDragEnter"
       @dragover="handleDragOver"
       @dragleave="handleDragLeave"
       @drop="handleDrop"
     >
+      <button
+        v-if="worldStyle"
+        class="chat-composer-resize-edge"
+        type="button"
+        :title="t('messenger.world.resize')"
+        :aria-label="t('messenger.world.resize')"
+        @mousedown.prevent="startWorldComposerResize"
+      >
+        <span class="chat-composer-resize-grip"></span>
+      </button>
       <div v-if="worldStyle" class="messenger-world-toolbar chat-composer-world-toolbar">
         <div ref="worldCommandAnchorRef" class="messenger-world-tool-anchor">
           <button

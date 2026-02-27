@@ -581,6 +581,9 @@ const parseSegmentedDelta = (payload, data) => {
       if (typeof segment.reasoning_delta === 'string' && segment.reasoning_delta) {
         reasoningDelta += segment.reasoning_delta;
       }
+      if (typeof segment.think_delta === 'string' && segment.think_delta) {
+        reasoningDelta += segment.think_delta;
+      }
       const segmentRound = normalizeStreamRound(
         segment.user_round ?? segment.model_round ?? segment.round
       );
@@ -622,13 +625,22 @@ const normalizeFlag = (value) => value === true || value === 'true';
 
 const normalizeSnapshotMessage = (message) => {
   if (!message || typeof message !== 'object') return null;
+  const normalizedAssistant =
+    message.role === 'assistant'
+      ? normalizeAssistantOutput(message.content, resolveAssistantReasoning(message))
+      : null;
   const base: SnapshotAssistantMessage = {
     role: message.role,
-    content: typeof message.content === 'string' ? message.content : String(message.content || ''),
+    content:
+      message.role === 'assistant'
+        ? normalizedAssistant?.content || ''
+        : typeof message.content === 'string'
+          ? message.content
+          : String(message.content || ''),
     created_at: message.created_at || ''
   };
   if (message.role === 'assistant') {
-    base.reasoning = message.reasoning || '';
+    base.reasoning = normalizedAssistant?.reasoning || '';
     base.reasoningStreaming = normalizeFlag(message.reasoningStreaming);
     base.workflowStreaming = normalizeFlag(message.workflowStreaming);
     base.stream_incomplete = normalizeFlag(message.stream_incomplete);
@@ -1344,12 +1356,152 @@ const extractAnswerFromPayload = (payload) => {
   return answer ? String(answer) : '';
 };
 
-const normalizeAssistantContent = (content) => {
-  if (!content) return content;
-  const payload = safeJsonParse(content);
-  if (!payload) return content;
+const THINK_OPEN_TAG = '<think>';
+const THINK_CLOSE_TAG = '</think>';
+
+const normalizeReasoningText = (value) =>
+  typeof value === 'string' ? value : value ? String(value) : '';
+
+const resolveAssistantReasoning = (payload) =>
+  normalizeReasoningText(
+    payload?.reasoning ??
+      payload?.reasoning_content ??
+      payload?.think_content
+  );
+
+const extractAssistantPayloadText = (content) => {
+  if (!content) return '';
+  const rawText = typeof content === 'string' ? content : String(content);
+  const payload = safeJsonParse(rawText);
+  if (!payload) return rawText;
   const answer = extractAnswerFromPayload(payload);
-  return answer || content;
+  return answer || rawText;
+};
+
+const splitThinkTaggedContent = (content) => {
+  const source = extractAssistantPayloadText(content);
+  if (!source) {
+    return { content: '', reasoning: '' };
+  }
+  let cursor = 0;
+  let visibleContent = '';
+  let reasoningContent = '';
+  while (cursor < source.length) {
+    const thinkStart = source.indexOf(THINK_OPEN_TAG, cursor);
+    if (thinkStart < 0) {
+      visibleContent += source.slice(cursor);
+      break;
+    }
+    visibleContent += source.slice(cursor, thinkStart);
+    const thinkEnd = source.indexOf(THINK_CLOSE_TAG, thinkStart + THINK_OPEN_TAG.length);
+    if (thinkEnd < 0) {
+      reasoningContent += source.slice(thinkStart);
+      break;
+    }
+    const thinkCloseEnd = thinkEnd + THINK_CLOSE_TAG.length;
+    reasoningContent += source.slice(thinkStart, thinkCloseEnd);
+    cursor = thinkCloseEnd;
+  }
+  return {
+    content: visibleContent,
+    reasoning: reasoningContent
+  };
+};
+
+const normalizeAssistantOutput = (content, reasoning = '') => {
+  const normalizedReasoning = normalizeReasoningText(reasoning);
+  const parsed = splitThinkTaggedContent(content);
+  return {
+    content: parsed.content,
+    inlineReasoning: parsed.reasoning,
+    reasoning: normalizedReasoning || parsed.reasoning
+  };
+};
+
+const normalizeAssistantContent = (content) => normalizeAssistantOutput(content).content;
+
+const createThinkTagStreamParser = () => {
+  let inThinkTag = false;
+  let bufferedTail = '';
+  const resolveSuffixLength = (text, marker) => {
+    const maxLength = Math.min(Math.max(marker.length - 1, 0), text.length);
+    for (let length = maxLength; length > 0; length -= 1) {
+      if (marker.startsWith(text.slice(-length))) {
+        return length;
+      }
+    }
+    return 0;
+  };
+  const takeStableText = (source, cursor, marker) => {
+    const remaining = source.slice(cursor);
+    const suffixLength = resolveSuffixLength(remaining, marker);
+    const safeEnd = source.length - suffixLength;
+    return {
+      stable: source.slice(cursor, safeEnd),
+      nextCursor: source.length,
+      tail: source.slice(safeEnd)
+    };
+  };
+  const push = (chunk, flush = false) => {
+    const source = `${bufferedTail}${chunk || ''}`;
+    bufferedTail = '';
+    if (!source) {
+      return { content: '', reasoning: '' };
+    }
+    let contentDelta = '';
+    let reasoningDelta = '';
+    let cursor = 0;
+    while (cursor < source.length) {
+      const marker = inThinkTag ? THINK_CLOSE_TAG : THINK_OPEN_TAG;
+      const markerIndex = source.indexOf(marker, cursor);
+      if (markerIndex < 0) {
+        if (flush) {
+          const tail = source.slice(cursor);
+          if (tail) {
+            if (inThinkTag) {
+              reasoningDelta += tail;
+            } else {
+              contentDelta += tail;
+            }
+          }
+          cursor = source.length;
+        } else {
+          const { stable, nextCursor, tail } = takeStableText(source, cursor, marker);
+          if (stable) {
+            if (inThinkTag) {
+              reasoningDelta += stable;
+            } else {
+              contentDelta += stable;
+            }
+          }
+          bufferedTail = tail;
+          cursor = nextCursor;
+        }
+        continue;
+      }
+      const stable = source.slice(cursor, markerIndex);
+      if (stable) {
+        if (inThinkTag) {
+          reasoningDelta += stable;
+        } else {
+          contentDelta += stable;
+        }
+      }
+      const markerEnd = markerIndex + marker.length;
+      reasoningDelta += source.slice(markerIndex, markerEnd);
+      cursor = markerEnd;
+      inThinkTag = !inThinkTag;
+    }
+    return {
+      content: contentDelta,
+      reasoning: reasoningDelta
+    };
+  };
+  const reset = () => {
+    inThinkTag = false;
+    bufferedTail = '';
+  };
+  return { push, reset };
 };
 
 const normalizeToolNameForFinal = (name) => {
@@ -1442,8 +1594,12 @@ const normalizeWorkflowEvents = (events, message) => {
   if (!Array.isArray(events) || events.length === 0) {
     return [];
   }
-  const content = normalizeAssistantContent(message?.content || '');
-  const reasoning = message?.reasoning || '';
+  const normalizedOutput = normalizeAssistantOutput(
+    message?.content || '',
+    resolveAssistantReasoning(message)
+  );
+  const content = normalizedOutput.content;
+  const reasoning = normalizedOutput.reasoning;
   const normalized = [];
   events.forEach((event) => {
     const eventName = String(event?.event || '').trim();
@@ -2164,8 +2320,15 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     reasoningStreaming: false
   };
   const finalizeWithNow = options.finalizeWithNow !== false;
+  const initialReasoning = resolveAssistantReasoning(assistantMessage);
+  const normalizedOutput = normalizeAssistantOutput(
+    assistantMessage.content,
+    initialReasoning
+  );
+  const hasExplicitInitialReasoning = initialReasoning !== '';
+  assistantMessage.content = normalizedOutput.content;
   // 思考内容需要同步到消息头部展示
-  assistantMessage.reasoning = assistantMessage.reasoning || '';
+  assistantMessage.reasoning = normalizedOutput.reasoning;
   assistantMessage.reasoningStreaming = normalizeFlag(assistantMessage.reasoningStreaming);
   const normalizedPlan = normalizePlanPayload(assistantMessage.plan);
   assistantMessage.plan = normalizedPlan;
@@ -2223,14 +2386,19 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     refreshInteractionDuration();
   };
   let outputContent = assistantMessage.content || '';
-  let outputReasoning = assistantMessage.reasoning || '';
+  let outputReasoningExplicit = hasExplicitInitialReasoning ? initialReasoning : '';
+  let outputReasoningFallback = hasExplicitInitialReasoning
+    ? normalizeReasoningText(normalizedOutput.inlineReasoning)
+    : normalizeReasoningText(normalizedOutput.reasoning);
   const existingOutput = assistantMessage.workflowItems?.find((item) => item.title === '模型输出');
   if (existingOutput) {
     outputItemId = existingOutput.id;
   }
 
+  const resolveReasoningOutput = () => outputReasoningExplicit || outputReasoningFallback;
+
   const syncReasoningToMessage = () => {
-    assistantMessage.reasoning = outputReasoning;
+    assistantMessage.reasoning = resolveReasoningOutput();
     assistantMessage.reasoningStreaming = outputState.reasoningStreaming;
   };
 
@@ -2397,8 +2565,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
   const buildOutputDetail = () => {
     const parts = [];
-    if (outputReasoning) {
-      parts.push(`[${t('chat.workflow.detail.reasoning')}]\n${tailText(outputReasoning)}`);
+    const reasoningText = resolveReasoningOutput();
+    if (reasoningText) {
+      parts.push(`[${t('chat.workflow.detail.reasoning')}]\n${tailText(reasoningText)}`);
     }
     if (outputContent) {
       parts.push(`[${t('chat.workflow.detail.output')}]\n${tailText(outputContent)}`);
@@ -2410,7 +2579,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   };
 
   let pendingContent = '';
-  let pendingReasoning = '';
+  let pendingReasoningExplicit = '';
+  let pendingReasoningFallback = '';
+  const thinkStreamParser = createThinkTagStreamParser();
   let streamTimer = null;
   const scheduleFrame =
     typeof requestAnimationFrame === 'function'
@@ -2423,14 +2594,30 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       cancelFrame(streamTimer);
       streamTimer = null;
     }
+    if (force) {
+      const trailingDelta = thinkStreamParser.push('', true);
+      if (trailingDelta.content) {
+        pendingContent += trailingDelta.content;
+      }
+      if (trailingDelta.reasoning) {
+        pendingReasoningFallback += trailingDelta.reasoning;
+      }
+    }
     const hasContentDelta = Boolean(pendingContent);
-    const hasReasoningDelta = Boolean(pendingReasoning);
+    const hasReasoningDelta = Boolean(
+      pendingReasoningExplicit || pendingReasoningFallback
+    );
     if (!hasContentDelta && !hasReasoningDelta && !force) {
       return;
     }
-    if (hasReasoningDelta) {
-      outputReasoning += pendingReasoning;
-      pendingReasoning = '';
+    if (pendingReasoningExplicit) {
+      outputReasoningExplicit += pendingReasoningExplicit;
+      pendingReasoningExplicit = '';
+      outputState.reasoningStreaming = true;
+    }
+    if (pendingReasoningFallback) {
+      outputReasoningFallback += pendingReasoningFallback;
+      pendingReasoningFallback = '';
       outputState.reasoningStreaming = true;
     }
     if (hasContentDelta) {
@@ -2465,7 +2652,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       streamTimer = null;
     }
     pendingContent = '';
-    pendingReasoning = '';
+    pendingReasoningExplicit = '';
+    pendingReasoningFallback = '';
+    thinkStreamParser.reset();
   };
 
   const notifySnapshot = () => {
@@ -2480,7 +2669,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     resetStreamPending();
     assistantMessage.content = '';
     outputContent = '';
-    outputReasoning = '';
+    outputReasoningExplicit = '';
+    outputReasoningFallback = '';
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
     assistantMessage.stream_round = null;
@@ -2733,18 +2923,30 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           segmentedDelta?.delta ??
           '';
         const reasoningDelta =
-          data?.reasoning_delta ?? payload?.reasoning_delta ?? segmentedDelta?.reasoningDelta ?? '';
+          data?.reasoning_delta ??
+          payload?.reasoning_delta ??
+          data?.think_delta ??
+          payload?.think_delta ??
+          segmentedDelta?.reasoningDelta ??
+          '';
         const reasoningDeltaText =
           typeof reasoningDelta === 'string' ? reasoningDelta : reasoningDelta ? String(reasoningDelta) : '';
         if (reasoningDeltaText) {
-          pendingReasoning += reasoningDeltaText;
+          pendingReasoningExplicit += reasoningDeltaText;
           outputState.reasoningStreaming = true;
         }
         if (typeof delta === 'string' && delta) {
-          pendingContent += delta;
-          outputState.streaming = true;
+          const parsedDelta = thinkStreamParser.push(delta);
+          if (parsedDelta.reasoning) {
+            pendingReasoningFallback += parsedDelta.reasoning;
+            outputState.reasoningStreaming = true;
+          }
+          if (parsedDelta.content) {
+            pendingContent += parsedDelta.content;
+            outputState.streaming = true;
+          }
         }
-        if (pendingContent || pendingReasoning) {
+        if (pendingContent || pendingReasoningExplicit || pendingReasoningFallback) {
           ensureOutputItem();
           scheduleStreamFlush();
         }
@@ -2779,9 +2981,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           payload?.reasoning ??
           data?.reasoning_content ??
           payload?.reasoning_content ??
+          data?.think_content ??
+          payload?.think_content ??
           '';
-        const reasoningText =
-          typeof reasoningRaw === 'string' ? reasoningRaw : reasoningRaw ? String(reasoningRaw) : '';
+        const reasoningText = normalizeReasoningText(reasoningRaw);
+        const parsedContent = normalizeAssistantOutput(content, reasoningText);
         const hasContent = typeof content === 'string' && content !== '';
         const toolCallsPayload =
           data?.tool_calls ??
@@ -2791,10 +2995,14 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           data?.function_call ??
           payload?.function_call;
         const toolCallAnswer = !hasContent ? extractFinalAnswerFromToolCalls(toolCallsPayload) : '';
-        const resolvedContent = hasContent ? content : toolCallAnswer;
+        const parsedToolCallAnswer = normalizeAssistantOutput(toolCallAnswer, '');
+        const resolvedContent = hasContent ? parsedContent.content : parsedToolCallAnswer.content;
+        const inlineReasoning = hasContent
+          ? parsedContent.inlineReasoning
+          : parsedToolCallAnswer.inlineReasoning;
         const resolvedHasContent =
           typeof resolvedContent === 'string' && resolvedContent !== '';
-        const hasReasoning = reasoningText !== '';
+        const hasReasoning = reasoningText !== '' || inlineReasoning !== '';
         if (
           !resolvedHasContent &&
           !hasReasoning &&
@@ -2803,8 +3011,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           outputState.streaming = false;
           outputState.reasoningStreaming = false;
         } else {
-          if (hasReasoning) {
-            outputReasoning = reasoningText;
+          if (reasoningText) {
+            outputReasoningExplicit = reasoningText;
+          } else if (inlineReasoning) {
+            outputReasoningFallback = inlineReasoning;
           }
           if (resolvedHasContent) {
             outputContent = resolvedContent;
@@ -2849,8 +3059,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           raw;
         if (answer) {
           const answerText = pickText(answer, assistantMessage.content);
-          assistantMessage.content = answerText;
-          outputContent = answerText;
+          const normalizedAnswer = normalizeAssistantOutput(answerText, '');
+          assistantMessage.content = normalizedAnswer.content;
+          outputContent = normalizedAnswer.content;
+          if (normalizedAnswer.inlineReasoning) {
+            outputReasoningFallback = normalizedAnswer.inlineReasoning;
+          }
           visibleRound = lastRound ?? visibleRound;
         }
         if (lastRound !== null) {
@@ -2925,13 +3139,17 @@ const hydrateMessage = (message, workflowState) => {
   if (!message || message.role !== 'assistant') {
     return message;
   }
+  const normalizedOutput = normalizeAssistantOutput(
+    message.content,
+    resolveAssistantReasoning(message)
+  );
   const hydrated = {
     ...message,
-    content: normalizeAssistantContent(message.content),
+    content: normalizedOutput.content,
     workflowItems: [],
     workflowStreaming: normalizeFlag(message?.workflowStreaming),
     stream_incomplete: normalizeFlag(message?.stream_incomplete),
-    reasoning: message?.reasoning || '',
+    reasoning: normalizedOutput.reasoning,
     reasoningStreaming: normalizeFlag(message?.reasoningStreaming),
     stats: normalizeMessageStats(message.stats) || buildMessageStats()
   };
