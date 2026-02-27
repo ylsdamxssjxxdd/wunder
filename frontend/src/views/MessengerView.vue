@@ -1,5 +1,5 @@
 <template>
-  <div class="messenger-view">
+  <div class="messenger-view" :class="{ 'messenger-view--without-right': !showRightDock }">
     <aside class="messenger-left-rail">
       <div class="messenger-left-brand">Wunder</div>
       <button class="messenger-avatar-btn" type="button" @click="switchSection('more')">
@@ -396,9 +396,16 @@
             </span>
           </div>
           <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
-          <div v-if="chatPanelCode" class="messenger-chat-code">{{ chatPanelCode }}</div>
         </div>
         <div class="messenger-chat-header-actions">
+          <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'agents'"
+            class="messenger-header-action-text"
+            type="button"
+            @click="enterSelectedAgentConversation"
+          >
+            {{ t('messenger.action.openConversation') }}
+          </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
@@ -412,19 +419,15 @@
         </div>
       </header>
 
-      <div v-if="!showChatSettingsView && sessionHub.activeConversation" class="messenger-chat-notice">
-        <i class="fa-solid fa-bullhorn" aria-hidden="true"></i>
-        <span>{{ activeConversationNotice }}</span>
-      </div>
-
-      <div ref="messageListRef" class="messenger-chat-body">
+      <div
+        ref="messageListRef"
+        class="messenger-chat-body"
+        :class="{ 'is-settings': showChatSettingsView, 'is-messages': !showChatSettingsView }"
+      >
         <template v-if="showChatSettingsView">
           <div class="messenger-chat-settings">
             <template v-if="showAgentSettingsPanel">
               <div class="messenger-inline-actions">
-                <button class="messenger-inline-btn primary" type="button" @click="enterSelectedAgentConversation">
-                  {{ t('messenger.action.openConversation') }}
-                </button>
                 <button
                   class="messenger-inline-btn"
                   :class="{ active: agentSettingMode === 'agent' }"
@@ -472,9 +475,35 @@
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'users'">
-              <div v-if="selectedContact" class="messenger-entity-panel">
+              <div v-if="selectedContact" class="messenger-entity-panel messenger-entity-panel--fill">
                 <div class="messenger-entity-title">{{ selectedContact.username || selectedContact.user_id }}</div>
-                <div class="messenger-entity-meta">ID: {{ selectedContact.user_id }}</div>
+                <div class="messenger-entity-grid">
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.userId') }}</span>
+                    <span class="messenger-entity-value">{{ selectedContact.user_id || '-' }}</span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.conversationId') }}</span>
+                    <span class="messenger-entity-value">{{ selectedContact.conversation_id || '-' }}</span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.unread') }}</span>
+                    <span class="messenger-entity-value">{{ resolveUnread(selectedContact.unread_count) }}</span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.lastMessageAt') }}</span>
+                    <span class="messenger-entity-value">{{ formatTime(selectedContact.last_message_at) || '-' }}</span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.status') }}</span>
+                    <span class="messenger-entity-value">{{ selectedContact.status || '-' }}</span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.unitId') }}</span>
+                    <span class="messenger-entity-value">{{ selectedContact.unit_id || '-' }}</span>
+                  </div>
+                </div>
+                <div class="messenger-entity-meta">{{ t('messenger.entity.lastPreview') }}</div>
                 <div class="messenger-entity-meta">
                   {{ selectedContact.last_message_preview || t('messenger.preview.empty') }}
                 </div>
@@ -488,9 +517,29 @@
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'groups'">
-              <div v-if="selectedGroup" class="messenger-entity-panel">
+              <div v-if="selectedGroup" class="messenger-entity-panel messenger-entity-panel--fill">
                 <div class="messenger-entity-title">{{ selectedGroup.group_name || selectedGroup.group_id }}</div>
-                <div class="messenger-entity-meta">ID: {{ selectedGroup.group_id }}</div>
+                <div class="messenger-entity-grid">
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.groupId') }}</span>
+                    <span class="messenger-entity-value">{{ selectedGroup.group_id || '-' }}</span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.conversationId') }}</span>
+                    <span class="messenger-entity-value">{{ selectedGroup.conversation_id || '-' }}</span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.unread') }}</span>
+                    <span class="messenger-entity-value">
+                      {{ resolveUnread(selectedGroup.unread_count_cache) }}
+                    </span>
+                  </div>
+                  <div class="messenger-entity-field">
+                    <span class="messenger-entity-label">{{ t('messenger.entity.lastMessageAt') }}</span>
+                    <span class="messenger-entity-value">{{ formatTime(selectedGroup.last_message_at) || '-' }}</span>
+                  </div>
+                </div>
+                <div class="messenger-entity-meta">{{ t('messenger.entity.lastPreview') }}</div>
                 <div class="messenger-entity-meta">
                   {{ selectedGroup.last_message_preview || t('messenger.preview.empty') }}
                 </div>
@@ -505,6 +554,37 @@
 
             <template v-else-if="sessionHub.activeSection === 'tools'">
               <div v-if="toolsCatalogLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+              <template
+                v-else-if="
+                  selectedToolCategory === 'mcp' ||
+                  selectedToolCategory === 'skills' ||
+                  selectedToolCategory === 'knowledge'
+                "
+              >
+                <div class="messenger-tools-pane-host user-tools-dialog">
+                  <UserMcpPane
+                    v-show="selectedToolCategory === 'mcp'"
+                    :visible="true"
+                    :active="selectedToolCategory === 'mcp'"
+                    :status="toolPaneStatus"
+                    @status="toolPaneStatus = String($event || '')"
+                  />
+                  <UserSkillPane
+                    v-show="selectedToolCategory === 'skills'"
+                    :visible="true"
+                    :active="selectedToolCategory === 'skills'"
+                    :status="toolPaneStatus"
+                    @status="toolPaneStatus = String($event || '')"
+                  />
+                  <UserKnowledgePane
+                    v-show="selectedToolCategory === 'knowledge'"
+                    :visible="true"
+                    :active="selectedToolCategory === 'knowledge'"
+                    :status="toolPaneStatus"
+                    @status="toolPaneStatus = String($event || '')"
+                  />
+                </div>
+              </template>
               <template v-else-if="selectedToolCategory">
                 <div class="messenger-entity-panel">
                   <div class="messenger-entity-title">{{ toolCategoryLabel(selectedToolCategory) }}</div>
@@ -524,10 +604,24 @@
                 </div>
               </template>
               <template v-else-if="selectedCustomTool">
-                <div class="messenger-entity-panel">
+                <div class="messenger-entity-panel messenger-entity-panel--fill">
                   <div class="messenger-entity-title">{{ selectedCustomTool.name }}</div>
                   <div class="messenger-entity-meta">{{ selectedCustomTool.description || t('common.noDescription') }}</div>
                   <div class="messenger-entity-meta">{{ t('messenger.tools.customTitle') }}</div>
+                  <div class="messenger-entity-meta">
+                    {{ t('messenger.tools.customManageHint') }}
+                  </div>
+                  <div class="messenger-inline-actions">
+                    <button class="messenger-inline-btn" type="button" @click="selectToolCategory('mcp')">
+                      {{ t('toolManager.system.mcp') }}
+                    </button>
+                    <button class="messenger-inline-btn" type="button" @click="selectToolCategory('skills')">
+                      {{ t('toolManager.system.skills') }}
+                    </button>
+                    <button class="messenger-inline-btn" type="button" @click="selectToolCategory('knowledge')">
+                      {{ t('toolManager.system.knowledge') }}
+                    </button>
+                  </div>
                 </div>
               </template>
               <template v-else-if="selectedSharedTool">
@@ -550,6 +644,9 @@
                     />
                     <span>{{ t('common.enabled') }}</span>
                   </label>
+                </div>
+                <div class="messenger-tools-pane-host user-tools-dialog">
+                  <UserSharedToolsPanel />
                 </div>
               </template>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
@@ -595,15 +692,6 @@
                     :content="String(message.reasoning || '')"
                     :streaming="Boolean(message.reasoningStreaming)"
                   />
-                  <button
-                    class="messenger-message-copy-btn"
-                    type="button"
-                    :title="t('chat.message.copy')"
-                    :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(message.content)"
-                  >
-                    <i class="fa-solid fa-copy" aria-hidden="true"></i>
-                  </button>
                 </div>
                 <div v-if="message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
                   <MessageWorkflow
@@ -613,13 +701,22 @@
                   />
                 </div>
                 <div class="messenger-message-bubble messenger-markdown">
+                  <button
+                    class="messenger-bubble-copy-btn"
+                    type="button"
+                    :title="t('chat.message.copy')"
+                    :aria-label="t('chat.message.copy')"
+                    @click="copyMessageContent(message.content)"
+                  >
+                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
+                  </button>
                   <div class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
                 </div>
               </div>
             </div>
           </template>
 
-          <template v-else>
+          <template v-else-if="isWorldConversationActive">
             <div
               v-for="message in userWorldStore.activeMessages"
               :key="`uw-${message.message_id}`"
@@ -633,22 +730,25 @@
                 <div class="messenger-message-meta">
                   <span>{{ resolveWorldMessageSender(message) }}</span>
                   <span>{{ formatTime(message.created_at) }}</span>
+                </div>
+                <div class="messenger-message-bubble messenger-markdown">
                   <button
-                    class="messenger-message-copy-btn"
+                    class="messenger-bubble-copy-btn"
                     type="button"
                     :title="t('chat.message.copy')"
                     :aria-label="t('chat.message.copy')"
                     @click="copyMessageContent(message.content)"
                   >
-                    <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
-                </div>
-                <div class="messenger-message-bubble messenger-markdown">
                   <div class="markdown-body" v-html="renderWorldMarkdown(message)"></div>
                 </div>
               </div>
             </div>
           </template>
+          <div v-else class="messenger-chat-empty">
+            {{ t('messenger.empty.selectConversation') }}
+          </div>
         </template>
       </div>
 
@@ -656,7 +756,7 @@
         <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
           <ChatComposer :loading="agentSessionLoading" @send="sendAgentMessage" @stop="stopAgentMessage" />
         </div>
-        <div v-else-if="sessionHub.activeConversation" class="messenger-world-composer">
+        <div v-else-if="isWorldConversationActive" class="messenger-world-composer">
           <textarea
             v-model.trim="worldDraft"
             :placeholder="t('userWorld.input.placeholder')"
@@ -678,7 +778,7 @@
       </footer>
     </section>
 
-    <aside class="messenger-right-dock">
+    <aside v-if="showRightDock" class="messenger-right-dock">
       <div class="messenger-right-content messenger-right-content--stack">
         <div class="messenger-right-panel messenger-right-panel--sandbox">
           <div class="messenger-right-section-title">
@@ -696,16 +796,34 @@
             <i class="fa-solid fa-timeline" aria-hidden="true"></i>
             <span>{{ t('messenger.right.timeline') }}</span>
           </div>
-          <div v-if="!rightPanelTimelineItems.length" class="messenger-list-empty">
-            {{ t('messenger.empty.timeline') }}
-          </div>
+          <div v-if="!rightPanelSessionHistory.length" class="messenger-list-empty">{{ t('messenger.empty.timeline') }}</div>
           <div v-else class="messenger-timeline">
-            <div v-for="item in rightPanelTimelineItems" :key="item.id" class="messenger-timeline-item">
-              <div class="messenger-timeline-title">{{ item.title }}</div>
-              <div class="messenger-timeline-detail">{{ item.detail || t('common.none') }}</div>
+            <div
+              v-for="item in rightPanelSessionHistory"
+              :key="item.id"
+              class="messenger-timeline-item"
+              :class="{ active: String(chatStore.activeSessionId || '') === item.id }"
+              role="button"
+              tabindex="0"
+              @click="restoreTimelineSession(item.id)"
+              @keydown.enter.prevent="restoreTimelineSession(item.id)"
+              @keydown.space.prevent="restoreTimelineSession(item.id)"
+            >
+              <div class="messenger-timeline-title-row">
+                <div class="messenger-timeline-title">{{ item.title }}</div>
+                <span v-if="item.isMain" class="messenger-kind-tag">{{ t('chat.history.main') }}</span>
+              </div>
+              <div class="messenger-timeline-detail">{{ item.preview || t('messenger.preview.empty') }}</div>
               <div class="messenger-timeline-meta">
-                <span>{{ item.status }}</span>
-                <span>{{ formatTime(item.createdAt) }}</span>
+                <span>{{ formatTime(item.lastAt) }}</span>
+                <button
+                  v-if="!item.isMain"
+                  class="messenger-timeline-main-btn"
+                  type="button"
+                  @click.stop="setTimelineSessionMain(item.id)"
+                >
+                  {{ t('chat.history.setMain') }}
+                </button>
               </div>
             </div>
           </div>
@@ -737,6 +855,10 @@ import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
+import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
+import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
+import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
+import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -777,6 +899,7 @@ type ToolEntry = {
   name: string;
   description: string;
   ownerId: string;
+  source: Record<string, unknown>;
 };
 
 const route = useRoute();
@@ -809,6 +932,7 @@ const mcpTools = ref<ToolEntry[]>([]);
 const a2aTools = ref<ToolEntry[]>([]);
 const skillTools = ref<ToolEntry[]>([]);
 const knowledgeTools = ref<ToolEntry[]>([]);
+const toolPaneStatus = ref('');
 
 const agentCreateVisible = ref(false);
 
@@ -875,9 +999,28 @@ const agentMap = computed(() => {
 });
 
 const activeConversation = computed(() => sessionHub.activeConversation);
-const isAgentConversationActive = computed(
-  () => activeConversation.value?.kind === 'agent'
-);
+const resolvedMessageConversationKind = computed<'agent' | 'world' | ''>(() => {
+  if (sessionHub.activeSection !== 'messages') {
+    return '';
+  }
+  const identity = activeConversation.value;
+  if (identity?.kind === 'agent') return 'agent';
+  if (identity?.kind === 'direct' || identity?.kind === 'group') return 'world';
+  const queryConversationId = String(route.query?.conversation_id || '').trim();
+  if (queryConversationId) return 'world';
+  const querySessionId = String(route.query?.session_id || '').trim();
+  const queryAgentId = String(route.query?.agent_id || '').trim();
+  const queryEntry = String(route.query?.entry || '')
+    .trim()
+    .toLowerCase();
+  if (querySessionId || queryAgentId || queryEntry === 'default') return 'agent';
+  if (String(chatStore.activeSessionId || '').trim() || String(chatStore.draftAgentId || '').trim()) {
+    return 'agent';
+  }
+  return '';
+});
+const isAgentConversationActive = computed(() => resolvedMessageConversationKind.value === 'agent');
+const isWorldConversationActive = computed(() => resolvedMessageConversationKind.value === 'world');
 
 const activeAgentId = computed(() => {
   const identity = activeConversation.value;
@@ -890,6 +1033,14 @@ const activeAgentId = computed(() => {
     }
     const session = chatStore.sessions.find((item) => String(item?.id || '') === identity.id);
     return normalizeAgentId(session?.agent_id || chatStore.draftAgentId);
+  }
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (sessionId) {
+    const session = chatStore.sessions.find((item) => String(item?.id || '') === sessionId);
+    return normalizeAgentId(session?.agent_id || chatStore.draftAgentId);
+  }
+  if (String(chatStore.draftAgentId || '').trim()) {
+    return normalizeAgentId(chatStore.draftAgentId);
   }
   return normalizeAgentId(selectedAgentId.value);
 });
@@ -1115,15 +1266,6 @@ const activeConversationKindLabel = computed(() => {
   return t(`messenger.kind.${identity.kind}`);
 });
 
-const activeConversationCode = computed(() => {
-  const identity = activeConversation.value;
-  if (!identity) return '';
-  if (identity.kind === 'agent' && identity.id.startsWith('draft:')) {
-    return t('chat.newSession');
-  }
-  return `ID: ${identity.id}`;
-});
-
 const chatPanelTitle = computed(() => {
   if (!showChatSettingsView.value) {
     return activeConversationTitle.value;
@@ -1173,30 +1315,6 @@ const chatPanelKindLabel = computed(() => {
   return '';
 });
 
-const chatPanelCode = computed(() => {
-  if (!showChatSettingsView.value) return activeConversationCode.value;
-  if (showAgentSettingsPanel.value && settingsAgentId.value && settingsAgentId.value !== DEFAULT_AGENT_KEY) {
-    return `ID: ${settingsAgentId.value}`;
-  }
-  if (sessionHub.activeSection === 'users' && selectedContact.value?.user_id) {
-    return `ID: ${selectedContact.value.user_id}`;
-  }
-  if (sessionHub.activeSection === 'groups' && selectedGroup.value?.group_id) {
-    return `ID: ${selectedGroup.value.group_id}`;
-  }
-  if (sessionHub.activeSection === 'tools') {
-    if (selectedCustomTool.value?.name) return selectedCustomTool.value.name;
-    if (selectedSharedTool.value?.name) return selectedSharedTool.value.name;
-  }
-  return '';
-});
-
-const activeConversationNotice = computed(() => {
-  const subtitle = String(activeConversationSubtitle.value || '').trim();
-  if (!subtitle) return t('messenger.empty.subtitle');
-  return subtitle;
-});
-
 const agentSessionLoading = computed(() => {
   if (!isAgentConversationActive.value) return false;
   const sessionId = String(chatStore.activeSessionId || '');
@@ -1206,32 +1324,18 @@ const agentSessionLoading = computed(() => {
 
 const canSendWorldMessage = computed(
   () =>
-    !isAgentConversationActive.value &&
+    isWorldConversationActive.value &&
     Boolean(activeConversation.value?.id) &&
     !userWorldStore.sending &&
     Boolean(worldDraft.value.trim())
 );
 
-const timelineItems = computed(() => {
-  if (!isAgentConversationActive.value) return [];
-  const output: Array<{ id: string; title: string; detail: string; status: string; createdAt: unknown }> = [];
-  chatStore.messages.forEach((message, messageIndex) => {
-    if (message?.role !== 'assistant') return;
-    const workflowItems = Array.isArray(message?.workflowItems) ? message.workflowItems : [];
-    workflowItems.forEach((item: Record<string, unknown>, index: number) => {
-      output.push({
-        id: `${messageIndex}-${item?.id ?? index}`,
-        title: String(item?.title || t('chat.workflow.title')),
-        detail: String(item?.detail || ''),
-        status: String(item?.status || 'pending'),
-        createdAt: message?.created_at
-      });
-    });
-  });
-  return output.reverse();
+const showRightDock = computed(() => {
+  if (sessionHub.activeSection === 'agents') return true;
+  return sessionHub.activeSection === 'messages' && isAgentConversationActive.value;
 });
 
-const showRightAgentPanels = computed(() => showAgentSettingsPanel.value);
+const showRightAgentPanels = computed(() => showRightDock.value);
 
 const rightPanelAgentId = computed(() => {
   if (!showRightAgentPanels.value) return '';
@@ -1251,9 +1355,21 @@ const rightPanelContainerId = computed(() => {
   return Math.min(10, Math.max(1, parsed));
 });
 
-const rightPanelTimelineItems = computed(() => {
-  if (!isAgentConversationActive.value) return [];
-  return timelineItems.value;
+const rightPanelSessionHistory = computed(() => {
+  if (!showRightDock.value) return [];
+  const targetAgentId = normalizeAgentId(rightPanelAgentId.value);
+  const result = (Array.isArray(chatStore.sessions) ? chatStore.sessions : [])
+    .filter((session) => normalizeAgentId(session?.agent_id) === targetAgentId)
+    .map((session) => ({
+      id: String(session?.id || ''),
+      title: String(session?.title || t('chat.newSession')),
+      preview: String(session?.last_message_preview || session?.last_message || session?.summary || ''),
+      lastAt: session?.updated_at || session?.last_message_at || session?.created_at,
+      isMain: Boolean(session?.is_main)
+    }))
+    .filter((item) => item.id)
+    .sort((left, right) => normalizeTimestamp(right.lastAt) - normalizeTimestamp(left.lastAt));
+  return result;
 });
 
 const hasCronTask = (agentId: unknown): boolean =>
@@ -1401,6 +1517,7 @@ const isMixedConversationActive = (item: MixedConversation): boolean => {
 const switchSection = (section: MessengerSection) => {
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
+  toolPaneStatus.value = '';
   if (section !== 'tools') {
     selectedToolCategory.value = '';
     selectedCustomToolName.value = '';
@@ -1573,6 +1690,21 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
   }
 };
 
+const restoreTimelineSession = async (sessionId: string) => {
+  if (!sessionId) return;
+  await openAgentSession(sessionId);
+};
+
+const setTimelineSessionMain = async (sessionId: string) => {
+  if (!sessionId) return;
+  try {
+    await chatStore.setMainSession(sessionId);
+    ElMessage.success(t('chat.history.setMainSuccess'));
+  } catch (error) {
+    showApiError(error, t('chat.history.setMainFailed'));
+  }
+};
+
 const selectContainer = (containerId: number) => {
   const parsed = Math.min(10, Math.max(1, Number(containerId) || 1));
   const source = activeAgent.value as Record<string, unknown> | null;
@@ -1587,7 +1719,7 @@ const normalizeToolEntry = (item: unknown): ToolEntry | null => {
   if (typeof item === 'string') {
     const name = item.trim();
     if (!name) return null;
-    return { name, description: '', ownerId: '' };
+    return { name, description: '', ownerId: '', source: {} };
   }
   const source = item as Record<string, unknown>;
   const name = String(source.name || source.tool_name || source.id || '').trim();
@@ -1595,7 +1727,8 @@ const normalizeToolEntry = (item: unknown): ToolEntry | null => {
   return {
     name,
     description: String(source.description || '').trim(),
-    ownerId: String(source.owner_id || source.ownerId || '').trim()
+    ownerId: String(source.owner_id || source.ownerId || '').trim(),
+    source
   };
 };
 
@@ -1645,18 +1778,21 @@ const loadToolsCatalog = async () => {
 };
 
 const selectToolCategory = (category: 'builtin' | 'mcp' | 'a2a' | 'skills' | 'knowledge') => {
+  toolPaneStatus.value = '';
   selectedToolCategory.value = category;
   selectedCustomToolName.value = '';
   selectedSharedToolName.value = '';
 };
 
 const selectCustomTool = (toolName: string) => {
+  toolPaneStatus.value = '';
   selectedCustomToolName.value = String(toolName || '').trim();
   selectedToolCategory.value = '';
   selectedSharedToolName.value = '';
 };
 
 const selectSharedTool = (toolName: string) => {
+  toolPaneStatus.value = '';
   selectedSharedToolName.value = String(toolName || '').trim();
   selectedToolCategory.value = '';
   selectedCustomToolName.value = '';
@@ -1734,6 +1870,32 @@ const ensureSectionSelection = () => {
     }
     return;
   }
+};
+
+const syncAgentConversationFallback = () => {
+  if (sessionHub.activeSection !== 'messages') return;
+  if (sessionHub.activeConversation) return;
+  const routeConversationId = String(route.query?.conversation_id || '').trim();
+  if (routeConversationId || String(userWorldStore.activeConversationId || '').trim()) return;
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (sessionId) {
+    const session = chatStore.sessions.find((item) => String(item?.id || '') === sessionId);
+    sessionHub.setActiveConversation({
+      kind: 'agent',
+      id: sessionId,
+      agentId: normalizeAgentId(session?.agent_id ?? chatStore.draftAgentId)
+    });
+    return;
+  }
+  if (!String(chatStore.draftAgentId || '').trim() && !chatStore.messages.length) {
+    return;
+  }
+  const draftAgent = normalizeAgentId(chatStore.draftAgentId || selectedAgentId.value);
+  sessionHub.setActiveConversation({
+    kind: 'agent',
+    id: `draft:${draftAgent}`,
+    agentId: draftAgent
+  });
 };
 
 const sendAgentMessage = async (payload: { content?: string; attachments?: unknown[] }) => {
@@ -1994,6 +2156,20 @@ watch(
 );
 
 watch(
+  () => [
+    sessionHub.activeSection,
+    sessionHub.activeConversationKey,
+    chatStore.activeSessionId,
+    chatStore.draftAgentId,
+    route.query?.conversation_id
+  ],
+  () => {
+    syncAgentConversationFallback();
+  },
+  { immediate: true }
+);
+
+watch(
   () => [filteredContacts.value.length, filteredGroups.value.length, filteredOwnedAgents.value.length, filteredSharedAgents.value.length],
   () => {
     ensureSectionSelection();
@@ -2010,7 +2186,8 @@ watch(
 watch(
   () => chatStore.activeSessionId,
   (value) => {
-    if (!value || !isAgentConversationActive.value) return;
+    if (!value || sessionHub.activeSection !== 'messages') return;
+    if (activeConversation.value?.kind === 'direct' || activeConversation.value?.kind === 'group') return;
     const session = chatStore.sessions.find((item) => String(item?.id || '') === String(value));
     selectedAgentId.value = normalizeAgentId(session?.agent_id ?? activeAgentId.value);
     sessionHub.setActiveConversation({

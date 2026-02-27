@@ -187,8 +187,11 @@ docs/                # 设计/API/方案文档
 - 测试方案：`docs/方案/测试方案.md`
 
 ## wunder已吞噬核心
-- EVA：<https://github.com/ylsdamxssjxxdd/eva>
-- OpenAI Codex：<https://github.com/openai/codex>
-- Claude Code：<https://github.com/anthropics/claude-code>
-- OpenClaw：<https://github.com/openclaw/openclaw>
-- OpenCode：<https://github.com/anomalyco/opencode>
+| 吞噬 | 项目名称 | GitHub 地址 |
+| :--- | :--- | :--- |
+| 智能体基础 | EVA | https://github.com/ylsdamxssjxxdd/eva |
+| rust基础 | OpenAI Codex | https://github.com/openai/codex |
+| 前端基础 | HuLa | https://github.com/HuLaSpark/HuLa |
+| MCP/SKILLS | Claude Code | https://github.com/anthropics/claude-code |
+| 网关/渠道/定时任务 | OpenClaw | https://github.com/openclaw/openclaw |
+| 智能体LSP | OpenCode | https://github.com/anomalyco/opencode |

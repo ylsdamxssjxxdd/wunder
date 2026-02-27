@@ -187,8 +187,11 @@ docs/                # design/API/plan documents
 - Test plan: `docs/方案/测试方案.md`
 
 ## wunder Devoured Core
-- EVA: <https://github.com/ylsdamxssjxxdd/eva>
-- OpenAI Codex: <https://github.com/openai/codex>
-- Claude Code: <https://github.com/anthropics/claude-code>
-- OpenClaw: <https://github.com/openclaw/openclaw>
-- OpenCode: <https://github.com/anomalyco/opencode>
+| Devoured | Project Name | GitHub URL |
+| :--- | :--- | :--- |
+| Agent Foundation | EVA | https://github.com/ylsdamxssjxxdd/eva |
+| Rust Foundation | OpenAI Codex | https://github.com/openai/codex |
+| Frontend Foundation | HuLa | https://github.com/HuLaSpark/HuLa |
+| MCP/SKILLS | Claude Code | https://github.com/anthropics/claude-code |
+| Gateway/Channel/Cron Jobs | OpenClaw | https://github.com/openclaw/openclaw |
+| Agent LSP | OpenCode | https://github.com/anomalyco/opencode |

@@ -511,6 +511,8 @@ export default {
   'chat.history.confirmDelete': '确认删除该会话记录吗？',
   'chat.history.main': '主线程',
   'chat.history.setMain': '设为主线程',
+  'chat.history.setMainSuccess': '\u5df2\u8bbe\u4e3a\u4e3b\u7ebf\u7a0b',
+  'chat.history.setMainFailed': '\u8bbe\u7f6e\u4e3b\u7ebf\u7a0b\u5931\u8d25',
   'chat.history.confirmTitle': '提示',
   'chat.history.empty': '暂无时间线记录',
   'chat.message.user': '你',
@@ -1241,8 +1243,17 @@ export default {
   'messenger.agent.subtitle': '智能体会话',
   'messenger.tools.customTitle': '\u81ea\u5efa\u5de5\u5177',
   'messenger.tools.customDesc': '\u914d\u7f6e MCP\u3001\u6280\u80fd\u548c\u77e5\u8bc6\u5e93\u5de5\u5177',
+  'messenger.tools.customManageHint': '\u53ef\u5728\u4e0b\u65b9\u9009\u62e9 MCP / \u6280\u80fd / \u77e5\u8bc6\u5e93 \u8fdb\u5165\u5bf9\u5e94\u8bbe\u7f6e',
   'messenger.tools.sharedTitle': '\u5171\u4eab\u5de5\u5177',
   'messenger.tools.sharedDesc': '\u9009\u62e9\u5e76\u7ba1\u7406\u53ef\u7528\u7684\u5171\u4eab\u5de5\u5177',
+  'messenger.entity.userId': '\u7528\u6237 ID',
+  'messenger.entity.groupId': '\u7fa4\u804a ID',
+  'messenger.entity.conversationId': '\u4f1a\u8bdd ID',
+  'messenger.entity.unread': '\u672a\u8bfb',
+  'messenger.entity.lastMessageAt': '\u6700\u540e\u6d88\u606f\u65f6\u95f4',
+  'messenger.entity.lastPreview': '\u6700\u8fd1\u4e00\u6761\u6d88\u606f',
+  'messenger.entity.status': '\u72b6\u6001',
+  'messenger.entity.unitId': '\u5355\u4f4d',
   'messenger.settings.agentOnly': '\u8bf7\u5148\u6253\u5f00\u4e00\u4e2a\u667a\u80fd\u4f53\u4f1a\u8bdd\uff0c\u518d\u914d\u7f6e\u667a\u80fd\u4f53\u76f8\u5173\u8bbe\u7f6e',
   'messenger.files.title': '沙盒容器',
   'messenger.files.current': '当前',
@@ -1285,4 +1296,3 @@ export default {
   'system.maintenance.desc': '后端服务暂时不可用，请稍后再试。',
   'system.maintenance.status': '状态码：{status}'
 };
-
