@@ -44,7 +44,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
@@ -70,6 +70,7 @@ const MAX_SESSION_LIST_ITEMS: i64 = 200;
 const MAX_SESSION_HISTORY_ITEMS: i64 = 500;
 const MAX_SESSION_MESSAGE_ITEMS: i64 = 50;
 const MAX_USER_WORLD_LIST_LIMIT: i64 = 500;
+const USER_WORLD_FILE_STAGING_DIR: &str = "user_world_uploads";
 const SESSION_RESULT_MAX_CHARS: usize = 2000;
 const LOCAL_PTC_TIMEOUT_S: u64 = 60;
 const LOCAL_PTC_DIR_NAME: &str = "ptc_temp";
@@ -1378,6 +1379,294 @@ async fn user_world_list_users(
     }))
 }
 
+#[derive(Debug, Clone)]
+struct UserWorldFileRefMatch {
+    token_start: usize,
+    token_end: usize,
+    normalized_path: String,
+    suffix: String,
+}
+
+#[derive(Debug, Clone)]
+struct UserWorldCopiedFile {
+    source_path: String,
+    staged_path: String,
+    entry_type: &'static str,
+}
+
+fn user_world_file_ref_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?m)(^|[\s\n])@("[^"]+"|'[^']+'|\S+)"#)
+            .expect("user world file ref regex must be valid")
+    })
+}
+
+fn is_user_world_file_ref_suffix(ch: char) -> bool {
+    matches!(
+        ch,
+        ')' | ']'
+            | '}'
+            | '>'
+            | ','
+            | '.'
+            | ';'
+            | ':'
+            | '!'
+            | '?'
+            | '，'
+            | '。'
+            | '；'
+            | '：'
+            | '！'
+            | '？'
+            | '）'
+            | '】'
+            | '》'
+            | '、'
+    )
+}
+
+fn split_user_world_file_ref_suffix(value: &str) -> (&str, &str) {
+    let mut split_at = value.len();
+    for (index, ch) in value.char_indices().rev() {
+        if is_user_world_file_ref_suffix(ch) {
+            split_at = index;
+        } else {
+            break;
+        }
+    }
+    if split_at == value.len() {
+        (value, "")
+    } else {
+        (&value[..split_at], &value[split_at..])
+    }
+}
+
+fn looks_like_user_world_file_ref(raw: &str, normalized: &str) -> bool {
+    let raw = raw.trim();
+    if raw.is_empty() || raw.contains('@') {
+        return false;
+    }
+    if raw.starts_with('/')
+        || raw.starts_with('\\')
+        || raw.starts_with("./")
+        || raw.starts_with("../")
+        || raw.starts_with("workspaces/")
+        || raw.starts_with("/workspaces/")
+        || raw.starts_with("workspace/")
+        || raw.starts_with("/workspace/")
+    {
+        return true;
+    }
+    normalized.contains('/') || normalized.contains('.')
+}
+
+fn normalize_user_world_file_ref_path(raw: &str, source_workspace_id: &str) -> Option<String> {
+    let mut value = raw.trim().replace('\\', "/");
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(stripped) = value.strip_prefix("/workspaces/") {
+        let stripped = stripped.trim_matches('/');
+        let mut segments = stripped.splitn(2, '/');
+        let owner = segments.next().unwrap_or("").trim();
+        let rest = segments.next().unwrap_or("").trim();
+        if owner.is_empty() || rest.is_empty() {
+            return None;
+        }
+        if owner != source_workspace_id {
+            return None;
+        }
+        value = rest.to_string();
+    } else if let Some(stripped) = value.strip_prefix("workspaces/") {
+        let stripped = stripped.trim_matches('/');
+        let mut segments = stripped.splitn(2, '/');
+        let owner = segments.next().unwrap_or("").trim();
+        let rest = segments.next().unwrap_or("").trim();
+        if owner.is_empty() || rest.is_empty() {
+            return None;
+        }
+        if owner != source_workspace_id {
+            return None;
+        }
+        value = rest.to_string();
+    } else if let Some(stripped) = value.strip_prefix("/workspace/") {
+        value = stripped.trim_matches('/').to_string();
+    } else if let Some(stripped) = value.strip_prefix("workspace/") {
+        value = stripped.trim_matches('/').to_string();
+    }
+    while let Some(stripped) = value.strip_prefix("./") {
+        value = stripped.to_string();
+    }
+    value = value.trim_start_matches('/').trim().to_string();
+    if value.is_empty() {
+        return None;
+    }
+    if !looks_like_user_world_file_ref(raw, &value) {
+        return None;
+    }
+    let candidate = Path::new(&value);
+    for component in candidate.components() {
+        match component {
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => return None,
+            Component::CurDir | Component::Normal(_) => {}
+        }
+    }
+    Some(value)
+}
+
+fn extract_user_world_file_refs(
+    content: &str,
+    source_workspace_id: &str,
+) -> Vec<UserWorldFileRefMatch> {
+    let mut items = Vec::new();
+    for captures in user_world_file_ref_regex().captures_iter(content) {
+        let Some(token_match) = captures.get(2) else {
+            continue;
+        };
+        let token = token_match.as_str();
+        if token.trim().is_empty() {
+            continue;
+        }
+        let (raw_path, suffix) =
+            if token.starts_with('"') && token.ends_with('"') && token.len() >= 2 {
+                (&token[1..token.len().saturating_sub(1)], "")
+            } else if token.starts_with('\'') && token.ends_with('\'') && token.len() >= 2 {
+                (&token[1..token.len().saturating_sub(1)], "")
+            } else {
+                split_user_world_file_ref_suffix(token)
+            };
+        let Some(normalized_path) =
+            normalize_user_world_file_ref_path(raw_path, source_workspace_id)
+        else {
+            continue;
+        };
+        items.push(UserWorldFileRefMatch {
+            token_start: token_match.start(),
+            token_end: token_match.end(),
+            normalized_path,
+            suffix: suffix.to_string(),
+        });
+    }
+    items
+}
+
+fn copy_user_world_staged_path(source: &Path, destination: &Path) -> Result<()> {
+    if source.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in WalkDir::new(source).min_depth(1) {
+            let entry = entry?;
+            if entry.file_type().is_symlink() {
+                return Err(anyhow!(
+                    "symbolic links are not supported in user_world file refs"
+                ));
+            }
+            let relative = entry.path().strip_prefix(source).unwrap_or(entry.path());
+            let target = destination.join(relative);
+            if entry.file_type().is_dir() {
+                fs::create_dir_all(&target)?;
+            } else if entry.file_type().is_file() {
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::copy(entry.path(), &target)?;
+            }
+        }
+        return Ok(());
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, destination)?;
+    Ok(())
+}
+
+fn stage_user_world_file_refs(
+    context: &ToolContext<'_>,
+    content: &str,
+) -> Result<(String, Vec<UserWorldCopiedFile>)> {
+    let matches = extract_user_world_file_refs(content, context.workspace_id);
+    if matches.is_empty() {
+        return Ok((content.to_string(), Vec::new()));
+    }
+    let source_workspace_id = context.workspace_id;
+    let sender_workspace_id = context.workspace.scoped_user_id(context.user_id, None);
+    let source_root = context.workspace.ensure_user_root(source_workspace_id)?;
+    let _ = context.workspace.ensure_user_root(&sender_workspace_id)?;
+    let transfer_id = format!(
+        "{}_{}",
+        Utc::now().format("%Y%m%d%H%M%S"),
+        Uuid::new_v4().simple()
+    );
+    let mut staged_path_map = HashMap::<String, UserWorldCopiedFile>::new();
+    for item in &matches {
+        if staged_path_map.contains_key(&item.normalized_path) {
+            continue;
+        }
+        let source_target = context
+            .workspace
+            .resolve_path(source_workspace_id, &item.normalized_path)?;
+        if !source_target.exists() {
+            return Err(anyhow!(
+                "user_world file ref not found in workspace: {}",
+                item.normalized_path
+            ));
+        }
+        if !is_within_root(&source_root, &source_target) {
+            return Err(anyhow!(
+                "user_world file ref is outside workspace: {}",
+                item.normalized_path
+            ));
+        }
+        let source_meta = fs::symlink_metadata(&source_target)?;
+        if source_meta.file_type().is_symlink() {
+            return Err(anyhow!(
+                "symbolic links are not supported in user_world file refs: {}",
+                item.normalized_path
+            ));
+        }
+        let staged_path = format!(
+            "{}/{}/{}",
+            USER_WORLD_FILE_STAGING_DIR, transfer_id, item.normalized_path
+        );
+        let destination = context
+            .workspace
+            .resolve_path(&sender_workspace_id, &staged_path)?;
+        copy_user_world_staged_path(&source_target, &destination)?;
+        staged_path_map.insert(
+            item.normalized_path.clone(),
+            UserWorldCopiedFile {
+                source_path: item.normalized_path.clone(),
+                staged_path,
+                entry_type: if source_target.is_dir() {
+                    "dir"
+                } else {
+                    "file"
+                },
+            },
+        );
+    }
+    let mut rewritten = String::with_capacity(content.len() + matches.len() * 32);
+    let mut cursor = 0usize;
+    for item in &matches {
+        let Some(staged) = staged_path_map.get(&item.normalized_path) else {
+            continue;
+        };
+        rewritten.push_str(&content[cursor..item.token_start]);
+        let quoted_path = staged.staged_path.replace('"', "%22");
+        rewritten.push('"');
+        rewritten.push_str(&quoted_path);
+        rewritten.push('"');
+        rewritten.push_str(&item.suffix);
+        cursor = item.token_end;
+    }
+    rewritten.push_str(&content[cursor..]);
+    let mut copied = staged_path_map.into_values().collect::<Vec<_>>();
+    copied.sort_by(|left, right| left.source_path.cmp(&right.source_path));
+    Ok((rewritten, copied))
+}
+
 async fn user_world_send_message(
     context: &ToolContext<'_>,
     payload: &UserWorldToolArgs,
@@ -1422,6 +1711,23 @@ async fn user_world_send_message(
         return Err(anyhow!("user_id or user_ids required"));
     }
     let user_store = UserStore::new(context.storage.clone());
+    let mut target_exists = HashMap::new();
+    let mut has_valid_target = false;
+    for target in &targets {
+        if target == sender {
+            continue;
+        }
+        let exists = user_store.get_user_by_id(target)?.is_some();
+        if exists {
+            has_valid_target = true;
+        }
+        target_exists.insert(target.to_string(), exists);
+    }
+    let (content, copied_files) = if has_valid_target {
+        stage_user_world_file_refs(context, content)?
+    } else {
+        (content.to_string(), Vec::new())
+    };
     let mut results = Vec::new();
     for target in targets {
         if target == sender {
@@ -1432,8 +1738,7 @@ async fn user_world_send_message(
             }));
             continue;
         }
-        let exists = user_store.get_user_by_id(&target)?;
-        if exists.is_none() {
+        if !target_exists.get(&target).copied().unwrap_or(false) {
             results.push(json!({
                 "user_id": target,
                 "ok": false,
@@ -1458,7 +1763,7 @@ async fn user_world_send_message(
             .send_message(
                 sender,
                 &conversation.conversation_id,
-                content,
+                &content,
                 content_type,
                 payload.client_msg_id.as_deref(),
                 now,
@@ -1485,7 +1790,14 @@ async fn user_world_send_message(
     }
     Ok(json!({
         "action": "send_message",
-        "results": results
+        "results": results,
+        "staged_files": copied_files.iter().map(|item| {
+            json!({
+                "source_path": item.source_path,
+                "staged_path": item.staged_path,
+                "entry_type": item.entry_type
+            })
+        }).collect::<Vec<_>>()
     }))
 }
 
@@ -7063,6 +7375,33 @@ fn is_a2a_task_finished(status: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn extract_user_world_file_refs_handles_quotes_suffix_and_email_mentions() {
+        let content =
+            "查看 @./docs/report.md, 以及 @\"assets/my file.txt\"，并抄送 @alice@example.com";
+        let refs = extract_user_world_file_refs(content, "owner__c__2");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].normalized_path, "docs/report.md");
+        assert_eq!(refs[0].suffix, ",");
+        assert_eq!(refs[1].normalized_path, "assets/my file.txt");
+        assert_eq!(refs[1].suffix, "");
+    }
+
+    #[test]
+    fn extract_user_world_file_refs_accepts_workspace_prefixed_token() {
+        let content = "@/workspaces/owner__c__2/projects/demo.md";
+        let refs = extract_user_world_file_refs(content, "owner__c__2");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].normalized_path, "projects/demo.md");
+    }
+
+    #[test]
+    fn extract_user_world_file_refs_ignores_mismatched_workspace_owner() {
+        let content = "@/workspaces/another_owner/demo.md";
+        let refs = extract_user_world_file_refs(content, "owner__c__2");
+        assert!(refs.is_empty());
+    }
 
     #[test]
     fn parse_read_file_specs_accepts_shorthand_path_payload() {

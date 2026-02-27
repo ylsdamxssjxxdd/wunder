@@ -4001,15 +4001,57 @@ async fn admin_user_accounts_seed(
     let now = now_ts();
     let access_level = UserStore::normalize_access_level(None);
     let capacity = scoped_units.len().saturating_mul(per_unit.max(0) as usize);
+    let mut existing_test_user_ids = HashSet::new();
+    let mut max_seed_serial = 0_u64;
+    let mut offset = 0;
+    loop {
+        let (batch, total) = state
+            .user_store
+            .list_users(
+                Some(DEFAULT_TEST_USER_PREFIX),
+                None,
+                offset,
+                TEST_USER_CLEANUP_BATCH_SIZE,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if batch.is_empty() {
+            break;
+        }
+        for record in batch {
+            let user_id = record.user_id.trim();
+            if user_id.is_empty() {
+                continue;
+            }
+            existing_test_user_ids.insert(user_id.to_string());
+            if let Some(serial) = parse_seed_test_user_serial(user_id) {
+                max_seed_serial = max_seed_serial.max(serial);
+            }
+        }
+        offset += TEST_USER_CLEANUP_BATCH_SIZE;
+        if offset >= total {
+            break;
+        }
+    }
+    let mut next_seed_serial = max_seed_serial.saturating_add(1).max(1);
     let mut records = Vec::with_capacity(capacity);
     for unit in &scoped_units {
         let daily_quota = UserStore::default_daily_quota_by_level(Some(unit.level));
         for _ in 0..per_unit {
-            let username = format!(
-                "{DEFAULT_TEST_USER_PREFIX}_{unit_id}_{}",
-                Uuid::new_v4().simple(),
-                unit_id = unit.unit_id
-            );
+            let username = loop {
+                let candidate = format!("{DEFAULT_TEST_USER_PREFIX}_{next_seed_serial}");
+                if next_seed_serial < u64::MAX {
+                    next_seed_serial += 1;
+                }
+                if existing_test_user_ids.insert(candidate.clone()) {
+                    break candidate;
+                }
+                if next_seed_serial == u64::MAX {
+                    return Err(error_response(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        i18n::t("error.internal"),
+                    ));
+                }
+            };
             records.push(UserAccountRecord {
                 user_id: username.clone(),
                 username,
@@ -4042,6 +4084,17 @@ async fn admin_user_accounts_seed(
             "password": DEFAULT_TEST_USER_PASSWORD,
         }
     })))
+}
+
+fn parse_seed_test_user_serial(user_id: &str) -> Option<u64> {
+    let suffix = user_id
+        .trim()
+        .strip_prefix(DEFAULT_TEST_USER_PREFIX)?
+        .strip_prefix('_')?;
+    if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    suffix.parse::<u64>().ok().filter(|value| *value > 0)
 }
 
 fn is_seed_test_user(record: &UserAccountRecord) -> bool {

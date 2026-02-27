@@ -1513,7 +1513,7 @@ type UnitTreeRow = {
   expanded: boolean;
 };
 
-type AgentRuntimeState = 'idle' | 'running' | 'done' | 'error';
+type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
 type MessengerSendKeyMode = 'enter' | 'ctrl_enter';
 type MessengerPerfTrace = {
   label: string;
@@ -3392,9 +3392,30 @@ const normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRu
   const raw = String(state || '')
     .trim()
     .toLowerCase();
-  if (pendingQuestion || raw === 'running' || raw === 'waiting' || raw === 'cancelling') return 'running';
+  if (
+    pendingQuestion ||
+    raw === 'pending_question' ||
+    raw === 'pending-question' ||
+    raw === 'pending_confirm' ||
+    raw === 'pending-confirm' ||
+    raw === 'pending_confirmation' ||
+    raw === 'awaiting_confirmation' ||
+    raw === 'awaiting-confirmation' ||
+    raw === 'await_confirm' ||
+    raw === 'question' ||
+    raw === 'questioning' ||
+    raw === 'asking' ||
+    raw === 'waiting'
+  ) {
+    return 'pending';
+  }
+  if (raw === 'running' || raw === 'executing' || raw === 'processing' || raw === 'cancelling') {
+    return 'running';
+  }
   if (raw === 'done' || raw === 'completed' || raw === 'finish' || raw === 'finished') return 'done';
-  if (raw === 'error' || raw === 'failed' || raw === 'timeout') return 'error';
+  if (raw === 'error' || raw === 'failed' || raw === 'timeout' || raw === 'aborted' || raw === 'terminated') {
+    return 'error';
+  }
   return 'idle';
 };
 
@@ -3441,6 +3462,12 @@ const isGreetingMessage = (message: Record<string, unknown>): boolean =>
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
+  const pendingQuestion =
+    Boolean(message?.pending_question) ||
+    Boolean(message?.pendingQuestion) ||
+    Boolean(message?.awaiting_confirmation) ||
+    Boolean(message?.requires_confirmation);
+  if (pendingQuestion) return 'pending';
   if (
     Boolean(message?.stream_incomplete) ||
     Boolean(message?.workflowStreaming) ||
@@ -3448,6 +3475,8 @@ const resolveMessageAgentAvatarState = (message: Record<string, unknown>): Agent
   ) {
     return 'running';
   }
+  const messageState = normalizeRuntimeState(message?.state, pendingQuestion);
+  if (messageState !== 'idle') return messageState;
   const current = resolveAgentRuntimeState(activeAgentId.value);
   return current === 'idle' ? 'done' : current;
 };

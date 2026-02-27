@@ -1504,8 +1504,8 @@
     "zh-CN": "批量发送的目标用户 ID 列表。"
   },
   "tool.spec.user_world.args.content": {
-    "en-US": "Message content.",
-    "zh-CN": "消息内容。"
+    "en-US": "Message content. Supports @path file refs from the current workspace; matched files are staged into the sender's user container before sending.",
+    "zh-CN": "消息内容。支持使用 @路径 引用当前工作区文件，命中后会先同步到发送者的用户容器再发送。"
   },
   "tool.spec.user_world.args.content_type": {
     "en-US": "Message content type.",

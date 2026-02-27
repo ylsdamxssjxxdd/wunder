@@ -316,7 +316,9 @@ const renderUserAccountRows = () => {
     quotaCell.textContent = formatQuotaValue(user);
 
     const loginCell = document.createElement("td");
-    loginCell.textContent = formatLoginTime(user.last_login_at);
+    const loginText = formatLoginTime(user.last_login_at);
+    loginCell.textContent = loginText;
+    loginCell.title = loginText === "-" ? "" : loginText;
 
     const actionCell = document.createElement("td");
     const settingsBtn = document.createElement("button");

@@ -239,6 +239,7 @@ const worldCommandPanelVisible = ref(false);
 const caretPosition = ref(0);
 const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
+let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 const { t } = useI18n();
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
@@ -289,6 +290,12 @@ const DOC_EXTENSIONS = [
 ];
 const uploadAccept = ['image/*', ...DOC_EXTENSIONS].join(',');
 const INPUT_MAX_HEIGHT = 180;
+const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'messenger_agent_composer_height';
+const clampWorldComposerHeight = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 188;
+  return Math.min(420, Math.max(168, Math.round(parsed)));
+};
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
 const hasInquirySelection = computed(
@@ -367,6 +374,10 @@ const quickCommandItems = computed(() =>
     description: t(item.descriptionKey)
   }))
 );
+const worldComposerHeight = ref(188);
+const worldComposerStyle = computed<Record<string, string>>(() => ({
+  '--chat-composer-world-height': `${worldComposerHeight.value}px`
+}));
 
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
 
@@ -414,6 +425,11 @@ const buildAttachmentPayload = () =>
 const resizeInput = () => {
   const el = inputRef.value;
   if (!el) return;
+  if (props.worldStyle) {
+    el.style.height = '';
+    el.style.overflowY = 'auto';
+    return;
+  }
   el.style.height = 'auto';
   const nextHeight = Math.min(el.scrollHeight, INPUT_MAX_HEIGHT);
   el.style.height = `${nextHeight}px`;
@@ -530,6 +546,11 @@ const handleEnterKeydown = async (event) => {
 const resetInputHeight = () => {
   const el = inputRef.value;
   if (!el) return;
+  if (props.worldStyle) {
+    el.style.height = '';
+    el.style.overflowY = 'auto';
+    return;
+  }
   el.style.height = 'auto';
   el.style.overflowY = 'hidden';
 };
@@ -652,6 +673,41 @@ const clearAttachments = () => {
   attachments.value = [];
 };
 
+const syncWorldComposerHeight = () => {
+  if (!props.worldStyle || typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      WORLD_COMPOSER_HEIGHT_STORAGE_KEY,
+      String(clampWorldComposerHeight(worldComposerHeight.value))
+    );
+  } catch {
+    // ignore localStorage errors
+  }
+};
+
+const stopWorldComposerResize = () => {
+  worldComposerResizeRuntime = null;
+  if (typeof window === 'undefined') return;
+  window.removeEventListener('mousemove', handleWorldComposerResizeMove);
+  window.removeEventListener('mouseup', stopWorldComposerResize);
+};
+
+const handleWorldComposerResizeMove = (event: MouseEvent) => {
+  if (!props.worldStyle || !worldComposerResizeRuntime) return;
+  const delta = worldComposerResizeRuntime.startY - event.clientY;
+  worldComposerHeight.value = clampWorldComposerHeight(worldComposerResizeRuntime.startHeight + delta);
+};
+
+const startWorldComposerResize = (event: MouseEvent) => {
+  if (!props.worldStyle || typeof window === 'undefined') return;
+  worldComposerResizeRuntime = {
+    startY: event.clientY,
+    startHeight: worldComposerHeight.value
+  };
+  window.addEventListener('mousemove', handleWorldComposerResizeMove);
+  window.addEventListener('mouseup', stopWorldComposerResize);
+};
+
 const toggleWorldCommandPanel = () => {
   worldCommandPanelVisible.value = !worldCommandPanelVisible.value;
 };
@@ -717,6 +773,11 @@ const handleDocumentPointerDown = (event: PointerEvent) => {
 };
 
 onMounted(async () => {
+  if (props.worldStyle && typeof window !== 'undefined') {
+    worldComposerHeight.value = clampWorldComposerHeight(
+      window.localStorage.getItem(WORLD_COMPOSER_HEIGHT_STORAGE_KEY)
+    );
+  }
   await nextTick();
   resizeInput();
   syncCaretPosition();
@@ -726,6 +787,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  stopWorldComposerResize();
   if (typeof document !== 'undefined') {
     document.removeEventListener('pointerdown', handleDocumentPointerDown);
   }
@@ -760,6 +822,13 @@ watch(
     if (value) {
       clearAttachments();
     }
+  }
+);
+
+watch(
+  () => worldComposerHeight.value,
+  () => {
+    syncWorldComposerHeight();
   }
 );
 </script>

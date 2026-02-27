@@ -1386,21 +1386,31 @@ const splitThinkTaggedContent = (content) => {
   let cursor = 0;
   let visibleContent = '';
   let reasoningContent = '';
+  let firstThinkSeen = false;
+  let thinkStartedAtHead = false;
   while (cursor < source.length) {
     const thinkStart = source.indexOf(THINK_OPEN_TAG, cursor);
     if (thinkStart < 0) {
       visibleContent += source.slice(cursor);
       break;
     }
+    if (!firstThinkSeen) {
+      firstThinkSeen = true;
+      thinkStartedAtHead = thinkStart === 0;
+    }
     visibleContent += source.slice(cursor, thinkStart);
     const thinkEnd = source.indexOf(THINK_CLOSE_TAG, thinkStart + THINK_OPEN_TAG.length);
+    const thinkPayloadStart = thinkStart + THINK_OPEN_TAG.length;
     if (thinkEnd < 0) {
-      reasoningContent += source.slice(thinkStart);
+      reasoningContent += source.slice(thinkPayloadStart);
       break;
     }
     const thinkCloseEnd = thinkEnd + THINK_CLOSE_TAG.length;
-    reasoningContent += source.slice(thinkStart, thinkCloseEnd);
+    reasoningContent += source.slice(thinkPayloadStart, thinkEnd);
     cursor = thinkCloseEnd;
+  }
+  if (reasoningContent && thinkStartedAtHead) {
+    visibleContent = visibleContent.replace(/^\s+/, '');
   }
   return {
     content: visibleContent,
@@ -1409,7 +1419,10 @@ const splitThinkTaggedContent = (content) => {
 };
 
 const normalizeAssistantOutput = (content, reasoning = '') => {
-  const normalizedReasoning = normalizeReasoningText(reasoning);
+  const normalizedReasoningRaw = normalizeReasoningText(reasoning);
+  const normalizedReasoning = normalizedReasoningRaw
+    ? splitThinkTaggedContent(normalizedReasoningRaw).reasoning || normalizedReasoningRaw
+    : '';
   const parsed = splitThinkTaggedContent(content);
   return {
     content: parsed.content,
@@ -1488,7 +1501,6 @@ const createThinkTagStreamParser = () => {
         }
       }
       const markerEnd = markerIndex + marker.length;
-      reasoningDelta += source.slice(markerIndex, markerEnd);
       cursor = markerEnd;
       inThinkTag = !inThinkTag;
     }
