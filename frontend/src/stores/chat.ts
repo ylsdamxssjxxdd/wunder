@@ -3018,6 +3018,10 @@ export const useChatStore = defineStore('chat', {
       const cached = getSessionMessages(sessionId);
       return Array.isArray(cached) && cached.length > 0;
     },
+    getCachedSessionMessages(sessionId) {
+      const cached = getSessionMessages(sessionId);
+      return Array.isArray(cached) ? cached : [];
+    },
     getCachedSessions(agentId) {
       const cached = readSessionListCache(agentId);
       if (cached) return cached;

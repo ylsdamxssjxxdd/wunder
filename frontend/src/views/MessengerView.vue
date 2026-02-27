@@ -44,7 +44,7 @@
         <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
       </header>
 
-      <div class="messenger-search-row">
+      <div v-if="sessionHub.activeSection !== 'more'" class="messenger-search-row">
         <label class="messenger-search">
           <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
           <input
@@ -56,11 +56,14 @@
           />
         </label>
         <button
+          v-if="sessionHub.activeSection === 'agents' || sessionHub.activeSection === 'groups'"
           class="messenger-plus-btn"
           type="button"
-          :title="t('messenger.action.newAgent')"
-          :aria-label="t('messenger.action.newAgent')"
-          @click="agentCreateVisible = true"
+          :title="sessionHub.activeSection === 'groups' ? t('userWorld.group.create') : t('messenger.action.newAgent')"
+          :aria-label="
+            sessionHub.activeSection === 'groups' ? t('userWorld.group.create') : t('messenger.action.newAgent')
+          "
+          @click="handleSearchCreateAction"
         >
           <i class="fa-solid fa-plus" aria-hidden="true"></i>
         </button>
@@ -68,13 +71,16 @@
 
       <div class="messenger-middle-list">
         <template v-if="sessionHub.activeSection === 'messages'">
-          <button
+          <div
             v-for="item in filteredMixedConversations"
             :key="item.key"
             class="messenger-list-item messenger-conversation-item"
             :class="{ active: isMixedConversationActive(item) }"
-            type="button"
+            role="button"
+            tabindex="0"
             @click="openMixedConversation(item)"
+            @keydown.enter.prevent="openMixedConversation(item)"
+            @keydown.space.prevent="openMixedConversation(item)"
           >
             <AgentAvatar
               v-if="item.kind === 'agent'"
@@ -93,13 +99,42 @@
                 <span v-if="item.unread > 0" class="messenger-list-unread">{{ item.unread }}</span>
               </div>
             </div>
-          </button>
+            <button
+              v-if="canDeleteMixedConversation(item)"
+              class="messenger-list-item-action"
+              type="button"
+              :title="t('chat.history.delete')"
+              :aria-label="t('chat.history.delete')"
+              @click.stop="deleteMixedConversation(item)"
+            >
+              <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+            </button>
+          </div>
           <div v-if="!filteredMixedConversations.length" class="messenger-list-empty">
             {{ t('messenger.empty.list') }}
           </div>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'users'">
+          <div class="messenger-unit-structure">
+            <div class="messenger-unit-structure-head">
+              <span class="messenger-unit-structure-title">{{ t('messenger.users.unitTitle') }}</span>
+              <span class="messenger-unit-structure-hint">{{ t('messenger.users.unitHint') }}</span>
+            </div>
+            <div class="messenger-unit-structure-list">
+              <button
+                v-for="unit in contactUnitOptions"
+                :key="`unit-filter-${unit.id || 'all'}`"
+                class="messenger-unit-filter-btn"
+                :class="{ active: selectedContactUnitId === unit.id }"
+                type="button"
+                @click="selectedContactUnitId = unit.id"
+              >
+                <span class="messenger-unit-filter-name">{{ unit.label }}</span>
+                <span class="messenger-unit-filter-count">{{ unit.count }}</span>
+              </button>
+            </div>
+          </div>
           <button
             v-for="contact in filteredContacts"
             :key="contact.user_id"
@@ -323,16 +358,34 @@
               </div>
             </div>
           </button>
-          <div v-if="!filteredCustomTools.length" class="messenger-list-empty">{{ t('messenger.empty.toolsCustom') }}</div>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'files'">
           <div class="messenger-block-title">{{ t('messenger.files.title') }}</div>
           <button
+            class="messenger-list-item"
+            :class="{ active: fileScope === 'user' }"
+            type="button"
+            @click="selectContainer('user')"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('workspace.title') }}</span>
+                <span v-if="fileScope === 'user'" class="messenger-kind-tag">
+                  {{ t('messenger.files.current') }}
+                </span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ currentUsername }}</span>
+              </div>
+            </div>
+          </button>
+          <button
             v-for="container in sandboxContainers"
             :key="`container-${container}`"
             class="messenger-list-item"
-            :class="{ active: currentContainerId === container }"
+            :class="{ active: fileScope === 'agent' && selectedFileContainerId === container }"
             type="button"
             @click="selectContainer(container)"
           >
@@ -340,27 +393,40 @@
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('portal.agent.sandbox.option', { id: container }) }}</span>
-                <span v-if="currentContainerId === container" class="messenger-kind-tag">
+                <span v-if="fileScope === 'agent' && selectedFileContainerId === container" class="messenger-kind-tag">
                   {{ t('messenger.files.current') }}
                 </span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ activeAgentName }}</span>
               </div>
             </div>
           </button>
         </template>
 
         <template v-else>
-          <button class="messenger-list-item" type="button" @click="toggleLanguage">
-            <div class="messenger-list-avatar"><i class="fa-solid fa-language" aria-hidden="true"></i></div>
+          <button
+            class="messenger-list-item"
+            :class="{ active: settingsPanelMode === 'general' }"
+            type="button"
+            @click="settingsPanelMode = 'general'"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-sliders" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.more.language') }}</span>
+                <span class="messenger-list-name">{{ t('messenger.section.settings') }}</span>
               </div>
               <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ currentLanguageLabel }}</span>
+                <span class="messenger-list-preview">{{ t('messenger.section.settings.desc') }}</span>
               </div>
             </div>
           </button>
-          <button class="messenger-list-item" type="button" @click="openProfilePage">
+          <button
+            class="messenger-list-item"
+            :class="{ active: settingsPanelMode === 'profile' }"
+            type="button"
+            @click="settingsPanelMode = 'profile'"
+          >
             <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
@@ -368,6 +434,23 @@
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ currentUsername }}</span>
+              </div>
+            </div>
+          </button>
+          <button
+            v-if="desktopMode"
+            class="messenger-list-item"
+            :class="{ active: settingsPanelMode === 'desktop' }"
+            type="button"
+            @click="settingsPanelMode = 'desktop'"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-desktop" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('desktop.settings.title') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('desktop.settings.systemHint') }}</span>
               </div>
             </div>
           </button>
@@ -404,6 +487,22 @@
             {{ t('messenger.action.openConversation') }}
           </button>
           <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'users' && selectedContact"
+            class="messenger-header-action-text"
+            type="button"
+            @click="openSelectedContactConversation"
+          >
+            {{ t('messenger.action.openConversation') }}
+          </button>
+          <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'groups' && selectedGroup"
+            class="messenger-header-action-text"
+            type="button"
+            @click="openSelectedGroupConversation"
+          >
+            {{ t('messenger.action.openConversation') }}
+          </button>
+          <button
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
@@ -412,6 +511,16 @@
             @click="startNewDraftSession"
           >
             <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+          </button>
+          <button
+            v-if="!showChatSettingsView && isAgentConversationActive"
+            class="messenger-header-btn"
+            type="button"
+            :title="t('common.setting')"
+            :aria-label="t('common.setting')"
+            @click="openActiveAgentSettings"
+          >
+            <i class="fa-solid fa-gear" aria-hidden="true"></i>
           </button>
         </div>
       </header>
@@ -425,6 +534,7 @@
           'is-agent': isAgentConversationActive,
           'is-world': isWorldConversationActive
         }"
+        @scroll="handleMessageListScroll"
       >
         <template v-if="showChatSettingsView">
           <div class="messenger-chat-settings">
@@ -502,17 +612,12 @@
                   </div>
                   <div class="messenger-entity-field">
                     <span class="messenger-entity-label">{{ t('messenger.entity.unitId') }}</span>
-                    <span class="messenger-entity-value">{{ selectedContact.unit_id || '-' }}</span>
+                    <span class="messenger-entity-value">{{ resolveUnitLabel(selectedContact.unit_id) }}</span>
                   </div>
                 </div>
                 <div class="messenger-entity-meta">{{ t('messenger.entity.lastPreview') }}</div>
                 <div class="messenger-entity-meta">
                   {{ selectedContact.last_message_preview || t('messenger.preview.empty') }}
-                </div>
-                <div class="messenger-inline-actions">
-                  <button class="messenger-inline-btn primary" type="button" @click="openSelectedContactConversation">
-                    {{ t('messenger.action.openConversation') }}
-                  </button>
                 </div>
               </div>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
@@ -544,11 +649,6 @@
                 <div class="messenger-entity-meta">{{ t('messenger.entity.lastPreview') }}</div>
                 <div class="messenger-entity-meta">
                   {{ selectedGroup.last_message_preview || t('messenger.preview.empty') }}
-                </div>
-                <div class="messenger-inline-actions">
-                  <button class="messenger-inline-btn primary" type="button" @click="openSelectedGroupConversation">
-                    {{ t('messenger.action.openConversation') }}
-                  </button>
                 </div>
               </div>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
@@ -632,10 +732,42 @@
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'files'">
-              <div class="messenger-entity-panel">
-                <div class="messenger-entity-title">{{ t('messenger.files.title') }}</div>
-                <div class="messenger-entity-meta">
-                  {{ t('portal.agent.sandbox.option', { id: currentContainerId }) }}
+              <div class="messenger-files-panel">
+                <div class="messenger-entity-panel">
+                  <div class="messenger-entity-title">{{ t('messenger.files.title') }}</div>
+                  <div class="messenger-entity-grid">
+                    <div class="messenger-entity-field">
+                      <span class="messenger-entity-label">{{ t('workspace.title') }}</span>
+                      <span class="messenger-entity-value">
+                        {{ fileScope === 'user' ? currentUsername : activeAgentName }}
+                      </span>
+                    </div>
+                    <div class="messenger-entity-field">
+                      <span class="messenger-entity-label">{{ t('messenger.files.current') }}</span>
+                      <span class="messenger-entity-value">
+                        {{ t('portal.agent.sandbox.option', { id: selectedFileContainerId }) }}
+                      </span>
+                    </div>
+                    <div class="messenger-entity-field">
+                      <span class="messenger-entity-label">{{ t('messenger.kind.agent') }}</span>
+                      <span class="messenger-entity-value">
+                        {{ fileScope === 'user' ? t('messenger.kind.direct') : activeAgentName }}
+                      </span>
+                    </div>
+                    <div class="messenger-entity-field">
+                      <span class="messenger-entity-label">{{ t('messenger.section.files') }}</span>
+                      <span class="messenger-entity-value">
+                        {{ fileScope === 'user' ? t('workspace.title') : t('messenger.right.sandbox') }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div class="messenger-workspace-scope chat-shell messenger-files-workspace">
+                  <WorkspacePanel
+                    :agent-id="selectedFileAgentIdForApi"
+                    :container-id="selectedFileContainerId"
+                    :title="t('workspace.title')"
+                  />
                 </div>
               </div>
             </template>
@@ -646,16 +778,15 @@
                 :username="currentUsername"
                 :user-id="currentUserId"
                 :language-label="currentLanguageLabel"
-                :session-count="chatStore.sessions.length"
-                :message-count="chatStore.messages.length"
-                :prompt-count="0"
-                :persona-count="0"
+                :desktop-tool-call-mode="desktopToolCallMode"
+                :devtools-available="desktopDevtoolsAvailable"
                 @toggle-language="toggleLanguage"
                 @logout="logout"
                 @check-update="checkClientUpdate"
-                @cloud-config="openCloudDataConfig"
-                @import-data="importLocalData"
-                @export-data="exportLocalData"
+                @open-tools="openDesktopTools"
+                @open-system="openDesktopSystemSettings"
+                @toggle-devtools="toggleDesktopDevTools"
+                @update:desktop-tool-call-mode="updateDesktopToolCallMode"
               />
             </template>
           </div>
@@ -722,7 +853,7 @@
                     :key="item.label"
                     class="messenger-message-stat"
                   >
-                    <span class="messenger-message-stat-label">{{ item.label }}：</span>
+                    <span class="messenger-message-stat-label">{{ item.label }}:</span>
                     <span class="messenger-message-stat-value">{{ item.value }}</span>
                   </span>
                 </div>
@@ -766,6 +897,17 @@
         </template>
       </div>
 
+      <button
+        v-if="!showChatSettingsView && showScrollBottomButton"
+        class="messenger-scroll-bottom-btn"
+        type="button"
+        :title="t('chat.toBottom')"
+        :aria-label="t('chat.toBottom')"
+        @click="jumpToMessageBottom"
+      >
+        <i class="fa-solid fa-angles-down" aria-hidden="true"></i>
+      </button>
+
       <footer v-if="!showChatSettingsView" class="messenger-chat-footer">
         <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
           <ChatComposer :loading="agentSessionLoading" @send="sendAgentMessage" @stop="stopAgentMessage" />
@@ -803,6 +945,7 @@
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
       @restore-session="restoreTimelineSession"
       @set-main="setTimelineSessionMain"
+      @delete-session="deleteTimelineSession"
     />
 
     <AgentCreateDialog
@@ -810,6 +953,57 @@
       :copy-from-agents="agentCopyFromOptions"
       @submit="handleAgentCreateSubmit"
     />
+
+    <el-dialog
+      v-model="groupCreateVisible"
+      :title="t('userWorld.group.createTitle')"
+      width="440px"
+      class="messenger-dialog"
+      append-to-body
+    >
+      <div class="messenger-group-create">
+        <label class="messenger-group-create-field">
+          <span>{{ t('userWorld.group.nameLabel') }}</span>
+          <input
+            v-model.trim="groupCreateName"
+            type="text"
+            :placeholder="t('userWorld.group.namePlaceholder')"
+            autocomplete="off"
+          />
+        </label>
+        <label class="messenger-group-create-field">
+          <span>{{ t('userWorld.group.memberLabel') }}</span>
+          <input
+            v-model.trim="groupCreateKeyword"
+            type="text"
+            :placeholder="t('userWorld.group.memberPlaceholder')"
+            autocomplete="off"
+          />
+        </label>
+        <div class="messenger-group-create-list">
+          <label
+            v-for="contact in filteredGroupCreateContacts"
+            :key="`group-member-${contact.user_id}`"
+            class="messenger-group-create-item"
+          >
+            <input v-model="groupCreateMemberIds" type="checkbox" :value="String(contact.user_id || '')" />
+            <span class="messenger-group-create-name">{{ contact.username || contact.user_id }}</span>
+            <span class="messenger-group-create-unit">{{ resolveUnitLabel(contact.unit_id) }}</span>
+          </label>
+          <div v-if="!filteredGroupCreateContacts.length" class="messenger-list-empty">
+            {{ t('userWorld.group.memberEmpty') }}
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <button class="messenger-inline-btn" type="button" :disabled="groupCreating" @click="groupCreateVisible = false">
+          {{ t('common.cancel') }}
+        </button>
+        <button class="messenger-inline-btn primary" type="button" :disabled="groupCreating" @click="submitGroupCreate">
+          {{ groupCreating ? t('common.loading') : t('userWorld.group.createSubmit') }}
+        </button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -819,6 +1013,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
+import { fetchOrgUnits } from '@/api/auth';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
@@ -831,10 +1026,17 @@ import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
+import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
 import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
 import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
+import {
+  getDesktopToolCallMode,
+  isDesktopModeEnabled,
+  setDesktopToolCallMode,
+  type DesktopToolCallMode
+} from '@/config/desktop';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -894,6 +1096,7 @@ const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
+const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const selectedCustomToolName = ref('');
 const worldDraft = ref('');
@@ -902,7 +1105,7 @@ const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
 const agentSettingMode = ref<'agent' | 'cron' | 'channel'>('agent');
-const settingsPanelMode = ref<'general' | 'profile'>('general');
+const settingsPanelMode = ref<'general' | 'profile' | 'desktop'>('general');
 const rightDockCollapsed = ref(false);
 const toolsCatalogLoading = ref(false);
 const customTools = ref<ToolEntry[]>([]);
@@ -912,6 +1115,19 @@ const mcpTools = ref<ToolEntry[]>([]);
 const skillTools = ref<ToolEntry[]>([]);
 const knowledgeTools = ref<ToolEntry[]>([]);
 const toolPaneStatus = ref('');
+const fileScope = ref<'agent' | 'user'>('agent');
+const selectedFileContainerId = ref(1);
+const timelinePreviewMap = ref<Map<string, string>>(new Map());
+const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
+const desktopToolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
+const orgUnitPathMap = ref<Record<string, string>>({});
+const showScrollBottomButton = ref(false);
+const autoStickToBottom = ref(true);
+const groupCreateVisible = ref(false);
+const groupCreateName = ref('');
+const groupCreateKeyword = ref('');
+const groupCreateMemberIds = ref<string[]>([]);
+const groupCreating = ref(false);
 
 const agentCreateVisible = ref(false);
 
@@ -938,6 +1154,14 @@ const basePrefix = computed(() => {
   if (route.path.startsWith('/desktop')) return '/desktop';
   if (route.path.startsWith('/demo')) return '/demo';
   return '/app';
+});
+
+const desktopMode = computed(() => isDesktopModeEnabled());
+const desktopDevtoolsAvailable = computed(() => {
+  if (!desktopMode.value || typeof window === 'undefined') {
+    return false;
+  }
+  return Boolean((window as any).wunderDesktop?.toggleDevTools);
 });
 
 const keyword = computed({
@@ -968,7 +1192,7 @@ const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
-const showMiddlePane = computed(() => sessionHub.activeSection !== 'more');
+const showMiddlePane = computed(() => true);
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
 const sharedAgents = computed(() => (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []));
@@ -1057,6 +1281,12 @@ const currentContainerId = computed(() => {
   return Math.min(10, Math.max(1, parsed));
 });
 
+const selectedFileAgentIdForApi = computed(() => {
+  if (fileScope.value !== 'agent') return '';
+  const target = normalizeAgentId(selectedAgentId.value || activeAgentId.value);
+  return target === DEFAULT_AGENT_KEY ? '' : target;
+});
+
 const showAgentSettingsPanel = computed(
   () => sessionHub.activeSection === 'agents' || isAgentConversationActive.value
 );
@@ -1117,12 +1347,63 @@ const filteredSharedAgents = computed(() => {
   });
 });
 
+const UNIT_UNGROUPED_ID = '__ungrouped__';
+
+const normalizeUnitText = (value: unknown): string => String(value || '').trim();
+
+const resolveUnitIdKey = (unitId: unknown): string => {
+  const cleaned = normalizeUnitText(unitId);
+  return cleaned || UNIT_UNGROUPED_ID;
+};
+
+const resolveUnitLabel = (unitId: unknown): string => {
+  const cleaned = normalizeUnitText(unitId);
+  if (!cleaned) return t('userWorld.unit.ungrouped');
+  return orgUnitPathMap.value[cleaned] || cleaned;
+};
+
+const contactUnitOptions = computed(() => {
+  const contacts = Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : [];
+  const counter = new Map<string, number>();
+  contacts.forEach((item) => {
+    const key = resolveUnitIdKey(item?.unit_id);
+    counter.set(key, (counter.get(key) || 0) + 1);
+  });
+
+  const keys = new Set<string>([...counter.keys(), ...Object.keys(orgUnitPathMap.value)]);
+  const options = [...keys].map((key) => {
+    const label = key === UNIT_UNGROUPED_ID ? t('userWorld.unit.ungrouped') : resolveUnitLabel(key);
+    return {
+      id: key,
+      label,
+      count: counter.get(key) || 0
+    };
+  });
+
+  options.sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+  return [
+    {
+      id: '',
+      label: t('messenger.users.unitAll'),
+      count: contacts.length
+    },
+    ...options
+  ];
+});
+
 const filteredContacts = computed(() => {
   const text = keyword.value.toLowerCase();
+  const selectedUnit = String(selectedContactUnitId.value || '').trim();
   return (Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : []).filter((item) => {
     const username = String(item?.username || '').toLowerCase();
     const userId = String(item?.user_id || '').toLowerCase();
-    return !text || username.includes(text) || userId.includes(text);
+    const unitId = String(item?.unit_id || '').trim();
+    const normalizedUnitId = unitId || '__ungrouped__';
+    if (selectedUnit && normalizedUnitId !== selectedUnit) {
+      return false;
+    }
+    const unitLabel = resolveUnitLabel(unitId).toLowerCase();
+    return !text || username.includes(text) || userId.includes(text) || unitLabel.includes(text);
   });
 });
 
@@ -1142,6 +1423,22 @@ const filteredCustomTools = computed(() => {
     const desc = String(item.description || '').toLowerCase();
     return !text || name.includes(text) || desc.includes(text);
   });
+});
+
+const filteredGroupCreateContacts = computed(() => {
+  const text = String(groupCreateKeyword.value || '')
+    .trim()
+    .toLowerCase();
+  const currentUserId = String((authStore.user as Record<string, unknown> | null)?.id || '').trim();
+  return (Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : [])
+    .filter((contact) => String(contact?.user_id || '').trim() !== currentUserId)
+    .filter((contact) => {
+      if (!text) return true;
+      const username = String(contact?.username || '').toLowerCase();
+      const userId = String(contact?.user_id || '').toLowerCase();
+      const unit = resolveUnitLabel(contact?.unit_id).toLowerCase();
+      return username.includes(text) || userId.includes(text) || unit.includes(text);
+    });
 });
 
 const selectedToolEntryKey = computed(() => {
@@ -1273,7 +1570,18 @@ const activeConversationSubtitle = computed(() => {
     const info = activeAgent.value as Record<string, unknown> | null;
     return String(info?.description || t('messenger.agent.subtitle'));
   }
-  return identity.kind === 'group' ? t('messenger.group.subtitle') : t('messenger.direct.subtitle');
+  if (identity.kind === 'group') {
+    return t('messenger.group.subtitle');
+  }
+  const conversation = userWorldStore.conversations.find(
+    (item) => String(item?.conversation_id || '') === identity.id
+  );
+  const peerUserId = String(conversation?.peer_user_id || '').trim();
+  if (!peerUserId) return t('messenger.direct.subtitle');
+  const contact = (Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : []).find(
+    (item) => String(item?.user_id || '').trim() === peerUserId
+  );
+  return t('userWorld.chat.userSubtitle', { unit: resolveUnitLabel(contact?.unit_id) });
 });
 
 const activeConversationKindLabel = computed(() => {
@@ -1303,6 +1611,10 @@ const chatPanelTitle = computed(() => {
     if (selectedToolCategory.value) return toolCategoryLabel(selectedToolCategory.value);
     if (selectedCustomTool.value?.name) return selectedCustomTool.value.name;
   }
+  if (sessionHub.activeSection === 'more') {
+    if (settingsPanelMode.value === 'profile') return t('user.profile.enter');
+    if (settingsPanelMode.value === 'desktop') return t('desktop.settings.title');
+  }
   return activeSectionTitle.value;
 });
 
@@ -1314,13 +1626,19 @@ const chatPanelSubtitle = computed(() => {
     return t('messenger.agent.subtitle');
   }
   if (sessionHub.activeSection === 'users') {
-    return t('messenger.section.users.desc');
+    return selectedContact.value
+      ? t('userWorld.chat.userSubtitle', { unit: resolveUnitLabel(selectedContact.value.unit_id) })
+      : t('messenger.section.users.desc');
   }
   if (sessionHub.activeSection === 'groups') {
     return t('messenger.section.groups.desc');
   }
   if (sessionHub.activeSection === 'tools') {
     return t('messenger.section.tools.desc');
+  }
+  if (sessionHub.activeSection === 'more') {
+    if (settingsPanelMode.value === 'profile') return currentUsername.value;
+    if (settingsPanelMode.value === 'desktop') return t('desktop.settings.systemHint');
   }
   return activeSectionSubtitle.value;
 });
@@ -1370,6 +1688,36 @@ const rightPanelContainerId = computed(() => {
   return Math.min(10, Math.max(1, parsed));
 });
 
+const extractLatestUserPreview = (messages: unknown[]): string => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const item = (messages[index] || {}) as Record<string, unknown>;
+    if (String(item.role || '').trim() !== 'user') continue;
+    const content = String(item.content || '').trim();
+    if (content) {
+      return content.replace(/\s+/g, ' ').slice(0, 120);
+    }
+  }
+  return '';
+};
+
+const resolveSessionTimelinePreview = (session: Record<string, unknown>): string => {
+  const sessionId = String(session?.id || '').trim();
+  if (sessionId) {
+    const cached = String(timelinePreviewMap.value.get(sessionId) || '').trim();
+    if (cached) return cached;
+  }
+  return String(
+    session?.last_user_message_preview ||
+      session?.last_user_message ||
+      session?.last_message_preview ||
+      session?.last_message ||
+      session?.summary ||
+      ''
+  )
+    .replace(/\s+/g, ' ')
+    .slice(0, 120);
+};
+
 const rightPanelSessionHistory = computed(() => {
   if (!showRightDock.value) return [];
   const targetAgentId = normalizeAgentId(rightPanelAgentId.value);
@@ -1378,7 +1726,7 @@ const rightPanelSessionHistory = computed(() => {
     .map((session) => ({
       id: String(session?.id || ''),
       title: String(session?.title || t('chat.newSession')),
-      preview: String(session?.last_message_preview || session?.last_message || session?.summary || ''),
+      preview: resolveSessionTimelinePreview(session as Record<string, unknown>),
       lastAt: session?.updated_at || session?.last_message_at || session?.created_at,
       isMain: Boolean(session?.is_main)
     }))
@@ -1386,6 +1734,29 @@ const rightPanelSessionHistory = computed(() => {
     .sort((left, right) => normalizeTimestamp(right.lastAt) - normalizeTimestamp(left.lastAt));
   return result;
 });
+
+const preloadTimelinePreview = async (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return;
+  if (timelinePreviewMap.value.has(targetId) || timelinePreviewLoadingSet.value.has(targetId)) {
+    return;
+  }
+  timelinePreviewLoadingSet.value.add(targetId);
+  try {
+    await chatStore.preloadSessionDetail(targetId);
+    const messages = chatStore.getCachedSessionMessages(targetId);
+    if (!Array.isArray(messages) || !messages.length) {
+      timelinePreviewMap.value.set(targetId, '');
+      return;
+    }
+    const preview = extractLatestUserPreview(messages as unknown[]);
+    timelinePreviewMap.value.set(targetId, preview);
+  } catch {
+    // Ignore timeline prefetch errors to keep the dock lightweight.
+  } finally {
+    timelinePreviewLoadingSet.value.delete(targetId);
+  }
+};
 
 const hasCronTask = (agentId: unknown): boolean =>
   cronAgentIds.value.has(normalizeAgentId(agentId));
@@ -1595,6 +1966,33 @@ const isMixedConversationActive = (item: MixedConversation): boolean => {
   return identity.kind === item.kind && identity.id === item.sourceId;
 };
 
+const canDeleteMixedConversation = (item: MixedConversation): boolean => Boolean(item?.sourceId);
+
+const deleteMixedConversation = async (item: MixedConversation) => {
+  const sourceId = String(item?.sourceId || '').trim();
+  if (!sourceId) return;
+  try {
+    await ElMessageBox.confirm(t('chat.history.confirmDelete'), t('chat.history.confirmTitle'), {
+      type: 'warning',
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel')
+    });
+  } catch {
+    return;
+  }
+  try {
+    if (item.kind === 'agent') {
+      await chatStore.deleteSession(sourceId);
+      timelinePreviewMap.value.delete(sourceId);
+    } else {
+      await userWorldStore.dismissConversation(sourceId);
+    }
+    ElMessage.success(t('chat.history.delete'));
+  } catch (error) {
+    showApiError(error, t('chat.sessions.deleteFailed'));
+  }
+};
+
 const switchSection = (section: MessengerSection) => {
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
@@ -1608,12 +2006,16 @@ const switchSection = (section: MessengerSection) => {
   }
   if (section !== 'users') {
     selectedContactUserId.value = '';
+    selectedContactUnitId.value = '';
   }
   if (section !== 'groups') {
     selectedGroupId.value = '';
   }
   if (section === 'agents') {
     agentSettingMode.value = 'agent';
+  }
+  if (section === 'files' && fileScope.value !== 'user') {
+    selectedFileContainerId.value = currentContainerId.value;
   }
   const targetPath = `${basePrefix.value}/${sectionRouteMap[section]}`;
   const nextQuery = { ...route.query, section } as Record<string, any>;
@@ -1647,6 +2049,17 @@ const openProfilePage = () => {
   delete nextQuery.entry;
   delete nextQuery.conversation_id;
   router.push({ path: `${basePrefix.value}/profile`, query: nextQuery }).catch(() => undefined);
+};
+
+const handleSearchCreateAction = () => {
+  if (sessionHub.activeSection === 'groups') {
+    groupCreateName.value = '';
+    groupCreateKeyword.value = '';
+    groupCreateMemberIds.value = [];
+    groupCreateVisible.value = true;
+    return;
+  }
+  agentCreateVisible.value = true;
 };
 
 const openMixedConversation = async (item: MixedConversation) => {
@@ -1689,7 +2102,7 @@ const openWorldConversation = async (
       path: mode === 'messages' ? `${basePrefix.value}/chat` : `${basePrefix.value}/user-world`,
       query: nextQuery
     }).catch(() => undefined);
-    await scrollMessagesToBottom();
+    await scrollMessagesToBottom(true);
   } catch (error) {
     showApiError(error, t('messenger.error.openConversation'));
   }
@@ -1730,7 +2143,7 @@ const openAgentById = async (agentId: unknown) => {
     path: `${basePrefix.value}/chat`,
     query: nextQuery
   }).catch(() => undefined);
-  await scrollMessagesToBottom();
+  await scrollMessagesToBottom(true);
 };
 
 const selectAgentForSettings = (agentId: unknown) => {
@@ -1741,6 +2154,27 @@ const selectAgentForSettings = (agentId: unknown) => {
 const enterSelectedAgentConversation = async () => {
   const target = settingsAgentId.value || DEFAULT_AGENT_KEY;
   await openAgentById(target);
+};
+
+const openActiveAgentSettings = () => {
+  const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  selectedAgentId.value = targetAgentId;
+  agentSettingMode.value = 'agent';
+  sessionHub.setSection('agents');
+  const nextQuery = {
+    ...route.query,
+    section: 'agents',
+    agent_id: targetAgentId === DEFAULT_AGENT_KEY ? '' : targetAgentId
+  } as Record<string, any>;
+  delete nextQuery.session_id;
+  delete nextQuery.entry;
+  delete nextQuery.conversation_id;
+  router
+    .push({
+      path: `${basePrefix.value}/home`,
+      query: nextQuery
+    })
+    .catch(() => undefined);
 };
 
 const openSelectedContactConversation = async () => {
@@ -1769,6 +2203,40 @@ const openSelectedGroupConversation = async () => {
   await openWorldConversation(conversationId, 'group', 'messages');
 };
 
+const submitGroupCreate = async () => {
+  const groupName = String(groupCreateName.value || '').trim();
+  const members = groupCreateMemberIds.value
+    .map((item) => String(item || '').trim())
+    .filter((item) => Boolean(item));
+  if (!groupName) {
+    ElMessage.warning(t('userWorld.group.namePlaceholder'));
+    return;
+  }
+  if (!members.length) {
+    ElMessage.warning(t('userWorld.group.memberEmpty'));
+    return;
+  }
+  groupCreating.value = true;
+  try {
+    const created = await userWorldStore.createGroupConversation(groupName, members);
+    groupCreateVisible.value = false;
+    groupCreateName.value = '';
+    groupCreateKeyword.value = '';
+    groupCreateMemberIds.value = [];
+    ElMessage.success(t('userWorld.group.createSuccess'));
+    const conversationId = String(created?.conversation_id || '').trim();
+    if (conversationId) {
+      await openWorldConversation(conversationId, 'group', 'messages');
+    } else {
+      await userWorldStore.refreshGroups();
+    }
+  } catch (error) {
+    showApiError(error, t('userWorld.group.createFailed'));
+  } finally {
+    groupCreating.value = false;
+  }
+};
+
 const openAgentSession = async (sessionId: string, agentId = '') => {
   if (!sessionId) return;
   try {
@@ -1794,7 +2262,7 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
       path: `${basePrefix.value}/chat`,
       query: nextQuery
     }).catch(() => undefined);
-    await scrollMessagesToBottom();
+    await scrollMessagesToBottom(true);
   } catch (error) {
     showApiError(error, t('messenger.error.openConversation'));
   }
@@ -1815,8 +2283,37 @@ const setTimelineSessionMain = async (sessionId: string) => {
   }
 };
 
-const selectContainer = (containerId: number) => {
+const deleteTimelineSession = async (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return;
+  try {
+    await ElMessageBox.confirm(t('chat.history.confirmDelete'), t('chat.history.confirmTitle'), {
+      type: 'warning',
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel')
+    });
+  } catch {
+    return;
+  }
+  try {
+    await chatStore.deleteSession(targetId);
+    timelinePreviewMap.value.delete(targetId);
+    ElMessage.success(t('chat.history.delete'));
+  } catch (error) {
+    showApiError(error, t('chat.sessions.deleteFailed'));
+  }
+};
+
+const selectContainer = (containerId: number | 'user') => {
+  if (containerId === 'user') {
+    fileScope.value = 'user';
+    selectedFileContainerId.value = 1;
+    sessionHub.setSection('files');
+    return;
+  }
   const parsed = Math.min(10, Math.max(1, Number(containerId) || 1));
+  fileScope.value = 'agent';
+  selectedFileContainerId.value = parsed;
   const source = activeAgent.value as Record<string, unknown> | null;
   if (source) {
     source.sandbox_container_id = parsed;
@@ -1881,6 +2378,31 @@ const loadToolsCatalog = async () => {
   }
 };
 
+const loadOrgUnits = async () => {
+  try {
+    const { data } = await fetchOrgUnits();
+    const sourceItems = Array.isArray(data?.data?.items)
+      ? data.data.items
+      : Array.isArray(data?.data)
+        ? data.data
+        : [];
+    const nextMap: Record<string, string> = {};
+    const stack = [...sourceItems];
+    while (stack.length) {
+      const current = (stack.pop() || {}) as Record<string, unknown>;
+      const unitId = normalizeUnitText(current.unit_id || current.id);
+      if (unitId) {
+        nextMap[unitId] = normalizeUnitText(current.path_name || current.pathName || current.display_name || current.unit_name || current.name) || unitId;
+      }
+      const children = Array.isArray(current.children) ? current.children : [];
+      children.forEach((child) => stack.push(child));
+    }
+    orgUnitPathMap.value = nextMap;
+  } catch {
+    orgUnitPathMap.value = {};
+  }
+};
+
 const selectToolCategory = (category: 'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared') => {
   toolPaneStatus.value = '';
   selectedToolCategory.value = category;
@@ -1920,6 +2442,12 @@ const ensureSectionSelection = () => {
   }
 
   if (sessionHub.activeSection === 'users') {
+    const exists = filteredContacts.value.some(
+      (item) => String(item?.user_id || '') === selectedContactUserId.value
+    );
+    if (!exists) {
+      selectedContactUserId.value = String(filteredContacts.value[0]?.user_id || '');
+    }
     if (!selectedContactUserId.value && filteredContacts.value.length > 0) {
       selectedContactUserId.value = String(filteredContacts.value[0]?.user_id || '');
     }
@@ -1942,6 +2470,13 @@ const ensureSectionSelection = () => {
       } else {
         selectedToolCategory.value = 'mcp';
       }
+    }
+    return;
+  }
+
+  if (sessionHub.activeSection === 'files') {
+    if (!selectedFileContainerId.value) {
+      selectedFileContainerId.value = currentContainerId.value;
     }
     return;
   }
@@ -2027,7 +2562,7 @@ const startNewDraftSession = async () => {
     id: `draft:${targetAgent}`,
     agentId: targetAgent
   });
-  await scrollMessagesToBottom();
+  await scrollMessagesToBottom(true);
 };
 
 const handleAgentCreateSubmit = async (payload: Record<string, unknown>) => {
@@ -2073,16 +2608,28 @@ const checkClientUpdate = () => {
   ElMessage.success(t('common.refreshSuccess'));
 };
 
-const openCloudDataConfig = () => {
-  ElMessage.info(t('messenger.settings.cloudConfigHint'));
+const updateDesktopToolCallMode = (value: DesktopToolCallMode) => {
+  desktopToolCallMode.value = value === 'function_call' ? 'function_call' : 'tool_call';
 };
 
-const importLocalData = () => {
-  ElMessage.info(t('messenger.settings.importHint'));
+const openDesktopTools = () => {
+  if (!desktopMode.value) return;
+  router.push('/desktop/tools').catch(() => undefined);
 };
 
-const exportLocalData = () => {
-  ElMessage.info(t('messenger.settings.exportHint'));
+const openDesktopSystemSettings = () => {
+  if (!desktopMode.value) return;
+  router.push('/desktop/system').catch(() => undefined);
+};
+
+const toggleDesktopDevTools = async () => {
+  if (!desktopDevtoolsAvailable.value) return;
+  try {
+    const desktopApi = (window as any).wunderDesktop;
+    await desktopApi?.toggleDevTools?.();
+  } catch {
+    ElMessage.warning(t('desktop.common.saveFailed'));
+  }
 };
 
 const loadRunningAgents = async () => {
@@ -2131,6 +2678,7 @@ const refreshAll = async () => {
     agentStore.loadAgents(),
     chatStore.loadSessions(),
     userWorldStore.bootstrap(true),
+    loadOrgUnits(),
     loadRunningAgents(),
     loadCronAgentIds(),
     loadToolsCatalog()
@@ -2139,11 +2687,39 @@ const refreshAll = async () => {
   ElMessage.success(t('common.refreshSuccess'));
 };
 
-const scrollMessagesToBottom = async () => {
+const updateMessageScrollState = () => {
+  const container = messageListRef.value;
+  if (!container || showChatSettingsView.value) {
+    showScrollBottomButton.value = false;
+    autoStickToBottom.value = true;
+    return;
+  }
+  const remaining = container.scrollHeight - container.clientHeight - container.scrollTop;
+  const shouldStick = remaining <= 72;
+  autoStickToBottom.value = shouldStick;
+  showScrollBottomButton.value =
+    !shouldStick && (isAgentConversationActive.value || isWorldConversationActive.value);
+};
+
+const handleMessageListScroll = () => {
+  updateMessageScrollState();
+};
+
+const scrollMessagesToBottom = async (force = false) => {
   await nextTick();
   const container = messageListRef.value;
   if (!container) return;
+  if (!force && !autoStickToBottom.value) {
+    updateMessageScrollState();
+    return;
+  }
   container.scrollTop = container.scrollHeight;
+  updateMessageScrollState();
+};
+
+const jumpToMessageBottom = async () => {
+  autoStickToBottom.value = true;
+  await scrollMessagesToBottom(true);
 };
 
 const normalizeAgentId = (value: unknown): string => {
@@ -2162,7 +2738,7 @@ const restoreConversationFromRoute = async () => {
     if (route.path.includes('/chat')) {
       await userWorldStore.setActiveConversation(queryConversationId);
       sessionHub.setActiveConversation({ kind, id: queryConversationId });
-      await scrollMessagesToBottom();
+      await scrollMessagesToBottom(true);
     } else {
       await openWorldConversation(queryConversationId, kind);
     }
@@ -2207,6 +2783,7 @@ const bootstrap = async () => {
     agentStore.loadAgents(),
     chatStore.loadSessions(),
     userWorldStore.bootstrap(),
+    loadOrgUnits(),
     loadRunningAgents(),
     loadCronAgentIds(),
     loadToolsCatalog()
@@ -2285,14 +2862,66 @@ watch(
 );
 
 watch(
+  () => currentContainerId.value,
+  (value) => {
+    if (fileScope.value !== 'agent') return;
+    selectedFileContainerId.value = value;
+  },
+  { immediate: true }
+);
+
+watch(
+  () => rightPanelSessionHistory.value.map((item) => item.id).join('|'),
+  (value) => {
+    if (!value) return;
+    rightPanelSessionHistory.value.slice(0, 12).forEach((item) => {
+      preloadTimelinePreview(item.id);
+    });
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [chatStore.activeSessionId, chatStore.messages.length],
+  () => {
+    const sessionId = String(chatStore.activeSessionId || '').trim();
+    if (!sessionId || !Array.isArray(chatStore.messages) || !chatStore.messages.length) return;
+    const preview = extractLatestUserPreview(chatStore.messages as unknown[]);
+    if (preview) {
+      timelinePreviewMap.value.set(sessionId, preview);
+    }
+  }
+);
+
+watch(
+  () => desktopToolCallMode.value,
+  (value) => {
+    if (!desktopMode.value) return;
+    setDesktopToolCallMode(value);
+  }
+);
+
+watch(
+  () => showChatSettingsView.value,
+  () => {
+    updateMessageScrollState();
+  }
+);
+
+watch(
   () => [chatStore.messages.length, userWorldStore.activeMessages.length, sessionHub.activeConversationKey],
   () => {
-    scrollMessagesToBottom();
+    if (autoStickToBottom.value) {
+      scrollMessagesToBottom();
+    } else {
+      updateMessageScrollState();
+    }
   }
 );
 
 onMounted(async () => {
   await bootstrap();
+  updateMessageScrollState();
   statusTimer = window.setInterval(() => {
     loadRunningAgents();
     loadCronAgentIds();
@@ -2305,6 +2934,8 @@ onBeforeUnmount(() => {
     statusTimer = null;
   }
   markdownCache.clear();
+  timelinePreviewMap.value.clear();
+  timelinePreviewLoadingSet.value.clear();
   userWorldStore.stopAllWatchers();
 });
 </script>

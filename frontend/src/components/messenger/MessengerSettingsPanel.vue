@@ -30,6 +30,58 @@
       </section>
     </template>
 
+    <template v-else-if="mode === 'desktop'">
+      <section class="messenger-settings-card">
+        <div class="messenger-settings-title">{{ t('desktop.settings.title') }}</div>
+        <div class="messenger-settings-row">
+          <div>
+            <div class="messenger-settings-label">{{ t('desktop.settings.toolCallMode') }}</div>
+            <div class="messenger-settings-hint">{{ t('desktop.settings.toolCallHint') }}</div>
+          </div>
+          <select
+            :value="desktopToolCallMode"
+            class="messenger-settings-select"
+            @change="handleDesktopToolCallModeChange"
+          >
+            <option value="tool_call">tool_call</option>
+            <option value="function_call">function_call</option>
+          </select>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
+            <div class="messenger-settings-label">{{ t('desktop.settings.tools') }}</div>
+            <div class="messenger-settings-hint">{{ t('desktop.settings.toolsHint') }}</div>
+          </div>
+          <button class="messenger-settings-action" type="button" @click="$emit('open-tools')">
+            {{ t('desktop.settings.openTools') }}
+          </button>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
+            <div class="messenger-settings-label">{{ t('desktop.settings.system') }}</div>
+            <div class="messenger-settings-hint">{{ t('desktop.settings.systemHint') }}</div>
+          </div>
+          <button class="messenger-settings-action" type="button" @click="$emit('open-system')">
+            {{ t('desktop.settings.openSystem') }}
+          </button>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
+            <div class="messenger-settings-label">{{ t('desktop.settings.devtools') }}</div>
+            <div class="messenger-settings-hint">{{ t('desktop.settings.devtoolsHint') }}</div>
+          </div>
+          <button
+            class="messenger-settings-action"
+            type="button"
+            :disabled="!devtoolsAvailable"
+            @click="$emit('toggle-devtools')"
+          >
+            {{ t('desktop.settings.openDevtools') }}
+          </button>
+        </div>
+      </section>
+    </template>
+
     <template v-else>
       <section class="messenger-settings-card">
         <div class="messenger-settings-head">
@@ -80,34 +132,6 @@
           </label>
         </div>
       </section>
-
-      <section class="messenger-settings-card">
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('messenger.settings.cloudData') }}</div>
-            <div class="messenger-settings-hint">{{ t('messenger.settings.cloudHint') }}</div>
-          </div>
-          <button class="messenger-settings-action" type="button" @click="$emit('cloud-config')">
-            {{ t('common.setting') }}
-          </button>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('messenger.settings.localData') }}</div>
-            <div class="messenger-settings-hint">
-              {{ t('messenger.settings.localHint', statsPayload) }}
-            </div>
-          </div>
-          <div class="messenger-settings-actions">
-            <button class="messenger-settings-action ghost" type="button" @click="$emit('import-data')">
-              {{ t('common.import') }}
-            </button>
-            <button class="messenger-settings-action ghost" type="button" @click="$emit('export-data')">
-              {{ t('common.export') }}
-            </button>
-          </div>
-        </div>
-      </section>
     </template>
   </div>
 </template>
@@ -118,34 +142,31 @@ import { useI18n } from '@/i18n';
 
 const props = withDefaults(
   defineProps<{
-    mode?: 'general' | 'profile';
+    mode?: 'general' | 'profile' | 'desktop';
     username?: string;
     userId?: string;
     languageLabel?: string;
-    sessionCount?: number;
-    messageCount?: number;
-    promptCount?: number;
-    personaCount?: number;
+    desktopToolCallMode?: 'tool_call' | 'function_call';
+    devtoolsAvailable?: boolean;
   }>(),
   {
     mode: 'general',
     username: '',
     userId: '',
     languageLabel: '',
-    sessionCount: 0,
-    messageCount: 0,
-    promptCount: 0,
-    personaCount: 0
+    desktopToolCallMode: 'tool_call',
+    devtoolsAvailable: false
   }
 );
 
-defineEmits<{
+const emit = defineEmits<{
   (event: 'toggle-language'): void;
   (event: 'logout'): void;
   (event: 'check-update'): void;
-  (event: 'cloud-config'): void;
-  (event: 'import-data'): void;
-  (event: 'export-data'): void;
+  (event: 'open-tools'): void;
+  (event: 'open-system'): void;
+  (event: 'toggle-devtools'): void;
+  (event: 'update:desktop-tool-call-mode', value: 'tool_call' | 'function_call'): void;
 }>();
 
 const { t } = useI18n();
@@ -159,10 +180,8 @@ const profileInitial = computed(() => {
   return source.slice(0, 1).toUpperCase();
 });
 
-const statsPayload = computed(() => ({
-  sessions: props.sessionCount,
-  messages: props.messageCount,
-  prompts: props.promptCount,
-  personas: props.personaCount
-}));
+const handleDesktopToolCallModeChange = (event: Event) => {
+  const value = String((event.target as HTMLSelectElement)?.value || '').trim().toLowerCase();
+  emit('update:desktop-tool-call-mode', value === 'function_call' ? 'function_call' : 'tool_call');
+};
 </script>
