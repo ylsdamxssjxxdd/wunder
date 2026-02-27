@@ -121,17 +121,38 @@
               <span class="messenger-unit-structure-title">{{ t('messenger.users.unitTitle') }}</span>
               <span class="messenger-unit-structure-hint">{{ t('messenger.users.unitHint') }}</span>
             </div>
-            <div class="messenger-unit-structure-list">
+            <div class="messenger-unit-structure-actions">
               <button
-                v-for="unit in contactUnitOptions"
-                :key="`unit-filter-${unit.id || 'all'}`"
-                class="messenger-unit-filter-btn"
-                :class="{ active: selectedContactUnitId === unit.id }"
+                class="messenger-unit-all-btn"
+                :class="{ active: !selectedContactUnitId }"
                 type="button"
-                @click="selectedContactUnitId = unit.id"
+                @click="selectedContactUnitId = ''"
               >
-                <span class="messenger-unit-filter-name">{{ unit.label }}</span>
-                <span class="messenger-unit-filter-count">{{ unit.count }}</span>
+                <span class="messenger-unit-tree-name">{{ t('messenger.users.unitAll') }}</span>
+                <span class="messenger-unit-tree-count">{{ contactTotalCount }}</span>
+              </button>
+            </div>
+            <div class="messenger-unit-tree">
+              <button
+                v-for="row in contactUnitTreeRows"
+                :key="`unit-tree-${row.id}`"
+                class="messenger-unit-tree-row"
+                :class="{ active: selectedContactUnitId === row.id }"
+                :style="resolveUnitTreeRowStyle(row)"
+                type="button"
+                @click="selectedContactUnitId = row.id"
+              >
+                <span
+                  v-if="row.hasChildren"
+                  class="messenger-unit-tree-toggle"
+                  :class="{ expanded: row.expanded }"
+                  @click.stop="toggleContactUnitExpanded(row.id)"
+                >
+                  <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+                </span>
+                <span v-else class="messenger-unit-tree-toggle messenger-unit-tree-toggle--placeholder"></span>
+                <span class="messenger-unit-tree-name">{{ row.label }}</span>
+                <span class="messenger-unit-tree-count">{{ row.count }}</span>
               </button>
             </div>
           </div>
@@ -1081,6 +1102,21 @@ type ToolEntry = {
   source: Record<string, unknown>;
 };
 
+type UnitTreeNode = {
+  id: string;
+  label: string;
+  children: UnitTreeNode[];
+};
+
+type UnitTreeRow = {
+  id: string;
+  label: string;
+  depth: number;
+  count: number;
+  hasChildren: boolean;
+  expanded: boolean;
+};
+
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'error';
 
 const route = useRoute();
@@ -1121,6 +1157,8 @@ const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
 const desktopToolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
 const orgUnitPathMap = ref<Record<string, string>>({});
+const orgUnitTree = ref<UnitTreeNode[]>([]);
+const contactUnitExpandedIds = ref<Set<string>>(new Set());
 const showScrollBottomButton = ref(false);
 const autoStickToBottom = ref(true);
 const groupCreateVisible = ref(false);
@@ -1362,47 +1400,172 @@ const resolveUnitLabel = (unitId: unknown): string => {
   return orgUnitPathMap.value[cleaned] || cleaned;
 };
 
-const contactUnitOptions = computed(() => {
-  const contacts = Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : [];
-  const counter = new Map<string, number>();
-  contacts.forEach((item) => {
+const normalizeUnitNode = (value: unknown): UnitTreeNode | null => {
+  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const unitId = normalizeUnitText(source.unit_id || source.id);
+  if (!unitId) return null;
+  const label =
+    normalizeUnitText(
+      source.path_name || source.pathName || source.display_name || source.unit_name || source.name
+    ) || unitId;
+  const children = (Array.isArray(source.children) ? source.children : [])
+    .map((item) => normalizeUnitNode(item))
+    .filter((item): item is UnitTreeNode => Boolean(item));
+  return {
+    id: unitId,
+    label,
+    children
+  };
+};
+
+const collectUnitNodeIds = (nodes: UnitTreeNode[], sink: Set<string>) => {
+  nodes.forEach((node) => {
+    sink.add(node.id);
+    if (node.children.length) {
+      collectUnitNodeIds(node.children, sink);
+    }
+  });
+};
+
+const isContactUnitExpanded = (unitId: string): boolean => contactUnitExpandedIds.value.has(unitId);
+
+const toggleContactUnitExpanded = (unitId: string) => {
+  const cleaned = normalizeUnitText(unitId);
+  if (!cleaned) return;
+  const next = new Set(contactUnitExpandedIds.value);
+  if (next.has(cleaned)) {
+    next.delete(cleaned);
+  } else {
+    next.add(cleaned);
+  }
+  contactUnitExpandedIds.value = next;
+};
+
+const resolveUnitTreeRowStyle = (row: UnitTreeRow): Record<string, string> => ({
+  '--messenger-unit-depth': String(Math.max(0, row.depth))
+});
+
+const contactTotalCount = computed(() =>
+  Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts.length : 0
+);
+
+const contactUnitDirectCountMap = computed(() => {
+  const map = new Map<string, number>();
+  (Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : []).forEach((item) => {
     const key = resolveUnitIdKey(item?.unit_id);
-    counter.set(key, (counter.get(key) || 0) + 1);
+    map.set(key, (map.get(key) || 0) + 1);
   });
+  return map;
+});
 
-  const keys = new Set<string>([...counter.keys(), ...Object.keys(orgUnitPathMap.value)]);
-  const options = [...keys].map((key) => {
-    const label = key === UNIT_UNGROUPED_ID ? t('userWorld.unit.ungrouped') : resolveUnitLabel(key);
-    return {
-      id: key,
-      label,
-      count: counter.get(key) || 0
-    };
+const contactUnitKnownIdSet = computed(() => {
+  const set = new Set<string>();
+  collectUnitNodeIds(orgUnitTree.value, set);
+  return set;
+});
+
+const contactUnitDescendantMap = computed(() => {
+  const map = new Map<string, Set<string>>();
+  const walk = (node: UnitTreeNode): Set<string> => {
+    const ids = new Set<string>([node.id]);
+    node.children.forEach((child) => {
+      walk(child).forEach((value) => ids.add(value));
+    });
+    map.set(node.id, ids);
+    return ids;
+  };
+  orgUnitTree.value.forEach((node) => {
+    walk(node);
   });
+  return map;
+});
 
-  options.sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
-  return [
-    {
-      id: '',
-      label: t('messenger.users.unitAll'),
-      count: contacts.length
-    },
-    ...options
-  ];
+const buildUnitTreeRows = (
+  nodes: UnitTreeNode[],
+  depth: number,
+  directCountMap: Map<string, number>
+): { rows: UnitTreeRow[]; total: number } => {
+  let rows: UnitTreeRow[] = [];
+  let total = 0;
+  nodes.forEach((node) => {
+    const child = buildUnitTreeRows(node.children, depth + 1, directCountMap);
+    const count = (directCountMap.get(node.id) || 0) + child.total;
+    if (count <= 0) {
+      return;
+    }
+    const hasChildren = child.rows.length > 0;
+    const expanded = hasChildren && isContactUnitExpanded(node.id);
+    rows.push({
+      id: node.id,
+      label: node.label,
+      depth,
+      count,
+      hasChildren,
+      expanded
+    });
+    if (expanded) {
+      rows = rows.concat(child.rows);
+    }
+    total += count;
+  });
+  return { rows, total };
+};
+
+const contactUnitTreeRows = computed<UnitTreeRow[]>(() => {
+  const directCountMap = contactUnitDirectCountMap.value;
+  const treeRows = buildUnitTreeRows(orgUnitTree.value, 0, directCountMap).rows;
+  const knownIds = contactUnitKnownIdSet.value;
+  const extraRows: UnitTreeRow[] = [];
+  directCountMap.forEach((count, unitId) => {
+    if (!count || unitId === UNIT_UNGROUPED_ID || knownIds.has(unitId)) return;
+    extraRows.push({
+      id: unitId,
+      label: resolveUnitLabel(unitId),
+      depth: 0,
+      count,
+      hasChildren: false,
+      expanded: false
+    });
+  });
+  extraRows.sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+  const ungroupedCount = directCountMap.get(UNIT_UNGROUPED_ID) || 0;
+  if (ungroupedCount > 0) {
+    extraRows.push({
+      id: UNIT_UNGROUPED_ID,
+      label: t('userWorld.unit.ungrouped'),
+      depth: 0,
+      count: ungroupedCount,
+      hasChildren: false,
+      expanded: false
+    });
+  }
+  return treeRows.concat(extraRows);
+});
+
+const selectedContactUnitScope = computed<Set<string> | null>(() => {
+  const selected = normalizeUnitText(selectedContactUnitId.value);
+  if (!selected) return null;
+  if (selected === UNIT_UNGROUPED_ID) {
+    return new Set<string>([UNIT_UNGROUPED_ID]);
+  }
+  const descendants = contactUnitDescendantMap.value.get(selected);
+  if (descendants?.size) {
+    return descendants;
+  }
+  return new Set<string>([selected]);
 });
 
 const filteredContacts = computed(() => {
   const text = keyword.value.toLowerCase();
-  const selectedUnit = String(selectedContactUnitId.value || '').trim();
+  const selectedScope = selectedContactUnitScope.value;
   return (Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : []).filter((item) => {
     const username = String(item?.username || '').toLowerCase();
     const userId = String(item?.user_id || '').toLowerCase();
-    const unitId = String(item?.unit_id || '').trim();
-    const normalizedUnitId = unitId || '__ungrouped__';
-    if (selectedUnit && normalizedUnitId !== selectedUnit) {
+    const unitKey = resolveUnitIdKey(item?.unit_id);
+    if (selectedScope && !selectedScope.has(unitKey)) {
       return false;
     }
-    const unitLabel = resolveUnitLabel(unitId).toLowerCase();
+    const unitLabel = resolveUnitLabel(item?.unit_id).toLowerCase();
     return !text || username.includes(text) || userId.includes(text) || unitLabel.includes(text);
   });
 });
@@ -2386,20 +2549,38 @@ const loadOrgUnits = async () => {
       : Array.isArray(data?.data)
         ? data.data
         : [];
+    const tree = sourceItems
+      .map((item) => normalizeUnitNode(item))
+      .filter((item): item is UnitTreeNode => Boolean(item));
     const nextMap: Record<string, string> = {};
-    const stack = [...sourceItems];
-    while (stack.length) {
-      const current = (stack.pop() || {}) as Record<string, unknown>;
-      const unitId = normalizeUnitText(current.unit_id || current.id);
-      if (unitId) {
-        nextMap[unitId] = normalizeUnitText(current.path_name || current.pathName || current.display_name || current.unit_name || current.name) || unitId;
+    const allNodeIds = new Set<string>();
+    const rootIds = new Set<string>();
+    const walk = (nodes: UnitTreeNode[]) => {
+      nodes.forEach((node) => {
+        nextMap[node.id] = node.label;
+        allNodeIds.add(node.id);
+        if (node.children.length) {
+          walk(node.children);
+        }
+      });
+    };
+    tree.forEach((node) => {
+      rootIds.add(node.id);
+    });
+    walk(tree);
+    const retainedExpanded = new Set<string>();
+    contactUnitExpandedIds.value.forEach((unitId) => {
+      if (allNodeIds.has(unitId)) {
+        retainedExpanded.add(unitId);
       }
-      const children = Array.isArray(current.children) ? current.children : [];
-      children.forEach((child) => stack.push(child));
-    }
+    });
     orgUnitPathMap.value = nextMap;
+    orgUnitTree.value = tree;
+    contactUnitExpandedIds.value = retainedExpanded.size > 0 ? retainedExpanded : rootIds;
   } catch {
     orgUnitPathMap.value = {};
+    orgUnitTree.value = [];
+    contactUnitExpandedIds.value = new Set();
   }
 };
 

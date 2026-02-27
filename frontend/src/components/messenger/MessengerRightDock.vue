@@ -42,29 +42,32 @@
             <div class="messenger-timeline-title-row">
               <div class="messenger-timeline-title">{{ item.title }}</div>
               <span v-if="item.isMain" class="messenger-kind-tag">{{ t('chat.history.main') }}</span>
-              <button
-                class="messenger-timeline-delete-btn"
-                type="button"
-                :title="t('chat.history.delete')"
-                :aria-label="t('chat.history.delete')"
-                @click.stop="$emit('delete-session', item.id)"
-              >
-                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-              </button>
+              <div class="messenger-timeline-actions">
+                <button
+                  class="messenger-timeline-main-btn"
+                  :class="{ active: item.isMain }"
+                  type="button"
+                  :title="item.isMain ? t('chat.history.main') : t('chat.history.setMain')"
+                  :aria-label="item.isMain ? t('chat.history.main') : t('chat.history.setMain')"
+                  :disabled="item.isMain"
+                  @click.stop="$emit('set-main', item.id)"
+                >
+                  <i class="fa-solid fa-thumbtack" aria-hidden="true"></i>
+                </button>
+                <button
+                  class="messenger-timeline-delete-btn"
+                  type="button"
+                  :title="t('chat.history.delete')"
+                  :aria-label="t('chat.history.delete')"
+                  @click.stop="$emit('delete-session', item.id)"
+                >
+                  <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                </button>
+              </div>
             </div>
             <div class="messenger-timeline-detail-row">
               <div class="messenger-timeline-detail">{{ item.preview || t('messenger.preview.empty') }}</div>
               <span class="messenger-timeline-time">{{ formatTime(item.lastAt) }}</span>
-            </div>
-            <div class="messenger-timeline-meta">
-              <button
-                v-if="!item.isMain"
-                class="messenger-timeline-main-btn"
-                type="button"
-                @click.stop="$emit('set-main', item.id)"
-              >
-                {{ t('chat.history.setMain') }}
-              </button>
             </div>
           </div>
         </div>

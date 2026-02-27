@@ -41,11 +41,11 @@
 }
 
 .messenger-view.messenger-view--right-collapsed {
-  grid-template-columns: 64px minmax(260px, 308px) minmax(460px, 1fr) 44px;
+  grid-template-columns: 64px minmax(260px, 308px) minmax(460px, 1fr) 0;
 }
 
 .messenger-view.messenger-view--without-middle.messenger-view--right-collapsed {
-  grid-template-columns: 64px minmax(460px, 1fr) 44px;
+  grid-template-columns: 64px minmax(460px, 1fr) 0;
 }
 
 .messenger-left-rail {
@@ -393,49 +393,124 @@
   color: #8a8a8a;
 }
 
-.messenger-unit-structure-list {
+.messenger-unit-structure-actions {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-height: 104px;
-  overflow: auto;
 }
 
-.messenger-unit-filter-btn {
+.messenger-unit-all-btn {
+  width: 100%;
+  border: 1px solid #dcdcdc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #4f4f4f;
+  cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  border: 1px solid #dcdcdc;
-  border-radius: 999px;
-  background: #ffffff;
-  color: #5a5a5a;
-  cursor: pointer;
-  padding: 3px 10px;
-  font-size: 11px;
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+  gap: 8px;
+  padding: 6px 8px;
+  text-align: left;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
-.messenger-unit-filter-btn:hover {
+.messenger-unit-all-btn:hover {
   border-color: rgba(19, 152, 127, 0.38);
   color: #13987f;
   background: #eef8f5;
 }
 
-.messenger-unit-filter-btn.active {
+.messenger-unit-all-btn.active {
   border-color: rgba(19, 152, 127, 0.42);
   background: #e4f3ef;
   color: #13987f;
 }
 
-.messenger-unit-filter-name {
-  max-width: 160px;
+.messenger-unit-tree {
+  max-height: 156px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-right: 2px;
+}
+
+.messenger-unit-tree-row {
+  --messenger-unit-depth: 0;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #4f4f4f;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 8px 5px calc(8px + var(--messenger-unit-depth) * 14px);
+  text-align: left;
+  font-size: 11px;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.messenger-unit-tree-row:hover {
+  border-color: rgba(19, 152, 127, 0.32);
+  background: #eef8f5;
+  color: #13987f;
+}
+
+.messenger-unit-tree-row.active {
+  border-color: rgba(19, 152, 127, 0.42);
+  background: #e4f3ef;
+  color: #13987f;
+}
+
+.messenger-unit-tree-toggle {
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #8a8a8a;
+  flex-shrink: 0;
+  transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
+}
+
+.messenger-unit-tree-toggle i {
+  font-size: 10px;
+  transition: transform 0.15s ease;
+}
+
+.messenger-unit-tree-toggle:hover {
+  background: #eef2f1;
+  color: #5f5f5f;
+}
+
+.messenger-unit-tree-toggle.expanded i {
+  transform: rotate(90deg);
+}
+
+.messenger-unit-tree-toggle--placeholder {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.messenger-unit-tree-name {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.messenger-unit-filter-count {
+.messenger-unit-tree-count {
   color: #8a8a8a;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.messenger-unit-tree-row.active .messenger-unit-tree-count,
+.messenger-unit-all-btn.active .messenger-unit-tree-count {
+  color: #13987f;
 }
 
 .messenger-chat {
@@ -797,6 +872,10 @@
 
 .messenger-right-dock.messenger-right-dock--collapsed {
   align-items: stretch;
+  width: 0;
+  min-width: 0;
+  border-left: 0;
+  overflow: visible;
 }
 
 .messenger-right-dock-toggle {
@@ -827,7 +906,9 @@
 }
 
 .messenger-right-dock.messenger-right-dock--collapsed .messenger-right-dock-toggle {
-  left: -9px;
+  left: -18px;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .messenger-right-dock-toggle:hover {
@@ -957,6 +1038,14 @@
   font-size: 11px;
 }
 
+.messenger-timeline-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.messenger-timeline-main-btn,
 .messenger-timeline-delete-btn {
   width: 22px;
   height: 22px;
@@ -973,45 +1062,34 @@
   transition: opacity 0.15s ease, border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
+.messenger-timeline-main-btn:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.messenger-timeline-main-btn.active {
+  border-color: rgba(19, 152, 127, 0.45);
+  color: var(--hula-accent);
+  background: #ebf6f3;
+}
+
+.messenger-timeline-item:hover .messenger-timeline-main-btn,
+.messenger-timeline-main-btn:focus-visible,
 .messenger-timeline-item:hover .messenger-timeline-delete-btn,
 .messenger-timeline-delete-btn:focus-visible {
   opacity: 1;
+}
+
+.messenger-timeline-main-btn:hover:not(:disabled) {
+  border-color: rgba(19, 152, 127, 0.42);
+  color: var(--hula-accent);
+  background: #ebf6f3;
 }
 
 .messenger-timeline-delete-btn:hover {
   border-color: #f0c2cb;
   color: #c14053;
   background: #fbf0f2;
-}
-
-.messenger-timeline-meta {
-  margin-top: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  color: #8a8a8a;
-  font-size: 11px;
-}
-
-.messenger-timeline-meta:empty {
-  display: none;
-}
-
-.messenger-timeline-main-btn {
-  height: 24px;
-  border: 1px solid #d8d8d8;
-  border-radius: 7px;
-  background: #f8f8f8;
-  color: #5d5d5d;
-  cursor: pointer;
-  padding: 0 8px;
-  font-size: 11px;
-}
-
-.messenger-timeline-main-btn:hover {
-  border-color: rgba(19, 152, 127, 0.42);
-  color: var(--hula-accent);
-  background: #ebf6f3;
 }
 
 .messenger-settings-panel {
@@ -2394,11 +2472,11 @@
   }
 
   .messenger-view.messenger-view--right-collapsed {
-    grid-template-columns: 64px minmax(240px, 292px) minmax(420px, 1fr) 44px;
+    grid-template-columns: 64px minmax(240px, 292px) minmax(420px, 1fr) 0;
   }
 
   .messenger-view.messenger-view--without-middle.messenger-view--right-collapsed {
-    grid-template-columns: 64px minmax(420px, 1fr) 44px;
+    grid-template-columns: 64px minmax(420px, 1fr) 0;
   }
 }
 
