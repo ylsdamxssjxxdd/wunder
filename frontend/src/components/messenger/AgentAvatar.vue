@@ -41,7 +41,7 @@ const stateClass = computed(() => `state-${props.state}`);
   align-items: center;
   justify-content: center;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   flex-shrink: 0;
 }
 
@@ -63,15 +63,19 @@ const stateClass = computed(() => `state-${props.state}`);
 }
 
 .messenger-agent-avatar-badge {
-  width: 9px;
-  height: 9px;
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
   border: 1px solid #ffffff;
-  background: #9aa4b2;
+  background: transparent;
   position: absolute;
-  right: 0;
-  bottom: 1px;
+  right: 1px;
+  top: 1px;
   box-sizing: border-box;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
+  z-index: 2;
 }
 
 .messenger-agent-avatar.state-running {
@@ -80,21 +84,19 @@ const stateClass = computed(() => `state-${props.state}`);
   color: #13886f;
 }
 
-.messenger-agent-avatar.state-running i {
-  animation: agent-avatar-spin 1.2s linear infinite;
-}
-
 .messenger-agent-avatar.state-running::after {
   content: '';
   position: absolute;
-  inset: -2px;
+  inset: -1px;
   border-radius: 50%;
-  border: 2px solid rgba(19, 152, 127, 0.28);
+  border: 2px solid rgba(19, 152, 127, 0.24);
   animation: agent-avatar-pulse 1.2s ease-in-out infinite;
 }
 
 .messenger-agent-avatar.state-running .messenger-agent-avatar-badge {
   background: #0fa087;
+  opacity: 1;
+  transform: scale(1);
   animation: agent-avatar-badge-pulse 1.2s ease-in-out infinite;
 }
 
@@ -106,6 +108,8 @@ const stateClass = computed(() => `state-${props.state}`);
 
 .messenger-agent-avatar.state-done .messenger-agent-avatar-badge {
   background: #23ac76;
+  opacity: 1;
+  transform: scale(1);
 }
 
 .messenger-agent-avatar.state-error {
@@ -116,15 +120,8 @@ const stateClass = computed(() => `state-${props.state}`);
 
 .messenger-agent-avatar.state-error .messenger-agent-avatar-badge {
   background: #c14053;
-}
-
-@keyframes agent-avatar-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  opacity: 1;
+  transform: scale(1);
 }
 
 @keyframes agent-avatar-pulse {

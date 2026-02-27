@@ -1,13 +1,20 @@
 <template>
-  <div class="messenger-view" :class="{ 'messenger-view--without-right': !showRightDock }">
+  <div
+    class="messenger-view"
+    :class="{
+      'messenger-view--without-right': !showRightDock,
+      'messenger-view--without-middle': !showMiddlePane,
+      'messenger-view--right-collapsed': showRightDock && rightDockCollapsed
+    }"
+  >
     <aside class="messenger-left-rail">
       <div class="messenger-left-brand">Wunder</div>
-      <button class="messenger-avatar-btn" type="button" @click="switchSection('more')">
+      <button class="messenger-avatar-btn" type="button" @click="openProfilePage">
         <span class="messenger-avatar-text">{{ avatarLabel(currentUsername) }}</span>
       </button>
       <div class="messenger-left-nav">
         <button
-          v-for="item in sectionOptions"
+          v-for="item in primarySectionOptions"
           :key="item.key"
           class="messenger-left-nav-btn"
           :class="{ active: sessionHub.activeSection === item.key }"
@@ -20,17 +27,18 @@
         </button>
       </div>
       <button
-        class="messenger-left-refresh"
+        class="messenger-left-nav-btn messenger-left-nav-btn--settings"
+        :class="{ active: sessionHub.activeSection === 'more' }"
         type="button"
-        :title="t('common.refresh')"
-        :aria-label="t('common.refresh')"
-        @click="refreshAll"
+        :title="t('messenger.section.settings')"
+        :aria-label="t('messenger.section.settings')"
+        @click="openSettingsPage"
       >
-        <i class="fa-solid fa-rotate" aria-hidden="true"></i>
+        <i class="fa-solid fa-gear" aria-hidden="true"></i>
       </button>
     </aside>
 
-    <section class="messenger-middle-pane">
+    <section v-if="showMiddlePane" class="messenger-middle-pane">
       <header class="messenger-middle-header">
         <div class="messenger-middle-title">{{ activeSectionTitle }}</div>
         <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
@@ -68,7 +76,13 @@
             type="button"
             @click="openMixedConversation(item)"
           >
-            <div class="messenger-list-avatar">{{ avatarLabel(item.title) }}</div>
+            <AgentAvatar
+              v-if="item.kind === 'agent'"
+              size="md"
+              :state="resolveAgentRuntimeState(item.agentId)"
+              :title="item.title"
+            />
+            <div v-else class="messenger-list-avatar">{{ avatarLabel(item.title) }}</div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ item.title }}</span>
@@ -79,7 +93,6 @@
                 <span v-if="item.unread > 0" class="messenger-list-unread">{{ item.unread }}</span>
               </div>
             </div>
-            <span class="messenger-kind-tag">{{ conversationKindLabel(item.kind) }}</span>
           </button>
           <div v-if="!filteredMixedConversations.length" class="messenger-list-empty">
             {{ t('messenger.empty.list') }}
@@ -150,11 +163,10 @@
             type="button"
             @click="selectAgentForSettings(DEFAULT_AGENT_KEY)"
           >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-robot" aria-hidden="true"></i></div>
+            <AgentAvatar size="md" :state="resolveAgentRuntimeState(DEFAULT_AGENT_KEY)" />
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('messenger.defaultAgent') }}</span>
-                <span v-if="isAgentRunning(DEFAULT_AGENT_KEY)" class="messenger-running-dot"></span>
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ t('messenger.defaultAgentDesc') }}</span>
@@ -172,11 +184,10 @@
             type="button"
             @click="selectAgentForSettings(agent.id)"
           >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-robot" aria-hidden="true"></i></div>
+            <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
-                <span v-if="isAgentRunning(agent.id)" class="messenger-running-dot"></span>
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ agent.description || t('messenger.preview.empty') }}</span>
@@ -199,7 +210,7 @@
             type="button"
             @click="selectAgentForSettings(agent.id)"
           >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-robot" aria-hidden="true"></i></div>
+            <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
@@ -349,7 +360,7 @@
               </div>
             </div>
           </button>
-          <button class="messenger-list-item" type="button" @click="openProfile">
+          <button class="messenger-list-item" type="button" @click="openProfilePage">
             <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
@@ -630,7 +641,22 @@
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'more'">
-              <div class="messenger-list-empty">{{ t('messenger.section.more.desc') }}</div>
+              <MessengerSettingsPanel
+                :mode="settingsPanelMode"
+                :username="currentUsername"
+                :user-id="currentUserId"
+                :language-label="currentLanguageLabel"
+                :session-count="chatStore.sessions.length"
+                :message-count="chatStore.messages.length"
+                :prompt-count="0"
+                :persona-count="0"
+                @toggle-language="toggleLanguage"
+                @logout="logout"
+                @check-update="checkClientUpdate"
+                @cloud-config="openCloudDataConfig"
+                @import-data="importLocalData"
+                @export-data="exportLocalData"
+              />
             </template>
           </div>
         </template>
@@ -645,12 +671,19 @@
             <div
               v-for="(message, index) in chatStore.messages"
               :key="resolveAgentMessageKey(message, index)"
+              v-show="shouldRenderAgentMessage(message)"
               class="messenger-message"
               :class="{ mine: message.role === 'user' }"
             >
-              <div class="messenger-message-avatar">
+              <div v-if="message.role === 'user'" class="messenger-message-avatar">
                 {{ avatarLabel(message.role === 'user' ? currentUsername : activeAgentName) }}
               </div>
+              <AgentAvatar
+                v-else
+                size="sm"
+                :state="resolveMessageAgentAvatarState(message)"
+                :title="activeAgentName"
+              />
               <div class="messenger-message-main">
                 <div class="messenger-message-meta">
                   <span>{{ message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
@@ -668,7 +701,10 @@
                     :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
                   />
                 </div>
-                <div class="messenger-message-bubble messenger-markdown">
+                <div
+                  v-if="message.role === 'user' || hasMessageContent(message.content)"
+                  class="messenger-message-bubble messenger-markdown"
+                >
                   <button
                     class="messenger-bubble-copy-btn"
                     type="button"
@@ -679,6 +715,16 @@
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                   <div class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
+                </div>
+                <div v-if="shouldShowMessageStats(message)" class="messenger-message-stats">
+                  <span
+                    v-for="item in buildMessageStatsEntries(message)"
+                    :key="item.label"
+                    class="messenger-message-stat"
+                  >
+                    <span class="messenger-message-stat-label">{{ item.label }}：</span>
+                    <span class="messenger-message-stat-value">{{ item.value }}</span>
+                  </span>
                 </div>
               </div>
             </div>
@@ -746,58 +792,18 @@
       </footer>
     </section>
 
-    <aside v-if="showRightDock" class="messenger-right-dock">
-      <div class="messenger-right-content messenger-right-content--stack">
-        <div class="messenger-right-panel messenger-right-panel--sandbox">
-          <div class="messenger-right-section-title">
-            <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
-            <span>{{ t('messenger.right.sandbox') }}</span>
-          </div>
-          <div v-if="showRightAgentPanels" class="messenger-workspace-scope chat-shell">
-            <WorkspacePanel :agent-id="rightPanelAgentIdForApi" :container-id="rightPanelContainerId" />
-          </div>
-          <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
-        </div>
-
-        <div class="messenger-right-panel messenger-right-panel--timeline">
-          <div class="messenger-right-section-title">
-            <i class="fa-solid fa-timeline" aria-hidden="true"></i>
-            <span>{{ t('messenger.right.timeline') }}</span>
-          </div>
-          <div v-if="!rightPanelSessionHistory.length" class="messenger-list-empty">{{ t('messenger.empty.timeline') }}</div>
-          <div v-else class="messenger-timeline">
-            <div
-              v-for="item in rightPanelSessionHistory"
-              :key="item.id"
-              class="messenger-timeline-item"
-              :class="{ active: String(chatStore.activeSessionId || '') === item.id }"
-              role="button"
-              tabindex="0"
-              @click="restoreTimelineSession(item.id)"
-              @keydown.enter.prevent="restoreTimelineSession(item.id)"
-              @keydown.space.prevent="restoreTimelineSession(item.id)"
-            >
-              <div class="messenger-timeline-title-row">
-                <div class="messenger-timeline-title">{{ item.title }}</div>
-                <span v-if="item.isMain" class="messenger-kind-tag">{{ t('chat.history.main') }}</span>
-              </div>
-              <div class="messenger-timeline-detail">{{ item.preview || t('messenger.preview.empty') }}</div>
-              <div class="messenger-timeline-meta">
-                <span>{{ formatTime(item.lastAt) }}</span>
-                <button
-                  v-if="!item.isMain"
-                  class="messenger-timeline-main-btn"
-                  type="button"
-                  @click.stop="setTimelineSessionMain(item.id)"
-                >
-                  {{ t('chat.history.setMain') }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </aside>
+    <MessengerRightDock
+      v-if="showRightDock"
+      :collapsed="rightDockCollapsed"
+      :show-agent-panels="showRightAgentPanels"
+      :agent-id-for-api="rightPanelAgentIdForApi"
+      :container-id="rightPanelContainerId"
+      :active-session-id="String(chatStore.activeSessionId || '')"
+      :session-history="rightPanelSessionHistory"
+      @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
+      @restore-session="restoreTimelineSession"
+      @set-main="setTimelineSessionMain"
+    />
 
     <AgentCreateDialog
       v-model="agentCreateVisible"
@@ -818,11 +824,13 @@ import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentCreateDialog from '@/components/messenger/AgentCreateDialog.vue';
+import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
+import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
+import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
-import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
 import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
 import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
@@ -839,6 +847,7 @@ import {
 import { useUserWorldStore } from '@/stores/userWorld';
 import { renderMarkdown } from '@/utils/markdown';
 import { showApiError } from '@/utils/apiError';
+import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 
 const DEFAULT_AGENT_KEY = '__default__';
 const sandboxContainers = Array.from({ length: 10 }, (_, index) => index + 1);
@@ -870,6 +879,8 @@ type ToolEntry = {
   source: Record<string, unknown>;
 };
 
+type AgentRuntimeState = 'idle' | 'running' | 'done' | 'error';
+
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -887,9 +898,12 @@ const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 's
 const selectedCustomToolName = ref('');
 const worldDraft = ref('');
 const messageListRef = ref<HTMLElement | null>(null);
-const runningAgentIds = ref<Set<string>>(new Set());
+const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
+const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
 const agentSettingMode = ref<'agent' | 'cron' | 'channel'>('agent');
+const settingsPanelMode = ref<'general' | 'profile'>('general');
+const rightDockCollapsed = ref(false);
 const toolsCatalogLoading = ref(false);
 const customTools = ref<ToolEntry[]>([]);
 const sharedTools = ref<ToolEntry[]>([]);
@@ -907,14 +921,18 @@ const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
 
 const sectionOptions = computed(() => [
-  { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.messages') },
+  { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
   { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
-  { key: 'groups' as MessengerSection, icon: 'fa-solid fa-users-viewfinder', label: t('messenger.section.groups') },
+  { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
   { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
   { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
   { key: 'files' as MessengerSection, icon: 'fa-solid fa-folder-open', label: t('messenger.section.files') },
-  { key: 'more' as MessengerSection, icon: 'fa-solid fa-ellipsis', label: t('messenger.section.more') }
+  { key: 'more' as MessengerSection, icon: 'fa-solid fa-gear', label: t('messenger.section.settings') }
 ]);
+
+const primarySectionOptions = computed(() =>
+  sectionOptions.value.filter((item) => item.key !== 'more')
+);
 
 const basePrefix = computed(() => {
   if (route.path.startsWith('/desktop')) return '/desktop';
@@ -931,13 +949,26 @@ const currentUsername = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
   return String(user?.username || user?.id || t('user.guest'));
 });
+const currentUserId = computed(() => {
+  const user = authStore.user as Record<string, unknown> | null;
+  return String(user?.id || '');
+});
 
-const activeSectionTitle = computed(() => t(`messenger.section.${sessionHub.activeSection}`));
-const activeSectionSubtitle = computed(() => t(`messenger.section.${sessionHub.activeSection}.desc`));
+const activeSectionTitle = computed(() =>
+  sessionHub.activeSection === 'more'
+    ? t('messenger.section.settings')
+    : t(`messenger.section.${sessionHub.activeSection}`)
+);
+const activeSectionSubtitle = computed(() =>
+  sessionHub.activeSection === 'more'
+    ? t('messenger.section.settings.desc')
+    : t(`messenger.section.${sessionHub.activeSection}.desc`)
+);
 const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
+const showMiddlePane = computed(() => sessionHub.activeSection !== 'more');
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
 const sharedAgents = computed(() => (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []));
@@ -1227,9 +1258,7 @@ const activeConversationTitle = computed(() => {
   const identity = activeConversation.value;
   if (!identity) return t('messenger.empty.noConversation');
   if (identity.kind === 'agent') {
-    if (identity.id.startsWith('draft:')) return activeAgentName.value;
-    const session = chatStore.sessions.find((item) => String(item?.id || '') === identity.id);
-    return String(session?.title || activeAgentName.value);
+    return activeAgentName.value;
   }
   const conversation = userWorldStore.conversations.find(
     (item) => String(item?.conversation_id || '') === identity.id
@@ -1361,11 +1390,72 @@ const rightPanelSessionHistory = computed(() => {
 const hasCronTask = (agentId: unknown): boolean =>
   cronAgentIds.value.has(normalizeAgentId(agentId));
 
-const isAgentRunning = (agentId: unknown): boolean =>
-  runningAgentIds.value.has(normalizeAgentId(agentId));
+const normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRuntimeState => {
+  const raw = String(state || '')
+    .trim()
+    .toLowerCase();
+  if (pendingQuestion || raw === 'running' || raw === 'waiting' || raw === 'cancelling') return 'running';
+  if (raw === 'done' || raw === 'completed' || raw === 'finish' || raw === 'finished') return 'done';
+  if (raw === 'error' || raw === 'failed' || raw === 'timeout') return 'error';
+  return 'idle';
+};
 
-const conversationKindLabel = (kind: 'agent' | 'direct' | 'group') =>
-  t(`messenger.kind.${kind}`);
+const setRuntimeStateOverride = (agentId: unknown, state: AgentRuntimeState, ttlMs = 0) => {
+  const key = normalizeAgentId(agentId);
+  if (ttlMs <= 0) {
+    runtimeStateOverrides.value.delete(key);
+    return;
+  }
+  runtimeStateOverrides.value.set(key, {
+    state,
+    expiresAt: Date.now() + ttlMs
+  });
+};
+
+const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
+  const key = normalizeAgentId(agentId);
+  const now = Date.now();
+  const override = runtimeStateOverrides.value.get(key);
+  if (override && override.expiresAt > now) {
+    return override.state;
+  }
+  if (override && override.expiresAt <= now) {
+    runtimeStateOverrides.value.delete(key);
+  }
+  return agentRuntimeStateMap.value.get(key) || 'idle';
+};
+
+const hasMessageContent = (value: unknown): boolean => Boolean(String(value || '').trim());
+
+const hasWorkflowOrThinking = (message: Record<string, unknown>): boolean =>
+  Boolean(message?.workflowStreaming) ||
+  Boolean(message?.reasoningStreaming) ||
+  Boolean((message?.workflowItems as unknown[])?.length) ||
+  hasMessageContent(message?.reasoning);
+
+const shouldRenderAgentMessage = (message: Record<string, unknown>): boolean => {
+  if (String(message?.role || '') === 'user') return true;
+  return hasMessageContent(message?.content) || hasWorkflowOrThinking(message);
+};
+
+const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
+  if (String(message?.role || '') !== 'assistant') return 'idle';
+  if (
+    Boolean(message?.stream_incomplete) ||
+    Boolean(message?.workflowStreaming) ||
+    Boolean(message?.reasoningStreaming)
+  ) {
+    return 'running';
+  }
+  const current = resolveAgentRuntimeState(activeAgentId.value);
+  return current === 'idle' ? 'done' : current;
+};
+
+const buildMessageStatsEntries = (message: Record<string, unknown>) =>
+  buildAssistantMessageStatsEntries(message as Record<string, any>, t);
+
+const shouldShowMessageStats = (message: Record<string, unknown>): boolean =>
+  buildMessageStatsEntries(message).length > 0;
 
 const avatarLabel = (value: unknown): string => {
   const source = String(value || '').trim();
@@ -1509,6 +1599,9 @@ const switchSection = (section: MessengerSection) => {
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
   toolPaneStatus.value = '';
+  if (section === 'more') {
+    settingsPanelMode.value = 'general';
+  }
   if (section !== 'tools') {
     selectedToolCategory.value = '';
     selectedCustomToolName.value = '';
@@ -1537,6 +1630,23 @@ const switchSection = (section: MessengerSection) => {
     loadToolsCatalog();
   }
   ensureSectionSelection();
+};
+
+const openSettingsPage = () => {
+  settingsPanelMode.value = 'general';
+  switchSection('more');
+};
+
+const openProfilePage = () => {
+  settingsPanelMode.value = 'profile';
+  sessionHub.setSection('more');
+  sessionHub.setKeyword('');
+  const nextQuery = { ...route.query, section: 'more' } as Record<string, any>;
+  delete nextQuery.session_id;
+  delete nextQuery.agent_id;
+  delete nextQuery.entry;
+  delete nextQuery.conversation_id;
+  router.push({ path: `${basePrefix.value}/profile`, query: nextQuery }).catch(() => undefined);
 };
 
 const openMixedConversation = async (item: MixedConversation) => {
@@ -1867,8 +1977,11 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
   const content = String(payload?.content || '').trim();
   const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
   if (!content && attachments.length === 0) return;
+  const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  setRuntimeStateOverride(targetAgentId, 'running', 30_000);
   try {
     await chatStore.sendMessage(content, { attachments });
+    setRuntimeStateOverride(targetAgentId, 'done', 8_000);
     if (chatStore.activeSessionId) {
       sessionHub.setActiveConversation({
         kind: 'agent',
@@ -1878,6 +1991,7 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
     }
     await scrollMessagesToBottom();
   } catch (error) {
+    setRuntimeStateOverride(targetAgentId, 'error', 8_000);
     showApiError(error, t('chat.error.requestFailed'));
   }
 };
@@ -1935,10 +2049,6 @@ const handleAgentCreateSubmit = async (payload: Record<string, unknown>) => {
   }
 };
 
-const openProfile = () => {
-  router.push(`${basePrefix.value}/profile`);
-};
-
 const toggleLanguage = () => {
   const next = getCurrentLanguage() === 'zh-CN' ? 'en-US' : 'zh-CN';
   setLanguage(next);
@@ -1959,28 +2069,38 @@ const logout = async () => {
   router.replace('/login');
 };
 
+const checkClientUpdate = () => {
+  ElMessage.success(t('common.refreshSuccess'));
+};
+
+const openCloudDataConfig = () => {
+  ElMessage.info(t('messenger.settings.cloudConfigHint'));
+};
+
+const importLocalData = () => {
+  ElMessage.info(t('messenger.settings.importHint'));
+};
+
+const exportLocalData = () => {
+  ElMessage.info(t('messenger.settings.exportHint'));
+};
+
 const loadRunningAgents = async () => {
   try {
     const response = await listRunningAgents();
     const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
-    const result = new Set<string>();
+    const stateMap = new Map<string, AgentRuntimeState>();
     items.forEach((item: Record<string, unknown>) => {
-      const state = String(item?.state || '').trim().toLowerCase();
-      const active =
-        state === 'running' ||
-        state === 'waiting' ||
-        state === 'cancelling' ||
-        item?.pending_question === true;
-      if (!active) return;
       const key =
         normalizeAgentId(
           item?.agent_id || (item?.is_default === true ? DEFAULT_AGENT_KEY : '')
         ) || DEFAULT_AGENT_KEY;
-      result.add(key);
+      const state = normalizeRuntimeState(item?.state, item?.pending_question === true);
+      stateMap.set(key, state);
     });
-    runningAgentIds.value = result;
+    agentRuntimeStateMap.value = stateMap;
   } catch {
-    runningAgentIds.value = new Set<string>();
+    agentRuntimeStateMap.value = new Map<string, AgentRuntimeState>();
   }
 };
 
@@ -2099,6 +2219,7 @@ const bootstrap = async () => {
 watch(
   () => [route.path, route.query.section],
   () => {
+    settingsPanelMode.value = route.path.includes('/profile') ? 'profile' : 'general';
     const sectionHint = String(route.query.section || '').trim().toLowerCase();
     if (route.path.includes('/user-world') && sectionHint === 'groups') {
       sessionHub.setSection('groups');
