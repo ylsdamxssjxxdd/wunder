@@ -2,64 +2,12 @@
   <div class="messenger-cron-panel">
     <div class="messenger-cron-toolbar">
       <div class="messenger-inline-hint">{{ t('cron.subtitle') }}</div>
-      <button class="messenger-inline-btn" type="button" :disabled="loading || creating" @click="refreshAll">
-        {{ t('common.refresh') }}
-      </button>
-    </div>
-
-    <div class="messenger-cron-create">
-      <div class="messenger-cron-create-title">{{ t('cron.create.title') }}</div>
-      <label class="messenger-cron-field">
-        <span>{{ t('cron.create.message') }}</span>
-        <textarea
-          v-model="createForm.message"
-          rows="3"
-          :placeholder="t('cron.create.messagePlaceholder')"
-        ></textarea>
-      </label>
-      <label class="messenger-cron-field">
-        <span>{{ t('cron.create.runAt') }}</span>
-        <input v-model="createForm.runAt" type="datetime-local" />
-      </label>
-      <div class="messenger-cron-mode-row">
-        <span>{{ t('cron.create.mode') }}</span>
-        <button
-          class="messenger-inline-btn"
-          :class="{ active: createForm.mode === 'once' }"
-          type="button"
-          @click="createForm.mode = 'once'"
-        >
-          {{ t('cron.create.mode.once') }}
+      <div class="messenger-inline-actions">
+        <button class="messenger-inline-btn" type="button" :disabled="loading || creating" @click="refreshAll">
+          {{ t('common.refresh') }}
         </button>
-        <button
-          class="messenger-inline-btn"
-          :class="{ active: createForm.mode === 'repeat' }"
-          type="button"
-          @click="createForm.mode = 'repeat'"
-        >
-          {{ t('cron.create.mode.repeat') }}
-        </button>
-      </div>
-      <div v-if="createForm.mode === 'repeat'" class="messenger-cron-repeat-row">
-        <span>{{ t('cron.create.intervalEvery') }}</span>
-        <input
-          v-model.number="createForm.intervalValue"
-          type="number"
-          min="1"
-          step="1"
-        />
-        <select v-model="createForm.intervalUnit">
-          <option value="minute">{{ t('cron.create.interval.unit.minute') }}</option>
-          <option value="hour">{{ t('cron.create.interval.unit.hour') }}</option>
-          <option value="day">{{ t('cron.create.interval.unit.day') }}</option>
-        </select>
-      </div>
-      <div class="messenger-cron-actions">
-        <button class="messenger-inline-btn" type="button" :disabled="creating" @click="resetCreateForm">
-          {{ t('common.reset') }}
-        </button>
-        <button class="messenger-inline-btn primary" type="button" :disabled="creating" @click="createJob">
-          {{ creating ? t('common.loading') : t('cron.create.submit') }}
+        <button class="messenger-inline-btn primary" type="button" :disabled="creating" @click="openCreateDialog">
+          {{ t('cron.create.title') }}
         </button>
       </div>
     </div>
@@ -138,6 +86,75 @@
         </template>
       </div>
     </div>
+
+    <el-dialog
+      v-model="createDialogVisible"
+      class="messenger-dialog messenger-cron-create-dialog"
+      :title="t('cron.create.title')"
+      width="520px"
+      append-to-body
+    >
+      <div class="messenger-cron-create">
+        <label class="messenger-cron-field">
+          <span>{{ t('cron.create.message') }}</span>
+          <textarea
+            v-model="createForm.message"
+            rows="3"
+            :placeholder="t('cron.create.messagePlaceholder')"
+          ></textarea>
+        </label>
+        <label class="messenger-cron-field">
+          <span>{{ t('cron.create.runAt') }}</span>
+          <input v-model="createForm.runAt" type="datetime-local" />
+        </label>
+        <div class="messenger-cron-mode-row">
+          <span>{{ t('cron.create.mode') }}</span>
+          <button
+            class="messenger-inline-btn"
+            :class="{ active: createForm.mode === 'once' }"
+            type="button"
+            @click="createForm.mode = 'once'"
+          >
+            {{ t('cron.create.mode.once') }}
+          </button>
+          <button
+            class="messenger-inline-btn"
+            :class="{ active: createForm.mode === 'repeat' }"
+            type="button"
+            @click="createForm.mode = 'repeat'"
+          >
+            {{ t('cron.create.mode.repeat') }}
+          </button>
+        </div>
+        <div v-if="createForm.mode === 'repeat'" class="messenger-cron-repeat-row">
+          <span>{{ t('cron.create.intervalEvery') }}</span>
+          <input
+            v-model.number="createForm.intervalValue"
+            type="number"
+            min="1"
+            step="1"
+          />
+          <select v-model="createForm.intervalUnit">
+            <option value="minute">{{ t('cron.create.interval.unit.minute') }}</option>
+            <option value="hour">{{ t('cron.create.interval.unit.hour') }}</option>
+            <option value="day">{{ t('cron.create.interval.unit.day') }}</option>
+          </select>
+        </div>
+      </div>
+      <template #footer>
+        <div class="messenger-cron-actions">
+          <button class="messenger-inline-btn" type="button" :disabled="creating" @click="resetCreateForm">
+            {{ t('common.reset') }}
+          </button>
+          <button class="messenger-inline-btn" type="button" :disabled="creating" @click="createDialogVisible = false">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="messenger-inline-btn primary" type="button" :disabled="creating" @click="createJob">
+            {{ creating ? t('common.loading') : t('cron.create.submit') }}
+          </button>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -178,6 +195,7 @@ const runs = ref<any[]>([]);
 const loading = ref(false);
 const runsLoading = ref(false);
 const creating = ref(false);
+const createDialogVisible = ref(false);
 const selectedJobId = ref('');
 const selectedRunId = ref('');
 
@@ -244,6 +262,13 @@ const resetCreateForm = () => {
   createForm.mode = 'once';
   createForm.intervalValue = 5;
   createForm.intervalUnit = 'minute';
+};
+
+const openCreateDialog = () => {
+  if (!createForm.runAt) {
+    createForm.runAt = resolveDefaultRunAt();
+  }
+  createDialogVisible.value = true;
 };
 
 const formatSchedule = (job: Record<string, unknown>): string => {
@@ -411,6 +436,7 @@ const createJob = async () => {
     });
     ElMessage.success(t('cron.create.success'));
     resetCreateForm();
+    createDialogVisible.value = false;
     await refreshAll();
   } catch (error) {
     showApiError(error, resolveError(error));

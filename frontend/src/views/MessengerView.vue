@@ -132,27 +132,42 @@
               </button>
             </div>
             <div class="messenger-unit-tree">
-              <button
+              <div
                 v-for="row in contactUnitTreeRows"
                 :key="`unit-tree-${row.id}`"
                 class="messenger-unit-tree-row"
-                :class="{ active: selectedContactUnitId === row.id }"
+                :class="{
+                  active: selectedContactUnitId === row.id,
+                  'messenger-unit-tree-row--dir': row.hasChildren,
+                  'messenger-unit-tree-row--leaf': !row.hasChildren
+                }"
                 :style="resolveUnitTreeRowStyle(row)"
-                type="button"
+                role="button"
+                tabindex="0"
                 @click="selectedContactUnitId = row.id"
+                @keydown.enter.prevent="selectedContactUnitId = row.id"
+                @keydown.space.prevent="selectedContactUnitId = row.id"
               >
-                <span
+                <button
                   v-if="row.hasChildren"
                   class="messenger-unit-tree-toggle"
                   :class="{ expanded: row.expanded }"
+                  type="button"
+                  :title="row.expanded ? t('common.collapse') : t('common.expand')"
                   @click.stop="toggleContactUnitExpanded(row.id)"
                 >
                   <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
-                </span>
+                </button>
                 <span v-else class="messenger-unit-tree-toggle messenger-unit-tree-toggle--placeholder"></span>
+                <span class="messenger-unit-tree-icon" aria-hidden="true">
+                  <i
+                    class="fa-solid"
+                    :class="row.hasChildren ? (row.expanded ? 'fa-folder-open' : 'fa-folder') : 'fa-file-lines'"
+                  ></i>
+                </span>
                 <span class="messenger-unit-tree-name">{{ row.label }}</span>
                 <span class="messenger-unit-tree-count">{{ row.count }}</span>
-              </button>
+              </div>
             </div>
           </div>
           <button
@@ -392,9 +407,6 @@
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('messenger.files.userContainer') }}</span>
-                <span v-if="fileScope === 'user'" class="messenger-kind-tag">
-                  {{ t('messenger.files.current') }}
-                </span>
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">
@@ -421,12 +433,6 @@
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('messenger.files.agentContainer', { id: container.id }) }}</span>
-                <span
-                  v-if="fileScope === 'agent' && selectedFileContainerId === container.id"
-                  class="messenger-kind-tag"
-                >
-                  {{ t('messenger.files.current') }}
-                </span>
                 <span v-if="container.agentNames.length" class="messenger-kind-tag">
                   {{ t('messenger.files.agentCount', { count: container.agentNames.length }) }}
                 </span>
@@ -451,12 +457,6 @@
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('messenger.files.agentContainer', { id: container.id }) }}</span>
-                <span
-                  v-if="fileScope === 'agent' && selectedFileContainerId === container.id"
-                  class="messenger-kind-tag"
-                >
-                  {{ t('messenger.files.current') }}
-                </span>
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ container.preview }}</span>
@@ -846,6 +846,7 @@
                 @open-tools="openDesktopTools"
                 @open-system="openDesktopSystemSettings"
                 @toggle-devtools="toggleDesktopDevTools"
+                @logout="handleSettingsLogout"
                 @update:ui-font-size="updateUiFontSize"
                 @update:desktop-tool-call-mode="updateDesktopToolCallMode"
               />
@@ -906,7 +907,99 @@
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
-                  <div class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
+                  <template v-if="isGreetingMessage(message)">
+                    <div class="messenger-greeting-line">
+                      <div class="messenger-greeting-text">{{ message.content }}</div>
+                      <el-tooltip
+                        ref="agentAbilityTooltipRef"
+                        placement="bottom-end"
+                        trigger="hover"
+                        :show-after="120"
+                        :teleported="true"
+                        :popper-options="agentAbilityTooltipOptions"
+                        popper-class="messenger-ability-tooltip-popper"
+                        @show="handleAgentAbilityTooltipShow"
+                        @hide="handleAgentAbilityTooltipHide"
+                      >
+                        <template #content>
+                          <div class="ability-tooltip">
+                            <div class="ability-header">
+                              <span class="ability-title">{{ t('chat.ability.title') }}</span>
+                              <span class="ability-sub">{{ t('chat.ability.subtitle') }}</span>
+                            </div>
+                            <div v-if="agentToolSummaryLoading && !hasAgentAbilitySummary" class="ability-muted">
+                              {{ t('chat.ability.loading') }}
+                            </div>
+                            <div v-else-if="agentToolSummaryError" class="ability-error">
+                              {{ agentToolSummaryError }}
+                            </div>
+                            <template v-else>
+                              <div v-if="!hasAgentAbilitySummary" class="ability-muted">
+                                {{ t('chat.ability.empty') }}
+                              </div>
+                              <div v-else class="ability-scroll">
+                                <div class="ability-section">
+                                  <div class="ability-section-title">
+                                    <span>{{ t('chat.ability.tools') }}</span>
+                                    <span class="ability-count">{{ agentAbilitySummary.tools.length }}</span>
+                                  </div>
+                                  <div v-if="agentAbilitySummary.tools.length" class="ability-item-list">
+                                    <div
+                                      v-for="tool in agentAbilitySummary.tools"
+                                      :key="`m-tool-${tool.name}`"
+                                      class="ability-item tool"
+                                    >
+                                      <div class="ability-item-name">{{ tool.name }}</div>
+                                      <div
+                                        class="ability-item-desc"
+                                        :class="{ 'is-empty': !tool.description }"
+                                      >
+                                        {{ tool.description || t('chat.ability.noDesc') }}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div v-else class="ability-empty">{{ t('chat.ability.emptyTools') }}</div>
+                                </div>
+                                <div class="ability-section">
+                                  <div class="ability-section-title">
+                                    <span>{{ t('chat.ability.skills') }}</span>
+                                    <span class="ability-count">{{ agentAbilitySummary.skills.length }}</span>
+                                  </div>
+                                  <div v-if="agentAbilitySummary.skills.length" class="ability-item-list">
+                                    <div
+                                      v-for="skill in agentAbilitySummary.skills"
+                                      :key="`m-skill-${skill.name}`"
+                                      class="ability-item skill"
+                                    >
+                                      <div class="ability-item-name">{{ skill.name }}</div>
+                                      <div
+                                        class="ability-item-desc"
+                                        :class="{ 'is-empty': !skill.description }"
+                                      >
+                                        {{ skill.description || t('chat.ability.noDesc') }}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div v-else class="ability-empty">{{ t('chat.ability.emptySkills') }}</div>
+                                </div>
+                              </div>
+                            </template>
+                          </div>
+                        </template>
+                        <button
+                          class="messenger-greeting-preview-btn"
+                          type="button"
+                          :title="t('chat.promptPreview')"
+                          :aria-label="t('chat.promptPreview')"
+                          :disabled="agentPromptPreviewLoading"
+                          @click.stop="openAgentPromptPreview"
+                        >
+                          <i class="fa-solid fa-eye" aria-hidden="true"></i>
+                        </button>
+                      </el-tooltip>
+                    </div>
+                  </template>
+                  <div v-else class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
                 </div>
                 <div v-if="shouldShowMessageStats(message)" class="messenger-message-stats">
                   <span
@@ -1058,33 +1151,14 @@
               <button
                 class="messenger-world-tool-btn"
                 type="button"
-                :class="{ active: worldQuickPanelMode === 'history' }"
                 :title="t('messenger.world.history')"
                 :aria-label="t('messenger.world.history')"
-                @click="toggleWorldQuickPanel('history')"
+                @click="openWorldHistoryDialog"
               >
                 <svg class="messenger-world-tool-icon" aria-hidden="true">
                   <use href="#history"></use>
                 </svg>
               </button>
-              <div v-if="worldQuickPanelMode === 'history'" class="messenger-world-pop-panel messenger-world-history-panel">
-                <button
-                  v-for="entry in worldHistoryEntries"
-                  :key="entry.key"
-                  class="messenger-world-history-item"
-                  type="button"
-                  :title="entry.content"
-                  @click="applyWorldHistory(entry.content)"
-                >
-                  <span class="messenger-world-history-item-text">{{ entry.content }}</span>
-                  <span class="messenger-world-history-item-time">
-                    {{ entry.time ? formatTime(entry.time) : '--' }}
-                  </span>
-                </button>
-                <div v-if="!worldHistoryEntries.length" class="messenger-world-history-empty">
-                  {{ t('messenger.world.historyEmpty') }}
-                </div>
-              </div>
             </div>
           </div>
           <textarea
@@ -1150,6 +1224,44 @@
     />
 
     <el-dialog
+      v-model="worldHistoryDialogVisible"
+      class="messenger-dialog messenger-world-history-dialog"
+      :title="t('messenger.world.history')"
+      width="520px"
+      append-to-body
+    >
+      <div class="messenger-world-history-dialog-list">
+        <button
+          v-for="entry in worldHistoryEntries"
+          :key="entry.key"
+          class="messenger-world-history-item"
+          type="button"
+          :title="entry.content"
+          @click="applyWorldHistory(entry.content)"
+        >
+          <span class="messenger-world-history-item-text">{{ entry.content }}</span>
+          <span class="messenger-world-history-item-time">
+            {{ entry.time ? formatTime(entry.time) : '--' }}
+          </span>
+        </button>
+        <div v-if="!worldHistoryEntries.length" class="messenger-world-history-empty">
+          {{ t('messenger.world.historyEmpty') }}
+        </div>
+      </div>
+    </el-dialog>
+
+    <el-dialog
+      v-model="agentPromptPreviewVisible"
+      class="system-prompt-dialog"
+      :title="t('chat.systemPrompt.title')"
+      width="720px"
+      append-to-body
+    >
+      <div v-if="agentPromptPreviewLoading" class="messenger-list-empty">{{ t('chat.systemPrompt.loading') }}</div>
+      <pre v-else class="workflow-dialog-detail">{{ activeAgentPromptPreviewText }}</pre>
+    </el-dialog>
+
+    <el-dialog
       v-model="groupCreateVisible"
       :title="t('userWorld.group.createTitle')"
       width="440px"
@@ -1209,8 +1321,9 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits } from '@/api/auth';
+import { fetchSessionSystemPrompt, fetchRealtimeSystemPrompt } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
-import { fetchUserToolsCatalog } from '@/api/userTools';
+import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
@@ -1246,6 +1359,7 @@ import { useUserWorldStore } from '@/stores/userWorld';
 import { renderMarkdown } from '@/utils/markdown';
 import { showApiError } from '@/utils/apiError';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
+import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 const DEFAULT_AGENT_KEY = '__default__';
@@ -1256,6 +1370,7 @@ const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;
 const WORLD_QUICK_EMOJI_STORAGE_KEY = 'wunder_world_quick_emoji';
 const WORLD_MESSAGE_HISTORY_STORAGE_KEY = 'wunder_world_message_history';
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
+const AGENT_TOOL_OVERRIDE_NONE = '__no_tools__';
 const WORLD_EMOJI_CATALOG = [
   '😀',
   '😁',
@@ -1332,6 +1447,8 @@ type AgentFileContainer = {
 type UnitTreeNode = {
   id: string;
   label: string;
+  parentId: string;
+  sortOrder: number;
   children: UnitTreeNode[];
 };
 
@@ -1368,7 +1485,26 @@ const worldTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const worldUploadInputRef = ref<HTMLInputElement | null>(null);
 const worldUploading = ref(false);
 const worldComposerHeight = ref(188);
-const worldQuickPanelMode = ref<'' | 'emoji' | 'history'>('');
+const worldQuickPanelMode = ref<'' | 'emoji'>('');
+const worldHistoryDialogVisible = ref(false);
+const agentPromptPreviewVisible = ref(false);
+const agentPromptPreviewLoading = ref(false);
+const agentPromptPreviewContent = ref('');
+const agentPromptToolSummary = ref<Record<string, unknown> | null>(null);
+const agentToolSummaryLoading = ref(false);
+const agentToolSummaryError = ref('');
+type TooltipLike = { updatePopper?: () => void; popperRef?: { update?: () => void } };
+const agentAbilityTooltipRef = ref<TooltipLike | TooltipLike[] | null>(null);
+const agentAbilityTooltipVisible = ref(false);
+const agentAbilityTooltipOptions = {
+  strategy: 'fixed',
+  modifiers: [
+    { name: 'offset', options: { offset: [0, 10] } },
+    { name: 'shift', options: { padding: 8 } },
+    { name: 'flip', options: { padding: 8, fallbackPlacements: ['top', 'bottom', 'right', 'left'] } },
+    { name: 'preventOverflow', options: { padding: 8, altAxis: true, boundary: 'viewport' } }
+  ]
+};
 const worldRecentEmojis = ref<string[]>([]);
 const worldHistoryMap = ref<Record<string, string[]>>({});
 const messageListRef = ref<HTMLElement | null>(null);
@@ -1553,6 +1689,96 @@ const activeAgentName = computed(() =>
   String(
     (activeAgent.value as Record<string, unknown> | null)?.name || t('messenger.defaultAgent')
   )
+);
+const activeAgentPromptPreviewText = computed(() =>
+  String(agentPromptPreviewContent.value || '').trim() || t('chat.systemPrompt.empty')
+);
+const activeAgentSession = computed(() => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) return null;
+  return (
+    chatStore.sessions.find((item) => String(item?.id || '').trim() === sessionId) || null
+  );
+});
+
+const normalizeAbilityItemName = (item: unknown): string => {
+  if (!item) return '';
+  if (typeof item === 'string') return item.trim();
+  const source = item as Record<string, unknown>;
+  return String(source.name || source.tool_name || source.toolName || source.id || '').trim();
+};
+
+const buildAbilityAllowedNameSet = (summary: Record<string, unknown>): Set<string> => {
+  const names = collectAbilityNames(summary);
+  return new Set<string>([...(names.tools || []), ...(names.skills || [])]);
+};
+
+const filterAbilitySummaryByNames = (
+  summary: Record<string, unknown>,
+  selectedNames: Set<string>
+): Record<string, unknown> => {
+  const filterList = (list: unknown) =>
+    Array.isArray(list)
+      ? list.filter((item) => {
+          const name = normalizeAbilityItemName(item);
+          return Boolean(name) && selectedNames.has(name);
+        })
+      : [];
+  return {
+    ...summary,
+    builtin_tools: filterList(summary.builtin_tools),
+    mcp_tools: filterList(summary.mcp_tools),
+    knowledge_tools: filterList(summary.knowledge_tools),
+    user_tools: filterList(summary.user_tools),
+    shared_tools: filterList(summary.shared_tools),
+    skills: filterList(summary.skills)
+  };
+};
+
+const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() => {
+  const summary = agentPromptToolSummary.value;
+  if (!summary) return null;
+  const allowedSet = buildAbilityAllowedNameSet(summary);
+  if (!allowedSet.size) return summary;
+  const session = activeAgentSession.value as Record<string, unknown> | null;
+  const sessionOverrides = Array.isArray(session?.tool_overrides)
+    ? (session?.tool_overrides as unknown[])
+    : [];
+  const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
+    ? (chatStore.draftToolOverrides as unknown[])
+    : [];
+  const agentDefaults = Array.isArray((activeAgent.value as Record<string, unknown> | null)?.tool_names)
+    ? (((activeAgent.value as Record<string, unknown> | null)?.tool_names as unknown[]) || [])
+    : [];
+  const sourceOverrides = sessionOverrides.length
+    ? sessionOverrides
+    : draftOverrides.length
+      ? draftOverrides
+      : agentDefaults;
+  if (sourceOverrides.some((item) => String(item || '').trim() === AGENT_TOOL_OVERRIDE_NONE)) {
+    return filterAbilitySummaryByNames(summary, new Set<string>());
+  }
+  const selectedNames = new Set<string>();
+  sourceOverrides.forEach((item) => {
+    const name = String(item || '').trim();
+    if (name && allowedSet.has(name)) {
+      selectedNames.add(name);
+    }
+  });
+  if (!selectedNames.size && !sourceOverrides.length) {
+    allowedSet.forEach((name) => selectedNames.add(name));
+  }
+  return filterAbilitySummaryByNames(summary, selectedNames);
+});
+
+const agentAbilitySummary = computed(() =>
+  collectAbilityDetails((effectiveAgentToolSummary.value || {}) as Record<string, unknown>)
+);
+const hasAgentAbilitySummary = computed(
+  () =>
+    Array.isArray(agentAbilitySummary.value.tools) &&
+    Array.isArray(agentAbilitySummary.value.skills) &&
+    (agentAbilitySummary.value.tools.length > 0 || agentAbilitySummary.value.skills.length > 0)
 );
 const currentContainerId = computed(() => {
   const source = activeAgent.value as Record<string, unknown> | null;
@@ -1777,6 +2003,8 @@ const normalizeUnitNode = (value: unknown): UnitTreeNode | null => {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
   const unitId = normalizeUnitText(source.unit_id || source.id);
   if (!unitId) return null;
+  const parentId = normalizeUnitText(source.parent_id || source.parentId);
+  const sortOrder = Number(source.sort_order ?? source.sortOrder);
   const label = normalizeUnitShortLabel(
     source.name ||
       source.unit_name ||
@@ -1789,11 +2017,101 @@ const normalizeUnitNode = (value: unknown): UnitTreeNode | null => {
   const children = (Array.isArray(source.children) ? source.children : [])
     .map((item) => normalizeUnitNode(item))
     .filter((item): item is UnitTreeNode => Boolean(item));
+  const hydratedChildren = children.map((child) => ({
+    ...child,
+    parentId: child.parentId || unitId
+  }));
   return {
     id: unitId,
     label: label || unitId,
-    children
+    parentId,
+    sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+    children: hydratedChildren
   };
+};
+
+const flattenUnitNodes = (nodes: UnitTreeNode[], sink: UnitTreeNode[] = []): UnitTreeNode[] => {
+  nodes.forEach((node) => {
+    sink.push({
+      id: node.id,
+      label: node.label,
+      parentId: node.parentId,
+      sortOrder: node.sortOrder,
+      children: []
+    });
+    if (node.children.length) {
+      flattenUnitNodes(node.children, sink);
+    }
+  });
+  return sink;
+};
+
+const buildUnitTreeFromFlat = (nodes: UnitTreeNode[]): UnitTreeNode[] => {
+  const nodeMap = new Map<string, UnitTreeNode>();
+  nodes.forEach((node) => {
+    const id = normalizeUnitText(node.id);
+    if (!id) return;
+    const existing = nodeMap.get(id);
+    if (existing) {
+      if (!existing.label || existing.label === existing.id) {
+        existing.label = node.label || id;
+      }
+      if (!existing.parentId && node.parentId) {
+        existing.parentId = node.parentId;
+      }
+      if ((!Number.isFinite(existing.sortOrder) || existing.sortOrder === 0) && Number.isFinite(node.sortOrder)) {
+        existing.sortOrder = node.sortOrder;
+      }
+      return;
+    }
+    nodeMap.set(id, {
+      id,
+      label: node.label || id,
+      parentId: normalizeUnitText(node.parentId),
+      sortOrder: Number.isFinite(node.sortOrder) ? node.sortOrder : 0,
+      children: []
+    });
+  });
+
+  const hasAncestor = (node: UnitTreeNode, ancestorId: string): boolean => {
+    let cursor = normalizeUnitText(node.parentId);
+    let guard = 0;
+    while (cursor && guard < nodeMap.size) {
+      if (cursor === ancestorId) {
+        return true;
+      }
+      const parent = nodeMap.get(cursor);
+      if (!parent) {
+        break;
+      }
+      cursor = normalizeUnitText(parent.parentId);
+      guard += 1;
+    }
+    return false;
+  };
+
+  const roots: UnitTreeNode[] = [];
+  nodeMap.forEach((node) => {
+    const parentId = normalizeUnitText(node.parentId);
+    const parent = parentId ? nodeMap.get(parentId) : null;
+    if (!parent || parent.id === node.id || hasAncestor(parent, node.id)) {
+      roots.push(node);
+      return;
+    }
+    parent.children.push(node);
+  });
+
+  const sortNodes = (list: UnitTreeNode[]) => {
+    list.sort((left, right) => {
+      const leftOrder = Number.isFinite(left.sortOrder) ? left.sortOrder : 0;
+      const rightOrder = Number.isFinite(right.sortOrder) ? right.sortOrder : 0;
+      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+      return left.label.localeCompare(right.label, 'zh-CN');
+    });
+    list.forEach((node) => sortNodes(node.children));
+  };
+  sortNodes(roots);
+  return roots;
 };
 
 const collectUnitNodeIds = (nodes: UnitTreeNode[], sink: Set<string>) => {
@@ -2378,14 +2696,20 @@ const scheduleWorldQuickPanelClose = () => {
   }, 120);
 };
 
-const openWorldQuickPanel = (mode: 'emoji' | 'history') => {
+const openWorldQuickPanel = (mode: 'emoji') => {
   clearWorldQuickPanelClose();
   worldQuickPanelMode.value = mode;
 };
 
-const toggleWorldQuickPanel = (mode: 'emoji' | 'history') => {
+const toggleWorldQuickPanel = (mode: 'emoji') => {
   clearWorldQuickPanelClose();
   worldQuickPanelMode.value = worldQuickPanelMode.value === mode ? '' : mode;
+};
+
+const openWorldHistoryDialog = () => {
+  clearWorldQuickPanelClose();
+  worldQuickPanelMode.value = '';
+  worldHistoryDialogVisible.value = true;
 };
 
 const rememberWorldEmoji = (emoji: string) => {
@@ -2423,6 +2747,7 @@ const applyWorldHistory = (content: string) => {
   if (!cleaned) return;
   worldDraft.value = cleaned;
   worldQuickPanelMode.value = '';
+  worldHistoryDialogVisible.value = false;
   focusWorldTextareaToEnd();
 };
 
@@ -2627,6 +2952,9 @@ const shouldRenderAgentMessage = (message: Record<string, unknown>): boolean => 
   return hasMessageContent(message?.content) || hasWorkflowOrThinking(message);
 };
 
+const isGreetingMessage = (message: Record<string, unknown>): boolean =>
+  String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
+
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
   if (
@@ -2660,22 +2988,43 @@ const resolveUnread = (value: unknown): number => {
 
 const normalizeTimestamp = (value: unknown): number => {
   if (value === null || value === undefined) return 0;
-  const date = new Date(value as string | number);
-  if (!Number.isNaN(date.getTime())) return date.getTime();
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? 0 : value.getTime();
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  const text = String(value).trim();
+  if (!text) return 0;
+  if (/^-?\d+(\.\d+)?$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return 0;
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 };
 
 const formatTime = (value: unknown): string => {
   const ts = normalizeTimestamp(value);
   if (!ts) return '';
   const date = new Date(ts);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const now = new Date();
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const sameDay =
+    sameYear && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
   const hour = String(date.getHours()).padStart(2, '0');
   const minute = String(date.getMinutes()).padStart(2, '0');
-  return `${month}-${day} ${hour}:${minute}`;
+  if (sameDay) {
+    return `${hour}:${minute}`;
+  }
+  if (sameYear) {
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${month}-${day}`;
+  }
+  return String(date.getFullYear());
 };
 
 const trimMarkdownCache = () => {
@@ -2814,6 +3163,8 @@ const deleteMixedConversation = async (item: MixedConversation) => {
 const switchSection = (section: MessengerSection) => {
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
+  worldHistoryDialogVisible.value = false;
+  agentPromptPreviewVisible.value = false;
   toolPaneStatus.value = '';
   if (section === 'more') {
     settingsPanelMode.value = 'general';
@@ -2871,6 +3222,15 @@ const openProfilePage = () => {
   delete nextQuery.entry;
   delete nextQuery.conversation_id;
   router.push({ path: `${basePrefix.value}/profile`, query: nextQuery }).catch(() => undefined);
+};
+
+const handleSettingsLogout = () => {
+  if (desktopMode.value) {
+    router.push('/desktop/home').catch(() => undefined);
+    return;
+  }
+  authStore.logout();
+  router.push('/login').catch(() => undefined);
 };
 
 const handleSearchCreateAction = () => {
@@ -2997,6 +3357,100 @@ const openActiveAgentSettings = () => {
       query: nextQuery
     })
     .catch(() => undefined);
+};
+
+const updateAgentAbilityTooltip = async () => {
+  await nextTick();
+  const raw = agentAbilityTooltipRef.value;
+  const tooltipRefs = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  tooltipRefs.forEach((tooltip) => {
+    if (tooltip?.updatePopper) {
+      tooltip.updatePopper();
+    } else if (tooltip?.popperRef?.update) {
+      tooltip.popperRef.update();
+    }
+  });
+  requestAnimationFrame(() => {
+    tooltipRefs.forEach((tooltip) => {
+      if (tooltip?.updatePopper) {
+        tooltip.updatePopper();
+      } else if (tooltip?.popperRef?.update) {
+        tooltip.popperRef.update();
+      }
+    });
+  });
+};
+
+const loadAgentToolSummary = async () => {
+  if (agentToolSummaryLoading.value || agentPromptToolSummary.value) {
+    return agentPromptToolSummary.value;
+  }
+  agentToolSummaryLoading.value = true;
+  agentToolSummaryError.value = '';
+  try {
+    const result = await fetchUserToolsSummary();
+    const summary = (result?.data?.data as Record<string, unknown> | null) || null;
+    agentPromptToolSummary.value = summary;
+    return summary;
+  } catch (error) {
+    agentToolSummaryError.value =
+      (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
+      t('chat.toolSummaryFailed');
+    return null;
+  } finally {
+    agentToolSummaryLoading.value = false;
+    if (agentAbilityTooltipVisible.value) {
+      await updateAgentAbilityTooltip();
+    }
+  }
+};
+
+const handleAgentAbilityTooltipShow = () => {
+  agentAbilityTooltipVisible.value = true;
+  void loadAgentToolSummary();
+  void updateAgentAbilityTooltip();
+};
+
+const handleAgentAbilityTooltipHide = () => {
+  agentAbilityTooltipVisible.value = false;
+};
+
+const openAgentPromptPreview = async () => {
+  agentPromptPreviewVisible.value = true;
+  agentPromptPreviewLoading.value = true;
+  agentPromptPreviewContent.value = '';
+  const summaryPromise = loadAgentToolSummary();
+  try {
+    const session = activeAgentSession.value as Record<string, unknown> | null;
+    const sessionId = String(chatStore.activeSessionId || '').trim();
+    const sessionOverrides = Array.isArray(session?.tool_overrides)
+      ? (session?.tool_overrides as unknown[])
+      : [];
+    const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
+      ? (chatStore.draftToolOverrides as unknown[])
+      : [];
+    const overrides = sessionOverrides.length ? sessionOverrides : draftOverrides.length ? draftOverrides : undefined;
+    const sourceAgentId = normalizeAgentId(
+      session?.agent_id || chatStore.draftAgentId || activeAgentId.value
+    );
+    const agentId = sourceAgentId === DEFAULT_AGENT_KEY ? '' : sourceAgentId;
+    const payload = {
+      ...(agentId ? { agent_id: agentId } : {}),
+      ...(overrides ? { tool_overrides: overrides } : {})
+    };
+    const promptRequest = sessionId
+      ? fetchSessionSystemPrompt(sessionId, payload)
+      : fetchRealtimeSystemPrompt(payload);
+    const promptResult = await promptRequest;
+    await summaryPromise;
+    const promptPayload = (promptResult?.data?.data || {}) as Record<string, unknown>;
+    agentPromptPreviewContent.value = String(promptPayload.prompt || '');
+  } catch (error) {
+    showApiError(error, t('chat.systemPromptFailed'));
+    agentPromptPreviewContent.value = '';
+  } finally {
+    agentPromptPreviewLoading.value = false;
+  }
 };
 
 const openSelectedContactConversation = async () => {
@@ -3215,14 +3669,17 @@ const loadToolsCatalog = async () => {
 const loadOrgUnits = async () => {
   try {
     const { data } = await fetchOrgUnits();
+    const sourceTree = Array.isArray(data?.data?.tree) ? data.data.tree : [];
     const sourceItems = Array.isArray(data?.data?.items)
       ? data.data.items
       : Array.isArray(data?.data)
         ? data.data
-        : [];
-    const tree = sourceItems
+        : sourceTree;
+    const normalized = sourceItems
       .map((item) => normalizeUnitNode(item))
       .filter((item): item is UnitTreeNode => Boolean(item));
+    const flatNodes = flattenUnitNodes(normalized);
+    const tree = buildUnitTreeFromFlat(flatNodes);
     const nextMap: Record<string, string> = {};
     const allNodeIds = new Set<string>();
     const rootIds = new Set<string>();

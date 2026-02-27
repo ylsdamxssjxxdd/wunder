@@ -107,21 +107,42 @@ const { t } = useI18n();
 
 const normalizeTimestamp = (value: unknown): number => {
   if (value === null || value === undefined) return 0;
-  const date = new Date(value as string | number);
-  if (!Number.isNaN(date.getTime())) return date.getTime();
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 0;
-  return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? 0 : value.getTime();
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  const text = String(value).trim();
+  if (!text) return 0;
+  if (/^-?\d+(\.\d+)?$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return 0;
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 };
 
 const formatTime = (value: unknown): string => {
   const ts = normalizeTimestamp(value);
   if (!ts) return '';
   const date = new Date(ts);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const now = new Date();
+  const sameYear = date.getFullYear() === now.getFullYear();
+  const sameDay =
+    sameYear && date.getMonth() === now.getMonth() && date.getDate() === now.getDate();
   const hour = String(date.getHours()).padStart(2, '0');
   const minute = String(date.getMinutes()).padStart(2, '0');
-  return `${month}-${day} ${hour}:${minute}`;
+  if (sameDay) {
+    return `${hour}:${minute}`;
+  }
+  if (sameYear) {
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${month}-${day}`;
+  }
+  return String(date.getFullYear());
 };
 </script>
