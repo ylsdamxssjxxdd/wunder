@@ -73,6 +73,7 @@ type WsError = Error & {
 
 const DEFAULT_TRANSPORT: 'ws' | 'sse' = 'ws';
 const WATCH_RETRY_DELAY_MS = 1000;
+const DISMISSED_STORAGE_PREFIX = 'user_world_dismissed_conversations';
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -107,6 +108,29 @@ const createTimeoutSignal = (timeoutMs: number): { signal: AbortSignal; cleanup:
 };
 
 const nowId = (): string => `msg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+const resolveDismissedStorageKey = (userId: unknown): string => {
+  const normalized = String(userId || '').trim() || 'anonymous';
+  return `${DISMISSED_STORAGE_PREFIX}:${normalized}`;
+};
+
+const normalizeConversationId = (value: unknown): string => String(value || '').trim();
+
+const parseDismissedConversationIds = (raw: unknown): string[] => {
+  if (typeof raw !== 'string' || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const result = new Set<string>();
+    parsed.forEach((item) => {
+      const cleaned = normalizeConversationId(item);
+      if (cleaned) result.add(cleaned);
+    });
+    return Array.from(result);
+  } catch {
+    return [];
+  }
+};
 
 const wsClient = createWsMultiplexer(() => openUserWorldSocket({ allowQueryToken: true }), {
   idleTimeoutMs: 30000,
@@ -160,7 +184,9 @@ export const useUserWorldStore = defineStore('user-world', {
     sending: false,
     initialized: false,
     error: '' as string,
-    streamTransport: DEFAULT_TRANSPORT as 'ws' | 'sse'
+    streamTransport: DEFAULT_TRANSPORT as 'ws' | 'sse',
+    dismissedConversationIds: [] as string[],
+    dismissedStorageKey: '' as string
   }),
   getters: {
     activeConversation(state): UserWorldConversation | null {
@@ -173,10 +199,63 @@ export const useUserWorldStore = defineStore('user-world', {
     }
   },
   actions: {
+    ensureDismissedConversationState(force = false) {
+      const authStore = useAuthStore();
+      const storageKey = resolveDismissedStorageKey(authStore.user?.id);
+      if (!force && this.dismissedStorageKey === storageKey) {
+        return;
+      }
+      this.dismissedStorageKey = storageKey;
+      if (typeof localStorage === 'undefined') {
+        this.dismissedConversationIds = [];
+        return;
+      }
+      const raw = localStorage.getItem(storageKey);
+      this.dismissedConversationIds = parseDismissedConversationIds(raw);
+    },
+
+    persistDismissedConversationState() {
+      if (typeof localStorage === 'undefined') return;
+      const authStore = useAuthStore();
+      const storageKey = this.dismissedStorageKey || resolveDismissedStorageKey(authStore.user?.id);
+      this.dismissedStorageKey = storageKey;
+      try {
+        const payload = JSON.stringify(Array.from(new Set(this.dismissedConversationIds)));
+        localStorage.setItem(storageKey, payload);
+      } catch {
+        // Ignore quota/private-mode storage errors.
+      }
+    },
+
+    isConversationDismissed(conversationId: string): boolean {
+      const cleaned = normalizeConversationId(conversationId);
+      if (!cleaned) return false;
+      return this.dismissedConversationIds.includes(cleaned);
+    },
+
+    markConversationDismissed(conversationId: string) {
+      const cleaned = normalizeConversationId(conversationId);
+      if (!cleaned || this.dismissedConversationIds.includes(cleaned)) {
+        return;
+      }
+      this.dismissedConversationIds = [...this.dismissedConversationIds, cleaned];
+      this.persistDismissedConversationState();
+    },
+
+    clearConversationDismissed(conversationId: string) {
+      const cleaned = normalizeConversationId(conversationId);
+      if (!cleaned || !this.dismissedConversationIds.includes(cleaned)) {
+        return;
+      }
+      this.dismissedConversationIds = this.dismissedConversationIds.filter((item) => item !== cleaned);
+      this.persistDismissedConversationState();
+    },
+
     async bootstrap(force = false) {
       if (this.initialized && !force) {
         return;
       }
+      this.ensureDismissedConversationState(force);
       this.loading = true;
       this.error = '';
       try {
@@ -200,6 +279,7 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async refreshContacts(keyword = '') {
+      this.ensureDismissedConversationState();
       const params: Record<string, string | number | boolean | null | undefined> = {
         offset: 0,
         limit: 500
@@ -210,17 +290,29 @@ export const useUserWorldStore = defineStore('user-world', {
       const response = await listUserWorldContacts(params);
       const data = asRecord(response.data?.data);
       const items = Array.isArray(data.items) ? (data.items as UserWorldContact[]) : [];
-      this.contacts = items.map((item) => ({
-        ...item,
-        unread_count: toNumber(item.unread_count)
-      }));
+      this.contacts = items.map((item) => {
+        const conversationId = normalizeConversationId(item.conversation_id);
+        if (conversationId && this.isConversationDismissed(conversationId)) {
+          return {
+            ...item,
+            conversation_id: null,
+            unread_count: 0
+          };
+        }
+        return {
+          ...item,
+          unread_count: toNumber(item.unread_count)
+        };
+      });
     },
 
     async refreshGroups() {
+      this.ensureDismissedConversationState();
       const response = await listUserWorldGroups({ offset: 0, limit: 500 });
       const data = asRecord(response.data?.data);
       const items = Array.isArray(data.items) ? (data.items as UserWorldGroup[]) : [];
       this.groups = items
+        .filter((item) => !this.isConversationDismissed(normalizeConversationId(item.conversation_id)))
         .map((item) => ({
           ...item,
           member_count: toNumber(item.member_count),
@@ -233,21 +325,30 @@ export const useUserWorldStore = defineStore('user-world', {
     },
 
     async refreshConversations() {
+      this.ensureDismissedConversationState();
       const response = await listUserWorldConversations({ offset: 0, limit: 500 });
       const data = asRecord(response.data?.data);
       const items = Array.isArray(data.items) ? (data.items as UserWorldConversation[]) : [];
-      this.conversations = items.map((item) => ({
-        ...item,
-        unread_count_cache: toNumber(item.unread_count_cache),
-        member_count:
-          item.member_count === null || item.member_count === undefined
-            ? item.member_count
-            : toNumber(item.member_count)
-      }));
+      this.conversations = items
+        .filter((item) => !this.isConversationDismissed(normalizeConversationId(item.conversation_id)))
+        .map((item) => ({
+          ...item,
+          unread_count_cache: toNumber(item.unread_count_cache),
+          member_count:
+            item.member_count === null || item.member_count === undefined
+              ? item.member_count
+              : toNumber(item.member_count)
+        }));
       this.unreadByConversation = this.conversations.reduce((acc: Record<string, number>, item) => {
         acc[item.conversation_id] = toNumber(item.unread_count_cache);
         return acc;
       }, {} as Record<string, number>);
+      if (
+        this.activeConversationId &&
+        this.isConversationDismissed(normalizeConversationId(this.activeConversationId))
+      ) {
+        this.activeConversationId = '';
+      }
       await this.syncConversationWatchers();
     },
 
@@ -257,6 +358,7 @@ export const useUserWorldStore = defineStore('user-world', {
       const response = await createOrGetUserWorldConversation({ peer_user_id: peer });
       const conversation = asRecord(response.data?.data) as unknown as UserWorldConversation;
       if (!conversation?.conversation_id) return;
+      this.clearConversationDismissed(conversation.conversation_id);
       this.upsertConversation(conversation);
       await this.setActiveConversation(conversation.conversation_id);
       await this.syncConversationWatchers();
@@ -278,6 +380,7 @@ export const useUserWorldStore = defineStore('user-world', {
       if (!conversation?.conversation_id) {
         return null;
       }
+      this.clearConversationDismissed(conversation.conversation_id);
       this.upsertConversation(conversation);
       await Promise.all([this.refreshConversations(), this.refreshGroups()]);
       await this.setActiveConversation(conversation.conversation_id);
@@ -288,6 +391,7 @@ export const useUserWorldStore = defineStore('user-world', {
     async dismissConversation(conversationId: string) {
       const cleaned = String(conversationId || '').trim();
       if (!cleaned) return;
+      this.markConversationDismissed(cleaned);
 
       const wasActive = this.activeConversationId === cleaned;
       this.stopConversationWatch(cleaned);
@@ -326,6 +430,7 @@ export const useUserWorldStore = defineStore('user-world', {
     async setActiveConversation(conversationId: string) {
       const cleaned = String(conversationId || '').trim();
       if (!cleaned) return;
+      this.clearConversationDismissed(cleaned);
       this.activeConversationId = cleaned;
       await this.loadMessages(cleaned);
       await this.markConversationRead(cleaned);
@@ -680,6 +785,9 @@ export const useUserWorldStore = defineStore('user-world', {
             ? conversation.member_count
             : toNumber(conversation.member_count)
       };
+      if (this.isConversationDismissed(normalizeConversationId(item.conversation_id))) {
+        return;
+      }
       const index = this.conversations.findIndex(
         (entry) => entry.conversation_id === item.conversation_id
       );

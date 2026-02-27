@@ -382,7 +382,7 @@
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'files'">
-          <div class="messenger-block-title">{{ t('messenger.files.title') }}</div>
+          <div class="messenger-block-title messenger-block-title--tight">{{ t('messenger.files.userContainer') }}</div>
           <button
             class="messenger-list-item"
             :class="{ active: fileScope === 'user' }"
@@ -392,34 +392,75 @@
             <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('workspace.title') }}</span>
+                <span class="messenger-list-name">{{ t('messenger.files.userContainer') }}</span>
                 <span v-if="fileScope === 'user'" class="messenger-kind-tag">
                   {{ t('messenger.files.current') }}
                 </span>
               </div>
               <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ currentUsername }}</span>
+                <span class="messenger-list-preview">
+                  {{ t('messenger.files.userContainerDesc', { id: USER_CONTAINER_ID }) }}
+                </span>
               </div>
             </div>
           </button>
+          <div class="messenger-block-title messenger-block-title--tight">
+            {{ t('messenger.files.agentContainerGroup') }}
+          </div>
+          <div v-if="boundAgentFileContainers.length" class="messenger-block-title messenger-block-title--sub">
+            {{ t('messenger.files.boundGroup') }}
+          </div>
           <button
-            v-for="container in sandboxContainers"
-            :key="`container-${container}`"
-            class="messenger-list-item"
-            :class="{ active: fileScope === 'agent' && selectedFileContainerId === container }"
+            v-for="container in boundAgentFileContainers"
+            :key="`container-${container.id}`"
+            class="messenger-list-item messenger-list-item--compact"
+            :class="{ active: fileScope === 'agent' && selectedFileContainerId === container.id }"
             type="button"
-            @click="selectContainer(container)"
+            @click="selectContainer(container.id)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('portal.agent.sandbox.option', { id: container }) }}</span>
-                <span v-if="fileScope === 'agent' && selectedFileContainerId === container" class="messenger-kind-tag">
+                <span class="messenger-list-name">{{ t('messenger.files.agentContainer', { id: container.id }) }}</span>
+                <span
+                  v-if="fileScope === 'agent' && selectedFileContainerId === container.id"
+                  class="messenger-kind-tag"
+                >
+                  {{ t('messenger.files.current') }}
+                </span>
+                <span v-if="container.agentNames.length" class="messenger-kind-tag">
+                  {{ t('messenger.files.agentCount', { count: container.agentNames.length }) }}
+                </span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ container.preview }}</span>
+              </div>
+            </div>
+          </button>
+          <div v-if="unboundAgentFileContainers.length" class="messenger-block-title messenger-block-title--sub">
+            {{ t('messenger.files.unboundGroup') }}
+          </div>
+          <button
+            v-for="container in unboundAgentFileContainers"
+            :key="`container-unbound-${container.id}`"
+            class="messenger-list-item messenger-list-item--compact"
+            :class="{ active: fileScope === 'agent' && selectedFileContainerId === container.id }"
+            type="button"
+            @click="selectContainer(container.id)"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('messenger.files.agentContainer', { id: container.id }) }}</span>
+                <span
+                  v-if="fileScope === 'agent' && selectedFileContainerId === container.id"
+                  class="messenger-kind-tag"
+                >
                   {{ t('messenger.files.current') }}
                 </span>
               </div>
               <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ activeAgentName }}</span>
+                <span class="messenger-list-preview">{{ container.preview }}</span>
               </div>
             </div>
           </button>
@@ -758,36 +799,43 @@
                   <div class="messenger-entity-title">{{ t('messenger.files.title') }}</div>
                   <div class="messenger-entity-grid">
                     <div class="messenger-entity-field">
-                      <span class="messenger-entity-label">{{ t('workspace.title') }}</span>
+                      <span class="messenger-entity-label">{{ t('messenger.files.containerType') }}</span>
                       <span class="messenger-entity-value">
-                        {{ fileScope === 'user' ? currentUsername : activeAgentName }}
+                        {{
+                          fileScope === 'user'
+                            ? t('messenger.files.userContainer')
+                            : t('messenger.files.agentContainer', { id: selectedFileContainerId })
+                        }}
                       </span>
                     </div>
                     <div class="messenger-entity-field">
-                      <span class="messenger-entity-label">{{ t('messenger.files.current') }}</span>
+                      <span class="messenger-entity-label">{{ t('messenger.files.lifecycle') }}</span>
                       <span class="messenger-entity-value">
-                        {{ t('portal.agent.sandbox.option', { id: selectedFileContainerId }) }}
+                        {{ fileContainerLifecycleText }}
                       </span>
                     </div>
                     <div class="messenger-entity-field">
-                      <span class="messenger-entity-label">{{ t('messenger.kind.agent') }}</span>
+                      <span class="messenger-entity-label">{{ t('messenger.files.agentBinding') }}</span>
                       <span class="messenger-entity-value">
-                        {{ fileScope === 'user' ? t('messenger.kind.direct') : activeAgentName }}
+                        {{ fileScope === 'user' ? currentUsername : selectedFileContainerAgentLabel }}
                       </span>
                     </div>
                     <div class="messenger-entity-field">
-                      <span class="messenger-entity-label">{{ t('messenger.section.files') }}</span>
+                      <span class="messenger-entity-label">{{ t('messenger.files.containerId') }}</span>
                       <span class="messenger-entity-value">
-                        {{ fileScope === 'user' ? t('workspace.title') : t('messenger.right.sandbox') }}
+                        {{ selectedFileContainerId }}
                       </span>
                     </div>
                   </div>
                 </div>
                 <div class="messenger-workspace-scope chat-shell messenger-files-workspace">
                   <WorkspacePanel
+                    :key="workspacePanelKey"
                     :agent-id="selectedFileAgentIdForApi"
                     :container-id="selectedFileContainerId"
-                    :title="t('workspace.title')"
+                    :title="fileScope === 'user' ? t('messenger.files.userContainer') : t('messenger.files.title')"
+                    :empty-text="fileScope === 'user' ? t('messenger.files.userEmpty') : t('workspace.empty')"
+                    @stats="handleFileWorkspaceStats"
                   />
                 </div>
               </div>
@@ -799,6 +847,7 @@
                 :username="currentUsername"
                 :user-id="currentUserId"
                 :language-label="currentLanguageLabel"
+                :ui-font-size="uiFontSize"
                 :desktop-tool-call-mode="desktopToolCallMode"
                 :devtools-available="desktopDevtoolsAvailable"
                 @toggle-language="toggleLanguage"
@@ -807,6 +856,7 @@
                 @open-tools="openDesktopTools"
                 @open-system="openDesktopSystemSettings"
                 @toggle-devtools="toggleDesktopDevTools"
+                @update:ui-font-size="updateUiFontSize"
                 @update:desktop-tool-call-mode="updateDesktopToolCallMode"
               />
             </template>
@@ -934,6 +984,16 @@
           <ChatComposer :loading="agentSessionLoading" @send="sendAgentMessage" @stop="stopAgentMessage" />
         </div>
         <div v-else-if="isWorldConversationActive" class="messenger-world-composer">
+          <button
+            class="messenger-world-upload-btn"
+            type="button"
+            :disabled="worldUploading"
+            :title="t('userWorld.attachments.upload')"
+            :aria-label="t('userWorld.attachments.upload')"
+            @click="triggerWorldUpload"
+          >
+            <i class="fa-solid fa-paperclip" aria-hidden="true"></i>
+          </button>
           <textarea
             v-model.trim="worldDraft"
             :placeholder="t('userWorld.input.placeholder')"
@@ -948,6 +1008,13 @@
           >
             <i class="fa-solid fa-paper-plane" aria-hidden="true"></i>
           </button>
+          <input
+            ref="worldUploadInputRef"
+            type="file"
+            multiple
+            hidden
+            @change="handleWorldUploadInput"
+          />
         </div>
         <div v-else class="messenger-chat-empty">
           {{ t('messenger.empty.input') }}
@@ -1037,6 +1104,7 @@ import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits } from '@/api/auth';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog } from '@/api/userTools';
+import { uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentCreateDialog from '@/components/messenger/AgentCreateDialog.vue';
@@ -1071,9 +1139,13 @@ import { useUserWorldStore } from '@/stores/userWorld';
 import { renderMarkdown } from '@/utils/markdown';
 import { showApiError } from '@/utils/apiError';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
+import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 const DEFAULT_AGENT_KEY = '__default__';
-const sandboxContainers = Array.from({ length: 10 }, (_, index) => index + 1);
+const USER_CONTAINER_ID = 1;
+const AGENT_CONTAINER_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
+const USER_WORLD_UPLOAD_BASE = 'user-world';
+const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;
 const sectionRouteMap: Record<MessengerSection, string> = {
   messages: 'chat',
   users: 'user-world',
@@ -1083,6 +1155,7 @@ const sectionRouteMap: Record<MessengerSection, string> = {
   files: 'workspace',
   more: 'settings'
 };
+const MESSENGER_UI_FONT_SIZE_STORAGE_KEY = 'messenger_ui_font_size';
 
 type MixedConversation = {
   key: string;
@@ -1100,6 +1173,14 @@ type ToolEntry = {
   description: string;
   ownerId: string;
   source: Record<string, unknown>;
+};
+
+type AgentFileContainer = {
+  id: number;
+  agentIds: string[];
+  agentNames: string[];
+  preview: string;
+  primaryAgentId: string;
 };
 
 type UnitTreeNode = {
@@ -1136,6 +1217,8 @@ const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const selectedCustomToolName = ref('');
 const worldDraft = ref('');
+const worldUploadInputRef = ref<HTMLInputElement | null>(null);
+const worldUploading = ref(false);
 const messageListRef = ref<HTMLElement | null>(null);
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
@@ -1152,10 +1235,14 @@ const skillTools = ref<ToolEntry[]>([]);
 const knowledgeTools = ref<ToolEntry[]>([]);
 const toolPaneStatus = ref('');
 const fileScope = ref<'agent' | 'user'>('agent');
-const selectedFileContainerId = ref(1);
+const selectedFileContainerId = ref(USER_CONTAINER_ID);
+const fileContainerLatestUpdatedAt = ref(0);
+const fileContainerEntryCount = ref(0);
+const fileLifecycleNowTick = ref(Date.now());
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
 const desktopToolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
+const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
 const orgUnitTree = ref<UnitTreeNode[]>([]);
 const contactUnitExpandedIds = ref<Set<string>>(new Set());
@@ -1170,6 +1257,7 @@ const groupCreating = ref(false);
 const agentCreateVisible = ref(false);
 
 let statusTimer: number | null = null;
+let lifecycleTimer: number | null = null;
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
@@ -1319,11 +1407,84 @@ const currentContainerId = computed(() => {
   return Math.min(10, Math.max(1, parsed));
 });
 
+const normalizeSandboxContainerId = (value: unknown): number => {
+  const parsed = Number.parseInt(String(value ?? USER_CONTAINER_ID), 10);
+  if (!Number.isFinite(parsed)) return USER_CONTAINER_ID;
+  return Math.min(10, Math.max(1, parsed));
+};
+
+const agentFileContainers = computed<AgentFileContainer[]>(() => {
+  const buckets = new Map<number, { agentIds: string[]; agentNames: string[] }>();
+  const seenAgentIds = new Set<string>();
+  const collect = (agent: Record<string, unknown>) => {
+    const normalizedId = normalizeAgentId(agent?.id);
+    if (seenAgentIds.has(normalizedId)) return;
+    seenAgentIds.add(normalizedId);
+    const containerId = normalizeSandboxContainerId(agent?.sandbox_container_id);
+    const target = buckets.get(containerId) || { agentIds: [], agentNames: [] };
+    target.agentIds.push(normalizedId);
+    target.agentNames.push(String(agent?.name || normalizedId));
+    buckets.set(containerId, target);
+  };
+  collect({
+    id: DEFAULT_AGENT_KEY,
+    name: t('messenger.defaultAgent'),
+    sandbox_container_id: USER_CONTAINER_ID
+  });
+  ownedAgents.value.forEach((item) => collect(item as Record<string, unknown>));
+  sharedAgents.value.forEach((item) => collect(item as Record<string, unknown>));
+
+  return AGENT_CONTAINER_IDS.map((id) => {
+    const bucket = buckets.get(id) || { agentIds: [], agentNames: [] };
+    const names = bucket.agentNames.filter(Boolean);
+    const preview =
+      names.length === 0
+        ? t('messenger.files.unboundAgentContainer')
+        : names.length <= 2
+          ? names.join(' / ')
+          : `${names.slice(0, 2).join(' / ')} +${names.length - 2}`;
+    const primaryAgentId =
+      bucket.agentIds.find((agentId) => agentId !== DEFAULT_AGENT_KEY) || bucket.agentIds[0] || '';
+    return {
+      id,
+      agentIds: bucket.agentIds,
+      agentNames: names,
+      preview,
+      primaryAgentId
+    };
+  });
+});
+
+const boundAgentFileContainers = computed(() =>
+  agentFileContainers.value.filter((item) => item.agentNames.length > 0)
+);
+
+const unboundAgentFileContainers = computed(() =>
+  agentFileContainers.value.filter((item) => item.agentNames.length === 0)
+);
+
+const selectedAgentFileContainer = computed(
+  () => agentFileContainers.value.find((item) => item.id === selectedFileContainerId.value) || null
+);
+
 const selectedFileAgentIdForApi = computed(() => {
   if (fileScope.value !== 'agent') return '';
-  const target = normalizeAgentId(selectedAgentId.value || activeAgentId.value);
-  return target === DEFAULT_AGENT_KEY ? '' : target;
+  const target = selectedAgentFileContainer.value?.primaryAgentId || '';
+  if (!target || target === DEFAULT_AGENT_KEY) return '';
+  return target;
 });
+
+const selectedFileContainerAgentLabel = computed(() => {
+  if (fileScope.value !== 'agent') return currentUsername.value;
+  const names = selectedAgentFileContainer.value?.agentNames || [];
+  if (!names.length) return t('common.none');
+  if (names.length <= 3) return names.join(' / ');
+  return `${names.slice(0, 3).join(' / ')} +${names.length - 3}`;
+});
+
+const workspacePanelKey = computed(() =>
+  `${fileScope.value}:${selectedFileContainerId.value}:${selectedFileAgentIdForApi.value || 'default'}`
+);
 
 const showAgentSettingsPanel = computed(
   () => sessionHub.activeSection === 'agents' || isAgentConversationActive.value
@@ -1388,6 +1549,19 @@ const filteredSharedAgents = computed(() => {
 const UNIT_UNGROUPED_ID = '__ungrouped__';
 
 const normalizeUnitText = (value: unknown): string => String(value || '').trim();
+
+const normalizeUiFontSize = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 14;
+  return Math.min(20, Math.max(12, Math.round(parsed)));
+};
+
+const applyUiFontSize = (value: number) => {
+  if (typeof document === 'undefined') return;
+  const normalized = normalizeUiFontSize(value);
+  document.documentElement.style.setProperty('--messenger-font-size', `${normalized}px`);
+  document.documentElement.style.setProperty('--messenger-font-scale', String(normalized / 14));
+};
 
 const resolveUnitIdKey = (unitId: unknown): string => {
   const cleaned = normalizeUnitText(unitId);
@@ -1823,8 +1997,41 @@ const canSendWorldMessage = computed(
     isWorldConversationActive.value &&
     Boolean(activeConversation.value?.id) &&
     !userWorldStore.sending &&
+    !worldUploading.value &&
     Boolean(worldDraft.value.trim())
 );
+
+const AGENT_CONTAINER_TTL_MS = 24 * 60 * 60 * 1000;
+
+const formatRemainingDuration = (ms: number): string => {
+  const safe = Math.max(0, Math.floor(ms / 1000));
+  const days = Math.floor(safe / 86400);
+  const hours = Math.floor((safe % 86400) / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  if (days > 0) {
+    return t('messenger.files.lifecycleDaysHours', { days, hours });
+  }
+  if (hours > 0) {
+    return t('messenger.files.lifecycleHoursMinutes', { hours, minutes });
+  }
+  return t('messenger.files.lifecycleMinutes', { minutes: Math.max(1, minutes) });
+};
+
+const fileContainerLifecycleText = computed(() => {
+  if (fileScope.value === 'user') {
+    return t('messenger.files.lifecyclePermanentValue');
+  }
+  if (!fileContainerEntryCount.value || fileContainerLatestUpdatedAt.value <= 0) {
+    return t('messenger.files.lifecycleEmptyValue');
+  }
+  const remaining = fileContainerLatestUpdatedAt.value + AGENT_CONTAINER_TTL_MS - fileLifecycleNowTick.value;
+  if (remaining <= 0) {
+    return t('messenger.files.lifecycleExpiredValue');
+  }
+  return t('messenger.files.lifecycleRemainingValue', {
+    remaining: formatRemainingDuration(remaining)
+  });
+});
 
 const showRightDock = computed(() => {
   if (sessionHub.activeSection === 'agents') return true;
@@ -2177,8 +2384,12 @@ const switchSection = (section: MessengerSection) => {
   if (section === 'agents') {
     agentSettingMode.value = 'agent';
   }
-  if (section === 'files' && fileScope.value !== 'user') {
-    selectedFileContainerId.value = currentContainerId.value;
+  if (section === 'files') {
+    if (fileScope.value === 'user') {
+      selectedFileContainerId.value = USER_CONTAINER_ID;
+    } else if (!agentFileContainers.value.some((item) => item.id === selectedFileContainerId.value)) {
+      selectedFileContainerId.value = agentFileContainers.value[0]?.id ?? USER_CONTAINER_ID;
+    }
   }
   const targetPath = `${basePrefix.value}/${sectionRouteMap[section]}`;
   const nextQuery = { ...route.query, section } as Record<string, any>;
@@ -2470,18 +2681,30 @@ const deleteTimelineSession = async (sessionId: string) => {
 const selectContainer = (containerId: number | 'user') => {
   if (containerId === 'user') {
     fileScope.value = 'user';
-    selectedFileContainerId.value = 1;
+    selectedFileContainerId.value = USER_CONTAINER_ID;
+    fileContainerLatestUpdatedAt.value = 0;
+    fileContainerEntryCount.value = 0;
     sessionHub.setSection('files');
     return;
   }
   const parsed = Math.min(10, Math.max(1, Number(containerId) || 1));
+  const target = agentFileContainers.value.find((item) => item.id === parsed);
+  if (!target) {
+    ElMessage.warning(t('messenger.files.agentContainerEmpty'));
+    return;
+  }
   fileScope.value = 'agent';
   selectedFileContainerId.value = parsed;
-  const source = activeAgent.value as Record<string, unknown> | null;
-  if (source) {
-    source.sandbox_container_id = parsed;
-  }
+  fileContainerLatestUpdatedAt.value = 0;
+  fileContainerEntryCount.value = 0;
   sessionHub.setSection('files');
+};
+
+const handleFileWorkspaceStats = (payload: unknown) => {
+  const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
+  fileContainerEntryCount.value = Math.max(0, Number(source.entryCount || 0));
+  fileContainerLatestUpdatedAt.value = normalizeTimestamp(source.latestUpdatedAt);
+  fileLifecycleNowTick.value = Date.now();
 };
 
 const normalizeToolEntry = (item: unknown): ToolEntry | null => {
@@ -2656,8 +2879,17 @@ const ensureSectionSelection = () => {
   }
 
   if (sessionHub.activeSection === 'files') {
-    if (!selectedFileContainerId.value) {
-      selectedFileContainerId.value = currentContainerId.value;
+    if (fileScope.value === 'user') {
+      selectedFileContainerId.value = USER_CONTAINER_ID;
+      return;
+    }
+    const exists = agentFileContainers.value.some((item) => item.id === selectedFileContainerId.value);
+    if (!exists) {
+      const fallbackId = agentFileContainers.value[0]?.id ?? USER_CONTAINER_ID;
+      selectedFileContainerId.value = fallbackId;
+      if (fallbackId === USER_CONTAINER_ID && !agentFileContainers.value.length) {
+        fileScope.value = 'user';
+      }
     }
     return;
   }
@@ -2717,6 +2949,82 @@ const stopAgentMessage = async () => {
     await chatStore.stopStream();
   } catch {
     // ignore stop errors to keep UI responsive
+  }
+};
+
+const normalizeUploadPath = (value: unknown): string =>
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+
+const buildWorldAttachmentToken = (rawPath: unknown): string => {
+  const normalized = normalizeUploadPath(rawPath);
+  if (!normalized) return '';
+  if (/\s/.test(normalized)) {
+    if (!normalized.includes('"')) {
+      return `@"${normalized}"`;
+    }
+    if (!normalized.includes("'")) {
+      return `@'${normalized}'`;
+    }
+    return `@${encodeURIComponent(normalized)}`;
+  }
+  return `@${normalized}`;
+};
+
+const appendWorldAttachmentTokens = (paths: string[]) => {
+  const tokens = paths.map((path) => buildWorldAttachmentToken(path)).filter(Boolean);
+  if (!tokens.length) return;
+  const prefix = worldDraft.value.trim() ? '\n' : '';
+  worldDraft.value = `${worldDraft.value}${prefix}${tokens.join(' ')}`;
+};
+
+const triggerWorldUpload = () => {
+  if (!isWorldConversationActive.value || worldUploading.value || !worldUploadInputRef.value) return;
+  worldUploadInputRef.value.value = '';
+  worldUploadInputRef.value.click();
+};
+
+const handleWorldUploadInput = async (event: Event) => {
+  const target = event.target as HTMLInputElement | null;
+  const files = target?.files ? Array.from(target.files) : [];
+  if (!files.length) return;
+  const oversized = files.find((file) => Number(file.size || 0) > WORLD_UPLOAD_SIZE_LIMIT);
+  if (oversized) {
+    ElMessage.warning(t('workspace.upload.tooLarge', { limit: '200 MB' }));
+    if (target) target.value = '';
+    return;
+  }
+  worldUploading.value = true;
+  try {
+    const formData = new FormData();
+    formData.append('path', USER_WORLD_UPLOAD_BASE);
+    formData.append('container_id', String(USER_CONTAINER_ID));
+    files.forEach((file) => {
+      formData.append('files', file as Blob);
+    });
+    const { data } = await uploadWunderWorkspace(formData);
+    const uploaded = (Array.isArray(data?.files) ? data.files : [])
+      .map((item) => normalizeUploadPath(item))
+      .filter(Boolean);
+    if (uploaded.length) {
+      appendWorldAttachmentTokens(uploaded);
+      emitWorkspaceRefresh({
+        reason: 'messenger-world-upload',
+        containerId: USER_CONTAINER_ID
+      });
+    }
+    ElMessage.success(
+      t('userWorld.attachments.uploadSuccess', { count: uploaded.length || files.length })
+    );
+  } catch (error) {
+    showApiError(error, t('workspace.upload.failed'));
+  } finally {
+    worldUploading.value = false;
+    if (target) {
+      target.value = '';
+    }
   }
 };
 
@@ -2791,6 +3099,15 @@ const checkClientUpdate = () => {
 
 const updateDesktopToolCallMode = (value: DesktopToolCallMode) => {
   desktopToolCallMode.value = value === 'function_call' ? 'function_call' : 'tool_call';
+};
+
+const updateUiFontSize = (value: number) => {
+  const normalized = normalizeUiFontSize(value);
+  uiFontSize.value = normalized;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY, String(normalized));
+  }
+  applyUiFontSize(normalized);
 };
 
 const openDesktopTools = () => {
@@ -3046,6 +3363,7 @@ watch(
   () => currentContainerId.value,
   (value) => {
     if (fileScope.value !== 'agent') return;
+    if (sessionHub.activeSection === 'files') return;
     selectedFileContainerId.value = value;
   },
   { immediate: true }
@@ -3100,9 +3418,25 @@ watch(
   }
 );
 
+watch(
+  () => [fileScope.value, selectedFileContainerId.value, selectedFileAgentIdForApi.value],
+  () => {
+    fileContainerLatestUpdatedAt.value = 0;
+    fileContainerEntryCount.value = 0;
+    fileLifecycleNowTick.value = Date.now();
+  }
+);
+
 onMounted(async () => {
+  if (typeof window !== 'undefined') {
+    uiFontSize.value = normalizeUiFontSize(window.localStorage.getItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY));
+  }
+  applyUiFontSize(uiFontSize.value);
   await bootstrap();
   updateMessageScrollState();
+  lifecycleTimer = window.setInterval(() => {
+    fileLifecycleNowTick.value = Date.now();
+  }, 60_000);
   statusTimer = window.setInterval(() => {
     loadRunningAgents();
     loadCronAgentIds();
@@ -3113,6 +3447,10 @@ onBeforeUnmount(() => {
   if (statusTimer) {
     window.clearInterval(statusTimer);
     statusTimer = null;
+  }
+  if (lifecycleTimer) {
+    window.clearInterval(lifecycleTimer);
+    lifecycleTimer = null;
   }
   markdownCache.clear();
   timelinePreviewMap.value.clear();

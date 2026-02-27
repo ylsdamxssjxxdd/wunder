@@ -313,8 +313,16 @@ const props = defineProps({
   showContainerId: {
     type: Boolean,
     default: true
+  },
+  emptyText: {
+    type: String,
+    default: ''
   }
 });
+
+const emit = defineEmits<{
+  (event: 'stats', payload: { latestUpdatedAt: number; entryCount: number }): void;
+}>();
 
 const { t } = useI18n();
 const panelTitle = computed(() => props.title || t('workspace.title'));
@@ -620,8 +628,9 @@ const normalizedContainerId = computed(() => {
 
 const withAgentParams = (params = {}) => {
   const agentId = normalizedAgentId.value;
-  if (!agentId) return params;
-  return { ...params, agent_id: agentId };
+  const next = { ...params, container_id: normalizedContainerId.value };
+  if (!agentId) return next;
+  return { ...next, agent_id: agentId };
 };
 
 const appendAgentId = (formData) => {
@@ -629,6 +638,7 @@ const appendAgentId = (formData) => {
   if (agentId) {
     formData.append('agent_id', agentId);
   }
+  formData.append('container_id', String(normalizedContainerId.value));
 };
 
 const listRef = ref(null);
@@ -697,7 +707,7 @@ const selectionMeta = computed(() =>
   selectedCount.value ? t('workspace.selection', { count: selectedCount.value }) : ''
 );
 const emptyText = computed(() =>
-  state.searchMode ? t('workspace.empty.search') : t('workspace.empty')
+  state.searchMode ? t('workspace.empty.search') : props.emptyText || t('workspace.empty')
 );
 const searchKeyword = computed({
   get: () => state.searchKeyword,
@@ -972,6 +982,40 @@ const formatBytes = (size) => {
   return `${(value / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 };
 
+const normalizeWorkspaceTimestamp = (value) => {
+  if (value === null || value === undefined) return 0;
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) return date.getTime();
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+};
+
+const collectWorkspaceStats = (entries) => {
+  let latestUpdatedAt = 0;
+  let entryCount = 0;
+  const walk = (items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((entry) => {
+      if (!entry || typeof entry !== 'object') return;
+      entryCount += 1;
+      const updatedTs = normalizeWorkspaceTimestamp(entry.updated_time || entry.updatedAt || entry.modified_at);
+      if (updatedTs > latestUpdatedAt) {
+        latestUpdatedAt = updatedTs;
+      }
+      if (Array.isArray(entry.children) && entry.children.length) {
+        walk(entry.children);
+      }
+    });
+  };
+  walk(entries);
+  return { latestUpdatedAt, entryCount };
+};
+
+const emitWorkspaceStats = (entries = state.entries) => {
+  emit('stats', collectWorkspaceStats(entries));
+};
+
 // 统一管理上传进度条展示，避免并发上传导致状态错乱
 const setUploadProgress = (options: UploadProgressOptions = {}) => {
   const { percent = 0, loaded = 0, total = 0, indeterminate = false } = options;
@@ -1108,6 +1152,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     state.path = normalizeWorkspacePath(cachedTree.path);
     state.parent = cachedTree.parent ? normalizeWorkspacePath(cachedTree.parent) : null;
     state.entries = cloneWorkspaceEntries(cachedTree.entries);
+    emitWorkspaceStats(state.entries);
   }
   state.loading = true;
   if (resetSearch) {
@@ -1134,6 +1179,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     const parentPath = getWorkspaceParentPath(normalizedPath);
     state.parent = parentPath ? parentPath : null;
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
+    emitWorkspaceStats(state.entries);
     writeWorkspaceTreeCache(cacheKey, {
       path: normalizedPath,
       parent: state.parent,
@@ -1154,6 +1200,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     showApiError(error, t('workspace.loadFailed'));
     if (!hasCachedEntries) {
       state.entries = [];
+      emitWorkspaceStats(state.entries);
     }
     return false;
   } finally {
@@ -1181,10 +1228,12 @@ const loadWorkspaceSearch = async () => {
     const payload = data || {};
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
     state.searchMode = true;
+    emitWorkspaceStats(state.entries);
     return true;
   } catch (error) {
     showApiError(error, t('workspace.searchFailed'));
     state.entries = [];
+    emitWorkspaceStats(state.entries);
     return false;
   } finally {
     state.loading = false;
@@ -1233,6 +1282,7 @@ const hydrateExpandedEntries = async () => {
         order: state.sortOrder
       }));
       attachWorkspaceChildren(state.entries, path, data.entries || []);
+      emitWorkspaceStats(state.entries);
     } catch (error) {
       state.expanded.delete(path);
       state.expanded = new Set(state.expanded);
@@ -1259,6 +1309,7 @@ const toggleWorkspaceDirectory = async (entry) => {
       order: state.sortOrder
     }));
     attachWorkspaceChildren(state.entries, entry.path, data.entries || []);
+    emitWorkspaceStats(state.entries);
   } catch (error) {
     state.expanded.delete(entry.path);
     state.expanded = new Set(state.expanded);
@@ -2260,6 +2311,17 @@ onMounted(async () => {
 
 watch(
   () => normalizedAgentId.value,
+  async (value, oldValue) => {
+    if (value === oldValue) return;
+    state.path = '';
+    state.parent = null;
+    state.expanded = new Set();
+    await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
+  }
+);
+
+watch(
+  () => normalizedContainerId.value,
   async (value, oldValue) => {
     if (value === oldValue) return;
     state.path = '';
