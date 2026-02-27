@@ -131,7 +131,14 @@ fn extract_json_segments(payload: &str) -> Vec<(usize, usize, Value)> {
     values
 }
 
-fn extract_prefixed_tool_name(prefix: &str) -> Option<String> {
+fn is_prefixed_tool_name_candidate(name: &str, allow_bare_name: bool) -> bool {
+    if !is_tool_name_token(name) {
+        return false;
+    }
+    allow_bare_name || name.contains('_') || name.contains('-')
+}
+
+fn extract_prefixed_tool_name(prefix: &str, allow_bare_name: bool) -> Option<String> {
     let trimmed = prefix.trim();
     if trimmed.is_empty() {
         return None;
@@ -147,7 +154,7 @@ fn extract_prefixed_tool_name(prefix: &str) -> Option<String> {
 
     if let Some(token) = trimmed.split_whitespace().last() {
         let cleaned = clean_tool_call_name(token);
-        if is_tool_name_token(cleaned.as_str()) {
+        if is_prefixed_tool_name_candidate(cleaned.as_str(), allow_bare_name) {
             return Some(cleaned);
         }
     }
@@ -285,6 +292,7 @@ fn is_tool_name_token(cleaned: &str) -> bool {
             | "params"
             | "input"
             | "payload"
+            | "return"
     ) {
         return false;
     }
@@ -370,12 +378,16 @@ fn extract_ascii_tool_tail(input: &str) -> Option<String> {
     Some(tail.to_string())
 }
 
-fn parse_prefixed_tool_calls(payload: &str, segments: &[(usize, usize, Value)]) -> Vec<ToolCall> {
+fn parse_prefixed_tool_calls(
+    payload: &str,
+    segments: &[(usize, usize, Value)],
+    allow_bare_name: bool,
+) -> Vec<ToolCall> {
     let mut calls = Vec::new();
     let mut last_end = 0usize;
     for (start, end, value) in segments {
         let prefix = payload.get(last_end..*start).unwrap_or("");
-        let Some(name) = extract_prefixed_tool_name(prefix) else {
+        let Some(name) = extract_prefixed_tool_name(prefix, allow_bare_name) else {
             last_end = *end;
             continue;
         };
@@ -601,7 +613,11 @@ fn parse_tagged_tool_call_payload(payload: &str) -> Option<ToolCall> {
     })
 }
 
-fn parse_tool_calls_payload(payload: &str, allow_prefixed: bool) -> Vec<ToolCall> {
+fn parse_tool_calls_payload(
+    payload: &str,
+    allow_prefixed: bool,
+    allow_bare_prefixed_name: bool,
+) -> Vec<ToolCall> {
     let payload = payload.trim();
     if payload.is_empty() {
         return Vec::new();
@@ -623,7 +639,11 @@ fn parse_tool_calls_payload(payload: &str, allow_prefixed: bool) -> Vec<ToolCall
         }
     }
     if allow_prefixed && calls.is_empty() && !segments.is_empty() {
-        calls.extend(parse_prefixed_tool_calls(payload, &segments));
+        calls.extend(parse_prefixed_tool_calls(
+            payload,
+            &segments,
+            allow_bare_prefixed_name,
+        ));
     }
     calls
 }
@@ -663,7 +683,7 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
 
     if !blocks.is_empty() {
         for (_, payload) in blocks {
-            calls.extend(parse_tool_calls_payload(&payload, true));
+            calls.extend(parse_tool_calls_payload(&payload, true, true));
         }
     }
 
@@ -681,14 +701,14 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
             let Some(payload) = content.get(start..end) else {
                 continue;
             };
-            calls.extend(parse_tool_calls_payload(payload, true));
+            calls.extend(parse_tool_calls_payload(payload, true, true));
         }
     }
 
     if !strict {
-        calls.extend(parse_tool_calls_payload(content, false));
+        calls.extend(parse_tool_calls_payload(content, false, false));
         if calls.is_empty() && content.contains("```") {
-            calls.extend(parse_tool_calls_payload(content, true));
+            calls.extend(parse_tool_calls_payload(content, true, false));
         }
         if calls.is_empty() {
             calls.extend(parse_shell_read_file_fallback(content));
@@ -1121,20 +1141,34 @@ mod tests {
 
     #[test]
     fn test_extract_prefixed_tool_name_supports_fullwidth_colon() {
-        let name = extract_prefixed_tool_name("prefix\u{FF1A}read_file ");
+        let name = extract_prefixed_tool_name("prefix\u{FF1A}read_file ", false);
         assert_eq!(name.as_deref(), Some("read_file"));
     }
 
     #[test]
     fn test_extract_prefixed_tool_name_rejects_json_argument_key() {
-        let name = extract_prefixed_tool_name("\"arguments\":");
+        let name = extract_prefixed_tool_name("\"arguments\":", false);
         assert!(name.is_none());
     }
 
     #[test]
     fn test_extract_prefixed_tool_name_reads_name_from_partial_json_prefix() {
-        let name = extract_prefixed_tool_name(r#"{"name":"编辑文件","arguments":"#);
+        let name = extract_prefixed_tool_name(r#"{"name":"编辑文件","arguments":"#, false);
         assert_eq!(name.as_deref(), Some("编辑文件"));
+    }
+
+    #[test]
+    fn test_parse_tool_call_ignores_python_return_array_literals() {
+        let content = r#"```python
+def fibonacci(n):
+    if n <= 0:
+        return []
+    elif n == 1:
+        return [0]
+    return [0, 1]
+```"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert!(calls.is_empty());
     }
 
     #[test]

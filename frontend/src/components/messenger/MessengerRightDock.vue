@@ -41,7 +41,6 @@
           >
             <div class="messenger-timeline-title-row">
               <div class="messenger-timeline-title">{{ item.title }}</div>
-              <span v-if="item.isMain" class="messenger-kind-tag">{{ t('chat.history.main') }}</span>
               <div class="messenger-timeline-actions">
                 <button
                   class="messenger-timeline-main-btn"

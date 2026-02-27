@@ -192,7 +192,6 @@ const toolGroups = computed<ToolGroup[]>(() => {
   return [
     { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(summary.builtin_tools) },
     { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(summary.mcp_tools) },
-    { label: t('portal.agent.tools.group.a2a'), options: normalizeOptions(summary.a2a_tools) },
     { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(summary.skills) },
     { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
     { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) },

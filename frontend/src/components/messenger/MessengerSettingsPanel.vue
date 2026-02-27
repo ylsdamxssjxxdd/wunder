@@ -13,24 +13,6 @@
             </div>
           </div>
         </div>
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('messenger.more.language') }}</div>
-            <div class="messenger-settings-hint">{{ languageLabel }}</div>
-          </div>
-          <button class="messenger-settings-action" type="button" @click="$emit('toggle-language')">
-            {{ t('messenger.more.language') }}
-          </button>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('nav.logout') }}</div>
-            <div class="messenger-settings-hint">{{ t('messenger.more.logoutConfirm') }}</div>
-          </div>
-          <button class="messenger-settings-action danger" type="button" @click="$emit('logout')">
-            {{ t('nav.logout') }}
-          </button>
-        </div>
       </section>
       <section class="messenger-settings-card">
         <div class="messenger-settings-title">{{ t('profile.metrics.title') }}</div>
@@ -89,8 +71,8 @@
             <span :style="{ width: `${quotaUsedPercent}%` }"></span>
           </div>
           <div class="messenger-profile-quota-meta">
-            <span>{{ t('profile.quota.used') }}：{{ quotaUsedText }}</span>
-            <span>{{ t('profile.quota.remaining') }}：{{ quotaRemainingText }}</span>
+            <span>{{ t('profile.quota.used') }}: {{ quotaUsedText }}</span>
+            <span>{{ t('profile.quota.remaining') }}: {{ quotaRemainingText }}</span>
           </div>
         </div>
       </section>
@@ -221,7 +203,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (event: 'toggle-language'): void;
-  (event: 'logout'): void;
   (event: 'check-update'): void;
   (event: 'open-tools'): void;
   (event: 'open-system'): void;

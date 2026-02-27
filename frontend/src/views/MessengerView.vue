@@ -8,7 +8,6 @@
     }"
   >
     <aside class="messenger-left-rail">
-      <div class="messenger-left-brand">Wunder</div>
       <button class="messenger-avatar-btn" type="button" @click="openProfilePage">
         <span class="messenger-avatar-text">{{ avatarLabel(currentUsername) }}</span>
       </button>
@@ -516,14 +515,6 @@
               </div>
             </div>
           </button>
-          <button class="messenger-list-item" type="button" @click="logout">
-            <div class="messenger-list-avatar"><i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('nav.logout') }}</span>
-              </div>
-            </div>
-          </button>
         </template>
       </div>
     </section>
@@ -851,7 +842,6 @@
                 :desktop-tool-call-mode="desktopToolCallMode"
                 :devtools-available="desktopDevtoolsAvailable"
                 @toggle-language="toggleLanguage"
-                @logout="logout"
                 @check-update="checkClientUpdate"
                 @open-tools="openDesktopTools"
                 @open-system="openDesktopSystemSettings"
@@ -983,31 +973,148 @@
         <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
           <ChatComposer :loading="agentSessionLoading" @send="sendAgentMessage" @stop="stopAgentMessage" />
         </div>
-        <div v-else-if="isWorldConversationActive" class="messenger-world-composer">
+        <div
+          v-else-if="isWorldConversationActive"
+          ref="worldComposerRef"
+          class="messenger-world-composer"
+          :style="worldComposerStyle"
+        >
           <button
-            class="messenger-world-upload-btn"
+            class="messenger-world-resize-edge"
             type="button"
-            :disabled="worldUploading"
-            :title="t('userWorld.attachments.upload')"
-            :aria-label="t('userWorld.attachments.upload')"
-            @click="triggerWorldUpload"
+            :title="t('messenger.world.resize')"
+            :aria-label="t('messenger.world.resize')"
+            @mousedown.prevent="startWorldComposerResize"
           >
-            <i class="fa-solid fa-paperclip" aria-hidden="true"></i>
+            <span class="messenger-world-resize-grip"></span>
           </button>
+          <div class="messenger-world-toolbar">
+            <div
+              class="messenger-world-tool-anchor messenger-world-tool-anchor--emoji"
+              @mouseenter="openWorldQuickPanel('emoji')"
+              @mouseleave="scheduleWorldQuickPanelClose"
+            >
+              <button
+                class="messenger-world-tool-btn"
+                type="button"
+                :class="{ active: worldQuickPanelMode === 'emoji' }"
+                :title="t('messenger.world.emoji')"
+                :aria-label="t('messenger.world.emoji')"
+                @click.prevent="toggleWorldQuickPanel('emoji')"
+              >
+                <svg class="messenger-world-tool-icon" aria-hidden="true">
+                  <use href="#smiling-face"></use>
+                </svg>
+              </button>
+              <div
+                v-if="worldQuickPanelMode === 'emoji'"
+                class="messenger-world-pop-panel messenger-world-emoji-panel"
+                @mouseenter="clearWorldQuickPanelClose"
+                @mouseleave="scheduleWorldQuickPanelClose"
+              >
+                <div v-if="worldRecentEmojis.length" class="messenger-world-emoji-section">
+                  <div class="messenger-world-quick-title">{{ t('messenger.world.quick.recent') }}</div>
+                  <div class="messenger-world-emoji-grid">
+                    <button
+                      v-for="emoji in worldRecentEmojis"
+                      :key="`recent-${emoji}`"
+                      class="messenger-world-emoji-item"
+                      type="button"
+                      @click="insertWorldEmoji(emoji)"
+                    >
+                      {{ emoji }}
+                    </button>
+                  </div>
+                </div>
+                <div class="messenger-world-emoji-section">
+                  <div class="messenger-world-quick-title">{{ t('messenger.world.quick.all') }}</div>
+                  <div class="messenger-world-emoji-grid">
+                    <button
+                      v-for="emoji in worldEmojiCatalog"
+                      :key="`catalog-${emoji}`"
+                      class="messenger-world-emoji-item"
+                      type="button"
+                      @click="insertWorldEmoji(emoji)"
+                    >
+                      {{ emoji }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <button
+              class="messenger-world-tool-btn"
+              type="button"
+              :disabled="worldUploading"
+              :title="t('userWorld.attachments.upload')"
+              :aria-label="t('userWorld.attachments.upload')"
+              @click="triggerWorldUpload"
+            >
+              <svg class="messenger-world-tool-icon" aria-hidden="true">
+                <use href="#file2"></use>
+              </svg>
+            </button>
+            <div class="messenger-world-tool-anchor messenger-world-tool-anchor--history">
+              <button
+                class="messenger-world-tool-btn"
+                type="button"
+                :class="{ active: worldQuickPanelMode === 'history' }"
+                :title="t('messenger.world.history')"
+                :aria-label="t('messenger.world.history')"
+                @click="toggleWorldQuickPanel('history')"
+              >
+                <svg class="messenger-world-tool-icon" aria-hidden="true">
+                  <use href="#history"></use>
+                </svg>
+              </button>
+              <div v-if="worldQuickPanelMode === 'history'" class="messenger-world-pop-panel messenger-world-history-panel">
+                <button
+                  v-for="entry in worldHistoryEntries"
+                  :key="entry.key"
+                  class="messenger-world-history-item"
+                  type="button"
+                  :title="entry.content"
+                  @click="applyWorldHistory(entry.content)"
+                >
+                  <span class="messenger-world-history-item-text">{{ entry.content }}</span>
+                  <span class="messenger-world-history-item-time">
+                    {{ entry.time ? formatTime(entry.time) : '--' }}
+                  </span>
+                </button>
+                <div v-if="!worldHistoryEntries.length" class="messenger-world-history-empty">
+                  {{ t('messenger.world.historyEmpty') }}
+                </div>
+              </div>
+            </div>
+          </div>
           <textarea
+            ref="worldTextareaRef"
             v-model.trim="worldDraft"
+            class="messenger-world-input"
             :placeholder="t('userWorld.input.placeholder')"
-            rows="1"
+            rows="3"
+            @focus="worldQuickPanelMode = ''"
             @keydown.enter.exact.prevent="sendWorldMessage"
           ></textarea>
-          <button
-            class="messenger-send-btn"
-            type="button"
-            :disabled="!canSendWorldMessage"
-            @click="sendWorldMessage"
-          >
-            <i class="fa-solid fa-paper-plane" aria-hidden="true"></i>
-          </button>
+          <div class="messenger-world-footer">
+            <div class="messenger-world-send-group">
+              <button
+                class="messenger-world-send-main"
+                type="button"
+                :disabled="!canSendWorldMessage"
+                @click="sendWorldMessage"
+              >
+                <svg class="messenger-world-send-icon" aria-hidden="true">
+                  <use href="#send"></use>
+                </svg>
+              </button>
+              <button class="messenger-world-send-menu" type="button" :title="t('messenger.settings.sendKey')">
+                <svg class="messenger-world-send-icon messenger-world-send-icon--menu" aria-hidden="true">
+                  <use href="#down"></use>
+                </svg>
+              </button>
+            </div>
+          </div>
           <input
             ref="worldUploadInputRef"
             type="file"
@@ -1146,6 +1253,43 @@ const USER_CONTAINER_ID = 1;
 const AGENT_CONTAINER_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
 const USER_WORLD_UPLOAD_BASE = 'user-world';
 const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;
+const WORLD_QUICK_EMOJI_STORAGE_KEY = 'wunder_world_quick_emoji';
+const WORLD_MESSAGE_HISTORY_STORAGE_KEY = 'wunder_world_message_history';
+const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
+const WORLD_EMOJI_CATALOG = [
+  '😀',
+  '😁',
+  '😂',
+  '🤣',
+  '😊',
+  '😉',
+  '😍',
+  '😘',
+  '😎',
+  '🤖',
+  '🫡',
+  '🤔',
+  '🤩',
+  '🥳',
+  '😴',
+  '🤯',
+  '😭',
+  '😤',
+  '🤝',
+  '👍',
+  '👏',
+  '🙏',
+  '💪',
+  '🎉',
+  '🌟',
+  '🔥',
+  '💡',
+  '📌',
+  '📎',
+  '✅',
+  '❓',
+  '❗'
+];
 const sectionRouteMap: Record<MessengerSection, string> = {
   messages: 'chat',
   users: 'user-world',
@@ -1156,6 +1300,8 @@ const sectionRouteMap: Record<MessengerSection, string> = {
   more: 'settings'
 };
 const MESSENGER_UI_FONT_SIZE_STORAGE_KEY = 'messenger_ui_font_size';
+
+type AgentLocalCommand = 'new' | 'stop' | 'help' | 'compact';
 
 type MixedConversation = {
   key: string;
@@ -1217,8 +1363,14 @@ const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const selectedCustomToolName = ref('');
 const worldDraft = ref('');
+const worldComposerRef = ref<HTMLElement | null>(null);
+const worldTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const worldUploadInputRef = ref<HTMLInputElement | null>(null);
 const worldUploading = ref(false);
+const worldComposerHeight = ref(188);
+const worldQuickPanelMode = ref<'' | 'emoji' | 'history'>('');
+const worldRecentEmojis = ref<string[]>([]);
+const worldHistoryMap = ref<Record<string, string[]>>({});
 const messageListRef = ref<HTMLElement | null>(null);
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
@@ -1258,6 +1410,8 @@ const agentCreateVisible = ref(false);
 
 let statusTimer: number | null = null;
 let lifecycleTimer: number | null = null;
+let worldQuickPanelCloseTimer: number | null = null;
+let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
@@ -1568,26 +1722,76 @@ const resolveUnitIdKey = (unitId: unknown): string => {
   return cleaned || UNIT_UNGROUPED_ID;
 };
 
+const normalizeUnitShortLabel = (value: unknown): string => {
+  const text = normalizeUnitText(value);
+  if (!text) return '';
+  const normalized = text
+    .replace(/->/g, '/')
+    .replace(/>/g, '/')
+    .replace(/\\/g, '/')
+    .replace(/\|/g, '/');
+  const parts = normalized
+    .split('/')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (parts.length > 1) {
+    return parts[parts.length - 1];
+  }
+  return text;
+};
+
+const contactUnitLabelMap = computed(() => {
+  const map = new Map<string, string>();
+  (Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts : []).forEach((item) => {
+    const source = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+    const key = resolveUnitIdKey(source.unit_id);
+    if (!key || key === UNIT_UNGROUPED_ID || map.has(key)) return;
+    const label = normalizeUnitShortLabel(
+      source.unit_name ||
+        source.unitName ||
+        source.unit_display_name ||
+        source.unitDisplayName ||
+        source.path_name ||
+        source.pathName ||
+        source.unit_path ||
+        source.unitPath
+    );
+    if (label) {
+      map.set(key, label);
+    }
+  });
+  return map;
+});
+
 const resolveUnitLabel = (unitId: unknown): string => {
   const cleaned = normalizeUnitText(unitId);
   if (!cleaned) return t('userWorld.unit.ungrouped');
-  return orgUnitPathMap.value[cleaned] || cleaned;
+  const mapped = normalizeUnitShortLabel(orgUnitPathMap.value[cleaned]);
+  if (mapped) return mapped;
+  const contactLabel = contactUnitLabelMap.value.get(cleaned);
+  if (contactLabel) return contactLabel;
+  return cleaned;
 };
 
 const normalizeUnitNode = (value: unknown): UnitTreeNode | null => {
   const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
   const unitId = normalizeUnitText(source.unit_id || source.id);
   if (!unitId) return null;
-  const label =
-    normalizeUnitText(
-      source.path_name || source.pathName || source.display_name || source.unit_name || source.name
-    ) || unitId;
+  const label = normalizeUnitShortLabel(
+    source.name ||
+      source.unit_name ||
+      source.unitName ||
+      source.display_name ||
+      source.displayName ||
+      source.path_name ||
+      source.pathName
+  );
   const children = (Array.isArray(source.children) ? source.children : [])
     .map((item) => normalizeUnitNode(item))
     .filter((item): item is UnitTreeNode => Boolean(item));
   return {
     id: unitId,
-    label,
+    label: label || unitId,
     children
   };
 };
@@ -2000,6 +2204,250 @@ const canSendWorldMessage = computed(
     !worldUploading.value &&
     Boolean(worldDraft.value.trim())
 );
+
+const loadStoredStringArray = (storageKey: string, maxCount: number): string[] => {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map((item) => String(item || '').trim())
+      .filter(Boolean)
+      .slice(0, maxCount);
+  } catch {
+    return [];
+  }
+};
+
+const saveStoredStringArray = (storageKey: string, items: string[]) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(items));
+  } catch {
+    // ignore localStorage errors
+  }
+};
+
+const loadWorldHistoryMap = (): Record<string, string[]> => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(WORLD_MESSAGE_HISTORY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, string[]>>((acc, [key, value]) => {
+      const conversationId = String(key || '').trim();
+      if (!conversationId || !Array.isArray(value)) return acc;
+      acc[conversationId] = value
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean)
+        .slice(0, 30);
+      return acc;
+    }, {});
+  } catch {
+    return {};
+  }
+};
+
+const saveWorldHistoryMap = (value: Record<string, string[]>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(WORLD_MESSAGE_HISTORY_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // ignore localStorage errors
+  }
+};
+
+const activeWorldConversationId = computed(() => {
+  if (!isWorldConversationActive.value) return '';
+  return String(activeConversation.value?.id || '').trim();
+});
+
+type WorldHistoryEntry = {
+  key: string;
+  content: string;
+  time: number;
+};
+
+const normalizeWorldMessageTimestamp = (value: unknown): number => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric < 1_000_000_000_000 ? Math.floor(numeric * 1000) : Math.floor(numeric);
+  }
+  const parsed = new Date(value as string | number).getTime();
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return 0;
+};
+
+const worldHistoryEntries = computed<WorldHistoryEntry[]>(() => {
+  const messages = Array.isArray(userWorldStore.activeMessages) ? userWorldStore.activeMessages : [];
+  const fromMessages = messages
+    .map((item, index) => {
+      const content = String(item?.content || '').replace(/\s+/g, ' ').trim();
+      if (!content) return null;
+      const time = normalizeWorldMessageTimestamp(item?.created_at);
+      return {
+        key: `message:${item?.message_id || index}:${time}`,
+        content: content.slice(0, 260),
+        time
+      } as WorldHistoryEntry;
+    })
+    .filter((item): item is WorldHistoryEntry => Boolean(item))
+    .reverse()
+    .slice(0, 30);
+  if (fromMessages.length) {
+    return fromMessages;
+  }
+  const conversationId = activeWorldConversationId.value;
+  const fallback = conversationId ? worldHistoryMap.value[conversationId] || [] : [];
+  return fallback.map((content, index) => ({
+    key: `history:${index}:${content.slice(0, 32)}`,
+    content: String(content || '').slice(0, 260),
+    time: 0
+  }));
+});
+
+const worldEmojiCatalog = computed(() =>
+  WORLD_EMOJI_CATALOG.filter((emoji) => !worldRecentEmojis.value.includes(emoji))
+);
+
+const clampWorldComposerHeight = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 188;
+  return Math.min(340, Math.max(158, Math.round(parsed)));
+};
+
+const worldComposerStyle = computed<Record<string, string>>(() => ({
+  '--messenger-world-composer-height': `${worldComposerHeight.value}px`
+}));
+
+const persistWorldComposerHeight = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      WORLD_COMPOSER_HEIGHT_STORAGE_KEY,
+      String(clampWorldComposerHeight(worldComposerHeight.value))
+    );
+  } catch {
+    // ignore localStorage errors
+  }
+};
+
+const handleWorldComposerResizeMove = (event: MouseEvent) => {
+  if (!worldComposerResizeRuntime) return;
+  const delta = worldComposerResizeRuntime.startY - event.clientY;
+  worldComposerHeight.value = clampWorldComposerHeight(worldComposerResizeRuntime.startHeight + delta);
+};
+
+const stopWorldComposerResize = () => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('mousemove', handleWorldComposerResizeMove);
+    window.removeEventListener('mouseup', stopWorldComposerResize);
+  }
+  if (!worldComposerResizeRuntime) return;
+  worldComposerResizeRuntime = null;
+  persistWorldComposerHeight();
+};
+
+const startWorldComposerResize = (event: MouseEvent) => {
+  if (event.button !== 0) return;
+  worldComposerResizeRuntime = {
+    startY: event.clientY,
+    startHeight: worldComposerHeight.value
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('mousemove', handleWorldComposerResizeMove);
+    window.addEventListener('mouseup', stopWorldComposerResize);
+  }
+};
+
+const clearWorldQuickPanelClose = () => {
+  if (worldQuickPanelCloseTimer) {
+    window.clearTimeout(worldQuickPanelCloseTimer);
+    worldQuickPanelCloseTimer = null;
+  }
+};
+
+const scheduleWorldQuickPanelClose = () => {
+  clearWorldQuickPanelClose();
+  worldQuickPanelCloseTimer = window.setTimeout(() => {
+    worldQuickPanelMode.value = '';
+    worldQuickPanelCloseTimer = null;
+  }, 120);
+};
+
+const openWorldQuickPanel = (mode: 'emoji' | 'history') => {
+  clearWorldQuickPanelClose();
+  worldQuickPanelMode.value = mode;
+};
+
+const toggleWorldQuickPanel = (mode: 'emoji' | 'history') => {
+  clearWorldQuickPanelClose();
+  worldQuickPanelMode.value = worldQuickPanelMode.value === mode ? '' : mode;
+};
+
+const rememberWorldEmoji = (emoji: string) => {
+  const cleaned = String(emoji || '').trim();
+  if (!cleaned) return;
+  worldRecentEmojis.value = [cleaned, ...worldRecentEmojis.value.filter((item) => item !== cleaned)].slice(0, 12);
+  saveStoredStringArray(WORLD_QUICK_EMOJI_STORAGE_KEY, worldRecentEmojis.value);
+};
+
+const focusWorldTextareaToEnd = () => {
+  nextTick(() => {
+    const textarea = worldTextareaRef.value;
+    if (!textarea) return;
+    if (typeof textarea.focus === 'function') {
+      textarea.focus();
+    }
+    const cursor = String(worldDraft.value || '').length;
+    if (typeof textarea.setSelectionRange === 'function') {
+      textarea.setSelectionRange(cursor, cursor);
+    }
+  });
+};
+
+const insertWorldEmoji = (emoji: string) => {
+  const cleaned = String(emoji || '').trim();
+  if (!cleaned) return;
+  worldDraft.value = `${worldDraft.value}${cleaned}`;
+  rememberWorldEmoji(cleaned);
+  worldQuickPanelMode.value = '';
+  focusWorldTextareaToEnd();
+};
+
+const applyWorldHistory = (content: string) => {
+  const cleaned = String(content || '').trim();
+  if (!cleaned) return;
+  worldDraft.value = cleaned;
+  worldQuickPanelMode.value = '';
+  focusWorldTextareaToEnd();
+};
+
+const pushWorldMessageHistory = (content: string) => {
+  const cleaned = String(content || '').trim();
+  const conversationId = activeWorldConversationId.value;
+  if (!cleaned || !conversationId) return;
+  const current = worldHistoryMap.value[conversationId] || [];
+  const nextHistory = [cleaned, ...current.filter((item) => item !== cleaned)].slice(0, 30);
+  worldHistoryMap.value = {
+    ...worldHistoryMap.value,
+    [conversationId]: nextHistory
+  };
+  saveWorldHistoryMap(worldHistoryMap.value);
+};
+
+const closeWorldQuickPanelWhenOutside = (event: Event) => {
+  if (!worldQuickPanelMode.value) return;
+  const target = event.target as Node | null;
+  if (!target || !worldComposerRef.value || worldComposerRef.value.contains(target)) {
+    return;
+  }
+  clearWorldQuickPanelClose();
+  worldQuickPanelMode.value = '';
+};
 
 const AGENT_CONTAINER_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -2921,10 +3369,104 @@ const syncAgentConversationFallback = () => {
   });
 };
 
+const parseAgentLocalCommand = (value: unknown): AgentLocalCommand | '' => {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith('/')) return '';
+  const token = raw.split(/\s+/, 1)[0].replace(/^\/+/, '').toLowerCase();
+  if (!token) return '';
+  if (token === 'new' || token === 'reset') return 'new';
+  if (token === 'stop' || token === 'cancel') return 'stop';
+  if (token === 'help' || token === '?') return 'help';
+  if (token === 'compact') return 'compact';
+  return '';
+};
+
+const resolveCommandErrorMessage = (error: unknown): string =>
+  String((error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail || (error as { message?: string })?.message || t('common.requestFailed')).trim();
+
+const appendAgentLocalCommandMessages = (commandText: string, replyText: string) => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  chatStore.appendLocalMessage('user', commandText, { sessionId });
+  chatStore.appendLocalMessage('assistant', replyText, { sessionId });
+};
+
+const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: string) => {
+  if (command === 'help') {
+    appendAgentLocalCommandMessages(rawText, t('chat.command.help'));
+    await scrollMessagesToBottom();
+    return;
+  }
+
+  if (command === 'new') {
+    try {
+      const payloadAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+      const created = await chatStore.createSession(
+        payloadAgentId === DEFAULT_AGENT_KEY ? {} : { agent_id: payloadAgentId }
+      );
+      sessionHub.setActiveConversation({
+        kind: 'agent',
+        id: String(created?.id || chatStore.activeSessionId || ''),
+        agentId: normalizeAgentId(created?.agent_id || payloadAgentId)
+      });
+      appendAgentLocalCommandMessages(rawText, t('chat.command.newSuccess'));
+    } catch (error) {
+      appendAgentLocalCommandMessages(
+        rawText,
+        t('chat.command.newFailed', { message: resolveCommandErrorMessage(error) })
+      );
+    }
+    await scrollMessagesToBottom();
+    return;
+  }
+
+  if (command === 'stop') {
+    const sessionId = String(chatStore.activeSessionId || '').trim();
+    if (!sessionId) {
+      appendAgentLocalCommandMessages(rawText, t('chat.command.stopNoSession'));
+      await scrollMessagesToBottom();
+      return;
+    }
+    const cancelled = await chatStore.stopStream();
+    appendAgentLocalCommandMessages(
+      rawText,
+      cancelled ? t('chat.command.stopRequested') : t('chat.command.stopNoRunning')
+    );
+    await scrollMessagesToBottom();
+    return;
+  }
+
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) {
+    appendAgentLocalCommandMessages(rawText, t('chat.command.compactMissingSession'));
+    await scrollMessagesToBottom();
+    return;
+  }
+  try {
+    await chatStore.compactSession(sessionId);
+    appendAgentLocalCommandMessages(rawText, t('chat.command.compactSuccess'));
+  } catch (error) {
+    appendAgentLocalCommandMessages(
+      rawText,
+      t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) })
+    );
+  }
+  await scrollMessagesToBottom();
+};
+
 const sendAgentMessage = async (payload: { content?: string; attachments?: unknown[] }) => {
   const content = String(payload?.content || '').trim();
   const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
   if (!content && attachments.length === 0) return;
+  const localCommand = parseAgentLocalCommand(content);
+  if (localCommand) {
+    if (attachments.length > 0) {
+      appendAgentLocalCommandMessages(content, t('chat.command.attachmentsUnsupported'));
+      await scrollMessagesToBottom();
+      return;
+    }
+    await handleAgentLocalCommand(localCommand, content);
+    return;
+  }
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
   setRuntimeStateOverride(targetAgentId, 'running', 30_000);
   try {
@@ -2982,6 +3524,7 @@ const appendWorldAttachmentTokens = (paths: string[]) => {
 
 const triggerWorldUpload = () => {
   if (!isWorldConversationActive.value || worldUploading.value || !worldUploadInputRef.value) return;
+  worldQuickPanelMode.value = '';
   worldUploadInputRef.value.value = '';
   worldUploadInputRef.value.click();
 };
@@ -3032,9 +3575,11 @@ const sendWorldMessage = async () => {
   if (!canSendWorldMessage.value) return;
   const text = worldDraft.value.trim();
   if (!text) return;
+  worldQuickPanelMode.value = '';
   worldDraft.value = '';
   try {
     await userWorldStore.sendToActiveConversation(text);
+    pushWorldMessageHistory(text);
     await scrollMessagesToBottom();
   } catch (error) {
     worldDraft.value = text;
@@ -3077,20 +3622,6 @@ const toggleLanguage = () => {
   const next = getCurrentLanguage() === 'zh-CN' ? 'en-US' : 'zh-CN';
   setLanguage(next);
   ElMessage.success(t('messenger.more.languageChanged'));
-};
-
-const logout = async () => {
-  try {
-    await ElMessageBox.confirm(t('messenger.more.logoutConfirm'), t('nav.logout'), {
-      type: 'warning',
-      confirmButtonText: t('common.confirm'),
-      cancelButtonText: t('common.cancel')
-    });
-  } catch {
-    return;
-  }
-  authStore.logout();
-  router.replace('/login');
 };
 
 const checkClientUpdate = () => {
@@ -3427,9 +3958,33 @@ watch(
   }
 );
 
+watch(
+  () => isWorldConversationActive.value,
+  (active) => {
+    if (!active) {
+      clearWorldQuickPanelClose();
+      worldQuickPanelMode.value = '';
+    }
+  }
+);
+
+watch(
+  () => activeWorldConversationId.value,
+  () => {
+    clearWorldQuickPanelClose();
+    worldQuickPanelMode.value = '';
+  }
+);
+
 onMounted(async () => {
   if (typeof window !== 'undefined') {
     uiFontSize.value = normalizeUiFontSize(window.localStorage.getItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY));
+    worldComposerHeight.value = clampWorldComposerHeight(
+      window.localStorage.getItem(WORLD_COMPOSER_HEIGHT_STORAGE_KEY)
+    );
+    worldRecentEmojis.value = loadStoredStringArray(WORLD_QUICK_EMOJI_STORAGE_KEY, 12);
+    worldHistoryMap.value = loadWorldHistoryMap();
+    window.addEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
   }
   applyUiFontSize(uiFontSize.value);
   await bootstrap();
@@ -3444,6 +3999,11 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
+  }
+  clearWorldQuickPanelClose();
+  stopWorldComposerResize();
   if (statusTimer) {
     window.clearInterval(statusTimer);
     statusTimer = null;
