@@ -421,6 +421,20 @@
   overflow: hidden;
 }
 
+.messenger-chat-body.is-agent .messenger-message:not(.mine) .messenger-message-main {
+  width: 100%;
+  max-width: 100%;
+}
+
+.messenger-chat-body.is-agent .messenger-message:not(.mine) {
+  align-items: stretch;
+}
+
+.messenger-chat-body.is-agent .messenger-message:not(.mine) .messenger-workflow-scope,
+.messenger-chat-body.is-agent .messenger-message:not(.mine) .messenger-message-bubble {
+  width: 100%;
+}
+
 .messenger-chat-settings {
   display: flex;
   flex-direction: column;
@@ -1064,6 +1078,12 @@
   overflow: hidden;
 }
 
+.messenger-right-panel--sandbox .messenger-workspace-scope.chat-shell {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+}
+
 .messenger-composer-scope.chat-shell,
 .messenger-workflow-scope.chat-shell {
   overflow: visible;
@@ -1156,6 +1176,17 @@
   padding: 10px;
 }
 
+.messenger-right-panel--sandbox .workspace-panel {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.messenger-right-panel--sandbox .workspace-list {
+  flex: 1;
+  min-height: 0;
+}
+
 .messenger-workspace-scope.chat-shell .workspace-list {
   background: #f8f8f8;
   border-color: #e3e3e3;
@@ -1171,16 +1202,39 @@
 }
 
 .messenger-workflow-scope.chat-shell .workflow-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 6px;
   background: #f8f8f8;
   border-color: #e3e3e3;
+  border-radius: 12px;
+}
+
+.messenger-workflow-scope.chat-shell .workflow-item {
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.messenger-workflow-scope.chat-shell .workflow-item + .workflow-item {
+  margin-top: 2px;
 }
 
 .messenger-workflow-scope.chat-shell .workflow-item:not(:last-child) {
-  border-bottom-color: #e3e3e3;
+  border-bottom: none;
 }
 
 .messenger-workflow-scope.chat-shell .workflow-item:hover {
-  background: #efefef;
+  border-color: #dce6e3;
+  background: #ffffff;
+}
+
+.messenger-workflow-scope.chat-shell .spinner,
+.messenger-workflow-scope.chat-shell .status-indicator.loading {
+  animation: spin 0.9s linear infinite !important;
+  transform-origin: center;
 }
 
 .messenger-view .chat-shell .message-thinking {
@@ -1298,6 +1352,129 @@
   color: #13987f;
 }
 
+.workflow-dialog .workflow-dialog-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: #2f6f62;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.workflow-dialog .workflow-dialog-title::before {
+  display: none;
+}
+
+.workflow-dialog .el-dialog__headerbtn .el-dialog__close {
+  color: #7a7a7a;
+}
+
+.workflow-dialog .el-dialog__headerbtn:hover .el-dialog__close {
+  color: #4f4f4f;
+}
+
+.workflow-dialog .workflow-dialog-detail {
+  background: #f8f8f8;
+  border: 1px solid #e3e3e3;
+  color: #2f2f2f;
+  border-radius: 10px;
+  line-height: 1.6;
+  font-size: 12px;
+  box-shadow: none;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skills-list {
+  border-color: #e3e3e3;
+  background: #f9f9f9;
+  box-shadow: none;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-item {
+  border-color: #e8e8e8;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-item:hover {
+  border-color: #cfe6df;
+  background: #f7fbfa;
+  box-shadow: none;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-item.active {
+  border-color: rgba(19, 152, 127, 0.5);
+  background: #e8f4f1;
+  box-shadow: none;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .management-layout.skill-layout {
+  grid-template-columns: minmax(220px, 296px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .management-detail.skill-detail {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 10px;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-detail-pane {
+  border: 1px solid #e3e3e3;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skills-section-title {
+  color: #2f6f62;
+  background: #e8f4f1;
+  border-color: rgba(19, 152, 127, 0.3);
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-file-tree {
+  border-color: #e3e3e3;
+  background: #f9f9f9;
+  color: #2f2f2f;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-tree-item.is-file:hover {
+  background: #eef7f4;
+  box-shadow: inset 0 0 0 1px rgba(19, 152, 127, 0.35);
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-tree-item.is-active {
+  background: #e8f4f1;
+  box-shadow: inset 0 0 0 1px rgba(19, 152, 127, 0.45);
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-body {
+  border-color: #e3e3e3;
+  background: #fafafa;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight {
+  color: #2f2f2f;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-comment {
+  color: #7a7a7a;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-string {
+  color: #217346;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-number {
+  color: #a16207;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-keyword {
+  color: #1d4ed8;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-text {
+  color: #1f2937;
+}
+
 .messenger-dialog.el-dialog {
   border-radius: 12px;
   border: 1px solid #dcdcdc;
@@ -1392,6 +1569,15 @@
 .messenger-view .chat-shell .spinner,
 .messenger-view .chat-shell .status-indicator.loading {
   animation-duration: 0.9s;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @media (max-width: 1680px) {

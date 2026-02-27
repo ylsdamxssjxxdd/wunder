@@ -224,6 +224,9 @@
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('toolManager.system.builtin') }}</span>
               </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('messenger.tools.builtinDesc') }}</span>
+              </div>
             </div>
           </button>
           <button
@@ -238,20 +241,7 @@
                 <span class="messenger-list-name">{{ t('toolManager.system.mcp') }}</span>
               </div>
               <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.tools.customDesc') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === 'category:a2a' }"
-            type="button"
-            @click="selectToolCategory('a2a')"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-network-wired" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('toolManager.system.a2a') }}</span>
+                <span class="messenger-list-preview">{{ t('messenger.tools.mcpDesc') }}</span>
               </div>
             </div>
           </button>
@@ -266,6 +256,9 @@
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('toolManager.system.skills') }}</span>
               </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('messenger.tools.skillsDesc') }}</span>
+              </div>
             </div>
           </button>
           <button
@@ -278,6 +271,25 @@
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ t('toolManager.system.knowledge') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('messenger.tools.knowledgeDesc') }}</span>
+              </div>
+            </div>
+          </button>
+          <button
+            class="messenger-list-item"
+            :class="{ active: selectedToolEntryKey === 'category:shared' }"
+            type="button"
+            @click="selectToolCategory('shared')"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-share-nodes" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('messenger.tools.sharedTitle') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('messenger.tools.sharedDesc') }}</span>
               </div>
             </div>
           </button>
@@ -301,32 +313,6 @@
             </div>
           </button>
           <div v-if="!filteredCustomTools.length" class="messenger-list-empty">{{ t('messenger.empty.toolsCustom') }}</div>
-
-          <div class="messenger-block-title">{{ t('messenger.tools.sharedTitle') }}</div>
-          <button
-            v-for="tool in filteredSharedTools"
-            :key="`shared-tool-${tool.name}`"
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === `shared:${tool.name}` }"
-            type="button"
-            @click="selectSharedTool(tool.name)"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-share-from-square" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ tool.name }}</span>
-                <span v-if="isSharedToolEnabled(tool.name)" class="messenger-kind-tag">
-                  {{ t('common.enabled') }}
-                </span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">
-                  {{ tool.description || t('common.noDescription') }}
-                </span>
-              </div>
-            </div>
-          </button>
-          <div v-if="!filteredSharedTools.length" class="messenger-list-empty">{{ t('messenger.empty.toolsShared') }}</div>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'files'">
@@ -422,7 +408,12 @@
       <div
         ref="messageListRef"
         class="messenger-chat-body"
-        :class="{ 'is-settings': showChatSettingsView, 'is-messages': !showChatSettingsView }"
+        :class="{
+          'is-settings': showChatSettingsView,
+          'is-messages': !showChatSettingsView,
+          'is-agent': isAgentConversationActive,
+          'is-world': isWorldConversationActive
+        }"
       >
         <template v-if="showChatSettingsView">
           <div class="messenger-chat-settings">
@@ -558,7 +549,8 @@
                 v-else-if="
                   selectedToolCategory === 'mcp' ||
                   selectedToolCategory === 'skills' ||
-                  selectedToolCategory === 'knowledge'
+                  selectedToolCategory === 'knowledge' ||
+                  selectedToolCategory === 'shared'
                 "
               >
                 <div class="messenger-tools-pane-host user-tools-dialog">
@@ -583,6 +575,7 @@
                     :status="toolPaneStatus"
                     @status="toolPaneStatus = String($event || '')"
                   />
+                  <UserSharedToolsPanel v-show="selectedToolCategory === 'shared'" />
                 </div>
               </template>
               <template v-else-if="selectedToolCategory">
@@ -622,31 +615,6 @@
                       {{ t('toolManager.system.knowledge') }}
                     </button>
                   </div>
-                </div>
-              </template>
-              <template v-else-if="selectedSharedTool">
-                <div class="messenger-entity-panel">
-                  <div class="messenger-entity-title">{{ selectedSharedTool.name }}</div>
-                  <div class="messenger-entity-meta">{{ selectedSharedTool.description || t('common.noDescription') }}</div>
-                  <div class="messenger-entity-meta">
-                    {{ t('userTools.shared.source', { owner: selectedSharedTool.ownerId || '-' }) }}
-                  </div>
-                  <label class="messenger-switch-row">
-                    <input
-                      type="checkbox"
-                      :checked="isSharedToolEnabled(selectedSharedTool.name)"
-                      @change="
-                        toggleSharedToolSelection(
-                          selectedSharedTool.name,
-                          ($event.target as HTMLInputElement).checked
-                        )
-                      "
-                    />
-                    <span>{{ t('common.enabled') }}</span>
-                  </label>
-                </div>
-                <div class="messenger-tools-pane-host user-tools-dialog">
-                  <UserSharedToolsPanel />
                 </div>
               </template>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
@@ -846,7 +814,7 @@ import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchCronJobs } from '@/api/cron';
-import { fetchUserToolsCatalog, saveUserSharedTools } from '@/api/userTools';
+import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentCreateDialog from '@/components/messenger/AgentCreateDialog.vue';
@@ -915,9 +883,8 @@ const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
-const selectedToolCategory = ref<'builtin' | 'mcp' | 'a2a' | 'skills' | 'knowledge' | ''>('');
+const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const selectedCustomToolName = ref('');
-const selectedSharedToolName = ref('');
 const worldDraft = ref('');
 const messageListRef = ref<HTMLElement | null>(null);
 const runningAgentIds = ref<Set<string>>(new Set());
@@ -926,10 +893,8 @@ const agentSettingMode = ref<'agent' | 'cron' | 'channel'>('agent');
 const toolsCatalogLoading = ref(false);
 const customTools = ref<ToolEntry[]>([]);
 const sharedTools = ref<ToolEntry[]>([]);
-const sharedToolSelectedSet = ref<Set<string>>(new Set());
 const builtinTools = ref<ToolEntry[]>([]);
 const mcpTools = ref<ToolEntry[]>([]);
-const a2aTools = ref<ToolEntry[]>([]);
 const skillTools = ref<ToolEntry[]>([]);
 const knowledgeTools = ref<ToolEntry[]>([]);
 const toolPaneStatus = ref('');
@@ -1148,20 +1113,9 @@ const filteredCustomTools = computed(() => {
   });
 });
 
-const filteredSharedTools = computed(() => {
-  const text = keyword.value.toLowerCase();
-  return sharedTools.value.filter((item) => {
-    const name = String(item.name || '').toLowerCase();
-    const desc = String(item.description || '').toLowerCase();
-    const owner = String(item.ownerId || '').toLowerCase();
-    return !text || name.includes(text) || desc.includes(text) || owner.includes(text);
-  });
-});
-
 const selectedToolEntryKey = computed(() => {
   if (selectedToolCategory.value) return `category:${selectedToolCategory.value}`;
   if (selectedCustomToolName.value) return `custom:${selectedCustomToolName.value}`;
-  if (selectedSharedToolName.value) return `shared:${selectedSharedToolName.value}`;
   return '';
 });
 
@@ -1169,43 +1123,76 @@ const selectedCustomTool = computed(
   () => customTools.value.find((item) => item.name === selectedCustomToolName.value) || null
 );
 
-const selectedSharedTool = computed(
-  () => sharedTools.value.find((item) => item.name === selectedSharedToolName.value) || null
-);
-
 const selectedToolCategoryItems = computed(() => {
   if (selectedToolCategory.value === 'builtin') return builtinTools.value;
   if (selectedToolCategory.value === 'mcp') return mcpTools.value;
-  if (selectedToolCategory.value === 'a2a') return a2aTools.value;
   if (selectedToolCategory.value === 'skills') return skillTools.value;
   if (selectedToolCategory.value === 'knowledge') return knowledgeTools.value;
+  if (selectedToolCategory.value === 'shared') return sharedTools.value;
   return [];
 });
 
 const mixedConversations = computed<MixedConversation[]>(() => {
-  const agentItems = (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).map((session) => {
-    const sessionId = String(session?.id || '');
-    const agentId = normalizeAgentId(session?.agent_id);
+  const sessionsByAgent = new Map<
+    string,
+    Array<{ session: Record<string, unknown>; lastAt: number; isMain: boolean }>
+  >();
+  (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).forEach((sessionRaw) => {
+    const session = (sessionRaw || {}) as Record<string, unknown>;
+    const agentId = normalizeAgentId(session.agent_id);
+    const list = sessionsByAgent.get(agentId) || [];
+    list.push({
+      session,
+      lastAt: normalizeTimestamp(session.updated_at || session.last_message_at || session.created_at),
+      isMain: Boolean(session.is_main)
+    });
+    sessionsByAgent.set(agentId, list);
+  });
+
+  const agentItems = Array.from(sessionsByAgent.entries()).map(([agentId, records]) => {
+    const sorted = [...records].sort((left, right) => right.lastAt - left.lastAt);
+    const latest = sorted[0];
+    const main = sorted.find((item) => item.isMain) || latest;
     const agent = agentMap.value.get(agentId) || null;
     const title = String(
-      session?.title ||
-        (agent as Record<string, unknown> | null)?.name ||
+      (agent as Record<string, unknown> | null)?.name ||
         (agentId === DEFAULT_AGENT_KEY ? t('messenger.defaultAgent') : agentId)
     );
     const preview = String(
-      session?.last_message_preview || session?.last_message || session?.summary || ''
+      latest?.session?.last_message_preview || latest?.session?.last_message || latest?.session?.summary || ''
     );
     return {
-      key: `agent:${sessionId}`,
+      key: `agent:${agentId}`,
       kind: 'agent',
-      sourceId: sessionId,
+      sourceId: String(main?.session?.id || ''),
       agentId,
       title,
       preview,
       unread: 0,
-      lastAt: normalizeTimestamp(session?.updated_at || session?.last_message_at || session?.created_at)
+      lastAt: Number(latest?.lastAt || main?.lastAt || 0)
     } as MixedConversation;
   });
+
+  const draftIdentity = activeConversation.value;
+  if (draftIdentity?.kind === 'agent' && draftIdentity.id.startsWith('draft:')) {
+    const draftAgentId = normalizeAgentId(draftIdentity.agentId || draftIdentity.id.slice('draft:'.length));
+    if (!agentItems.some((item) => item.agentId === draftAgentId)) {
+      const agent = agentMap.value.get(draftAgentId) || null;
+      agentItems.unshift({
+        key: `agent:${draftAgentId}`,
+        kind: 'agent',
+        sourceId: '',
+        agentId: draftAgentId,
+        title: String(
+          (agent as Record<string, unknown> | null)?.name ||
+            (draftAgentId === DEFAULT_AGENT_KEY ? t('messenger.defaultAgent') : draftAgentId)
+        ),
+        preview: '',
+        unread: 0,
+        lastAt: Date.now()
+      });
+    }
+  }
 
   const worldItems = (Array.isArray(userWorldStore.conversations) ? userWorldStore.conversations : []).map(
     (conversation) => {
@@ -1286,7 +1273,6 @@ const chatPanelTitle = computed(() => {
   if (sessionHub.activeSection === 'tools') {
     if (selectedToolCategory.value) return toolCategoryLabel(selectedToolCategory.value);
     if (selectedCustomTool.value?.name) return selectedCustomTool.value.name;
-    if (selectedSharedTool.value?.name) return selectedSharedTool.value.name;
   }
   return activeSectionTitle.value;
 });
@@ -1508,8 +1494,13 @@ const isMixedConversationActive = (item: MixedConversation): boolean => {
   if (!identity) return false;
   if (item.kind === 'agent') {
     if (identity.kind !== 'agent') return false;
-    if (identity.id === item.sourceId) return true;
-    return identity.id.startsWith('draft:') && normalizeAgentId(identity.agentId) === item.agentId;
+    const currentAgentId = normalizeAgentId(
+      identity.agentId ||
+        (identity.id.startsWith('draft:')
+          ? identity.id.slice('draft:'.length)
+          : chatStore.sessions.find((session) => String(session?.id || '') === identity.id)?.agent_id)
+    );
+    return currentAgentId === item.agentId;
   }
   return identity.kind === item.kind && identity.id === item.sourceId;
 };
@@ -1521,7 +1512,6 @@ const switchSection = (section: MessengerSection) => {
   if (section !== 'tools') {
     selectedToolCategory.value = '';
     selectedCustomToolName.value = '';
-    selectedSharedToolName.value = '';
   }
   if (section !== 'users') {
     selectedContactUserId.value = '';
@@ -1551,7 +1541,11 @@ const switchSection = (section: MessengerSection) => {
 
 const openMixedConversation = async (item: MixedConversation) => {
   if (item.kind === 'agent') {
-    await openAgentSession(item.sourceId, item.agentId);
+    if (item.sourceId) {
+      await openAgentSession(item.sourceId, item.agentId);
+      return;
+    }
+    await openAgentById(item.agentId);
     return;
   }
   await openWorldConversation(item.sourceId, item.kind, 'messages');
@@ -1594,11 +1588,17 @@ const openWorldConversation = async (
 const openAgentById = async (agentId: unknown) => {
   const normalized = normalizeAgentId(agentId);
   selectedAgentId.value = normalized;
-  const session = chatStore.sessions.find(
-    (item) => normalizeAgentId(item?.agent_id) === normalized
-  );
-  if (session?.id) {
-    await openAgentSession(String(session.id), normalized);
+  const sessions = (Array.isArray(chatStore.sessions) ? chatStore.sessions : [])
+    .filter((item) => normalizeAgentId(item?.agent_id) === normalized)
+    .sort(
+      (left, right) =>
+        normalizeTimestamp(right?.updated_at || right?.last_message_at || right?.created_at) -
+        normalizeTimestamp(left?.updated_at || left?.last_message_at || left?.created_at)
+    );
+  const mainSession = sessions.find((item) => Boolean(item?.is_main));
+  const targetSession = mainSession || sessions[0];
+  if (targetSession?.id) {
+    await openAgentSession(String(targetSession.id), normalized);
     return;
   }
   chatStore.openDraftSession({ agent_id: normalized === DEFAULT_AGENT_KEY ? '' : normalized });
@@ -1749,23 +1749,17 @@ const loadToolsCatalog = async () => {
     mcpTools.value = (Array.isArray(payload.mcp_tools) ? payload.mcp_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
-    a2aTools.value = (Array.isArray(payload.a2a_tools) ? payload.a2a_tools : [])
-      .map((item) => normalizeToolEntry(item))
-      .filter(Boolean) as ToolEntry[];
     skillTools.value = (Array.isArray(payload.skills) ? payload.skills : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
     knowledgeTools.value = (Array.isArray(payload.knowledge_tools) ? payload.knowledge_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
-    const selected = Array.isArray(payload.shared_tools_selected) ? payload.shared_tools_selected : [];
-    sharedToolSelectedSet.value = new Set(selected.map((item) => String(item || '').trim()).filter(Boolean));
-
-    if (!selectedToolCategory.value && !selectedCustomToolName.value && !selectedSharedToolName.value) {
+    if (!selectedToolCategory.value && !selectedCustomToolName.value) {
       if (customTools.value.length > 0) {
         selectedCustomToolName.value = customTools.value[0].name;
       } else if (sharedTools.value.length > 0) {
-        selectedSharedToolName.value = sharedTools.value[0].name;
+        selectedToolCategory.value = 'shared';
       } else {
         selectedToolCategory.value = 'mcp';
       }
@@ -1777,53 +1771,24 @@ const loadToolsCatalog = async () => {
   }
 };
 
-const selectToolCategory = (category: 'builtin' | 'mcp' | 'a2a' | 'skills' | 'knowledge') => {
+const selectToolCategory = (category: 'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared') => {
   toolPaneStatus.value = '';
   selectedToolCategory.value = category;
   selectedCustomToolName.value = '';
-  selectedSharedToolName.value = '';
 };
 
 const selectCustomTool = (toolName: string) => {
   toolPaneStatus.value = '';
   selectedCustomToolName.value = String(toolName || '').trim();
   selectedToolCategory.value = '';
-  selectedSharedToolName.value = '';
-};
-
-const selectSharedTool = (toolName: string) => {
-  toolPaneStatus.value = '';
-  selectedSharedToolName.value = String(toolName || '').trim();
-  selectedToolCategory.value = '';
-  selectedCustomToolName.value = '';
-};
-
-const isSharedToolEnabled = (toolName: string): boolean =>
-  sharedToolSelectedSet.value.has(String(toolName || '').trim());
-
-const toggleSharedToolSelection = async (toolName: string, checked: boolean) => {
-  const target = String(toolName || '').trim();
-  if (!target) return;
-  const next = new Set(sharedToolSelectedSet.value);
-  if (checked) {
-    next.add(target);
-  } else {
-    next.delete(target);
-  }
-  sharedToolSelectedSet.value = next;
-  try {
-    await saveUserSharedTools({ shared_tools: Array.from(next) });
-  } catch (error) {
-    showApiError(error, t('userTools.shared.saveFailed'));
-  }
 };
 
 const toolCategoryLabel = (category: string) => {
   if (category === 'builtin') return t('toolManager.system.builtin');
   if (category === 'mcp') return t('toolManager.system.mcp');
-  if (category === 'a2a') return t('toolManager.system.a2a');
   if (category === 'skills') return t('toolManager.system.skills');
   if (category === 'knowledge') return t('toolManager.system.knowledge');
+  if (category === 'shared') return t('messenger.tools.sharedTitle');
   return category;
 };
 
@@ -1863,7 +1828,7 @@ const ensureSectionSelection = () => {
       if (customTools.value.length > 0) {
         selectedCustomToolName.value = customTools.value[0].name;
       } else if (sharedTools.value.length > 0) {
-        selectedSharedToolName.value = sharedTools.value[0].name;
+        selectedToolCategory.value = 'shared';
       } else {
         selectedToolCategory.value = 'mcp';
       }
