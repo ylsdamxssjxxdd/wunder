@@ -215,6 +215,19 @@
           <div class="messenger-block-title">{{ t('messenger.tools.customTitle') }}</div>
           <button
             class="messenger-list-item"
+            :class="{ active: selectedToolEntryKey === 'category:builtin' }"
+            type="button"
+            @click="selectToolCategory('builtin')"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-cubes" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('toolManager.system.builtin') }}</span>
+              </div>
+            </div>
+          </button>
+          <button
+            class="messenger-list-item"
             :class="{ active: selectedToolEntryKey === 'category:mcp' }"
             type="button"
             @click="selectToolCategory('mcp')"
@@ -226,6 +239,19 @@
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ t('messenger.tools.customDesc') }}</span>
+              </div>
+            </div>
+          </button>
+          <button
+            class="messenger-list-item"
+            :class="{ active: selectedToolEntryKey === 'category:a2a' }"
+            type="button"
+            @click="selectToolCategory('a2a')"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-network-wired" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('toolManager.system.a2a') }}</span>
               </div>
             </div>
           </button>
@@ -364,16 +390,17 @@
       <header class="messenger-chat-header">
         <div class="messenger-chat-heading">
           <div class="messenger-chat-title-row">
-            <div class="messenger-chat-title">{{ activeConversationTitle }}</div>
-            <span v-if="activeConversationKindLabel" class="messenger-chat-kind-pill">
-              {{ activeConversationKindLabel }}
+            <div class="messenger-chat-title">{{ chatPanelTitle }}</div>
+            <span v-if="chatPanelKindLabel" class="messenger-chat-kind-pill">
+              {{ chatPanelKindLabel }}
             </span>
           </div>
-          <div class="messenger-chat-subtitle">{{ activeConversationSubtitle }}</div>
-          <div v-if="activeConversationCode" class="messenger-chat-code">{{ activeConversationCode }}</div>
+          <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
+          <div v-if="chatPanelCode" class="messenger-chat-code">{{ chatPanelCode }}</div>
         </div>
         <div class="messenger-chat-header-actions">
           <button
+            v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
             :title="t('chat.newSession')"
@@ -382,105 +409,250 @@
           >
             <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
           </button>
-          <button
-            class="messenger-header-btn"
-            type="button"
-            :title="t('messenger.right.sandbox')"
-            :aria-label="t('messenger.right.sandbox')"
-            @click="sessionHub.setRightTab('sandbox')"
-          >
-            <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
-          </button>
         </div>
       </header>
 
-      <div v-if="sessionHub.activeConversation" class="messenger-chat-notice">
+      <div v-if="!showChatSettingsView && sessionHub.activeConversation" class="messenger-chat-notice">
         <i class="fa-solid fa-bullhorn" aria-hidden="true"></i>
         <span>{{ activeConversationNotice }}</span>
       </div>
 
       <div ref="messageListRef" class="messenger-chat-body">
-        <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>
-        <div v-else-if="!sessionHub.activeConversation" class="messenger-chat-empty">
-          {{ t('messenger.empty.selectConversation') }}
-        </div>
-
-        <template v-else-if="isAgentConversationActive">
-          <div
-            v-for="(message, index) in chatStore.messages"
-            :key="resolveAgentMessageKey(message, index)"
-            class="messenger-message"
-            :class="{ mine: message.role === 'user' }"
-          >
-            <div class="messenger-message-avatar">
-              {{ avatarLabel(message.role === 'user' ? currentUsername : activeAgentName) }}
-            </div>
-            <div class="messenger-message-main">
-              <div class="messenger-message-meta">
-                <span>{{ message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
-                <span>{{ formatTime(message.created_at) }}</span>
-                <MessageThinking
-                  v-if="message.role === 'assistant'"
-                  :content="String(message.reasoning || '')"
-                  :streaming="Boolean(message.reasoningStreaming)"
-                />
+        <template v-if="showChatSettingsView">
+          <div class="messenger-chat-settings">
+            <template v-if="showAgentSettingsPanel">
+              <div class="messenger-inline-actions">
+                <button class="messenger-inline-btn primary" type="button" @click="enterSelectedAgentConversation">
+                  {{ t('messenger.action.openConversation') }}
+                </button>
                 <button
-                  class="messenger-message-copy-btn"
+                  class="messenger-inline-btn"
+                  :class="{ active: agentSettingMode === 'agent' }"
                   type="button"
-                  :title="t('chat.message.copy')"
-                  :aria-label="t('chat.message.copy')"
-                  @click="copyMessageContent(message.content)"
+                  @click="agentSettingMode = 'agent'"
                 >
-                  <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                  {{ t('chat.features.agentSettings') }}
+                </button>
+                <button
+                  class="messenger-inline-btn"
+                  :class="{ active: agentSettingMode === 'cron' }"
+                  type="button"
+                  @click="agentSettingMode = 'cron'"
+                >
+                  {{ t('chat.features.cron') }}
+                </button>
+                <button
+                  class="messenger-inline-btn"
+                  :class="{ active: agentSettingMode === 'channel' }"
+                  type="button"
+                  @click="agentSettingMode = 'channel'"
+                >
+                  {{ t('chat.features.channels') }}
                 </button>
               </div>
-              <div v-if="message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
-                <MessageWorkflow
-                  :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
-                  :loading="Boolean(message.workflowStreaming)"
-                  :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
+
+              <div v-show="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
+                <AgentSettingsPanel
+                  :agent-id="settingsAgentIdForApi"
+                  @saved="handleAgentSettingsSaved"
+                  @deleted="handleAgentDeleted"
                 />
               </div>
-              <div class="messenger-message-bubble messenger-markdown">
-                <div class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
+
+              <div v-show="agentSettingMode === 'cron'" class="messenger-chat-settings-block">
+                <AgentCronPanel :agent-id="settingsAgentIdForApi" />
               </div>
-            </div>
+
+              <div
+                v-show="agentSettingMode === 'channel'"
+                class="messenger-chat-settings-block messenger-channel-panel-wrap"
+              >
+                <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
+              </div>
+            </template>
+
+            <template v-else-if="sessionHub.activeSection === 'users'">
+              <div v-if="selectedContact" class="messenger-entity-panel">
+                <div class="messenger-entity-title">{{ selectedContact.username || selectedContact.user_id }}</div>
+                <div class="messenger-entity-meta">ID: {{ selectedContact.user_id }}</div>
+                <div class="messenger-entity-meta">
+                  {{ selectedContact.last_message_preview || t('messenger.preview.empty') }}
+                </div>
+                <div class="messenger-inline-actions">
+                  <button class="messenger-inline-btn primary" type="button" @click="openSelectedContactConversation">
+                    {{ t('messenger.action.openConversation') }}
+                  </button>
+                </div>
+              </div>
+              <div v-else class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
+            </template>
+
+            <template v-else-if="sessionHub.activeSection === 'groups'">
+              <div v-if="selectedGroup" class="messenger-entity-panel">
+                <div class="messenger-entity-title">{{ selectedGroup.group_name || selectedGroup.group_id }}</div>
+                <div class="messenger-entity-meta">ID: {{ selectedGroup.group_id }}</div>
+                <div class="messenger-entity-meta">
+                  {{ selectedGroup.last_message_preview || t('messenger.preview.empty') }}
+                </div>
+                <div class="messenger-inline-actions">
+                  <button class="messenger-inline-btn primary" type="button" @click="openSelectedGroupConversation">
+                    {{ t('messenger.action.openConversation') }}
+                  </button>
+                </div>
+              </div>
+              <div v-else class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
+            </template>
+
+            <template v-else-if="sessionHub.activeSection === 'tools'">
+              <div v-if="toolsCatalogLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+              <template v-else-if="selectedToolCategory">
+                <div class="messenger-entity-panel">
+                  <div class="messenger-entity-title">{{ toolCategoryLabel(selectedToolCategory) }}</div>
+                  <div class="messenger-entity-meta">{{ t('messenger.tools.customDesc') }}</div>
+                  <div class="messenger-tool-tag-list">
+                    <span
+                      v-for="item in selectedToolCategoryItems"
+                      :key="`tool-category-item-${selectedToolCategory}-${item.name}`"
+                      class="messenger-tool-tag"
+                    >
+                      {{ item.name }}
+                    </span>
+                    <span v-if="!selectedToolCategoryItems.length" class="messenger-list-empty">
+                      {{ t('common.none') }}
+                    </span>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="selectedCustomTool">
+                <div class="messenger-entity-panel">
+                  <div class="messenger-entity-title">{{ selectedCustomTool.name }}</div>
+                  <div class="messenger-entity-meta">{{ selectedCustomTool.description || t('common.noDescription') }}</div>
+                  <div class="messenger-entity-meta">{{ t('messenger.tools.customTitle') }}</div>
+                </div>
+              </template>
+              <template v-else-if="selectedSharedTool">
+                <div class="messenger-entity-panel">
+                  <div class="messenger-entity-title">{{ selectedSharedTool.name }}</div>
+                  <div class="messenger-entity-meta">{{ selectedSharedTool.description || t('common.noDescription') }}</div>
+                  <div class="messenger-entity-meta">
+                    {{ t('userTools.shared.source', { owner: selectedSharedTool.ownerId || '-' }) }}
+                  </div>
+                  <label class="messenger-switch-row">
+                    <input
+                      type="checkbox"
+                      :checked="isSharedToolEnabled(selectedSharedTool.name)"
+                      @change="
+                        toggleSharedToolSelection(
+                          selectedSharedTool.name,
+                          ($event.target as HTMLInputElement).checked
+                        )
+                      "
+                    />
+                    <span>{{ t('common.enabled') }}</span>
+                  </label>
+                </div>
+              </template>
+              <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
+            </template>
+
+            <template v-else-if="sessionHub.activeSection === 'files'">
+              <div class="messenger-entity-panel">
+                <div class="messenger-entity-title">{{ t('messenger.files.title') }}</div>
+                <div class="messenger-entity-meta">
+                  {{ t('portal.agent.sandbox.option', { id: currentContainerId }) }}
+                </div>
+              </div>
+            </template>
+
+            <template v-else-if="sessionHub.activeSection === 'more'">
+              <div class="messenger-list-empty">{{ t('messenger.section.more.desc') }}</div>
+            </template>
           </div>
         </template>
 
         <template v-else>
-          <div
-            v-for="message in userWorldStore.activeMessages"
-            :key="`uw-${message.message_id}`"
-            class="messenger-message"
-            :class="{ mine: isOwnMessage(message) }"
-          >
-            <div class="messenger-message-avatar">
-              {{ avatarLabel(resolveWorldMessageSender(message)) }}
-            </div>
-            <div class="messenger-message-main">
-              <div class="messenger-message-meta">
-                <span>{{ resolveWorldMessageSender(message) }}</span>
-                <span>{{ formatTime(message.created_at) }}</span>
-                <button
-                  class="messenger-message-copy-btn"
-                  type="button"
-                  :title="t('chat.message.copy')"
-                  :aria-label="t('chat.message.copy')"
-                  @click="copyMessageContent(message.content)"
-                >
-                  <i class="fa-solid fa-copy" aria-hidden="true"></i>
-                </button>
-              </div>
-              <div class="messenger-message-bubble messenger-markdown">
-                <div class="markdown-body" v-html="renderWorldMarkdown(message)"></div>
-              </div>
-            </div>
+          <div v-if="bootLoading" class="messenger-chat-empty">{{ t('common.loading') }}</div>
+          <div v-else-if="!sessionHub.activeConversation" class="messenger-chat-empty">
+            {{ t('messenger.empty.selectConversation') }}
           </div>
+
+          <template v-else-if="isAgentConversationActive">
+            <div
+              v-for="(message, index) in chatStore.messages"
+              :key="resolveAgentMessageKey(message, index)"
+              class="messenger-message"
+              :class="{ mine: message.role === 'user' }"
+            >
+              <div class="messenger-message-avatar">
+                {{ avatarLabel(message.role === 'user' ? currentUsername : activeAgentName) }}
+              </div>
+              <div class="messenger-message-main">
+                <div class="messenger-message-meta">
+                  <span>{{ message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
+                  <span>{{ formatTime(message.created_at) }}</span>
+                  <MessageThinking
+                    v-if="message.role === 'assistant'"
+                    :content="String(message.reasoning || '')"
+                    :streaming="Boolean(message.reasoningStreaming)"
+                  />
+                  <button
+                    class="messenger-message-copy-btn"
+                    type="button"
+                    :title="t('chat.message.copy')"
+                    :aria-label="t('chat.message.copy')"
+                    @click="copyMessageContent(message.content)"
+                  >
+                    <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <div v-if="message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
+                  <MessageWorkflow
+                    :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
+                    :loading="Boolean(message.workflowStreaming)"
+                    :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
+                  />
+                </div>
+                <div class="messenger-message-bubble messenger-markdown">
+                  <div class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+            <div
+              v-for="message in userWorldStore.activeMessages"
+              :key="`uw-${message.message_id}`"
+              class="messenger-message"
+              :class="{ mine: isOwnMessage(message) }"
+            >
+              <div class="messenger-message-avatar">
+                {{ avatarLabel(resolveWorldMessageSender(message)) }}
+              </div>
+              <div class="messenger-message-main">
+                <div class="messenger-message-meta">
+                  <span>{{ resolveWorldMessageSender(message) }}</span>
+                  <span>{{ formatTime(message.created_at) }}</span>
+                  <button
+                    class="messenger-message-copy-btn"
+                    type="button"
+                    :title="t('chat.message.copy')"
+                    :aria-label="t('chat.message.copy')"
+                    @click="copyMessageContent(message.content)"
+                  >
+                    <i class="fa-solid fa-copy" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <div class="messenger-message-bubble messenger-markdown">
+                  <div class="markdown-body" v-html="renderWorldMarkdown(message)"></div>
+                </div>
+              </div>
+            </div>
+          </template>
         </template>
       </div>
 
-      <footer class="messenger-chat-footer">
+      <footer v-if="!showChatSettingsView" class="messenger-chat-footer">
         <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
           <ChatComposer :loading="agentSessionLoading" @send="sendAgentMessage" @stop="stopAgentMessage" />
         </div>
@@ -507,40 +679,28 @@
     </section>
 
     <aside class="messenger-right-dock">
-      <div class="messenger-right-tabs">
-        <button
-          v-for="tab in rightTabs"
-          :key="tab.key"
-          class="messenger-right-tab"
-          :class="{ active: sessionHub.rightTab === tab.key }"
-          type="button"
-          @click="sessionHub.setRightTab(tab.key)"
-        >
-          {{ tab.label }}
-        </button>
-      </div>
-
-      <div class="messenger-right-content">
-        <div v-show="sessionHub.rightTab === 'sandbox'" class="messenger-right-panel">
+      <div class="messenger-right-content messenger-right-content--stack">
+        <div class="messenger-right-panel messenger-right-panel--sandbox">
           <div class="messenger-right-section-title">
             <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
             <span>{{ t('messenger.right.sandbox') }}</span>
           </div>
-          <div class="messenger-workspace-scope chat-shell">
-            <WorkspacePanel :agent-id="activeAgentIdForApi" :container-id="currentContainerId" />
+          <div v-if="showRightAgentPanels" class="messenger-workspace-scope chat-shell">
+            <WorkspacePanel :agent-id="rightPanelAgentIdForApi" :container-id="rightPanelContainerId" />
           </div>
+          <div v-else class="messenger-list-empty">{{ t('messenger.settings.agentOnly') }}</div>
         </div>
 
-        <div v-show="sessionHub.rightTab === 'timeline'" class="messenger-right-panel">
+        <div class="messenger-right-panel messenger-right-panel--timeline">
           <div class="messenger-right-section-title">
             <i class="fa-solid fa-timeline" aria-hidden="true"></i>
             <span>{{ t('messenger.right.timeline') }}</span>
           </div>
-          <div v-if="!timelineItems.length" class="messenger-list-empty">
+          <div v-if="!rightPanelTimelineItems.length" class="messenger-list-empty">
             {{ t('messenger.empty.timeline') }}
           </div>
           <div v-else class="messenger-timeline">
-            <div v-for="item in timelineItems" :key="item.id" class="messenger-timeline-item">
+            <div v-for="item in rightPanelTimelineItems" :key="item.id" class="messenger-timeline-item">
               <div class="messenger-timeline-title">{{ item.title }}</div>
               <div class="messenger-timeline-detail">{{ item.detail || t('common.none') }}</div>
               <div class="messenger-timeline-meta">
@@ -548,169 +708,6 @@
                 <span>{{ formatTime(item.createdAt) }}</span>
               </div>
             </div>
-          </div>
-        </div>
-
-        <div v-show="sessionHub.rightTab === 'settings'" class="messenger-right-panel messenger-settings-panel">
-          <div class="messenger-right-section-title">
-            <i class="fa-solid fa-sliders" aria-hidden="true"></i>
-            <span>{{ t('messenger.right.settings') }}</span>
-          </div>
-          <template v-if="showAgentSettingsPanel">
-            <div class="messenger-inline-actions">
-              <button class="messenger-inline-btn" type="button" @click="enterSelectedAgentConversation">
-                {{ t('messenger.action.openConversation') }}
-              </button>
-              <button
-                class="messenger-inline-btn"
-                :class="{ active: agentSettingMode === 'agent' }"
-                type="button"
-                @click="agentSettingMode = 'agent'"
-              >
-                {{ t('chat.features.agentSettings') }}
-              </button>
-              <button
-                class="messenger-inline-btn"
-                :class="{ active: agentSettingMode === 'cron' }"
-                type="button"
-                @click="agentSettingMode = 'cron'"
-              >
-                {{ t('chat.features.cron') }}
-              </button>
-              <button
-                class="messenger-inline-btn"
-                :class="{ active: agentSettingMode === 'channel' }"
-                type="button"
-                @click="agentSettingMode = 'channel'"
-              >
-                {{ t('chat.features.channels') }}
-              </button>
-              <button
-                class="messenger-inline-btn danger"
-                type="button"
-                :disabled="!agentSessionLoading"
-                @click="stopAgentMessage"
-              >
-                {{ t('common.stop') }}
-              </button>
-            </div>
-
-            <div v-show="agentSettingMode === 'agent'" class="messenger-right-block">
-              <AgentSettingsPanel
-                :agent-id="settingsAgentIdForApi"
-                @saved="handleAgentSettingsSaved"
-                @deleted="handleAgentDeleted"
-              />
-            </div>
-
-            <div v-show="agentSettingMode === 'cron'" class="messenger-right-block">
-              <AgentCronPanel :agent-id="settingsAgentIdForApi" />
-            </div>
-
-            <div v-show="agentSettingMode === 'channel'" class="messenger-right-block messenger-channel-panel-wrap">
-              <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
-            </div>
-          </template>
-
-          <template v-else-if="sessionHub.activeSection === 'users'">
-            <div v-if="selectedContact" class="messenger-entity-panel">
-              <div class="messenger-entity-title">{{ selectedContact.username || selectedContact.user_id }}</div>
-              <div class="messenger-entity-meta">ID: {{ selectedContact.user_id }}</div>
-              <div class="messenger-entity-meta">
-                {{ selectedContact.last_message_preview || t('messenger.preview.empty') }}
-              </div>
-              <div class="messenger-inline-actions">
-                <button class="messenger-inline-btn primary" type="button" @click="openSelectedContactConversation">
-                  {{ t('messenger.action.openConversation') }}
-                </button>
-              </div>
-            </div>
-            <div v-else class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
-          </template>
-
-          <template v-else-if="sessionHub.activeSection === 'groups'">
-            <div v-if="selectedGroup" class="messenger-entity-panel">
-              <div class="messenger-entity-title">{{ selectedGroup.group_name || selectedGroup.group_id }}</div>
-              <div class="messenger-entity-meta">ID: {{ selectedGroup.group_id }}</div>
-              <div class="messenger-entity-meta">
-                {{ selectedGroup.last_message_preview || t('messenger.preview.empty') }}
-              </div>
-              <div class="messenger-inline-actions">
-                <button class="messenger-inline-btn primary" type="button" @click="openSelectedGroupConversation">
-                  {{ t('messenger.action.openConversation') }}
-                </button>
-              </div>
-            </div>
-            <div v-else class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
-          </template>
-
-          <template v-else-if="sessionHub.activeSection === 'tools'">
-            <div v-if="toolsCatalogLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
-            <template v-else-if="selectedToolCategory">
-              <div class="messenger-entity-panel">
-                <div class="messenger-entity-title">{{ toolCategoryLabel(selectedToolCategory) }}</div>
-                <div class="messenger-entity-meta">{{ t('messenger.tools.customDesc') }}</div>
-                <div class="messenger-tool-tag-list">
-                  <span
-                    v-for="item in selectedToolCategoryItems"
-                    :key="`tool-category-item-${selectedToolCategory}-${item.name}`"
-                    class="messenger-tool-tag"
-                  >
-                    {{ item.name }}
-                  </span>
-                  <span v-if="!selectedToolCategoryItems.length" class="messenger-list-empty">
-                    {{ t('common.none') }}
-                  </span>
-                </div>
-              </div>
-            </template>
-            <template v-else-if="selectedCustomTool">
-              <div class="messenger-entity-panel">
-                <div class="messenger-entity-title">{{ selectedCustomTool.name }}</div>
-                <div class="messenger-entity-meta">{{ selectedCustomTool.description || t('common.noDescription') }}</div>
-                <div class="messenger-entity-meta">{{ t('messenger.tools.customTitle') }}</div>
-              </div>
-            </template>
-            <template v-else-if="selectedSharedTool">
-              <div class="messenger-entity-panel">
-                <div class="messenger-entity-title">{{ selectedSharedTool.name }}</div>
-                <div class="messenger-entity-meta">{{ selectedSharedTool.description || t('common.noDescription') }}</div>
-                <div class="messenger-entity-meta">
-                  {{ t('userTools.shared.source', { owner: selectedSharedTool.ownerId || '-' }) }}
-                </div>
-                <label class="messenger-switch-row">
-                  <input
-                    type="checkbox"
-                    :checked="isSharedToolEnabled(selectedSharedTool.name)"
-                    @change="
-                      toggleSharedToolSelection(
-                        selectedSharedTool.name,
-                        ($event.target as HTMLInputElement).checked
-                      )
-                    "
-                  />
-                  <span>{{ t('common.enabled') }}</span>
-                </label>
-              </div>
-            </template>
-            <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
-          </template>
-
-          <template v-else-if="sessionHub.activeSection === 'files'">
-            <div class="messenger-entity-panel">
-              <div class="messenger-entity-title">{{ t('messenger.files.title') }}</div>
-              <div class="messenger-entity-meta">
-                {{ t('portal.agent.sandbox.option', { id: currentContainerId }) }}
-              </div>
-            </div>
-          </template>
-
-          <template v-else-if="sessionHub.activeSection === 'more'">
-            <div class="messenger-list-empty">{{ t('messenger.section.more.desc') }}</div>
-          </template>
-
-          <div v-else class="messenger-list-empty">
-            {{ t('messenger.settings.agentOnly') }}
           </div>
         </div>
       </div>
@@ -795,7 +792,7 @@ const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
-const selectedToolCategory = ref<'mcp' | 'skills' | 'knowledge' | ''>('');
+const selectedToolCategory = ref<'builtin' | 'mcp' | 'a2a' | 'skills' | 'knowledge' | ''>('');
 const selectedCustomToolName = ref('');
 const selectedSharedToolName = ref('');
 const worldDraft = ref('');
@@ -807,7 +804,9 @@ const toolsCatalogLoading = ref(false);
 const customTools = ref<ToolEntry[]>([]);
 const sharedTools = ref<ToolEntry[]>([]);
 const sharedToolSelectedSet = ref<Set<string>>(new Set());
+const builtinTools = ref<ToolEntry[]>([]);
 const mcpTools = ref<ToolEntry[]>([]);
+const a2aTools = ref<ToolEntry[]>([]);
 const skillTools = ref<ToolEntry[]>([]);
 const knowledgeTools = ref<ToolEntry[]>([]);
 
@@ -826,12 +825,6 @@ const sectionOptions = computed(() => [
   { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
   { key: 'files' as MessengerSection, icon: 'fa-solid fa-folder-open', label: t('messenger.section.files') },
   { key: 'more' as MessengerSection, icon: 'fa-solid fa-ellipsis', label: t('messenger.section.more') }
-]);
-
-const rightTabs = computed(() => [
-  { key: 'sandbox', label: t('messenger.right.sandbox') },
-  { key: 'timeline', label: t('messenger.right.timeline') },
-  { key: 'settings', label: t('messenger.right.settings') }
 ]);
 
 const basePrefix = computed(() => {
@@ -948,6 +941,8 @@ const selectedGroup = computed(() =>
   ) || null
 );
 
+const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
+
 const agentCopyFromOptions = computed(() =>
   [...ownedAgents.value, ...sharedAgents.value]
     .filter((item) => normalizeAgentId(item?.id) !== DEFAULT_AGENT_KEY)
@@ -1028,7 +1023,9 @@ const selectedSharedTool = computed(
 );
 
 const selectedToolCategoryItems = computed(() => {
+  if (selectedToolCategory.value === 'builtin') return builtinTools.value;
   if (selectedToolCategory.value === 'mcp') return mcpTools.value;
+  if (selectedToolCategory.value === 'a2a') return a2aTools.value;
   if (selectedToolCategory.value === 'skills') return skillTools.value;
   if (selectedToolCategory.value === 'knowledge') return knowledgeTools.value;
   return [];
@@ -1127,6 +1124,73 @@ const activeConversationCode = computed(() => {
   return `ID: ${identity.id}`;
 });
 
+const chatPanelTitle = computed(() => {
+  if (!showChatSettingsView.value) {
+    return activeConversationTitle.value;
+  }
+  if (showAgentSettingsPanel.value) {
+    if (settingsAgentId.value === DEFAULT_AGENT_KEY) {
+      return t('messenger.defaultAgent');
+    }
+    const target = agentMap.value.get(normalizeAgentId(settingsAgentId.value));
+    return String(target?.name || settingsAgentId.value || t('messenger.section.agents'));
+  }
+  if (sessionHub.activeSection === 'users') {
+    return String(selectedContact.value?.username || selectedContact.value?.user_id || t('messenger.section.users'));
+  }
+  if (sessionHub.activeSection === 'groups') {
+    return String(selectedGroup.value?.group_name || selectedGroup.value?.group_id || t('messenger.section.groups'));
+  }
+  if (sessionHub.activeSection === 'tools') {
+    if (selectedToolCategory.value) return toolCategoryLabel(selectedToolCategory.value);
+    if (selectedCustomTool.value?.name) return selectedCustomTool.value.name;
+    if (selectedSharedTool.value?.name) return selectedSharedTool.value.name;
+  }
+  return activeSectionTitle.value;
+});
+
+const chatPanelSubtitle = computed(() => {
+  if (!showChatSettingsView.value) {
+    return activeConversationSubtitle.value;
+  }
+  if (showAgentSettingsPanel.value) {
+    return t('messenger.agent.subtitle');
+  }
+  if (sessionHub.activeSection === 'users') {
+    return t('messenger.section.users.desc');
+  }
+  if (sessionHub.activeSection === 'groups') {
+    return t('messenger.section.groups.desc');
+  }
+  if (sessionHub.activeSection === 'tools') {
+    return t('messenger.section.tools.desc');
+  }
+  return activeSectionSubtitle.value;
+});
+
+const chatPanelKindLabel = computed(() => {
+  if (!showChatSettingsView.value) return activeConversationKindLabel.value;
+  return '';
+});
+
+const chatPanelCode = computed(() => {
+  if (!showChatSettingsView.value) return activeConversationCode.value;
+  if (showAgentSettingsPanel.value && settingsAgentId.value && settingsAgentId.value !== DEFAULT_AGENT_KEY) {
+    return `ID: ${settingsAgentId.value}`;
+  }
+  if (sessionHub.activeSection === 'users' && selectedContact.value?.user_id) {
+    return `ID: ${selectedContact.value.user_id}`;
+  }
+  if (sessionHub.activeSection === 'groups' && selectedGroup.value?.group_id) {
+    return `ID: ${selectedGroup.value.group_id}`;
+  }
+  if (sessionHub.activeSection === 'tools') {
+    if (selectedCustomTool.value?.name) return selectedCustomTool.value.name;
+    if (selectedSharedTool.value?.name) return selectedSharedTool.value.name;
+  }
+  return '';
+});
+
 const activeConversationNotice = computed(() => {
   const subtitle = String(activeConversationSubtitle.value || '').trim();
   if (!subtitle) return t('messenger.empty.subtitle');
@@ -1165,6 +1229,31 @@ const timelineItems = computed(() => {
     });
   });
   return output.reverse();
+});
+
+const showRightAgentPanels = computed(() => showAgentSettingsPanel.value);
+
+const rightPanelAgentId = computed(() => {
+  if (!showRightAgentPanels.value) return '';
+  return normalizeAgentId(settingsAgentId.value || activeAgentId.value);
+});
+
+const rightPanelAgentIdForApi = computed(() => {
+  const value = normalizeAgentId(rightPanelAgentId.value);
+  return value === DEFAULT_AGENT_KEY ? '' : value;
+});
+
+const rightPanelContainerId = computed(() => {
+  const value = normalizeAgentId(rightPanelAgentId.value);
+  const source = agentMap.value.get(value) || null;
+  const parsed = Number.parseInt(String((source as Record<string, unknown> | null)?.sandbox_container_id ?? 1), 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(10, Math.max(1, parsed));
+});
+
+const rightPanelTimelineItems = computed(() => {
+  if (!isAgentConversationActive.value) return [];
+  return timelineItems.value;
 });
 
 const hasCronTask = (agentId: unknown): boolean =>
@@ -1348,54 +1437,35 @@ const openMixedConversation = async (item: MixedConversation) => {
     await openAgentSession(item.sourceId, item.agentId);
     return;
   }
-  try {
-    await userWorldStore.setActiveConversation(item.sourceId);
-    sessionHub.setActiveConversation({ kind: item.kind, id: item.sourceId });
-    const nextQuery = {
-      ...route.query,
-      section: 'messages',
-      conversation_id: item.sourceId
-    } as Record<string, any>;
-    delete nextQuery.session_id;
-    delete nextQuery.agent_id;
-    delete nextQuery.entry;
-    router.replace({
-      path: `${basePrefix.value}/chat`,
-      query: nextQuery
-    }).catch(() => undefined);
-    await scrollMessagesToBottom();
-  } catch (error) {
-    showApiError(error, t('messenger.error.openConversation'));
-  }
+  await openWorldConversation(item.sourceId, item.kind, 'messages');
 };
 
 const selectContact = (contact: Record<string, unknown>) => {
   selectedContactUserId.value = String(contact?.user_id || '').trim();
   selectedGroupId.value = '';
-  sessionHub.setRightTab('settings');
 };
 
 const selectGroup = (group: Record<string, unknown>) => {
   selectedGroupId.value = String(group?.group_id || '').trim();
   selectedContactUserId.value = '';
-  sessionHub.setRightTab('settings');
 };
 
 const openWorldConversation = async (
   conversationId: string,
-  kind: 'direct' | 'group'
+  kind: 'direct' | 'group',
+  mode: 'detail' | 'messages' = 'detail'
 ) => {
   if (!conversationId) return;
   try {
     await userWorldStore.setActiveConversation(conversationId);
     sessionHub.setActiveConversation({ kind, id: conversationId });
-    const section = kind === 'group' ? 'groups' : 'users';
+    const section = mode === 'messages' ? 'messages' : kind === 'group' ? 'groups' : 'users';
     const nextQuery = { ...route.query, section, conversation_id: conversationId } as Record<string, any>;
     delete nextQuery.session_id;
     delete nextQuery.agent_id;
     delete nextQuery.entry;
     router.replace({
-      path: `${basePrefix.value}/user-world`,
+      path: mode === 'messages' ? `${basePrefix.value}/chat` : `${basePrefix.value}/user-world`,
       query: nextQuery
     }).catch(() => undefined);
     await scrollMessagesToBottom();
@@ -1439,7 +1509,6 @@ const openAgentById = async (agentId: unknown) => {
 const selectAgentForSettings = (agentId: unknown) => {
   selectedAgentId.value = normalizeAgentId(agentId);
   agentSettingMode.value = 'agent';
-  sessionHub.setRightTab('settings');
 };
 
 const enterSelectedAgentConversation = async () => {
@@ -1451,7 +1520,7 @@ const openSelectedContactConversation = async () => {
   if (!selectedContact.value) return;
   const conversationId = String(selectedContact.value.conversation_id || '').trim();
   if (conversationId) {
-    await openWorldConversation(conversationId, 'direct');
+    await openWorldConversation(conversationId, 'direct', 'messages');
     return;
   }
   const peerUserId = String(selectedContact.value.user_id || '').trim();
@@ -1459,7 +1528,7 @@ const openSelectedContactConversation = async () => {
   try {
     await userWorldStore.openConversationByPeer(peerUserId);
     if (userWorldStore.activeConversationId) {
-      await openWorldConversation(userWorldStore.activeConversationId, 'direct');
+      await openWorldConversation(userWorldStore.activeConversationId, 'direct', 'messages');
     }
   } catch (error) {
     showApiError(error, t('userWorld.contact.openFailed'));
@@ -1470,7 +1539,7 @@ const openSelectedGroupConversation = async () => {
   if (!selectedGroup.value) return;
   const conversationId = String(selectedGroup.value.conversation_id || '').trim();
   if (!conversationId) return;
-  await openWorldConversation(conversationId, 'group');
+  await openWorldConversation(conversationId, 'group', 'messages');
 };
 
 const openAgentSession = async (sessionId: string, agentId = '') => {
@@ -1510,7 +1579,6 @@ const selectContainer = (containerId: number) => {
   if (source) {
     source.sandbox_container_id = parsed;
   }
-  sessionHub.setRightTab('sandbox');
   sessionHub.setSection('files');
 };
 
@@ -1536,6 +1604,9 @@ const loadToolsCatalog = async () => {
   try {
     const { data } = await fetchUserToolsCatalog();
     const payload = (data?.data || {}) as Record<string, unknown>;
+    builtinTools.value = (Array.isArray(payload.builtin_tools) ? payload.builtin_tools : [])
+      .map((item) => normalizeToolEntry(item))
+      .filter(Boolean) as ToolEntry[];
     customTools.value = (Array.isArray(payload.user_tools) ? payload.user_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
@@ -1543,6 +1614,9 @@ const loadToolsCatalog = async () => {
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
     mcpTools.value = (Array.isArray(payload.mcp_tools) ? payload.mcp_tools : [])
+      .map((item) => normalizeToolEntry(item))
+      .filter(Boolean) as ToolEntry[];
+    a2aTools.value = (Array.isArray(payload.a2a_tools) ? payload.a2a_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
     skillTools.value = (Array.isArray(payload.skills) ? payload.skills : [])
@@ -1570,25 +1644,22 @@ const loadToolsCatalog = async () => {
   }
 };
 
-const selectToolCategory = (category: 'mcp' | 'skills' | 'knowledge') => {
+const selectToolCategory = (category: 'builtin' | 'mcp' | 'a2a' | 'skills' | 'knowledge') => {
   selectedToolCategory.value = category;
   selectedCustomToolName.value = '';
   selectedSharedToolName.value = '';
-  sessionHub.setRightTab('settings');
 };
 
 const selectCustomTool = (toolName: string) => {
   selectedCustomToolName.value = String(toolName || '').trim();
   selectedToolCategory.value = '';
   selectedSharedToolName.value = '';
-  sessionHub.setRightTab('settings');
 };
 
 const selectSharedTool = (toolName: string) => {
   selectedSharedToolName.value = String(toolName || '').trim();
   selectedToolCategory.value = '';
   selectedCustomToolName.value = '';
-  sessionHub.setRightTab('settings');
 };
 
 const isSharedToolEnabled = (toolName: string): boolean =>
@@ -1612,7 +1683,9 @@ const toggleSharedToolSelection = async (toolName: string, checked: boolean) => 
 };
 
 const toolCategoryLabel = (category: string) => {
+  if (category === 'builtin') return t('toolManager.system.builtin');
   if (category === 'mcp') return t('toolManager.system.mcp');
+  if (category === 'a2a') return t('toolManager.system.a2a');
   if (category === 'skills') return t('toolManager.system.skills');
   if (category === 'knowledge') return t('toolManager.system.knowledge');
   return category;
@@ -1632,7 +1705,6 @@ const ensureSectionSelection = () => {
     if (!selectedAgentId.value) {
       selectedAgentId.value = DEFAULT_AGENT_KEY;
     }
-    sessionHub.setRightTab('settings');
     return;
   }
 
@@ -1640,7 +1712,6 @@ const ensureSectionSelection = () => {
     if (!selectedContactUserId.value && filteredContacts.value.length > 0) {
       selectedContactUserId.value = String(filteredContacts.value[0]?.user_id || '');
     }
-    sessionHub.setRightTab('settings');
     return;
   }
 
@@ -1648,7 +1719,6 @@ const ensureSectionSelection = () => {
     if (!selectedGroupId.value && filteredGroups.value.length > 0) {
       selectedGroupId.value = String(filteredGroups.value[0]?.group_id || '');
     }
-    sessionHub.setRightTab('settings');
     return;
   }
 
@@ -1662,12 +1732,7 @@ const ensureSectionSelection = () => {
         selectedToolCategory.value = 'mcp';
       }
     }
-    sessionHub.setRightTab('settings');
     return;
-  }
-
-  if (sessionHub.activeSection === 'files') {
-    sessionHub.setRightTab('sandbox');
   }
 };
 
@@ -1734,7 +1799,6 @@ const handleAgentCreateSubmit = async (payload: Record<string, unknown>) => {
       sessionHub.setSection('agents');
       selectedAgentId.value = normalizeAgentId(created.id);
       agentSettingMode.value = 'agent';
-      sessionHub.setRightTab('settings');
       router
         .replace({ path: `${basePrefix.value}/home`, query: { ...route.query, section: 'agents' } })
         .catch(() => undefined);
