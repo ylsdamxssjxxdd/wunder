@@ -168,6 +168,20 @@
         </div>
         <div class="messenger-settings-row">
           <div>
+            <div class="messenger-settings-label">{{ t('messenger.settings.debugTools') }}</div>
+            <div class="messenger-settings-hint">{{ t('messenger.settings.debugHint') }}</div>
+          </div>
+          <button
+            class="messenger-settings-action"
+            type="button"
+            :disabled="!devtoolsAvailable"
+            @click="$emit('toggle-devtools')"
+          >
+            {{ t('messenger.settings.openDebug') }}
+          </button>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
             <div class="messenger-settings-label">{{ t('messenger.settings.fontSize') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.fontHint') }}</div>
           </div>
@@ -198,6 +212,7 @@ import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 
+type SendKeyMode = 'enter' | 'ctrl_enter';
 type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
 
 const props = withDefaults(
@@ -206,6 +221,7 @@ const props = withDefaults(
     username?: string;
     userId?: string;
     languageLabel?: string;
+    sendKey?: SendKeyMode;
     themePalette?: ThemePalette;
     uiFontSize?: number;
     desktopToolCallMode?: 'tool_call' | 'function_call';
@@ -216,6 +232,7 @@ const props = withDefaults(
     username: '',
     userId: '',
     languageLabel: '',
+    sendKey: 'enter',
     themePalette: 'eva-orange',
     uiFontSize: 14,
     desktopToolCallMode: 'tool_call',
@@ -230,6 +247,7 @@ const emit = defineEmits<{
   (event: 'open-system'): void;
   (event: 'toggle-devtools'): void;
   (event: 'logout'): void;
+  (event: 'update:send-key', value: SendKeyMode): void;
   (event: 'update:desktop-tool-call-mode', value: 'tool_call' | 'function_call'): void;
   (event: 'update:theme-palette', value: ThemePalette): void;
   (event: 'update:ui-font-size', value: number): void;
@@ -238,9 +256,12 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
-const sendKey = ref('enter');
+const sendKey = ref<SendKeyMode>('enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
+
+const normalizeSendKey = (value: unknown): SendKeyMode =>
+  String(value || '').trim().toLowerCase() === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
 
 const normalizeThemePalette = (value: unknown): ThemePalette => {
   const text = String(value || '').trim().toLowerCase();
@@ -248,6 +269,21 @@ const normalizeThemePalette = (value: unknown): ThemePalette => {
   if (text === 'minimal') return 'minimal';
   return 'eva-orange';
 };
+
+watch(
+  () => props.sendKey,
+  (value) => {
+    const normalized = normalizeSendKey(value);
+    if (sendKey.value !== normalized) {
+      sendKey.value = normalized;
+    }
+  },
+  { immediate: true }
+);
+
+watch(sendKey, (value) => {
+  emit('update:send-key', normalizeSendKey(value));
+});
 
 watch(
   () => props.themePalette,

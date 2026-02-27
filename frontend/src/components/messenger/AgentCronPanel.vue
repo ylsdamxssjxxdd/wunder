@@ -6,7 +6,12 @@
         <button class="messenger-inline-btn" type="button" :disabled="loading || creating" @click="refreshAll">
           {{ t('common.refresh') }}
         </button>
-        <button class="messenger-inline-btn primary" type="button" :disabled="creating" @click="openCreateDialog">
+        <button
+          class="messenger-inline-btn primary"
+          type="button"
+          :disabled="creating || permissionDenied"
+          @click="openCreateDialog"
+        >
           {{ t('cron.create.title') }}
         </button>
       </div>
@@ -15,6 +20,7 @@
     <div class="messenger-cron-body">
       <div class="messenger-cron-list">
         <div v-if="loading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+        <div v-else-if="permissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
         <div v-else-if="!jobs.length" class="messenger-list-empty">{{ t('cron.list.empty') }}</div>
         <button
           v-for="job in jobs"
@@ -37,7 +43,8 @@
       </div>
 
       <div class="messenger-cron-detail">
-        <div v-if="!selectedJob" class="messenger-list-empty">{{ t('cron.detail.empty') }}</div>
+        <div v-if="permissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
+        <div v-else-if="!selectedJob" class="messenger-list-empty">{{ t('cron.detail.empty') }}</div>
         <template v-else>
           <div class="messenger-cron-title">{{ selectedJob.name || selectedJob.job_id }}</div>
           <div class="messenger-cron-kv">
@@ -195,6 +202,7 @@ const runs = ref<any[]>([]);
 const loading = ref(false);
 const runsLoading = ref(false);
 const creating = ref(false);
+const permissionDenied = ref(false);
 const createDialogVisible = ref(false);
 const selectedJobId = ref('');
 const selectedRunId = ref('');
@@ -236,6 +244,11 @@ const resolveError = (error: unknown): string => {
       ? source.response.data.detail.message
       : source?.response?.data?.detail || source?.message || t('cron.action.failed')
   );
+};
+
+const resolveHttpStatus = (error: unknown): number => {
+  const status = Number((error as { response?: { status?: unknown } })?.response?.status ?? 0);
+  return Number.isFinite(status) ? status : 0;
 };
 
 const toDateTimeLocalValue = (date: Date): string => {
@@ -333,7 +346,17 @@ const loadJobs = async () => {
     if (!selectedJobId.value || !items.find((job: Record<string, unknown>) => job.job_id === selectedJobId.value)) {
       selectedJobId.value = String(items[0].job_id || '');
     }
+    permissionDenied.value = false;
   } catch (error) {
+    const status = resolveHttpStatus(error);
+    if (status === 401 || status === 403) {
+      permissionDenied.value = true;
+      selectedJobId.value = '';
+      selectedRunId.value = '';
+      jobs.value = [];
+      runs.value = [];
+      return;
+    }
     showApiError(error, resolveError(error));
   } finally {
     loading.value = false;
@@ -341,6 +364,11 @@ const loadJobs = async () => {
 };
 
 const loadRuns = async (jobId: string) => {
+  if (permissionDenied.value) {
+    selectedRunId.value = '';
+    runs.value = [];
+    return;
+  }
   if (!jobId) {
     selectedRunId.value = '';
     runs.value = [];
@@ -360,6 +388,13 @@ const loadRuns = async (jobId: string) => {
       selectedRunId.value = String(items[0].run_id || '');
     }
   } catch (error) {
+    const status = resolveHttpStatus(error);
+    if (status === 401 || status === 403) {
+      permissionDenied.value = true;
+      selectedRunId.value = '';
+      runs.value = [];
+      return;
+    }
     showApiError(error, resolveError(error));
   } finally {
     runsLoading.value = false;

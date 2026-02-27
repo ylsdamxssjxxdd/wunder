@@ -30,13 +30,16 @@ const stateClass = computed(() => `state-${props.state}`);
 
 <style scoped>
 .messenger-agent-avatar {
+  --agent-avatar-done: #6d8ee8;
+  --agent-avatar-done-rgb: 109, 142, 232;
+  --agent-avatar-done-soft: #edf2ff;
   --avatar-size: 36px;
   width: var(--avatar-size);
   height: var(--avatar-size);
   border-radius: 50%;
-  border: 1px solid #dce9e5;
-  background: #eef5f3;
-  color: #4f7c73;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -80,8 +83,8 @@ const stateClass = computed(() => `state-${props.state}`);
 
 .messenger-agent-avatar.state-running {
   border-color: rgba(var(--ui-accent-rgb), 0.44);
-  background: #e7f6f2;
-  color: #13886f;
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
 }
 
 .messenger-agent-avatar.state-running::after {
@@ -94,20 +97,20 @@ const stateClass = computed(() => `state-${props.state}`);
 }
 
 .messenger-agent-avatar.state-running .messenger-agent-avatar-badge {
-  background: #0fa087;
+  background: var(--ui-accent);
   opacity: 1;
   transform: scale(1);
   animation: agent-avatar-badge-pulse 1.2s ease-in-out infinite;
 }
 
 .messenger-agent-avatar.state-done {
-  border-color: rgba(35, 172, 118, 0.42);
-  background: #e7f7ef;
-  color: #1a9b68;
+  border-color: rgba(var(--agent-avatar-done-rgb), 0.42);
+  background: var(--agent-avatar-done-soft);
+  color: var(--agent-avatar-done);
 }
 
 .messenger-agent-avatar.state-done .messenger-agent-avatar-badge {
-  background: #23ac76;
+  background: var(--agent-avatar-done);
   opacity: 1;
   transform: scale(1);
 }

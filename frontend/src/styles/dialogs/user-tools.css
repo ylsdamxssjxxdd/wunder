@@ -1219,7 +1219,7 @@
 }
 
 .user-tools-dialog .knowledge-doc-chunk-status.status-embedded {
-  color: #34d399;
+  color: var(--user-tools-accent);
 }
 
 .user-tools-dialog .knowledge-doc-chunk-status.status-pending {
@@ -1435,14 +1435,14 @@
 }
 
 .user-tools-dialog .user-tools-tab:hover {
-  background: #eef6f4;
+  background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.32);
 }
 
 .user-tools-dialog .user-tools-tab.active {
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.45);
-  color: #0f7f69;
+  color: var(--ui-accent);
   box-shadow: none;
 }
 
@@ -1525,14 +1525,14 @@
 }
 
 .user-tools-dialog .knowledge-heading-line {
-  background: #edf5f2;
+  background: var(--ui-accent-soft);
   box-shadow: inset 3px 0 0 rgba(var(--ui-accent-rgb), 0.55);
 }
 
 .user-tools-dialog .user-tools-btn {
   border-color: rgba(var(--ui-accent-rgb), 0.36);
   background: var(--ui-accent-soft);
-  color: #0f7f69;
+  color: var(--ui-accent);
   box-shadow: none;
 }
 
@@ -1583,7 +1583,7 @@
 }
 
 .user-tools-dialog .skill-editor-highlight .code-token-string {
-  color: #0f7f69;
+  color: var(--ui-accent);
 }
 
 .user-tools-dialog .skill-editor-highlight .code-token-number {
@@ -1595,7 +1595,7 @@
 }
 
 .user-tools-dialog .skills-section-title {
-  color: #0f7f69;
+  color: var(--ui-accent);
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.35);
 }

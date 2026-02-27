@@ -1,42 +1,62 @@
 <template>
-  <div :class="['auth-page', themeClass]">
-    <div class="auth-card">
-      <h2>{{ t('auth.register.title') }}</h2>
-      <el-form :model="form" label-position="top" @submit.prevent>
-        <el-form-item :label="t('auth.register.username')">
-          <el-input v-model="form.username" :placeholder="t('auth.placeholder.username')" />
-        </el-form-item>
-        <el-form-item :label="t('auth.register.email')">
-          <el-input v-model="form.email" :placeholder="t('auth.placeholder.email')" />
-        </el-form-item>
-        <el-form-item :label="t('auth.register.unit')">
-          <el-select
+  <div class="auth-page auth-page--user">
+    <div class="auth-card auth-card--user">
+      <h2 class="auth-title">{{ t('auth.register.title') }}</h2>
+      <form class="auth-form" @submit.prevent="handleRegister">
+        <label class="auth-field">
+          <span class="auth-label">{{ t('auth.register.username') }}</span>
+          <input
+            v-model.trim="form.username"
+            class="auth-input"
+            type="text"
+            :placeholder="t('auth.placeholder.username')"
+            autocomplete="username"
+          />
+        </label>
+        <label class="auth-field">
+          <span class="auth-label">{{ t('auth.register.email') }}</span>
+          <input
+            v-model.trim="form.email"
+            class="auth-input"
+            type="email"
+            :placeholder="t('auth.placeholder.email')"
+            autocomplete="email"
+          />
+        </label>
+        <label class="auth-field">
+          <span class="auth-label">{{ t('auth.register.unit') }}</span>
+          <select
             v-model="form.unit_id"
-            :placeholder="t('auth.placeholder.unit')"
-            filterable
-            clearable
-            :loading="unitLoading"
+            class="auth-input auth-select"
             :disabled="unitLoading || unitOptions.length === 0"
-            style="width: 100%"
           >
-            <el-option
-              v-for="unit in unitOptions"
-              :key="unit.value"
-              :label="unit.label"
-              :value="unit.value"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="t('auth.register.password')">
-          <el-input v-model="form.password" type="password" :placeholder="t('auth.placeholder.password')" />
-        </el-form-item>
-        <div class="auth-actions">
-          <el-button type="primary" :loading="loading" @click="handleRegister">
-            {{ t('auth.register.submit') }}
-          </el-button>
-          <el-button text @click="goLogin">{{ t('auth.register.login') }}</el-button>
+            <option value="">
+              {{ unitLoading ? t('common.loading') : t('auth.placeholder.unit') }}
+            </option>
+            <option v-for="unit in unitOptions" :key="unit.value" :value="unit.value">
+              {{ unit.label }}
+            </option>
+          </select>
+        </label>
+        <label class="auth-field">
+          <span class="auth-label">{{ t('auth.register.password') }}</span>
+          <input
+            v-model="form.password"
+            class="auth-input"
+            type="password"
+            :placeholder="t('auth.placeholder.password')"
+            autocomplete="new-password"
+          />
+        </label>
+        <div class="auth-actions auth-actions--user">
+          <button class="auth-submit-btn" type="submit" :disabled="loading">
+            {{ loading ? t('common.loading') : t('auth.register.submit') }}
+          </button>
+          <button class="auth-link-btn" type="button" @click="goLogin">
+            {{ t('auth.register.login') }}
+          </button>
         </div>
-      </el-form>
+      </form>
     </div>
   </div>
 </template>
@@ -44,17 +64,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
 
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
-import { useThemeStore } from '@/stores/theme';
 import { fetchOrgUnits } from '@/api/auth';
 import { showApiError } from '@/utils/apiError';
 
 const router = useRouter();
 const authStore = useAuthStore();
-const themeStore = useThemeStore();
 const { t } = useI18n();
 const form = reactive({
   username: '',
@@ -64,18 +81,18 @@ const form = reactive({
 });
 
 const loading = computed(() => authStore.loading);
-const unitOptions = ref([]);
+const unitOptions = ref<Array<{ value: string; label: string }>>([]);
 const unitLoading = ref(false);
-// 根据主题状态切换注册页暗色/浅色样式
-const themeClass = computed(() => (themeStore.mode === 'light' ? 'theme-light' : 'theme-dark'));
 
-const buildUnitOptions = (items) =>
+const buildUnitOptions = (items: Array<Record<string, unknown>>) =>
   (items || [])
-    .map((unit) => ({
-      value: unit.unit_id || unit.id || '',
-      label: unit.path_name || unit.pathName || unit.name || unit.unit_id || '-'
-    }))
-    .filter((unit) => unit.value)
+    .map((raw) => {
+      const unit = raw || {};
+      const value = String(unit.unit_id || unit.id || '').trim();
+      const label = String(unit.path_name || unit.pathName || unit.name || value || '-').trim();
+      return { value, label };
+    })
+    .filter((unit) => Boolean(unit.value))
     .sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
 
 const loadUnits = async () => {

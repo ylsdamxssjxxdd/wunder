@@ -35,6 +35,30 @@
       @drop="handleDrop"
     >
       <div v-if="worldStyle" class="messenger-world-toolbar chat-composer-world-toolbar">
+        <div ref="worldCommandAnchorRef" class="messenger-world-tool-anchor">
+          <button
+            class="messenger-world-tool-btn"
+            type="button"
+            :class="{ active: worldCommandPanelVisible }"
+            :title="t('chat.commandMenu.quick')"
+            :aria-label="t('chat.commandMenu.quick')"
+            @click.prevent="toggleWorldCommandPanel"
+          >
+            <i class="fa-solid fa-terminal chat-composer-command-btn-icon" aria-hidden="true"></i>
+          </button>
+          <div v-if="worldCommandPanelVisible" class="chat-composer-command-panel">
+            <button
+              v-for="item in quickCommandItems"
+              :key="item.command"
+              class="chat-composer-command-item"
+              type="button"
+              @click="sendQuickCommand(item.command)"
+            >
+              <span class="chat-composer-command-name">{{ item.command }}</span>
+              <span class="chat-composer-command-desc">{{ item.description }}</span>
+            </button>
+          </div>
+        </div>
         <button
           class="messenger-world-tool-btn"
           type="button"
@@ -58,7 +82,7 @@
         @click="syncCaretPosition"
         @keyup="syncCaretPosition"
         @keydown="handleInputKeydown"
-        @keydown.enter.exact.prevent="handleSend"
+        @keydown.enter="handleEnterKeydown"
       />
       <div
         v-if="commandSuggestionsVisible"
@@ -157,7 +181,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { convertChatAttachment } from '@/api/chat';
@@ -180,6 +204,10 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  sendKey: {
+    type: String,
+    default: 'enter'
+  },
   worldStyle: {
     type: Boolean,
     default: false
@@ -195,6 +223,8 @@ const attachments = ref([]);
 const attachmentBusy = ref(0);
 const dragActive = ref(false);
 const dragCounter = ref(0);
+const worldCommandAnchorRef = ref<HTMLElement | null>(null);
+const worldCommandPanelVisible = ref(false);
 const caretPosition = ref(0);
 const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
@@ -208,6 +238,8 @@ type AttachmentPayload = {
   content: string;
   mime_type?: string;
 };
+
+type SendKeyMode = 'enter' | 'ctrl_enter';
 
 type SlashCommandDefinition = {
   command: string;
@@ -252,7 +284,11 @@ const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
 const inputPlaceholder = computed(() =>
-  props.inquiryActive ? t('chat.input.inquiryPlaceholder') : t('chat.input.placeholderCommands')
+  props.inquiryActive
+    ? t('chat.input.inquiryPlaceholder')
+    : props.worldStyle
+      ? t('chat.input.placeholder')
+      : t('chat.input.placeholderCommands')
 );
 const canSendOrStop = computed(() => {
   if (props.loading) return true;
@@ -311,7 +347,14 @@ const commandSuggestions = computed(() => {
 });
 
 const commandSuggestionsVisible = computed(
-  () => !commandMenuDismissed.value && commandSuggestions.value.length > 0
+  () => !props.worldStyle && !commandMenuDismissed.value && commandSuggestions.value.length > 0
+);
+
+const quickCommandItems = computed(() =>
+  slashCommandDefinitions.map((item) => ({
+    command: item.command,
+    description: t(item.descriptionKey)
+  }))
 );
 
 const buildAttachmentId = () => `${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -374,6 +417,9 @@ const syncCaretPosition = () => {
 };
 
 const handleInput = () => {
+  if (worldCommandPanelVisible.value) {
+    worldCommandPanelVisible.value = false;
+  }
   commandMenuDismissed.value = false;
   resizeInput();
   syncCaretPosition();
@@ -423,6 +469,9 @@ const applyCommandSuggestion = (index = commandMenuIndex.value) => {
 };
 
 const handleInputKeydown = (event) => {
+  if (props.worldStyle) {
+    return;
+  }
   if (!commandSuggestionsVisible.value) {
     return;
   }
@@ -445,6 +494,25 @@ const handleInputKeydown = (event) => {
     event.preventDefault();
     commandMenuDismissed.value = true;
   }
+};
+
+const resolveSendKeyMode = (): SendKeyMode =>
+  props.sendKey === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
+
+const handleEnterKeydown = async (event) => {
+  const mode = resolveSendKeyMode();
+  if (mode === 'ctrl_enter') {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      await handleSend();
+    }
+    return;
+  }
+  if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+  event.preventDefault();
+  await handleSend();
 };
 
 
@@ -573,6 +641,31 @@ const clearAttachments = () => {
   attachments.value = [];
 };
 
+const toggleWorldCommandPanel = () => {
+  worldCommandPanelVisible.value = !worldCommandPanelVisible.value;
+};
+
+const sendQuickCommand = async (command: string) => {
+  worldCommandPanelVisible.value = false;
+  if (!command) return;
+  if (props.loading) {
+    if (command === '/stop') {
+      emit('stop');
+    }
+    return;
+  }
+  if (attachmentBusy.value > 0) {
+    ElMessage.warning(t('chat.attachments.busy'));
+    return;
+  }
+  emit('send', { content: command, attachments: [] });
+  inputText.value = '';
+  commandMenuDismissed.value = false;
+  caretPosition.value = 0;
+  resetInputHeight();
+  clearAttachments();
+};
+
 const handleSend = async () => {
   if (props.loading) return;
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
@@ -602,10 +695,29 @@ const handleSendOrStop = async () => {
   await handleSend();
 };
 
+const handleDocumentPointerDown = (event: PointerEvent) => {
+  if (!worldCommandPanelVisible.value) return;
+  const anchor = worldCommandAnchorRef.value;
+  const target = event.target as Node | null;
+  if (anchor && target && anchor.contains(target)) {
+    return;
+  }
+  worldCommandPanelVisible.value = false;
+};
+
 onMounted(async () => {
   await nextTick();
   resizeInput();
   syncCaretPosition();
+  if (typeof document !== 'undefined') {
+    document.addEventListener('pointerdown', handleDocumentPointerDown);
+  }
+});
+
+onBeforeUnmount(() => {
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('pointerdown', handleDocumentPointerDown);
+  }
 });
 
 // Reset command suggestion state whenever command input changes.

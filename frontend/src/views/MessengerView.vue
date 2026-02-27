@@ -617,6 +617,7 @@
                   {{ t('chat.features.agentSettings') }}
                 </button>
                 <button
+                  v-if="canManageAgentIntegrations"
                   class="messenger-inline-btn"
                   :class="{ active: agentSettingMode === 'cron' }"
                   type="button"
@@ -625,6 +626,7 @@
                   {{ t('chat.features.cron') }}
                 </button>
                 <button
+                  v-if="canManageAgentIntegrations"
                   class="messenger-inline-btn"
                   :class="{ active: agentSettingMode === 'channel' }"
                   type="button"
@@ -634,7 +636,7 @@
                 </button>
               </div>
 
-              <div v-show="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
+              <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
                 <AgentSettingsPanel
                   :agent-id="settingsAgentIdForApi"
                   @saved="handleAgentSettingsSaved"
@@ -642,12 +644,15 @@
                 />
               </div>
 
-              <div v-show="agentSettingMode === 'cron'" class="messenger-chat-settings-block">
+              <div
+                v-else-if="agentSettingMode === 'cron' && canManageAgentIntegrations"
+                class="messenger-chat-settings-block"
+              >
                 <AgentCronPanel :agent-id="settingsAgentIdForApi" />
               </div>
 
               <div
-                v-show="agentSettingMode === 'channel'"
+                v-else-if="agentSettingMode === 'channel' && canManageAgentIntegrations"
                 class="messenger-chat-settings-block messenger-channel-panel-wrap"
               >
                 <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
@@ -861,16 +866,18 @@
                 :username="currentUsername"
                 :user-id="currentUserId"
                 :language-label="currentLanguageLabel"
+                :send-key="messengerSendKey"
                 :theme-palette="themeStore.palette"
                 :ui-font-size="uiFontSize"
                 :desktop-tool-call-mode="desktopToolCallMode"
-                :devtools-available="desktopDevtoolsAvailable"
+                :devtools-available="debugToolsAvailable"
                 @toggle-language="toggleLanguage"
                 @check-update="checkClientUpdate"
                 @open-tools="openDesktopTools"
                 @open-system="openDesktopSystemSettings"
-                @toggle-devtools="toggleDesktopDevTools"
+                @toggle-devtools="openDebugTools"
                 @logout="handleSettingsLogout"
+                @update:send-key="updateSendKey"
                 @update:theme-palette="updateThemePalette"
                 @update:ui-font-size="updateUiFontSize"
                 @update:desktop-tool-call-mode="updateDesktopToolCallMode"
@@ -1097,6 +1104,7 @@
           <ChatComposer
             world-style
             :loading="agentSessionLoading"
+            :send-key="messengerSendKey"
             @send="sendAgentMessage"
             @stop="stopAgentMessage"
           />
@@ -1203,7 +1211,7 @@
             :placeholder="t('userWorld.input.placeholder')"
             rows="3"
             @focus="worldQuickPanelMode = ''"
-            @keydown.enter.exact.prevent="sendWorldMessage"
+            @keydown.enter="handleWorldComposerEnterKeydown"
           ></textarea>
           <div class="messenger-world-footer">
             <div class="messenger-world-send-group">
@@ -1251,12 +1259,6 @@
       @restore-session="restoreTimelineSession"
       @set-main="setTimelineSessionMain"
       @delete-session="deleteTimelineSession"
-    />
-
-    <AgentCreateDialog
-      v-model="agentCreateVisible"
-      :copy-from-agents="agentCopyFromOptions"
-      @submit="handleAgentCreateSubmit"
     />
 
     <el-dialog
@@ -1363,7 +1365,6 @@ import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
-import AgentCreateDialog from '@/components/messenger/AgentCreateDialog.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
@@ -1453,6 +1454,7 @@ const sectionRouteMap: Record<MessengerSection, string> = {
   files: 'workspace',
   more: 'settings'
 };
+const MESSENGER_SEND_KEY_STORAGE_KEY = 'messenger_send_key';
 const MESSENGER_UI_FONT_SIZE_STORAGE_KEY = 'messenger_ui_font_size';
 
 type AgentLocalCommand = 'new' | 'stop' | 'help' | 'compact';
@@ -1501,6 +1503,7 @@ type UnitTreeRow = {
 };
 
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'error';
+type MessengerSendKeyMode = 'enter' | 'ctrl_enter';
 type MessengerPerfTrace = {
   label: string;
   startedAt: number;
@@ -1581,6 +1584,7 @@ const fileLifecycleNowTick = ref(Date.now());
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
 const desktopToolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
+const messengerSendKey = ref<MessengerSendKeyMode>('enter');
 const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
 const orgUnitTree = ref<UnitTreeNode[]>([]);
@@ -1594,8 +1598,7 @@ const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440);
 const middlePaneOverlayVisible = ref(false);
-
-const agentCreateVisible = ref(false);
+const quickCreatingAgent = ref(false);
 
 let statusTimer: number | null = null;
 let lifecycleTimer: number | null = null;
@@ -1676,12 +1679,7 @@ const basePrefix = computed(() => {
 });
 
 const desktopMode = computed(() => isDesktopModeEnabled());
-const desktopDevtoolsAvailable = computed(() => {
-  if (!desktopMode.value || typeof window === 'undefined') {
-    return false;
-  }
-  return Boolean((window as any).wunderDesktop?.toggleDevTools);
-});
+const debugToolsAvailable = computed(() => typeof window !== 'undefined');
 
 const keyword = computed({
   get: () => sessionHub.keyword,
@@ -1695,6 +1693,14 @@ const currentUsername = computed(() => {
 const currentUserId = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
   return String(user?.id || '');
+});
+const canManageAgentIntegrations = computed(() => {
+  const user = authStore.user as Record<string, unknown> | null;
+  if (!user) return false;
+  const roles = Array.isArray(user.roles)
+    ? user.roles.map((item) => String(item || '').trim().toLowerCase())
+    : [];
+  return roles.includes('admin') || roles.includes('super_admin');
 });
 
 const activeSectionTitle = computed(() =>
@@ -2033,15 +2039,6 @@ const selectedGroup = computed(() =>
 
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
 
-const agentCopyFromOptions = computed(() =>
-  [...ownedAgents.value, ...sharedAgents.value]
-    .filter((item) => normalizeAgentId(item?.id) !== DEFAULT_AGENT_KEY)
-    .map((item) => ({
-      id: String(item?.id || ''),
-      name: String(item?.name || item?.id || '')
-    }))
-);
-
 const filteredOwnedAgents = computed(() => {
   const text = keyword.value.toLowerCase();
   return ownedAgents.value.filter((agent) => {
@@ -2069,6 +2066,9 @@ const normalizeUiFontSize = (value: unknown): number => {
   if (!Number.isFinite(parsed)) return 14;
   return Math.min(20, Math.max(12, Math.round(parsed)));
 };
+
+const normalizeMessengerSendKey = (value: unknown): MessengerSendKeyMode =>
+  String(value || '').trim().toLowerCase() === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
 
 const applyUiFontSize = (value: number) => {
   if (typeof document === 'undefined') return;
@@ -3519,7 +3519,57 @@ const scheduleMiddlePaneOverlayHide = () => {
   }, 140);
 };
 
-const handleSearchCreateAction = () => {
+const openCreatedAgentSettings = (agentId: unknown) => {
+  const normalizedId = normalizeAgentId(agentId);
+  if (!normalizedId) {
+    return;
+  }
+  sessionHub.setSection('agents');
+  selectedAgentId.value = normalizedId;
+  agentSettingMode.value = 'agent';
+  router
+    .replace({ path: `${basePrefix.value}/home`, query: { ...route.query, section: 'agents' } })
+    .catch(() => undefined);
+};
+
+const buildQuickAgentName = () => {
+  const now = new Date();
+  const pad = (value: number) => String(value).padStart(2, '0');
+  const suffix = `${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(
+    now.getMinutes()
+  )}${pad(now.getSeconds())}`;
+  return `${t('messenger.action.newAgent')} ${suffix}`;
+};
+
+const createAgentQuickly = async () => {
+  if (quickCreatingAgent.value) {
+    return;
+  }
+  quickCreatingAgent.value = true;
+  try {
+    const created = await agentStore.createAgent({
+      name: buildQuickAgentName(),
+      description: '',
+      system_prompt: '',
+      tool_names: []
+    });
+    ElMessage.success(t('portal.agent.createSuccess'));
+    const tasks: Promise<unknown>[] = [loadRunningAgents()];
+    if (canManageAgentIntegrations.value) {
+      tasks.push(loadCronAgentIds());
+    } else {
+      cronAgentIds.value = new Set<string>();
+    }
+    await Promise.all(tasks);
+    openCreatedAgentSettings(created?.id);
+  } catch (error) {
+    showApiError(error, t('portal.agent.saveFailed'));
+  } finally {
+    quickCreatingAgent.value = false;
+  }
+};
+
+const handleSearchCreateAction = async () => {
   if (sessionHub.activeSection === 'groups') {
     groupCreateName.value = '';
     groupCreateKeyword.value = '';
@@ -3527,7 +3577,9 @@ const handleSearchCreateAction = () => {
     groupCreateVisible.value = true;
     return;
   }
-  agentCreateVisible.value = true;
+  if (sessionHub.activeSection === 'agents') {
+    await createAgentQuickly();
+  }
 };
 
 const openMixedConversation = async (item: MixedConversation) => {
@@ -4101,12 +4153,24 @@ const toolCategoryLabel = (category: string) => {
 };
 
 const handleAgentSettingsSaved = async () => {
-  await Promise.allSettled([agentStore.loadAgents(), loadRunningAgents(), loadCronAgentIds()]);
+  const tasks: Promise<unknown>[] = [agentStore.loadAgents(), loadRunningAgents()];
+  if (canManageAgentIntegrations.value) {
+    tasks.push(loadCronAgentIds());
+  } else {
+    cronAgentIds.value = new Set<string>();
+  }
+  await Promise.allSettled(tasks);
 };
 
 const handleAgentDeleted = async () => {
   selectedAgentId.value = DEFAULT_AGENT_KEY;
-  await Promise.allSettled([chatStore.loadSessions(), loadRunningAgents(), loadCronAgentIds()]);
+  const tasks: Promise<unknown>[] = [chatStore.loadSessions(), loadRunningAgents()];
+  if (canManageAgentIntegrations.value) {
+    tasks.push(loadCronAgentIds());
+  } else {
+    cronAgentIds.value = new Set<string>();
+  }
+  await Promise.allSettled(tasks);
 };
 
 const ensureSectionSelection = () => {
@@ -4411,6 +4475,21 @@ const sendWorldMessage = async () => {
   }
 };
 
+const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
+  if (messengerSendKey.value === 'ctrl_enter') {
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      await sendWorldMessage();
+    }
+    return;
+  }
+  if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+  event.preventDefault();
+  await sendWorldMessage();
+};
+
 const startNewDraftSession = async () => {
   if (!isAgentConversationActive.value) return;
   const targetAgent = activeAgentId.value;
@@ -4421,25 +4500,6 @@ const startNewDraftSession = async () => {
     agentId: targetAgent
   });
   await scrollMessagesToBottom(true);
-};
-
-const handleAgentCreateSubmit = async (payload: Record<string, unknown>) => {
-  try {
-    const created = await agentStore.createAgent(payload);
-    agentCreateVisible.value = false;
-    ElMessage.success(t('portal.agent.createSuccess'));
-    await Promise.all([loadRunningAgents(), loadCronAgentIds()]);
-    if (created?.id) {
-      sessionHub.setSection('agents');
-      selectedAgentId.value = normalizeAgentId(created.id);
-      agentSettingMode.value = 'agent';
-      router
-        .replace({ path: `${basePrefix.value}/home`, query: { ...route.query, section: 'agents' } })
-        .catch(() => undefined);
-    }
-  } catch (error) {
-    showApiError(error, t('portal.agent.saveFailed'));
-  }
 };
 
 const toggleLanguage = () => {
@@ -4454,6 +4514,14 @@ const checkClientUpdate = () => {
 
 const updateDesktopToolCallMode = (value: DesktopToolCallMode) => {
   desktopToolCallMode.value = value === 'function_call' ? 'function_call' : 'tool_call';
+};
+
+const updateSendKey = (value: MessengerSendKeyMode) => {
+  const normalized = normalizeMessengerSendKey(value);
+  messengerSendKey.value = normalized;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(MESSENGER_SEND_KEY_STORAGE_KEY, normalized);
+  }
 };
 
 const updateThemePalette = (value: 'hula-green' | 'eva-orange' | 'minimal') => {
@@ -4479,14 +4547,19 @@ const openDesktopSystemSettings = () => {
   router.push('/desktop/system').catch(() => undefined);
 };
 
-const toggleDesktopDevTools = async () => {
-  if (!desktopDevtoolsAvailable.value) return;
+const openDebugTools = async () => {
+  if (typeof window === 'undefined') return;
   try {
     const desktopApi = (window as any).wunderDesktop;
-    await desktopApi?.toggleDevTools?.();
+    if (typeof desktopApi?.toggleDevTools === 'function') {
+      await desktopApi.toggleDevTools();
+      return;
+    }
   } catch {
     ElMessage.warning(t('desktop.common.saveFailed'));
+    return;
   }
+  ElMessage.info(t('messenger.settings.debugHint'));
 };
 
 const loadRunningAgents = async () => {
@@ -4508,7 +4581,16 @@ const loadRunningAgents = async () => {
   }
 };
 
+const resolveHttpStatus = (error: unknown): number => {
+  const status = Number((error as { response?: { status?: unknown } })?.response?.status ?? 0);
+  return Number.isFinite(status) ? status : 0;
+};
+
 const loadCronAgentIds = async () => {
+  if (!canManageAgentIntegrations.value) {
+    cronAgentIds.value = new Set<string>();
+    return;
+  }
   try {
     const response = await fetchCronJobs();
     const jobs = Array.isArray(response?.data?.data?.jobs) ? response.data.data.jobs : [];
@@ -4525,21 +4607,31 @@ const loadCronAgentIds = async () => {
       result.add(normalizeAgentId(resolved));
     });
     cronAgentIds.value = result;
-  } catch {
+  } catch (error) {
+    const status = resolveHttpStatus(error);
+    if (status === 401 || status === 403) {
+      cronAgentIds.value = new Set<string>();
+      return;
+    }
     cronAgentIds.value = new Set<string>();
   }
 };
 
 const refreshAll = async () => {
-  await Promise.allSettled([
+  const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
     chatStore.loadSessions(),
     userWorldStore.bootstrap(true),
     loadOrgUnits(),
     loadRunningAgents(),
-    loadCronAgentIds(),
     loadToolsCatalog()
-  ]);
+  ];
+  if (canManageAgentIntegrations.value) {
+    tasks.push(loadCronAgentIds());
+  } else {
+    cronAgentIds.value = new Set<string>();
+  }
+  await Promise.allSettled(tasks);
   ensureSectionSelection();
   ElMessage.success(t('common.refreshSuccess'));
 };
@@ -4591,22 +4683,33 @@ const restoreConversationFromRoute = async () => {
     const conversation = userWorldStore.conversations.find(
       (item) => String(item?.conversation_id || '') === queryConversationId
     );
-    const kind = String(conversation?.conversation_type || '').toLowerCase() === 'group' ? 'group' : 'direct';
-    if (route.path.includes('/chat')) {
-      await userWorldStore.setActiveConversation(queryConversationId);
-      sessionHub.setActiveConversation({ kind, id: queryConversationId });
-      await scrollMessagesToBottom(true);
-    } else {
-      await openWorldConversation(queryConversationId, kind);
+    if (conversation) {
+      const kind =
+        String(conversation?.conversation_type || '').toLowerCase() === 'group' ? 'group' : 'direct';
+      if (route.path.includes('/chat')) {
+        await userWorldStore.setActiveConversation(queryConversationId);
+        sessionHub.setActiveConversation({ kind, id: queryConversationId });
+        await scrollMessagesToBottom(true);
+      } else {
+        await openWorldConversation(queryConversationId, kind);
+      }
+      return;
     }
-    return;
+    const nextQuery = { ...route.query } as Record<string, any>;
+    delete nextQuery.conversation_id;
+    router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
   }
 
   const querySessionId = String(query?.session_id || '').trim();
   if (querySessionId) {
     const session = chatStore.sessions.find((item) => String(item?.id || '') === querySessionId);
-    await openAgentSession(querySessionId, normalizeAgentId(session?.agent_id));
-    return;
+    if (session) {
+      await openAgentSession(querySessionId, normalizeAgentId(session?.agent_id));
+      return;
+    }
+    const nextQuery = { ...route.query } as Record<string, any>;
+    delete nextQuery.session_id;
+    router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
   }
 
   const queryAgentId = String(query?.agent_id || '').trim();
@@ -4635,16 +4738,25 @@ const restoreConversationFromRoute = async () => {
 
 const bootstrap = async () => {
   bootLoading.value = true;
-  await Promise.allSettled([
-    authStore.loadProfile(),
+  try {
+    await authStore.loadProfile();
+  } catch {
+    // keep bootstrap resilient when profile endpoint is temporarily unavailable
+  }
+  const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
     chatStore.loadSessions(),
     userWorldStore.bootstrap(),
     loadOrgUnits(),
     loadRunningAgents(),
-    loadCronAgentIds(),
     loadToolsCatalog()
-  ]);
+  ];
+  if (canManageAgentIntegrations.value) {
+    tasks.push(loadCronAgentIds());
+  } else {
+    cronAgentIds.value = new Set<string>();
+  }
+  await Promise.allSettled(tasks);
   await restoreConversationFromRoute();
   ensureSectionSelection();
   bootLoading.value = false;
@@ -4688,6 +4800,19 @@ watch(
   () => currentUserId.value,
   () => {
     ensureDismissedAgentConversationState(true);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => canManageAgentIntegrations.value,
+  (enabled) => {
+    if (!enabled) {
+      cronAgentIds.value = new Set<string>();
+      if (agentSettingMode.value !== 'agent') {
+        agentSettingMode.value = 'agent';
+      }
+    }
   },
   { immediate: true }
 );
@@ -4854,6 +4979,9 @@ onMounted(async () => {
     };
     viewportResizeHandler();
     window.addEventListener('resize', viewportResizeHandler);
+    messengerSendKey.value = normalizeMessengerSendKey(
+      window.localStorage.getItem(MESSENGER_SEND_KEY_STORAGE_KEY)
+    );
     uiFontSize.value = normalizeUiFontSize(window.localStorage.getItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY));
     worldComposerHeight.value = clampWorldComposerHeight(
       window.localStorage.getItem(WORLD_COMPOSER_HEIGHT_STORAGE_KEY)
@@ -4870,7 +4998,9 @@ onMounted(async () => {
   }, 60_000);
   statusTimer = window.setInterval(() => {
     loadRunningAgents();
-    loadCronAgentIds();
+    if (canManageAgentIntegrations.value) {
+      loadCronAgentIds();
+    }
   }, 12000);
 });
 

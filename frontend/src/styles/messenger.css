@@ -357,7 +357,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #1ab292;
+  background: var(--ui-accent);
 }
 
 .messenger-list-empty {
@@ -747,8 +747,8 @@
 }
 
 .messenger-message.mine .messenger-message-avatar {
-  background: #d8eee7;
-  color: #2f6f62;
+  background: var(--ui-accent-soft-4);
+  color: var(--ui-accent-deep);
 }
 
 .messenger-message-main {
@@ -779,8 +779,8 @@
 }
 
 .messenger-message.mine .messenger-message-bubble {
-  background: #cef9ec;
-  border-color: #b8ecdc;
+  background: rgba(var(--ui-accent-rgb), 0.12);
+  border-color: rgba(var(--ui-accent-rgb), 0.3);
 }
 
 .messenger-message-stats {
@@ -823,10 +823,10 @@
 .messenger-message-footer-copy {
   width: 24px;
   height: 24px;
-  border: 1px solid #d8e7e3;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
   border-radius: 8px;
-  background: #edf6f3;
-  color: #4f7f74;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -855,10 +855,10 @@
   right: 8px;
   width: 24px;
   height: 24px;
-  border: 1px solid #d8e7e3;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
   border-radius: 8px;
-  background: #edf6f3;
-  color: #4f7f74;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1271,8 +1271,8 @@
   height: 74px;
   border: 0;
   border-radius: 999px;
-  background: linear-gradient(180deg, #e4efec, #d8e6e1);
-  color: #5b7d74;
+  background: linear-gradient(180deg, var(--ui-accent-soft-2), var(--ui-accent-soft-4));
+  color: var(--ui-accent-deep);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1301,7 +1301,7 @@
 
 .messenger-right-dock-toggle:hover {
   color: var(--ui-accent);
-  background: linear-gradient(180deg, #e6f4f0, #dff0eb);
+  background: linear-gradient(180deg, var(--ui-accent-soft-2), var(--ui-accent-soft-5));
   transform: translateY(-50%) scale(1.02);
 }
 
@@ -1603,10 +1603,10 @@
 }
 
 .messenger-tool-group-toggle {
-  border: 1px solid #d8e7e3;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
   border-radius: 7px;
-  background: #eef6f4;
-  color: #356f63;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
   font-size: 11px;
   line-height: 20px;
   padding: 0 7px;
@@ -1616,7 +1616,7 @@
 .messenger-tool-group-toggle:hover {
   border-color: rgba(var(--ui-accent-rgb), 0.38);
   color: var(--ui-accent);
-  background: #e4f3ef;
+  background: var(--ui-accent-soft-2);
 }
 
 .messenger-tool-options {
@@ -1763,10 +1763,10 @@
 }
 
 .messenger-tool-tag {
-  border: 1px solid #d9e7e3;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
   border-radius: 999px;
-  background: #eef6f4;
-  color: #356f63;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
   font-size: 11px;
   padding: 3px 8px;
 }
@@ -1960,8 +1960,8 @@
 }
 
 .messenger-cron-run-item:hover {
-  border-color: #cfe6df;
-  background: #f7fbfa;
+  border-color: rgba(var(--ui-accent-rgb), 0.28);
+  background: var(--ui-accent-soft-2);
 }
 
 .messenger-cron-run-item.active {
@@ -1985,7 +1985,7 @@
 .messenger-settings-btn:hover:not(:disabled) {
   border-color: rgba(var(--ui-accent-rgb), 0.4);
   color: var(--hula-accent);
-  background: #f8fcfb;
+  background: var(--ui-accent-soft-2);
 }
 
 .messenger-settings-btn:disabled {
@@ -2217,8 +2217,8 @@
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: #dcefe9;
-  color: #2f6f62;
+  background: var(--ui-accent-soft-4);
+  color: var(--ui-accent-deep);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2247,10 +2247,10 @@
 }
 
 .messenger-settings-profile-tag {
-  border: 1px solid #d9e7e3;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
   border-radius: 999px;
-  background: #eef6f4;
-  color: #356f63;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
   font-size: 11px;
   padding: 3px 8px;
 }
@@ -2318,7 +2318,7 @@
   height: 72px;
   border-radius: 8px;
   border: 1px solid #e4ece9;
-  background: #eef5f3;
+  background: var(--ui-accent-soft);
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -2340,9 +2340,9 @@
 }
 
 .messenger-profile-quota-card {
-  border: 1px solid #dbe9e4;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.34);
   border-radius: 12px;
-  background: #f5faf8;
+  background: var(--ui-accent-soft);
   padding: 10px;
   display: flex;
   flex-direction: column;
@@ -2354,7 +2354,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: #47645e;
+  color: var(--ui-accent-deep);
   font-size: 12px;
   font-weight: 600;
 }
@@ -2363,7 +2363,7 @@
   width: 100%;
   height: 8px;
   border-radius: 999px;
-  background: #dcebe6;
+  background: rgba(var(--ui-accent-rgb), 0.22);
   overflow: hidden;
 }
 
@@ -2380,7 +2380,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  color: #6c7f7a;
+  color: #6f6f6f;
   font-size: 11px;
 }
 
@@ -2422,8 +2422,8 @@
 }
 
 .messenger-markdown .markdown-body .ai-rich-table th {
-  background: #eef8f4;
-  color: #2d6f62;
+  background: var(--ui-accent-soft-3);
+  color: var(--ui-accent-deep);
 }
 
 .messenger-markdown .markdown-body .ai-rich-table td {
@@ -2431,11 +2431,11 @@
 }
 
 .messenger-markdown .markdown-body .ai-rich-table tbody tr:nth-child(2n) td {
-  background: #f8fcfa;
+  background: #fafbfd;
 }
 
 .messenger-markdown .markdown-body .ai-rich-table tbody tr:hover td {
-  background: #edf7f3;
+  background: var(--ui-accent-soft-2);
 }
 
 .messenger-markdown .markdown-body .ai-code-block {
@@ -2509,7 +2509,7 @@
 .messenger-markdown .markdown-body a.ai-resource-link {
   color: var(--hula-accent);
   border-color: rgba(var(--ui-accent-rgb), 0.35);
-  background: #eaf4f1;
+  background: var(--ui-accent-soft-2);
 }
 
 .messenger-markdown .markdown-body a.ai-resource-link:hover {
@@ -2586,6 +2586,65 @@
   min-height: 188px;
   height: 188px;
   padding: 10px 12px;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-world-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-command-btn-icon {
+  width: 14px;
+  height: 14px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-command-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 252px;
+  border: 1px solid #d7dbe2;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 10;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-command-item {
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #202020;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-command-item:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.28);
+  background: var(--ui-accent-soft);
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-command-name {
+  font-weight: 600;
+  color: #202020;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-command-desc {
+  color: #808080;
+  text-align: right;
 }
 
 .messenger-composer-scope.chat-shell .command-menu {
@@ -2763,10 +2822,10 @@
 .messenger-greeting-preview-btn {
   width: 24px;
   height: 24px;
-  border: 1px solid #d8e7e3;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
   border-radius: 8px;
-  background: #edf6f3;
-  color: #4f7f74;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2999,7 +3058,7 @@
 .workspace-context-menu .workspace-menu-btn:focus-visible {
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.32);
-  color: #0f7f69;
+  color: var(--ui-accent);
 }
 
 .workspace-context-menu .workspace-menu-btn.danger {
@@ -3078,7 +3137,7 @@
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
-  color: #2f6f62;
+  color: var(--ui-accent-deep);
   font-weight: 700;
   font-size: 13px;
 }
@@ -3129,7 +3188,7 @@
 
 .workflow-dialog .el-dialog__headerbtn:hover {
   border-color: rgba(var(--ui-accent-rgb), 0.46);
-  background: #ebf6f3;
+  background: var(--ui-accent-soft-2);
 }
 
 .workflow-dialog .workflow-dialog-detail {
@@ -3155,8 +3214,8 @@
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skill-item:hover {
-  border-color: #cfe6df;
-  background: #f7fbfa;
+  border-color: rgba(var(--ui-accent-rgb), 0.28);
+  background: var(--ui-accent-soft-2);
   box-shadow: none;
 }
 
@@ -3183,7 +3242,7 @@
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skills-section-title {
-  color: #2f6f62;
+  color: var(--ui-accent-deep);
   background: var(--ui-accent-soft);
   border-color: rgba(var(--ui-accent-rgb), 0.3);
 }
@@ -3195,7 +3254,7 @@
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skill-tree-item.is-file:hover {
-  background: #eef7f4;
+  background: var(--ui-accent-soft-2);
   box-shadow: inset 0 0 0 1px rgba(var(--ui-accent-rgb), 0.35);
 }
 
@@ -3218,7 +3277,7 @@
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-string {
-  color: #217346;
+  color: var(--ui-accent-deep);
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-number {
@@ -3268,8 +3327,8 @@
 }
 
 .messenger-dialog .el-button--primary:hover {
-  background: #0f7f69;
-  border-color: #0f7f69;
+  background: var(--ui-accent-hover);
+  border-color: var(--ui-accent-hover);
 }
 
 .messenger-dialog-header {

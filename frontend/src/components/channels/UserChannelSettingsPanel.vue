@@ -4,7 +4,12 @@
       <div class="channel-sidebar-header">
         <div class="channel-sidebar-title">{{ t('channels.list.title') }}</div>
         <div class="channel-sidebar-actions">
-          <button class="channel-refresh-btn" type="button" :disabled="loading || saving" @click="startCreate">
+          <button
+            class="channel-refresh-btn"
+            type="button"
+            :disabled="loading || saving || permissionDenied"
+            @click="startCreate"
+          >
             {{ t('channels.action.add') }}
           </button>
           <button class="channel-refresh-btn subtle" type="button" :disabled="loading || saving" @click="refreshAll">
@@ -102,6 +107,7 @@
       </div>
 
       <div v-if="loading" class="channel-empty">{{ t('common.loading') }}</div>
+      <div v-else-if="permissionDenied" class="channel-empty">{{ t('auth.login.noPermission') }}</div>
       <div v-else-if="!accounts.length" class="channel-empty">{{ t('channels.list.empty') }}</div>
       <div v-else class="channel-account-list">
         <button
@@ -134,7 +140,8 @@
         </div>
       </div>
 
-      <div v-if="!selectedAccount" class="channel-empty">{{ t('channels.detail.empty') }}</div>
+      <div v-if="permissionDenied" class="channel-empty">{{ t('auth.login.noPermission') }}</div>
+      <div v-else-if="!selectedAccount" class="channel-empty">{{ t('channels.detail.empty') }}</div>
       <div v-else class="channel-detail">
         <div class="channel-detail-card">
           <div class="channel-detail-title">{{ t('channels.detail.info') }}</div>
@@ -279,6 +286,7 @@ const loading = ref(false);
 const saving = ref(false);
 const createSaving = ref(false);
 const creating = ref(false);
+const permissionDenied = ref(false);
 const accounts = ref([]);
 const supportedChannels = ref([]);
 const selectedKey = ref('');
@@ -466,6 +474,11 @@ const resetEditForm = () => {
   }
 };
 
+const resolveHttpStatus = (error: unknown): number => {
+  const status = Number((error as { response?: { status?: unknown } })?.response?.status ?? 0);
+  return Number.isFinite(status) ? status : 0;
+};
+
 const loadAccounts = async (preferred = undefined) => {
   loading.value = true;
   try {
@@ -517,7 +530,19 @@ const loadAccounts = async (preferred = undefined) => {
       resetCreateForm();
     }
     resetEditForm();
+    permissionDenied.value = false;
   } catch (error) {
+    const status = resolveHttpStatus(error);
+    if (status === 401 || status === 403) {
+      permissionDenied.value = true;
+      accounts.value = [];
+      selectedKey.value = '';
+      if (!creating.value) {
+        resetCreateForm();
+      }
+      resetEditForm();
+      return;
+    }
     showApiError(error, t('channels.loadFailed'));
   } finally {
     loading.value = false;

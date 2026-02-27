@@ -4,41 +4,41 @@
   --dark-border: #e3e3e3;
   --dark-text: #18181c;
   --dark-muted: #808080;
-  --ui-accent: #ff8a3d;
-  --ui-accent-rgb: 255, 138, 61;
-  --ui-accent-secondary: #f7a24f;
-  --ui-accent-secondary-rgb: 247, 162, 79;
-  --ui-accent-deep: #dd7f2f;
-  --ui-accent-soft: #fff1e6;
-  --ui-accent-soft-2: #fff0e4;
-  --ui-accent-soft-3: #fff4ec;
-  --ui-accent-soft-4: #ffe9da;
-  --ui-accent-soft-5: #ffe8d8;
-  --ui-accent-gradient-start: #ffc07a;
-  --ui-accent-gradient-mid: #ff9f53;
-  --ui-accent-hover: #e5772b;
-  --ui-accent-disabled: #f6c7a0;
-  --ui-accent-link-hover: #cf6d2a;
+  --ui-accent: #f4a66f;
+  --ui-accent-rgb: 244, 166, 111;
+  --ui-accent-secondary: #f7b985;
+  --ui-accent-secondary-rgb: 247, 185, 133;
+  --ui-accent-deep: #d78f5c;
+  --ui-accent-soft: #fff5ee;
+  --ui-accent-soft-2: #fff4ec;
+  --ui-accent-soft-3: #fff8f2;
+  --ui-accent-soft-4: #ffefe2;
+  --ui-accent-soft-5: #ffecdd;
+  --ui-accent-gradient-start: #ffd7b3;
+  --ui-accent-gradient-mid: #f6bd8a;
+  --ui-accent-hover: #e29861;
+  --ui-accent-disabled: #f2cfb1;
+  --ui-accent-link-hover: #cd8552;
   --accent: var(--ui-accent);
   --scrollbar-size: 7px;
 }
 
 :root[data-user-accent='eva-orange'] {
-  --ui-accent: #ff8a3d;
-  --ui-accent-rgb: 255, 138, 61;
-  --ui-accent-secondary: #f7a24f;
-  --ui-accent-secondary-rgb: 247, 162, 79;
-  --ui-accent-deep: #dd7f2f;
-  --ui-accent-soft: #fff1e6;
-  --ui-accent-soft-2: #fff0e4;
-  --ui-accent-soft-3: #fff4ec;
-  --ui-accent-soft-4: #ffe9da;
-  --ui-accent-soft-5: #ffe8d8;
-  --ui-accent-gradient-start: #ffc07a;
-  --ui-accent-gradient-mid: #ff9f53;
-  --ui-accent-hover: #e5772b;
-  --ui-accent-disabled: #f6c7a0;
-  --ui-accent-link-hover: #cf6d2a;
+  --ui-accent: #f4a66f;
+  --ui-accent-rgb: 244, 166, 111;
+  --ui-accent-secondary: #f7b985;
+  --ui-accent-secondary-rgb: 247, 185, 133;
+  --ui-accent-deep: #d78f5c;
+  --ui-accent-soft: #fff5ee;
+  --ui-accent-soft-2: #fff4ec;
+  --ui-accent-soft-3: #fff8f2;
+  --ui-accent-soft-4: #ffefe2;
+  --ui-accent-soft-5: #ffecdd;
+  --ui-accent-gradient-start: #ffd7b3;
+  --ui-accent-gradient-mid: #f6bd8a;
+  --ui-accent-hover: #e29861;
+  --ui-accent-disabled: #f2cfb1;
+  --ui-accent-link-hover: #cd8552;
 }
 
 :root[data-user-accent='hula-green'] {
@@ -60,21 +60,21 @@
 }
 
 :root[data-user-accent='minimal'] {
-  --ui-accent: #6b7280;
-  --ui-accent-rgb: 107, 114, 128;
-  --ui-accent-secondary: #8b93a1;
-  --ui-accent-secondary-rgb: 139, 147, 161;
-  --ui-accent-deep: #596273;
+  --ui-accent: #8f9aad;
+  --ui-accent-rgb: 143, 154, 173;
+  --ui-accent-secondary: #b5bfce;
+  --ui-accent-secondary-rgb: 181, 191, 206;
+  --ui-accent-deep: #9ba6ba;
   --ui-accent-soft: #f3f4f6;
   --ui-accent-soft-2: #f5f6f7;
   --ui-accent-soft-3: #f6f7f8;
   --ui-accent-soft-4: #eceff3;
   --ui-accent-soft-5: #e9edf1;
-  --ui-accent-gradient-start: #d2d7df;
-  --ui-accent-gradient-mid: #a8b0bd;
-  --ui-accent-hover: #4b5563;
+  --ui-accent-gradient-start: #dde2ea;
+  --ui-accent-gradient-mid: #c2cad8;
+  --ui-accent-hover: #a5afc2;
   --ui-accent-disabled: #cfd5de;
-  --ui-accent-link-hover: #374151;
+  --ui-accent-link-hover: #8b95a9;
 }
 
 * {
