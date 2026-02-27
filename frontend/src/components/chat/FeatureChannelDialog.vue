@@ -121,8 +121,8 @@ watch(
 }
 
 .feature-window-close:hover {
-  border-color: rgba(19, 152, 127, 0.45);
-  color: #13987f;
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+  color: var(--ui-accent);
 }
 
 .feature-window-body {

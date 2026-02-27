@@ -1386,7 +1386,7 @@
   --user-tools-border: #e3e3e3;
   --user-tools-text: #202020;
   --user-tools-muted: #808080;
-  --user-tools-accent: #13987f;
+  --user-tools-accent: var(--ui-accent);
   --user-tools-surface: #fafafa;
   --user-tools-card: #ffffff;
   --user-tools-shadow: 0 14px 36px rgba(15, 23, 42, 0.12);
@@ -1436,12 +1436,12 @@
 
 .user-tools-dialog .user-tools-tab:hover {
   background: #eef6f4;
-  border-color: rgba(19, 152, 127, 0.32);
+  border-color: rgba(var(--ui-accent-rgb), 0.32);
 }
 
 .user-tools-dialog .user-tools-tab.active {
-  background: #e8f4f1;
-  border-color: rgba(19, 152, 127, 0.45);
+  background: var(--ui-accent-soft);
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
   color: #0f7f69;
   box-shadow: none;
 }
@@ -1456,8 +1456,8 @@
 }
 
 .user-tools-dialog .icon-btn:hover {
-  border-color: rgba(19, 152, 127, 0.4);
-  color: #13987f;
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  color: var(--ui-accent);
 }
 
 .user-tools-dialog .el-input__wrapper,
@@ -1471,8 +1471,8 @@
 .user-tools-dialog .el-input__wrapper.is-focus,
 .user-tools-dialog .el-select__wrapper.is-focused,
 .user-tools-dialog .el-textarea__inner:focus {
-  border-color: rgba(19, 152, 127, 0.46);
-  box-shadow: 0 0 0 2px rgba(19, 152, 127, 0.12);
+  border-color: rgba(var(--ui-accent-rgb), 0.46);
+  box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), 0.12);
 }
 
 .user-tools-dialog .list-body,
@@ -1520,18 +1520,18 @@
 .user-tools-dialog .knowledge-file-item.active,
 .user-tools-dialog .knowledge-doc-item.active,
 .user-tools-dialog .knowledge-doc-chunk-item.selected {
-  background: #e8f4f1;
-  border-color: rgba(19, 152, 127, 0.4);
+  background: var(--ui-accent-soft);
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
 }
 
 .user-tools-dialog .knowledge-heading-line {
   background: #edf5f2;
-  box-shadow: inset 3px 0 0 rgba(19, 152, 127, 0.55);
+  box-shadow: inset 3px 0 0 rgba(var(--ui-accent-rgb), 0.55);
 }
 
 .user-tools-dialog .user-tools-btn {
-  border-color: rgba(19, 152, 127, 0.36);
-  background: #e8f4f1;
+  border-color: rgba(var(--ui-accent-rgb), 0.36);
+  background: var(--ui-accent-soft);
   color: #0f7f69;
   box-shadow: none;
 }
@@ -1596,8 +1596,8 @@
 
 .user-tools-dialog .skills-section-title {
   color: #0f7f69;
-  background: #e8f4f1;
-  border-color: rgba(19, 152, 127, 0.35);
+  background: var(--ui-accent-soft);
+  border-color: rgba(var(--ui-accent-rgb), 0.35);
 }
 
 .user-tools-dialog .knowledge-doc-content mark,

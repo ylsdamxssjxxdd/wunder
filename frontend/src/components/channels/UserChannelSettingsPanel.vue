@@ -778,9 +778,9 @@ onMounted(() => {
 
 .channel-refresh-btn:hover,
 .channel-action-btn:hover:not(:disabled) {
-  border-color: rgba(19, 152, 127, 0.4);
-  color: #13987f;
-  background: #e8f4f1;
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  color: var(--ui-accent);
+  background: var(--ui-accent-soft);
 }
 
 .channel-refresh-btn.subtle {
@@ -866,8 +866,8 @@ onMounted(() => {
 
 .channel-input:focus,
 .channel-textarea:focus {
-  border-color: rgba(19, 152, 127, 0.5);
-  box-shadow: 0 0 0 2px rgba(19, 152, 127, 0.12);
+  border-color: rgba(var(--ui-accent-rgb), 0.5);
+  box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), 0.12);
 }
 
 .channel-textarea {
@@ -910,8 +910,8 @@ onMounted(() => {
 }
 
 .channel-account-card.active {
-  background: #e8f4f1;
-  border-color: rgba(19, 152, 127, 0.4);
+  background: var(--ui-accent-soft);
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
 }
 
 .channel-account-head {
@@ -928,9 +928,9 @@ onMounted(() => {
 
 .channel-account-status {
   font-size: 11px;
-  color: #13987f;
+  color: var(--ui-accent);
   background: #eaf4f1;
-  border: 1px solid rgba(19, 152, 127, 0.3);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.3);
   border-radius: 999px;
   padding: 2px 7px;
 }

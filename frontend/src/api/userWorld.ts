@@ -30,6 +30,17 @@ const resolveDevProxyWsBase = (apiPathPrefix: string): string => {
   try {
     const url = new URL(raw, window.location.origin);
     const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    const currentHost = window.location.host.toLowerCase();
+    const targetHost = url.host.toLowerCase();
+    // Browser cannot resolve some internal service aliases (e.g. wunder-server),
+    // use same-origin WS path so Vite dev proxy can forward the request.
+    if (
+      !targetHost ||
+      (targetHost !== currentHost && isLikelyInternalServiceHost(url.hostname))
+    ) {
+      const currentProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${currentProtocol}//${window.location.host}${apiPathPrefix}`;
+    }
     const targetPath = url.pathname.replace(/\/$/, '');
     if (!targetPath || apiPathPrefix.startsWith(targetPath)) {
       return `${protocol}//${url.host}${apiPathPrefix}`;
@@ -41,6 +52,15 @@ const resolveDevProxyWsBase = (apiPathPrefix: string): string => {
   }
 };
 
+const isLikelyInternalServiceHost = (hostname: string): boolean => {
+  const host = String(hostname || '').trim().toLowerCase();
+  if (!host) return false;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  if (host.includes('.')) return false;
+  return true;
+};
+
 const resolveWsBase = (): string => {
   const base = resolveApiBase() || api.defaults.baseURL || '';
   const trimmed = base.replace(/\/$/, '');
@@ -48,7 +68,22 @@ const resolveWsBase = (): string => {
     return '';
   }
   if (/^https?:\/\//i.test(trimmed)) {
-    return trimmed.replace(/^http/i, 'ws');
+    try {
+      const parsed = new URL(trimmed);
+      const parsedHost = parsed.hostname.toLowerCase();
+      const parsedHostWithPort = parsed.host.toLowerCase();
+      const currentHostWithPort = window.location.host.toLowerCase();
+      if (parsedHostWithPort !== currentHostWithPort && isLikelyInternalServiceHost(parsedHost)) {
+        if (import.meta.env.DEV && window.location.port === '18001') {
+          return resolveDevProxyWsBase(parsed.pathname || '/wunder');
+        }
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        return `${protocol}//${window.location.host}${parsed.pathname}`;
+      }
+      return trimmed.replace(/^http/i, 'ws');
+    } catch {
+      return trimmed.replace(/^http/i, 'ws');
+    }
   }
   if (trimmed.startsWith('/')) {
     if (import.meta.env.DEV && window.location.port === '18001') {

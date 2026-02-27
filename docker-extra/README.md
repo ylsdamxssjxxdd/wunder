@@ -2,6 +2,9 @@
 
 本目录用于在 `glibc 2.31`（Debian bullseye 基线）环境中编译 `wunder-server`、`wunder-cli`、`wunder-desktop`，目标是让产物在 Ubuntu 20.04 上可运行。
 
+> 重要：Ubuntu 20.04 目标的 Desktop 打包统一使用 `wunder-desktop-electron`（Electron AppImage），不要使用 `cargo tauri build` 打包。
+> 在 bullseye 基线里，Tauri 依赖链会引入 `glib-2.0 >= 2.70`，与 Ubuntu 20.04 基线不兼容。
+
 - 编译容器编排文件：`docker-extra/docker-compose-ubuntu20.yml`
 - x86 Dockerfile：`docker-extra/Dockerfile.ubuntu20-x86`
 - arm Dockerfile：`docker-extra/Dockerfile.ubuntu20-arm`
@@ -25,22 +28,15 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml --profile x86 up -d -
 docker compose -f docker-extra/docker-compose-ubuntu20.yml --profile arm up -d --build
 ```
 
-## 3. 进入容器执行编译
+## 3. 进入容器执行编译与 Desktop 打包（Electron）
 
 ### x86（amd64）
 
 ```bash
 docker compose -f docker-extra/docker-compose-ubuntu20.yml exec wunder-build-x86 bash
 cargo build --release --bin wunder-server --bin wunder-cli
-# build desktop binary only
-cargo build --release --features desktop --bin wunder-desktop
-# build Linux AppImage (requires frontend/dist to exist)
-cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --bundles appimage
 
-# build Linux AppImage with embedded Python (base requirements)
-ARCH=x86 bash docker-extra/scripts/package_appimage_with_python.sh
-
-# build Electron AppImage (requires frontend/dist + bridge binary)
+# build Electron bridge + AppImage（requires frontend/dist）
 cargo build --release --bin wunder-desktop-bridge
 cd wunder-desktop-electron
 npm install
@@ -52,15 +48,8 @@ npm run build:linux:x64
 ```bash
 docker compose -f docker-extra/docker-compose-ubuntu20.yml exec wunder-build-arm bash
 cargo build --release --bin wunder-server --bin wunder-cli
-# build desktop binary only
-cargo build --release --features desktop --bin wunder-desktop
-# build Linux AppImage (requires frontend/dist to exist)
-cargo tauri build --features desktop --config wunder-desktop/tauri.conf.json --bundles appimage
 
-# build Linux AppImage with embedded Python (base requirements)
-bash docker-extra/scripts/package_appimage_with_python.sh
-
-# build Electron AppImage (requires frontend/dist + bridge binary)
+# build Electron bridge + AppImage（requires frontend/dist）
 cargo build --release --bin wunder-desktop-bridge
 cd wunder-desktop-electron
 npm install
@@ -78,7 +67,6 @@ npm run build:linux:arm64
 
 - `wunder-server`
 - `wunder-cli`
-- `wunder-desktop`
 - `wunder-desktop-bridge`
 - Electron AppImage: `wunder-desktop-electron/dist/*.AppImage`
 

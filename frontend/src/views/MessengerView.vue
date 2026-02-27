@@ -7,7 +7,12 @@
       'messenger-view--right-collapsed': showRightDock && rightDockCollapsed
     }"
   >
-    <aside class="messenger-left-rail">
+    <aside
+      ref="leftRailRef"
+      class="messenger-left-rail"
+      @mouseenter="cancelMiddlePaneOverlayHide"
+      @mouseleave="scheduleMiddlePaneOverlayHide"
+    >
       <button class="messenger-avatar-btn" type="button" @click="openProfilePage">
         <span class="messenger-avatar-text">{{ avatarLabel(currentUsername) }}</span>
       </button>
@@ -20,6 +25,8 @@
           type="button"
           :title="item.label"
           :aria-label="item.label"
+          @mouseenter="openMiddlePaneOverlay"
+          @focus="openMiddlePaneOverlay"
           @click="switchSection(item.key)"
         >
           <i :class="item.icon" aria-hidden="true"></i>
@@ -31,13 +38,21 @@
         type="button"
         :title="t('messenger.section.settings')"
         :aria-label="t('messenger.section.settings')"
+        @mouseenter="openMiddlePaneOverlay"
+        @focus="openMiddlePaneOverlay"
         @click="openSettingsPage"
       >
         <i class="fa-solid fa-gear" aria-hidden="true"></i>
       </button>
     </aside>
 
-    <section v-if="showMiddlePane" class="messenger-middle-pane">
+    <section
+      v-if="showMiddlePane"
+      ref="middlePaneRef"
+      class="messenger-middle-pane messenger-middle-pane--overlay"
+      @mouseenter="cancelMiddlePaneOverlayHide"
+      @mouseleave="scheduleMiddlePaneOverlayHide"
+    >
       <header class="messenger-middle-header">
         <div class="messenger-middle-title">{{ activeSectionTitle }}</div>
         <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
@@ -806,6 +821,14 @@
                       </span>
                     </div>
                     <div class="messenger-entity-field">
+                      <span class="messenger-entity-label">{{ t('messenger.files.cloudLocation') }}</span>
+                      <span class="messenger-entity-value">{{ fileContainerCloudLocation }}</span>
+                    </div>
+                    <div class="messenger-entity-field">
+                      <span class="messenger-entity-label">{{ t('messenger.files.localLocation') }}</span>
+                      <span class="messenger-entity-value">{{ fileContainerLocalLocation }}</span>
+                    </div>
+                    <div class="messenger-entity-field">
                       <span class="messenger-entity-label">{{ t('messenger.files.agentBinding') }}</span>
                       <span class="messenger-entity-value">
                         {{ fileScope === 'user' ? currentUsername : selectedFileContainerAgentLabel }}
@@ -838,6 +861,7 @@
                 :username="currentUsername"
                 :user-id="currentUserId"
                 :language-label="currentLanguageLabel"
+                :theme-palette="themeStore.palette"
                 :ui-font-size="uiFontSize"
                 :desktop-tool-call-mode="desktopToolCallMode"
                 :devtools-available="desktopDevtoolsAvailable"
@@ -847,6 +871,7 @@
                 @open-system="openDesktopSystemSettings"
                 @toggle-devtools="toggleDesktopDevTools"
                 @logout="handleSettingsLogout"
+                @update:theme-palette="updateThemePalette"
                 @update:ui-font-size="updateUiFontSize"
                 @update:desktop-tool-call-mode="updateDesktopToolCallMode"
               />
@@ -898,15 +923,6 @@
                   v-if="message.role === 'user' || hasMessageContent(message.content)"
                   class="messenger-message-bubble messenger-markdown"
                 >
-                  <button
-                    class="messenger-bubble-copy-btn"
-                    type="button"
-                    :title="t('chat.message.copy')"
-                    :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(message.content)"
-                  >
-                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
-                  </button>
                   <template v-if="isGreetingMessage(message)">
                     <div class="messenger-greeting-line">
                       <div class="messenger-greeting-text">{{ message.content }}</div>
@@ -1001,15 +1017,29 @@
                   </template>
                   <div v-else class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
                 </div>
-                <div v-if="shouldShowMessageStats(message)" class="messenger-message-stats">
-                  <span
-                    v-for="item in buildMessageStatsEntries(message)"
-                    :key="item.label"
-                    class="messenger-message-stat"
+                <div
+                  v-if="hasMessageContent(message.content) || shouldShowMessageStats(message)"
+                  class="messenger-message-extra"
+                >
+                  <div v-if="shouldShowMessageStats(message)" class="messenger-message-stats">
+                    <span
+                      v-for="item in buildMessageStatsEntries(message)"
+                      :key="item.label"
+                      class="messenger-message-stat"
+                    >
+                      <span class="messenger-message-stat-label">{{ item.label }}:</span>
+                      <span class="messenger-message-stat-value">{{ item.value }}</span>
+                    </span>
+                  </div>
+                  <button
+                    class="messenger-message-footer-copy"
+                    type="button"
+                    :title="t('chat.message.copy')"
+                    :aria-label="t('chat.message.copy')"
+                    @click="copyMessageContent(message.content)"
                   >
-                    <span class="messenger-message-stat-label">{{ item.label }}:</span>
-                    <span class="messenger-message-stat-value">{{ item.value }}</span>
-                  </span>
+                    <i class="fa-solid fa-clone" aria-hidden="true"></i>
+                  </button>
                 </div>
               </div>
             </div>
@@ -1064,7 +1094,12 @@
 
       <footer v-if="!showChatSettingsView" class="messenger-chat-footer">
         <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
-          <ChatComposer :loading="agentSessionLoading" @send="sendAgentMessage" @stop="stopAgentMessage" />
+          <ChatComposer
+            world-style
+            :loading="agentSessionLoading"
+            @send="sendAgentMessage"
+            @stop="stopAgentMessage"
+          />
         </div>
         <div
           v-else-if="isWorldConversationActive"
@@ -1204,6 +1239,7 @@
     </section>
 
     <MessengerRightDock
+      ref="rightDockRef"
       v-if="showRightDock"
       :collapsed="rightDockCollapsed"
       :show-agent-panels="showRightAgentPanels"
@@ -1346,10 +1382,12 @@ import {
   setDesktopToolCallMode,
   type DesktopToolCallMode
 } from '@/config/desktop';
+import { getRuntimeConfig, resolveApiBase } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import { useThemeStore } from '@/stores/theme';
 import {
   useSessionHubStore,
   resolveSectionFromRoute,
@@ -1370,6 +1408,7 @@ const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;
 const WORLD_QUICK_EMOJI_STORAGE_KEY = 'wunder_world_quick_emoji';
 const WORLD_MESSAGE_HISTORY_STORAGE_KEY = 'wunder_world_message_history';
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
+const DISMISSED_AGENT_STORAGE_PREFIX = 'messenger_dismissed_agent_conversations';
 const AGENT_TOOL_OVERRIDE_NONE = '__no_tools__';
 const WORLD_EMOJI_CATALOG = [
   '😀',
@@ -1462,6 +1501,12 @@ type UnitTreeRow = {
 };
 
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'error';
+type MessengerPerfTrace = {
+  label: string;
+  startedAt: number;
+  marks: Array<{ name: string; at: number }>;
+  meta?: Record<string, unknown>;
+};
 
 const route = useRoute();
 const router = useRouter();
@@ -1469,6 +1514,7 @@ const { t } = useI18n();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
+const themeStore = useThemeStore();
 const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
 
@@ -1480,6 +1526,11 @@ const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const selectedCustomToolName = ref('');
 const worldDraft = ref('');
+const dismissedAgentConversationMap = ref<Record<string, number>>({});
+const dismissedAgentStorageKey = ref('');
+const leftRailRef = ref<HTMLElement | null>(null);
+const middlePaneRef = ref<HTMLElement | null>(null);
+const rightDockRef = ref<{ $el?: HTMLElement } | null>(null);
 const worldComposerRef = ref<HTMLElement | null>(null);
 const worldTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const worldUploadInputRef = ref<HTMLInputElement | null>(null);
@@ -1541,16 +1592,68 @@ const groupCreateName = ref('');
 const groupCreateKeyword = ref('');
 const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
+const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440);
+const middlePaneOverlayVisible = ref(false);
 
 const agentCreateVisible = ref(false);
 
 let statusTimer: number | null = null;
 let lifecycleTimer: number | null = null;
 let worldQuickPanelCloseTimer: number | null = null;
+let timelinePrefetchTimer: number | null = null;
+let middlePaneOverlayHideTimer: number | null = null;
+let viewportResizeHandler: (() => void) | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
+const MESSENGER_PERF_TRACE_ENABLED = (() => {
+  if (typeof window === 'undefined') return false;
+  const raw = String(window.localStorage.getItem('messenger_perf_trace') || '')
+    .trim()
+    .toLowerCase();
+  if (raw === '1' || raw === 'true' || raw === 'on') return true;
+  return import.meta.env.DEV;
+})();
+
+const startMessengerPerfTrace = (
+  label: string,
+  meta: Record<string, unknown> = {}
+): MessengerPerfTrace | null => {
+  if (!MESSENGER_PERF_TRACE_ENABLED) return null;
+  return {
+    label,
+    startedAt: performance.now(),
+    marks: [],
+    meta
+  };
+};
+
+const markMessengerPerfTrace = (trace: MessengerPerfTrace | null, name: string) => {
+  if (!trace) return;
+  trace.marks.push({ name, at: performance.now() });
+};
+
+const finishMessengerPerfTrace = (
+  trace: MessengerPerfTrace | null,
+  status: 'ok' | 'fail' | 'pending' = 'ok',
+  extra: Record<string, unknown> = {}
+) => {
+  if (!trace) return;
+  const totalMs = Number((performance.now() - trace.startedAt).toFixed(1));
+  const marks = trace.marks.map((item) => ({
+    name: item.name,
+    sinceStartMs: Number((item.at - trace.startedAt).toFixed(1))
+  }));
+  console.info('[messenger-perf]', {
+    label: trace.label,
+    status,
+    totalMs,
+    ...trace.meta,
+    ...extra,
+    marks
+  });
+};
 
 const sectionOptions = computed(() => [
   { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
@@ -1608,7 +1711,9 @@ const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
-const showMiddlePane = computed(() => true);
+const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 840);
+const isRightDockOverlay = computed(() => viewportWidth.value <= 1380);
+const showMiddlePane = computed(() => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value);
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
 const sharedAgents = computed(() => (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []));
@@ -1860,6 +1965,35 @@ const selectedFileContainerAgentLabel = computed(() => {
   if (!names.length) return t('common.none');
   if (names.length <= 3) return names.join(' / ');
   return `${names.slice(0, 3).join(' / ')} +${names.length - 3}`;
+});
+
+const fileContainerCloudLocation = computed(() => {
+  const apiBase = String(resolveApiBase() || '/wunder')
+    .trim()
+    .replace(/\/$/, '');
+  const base = apiBase || '/wunder';
+  const params = new URLSearchParams({
+    container_id: String(selectedFileContainerId.value || USER_CONTAINER_ID)
+  });
+  if (selectedFileAgentIdForApi.value) {
+    params.set('agent_id', selectedFileAgentIdForApi.value);
+  }
+  return `${base}/workspace/tree?${params.toString()}`;
+});
+
+const fileContainerLocalLocation = computed(() => {
+  const runtimeRoot = String(getRuntimeConfig().workspace_root || '').trim();
+  if (!runtimeRoot) {
+    return t('messenger.files.localLocationUnknown');
+  }
+  const normalizedRoot = runtimeRoot.replace(/[\\/]+$/, '');
+  const userId = String(currentUserId.value || '').trim() || 'anonymous';
+  const localScope =
+    fileScope.value === 'user' || selectedFileContainerId.value === USER_CONTAINER_ID
+      ? userId
+      : `${userId}__c__${selectedFileContainerId.value}`;
+  const separator = normalizedRoot.includes('\\') ? '\\' : '/';
+  return `${normalizedRoot}${separator}${localScope}`;
 });
 
 const workspacePanelKey = computed(() =>
@@ -2320,6 +2454,7 @@ const selectedToolCategoryItems = computed(() => {
 });
 
 const mixedConversations = computed<MixedConversation[]>(() => {
+  const dismissedMap = dismissedAgentConversationMap.value;
   const sessionsByAgent = new Map<
     string,
     Array<{ session: Record<string, unknown>; lastAt: number; isMain: boolean }>
@@ -2336,34 +2471,41 @@ const mixedConversations = computed<MixedConversation[]>(() => {
     sessionsByAgent.set(agentId, list);
   });
 
-  const agentItems = Array.from(sessionsByAgent.entries()).map(([agentId, records]) => {
-    const sorted = [...records].sort((left, right) => right.lastAt - left.lastAt);
-    const latest = sorted[0];
-    const main = sorted.find((item) => item.isMain) || latest;
-    const agent = agentMap.value.get(agentId) || null;
-    const title = String(
-      (agent as Record<string, unknown> | null)?.name ||
-        (agentId === DEFAULT_AGENT_KEY ? t('messenger.defaultAgent') : agentId)
-    );
-    const preview = String(
-      latest?.session?.last_message_preview || latest?.session?.last_message || latest?.session?.summary || ''
-    );
-    return {
-      key: `agent:${agentId}`,
-      kind: 'agent',
-      sourceId: String(main?.session?.id || ''),
-      agentId,
-      title,
-      preview,
-      unread: 0,
-      lastAt: Number(latest?.lastAt || main?.lastAt || 0)
-    } as MixedConversation;
-  });
+  const agentItems = Array.from(sessionsByAgent.entries())
+    .map(([agentId, records]) => {
+      const sorted = [...records].sort((left, right) => right.lastAt - left.lastAt);
+      const latest = sorted[0];
+      const main = sorted.find((item) => item.isMain) || latest;
+      const agent = agentMap.value.get(agentId) || null;
+      const title = String(
+        (agent as Record<string, unknown> | null)?.name ||
+          (agentId === DEFAULT_AGENT_KEY ? t('messenger.defaultAgent') : agentId)
+      );
+      const preview = String(
+        latest?.session?.last_message_preview || latest?.session?.last_message || latest?.session?.summary || ''
+      );
+      return {
+        key: `agent:${agentId}`,
+        kind: 'agent',
+        sourceId: String(main?.session?.id || ''),
+        agentId,
+        title,
+        preview,
+        unread: 0,
+        lastAt: Number(latest?.lastAt || main?.lastAt || 0)
+      } as MixedConversation;
+    })
+    .filter((item) => {
+      const dismissedAt = Number(dismissedMap[item.agentId] || 0);
+      if (!dismissedAt) return true;
+      return item.lastAt > dismissedAt;
+    });
 
   const draftIdentity = activeConversation.value;
   if (draftIdentity?.kind === 'agent' && draftIdentity.id.startsWith('draft:')) {
     const draftAgentId = normalizeAgentId(draftIdentity.agentId || draftIdentity.id.slice('draft:'.length));
-    if (!agentItems.some((item) => item.agentId === draftAgentId)) {
+    const draftDismissedAt = Number(dismissedMap[draftAgentId] || 0);
+    if (!agentItems.some((item) => item.agentId === draftAgentId) && !draftDismissedAt) {
       const agent = agentMap.value.get(draftAgentId) || null;
       agentItems.unshift({
         key: `agent:${draftAgentId}`,
@@ -2522,6 +2664,79 @@ const canSendWorldMessage = computed(
     !worldUploading.value &&
     Boolean(worldDraft.value.trim())
 );
+
+const normalizeDismissedAgentConversationMap = (value: unknown): Record<string, number> => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, number>>(
+    (acc, [key, raw]) => {
+      const agentId = normalizeAgentId(key);
+      const timestamp = Number(raw);
+      if (!agentId || !Number.isFinite(timestamp) || timestamp <= 0) {
+        return acc;
+      }
+      acc[agentId] = timestamp;
+      return acc;
+    },
+    {}
+  );
+};
+
+const resolveDismissedAgentStorageKey = (userId: unknown): string => {
+  const cleaned = String(userId || '').trim() || 'anonymous';
+  return `${DISMISSED_AGENT_STORAGE_PREFIX}:${cleaned}`;
+};
+
+const ensureDismissedAgentConversationState = (force = false) => {
+  if (typeof window === 'undefined') {
+    dismissedAgentConversationMap.value = {};
+    dismissedAgentStorageKey.value = '';
+    return;
+  }
+  const targetKey = resolveDismissedAgentStorageKey(currentUserId.value);
+  if (!force && dismissedAgentStorageKey.value === targetKey) {
+    return;
+  }
+  dismissedAgentStorageKey.value = targetKey;
+  try {
+    const raw = window.localStorage.getItem(targetKey);
+    dismissedAgentConversationMap.value = raw ? normalizeDismissedAgentConversationMap(JSON.parse(raw)) : {};
+  } catch {
+    dismissedAgentConversationMap.value = {};
+  }
+};
+
+const persistDismissedAgentConversationState = () => {
+  if (typeof window === 'undefined') return;
+  const targetKey =
+    dismissedAgentStorageKey.value || resolveDismissedAgentStorageKey(currentUserId.value);
+  dismissedAgentStorageKey.value = targetKey;
+  try {
+    window.localStorage.setItem(targetKey, JSON.stringify(dismissedAgentConversationMap.value));
+  } catch {
+    // ignore localStorage errors
+  }
+};
+
+const markAgentConversationDismissed = (agentId: unknown) => {
+  const normalized = normalizeAgentId(agentId);
+  if (!normalized) return;
+  dismissedAgentConversationMap.value = {
+    ...dismissedAgentConversationMap.value,
+    [normalized]: Date.now()
+  };
+  persistDismissedAgentConversationState();
+};
+
+const clearAgentConversationDismissed = (agentId: unknown) => {
+  const normalized = normalizeAgentId(agentId);
+  if (!normalized || !(normalized in dismissedAgentConversationMap.value)) return;
+  const next = { ...dismissedAgentConversationMap.value };
+  delete next[normalized];
+  dismissedAgentConversationMap.value = next;
+  persistDismissedAgentConversationState();
+};
 
 const loadStoredStringArray = (storageKey: string, maxCount: number): string[] => {
   if (typeof window === 'undefined') return [];
@@ -2765,13 +2980,32 @@ const pushWorldMessageHistory = (content: string) => {
 };
 
 const closeWorldQuickPanelWhenOutside = (event: Event) => {
-  if (!worldQuickPanelMode.value) return;
   const target = event.target as Node | null;
-  if (!target || !worldComposerRef.value || worldComposerRef.value.contains(target)) {
+  if (!target) {
     return;
   }
-  clearWorldQuickPanelClose();
-  worldQuickPanelMode.value = '';
+  if (worldQuickPanelMode.value) {
+    if (!worldComposerRef.value || !worldComposerRef.value.contains(target)) {
+      clearWorldQuickPanelClose();
+      worldQuickPanelMode.value = '';
+    }
+  }
+
+  if (isRightDockOverlay.value && showRightDock.value && !rightDockCollapsed.value) {
+    const rightDockElement = rightDockRef.value?.$el;
+    if (rightDockElement && !rightDockElement.contains(target)) {
+      rightDockCollapsed.value = true;
+    }
+  }
+
+  if (isMiddlePaneOverlay.value && middlePaneOverlayVisible.value) {
+    const isInMiddlePane = Boolean(middlePaneRef.value?.contains(target));
+    const isInLeftRail = Boolean(leftRailRef.value?.contains(target));
+    if (!isInMiddlePane && !isInLeftRail) {
+      clearMiddlePaneOverlayHide();
+      middlePaneOverlayVisible.value = false;
+    }
+  }
 };
 
 const AGENT_CONTAINER_TTL_MS = 24 * 60 * 60 * 1000;
@@ -3133,7 +3367,8 @@ const isMixedConversationActive = (item: MixedConversation): boolean => {
   return identity.kind === item.kind && identity.id === item.sourceId;
 };
 
-const canDeleteMixedConversation = (item: MixedConversation): boolean => Boolean(item?.sourceId);
+const canDeleteMixedConversation = (item: MixedConversation): boolean =>
+  item?.kind === 'agent' || Boolean(item?.sourceId);
 
 const deleteMixedConversation = async (item: MixedConversation) => {
   const sourceId = String(item?.sourceId || '').trim();
@@ -3149,8 +3384,28 @@ const deleteMixedConversation = async (item: MixedConversation) => {
   }
   try {
     if (item.kind === 'agent') {
-      await chatStore.deleteSession(sourceId);
-      timelinePreviewMap.value.delete(sourceId);
+      const agentId = normalizeAgentId(item.agentId);
+      markAgentConversationDismissed(agentId);
+      if (sourceId) {
+        timelinePreviewMap.value.delete(sourceId);
+      }
+      if (isMixedConversationActive(item)) {
+        const fallback = mixedConversations.value.find((entry) => entry.key !== item.key);
+        if (fallback) {
+          await openMixedConversation(fallback);
+        } else {
+          sessionHub.clearActiveConversation();
+          const nextQuery = {
+            ...route.query,
+            section: 'messages'
+          } as Record<string, any>;
+          delete nextQuery.conversation_id;
+          delete nextQuery.session_id;
+          delete nextQuery.agent_id;
+          delete nextQuery.entry;
+          router.replace({ path: `${basePrefix.value}/chat`, query: nextQuery }).catch(() => undefined);
+        }
+      }
     } else {
       await userWorldStore.dismissConversation(sourceId);
     }
@@ -3161,6 +3416,7 @@ const deleteMixedConversation = async (item: MixedConversation) => {
 };
 
 const switchSection = (section: MessengerSection) => {
+  openMiddlePaneOverlay();
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
   worldHistoryDialogVisible.value = false;
@@ -3233,6 +3489,36 @@ const handleSettingsLogout = () => {
   router.push('/login').catch(() => undefined);
 };
 
+const clearMiddlePaneOverlayHide = () => {
+  if (typeof window !== 'undefined' && middlePaneOverlayHideTimer) {
+    window.clearTimeout(middlePaneOverlayHideTimer);
+    middlePaneOverlayHideTimer = null;
+  }
+};
+
+const openMiddlePaneOverlay = () => {
+  if (!isMiddlePaneOverlay.value) return;
+  clearMiddlePaneOverlayHide();
+  middlePaneOverlayVisible.value = true;
+};
+
+const cancelMiddlePaneOverlayHide = () => {
+  clearMiddlePaneOverlayHide();
+};
+
+const scheduleMiddlePaneOverlayHide = () => {
+  if (!isMiddlePaneOverlay.value) return;
+  clearMiddlePaneOverlayHide();
+  if (typeof window === 'undefined') {
+    middlePaneOverlayVisible.value = false;
+    return;
+  }
+  middlePaneOverlayHideTimer = window.setTimeout(() => {
+    middlePaneOverlayHideTimer = null;
+    middlePaneOverlayVisible.value = false;
+  }, 140);
+};
+
 const handleSearchCreateAction = () => {
   if (sessionHub.activeSection === 'groups') {
     groupCreateName.value = '';
@@ -3245,6 +3531,8 @@ const handleSearchCreateAction = () => {
 };
 
 const openMixedConversation = async (item: MixedConversation) => {
+  clearMiddlePaneOverlayHide();
+  middlePaneOverlayVisible.value = false;
   if (item.kind === 'agent') {
     if (item.sourceId) {
       await openAgentSession(item.sourceId, item.agentId);
@@ -3272,26 +3560,58 @@ const openWorldConversation = async (
   mode: 'detail' | 'messages' = 'detail'
 ) => {
   if (!conversationId) return;
+  const perfTrace = startMessengerPerfTrace('openWorldConversation', {
+    conversationId,
+    kind,
+    mode
+  });
   try {
-    await userWorldStore.setActiveConversation(conversationId);
+    if (mode === 'messages') {
+      clearMiddlePaneOverlayHide();
+      middlePaneOverlayVisible.value = false;
+    }
+    markMessengerPerfTrace(perfTrace, 'beforeActivate');
+    const activateTask = userWorldStore.setActiveConversation(conversationId, { waitForLoad: false });
+    markMessengerPerfTrace(perfTrace, 'afterActivateScheduled');
     sessionHub.setActiveConversation({ kind, id: conversationId });
     const section = mode === 'messages' ? 'messages' : kind === 'group' ? 'groups' : 'users';
     const nextQuery = { ...route.query, section, conversation_id: conversationId } as Record<string, any>;
     delete nextQuery.session_id;
     delete nextQuery.agent_id;
     delete nextQuery.entry;
+    markMessengerPerfTrace(perfTrace, 'beforeRouteReplace');
     router.replace({
       path: mode === 'messages' ? `${basePrefix.value}/chat` : `${basePrefix.value}/user-world`,
       query: nextQuery
     }).catch(() => undefined);
+    markMessengerPerfTrace(perfTrace, 'afterRouteReplace');
     await scrollMessagesToBottom(true);
+    markMessengerPerfTrace(perfTrace, 'afterScrollBottom');
+    finishMessengerPerfTrace(perfTrace, 'pending');
+    void activateTask.then(
+      () => {
+        finishMessengerPerfTrace(perfTrace, 'ok', { phase: 'activateTask' });
+      },
+      (error) => {
+        finishMessengerPerfTrace(perfTrace, 'fail', {
+          phase: 'activateTask',
+          error: (error as { message?: string })?.message || String(error)
+        });
+        showApiError(error, t('messenger.error.openConversation'));
+      }
+    );
   } catch (error) {
+    finishMessengerPerfTrace(perfTrace, 'fail', {
+      phase: 'openWorldConversation',
+      error: (error as { message?: string })?.message || String(error)
+    });
     showApiError(error, t('messenger.error.openConversation'));
   }
 };
 
 const openAgentById = async (agentId: unknown) => {
   const normalized = normalizeAgentId(agentId);
+  clearAgentConversationDismissed(normalized);
   selectedAgentId.value = normalized;
   const sessions = (Array.isArray(chatStore.sessions) ? chatStore.sessions : [])
     .filter((item) => normalizeAgentId(item?.agent_id) === normalized)
@@ -3307,6 +3627,8 @@ const openAgentById = async (agentId: unknown) => {
     return;
   }
   chatStore.openDraftSession({ agent_id: normalized === DEFAULT_AGENT_KEY ? '' : normalized });
+  clearMiddlePaneOverlayHide();
+  middlePaneOverlayVisible.value = false;
   sessionHub.setActiveConversation({
     kind: 'agent',
     id: `draft:${normalized}`,
@@ -3455,19 +3777,45 @@ const openAgentPromptPreview = async () => {
 
 const openSelectedContactConversation = async () => {
   if (!selectedContact.value) return;
-  const conversationId = String(selectedContact.value.conversation_id || '').trim();
+  const perfTrace = startMessengerPerfTrace('openSelectedContactConversation', {
+    selectedContactUserId: String(selectedContact.value?.user_id || '').trim()
+  });
+  const peerUserId = String(selectedContact.value.user_id || '').trim();
+  const listMatchedConversationId = (Array.isArray(userWorldStore.conversations) ? userWorldStore.conversations : [])
+    .find((item) => {
+      const kind = String(item?.conversation_type || '').trim().toLowerCase();
+      return kind !== 'group' && String(item?.peer_user_id || '').trim() === peerUserId;
+    })
+    ?.conversation_id;
+  const conversationId = String(selectedContact.value.conversation_id || listMatchedConversationId || '').trim();
   if (conversationId) {
+    markMessengerPerfTrace(perfTrace, 'hitExistingConversation');
     await openWorldConversation(conversationId, 'direct', 'messages');
+    finishMessengerPerfTrace(perfTrace, 'ok', { reusedConversation: true });
     return;
   }
-  const peerUserId = String(selectedContact.value.user_id || '').trim();
   if (!peerUserId) return;
   try {
-    await userWorldStore.openConversationByPeer(peerUserId);
-    if (userWorldStore.activeConversationId) {
-      await openWorldConversation(userWorldStore.activeConversationId, 'direct', 'messages');
+    markMessengerPerfTrace(perfTrace, 'callOpenConversationByPeer');
+    const conversation = await userWorldStore.openConversationByPeer(peerUserId, {
+      waitForLoad: false,
+      activate: false
+    });
+    markMessengerPerfTrace(perfTrace, 'returnedOpenConversationByPeer');
+    const targetConversationId = String(
+      (conversation as Record<string, unknown> | null)?.conversation_id || userWorldStore.activeConversationId || ''
+    ).trim();
+    if (targetConversationId) {
+      await openWorldConversation(targetConversationId, 'direct', 'messages');
+      finishMessengerPerfTrace(perfTrace, 'ok', { reusedConversation: false });
+      return;
     }
+    finishMessengerPerfTrace(perfTrace, 'fail', { phase: 'missingConversationId' });
   } catch (error) {
+    finishMessengerPerfTrace(perfTrace, 'fail', {
+      phase: 'openConversationByPeer',
+      error: (error as { message?: string })?.message || String(error)
+    });
     showApiError(error, t('userWorld.contact.openFailed'));
   }
 };
@@ -3515,31 +3863,50 @@ const submitGroupCreate = async () => {
 
 const openAgentSession = async (sessionId: string, agentId = '') => {
   if (!sessionId) return;
+  const perfTrace = startMessengerPerfTrace('openAgentSession', { sessionId, agentId });
+  clearMiddlePaneOverlayHide();
+  middlePaneOverlayVisible.value = false;
+  const knownSession = chatStore.sessions.find((item) => String(item?.id || '') === sessionId);
+  const fallbackAgentId = agentId
+    ? normalizeAgentId(agentId)
+    : normalizeAgentId(knownSession?.agent_id ?? chatStore.draftAgentId);
+  clearAgentConversationDismissed(fallbackAgentId);
+  selectedAgentId.value = fallbackAgentId || DEFAULT_AGENT_KEY;
+  sessionHub.setActiveConversation({
+    kind: 'agent',
+    id: sessionId,
+    agentId: fallbackAgentId || DEFAULT_AGENT_KEY
+  });
+  const nextQuery = {
+    ...route.query,
+    section: 'messages',
+    session_id: sessionId,
+    agent_id: fallbackAgentId === DEFAULT_AGENT_KEY ? '' : fallbackAgentId
+  } as Record<string, any>;
+  delete nextQuery.conversation_id;
+  router.replace({
+    path: `${basePrefix.value}/chat`,
+    query: nextQuery
+  }).catch(() => undefined);
+  await scrollMessagesToBottom(true);
+  markMessengerPerfTrace(perfTrace, 'uiReady');
   try {
+    markMessengerPerfTrace(perfTrace, 'beforeLoadSessionDetail');
     await chatStore.loadSessionDetail(sessionId);
+    markMessengerPerfTrace(perfTrace, 'afterLoadSessionDetail');
     const session = chatStore.sessions.find((item) => String(item?.id || '') === sessionId);
-    const targetAgentId = agentId
-      ? normalizeAgentId(agentId)
-      : normalizeAgentId(session?.agent_id ?? chatStore.draftAgentId);
+    const targetAgentId = normalizeAgentId(session?.agent_id ?? fallbackAgentId);
     selectedAgentId.value = targetAgentId || DEFAULT_AGENT_KEY;
     sessionHub.setActiveConversation({
       kind: 'agent',
       id: sessionId,
       agentId: targetAgentId || DEFAULT_AGENT_KEY
     });
-    const nextQuery = {
-      ...route.query,
-      section: 'messages',
-      session_id: sessionId,
-      agent_id: targetAgentId === DEFAULT_AGENT_KEY ? '' : targetAgentId
-    } as Record<string, any>;
-    delete nextQuery.conversation_id;
-    router.replace({
-      path: `${basePrefix.value}/chat`,
-      query: nextQuery
-    }).catch(() => undefined);
-    await scrollMessagesToBottom(true);
+    finishMessengerPerfTrace(perfTrace, 'ok');
   } catch (error) {
+    finishMessengerPerfTrace(perfTrace, 'fail', {
+      error: (error as { message?: string })?.message || String(error)
+    });
     showApiError(error, t('messenger.error.openConversation'));
   }
 };
@@ -4089,6 +4456,10 @@ const updateDesktopToolCallMode = (value: DesktopToolCallMode) => {
   desktopToolCallMode.value = value === 'function_call' ? 'function_call' : 'tool_call';
 };
 
+const updateThemePalette = (value: 'hula-green' | 'eva-orange' | 'minimal') => {
+  themeStore.setPalette(value);
+};
+
 const updateUiFontSize = (value: number) => {
   const normalized = normalizeUiFontSize(value);
   uiFontSize.value = normalized;
@@ -4280,6 +4651,26 @@ const bootstrap = async () => {
 };
 
 watch(
+  () => isMiddlePaneOverlay.value,
+  (overlay) => {
+    if (!overlay) {
+      clearMiddlePaneOverlayHide();
+      middlePaneOverlayVisible.value = false;
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => showRightDock.value,
+  (visible) => {
+    if (!visible) {
+      rightDockCollapsed.value = false;
+    }
+  }
+);
+
+watch(
   () => [route.path, route.query.section],
   () => {
     settingsPanelMode.value = route.path.includes('/profile') ? 'profile' : 'general';
@@ -4289,6 +4680,14 @@ watch(
       return;
     }
     sessionHub.setSection(resolveSectionFromRoute(route.path, route.query.section));
+  },
+  { immediate: true }
+);
+
+watch(
+  () => currentUserId.value,
+  () => {
+    ensureDismissedAgentConversationState(true);
   },
   { immediate: true }
 );
@@ -4361,9 +4760,24 @@ watch(
   () => rightPanelSessionHistory.value.map((item) => item.id).join('|'),
   (value) => {
     if (!value) return;
-    rightPanelSessionHistory.value.slice(0, 12).forEach((item) => {
-      preloadTimelinePreview(item.id);
-    });
+    if (typeof window !== 'undefined' && timelinePrefetchTimer) {
+      window.clearTimeout(timelinePrefetchTimer);
+      timelinePrefetchTimer = null;
+    }
+    const prefetchTargets = rightPanelSessionHistory.value.slice(0, 4).map((item) => item.id);
+    const runPrefetch = () => {
+      prefetchTargets.forEach((sessionId) => {
+        void preloadTimelinePreview(sessionId);
+      });
+    };
+    if (typeof window !== 'undefined') {
+      timelinePrefetchTimer = window.setTimeout(() => {
+        timelinePrefetchTimer = null;
+        runPrefetch();
+      }, 80);
+      return;
+    }
+    runPrefetch();
   },
   { immediate: true }
 );
@@ -4435,6 +4849,11 @@ watch(
 
 onMounted(async () => {
   if (typeof window !== 'undefined') {
+    viewportResizeHandler = () => {
+      viewportWidth.value = window.innerWidth;
+    };
+    viewportResizeHandler();
+    window.addEventListener('resize', viewportResizeHandler);
     uiFontSize.value = normalizeUiFontSize(window.localStorage.getItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY));
     worldComposerHeight.value = clampWorldComposerHeight(
       window.localStorage.getItem(WORLD_COMPOSER_HEIGHT_STORAGE_KEY)
@@ -4457,9 +4876,14 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (typeof window !== 'undefined') {
+    if (viewportResizeHandler) {
+      window.removeEventListener('resize', viewportResizeHandler);
+      viewportResizeHandler = null;
+    }
     window.removeEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
   }
   clearWorldQuickPanelClose();
+  clearMiddlePaneOverlayHide();
   stopWorldComposerResize();
   if (statusTimer) {
     window.clearInterval(statusTimer);
@@ -4468,6 +4892,10 @@ onBeforeUnmount(() => {
   if (lifecycleTimer) {
     window.clearInterval(lifecycleTimer);
     lifecycleTimer = null;
+  }
+  if (typeof window !== 'undefined' && timelinePrefetchTimer) {
+    window.clearTimeout(timelinePrefetchTimer);
+    timelinePrefetchTimer = null;
   }
   markdownCache.clear();
   timelinePreviewMap.value.clear();

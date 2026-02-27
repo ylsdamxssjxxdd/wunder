@@ -71,6 +71,11 @@ type WsError = Error & {
   phase?: string;
 };
 
+type OpenConversationByPeerOptions = {
+  waitForLoad?: boolean;
+  activate?: boolean;
+};
+
 const DEFAULT_TRANSPORT: 'ws' | 'sse' = 'ws';
 const WATCH_RETRY_DELAY_MS = 1000;
 const DISMISSED_STORAGE_PREFIX = 'user_world_dismissed_conversations';
@@ -352,16 +357,55 @@ export const useUserWorldStore = defineStore('user-world', {
       await this.syncConversationWatchers();
     },
 
-    async openConversationByPeer(peerUserId: string) {
+    async openConversationByPeer(peerUserId: string, options: OpenConversationByPeerOptions = {}) {
       const peer = peerUserId.trim();
-      if (!peer) return;
+      if (!peer) return null;
+      const shouldActivate = options.activate !== false;
+      const contactConversationId = normalizeConversationId(
+        this.contacts.find((item) => String(item?.user_id || '').trim() === peer)?.conversation_id
+      );
+      const existingConversation =
+        this.conversations.find((item) => {
+          const kind = String(item?.conversation_type || '').trim().toLowerCase();
+          if (kind === 'group') return false;
+          const itemPeer = String(item?.peer_user_id || '').trim();
+          if (itemPeer && itemPeer === peer) return true;
+          return Boolean(contactConversationId) && String(item?.conversation_id || '').trim() === contactConversationId;
+        }) || null;
+      if (existingConversation?.conversation_id) {
+        this.clearConversationDismissed(existingConversation.conversation_id);
+        const contact = this.contacts.find((item) => String(item?.user_id || '').trim() === peer);
+        if (contact) {
+          contact.conversation_id = existingConversation.conversation_id;
+        }
+        if (shouldActivate) {
+          await this.setActiveConversation(existingConversation.conversation_id, {
+            waitForLoad: options.waitForLoad
+          });
+          await this.syncConversationWatchers();
+        }
+        return existingConversation;
+      }
       const response = await createOrGetUserWorldConversation({ peer_user_id: peer });
-      const conversation = asRecord(response.data?.data) as unknown as UserWorldConversation;
-      if (!conversation?.conversation_id) return;
+      const incoming = asRecord(response.data?.data) as unknown as UserWorldConversation;
+      if (!incoming?.conversation_id) return null;
+      const conversation: UserWorldConversation = {
+        ...incoming,
+        peer_user_id: String(incoming.peer_user_id || peer).trim()
+      };
       this.clearConversationDismissed(conversation.conversation_id);
       this.upsertConversation(conversation);
-      await this.setActiveConversation(conversation.conversation_id);
-      await this.syncConversationWatchers();
+      const contact = this.contacts.find((item) => String(item?.user_id || '').trim() === peer);
+      if (contact) {
+        contact.conversation_id = conversation.conversation_id;
+      }
+      if (shouldActivate) {
+        await this.setActiveConversation(conversation.conversation_id, {
+          waitForLoad: options.waitForLoad
+        });
+        await this.syncConversationWatchers();
+      }
+      return conversation;
     },
 
     async createGroupConversation(groupName: string, memberUserIds: string[]) {
@@ -427,13 +471,31 @@ export const useUserWorldStore = defineStore('user-world', {
       await this.syncConversationWatchers();
     },
 
-    async setActiveConversation(conversationId: string) {
+    async setActiveConversation(
+      conversationId: string,
+      options: { forceReload?: boolean; waitForLoad?: boolean } = {}
+    ) {
       const cleaned = String(conversationId || '').trim();
       if (!cleaned) return;
       this.clearConversationDismissed(cleaned);
+      const switched = this.activeConversationId !== cleaned;
       this.activeConversationId = cleaned;
-      await this.loadMessages(cleaned);
-      await this.markConversationRead(cleaned);
+      const hasCachedMessages =
+        Array.isArray(this.messagesByConversation[cleaned]) &&
+        this.messagesByConversation[cleaned].length > 0;
+      const shouldReload = Boolean(options.forceReload) || switched || !hasCachedMessages;
+      const waitForLoad = options.waitForLoad !== false;
+      if (shouldReload) {
+        const loadTask = this.loadMessages(cleaned);
+        if (waitForLoad) {
+          await loadTask;
+        } else {
+          void loadTask.catch(() => undefined);
+        }
+      } else if (!waitForLoad) {
+        void this.loadMessages(cleaned).catch(() => undefined);
+      }
+      void this.markConversationRead(cleaned);
     },
 
     async loadMessages(conversationId: string, options: { beforeMessageId?: number } = {}) {

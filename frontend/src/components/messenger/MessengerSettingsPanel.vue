@@ -157,6 +157,17 @@
         </div>
         <div class="messenger-settings-row">
           <div>
+            <div class="messenger-settings-label">{{ t('messenger.settings.theme') }}</div>
+            <div class="messenger-settings-hint">{{ t('messenger.settings.themeHint') }}</div>
+          </div>
+          <select v-model="themePalette" class="messenger-settings-select">
+            <option value="hula-green">{{ t('messenger.settings.themeOptionHula') }}</option>
+            <option value="eva-orange">{{ t('messenger.settings.themeOptionEva') }}</option>
+            <option value="minimal">{{ t('messenger.settings.themeOptionMinimal') }}</option>
+          </select>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
             <div class="messenger-settings-label">{{ t('messenger.settings.fontSize') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.fontHint') }}</div>
           </div>
@@ -187,12 +198,15 @@ import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 
+type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
+
 const props = withDefaults(
   defineProps<{
     mode?: 'general' | 'profile' | 'desktop';
     username?: string;
     userId?: string;
     languageLabel?: string;
+    themePalette?: ThemePalette;
     uiFontSize?: number;
     desktopToolCallMode?: 'tool_call' | 'function_call';
     devtoolsAvailable?: boolean;
@@ -202,6 +216,7 @@ const props = withDefaults(
     username: '',
     userId: '',
     languageLabel: '',
+    themePalette: 'eva-orange',
     uiFontSize: 14,
     desktopToolCallMode: 'tool_call',
     devtoolsAvailable: false
@@ -216,6 +231,7 @@ const emit = defineEmits<{
   (event: 'toggle-devtools'): void;
   (event: 'logout'): void;
   (event: 'update:desktop-tool-call-mode', value: 'tool_call' | 'function_call'): void;
+  (event: 'update:theme-palette', value: ThemePalette): void;
   (event: 'update:ui-font-size', value: number): void;
 }>();
 
@@ -223,7 +239,30 @@ const { t } = useI18n();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const sendKey = ref('enter');
+const themePalette = ref<ThemePalette>('eva-orange');
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
+
+const normalizeThemePalette = (value: unknown): ThemePalette => {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'hula-green') return 'hula-green';
+  if (text === 'minimal') return 'minimal';
+  return 'eva-orange';
+};
+
+watch(
+  () => props.themePalette,
+  (value) => {
+    const normalized = normalizeThemePalette(value);
+    if (themePalette.value !== normalized) {
+      themePalette.value = normalized;
+    }
+  },
+  { immediate: true }
+);
+
+watch(themePalette, (value) => {
+  emit('update:theme-palette', normalizeThemePalette(value));
+});
 
 watch(
   () => props.uiFontSize,

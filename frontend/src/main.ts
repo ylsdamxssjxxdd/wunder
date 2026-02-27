@@ -7,6 +7,7 @@ import '@/styles/main.css';
 import App from './App.vue';
 import router from './router';
 import { usePerformanceStore } from '@/stores/performance';
+import { useThemeStore } from '@/stores/theme';
 import { initI18n } from '@/i18n';
 import { loadRuntimeConfig } from '@/config/runtime';
 import { initDesktopRuntime } from '@/config/desktop';
@@ -15,6 +16,7 @@ const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
 usePerformanceStore(pinia);
+useThemeStore(pinia);
 app.use(ElementPlus);
 app.use(router);
 

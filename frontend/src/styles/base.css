@@ -4,8 +4,77 @@
   --dark-border: #e3e3e3;
   --dark-text: #18181c;
   --dark-muted: #808080;
-  --accent: #13987f;
+  --ui-accent: #ff8a3d;
+  --ui-accent-rgb: 255, 138, 61;
+  --ui-accent-secondary: #f7a24f;
+  --ui-accent-secondary-rgb: 247, 162, 79;
+  --ui-accent-deep: #dd7f2f;
+  --ui-accent-soft: #fff1e6;
+  --ui-accent-soft-2: #fff0e4;
+  --ui-accent-soft-3: #fff4ec;
+  --ui-accent-soft-4: #ffe9da;
+  --ui-accent-soft-5: #ffe8d8;
+  --ui-accent-gradient-start: #ffc07a;
+  --ui-accent-gradient-mid: #ff9f53;
+  --ui-accent-hover: #e5772b;
+  --ui-accent-disabled: #f6c7a0;
+  --ui-accent-link-hover: #cf6d2a;
+  --accent: var(--ui-accent);
   --scrollbar-size: 7px;
+}
+
+:root[data-user-accent='eva-orange'] {
+  --ui-accent: #ff8a3d;
+  --ui-accent-rgb: 255, 138, 61;
+  --ui-accent-secondary: #f7a24f;
+  --ui-accent-secondary-rgb: 247, 162, 79;
+  --ui-accent-deep: #dd7f2f;
+  --ui-accent-soft: #fff1e6;
+  --ui-accent-soft-2: #fff0e4;
+  --ui-accent-soft-3: #fff4ec;
+  --ui-accent-soft-4: #ffe9da;
+  --ui-accent-soft-5: #ffe8d8;
+  --ui-accent-gradient-start: #ffc07a;
+  --ui-accent-gradient-mid: #ff9f53;
+  --ui-accent-hover: #e5772b;
+  --ui-accent-disabled: #f6c7a0;
+  --ui-accent-link-hover: #cf6d2a;
+}
+
+:root[data-user-accent='hula-green'] {
+  --ui-accent: #13987f;
+  --ui-accent-rgb: 19, 152, 127;
+  --ui-accent-secondary: #64a29c;
+  --ui-accent-secondary-rgb: 100, 162, 156;
+  --ui-accent-deep: #5b9690;
+  --ui-accent-soft: #e8f4f1;
+  --ui-accent-soft-2: #e9f5f1;
+  --ui-accent-soft-3: #ecf7f4;
+  --ui-accent-soft-4: #e0f1ed;
+  --ui-accent-soft-5: #def0eb;
+  --ui-accent-gradient-start: #71c7b8;
+  --ui-accent-gradient-mid: #2ab799;
+  --ui-accent-hover: #0f8a73;
+  --ui-accent-disabled: #a7d9cf;
+  --ui-accent-link-hover: #0b7a66;
+}
+
+:root[data-user-accent='minimal'] {
+  --ui-accent: #6b7280;
+  --ui-accent-rgb: 107, 114, 128;
+  --ui-accent-secondary: #8b93a1;
+  --ui-accent-secondary-rgb: 139, 147, 161;
+  --ui-accent-deep: #596273;
+  --ui-accent-soft: #f3f4f6;
+  --ui-accent-soft-2: #f5f6f7;
+  --ui-accent-soft-3: #f6f7f8;
+  --ui-accent-soft-4: #eceff3;
+  --ui-accent-soft-5: #e9edf1;
+  --ui-accent-gradient-start: #d2d7df;
+  --ui-accent-gradient-mid: #a8b0bd;
+  --ui-accent-hover: #4b5563;
+  --ui-accent-disabled: #cfd5de;
+  --ui-accent-link-hover: #374151;
 }
 
 * {

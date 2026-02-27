@@ -1,5 +1,5 @@
 <template>
-  <div class="input-container">
+  <div class="input-container" :class="{ 'input-container--world': worldStyle }">
     <div v-if="showUploadArea" class="upload-preview">
       <div class="upload-preview-list">
         <div v-for="attachment in attachments" :key="attachment.id" class="upload-preview-item">
@@ -28,15 +28,30 @@
 
     <div
       class="input-box"
-      :class="{ dragover: dragActive }"
+      :class="[{ dragover: dragActive }, { 'input-box--world': worldStyle }]"
       @dragenter="handleDragEnter"
       @dragover="handleDragOver"
       @dragleave="handleDragLeave"
       @drop="handleDrop"
     >
+      <div v-if="worldStyle" class="messenger-world-toolbar chat-composer-world-toolbar">
+        <button
+          class="messenger-world-tool-btn"
+          type="button"
+          :title="t('chat.attachments.upload')"
+          :aria-label="t('chat.attachments.upload')"
+          :disabled="attachmentBusy > 0"
+          @click="triggerUpload"
+        >
+          <svg class="messenger-world-tool-icon" aria-hidden="true">
+            <use href="#file2"></use>
+          </svg>
+        </button>
+      </div>
       <textarea
         v-model="inputText"
         ref="inputRef"
+        :class="{ 'chat-composer-input--world': worldStyle }"
         :placeholder="inputPlaceholder"
         rows="1"
         @input="handleInput"
@@ -45,7 +60,12 @@
         @keydown="handleInputKeydown"
         @keydown.enter.exact.prevent="handleSend"
       />
-      <div v-if="commandSuggestionsVisible" class="command-menu" role="listbox">
+      <div
+        v-if="commandSuggestionsVisible"
+        class="command-menu"
+        :class="{ 'command-menu--world': worldStyle }"
+        role="listbox"
+      >
         <button
           v-for="(item, index) in commandSuggestions"
           :key="item.command"
@@ -62,31 +82,67 @@
         </button>
         <div class="command-menu-hint">{{ t('chat.commandMenu.hint') }}</div>
       </div>
-      <button
-        class="input-icon-btn upload-btn"
-        type="button"
-        :title="t('chat.attachments.upload')"
-        :aria-label="t('chat.attachments.upload')"
-        :disabled="attachmentBusy > 0"
-        @click="triggerUpload"
-      >
-        <i class="fa-solid fa-paperclip input-icon" aria-hidden="true"></i>
-      </button>
-      <button
-        class="input-icon-btn send-btn"
-        type="button"
-        :disabled="!canSendOrStop"
-        :title="loading ? t('common.stop') : t('chat.input.send')"
-        :aria-label="loading ? t('common.stop') : t('chat.input.send')"
-        @click="handleSendOrStop"
-      >
-        <i
-          v-if="loading"
-          class="fa-solid fa-stop input-icon input-icon-fill"
-          aria-hidden="true"
-        ></i>
-        <i v-else class="fa-solid fa-paper-plane input-icon input-icon-fill" aria-hidden="true"></i>
-      </button>
+      <template v-if="worldStyle">
+        <div class="messenger-world-footer chat-composer-world-footer">
+          <div class="messenger-world-send-group">
+            <button
+              class="messenger-world-send-main"
+              type="button"
+              :disabled="!canSendOrStop"
+              :title="loading ? t('common.stop') : t('chat.input.send')"
+              :aria-label="loading ? t('common.stop') : t('chat.input.send')"
+              @click="handleSendOrStop"
+            >
+              <i
+                v-if="loading"
+                class="fa-solid fa-stop input-icon chat-composer-world-send-stop-icon"
+                aria-hidden="true"
+              ></i>
+              <svg v-else class="messenger-world-send-icon" aria-hidden="true">
+                <use href="#send"></use>
+              </svg>
+            </button>
+            <button
+              class="messenger-world-send-menu chat-composer-world-send-menu"
+              type="button"
+              :title="t('messenger.settings.sendKey')"
+              :aria-label="t('messenger.settings.sendKey')"
+              tabindex="-1"
+            >
+              <svg class="messenger-world-send-icon messenger-world-send-icon--menu" aria-hidden="true">
+                <use href="#down"></use>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </template>
+      <template v-else>
+        <button
+          class="input-icon-btn upload-btn"
+          type="button"
+          :title="t('chat.attachments.upload')"
+          :aria-label="t('chat.attachments.upload')"
+          :disabled="attachmentBusy > 0"
+          @click="triggerUpload"
+        >
+          <i class="fa-solid fa-paperclip input-icon" aria-hidden="true"></i>
+        </button>
+        <button
+          class="input-icon-btn send-btn"
+          type="button"
+          :disabled="!canSendOrStop"
+          :title="loading ? t('common.stop') : t('chat.input.send')"
+          :aria-label="loading ? t('common.stop') : t('chat.input.send')"
+          @click="handleSendOrStop"
+        >
+          <i
+            v-if="loading"
+            class="fa-solid fa-stop input-icon input-icon-fill"
+            aria-hidden="true"
+          ></i>
+          <i v-else class="fa-solid fa-paper-plane input-icon input-icon-fill" aria-hidden="true"></i>
+        </button>
+      </template>
     </div>
 
     <input
@@ -123,6 +179,10 @@ const props = defineProps({
   inquirySelection: {
     type: Array,
     default: () => []
+  },
+  worldStyle: {
+    type: Boolean,
+    default: false
   }
 });
 

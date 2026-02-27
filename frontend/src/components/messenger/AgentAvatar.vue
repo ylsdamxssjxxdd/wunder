@@ -79,7 +79,7 @@ const stateClass = computed(() => `state-${props.state}`);
 }
 
 .messenger-agent-avatar.state-running {
-  border-color: rgba(19, 152, 127, 0.44);
+  border-color: rgba(var(--ui-accent-rgb), 0.44);
   background: #e7f6f2;
   color: #13886f;
 }
@@ -89,7 +89,7 @@ const stateClass = computed(() => `state-${props.state}`);
   position: absolute;
   inset: -1px;
   border-radius: 50%;
-  border: 2px solid rgba(19, 152, 127, 0.24);
+  border: 2px solid rgba(var(--ui-accent-rgb), 0.24);
   animation: agent-avatar-pulse 1.2s ease-in-out infinite;
 }
 
