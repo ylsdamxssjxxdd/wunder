@@ -106,15 +106,6 @@
         </div>
         <div class="messenger-settings-row">
           <div>
-            <div class="messenger-settings-label">{{ t('desktop.settings.system') }}</div>
-            <div class="messenger-settings-hint">{{ t('desktop.settings.systemHint') }}</div>
-          </div>
-          <button class="messenger-settings-action" type="button" @click="$emit('open-system')">
-            {{ t('desktop.settings.openSystem') }}
-          </button>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
             <div class="messenger-settings-label">{{ t('desktop.settings.update') }}</div>
             <div class="messenger-settings-hint">{{ t('desktop.settings.updateHint') }}</div>
           </div>
@@ -142,6 +133,7 @@
           </button>
         </div>
       </section>
+      <DesktopSystemSettingsPanel />
     </template>
 
     <template v-else>
@@ -225,6 +217,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSettingsPanel.vue';
 
 type SendKeyMode = 'enter' | 'ctrl_enter';
 type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
@@ -260,7 +253,6 @@ const emit = defineEmits<{
   (event: 'toggle-language'): void;
   (event: 'check-update'): void;
   (event: 'open-tools'): void;
-  (event: 'open-system'): void;
   (event: 'toggle-devtools'): void;
   (event: 'logout'): void;
   (event: 'update:send-key', value: SendKeyMode): void;

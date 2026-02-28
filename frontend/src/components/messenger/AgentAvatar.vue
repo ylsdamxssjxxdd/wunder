@@ -47,21 +47,25 @@ const statusIconClass = computed(() => {
 <style scoped>
 .messenger-agent-avatar {
   --avatar-size: 36px;
+  --agent-avatar-bg: var(--ui-accent-soft);
+  --agent-avatar-border: rgba(var(--ui-accent-rgb), 0.26);
+  --agent-avatar-color: var(--ui-accent-deep);
   --agent-avatar-status-bg: rgba(var(--ui-accent-rgb), 0.2);
   --agent-avatar-status-color: var(--ui-accent-deep);
   --agent-avatar-status-ring: rgba(var(--ui-accent-rgb), 0.28);
   width: var(--avatar-size);
   height: var(--avatar-size);
   border-radius: 50%;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.26);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-deep);
+  border: 1px solid var(--agent-avatar-border);
+  background: var(--agent-avatar-bg);
+  color: var(--agent-avatar-color);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   position: relative;
   overflow: visible;
   flex-shrink: 0;
+  isolation: isolate;
 }
 
 .messenger-agent-avatar.size-sm {
@@ -90,8 +94,8 @@ const statusIconClass = computed(() => {
   max-height: 20px;
   border-radius: 999px;
   border: 2px solid #ffffff;
-  background: var(--agent-avatar-status-bg);
-  color: var(--agent-avatar-status-color);
+  background: var(--agent-avatar-status-bg) !important;
+  color: var(--agent-avatar-status-color) !important;
   position: absolute;
   right: -3px;
   bottom: -3px;
@@ -113,68 +117,26 @@ const statusIconClass = computed(() => {
 }
 
 .messenger-agent-avatar.state-running {
-  border-color: rgba(var(--ui-accent-rgb), 0.56);
-  background: var(--ui-accent-soft-4);
-  color: var(--ui-accent-deep);
   --agent-avatar-status-bg: var(--ui-accent);
   --agent-avatar-status-color: #ffffff;
   --agent-avatar-status-ring: rgba(var(--ui-accent-rgb), 0.45);
 }
 
-.messenger-agent-avatar.state-running::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 50%;
-  border: 2px solid rgba(var(--ui-accent-rgb), 0.24);
-  animation: agent-avatar-pulse 1.2s ease-in-out infinite;
-}
-
 .messenger-agent-avatar.state-done {
-  border-color: rgba(56, 154, 108, 0.45);
-  background: #eaf8ef;
-  color: #2f9b6a;
   --agent-avatar-status-bg: #3ca976;
   --agent-avatar-status-color: #ffffff;
   --agent-avatar-status-ring: rgba(56, 154, 108, 0.42);
 }
 
 .messenger-agent-avatar.state-pending {
-  border-color: rgba(128, 108, 184, 0.45);
-  background: #f4efff;
-  color: #745cb7;
   --agent-avatar-status-bg: #8b6bd0;
   --agent-avatar-status-color: #ffffff;
   --agent-avatar-status-ring: rgba(128, 108, 184, 0.42);
 }
 
-.messenger-agent-avatar.state-pending::after {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: 50%;
-  border: 2px dashed rgba(128, 108, 184, 0.25);
-  animation: agent-avatar-pulse 1.8s ease-in-out infinite;
-}
-
 .messenger-agent-avatar.state-error {
-  border-color: rgba(193, 64, 83, 0.45);
-  background: #fceef1;
-  color: #c14053;
   --agent-avatar-status-bg: #cd4a60;
   --agent-avatar-status-color: #ffffff;
   --agent-avatar-status-ring: rgba(193, 64, 83, 0.45);
-}
-
-@keyframes agent-avatar-pulse {
-  0%,
-  100% {
-    opacity: 0.35;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.72;
-    transform: scale(1.06);
-  }
 }
 </style>

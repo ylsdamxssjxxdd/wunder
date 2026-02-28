@@ -101,7 +101,7 @@ const openSystemSettings = () => {
   if (!desktopMode.value) {
     return;
   }
-  router.push('/desktop/system');
+  router.push('/desktop/settings?section=more&panel=desktop');
 };
 
 const toggleDevTools = async () => {

@@ -3337,6 +3337,156 @@
   gap: 6px;
 }
 
+.messenger-world-history-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.messenger-world-history-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.messenger-world-history-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e1e1e1;
+  border-radius: 10px;
+  background: #fafafa;
+  color: #8a8a8a;
+  padding: 0 10px;
+}
+
+.messenger-world-history-search:focus-within {
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+}
+
+.messenger-world-history-search input {
+  width: 100%;
+  line-height: 34px;
+  border: 0;
+  background: transparent;
+  color: #2f2f2f;
+  font-size: 13px;
+  outline: none;
+}
+
+.messenger-world-history-date {
+  width: 340px;
+  max-width: 100%;
+}
+
+.messenger-world-history-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.messenger-world-history-tab {
+  border: 1px solid #dddddd;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #535353;
+  cursor: pointer;
+  height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.messenger-world-history-tab:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  color: var(--ui-accent-deep);
+}
+
+.messenger-world-history-tab.active {
+  border-color: rgba(var(--ui-accent-rgb), 0.5);
+  background: var(--ui-accent-soft-3);
+  color: var(--ui-accent-deep);
+}
+
+.messenger-world-history-record {
+  width: 100%;
+  border: 1px solid #ececec;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #2f2f2f;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.messenger-world-history-record:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.35);
+  background: #f7fbfa;
+}
+
+.messenger-world-history-record-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8a8a8a;
+  font-size: 11px;
+}
+
+.messenger-world-history-record-sender {
+  max-width: 160px;
+  color: #5e5e5e;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-world-history-record-time {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.messenger-world-history-record-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.messenger-world-history-record-content i {
+  margin-top: 2px;
+  color: #6c6c6c;
+  flex-shrink: 0;
+}
+
+.messenger-world-history-record-text {
+  flex: 1;
+  min-width: 0;
+  color: #454545;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.messenger-message.is-history-target .messenger-message-bubble {
+  animation: messenger-history-target-pulse 1.2s ease-out;
+}
+
+@keyframes messenger-history-target-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(var(--ui-accent-rgb), 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 12px rgba(var(--ui-accent-rgb), 0);
+  }
+}
+
 .messenger-workflow-scope.chat-shell .spinner,
 .messenger-workflow-scope.chat-shell .status-indicator.loading {
   animation: spin 0.9s linear infinite !important;

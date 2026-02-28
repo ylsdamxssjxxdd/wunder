@@ -7,7 +7,6 @@ import LoginView from '@/views/LoginView.vue';
 import RegisterView from '@/views/RegisterView.vue';
 import MessengerView from '@/views/MessengerView.vue';
 import ExternalAppView from '@/views/ExternalAppView.vue';
-import DesktopSystemSettingsView from '@/views/DesktopSystemSettingsView.vue';
 import AdminLoginView from '@/views/AdminLoginView.vue';
 import AdminUsersView from '@/views/AdminUsersView.vue';
 import AdminAgentsView from '@/views/AdminAgentsView.vue';
@@ -139,8 +138,8 @@ const routes: RouteRecordRaw[] = [
       { path: 'user-world', name: 'desktop-user-world', component: MessengerView },
       { path: 'workspace', name: 'desktop-workspace', component: MessengerView },
       { path: 'settings', name: 'desktop-settings', component: MessengerView },
-      { path: 'containers', redirect: '/desktop/system?section=containers' },
-      { path: 'system', name: 'desktop-system', component: DesktopSystemSettingsView },
+      { path: 'containers', redirect: '/desktop/files?section=files&panel=containers' },
+      { path: 'system', redirect: '/desktop/settings?section=more&panel=desktop' },
       { path: 'profile', name: 'desktop-profile', component: MessengerView }
     ]
   },

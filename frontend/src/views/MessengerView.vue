@@ -938,6 +938,7 @@
                     @stats="handleFileWorkspaceStats"
                   />
                 </div>
+                <DesktopContainerManagerPanel v-if="desktopMode" />
               </div>
             </template>
 
@@ -956,7 +957,6 @@
                 @toggle-language="toggleLanguage"
                 @check-update="checkClientUpdate"
                 @open-tools="openDesktopTools"
-                @open-system="openDesktopSystemSettings"
                 @toggle-devtools="openDebugTools"
                 @logout="handleSettingsLogout"
                 @update:send-key="updateSendKey"
@@ -1143,6 +1143,7 @@
               v-for="message in userWorldStore.activeMessages"
               :key="`uw-${message.message_id}`"
               class="messenger-message"
+              :id="resolveWorldMessageDomId(message)"
               :class="{ mine: isOwnMessage(message) }"
             >
               <div class="messenger-message-avatar">
@@ -1359,25 +1360,67 @@
       v-model="worldHistoryDialogVisible"
       class="messenger-dialog messenger-world-history-dialog"
       :title="t('messenger.world.history')"
-      width="520px"
+      width="860px"
       append-to-body
     >
-      <div class="messenger-world-history-dialog-list">
-        <button
-          v-for="entry in worldHistoryEntries"
-          :key="entry.key"
-          class="messenger-world-history-item"
-          type="button"
-          :title="entry.content"
-          @click="applyWorldHistory(entry.content)"
-        >
-          <span class="messenger-world-history-item-text">{{ entry.content }}</span>
-          <span class="messenger-world-history-item-time">
-            {{ entry.time ? formatTime(entry.time) : '--' }}
-          </span>
-        </button>
-        <div v-if="!worldHistoryEntries.length" class="messenger-world-history-empty">
-          {{ t('messenger.world.historyEmpty') }}
+      <div class="messenger-world-history-dialog">
+        <div class="messenger-world-history-filter-row">
+          <label class="messenger-world-history-search">
+            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+            <input
+              v-model.trim="worldHistoryKeyword"
+              type="text"
+              :placeholder="t('messenger.world.historySearch')"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <el-date-picker
+            v-model="worldHistoryDateRange"
+            type="daterange"
+            unlink-panels
+            value-format="x"
+            :range-separator="t('messenger.world.historyDateRangeSeparator')"
+            :start-placeholder="t('messenger.world.historyDateStart')"
+            :end-placeholder="t('messenger.world.historyDateEnd')"
+            class="messenger-world-history-date"
+          />
+        </div>
+
+        <div class="messenger-world-history-tabs">
+          <button
+            v-for="tab in worldHistoryTabOptions"
+            :key="tab.key"
+            class="messenger-world-history-tab"
+            :class="{ active: worldHistoryActiveTab === tab.key }"
+            type="button"
+            @click="worldHistoryActiveTab = tab.key"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+
+        <div class="messenger-world-history-dialog-list">
+          <button
+            v-for="entry in filteredWorldHistoryRecords"
+            :key="entry.key"
+            class="messenger-world-history-record"
+            type="button"
+            :title="entry.rawContent"
+            @click="locateWorldHistoryMessage(entry)"
+          >
+            <div class="messenger-world-history-record-meta">
+              <span class="messenger-world-history-record-sender">{{ entry.sender }}</span>
+              <span class="messenger-world-history-record-time">{{ formatTime(entry.createdAt) }}</span>
+            </div>
+            <div class="messenger-world-history-record-content">
+              <i class="fa-solid" :class="entry.icon" aria-hidden="true"></i>
+              <span class="messenger-world-history-record-text">{{ entry.preview }}</span>
+            </div>
+          </button>
+          <div v-if="!filteredWorldHistoryRecords.length" class="messenger-world-history-empty">
+            {{ t('messenger.world.historyEmpty') }}
+          </div>
         </div>
       </div>
     </el-dialog>
@@ -1460,6 +1503,7 @@ import { uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
+import DesktopContainerManagerPanel from '@/components/messenger/DesktopContainerManagerPanel.vue';
 import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
@@ -1524,7 +1568,6 @@ const AGENT_CONTAINER_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
 const USER_WORLD_UPLOAD_BASE = 'user-world';
 const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;
 const WORLD_QUICK_EMOJI_STORAGE_KEY = 'wunder_world_quick_emoji';
-const WORLD_MESSAGE_HISTORY_STORAGE_KEY = 'wunder_world_message_history';
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
 const DISMISSED_AGENT_STORAGE_PREFIX = 'messenger_dismissed_agent_conversations';
 const AGENT_TOOL_OVERRIDE_NONE = '__no_tools__';
@@ -1562,6 +1605,35 @@ const WORLD_EMOJI_CATALOG = [
   '❓',
   '❗'
 ];
+const WORLD_HISTORY_MEDIA_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'bmp',
+  'svg',
+  'ico',
+  'mp4',
+  'mov',
+  'avi',
+  'mkv',
+  'webm',
+  'm4v'
+]);
+const WORLD_HISTORY_DOCUMENT_EXTENSIONS = new Set([
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'txt',
+  'md',
+  'csv',
+  'rtf'
+]);
 const sectionRouteMap: Record<MessengerSection, string> = {
   messages: 'chat',
   users: 'user-world',
@@ -1631,6 +1703,19 @@ type UnitTreeRow = {
   expanded: boolean;
 };
 
+type WorldHistoryCategory = 'all' | 'media' | 'document' | 'other_file';
+
+type WorldHistoryRecord = {
+  key: string;
+  messageId: number;
+  sender: string;
+  createdAt: number;
+  preview: string;
+  rawContent: string;
+  category: Exclude<WorldHistoryCategory, 'all'> | 'text';
+  icon: string;
+};
+
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
 type MessengerSendKeyMode = 'enter' | 'ctrl_enter';
 type MessengerPerfTrace = {
@@ -1671,6 +1756,9 @@ const worldUploading = ref(false);
 const worldComposerHeight = ref(188);
 const worldQuickPanelMode = ref<'' | 'emoji'>('');
 const worldHistoryDialogVisible = ref(false);
+const worldHistoryKeyword = ref('');
+const worldHistoryActiveTab = ref<WorldHistoryCategory>('all');
+const worldHistoryDateRange = ref<[string, string] | []>([]);
 const agentPromptPreviewVisible = ref(false);
 const agentPromptPreviewLoading = ref(false);
 const agentPromptPreviewContent = ref('');
@@ -1690,7 +1778,6 @@ const agentAbilityTooltipOptions = {
   ]
 };
 const worldRecentEmojis = ref<string[]>([]);
-const worldHistoryMap = ref<Record<string, string[]>>({});
 const messageListRef = ref<HTMLElement | null>(null);
 const chatFooterRef = ref<HTMLElement | null>(null);
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
@@ -3182,46 +3269,10 @@ const saveStoredStringArray = (storageKey: string, items: string[]) => {
   }
 };
 
-const loadWorldHistoryMap = (): Record<string, string[]> => {
-  if (typeof window === 'undefined') return {};
-  try {
-    const raw = window.localStorage.getItem(WORLD_MESSAGE_HISTORY_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    return Object.entries(parsed as Record<string, unknown>).reduce<Record<string, string[]>>((acc, [key, value]) => {
-      const conversationId = String(key || '').trim();
-      if (!conversationId || !Array.isArray(value)) return acc;
-      acc[conversationId] = value
-        .map((entry) => String(entry || '').trim())
-        .filter(Boolean)
-        .slice(0, 30);
-      return acc;
-    }, {});
-  } catch {
-    return {};
-  }
-};
-
-const saveWorldHistoryMap = (value: Record<string, string[]>) => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(WORLD_MESSAGE_HISTORY_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // ignore localStorage errors
-  }
-};
-
 const activeWorldConversationId = computed(() => {
   if (!isWorldConversationActive.value) return '';
   return String(activeConversation.value?.id || '').trim();
 });
-
-type WorldHistoryEntry = {
-  key: string;
-  content: string;
-  time: number;
-};
 
 const normalizeWorldMessageTimestamp = (value: unknown): number => {
   const numeric = Number(value);
@@ -3233,32 +3284,151 @@ const normalizeWorldMessageTimestamp = (value: unknown): number => {
   return 0;
 };
 
-const worldHistoryEntries = computed<WorldHistoryEntry[]>(() => {
-  const messages = Array.isArray(userWorldStore.activeMessages) ? userWorldStore.activeMessages : [];
-  const fromMessages = messages
-    .map((item, index) => {
-      const content = String(item?.content || '').replace(/\s+/g, ' ').trim();
-      if (!content) return null;
-      const time = normalizeWorldMessageTimestamp(item?.created_at);
-      return {
-        key: `message:${item?.message_id || index}:${time}`,
-        content: content.slice(0, 260),
-        time
-      } as WorldHistoryEntry;
-    })
-    .filter((item): item is WorldHistoryEntry => Boolean(item))
-    .reverse()
-    .slice(0, 30);
-  if (fromMessages.length) {
-    return fromMessages;
+const normalizeWorldHistoryText = (value: unknown): string =>
+  String(value || '')
+    .replace(/!\[[^\]]*\]\(([^)]+)\)/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 $2')
+    .replace(/`{1,3}([^`]+)`{1,3}/g, '$1')
+    .replace(/[>#*_~]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const extractPathExtension = (value: unknown): string => {
+  const cleaned = String(value || '')
+    .trim()
+    .replace(/^@/, '')
+    .replace(/^['"]|['"]$/g, '')
+    .split(/[?#]/)[0];
+  if (!cleaned) return '';
+  const lastSegment = cleaned.split('/').filter(Boolean).pop() || '';
+  const index = lastSegment.lastIndexOf('.');
+  if (index <= 0 || index >= lastSegment.length - 1) return '';
+  return lastSegment.slice(index + 1).toLowerCase();
+};
+
+const extractWorldHistoryTokenExtensions = (content: string): string[] => {
+  const output = new Set<string>();
+  const append = (source: string) => {
+    const ext = extractPathExtension(source);
+    if (ext) output.add(ext);
+  };
+  content.replace(/!\[[^\]]*]\(([^)]+)\)/g, (_match, path) => {
+    append(path);
+    return '';
+  });
+  content.replace(/\[[^\]]+]\(([^)]+)\)/g, (_match, path) => {
+    append(path);
+    return '';
+  });
+  content.replace(/https?:\/\/[^\s)]+/gi, (url) => {
+    append(url);
+    return '';
+  });
+  content.replace(/@(?:"([^"]+)"|'([^']+)'|([^\s]+))/g, (_match, quoted, singleQuoted, plain) => {
+    append(quoted || singleQuoted || plain || '');
+    return '';
+  });
+  return Array.from(output);
+};
+
+const classifyWorldHistoryMessage = (message: Record<string, unknown>): WorldHistoryRecord['category'] => {
+  const contentType = String(message?.content_type || '')
+    .trim()
+    .toLowerCase();
+  if (contentType.includes('image') || contentType.includes('video')) {
+    return 'media';
   }
-  const conversationId = activeWorldConversationId.value;
-  const fallback = conversationId ? worldHistoryMap.value[conversationId] || [] : [];
-  return fallback.map((content, index) => ({
-    key: `history:${index}:${content.slice(0, 32)}`,
-    content: String(content || '').slice(0, 260),
-    time: 0
-  }));
+  if (contentType.includes('document')) {
+    return 'document';
+  }
+  if (contentType.includes('file')) {
+    return 'other_file';
+  }
+  const content = String(message?.content || '');
+  const extensions = extractWorldHistoryTokenExtensions(content);
+  if (extensions.some((ext) => WORLD_HISTORY_MEDIA_EXTENSIONS.has(ext))) {
+    return 'media';
+  }
+  if (extensions.some((ext) => WORLD_HISTORY_DOCUMENT_EXTENSIONS.has(ext))) {
+    return 'document';
+  }
+  if (extensions.length > 0 || /@(?:"[^"]+"|'[^']+'|[^\s]+)/.test(content)) {
+    return 'other_file';
+  }
+  if (/<img\b|!\[[^\]]*]\([^)]+\)/i.test(content)) {
+    return 'media';
+  }
+  return 'text';
+};
+
+const resolveWorldHistoryIcon = (category: WorldHistoryRecord['category']): string => {
+  if (category === 'media') return 'fa-image';
+  if (category === 'document') return 'fa-file-lines';
+  if (category === 'other_file') return 'fa-file';
+  return 'fa-comment-dots';
+};
+
+const worldHistoryRecords = computed<WorldHistoryRecord[]>(() => {
+  const messages = Array.isArray(userWorldStore.activeMessages) ? userWorldStore.activeMessages : [];
+  return messages
+    .slice()
+    .reverse()
+    .map((item, index) => {
+      const source = item as Record<string, unknown>;
+      const rawContent = String(source.content || '').trim();
+      if (!rawContent) return null;
+      const category = classifyWorldHistoryMessage(source);
+      const preview = normalizeWorldHistoryText(rawContent).slice(0, 260) || t('messenger.preview.empty');
+      const messageId = Number.parseInt(String(source.message_id || ''), 10);
+      const createdAt = normalizeWorldMessageTimestamp(source.created_at);
+      return {
+        key: `history:${source.message_id || index}:${createdAt}`,
+        messageId: Number.isFinite(messageId) ? messageId : 0,
+        sender: resolveWorldMessageSender(source),
+        createdAt,
+        preview,
+        rawContent,
+        category,
+        icon: resolveWorldHistoryIcon(category)
+      } as WorldHistoryRecord;
+    })
+    .filter((item): item is WorldHistoryRecord => Boolean(item));
+});
+
+const worldHistoryTabOptions = computed(() => [
+  { key: 'all' as WorldHistoryCategory, label: t('messenger.world.historyTabAll') },
+  { key: 'media' as WorldHistoryCategory, label: t('messenger.world.historyTabMedia') },
+  { key: 'document' as WorldHistoryCategory, label: t('messenger.world.historyTabDocument') },
+  { key: 'other_file' as WorldHistoryCategory, label: t('messenger.world.historyTabOtherFile') }
+]);
+
+const filteredWorldHistoryRecords = computed(() => {
+  const keyword = String(worldHistoryKeyword.value || '').trim().toLowerCase();
+  const [rangeStartRaw, rangeEndRaw] = Array.isArray(worldHistoryDateRange.value)
+    ? worldHistoryDateRange.value
+    : [];
+  const rangeStart = Number(rangeStartRaw);
+  const rangeEnd = Number(rangeEndRaw);
+  const hasDateRange = Number.isFinite(rangeStart) && Number.isFinite(rangeEnd);
+  return worldHistoryRecords.value.filter((item) => {
+    if (worldHistoryActiveTab.value !== 'all' && item.category !== worldHistoryActiveTab.value) {
+      return false;
+    }
+    if (keyword) {
+      const haystack = `${item.preview}\n${item.rawContent}\n${item.sender}`.toLowerCase();
+      if (!haystack.includes(keyword)) {
+        return false;
+      }
+    }
+    if (hasDateRange && item.createdAt > 0) {
+      const safeStart = Math.min(rangeStart, rangeEnd);
+      const safeEnd = Math.max(rangeStart, rangeEnd) + 24 * 60 * 60 * 1000 - 1;
+      if (item.createdAt < safeStart || item.createdAt > safeEnd) {
+        return false;
+      }
+    }
+    return true;
+  });
 });
 
 const worldEmojiCatalog = computed(() =>
@@ -3343,6 +3513,9 @@ const toggleWorldQuickPanel = (mode: 'emoji') => {
 const openWorldHistoryDialog = () => {
   clearWorldQuickPanelClose();
   worldQuickPanelMode.value = '';
+  worldHistoryKeyword.value = '';
+  worldHistoryActiveTab.value = 'all';
+  worldHistoryDateRange.value = [];
   worldHistoryDialogVisible.value = true;
 };
 
@@ -3376,26 +3549,18 @@ const insertWorldEmoji = (emoji: string) => {
   focusWorldTextareaToEnd();
 };
 
-const applyWorldHistory = (content: string) => {
-  const cleaned = String(content || '').trim();
-  if (!cleaned) return;
-  worldDraft.value = cleaned;
-  worldQuickPanelMode.value = '';
+const locateWorldHistoryMessage = (entry: WorldHistoryRecord) => {
+  const targetId = resolveWorldMessageDomId({ message_id: entry.messageId });
   worldHistoryDialogVisible.value = false;
-  focusWorldTextareaToEnd();
-};
-
-const pushWorldMessageHistory = (content: string) => {
-  const cleaned = String(content || '').trim();
-  const conversationId = activeWorldConversationId.value;
-  if (!cleaned || !conversationId) return;
-  const current = worldHistoryMap.value[conversationId] || [];
-  const nextHistory = [cleaned, ...current.filter((item) => item !== cleaned)].slice(0, 30);
-  worldHistoryMap.value = {
-    ...worldHistoryMap.value,
-    [conversationId]: nextHistory
-  };
-  saveWorldHistoryMap(worldHistoryMap.value);
+  nextTick(() => {
+    const target = typeof document !== 'undefined' ? document.getElementById(targetId) : null;
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.classList.add('is-history-target');
+    window.setTimeout(() => {
+      target.classList.remove('is-history-target');
+    }, 1400);
+  });
 };
 
 const closeWorldQuickPanelWhenOutside = (event: Event) => {
@@ -3833,6 +3998,15 @@ const resolveWorldMessageKey = (message: Record<string, unknown>): string =>
       `${message?.sender_user_id || 'peer'}-${message?.created_at || ''}`
   );
 
+const resolveWorldMessageDomId = (message: Record<string, unknown>): string => {
+  const messageId = Number.parseInt(String(message?.message_id || ''), 10);
+  if (Number.isFinite(messageId) && messageId > 0) {
+    return `uw-message-${messageId}`;
+  }
+  const fallbackKey = resolveWorldMessageKey(message).replace(/[^a-zA-Z0-9_-]/g, '_');
+  return `uw-message-${fallbackKey}`;
+};
+
 const resolveAgentMessageKey = (message: Record<string, unknown>, index: number): string =>
   String(message?.id || message?.message_id || `${message?.role || 'm'}-${index}`);
 
@@ -3936,6 +4110,7 @@ const switchSection = (section: MessengerSection) => {
   }
   const targetPath = `${basePrefix.value}/${sectionRouteMap[section]}`;
   const nextQuery = { ...route.query, section } as Record<string, any>;
+  delete nextQuery.panel;
   if (section !== 'messages') {
     delete nextQuery.session_id;
     delete nextQuery.agent_id;
@@ -3965,6 +4140,7 @@ const openProfilePage = () => {
   delete nextQuery.agent_id;
   delete nextQuery.entry;
   delete nextQuery.conversation_id;
+  delete nextQuery.panel;
   router.push({ path: `${basePrefix.value}/profile`, query: nextQuery }).catch(() => undefined);
 };
 
@@ -5016,7 +5192,6 @@ const sendWorldMessage = async () => {
   worldDraft.value = '';
   try {
     await userWorldStore.sendToActiveConversation(text);
-    pushWorldMessageHistory(text);
     await scrollMessagesToBottom();
   } catch (error) {
     worldDraft.value = text;
@@ -5173,11 +5348,6 @@ const updateUiFontSize = (value: number) => {
 const openDesktopTools = () => {
   if (!desktopMode.value) return;
   router.push('/desktop/tools').catch(() => undefined);
-};
-
-const openDesktopSystemSettings = () => {
-  if (!desktopMode.value) return;
-  router.push('/desktop/system').catch(() => undefined);
 };
 
 const openDebugTools = async () => {
@@ -5422,9 +5592,16 @@ watch(
 );
 
 watch(
-  () => [route.path, route.query.section],
+  () => [route.path, route.query.section, route.query.panel],
   () => {
-    settingsPanelMode.value = route.path.includes('/profile') ? 'profile' : 'general';
+    const panelHint = String(route.query.panel || '').trim().toLowerCase();
+    if (route.path.includes('/profile')) {
+      settingsPanelMode.value = 'profile';
+    } else if (desktopMode.value && panelHint === 'desktop') {
+      settingsPanelMode.value = 'desktop';
+    } else {
+      settingsPanelMode.value = 'general';
+    }
     const sectionHint = String(route.query.section || '').trim().toLowerCase();
     if (route.path.includes('/user-world') && sectionHint === 'groups') {
       sessionHub.setSection('groups');
@@ -5627,6 +5804,7 @@ watch(
   () => {
     clearWorldQuickPanelClose();
     worldQuickPanelMode.value = '';
+    worldHistoryDialogVisible.value = false;
   }
 );
 
@@ -5645,7 +5823,6 @@ onMounted(async () => {
       window.localStorage.getItem(WORLD_COMPOSER_HEIGHT_STORAGE_KEY)
     );
     worldRecentEmojis.value = loadStoredStringArray(WORLD_QUICK_EMOJI_STORAGE_KEY, 12);
-    worldHistoryMap.value = loadWorldHistoryMap();
     window.addEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
   }
   applyUiFontSize(uiFontSize.value);

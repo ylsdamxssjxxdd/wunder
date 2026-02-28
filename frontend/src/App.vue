@@ -9,7 +9,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, watchEffect } from 'vue';
 import { useRoute } from 'vue-router';
 
 import DesktopWindowChrome from '@/components/common/DesktopWindowChrome.vue';
@@ -21,6 +21,16 @@ const route = useRoute();
 const desktopChromeVisible = computed(
   () => isDesktopModeEnabled() && !route.path.startsWith('/admin')
 );
+
+watchEffect(() => {
+  if (typeof document === 'undefined') return;
+  document.body.classList.toggle('desktop-shell-active', desktopChromeVisible.value);
+});
+
+onBeforeUnmount(() => {
+  if (typeof document === 'undefined') return;
+  document.body.classList.remove('desktop-shell-active');
+});
 </script>
 
 <style>
@@ -43,5 +53,10 @@ const desktopChromeVisible = computed(
   height: 100%;
   min-height: 0;
   overflow: hidden;
+}
+
+body.desktop-shell-active .el-message,
+body.desktop-shell-active .el-notification {
+  top: calc(var(--desktop-window-chrome-height, 36px) + 12px) !important;
 }
 </style>
