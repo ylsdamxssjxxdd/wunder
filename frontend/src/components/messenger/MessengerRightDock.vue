@@ -1,5 +1,9 @@
 <template>
-  <aside class="messenger-right-dock" :class="{ 'messenger-right-dock--collapsed': collapsed }">
+  <aside
+    class="messenger-right-dock"
+    :class="{ 'messenger-right-dock--collapsed': collapsed }"
+    @pointerdown.right.stop="swallowRightDockRightPointer"
+  >
     <button
       class="messenger-right-dock-toggle"
       type="button"
@@ -147,6 +151,10 @@ const sandboxContextMenuStyle = computed(() => ({
 
 const closeSandboxContextMenu = () => {
   sandboxContextMenu.value.visible = false;
+};
+
+const swallowRightDockRightPointer = () => {
+  // Stop bubbling right-click pointer events so overlay auto-hide logic does not collapse the dock.
 };
 
 const openSandboxContainerMenu = async (event: MouseEvent) => {

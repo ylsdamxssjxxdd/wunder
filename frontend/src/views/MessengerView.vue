@@ -2042,7 +2042,7 @@ const currentLanguageLabel = computed(() =>
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 840);
-const isRightDockOverlay = computed(() => viewportWidth.value <= 1380);
+const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
 const showMiddlePane = computed(() => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value);
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
@@ -3688,8 +3688,16 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
   }
 
   if (isRightDockOverlay.value && showRightDock.value && !rightDockCollapsed.value) {
-    const rightDockElement = rightDockRef.value?.$el;
-    if (rightDockElement && !rightDockElement.contains(target)) {
+    const pointerEvent = event as PointerEvent | null;
+    const isSecondaryClick = Boolean(pointerEvent && typeof pointerEvent.button === 'number' && pointerEvent.button === 2);
+    const targetElement = target instanceof Element ? target : null;
+    const rightDockElement = rightDockRef.value?.$el || null;
+    const hitInsideRightDock = Boolean(
+      (rightDockElement && rightDockElement.contains(target)) ||
+      targetElement?.closest('.messenger-right-dock') ||
+      targetElement?.closest('.messenger-files-context-menu')
+    );
+    if (!isSecondaryClick && !hitInsideRightDock) {
       rightDockCollapsed.value = true;
     }
   }
