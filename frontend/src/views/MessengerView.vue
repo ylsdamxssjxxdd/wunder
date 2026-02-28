@@ -84,6 +84,25 @@
         >
           <i class="fa-solid fa-plus" aria-hidden="true"></i>
         </button>
+        <button
+          v-if="sessionHub.activeSection === 'agents'"
+          class="messenger-plus-btn"
+          :class="{ active: agentOverviewMode === 'grid' }"
+          type="button"
+          :title="
+            agentOverviewMode === 'grid'
+              ? t('messenger.agent.listView')
+              : t('messenger.agent.gridView')
+          "
+          :aria-label="
+            agentOverviewMode === 'grid'
+              ? t('messenger.agent.listView')
+              : t('messenger.agent.gridView')
+          "
+          @click="toggleAgentOverviewMode"
+        >
+          <i class="fa-solid fa-table-cells-large" aria-hidden="true"></i>
+        </button>
       </div>
 
       <div class="messenger-middle-list">
@@ -556,7 +575,7 @@
         </div>
         <div class="messenger-chat-header-actions">
           <button
-            v-if="showChatSettingsView && sessionHub.activeSection === 'agents'"
+            v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview"
             class="messenger-header-action-text"
             type="button"
             @click="enterSelectedAgentConversation"
@@ -616,51 +635,109 @@
         <template v-if="showChatSettingsView">
           <div class="messenger-chat-settings">
             <template v-if="showAgentSettingsPanel">
-              <div class="messenger-inline-actions">
-                <button
-                  class="messenger-inline-btn"
-                  :class="{ active: agentSettingMode === 'agent' }"
-                  type="button"
-                  @click="agentSettingMode = 'agent'"
-                >
-                  {{ t('chat.features.agentSettings') }}
-                </button>
-                <button
-                  class="messenger-inline-btn"
-                  :class="{ active: agentSettingMode === 'cron' }"
-                  type="button"
-                  @click="agentSettingMode = 'cron'"
-                >
-                  {{ t('chat.features.cron') }}
-                </button>
-                <button
-                  class="messenger-inline-btn"
-                  :class="{ active: agentSettingMode === 'channel' }"
-                  type="button"
-                  @click="agentSettingMode = 'channel'"
-                >
-                  {{ t('chat.features.channels') }}
-                </button>
-              </div>
+              <template v-if="showAgentGridOverview">
+                <div class="messenger-chat-settings-block messenger-agent-grid-panel">
+                  <div class="messenger-agent-grid-header">
+                    <div class="messenger-agent-grid-title">{{ t('messenger.agent.overviewTitle') }}</div>
+                    <div class="messenger-agent-grid-subtitle">{{ t('messenger.agent.overviewDesc') }}</div>
+                  </div>
+                  <div v-if="!agentOverviewCards.length" class="messenger-list-empty">
+                    {{ t('messenger.agent.overviewEmpty') }}
+                  </div>
+                  <div v-else class="messenger-agent-grid">
+                    <article
+                      v-for="card in agentOverviewCards"
+                      :key="`agent-overview-${card.id}`"
+                      class="messenger-agent-grid-card"
+                      :class="{ active: selectedAgentId === card.id }"
+                      role="button"
+                      tabindex="0"
+                      @click="selectAgentForSettings(card.id)"
+                      @keydown.enter.prevent="selectAgentForSettings(card.id)"
+                      @keydown.space.prevent="selectAgentForSettings(card.id)"
+                    >
+                      <div class="messenger-agent-grid-card-head">
+                        <AgentAvatar size="md" :state="card.runtimeState" />
+                        <div class="messenger-agent-grid-main">
+                          <div class="messenger-agent-grid-name">{{ card.name }}</div>
+                          <div class="messenger-agent-grid-meta">
+                            <span class="messenger-kind-tag">{{ formatAgentRuntimeState(card.runtimeState) }}</span>
+                            <span v-if="card.isDefault" class="messenger-kind-tag">{{ t('messenger.defaultAgent') }}</span>
+                            <span v-else-if="card.shared" class="messenger-kind-tag">{{ t('messenger.agent.sharedTag') }}</span>
+                            <span v-if="card.hasCron" class="messenger-kind-tag">{{ t('messenger.agent.cron') }}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <p class="messenger-agent-grid-desc">
+                        {{ card.description || t('messenger.preview.empty') }}
+                      </p>
+                      <div class="messenger-agent-grid-actions">
+                        <button
+                          class="messenger-inline-btn"
+                          type="button"
+                          @click.stop="selectAgentForSettings(card.id)"
+                        >
+                          {{ t('messenger.agent.openSettings') }}
+                        </button>
+                        <button
+                          class="messenger-inline-btn"
+                          type="button"
+                          @click.stop="openAgentById(card.id)"
+                        >
+                          {{ t('messenger.agent.openChat') }}
+                        </button>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              </template>
+              <template v-else>
+                <div class="messenger-inline-actions">
+                  <button
+                    class="messenger-inline-btn"
+                    :class="{ active: agentSettingMode === 'agent' }"
+                    type="button"
+                    @click="agentSettingMode = 'agent'"
+                  >
+                    {{ t('chat.features.agentSettings') }}
+                  </button>
+                  <button
+                    class="messenger-inline-btn"
+                    :class="{ active: agentSettingMode === 'cron' }"
+                    type="button"
+                    @click="agentSettingMode = 'cron'"
+                  >
+                    {{ t('chat.features.cron') }}
+                  </button>
+                  <button
+                    class="messenger-inline-btn"
+                    :class="{ active: agentSettingMode === 'channel' }"
+                    type="button"
+                    @click="agentSettingMode = 'channel'"
+                  >
+                    {{ t('chat.features.channels') }}
+                  </button>
+                </div>
 
-              <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
-                <AgentSettingsPanel
-                  :agent-id="settingsAgentIdForApi"
-                  @saved="handleAgentSettingsSaved"
-                  @deleted="handleAgentDeleted"
-                />
-              </div>
+                <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
+                  <AgentSettingsPanel
+                    :agent-id="settingsAgentIdForApi"
+                    @saved="handleAgentSettingsSaved"
+                    @deleted="handleAgentDeleted"
+                  />
+                </div>
 
-              <div v-else-if="agentSettingMode === 'cron'" class="messenger-chat-settings-block">
-                <AgentCronPanel :agent-id="settingsAgentIdForApi" />
-              </div>
+                <div v-else-if="agentSettingMode === 'cron'" class="messenger-chat-settings-block">
+                  <AgentCronPanel :agent-id="settingsAgentIdForApi" />
+                </div>
 
-              <div
-                v-else-if="agentSettingMode === 'channel'"
-                class="messenger-chat-settings-block messenger-channel-panel-wrap"
-              >
-                <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
-              </div>
+                <div
+                  v-else-if="agentSettingMode === 'channel'"
+                  class="messenger-chat-settings-block messenger-channel-panel-wrap"
+                >
+                  <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
+                </div>
+              </template>
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'users'">
@@ -1392,7 +1469,7 @@ import {
   setDesktopToolCallMode,
   type DesktopToolCallMode
 } from '@/config/desktop';
-import { getRuntimeConfig, resolveApiBase } from '@/config/runtime';
+import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -1496,6 +1573,16 @@ type AgentFileContainer = {
   primaryAgentId: string;
 };
 
+type AgentOverviewCard = {
+  id: string;
+  name: string;
+  description: string;
+  shared: boolean;
+  isDefault: boolean;
+  runtimeState: AgentRuntimeState;
+  hasCron: boolean;
+};
+
 type UnitTreeNode = {
   id: string;
   label: string;
@@ -1534,6 +1621,7 @@ const sessionHub = useSessionHubStore();
 
 const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
+const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
 const selectedContactUnitId = ref('');
@@ -1983,33 +2071,35 @@ const selectedFileContainerAgentLabel = computed(() => {
   return `${names.slice(0, 3).join(' / ')} +${names.length - 3}`;
 });
 
-const fileContainerCloudLocation = computed(() => {
-  const apiBase = String(resolveApiBase() || '/wunder')
+const resolveWorkspaceRootPrefix = (): { root: string; separator: '/' | '\\' } => {
+  const runtimeRoot = String(getRuntimeConfig().workspace_root || '')
     .trim()
-    .replace(/\/$/, '');
-  const base = apiBase || '/wunder';
-  const params = new URLSearchParams({
-    container_id: String(selectedFileContainerId.value || USER_CONTAINER_ID)
-  });
-  if (selectedFileAgentIdForApi.value) {
-    params.set('agent_id', selectedFileAgentIdForApi.value);
+    .replace(/[\\/]+$/, '');
+  const root = runtimeRoot || '/workspaces';
+  return {
+    root,
+    separator: root.includes('\\') ? '\\' : '/'
+  };
+};
+
+const resolveWorkspaceScopeSuffix = (): string => {
+  const userId = String(currentUserId.value || '').trim() || 'anonymous';
+  if (fileScope.value === 'user' || selectedFileContainerId.value === USER_CONTAINER_ID) {
+    return userId;
   }
-  return `${base}/workspace/tree?${params.toString()}`;
+  return `${userId}__c__${selectedFileContainerId.value}`;
+};
+
+const fileContainerCloudLocation = computed(() => {
+  const { root } = resolveWorkspaceRootPrefix();
+  const scope = resolveWorkspaceScopeSuffix();
+  return `${root.replace(/\\/g, '/')}/${scope}/`;
 });
 
 const fileContainerLocalLocation = computed(() => {
-  const runtimeRoot = String(getRuntimeConfig().workspace_root || '').trim();
-  if (!runtimeRoot) {
-    return t('messenger.files.localLocationUnknown');
-  }
-  const normalizedRoot = runtimeRoot.replace(/[\\/]+$/, '');
-  const userId = String(currentUserId.value || '').trim() || 'anonymous';
-  const localScope =
-    fileScope.value === 'user' || selectedFileContainerId.value === USER_CONTAINER_ID
-      ? userId
-      : `${userId}__c__${selectedFileContainerId.value}`;
-  const separator = normalizedRoot.includes('\\') ? '\\' : '/';
-  return `${normalizedRoot}${separator}${localScope}`;
+  const { root, separator } = resolveWorkspaceRootPrefix();
+  const scope = resolveWorkspaceScopeSuffix();
+  return `${root}${separator}${scope}${separator}`;
 });
 
 const workspacePanelKey = computed(() =>
@@ -2065,6 +2155,41 @@ const filteredSharedAgents = computed(() => {
     const desc = String(agent?.description || '').toLowerCase();
     return !text || name.includes(text) || desc.includes(text);
   });
+});
+
+const showAgentGridOverview = computed(
+  () => sessionHub.activeSection === 'agents' && agentOverviewMode.value === 'grid'
+);
+
+const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
+  const cards: AgentOverviewCard[] = [];
+  const seen = new Set<string>();
+  const pushCard = (agent: Record<string, unknown>, options: { shared?: boolean; isDefault?: boolean } = {}) => {
+    const id = normalizeAgentId(agent?.id || DEFAULT_AGENT_KEY);
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    cards.push({
+      id,
+      name: String(agent?.name || id),
+      description: String(agent?.description || ''),
+      shared: options.shared === true,
+      isDefault: options.isDefault === true,
+      runtimeState: resolveAgentRuntimeState(id),
+      hasCron: hasCronTask(id)
+    });
+  };
+
+  pushCard(
+    {
+      id: DEFAULT_AGENT_KEY,
+      name: t('messenger.defaultAgent'),
+      description: t('messenger.defaultAgentDesc')
+    },
+    { isDefault: true }
+  );
+  filteredOwnedAgents.value.forEach((item) => pushCard(item as Record<string, unknown>));
+  filteredSharedAgents.value.forEach((item) => pushCard(item as Record<string, unknown>, { shared: true }));
+  return cards;
 });
 
 const UNIT_UNGROUPED_ID = '__ungrouped__';
@@ -2632,6 +2757,9 @@ const chatPanelTitle = computed(() => {
   if (!showChatSettingsView.value) {
     return activeConversationTitle.value;
   }
+  if (showAgentGridOverview.value) {
+    return t('messenger.agent.overviewTitle');
+  }
   if (showAgentSettingsPanel.value) {
     if (settingsAgentId.value === DEFAULT_AGENT_KEY) {
       return t('messenger.defaultAgent');
@@ -2659,6 +2787,9 @@ const chatPanelTitle = computed(() => {
 const chatPanelSubtitle = computed(() => {
   if (!showChatSettingsView.value) {
     return activeConversationSubtitle.value;
+  }
+  if (showAgentGridOverview.value) {
+    return t('messenger.agent.overviewDesc');
   }
   if (showAgentSettingsPanel.value) {
     return t('messenger.agent.subtitle');
@@ -3291,7 +3422,7 @@ const fileContainerLifecycleText = computed(() => {
 });
 
 const showRightDock = computed(() => {
-  if (sessionHub.activeSection === 'agents') return true;
+  if (sessionHub.activeSection === 'agents') return !showAgentGridOverview.value;
   return sessionHub.activeSection === 'messages' && isAgentConversationActive.value;
 });
 
@@ -3442,6 +3573,14 @@ const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
     runtimeStateOverrides.value.delete(key);
   }
   return agentRuntimeStateMap.value.get(key) || 'idle';
+};
+
+const formatAgentRuntimeState = (state: AgentRuntimeState): string => {
+  if (state === 'running') return t('portal.card.running');
+  if (state === 'pending') return t('portal.card.waiting');
+  if (state === 'done') return t('portal.card.done');
+  if (state === 'error') return t('portal.card.error');
+  return t('portal.card.idle');
 };
 
 const hasMessageContent = (value: unknown): boolean => Boolean(String(value || '').trim());
@@ -3981,8 +4120,13 @@ const openAgentById = async (agentId: unknown) => {
 };
 
 const selectAgentForSettings = (agentId: unknown) => {
+  agentOverviewMode.value = 'detail';
   selectedAgentId.value = normalizeAgentId(agentId);
   agentSettingMode.value = 'agent';
+};
+
+const toggleAgentOverviewMode = () => {
+  agentOverviewMode.value = agentOverviewMode.value === 'grid' ? 'detail' : 'grid';
 };
 
 const enterSelectedAgentConversation = async () => {
@@ -3992,6 +4136,7 @@ const enterSelectedAgentConversation = async () => {
 
 const openActiveAgentSettings = () => {
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  agentOverviewMode.value = 'detail';
   selectedAgentId.value = targetAgentId;
   agentSettingMode.value = 'agent';
   sessionHub.setSection('agents');

@@ -1265,6 +1265,13 @@ export default {
   'messenger.agent.sharedTag': 'Shared',
   'messenger.agent.cron': 'Cron',
   'messenger.agent.subtitle': 'Agent conversation',
+  'messenger.agent.gridView': 'Grid overview',
+  'messenger.agent.listView': 'Back to list',
+  'messenger.agent.overviewTitle': 'Agent app overview',
+  'messenger.agent.overviewDesc': 'Quickly scan and jump into any agent app',
+  'messenger.agent.overviewEmpty': 'No agent apps to display',
+  'messenger.agent.openSettings': 'Open settings',
+  'messenger.agent.openChat': 'Open chat',
   'messenger.tools.customTitle': 'Personal Tools',
   'messenger.tools.customDesc': 'Configure MCP, skills, and knowledge tools',
   'messenger.tools.customManageHint': 'Pick MCP / Skills / Knowledge below to edit related settings',
@@ -1372,4 +1379,3 @@ export default {
   'system.maintenance.desc': 'The service is temporarily unavailable. Please try again later.',
   'system.maintenance.status': 'Status code: {status}'
 };
-

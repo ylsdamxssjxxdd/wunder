@@ -1,12 +1,12 @@
 .layout {
-  min-height: 100vh;
-  height: 100vh;
+  min-height: var(--app-viewport-height, 100vh);
+  height: var(--app-viewport-height, 100vh);
   overflow: hidden;
 }
 
 .layout-container {
-  min-height: 100vh;
-  height: 100vh;
+  min-height: var(--app-viewport-height, 100vh);
+  height: var(--app-viewport-height, 100vh);
 }
 
 .layout-aside {

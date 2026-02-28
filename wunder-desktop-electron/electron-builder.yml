@@ -18,3 +18,7 @@ linux:
   category: Utility
   executableName: wunder-desktop
   icon: build/icon.png
+win:
+  icon: assets/icon.ico
+  target:
+    - target: nsis

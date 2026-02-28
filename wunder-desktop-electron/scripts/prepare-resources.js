@@ -7,6 +7,7 @@ const outputRoot = path.resolve(__dirname, '..', 'resources')
 const bridgeName = process.platform === 'win32' ? 'wunder-desktop-bridge.exe' : 'wunder-desktop-bridge'
 const bridgeSource = process.env.WUNDER_BRIDGE_BIN || path.join(repoRoot, 'target', 'release', bridgeName)
 const frontendSource = path.join(repoRoot, 'frontend', 'dist')
+const iconIcoSource = path.join(__dirname, '..', 'assets', 'icon.ico')
 
 const copyDir = (src, dest) => {
   fs.cpSync(src, dest, { recursive: true })
@@ -41,6 +42,9 @@ fs.rmSync(outputRoot, { recursive: true, force: true })
 fs.mkdirSync(outputRoot, { recursive: true })
 
 copyFile(bridgeSource, path.join(outputRoot, bridgeName))
+if (fs.existsSync(iconIcoSource)) {
+  copyFile(iconIcoSource, path.join(outputRoot, 'icon.ico'))
+}
 if (process.platform !== 'win32') {
   try {
     fs.chmodSync(path.join(outputRoot, bridgeName), 0o755)

@@ -25,17 +25,23 @@ const desktopChromeVisible = computed(
 
 <style>
 .app-shell {
+  --desktop-window-chrome-height: 36px;
+  --app-viewport-height: 100vh;
+  --app-viewport-height-dvh: 100dvh;
   height: 100%;
   min-height: 0;
 }
 
 .app-shell--desktop {
-  padding-top: var(--desktop-window-chrome-height, 36px);
+  --app-viewport-height: calc(100vh - var(--desktop-window-chrome-height));
+  --app-viewport-height-dvh: calc(100dvh - var(--desktop-window-chrome-height));
+  padding-top: var(--desktop-window-chrome-height);
   box-sizing: border-box;
 }
 
 .app-shell-content {
   height: 100%;
   min-height: 0;
+  overflow: hidden;
 }
 </style>

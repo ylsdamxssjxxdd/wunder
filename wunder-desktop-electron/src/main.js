@@ -17,6 +17,11 @@ if (process.env.WUNDER_DISABLE_GPU === '1') {
 
 const repoRoot = path.resolve(__dirname, '..', '..')
 const localResourcesRoot = path.resolve(__dirname, '..', 'resources')
+const desktopAppId = 'com.wunder.desktop'
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(desktopAppId)
+}
 
 const getBridgeName = () => (process.platform === 'win32' ? 'wunder-desktop-bridge.exe' : 'wunder-desktop-bridge')
 
@@ -47,6 +52,19 @@ const resolveFrontendRoot = () => {
     return devCandidate
   }
   return path.join(localResourcesRoot, 'frontend-dist')
+}
+
+const resolveWindowIcon = () => {
+  const icoName = 'icon.ico'
+  const packagedIcon = path.join(process.resourcesPath, icoName)
+  if (app.isPackaged && fs.existsSync(packagedIcon)) {
+    return packagedIcon
+  }
+  const devIcon = path.join(__dirname, '..', 'assets', icoName)
+  if (fs.existsSync(devIcon)) {
+    return devIcon
+  }
+  return undefined
 }
 
 const getFreePort = () =>
@@ -233,6 +251,7 @@ const createWindow = async () => {
     minWidth: 1024,
     minHeight: 700,
     title: 'Wunder Desktop',
+    icon: resolveWindowIcon(),
     frame: false,
     show: false,
     autoHideMenuBar: true,
