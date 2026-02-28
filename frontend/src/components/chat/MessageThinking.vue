@@ -12,7 +12,7 @@
       <div class="thinking-tooltip">{{ fullText }}</div>
     </template>
     <div class="message-thinking">
-      <span class="message-thinking-label">{{ t('chat.thinking') }}</span>
+      <span class="message-thinking-label">{{ thinkingLabel }}</span>
       <div ref="marqueeRef" class="message-thinking-marquee">
         <span class="message-thinking-track">
           {{ displayText }}
@@ -75,6 +75,10 @@ const displayText = computed(() => {
 const fullText = computed(() => stripTrailingTimestamp(String(props.content || '')));
 
 const visible = computed(() => Boolean(displayText.value));
+
+const thinkingLabel = computed(() =>
+  props.streaming ? t('chat.thinking') : t('chat.thinkingDone')
+);
 
 const marqueeRef = ref(null);
 

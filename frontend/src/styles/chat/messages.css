@@ -307,17 +307,31 @@
 }
 
 .thinking-tooltip-popper {
-  --el-tooltip-bg-color: rgba(17, 26, 47, 0.96);
-  --el-tooltip-border-color: rgba(106, 217, 255, 0.28);
-  --el-bg-color: var(--el-tooltip-bg-color);
-  --el-border-color: var(--el-tooltip-border-color);
-  background: linear-gradient(160deg, rgba(17, 26, 47, 0.96), rgba(21, 33, 60, 0.92));
-  border: 1px solid var(--el-tooltip-border-color);
-  color: #f1f5f9;
+  --thinking-tooltip-bg: #ffffff;
+  --thinking-tooltip-bg-alt: #f6f8fc;
+  --thinking-tooltip-border: rgba(15, 23, 42, 0.12);
+  --thinking-tooltip-text: #0f172a;
+  --el-tooltip-bg-color: var(--thinking-tooltip-bg);
+  --el-tooltip-border-color: var(--thinking-tooltip-border);
+  --el-bg-color: var(--thinking-tooltip-bg);
+  --el-border-color: var(--thinking-tooltip-border);
+  --el-bg-color-overlay: var(--thinking-tooltip-bg);
+  --el-text-color-primary: var(--thinking-tooltip-text);
+  --el-text-color-regular: #475569;
+  background: linear-gradient(160deg, var(--thinking-tooltip-bg), var(--thinking-tooltip-bg-alt));
+  border: 1px solid var(--thinking-tooltip-border);
+  color: var(--thinking-tooltip-text);
   border-radius: 12px;
   padding: 0;
   max-width: min(480px, calc(100vw - 48px));
-  box-shadow: 0 18px 40px rgba(5, 8, 18, 0.35);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+.thinking-tooltip-popper.el-popper,
+.thinking-tooltip-popper.el-popper.is-dark {
+  background: var(--thinking-tooltip-bg) !important;
+  color: var(--thinking-tooltip-text) !important;
+  border-color: var(--thinking-tooltip-border) !important;
 }
 
 .thinking-tooltip {
@@ -328,8 +342,16 @@
   word-break: break-word;
   font-size: 12px;
   line-height: 1.5;
-  color: #f1f5f9;
+  color: var(--thinking-tooltip-text);
   background: transparent;
+}
+
+:root[data-user-theme='light'] .thinking-tooltip-popper {
+  --thinking-tooltip-bg: #ffffff;
+  --thinking-tooltip-bg-alt: #f6f8fc;
+  --thinking-tooltip-border: rgba(15, 23, 42, 0.12);
+  --thinking-tooltip-text: #0f172a;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
 }
 
 .thinking-tooltip-popper .el-popper__arrow {

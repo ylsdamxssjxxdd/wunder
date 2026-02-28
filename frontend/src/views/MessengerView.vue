@@ -445,6 +445,7 @@
             :class="{ active: fileScope === 'user' }"
             type="button"
             @click="selectContainer('user')"
+            @contextmenu.prevent.stop="openFileContainerMenu($event, 'user', USER_CONTAINER_ID)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -471,6 +472,7 @@
             :class="{ active: fileScope === 'agent' && selectedFileContainerId === container.id }"
             type="button"
             @click="selectContainer(container.id)"
+            @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -495,6 +497,7 @@
             :class="{ active: fileScope === 'agent' && selectedFileContainerId === container.id }"
             type="button"
             @click="selectContainer(container.id)"
+            @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -631,6 +634,7 @@
           'is-world': isWorldConversationActive
         }"
         @scroll="handleMessageListScroll"
+        @click="handleMessageContentClick"
       >
         <template v-if="showChatSettingsView">
           <div class="messenger-chat-settings">
@@ -1356,6 +1360,26 @@
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
     />
 
+    <Teleport to="body">
+      <div
+        v-if="fileContainerContextMenu.visible"
+        ref="fileContainerMenuRef"
+        class="messenger-files-context-menu"
+        :style="fileContainerContextMenuStyle"
+        @contextmenu.prevent
+      >
+        <button class="messenger-files-menu-btn" type="button" @click="handleFileContainerMenuOpen">
+          {{ t('messenger.files.menu.open') }}
+        </button>
+        <button class="messenger-files-menu-btn" type="button" @click="handleFileContainerMenuCopyId">
+          {{ t('messenger.files.menu.copyId') }}
+        </button>
+        <button class="messenger-files-menu-btn" type="button" @click="handleFileContainerMenuSettings">
+          {{ t('messenger.files.menu.settings') }}
+        </button>
+      </div>
+    </Teleport>
+
     <el-dialog
       v-model="worldHistoryDialogVisible"
       class="messenger-dialog messenger-world-history-dialog"
@@ -1437,6 +1461,35 @@
     </el-dialog>
 
     <el-dialog
+      v-model="imagePreviewVisible"
+      :title="t('workspace.preview.dialogTitle')"
+      width="720px"
+      class="workspace-dialog"
+      append-to-body
+    >
+      <div class="workspace-preview-title">
+        {{ imagePreviewTitle || t('chat.imagePreview') }}
+      </div>
+      <div class="workspace-preview-meta">{{ imagePreviewWorkspacePath || t('chat.imagePreview') }}</div>
+      <div class="workspace-preview embed">
+        <img v-if="imagePreviewUrl" :src="imagePreviewUrl" :alt="imagePreviewTitle || t('chat.imagePreview')" />
+      </div>
+      <template #footer>
+        <button
+          class="workspace-btn secondary"
+          type="button"
+          :disabled="!imagePreviewWorkspacePath"
+          @click="handleImagePreviewDownload"
+        >
+          {{ t('common.download') }}
+        </button>
+        <button class="workspace-btn secondary" type="button" @click="closeImagePreview">
+          {{ t('common.close') }}
+        </button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="groupCreateVisible"
       :title="t('userWorld.group.createTitle')"
       width="440px"
@@ -1499,7 +1552,7 @@ import { fetchOrgUnits } from '@/api/auth';
 import { getSession as getChatSessionApi, fetchSessionSystemPrompt, fetchRealtimeSystemPrompt } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
-import { uploadWunderWorkspace } from '@/api/workspace';
+import { downloadWunderWorkspaceFile, uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
@@ -1536,9 +1589,11 @@ import {
 import { useUserWorldStore } from '@/stores/userWorld';
 import { renderMarkdown } from '@/utils/markdown';
 import { showApiError } from '@/utils/apiError';
+import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
+import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 type DesktopUpdateState = {
@@ -1725,6 +1780,11 @@ type MessengerPerfTrace = {
   meta?: Record<string, unknown>;
 };
 
+type FileContainerMenuTarget = {
+  scope: 'user' | 'agent';
+  id: number;
+};
+
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -1762,6 +1822,10 @@ const worldHistoryDateRange = ref<[string, string] | []>([]);
 const agentPromptPreviewVisible = ref(false);
 const agentPromptPreviewLoading = ref(false);
 const agentPromptPreviewContent = ref('');
+const imagePreviewVisible = ref(false);
+const imagePreviewUrl = ref('');
+const imagePreviewTitle = ref('');
+const imagePreviewWorkspacePath = ref('');
 const agentPromptToolSummary = ref<Record<string, unknown> | null>(null);
 const agentToolSummaryLoading = ref(false);
 const agentToolSummaryError = ref('');
@@ -1800,6 +1864,18 @@ const selectedFileContainerId = ref(USER_CONTAINER_ID);
 const fileContainerLatestUpdatedAt = ref(0);
 const fileContainerEntryCount = ref(0);
 const fileLifecycleNowTick = ref(Date.now());
+const fileContainerMenuRef = ref<HTMLElement | null>(null);
+const fileContainerContextMenu = ref<{
+  visible: boolean;
+  x: number;
+  y: number;
+  target: FileContainerMenuTarget | null;
+}>({
+  visible: false,
+  x: 0,
+  y: 0,
+  target: null
+});
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
 const desktopToolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
@@ -1833,6 +1909,10 @@ const agentUnreadRefreshInFlight = new Set<string>();
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
+const workspaceResourceCache = new Map<string, { objectUrl?: string; filename?: string; promise?: Promise<{ objectUrl: string; filename: string }> }>();
+let workspaceResourceHydrationFrame: number | null = null;
+let pendingAssistantCenter = false;
+let pendingAssistantCenterCount = 0;
 const MESSENGER_PERF_TRACE_ENABLED = (() => {
   if (typeof window === 'undefined') return false;
   const raw = String(window.localStorage.getItem('messenger_perf_trace') || '')
@@ -2230,6 +2310,11 @@ const fileContainerLocalLocation = computed(() => {
 const workspacePanelKey = computed(() =>
   `${fileScope.value}:${selectedFileContainerId.value}:${selectedFileAgentIdForApi.value || 'default'}`
 );
+
+const fileContainerContextMenuStyle = computed(() => ({
+  left: `${fileContainerContextMenu.value.x}px`,
+  top: `${fileContainerContextMenu.value.y}px`
+}));
 
 const showAgentSettingsPanel = computed(
   () => sessionHub.activeSection === 'agents' || isAgentConversationActive.value
@@ -3568,6 +3653,12 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
   if (!target) {
     return;
   }
+  if (fileContainerContextMenu.value.visible) {
+    const menu = fileContainerMenuRef.value;
+    if (!menu || !menu.contains(target)) {
+      closeFileContainerMenu();
+    }
+  }
   if (worldQuickPanelMode.value) {
     if (!worldComposerRef.value || !worldComposerRef.value.contains(target)) {
       clearWorldQuickPanelClose();
@@ -3911,6 +4002,303 @@ const formatTime = (value: unknown): string => {
   return String(date.getFullYear());
 };
 
+const isAdminUser = (user: Record<string, unknown> | null): boolean =>
+  Array.isArray(user?.roles) &&
+  user.roles.some((role) => role === 'admin' || role === 'super_admin');
+
+const normalizeWorkspaceOwnerId = (value: unknown): string =>
+  String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '_');
+
+type WorkspaceResolvedResource = ReturnType<typeof parseWorkspaceResourceUrl> & {
+  requestUserId: string | null;
+  requestAgentId: string | null;
+  allowed: boolean;
+};
+
+const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource | null => {
+  const parsed = parseWorkspaceResourceUrl(publicPath);
+  if (!parsed) return null;
+  const user = authStore.user as Record<string, unknown> | null;
+  if (!user) return null;
+  const currentId = normalizeWorkspaceOwnerId(user.id);
+  const workspaceId = parsed.workspaceId || parsed.userId;
+  const ownerId = parsed.ownerId || workspaceId;
+  const agentId = parsed.agentId || '';
+  const isOwner =
+    Boolean(currentId) &&
+    (workspaceId === currentId || workspaceId.startsWith(`${currentId}__agent__`));
+  if (isOwner) {
+    return {
+      ...parsed,
+      requestUserId: null,
+      requestAgentId: agentId || null,
+      allowed: true
+    };
+  }
+  if (isAdminUser(user)) {
+    return {
+      ...parsed,
+      requestUserId: ownerId,
+      requestAgentId: agentId || null,
+      allowed: true
+    };
+  }
+  // 非管理员仍优先尝试按当前登录用户上下文读取，避免不同展示ID导致的误拦截。
+  return {
+    ...parsed,
+    requestUserId: null,
+    requestAgentId: agentId || null,
+    allowed: true
+  };
+};
+
+const getFilenameFromHeaders = (headers: Record<string, unknown> | undefined, fallback: string): string => {
+  const disposition = String(headers?.['content-disposition'] || headers?.['Content-Disposition'] || '').trim();
+  if (!disposition) return fallback;
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {
+      return utf8Match[1];
+    }
+  }
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  return match?.[1] || fallback;
+};
+
+const getFileExtension = (filename: string): string => {
+  const base = String(filename || '').split('?')[0].split('#')[0];
+  const parts = base.split('.');
+  if (parts.length < 2) return '';
+  return String(parts.pop() || '').toLowerCase();
+};
+
+const normalizeWorkspaceImageBlob = (blob: Blob, filename: string, contentType: string): Blob => {
+  if (!(blob instanceof Blob)) return blob;
+  if (getFileExtension(filename) !== 'svg') return blob;
+  const expectedType = 'image/svg+xml';
+  if (blob.type === expectedType) return blob;
+  const headerType = String(contentType || '').toLowerCase();
+  if (headerType.includes('image/svg')) {
+    return blob.slice(0, blob.size, expectedType);
+  }
+  return blob.slice(0, blob.size, expectedType);
+};
+
+const saveBlobUrl = (url: string, filename: string) => {
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename || 'download';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
+  const cacheKey = resource.publicPath;
+  const cached = workspaceResourceCache.get(cacheKey);
+  if (cached?.objectUrl && cached?.filename) {
+    return { objectUrl: cached.objectUrl, filename: cached.filename };
+  }
+  if (cached?.promise) return cached.promise;
+  const params: Record<string, string> = {
+    path: String(resource.relativePath || '')
+  };
+  if (resource.requestUserId) {
+    params.user_id = resource.requestUserId;
+  }
+  if (resource.requestAgentId) {
+    params.agent_id = resource.requestAgentId;
+  }
+  const promise = downloadWunderWorkspaceFile(params)
+    .then((response) => {
+      const filename = getFilenameFromHeaders(
+        response?.headers as Record<string, unknown>,
+        resource.filename || 'download'
+      );
+      const contentType = String(
+        (response?.headers as Record<string, unknown>)?.['content-type'] ||
+          (response?.headers as Record<string, unknown>)?.['Content-Type'] ||
+          ''
+      );
+      const normalizedBlob = normalizeWorkspaceImageBlob(response.data as Blob, filename, contentType);
+      const objectUrl = URL.createObjectURL(normalizedBlob);
+      const entry = { objectUrl, filename };
+      workspaceResourceCache.set(cacheKey, entry);
+      return entry;
+    })
+    .catch((error) => {
+      workspaceResourceCache.delete(cacheKey);
+      throw error;
+    });
+  workspaceResourceCache.set(cacheKey, { promise });
+  return promise;
+};
+
+const isWorkspaceResourceMissing = (error: unknown): boolean => {
+  const status = Number((error as { response?: { status?: unknown } })?.response?.status || 0);
+  if (status === 404 || status === 410) return true;
+  const raw =
+    (error as { response?: { data?: { detail?: string; message?: string } } })?.response?.data?.detail ||
+    (error as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+    (error as { message?: string })?.message ||
+    '';
+  const message = typeof raw === 'string' ? raw : String(raw || '');
+  return /not found|no such|不存在|找不到|已删除|已移除|removed/i.test(message);
+};
+
+const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
+  if (!card || card.dataset.workspaceState) return;
+  const kind = String(card.dataset.workspaceKind || 'image');
+  if (kind !== 'image') {
+    card.dataset.workspaceState = 'ready';
+    return;
+  }
+  const publicPath = String(card.dataset.workspacePath || '').trim();
+  const status = card.querySelector('.ai-resource-status') as HTMLElement | null;
+  const preview = card.querySelector('.ai-resource-preview') as HTMLImageElement | null;
+  if (!publicPath || !preview) return;
+  const resource = resolveWorkspaceResource(publicPath);
+  if (!resource || !resource.allowed) {
+    if (status) status.textContent = t('chat.resourceUnavailable');
+    card.dataset.workspaceState = 'error';
+    card.classList.add('is-error');
+    return;
+  }
+  card.dataset.workspaceState = 'loading';
+  try {
+    const entry = await fetchWorkspaceResource(resource);
+    preview.src = entry.objectUrl;
+    card.dataset.workspaceState = 'ready';
+    card.classList.add('is-ready');
+    if (status) status.textContent = '';
+  } catch (error) {
+    if (status) {
+      status.textContent = isWorkspaceResourceMissing(error)
+        ? t('chat.resourceMissing')
+        : t('chat.resourceImageFailed');
+    }
+    card.dataset.workspaceState = 'error';
+    card.classList.add('is-error');
+  }
+};
+
+const hydrateWorkspaceResources = () => {
+  const container = messageListRef.value;
+  if (!container) return;
+  const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
+  cards.forEach((card) => {
+    void hydrateWorkspaceResourceCard(card as HTMLElement);
+  });
+};
+
+const scheduleWorkspaceResourceHydration = () => {
+  if (workspaceResourceHydrationFrame !== null || typeof window === 'undefined') return;
+  workspaceResourceHydrationFrame = window.requestAnimationFrame(() => {
+    workspaceResourceHydrationFrame = null;
+    hydrateWorkspaceResources();
+  });
+};
+
+const clearWorkspaceResourceCache = () => {
+  if (workspaceResourceHydrationFrame !== null && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(workspaceResourceHydrationFrame);
+    workspaceResourceHydrationFrame = null;
+  }
+  workspaceResourceCache.forEach((entry) => {
+    if (entry?.objectUrl) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+  });
+  workspaceResourceCache.clear();
+};
+
+const downloadWorkspaceResource = async (publicPath: string) => {
+  const resource = resolveWorkspaceResource(publicPath);
+  if (!resource || !resource.allowed) return;
+  try {
+    const entry = await fetchWorkspaceResource(resource);
+    saveBlobUrl(entry.objectUrl, entry.filename || resource.filename || 'download');
+  } catch (error) {
+    ElMessage.error(
+      isWorkspaceResourceMissing(error) ? t('chat.resourceMissing') : t('chat.resourceDownloadFailed')
+    );
+  }
+};
+
+const openImagePreview = (src: string, title = '', workspacePath = '') => {
+  const normalizedSrc = String(src || '').trim();
+  if (!normalizedSrc) return;
+  imagePreviewUrl.value = normalizedSrc;
+  imagePreviewTitle.value = String(title || '').trim() || t('chat.imagePreview');
+  imagePreviewWorkspacePath.value = String(workspacePath || '').trim();
+  imagePreviewVisible.value = true;
+};
+
+const handleImagePreviewDownload = async () => {
+  const workspacePath = String(imagePreviewWorkspacePath.value || '').trim();
+  if (!workspacePath) return;
+  await downloadWorkspaceResource(workspacePath);
+};
+
+const closeImagePreview = () => {
+  imagePreviewVisible.value = false;
+  imagePreviewUrl.value = '';
+  imagePreviewTitle.value = '';
+  imagePreviewWorkspacePath.value = '';
+};
+
+const handleMessageContentClick = async (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (!target) return;
+  const previewImage = target.closest('img.ai-resource-preview') as HTMLImageElement | null;
+  if (previewImage) {
+    const card = previewImage.closest('.ai-resource-card') as HTMLElement | null;
+    if (card?.dataset?.workspaceState !== 'ready') return;
+    const src = String(previewImage.getAttribute('src') || '').trim();
+    if (!src) return;
+    const title = String(card?.querySelector('.ai-resource-name')?.textContent || '').trim();
+    const workspacePath = String(card?.dataset?.workspacePath || '').trim();
+    openImagePreview(src, title, workspacePath);
+    return;
+  }
+  const resourceButton = target.closest('[data-workspace-action]') as HTMLElement | null;
+  if (resourceButton) {
+    const container = resourceButton.closest('[data-workspace-path]') as HTMLElement | null;
+    const publicPath = String(container?.dataset?.workspacePath || '').trim();
+    if (!publicPath) return;
+    event.preventDefault();
+    await downloadWorkspaceResource(publicPath);
+    return;
+  }
+  const resourceLink = target.closest('a.ai-resource-link[data-workspace-path]') as HTMLElement | null;
+  if (resourceLink) {
+    const publicPath = String(resourceLink.dataset?.workspacePath || '').trim();
+    if (!publicPath) return;
+    event.preventDefault();
+    await downloadWorkspaceResource(publicPath);
+    return;
+  }
+  const copyButton = target.closest('.ai-code-copy') as HTMLElement | null;
+  if (!copyButton) return;
+  event.preventDefault();
+  const codeBlock = copyButton.closest('.ai-code-block');
+  const codeText = String(codeBlock?.querySelector('code')?.textContent || '').trim();
+  if (!codeText) {
+    ElMessage.warning(t('chat.message.copyEmpty'));
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(codeText);
+    ElMessage.success(t('chat.message.copySuccess'));
+  } catch {
+    ElMessage.warning(t('chat.message.copyFailed'));
+  }
+};
+
 const trimMarkdownCache = () => {
   while (markdownCache.size > MARKDOWN_CACHE_LIMIT) {
     const oldestKey = markdownCache.keys().next().value;
@@ -4078,6 +4466,7 @@ const deleteMixedConversation = async (item: MixedConversation) => {
 };
 
 const switchSection = (section: MessengerSection) => {
+  closeFileContainerMenu();
   openMiddlePaneOverlay();
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
@@ -4132,6 +4521,7 @@ const openSettingsPage = () => {
 };
 
 const openProfilePage = () => {
+  closeFileContainerMenu();
   settingsPanelMode.value = 'profile';
   sessionHub.setSection('more');
   sessionHub.setKeyword('');
@@ -4689,7 +5079,86 @@ const deleteTimelineSession = async (sessionId: string) => {
   }
 };
 
+const closeFileContainerMenu = () => {
+  fileContainerContextMenu.value.visible = false;
+};
+
+const openDesktopContainerSettings = () => {
+  if (desktopMode.value) {
+    settingsPanelMode.value = 'desktop';
+  } else {
+    settingsPanelMode.value = 'general';
+  }
+  sessionHub.setSection('more');
+  sessionHub.setKeyword('');
+  const nextQuery = {
+    ...route.query,
+    section: 'more',
+    panel: desktopMode.value ? 'desktop' : undefined
+  } as Record<string, any>;
+  delete nextQuery.session_id;
+  delete nextQuery.agent_id;
+  delete nextQuery.entry;
+  delete nextQuery.conversation_id;
+  if (!desktopMode.value) {
+    delete nextQuery.panel;
+  }
+  router.push({ path: `${basePrefix.value}/settings`, query: nextQuery }).catch(() => undefined);
+};
+
+const openFileContainerMenu = async (
+  event: MouseEvent,
+  scope: 'user' | 'agent',
+  containerId: number
+) => {
+  const normalizedId =
+    scope === 'user'
+      ? USER_CONTAINER_ID
+      : Math.min(10, Math.max(1, Number.parseInt(String(containerId || 1), 10) || 1));
+  if (scope === 'agent' && !agentFileContainers.value.some((item) => item.id === normalizedId)) {
+    ElMessage.warning(t('messenger.files.agentContainerEmpty'));
+    return;
+  }
+  selectContainer(scope === 'user' ? 'user' : normalizedId);
+  fileContainerContextMenu.value.target = { scope, id: normalizedId };
+  fileContainerContextMenu.value.visible = true;
+  fileContainerContextMenu.value.x = event.clientX;
+  fileContainerContextMenu.value.y = event.clientY;
+  await nextTick();
+  const menuRect = fileContainerMenuRef.value?.getBoundingClientRect();
+  if (!menuRect) return;
+  const maxLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
+  const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
+  fileContainerContextMenu.value.x = Math.min(Math.max(8, fileContainerContextMenu.value.x), maxLeft);
+  fileContainerContextMenu.value.y = Math.min(Math.max(8, fileContainerContextMenu.value.y), maxTop);
+};
+
+const handleFileContainerMenuOpen = () => {
+  const target = fileContainerContextMenu.value.target;
+  closeFileContainerMenu();
+  if (!target) return;
+  selectContainer(target.scope === 'user' ? 'user' : target.id);
+};
+
+const handleFileContainerMenuCopyId = async () => {
+  const target = fileContainerContextMenu.value.target;
+  closeFileContainerMenu();
+  if (!target) return;
+  const copied = await copyText(String(target.id));
+  if (copied) {
+    ElMessage.success(t('messenger.files.copyIdSuccess', { id: target.id }));
+  } else {
+    ElMessage.warning(t('messenger.files.copyIdFailed'));
+  }
+};
+
+const handleFileContainerMenuSettings = () => {
+  closeFileContainerMenu();
+  openDesktopContainerSettings();
+};
+
 const selectContainer = (containerId: number | 'user') => {
+  closeFileContainerMenu();
   if (containerId === 'user') {
     fileScope.value = 'user';
     selectedFileContainerId.value = USER_CONTAINER_ID;
@@ -5082,6 +5551,8 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
   }
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
   setRuntimeStateOverride(targetAgentId, 'running', 30_000);
+  pendingAssistantCenter = true;
+  pendingAssistantCenterCount = chatStore.messages.length;
   try {
     await chatStore.sendMessage(content, { attachments });
     setRuntimeStateOverride(targetAgentId, 'done', 8_000);
@@ -5094,6 +5565,8 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
     }
     await scrollMessagesToBottom();
   } catch (error) {
+    pendingAssistantCenter = false;
+    pendingAssistantCenterCount = 0;
     setRuntimeStateOverride(targetAgentId, 'error', 8_000);
     showApiError(error, t('chat.error.requestFailed'));
   }
@@ -5476,6 +5949,25 @@ const jumpToMessageBottom = async () => {
   await scrollMessagesToBottom(true);
 };
 
+const scrollLatestAssistantToCenter = async () => {
+  if (!isAgentConversationActive.value) return;
+  await nextTick();
+  const container = messageListRef.value;
+  if (!container) return;
+  const items = container.querySelectorAll('.messenger-message:not(.mine)');
+  if (!items.length) return;
+  const target = items[items.length - 1] as HTMLElement;
+  requestAnimationFrame(() => {
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const targetCenter = targetRect.top - containerRect.top + targetRect.height / 2;
+    const nextTop = container.scrollTop + targetCenter - container.clientHeight / 2;
+    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTop = Math.max(0, Math.min(nextTop, maxTop));
+    updateMessageScrollState();
+  });
+};
+
 const normalizeAgentId = (value: unknown): string => {
   const text = String(value || '').trim();
   return text || DEFAULT_AGENT_KEY;
@@ -5617,9 +6109,11 @@ watch(
   () => {
     cronPermissionDenied.value = false;
     cronAgentIds.value = new Set<string>();
+    clearWorkspaceResourceCache();
     ensureDismissedAgentConversationState(true);
     ensureAgentUnreadState(true);
     refreshAgentMainUnreadFromSessions();
+    scheduleWorkspaceResourceHydration();
   },
   { immediate: true }
 );
@@ -5627,6 +6121,7 @@ watch(
 watch(
   () => sessionHub.activeSection,
   (section) => {
+    closeFileContainerMenu();
     if (section === 'tools' && !customTools.value.length && !sharedTools.value.length) {
       loadToolsCatalog();
     }
@@ -5688,6 +6183,10 @@ watch(
   () => sessionHub.activeConversationKey,
   () => {
     markdownCache.clear();
+    clearWorkspaceResourceCache();
+    pendingAssistantCenter = false;
+    pendingAssistantCenterCount = 0;
+    scheduleWorkspaceResourceHydration();
   }
 );
 
@@ -5772,11 +6271,42 @@ watch(
 watch(
   () => [chatStore.messages.length, userWorldStore.activeMessages.length, sessionHub.activeConversationKey],
   () => {
+    scheduleWorkspaceResourceHydration();
+    if (
+      pendingAssistantCenter &&
+      isAgentConversationActive.value &&
+      chatStore.messages.length > pendingAssistantCenterCount
+    ) {
+      const lastMessage = chatStore.messages[chatStore.messages.length - 1] as
+        | Record<string, unknown>
+        | undefined;
+      if (String(lastMessage?.role || '') === 'assistant') {
+        pendingAssistantCenter = false;
+        pendingAssistantCenterCount = chatStore.messages.length;
+        autoStickToBottom.value = false;
+        void scrollLatestAssistantToCenter();
+        return;
+      }
+    }
     if (autoStickToBottom.value) {
-      scrollMessagesToBottom();
+      void scrollMessagesToBottom();
     } else {
       updateMessageScrollState();
     }
+  }
+);
+
+watch(
+  () => chatStore.messages[chatStore.messages.length - 1]?.content,
+  () => {
+    scheduleWorkspaceResourceHydration();
+  }
+);
+
+watch(
+  () => userWorldStore.activeMessages[userWorldStore.activeMessages.length - 1]?.content,
+  () => {
+    scheduleWorkspaceResourceHydration();
   }
 );
 
@@ -5812,6 +6342,7 @@ onMounted(async () => {
   if (typeof window !== 'undefined') {
     viewportResizeHandler = () => {
       viewportWidth.value = window.innerWidth;
+      closeFileContainerMenu();
     };
     viewportResizeHandler();
     window.addEventListener('resize', viewportResizeHandler);
@@ -5824,10 +6355,12 @@ onMounted(async () => {
     );
     worldRecentEmojis.value = loadStoredStringArray(WORLD_QUICK_EMOJI_STORAGE_KEY, 12);
     window.addEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
+    document.addEventListener('scroll', closeFileContainerMenu, true);
   }
   applyUiFontSize(uiFontSize.value);
   await bootstrap();
   updateMessageScrollState();
+  scheduleWorkspaceResourceHydration();
   lifecycleTimer = window.setInterval(() => {
     fileLifecycleNowTick.value = Date.now();
   }, 60_000);
@@ -5846,9 +6379,12 @@ onBeforeUnmount(() => {
       viewportResizeHandler = null;
     }
     window.removeEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
+    document.removeEventListener('scroll', closeFileContainerMenu, true);
   }
+  closeFileContainerMenu();
   clearWorldQuickPanelClose();
   clearMiddlePaneOverlayHide();
+  closeImagePreview();
   stopWorldComposerResize();
   if (statusTimer) {
     window.clearInterval(statusTimer);
@@ -5863,6 +6399,7 @@ onBeforeUnmount(() => {
     timelinePrefetchTimer = null;
   }
   markdownCache.clear();
+  clearWorkspaceResourceCache();
   timelinePreviewMap.value.clear();
   timelinePreviewLoadingSet.value.clear();
   userWorldStore.stopAllWatchers();

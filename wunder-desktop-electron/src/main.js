@@ -25,6 +25,9 @@ const createUpdateSnapshot = () => ({
 let updateState = createUpdateSnapshot()
 
 app.commandLine.appendSwitch('log-level', '2')
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('class', 'wunder-desktop')
+}
 if (process.env.WUNDER_DISABLE_GPU === '1') {
   app.disableHardwareAcceleration()
 }
@@ -69,14 +72,20 @@ const resolveFrontendRoot = () => {
 }
 
 const resolveWindowIcon = () => {
-  const icoName = 'icon.ico'
-  const packagedIcon = path.join(process.resourcesPath, icoName)
-  if (app.isPackaged && fs.existsSync(packagedIcon)) {
-    return packagedIcon
+  const iconNames = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png', 'icon.ico']
+  const searchRoots = []
+  if (app.isPackaged) {
+    searchRoots.push(process.resourcesPath)
   }
-  const devIcon = path.join(__dirname, '..', 'assets', icoName)
-  if (fs.existsSync(devIcon)) {
-    return devIcon
+  searchRoots.push(path.join(__dirname, '..', 'build'))
+  searchRoots.push(path.join(__dirname, '..', 'assets'))
+  for (const root of searchRoots) {
+    for (const iconName of iconNames) {
+      const iconPath = path.join(root, iconName)
+      if (fs.existsSync(iconPath)) {
+        return iconPath
+      }
+    }
   }
   return undefined
 }

@@ -4,7 +4,8 @@
 
 ### 4.0 实现说明
 
-- 接口实现基于 Rust Axum，路由拆分在 `src/api` 的 core/admin/workspace/user_tools/a2a 模块。
+- 接口实现基于 Rust Axum，路由拆分在 `src/api`（core/chat/user_world/user_tools/user_agents/user_channels/admin/a2a/desktop 等模块）。
+- 当前产品核心能力采用“五维能力框架”：**形态协同 / 租户治理 / 智能体协作 / 工具生态 / 接口开放**；用户体系聊天（用户↔智能体 + 用户↔用户）是默认主线。
 - 运行与热重载环境建议使用 `Dockerfile` + `docker-compose-x86.yml`/`docker-compose-arm.yml`。
 - MCP 服务容器：`extra-mcp` 用于运行 `extra_mcp/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `extra_mcp/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`extra_mcp/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
@@ -25,7 +26,7 @@
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
-- User frontend default entry is `/app/chat`; world page entry is `/home` (actual route `/app/home`); external app detail route is `/app/external/:linkId` (demo route `/demo/external/:linkId`). External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001.
+- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
@@ -2662,7 +2663,7 @@
 
 > wunder-desktop 复用既有 `/wunder` 协议，不引入新业务协议版本；差异主要在 Tauri 桌面壳、运行时引导、免登录注入与本地路由约束。
 
-- 默认地址：`http://127.0.0.1:27653`（支持 `--host/--port` 覆盖，`--port 0` 自动分配）。
+- 默认地址：`http://127.0.0.1:18123`（支持 `--host/--port` 覆盖；端口冲突自动回退随机端口，`--port 0` 强制随机）。Electron 壳运行时默认分配随机可用端口。
 - API 基址：`http://<host>:<port>/wunder`
 - WS 基址：`ws://<host>:<port>/wunder/chat/ws`
 - 默认启动模式：Tauri GUI；`--bridge-only` 用于诊断与无窗口运行。
@@ -2773,7 +2774,7 @@
 
 - 使用 desktop 本地 token（启动时生成并持久化到 `WUNDER_TEMPD/config/desktop.settings.json`）。
 - token guard 仅作用于 `/wunder/**` 业务接口；静态页与引导接口可无 token 访问。
-- 桌面模式会在 `index.html` 注入 runtime，并写入 `localStorage.access_token`；用户侧无需登录流程即可进入 `/desktop/home`。
+- 桌面模式会在 `index.html` 注入 runtime；本地模式会写入本地 token 到 `localStorage.access_token`，可直接进入 `/desktop/home`。若已切到 remote auth 模式，则不会自动注入远端 token，需走常规注册/登录流程。
 - 远端模式下不再自动写入远端 token；用户登录/注册成功后由正常鉴权流程写入 `localStorage.access_token`，本地设置接口仍使用 `desktop_token` 独立鉴权。
 - 支持从以下位置携带 token：
   - `x-api-key`
@@ -2791,14 +2792,14 @@
 
 ### desktop 暴露路由范围（当前）
 
-- 包含：`auth/chat/chat_ws/core/core_ws/external_links/workspace/user_tools/user_agents/user_channels/mcp/temp_dir`
+- 包含：`auth/chat/chat_ws/core/core_ws/desktop/external_links/workspace/user_tools/user_agents/user_channels/user_world/user_world_ws/mcp/temp_dir`
 - 不包含：`admin/channel/gateway/cron/a2a` 等管理或多租户路由
 
 ### 前端托管约定
 
 - 默认托管目录：`frontend/dist`（支持 `--frontend-root` 自定义）。
 - `GET /`、`GET /index.html`、`GET /{*path}` 回退到前端 `index.html`。
-- 服务端在 `index.html` 注入 `window.__WUNDER_DESKTOP_RUNTIME__`，并写入 `localStorage.access_token`，确保用户端前端可直接进入会话。
+- 服务端在 `index.html` 注入 `window.__WUNDER_DESKTOP_RUNTIME__`；本地模式会同步本地 token，远端模式仅注入运行时信息并保留登录流程。
 
 ### 启动期目录与持久化
 

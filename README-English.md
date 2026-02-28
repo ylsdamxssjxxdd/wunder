@@ -122,7 +122,7 @@ cargo run --bin wunder-cli -- tool list
 
 ### Path C: `wunder-desktop` (local GUI)
 ```bash
-# Start desktop window (local bridge defaults to 127.0.0.1:18000)
+# Start desktop window (local bridge defaults to 127.0.0.1:18123; falls back to a random port if occupied)
 cargo run --features desktop --bin wunder-desktop
 
 # Start bridge with a random free port

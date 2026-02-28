@@ -17,14 +17,22 @@ linux:
     - target: AppImage
   category: Utility
   executableName: wunder-desktop
-  icon: build/icon.png
+  icon: build/icons
+  desktop:
+    entry:
+      Name: Wunder Desktop
+      StartupWMClass: wunder-desktop
 win:
-  icon: assets/icon.ico
+  icon: build/icon.ico
   target:
     - target: nsis
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  include: scripts/installer-custom.nsh
 publish:
   provider: github
   owner: ylsdamxssjxxdd

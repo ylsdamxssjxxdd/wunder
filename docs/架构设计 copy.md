@@ -58,21 +58,13 @@ Desktop 默认本地优先，但可通过 `remote_gateway` 切到远端协同：
 flowchart LR
   subgraph Access["访问层"]
     direction TB
-    ALock[" "]
     DesktopUI["Desktop App<br/>Messenger Shell"]
     WebUI["Web Frontend<br/>/app/home"]
     SDK["API / SDK Client"]
-    RG["remote_gateway 渠道<br/>(外部信息入口，可选)"]
-
-    ALock --> DesktopUI
-    ALock --> WebUI
-    ALock --> SDK
-    ALock --> RG
   end
 
   subgraph Runtime["运行层"]
     direction TB
-    RLock[" "]
 
     subgraph Edge["本地端（Edge）"]
       direction TB
@@ -92,46 +84,31 @@ flowchart LR
       API --> PG
       API --> VDB
     end
-
-    RLock --> Edge
-    RLock --> Cloud
   end
 
   subgraph External["外部能力层"]
     direction TB
-    ELock[" "]
     ExtHub["Capability Access"]
     LLM["LLM API"]
     MCP["MCP / A2A / Skills"]
-    ELock --> ExtHub
     ExtHub --> LLM
     ExtHub --> MCP
   end
 
-  ALock --- RLock
-  RLock --- ELock
-
   DesktopUI --> Bridge
   WebUI --> API
   SDK --> API
-  Bridge -. remote_gateway 渠道转发（可选） .-> RG
-  RG -.-> API
+  Bridge -. remote_gateway 渠道（可选） .-> API
   LocalRuntime --> ExtHub
   API --> ExtHub
 
-  linkStyle 0,1,2,3,9,10,11,14,15 stroke:transparent,fill:none;
-
-  classDef hidden fill:transparent,stroke:transparent,color:transparent;
   classDef client fill:#eef6ff,stroke:#5b8ff9,stroke-width:1.2px,color:#1d39c4;
-  classDef channel fill:#fff1f0,stroke:#ff7875,stroke-width:1.2px,color:#a8071a;
   classDef edge fill:#fff7e6,stroke:#fa8c16,stroke-width:1.2px,color:#873800;
   classDef cloud fill:#f9f0ff,stroke:#9254de,stroke-width:1.2px,color:#391085;
   classDef external fill:#f6ffed,stroke:#73d13d,stroke-width:1.2px,color:#135200;
   classDef storage fill:#f5f5f5,stroke:#8c8c8c,stroke-width:1.2px,color:#262626;
 
-  class ALock,RLock,ELock hidden;
   class DesktopUI,WebUI,SDK client;
-  class RG channel;
   class Bridge,LocalRuntime edge;
   class API,SBX cloud;
   class ExtHub,LLM,MCP external;

@@ -6,7 +6,13 @@
     @mousedown="handleDragRegionMouseDown"
   >
     <div class="desktop-window-title" data-tauri-drag-region>
-      <img class="desktop-window-logo" src="/favicon.svg" alt="" aria-hidden="true" />
+      <img
+        class="desktop-window-logo"
+        :src="logoSrc"
+        alt=""
+        aria-hidden="true"
+        @error="handleLogoError"
+      />
       <span class="desktop-window-title-text">{{ titleText }}</span>
     </div>
     <div class="desktop-window-controls" data-tauri-drag-region="false">
@@ -61,6 +67,7 @@ type DesktopWindowBridge = {
 const { t } = useI18n();
 const windowMaximized = ref(false);
 const titleText = 'Wunder Desktop';
+const logoSrc = ref('/desktop-icon.png');
 
 const getDesktopBridge = (): DesktopWindowBridge | null => {
   if (typeof window === 'undefined') return null;
@@ -124,6 +131,13 @@ const handleDragRegionMouseDown = async (event: MouseEvent) => {
   } catch {
     // Ignore non-critical drag failures.
   }
+};
+
+const handleLogoError = () => {
+  if (logoSrc.value === '/favicon.svg') {
+    return;
+  }
+  logoSrc.value = '/favicon.svg';
 };
 
 const handleWindowResize = () => {

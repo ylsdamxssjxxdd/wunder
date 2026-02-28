@@ -32,7 +32,7 @@
             v-for="item in sessionHistory"
             :key="item.id"
             class="messenger-timeline-item"
-            :class="{ active: activeSessionId === item.id }"
+            :class="{ active: activeSessionId === item.id, 'is-main': item.isMain }"
             role="button"
             tabindex="0"
             @click="$emit('restore-session', item.id)"
@@ -41,7 +41,7 @@
           >
             <div class="messenger-timeline-title-row">
               <div class="messenger-timeline-title">{{ item.title }}</div>
-              <div class="messenger-timeline-actions">
+              <div class="messenger-timeline-actions" :class="{ 'messenger-timeline-actions--main': item.isMain }">
                 <button
                   class="messenger-timeline-main-btn"
                   :class="{ active: item.isMain }"

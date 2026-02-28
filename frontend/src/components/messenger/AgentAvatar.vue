@@ -50,9 +50,9 @@ const statusIconClass = computed(() => {
   --agent-avatar-bg: var(--ui-accent-soft);
   --agent-avatar-border: rgba(var(--ui-accent-rgb), 0.26);
   --agent-avatar-color: var(--ui-accent-deep);
-  --agent-avatar-status-bg: rgba(var(--ui-accent-rgb), 0.2);
-  --agent-avatar-status-color: var(--ui-accent-deep);
-  --agent-avatar-status-ring: rgba(var(--ui-accent-rgb), 0.28);
+  --agent-avatar-status-bg: #f3f4f6;
+  --agent-avatar-status-color: #6b7280;
+  --agent-avatar-status-ring: rgba(107, 114, 128, 0.28);
   width: var(--avatar-size);
   height: var(--avatar-size);
   border-radius: 50%;
@@ -108,12 +108,20 @@ const statusIconClass = computed(() => {
     0 2px 5px rgba(15, 23, 42, 0.22),
     0 0 0 1px var(--agent-avatar-status-ring);
   z-index: 2;
+  mix-blend-mode: normal;
 }
 
 .messenger-agent-avatar-status i {
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
+  color: inherit !important;
+}
+
+.messenger-agent-avatar.state-idle {
+  --agent-avatar-status-bg: #f3f4f6;
+  --agent-avatar-status-color: #6b7280;
+  --agent-avatar-status-ring: rgba(107, 114, 128, 0.28);
 }
 
 .messenger-agent-avatar.state-running {

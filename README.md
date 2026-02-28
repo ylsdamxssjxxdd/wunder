@@ -122,7 +122,7 @@ cargo run --bin wunder-cli -- tool list
 
 ### 路径 C：wunder-desktop（本地图形界面）
 ```bash
-# 启动桌面窗口（默认本地桥接 127.0.0.1:18000）
+# 启动桌面窗口（默认本地桥接 127.0.0.1:18123；端口占用会自动回退随机端口）
 cargo run --features desktop --bin wunder-desktop
 
 # 使用随机可用端口启动桥接
