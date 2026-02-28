@@ -14,21 +14,44 @@
 - 已安装 Docker（推荐 Docker Desktop + Compose v2）
 - 在仓库根目录执行命令（`wunder/`）
 
-## 2. 构建并启动编译容器
+## 2. 启动编译容器（直接使用现有镜像）
 
 ### x86（amd64）
 
 ```bash
-docker compose -f docker-extra/docker-compose-ubuntu20.yml --profile x86 up -d --build
+docker compose -f docker-extra/docker-compose-ubuntu20.yml --profile x86 up -d --no-build
 ```
 
 ### arm（arm64）
 
 ```bash
-docker compose -f docker-extra/docker-compose-ubuntu20.yml --profile arm up -d --build
+docker compose -f docker-extra/docker-compose-ubuntu20.yml --profile arm up -d --no-build
 ```
 
 ## 3. 进入容器执行编译与 Desktop 打包（Electron）
+
+### 目录优先级（arm / Ubuntu 20.04）
+
+arm 目标默认优先使用以下缓存与产物目录（推荐）：
+
+- `CARGO_HOME=/app/.cargo/arm64-20`
+- `CARGO_TARGET_DIR=/app/target/arm64-20`
+- 嵌入式 Python 目录：`/app/target/arm64-20/.build/python`
+
+### 一键打包（推荐）
+
+在仓库根目录执行：
+
+```bash
+bash docker-extra/scripts/build_arm64_desktop_with_python.sh
+```
+
+该脚本会自动：
+
+- 直接复用 `wunder-arm-20:latest`（`--no-build`）
+- 使用 `arm64-20` 目录作为 Cargo 与 target 优先路径
+- 生成 Electron arm64 AppImage
+- 基于 `target/arm64-20/.build/python` 产出附带 Python 的 AppImage
 
 ### x86（amd64）
 
@@ -47,13 +70,27 @@ npm run build:linux:x64
 
 ```bash
 docker compose -f docker-extra/docker-compose-ubuntu20.yml exec wunder-build-arm bash
+export PATH=/usr/local/cargo/bin:$PATH
+export CARGO_HOME=/app/.cargo/arm64-20
+export CARGO_TARGET_DIR=/app/target/arm64-20
 cargo build --release --bin wunder-server --bin wunder-cli
 
 # build Electron bridge + AppImage（requires frontend/dist）
 cargo build --release --bin wunder-desktop-bridge
 cd wunder-desktop-electron
 npm install
-npm run build:linux:arm64
+WUNDER_BRIDGE_BIN=/app/target/arm64-20/release/wunder-desktop-bridge \
+  npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
+
+# package Electron AppImage with embedded Python (uses /app/target/arm64-20/.build/python)
+cp "/app/target/arm64-20/dist/Wunder Desktop-0.1.0-arm64.AppImage" \
+  /app/target/arm64-20/dist/wunder-desktop-arm64.AppImage
+ARCH=arm64 \
+APPIMAGE_PATH=/app/target/arm64-20/dist/wunder-desktop-arm64.AppImage \
+BUILD_ROOT=/app/target/arm64-20/.build/python \
+APPIMAGE_WORK=/app/target/arm64-20/.build/python/appimage \
+OUTPUT_DIR=/app/target/arm64-20/dist \
+  bash docker-extra/scripts/package_appimage_with_python.sh
 ```
 
 > NOTE: Linux containers can only produce Linux bundles (AppImage, etc.); Windows MSI must be built on Windows.
@@ -61,14 +98,15 @@ npm run build:linux:arm64
 ## 4. 产物位置
 
 - x86：`target/x86/release/`
-- arm：`target/arm64/release/`
+- arm（优先）：`target/arm64-20/release/` + `target/arm64-20/dist/`
 
 主要产物：
 
 - `wunder-server`
 - `wunder-cli`
 - `wunder-desktop-bridge`
-- Electron AppImage: `wunder-desktop-electron/dist/*.AppImage`
+- Electron AppImage: `target/arm64-20/dist/wunder-desktop-arm64.AppImage`
+- Electron AppImage（附带 Python）: `target/arm64-20/dist/wunder-desktop-arm64-python.AppImage`
 
 ## 5. 缓存与目录复用说明
 
@@ -76,7 +114,7 @@ compose 已对齐项目主编排的缓存习惯：
 
 - 构建缓存保持写入仓库目录（bind mount），便于本地清理与管理：
   - x86：`/app/.cargo/x86`、`/app/target/x86`
-  - arm：`/app/.cargo/arm64`、`/app/target/arm64`
+  - arm（优先）：`/app/.cargo/arm64-20`、`/app/target/arm64-20`
 - 会挂载一个命名卷 `wunder_workspaces` 到 `/workspaces`（仅工作区/临时目录）；其余运行态配置仍使用仓库本地 `./data`。
 
 这样能显著减少重复下载依赖和重复编译。

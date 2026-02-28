@@ -326,6 +326,21 @@
   font-weight: 600;
 }
 
+.user-world-contact-presence {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  color: #7c8596;
+  background: rgba(148, 163, 184, 0.2);
+  flex-shrink: 0;
+}
+
+.user-world-contact-presence.online {
+  color: #13804d;
+  background: rgba(34, 197, 94, 0.18);
+}
+
 .user-world-contact-time {
   color: var(--uw-muted);
   font-size: 12px;

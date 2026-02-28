@@ -60,6 +60,8 @@ type UserWorldContact = {
   user_id: string;
   username: string;
   status?: string;
+  online?: boolean;
+  last_seen_at?: number | null;
   unit_id?: string | null;
   conversation_id?: string | null;
   last_message_preview?: string | null;
@@ -94,6 +96,16 @@ const parseEventPayload = (dataText: string): Record<string, unknown> => {
 const toNumber = (value: unknown): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const toBoolean = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'online';
+  }
+  return false;
 };
 
 const resolveHttpStatus = (error: unknown): number => {
@@ -348,17 +360,23 @@ export const useUserWorldStore = defineStore('user-world', {
         const items = Array.isArray(data.items) ? (data.items as UserWorldContact[]) : [];
         this.contacts = items.map((item) => {
           const conversationId = normalizeConversationId(item.conversation_id);
+          const normalized = {
+            ...item,
+            unread_count: toNumber(item.unread_count),
+            online: toBoolean(item.online),
+            last_seen_at:
+              item.last_seen_at === null || item.last_seen_at === undefined
+                ? null
+                : toNumber(item.last_seen_at)
+          };
           if (conversationId && this.isConversationDismissed(conversationId)) {
             return {
-              ...item,
+              ...normalized,
               conversation_id: null,
               unread_count: 0
             };
           }
-          return {
-            ...item,
-            unread_count: toNumber(item.unread_count)
-          };
+          return normalized;
         });
         this.permissionDenied = false;
         this.permissionDeniedKey = '';

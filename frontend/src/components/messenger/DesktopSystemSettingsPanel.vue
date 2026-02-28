@@ -1,5 +1,5 @@
 <template>
-  <section class="messenger-settings-card desktop-system-settings-panel" v-loading="loading">
+  <section class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm" v-loading="loading">
     <div class="desktop-system-settings-head">
       <div>
         <div class="messenger-settings-title">{{ t('desktop.system.llm') }}</div>
@@ -15,55 +15,65 @@
       </div>
     </div>
 
-    <div class="desktop-system-settings-form-grid">
-      <label class="desktop-system-settings-field">
-        <span>{{ t('desktop.system.language') }}</span>
-        <el-select v-model="language" class="desktop-system-settings-input">
-          <el-option
-            v-for="item in supportedLanguages"
-            :key="item"
-            :label="getLanguageLabel(item)"
-            :value="item"
-          />
-        </el-select>
-      </label>
+    <div class="desktop-system-settings-section">
+      <div class="desktop-system-settings-form-grid">
+        <label class="desktop-system-settings-field">
+          <span class="desktop-system-settings-field-label">{{ t('desktop.system.language') }}</span>
+          <el-select v-model="language" class="desktop-system-settings-input">
+            <el-option
+              v-for="item in supportedLanguages"
+              :key="item"
+              :label="getLanguageLabel(item)"
+              :value="item"
+            />
+          </el-select>
+        </label>
 
-      <label class="desktop-system-settings-field">
-        <span>{{ t('desktop.system.defaultModel') }}</span>
-        <el-select v-model="defaultModel" class="desktop-system-settings-input" filterable allow-create>
-          <el-option
-            v-for="item in modelRows"
-            :key="item.key || item.uid"
-            :label="item.key || t('desktop.system.modelUnnamed')"
-            :value="item.key"
-          />
-        </el-select>
-      </label>
+        <label class="desktop-system-settings-field">
+          <span class="desktop-system-settings-field-label">{{ t('desktop.system.defaultModel') }}</span>
+          <el-select v-model="defaultModel" class="desktop-system-settings-input" filterable allow-create>
+            <el-option
+              v-for="item in modelRows"
+              :key="item.key || item.uid"
+              :label="item.key || t('desktop.system.modelUnnamed')"
+              :value="item.key"
+            />
+          </el-select>
+        </label>
+      </div>
     </div>
 
-    <div class="desktop-system-settings-model-list">
-      <div v-for="row in modelRows" :key="row.uid" class="desktop-system-settings-model-item">
-        <div class="desktop-system-settings-model-grid">
-          <label class="desktop-system-settings-field">
-            <span>{{ t('desktop.system.modelKey') }}</span>
-            <el-input v-model="row.key" />
-          </label>
-          <label class="desktop-system-settings-field">
-            <span>{{ t('desktop.system.baseUrl') }}</span>
-            <el-input v-model="row.base_url" :placeholder="t('desktop.system.baseUrlPlaceholder')" />
-          </label>
-          <label class="desktop-system-settings-field">
-            <span>{{ t('desktop.system.apiKey') }}</span>
-            <el-input v-model="row.api_key" show-password />
-          </label>
-          <label class="desktop-system-settings-field">
-            <span>{{ t('desktop.system.modelName') }}</span>
-            <el-input v-model="row.model" :placeholder="t('desktop.system.modelNamePlaceholder')" />
-          </label>
+    <div class="desktop-system-settings-section">
+      <div class="desktop-system-settings-model-list-title">{{ t('desktop.system.modelsTitle') }}</div>
+      <div class="desktop-system-settings-model-list">
+        <div v-for="row in modelRows" :key="row.uid" class="desktop-system-settings-model-item">
+          <div class="desktop-system-settings-model-item-head">
+            <span class="desktop-system-settings-model-item-name">
+              {{ row.key || t('desktop.system.modelUnnamed') }}
+            </span>
+            <el-button link type="danger" @click="removeModel(row)">
+              {{ t('desktop.common.remove') }}
+            </el-button>
+          </div>
+          <div class="desktop-system-settings-model-grid">
+            <label class="desktop-system-settings-field">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelKey') }}</span>
+              <el-input v-model="row.key" />
+            </label>
+            <label class="desktop-system-settings-field">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.baseUrl') }}</span>
+              <el-input v-model="row.base_url" :placeholder="t('desktop.system.baseUrlPlaceholder')" />
+            </label>
+            <label class="desktop-system-settings-field">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.apiKey') }}</span>
+              <el-input v-model="row.api_key" show-password />
+            </label>
+            <label class="desktop-system-settings-field">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelName') }}</span>
+              <el-input v-model="row.model" :placeholder="t('desktop.system.modelNamePlaceholder')" />
+            </label>
+          </div>
         </div>
-        <el-button link type="danger" @click="removeModel(row)">
-          {{ t('desktop.common.remove') }}
-        </el-button>
       </div>
     </div>
   </section>
@@ -83,21 +93,23 @@
       </span>
     </div>
 
-    <label class="desktop-system-settings-field">
-      <span>{{ t('desktop.system.remote.serverBaseUrl') }}</span>
-      <el-input
-        v-model="remoteServerBaseUrl"
-        :placeholder="t('desktop.system.remote.serverPlaceholder')"
-      />
-    </label>
+    <div class="desktop-system-settings-section">
+      <label class="desktop-system-settings-field">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.remote.serverBaseUrl') }}</span>
+        <el-input
+          v-model="remoteServerBaseUrl"
+          :placeholder="t('desktop.system.remote.serverPlaceholder')"
+        />
+      </label>
 
-    <div class="desktop-system-settings-actions">
-      <el-button type="primary" :loading="connectingRemote" @click="connectRemoteServer">
-        {{ t('desktop.system.remote.connect') }}
-      </el-button>
-      <el-button :disabled="!remoteConnected || connectingRemote" @click="disconnectRemoteServer">
-        {{ t('desktop.system.remote.disconnect') }}
-      </el-button>
+      <div class="desktop-system-settings-actions">
+        <el-button type="primary" :loading="connectingRemote" @click="connectRemoteServer">
+          {{ t('desktop.system.remote.connect') }}
+        </el-button>
+        <el-button :disabled="!remoteConnected || connectingRemote" @click="disconnectRemoteServer">
+          {{ t('desktop.system.remote.disconnect') }}
+        </el-button>
+      </div>
     </div>
   </section>
 </template>
@@ -372,7 +384,7 @@ onMounted(() => {
 <style scoped>
 .desktop-system-settings-panel {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
 
 .desktop-system-settings-head {
@@ -383,11 +395,25 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.desktop-system-settings-section {
+  border: 1px solid var(--portal-border);
+  border-radius: 12px;
+  background: var(--portal-panel);
+  padding: 12px;
+  display: grid;
+  gap: 12px;
+}
+
 .desktop-system-settings-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.desktop-system-settings-field-label {
+  color: var(--portal-text);
+  font-size: 12px;
 }
 
 .desktop-system-settings-form-grid {
@@ -407,6 +433,12 @@ onMounted(() => {
   width: 100%;
 }
 
+.desktop-system-settings-model-list-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
 .desktop-system-settings-model-list {
   display: grid;
   gap: 10px;
@@ -415,10 +447,26 @@ onMounted(() => {
 .desktop-system-settings-model-item {
   border: 1px solid var(--portal-border);
   border-radius: 10px;
-  background: var(--portal-panel);
-  padding: 10px;
+  background: var(--portal-surface, rgba(255, 255, 255, 0.9));
+  padding: 11px;
   display: grid;
-  gap: 8px;
+  gap: 10px;
+}
+
+.desktop-system-settings-model-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.desktop-system-settings-model-item-name {
+  font-size: 12px;
+  color: var(--portal-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .desktop-system-settings-model-grid {
@@ -440,6 +488,18 @@ onMounted(() => {
 .desktop-system-settings-panel :deep(.el-select__wrapper) {
   background: var(--portal-surface, rgba(255, 255, 255, 0.86));
   box-shadow: 0 0 0 1px var(--portal-border) inset;
+  border-radius: 10px;
+  transition: box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.desktop-system-settings-panel :deep(.el-input__wrapper:hover),
+.desktop-system-settings-panel :deep(.el-select__wrapper:hover) {
+  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.35) inset;
+}
+
+.desktop-system-settings-panel :deep(.el-input__wrapper.is-focus),
+.desktop-system-settings-panel :deep(.el-select__wrapper.is-focused) {
+  box-shadow: 0 0 0 1.5px rgba(var(--ui-accent-rgb), 0.58) inset;
 }
 
 @media (max-width: 900px) {

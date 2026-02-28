@@ -147,10 +147,22 @@ async fn list_contacts(
     let resolved = resolve_user(&state, &headers, None).await?;
     let (offset, limit) = normalize_pagination(query.offset, query.limit);
     let keyword = query.keyword.as_deref();
-    let (items, total) = state
+    let (mut items, total) = state
         .user_world
         .list_contacts(&resolved.user.user_id, keyword, offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let snapshots = state
+        .user_presence
+        .snapshot_many(items.iter().map(|item| item.user_id.as_str()), now_ts());
+    for item in &mut items {
+        if let Some(snapshot) = snapshots.get(item.user_id.as_str()) {
+            item.online = snapshot.online;
+            item.last_seen_at = Some(snapshot.last_seen_at);
+        } else {
+            item.online = false;
+            item.last_seen_at = None;
+        }
+    }
     Ok(Json(json!({
         "data": {
             "items": items,

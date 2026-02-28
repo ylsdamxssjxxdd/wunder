@@ -3870,6 +3870,7 @@ async fn admin_user_accounts_list(
         .list_users(keyword, scoped_unit_ids.as_deref(), offset, limit)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let today = UserStore::today_string();
+    let presence_now = now_ts();
     let active_sessions = state.monitor.list_sessions(true);
     let mut active_map: HashMap<String, i64> = HashMap::new();
     for session in active_sessions {
@@ -3885,6 +3886,9 @@ async fn admin_user_accounts_list(
         *entry += 1;
     }
     let unit_map = build_unit_map(&units);
+    let presence_map = state
+        .user_presence
+        .snapshot_many(users.iter().map(|user| user.user_id.as_str()), presence_now);
     let items = users
         .into_iter()
         .map(|user| {
@@ -3894,6 +3898,10 @@ async fn admin_user_accounts_list(
                 .and_then(|unit_id| unit_map.get(unit_id));
             let profile = UserStore::to_profile_with_unit(&user, unit);
             let active_count = active_map.get(&profile.id).copied().unwrap_or(0);
+            let (presence_online, presence_last_seen) = presence_map
+                .get(profile.id.as_str())
+                .map(|snapshot| (snapshot.online, Some(snapshot.last_seen_at)))
+                .unwrap_or((false, None));
             let quota_total = user.daily_quota.max(0);
             let quota_used = if user.daily_quota_date.as_deref() == Some(today.as_str()) {
                 user.daily_quota_used.max(0)
@@ -3904,7 +3912,11 @@ async fn admin_user_accounts_list(
             let mut value = serde_json::to_value(profile).unwrap_or_else(|_| json!({}));
             if let Value::Object(ref mut map) = value {
                 map.insert("active_sessions".to_string(), json!(active_count));
-                map.insert("online".to_string(), json!(active_count > 0));
+                map.insert(
+                    "online".to_string(),
+                    json!(presence_online || active_count > 0),
+                );
+                map.insert("last_seen_at".to_string(), json!(presence_last_seen));
                 map.insert("daily_quota".to_string(), json!(quota_total));
                 map.insert("daily_quota_used".to_string(), json!(quota_used));
                 map.insert("daily_quota_remaining".to_string(), json!(quota_remaining));

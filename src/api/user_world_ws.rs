@@ -97,6 +97,8 @@ async fn handle_ws(
         }
     });
 
+    let connected_at = Utc::now().timestamp_millis() as f64 / 1000.0;
+    state.user_presence.connect(&user_id, connected_at);
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let ready_payload = WsReadyPayload {
         connection_id,
@@ -355,6 +357,9 @@ async fn handle_ws(
             task.cancel.cancel();
         }
     }
+    state
+        .user_presence
+        .disconnect(&user_id, Utc::now().timestamp_millis() as f64 / 1000.0);
     drop(out_tx);
     let _ = writer.await;
 }

@@ -103,6 +103,12 @@
                       <span class="user-world-contact-name" :title="row.contact.username || row.contact.user_id">
                         {{ row.contact.username || row.contact.user_id }}
                       </span>
+                      <span
+                        class="user-world-contact-presence"
+                        :class="{ online: isContactOnline(row.contact) }"
+                      >
+                        {{ formatContactPresence(row.contact) }}
+                      </span>
                       <span class="user-world-contact-time">{{ formatTime(row.contact.last_message_at) }}</span>
                     </div>
                     <div class="user-world-contact-row">
@@ -376,6 +382,8 @@ type SidebarTab = 'chat' | 'users' | 'groups' | 'container';
 type ContactItem = {
   user_id: string;
   username: string;
+  online?: boolean;
+  last_seen_at?: number | null;
   unit_id?: string | null;
   conversation_id?: string | null;
   last_message_preview?: string | null;
@@ -881,6 +889,7 @@ const buildMentionSuggestion = (entry: { path?: string; type?: string; name?: st
 
 let mentionSearchTimer: number | null = null;
 let mentionSearchToken = 0;
+let contactPresenceTimer: number | null = null;
 
 const clearMentionSuggestions = () => {
   mentionSuggestions.value = [];
@@ -1149,6 +1158,21 @@ const resolveUnread = (contact: ContactItem): number => {
   const fallback = Number(contact.unread_count || 0);
   return Number.isFinite(fallback) ? fallback : 0;
 };
+
+const resolveOnlineFlag = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'online';
+  }
+  return false;
+};
+
+const isContactOnline = (contact: ContactItem): boolean => resolveOnlineFlag(contact?.online);
+
+const formatContactPresence = (contact: ContactItem): string =>
+  isContactOnline(contact) ? t('presence.online') : t('presence.offline');
 
 const formatTime = (value: unknown): string => {
   const timestamp = Number(value || 0);
@@ -1734,6 +1758,9 @@ const loadOrgUnits = async () => {
 onMounted(async () => {
   try {
     await Promise.all([loadOrgUnits(), userWorldStore.bootstrap()]);
+    contactPresenceTimer = window.setInterval(() => {
+      userWorldStore.refreshContacts().catch(() => {});
+    }, 12000);
     await scrollToBottom();
     scheduleUserWorldResourceHydration();
     stopUserWorldWorkspaceRefresh = onWorkspaceRefresh(handleWorkspaceRefresh);
@@ -1755,6 +1782,10 @@ onBeforeUnmount(() => {
   if (mentionSearchTimer) {
     window.clearTimeout(mentionSearchTimer);
     mentionSearchTimer = null;
+  }
+  if (contactPresenceTimer) {
+    window.clearInterval(contactPresenceTimer);
+    contactPresenceTimer = null;
   }
 });
 

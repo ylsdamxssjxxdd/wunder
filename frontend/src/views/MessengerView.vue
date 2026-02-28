@@ -218,12 +218,18 @@
               @click="selectContact(contact)"
             >
               <div class="messenger-list-avatar">{{ avatarLabel(contact.username || contact.user_id) }}</div>
-              <div class="messenger-list-main">
-                <div class="messenger-list-row">
-                  <span class="messenger-list-name">{{ contact.username || contact.user_id }}</span>
-                  <span class="messenger-list-time">{{ formatTime(contact.last_message_at) }}</span>
-                </div>
-                <div class="messenger-list-row">
+                <div class="messenger-list-main">
+                  <div class="messenger-list-row">
+                    <span class="messenger-list-name">{{ contact.username || contact.user_id }}</span>
+                    <span
+                      class="messenger-presence-tag"
+                      :class="{ online: isContactOnline(contact) }"
+                    >
+                      {{ formatContactPresence(contact) }}
+                    </span>
+                    <span class="messenger-list-time">{{ formatTime(contact.last_message_at) }}</span>
+                  </div>
+                  <div class="messenger-list-row">
                   <span class="messenger-list-preview">
                     {{ contact.last_message_preview || t('messenger.preview.empty') }}
                   </span>
@@ -769,7 +775,12 @@
                   </div>
                   <div class="messenger-entity-field">
                     <span class="messenger-entity-label">{{ t('messenger.entity.status') }}</span>
-                    <span class="messenger-entity-value">{{ selectedContact.status || '-' }}</span>
+                    <span class="messenger-entity-value">
+                      {{ formatContactPresence(selectedContact) }}
+                      <template v-if="selectedContact.status">
+                        · {{ selectedContact.status }}
+                      </template>
+                    </span>
                   </div>
                   <div class="messenger-entity-field">
                     <span class="messenger-entity-label">{{ t('messenger.entity.unitId') }}</span>
@@ -4031,6 +4042,24 @@ const formatTime = (value: unknown): string => {
   return String(date.getFullYear());
 };
 
+const resolveOnlineFlag = (value: unknown): boolean => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) && value > 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'online';
+  }
+  return false;
+};
+
+const isContactOnline = (contact: unknown): boolean => {
+  const source = (contact || {}) as Record<string, unknown>;
+  return resolveOnlineFlag(source.online);
+};
+
+const formatContactPresence = (contact: unknown): string =>
+  isContactOnline(contact) ? t('presence.online') : t('presence.offline');
+
 const isAdminUser = (user: Record<string, unknown> | null): boolean =>
   Array.isArray(user?.roles) &&
   user.roles.some((role) => role === 'admin' || role === 'super_admin');
@@ -6496,6 +6525,9 @@ onMounted(async () => {
     loadRunningAgents();
     if (!cronPermissionDenied.value) {
       loadCronAgentIds();
+    }
+    if (!userWorldPermissionDenied.value) {
+      userWorldStore.refreshContacts().catch(() => {});
     }
   }, 12000);
 });

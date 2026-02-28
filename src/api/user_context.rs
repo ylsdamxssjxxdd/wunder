@@ -51,6 +51,7 @@ pub async fn resolve_user(
     if let Some(requested) = requested {
         if let Some(user) = token_user.as_ref() {
             if user.user_id == requested {
+                state.user_presence.touch(&user.user_id, now_ts());
                 return Ok(ResolvedUser { user: user.clone() });
             }
         }
@@ -62,7 +63,11 @@ pub async fn resolve_user(
                     .await
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            let user = user.unwrap_or_else(|| build_virtual_user(requested));
+            if let Some(user) = user {
+                state.user_presence.touch(&user.user_id, now_ts());
+                return Ok(ResolvedUser { user });
+            }
+            let user = build_virtual_user(requested);
             return Ok(ResolvedUser { user });
         }
         return Err(error_response(
@@ -72,6 +77,7 @@ pub async fn resolve_user(
     }
 
     if let Some(user) = token_user {
+        state.user_presence.touch(&user.user_id, now_ts());
         return Ok(ResolvedUser { user });
     }
 

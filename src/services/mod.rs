@@ -16,6 +16,7 @@ pub mod skills;
 pub mod swarm;
 pub mod tools;
 pub mod user_access;
+pub mod user_presence;
 pub mod user_store;
 pub mod user_tools;
 pub mod user_world;

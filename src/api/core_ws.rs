@@ -128,6 +128,9 @@ async fn handle_ws(
         }
     });
 
+    state
+        .user_presence
+        .connect(&user.user_id, Utc::now().timestamp_millis() as f64 / 1000.0);
     log_ws_open(WS_ENDPOINT, &connection_id, &user.user_id, &conn_meta);
     let now_ts = Utc::now().timestamp_millis() as f64 / 1000.0;
     let protocol = ws_protocol_info();
@@ -698,6 +701,9 @@ async fn handle_ws(
 
     drop(out_tx);
     let _ = writer.await;
+    state
+        .user_presence
+        .disconnect(&user.user_id, Utc::now().timestamp_millis() as f64 / 1000.0);
     if !close_logged {
         log_ws_close(
             WS_ENDPOINT,

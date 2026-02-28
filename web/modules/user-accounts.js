@@ -11,6 +11,8 @@ const DEFAULT_USER_ACCOUNT_PAGE_SIZE = 50;
 const DEFAULT_TEST_USER_PASSWORD = "Test@123456";
 const DEFAULT_TEST_USER_PER_UNIT = 1;
 const MAX_TEST_USERS_PER_UNIT = 200;
+const USER_ACCOUNT_ONLINE_REFRESH_MS = 12000;
+let userAccountOnlineRefreshTimer = null;
 
 const ensureUserAccountsState = () => {
   if (!state.userAccounts) {
@@ -218,6 +220,9 @@ const formatQuotaMeta = (user) => {
   return t("userAccounts.modal.settings.quota.meta", { used, remaining, total });
 };
 
+const formatOnlineStatus = (user) =>
+  user?.online ? t("userAccounts.status.online") : t("userAccounts.status.offline");
+
 const resolveUnitOptions = () =>
   getOrgUnitOptions({
     includeRoot: true,
@@ -312,6 +317,10 @@ const renderUserAccountRows = () => {
     });
     statusCell.appendChild(statusSelect);
 
+    const onlineCell = document.createElement("td");
+    onlineCell.textContent = formatOnlineStatus(user);
+    onlineCell.className = user.online ? "status-online" : "status-offline";
+
     const quotaCell = document.createElement("td");
     quotaCell.textContent = formatQuotaValue(user);
 
@@ -336,6 +345,7 @@ const renderUserAccountRows = () => {
     row.appendChild(unitCell);
     row.appendChild(unitLevelCell);
     row.appendChild(statusCell);
+    row.appendChild(onlineCell);
     row.appendChild(quotaCell);
     row.appendChild(loginCell);
     row.appendChild(actionCell);
@@ -1017,6 +1027,15 @@ export const initUserAccountsPanel = () => {
     state.userAccounts.pagination.page = state.userAccounts.pagination.page + 1;
     await loadUserAccounts();
   });
+  if (userAccountOnlineRefreshTimer) {
+    clearInterval(userAccountOnlineRefreshTimer);
+  }
+  userAccountOnlineRefreshTimer = setInterval(() => {
+    if (state.runtime?.activePanel !== "userAccounts") {
+      return;
+    }
+    loadUserAccounts().catch(() => {});
+  }, USER_ACCOUNT_ONLINE_REFRESH_MS);
   setCleanupBusy(false);
 };
 

@@ -31,6 +31,13 @@
             </el-select>
           </template>
         </el-table-column>
+        <el-table-column prop="online" :label="t('admin.users.online')" width="120">
+          <template #default="scope">
+            <el-tag size="small" :type="scope.row.online ? 'success' : 'info'">
+              {{ scope.row.online ? t('presence.online') : t('presence.offline') }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="roles" :label="t('admin.users.roles')" />
         <el-table-column :label="t('admin.users.resetPassword')" width="240">
           <template #default="scope">
@@ -133,7 +140,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { useI18n } from '@/i18n';
@@ -147,6 +154,7 @@ const dialogVisible = ref(false);
 const toolDialogVisible = ref(false);
 const toolDialogLoading = ref(false);
 const selectedUser = ref(null);
+let onlineRefreshTimer: number | null = null;
 // 重置密码输入与加载状态缓存
 const resetPasswords = reactive({});
 const resetLoading = reactive({});
@@ -328,5 +336,17 @@ watch(
   }
 );
 
-onMounted(loadUsers);
+onMounted(async () => {
+  await loadUsers();
+  onlineRefreshTimer = window.setInterval(() => {
+    loadUsers().catch(() => {});
+  }, 12000);
+});
+
+onBeforeUnmount(() => {
+  if (onlineRefreshTimer) {
+    window.clearInterval(onlineRefreshTimer);
+    onlineRefreshTimer = null;
+  }
+});
 </script>

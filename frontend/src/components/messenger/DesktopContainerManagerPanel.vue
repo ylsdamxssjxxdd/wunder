@@ -1,21 +1,18 @@
 <template>
   <section class="messenger-entity-panel desktop-container-manager-panel" v-loading="loading">
-    <div class="messenger-entity-title">{{ t('desktop.containers.title') }}</div>
-    <div class="messenger-entity-meta">{{ t('desktop.containers.subtitle') }}</div>
-
-    <label class="desktop-container-manager-field">
-      <span>{{ t('desktop.containers.defaultWorkspace') }}</span>
-      <el-input v-model="workspaceRoot" :placeholder="t('desktop.containers.pathPlaceholder')" />
-      <span class="desktop-container-manager-hint">{{ t('desktop.containers.defaultHint') }}</span>
-    </label>
-
-    <div class="desktop-container-manager-toolbar">
-      <el-button type="primary" plain size="small" @click="addContainer">
-        {{ t('desktop.containers.add') }}
-      </el-button>
-      <el-button type="primary" size="small" :loading="saving" @click="saveSettings">
-        {{ t('desktop.common.save') }}
-      </el-button>
+    <div class="desktop-container-manager-head">
+      <div>
+        <div class="messenger-entity-title">{{ t('desktop.containers.title') }}</div>
+        <div class="messenger-entity-meta">{{ t('desktop.containers.subtitle') }}</div>
+      </div>
+      <div class="desktop-container-manager-toolbar">
+        <el-button type="primary" plain size="small" @click="addContainer">
+          {{ t('desktop.containers.add') }}
+        </el-button>
+        <el-button type="primary" size="small" :loading="saving" @click="saveSettings">
+          {{ t('desktop.common.save') }}
+        </el-button>
+      </div>
     </div>
 
     <div class="desktop-container-manager-list">
@@ -24,8 +21,30 @@
         :key="`desktop-container-${row.container_id}`"
         class="desktop-container-manager-item"
       >
-        <div class="desktop-container-manager-item-head">
-          <span>{{ t('desktop.containers.id') }} #{{ row.container_id }}</span>
+        <div class="desktop-container-manager-item-main">
+          <div class="desktop-container-manager-item-head">
+            <span>{{ t('desktop.containers.id') }} #{{ row.container_id }}</span>
+            <span v-if="row.container_id === 1" class="desktop-container-manager-fixed">
+              {{ t('desktop.containers.fixed') }}
+            </span>
+          </div>
+          <div class="desktop-container-manager-item-locations">
+            <div class="desktop-container-manager-item-location">
+              <span class="desktop-container-manager-item-label">{{ t('messenger.files.localLocation') }}</span>
+              <span class="desktop-container-manager-item-value" :title="row.root || '-'">{{ row.root || '-' }}</span>
+            </div>
+            <div class="desktop-container-manager-item-location">
+              <span class="desktop-container-manager-item-label">{{ t('messenger.files.cloudLocation') }}</span>
+              <span class="desktop-container-manager-item-value" :title="row.cloud_workspace_id || '-'">
+                {{ row.cloud_workspace_id || '-' }}
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="desktop-container-manager-item-actions">
+          <el-button size="small" @click="openContainerEditor(row.container_id)">
+            {{ t('desktop.containers.manage') }}
+          </el-button>
           <el-button
             v-if="row.container_id !== 1"
             link
@@ -35,22 +54,49 @@
           >
             {{ t('desktop.common.remove') }}
           </el-button>
-          <span v-else class="desktop-container-manager-fixed">{{ t('desktop.containers.fixed') }}</span>
         </div>
-        <label class="desktop-container-manager-field">
-          <span>{{ t('desktop.containers.path') }}</span>
-          <el-input v-model="row.root" :placeholder="t('desktop.containers.pathPlaceholder')" />
-        </label>
-        <label class="desktop-container-manager-field">
-          <span>{{ t('desktop.seed.cloudWorkspaceId') }}</span>
-          <el-input
-            v-model="row.cloud_workspace_id"
-            :placeholder="t('desktop.seed.cloudWorkspacePlaceholder')"
-          />
-        </label>
       </article>
     </div>
   </section>
+
+  <el-dialog
+    v-model="containerEditorVisible"
+    :title="t('desktop.containers.manageTitle', { id: editorForm.container_id || '-' })"
+    width="560px"
+    append-to-body
+  >
+    <div class="desktop-container-editor">
+      <label class="desktop-container-manager-field">
+        <span>{{ editorForm.container_id === 1 ? t('desktop.containers.defaultWorkspace') : t('desktop.containers.path') }}</span>
+        <el-input v-model="editorForm.root" :placeholder="t('desktop.containers.pathPlaceholder')" />
+        <span v-if="editorForm.container_id === 1" class="desktop-container-manager-hint">
+          {{ t('desktop.containers.defaultHint') }}
+        </span>
+      </label>
+      <label class="desktop-container-manager-field">
+        <span>{{ t('desktop.seed.cloudWorkspaceId') }}</span>
+        <el-input
+          v-model="editorForm.cloud_workspace_id"
+          :placeholder="t('desktop.seed.cloudWorkspacePlaceholder')"
+        />
+      </label>
+    </div>
+    <template #footer>
+      <div class="desktop-container-editor-footer">
+        <el-button
+          v-if="editorForm.container_id !== 1"
+          type="danger"
+          plain
+          @click="removeContainer(editorForm.container_id, true)"
+        >
+          {{ t('desktop.common.remove') }}
+        </el-button>
+        <span class="desktop-container-editor-footer-spacer"></span>
+        <el-button @click="containerEditorVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="applyContainerEditor">{{ t('desktop.common.save') }}</el-button>
+      </div>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup lang="ts">
@@ -77,6 +123,12 @@ const loading = ref(false);
 const saving = ref(false);
 const workspaceRoot = ref('');
 const rows = ref<ContainerRow[]>([]);
+const containerEditorVisible = ref(false);
+const editorForm = ref<ContainerRow>({
+  container_id: 1,
+  root: '',
+  cloud_workspace_id: ''
+});
 
 const sortRows = () => {
   rows.value.sort((left, right) => left.container_id - right.container_id);
@@ -140,20 +192,63 @@ const loadSettings = async () => {
 
 const addContainer = () => {
   const maxId = rows.value.reduce((max, item) => Math.max(max, item.container_id), 1);
-  rows.value.push({
+  editorForm.value = {
     container_id: maxId + 1,
     root: '',
     cloud_workspace_id: ''
-  });
-  sortRows();
+  };
+  containerEditorVisible.value = true;
 };
 
-const removeContainer = (containerId: number) => {
+const openContainerEditor = (containerId: number) => {
+  const target = rows.value.find((item) => item.container_id === containerId);
+  if (!target) return;
+  editorForm.value = {
+    container_id: target.container_id,
+    root: String(target.root || '').trim(),
+    cloud_workspace_id: String(target.cloud_workspace_id || '').trim()
+  };
+  containerEditorVisible.value = true;
+};
+
+const applyContainerEditor = () => {
+  const containerId = Number.parseInt(String(editorForm.value.container_id), 10);
+  if (!Number.isFinite(containerId) || containerId <= 0) return;
+  const root = String(editorForm.value.root || '').trim();
+  const cloudWorkspaceId = String(editorForm.value.cloud_workspace_id || '').trim();
+  if (!root) {
+    ElMessage.warning(t('desktop.containers.pathRequired', { id: containerId }));
+    return;
+  }
+  const target = rows.value.find((item) => item.container_id === containerId);
+  if (!target) {
+    rows.value.push({
+      container_id: containerId,
+      root,
+      cloud_workspace_id: cloudWorkspaceId
+    });
+  } else {
+    target.root = root;
+    target.cloud_workspace_id = cloudWorkspaceId;
+  }
+  if (containerId === 1) {
+    workspaceRoot.value = root;
+  }
+  sortRows();
+  containerEditorVisible.value = false;
+};
+
+const removeContainer = (containerId: number, closeEditor = false) => {
+  if (containerId === 1) return;
   rows.value = rows.value.filter((item) => item.container_id !== containerId);
+  if (closeEditor) {
+    containerEditorVisible.value = false;
+  }
 };
 
 const saveSettings = async () => {
-  const workspace = workspaceRoot.value.trim();
+  const defaultContainer = rows.value.find((item) => item.container_id === 1);
+  const workspace = String(defaultContainer?.root || workspaceRoot.value || '').trim();
   if (!workspace) {
     ElMessage.warning(t('desktop.containers.workspaceRequired'));
     return;
@@ -167,9 +262,9 @@ const saveSettings = async () => {
     }))
     .filter((item) => Number.isFinite(item.container_id) && item.container_id > 0);
 
-  const defaultContainer = normalized.find((item) => item.container_id === 1);
-  if (defaultContainer) {
-    defaultContainer.root = workspace;
+  const normalizedDefault = normalized.find((item) => item.container_id === 1);
+  if (normalizedDefault) {
+    normalizedDefault.root = workspace;
   } else {
     normalized.unshift({ container_id: 1, root: workspace, cloud_workspace_id: '' });
   }
@@ -214,7 +309,15 @@ onMounted(() => {
 
 <style scoped>
 .desktop-container-manager-panel {
-  gap: 10px;
+  gap: 12px;
+}
+
+.desktop-container-manager-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .desktop-container-manager-field {
@@ -232,7 +335,6 @@ onMounted(() => {
 
 .desktop-container-manager-toolbar {
   display: flex;
-  justify-content: flex-end;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
@@ -240,34 +342,111 @@ onMounted(() => {
 
 .desktop-container-manager-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .desktop-container-manager-item {
   border: 1px solid var(--portal-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--portal-panel);
-  padding: 10px;
-  display: grid;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
+}
+
+.desktop-container-manager-item-main {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
 }
 
 .desktop-container-manager-item-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   font-size: 12px;
+  color: var(--portal-text);
+}
+
+.desktop-container-manager-item-locations {
+  display: grid;
+  gap: 4px;
+}
+
+.desktop-container-manager-item-location {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.desktop-container-manager-item-label {
+  font-size: 11px;
   color: var(--portal-muted);
+  flex-shrink: 0;
+}
+
+.desktop-container-manager-item-value {
+  font-size: 12px;
+  color: var(--portal-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-container-manager-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
 }
 
 .desktop-container-manager-fixed {
-  font-size: 12px;
-  color: var(--portal-muted);
+  font-size: 11px;
+  color: var(--hula-accent);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.35);
+  background: var(--ui-accent-soft-2);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.desktop-container-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.desktop-container-editor-footer {
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.desktop-container-editor-footer-spacer {
+  flex: 1;
 }
 
 .desktop-container-manager-panel :deep(.el-input__wrapper) {
   background: var(--portal-surface, rgba(255, 255, 255, 0.86));
   box-shadow: 0 0 0 1px var(--portal-border) inset;
+  border-radius: 10px;
+}
+
+.desktop-container-manager-panel :deep(.el-input__wrapper.is-focus),
+.desktop-container-manager-panel :deep(.el-input__wrapper:hover) {
+  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.44) inset;
+}
+
+@media (max-width: 900px) {
+  .desktop-container-manager-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .desktop-container-manager-item-actions {
+    justify-content: flex-end;
+  }
 }
 </style>

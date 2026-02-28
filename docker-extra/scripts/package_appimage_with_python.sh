@@ -9,6 +9,8 @@ OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/dist}"
 BUILD_ROOT="${BUILD_ROOT:-${ROOT_DIR}/.build/python}"
 APPIMAGE_WORK="${APPIMAGE_WORK:-${BUILD_ROOT}/appimage}"
 TOOLS_DIR="${BUILD_ROOT}/tools"
+PREFER_PREBUILT_PYTHON="${PREFER_PREBUILT_PYTHON:-1}"
+PREBUILT_PYTHON_ROOT="${BUILD_ROOT}/stage/opt/python"
 
 patch_appimage_runtime_magic() {
   local target_file=$1
@@ -64,7 +66,11 @@ if [ -z "${APPIMAGE_PATH}" ] || [ ! -f "${APPIMAGE_PATH}" ]; then
   exit 1
 fi
 
-"${ROOT_DIR}/docker-extra/scripts/build_embedded_python.sh"
+if [ "${PREFER_PREBUILT_PYTHON}" = "1" ] && [ -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
+  echo "Using prebuilt embedded Python under ${PREBUILT_PYTHON_ROOT}."
+else
+  "${ROOT_DIR}/docker-extra/scripts/build_embedded_python.sh"
+fi
 
 extract_appimage "${APPIMAGE_PATH}" "${APPIMAGE_WORK}"
 
@@ -73,10 +79,14 @@ if [ ! -d "${APPDIR}" ]; then
   echo "Extracted AppDir not found at ${APPDIR}." >&2
   exit 1
 fi
+if [ ! -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
+  echo "Embedded Python not found under ${PREBUILT_PYTHON_ROOT}." >&2
+  exit 1
+fi
 
 mkdir -p "${APPDIR}/opt"
 rm -rf "${APPDIR}/opt/python"
-cp -a "${BUILD_ROOT}/stage/opt/python" "${APPDIR}/opt/"
+cp -a "${PREBUILT_PYTHON_ROOT}" "${APPDIR}/opt/"
 
 if [ -f "${APPDIR}/AppRun" ]; then
   mv "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"

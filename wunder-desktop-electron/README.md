@@ -46,6 +46,31 @@ npm run build
 npm run build:linux:arm64 -- --config.directories.output=../target/arm64-20
 ```
 
+### Ubuntu 20.04（arm64）推荐目录
+
+Ubuntu 20.04 目标建议优先使用：
+
+- Cargo 缓存：`.cargo/arm64-20`
+- 构建产物：`target/arm64-20`
+- 嵌入式 Python：`target/arm64-20/.build/python`
+
+如果希望一键完成 bridge 编译 + Electron 打包 + 附带 Python 重打包，推荐直接在仓库根目录执行：
+```bash
+bash docker-extra/scripts/build_arm64_desktop_with_python.sh
+```
+
+如果需要生成附带 Python 的 Electron AppImage，可在仓库根目录执行：
+```bash
+cp "target/arm64-20/dist/Wunder Desktop-0.1.0-arm64.AppImage" \
+  target/arm64-20/dist/wunder-desktop-arm64.AppImage
+ARCH=arm64 \
+APPIMAGE_PATH=target/arm64-20/dist/wunder-desktop-arm64.AppImage \
+BUILD_ROOT=target/arm64-20/.build/python \
+APPIMAGE_WORK=target/arm64-20/.build/python/appimage \
+OUTPUT_DIR=target/arm64-20/dist \
+  bash docker-extra/scripts/package_appimage_with_python.sh
+```
+
 ## 资源打包机制
 
 Electron 打包前会执行 `scripts/prepare-resources.js`，将运行所需资源拷贝到 `wunder-desktop-electron/resources`：

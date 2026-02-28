@@ -2544,6 +2544,15 @@ button.danger {
   scrollbar-gutter: stable;
 }
 
+.user-account-table td.status-online {
+  color: #13804d;
+  font-weight: 600;
+}
+
+.user-account-table td.status-offline {
+  color: #64748b;
+}
+
 #memoryPanel .management-list {
   background: #ffffff;
   border: 1px solid #e2e8f0;

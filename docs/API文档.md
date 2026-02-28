@@ -54,7 +54,7 @@
 - 目标：支持“用户↔用户”单聊 + 群聊，默认可见联系人，WebSocket 优先，SSE 兜底。
 - 鉴权：使用用户端 Bearer Token（与 `/wunder/chat/*` 一致）。
 - 接口清单：
-  - `GET /wunder/user_world/contacts`：联系人列表（支持 `keyword/offset/limit`）
+  - `GET /wunder/user_world/contacts`：联系人列表（支持 `keyword/offset/limit`，返回 `online/last_seen_at` 在线状态）
   - `GET /wunder/user_world/groups`：当前用户群聊列表（支持 `offset/limit`）
   - `POST /wunder/user_world/groups`：创建群聊（`group_name/member_user_ids[]`）
   - `GET /wunder/user_world/groups/{group_id}`：群详情（含群公告与成员列表，需群成员权限）
@@ -2028,7 +2028,7 @@
 
 - `GET /wunder/admin/user_accounts`
   - Query：`keyword`、`offset`、`limit`
-  - 返回：`data.total`、`data.items`（UserProfile + `daily_quota`/`daily_quota_used`/`daily_quota_remaining`/`daily_quota_date`）
+  - 返回：`data.total`、`data.items`（UserProfile + `active_sessions`/`online`/`last_seen_at` + `daily_quota`/`daily_quota_used`/`daily_quota_remaining`/`daily_quota_date`）
 - `POST /wunder/admin/user_accounts`
   - 入参（JSON）：`username`、`email`（可选）、`password`、`unit_id`（可选）、`roles`（可选）、`status`（可选）、`is_demo`（可选）
   - 返回：`data`（UserProfile）
