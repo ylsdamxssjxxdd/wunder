@@ -44,6 +44,10 @@ pub fn apply_python_env(cmd: &mut Command, runtime: &PythonRuntime) {
     if !runtime.embedded {
         return;
     }
+    cmd.env(
+        "WUNDER_PYTHON_BIN",
+        runtime.bin.to_string_lossy().to_string(),
+    );
     if let Some(home) = &runtime.home {
         cmd.env("PYTHONHOME", home.to_string_lossy().to_string());
     }
@@ -55,15 +59,34 @@ pub fn apply_python_env(cmd: &mut Command, runtime: &PythonRuntime) {
     }
     cmd.env("PYTHONNOUSERSITE", "1");
     cmd.env("PIP_NO_INDEX", "1");
+    if let Some(bin_dir) = runtime.bin.parent() {
+        prepend_path_env(cmd, "PATH", bin_dir);
+    }
 
     if let Some(lib_dir) = &runtime.lib_dir {
-        let lib_dir = lib_dir.to_string_lossy().to_string();
-        let merged = match env::var("LD_LIBRARY_PATH") {
-            Ok(existing) if !existing.trim().is_empty() => format!("{lib_dir}:{existing}"),
-            _ => lib_dir,
-        };
-        cmd.env("LD_LIBRARY_PATH", merged);
+        prepend_path_env(cmd, "LD_LIBRARY_PATH", lib_dir);
     }
+}
+
+fn prepend_path_env(cmd: &mut Command, key: &str, value: &Path) {
+    let mut entries = vec![value.to_path_buf()];
+    if let Some(existing) = env::var_os(key) {
+        entries.extend(env::split_paths(&existing));
+    }
+    match env::join_paths(entries) {
+        Ok(merged) => {
+            cmd.env(key, merged);
+        }
+        Err(_) => {
+            let prefix = value.to_string_lossy();
+            let sep = if cfg!(windows) { ';' } else { ':' };
+            let merged = match env::var(key) {
+                Ok(existing) if !existing.trim().is_empty() => format!("{prefix}{sep}{existing}"),
+                _ => prefix.to_string(),
+            };
+            cmd.env(key, merged);
+        }
+    };
 }
 
 fn resolve_app_dir() -> Option<PathBuf> {

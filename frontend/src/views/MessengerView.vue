@@ -1219,137 +1219,30 @@
             @stop="stopAgentMessage"
           />
         </div>
-        <div
+        <MessengerWorldComposer
           v-else-if="isWorldConversationActive"
-          ref="worldComposerRef"
-          class="messenger-world-composer"
+          ref="worldComposerViewRef"
           :style="worldComposerStyle"
-        >
-          <button
-            class="messenger-world-resize-edge"
-            type="button"
-            :title="t('messenger.world.resize')"
-            :aria-label="t('messenger.world.resize')"
-            @mousedown.prevent="startWorldComposerResize"
-          >
-            <span class="messenger-world-resize-grip"></span>
-          </button>
-          <div class="messenger-world-toolbar">
-            <div
-              class="messenger-world-tool-anchor messenger-world-tool-anchor--emoji"
-              @mouseenter="openWorldQuickPanel('emoji')"
-              @mouseleave="scheduleWorldQuickPanelClose"
-            >
-              <button
-                class="messenger-world-tool-btn"
-                type="button"
-                :class="{ active: worldQuickPanelMode === 'emoji' }"
-                :title="t('messenger.world.emoji')"
-                :aria-label="t('messenger.world.emoji')"
-                @click.prevent="toggleWorldQuickPanel('emoji')"
-              >
-                <svg class="messenger-world-tool-icon" aria-hidden="true">
-                  <use href="#smiling-face"></use>
-                </svg>
-              </button>
-              <div
-                v-if="worldQuickPanelMode === 'emoji'"
-                class="messenger-world-pop-panel messenger-world-emoji-panel"
-                @mouseenter="clearWorldQuickPanelClose"
-                @mouseleave="scheduleWorldQuickPanelClose"
-              >
-                <div v-if="worldRecentEmojis.length" class="messenger-world-emoji-section">
-                  <div class="messenger-world-quick-title">{{ t('messenger.world.quick.recent') }}</div>
-                  <div class="messenger-world-emoji-grid">
-                    <button
-                      v-for="emoji in worldRecentEmojis"
-                      :key="`recent-${emoji}`"
-                      class="messenger-world-emoji-item"
-                      type="button"
-                      @click="insertWorldEmoji(emoji)"
-                    >
-                      {{ emoji }}
-                    </button>
-                  </div>
-                </div>
-                <div class="messenger-world-emoji-section">
-                  <div class="messenger-world-quick-title">{{ t('messenger.world.quick.all') }}</div>
-                  <div class="messenger-world-emoji-grid">
-                    <button
-                      v-for="emoji in worldEmojiCatalog"
-                      :key="`catalog-${emoji}`"
-                      class="messenger-world-emoji-item"
-                      type="button"
-                      @click="insertWorldEmoji(emoji)"
-                    >
-                      {{ emoji }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <button
-              class="messenger-world-tool-btn"
-              type="button"
-              :disabled="worldUploading"
-              :title="t('userWorld.attachments.upload')"
-              :aria-label="t('userWorld.attachments.upload')"
-              @click="triggerWorldUpload"
-            >
-              <svg class="messenger-world-tool-icon" aria-hidden="true">
-                <use href="#file2"></use>
-              </svg>
-            </button>
-            <div class="messenger-world-tool-anchor messenger-world-tool-anchor--history">
-              <button
-                class="messenger-world-tool-btn"
-                type="button"
-                :title="t('messenger.world.history')"
-                :aria-label="t('messenger.world.history')"
-                @click="openWorldHistoryDialog"
-              >
-                <svg class="messenger-world-tool-icon" aria-hidden="true">
-                  <use href="#history"></use>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <textarea
-            ref="worldTextareaRef"
-            v-model.trim="worldDraft"
-            class="messenger-world-input"
-            :placeholder="t('userWorld.input.placeholder')"
-            rows="3"
-            @focus="worldQuickPanelMode = ''"
-            @keydown.enter="handleWorldComposerEnterKeydown"
-          ></textarea>
-          <div class="messenger-world-footer">
-            <div class="messenger-world-send-group">
-              <button
-                class="messenger-world-send-main"
-                type="button"
-                :disabled="!canSendWorldMessage"
-                @click="sendWorldMessage"
-              >
-                <svg class="messenger-world-send-icon" aria-hidden="true">
-                  <use href="#send"></use>
-                </svg>
-              </button>
-              <button class="messenger-world-send-menu" type="button" :title="t('messenger.settings.sendKey')">
-                <svg class="messenger-world-send-icon messenger-world-send-icon--menu" aria-hidden="true">
-                  <use href="#down"></use>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <input
-            ref="worldUploadInputRef"
-            type="file"
-            multiple
-            hidden
-            @change="handleWorldUploadInput"
-          />
-        </div>
+          :quick-panel-mode="worldQuickPanelMode"
+          :recent-emojis="worldRecentEmojis"
+          :emoji-catalog="worldEmojiCatalog"
+          :draft="worldDraft"
+          :can-send="canSendWorldMessage"
+          :uploading="worldUploading"
+          @update:draft="worldDraft = $event"
+          @resize-mousedown="startWorldComposerResize"
+          @open-quick-panel="openWorldQuickPanel"
+          @toggle-quick-panel="toggleWorldQuickPanel"
+          @clear-quick-panel-close="clearWorldQuickPanelClose"
+          @schedule-quick-panel-close="scheduleWorldQuickPanelClose"
+          @insert-emoji="insertWorldEmoji"
+          @trigger-upload="triggerWorldUpload"
+          @open-history="openWorldHistoryDialog"
+          @focus-input="worldQuickPanelMode = ''"
+          @enter="handleWorldComposerEnterKeydown"
+          @send="sendWorldMessage"
+          @upload-change="handleWorldUploadInput"
+        />
         <div v-else class="messenger-chat-empty">
           {{ t('messenger.empty.input') }}
         </div>
@@ -1380,185 +1273,51 @@
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
     />
 
-    <Teleport to="body">
-      <div
-        v-if="fileContainerContextMenu.visible"
-        ref="fileContainerMenuRef"
-        class="messenger-files-context-menu"
-        :style="fileContainerContextMenuStyle"
-        @contextmenu.prevent
-      >
-        <button class="messenger-files-menu-btn" type="button" @click="handleFileContainerMenuOpen">
-          {{ t('messenger.files.menu.open') }}
-        </button>
-        <button class="messenger-files-menu-btn" type="button" @click="handleFileContainerMenuCopyId">
-          {{ t('messenger.files.menu.copyId') }}
-        </button>
-        <button class="messenger-files-menu-btn" type="button" @click="handleFileContainerMenuSettings">
-          {{ t('messenger.files.menu.settings') }}
-        </button>
-      </div>
-    </Teleport>
+    <MessengerFileContainerMenu
+      ref="fileContainerMenuViewRef"
+      :visible="fileContainerContextMenu.visible"
+      :style="fileContainerContextMenuStyle"
+      @open="handleFileContainerMenuOpen"
+      @copy-id="handleFileContainerMenuCopyId"
+      @settings="handleFileContainerMenuSettings"
+    />
 
-    <el-dialog
-      v-model="worldHistoryDialogVisible"
-      class="messenger-dialog messenger-world-history-dialog"
-      :title="t('messenger.world.history')"
-      width="860px"
-      append-to-body
-    >
-      <div class="messenger-world-history-dialog">
-        <div class="messenger-world-history-filter-row">
-          <label class="messenger-world-history-search">
-            <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-            <input
-              v-model.trim="worldHistoryKeyword"
-              type="text"
-              :placeholder="t('messenger.world.historySearch')"
-              autocomplete="off"
-              spellcheck="false"
-            />
-          </label>
-          <el-date-picker
-            v-model="worldHistoryDateRange"
-            type="daterange"
-            unlink-panels
-            value-format="x"
-            :range-separator="t('messenger.world.historyDateRangeSeparator')"
-            :start-placeholder="t('messenger.world.historyDateStart')"
-            :end-placeholder="t('messenger.world.historyDateEnd')"
-            class="messenger-world-history-date"
-          />
-        </div>
+    <MessengerWorldHistoryDialog
+      v-model:visible="worldHistoryDialogVisible"
+      v-model:keyword="worldHistoryKeyword"
+      v-model:active-tab="worldHistoryActiveTab"
+      v-model:date-range="worldHistoryDateRange"
+      :tab-options="worldHistoryTabOptions"
+      :records="filteredWorldHistoryRecords"
+      :format-time="formatTime"
+      @locate="locateWorldHistoryMessage"
+    />
 
-        <div class="messenger-world-history-tabs">
-          <button
-            v-for="tab in worldHistoryTabOptions"
-            :key="tab.key"
-            class="messenger-world-history-tab"
-            :class="{ active: worldHistoryActiveTab === tab.key }"
-            type="button"
-            @click="worldHistoryActiveTab = tab.key"
-          >
-            {{ tab.label }}
-          </button>
-        </div>
+    <MessengerPromptPreviewDialog
+      v-model:visible="agentPromptPreviewVisible"
+      :loading="agentPromptPreviewLoading"
+      :content="activeAgentPromptPreviewText"
+    />
 
-        <div class="messenger-world-history-dialog-list">
-          <button
-            v-for="entry in filteredWorldHistoryRecords"
-            :key="entry.key"
-            class="messenger-world-history-record"
-            type="button"
-            :title="entry.rawContent"
-            @click="locateWorldHistoryMessage(entry)"
-          >
-            <div class="messenger-world-history-record-meta">
-              <span class="messenger-world-history-record-sender">{{ entry.sender }}</span>
-              <span class="messenger-world-history-record-time">{{ formatTime(entry.createdAt) }}</span>
-            </div>
-            <div class="messenger-world-history-record-content">
-              <i class="fa-solid" :class="entry.icon" aria-hidden="true"></i>
-              <span class="messenger-world-history-record-text">{{ entry.preview }}</span>
-            </div>
-          </button>
-          <div v-if="!filteredWorldHistoryRecords.length" class="messenger-world-history-empty">
-            {{ t('messenger.world.historyEmpty') }}
-          </div>
-        </div>
-      </div>
-    </el-dialog>
+    <MessengerImagePreviewDialog
+      :visible="imagePreviewVisible"
+      :image-url="imagePreviewUrl"
+      :title="imagePreviewTitle"
+      :workspace-path="imagePreviewWorkspacePath"
+      @download="handleImagePreviewDownload"
+      @close="closeImagePreview"
+    />
 
-    <el-dialog
-      v-model="agentPromptPreviewVisible"
-      class="system-prompt-dialog"
-      :title="t('chat.systemPrompt.title')"
-      width="720px"
-      append-to-body
-    >
-      <div v-if="agentPromptPreviewLoading" class="messenger-list-empty">{{ t('chat.systemPrompt.loading') }}</div>
-      <pre v-else class="workflow-dialog-detail">{{ activeAgentPromptPreviewText }}</pre>
-    </el-dialog>
-
-    <el-dialog
-      v-model="imagePreviewVisible"
-      :title="t('workspace.preview.dialogTitle')"
-      width="720px"
-      class="workspace-dialog"
-      append-to-body
-    >
-      <div class="workspace-preview-title">
-        {{ imagePreviewTitle || t('chat.imagePreview') }}
-      </div>
-      <div class="workspace-preview-meta">{{ imagePreviewWorkspacePath || t('chat.imagePreview') }}</div>
-      <div class="workspace-preview embed">
-        <img v-if="imagePreviewUrl" :src="imagePreviewUrl" :alt="imagePreviewTitle || t('chat.imagePreview')" />
-      </div>
-      <template #footer>
-        <button
-          class="workspace-btn secondary"
-          type="button"
-          :disabled="!imagePreviewWorkspacePath"
-          @click="handleImagePreviewDownload"
-        >
-          {{ t('common.download') }}
-        </button>
-        <button class="workspace-btn secondary" type="button" @click="closeImagePreview">
-          {{ t('common.close') }}
-        </button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="groupCreateVisible"
-      :title="t('userWorld.group.createTitle')"
-      width="440px"
-      class="messenger-dialog"
-      append-to-body
-    >
-      <div class="messenger-group-create">
-        <label class="messenger-group-create-field">
-          <span>{{ t('userWorld.group.nameLabel') }}</span>
-          <input
-            v-model.trim="groupCreateName"
-            type="text"
-            :placeholder="t('userWorld.group.namePlaceholder')"
-            autocomplete="off"
-          />
-        </label>
-        <label class="messenger-group-create-field">
-          <span>{{ t('userWorld.group.memberLabel') }}</span>
-          <input
-            v-model.trim="groupCreateKeyword"
-            type="text"
-            :placeholder="t('userWorld.group.memberPlaceholder')"
-            autocomplete="off"
-          />
-        </label>
-        <div class="messenger-group-create-list">
-          <label
-            v-for="contact in filteredGroupCreateContacts"
-            :key="`group-member-${contact.user_id}`"
-            class="messenger-group-create-item"
-          >
-            <input v-model="groupCreateMemberIds" type="checkbox" :value="String(contact.user_id || '')" />
-            <span class="messenger-group-create-name">{{ contact.username || contact.user_id }}</span>
-            <span class="messenger-group-create-unit">{{ resolveUnitLabel(contact.unit_id) }}</span>
-          </label>
-          <div v-if="!filteredGroupCreateContacts.length" class="messenger-list-empty">
-            {{ t('userWorld.group.memberEmpty') }}
-          </div>
-        </div>
-      </div>
-      <template #footer>
-        <button class="messenger-inline-btn" type="button" :disabled="groupCreating" @click="groupCreateVisible = false">
-          {{ t('common.cancel') }}
-        </button>
-        <button class="messenger-inline-btn primary" type="button" :disabled="groupCreating" @click="submitGroupCreate">
-          {{ groupCreating ? t('common.loading') : t('userWorld.group.createSubmit') }}
-        </button>
-      </template>
-    </el-dialog>
+    <MessengerGroupCreateDialog
+      v-model:visible="groupCreateVisible"
+      v-model:group-name="groupCreateName"
+      v-model:keyword="groupCreateKeyword"
+      v-model:member-ids="groupCreateMemberIds"
+      :creating="groupCreating"
+      :contacts="filteredGroupCreateContacts"
+      :resolve-unit-label="resolveUnitLabel"
+      @submit="submitGroupCreate"
+    />
   </div>
 </template>
 
@@ -1577,9 +1336,15 @@ import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsP
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import DesktopContainerManagerPanel from '@/components/messenger/DesktopContainerManagerPanel.vue';
+import MessengerFileContainerMenu from '@/components/messenger/MessengerFileContainerMenu.vue';
 import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
+import MessengerGroupCreateDialog from '@/components/messenger/MessengerGroupCreateDialog.vue';
+import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePreviewDialog.vue';
+import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
+import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
+import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
@@ -1620,195 +1385,57 @@ import {
 } from '@/utils/workspaceImagePersistentCache';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
-
-type DesktopUpdateState = {
-  phase?: string;
-  currentVersion?: string;
-  latestVersion?: string;
-  downloaded?: boolean;
-  progress?: number;
-  message?: string;
-};
-
-type DesktopInstallResult = {
-  ok?: boolean;
-  state?: DesktopUpdateState;
-};
-
-type DesktopBridge = {
-  toggleDevTools?: () => Promise<boolean> | boolean;
-  checkForUpdates?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
-  getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
-  installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
-};
-
-const DEFAULT_AGENT_KEY = '__default__';
-const USER_CONTAINER_ID = 1;
-const AGENT_CONTAINER_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
-const USER_WORLD_UPLOAD_BASE = 'user-world';
-const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;
-const WORLD_QUICK_EMOJI_STORAGE_KEY = 'wunder_world_quick_emoji';
-const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
-const DISMISSED_AGENT_STORAGE_PREFIX = 'messenger_dismissed_agent_conversations';
-const AGENT_TOOL_OVERRIDE_NONE = '__no_tools__';
-const WORLD_EMOJI_CATALOG = [
-  '😀',
-  '😁',
-  '😂',
-  '🤣',
-  '😊',
-  '😉',
-  '😍',
-  '😘',
-  '😎',
-  '🤖',
-  '🫡',
-  '🤔',
-  '🤩',
-  '🥳',
-  '😴',
-  '🤯',
-  '😭',
-  '😤',
-  '🤝',
-  '👍',
-  '👏',
-  '🙏',
-  '💪',
-  '🎉',
-  '🌟',
-  '🔥',
-  '💡',
-  '📌',
-  '📎',
-  '✅',
-  '❓',
-  '❗'
-];
-const WORLD_HISTORY_MEDIA_EXTENSIONS = new Set([
-  'png',
-  'jpg',
-  'jpeg',
-  'gif',
-  'webp',
-  'bmp',
-  'svg',
-  'ico',
-  'mp4',
-  'mov',
-  'avi',
-  'mkv',
-  'webm',
-  'm4v'
-]);
-const WORLD_HISTORY_DOCUMENT_EXTENSIONS = new Set([
-  'pdf',
-  'doc',
-  'docx',
-  'xls',
-  'xlsx',
-  'ppt',
-  'pptx',
-  'txt',
-  'md',
-  'csv',
-  'rtf'
-]);
-const sectionRouteMap: Record<MessengerSection, string> = {
-  messages: 'chat',
-  users: 'user-world',
-  groups: 'user-world',
-  agents: 'home',
-  tools: 'tools',
-  files: 'workspace',
-  more: 'settings'
-};
-const MESSENGER_SEND_KEY_STORAGE_KEY = 'messenger_send_key';
-const MESSENGER_UI_FONT_SIZE_STORAGE_KEY = 'messenger_ui_font_size';
-const AGENT_MAIN_READ_AT_STORAGE_PREFIX = 'messenger_agent_main_read_at';
-const AGENT_MAIN_UNREAD_STORAGE_PREFIX = 'messenger_agent_main_unread';
-
-type AgentLocalCommand = 'new' | 'stop' | 'help' | 'compact';
-
-type MixedConversation = {
-  key: string;
-  kind: 'agent' | 'direct' | 'group';
-  sourceId: string;
-  agentId: string;
-  title: string;
-  preview: string;
-  unread: number;
-  lastAt: number;
-};
-
-type ToolEntry = {
-  name: string;
-  description: string;
-  ownerId: string;
-  source: Record<string, unknown>;
-};
-
-type AgentFileContainer = {
-  id: number;
-  agentIds: string[];
-  agentNames: string[];
-  preview: string;
-  primaryAgentId: string;
-};
-
-type AgentOverviewCard = {
-  id: string;
-  name: string;
-  description: string;
-  shared: boolean;
-  isDefault: boolean;
-  runtimeState: AgentRuntimeState;
-  hasCron: boolean;
-};
-
-type UnitTreeNode = {
-  id: string;
-  label: string;
-  parentId: string;
-  sortOrder: number;
-  children: UnitTreeNode[];
-};
-
-type UnitTreeRow = {
-  id: string;
-  label: string;
-  depth: number;
-  count: number;
-  hasChildren: boolean;
-  expanded: boolean;
-};
-
-type WorldHistoryCategory = 'all' | 'media' | 'document' | 'other_file';
-
-type WorldHistoryRecord = {
-  key: string;
-  messageId: number;
-  sender: string;
-  createdAt: number;
-  preview: string;
-  rawContent: string;
-  category: Exclude<WorldHistoryCategory, 'all'> | 'text';
-  icon: string;
-};
-
-type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
-type MessengerSendKeyMode = 'enter' | 'ctrl_enter';
-type MessengerPerfTrace = {
-  label: string;
-  startedAt: number;
-  marks: Array<{ name: string; at: number }>;
-  meta?: Record<string, unknown>;
-};
-
-type FileContainerMenuTarget = {
-  scope: 'user' | 'agent';
-  id: number;
-};
+import {
+  classifyWorldHistoryMessage,
+  normalizeWorldHistoryText,
+  resolveWorldHistoryIcon
+} from '@/views/messenger/worldHistory';
+import {
+  buildUnitTreeFromFlat,
+  buildUnitTreeRows,
+  collectUnitNodeIds,
+  flattenUnitNodes,
+  normalizeUnitNode,
+  normalizeUnitShortLabel,
+  normalizeUnitText,
+  resolveUnitIdKey,
+  resolveUnitTreeRowStyle
+} from '@/views/messenger/orgUnits';
+import {
+  AGENT_CONTAINER_IDS,
+  AGENT_MAIN_READ_AT_STORAGE_PREFIX,
+  AGENT_MAIN_UNREAD_STORAGE_PREFIX,
+  AGENT_TOOL_OVERRIDE_NONE,
+  DEFAULT_AGENT_KEY,
+  DISMISSED_AGENT_STORAGE_PREFIX,
+  MESSENGER_SEND_KEY_STORAGE_KEY,
+  MESSENGER_UI_FONT_SIZE_STORAGE_KEY,
+  USER_CONTAINER_ID,
+  USER_WORLD_UPLOAD_BASE,
+  UNIT_UNGROUPED_ID,
+  WORLD_COMPOSER_HEIGHT_STORAGE_KEY,
+  WORLD_EMOJI_CATALOG,
+  WORLD_QUICK_EMOJI_STORAGE_KEY,
+  WORLD_UPLOAD_SIZE_LIMIT,
+  sectionRouteMap,
+  type AgentFileContainer,
+  type AgentLocalCommand,
+  type AgentOverviewCard,
+  type AgentRuntimeState,
+  type DesktopBridge,
+  type DesktopInstallResult,
+  type DesktopUpdateState,
+  type FileContainerMenuTarget,
+  type MessengerPerfTrace,
+  type MessengerSendKeyMode,
+  type MixedConversation,
+  type ToolEntry,
+  type UnitTreeNode,
+  type UnitTreeRow,
+  type WorldComposerViewRef,
+  type WorldHistoryCategory,
+  type WorldHistoryRecord
+} from '@/views/messenger/model';
 
 const route = useRoute();
 const router = useRouter();
@@ -1834,9 +1461,7 @@ const dismissedAgentStorageKey = ref('');
 const leftRailRef = ref<HTMLElement | null>(null);
 const middlePaneRef = ref<HTMLElement | null>(null);
 const rightDockRef = ref<{ $el?: HTMLElement } | null>(null);
-const worldComposerRef = ref<HTMLElement | null>(null);
-const worldTextareaRef = ref<HTMLTextAreaElement | null>(null);
-const worldUploadInputRef = ref<HTMLInputElement | null>(null);
+const worldComposerViewRef = ref<WorldComposerViewRef | null>(null);
 const worldUploading = ref(false);
 const worldComposerHeight = ref(188);
 const worldQuickPanelMode = ref<'' | 'emoji'>('');
@@ -1889,7 +1514,7 @@ const selectedFileContainerId = ref(USER_CONTAINER_ID);
 const fileContainerLatestUpdatedAt = ref(0);
 const fileContainerEntryCount = ref(0);
 const fileLifecycleNowTick = ref(Date.now());
-const fileContainerMenuRef = ref<HTMLElement | null>(null);
+const fileContainerMenuViewRef = ref<{ getMenuElement: () => HTMLElement | null } | null>(null);
 const fileContainerContextMenu = ref<{
   visible: boolean;
   x: number;
@@ -2434,10 +2059,6 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
   return cards;
 });
 
-const UNIT_UNGROUPED_ID = '__ungrouped__';
-
-const normalizeUnitText = (value: unknown): string => String(value || '').trim();
-
 const normalizeUiFontSize = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 14;
@@ -2452,29 +2073,6 @@ const applyUiFontSize = (value: number) => {
   const normalized = normalizeUiFontSize(value);
   document.documentElement.style.setProperty('--messenger-font-size', `${normalized}px`);
   document.documentElement.style.setProperty('--messenger-font-scale', String(normalized / 14));
-};
-
-const resolveUnitIdKey = (unitId: unknown): string => {
-  const cleaned = normalizeUnitText(unitId);
-  return cleaned || UNIT_UNGROUPED_ID;
-};
-
-const normalizeUnitShortLabel = (value: unknown): string => {
-  const text = normalizeUnitText(value);
-  if (!text) return '';
-  const normalized = text
-    .replace(/->/g, '/')
-    .replace(/>/g, '/')
-    .replace(/\\/g, '/')
-    .replace(/\|/g, '/');
-  const parts = normalized
-    .split('/')
-    .map((item) => item.trim())
-    .filter(Boolean);
-  if (parts.length > 1) {
-    return parts[parts.length - 1];
-  }
-  return text;
 };
 
 const contactUnitLabelMap = computed(() => {
@@ -2535,130 +2133,6 @@ const buildCurrentUserFallbackUnitTree = (): UnitTreeNode[] => {
   ];
 };
 
-const normalizeUnitNode = (value: unknown): UnitTreeNode | null => {
-  const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const unitId = normalizeUnitText(source.unit_id || source.id);
-  if (!unitId) return null;
-  const parentId = normalizeUnitText(source.parent_id || source.parentId);
-  const sortOrder = Number(source.sort_order ?? source.sortOrder);
-  const label = normalizeUnitShortLabel(
-    source.name ||
-      source.unit_name ||
-      source.unitName ||
-      source.display_name ||
-      source.displayName ||
-      source.path_name ||
-      source.pathName
-  );
-  const children = (Array.isArray(source.children) ? source.children : [])
-    .map((item) => normalizeUnitNode(item))
-    .filter((item): item is UnitTreeNode => Boolean(item));
-  const hydratedChildren = children.map((child) => ({
-    ...child,
-    parentId: child.parentId || unitId
-  }));
-  return {
-    id: unitId,
-    label: label || unitId,
-    parentId,
-    sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
-    children: hydratedChildren
-  };
-};
-
-const flattenUnitNodes = (nodes: UnitTreeNode[], sink: UnitTreeNode[] = []): UnitTreeNode[] => {
-  nodes.forEach((node) => {
-    sink.push({
-      id: node.id,
-      label: node.label,
-      parentId: node.parentId,
-      sortOrder: node.sortOrder,
-      children: []
-    });
-    if (node.children.length) {
-      flattenUnitNodes(node.children, sink);
-    }
-  });
-  return sink;
-};
-
-const buildUnitTreeFromFlat = (nodes: UnitTreeNode[]): UnitTreeNode[] => {
-  const nodeMap = new Map<string, UnitTreeNode>();
-  nodes.forEach((node) => {
-    const id = normalizeUnitText(node.id);
-    if (!id) return;
-    const existing = nodeMap.get(id);
-    if (existing) {
-      if (!existing.label || existing.label === existing.id) {
-        existing.label = node.label || id;
-      }
-      if (!existing.parentId && node.parentId) {
-        existing.parentId = node.parentId;
-      }
-      if ((!Number.isFinite(existing.sortOrder) || existing.sortOrder === 0) && Number.isFinite(node.sortOrder)) {
-        existing.sortOrder = node.sortOrder;
-      }
-      return;
-    }
-    nodeMap.set(id, {
-      id,
-      label: node.label || id,
-      parentId: normalizeUnitText(node.parentId),
-      sortOrder: Number.isFinite(node.sortOrder) ? node.sortOrder : 0,
-      children: []
-    });
-  });
-
-  const hasAncestor = (node: UnitTreeNode, ancestorId: string): boolean => {
-    let cursor = normalizeUnitText(node.parentId);
-    let guard = 0;
-    while (cursor && guard < nodeMap.size) {
-      if (cursor === ancestorId) {
-        return true;
-      }
-      const parent = nodeMap.get(cursor);
-      if (!parent) {
-        break;
-      }
-      cursor = normalizeUnitText(parent.parentId);
-      guard += 1;
-    }
-    return false;
-  };
-
-  const roots: UnitTreeNode[] = [];
-  nodeMap.forEach((node) => {
-    const parentId = normalizeUnitText(node.parentId);
-    const parent = parentId ? nodeMap.get(parentId) : null;
-    if (!parent || parent.id === node.id || hasAncestor(parent, node.id)) {
-      roots.push(node);
-      return;
-    }
-    parent.children.push(node);
-  });
-
-  const sortNodes = (list: UnitTreeNode[]) => {
-    list.sort((left, right) => {
-      const leftOrder = Number.isFinite(left.sortOrder) ? left.sortOrder : 0;
-      const rightOrder = Number.isFinite(right.sortOrder) ? right.sortOrder : 0;
-      if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-      return left.label.localeCompare(right.label, 'zh-CN');
-    });
-    list.forEach((node) => sortNodes(node.children));
-  };
-  sortNodes(roots);
-  return roots;
-};
-
-const collectUnitNodeIds = (nodes: UnitTreeNode[], sink: Set<string>) => {
-  nodes.forEach((node) => {
-    sink.add(node.id);
-    if (node.children.length) {
-      collectUnitNodeIds(node.children, sink);
-    }
-  });
-};
-
 const isContactUnitExpanded = (unitId: string): boolean => contactUnitExpandedIds.value.has(unitId);
 
 const toggleContactUnitExpanded = (unitId: string) => {
@@ -2672,10 +2146,6 @@ const toggleContactUnitExpanded = (unitId: string) => {
   }
   contactUnitExpandedIds.value = next;
 };
-
-const resolveUnitTreeRowStyle = (row: UnitTreeRow): Record<string, string> => ({
-  '--messenger-unit-depth': String(Math.max(0, row.depth))
-});
 
 const contactTotalCount = computed(() =>
   Array.isArray(userWorldStore.contacts) ? userWorldStore.contacts.length : 0
@@ -2712,40 +2182,9 @@ const contactUnitDescendantMap = computed(() => {
   return map;
 });
 
-const buildUnitTreeRows = (
-  nodes: UnitTreeNode[],
-  depth: number,
-  directCountMap: Map<string, number>
-): { rows: UnitTreeRow[]; total: number } => {
-  let rows: UnitTreeRow[] = [];
-  let total = 0;
-  nodes.forEach((node) => {
-    const child = buildUnitTreeRows(node.children, depth + 1, directCountMap);
-    const count = (directCountMap.get(node.id) || 0) + child.total;
-    if (count <= 0) {
-      return;
-    }
-    const hasChildren = child.rows.length > 0;
-    const expanded = hasChildren && isContactUnitExpanded(node.id);
-    rows.push({
-      id: node.id,
-      label: node.label,
-      depth,
-      count,
-      hasChildren,
-      expanded
-    });
-    if (expanded) {
-      rows = rows.concat(child.rows);
-    }
-    total += count;
-  });
-  return { rows, total };
-};
-
 const contactUnitTreeRows = computed<UnitTreeRow[]>(() => {
   const directCountMap = contactUnitDirectCountMap.value;
-  const treeRows = buildUnitTreeRows(orgUnitTree.value, 0, directCountMap).rows;
+  const treeRows = buildUnitTreeRows(orgUnitTree.value, 0, directCountMap, isContactUnitExpanded).rows;
   const knownIds = contactUnitKnownIdSet.value;
   const extraRows: UnitTreeRow[] = [];
   directCountMap.forEach((count, unitId) => {
@@ -3401,90 +2840,6 @@ const normalizeWorldMessageTimestamp = (value: unknown): number => {
   return 0;
 };
 
-const normalizeWorldHistoryText = (value: unknown): string =>
-  String(value || '')
-    .replace(/!\[[^\]]*\]\(([^)]+)\)/g, '$1')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 $2')
-    .replace(/`{1,3}([^`]+)`{1,3}/g, '$1')
-    .replace(/[>#*_~]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-const extractPathExtension = (value: unknown): string => {
-  const cleaned = String(value || '')
-    .trim()
-    .replace(/^@/, '')
-    .replace(/^['"]|['"]$/g, '')
-    .split(/[?#]/)[0];
-  if (!cleaned) return '';
-  const lastSegment = cleaned.split('/').filter(Boolean).pop() || '';
-  const index = lastSegment.lastIndexOf('.');
-  if (index <= 0 || index >= lastSegment.length - 1) return '';
-  return lastSegment.slice(index + 1).toLowerCase();
-};
-
-const extractWorldHistoryTokenExtensions = (content: string): string[] => {
-  const output = new Set<string>();
-  const append = (source: string) => {
-    const ext = extractPathExtension(source);
-    if (ext) output.add(ext);
-  };
-  content.replace(/!\[[^\]]*]\(([^)]+)\)/g, (_match, path) => {
-    append(path);
-    return '';
-  });
-  content.replace(/\[[^\]]+]\(([^)]+)\)/g, (_match, path) => {
-    append(path);
-    return '';
-  });
-  content.replace(/https?:\/\/[^\s)]+/gi, (url) => {
-    append(url);
-    return '';
-  });
-  content.replace(/@(?:"([^"]+)"|'([^']+)'|([^\s]+))/g, (_match, quoted, singleQuoted, plain) => {
-    append(quoted || singleQuoted || plain || '');
-    return '';
-  });
-  return Array.from(output);
-};
-
-const classifyWorldHistoryMessage = (message: Record<string, unknown>): WorldHistoryRecord['category'] => {
-  const contentType = String(message?.content_type || '')
-    .trim()
-    .toLowerCase();
-  if (contentType.includes('image') || contentType.includes('video')) {
-    return 'media';
-  }
-  if (contentType.includes('document')) {
-    return 'document';
-  }
-  if (contentType.includes('file')) {
-    return 'other_file';
-  }
-  const content = String(message?.content || '');
-  const extensions = extractWorldHistoryTokenExtensions(content);
-  if (extensions.some((ext) => WORLD_HISTORY_MEDIA_EXTENSIONS.has(ext))) {
-    return 'media';
-  }
-  if (extensions.some((ext) => WORLD_HISTORY_DOCUMENT_EXTENSIONS.has(ext))) {
-    return 'document';
-  }
-  if (extensions.length > 0 || /@(?:"[^"]+"|'[^']+'|[^\s]+)/.test(content)) {
-    return 'other_file';
-  }
-  if (/<img\b|!\[[^\]]*]\([^)]+\)/i.test(content)) {
-    return 'media';
-  }
-  return 'text';
-};
-
-const resolveWorldHistoryIcon = (category: WorldHistoryRecord['category']): string => {
-  if (category === 'media') return 'fa-image';
-  if (category === 'document') return 'fa-file-lines';
-  if (category === 'other_file') return 'fa-file';
-  return 'fa-comment-dots';
-};
-
 const worldHistoryRecords = computed<WorldHistoryRecord[]>(() => {
   const messages = Array.isArray(userWorldStore.activeMessages) ? userWorldStore.activeMessages : [];
   return messages
@@ -3645,7 +3000,7 @@ const rememberWorldEmoji = (emoji: string) => {
 
 const focusWorldTextareaToEnd = () => {
   nextTick(() => {
-    const textarea = worldTextareaRef.value;
+    const textarea = worldComposerViewRef.value?.getTextareaElement() || null;
     if (!textarea) return;
     if (typeof textarea.focus === 'function') {
       textarea.focus();
@@ -3686,13 +3041,14 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
     return;
   }
   if (fileContainerContextMenu.value.visible) {
-    const menu = fileContainerMenuRef.value;
+    const menu = fileContainerMenuViewRef.value?.getMenuElement() || null;
     if (!menu || !menu.contains(target)) {
       closeFileContainerMenu();
     }
   }
   if (worldQuickPanelMode.value) {
-    if (!worldComposerRef.value || !worldComposerRef.value.contains(target)) {
+    const composerElement = worldComposerViewRef.value?.getComposerElement() || null;
+    if (!composerElement || !composerElement.contains(target)) {
       clearWorldQuickPanelClose();
       worldQuickPanelMode.value = '';
     }
@@ -5265,7 +4621,7 @@ const openFileContainerMenu = async (
   fileContainerContextMenu.value.x = initialX;
   fileContainerContextMenu.value.y = initialY;
   await nextTick();
-  const menuRect = fileContainerMenuRef.value?.getBoundingClientRect();
+  const menuRect = fileContainerMenuViewRef.value?.getMenuElement()?.getBoundingClientRect();
   if (!menuRect) return;
   const maxLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
   const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
@@ -5766,10 +5122,11 @@ const appendWorldAttachmentTokens = (paths: string[]) => {
 };
 
 const triggerWorldUpload = () => {
-  if (!isWorldConversationActive.value || worldUploading.value || !worldUploadInputRef.value) return;
+  const uploadInput = worldComposerViewRef.value?.getUploadInputElement() || null;
+  if (!isWorldConversationActive.value || worldUploading.value || !uploadInput) return;
   worldQuickPanelMode.value = '';
-  worldUploadInputRef.value.value = '';
-  worldUploadInputRef.value.click();
+  uploadInput.value = '';
+  uploadInput.click();
 };
 
 const handleWorldUploadInput = async (event: Event) => {

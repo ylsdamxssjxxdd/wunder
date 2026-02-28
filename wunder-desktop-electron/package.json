@@ -6,7 +6,8 @@
   "main": "src/main.js",
   "author": "wunder",
   "scripts": {
-    "prepare:resources": "node scripts/prepare-resources.js",
+    "prepare:icons": "node scripts/sync-icons.js",
+    "prepare:resources": "npm run prepare:icons && node scripts/prepare-resources.js",
     "pack": "npm run prepare:resources && electron-builder --dir --publish never",
     "build:linux": "npm run prepare:resources && electron-builder --linux --x64 --arm64 --publish never",
     "build:linux:x64": "npm run prepare:resources && electron-builder --linux --x64 --publish never",
@@ -17,7 +18,9 @@
     "electron-updater": "6.6.2"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "electron": "38.7.0",
-    "electron-builder": "26.1.0"
+    "electron-builder": "26.1.0",
+    "png-to-ico": "^2.1.8"
   }
 }

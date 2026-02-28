@@ -2673,11 +2673,23 @@
 
 - `desktop_runtime_info`：返回桌面运行时信息快照。
 - `desktop_toggle_devtools`：切换 DevTools。
+- `desktop_get_update_state`：读取当前桌面更新状态快照（idle/checking/available/downloading/downloaded/installing/error 等）。
+- `desktop_check_for_updates`：检查并下载可用更新；下载成功后状态进入 `downloaded`。
+- `desktop_install_update`：安装已下载更新并返回安装结果。
 - `desktop_window_minimize`：最小化窗口。
 - `desktop_window_toggle_maximize`：最大化/还原窗口。
 - `desktop_window_close`：关闭窗口。
 - `desktop_window_is_maximized`：查询窗口是否处于最大化状态。
 - `desktop_window_start_dragging`：启动窗口拖拽（用于无边框标题栏）。
+
+### desktop Tauri 在线更新环境变量
+
+- `WUNDER_TAURI_UPDATE_ENDPOINTS`
+  - 说明：逗号分隔更新元数据 URL 列表（支持 `{{target}}/{{arch}}/{{current_version}}` 占位符）。
+  - 示例：`https://updates.example.com/wunder-desktop/tauri/latest.json`
+- `WUNDER_TAURI_UPDATE_PUBKEY`
+  - 说明：minisign 公钥（用于安装包签名校验）。
+- 未配置上述变量时，更新命令返回 `update source is not configured`。
 
 ### desktop 运行时引导接口
 

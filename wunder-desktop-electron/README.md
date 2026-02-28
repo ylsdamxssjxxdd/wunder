@@ -61,7 +61,7 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 
 如果需要生成附带 Python 的 Electron AppImage，可在仓库根目录执行：
 ```bash
-cp "target/arm64-20/dist/Wunder Desktop-0.1.0-arm64.AppImage" \
+cp "$(ls -1t target/arm64-20/dist/*.AppImage | grep -v python | head -n 1)" \
   target/arm64-20/dist/wunder-desktop-arm64.AppImage
 ARCH=arm64 \
 APPIMAGE_PATH=target/arm64-20/dist/wunder-desktop-arm64.AppImage \
@@ -71,12 +71,26 @@ OUTPUT_DIR=target/arm64-20/dist \
   bash docker-extra/scripts/package_appimage_with_python.sh
 ```
 
+该重打包脚本会自动把 `opt/python/bin` 提前到 `PATH`，并在缺失时补齐 `python`/`pip` 软链接到 `python3`/`pip3`，这样 `执行命令` 工具里直接跑 `python` 也会走内置运行时。
+
 ## 资源打包机制
 
 Electron 打包前会执行 `scripts/prepare-resources.js`，将运行所需资源拷贝到 `wunder-desktop-electron/resources`：
 - `wunder-desktop-bridge`（桥接程序）
 - `frontend/dist`（前端静态资源）
 - `config/`、`prompts/`、`skills/`、`scripts/`（如存在）
+
+图标现在采用单一源文件：`images/eva01-head.svg`。  
+`prepare-resources` 前会自动执行 `scripts/sync-icons.js`，统一生成并同步：
+- `wunder-desktop-electron/build/icon.png`
+- `wunder-desktop-electron/build/icon.ico`
+- `wunder-desktop-electron/assets/icon.ico`
+- `wunder-desktop/icons/icon.ico`（供 Tauri 打包复用）
+
+如只想手动刷新图标，可执行：
+```bash
+npm run prepare:icons
+```
 
 如果需要指定桥接程序路径，可设置环境变量：
 ```bash
@@ -113,3 +127,15 @@ WUNDER_DISABLE_GPU=1
 
 ### 2) 找不到 bridge 或 frontend 资源
 请先执行前端构建与桥接程序构建，再打包；或使用上面的环境变量指定路径。
+
+## CI Nightly（自动构建与发布）
+
+仓库包含 GitHub Actions 工作流：`.github/workflows/desktop-nightly.yml`。
+
+- 触发方式：`push`（所有分支）或手动 `workflow_dispatch`
+- 产物平台：
+  - Windows x64
+  - macOS（x64 + arm64）
+  - Linux x64 / arm64（AppImage，Ubuntu 20 兼容基线，不附带 Python）
+- 发布方式：自动更新 `nightly` 标签与 Nightly Release，始终保留最新提交对应产物
+- 产物命名示例：`Wunder-Desktop-linux-arm64-YYYYMMDD.AppImage`

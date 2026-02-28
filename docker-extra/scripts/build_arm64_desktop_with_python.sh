@@ -55,18 +55,20 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
     npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 "
 
-echo "[5/6] Repacking AppImage with embedded Python from arm64-20..."
+echo "[5/6] Repacking AppImage with embedded Python from arm64-20 (qemu may take 10-30 min)..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   set -euo pipefail
   output_dir=/app/target/arm64-20/dist
   base_appimage="${output_dir}/wunder-desktop-arm64.AppImage"
-  if [ ! -f "${base_appimage}" ]; then
-    src_appimage="$(find "${output_dir}" -maxdepth 1 -type f -name "*.AppImage" ! -name "*python*" | head -n 1)"
-    if [ -z "${src_appimage}" ]; then
-      echo "No base AppImage found under ${output_dir}" >&2
-      exit 1
-    fi
+  src_appimage="$(ls -1t "${output_dir}"/*.AppImage 2>/dev/null \
+    | grep -v "python" \
+    | grep -v "/wunder-desktop-arm64.AppImage$" \
+    | head -n 1 || true)"
+  if [ -n "${src_appimage}" ]; then
     cp -f "${src_appimage}" "${base_appimage}"
+  elif [ ! -f "${base_appimage}" ]; then
+    echo "No base AppImage found under ${output_dir}" >&2
+    exit 1
   fi
   ARCH=arm64 \
   APPIMAGE_PATH="${base_appimage}" \

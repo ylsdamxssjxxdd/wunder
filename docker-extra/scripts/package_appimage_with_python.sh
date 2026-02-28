@@ -87,6 +87,12 @@ fi
 mkdir -p "${APPDIR}/opt"
 rm -rf "${APPDIR}/opt/python"
 cp -a "${PREBUILT_PYTHON_ROOT}" "${APPDIR}/opt/"
+if [ ! -e "${APPDIR}/opt/python/bin/python" ] && [ -x "${APPDIR}/opt/python/bin/python3" ]; then
+  ln -s python3 "${APPDIR}/opt/python/bin/python"
+fi
+if [ ! -e "${APPDIR}/opt/python/bin/pip" ] && [ -x "${APPDIR}/opt/python/bin/pip3" ]; then
+  ln -s pip3 "${APPDIR}/opt/python/bin/pip"
+fi
 
 if [ -f "${APPDIR}/AppRun" ]; then
   mv "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
@@ -99,6 +105,7 @@ PY_VER="$(cat "$APPDIR/opt/python/.wunder-python-version" 2>/dev/null || echo "3
 export PYTHONHOME="$APPDIR/opt/python"
 export PYTHONPATH="$APPDIR/opt/python/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 export LD_LIBRARY_PATH="$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+export PATH="$APPDIR/opt/python/bin:${PATH:-}"
 if [ -f "$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
   export SSL_CERT_FILE="$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
 fi
@@ -118,6 +125,7 @@ PY_VER="$(cat "$APPDIR/opt/python/.wunder-python-version" 2>/dev/null || echo "3
 export PYTHONHOME="$APPDIR/opt/python"
 export PYTHONPATH="$APPDIR/opt/python/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
 export LD_LIBRARY_PATH="$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+export PATH="$APPDIR/opt/python/bin:${PATH:-}"
 if [ -f "$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
   export SSL_CERT_FILE="$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
 fi

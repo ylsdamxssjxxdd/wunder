@@ -615,7 +615,18 @@ async fn run_shell_command(
     cwd: &Path,
     timeout_s: u64,
 ) -> Result<CommandOutput, String> {
-    if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
+    let runtime = python_runtime::resolve_python_runtime();
+
+    if let Some(mut cmd) = runtime
+        .as_ref()
+        .and_then(|runtime| {
+            command_utils::build_direct_command_with_python_override(command, cwd, &runtime.bin)
+        })
+        .or_else(|| command_utils::build_direct_command(command, cwd))
+    {
+        if let Some(runtime) = runtime.as_ref() {
+            python_runtime::apply_python_env(&mut cmd, runtime);
+        }
         match run_command_output(cmd, timeout_s).await {
             Ok(output) => return Ok(output),
             Err(err) if err.kind == CommandErrorKind::SpawnNotFound => {}
@@ -623,7 +634,10 @@ async fn run_shell_command(
         }
     }
 
-    let cmd = command_utils::build_shell_command(command, cwd);
+    let mut cmd = command_utils::build_shell_command(command, cwd);
+    if let Some(runtime) = runtime.as_ref() {
+        python_runtime::apply_python_env(&mut cmd, runtime);
+    }
     run_command_output(cmd, timeout_s)
         .await
         .map_err(|err| err.detail)

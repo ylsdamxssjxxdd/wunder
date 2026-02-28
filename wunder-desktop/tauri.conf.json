@@ -10,7 +10,8 @@
     }
   },
   "bundle": {
-    "active": false,
+    "active": true,
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/icon.ico"
     ]

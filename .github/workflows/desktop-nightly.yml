@@ -1,0 +1,341 @@
+name: Desktop Nightly
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wunder-desktop-nightly
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      build_date: ${{ steps.meta.outputs.build_date }}
+    steps:
+      - id: meta
+        shell: bash
+        run: echo "build_date=$(date -u +'%Y%m%d')" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            wunder-desktop-electron/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build frontend
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build bridge and package Electron (Windows x64)
+        shell: pwsh
+        run: |
+          cargo build --release --bin wunder-desktop-bridge
+          $bridge = Join-Path $env:GITHUB_WORKSPACE "target\release\wunder-desktop-bridge.exe"
+          if (-not (Test-Path $bridge)) { throw "Bridge not found: $bridge" }
+          $outDir = Join-Path $env:GITHUB_WORKSPACE "target\nightly\windows-x64"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          Push-Location (Join-Path $env:GITHUB_WORKSPACE "wunder-desktop-electron")
+          npm ci
+          $env:WUNDER_BRIDGE_BIN = $bridge
+          npm run build -- --win --x64 --publish never --config.directories.output="$outDir"
+          Pop-Location
+
+      - name: Rename Windows artifacts
+        shell: pwsh
+        run: |
+          $date = "${{ needs.prepare.outputs.build_date }}"
+          $dist = Join-Path $env:GITHUB_WORKSPACE "target\nightly\windows-x64"
+          $out = Join-Path $env:GITHUB_WORKSPACE "release-assets\windows"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $installer = Get-ChildItem -Path $dist -File -Filter "*.exe" | Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $installer) { throw "No Windows installer found in $dist" }
+          Copy-Item $installer.FullName (Join-Path $out "Wunder-Desktop-win-x64-$date.exe")
+
+          if (Test-Path (Join-Path $dist "latest.yml")) {
+            Copy-Item (Join-Path $dist "latest.yml") (Join-Path $out "Wunder-Desktop-win-x64-$date.yml")
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-windows
+          path: release-assets/windows/*
+          if-no-files-found: error
+          retention-days: 7
+
+  build-macos:
+    needs: prepare
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            wunder-desktop-electron/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build frontend
+        working-directory: frontend
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build bridge and package Electron (macOS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --release --bin wunder-desktop-bridge
+          bridge="$GITHUB_WORKSPACE/target/release/wunder-desktop-bridge"
+          if [ ! -x "$bridge" ]; then
+            echo "Bridge not found: $bridge" >&2
+            exit 1
+          fi
+          out_dir="$GITHUB_WORKSPACE/target/nightly/macos"
+          mkdir -p "$out_dir"
+          cd "$GITHUB_WORKSPACE/wunder-desktop-electron"
+          npm ci
+          CSC_IDENTITY_AUTO_DISCOVERY=false \
+          WUNDER_BRIDGE_BIN="$bridge" \
+            npm run build -- --mac --x64 --arm64 --publish never --config.directories.output="$out_dir"
+
+      - name: Rename macOS artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATE="${{ needs.prepare.outputs.build_date }}"
+          DIST="$GITHUB_WORKSPACE/target/nightly/macos"
+          OUT="$GITHUB_WORKSPACE/release-assets/macos"
+          mkdir -p "$OUT"
+
+          shopt -s nullglob
+          for dmg in "$DIST"/*.dmg; do
+            name="$(basename "$dmg")"
+            arch="universal"
+            if [[ "$name" == *arm64* ]]; then
+              arch="arm64"
+            elif [[ "$name" == *x64* ]]; then
+              arch="x64"
+            fi
+            cp "$dmg" "$OUT/Wunder-Desktop-macos-${arch}-${DATE}.dmg"
+          done
+
+          count=$(find "$OUT" -maxdepth 1 -type f -name "*.dmg" | wc -l | tr -d ' ')
+          if [ "$count" -eq 0 ]; then
+            echo "No macOS dmg found in $DIST" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-macos
+          path: release-assets/macos/*
+          if-no-files-found: error
+          retention-days: 7
+
+  build-linux-x64:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker-extra
+          file: Dockerfile.ubuntu20-x86
+          platforms: linux/amd64
+          tags: wunder-x86-20-ci:latest
+          load: true
+          cache-from: type=gha,scope=wunder-linux-x64-image
+          cache-to: type=gha,mode=max,scope=wunder-linux-x64-image
+
+      - name: Build bridge and package Electron (Linux x64 on Ubuntu20 base)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            -e ARCH=x64 \
+            -e CARGO_HOME=/app/.cargo/x86-20-ci \
+            -e CARGO_TARGET_DIR=/app/target/x86-20-ci \
+            -e OUTPUT_DIR=/app/target/nightly/linux-x64 \
+            wunder-x86-20-ci:latest \
+            bash /app/docker-extra/scripts/ci_build_linux_electron.sh
+
+      - name: Rename Linux x64 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATE="${{ needs.prepare.outputs.build_date }}"
+          DIST="$GITHUB_WORKSPACE/target/nightly/linux-x64"
+          OUT="$GITHUB_WORKSPACE/release-assets/linux-x64"
+          mkdir -p "$OUT"
+          APPIMAGE="$(find "$DIST" -maxdepth 1 -type f -name "*.AppImage" | head -n 1 || true)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "No Linux x64 AppImage found in $DIST" >&2
+            exit 1
+          fi
+          cp "$APPIMAGE" "$OUT/Wunder-Desktop-linux-x86_64-${DATE}.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-linux-x64
+          path: release-assets/linux-x64/*
+          if-no-files-found: error
+          retention-days: 7
+
+  build-linux-arm64:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker-extra
+          file: Dockerfile.ubuntu20-arm
+          platforms: linux/arm64
+          tags: wunder-arm-20-ci:latest
+          load: true
+          cache-from: type=gha,scope=wunder-linux-arm64-image
+          cache-to: type=gha,mode=max,scope=wunder-linux-arm64-image
+
+      - name: Build bridge and package Electron (Linux arm64 on Ubuntu20 base)
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$GITHUB_WORKSPACE:/app" \
+            -w /app \
+            -e ARCH=arm64 \
+            -e CARGO_HOME=/app/.cargo/arm64-20-ci \
+            -e CARGO_TARGET_DIR=/app/target/arm64-20-ci \
+            -e OUTPUT_DIR=/app/target/nightly/linux-arm64 \
+            wunder-arm-20-ci:latest \
+            bash /app/docker-extra/scripts/ci_build_linux_electron.sh
+
+      - name: Rename Linux arm64 artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATE="${{ needs.prepare.outputs.build_date }}"
+          DIST="$GITHUB_WORKSPACE/target/nightly/linux-arm64"
+          OUT="$GITHUB_WORKSPACE/release-assets/linux-arm64"
+          mkdir -p "$OUT"
+          APPIMAGE="$(find "$DIST" -maxdepth 1 -type f -name "*.AppImage" | head -n 1 || true)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "No Linux arm64 AppImage found in $DIST" >&2
+            exit 1
+          fi
+          cp "$APPIMAGE" "$OUT/Wunder-Desktop-linux-arm64-${DATE}.AppImage"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-linux-arm64
+          path: release-assets/linux-arm64/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release-nightly:
+    needs:
+      - prepare
+      - build-windows
+      - build-macos
+      - build-linux-x64
+      - build-linux-arm64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Move nightly tag to current commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa nightly -m "Nightly build ${GITHUB_SHA}" "${GITHUB_SHA}"
+          git push origin refs/tags/nightly --force
+
+      - name: Remove old nightly assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view nightly --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            assets="$(gh release view nightly --repo "${GITHUB_REPOSITORY}" --json assets -q '.assets[].name' || true)"
+            if [ -n "${assets}" ]; then
+              while IFS= read -r asset; do
+                [ -z "${asset}" ] && continue
+                gh release delete-asset nightly "${asset}" --repo "${GITHUB_REPOSITORY}" -y || true
+              done <<< "${assets}"
+            fi
+          fi
+
+      - name: Publish nightly release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: Wunder Desktop Nightly
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: |
+            release-assets/*
+          body: |
+            Build date (UTC): ${{ needs.prepare.outputs.build_date }}
+            Commit: ${{ github.sha }}
+            Triggered by: ${{ github.actor }}

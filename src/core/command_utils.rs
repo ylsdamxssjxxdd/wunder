@@ -40,6 +40,39 @@ pub fn build_direct_command(command: &str, cwd: &Path) -> Option<Command> {
     Some(cmd)
 }
 
+pub fn build_direct_command_with_python_override(
+    command: &str,
+    cwd: &Path,
+    python_bin: &Path,
+) -> Option<Command> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() || contains_shell_meta(trimmed) {
+        return None;
+    }
+    let parts = shell_words::split(trimmed).ok()?;
+    if parts.is_empty() {
+        return None;
+    }
+    let (envs, program_index) = parse_env_prefix(&parts);
+    let program = parts.get(program_index)?;
+    if is_shell_builtin(program) {
+        return None;
+    }
+    let mut cmd = if is_python_program(program) {
+        Command::new(python_bin)
+    } else {
+        Command::new(program)
+    };
+    if program_index + 1 < parts.len() {
+        cmd.args(&parts[program_index + 1..]);
+    }
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    cmd.current_dir(cwd);
+    Some(cmd)
+}
+
 pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
     #[cfg(windows)]
     {
@@ -152,6 +185,11 @@ fn is_shell_builtin(program: &str) -> bool {
         .any(|item| item.eq_ignore_ascii_case(program))
 }
 
+fn is_python_program(program: &str) -> bool {
+    let lower = program.to_ascii_lowercase();
+    lower == "python" || lower == "python3" || lower.starts_with("python3.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +221,28 @@ mod tests {
             .to_string_lossy()
             .to_ascii_lowercase();
         assert!(program.ends_with("bash"));
+    }
+
+    #[test]
+    fn build_direct_command_overrides_python_program() {
+        let python_bin = Path::new("/tmp/wunder-python/bin/python3");
+        let command =
+            build_direct_command_with_python_override("python -V", Path::new("."), python_bin)
+                .expect("direct command");
+        assert_eq!(
+            command.as_std().get_program().to_string_lossy(),
+            python_bin.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn build_direct_command_keeps_non_python_program() {
+        let command = build_direct_command_with_python_override(
+            "echo hello",
+            Path::new("."),
+            Path::new("/tmp/wunder-python/bin/python3"),
+        )
+        .expect("direct command");
+        assert_eq!(command.as_std().get_program().to_string_lossy(), "echo");
     }
 }

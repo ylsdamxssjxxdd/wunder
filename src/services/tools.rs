@@ -5006,18 +5006,32 @@ async fn run_command_streaming(
     tool_name: &str,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
-    let (mut cmd, used_direct) =
-        if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
+    let runtime = python_runtime::resolve_python_runtime();
+    let (mut cmd, used_direct) = if let Some(runtime) = runtime.as_ref() {
+        if let Some(cmd) =
+            command_utils::build_direct_command_with_python_override(command, cwd, &runtime.bin)
+        {
             (cmd, true)
         } else {
             (command_utils::build_shell_command(command, cwd), false)
-        };
+        }
+    } else if let Some(cmd) = command_utils::build_direct_command(command, cwd) {
+        (cmd, true)
+    } else {
+        (command_utils::build_shell_command(command, cwd), false)
+    };
+    if let Some(runtime) = runtime.as_ref() {
+        python_runtime::apply_python_env(&mut cmd, runtime);
+    }
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let child = match cmd.spawn() {
         Ok(child) => child,
         Err(err) if used_direct && command_utils::is_not_found_error(&err) => {
             let mut cmd = command_utils::build_shell_command(command, cwd);
+            if let Some(runtime) = runtime.as_ref() {
+                python_runtime::apply_python_env(&mut cmd, runtime);
+            }
             cmd.kill_on_drop(true);
             cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
             cmd.spawn()?
