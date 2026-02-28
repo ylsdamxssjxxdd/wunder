@@ -446,6 +446,7 @@
             type="button"
             @click="selectContainer('user')"
             @contextmenu.prevent.stop="openFileContainerMenu($event, 'user', USER_CONTAINER_ID)"
+            @mousedown.right.prevent.stop="openFileContainerMenu($event, 'user', USER_CONTAINER_ID)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -473,6 +474,7 @@
             type="button"
             @click="selectContainer(container.id)"
             @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
+            @mousedown.right.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -498,6 +500,7 @@
             type="button"
             @click="selectContainer(container.id)"
             @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
+            @mousedown.right.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -932,7 +935,11 @@
                     </div>
                   </div>
                 </div>
-                <div class="messenger-workspace-scope chat-shell messenger-files-workspace">
+                <div
+                  class="messenger-workspace-scope chat-shell messenger-files-workspace"
+                  @contextmenu.prevent.stop="openCurrentFileContainerMenu($event)"
+                  @mousedown.right.prevent.stop="openCurrentFileContainerMenu($event)"
+                >
                   <WorkspacePanel
                     :key="workspacePanelKey"
                     :agent-id="selectedFileAgentIdForApi"
@@ -1351,6 +1358,8 @@
       @restore-session="restoreTimelineSession"
       @set-main="setTimelineSessionMain"
       @delete-session="deleteTimelineSession"
+      @open-container="openContainerFromRightDock"
+      @open-container-settings="openContainerSettingsFromRightDock"
     />
     <MessengerGroupDock
       ref="rightDockRef"
@@ -1593,7 +1602,12 @@ import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
-import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import {
+  buildWorkspaceImagePersistentCacheKey,
+  readWorkspaceImagePersistentCache,
+  writeWorkspaceImagePersistentCache
+} from '@/utils/workspaceImagePersistentCache';
+import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 
 type DesktopUpdateState = {
@@ -1909,7 +1923,14 @@ const agentUnreadRefreshInFlight = new Set<string>();
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
-const workspaceResourceCache = new Map<string, { objectUrl?: string; filename?: string; promise?: Promise<{ objectUrl: string; filename: string }> }>();
+type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
+type WorkspaceResourceCacheEntry = {
+  objectUrl?: string;
+  filename?: string;
+  promise?: Promise<WorkspaceResourceCachePayload>;
+};
+const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
+const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 let workspaceResourceHydrationFrame: number | null = null;
 let pendingAssistantCenter = false;
 let pendingAssistantCenterCount = 0;
@@ -4054,6 +4075,40 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
   };
 };
 
+const buildWorkspaceResourcePersistentCacheKey = (resource: WorkspaceResolvedResource): string => {
+  const currentUserId = normalizeWorkspaceOwnerId((authStore.user as Record<string, unknown> | null)?.id);
+  return buildWorkspaceImagePersistentCacheKey({
+    scope: currentUserId || 'anonymous',
+    requestUserId: resource.requestUserId,
+    requestAgentId: resource.requestAgentId,
+    publicPath: resource.publicPath
+  });
+};
+
+const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
+  const raw = status?.dataset?.loadingLabel;
+  const normalized = String(raw || '').trim();
+  return normalized || t('chat.resourceImageLoading');
+};
+
+const scheduleWorkspaceLoadingLabel = (
+  card: HTMLElement,
+  status: HTMLElement | null
+): number | null => {
+  if (!status || typeof window === 'undefined') return null;
+  status.textContent = '';
+  const label = resolveWorkspaceLoadingLabel(status);
+  return window.setTimeout(() => {
+    if (!card.isConnected || card.dataset.workspaceState !== 'loading') return;
+    status.textContent = label;
+  }, WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS);
+};
+
+const clearWorkspaceLoadingLabelTimer = (timerId: number | null) => {
+  if (timerId === null || typeof window === 'undefined') return;
+  window.clearTimeout(timerId);
+};
+
 const getFilenameFromHeaders = (headers: Record<string, unknown> | undefined, fallback: string): string => {
   const disposition = String(headers?.['content-disposition'] || headers?.['Content-Disposition'] || '').trim();
   if (!disposition) return fallback;
@@ -4100,21 +4155,44 @@ const saveBlobUrl = (url: string, filename: string) => {
 const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
   const cacheKey = resource.publicPath;
   const cached = workspaceResourceCache.get(cacheKey);
-  if (cached?.objectUrl && cached?.filename) {
-    return { objectUrl: cached.objectUrl, filename: cached.filename };
+  if (cached?.objectUrl) {
+    return {
+      objectUrl: cached.objectUrl,
+      filename: cached.filename || resource.filename || 'download'
+    };
   }
   if (cached?.promise) return cached.promise;
-  const params: Record<string, string> = {
-    path: String(resource.relativePath || '')
-  };
-  if (resource.requestUserId) {
-    params.user_id = resource.requestUserId;
-  }
-  if (resource.requestAgentId) {
-    params.agent_id = resource.requestAgentId;
-  }
-  const promise = downloadWunderWorkspaceFile(params)
-    .then((response) => {
+  const allowPersistentCache = isImagePath(resource.filename || resource.relativePath || '');
+  const persistentCacheKey = allowPersistentCache
+    ? buildWorkspaceResourcePersistentCacheKey(resource)
+    : '';
+  const promise = (async () => {
+    if (allowPersistentCache && persistentCacheKey) {
+      const cachedPayload = await readWorkspaceImagePersistentCache(persistentCacheKey);
+      if (cachedPayload?.blob) {
+        const filename = cachedPayload.filename || resource.filename || 'download';
+        const cachedBlob = normalizeWorkspaceImageBlob(
+          cachedPayload.blob,
+          filename,
+          cachedPayload.blob.type
+        );
+        const objectUrl = URL.createObjectURL(cachedBlob);
+        const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
+        workspaceResourceCache.set(cacheKey, entry);
+        return entry;
+      }
+    }
+    const params: Record<string, string> = {
+      path: String(resource.relativePath || '')
+    };
+    if (resource.requestUserId) {
+      params.user_id = resource.requestUserId;
+    }
+    if (resource.requestAgentId) {
+      params.agent_id = resource.requestAgentId;
+    }
+    const response = await downloadWunderWorkspaceFile(params);
+    try {
       const filename = getFilenameFromHeaders(
         response?.headers as Record<string, unknown>,
         resource.filename || 'download'
@@ -4126,10 +4204,20 @@ const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
       );
       const normalizedBlob = normalizeWorkspaceImageBlob(response.data as Blob, filename, contentType);
       const objectUrl = URL.createObjectURL(normalizedBlob);
-      const entry = { objectUrl, filename };
+      const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
       workspaceResourceCache.set(cacheKey, entry);
+      if (allowPersistentCache && persistentCacheKey) {
+        void writeWorkspaceImagePersistentCache(persistentCacheKey, {
+          blob: normalizedBlob,
+          filename
+        });
+      }
       return entry;
-    })
+    } catch (error) {
+      workspaceResourceCache.delete(cacheKey);
+      throw error;
+    }
+  })()
     .catch((error) => {
       workspaceResourceCache.delete(cacheKey);
       throw error;
@@ -4169,6 +4257,9 @@ const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
     return;
   }
   card.dataset.workspaceState = 'loading';
+  card.classList.remove('is-error');
+  card.classList.remove('is-ready');
+  const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status);
   try {
     const entry = await fetchWorkspaceResource(resource);
     preview.src = entry.objectUrl;
@@ -4183,6 +4274,8 @@ const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
     }
     card.dataset.workspaceState = 'error';
     card.classList.add('is-error');
+  } finally {
+    clearWorkspaceLoadingLabelTimer(loadingTimerId);
   }
 };
 
@@ -5120,10 +5213,20 @@ const openFileContainerMenu = async (
     return;
   }
   selectContainer(scope === 'user' ? 'user' : normalizedId);
+  const eventTarget = event.target as HTMLElement | null;
+  const fallbackRect = eventTarget?.getBoundingClientRect();
+  const initialX =
+    Number.isFinite(event.clientX) && event.clientX > 0
+      ? event.clientX
+      : Math.round((fallbackRect?.left || 0) + (fallbackRect?.width || 0) / 2);
+  const initialY =
+    Number.isFinite(event.clientY) && event.clientY > 0
+      ? event.clientY
+      : Math.round((fallbackRect?.top || 0) + (fallbackRect?.height || 0) / 2);
   fileContainerContextMenu.value.target = { scope, id: normalizedId };
   fileContainerContextMenu.value.visible = true;
-  fileContainerContextMenu.value.x = event.clientX;
-  fileContainerContextMenu.value.y = event.clientY;
+  fileContainerContextMenu.value.x = initialX;
+  fileContainerContextMenu.value.y = initialY;
   await nextTick();
   const menuRect = fileContainerMenuRef.value?.getBoundingClientRect();
   if (!menuRect) return;
@@ -5131,6 +5234,12 @@ const openFileContainerMenu = async (
   const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
   fileContainerContextMenu.value.x = Math.min(Math.max(8, fileContainerContextMenu.value.x), maxLeft);
   fileContainerContextMenu.value.y = Math.min(Math.max(8, fileContainerContextMenu.value.y), maxTop);
+};
+
+const openCurrentFileContainerMenu = (event: MouseEvent) => {
+  const scope = fileScope.value;
+  const targetId = scope === 'user' ? USER_CONTAINER_ID : selectedFileContainerId.value;
+  void openFileContainerMenu(event, scope, targetId);
 };
 
 const handleFileContainerMenuOpen = () => {
@@ -5178,6 +5287,17 @@ const selectContainer = (containerId: number | 'user') => {
   fileContainerLatestUpdatedAt.value = 0;
   fileContainerEntryCount.value = 0;
   sessionHub.setSection('files');
+};
+
+const openContainerFromRightDock = (containerId: number) => {
+  const normalized = Math.min(10, Math.max(1, Number.parseInt(String(containerId || 1), 10) || 1));
+  switchSection('files');
+  selectContainer(normalized === USER_CONTAINER_ID ? 'user' : normalized);
+};
+
+const openContainerSettingsFromRightDock = (containerId: number) => {
+  openContainerFromRightDock(containerId);
+  openDesktopContainerSettings();
 };
 
 const handleFileWorkspaceStats = (payload: unknown) => {

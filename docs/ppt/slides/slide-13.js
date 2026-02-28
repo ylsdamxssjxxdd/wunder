@@ -20,11 +20,13 @@ function buildSlide() {
   <div class="grid two">
     <div class="card stack">
       <span class="pill">用户入口</span>
-      <p>frontend 与 desktop 提供会话、工作区与应用广场。</p>
+      <p>frontend 与 desktop 统一 Messenger 壳（/app/home、/desktop/home），承载会话、用户世界、工具与文件。</p>
       <span class="pill">管理入口</span>
       <p>web 负责模型、工具、权限、监控与评估治理。</p>
       <span class="pill">开发入口</span>
       <p>cli 面向本地开发、自动化与调试回放。</p>
+      <span class="pill">端云协同入口</span>
+      <p>desktop 可通过 remote_gateway 渠道接入云端 /wunder，失败自动回退本地。</p>
       <span class="pill">统一执行</span>
       <p>不同入口最终都回到同一 /wunder 调度链路。</p>
     </div>

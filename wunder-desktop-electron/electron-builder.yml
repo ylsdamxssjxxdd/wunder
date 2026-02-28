@@ -24,6 +24,7 @@ linux:
       StartupWMClass: wunder-desktop
 win:
   icon: build/icon.ico
+  signAndEditExecutable: false
   target:
     - target: nsis
 nsis:

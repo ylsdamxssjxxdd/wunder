@@ -11,7 +11,11 @@
     </button>
     <div v-if="!collapsed" class="messenger-right-content messenger-right-content--stack">
       <div class="messenger-right-panel messenger-right-panel--sandbox">
-        <div class="messenger-right-section-title">
+        <div
+          class="messenger-right-section-title"
+          @contextmenu.prevent.stop="openSandboxContainerMenu($event)"
+          @mousedown.right.prevent.stop="openSandboxContainerMenu($event)"
+        >
           <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
           <span>{{ t('messenger.right.sandbox') }}</span>
         </div>
@@ -73,11 +77,35 @@
       </div>
     </div>
   </aside>
+
+  <Teleport to="body">
+    <div
+      v-if="sandboxContextMenu.visible"
+      ref="sandboxMenuRef"
+      class="messenger-files-context-menu"
+      :style="sandboxContextMenuStyle"
+      @contextmenu.prevent
+    >
+      <button class="messenger-files-menu-btn" type="button" @click="handleSandboxMenuOpenContainer">
+        {{ t('messenger.files.menu.open') }}
+      </button>
+      <button class="messenger-files-menu-btn" type="button" @click="handleSandboxMenuCopyId">
+        {{ t('messenger.files.menu.copyId') }}
+      </button>
+      <button class="messenger-files-menu-btn" type="button" @click="handleSandboxMenuOpenSettings">
+        {{ t('messenger.files.menu.settings') }}
+      </button>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
+
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import { useI18n } from '@/i18n';
+import { copyText } from '@/utils/clipboard';
 
 type TimelineSessionItem = {
   id: string;
@@ -87,7 +115,7 @@ type TimelineSessionItem = {
   isMain: boolean;
 };
 
-defineProps<{
+const props = defineProps<{
   collapsed: boolean;
   showAgentPanels: boolean;
   agentIdForApi: string;
@@ -96,14 +124,114 @@ defineProps<{
   sessionHistory: TimelineSessionItem[];
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (event: 'toggle-collapse'): void;
   (event: 'restore-session', sessionId: string): void;
   (event: 'set-main', sessionId: string): void;
   (event: 'delete-session', sessionId: string): void;
+  (event: 'open-container', containerId: number): void;
+  (event: 'open-container-settings', containerId: number): void;
 }>();
 
 const { t } = useI18n();
+const sandboxMenuRef = ref<HTMLElement | null>(null);
+const sandboxContextMenu = ref({
+  visible: false,
+  x: 0,
+  y: 0
+});
+const sandboxContextMenuStyle = computed(() => ({
+  left: `${sandboxContextMenu.value.x}px`,
+  top: `${sandboxContextMenu.value.y}px`
+}));
+
+const closeSandboxContextMenu = () => {
+  sandboxContextMenu.value.visible = false;
+};
+
+const openSandboxContainerMenu = async (event: MouseEvent) => {
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('.workspace-context-menu, .workspace-dialog')) {
+    return;
+  }
+  const targetRect = target?.getBoundingClientRect();
+  const initialX =
+    Number.isFinite(event.clientX) && event.clientX > 0
+      ? event.clientX
+      : Math.round((targetRect?.left || 0) + (targetRect?.width || 0) / 2);
+  const initialY =
+    Number.isFinite(event.clientY) && event.clientY > 0
+      ? event.clientY
+      : Math.round((targetRect?.top || 0) + (targetRect?.height || 0) / 2);
+  sandboxContextMenu.value.visible = true;
+  sandboxContextMenu.value.x = initialX;
+  sandboxContextMenu.value.y = initialY;
+  await nextTick();
+  const menuRect = sandboxMenuRef.value?.getBoundingClientRect();
+  if (!menuRect) return;
+  const maxLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
+  const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
+  sandboxContextMenu.value.x = Math.min(Math.max(8, sandboxContextMenu.value.x), maxLeft);
+  sandboxContextMenu.value.y = Math.min(Math.max(8, sandboxContextMenu.value.y), maxTop);
+};
+
+const normalizeContainerId = (value: unknown): number => {
+  const parsed = Number.parseInt(String(value ?? 1), 10);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.min(10, Math.max(1, parsed));
+};
+
+const handleSandboxMenuOpenContainer = () => {
+  const targetId = normalizeContainerId(props.containerId);
+  closeSandboxContextMenu();
+  emit('open-container', targetId);
+};
+
+const handleSandboxMenuCopyId = async () => {
+  const targetId = normalizeContainerId(props.containerId);
+  closeSandboxContextMenu();
+  const copied = await copyText(String(targetId));
+  if (copied) {
+    ElMessage.success(t('messenger.files.copyIdSuccess', { id: targetId }));
+  } else {
+    ElMessage.warning(t('messenger.files.copyIdFailed'));
+  }
+};
+
+const handleSandboxMenuOpenSettings = () => {
+  const targetId = normalizeContainerId(props.containerId);
+  closeSandboxContextMenu();
+  emit('open-container-settings', targetId);
+};
+
+const closeSandboxMenuWhenOutside = (event: Event) => {
+  if (!sandboxContextMenu.value.visible) {
+    return;
+  }
+  const target = event.target as Node | null;
+  if (!target || !sandboxMenuRef.value?.contains(target)) {
+    closeSandboxContextMenu();
+  }
+};
+
+onMounted(() => {
+  window.addEventListener('pointerdown', closeSandboxMenuWhenOutside);
+  window.addEventListener('resize', closeSandboxContextMenu);
+  document.addEventListener('scroll', closeSandboxContextMenu, true);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', closeSandboxMenuWhenOutside);
+  window.removeEventListener('resize', closeSandboxContextMenu);
+  document.removeEventListener('scroll', closeSandboxContextMenu, true);
+});
+
+watch(
+  () => props.collapsed,
+  () => {
+    closeSandboxContextMenu();
+  }
+);
 
 const normalizeTimestamp = (value: unknown): number => {
   if (value === null || value === undefined) return 0;

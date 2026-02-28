@@ -15,6 +15,10 @@
       />
       <span class="desktop-window-title-text">{{ titleText }}</span>
     </div>
+    <div class="desktop-window-runtime" data-tauri-drag-region>
+      <span class="desktop-window-runtime-label">{{ t('desktop.chrome.runtimeLabel') }}</span>
+      <span class="desktop-window-runtime-value">{{ runtimeModeText }}</span>
+    </div>
     <div class="desktop-window-controls" data-tauri-drag-region="false">
       <button
         class="desktop-window-btn"
@@ -52,8 +56,9 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 
+import { isDesktopRemoteAuthMode, onDesktopRemoteModeChange } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 
 type DesktopWindowBridge = {
@@ -68,6 +73,17 @@ const { t } = useI18n();
 const windowMaximized = ref(false);
 const titleText = 'Wunder Desktop';
 const logoSrc = ref('/desktop-icon.png');
+const runtimeMode = ref<'local' | 'hybrid'>('local');
+const runtimeModeText = computed(() =>
+  runtimeMode.value === 'hybrid'
+    ? t('desktop.chrome.runtimeHybrid')
+    : t('desktop.chrome.runtimeLocal')
+);
+let stopRuntimeModeListener: (() => void) | null = null;
+
+const refreshRuntimeMode = () => {
+  runtimeMode.value = isDesktopRemoteAuthMode() ? 'hybrid' : 'local';
+};
 
 const getDesktopBridge = (): DesktopWindowBridge | null => {
   if (typeof window === 'undefined') return null;
@@ -141,16 +157,25 @@ const handleLogoError = () => {
 };
 
 const handleWindowResize = () => {
+  refreshRuntimeMode();
   void refreshMaximizedState();
 };
 
 onMounted(async () => {
+  refreshRuntimeMode();
+  stopRuntimeModeListener = onDesktopRemoteModeChange((detail) => {
+    runtimeMode.value = detail.remoteAuthMode ? 'hybrid' : 'local';
+  });
   await refreshMaximizedState();
   window.addEventListener('resize', handleWindowResize);
   window.addEventListener('focus', handleWindowResize);
 });
 
 onBeforeUnmount(() => {
+  if (stopRuntimeModeListener) {
+    stopRuntimeModeListener();
+    stopRuntimeModeListener = null;
+  }
   window.removeEventListener('resize', handleWindowResize);
   window.removeEventListener('focus', handleWindowResize);
 });
@@ -166,6 +191,8 @@ onBeforeUnmount(() => {
   );
   --desktop-window-chrome-border: rgba(var(--ui-accent-rgb), 0.24);
   --desktop-window-chrome-title: #344255;
+  --desktop-window-runtime-label: #7a8594;
+  --desktop-window-runtime-value: #3d4f67;
   --desktop-window-btn-color: #5f6b7a;
   --desktop-window-btn-hover-bg: rgba(var(--ui-accent-rgb), 0.16);
   --desktop-window-btn-hover-color: var(--ui-accent-deep);
@@ -190,6 +217,8 @@ onBeforeUnmount(() => {
   );
   --desktop-window-chrome-border: rgba(var(--ui-accent-rgb), 0.34);
   --desktop-window-chrome-title: #edf2ff;
+  --desktop-window-runtime-label: rgba(230, 237, 247, 0.78);
+  --desktop-window-runtime-value: #f3f6ff;
   --desktop-window-btn-color: #d9e0ec;
   --desktop-window-btn-hover-bg: rgba(var(--ui-accent-rgb), 0.28);
   --desktop-window-btn-hover-color: #ffffff;
@@ -222,6 +251,33 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+.desktop-window-runtime {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 50vw;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--desktop-window-runtime-label);
+  pointer-events: none;
+}
+
+.desktop-window-runtime-label {
+  opacity: 0.9;
+}
+
+.desktop-window-runtime-value {
+  font-weight: 600;
+  color: var(--desktop-window-runtime-value);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .desktop-window-controls {
   display: inline-flex;
   align-items: stretch;
@@ -247,5 +303,11 @@ onBeforeUnmount(() => {
 .desktop-window-btn--close:hover {
   background: #d9534f;
   color: #ffffff;
+}
+
+@media (max-width: 760px) {
+  .desktop-window-runtime {
+    display: none;
+  }
 }
 </style>

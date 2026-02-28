@@ -653,7 +653,12 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { copyText } from '@/utils/clipboard';
 import { renderMarkdown } from '@/utils/markdown';
-import { parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import {
+  buildWorkspaceImagePersistentCacheKey,
+  readWorkspaceImagePersistentCache,
+  writeWorkspaceImagePersistentCache
+} from '@/utils/workspaceImagePersistentCache';
+import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
@@ -1215,7 +1220,15 @@ const renderAssistantMarkdown = (message) => {
   return html;
 };
 
-const workspaceResourceCache = new Map();
+type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
+type WorkspaceResourceCacheEntry = {
+  objectUrl?: string;
+  filename?: string;
+  promise?: Promise<WorkspaceResourceCachePayload>;
+};
+
+const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
+const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 let workspaceResourceHydrationFrame = null;
 let stopWorkspaceRefreshListener = null;
 
@@ -1257,6 +1270,40 @@ const resolveWorkspaceResource = (publicPath) => {
     };
   }
   return { ...parsed, requestUserId: null, requestAgentId: null, allowed: false };
+};
+
+const buildWorkspaceResourcePersistentCacheKey = (resource) => {
+  const currentUserId = normalizeWorkspaceOwnerId(authStore.user?.id);
+  return buildWorkspaceImagePersistentCacheKey({
+    scope: currentUserId || 'anonymous',
+    requestUserId: resource.requestUserId,
+    requestAgentId: resource.requestAgentId,
+    publicPath: resource.publicPath
+  });
+};
+
+const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
+  const raw = status?.dataset?.loadingLabel;
+  const normalized = String(raw || '').trim();
+  return normalized || t('chat.resourceImageLoading');
+};
+
+const scheduleWorkspaceLoadingLabel = (
+  card: HTMLElement,
+  status: HTMLElement | null
+): number | null => {
+  if (!status || typeof window === 'undefined') return null;
+  status.textContent = '';
+  const label = resolveWorkspaceLoadingLabel(status);
+  return window.setTimeout(() => {
+    if (!card.isConnected || card.dataset.workspaceState !== 'loading') return;
+    status.textContent = label;
+  }, WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS);
+};
+
+const clearWorkspaceLoadingLabelTimer = (timerId: number | null) => {
+  if (timerId === null || typeof window === 'undefined') return;
+  window.clearTimeout(timerId);
 };
 
 const getFilenameFromHeaders = (headers, fallback) => {
@@ -1301,26 +1348,60 @@ const saveBlobUrl = (url, filename) => {
 
 const fetchWorkspaceResource = async (resource) => {
   const cached = workspaceResourceCache.get(resource.publicPath);
-  if (cached?.objectUrl) return cached;
+  if (cached?.objectUrl) {
+    return {
+      objectUrl: cached.objectUrl,
+      filename: cached.filename || resource.filename || 'download'
+    };
+  }
   if (cached?.promise) return cached.promise;
-  const params: Record<string, string> = { path: String(resource.relativePath || '') };
-  
-  if (resource.requestUserId) {
-    params.user_id = resource.requestUserId;
-  }
-  if (resource.requestAgentId) {
-    params.agent_id = resource.requestAgentId;
-  }
-  const promise = downloadWunderWorkspaceFile(params)
-    .then((response) => {
+  const allowPersistentCache = isImagePath(resource.filename || resource.relativePath || '');
+  const persistentCacheKey = allowPersistentCache
+    ? buildWorkspaceResourcePersistentCacheKey(resource)
+    : '';
+  const promise = (async () => {
+    if (allowPersistentCache && persistentCacheKey) {
+      const cachedPayload = await readWorkspaceImagePersistentCache(persistentCacheKey);
+      if (cachedPayload?.blob) {
+        const filename = cachedPayload.filename || resource.filename || 'download';
+        const cachedBlob = normalizeWorkspaceImageBlob(
+          cachedPayload.blob,
+          filename,
+          cachedPayload.blob.type
+        );
+        const objectUrl = URL.createObjectURL(cachedBlob);
+        const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
+        workspaceResourceCache.set(resource.publicPath, entry);
+        return entry;
+      }
+    }
+    const params: Record<string, string> = { path: String(resource.relativePath || '') };
+    if (resource.requestUserId) {
+      params.user_id = resource.requestUserId;
+    }
+    if (resource.requestAgentId) {
+      params.agent_id = resource.requestAgentId;
+    }
+    const response = await downloadWunderWorkspaceFile(params);
+    try {
       const filename = getFilenameFromHeaders(response.headers, resource.filename || 'download');
       const contentType = response.headers?.['content-type'] || response.headers?.['Content-Type'];
       const blob = normalizeWorkspaceImageBlob(response.data, filename, contentType);
       const objectUrl = URL.createObjectURL(blob);
-      const entry = { objectUrl, filename };
+      const entry: WorkspaceResourceCachePayload = { objectUrl, filename };
       workspaceResourceCache.set(resource.publicPath, entry);
+      if (allowPersistentCache && persistentCacheKey) {
+        void writeWorkspaceImagePersistentCache(persistentCacheKey, {
+          blob,
+          filename
+        });
+      }
       return entry;
-    })
+    } catch (error) {
+      workspaceResourceCache.delete(resource.publicPath);
+      throw error;
+    }
+  })()
     .catch((error) => {
       workspaceResourceCache.delete(resource.publicPath);
       throw error;
@@ -1366,6 +1447,9 @@ const hydrateWorkspaceResourceCard = async (card) => {
     return;
   }
   card.dataset.workspaceState = 'loading';
+  card.classList.remove('is-error');
+  card.classList.remove('is-ready');
+  const loadingTimerId = scheduleWorkspaceLoadingLabel(card as HTMLElement, status as HTMLElement | null);
   try {
     const entry = await fetchWorkspaceResource(resource);
     preview.src = entry.objectUrl;
@@ -1380,6 +1464,8 @@ const hydrateWorkspaceResourceCard = async (card) => {
     }
     card.dataset.workspaceState = 'error';
     card.classList.add('is-error');
+  } finally {
+    clearWorkspaceLoadingLabelTimer(loadingTimerId);
   }
 };
 
@@ -1406,7 +1492,7 @@ const resetWorkspaceResourceCards = () => {
     card.classList.remove('is-ready');
     const status = card.querySelector('.ai-resource-status');
     if (status) {
-      status.textContent = t('chat.resourceImageLoading');
+      status.textContent = '';
     }
   });
 };

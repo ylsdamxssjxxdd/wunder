@@ -426,6 +426,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
   const fileActionLabel = escapeHtml(`${downloadLabel} ${displayName}`);
   const fileIcon = resolveFileIconPath(fileExt);
   const fileBadge = fileExt ? fileExt.toUpperCase() : 'FILE';
+  const imageLoadingLabel = escapeHtml(t('chat.resourceImageLoading'));
   const fileHeader = `
     <div class="ai-resource-file-header">
       <div class="ai-resource-file-title" title="${safeName}">${safeName}</div>
@@ -447,7 +448,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
   `;
   const imageBody = `
     <div class="ai-resource-body">
-      <div class="ai-resource-status">${t('chat.resourceImageLoading')}</div>
+      <div class="ai-resource-status" data-loading-label="${imageLoadingLabel}"></div>
       <img class="ai-resource-preview" alt="${safeName}" loading="lazy" />
     </div>
   `;

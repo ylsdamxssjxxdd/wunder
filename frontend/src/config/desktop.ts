@@ -4,6 +4,7 @@ const DESKTOP_TOOL_CALL_MODE_KEY = 'wunder_desktop_tool_call_mode';
 const DESKTOP_USER_ID_KEY = 'wunder_desktop_user_id';
 const DESKTOP_LOCAL_TOKEN_KEY = 'wunder_desktop_local_token';
 const DESKTOP_REMOTE_API_BASE_KEY = 'wunder_desktop_remote_api_base';
+const DESKTOP_REMOTE_MODE_CHANGE_EVENT = 'wunder:desktop-remote-mode-change';
 
 export const DESKTOP_TOOL_CALL_MODES = ['tool_call', 'function_call'] as const;
 
@@ -28,6 +29,11 @@ export type DesktopRuntime = {
   remote_connected: boolean;
   remote_server_base_url: string;
   remote_error?: string;
+};
+
+export type DesktopRemoteModeChangeDetail = {
+  remoteAuthMode: boolean;
+  remoteApiBase: string;
 };
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -78,6 +84,26 @@ const readRemoteApiBaseOverride = (): string => {
   }
 };
 
+const getDesktopRemoteModeDetail = (): DesktopRemoteModeChangeDetail => {
+  const remoteApiBase = readRemoteApiBaseOverride();
+  return {
+    remoteAuthMode: Boolean(remoteApiBase),
+    remoteApiBase
+  };
+};
+
+const emitDesktopRemoteModeChange = (): DesktopRemoteModeChangeDetail => {
+  const detail = getDesktopRemoteModeDetail();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent<DesktopRemoteModeChangeDetail>(DESKTOP_REMOTE_MODE_CHANGE_EVENT, {
+        detail
+      })
+    );
+  }
+  return detail;
+};
+
 const writeRemoteApiBaseOverride = (serverBaseUrl: string): string => {
   const normalized = normalizeRemoteApiBase(serverBaseUrl);
   try {
@@ -89,6 +115,7 @@ const writeRemoteApiBaseOverride = (serverBaseUrl: string): string => {
   } catch {
     // ignore localStorage failures
   }
+  emitDesktopRemoteModeChange();
   return normalized;
 };
 
@@ -98,6 +125,7 @@ const clearRemoteApiBaseOverrideInternal = (): void => {
   } catch {
     // ignore localStorage failures
   }
+  emitDesktopRemoteModeChange();
 };
 
 const normalizeRuntime = (value: unknown): DesktopRuntime | null => {
@@ -269,6 +297,26 @@ export const clearDesktopRemoteApiBaseOverride = (): void => {
 export const getDesktopRemoteApiBaseOverride = (): string => readRemoteApiBaseOverride();
 
 export const isDesktopRemoteAuthMode = (): boolean => Boolean(readRemoteApiBaseOverride());
+
+export const onDesktopRemoteModeChange = (
+  listener: (detail: DesktopRemoteModeChangeDetail) => void
+): (() => void) => {
+  if (typeof window === 'undefined') {
+    return () => undefined;
+  }
+  const handler = (event: Event) => {
+    const detail = (event as CustomEvent<DesktopRemoteModeChangeDetail>)?.detail;
+    if (detail && typeof detail === 'object') {
+      listener(detail);
+      return;
+    }
+    listener(getDesktopRemoteModeDetail());
+  };
+  window.addEventListener(DESKTOP_REMOTE_MODE_CHANGE_EVENT, handler as EventListener);
+  return () => {
+    window.removeEventListener(DESKTOP_REMOTE_MODE_CHANGE_EVENT, handler as EventListener);
+  };
+};
 
 export const getDesktopLocalToken = (): string => {
   const runtime = getDesktopRuntime();

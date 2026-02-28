@@ -359,6 +359,11 @@ import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUserWorldStore } from '@/stores/userWorld';
 import { renderMarkdown } from '@/utils/markdown';
+import {
+  buildWorkspaceImagePersistentCacheKey,
+  readWorkspaceImagePersistentCache,
+  writeWorkspaceImagePersistentCache
+} from '@/utils/workspaceImagePersistentCache';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
@@ -1246,6 +1251,7 @@ type UserWorldResourceCacheEntry = {
   promise?: Promise<UserWorldResourceCacheEntry>;
 };
 
+const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const userWorldResourceCache = new Map<string, UserWorldResourceCacheEntry>();
 let userWorldResourceHydrationFrame: number | null = null;
 let stopUserWorldWorkspaceRefresh: (() => void) | null = null;
@@ -1341,6 +1347,44 @@ const buildUserWorldCacheKey = (publicPath: string, suffix = '') => {
   return `${conversationId}:${publicPath}${suffix}`;
 };
 
+const buildUserWorldPersistentCacheKey = (resource: {
+  publicPath: string;
+  ownerId: string;
+}) => {
+  const currentUserId = String(authStore.user?.id || '').trim();
+  const conversationId = String(activeConversationId.value || '').trim();
+  const scope = `user-world:${currentUserId}:${conversationId}`;
+  return buildWorkspaceImagePersistentCacheKey({
+    scope,
+    requestUserId: resource.ownerId,
+    publicPath: resource.publicPath
+  });
+};
+
+const resolveWorkspaceLoadingLabel = (status: HTMLElement | null): string => {
+  const raw = status?.dataset?.loadingLabel;
+  const normalized = String(raw || '').trim();
+  return normalized || t('chat.resourceImageLoading');
+};
+
+const scheduleWorkspaceLoadingLabel = (
+  card: HTMLElement,
+  status: HTMLElement | null
+): number | null => {
+  if (!status || typeof window === 'undefined') return null;
+  status.textContent = '';
+  const label = resolveWorkspaceLoadingLabel(status);
+  return window.setTimeout(() => {
+    if (!card.isConnected || card.dataset.workspaceState !== 'loading') return;
+    status.textContent = label;
+  }, WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS);
+};
+
+const clearWorkspaceLoadingLabelTimer = (timerId: number | null) => {
+  if (timerId === null || typeof window === 'undefined') return;
+  window.clearTimeout(timerId);
+};
+
 const fetchUserWorldResource = async (resource: {
   publicPath: string;
   ownerId: string;
@@ -1356,14 +1400,35 @@ const fetchUserWorldResource = async (resource: {
     throw new Error('conversation_id is missing');
   }
   const cached = userWorldResourceCache.get(cacheKey);
-  if (cached?.objectUrl) return cached;
+  if (cached?.objectUrl) {
+    return {
+      objectUrl: cached.objectUrl,
+      filename: cached.filename || resource.filename || 'download'
+    };
+  }
   if (cached?.promise) return cached.promise;
-  const promise = downloadUserWorldFile({
-    conversation_id: conversationId,
-    owner_user_id: resource.ownerId,
-    path: String(resource.relativePath || '')
-  })
-    .then((response) => {
+  const allowPersistentCache = isImagePath(resource.filename || resource.relativePath || '');
+  const persistentCacheKey = allowPersistentCache
+    ? buildUserWorldPersistentCacheKey(resource)
+    : '';
+  const promise = (async () => {
+    if (allowPersistentCache && persistentCacheKey) {
+      const cachedPayload = await readWorkspaceImagePersistentCache(persistentCacheKey);
+      if (cachedPayload?.blob) {
+        const filename = cachedPayload.filename || resource.filename || 'download';
+        const blob = normalizeWorkspaceImageBlob(cachedPayload.blob, filename, cachedPayload.blob.type);
+        const objectUrl = URL.createObjectURL(blob);
+        const entry: UserWorldResourceCacheEntry = { objectUrl, filename };
+        userWorldResourceCache.set(cacheKey, entry);
+        return entry;
+      }
+    }
+    const response = await downloadUserWorldFile({
+      conversation_id: conversationId,
+      owner_user_id: resource.ownerId,
+      path: String(resource.relativePath || '')
+    });
+    try {
       const filename = getFilenameFromHeaders(
         response.headers as Record<string, string>,
         resource.filename || 'download'
@@ -1373,8 +1438,15 @@ const fetchUserWorldResource = async (resource: {
       const objectUrl = URL.createObjectURL(blob);
       const entry: UserWorldResourceCacheEntry = { objectUrl, filename };
       userWorldResourceCache.set(cacheKey, entry);
+      if (allowPersistentCache && persistentCacheKey) {
+        void writeWorkspaceImagePersistentCache(persistentCacheKey, { blob, filename });
+      }
       return entry;
-    })
+    } catch (error) {
+      userWorldResourceCache.delete(cacheKey);
+      throw error;
+    }
+  })()
     .catch((error) => {
       userWorldResourceCache.delete(cacheKey);
       throw error;
@@ -1469,6 +1541,9 @@ const hydrateUserWorldResourceCard = async (card: HTMLElement) => {
     return;
   }
   card.dataset.workspaceState = 'loading';
+  card.classList.remove('is-error');
+  card.classList.remove('is-ready');
+  const loadingTimerId = scheduleWorkspaceLoadingLabel(card, status as HTMLElement | null);
   try {
     const entry = await fetchUserWorldResource(resource);
     preview.src = entry.objectUrl;
@@ -1483,6 +1558,8 @@ const hydrateUserWorldResourceCard = async (card: HTMLElement) => {
     }
     card.dataset.workspaceState = 'error';
     card.classList.add('is-error');
+  } finally {
+    clearWorkspaceLoadingLabelTimer(loadingTimerId);
   }
 };
 
@@ -1507,7 +1584,7 @@ const resetUserWorldResourceCards = () => {
     if (kind === 'image') {
       const status = card.querySelector('.ai-resource-status');
       if (status) {
-        status.textContent = t('chat.resourceImageLoading');
+        status.textContent = '';
       }
     } else {
       clearFileCardStatus(card as HTMLElement);
