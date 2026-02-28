@@ -33,6 +33,15 @@ pub fn is_admin_path(path: &str) -> bool {
     if path.starts_with("/wunder/workspace") {
         return false;
     }
+    if path.starts_with("/wunder/user_world") {
+        return false;
+    }
+    if path.starts_with("/wunder/cron") {
+        return false;
+    }
+    if path.starts_with("/wunder/channels") {
+        return false;
+    }
     if path.starts_with("/wunder/user_tools") {
         return false;
     }
@@ -107,6 +116,10 @@ mod tests {
         assert!(!is_admin_path("/wunder/auth/login"));
         assert!(!is_admin_path("/wunder/chat/sessions"));
         assert!(!is_admin_path("/wunder/workspace"));
+        assert!(!is_admin_path("/wunder/user_world/contacts"));
+        assert!(!is_admin_path("/wunder/user_world/ws"));
+        assert!(!is_admin_path("/wunder/cron/list"));
+        assert!(!is_admin_path("/wunder/channels/accounts"));
         assert!(!is_admin_path("/wunder/user_tools/mcp"));
         assert!(!is_admin_path("/wunder/agents"));
         assert!(!is_admin_path("/wunder/external_links"));

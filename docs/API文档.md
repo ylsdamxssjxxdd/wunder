@@ -2663,6 +2663,17 @@
 - API 基址：`http://<host>:<port>/wunder`
 - WS 基址：`ws://<host>:<port>/wunder/chat/ws`
 - 默认启动模式：Tauri GUI；`--bridge-only` 用于诊断与无窗口运行。
+- Tauri GUI 主窗口为无边框模式（`decorations=false`），前端统一使用 `window.wunderDesktop` 进行窗口控制。
+
+### desktop Tauri 窗口 command（非 HTTP）
+
+- `desktop_runtime_info`：返回桌面运行时信息快照。
+- `desktop_toggle_devtools`：切换 DevTools。
+- `desktop_window_minimize`：最小化窗口。
+- `desktop_window_toggle_maximize`：最大化/还原窗口。
+- `desktop_window_close`：关闭窗口。
+- `desktop_window_is_maximized`：查询窗口是否处于最大化状态。
+- `desktop_window_start_dragging`：启动窗口拖拽（用于无边框标题栏）。
 
 ### desktop 运行时引导接口
 

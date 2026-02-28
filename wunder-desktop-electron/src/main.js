@@ -218,6 +218,13 @@ const toggleMainDevTools = () => {
   return true
 }
 
+const withMainWindow = (handler, fallback) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return fallback
+  }
+  return handler(mainWindow)
+}
+
 const createWindow = async () => {
   const port = await startBridge()
   mainWindow = new BrowserWindow({
@@ -226,8 +233,10 @@ const createWindow = async () => {
     minWidth: 1024,
     minHeight: 700,
     title: 'Wunder Desktop',
+    frame: false,
     show: false,
     autoHideMenuBar: true,
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hidden' } : {}),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -264,6 +273,32 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     try {
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
+      ipcMain.handle('wunder:window-minimize', () =>
+        withMainWindow((window) => {
+          window.minimize()
+          return true
+        }, false)
+      )
+      ipcMain.handle('wunder:window-toggle-maximize', () =>
+        withMainWindow((window) => {
+          if (window.isMaximized()) {
+            window.unmaximize()
+          } else {
+            window.maximize()
+          }
+          return window.isMaximized()
+        }, false)
+      )
+      ipcMain.handle('wunder:window-close', () =>
+        withMainWindow((window) => {
+          window.close()
+          return true
+        }, false)
+      )
+      ipcMain.handle('wunder:window-is-maximized', () =>
+        withMainWindow((window) => window.isMaximized(), false)
+      )
+      ipcMain.handle('wunder:window-start-drag', () => false)
       Menu.setApplicationMenu(null)
       await createWindow()
     } catch (err) {
