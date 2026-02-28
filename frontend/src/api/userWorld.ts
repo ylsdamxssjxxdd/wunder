@@ -133,6 +133,16 @@ export const createUserWorldGroup = (payload: {
   member_user_ids: string[];
 }) => api.post('/user_world/groups', payload, { timeout: 60000 });
 
+export const getUserWorldGroupDetail = (groupId: string) =>
+  api.get(`/user_world/groups/${groupId}`, { timeout: 60000 });
+
+export const updateUserWorldGroupAnnouncement = (
+  groupId: string,
+  payload: {
+    announcement?: string | null;
+  }
+) => api.post(`/user_world/groups/${groupId}/announcement`, payload, { timeout: 60000 });
+
 export const createOrGetUserWorldConversation = (payload: { peer_user_id: string }) =>
   api.post('/user_world/conversations', payload, { timeout: 60000 });
 

@@ -6,6 +6,7 @@
     @mousedown="handleDragRegionMouseDown"
   >
     <div class="desktop-window-title" data-tauri-drag-region>
+      <img class="desktop-window-logo" src="/favicon.svg" alt="" aria-hidden="true" />
       <span class="desktop-window-title-text">{{ titleText }}</span>
     </div>
     <div class="desktop-window-controls" data-tauri-drag-region="false">
@@ -144,17 +145,40 @@ onBeforeUnmount(() => {
 <style scoped>
 .desktop-window-chrome {
   --desktop-window-chrome-height: 36px;
+  --desktop-window-chrome-bg: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96),
+    rgba(250, 251, 253, 0.92)
+  );
+  --desktop-window-chrome-border: rgba(var(--ui-accent-rgb), 0.24);
+  --desktop-window-chrome-title: #344255;
+  --desktop-window-btn-color: #5f6b7a;
+  --desktop-window-btn-hover-bg: rgba(var(--ui-accent-rgb), 0.16);
+  --desktop-window-btn-hover-color: var(--ui-accent-deep);
   position: fixed;
   inset: 0 0 auto;
   height: var(--desktop-window-chrome-height);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: rgba(255, 255, 255, 0.9);
-  border-bottom: 1px solid rgba(var(--ui-accent-rgb), 0.18);
+  background: var(--desktop-window-chrome-bg);
+  border-bottom: 1px solid var(--desktop-window-chrome-border);
   z-index: 3000;
   user-select: none;
   -webkit-app-region: drag;
+}
+
+:global(:root[data-user-theme='dark']) .desktop-window-chrome {
+  --desktop-window-chrome-bg: linear-gradient(
+    180deg,
+    rgba(31, 37, 46, 0.96),
+    rgba(26, 31, 40, 0.92)
+  );
+  --desktop-window-chrome-border: rgba(var(--ui-accent-rgb), 0.34);
+  --desktop-window-chrome-title: #edf2ff;
+  --desktop-window-btn-color: #d9e0ec;
+  --desktop-window-btn-hover-bg: rgba(var(--ui-accent-rgb), 0.28);
+  --desktop-window-btn-hover-color: #ffffff;
 }
 
 .desktop-window-title {
@@ -163,13 +187,21 @@ onBeforeUnmount(() => {
   padding-left: 12px;
   display: inline-flex;
   align-items: center;
+  gap: 8px;
   height: 100%;
+}
+
+.desktop-window-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  flex: 0 0 auto;
 }
 
 .desktop-window-title-text {
   font-size: 12px;
   font-weight: 600;
-  color: #4b5563;
+  color: var(--desktop-window-chrome-title);
   letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;
@@ -187,15 +219,15 @@ onBeforeUnmount(() => {
   width: 44px;
   border: none;
   background: transparent;
-  color: #5f6b7a;
+  color: var(--desktop-window-btn-color);
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
   -webkit-app-region: no-drag;
 }
 
 .desktop-window-btn:hover {
-  background: rgba(var(--ui-accent-rgb), 0.15);
-  color: var(--ui-accent-deep);
+  background: var(--desktop-window-btn-hover-bg);
+  color: var(--desktop-window-btn-hover-color);
 }
 
 .desktop-window-btn--close:hover {

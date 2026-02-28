@@ -239,12 +239,14 @@ impl SqliteStorage {
             conversation_id: row.get(1)?,
             group_name: row.get(2)?,
             owner_user_id: row.get(3)?,
-            member_count: row.get(4)?,
-            unread_count_cache: row.get(5)?,
-            updated_at: row.get(6)?,
-            last_message_at: row.get(7)?,
-            last_message_id: row.get(8)?,
-            last_message_preview: row.get(9)?,
+            announcement: row.get(4)?,
+            announcement_updated_at: row.get(5)?,
+            member_count: row.get(6)?,
+            unread_count_cache: row.get(7)?,
+            updated_at: row.get(8)?,
+            last_message_at: row.get(9)?,
+            last_message_id: row.get(10)?,
+            last_message_preview: row.get(11)?,
         })
     }
 
@@ -549,6 +551,28 @@ impl SqliteStorage {
             "CREATE INDEX IF NOT EXISTS idx_user_agents_user_hive ON user_agents (user_id, hive_id, updated_at)",
             [],
         )?;
+        Ok(())
+    }
+
+    fn ensure_user_world_group_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(user_world_groups)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = HashSet::new();
+        for name in rows.flatten() {
+            columns.insert(name);
+        }
+        if !columns.contains("announcement") {
+            conn.execute(
+                "ALTER TABLE user_world_groups ADD COLUMN announcement TEXT",
+                [],
+            )?;
+        }
+        if !columns.contains("announcement_updated_at") {
+            conn.execute(
+                "ALTER TABLE user_world_groups ADD COLUMN announcement_updated_at REAL",
+                [],
+            )?;
+        }
         Ok(())
     }
 }
@@ -870,6 +894,8 @@ impl StorageBackend for SqliteStorage {
               conversation_id TEXT NOT NULL UNIQUE,
               group_name TEXT NOT NULL,
               owner_user_id TEXT NOT NULL,
+              announcement TEXT,
+              announcement_updated_at REAL,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL
             );
@@ -1279,6 +1305,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;
+        self.ensure_user_world_group_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -4654,6 +4681,7 @@ impl StorageBackend for SqliteStorage {
         )?;
 
         let mut sql = "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+                       g.announcement, g.announcement_updated_at, \
                        (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
                        m.unread_count_cache, m.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
                        FROM user_world_groups g \
@@ -4676,6 +4704,81 @@ impl StorageBackend for SqliteStorage {
             )?
             .collect::<std::result::Result<Vec<UserWorldGroupRecord>, _>>()?;
         Ok((rows, total))
+    }
+
+    fn get_user_world_group_by_id(&self, group_id: &str) -> Result<Option<UserWorldGroupRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_group = group_id.trim();
+        if cleaned_group.is_empty() {
+            return Ok(None);
+        }
+        let conn = self.open()?;
+        conn.query_row(
+            "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+             g.announcement, g.announcement_updated_at, \
+             (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
+             0 AS unread_count_cache, g.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+             FROM user_world_groups g \
+             JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
+             WHERE g.group_id = ?",
+            params![cleaned_group],
+            Self::map_user_world_group_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    fn update_user_world_group_announcement(
+        &self,
+        group_id: &str,
+        announcement: Option<&str>,
+        announcement_updated_at: Option<f64>,
+        updated_at: f64,
+    ) -> Result<Option<UserWorldGroupRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_group = group_id.trim();
+        if cleaned_group.is_empty() {
+            return Ok(None);
+        }
+        let announcement = announcement
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let mut conn = self.open()?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let affected = tx.execute(
+            "UPDATE user_world_groups SET announcement = ?, announcement_updated_at = ?, updated_at = ? \
+             WHERE group_id = ?",
+            params![
+                announcement,
+                announcement_updated_at,
+                if updated_at.is_finite() && updated_at > 0.0 {
+                    updated_at
+                } else {
+                    Self::now_ts()
+                },
+                cleaned_group
+            ],
+        )?;
+        if affected <= 0 {
+            tx.commit()?;
+            return Ok(None);
+        }
+        let record = tx
+            .query_row(
+                "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+                 g.announcement, g.announcement_updated_at, \
+                 (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
+                 0 AS unread_count_cache, g.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+                 FROM user_world_groups g \
+                 JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
+                 WHERE g.group_id = ?",
+                params![cleaned_group],
+                Self::map_user_world_group_row,
+            )
+            .optional()?;
+        tx.commit()?;
+        Ok(record)
     }
 
     fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>> {

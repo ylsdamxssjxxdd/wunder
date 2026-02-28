@@ -7,11 +7,14 @@
   "author": "wunder",
   "scripts": {
     "prepare:resources": "node scripts/prepare-resources.js",
-    "pack": "npm run prepare:resources && electron-builder --dir",
-    "build:linux": "npm run prepare:resources && electron-builder --linux --x64 --arm64",
-    "build:linux:x64": "npm run prepare:resources && electron-builder --linux --x64",
-    "build:linux:arm64": "npm run prepare:resources && electron-builder --linux --arm64",
-    "build": "npm run prepare:resources && electron-builder"
+    "pack": "npm run prepare:resources && electron-builder --dir --publish never",
+    "build:linux": "npm run prepare:resources && electron-builder --linux --x64 --arm64 --publish never",
+    "build:linux:x64": "npm run prepare:resources && electron-builder --linux --x64 --publish never",
+    "build:linux:arm64": "npm run prepare:resources && electron-builder --linux --arm64 --publish never",
+    "build": "npm run prepare:resources && electron-builder --publish never"
+  },
+  "dependencies": {
+    "electron-updater": "6.6.2"
   },
   "devDependencies": {
     "electron": "38.7.0",

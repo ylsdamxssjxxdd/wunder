@@ -56,6 +56,8 @@
   - `GET /wunder/user_world/contacts`：联系人列表（支持 `keyword/offset/limit`）
   - `GET /wunder/user_world/groups`：当前用户群聊列表（支持 `offset/limit`）
   - `POST /wunder/user_world/groups`：创建群聊（`group_name/member_user_ids[]`）
+  - `GET /wunder/user_world/groups/{group_id}`：群详情（含群公告与成员列表，需群成员权限）
+  - `POST /wunder/user_world/groups/{group_id}/announcement`：更新群公告（`announcement`，传空可清空，需群成员权限）
   - `POST /wunder/user_world/conversations`：按 `peer_user_id` 获取或创建 direct 会话
   - `GET /wunder/user_world/conversations`：当前用户会话列表
   - `GET /wunder/user_world/conversations/{conversation_id}`：会话详情（需成员权限）
@@ -76,6 +78,7 @@
   - 仅会话成员可读写与订阅事件。
   - 支持 `client_msg_id` 幂等去重（同会话内唯一）。
   - 会话对象在群聊场景返回 `group_id/group_name/member_count`；单聊场景返回 `peer_user_id`。
+  - 群聊对象返回 `announcement/announcement_updated_at` 字段；群详情额外返回 `members[]`。
 
 ### 4.1 `/wunder` 请求
 

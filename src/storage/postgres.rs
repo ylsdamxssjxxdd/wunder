@@ -340,12 +340,14 @@ impl PostgresStorage {
             conversation_id: row.get(1),
             group_name: row.get(2),
             owner_user_id: row.get(3),
-            member_count: row.get(4),
-            unread_count_cache: row.get(5),
-            updated_at: row.get(6),
-            last_message_at: row.get(7),
-            last_message_id: row.get(8),
-            last_message_preview: row.get(9),
+            announcement: row.get(4),
+            announcement_updated_at: row.get(5),
+            member_count: row.get(6),
+            unread_count_cache: row.get(7),
+            updated_at: row.get(8),
+            last_message_at: row.get(9),
+            last_message_id: row.get(10),
+            last_message_preview: row.get(11),
         }
     }
 
@@ -709,6 +711,18 @@ impl PostgresStorage {
         }
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_agents_user_hive ON user_agents (user_id, hive_id, updated_at)",
+            &[],
+        )?;
+        Ok(())
+    }
+
+    fn ensure_user_world_group_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.execute(
+            "ALTER TABLE user_world_groups ADD COLUMN IF NOT EXISTS announcement TEXT",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE user_world_groups ADD COLUMN IF NOT EXISTS announcement_updated_at DOUBLE PRECISION",
             &[],
         )?;
         Ok(())
@@ -1121,6 +1135,8 @@ impl StorageBackend for PostgresStorage {
                   conversation_id TEXT NOT NULL UNIQUE,
                   group_name TEXT NOT NULL,
                   owner_user_id TEXT NOT NULL,
+                  announcement TEXT,
+                  announcement_updated_at DOUBLE PRECISION,
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL
                 );
@@ -1532,6 +1548,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_channel_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
                     self.ensure_user_agent_columns(&mut conn)?;
+                    self.ensure_user_world_group_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
@@ -4794,6 +4811,7 @@ impl StorageBackend for PostgresStorage {
             let safe_offset = offset.max(0);
             conn.query(
                 "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+                 g.announcement, g.announcement_updated_at, \
                  (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
                  m.unread_count_cache, m.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
                  FROM user_world_groups g \
@@ -4807,6 +4825,7 @@ impl StorageBackend for PostgresStorage {
         } else {
             conn.query(
                 "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+                 g.announcement, g.announcement_updated_at, \
                  (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
                  m.unread_count_cache, m.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
                  FROM user_world_groups g \
@@ -4822,6 +4841,77 @@ impl StorageBackend for PostgresStorage {
             output.push(Self::map_user_world_group_row(&row));
         }
         Ok((output, total))
+    }
+
+    fn get_user_world_group_by_id(&self, group_id: &str) -> Result<Option<UserWorldGroupRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_group = group_id.trim();
+        if cleaned_group.is_empty() {
+            return Ok(None);
+        }
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+             g.announcement, g.announcement_updated_at, \
+             (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
+             0::BIGINT AS unread_count_cache, g.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+             FROM user_world_groups g \
+             JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
+             WHERE g.group_id = $1",
+            &[&cleaned_group],
+        )?;
+        Ok(row.map(|row| Self::map_user_world_group_row(&row)))
+    }
+
+    fn update_user_world_group_announcement(
+        &self,
+        group_id: &str,
+        announcement: Option<&str>,
+        announcement_updated_at: Option<f64>,
+        updated_at: f64,
+    ) -> Result<Option<UserWorldGroupRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_group = group_id.trim();
+        if cleaned_group.is_empty() {
+            return Ok(None);
+        }
+        let announcement = announcement
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let safe_updated_at = if updated_at.is_finite() && updated_at > 0.0 {
+            updated_at
+        } else {
+            Self::now_ts()
+        };
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        let affected = tx.execute(
+            "UPDATE user_world_groups SET announcement = $1, announcement_updated_at = $2, updated_at = $3 \
+             WHERE group_id = $4",
+            &[
+                &announcement,
+                &announcement_updated_at,
+                &safe_updated_at,
+                &cleaned_group,
+            ],
+        )?;
+        if affected <= 0 {
+            tx.commit()?;
+            return Ok(None);
+        }
+        let row = tx.query_opt(
+            "SELECT g.group_id, g.conversation_id, g.group_name, g.owner_user_id, \
+             g.announcement, g.announcement_updated_at, \
+             (SELECT COUNT(*) FROM user_world_members mm WHERE mm.conversation_id = g.conversation_id) AS member_count, \
+             0::BIGINT AS unread_count_cache, g.updated_at, c.last_message_at, c.last_message_id, c.last_message_preview \
+             FROM user_world_groups g \
+             JOIN user_world_conversations c ON c.conversation_id = g.conversation_id \
+             WHERE g.group_id = $1",
+            &[&cleaned_group],
+        )?;
+        tx.commit()?;
+        Ok(row.map(|row| Self::map_user_world_group_row(&row)))
     }
 
     fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>> {

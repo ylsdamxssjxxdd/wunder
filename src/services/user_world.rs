@@ -13,6 +13,7 @@ use tokio::sync::{broadcast, RwLock};
 const DEFAULT_CONTACT_LIMIT: i64 = 100;
 const MAX_CONTACT_FETCH: i64 = 10_000;
 const DEFAULT_LIST_LIMIT: i64 = 50;
+const MAX_GROUP_ANNOUNCEMENT_LEN: usize = 4_000;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserWorldContact {
@@ -50,12 +51,39 @@ pub struct UserWorldGroupView {
     pub conversation_id: String,
     pub group_name: String,
     pub owner_user_id: String,
+    pub announcement: Option<String>,
+    pub announcement_updated_at: Option<f64>,
     pub member_count: i64,
     pub unread_count_cache: i64,
     pub updated_at: f64,
     pub last_message_at: f64,
     pub last_message_id: Option<i64>,
     pub last_message_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserWorldGroupMemberView {
+    pub user_id: String,
+    pub username: String,
+    pub status: String,
+    pub unit_id: Option<String>,
+    pub is_owner: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct UserWorldGroupDetailView {
+    pub group_id: String,
+    pub conversation_id: String,
+    pub group_name: String,
+    pub owner_user_id: String,
+    pub announcement: Option<String>,
+    pub announcement_updated_at: Option<f64>,
+    pub member_count: i64,
+    pub updated_at: f64,
+    pub last_message_at: f64,
+    pub last_message_id: Option<i64>,
+    pub last_message_preview: Option<String>,
+    pub members: Vec<UserWorldGroupMemberView>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -232,6 +260,80 @@ impl UserWorldService {
         )?;
         let output = items.iter().map(Self::map_group).collect::<Vec<_>>();
         Ok((output, total))
+    }
+
+    pub fn get_group_detail(
+        &self,
+        user_id: &str,
+        group_id: &str,
+    ) -> Result<Option<UserWorldGroupDetailView>> {
+        let cleaned_user = user_id.trim();
+        let cleaned_group = group_id.trim();
+        if cleaned_user.is_empty() || cleaned_group.is_empty() {
+            return Ok(None);
+        }
+        let Some(group) = self.storage.get_user_world_group_by_id(cleaned_group)? else {
+            return Ok(None);
+        };
+        if self
+            .storage
+            .get_user_world_member(&group.conversation_id, cleaned_user)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.build_group_detail(&group).map(Some)
+    }
+
+    pub fn update_group_announcement(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        announcement: Option<&str>,
+        now: f64,
+    ) -> Result<Option<UserWorldGroupDetailView>> {
+        let cleaned_user = user_id.trim();
+        let cleaned_group = group_id.trim();
+        if cleaned_user.is_empty() || cleaned_group.is_empty() {
+            return Ok(None);
+        }
+        let Some(current_group) = self.storage.get_user_world_group_by_id(cleaned_group)? else {
+            return Ok(None);
+        };
+        self.ensure_member(cleaned_user, &current_group.conversation_id)?;
+        let normalized_announcement = announcement
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if let Some(value) = &normalized_announcement {
+            if value.chars().count() > MAX_GROUP_ANNOUNCEMENT_LEN {
+                return Err(anyhow!(
+                    "announcement is too long (max {MAX_GROUP_ANNOUNCEMENT_LEN} characters)"
+                ));
+            }
+        }
+        let safe_now = if now.is_finite() && now > 0.0 {
+            now
+        } else {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_secs_f64())
+                .unwrap_or(0.0)
+        };
+        let updated = self.storage.update_user_world_group_announcement(
+            cleaned_group,
+            normalized_announcement.as_deref(),
+            if normalized_announcement.is_some() {
+                Some(safe_now)
+            } else {
+                None
+            },
+            safe_now,
+        )?;
+        updated
+            .as_ref()
+            .map(|item| self.build_group_detail(item))
+            .transpose()
     }
 
     pub fn list_conversations(
@@ -507,12 +609,71 @@ impl UserWorldService {
         }
     }
 
+    fn build_group_detail(&self, item: &UserWorldGroupRecord) -> Result<UserWorldGroupDetailView> {
+        let member_user_ids = self
+            .storage
+            .list_user_world_member_user_ids(&item.conversation_id)?;
+        let mut members = member_user_ids
+            .into_iter()
+            .map(|user_id| {
+                let account = self.storage.get_user_account(&user_id)?;
+                Ok(Self::map_group_member(
+                    &user_id,
+                    account.as_ref(),
+                    &item.owner_user_id,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        members.sort_by(|left, right| {
+            right
+                .is_owner
+                .cmp(&left.is_owner)
+                .then_with(|| left.username.cmp(&right.username))
+                .then_with(|| left.user_id.cmp(&right.user_id))
+        });
+        Ok(UserWorldGroupDetailView {
+            group_id: item.group_id.clone(),
+            conversation_id: item.conversation_id.clone(),
+            group_name: item.group_name.clone(),
+            owner_user_id: item.owner_user_id.clone(),
+            announcement: item.announcement.clone(),
+            announcement_updated_at: item.announcement_updated_at,
+            member_count: members.len().max(item.member_count.max(0) as usize) as i64,
+            updated_at: item.updated_at,
+            last_message_at: item.last_message_at,
+            last_message_id: item.last_message_id,
+            last_message_preview: item.last_message_preview.clone(),
+            members,
+        })
+    }
+
+    fn map_group_member(
+        user_id: &str,
+        account: Option<&UserAccountRecord>,
+        owner_user_id: &str,
+    ) -> UserWorldGroupMemberView {
+        let normalized_user_id = user_id.trim().to_string();
+        UserWorldGroupMemberView {
+            user_id: normalized_user_id.clone(),
+            username: account
+                .map(|item| item.username.clone())
+                .unwrap_or_else(|| normalized_user_id.clone()),
+            status: account
+                .map(|item| item.status.clone())
+                .unwrap_or_else(|| "active".to_string()),
+            unit_id: account.and_then(|item| item.unit_id.clone()),
+            is_owner: normalized_user_id == owner_user_id,
+        }
+    }
+
     fn map_group(item: &UserWorldGroupRecord) -> UserWorldGroupView {
         UserWorldGroupView {
             group_id: item.group_id.clone(),
             conversation_id: item.conversation_id.clone(),
             group_name: item.group_name.clone(),
             owner_user_id: item.owner_user_id.clone(),
+            announcement: item.announcement.clone(),
+            announcement_updated_at: item.announcement_updated_at,
             member_count: item.member_count,
             unread_count_cache: item.unread_count_cache,
             updated_at: item.updated_at,

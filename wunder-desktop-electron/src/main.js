@@ -1,4 +1,5 @@
 const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron')
+const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
 const fs = require('fs')
 const http = require('http')
@@ -9,6 +10,19 @@ let mainWindow = null
 let bridgeProcess = null
 let bridgePort = null
 let bridgeWebBase = null
+let updateTask = null
+let updaterReady = false
+
+const createUpdateSnapshot = () => ({
+  phase: 'idle',
+  currentVersion: app.getVersion(),
+  latestVersion: '',
+  downloaded: false,
+  progress: 0,
+  message: ''
+})
+
+let updateState = createUpdateSnapshot()
 
 app.commandLine.appendSwitch('log-level', '2')
 if (process.env.WUNDER_DISABLE_GPU === '1') {
@@ -65,6 +79,176 @@ const resolveWindowIcon = () => {
     return devIcon
   }
   return undefined
+}
+
+const normalizeUpdateMessage = (error) => {
+  const text = String(error?.message || error || '').trim()
+  if (!text) {
+    return 'unknown update error'
+  }
+  if (/publish configuration/i.test(text) || /app-update\.yml/i.test(text)) {
+    return 'update source is not configured'
+  }
+  return text
+}
+
+const setUpdateState = (patch) => {
+  updateState = {
+    ...updateState,
+    ...patch,
+    currentVersion: app.getVersion()
+  }
+}
+
+const getUpdateState = () => ({
+  ...updateState,
+  currentVersion: app.getVersion()
+})
+
+const configureUpdaterEvents = () => {
+  if (updaterReady) {
+    return
+  }
+  updaterReady = true
+
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = false
+  autoUpdater.logger = console
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdateState({
+      phase: 'checking',
+      downloaded: false,
+      progress: 0,
+      message: ''
+    })
+  })
+
+  autoUpdater.on('update-available', (info) => {
+    setUpdateState({
+      phase: 'available',
+      latestVersion: String(info?.version || '').trim(),
+      downloaded: false,
+      progress: 0,
+      message: ''
+    })
+  })
+
+  autoUpdater.on('update-not-available', () => {
+    setUpdateState({
+      phase: 'not-available',
+      latestVersion: '',
+      downloaded: false,
+      progress: 0,
+      message: ''
+    })
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    setUpdateState({
+      phase: 'downloading',
+      downloaded: false,
+      progress: Number(progress?.percent || 0),
+      message: ''
+    })
+  })
+
+  autoUpdater.on('update-downloaded', (info) => {
+    setUpdateState({
+      phase: 'downloaded',
+      latestVersion: String(info?.version || '').trim(),
+      downloaded: true,
+      progress: 100,
+      message: ''
+    })
+  })
+
+  autoUpdater.on('error', (error) => {
+    setUpdateState({
+      phase: 'error',
+      message: normalizeUpdateMessage(error)
+    })
+  })
+}
+
+const checkAndDownloadUpdate = async () => {
+  if (updateTask) {
+    return updateTask
+  }
+
+  updateTask = (async () => {
+    if (!app.isPackaged) {
+      setUpdateState({
+        phase: 'unsupported',
+        message: 'auto update is only available in packaged app'
+      })
+      return getUpdateState()
+    }
+
+    configureUpdaterEvents()
+    setUpdateState({
+      phase: 'checking',
+      latestVersion: '',
+      downloaded: false,
+      progress: 0,
+      message: ''
+    })
+
+    try {
+      const checkResult = await autoUpdater.checkForUpdates()
+      if (!checkResult?.isUpdateAvailable || !checkResult?.updateInfo) {
+        setUpdateState({
+          phase: 'not-available',
+          latestVersion: '',
+          downloaded: false,
+          progress: 0,
+          message: ''
+        })
+        return getUpdateState()
+      }
+
+      const latestVersion = String(checkResult.updateInfo.version || '').trim()
+      setUpdateState({
+        phase: 'available',
+        latestVersion,
+        downloaded: false,
+        progress: 0,
+        message: ''
+      })
+
+      await autoUpdater.downloadUpdate()
+      return getUpdateState()
+    } catch (error) {
+      setUpdateState({
+        phase: 'error',
+        message: normalizeUpdateMessage(error)
+      })
+      return getUpdateState()
+    }
+  })()
+
+  try {
+    return await updateTask
+  } finally {
+    updateTask = null
+  }
+}
+
+const installDownloadedUpdate = () => {
+  if (!app.isPackaged || !updateState.downloaded || updateState.phase !== 'downloaded') {
+    return {
+      ok: false,
+      state: getUpdateState()
+    }
+  }
+  app.isQuitting = true
+  setImmediate(() => {
+    autoUpdater.quitAndInstall()
+  })
+  return {
+    ok: true,
+    state: getUpdateState()
+  }
 }
 
 const getFreePort = () =>
@@ -291,6 +475,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     try {
+      configureUpdaterEvents()
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       ipcMain.handle('wunder:window-minimize', () =>
         withMainWindow((window) => {
@@ -318,6 +503,9 @@ if (!gotLock) {
         withMainWindow((window) => window.isMaximized(), false)
       )
       ipcMain.handle('wunder:window-start-drag', () => false)
+      ipcMain.handle('wunder:update-check', () => checkAndDownloadUpdate())
+      ipcMain.handle('wunder:update-status', () => getUpdateState())
+      ipcMain.handle('wunder:update-install', () => installDownloadedUpdate())
       Menu.setApplicationMenu(null)
       await createWindow()
     } catch (err) {

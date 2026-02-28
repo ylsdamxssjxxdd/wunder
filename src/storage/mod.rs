@@ -305,6 +305,8 @@ pub struct UserWorldGroupRecord {
     pub conversation_id: String,
     pub group_name: String,
     pub owner_user_id: String,
+    pub announcement: Option<String>,
+    pub announcement_updated_at: Option<f64>,
     pub member_count: i64,
     pub unread_count_cache: i64,
     pub updated_at: f64,
@@ -1013,6 +1015,14 @@ pub trait StorageBackend: Send + Sync {
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<UserWorldGroupRecord>, i64)>;
+    fn get_user_world_group_by_id(&self, group_id: &str) -> Result<Option<UserWorldGroupRecord>>;
+    fn update_user_world_group_announcement(
+        &self,
+        group_id: &str,
+        announcement: Option<&str>,
+        announcement_updated_at: Option<f64>,
+        updated_at: f64,
+    ) -> Result<Option<UserWorldGroupRecord>>;
     fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>>;
 
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()>;

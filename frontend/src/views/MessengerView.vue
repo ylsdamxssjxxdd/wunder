@@ -952,6 +952,7 @@
                 :ui-font-size="uiFontSize"
                 :desktop-tool-call-mode="desktopToolCallMode"
                 :devtools-available="debugToolsAvailable"
+                :update-available="desktopUpdateAvailable"
                 @toggle-language="toggleLanguage"
                 @check-update="checkClientUpdate"
                 @open-tools="openDesktopTools"
@@ -1334,7 +1335,7 @@
 
     <MessengerRightDock
       ref="rightDockRef"
-      v-if="showRightDock"
+      v-if="showAgentRightDock"
       :collapsed="rightDockCollapsed"
       :show-agent-panels="showRightAgentPanels"
       :agent-id-for-api="rightPanelAgentIdForApi"
@@ -1345,6 +1346,13 @@
       @restore-session="restoreTimelineSession"
       @set-main="setTimelineSessionMain"
       @delete-session="deleteTimelineSession"
+    />
+    <MessengerGroupDock
+      ref="rightDockRef"
+      v-else-if="showGroupRightDock"
+      :collapsed="rightDockCollapsed"
+      :group-id="activeWorldGroupId"
+      @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
     />
 
     <el-dialog
@@ -1441,7 +1449,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits } from '@/api/auth';
@@ -1452,6 +1460,7 @@ import { uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
+import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
@@ -1483,9 +1492,31 @@ import {
 import { useUserWorldStore } from '@/stores/userWorld';
 import { renderMarkdown } from '@/utils/markdown';
 import { showApiError } from '@/utils/apiError';
+import { confirmWithFallback } from '@/utils/confirm';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+
+type DesktopUpdateState = {
+  phase?: string;
+  currentVersion?: string;
+  latestVersion?: string;
+  downloaded?: boolean;
+  progress?: number;
+  message?: string;
+};
+
+type DesktopInstallResult = {
+  ok?: boolean;
+  state?: DesktopUpdateState;
+};
+
+type DesktopBridge = {
+  toggleDevTools?: () => Promise<boolean> | boolean;
+  checkForUpdates?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
+  getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
+  installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
+};
 
 const DEFAULT_AGENT_KEY = '__default__';
 const USER_CONTAINER_ID = 1;
@@ -1783,8 +1814,15 @@ const basePrefix = computed(() => {
   return '/app';
 });
 
+const getDesktopBridge = (): DesktopBridge | null => {
+  if (typeof window === 'undefined') return null;
+  const candidate = (window as Window & { wunderDesktop?: DesktopBridge }).wunderDesktop;
+  return candidate && typeof candidate === 'object' ? candidate : null;
+};
+
 const desktopMode = computed(() => isDesktopModeEnabled());
-const debugToolsAvailable = computed(() => typeof window !== 'undefined');
+const debugToolsAvailable = computed(() => typeof getDesktopBridge()?.toggleDevTools === 'function');
+const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkForUpdates === 'function');
 
 const keyword = computed({
   get: () => sessionHub.keyword,
@@ -3421,12 +3459,41 @@ const fileContainerLifecycleText = computed(() => {
   });
 });
 
-const showRightDock = computed(() => {
+const activeWorldGroupId = computed(() => {
+  if (!isWorldConversationActive.value) return '';
+  const conversationId = String(activeWorldConversationId.value || '').trim();
+  if (!conversationId) return '';
+  const conversation = userWorldStore.conversations.find(
+    (item) => String(item?.conversation_id || '').trim() === conversationId
+  );
+  if (String(conversation?.conversation_type || '').trim().toLowerCase() !== 'group') {
+    return '';
+  }
+  const fallbackGroup = userWorldStore.groups.find(
+    (item) => String(item?.conversation_id || '').trim() === conversationId
+  );
+  return (
+    String(conversation?.group_id || '').trim() ||
+    String(fallbackGroup?.group_id || '').trim() ||
+    String(selectedGroup.value?.group_id || '').trim()
+  );
+});
+
+const showAgentRightDock = computed(() => {
   if (sessionHub.activeSection === 'agents') return !showAgentGridOverview.value;
   return sessionHub.activeSection === 'messages' && isAgentConversationActive.value;
 });
 
-const showRightAgentPanels = computed(() => showRightDock.value);
+const showGroupRightDock = computed(
+  () =>
+    sessionHub.activeSection === 'messages' &&
+    isWorldConversationActive.value &&
+    Boolean(activeWorldGroupId.value)
+);
+
+const showRightDock = computed(() => showAgentRightDock.value || showGroupRightDock.value);
+
+const showRightAgentPanels = computed(() => showAgentRightDock.value);
 
 const rightPanelAgentId = computed(() => {
   if (!showRightAgentPanels.value) return '';
@@ -3477,7 +3544,7 @@ const resolveSessionTimelinePreview = (session: Record<string, unknown>): string
 };
 
 const rightPanelSessionHistory = computed(() => {
-  if (!showRightDock.value) return [];
+  if (!showAgentRightDock.value) return [];
   const targetAgentId = normalizeAgentId(rightPanelAgentId.value);
   const result = (Array.isArray(chatStore.sessions) ? chatStore.sessions : [])
     .filter((session) => normalizeAgentId(session?.agent_id) === targetAgentId)
@@ -3791,13 +3858,16 @@ const canDeleteMixedConversation = (item: MixedConversation): boolean =>
 const deleteMixedConversation = async (item: MixedConversation) => {
   const sourceId = String(item?.sourceId || '').trim();
   if (!sourceId) return;
-  try {
-    await ElMessageBox.confirm(t('chat.history.confirmDelete'), t('chat.history.confirmTitle'), {
+  const confirmed = await confirmWithFallback(
+    t('chat.history.confirmDelete'),
+    t('chat.history.confirmTitle'),
+    {
       type: 'warning',
       confirmButtonText: t('common.confirm'),
       cancelButtonText: t('common.cancel')
-    });
-  } catch {
+    }
+  );
+  if (!confirmed) {
     return;
   }
   try {
@@ -4422,13 +4492,16 @@ const setTimelineSessionMain = async (sessionId: string) => {
 const deleteTimelineSession = async (sessionId: string) => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) return;
-  try {
-    await ElMessageBox.confirm(t('chat.history.confirmDelete'), t('chat.history.confirmTitle'), {
+  const confirmed = await confirmWithFallback(
+    t('chat.history.confirmDelete'),
+    t('chat.history.confirmTitle'),
+    {
       type: 'warning',
       confirmButtonText: t('common.confirm'),
       cancelButtonText: t('common.cancel')
-    });
-  } catch {
+    }
+  );
+  if (!confirmed) {
     return;
   }
   try {
@@ -4984,8 +5057,92 @@ const toggleLanguage = () => {
   ElMessage.success(t('messenger.more.languageChanged'));
 };
 
-const checkClientUpdate = () => {
-  ElMessage.success(t('common.refreshSuccess'));
+const checkClientUpdate = async () => {
+  if (!desktopMode.value) {
+    ElMessage.success(t('common.refreshSuccess'));
+    return;
+  }
+
+  const bridge = getDesktopBridge();
+  if (!bridge || typeof bridge.checkForUpdates !== 'function') {
+    ElMessage.warning(t('desktop.settings.updateUnsupported'));
+    return;
+  }
+
+  const checkingMessage = ElMessage({
+    type: 'info',
+    message: t('desktop.settings.checkingUpdate'),
+    duration: 0,
+    showClose: true
+  });
+
+  try {
+    const state = await bridge.checkForUpdates();
+    checkingMessage.close();
+    const phase = String(state?.phase || '').trim().toLowerCase();
+    const latestVersion = String(state?.latestVersion || '').trim();
+
+    if (phase === 'not-available' || phase === 'idle') {
+      ElMessage.success(t('desktop.settings.updateNotAvailable'));
+      return;
+    }
+
+    if (phase === 'unsupported') {
+      ElMessage.warning(t('desktop.settings.updateUnsupported'));
+      return;
+    }
+
+    if (phase === 'error') {
+      const reason = String(state?.message || '').trim() || t('common.unknown');
+      ElMessage.error(t('desktop.settings.updateCheckFailed', { reason }));
+      return;
+    }
+
+    if (phase === 'downloading' || phase === 'available' || phase === 'checking') {
+      ElMessage.info(t('desktop.settings.updateDownloading'));
+      return;
+    }
+
+    if (phase !== 'downloaded') {
+      ElMessage.info(t('desktop.settings.updateUnknownState'));
+      return;
+    }
+
+    const versionText = latestVersion || String(state?.currentVersion || '-');
+    const confirmed = await confirmWithFallback(
+      t('desktop.settings.updateReadyConfirm', { version: versionText }),
+      t('desktop.settings.update'),
+      {
+        type: 'warning',
+        confirmButtonText: t('desktop.settings.installNow'),
+        cancelButtonText: t('common.cancel')
+      }
+    );
+    if (!confirmed) {
+      ElMessage.info(t('desktop.settings.updateReadyLater'));
+      return;
+    }
+
+    if (typeof bridge.installUpdate !== 'function') {
+      ElMessage.warning(t('desktop.settings.updateUnsupported'));
+      return;
+    }
+
+    const installResult = await bridge.installUpdate();
+    const installOk =
+      typeof installResult === 'boolean' ? installResult : Boolean((installResult as DesktopInstallResult)?.ok);
+
+    if (!installOk) {
+      ElMessage.warning(t('desktop.settings.updateInstallFailed'));
+      return;
+    }
+
+    ElMessage.success(t('desktop.settings.updateInstalling'));
+  } catch (error) {
+    checkingMessage.close();
+    const reason = String((error as { message?: unknown })?.message || '').trim() || t('common.unknown');
+    ElMessage.error(t('desktop.settings.updateCheckFailed', { reason }));
+  }
 };
 
 const updateDesktopToolCallMode = (value: DesktopToolCallMode) => {
@@ -5026,9 +5183,9 @@ const openDesktopSystemSettings = () => {
 const openDebugTools = async () => {
   if (typeof window === 'undefined') return;
   try {
-    const desktopApi = (window as any).wunderDesktop;
-    if (typeof desktopApi?.toggleDevTools === 'function') {
-      await desktopApi.toggleDevTools();
+    const bridge = getDesktopBridge();
+    if (typeof bridge?.toggleDevTools === 'function') {
+      await bridge.toggleDevTools();
       return;
     }
   } catch {

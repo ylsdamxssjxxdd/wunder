@@ -36,6 +36,14 @@ pub fn router() -> Router<Arc<AppState>> {
             get(list_groups).post(create_group),
         )
         .route(
+            "/wunder/user_world/groups/{group_id}",
+            get(get_group_detail),
+        )
+        .route(
+            "/wunder/user_world/groups/{group_id}/announcement",
+            post(update_group_announcement),
+        )
+        .route(
             "/wunder/user_world/conversations",
             get(list_conversations).post(create_or_get_conversation),
         )
@@ -81,6 +89,12 @@ struct GroupCreateRequest {
     group_name: String,
     #[serde(default)]
     member_user_ids: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GroupAnnouncementUpdateRequest {
+    #[serde(default)]
+    announcement: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -200,6 +214,44 @@ async fn create_group(
             now_ts(),
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": item })))
+}
+
+async fn get_group_detail(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let item = state
+        .user_world
+        .get_group_detail(&resolved.user.user_id, group_id.trim())
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let Some(item) = item else {
+        return Err(error_response(StatusCode::NOT_FOUND, "group not found"));
+    };
+    Ok(Json(json!({ "data": item })))
+}
+
+async fn update_group_announcement(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+    Json(payload): Json<GroupAnnouncementUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let item = state
+        .user_world
+        .update_group_announcement(
+            &resolved.user.user_id,
+            group_id.trim(),
+            payload.announcement.as_deref(),
+            now_ts(),
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let Some(item) = item else {
+        return Err(error_response(StatusCode::NOT_FOUND, "group not found"));
+    };
     Ok(Json(json!({ "data": item })))
 }
 

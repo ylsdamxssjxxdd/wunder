@@ -115,6 +115,20 @@
         </div>
         <div class="messenger-settings-row">
           <div>
+            <div class="messenger-settings-label">{{ t('desktop.settings.update') }}</div>
+            <div class="messenger-settings-hint">{{ t('desktop.settings.updateHint') }}</div>
+          </div>
+          <button
+            class="messenger-settings-action"
+            type="button"
+            :disabled="!updateAvailable"
+            @click="$emit('check-update')"
+          >
+            {{ t('desktop.settings.checkUpdate') }}
+          </button>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
             <div class="messenger-settings-label">{{ t('desktop.settings.devtools') }}</div>
             <div class="messenger-settings-hint">{{ t('desktop.settings.devtoolsHint') }}</div>
           </div>
@@ -226,6 +240,7 @@ const props = withDefaults(
     uiFontSize?: number;
     desktopToolCallMode?: 'tool_call' | 'function_call';
     devtoolsAvailable?: boolean;
+    updateAvailable?: boolean;
   }>(),
   {
     mode: 'general',
@@ -236,7 +251,8 @@ const props = withDefaults(
     themePalette: 'eva-orange',
     uiFontSize: 14,
     desktopToolCallMode: 'tool_call',
-    devtoolsAvailable: false
+    devtoolsAvailable: false,
+    updateAvailable: false
   }
 );
 

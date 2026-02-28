@@ -274,6 +274,10 @@ fn build_frontend_router(frontend_root: &Path) -> Router {
             "/favicon.svg",
             get_service(ServeFile::new(frontend_root.join("favicon.svg"))),
         )
+        .route(
+            "/hula-icon.js",
+            get_service(ServeFile::new(frontend_root.join("hula-icon.js"))),
+        )
         .nest_service("/assets", ServeDir::new(frontend_root.join("assets")))
         .nest_service("/third", ServeDir::new(frontend_root.join("third")))
         .nest_service("/doc-icons", ServeDir::new(frontend_root.join("doc-icons")))
