@@ -3106,6 +3106,17 @@
   gap: 6px;
 }
 
+.messenger-composer-scope.chat-shell .messenger-world-tool-anchor {
+  position: relative;
+  z-index: 12;
+}
+
+.messenger-composer-scope.chat-shell .messenger-world-tool-anchor.is-open,
+.messenger-composer-scope.chat-shell .messenger-world-tool-anchor:hover,
+.messenger-composer-scope.chat-shell .messenger-world-tool-anchor:focus-within {
+  z-index: 30;
+}
+
 .messenger-composer-scope.chat-shell .chat-composer-command-btn-icon {
   width: 14px;
   height: 14px;
@@ -3115,9 +3126,10 @@
 
 .messenger-composer-scope.chat-shell .chat-composer-command-panel {
   position: absolute;
-  top: calc(100% + 8px);
+  top: auto;
+  bottom: calc(100% + 8px);
   left: 0;
-  width: 252px;
+  width: min(264px, calc(100vw - 28px));
   border: 1px solid #d7dbe2;
   border-radius: 10px;
   background: #ffffff;
@@ -3126,7 +3138,9 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 10;
+  max-height: min(280px, calc(100dvh - 160px));
+  overflow: auto;
+  z-index: 40;
 }
 
 .messenger-composer-scope.chat-shell .chat-composer-command-item {

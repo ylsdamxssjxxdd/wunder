@@ -46,18 +46,31 @@
         <span class="chat-composer-resize-grip"></span>
       </button>
       <div v-if="worldStyle" class="messenger-world-toolbar chat-composer-world-toolbar">
-        <div ref="worldCommandAnchorRef" class="messenger-world-tool-anchor">
+        <div
+          ref="worldCommandAnchorRef"
+          class="messenger-world-tool-anchor"
+          :class="{ 'is-open': worldCommandPanelVisible }"
+          @mouseenter="openWorldCommandPanel"
+          @mouseleave="closeWorldCommandPanel"
+          @focusin="openWorldCommandPanel"
+          @focusout="handleWorldCommandAnchorFocusOut"
+        >
           <button
             class="messenger-world-tool-btn"
             type="button"
             :class="{ active: worldCommandPanelVisible }"
             :title="t('chat.commandMenu.quick')"
             :aria-label="t('chat.commandMenu.quick')"
-            @click.prevent="toggleWorldCommandPanel"
+            @click.prevent="openWorldCommandPanel"
           >
             <i class="fa-solid fa-terminal chat-composer-command-btn-icon" aria-hidden="true"></i>
           </button>
-          <div v-if="worldCommandPanelVisible" class="chat-composer-command-panel">
+          <div
+            v-if="worldCommandPanelVisible"
+            class="chat-composer-command-panel"
+            @mouseenter="openWorldCommandPanel"
+            @mouseleave="closeWorldCommandPanel"
+          >
             <button
               v-for="item in quickCommandItems"
               :key="item.command"
@@ -708,8 +721,21 @@ const startWorldComposerResize = (event: MouseEvent) => {
   window.addEventListener('mouseup', stopWorldComposerResize);
 };
 
-const toggleWorldCommandPanel = () => {
-  worldCommandPanelVisible.value = !worldCommandPanelVisible.value;
+const openWorldCommandPanel = () => {
+  worldCommandPanelVisible.value = true;
+};
+
+const closeWorldCommandPanel = () => {
+  worldCommandPanelVisible.value = false;
+};
+
+const handleWorldCommandAnchorFocusOut = (event: FocusEvent) => {
+  const anchor = worldCommandAnchorRef.value;
+  const nextTarget = event.relatedTarget as Node | null;
+  if (anchor && nextTarget && anchor.contains(nextTarget)) {
+    return;
+  }
+  closeWorldCommandPanel();
 };
 
 const sendQuickCommand = async (command: string) => {
