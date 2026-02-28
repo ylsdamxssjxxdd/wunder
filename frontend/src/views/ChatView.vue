@@ -1240,6 +1240,16 @@ const normalizeWorkspaceOwnerId = (value) =>
     .trim()
     .replace(/[^a-zA-Z0-9_-]/g, '_');
 
+const workspaceBelongsToCurrentUser = (workspaceId: string, currentUserId: string) => {
+  if (!workspaceId || !currentUserId) return false;
+  return (
+    workspaceId === currentUserId ||
+    workspaceId.startsWith(`${currentUserId}__c__`) ||
+    workspaceId.startsWith(`${currentUserId}__a__`) ||
+    workspaceId.startsWith(`${currentUserId}__agent__`)
+  );
+};
+
 const resolveWorkspaceResource = (publicPath) => {
   const parsed = parseWorkspaceResourceUrl(publicPath);
   if (!parsed) return null;
@@ -1247,25 +1257,23 @@ const resolveWorkspaceResource = (publicPath) => {
   if (!user) return null;
   const currentId = String(user.id || '').trim();
   const safeCurrentId = normalizeWorkspaceOwnerId(currentId);
-  const workspaceId = parsed.workspaceId || parsed.userId;
-  const ownerId = parsed.ownerId || workspaceId;
-  const agentId = parsed.agentId || '';
-  const isOwner =
-    Boolean(safeCurrentId) &&
-    (workspaceId === safeCurrentId || workspaceId.startsWith(`${safeCurrentId}__agent__`));
+  const workspaceId = normalizeWorkspaceOwnerId(parsed.workspaceId || parsed.userId || '');
+  if (!workspaceId) return null;
+  const isOwner = workspaceBelongsToCurrentUser(workspaceId, safeCurrentId);
   if (isOwner) {
+    const requestUserId = workspaceId === safeCurrentId ? null : workspaceId;
     return {
       ...parsed,
-      requestUserId: null,
-      requestAgentId: agentId || null,
+      requestUserId,
+      requestAgentId: null,
       allowed: true
     };
   }
   if (isAdminUser(user)) {
     return {
       ...parsed,
-      requestUserId: ownerId,
-      requestAgentId: agentId || null,
+      requestUserId: workspaceId,
+      requestAgentId: null,
       allowed: true
     };
   }

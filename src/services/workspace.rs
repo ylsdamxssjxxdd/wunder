@@ -2,7 +2,8 @@
 use crate::i18n;
 use crate::path_utils::is_within_root;
 use crate::storage::{
-    normalize_sandbox_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
+    normalize_workspace_container_id, StorageBackend, DEFAULT_SANDBOX_CONTAINER_ID,
+    USER_PRIVATE_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Local};
@@ -277,7 +278,7 @@ impl WorkspaceManager {
             return path;
         }
         if self.single_root {
-            if container_id == DEFAULT_SANDBOX_CONTAINER_ID {
+            if container_id == USER_PRIVATE_CONTAINER_ID {
                 return self.root.clone();
             }
             return self.root.join(safe_id);
@@ -343,8 +344,8 @@ impl WorkspaceManager {
 
     pub fn scoped_user_id_by_container(&self, user_id: &str, sandbox_container_id: i32) -> String {
         let safe_user = self.safe_user_id(user_id);
-        let container_id = normalize_sandbox_container_id(sandbox_container_id);
-        if container_id == DEFAULT_SANDBOX_CONTAINER_ID {
+        let container_id = normalize_workspace_container_id(sandbox_container_id);
+        if container_id == USER_PRIVATE_CONTAINER_ID {
             return safe_user;
         }
         format!("{safe_user}__c__{container_id}")
@@ -1812,7 +1813,7 @@ fn workspace_single_root_enabled() -> bool {
 fn normalize_container_roots(container_roots: &HashMap<i32, String>) -> HashMap<i32, PathBuf> {
     let mut output = HashMap::new();
     for (container_id, root) in container_roots {
-        let normalized_id = normalize_sandbox_container_id(*container_id);
+        let normalized_id = normalize_workspace_container_id(*container_id);
         let trimmed = root.trim();
         if trimmed.is_empty() {
             continue;
@@ -1825,10 +1826,13 @@ fn normalize_container_roots(container_roots: &HashMap<i32, String>) -> HashMap<
 fn extract_container_id_from_scoped_user(user_id: &str) -> i32 {
     if let Some((_, suffix)) = user_id.rsplit_once("__c__") {
         if let Ok(parsed) = suffix.parse::<i32>() {
-            return normalize_sandbox_container_id(parsed);
+            return normalize_workspace_container_id(parsed);
         }
     }
-    DEFAULT_SANDBOX_CONTAINER_ID
+    if user_id.contains("__a__") || user_id.contains("__agent__") {
+        return DEFAULT_SANDBOX_CONTAINER_ID;
+    }
+    USER_PRIVATE_CONTAINER_ID
 }
 
 fn fnv1a_hash64(data: &[u8]) -> u64 {

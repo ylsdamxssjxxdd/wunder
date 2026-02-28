@@ -1,9 +1,13 @@
 const fs = require('fs')
 const path = require('path')
 const { Resvg } = require('@resvg/resvg-js')
+const { parseICO } = require('icojs')
 const pngToIco = require('png-to-ico')
 
 const repoRoot = path.resolve(__dirname, '..', '..')
+const sourceIco = process.env.WUNDER_ICON_ICO
+  ? path.resolve(process.env.WUNDER_ICON_ICO)
+  : path.join(repoRoot, 'images', 'eva01-head.ico')
 const sourceSvg = process.env.WUNDER_ICON_SVG
   ? path.resolve(process.env.WUNDER_ICON_SVG)
   : path.join(repoRoot, 'images', 'eva01-head.svg')
@@ -29,9 +33,40 @@ const renderPng = (svgBuffer, size) =>
     .render()
     .asPng()
 
-async function main() {
+const writeFromIco = async () => {
+  if (!fs.existsSync(sourceIco)) {
+    return false
+  }
+  const parsed = await parseICO(fs.readFileSync(sourceIco), 'image/png')
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error(`[sync-icons] invalid ico source: ${sourceIco}`)
+  }
+
+  const largest = parsed
+    .slice()
+    .sort((left, right) => right.width * right.height - left.width * left.height)[0]
+  const largestPng = Buffer.from(largest.buffer)
+
+  for (const target of pngTargets) {
+    ensureDir(target)
+    fs.writeFileSync(target, largestPng)
+  }
+
+  const icoBuffer = fs.readFileSync(sourceIco)
+  for (const target of icoTargets) {
+    ensureDir(target)
+    fs.writeFileSync(target, icoBuffer)
+  }
+
+  console.log(
+    `[sync-icons] synced from ${sourceIco} -> ${pngTargets.length} png target(s), ${icoTargets.length} ico target(s)`
+  )
+  return true
+}
+
+const writeFromSvg = async () => {
   if (!fs.existsSync(sourceSvg)) {
-    throw new Error(`[sync-icons] source svg not found: ${sourceSvg}`)
+    return false
   }
 
   const svgBuffer = fs.readFileSync(sourceSvg)
@@ -54,6 +89,17 @@ async function main() {
   console.log(
     `[sync-icons] synced from ${sourceSvg} -> ${pngTargets.length} png target(s), ${icoTargets.length} ico target(s)`
   )
+  return true
+}
+
+async function main() {
+  if (await writeFromIco()) {
+    return
+  }
+  if (await writeFromSvg()) {
+    return
+  }
+  throw new Error(`[sync-icons] icon source not found: ${sourceIco} or ${sourceSvg}`)
 }
 
 main().catch((error) => {

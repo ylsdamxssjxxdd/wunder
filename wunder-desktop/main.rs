@@ -338,6 +338,7 @@ async fn desktop_install_update(
 }
 
 #[tauri::command]
+#[cfg(debug_assertions)]
 fn desktop_toggle_devtools(window: tauri::WebviewWindow) {
     if window.is_devtools_open() {
         window.close_devtools();
@@ -345,6 +346,10 @@ fn desktop_toggle_devtools(window: tauri::WebviewWindow) {
         window.open_devtools();
     }
 }
+
+#[tauri::command]
+#[cfg(not(debug_assertions))]
+fn desktop_toggle_devtools(_window: tauri::WebviewWindow) {}
 
 #[tauri::command]
 fn desktop_window_minimize(window: tauri::WebviewWindow) -> Result<(), String> {

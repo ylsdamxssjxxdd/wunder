@@ -1361,8 +1361,12 @@ const resolveUserWorldResource = (publicPath: string, ownerId: string) => {
   if (!parsed) return null;
   const relativePath = String(parsed.relativePath || '').trim();
   const resolvedOwner = String(ownerId || parsed.ownerId || parsed.workspaceId || parsed.userId || '').trim();
+  const containerId =
+    typeof parsed.containerId === 'number' && Number.isFinite(parsed.containerId)
+      ? parsed.containerId
+      : null;
   if (!relativePath || !resolvedOwner) return null;
-  return { ...parsed, ownerId: resolvedOwner, relativePath };
+  return { ...parsed, ownerId: resolvedOwner, relativePath, containerId };
 };
 
 const buildUserWorldCacheKey = (publicPath: string, suffix = '') => {
@@ -1374,6 +1378,7 @@ const buildUserWorldCacheKey = (publicPath: string, suffix = '') => {
 const buildUserWorldPersistentCacheKey = (resource: {
   publicPath: string;
   ownerId: string;
+  containerId?: number | null;
 }) => {
   const currentUserId = String(authStore.user?.id || '').trim();
   const conversationId = String(activeConversationId.value || '').trim();
@@ -1381,6 +1386,7 @@ const buildUserWorldPersistentCacheKey = (resource: {
   return buildWorkspaceImagePersistentCacheKey({
     scope,
     requestUserId: resource.ownerId,
+    requestContainerId: resource.containerId,
     publicPath: resource.publicPath
   });
 };
@@ -1413,6 +1419,7 @@ const fetchUserWorldResource = async (resource: {
   publicPath: string;
   ownerId: string;
   relativePath: string;
+  containerId?: number | null;
   filename?: string;
 }) => {
   const conversationId = String(activeConversationId.value || '').trim();
@@ -1450,6 +1457,10 @@ const fetchUserWorldResource = async (resource: {
     const response = await downloadUserWorldFile({
       conversation_id: conversationId,
       owner_user_id: resource.ownerId,
+      container_id:
+        resource.containerId !== null && Number.isFinite(resource.containerId)
+          ? resource.containerId
+          : undefined,
       path: String(resource.relativePath || '')
     });
     try {
@@ -1483,6 +1494,7 @@ const checkUserWorldResource = async (resource: {
   publicPath: string;
   ownerId: string;
   relativePath: string;
+  containerId?: number | null;
 }) => {
   const conversationId = String(activeConversationId.value || '').trim();
   if (!conversationId) {
@@ -1498,6 +1510,10 @@ const checkUserWorldResource = async (resource: {
   const promise = downloadUserWorldFile({
     conversation_id: conversationId,
     owner_user_id: resource.ownerId,
+    container_id:
+      resource.containerId !== null && Number.isFinite(resource.containerId)
+        ? resource.containerId
+        : undefined,
     path: String(resource.relativePath || ''),
     check: true
   })

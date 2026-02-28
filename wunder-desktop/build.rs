@@ -30,11 +30,30 @@ fn icons_need_sync(manifest_dir: &Path, icon_source_path: &Path) -> bool {
 }
 
 #[cfg(feature = "desktop")]
-fn sync_icons_if_needed(manifest_dir: &Path) {
-    let icon_source_path = manifest_dir.join("images/eva01-head.svg");
-    let icon_sync_script = manifest_dir.join("wunder-desktop-electron/scripts/sync-icons.js");
+fn resolve_icon_source(manifest_dir: &Path) -> Option<std::path::PathBuf> {
+    let ico = manifest_dir.join("images/eva01-head.ico");
+    if ico.exists() {
+        return Some(ico);
+    }
+    let svg = manifest_dir.join("images/eva01-head.svg");
+    if svg.exists() {
+        return Some(svg);
+    }
+    None
+}
 
-    println!("cargo:rerun-if-changed={}", icon_source_path.display());
+#[cfg(feature = "desktop")]
+fn sync_icons_if_needed(manifest_dir: &Path) {
+    let icon_source_path = match resolve_icon_source(manifest_dir) {
+        Some(path) => path,
+        None => return,
+    };
+    let icon_sync_script = manifest_dir.join("wunder-desktop-electron/scripts/sync-icons.js");
+    let icon_source_svg = manifest_dir.join("images/eva01-head.svg");
+    let icon_source_ico = manifest_dir.join("images/eva01-head.ico");
+
+    println!("cargo:rerun-if-changed={}", icon_source_svg.display());
+    println!("cargo:rerun-if-changed={}", icon_source_ico.display());
     println!("cargo:rerun-if-changed={}", icon_sync_script.display());
 
     if !icons_need_sync(manifest_dir, &icon_source_path) {

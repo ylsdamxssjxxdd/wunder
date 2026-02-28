@@ -21,6 +21,7 @@
     "@resvg/resvg-js": "^2.6.2",
     "electron": "38.7.0",
     "electron-builder": "26.1.0",
+    "icojs": "^0.20.1",
     "png-to-ico": "^2.1.8"
   }
 }

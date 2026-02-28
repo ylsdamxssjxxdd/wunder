@@ -28,6 +28,7 @@
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
 - 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
+- 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
@@ -65,7 +66,7 @@
   - `GET /wunder/user_world/conversations/{conversation_id}/messages`：消息分页（`before_message_id/limit`）
   - `POST /wunder/user_world/conversations/{conversation_id}/messages`：发送消息（`content/content_type/client_msg_id`）
   - `POST /wunder/user_world/conversations/{conversation_id}/read`：回写已读（`last_read_message_id`）
-- `GET /wunder/user_world/files/download`：会话内文件/文件夹下载（`conversation_id/owner_user_id/path`，目录会自动打包为 zip，支持 `check=true` 仅校验存在并返回响应头）
+- `GET /wunder/user_world/files/download`：会话内文件/文件夹下载（`conversation_id/owner_user_id/path`，可选 `container_id` 指定容器；目录会自动打包为 zip，支持 `check=true` 仅校验存在并返回响应头）
   - `GET /wunder/user_world/conversations/{conversation_id}/events`：SSE 事件流（`after_event_id/limit`）
   - `GET /wunder/user_world/ws`：WebSocket 多路复用通道
 - WS 消息类型：
@@ -927,6 +928,7 @@
 ### 4.1.12 `/wunder/workspace`
 
 - 说明：所有 workspace 接口支持可选 `agent_id`。若该智能体已配置 `sandbox_container_id`（1~10），则按“用户 + 容器编号”路由工作区；未传 `agent_id`、找不到智能体或历史兼容场景时，仍回退到默认用户工作区/旧路由策略。
+- 说明：已登录用户可显式传入自身 scoped `user_id`（如 `user__c__2`、`user__a__xxxx`、`user__agent__legacy`）访问对应容器/智能体工作区，无需管理员权限。
 - 方法：`GET`
 - 入参（Query）：
   - `user_id`：用户唯一标识

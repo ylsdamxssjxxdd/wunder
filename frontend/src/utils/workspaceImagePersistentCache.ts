@@ -15,6 +15,7 @@ type WorkspaceImageCacheKeyInput = {
   publicPath?: unknown;
   requestUserId?: unknown;
   requestAgentId?: unknown;
+  requestContainerId?: unknown;
 };
 
 const canUsePersistentCache = () =>
@@ -85,8 +86,9 @@ export const buildWorkspaceImagePersistentCacheKey = (
   const scope = String(input.scope || '').trim();
   const userId = String(input.requestUserId || '').trim();
   const agentId = String(input.requestAgentId || '').trim();
+  const containerId = String(input.requestContainerId ?? '').trim();
   const publicPath = String(input.publicPath || '').trim();
-  return `${scope}|${userId}|${agentId}|${publicPath}`;
+  return `${scope}|${userId}|${agentId}|${containerId}|${publicPath}`;
 };
 
 export const readWorkspaceImagePersistentCache = async (

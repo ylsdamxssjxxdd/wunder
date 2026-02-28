@@ -22,7 +22,7 @@ export type DesktopBridge = {
 };
 
 export const DEFAULT_AGENT_KEY = '__default__';
-export const USER_CONTAINER_ID = 1;
+export const USER_CONTAINER_ID = 0;
 export const AGENT_CONTAINER_IDS = Array.from({ length: 10 }, (_, index) => index + 1);
 export const USER_WORLD_UPLOAD_BASE = 'user-world';
 export const WORLD_UPLOAD_SIZE_LIMIT = 200 * 1024 * 1024;

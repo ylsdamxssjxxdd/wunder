@@ -2,6 +2,7 @@ use crate::api::errors::error_response;
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::state::AppState;
+use crate::storage::normalize_workspace_container_id;
 use axum::body::Body;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
@@ -133,6 +134,8 @@ struct UserWorldFileDownloadQuery {
     conversation_id: String,
     #[serde(default)]
     owner_user_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     #[serde(default)]
     path: String,
     #[serde(default)]
@@ -494,7 +497,14 @@ async fn download_user_world_file(
         ));
     }
 
-    let workspace_id = state.workspace.scoped_user_id(&owner_user_id, None);
+    let workspace_id = if let Some(container_id) = params.container_id {
+        state.workspace.scoped_user_id_by_container(
+            &owner_user_id,
+            normalize_workspace_container_id(container_id),
+        )
+    } else {
+        state.workspace.scoped_user_id(&owner_user_id, None)
+    };
     let root = state
         .workspace
         .ensure_user_root(&workspace_id)

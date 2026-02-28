@@ -90,6 +90,95 @@ const resolveWindowIcon = () => {
   return undefined
 }
 
+const resolveLinuxDesktopIconSource = () => {
+  if (process.platform !== 'linux') {
+    return null
+  }
+  const searchRoots = []
+  if (app.isPackaged) {
+    searchRoots.push(process.resourcesPath)
+  }
+  searchRoots.push(path.join(__dirname, '..', 'build'))
+  for (const root of searchRoots) {
+    const candidate = path.join(root, 'icon.png')
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+  return null
+}
+
+const writeFileIfChanged = (filePath, content, mode) => {
+  const previous = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : null
+  if (previous === content) {
+    return
+  }
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, content, 'utf8')
+  if (typeof mode === 'number') {
+    fs.chmodSync(filePath, mode)
+  }
+}
+
+const ensureLinuxDesktopIntegration = () => {
+  if (process.platform !== 'linux') {
+    return
+  }
+  const appImagePath = process.env.APPIMAGE || process.execPath
+  if (!appImagePath || !fs.existsSync(appImagePath)) {
+    return
+  }
+
+  const homeDir = app.getPath('home')
+  const applicationsDir = path.join(homeDir, '.local', 'share', 'applications')
+  const desktopFilePath = path.join(applicationsDir, 'wunder-desktop.desktop')
+
+  let iconValue = 'wunder-desktop'
+  const iconSource = resolveLinuxDesktopIconSource()
+  if (iconSource) {
+    const iconTargetDir = path.join(homeDir, '.local', 'share', 'icons', 'hicolor', '512x512', 'apps')
+    const iconTarget = path.join(iconTargetDir, 'wunder-desktop.png')
+    fs.mkdirSync(iconTargetDir, { recursive: true })
+    fs.copyFileSync(iconSource, iconTarget)
+    iconValue = iconTarget
+  }
+
+  const escapedExec = String(appImagePath).replace(/"/g, '\\"')
+  const desktopEntry = [
+    '[Desktop Entry]',
+    'Version=1.0',
+    'Type=Application',
+    'Name=Wunder Desktop',
+    'Comment=Wunder Desktop',
+    `Exec="${escapedExec}" %U`,
+    `Icon=${iconValue}`,
+    'Terminal=false',
+    'Categories=Utility;',
+    'StartupWMClass=wunder-desktop',
+    `X-AppImage-Version=${app.getVersion()}`,
+    ''
+  ].join('\n')
+
+  writeFileIfChanged(desktopFilePath, desktopEntry, 0o644)
+
+  const desktopDir = app.getPath('desktop')
+  if (desktopDir && fs.existsSync(desktopDir)) {
+    const desktopShortcutPath = path.join(desktopDir, 'Wunder Desktop.desktop')
+    writeFileIfChanged(desktopShortcutPath, desktopEntry, 0o755)
+  }
+
+  try {
+    const updater = spawn('update-desktop-database', [applicationsDir], {
+      stdio: 'ignore',
+      detached: true
+    })
+    updater.on('error', () => {})
+    updater.unref()
+  } catch {
+    // ignore: not all distros provide update-desktop-database
+  }
+}
+
 const normalizeUpdateMessage = (error) => {
   const text = String(error?.message || error || '').trim()
   if (!text) {
@@ -485,6 +574,7 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     try {
       configureUpdaterEvents()
+      ensureLinuxDesktopIntegration()
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       ipcMain.handle('wunder:window-minimize', () =>
         withMainWindow((window) => {

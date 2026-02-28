@@ -1,6 +1,6 @@
 use crate::config::{Config, LlmConfig};
 use crate::state::AppState;
-use crate::storage::normalize_sandbox_container_id;
+use crate::storage::{normalize_workspace_container_id, USER_PRIVATE_CONTAINER_ID};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -265,7 +265,7 @@ impl DesktopSeedManager {
         &self,
         config: DesktopSeedJobConfig,
     ) -> Result<DesktopSeedJobSnapshot, String> {
-        let container_id = normalize_sandbox_container_id(config.container_id);
+        let container_id = normalize_workspace_container_id(config.container_id);
         if let Some(existing) = self.latest_job_for_container(container_id).await {
             if is_seed_job_active_status(&existing.status) {
                 return Err(format!(
@@ -335,7 +335,7 @@ impl DesktopSeedManager {
         container_id: Option<i32>,
         limit: usize,
     ) -> Vec<DesktopSeedJobSnapshot> {
-        let normalized_container = container_id.map(normalize_sandbox_container_id);
+        let normalized_container = container_id.map(normalize_workspace_container_id);
         let handles = self.jobs.read().await.values().cloned().collect::<Vec<_>>();
         let mut snapshots = Vec::new();
         for handle in handles {
@@ -431,7 +431,7 @@ async fn desktop_settings_get(State(state): State<Arc<AppState>>) -> Result<Json
         normalize_desktop_container_cloud_workspaces(&settings.container_cloud_workspaces);
     settings.workspace_root = settings
         .container_roots
-        .get(&1)
+        .get(&USER_PRIVATE_CONTAINER_ID)
         .cloned()
         .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
 
@@ -534,7 +534,7 @@ async fn desktop_settings_update(
             let mut roots = HashMap::new();
             let mut clouds = HashMap::new();
             for item in items {
-                let container_id = normalize_sandbox_container_id(item.container_id);
+                let container_id = normalize_workspace_container_id(item.container_id);
                 let trimmed_root = item.root.trim();
                 if !trimmed_root.is_empty() {
                     roots.insert(container_id, trimmed_root.to_string());
@@ -555,7 +555,7 @@ async fn desktop_settings_update(
     if let Some(items) = payload.container_roots.as_ref() {
         let mut next_roots = HashMap::new();
         for item in items {
-            let container_id = normalize_sandbox_container_id(item.container_id);
+            let container_id = normalize_workspace_container_id(item.container_id);
             let trimmed = item.root.trim();
             if trimmed.is_empty() {
                 continue;
@@ -567,7 +567,7 @@ async fn desktop_settings_update(
 
     if let Some(workspace_root) = payload.workspace_root.as_deref().map(str::trim) {
         if !workspace_root.is_empty() {
-            container_roots.insert(1, workspace_root.to_string());
+            container_roots.insert(USER_PRIVATE_CONTAINER_ID, workspace_root.to_string());
         }
     }
 
@@ -581,7 +581,7 @@ async fn desktop_settings_update(
     settings.container_roots = container_roots.clone();
     settings.container_cloud_workspaces = container_cloud_workspaces.clone();
     settings.workspace_root = container_roots
-        .get(&1)
+        .get(&USER_PRIVATE_CONTAINER_ID)
         .cloned()
         .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
 
@@ -608,7 +608,7 @@ async fn desktop_settings_update(
             if let Some(ref llm) = llm_update {
                 config.llm = llm.clone();
             }
-            if let Some(root) = next_container_roots.get(&1) {
+            if let Some(root) = next_container_roots.get(&USER_PRIVATE_CONTAINER_ID) {
                 config.workspace.root = root.clone();
             }
             config.workspace.container_roots = next_container_roots.clone();
@@ -656,7 +656,8 @@ async fn desktop_seed_start(
         return Err(bad_request("access_token is required".to_string()));
     }
 
-    let container_id = normalize_sandbox_container_id(payload.container_id.unwrap_or(1));
+    let container_id =
+        normalize_workspace_container_id(payload.container_id.unwrap_or(USER_PRIVATE_CONTAINER_ID));
     let local_root = if payload.local_root.trim().is_empty() {
         settings
             .container_roots
@@ -759,7 +760,7 @@ fn build_settings_payload(
 ) -> Value {
     let workspace_root = settings
         .container_roots
-        .get(&1)
+        .get(&USER_PRIVATE_CONTAINER_ID)
         .cloned()
         .or_else(|| {
             let trimmed = settings.workspace_root.trim();
@@ -985,6 +986,7 @@ async fn upload_single_file_to_cloud(
     let body = reqwest::Body::wrap_stream(stream);
     let part = Part::stream_with_length(body, file.size).file_name(filename);
     let form = Form::new()
+        .text("container_id", config.container_id.to_string())
         .text("path", base_path)
         .text("relative_paths", file.relative_path.clone())
         .part("files", part);
@@ -1241,7 +1243,7 @@ fn resolve_desktop_list_path(
 ) -> PathBuf {
     let fallback = settings
         .container_roots
-        .get(&1)
+        .get(&USER_PRIVATE_CONTAINER_ID)
         .cloned()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
@@ -1274,10 +1276,20 @@ fn normalize_desktop_container_roots(
     app_dir: &Path,
 ) -> HashMap<i32, String> {
     let mut output = HashMap::new();
-    output.insert(1, default_workspace_root.to_string_lossy().to_string());
+    let user_default_root = source
+        .get(&USER_PRIVATE_CONTAINER_ID)
+        .or_else(|| source.get(&1))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
+    let resolved_user_root = resolve_workspace_path(&user_default_root, app_dir);
+    output.insert(
+        USER_PRIVATE_CONTAINER_ID,
+        resolved_user_root.to_string_lossy().to_string(),
+    );
     for (container_id, root) in source {
-        let normalized_id = normalize_sandbox_container_id(*container_id);
-        if normalized_id == 1 {
+        let normalized_id = normalize_workspace_container_id(*container_id);
+        if normalized_id == USER_PRIVATE_CONTAINER_ID {
             continue;
         }
         let trimmed = root.trim();
@@ -1287,10 +1299,6 @@ fn normalize_desktop_container_roots(
         let resolved = resolve_workspace_path(trimmed, app_dir);
         output.insert(normalized_id, resolved.to_string_lossy().to_string());
     }
-    if let Some(raw_root) = source.get(&1).map(String::as_str) {
-        let resolved = resolve_workspace_path(raw_root, app_dir);
-        output.insert(1, resolved.to_string_lossy().to_string());
-    }
     output
 }
 
@@ -1299,7 +1307,7 @@ fn normalize_desktop_container_cloud_workspaces(
 ) -> HashMap<i32, String> {
     let mut output = HashMap::new();
     for (container_id, cloud_workspace_id) in source {
-        let normalized_id = normalize_sandbox_container_id(*container_id);
+        let normalized_id = normalize_workspace_container_id(*container_id);
         let cleaned = cloud_workspace_id.trim();
         if cleaned.is_empty() {
             continue;

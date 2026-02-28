@@ -80,7 +80,7 @@ Electron 打包前会执行 `scripts/prepare-resources.js`，将运行所需资�
 - `frontend/dist`（前端静态资源）
 - `config/`、`prompts/`、`skills/`、`scripts/`（如存在）
 
-图标现在采用单一源文件：`images/eva01-head.svg`。  
+图标现在采用单一源文件（优先）：`images/eva01-head.ico`（若缺失则回退 `images/eva01-head.svg`）。  
 `prepare-resources` 前会自动执行 `scripts/sync-icons.js`，统一生成并同步：
 - `wunder-desktop-electron/build/icon.png`
 - `wunder-desktop-electron/build/icon.ico`
@@ -115,6 +115,9 @@ Electron 启动时会：
 - 默认移除菜单栏（避免出现 View / Edit 等菜单）。
 - 等待 `ready-to-show` 再显示窗口，减少首帧卡顿。
 - 关闭拼写检查与后台节流，提升前台响应。
+- Linux AppImage 首次运行会自动写入：
+  - `~/.local/share/applications/wunder-desktop.desktop`（开始菜单）
+  - `~/Desktop/Wunder Desktop.desktop`（桌面快捷方式，目录存在时）
 
 ## 常见问题
 

@@ -1,0 +1,100 @@
+[package]
+name = "wunder-server"
+version = "0.1.0"
+edition = "2021"
+default-run = "wunder-desktop"
+build = "wunder-desktop/build.rs"
+rust-version = "1.92"
+
+[features]
+default = []
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
+
+[[bin]]
+name = "wunder-cli"
+path = "wunder-cli/main.rs"
+
+[[bin]]
+name = "wunder-desktop"
+path = "wunder-desktop/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "wunder-desktop-bridge"
+path = "wunder-desktop/bridge_main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
+bytes = "1"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+chrono-tz = "0.10"
+cron = "0.12"
+crossterm = "0.28"
+dashmap = "5"
+futures = "0.3"
+mime = "0.3"
+parking_lot = "0.12"
+hmac = "0.12"
+sha2 = "0.10"
+sha1 = "0.10"
+hex = "0.4"
+rmcp = { version = "0.12.0", default-features = false, features = [
+  "auth",
+  "base64",
+  "client",
+  "macros",
+  "schemars",
+  "server",
+  "transport-streamable-http-client-reqwest",
+  "transport-streamable-http-server",
+] }
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+serde_bytes = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+sysinfo = "0.30"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tauri = { version = "2", features = ["wry"], optional = true }
+tauri-plugin-updater = { version = "2", optional = true }
+url = "2"
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+walkdir = "2"
+zip = "0.6"
+regex = "1"
+ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
+unicode-width = "0.1"
+encoding_rs = "0.8"
+sse-stream = "0.2.1"
+argon2 = "0.5"
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio-postgres = "0.7.15"
+deadpool-postgres = "0.14.1"
+calamine = "0.25"
+cfb = "0.10"
+html2md = "0.2"
+pdf-extract = "0.10"
+quick-xml = "0.31"
+shell-words = "1"
+rlsx = "1.0.1"
+aes = "0.8"
+cbc = "0.1"
+prost = "0.13"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+pulldown-cmark = "0.10"
+textwrap = "0.16.2"
+
+[build-dependencies]
+tauri-build = { version = "2", features = ["codegen"], optional = true }
+
+[dev-dependencies]

@@ -1,6 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::state::AppState;
+use crate::storage::normalize_workspace_container_id;
 use crate::workspace::WorkspaceEntry;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Query, State};
@@ -55,7 +56,7 @@ async fn workspace_list(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
     let _root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -109,7 +110,7 @@ async fn workspace_content(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
     let _root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -242,7 +243,7 @@ async fn workspace_search(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -290,6 +291,7 @@ async fn workspace_upload(
 
     let mut raw_user_id = String::new();
     let mut raw_agent_id = String::new();
+    let mut raw_container_id: Option<i32> = None;
     let mut base_path = String::new();
     let mut relative_paths = Vec::new();
     let mut pending_files = Vec::new();
@@ -318,6 +320,15 @@ async fn workspace_upload(
                     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
                 if !value.trim().is_empty() {
                     raw_agent_id = value.trim().to_string();
+                }
+            }
+            "container_id" => {
+                let value = field
+                    .text()
+                    .await
+                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+                if let Ok(parsed) = value.trim().parse::<i32>() {
+                    raw_container_id = Some(parsed);
                 }
             }
             "path" => {
@@ -372,7 +383,7 @@ async fn workspace_upload(
     .await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(Some(raw_agent_id.as_str()));
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, raw_container_id);
     let root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -487,7 +498,7 @@ async fn workspace_dir(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, request.container_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -537,7 +548,7 @@ async fn workspace_move(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, request.container_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -625,7 +636,7 @@ async fn workspace_copy(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, request.container_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -700,7 +711,7 @@ async fn workspace_batch(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, request.container_id);
     let root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -873,7 +884,7 @@ async fn workspace_file_update(
     let resolved = resolve_user(&state, &headers, request.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(request.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, request.container_id);
     state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -923,7 +934,7 @@ async fn workspace_archive(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
     let root = state
         .workspace
         .ensure_user_root(&workspace_id)
@@ -999,7 +1010,7 @@ async fn workspace_download(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -1044,7 +1055,7 @@ async fn workspace_delete(
     let resolved = resolve_user(&state, &headers, params.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
     let agent_id = normalize_agent_id(params.agent_id.as_deref());
-    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id);
+    let workspace_id = resolve_workspace_id(&state, &user_id, agent_id, params.container_id);
     let normalized = normalize_relative_path(&params.path);
     if normalized.is_empty() {
         return Err(error_response(
@@ -1141,7 +1152,17 @@ fn normalize_agent_id(value: Option<&str>) -> Option<&str> {
         .filter(|trimmed| !trimmed.is_empty())
 }
 
-fn resolve_workspace_id(state: &AppState, user_id: &str, agent_id: Option<&str>) -> String {
+fn resolve_workspace_id(
+    state: &AppState,
+    user_id: &str,
+    agent_id: Option<&str>,
+    container_id: Option<i32>,
+) -> String {
+    if let Some(explicit_container_id) = container_id.map(normalize_workspace_container_id) {
+        return state
+            .workspace
+            .scoped_user_id_by_container(user_id, explicit_container_id);
+    }
     if let Some(container_id) = state
         .user_store
         .resolve_agent_sandbox_container_id(agent_id)
@@ -1344,6 +1365,8 @@ struct WorkspaceListQuery {
     #[serde(default)]
     agent_id: Option<String>,
     #[serde(default)]
+    container_id: Option<i32>,
+    #[serde(default)]
     path: String,
     #[serde(default)]
     refresh_tree: bool,
@@ -1365,6 +1388,8 @@ struct WorkspaceContentQuery {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     #[serde(default)]
     path: String,
     #[serde(default = "default_true")]
@@ -1391,6 +1416,8 @@ struct WorkspaceSearchQuery {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     keyword: String,
     #[serde(default)]
     offset: i64,
@@ -1408,6 +1435,8 @@ struct WorkspaceDownloadQuery {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     path: String,
 }
 
@@ -1418,6 +1447,8 @@ struct WorkspaceArchiveQuery {
     #[serde(default)]
     agent_id: Option<String>,
     #[serde(default)]
+    container_id: Option<i32>,
+    #[serde(default)]
     path: Option<String>,
 }
 
@@ -1427,6 +1458,8 @@ struct WorkspaceDeleteQuery {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     path: String,
 }
 
@@ -1436,6 +1469,8 @@ struct WorkspaceDirRequest {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     path: String,
 }
 
@@ -1445,6 +1480,8 @@ struct WorkspaceMoveRequest {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     source: String,
     destination: String,
 }
@@ -1455,6 +1492,8 @@ struct WorkspaceCopyRequest {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     source: String,
     destination: String,
 }
@@ -1465,6 +1504,8 @@ struct WorkspaceBatchRequest {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     action: String,
     #[serde(default)]
     paths: Vec<String>,
@@ -1478,6 +1519,8 @@ struct WorkspaceFileUpdateRequest {
     user_id: Option<String>,
     #[serde(default)]
     agent_id: Option<String>,
+    #[serde(default)]
+    container_id: Option<i32>,
     path: String,
     #[serde(default)]
     content: String,

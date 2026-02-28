@@ -1,5 +1,7 @@
 const WORKSPACE_PUBLIC_PREFIX = '/workspaces/';
 const WORKSPACE_AGENT_MARKER = '__agent__';
+const WORKSPACE_SHORT_AGENT_MARKER = '__a__';
+const WORKSPACE_CONTAINER_MARKER = '__c__';
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 
 const getBaseOrigin = () => {
@@ -34,11 +36,25 @@ export const parseWorkspaceResourceUrl = (raw) => {
   if (parts.length < 2) return null;
   const workspaceId = parts.shift();
   if (!workspaceId) return null;
-  const markerIndex = workspaceId.indexOf(WORKSPACE_AGENT_MARKER);
-  const ownerId =
-    markerIndex >= 0 ? workspaceId.slice(0, markerIndex) : workspaceId;
-  const agentId =
-    markerIndex >= 0 ? workspaceId.slice(markerIndex + WORKSPACE_AGENT_MARKER.length) : '';
+  let ownerId = workspaceId;
+  let agentId = '';
+  let containerId = null;
+  const containerRegex = new RegExp(`^(.*)${WORKSPACE_CONTAINER_MARKER}(\\d+)$`);
+  const containerMatch = workspaceId.match(containerRegex);
+  if (containerMatch) {
+    ownerId = containerMatch[1] || workspaceId;
+    containerId = Number.parseInt(containerMatch[2], 10);
+  } else {
+    const fullAgentIndex = workspaceId.indexOf(WORKSPACE_AGENT_MARKER);
+    const shortAgentIndex = workspaceId.indexOf(WORKSPACE_SHORT_AGENT_MARKER);
+    if (fullAgentIndex >= 0) {
+      ownerId = workspaceId.slice(0, fullAgentIndex) || workspaceId;
+      agentId = workspaceId.slice(fullAgentIndex + WORKSPACE_AGENT_MARKER.length);
+    } else if (shortAgentIndex >= 0) {
+      ownerId = workspaceId.slice(0, shortAgentIndex) || workspaceId;
+      agentId = workspaceId.slice(shortAgentIndex + WORKSPACE_SHORT_AGENT_MARKER.length);
+    }
+  }
   const relativeRaw = parts.join('/');
   if (!relativeRaw) return null;
   const relativePath = decodePath(relativeRaw);
@@ -49,6 +65,7 @@ export const parseWorkspaceResourceUrl = (raw) => {
     workspaceId,
     ownerId,
     agentId,
+    containerId: Number.isFinite(containerId) ? containerId : null,
     relativePath,
     publicPath,
     filename

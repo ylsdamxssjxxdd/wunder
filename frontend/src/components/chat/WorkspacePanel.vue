@@ -622,8 +622,8 @@ type WorkspaceDroppedFile = {
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const normalizedContainerId = computed(() => {
   const parsed = Number.parseInt(String(props.containerId ?? ''), 10);
-  if (!Number.isFinite(parsed)) return 1;
-  return Math.min(10, Math.max(1, parsed));
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(10, Math.max(0, parsed));
 });
 
 const withAgentParams = (params = {}) => {

@@ -960,7 +960,11 @@
                     @stats="handleFileWorkspaceStats"
                   />
                 </div>
-                <DesktopContainerManagerPanel v-if="desktopMode" />
+                <DesktopContainerManagerPanel
+                  v-if="desktopMode"
+                  ref="desktopContainerManagerPanelRef"
+                  :active-container-id="selectedFileContainerId"
+                />
               </div>
             </template>
 
@@ -1211,10 +1215,22 @@
           <i class="fa-solid fa-angles-down" aria-hidden="true"></i>
         </button>
         <div v-if="isAgentConversationActive" class="messenger-agent-composer messenger-composer-scope chat-shell">
+          <InquiryPanel
+            v-if="activeAgentInquiryPanel"
+            :panel="activeAgentInquiryPanel.panel"
+            @update:selected="handleAgentInquirySelection"
+          />
+          <PlanPanel
+            v-if="activeAgentPlan"
+            v-model:expanded="agentPlanExpanded"
+            :plan="activeAgentPlan"
+          />
           <ChatComposer
             world-style
             :loading="agentSessionLoading"
             :send-key="messengerSendKey"
+            :inquiry-active="Boolean(activeAgentInquiryPanel)"
+            :inquiry-selection="agentInquirySelection"
             @send="sendAgentMessage"
             @stop="stopAgentMessage"
           />
@@ -1347,8 +1363,10 @@ import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHi
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
+import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
+import PlanPanel from '@/components/chat/PlanPanel.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
 import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
@@ -1515,6 +1533,9 @@ const fileContainerLatestUpdatedAt = ref(0);
 const fileContainerEntryCount = ref(0);
 const fileLifecycleNowTick = ref(Date.now());
 const fileContainerMenuViewRef = ref<{ getMenuElement: () => HTMLElement | null } | null>(null);
+const desktopContainerManagerPanelRef = ref<{
+  openManager: (containerId?: number) => Promise<void> | void;
+} | null>(null);
 const fileContainerContextMenu = ref<{
   visible: boolean;
   x: number;
@@ -1536,6 +1557,8 @@ const orgUnitTree = ref<UnitTreeNode[]>([]);
 const contactUnitExpandedIds = ref<Set<string>>(new Set());
 const showScrollBottomButton = ref(false);
 const autoStickToBottom = ref(true);
+const agentInquirySelection = ref<number[]>([]);
+const agentPlanExpanded = ref(false);
 const groupCreateVisible = ref(false);
 const groupCreateName = ref('');
 const groupCreateKeyword = ref('');
@@ -1859,8 +1882,8 @@ const currentContainerId = computed(() => {
 });
 
 const normalizeSandboxContainerId = (value: unknown): number => {
-  const parsed = Number.parseInt(String(value ?? USER_CONTAINER_ID), 10);
-  if (!Number.isFinite(parsed)) return USER_CONTAINER_ID;
+  const parsed = Number.parseInt(String(value ?? 1), 10);
+  if (!Number.isFinite(parsed)) return 1;
   return Math.min(10, Math.max(1, parsed));
 };
 
@@ -1880,7 +1903,7 @@ const agentFileContainers = computed<AgentFileContainer[]>(() => {
   collect({
     id: DEFAULT_AGENT_KEY,
     name: t('messenger.defaultAgent'),
-    sandbox_container_id: USER_CONTAINER_ID
+    sandbox_container_id: 1
   });
   ownedAgents.value.forEach((item) => collect(item as Record<string, unknown>));
   sharedAgents.value.forEach((item) => collect(item as Record<string, unknown>));
@@ -3345,6 +3368,79 @@ const buildMessageStatsEntries = (message: Record<string, unknown>) =>
 const shouldShowMessageStats = (message: Record<string, unknown>): boolean =>
   buildMessageStatsEntries(message).length > 0;
 
+const hasPlanSteps = (plan: unknown): boolean =>
+  Array.isArray((plan as { steps?: unknown[] } | null)?.steps) &&
+  ((plan as { steps?: unknown[] } | null)?.steps?.length || 0) > 0;
+
+const activeAgentPlanMessage = computed<Record<string, unknown> | null>(() => {
+  if (!isAgentConversationActive.value) return null;
+  for (let index = chatStore.messages.length - 1; index >= 0; index -= 1) {
+    const message = chatStore.messages[index] as Record<string, unknown> | undefined;
+    if (String(message?.role || '') !== 'assistant') continue;
+    if (hasPlanSteps(message?.plan)) {
+      return message || null;
+    }
+  }
+  return null;
+});
+
+const activeAgentPlan = computed(() => {
+  const message = activeAgentPlanMessage.value as { plan?: unknown } | null;
+  return message?.plan || null;
+});
+
+type AgentInquiryPanelRoute = { label: string; description?: string };
+type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
+type ActiveAgentInquiryPanel = { message: Record<string, unknown>; panel: AgentInquiryPanelData };
+
+const activeAgentInquiryPanel = computed<ActiveAgentInquiryPanel | null>(() => {
+  if (!isAgentConversationActive.value) return null;
+  for (let index = chatStore.messages.length - 1; index >= 0; index -= 1) {
+    const message = chatStore.messages[index] as Record<string, unknown> | undefined;
+    if (String(message?.role || '') !== 'assistant') continue;
+    const panel = (message?.questionPanel || null) as AgentInquiryPanelData | null;
+    if (panel?.status === 'pending') {
+      return {
+        message: message || {},
+        panel
+      };
+    }
+  }
+  return null;
+});
+
+const handleAgentInquirySelection = (selected: unknown) => {
+  if (!Array.isArray(selected)) {
+    agentInquirySelection.value = [];
+    return;
+  }
+  agentInquirySelection.value = selected
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item >= 0);
+};
+
+const resolveAgentInquirySelectionRoutes = (
+  panel: AgentInquiryPanelData | null | undefined,
+  selected: number[]
+): AgentInquiryPanelRoute[] => {
+  if (!panel || !Array.isArray(selected) || !selected.length) {
+    return [];
+  }
+  return selected
+    .map((index) => panel.routes?.[index])
+    .filter((route): route is AgentInquiryPanelRoute => Boolean(route?.label));
+};
+
+const buildAgentInquiryReply = (panel: AgentInquiryPanelData, routes: AgentInquiryPanelRoute[]): string => {
+  const header = t('chat.askPanelPrefix');
+  const question = panel?.question ? t('chat.askPanelQuestion', { question: panel.question }) : '';
+  const lines = routes.map((route) => {
+    const detail = route.description ? `：${route.description}` : '';
+    return `- ${route.label}${detail}`;
+  });
+  return [header, question, ...lines].filter(Boolean).join('\n');
+};
+
 const avatarLabel = (value: unknown): string => {
   const source = String(value || '').trim();
   if (!source) return '?';
@@ -3428,6 +3524,7 @@ const normalizeWorkspaceOwnerId = (value: unknown): string =>
 type WorkspaceResolvedResource = ReturnType<typeof parseWorkspaceResourceUrl> & {
   requestUserId: string | null;
   requestAgentId: string | null;
+  requestContainerId: number | null;
   allowed: boolean;
 };
 
@@ -3440,14 +3537,22 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
   const workspaceId = parsed.workspaceId || parsed.userId;
   const ownerId = parsed.ownerId || workspaceId;
   const agentId = parsed.agentId || '';
+  const containerId =
+    typeof parsed.containerId === 'number' && Number.isFinite(parsed.containerId)
+      ? parsed.containerId
+      : null;
   const isOwner =
     Boolean(currentId) &&
-    (workspaceId === currentId || workspaceId.startsWith(`${currentId}__agent__`));
+    (workspaceId === currentId ||
+      workspaceId.startsWith(`${currentId}__agent__`) ||
+      workspaceId.startsWith(`${currentId}__a__`) ||
+      workspaceId.startsWith(`${currentId}__c__`));
   if (isOwner) {
     return {
       ...parsed,
       requestUserId: null,
       requestAgentId: agentId || null,
+      requestContainerId: containerId,
       allowed: true
     };
   }
@@ -3456,6 +3561,7 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
       ...parsed,
       requestUserId: ownerId,
       requestAgentId: agentId || null,
+      requestContainerId: containerId,
       allowed: true
     };
   }
@@ -3464,6 +3570,7 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
     ...parsed,
     requestUserId: null,
     requestAgentId: agentId || null,
+    requestContainerId: containerId,
     allowed: true
   };
 };
@@ -3474,6 +3581,7 @@ const buildWorkspaceResourcePersistentCacheKey = (resource: WorkspaceResolvedRes
     scope: currentUserId || 'anonymous',
     requestUserId: resource.requestUserId,
     requestAgentId: resource.requestAgentId,
+    requestContainerId: resource.requestContainerId,
     publicPath: resource.publicPath
   });
 };
@@ -3583,6 +3691,9 @@ const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
     }
     if (resource.requestAgentId) {
       params.agent_id = resource.requestAgentId;
+    }
+    if (resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)) {
+      params.container_id = String(resource.requestContainerId);
     }
     const response = await downloadWunderWorkspaceFile(params);
     try {
@@ -4569,26 +4680,33 @@ const closeFileContainerMenu = () => {
   fileContainerContextMenu.value.visible = false;
 };
 
-const openDesktopContainerSettings = () => {
+const openDesktopContainerSettings = async (containerId?: number) => {
   if (desktopMode.value) {
-    settingsPanelMode.value = 'desktop';
-  } else {
-    settingsPanelMode.value = 'general';
+    if (sessionHub.activeSection !== 'files') {
+      switchSection('files');
+      await nextTick();
+    }
+    const fallbackContainerId =
+      fileScope.value === 'user' ? USER_CONTAINER_ID : selectedFileContainerId.value;
+    const normalized = Math.min(
+      10,
+      Math.max(0, Number.parseInt(String(containerId ?? fallbackContainerId), 10) || 0)
+    );
+    desktopContainerManagerPanelRef.value?.openManager(normalized);
+    return;
   }
+  settingsPanelMode.value = 'general';
   sessionHub.setSection('more');
   sessionHub.setKeyword('');
   const nextQuery = {
     ...route.query,
-    section: 'more',
-    panel: desktopMode.value ? 'desktop' : undefined
+    section: 'more'
   } as Record<string, any>;
   delete nextQuery.session_id;
   delete nextQuery.agent_id;
   delete nextQuery.entry;
   delete nextQuery.conversation_id;
-  if (!desktopMode.value) {
-    delete nextQuery.panel;
-  }
+  delete nextQuery.panel;
   router.push({ path: `${basePrefix.value}/settings`, query: nextQuery }).catch(() => undefined);
 };
 
@@ -4655,8 +4773,9 @@ const handleFileContainerMenuCopyId = async () => {
 };
 
 const handleFileContainerMenuSettings = () => {
+  const target = fileContainerContextMenu.value.target;
   closeFileContainerMenu();
-  openDesktopContainerSettings();
+  void openDesktopContainerSettings(target?.id);
 };
 
 const selectContainer = (containerId: number | 'user') => {
@@ -4690,7 +4809,7 @@ const openContainerFromRightDock = (containerId: number) => {
 
 const openContainerSettingsFromRightDock = (containerId: number) => {
   openContainerFromRightDock(containerId);
-  openDesktopContainerSettings();
+  void openDesktopContainerSettings(containerId);
 };
 
 const handleFileWorkspaceStats = (payload: unknown) => {
@@ -5051,23 +5170,50 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
 const sendAgentMessage = async (payload: { content?: string; attachments?: unknown[] }) => {
   const content = String(payload?.content || '').trim();
   const attachments = Array.isArray(payload?.attachments) ? payload.attachments : [];
-  if (!content && attachments.length === 0) return;
+  const activeInquiry = activeAgentInquiryPanel.value;
+  const selectedRoutes = resolveAgentInquirySelectionRoutes(activeInquiry?.panel, agentInquirySelection.value);
+  const hasInquirySelection = selectedRoutes.length > 0;
+  if (!content && attachments.length === 0 && !hasInquirySelection) return;
   const localCommand = parseAgentLocalCommand(content);
-  if (localCommand) {
+  if (localCommand && !hasInquirySelection) {
+    if (activeInquiry) {
+      chatStore.resolveInquiryPanel(activeInquiry.message, { status: 'dismissed' });
+    }
     if (attachments.length > 0) {
       appendAgentLocalCommandMessages(content, t('chat.command.attachmentsUnsupported'));
+      agentInquirySelection.value = [];
       await scrollMessagesToBottom();
       return;
     }
     await handleAgentLocalCommand(localCommand, content);
+    agentInquirySelection.value = [];
     return;
   }
+
+  let finalContent = content;
+  if (activeInquiry) {
+    if (hasInquirySelection) {
+      chatStore.resolveInquiryPanel(activeInquiry.message, {
+        status: 'answered',
+        selected: selectedRoutes.map((route) => route.label)
+      });
+      const selectionText = buildAgentInquiryReply(activeInquiry.panel, selectedRoutes);
+      if (content) {
+        finalContent = `${selectionText}\n\n${t('chat.askPanelUserAppend', { content })}`;
+      } else {
+        finalContent = selectionText;
+      }
+    } else {
+      chatStore.resolveInquiryPanel(activeInquiry.message, { status: 'dismissed' });
+    }
+  }
+
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
   setRuntimeStateOverride(targetAgentId, 'running', 30_000);
   pendingAssistantCenter = true;
   pendingAssistantCenterCount = chatStore.messages.length;
   try {
-    await chatStore.sendMessage(content, { attachments });
+    await chatStore.sendMessage(finalContent, { attachments });
     setRuntimeStateOverride(targetAgentId, 'done', 8_000);
     if (chatStore.activeSessionId) {
       sessionHub.setActiveConversation({
@@ -5082,6 +5228,8 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
     pendingAssistantCenterCount = 0;
     setRuntimeStateOverride(targetAgentId, 'error', 8_000);
     showApiError(error, t('chat.error.requestFailed'));
+  } finally {
+    agentInquirySelection.value = [];
   }
 };
 
@@ -5700,7 +5848,27 @@ watch(
     clearWorkspaceResourceCache();
     pendingAssistantCenter = false;
     pendingAssistantCenterCount = 0;
+    agentPlanExpanded.value = false;
+    agentInquirySelection.value = [];
     scheduleWorkspaceResourceHydration();
+  }
+);
+
+watch(
+  () => activeAgentPlan.value,
+  (value) => {
+    if (!value) {
+      agentPlanExpanded.value = false;
+    }
+  }
+);
+
+watch(
+  () => activeAgentInquiryPanel.value,
+  (value) => {
+    if (!value) {
+      agentInquirySelection.value = [];
+    }
   }
 );
 
