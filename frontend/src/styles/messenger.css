@@ -1076,6 +1076,12 @@
   contain: layout style paint;
 }
 
+.messenger-message-virtual-spacer {
+  width: 100%;
+  pointer-events: none;
+  flex: 0 0 auto;
+}
+
 .messenger-message.mine {
   flex-direction: row-reverse;
 }
@@ -2295,6 +2301,13 @@
   font-size: 16px;
   font-weight: 700;
   color: #252525;
+}
+
+.messenger-entity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .messenger-entity-meta {

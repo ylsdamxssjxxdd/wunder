@@ -24,6 +24,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+const DEFAULT_AGENT_APPROVAL_MODE: &str = "auto_edit";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -485,6 +486,11 @@ async fn create_agent(
     }
 
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
+    let approval_mode = if let Some(source) = copy_source.as_ref() {
+        normalize_agent_approval_mode(Some(&source.approval_mode))
+    } else {
+        normalize_agent_approval_mode(payload.approval_mode.as_deref())
+    };
     let status = normalize_agent_status(payload.status.as_deref());
     let is_shared = payload.is_shared.unwrap_or(false);
     let now = now_ts();
@@ -519,6 +525,7 @@ async fn create_agent(
         system_prompt,
         tool_names,
         access_level,
+        approval_mode,
         is_shared,
         status,
         icon,
@@ -579,6 +586,9 @@ async fn update_agent(
     }
     if let Some(status) = payload.status {
         record.status = normalize_agent_status(Some(&status));
+    }
+    if let Some(approval_mode) = payload.approval_mode {
+        record.approval_mode = normalize_agent_approval_mode(Some(&approval_mode));
     }
     if payload.icon.is_some() {
         record.icon = payload.icon;
@@ -745,6 +755,7 @@ fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
         "system_prompt": record.system_prompt,
         "tool_names": record.tool_names,
         "access_level": record.access_level,
+        "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
         "is_shared": record.is_shared,
         "status": record.status,
         "icon": record.icon,
@@ -783,6 +794,16 @@ fn normalize_agent_status(raw: Option<&str>) -> String {
         "active".to_string()
     } else {
         status.to_string()
+    }
+}
+
+fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
+    let cleaned = raw.unwrap_or("").trim().to_ascii_lowercase();
+    match cleaned.as_str() {
+        "suggest" => "suggest".to_string(),
+        "auto_edit" | "auto-edit" => "auto_edit".to_string(),
+        "full_auto" | "full-auto" => "full_auto".to_string(),
+        _ => DEFAULT_AGENT_APPROVAL_MODE.to_string(),
     }
 }
 
@@ -991,6 +1012,7 @@ async fn ensure_preset_agents(
             system_prompt: preset.system_prompt.clone(),
             tool_names: tool_names.clone(),
             access_level: access_level.clone(),
+            approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
             is_shared: false,
             status: "active".to_string(),
             icon: Some(build_icon_payload(&preset.icon_name, &preset.icon_color)),
@@ -1096,6 +1118,14 @@ struct AgentCreateRequest {
     is_shared: Option<bool>,
     #[serde(default)]
     status: Option<String>,
+    #[serde(
+        default,
+        alias = "approvalMode",
+        alias = "approval_mode",
+        alias = "permissionLevel",
+        alias = "permission_level"
+    )]
+    approval_mode: Option<String>,
     #[serde(default)]
     icon: Option<String>,
     #[serde(default)]
@@ -1123,6 +1153,14 @@ struct AgentUpdateRequest {
     is_shared: Option<bool>,
     #[serde(default)]
     status: Option<String>,
+    #[serde(
+        default,
+        alias = "approvalMode",
+        alias = "approval_mode",
+        alias = "permissionLevel",
+        alias = "permission_level"
+    )]
+    approval_mode: Option<String>,
     #[serde(default)]
     icon: Option<String>,
     #[serde(default)]

@@ -72,7 +72,19 @@
                 />
               </el-select>
             </label>
+            <label class="messenger-agent-base-item messenger-agent-base-item--select">
+              <span>{{ t('portal.agent.permission.title') }}</span>
+              <el-select v-model="form.approval_mode">
+                <el-option
+                  v-for="item in approvalModeOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+            </label>
             <div class="messenger-inline-hint">{{ t('portal.agent.sandbox.hint') }}</div>
+            <div class="messenger-inline-hint">{{ t('portal.agent.permission.hint') }}</div>
           </div>
         </el-form-item>
       </el-form>
@@ -128,6 +140,11 @@ const { t } = useI18n();
 const agentStore = useAgentStore();
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
+const approvalModeOptions = computed(() => [
+  { value: 'suggest', label: t('portal.agent.permission.option.suggest') },
+  { value: 'auto_edit', label: t('portal.agent.permission.option.auto_edit') },
+  { value: 'full_auto', label: t('portal.agent.permission.option.full_auto') }
+]);
 
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const canEdit = computed(() => Boolean(normalizedAgentId.value));
@@ -138,7 +155,8 @@ const form = reactive({
   is_shared: false,
   system_prompt: '',
   tool_names: [] as string[],
-  sandbox_container_id: 1
+  sandbox_container_id: 1,
+  approval_mode: 'auto_edit'
 });
 
 const saving = ref(false);
@@ -150,6 +168,14 @@ const normalizeSandboxContainerId = (value: unknown): number => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return 1;
   return Math.min(10, Math.max(1, parsed));
+};
+
+const normalizeApprovalMode = (value: unknown): string => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'suggest') return 'suggest';
+  if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
+  if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
+  return 'auto_edit';
 };
 
 const normalizeOption = (item: unknown): ToolOption | null => {
@@ -252,6 +278,7 @@ const loadAgent = async () => {
     form.system_prompt = String(agent.system_prompt || '');
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
+    form.approval_mode = normalizeApprovalMode(agent.approval_mode);
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
   }
@@ -276,7 +303,8 @@ const saveAgent = async () => {
       is_shared: Boolean(form.is_shared),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: String(form.system_prompt || ''),
-      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id)
+      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+      approval_mode: normalizeApprovalMode(form.approval_mode)
     });
     ElMessage.success(t('portal.agent.updateSuccess'));
     emit('saved', normalizedAgentId.value);

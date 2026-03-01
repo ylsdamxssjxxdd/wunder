@@ -390,6 +390,7 @@ fn seed_agents(state: &AppState, user_id: &str, agent_count: usize) -> Result<Ve
                 .to_string(),
             tool_names: Vec::new(),
             access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
             is_shared: false,
             status: "active".to_string(),
             icon: None,

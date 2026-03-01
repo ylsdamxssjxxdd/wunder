@@ -53,6 +53,7 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 - 生成 Electron arm64 AppImage
 - 基于 `target/arm64-20/.build/python` 产出附带 Python 的 AppImage
 - 在 AppImage 内补齐 `python -> python3`、`pip -> pip3`，并将 `opt/python/bin` 置于 `PATH` 最前，确保 `执行命令` 工具里的 `python` 默认命中内置解释器
+- 内置 Python 依赖默认包含一组“优先、轻量、高价值”库（`orjson`、`tabulate`、`rapidfuzz`、`Unidecode`、`docxtpl`），用于文本匹配、结构化输出、JSON 处理与文档模板生成
 
 > 提示：第 5 步 AppImage 重打包在 qemu 下可能持续 10~30 分钟，看起来像“卡住”但通常仍在运行。
 > 可用以下命令观察进度（文件大小持续增长即正常）：

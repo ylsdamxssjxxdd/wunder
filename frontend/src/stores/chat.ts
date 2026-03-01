@@ -103,6 +103,20 @@ type ResumeStreamOptions = {
   afterEventId?: number | string;
 };
 
+type ApprovalDecision = 'approve_once' | 'approve_session' | 'deny';
+
+type PendingApproval = {
+  approval_id: string;
+  request_id: string;
+  session_id: string;
+  tool: string;
+  kind: string;
+  summary: string;
+  detail: unknown;
+  args: unknown;
+  created_at: string;
+};
+
 const buildMessageStats = () => ({
   toolCalls: 0,
   usage: null,
@@ -1074,6 +1088,49 @@ const safeJsonParse = (raw) => {
   }
 };
 
+const normalizeApprovalKind = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'exec' || raw === 'patch') {
+    return raw;
+  }
+  return '';
+};
+
+const normalizePendingApproval = (payload, requestId, sessionId): PendingApproval | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const approvalId = String(payload.approval_id ?? payload.id ?? '').trim();
+  if (!approvalId) {
+    return null;
+  }
+  const summary = String(payload.summary || '').trim();
+  const tool = String(payload.tool || payload.name || '').trim();
+  const kind = normalizeApprovalKind(payload.kind);
+  const normalizedSessionId = String(
+    payload.session_id ?? payload.sessionId ?? sessionId ?? ''
+  ).trim();
+  if (!normalizedSessionId) {
+    return null;
+  }
+  return {
+    approval_id: approvalId,
+    request_id: String(requestId || '').trim(),
+    session_id: normalizedSessionId,
+    tool,
+    kind,
+    summary: summary || tool || approvalId,
+    detail: payload.detail ?? null,
+    args: payload.args ?? null,
+    created_at: new Date().toISOString()
+  };
+};
+
+const normalizeApprovalResultId = (payload) => {
+  if (!payload || typeof payload !== 'object') return '';
+  return String(payload.approval_id ?? payload.id ?? '').trim();
+};
+
 const stringifyPayload = (payload) => {
   if (payload === null || payload === undefined) return '';
   if (typeof payload === 'string') return payload;
@@ -1320,6 +1377,17 @@ const resolveEventType = (eventName, payload) => {
   if (payload?.event) return payload.event;
   if (payload?.type) return payload.type;
   return normalized || 'message';
+};
+
+const handleApprovalEvent = (store, eventType, payload, requestId, sessionId) => {
+  if (!store) return;
+  if (eventType === 'approval_request') {
+    store.enqueueApprovalRequest(requestId, sessionId, payload);
+    return;
+  }
+  if (eventType === 'approval_result') {
+    store.resolveApprovalResult(payload);
+  }
 };
 
 const pickText = (value, fallback = '') => {
@@ -2157,6 +2225,7 @@ const startSessionWatcher = (store, sessionId) => {
     }
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
+    handleApprovalEvent(store, eventType, data, requestId, key);
     if (eventType === 'slow_client' && !data) {
       return;
     }
@@ -2256,6 +2325,7 @@ const startSessionWatcher = (store, sessionId) => {
         })
       : watchWithSse();
   watchPromise.catch((error) => {
+    store.clearPendingApprovals({ requestId, sessionId: key });
     if (error?.name === 'AbortError' || error?.phase === 'aborted') {
       finalizeAll(true);
       return;
@@ -2319,6 +2389,7 @@ const abortSendStream = (sessionId) => {
 const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options: WorkflowProcessorOptions = {}) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
   const toolItemMap = new Map();
+  const approvalItemMap = new Map();
   const toolOutputItemMap = new Map();
   const toolOutputBufferMap = new Map();
   let outputItemId = null;
@@ -2868,6 +2939,35 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         break;
       }
+      case 'approval_request': {
+        const approvalId = String(data?.approval_id ?? payload?.approval_id ?? '').trim();
+        const toolName = String(data?.tool ?? payload?.tool ?? '').trim();
+        const title = toolName ? `等待审批：${toolName}` : '等待审批';
+        const item = buildWorkflowItem(title, buildDetail(data ?? payload), 'loading');
+        assistantMessage.workflowItems.push(item);
+        if (approvalId) {
+          approvalItemMap.set(approvalId, item.id);
+        }
+        break;
+      }
+      case 'approval_result': {
+        const approvalId = String(data?.approval_id ?? payload?.approval_id ?? '').trim();
+        const statusRaw = String(data?.status ?? payload?.status ?? '').trim().toLowerCase();
+        const itemStatus = statusRaw === 'approved' ? 'completed' : 'failed';
+        const targetId = approvalId ? approvalItemMap.get(approvalId) : null;
+        if (targetId) {
+          updateWorkflowItem(assistantMessage.workflowItems, targetId, {
+            status: itemStatus,
+            detail: buildDetail(data ?? payload)
+          });
+          approvalItemMap.delete(approvalId);
+        } else {
+          assistantMessage.workflowItems.push(
+            buildWorkflowItem('审批结果', buildDetail(data ?? payload), itemStatus)
+          );
+        }
+        break;
+      }
       case 'workspace_update': {
         const sessionId = payload?.session_id ?? payload?.sessionId ?? null;
         const agentId = data?.agent_id ?? data?.agentId ?? '';
@@ -3193,6 +3293,7 @@ export const useChatStore = defineStore('chat', {
     greetingOverride: '',
     draftAgentId: '',
     draftToolOverrides: null,
+    pendingApprovals: [] as PendingApproval[],
     streamTransport: resolveStreamTransport()
   }),
   getters: {
@@ -3200,7 +3301,8 @@ export const useChatStore = defineStore('chat', {
       const key = resolveSessionKey(sessionId);
       if (!key) return false;
       return Boolean(state.loadingBySession[key]);
-    }
+    },
+    activeApproval: (state) => (Array.isArray(state.pendingApprovals) ? state.pendingApprovals[0] : null)
   },
   actions: {
     markPageUnloading() {
@@ -3234,6 +3336,76 @@ export const useChatStore = defineStore('chat', {
     toggleStreamTransport() {
       const next = this.streamTransport === 'sse' ? 'ws' : 'sse';
       this.setStreamTransport(next);
+    },
+    enqueueApprovalRequest(requestId, sessionId, payload) {
+      const approval = normalizePendingApproval(payload, requestId, sessionId);
+      if (!approval) return null;
+      const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
+      const filtered = current.filter((item) => item?.approval_id !== approval.approval_id);
+      this.pendingApprovals = [...filtered, approval];
+      return approval;
+    },
+    resolveApprovalResult(payload) {
+      const approvalId = normalizeApprovalResultId(payload);
+      if (!approvalId) return false;
+      const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
+      const next = current.filter((item) => item?.approval_id !== approvalId);
+      const changed = next.length !== current.length;
+      if (changed) {
+        this.pendingApprovals = next;
+      }
+      return changed;
+    },
+    clearPendingApprovals(options: { sessionId?: string; requestId?: string } = {}) {
+      const targetSessionId = String(options.sessionId || '').trim();
+      const targetRequestId = String(options.requestId || '').trim();
+      const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
+      if (!targetSessionId && !targetRequestId) {
+        this.pendingApprovals = [];
+        return;
+      }
+      this.pendingApprovals = current.filter((item) => {
+        if (!item) return false;
+        if (targetSessionId && String(item.session_id || '').trim() !== targetSessionId) {
+          return true;
+        }
+        if (targetRequestId && String(item.request_id || '').trim() !== targetRequestId) {
+          return true;
+        }
+        return false;
+      });
+    },
+    async respondApproval(decision: ApprovalDecision, approvalId = '') {
+      const normalizedDecision = String(decision || '').trim().toLowerCase();
+      const resolvedDecision: ApprovalDecision =
+        normalizedDecision === 'approve_session'
+          ? 'approve_session'
+          : normalizedDecision === 'approve_once'
+            ? 'approve_once'
+            : 'deny';
+      const targetApprovalId = String(
+        approvalId || this.activeApproval?.approval_id || ''
+      ).trim();
+      if (!targetApprovalId) return false;
+      const current = Array.isArray(this.pendingApprovals) ? this.pendingApprovals : [];
+      const target = current.find((item) => item?.approval_id === targetApprovalId);
+      if (!target) return false;
+      try {
+        await chatWsClient.notify({
+          type: 'approval',
+          session_id: target.session_id,
+          payload: {
+            approval_id: targetApprovalId,
+            decision: resolvedDecision
+          }
+        });
+      } catch (error) {
+        if (resolvedDecision !== 'deny') {
+          throw error;
+        }
+      }
+      this.pendingApprovals = current.filter((item) => item?.approval_id !== targetApprovalId);
+      return true;
     },
     getPersistedState() {
       return readChatPersistState();
@@ -3550,6 +3722,7 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(targetId);
       abortSendStream(targetId);
       setSessionLoading(this, targetId, false);
+      this.clearPendingApprovals({ sessionId: targetId });
       sessionRuntime.delete(resolveSessionKey(targetId));
       sessionMessages.delete(resolveSessionKey(targetId));
       sessionDetailWarmState.delete(resolveSessionKey(targetId));
@@ -3701,6 +3874,14 @@ export const useChatStore = defineStore('chat', {
         };
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);
+          const approvalPayload = payload?.data ?? payload;
+          handleApprovalEvent(
+            this,
+            eventType,
+            approvalPayload,
+            runtime?.sendRequestId || '',
+            sessionId
+          );
           const queuedFlag =
             eventType === 'queued' || payload?.queued === true || payload?.data?.queued === true;
           if (queuedFlag) {
@@ -3793,11 +3974,13 @@ export const useChatStore = defineStore('chat', {
         }
         this.dismissPendingInquiryPanel();
       } finally {
+        const finishedRequestId = runtime?.sendRequestId || '';
         assistantMessage.workflowStreaming = false;
         assistantMessage.stream_incomplete = queued ? true : false;
         setSessionLoading(this, sessionId, false);
         processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
+        this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
         if (runtime) {
           runtime.sendController = null;
           runtime.stopRequested = false;
@@ -3867,6 +4050,14 @@ export const useChatStore = defineStore('chat', {
       const resumeAfterEventId = Number.isFinite(afterEventId) ? Math.max(afterEventId, 0) : 0;
       try {
         const onEvent = (eventType, dataText, eventId) => {
+          const payload = safeJsonParse(dataText);
+          handleApprovalEvent(
+            this,
+            eventType,
+            payload?.data ?? payload,
+            runtime?.resumeRequestId || '',
+            sessionId
+          );
           assignStreamEventId(message, eventId);
           updateRuntimeLastEventId(runtime, eventId);
           processor.handleEvent(eventType, dataText);
@@ -3942,6 +4133,7 @@ export const useChatStore = defineStore('chat', {
           }
         }
       } finally {
+        const finishedRequestId = runtime?.resumeRequestId || '';
         message.workflowStreaming = false;
         if (!aborted) {
           message.stream_incomplete = false;
@@ -3949,6 +4141,7 @@ export const useChatStore = defineStore('chat', {
         setSessionLoading(this, sessionId, false);
         processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
+        this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
         if (runtime && !aborted) {
           runtime.resumeController = null;
         }

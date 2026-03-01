@@ -229,7 +229,18 @@ impl Orchestrator {
                 truncated = true;
             }
         }
-        let output_chars = estimate_tool_result_chars(&result.data);
+        let mut output_chars = estimate_tool_result_chars(&result.data);
+        if !is_admin && output_chars > TOOL_RESULT_MAX_CHARS {
+            result.data = compact_large_tool_result_data(
+                &result.data,
+                output_chars,
+                TOOL_RESULT_HEAD_CHARS,
+                TOOL_RESULT_TAIL_CHARS,
+                TOOL_RESULT_TRUNCATION_MARKER,
+            );
+            truncated = true;
+            output_chars = estimate_tool_result_chars(&result.data);
+        }
         let exit_code = extract_exit_code(&result.data);
         let mut meta = merge_tool_result_meta(result.meta.take());
         meta.insert("duration_ms".to_string(), json!(duration_ms));
@@ -834,6 +845,23 @@ fn truncate_tool_result_data(
         }
         Value::Array(items) => {
             let mut truncated = false;
+            if items.len() > TOOL_RESULT_MAX_ARRAY_ITEMS {
+                let original_len = items.len();
+                let head_items = TOOL_RESULT_ARRAY_HEAD_ITEMS.min(original_len);
+                let tail_items = TOOL_RESULT_ARRAY_TAIL_ITEMS.min(original_len - head_items);
+                let omitted = original_len.saturating_sub(head_items + tail_items);
+                let mut compacted = Vec::with_capacity(head_items + tail_items + 1);
+                compacted.extend(items.iter().take(head_items).cloned());
+                compacted.push(json!({
+                    "truncated_items": omitted,
+                    "marker": marker,
+                }));
+                if tail_items > 0 {
+                    compacted.extend(items.iter().skip(original_len - tail_items).cloned());
+                }
+                *items = compacted;
+                truncated = true;
+            }
             for item in items.iter_mut() {
                 if truncate_tool_result_data(item, head_chars, tail_chars, marker) {
                     truncated = true;
@@ -852,6 +880,28 @@ fn truncate_tool_result_data(
         }
         _ => false,
     }
+}
+
+fn compact_large_tool_result_data(
+    value: &Value,
+    original_chars: usize,
+    head_chars: usize,
+    tail_chars: usize,
+    marker: &str,
+) -> Value {
+    let serialized = serde_json::to_string(value).unwrap_or_else(|_| value.to_string());
+    let preview = truncate_tool_result_string(&serialized, head_chars, tail_chars, marker);
+    let mut payload = json!({
+        "truncated": true,
+        "original_chars": original_chars,
+        "preview": preview,
+    });
+    if let Some(exit_code) = extract_exit_code(value) {
+        if let Value::Object(ref mut map) = payload {
+            map.insert("exit_code".to_string(), json!(exit_code));
+        }
+    }
+    payload
 }
 
 fn estimate_tool_result_chars(value: &Value) -> usize {
@@ -957,5 +1007,70 @@ mod tests {
         assert!(stdout.starts_with("0"));
         assert!(stdout.ends_with("89"));
         assert!(stdout.contains(TOOL_RESULT_TRUNCATION_MARKER));
+    }
+
+    #[test]
+    fn test_truncate_tool_result_data_limits_large_arrays() {
+        let mut rows = Vec::new();
+        for idx in 0..200 {
+            rows.push(json!({ "id": idx }));
+        }
+        let mut value = json!({ "rows": rows });
+        let truncated = truncate_tool_result_data(
+            &mut value,
+            TOOL_RESULT_HEAD_CHARS,
+            TOOL_RESULT_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
+        assert!(truncated);
+        let rows = value
+            .get("rows")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert!(rows.len() <= TOOL_RESULT_MAX_ARRAY_ITEMS + 1);
+        let has_marker = rows.iter().any(|item| {
+            item.get("truncated_items")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+                > 0
+        });
+        assert!(has_marker);
+    }
+
+    #[test]
+    fn test_compact_large_tool_result_data_includes_preview() {
+        let mut rows = Vec::new();
+        for idx in 0..160 {
+            rows.push(json!({
+                "id": idx,
+                "text": format!("row-{idx:03}-{}", "x".repeat(64)),
+            }));
+        }
+        let value = json!({ "rows": rows });
+        let chars = estimate_tool_result_chars(&value);
+        let compacted = compact_large_tool_result_data(
+            &value,
+            chars,
+            TOOL_RESULT_HEAD_CHARS,
+            TOOL_RESULT_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
+        assert_eq!(
+            compacted.get("truncated").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            compacted
+                .get("original_chars")
+                .and_then(Value::as_u64)
+                .unwrap_or_default() as usize,
+            chars
+        );
+        let preview = compacted
+            .get("preview")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(!preview.is_empty());
     }
 }

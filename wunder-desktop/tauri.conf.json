@@ -12,6 +12,13 @@
   "bundle": {
     "active": true,
     "createUpdaterArtifacts": true,
+    "resources": [
+      "../config",
+      "../prompts",
+      "../skills",
+      "../scripts",
+      "../frontend/dist"
+    ],
     "icon": [
       "icons/icon.ico"
     ]

@@ -335,6 +335,9 @@ export const createWsMultiplexer = (
       const requestId = normalizeRequestId(payload?.request_id || payload?.requestId);
       if (requestId && pending.has(requestId)) {
         rejectRequest(requestId, err);
+      } else if (requestId) {
+        // Ignore errors for fire-and-forget request ids to avoid interrupting active streams.
+        return;
       } else {
         failAll(err);
       }
@@ -455,6 +458,16 @@ export const createWsMultiplexer = (
         });
     });
 
+  const notify = (message: unknown): Promise<void> =>
+    ensureConnected().then(() => {
+      try {
+        sendMessage(message);
+      } catch (error) {
+        const source = error as { message?: string };
+        throw normalizeError(source?.message || '', opened ? 'stream' : 'connect');
+      }
+    });
+
   const close = (code?: number, reason?: string): void => {
     if (!socket) return;
     try {
@@ -468,6 +481,7 @@ export const createWsMultiplexer = (
 
   return {
     request,
+    notify,
     close,
     sendCancel,
     isOpen

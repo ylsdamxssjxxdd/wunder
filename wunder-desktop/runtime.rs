@@ -11,7 +11,10 @@ use url::Url;
 use wunder_server::config::{Config, LlmConfig};
 use wunder_server::config_store::ConfigStore;
 use wunder_server::state::{AppState, AppStateInitOptions};
-use wunder_server::storage::UserTokenRecord;
+use wunder_server::storage::{
+    normalize_workspace_container_id, UserTokenRecord, MAX_SANDBOX_CONTAINER_ID,
+    USER_PRIVATE_CONTAINER_ID,
+};
 use wunder_server::user_store::UserStore;
 
 pub const DESKTOP_DEFAULT_USER_ID: &str = "desktop_user";
@@ -78,6 +81,7 @@ impl DesktopRuntime {
         let app_dir = resolve_app_dir()?;
         let repo_root = resolve_repo_root(&app_dir);
         let temp_root = resolve_temp_root(args.temp_root.as_deref(), &app_dir);
+        let user_id = normalize_user_id(args.user.as_deref());
         ensure_runtime_dirs(&temp_root)?;
 
         let settings_path = temp_root.join("config/desktop.settings.json");
@@ -94,15 +98,35 @@ impl DesktopRuntime {
                 workspace_root.to_string_lossy()
             )
         })?;
+        if let Err(err) = seed_workspace_skills(&repo_root, &workspace_root) {
+            warn!(
+                "seed desktop workspace skills failed: {} -> {}: {err}",
+                repo_root.join("skills").display(),
+                workspace_root.join("skills").display()
+            );
+        }
 
         if settings.desktop_token.trim().is_empty() {
             settings.desktop_token = uuid::Uuid::new_v4().simple().to_string();
         }
         settings.workspace_root = workspace_root.to_string_lossy().to_string();
-        settings.container_roots =
-            normalize_desktop_container_roots(&settings.container_roots, &workspace_root, &app_dir);
+        settings.container_roots = normalize_desktop_container_roots(
+            &settings.container_roots,
+            &workspace_root,
+            &app_dir,
+            &user_id,
+        );
         settings.container_cloud_workspaces =
             normalize_desktop_container_cloud_workspaces(&settings.container_cloud_workspaces);
+        settings
+            .container_cloud_workspaces
+            .retain(|container_id, _| settings.container_roots.contains_key(container_id));
+        fs::create_dir_all(&workspace_root).with_context(|| {
+            format!(
+                "create desktop workspace root failed: {}",
+                workspace_root.display()
+            )
+        })?;
         ensure_container_root_dirs(&settings.container_roots)?;
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;
@@ -124,9 +148,9 @@ impl DesktopRuntime {
         set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
+        std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
-        let user_id = normalize_user_id(args.user.as_deref());
         let desktop_token = settings.desktop_token.clone();
 
         let config_store = ConfigStore::new(override_path);
@@ -199,12 +223,17 @@ fn resolve_app_dir() -> Result<PathBuf> {
 }
 
 fn resolve_repo_root(app_dir: &Path) -> PathBuf {
-    let candidate = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if candidate.join("config/wunder.yaml").exists() {
-        candidate
-    } else {
-        app_dir.to_path_buf()
+    let mut candidates = vec![app_dir.to_path_buf(), app_dir.join("resources")];
+    if let Some(parent) = app_dir.parent() {
+        candidates.push(parent.join("Resources"));
     }
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
+    for candidate in candidates {
+        if has_runtime_resource_layout(&candidate) {
+            return candidate;
+        }
+    }
+    app_dir.to_path_buf()
 }
 
 fn resolve_temp_root(temp_root: Option<&Path>, app_dir: &Path) -> PathBuf {
@@ -258,11 +287,24 @@ fn resolve_frontend_root(
         return None;
     }
 
-    let candidates = [
+    let mut candidates = vec![
         repo_root.join("frontend/dist"),
+        repo_root.join("frontend-dist"),
         app_dir.join("frontend/dist"),
+        app_dir.join("frontend-dist"),
+        app_dir.join("resources/frontend/dist"),
+        app_dir.join("resources/frontend-dist"),
     ];
+    if let Some(parent) = app_dir.parent() {
+        candidates.push(parent.join("Resources/frontend/dist"));
+        candidates.push(parent.join("Resources/frontend-dist"));
+    }
     candidates.into_iter().find(|candidate| candidate.exists())
+}
+
+fn has_runtime_resource_layout(root: &Path) -> bool {
+    root.join("config/wunder.yaml").is_file()
+        && (root.join("skills").is_dir() || root.join("prompts").is_dir())
 }
 
 fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
@@ -275,6 +317,51 @@ fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
         temp_root.join("vector_knowledge"),
     ] {
         fs::create_dir_all(dir)?;
+    }
+    Ok(())
+}
+
+fn seed_workspace_skills(repo_root: &Path, workspace_root: &Path) -> Result<()> {
+    let source = repo_root.join("skills");
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let target = workspace_root.join("skills");
+    merge_directory_if_missing(&source, &target)
+}
+
+fn merge_directory_if_missing(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)
+        .with_context(|| format!("create skills target dir failed: {}", target.display()))?;
+    let entries = fs::read_dir(source)
+        .with_context(|| format!("read skills source dir failed: {}", source.display()))?;
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("read skills source entry failed: {}", source.display()))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type().with_context(|| {
+            format!(
+                "read skills source entry type failed: {}",
+                source_path.display()
+            )
+        })?;
+        if file_type.is_dir() {
+            merge_directory_if_missing(&source_path, &target_path)?;
+        } else if file_type.is_file() && !target_path.exists() {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("create skills target parent failed: {}", parent.display())
+                })?;
+            }
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "copy desktop skill file failed: {} -> {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
     }
     Ok(())
 }
@@ -303,20 +390,49 @@ pub(crate) fn normalize_desktop_container_roots(
     source: &HashMap<i32, String>,
     default_workspace_root: &Path,
     app_dir: &Path,
+    user_id: &str,
 ) -> HashMap<i32, String> {
-    let mut output = HashMap::new();
-    output.insert(1, default_workspace_root.to_string_lossy().to_string());
+    let normalized_user_id = normalize_user_id(Some(user_id));
+    let workspace_root_cmp = normalize_path_for_compare(default_workspace_root);
+
+    let mut explicit = HashMap::new();
+    let mut seen_paths = HashSet::new();
+    seen_paths.insert(workspace_root_cmp);
+    for container_id in USER_PRIVATE_CONTAINER_ID..=MAX_SANDBOX_CONTAINER_ID {
+        let default_root =
+            build_default_container_root(default_workspace_root, &normalized_user_id, container_id);
+        seen_paths.insert(normalize_path_for_compare(&default_root));
+    }
+
     for (container_id, root) in source {
-        let normalized_id = wunder_server::storage::normalize_sandbox_container_id(*container_id);
-        if normalized_id == 1 {
-            continue;
-        }
+        let normalized_id = normalize_workspace_container_id(*container_id);
         let trimmed = root.trim();
         if trimmed.is_empty() {
             continue;
         }
         let resolved = resolve_workspace_path_input(trimmed, app_dir);
-        output.insert(normalized_id, resolved.to_string_lossy().to_string());
+        let resolved_cmp = normalize_path_for_compare(&resolved);
+        if resolved_cmp.is_empty() || seen_paths.contains(&resolved_cmp) {
+            continue;
+        }
+        if normalized_id == USER_PRIVATE_CONTAINER_ID {
+            seen_paths.insert(resolved_cmp.clone());
+            explicit.insert(normalized_id, resolved);
+            continue;
+        }
+        if !(1..=MAX_SANDBOX_CONTAINER_ID).contains(&normalized_id) {
+            continue;
+        }
+        seen_paths.insert(resolved_cmp);
+        explicit.insert(normalized_id, resolved);
+    }
+
+    let mut output = HashMap::new();
+    for container_id in USER_PRIVATE_CONTAINER_ID..=MAX_SANDBOX_CONTAINER_ID {
+        let root = explicit.remove(&container_id).unwrap_or_else(|| {
+            build_default_container_root(default_workspace_root, &normalized_user_id, container_id)
+        });
+        output.insert(container_id, root.to_string_lossy().to_string());
     }
     output
 }
@@ -355,6 +471,48 @@ fn resolve_workspace_path_input(raw: &str, app_dir: &Path) -> PathBuf {
     } else {
         app_dir.join(path)
     }
+}
+
+fn sanitize_workspace_scope(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.trim().is_empty() {
+        DESKTOP_DEFAULT_USER_ID.to_string()
+    } else {
+        output
+    }
+}
+
+fn build_default_container_root(
+    workspace_root: &Path,
+    user_id: &str,
+    container_id: i32,
+) -> PathBuf {
+    if container_id == USER_PRIVATE_CONTAINER_ID {
+        return workspace_root.join(sanitize_workspace_scope(user_id));
+    }
+    workspace_root.join(format!(
+        "{}__c__{container_id}",
+        sanitize_workspace_scope(user_id)
+    ))
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        normalized.make_ascii_lowercase();
+    }
+    normalized
 }
 
 fn resolve_remote_endpoints(
@@ -527,7 +685,8 @@ fn apply_desktop_defaults(
         config.llm = llm.clone();
     }
 
-    config.channels.enabled = false;
+    // Keep per-agent channel settings available in desktop local mode.
+    config.channels.enabled = true;
     config.gateway.enabled = false;
     config.agent_queue.enabled = false;
     config.cron.enabled = false;
@@ -674,4 +833,99 @@ fn now_ts() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn apply_desktop_defaults_keeps_channels_available() {
+        let mut config = Config::default();
+        let workspace_root = PathBuf::from("/tmp/wunder-work");
+        let temp_root = PathBuf::from("/tmp/wunder-temp");
+        let repo_root = PathBuf::from("/tmp/wunder-repo");
+        let container_roots = HashMap::new();
+        let defaults = DesktopDefaultsInput {
+            desktop_token: "desktop-token",
+            container_roots: &container_roots,
+            language: "",
+            llm: None,
+        };
+
+        apply_desktop_defaults(
+            &mut config,
+            &workspace_root,
+            &temp_root,
+            &repo_root,
+            defaults,
+        );
+
+        assert!(config.channels.enabled);
+        assert!(!config.gateway.enabled);
+    }
+
+    #[test]
+    fn normalize_desktop_container_roots_uses_isolated_defaults() {
+        let workspace_root = PathBuf::from("/tmp/wunder-work");
+        let app_dir = PathBuf::from("/tmp/wunder-app");
+        let roots =
+            normalize_desktop_container_roots(&HashMap::new(), &workspace_root, &app_dir, "alice");
+
+        let user_root = roots
+            .get(&USER_PRIVATE_CONTAINER_ID)
+            .expect("user root should exist");
+        let container_one_root = roots.get(&1).expect("container 1 root should exist");
+
+        assert_eq!(
+            user_root,
+            &workspace_root.join("alice").to_string_lossy().to_string()
+        );
+        assert_eq!(
+            container_one_root,
+            &workspace_root
+                .join("alice__c__1")
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_ne!(user_root, container_one_root);
+    }
+
+    #[test]
+    fn normalize_desktop_container_roots_ignores_shared_workspace_root_mapping() {
+        let workspace_root = PathBuf::from("/tmp/wunder-work");
+        let app_dir = PathBuf::from("/tmp/wunder-app");
+        let mut source = HashMap::new();
+        source.insert(1, workspace_root.to_string_lossy().to_string());
+        source.insert(
+            2,
+            workspace_root
+                .join("alice__c__1")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let roots = normalize_desktop_container_roots(&source, &workspace_root, &app_dir, "alice");
+
+        let container_one_root = roots.get(&1).expect("container 1 root should exist");
+        let container_two_root = roots.get(&2).expect("container 2 root should exist");
+
+        assert_eq!(
+            container_one_root,
+            &workspace_root
+                .join("alice__c__1")
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_eq!(
+            container_two_root,
+            &workspace_root
+                .join("alice__c__2")
+                .to_string_lossy()
+                .to_string()
+        );
+        assert_ne!(Path::new(container_one_root), Path::new(container_two_root));
+    }
 }

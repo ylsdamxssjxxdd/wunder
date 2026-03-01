@@ -23,6 +23,7 @@ enum TerminalTool {
 const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 8;
 const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
 const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = DEFAULT_NON_ADMIN_MAX_ROUNDS;
+const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 2;
 
 impl Orchestrator {
     pub(super) async fn execute_request(
@@ -290,23 +291,84 @@ impl Orchestrator {
                 let tools_payload = function_tooling
                     .as_ref()
                     .map(|tooling| tooling.tools.as_slice());
-                let (content, reasoning, usage, tool_calls_payload) = self
-                    .call_llm(
-                        &llm_config,
-                        &messages,
-                        &user_id,
-                        is_admin,
-                        &emitter,
-                        &session_id,
-                        prepared.stream,
-                        round_info,
-                        true,
-                        true,
-                        log_payload,
-                        tools_payload,
-                        None,
-                    )
-                    .await?;
+                let mut overflow_recovery_attempts = 0_u32;
+                let (content, reasoning, usage, tool_calls_payload) = loop {
+                    match self
+                        .call_llm(
+                            &llm_config,
+                            &messages,
+                            &user_id,
+                            is_admin,
+                            &emitter,
+                            &session_id,
+                            prepared.stream,
+                            round_info,
+                            true,
+                            true,
+                            log_payload,
+                            tools_payload,
+                            None,
+                        )
+                        .await
+                    {
+                        Ok(response) => break response,
+                        Err(err)
+                            if should_recover_from_context_overflow(&err)
+                                && overflow_recovery_attempts
+                                    < MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS =>
+                        {
+                            overflow_recovery_attempts += 1;
+                            let mut recovery_payload = json!({
+                                "stage": "context_overflow_recovery",
+                                "summary": i18n::t("compaction.reason.context_too_long"),
+                                "attempt": overflow_recovery_attempts,
+                                "max_attempts": MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS,
+                            });
+                            if let Value::Object(ref mut map) = recovery_payload {
+                                round_info.insert_into(map);
+                            }
+                            emitter.emit("progress", recovery_payload).await;
+
+                            messages = self
+                                .maybe_compact_messages(
+                                    &config,
+                                    &llm_config,
+                                    &user_id,
+                                    &session_id,
+                                    is_admin,
+                                    round_info,
+                                    messages,
+                                    &emitter,
+                                    &question,
+                                    log_payload,
+                                    true,
+                                    true,
+                                )
+                                .await?;
+                            messages = context_manager.normalize_messages(messages);
+                            let recovered_tokens = context_manager.estimate_context_tokens(&messages);
+                            self.workspace
+                                .save_session_context_tokens_async(
+                                    &user_id,
+                                    &session_id,
+                                    recovered_tokens,
+                                )
+                                .await;
+                            let mut compaction_payload = json!({
+                                "reason": "overflow_recovery",
+                                "status": "done",
+                                "attempt": overflow_recovery_attempts,
+                                "max_attempts": MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS,
+                                "context_tokens_after": recovered_tokens,
+                            });
+                            if let Value::Object(ref mut map) = compaction_payload {
+                                round_info.insert_into(map);
+                            }
+                            emitter.emit("compaction", compaction_payload).await;
+                        }
+                        Err(err) => return Err(err),
+                    }
+                };
                 if !user_message_appended {
                     self.append_chat(
                         &user_id,
@@ -492,6 +554,7 @@ impl Orchestrator {
                             &allowed_tool_names,
                             &session_id,
                             is_admin,
+                            &emitter,
                             prepared.approval_tx.clone(),
                         )
                         .await?;
@@ -831,6 +894,7 @@ impl Orchestrator {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn execute_tool_calls_parallel(
         &self,
         calls: Vec<PlannedToolCall>,
@@ -838,6 +902,7 @@ impl Orchestrator {
         allowed_tool_names: &HashSet<String>,
         session_id: &str,
         is_admin: bool,
+        emitter: &EventEmitter,
         approval_tx: Option<ApprovalRequestTx>,
     ) -> Result<Vec<ToolExecutionOutcome>, OrchestratorError> {
         if calls.is_empty() {
@@ -847,6 +912,7 @@ impl Orchestrator {
         let mut stream = futures::stream::iter(calls.into_iter().map(|planned| {
             let orchestrator = self;
             let approval_tx = approval_tx.clone();
+            let emitter = emitter.clone();
             async move {
                 let PlannedToolCall { call, name } = planned;
                 let args = call.arguments.clone();
@@ -871,36 +937,89 @@ impl Orchestrator {
                 } else if let Some(decision) = policy_decision.as_ref() {
                     if !decision.allowed {
                         let mut approved = None;
+                        let mut approval_id = None::<String>;
+                        let mut approval_kind = None::<ApprovalRequestKind>;
+                        let mut approval_summary = None::<String>;
                         if decision.requires_approval {
                             if let Some(tx) = approval_tx.clone() {
                                 let (respond_to, response_rx) = tokio::sync::oneshot::channel();
                                 let kind = approval_kind_for_tool(&name);
                                 let summary = approval_summary_for_tool(&name, &args, kind);
+                                let request_id = Uuid::new_v4().simple().to_string();
                                 let detail = json!({
                                     "policy": policy_meta.clone().unwrap_or(Value::Null),
                                     "reason": decision.reason.clone(),
                                 });
                                 let request = ApprovalRequest {
-                                    id: Uuid::new_v4().simple().to_string(),
+                                    id: request_id.clone(),
                                     kind,
                                     tool: name.clone(),
                                     args: args.clone(),
-                                    summary,
-                                    detail,
+                                    summary: summary.clone(),
+                                    detail: detail.clone(),
                                     respond_to,
                                 };
                                 if tx.send(request).is_ok() {
+                                    approval_id = Some(request_id.clone());
+                                    approval_kind = Some(kind);
+                                    approval_summary = Some(summary.clone());
+                                    orchestrator
+                                        .monitor
+                                        .mark_approval_pending(session_id, Some(summary.as_str()));
+                                    let mut event_payload = json!({
+                                        "approval_id": request_id,
+                                        "kind": kind,
+                                        "tool": name.clone(),
+                                        "summary": summary.clone(),
+                                        "args": args.clone(),
+                                        "detail": detail,
+                                    });
+                                    if let Value::Object(ref mut map) = event_payload {
+                                        if let Some(meta) = policy_meta.clone() {
+                                            map.insert("policy".to_string(), meta);
+                                        }
+                                    }
+                                    emitter.emit("approval_request", event_payload).await;
                                     approved = tokio::select! {
                                         res = response_rx => res.ok(),
                                         err = orchestrator.wait_for_cancelled(session_id) => {
                                             return Err(err);
                                         }
                                     };
+                                    orchestrator.monitor.mark_running(session_id, None);
                                 }
                             }
                         }
 
-                        let approved = match approved.unwrap_or(ApprovalResponse::Deny) {
+                        let approval_response = approved.unwrap_or(ApprovalResponse::Deny);
+                        if let Some(id) = approval_id {
+                            let status = match approval_response {
+                                ApprovalResponse::ApproveOnce | ApprovalResponse::ApproveSession => {
+                                    "approved"
+                                }
+                                ApprovalResponse::Deny => "denied",
+                            };
+                            let scope = match approval_response {
+                                ApprovalResponse::ApproveSession => "session",
+                                ApprovalResponse::ApproveOnce => "once",
+                                ApprovalResponse::Deny => "none",
+                            };
+                            emitter
+                                .emit(
+                                    "approval_result",
+                                    json!({
+                                        "approval_id": id,
+                                        "status": status,
+                                        "scope": scope,
+                                        "kind": approval_kind,
+                                        "tool": name.clone(),
+                                        "summary": approval_summary.clone().unwrap_or_default(),
+                                    }),
+                                )
+                                .await;
+                        }
+
+                        let approved = match approval_response {
                             ApprovalResponse::ApproveOnce => Some(ApprovalResponse::ApproveOnce),
                             ApprovalResponse::ApproveSession => {
                                 let args_approved = args_with_approved_flag(&args);
@@ -1077,6 +1196,11 @@ fn resolve_non_admin_max_rounds(llm_config: &LlmModelConfig, skip_tool_calls: bo
     i64::from(configured.max(minimum))
 }
 
+fn should_recover_from_context_overflow(err: &OrchestratorError) -> bool {
+    err.code() == "CONTEXT_WINDOW_EXCEEDED"
+        || super::llm::is_context_window_error_text(err.message())
+}
+
 fn resolve_empty_answer_fallback(reached_max_rounds: bool) -> (String, &'static str) {
     if reached_max_rounds {
         return (i18n::t("error.max_rounds_no_final_answer"), "max_rounds");
@@ -1140,7 +1264,7 @@ fn args_with_approved_flag(args: &Value) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_empty_answer_fallback;
+    use super::*;
 
     #[test]
     fn resolve_empty_answer_fallback_uses_max_rounds_reason() {
@@ -1154,5 +1278,24 @@ mod tests {
         let (answer, stop_reason) = resolve_empty_answer_fallback(false);
         assert!(!answer.trim().is_empty());
         assert_eq!(stop_reason, "empty_response");
+    }
+
+    #[test]
+    fn recover_from_context_overflow_when_code_matches() {
+        let err = OrchestratorError::context_window_exceeded("context length exceeded".to_string());
+        assert!(should_recover_from_context_overflow(&err));
+    }
+
+    #[test]
+    fn recover_from_context_overflow_when_message_matches() {
+        let err =
+            OrchestratorError::internal("LLM call failed: context_length_exceeded".to_string());
+        assert!(should_recover_from_context_overflow(&err));
+    }
+
+    #[test]
+    fn skip_context_overflow_recovery_for_other_errors() {
+        let err = OrchestratorError::internal("LLM call failed: invalid api key".to_string());
+        assert!(!should_recover_from_context_overflow(&err));
     }
 }

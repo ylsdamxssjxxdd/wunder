@@ -135,6 +135,8 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "compaction"
             | "tool_call"
             | "tool_result"
+            | "approval_request"
+            | "approval_result"
             | "workspace_update"
             | "plan_update"
             | "question_panel"

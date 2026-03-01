@@ -1,6 +1,8 @@
 use crate::config::{Config, LlmConfig};
 use crate::state::AppState;
-use crate::storage::{normalize_workspace_container_id, USER_PRIVATE_CONTAINER_ID};
+use crate::storage::{
+    normalize_workspace_container_id, MAX_SANDBOX_CONTAINER_ID, USER_PRIVATE_CONTAINER_ID,
+};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -11,7 +13,7 @@ use axum::{
 use reqwest::multipart::{Form, Part};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,6 +30,7 @@ use walkdir::WalkDir;
 const DESKTOP_SETTINGS_PATH_ENV: &str = "WUNDER_DESKTOP_SETTINGS_PATH";
 const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
 const DESKTOP_DEFAULT_WORKSPACE_ROOT_ENV: &str = "WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT";
+const DESKTOP_USER_ID_ENV: &str = "WUNDER_DESKTOP_USER_ID";
 const DEFAULT_SEED_QUERY_LIMIT: usize = 50;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -421,19 +424,22 @@ fn desktop_seed_manager() -> &'static DesktopSeedManager {
 async fn desktop_settings_get(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let (settings_path, app_dir, default_workspace_root) =
         resolve_desktop_paths().map_err(bad_request)?;
+    let user_id = resolve_desktop_user_id();
     let mut settings = load_desktop_settings(&settings_path).map_err(internal_error)?;
+    let resolved_workspace_root =
+        resolve_desktop_workspace_root(&settings, &default_workspace_root, &app_dir);
     settings.container_roots = normalize_desktop_container_roots(
         &settings.container_roots,
-        &default_workspace_root,
+        &resolved_workspace_root,
+        &user_id,
         &app_dir,
     );
     settings.container_cloud_workspaces =
         normalize_desktop_container_cloud_workspaces(&settings.container_cloud_workspaces);
-    settings.workspace_root = settings
-        .container_roots
-        .get(&USER_PRIVATE_CONTAINER_ID)
-        .cloned()
-        .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
+    settings
+        .container_cloud_workspaces
+        .retain(|container_id, _| settings.container_roots.contains_key(container_id));
+    settings.workspace_root = resolved_workspace_root.to_string_lossy().to_string();
 
     let config = state.config_store.get().await;
     let seed_statuses = desktop_seed_manager().container_seed_statuses().await;
@@ -448,7 +454,17 @@ async fn desktop_fs_list(
 ) -> Result<Json<Value>, Response> {
     let (settings_path, app_dir, default_workspace_root) =
         resolve_desktop_paths().map_err(bad_request)?;
-    let settings = load_desktop_settings(&settings_path).map_err(internal_error)?;
+    let user_id = resolve_desktop_user_id();
+    let mut settings = load_desktop_settings(&settings_path).map_err(internal_error)?;
+    let resolved_workspace_root =
+        resolve_desktop_workspace_root(&settings, &default_workspace_root, &app_dir);
+    settings.container_roots = normalize_desktop_container_roots(
+        &settings.container_roots,
+        &resolved_workspace_root,
+        &user_id,
+        &app_dir,
+    );
+    settings.workspace_root = resolved_workspace_root.to_string_lossy().to_string();
 
     let current_path = resolve_desktop_list_path(
         query.path.as_deref(),
@@ -527,7 +543,18 @@ async fn desktop_settings_update(
 ) -> Result<Json<Value>, Response> {
     let (settings_path, app_dir, default_workspace_root) =
         resolve_desktop_paths().map_err(bad_request)?;
+    let user_id = resolve_desktop_user_id();
     let mut settings = load_desktop_settings(&settings_path).map_err(internal_error)?;
+    let resolved_workspace_root = if let Some(workspace_root) = payload.workspace_root.as_deref() {
+        let trimmed = workspace_root.trim();
+        if trimmed.is_empty() {
+            resolve_desktop_workspace_root(&settings, &default_workspace_root, &app_dir)
+        } else {
+            resolve_workspace_path(trimmed, &app_dir)
+        }
+    } else {
+        resolve_desktop_workspace_root(&settings, &default_workspace_root, &app_dir)
+    };
 
     let (mut container_roots, mut container_cloud_workspaces) =
         if let Some(items) = payload.container_mounts.as_ref() {
@@ -565,14 +592,18 @@ async fn desktop_settings_update(
         container_roots = next_roots;
     }
 
-    if let Some(workspace_root) = payload.workspace_root.as_deref().map(str::trim) {
-        if !workspace_root.is_empty() {
-            container_roots.insert(USER_PRIVATE_CONTAINER_ID, workspace_root.to_string());
-        }
-    }
-
-    container_roots =
-        normalize_desktop_container_roots(&container_roots, &default_workspace_root, &app_dir);
+    container_roots = normalize_desktop_container_roots(
+        &container_roots,
+        &resolved_workspace_root,
+        &user_id,
+        &app_dir,
+    );
+    fs::create_dir_all(&resolved_workspace_root).map_err(|err| {
+        internal_error(format!(
+            "create desktop workspace root failed {}: {err}",
+            resolved_workspace_root.display()
+        ))
+    })?;
     ensure_container_root_dirs(&container_roots).map_err(internal_error)?;
     container_cloud_workspaces =
         normalize_desktop_container_cloud_workspaces(&container_cloud_workspaces);
@@ -580,10 +611,7 @@ async fn desktop_settings_update(
 
     settings.container_roots = container_roots.clone();
     settings.container_cloud_workspaces = container_cloud_workspaces.clone();
-    settings.workspace_root = container_roots
-        .get(&USER_PRIVATE_CONTAINER_ID)
-        .cloned()
-        .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
+    settings.workspace_root = resolved_workspace_root.to_string_lossy().to_string();
 
     if let Some(language) = payload.language.as_deref().map(str::trim) {
         if !language.is_empty() {
@@ -600,6 +628,7 @@ async fn desktop_settings_update(
     save_desktop_settings(&settings_path, &settings).map_err(internal_error)?;
 
     let next_container_roots = settings.container_roots.clone();
+    let next_workspace_root = settings.workspace_root.clone();
     let next_language = settings.language.clone();
     let llm_update = settings.llm.clone();
     let updated_config = state
@@ -608,9 +637,7 @@ async fn desktop_settings_update(
             if let Some(ref llm) = llm_update {
                 config.llm = llm.clone();
             }
-            if let Some(root) = next_container_roots.get(&USER_PRIVATE_CONTAINER_ID) {
-                config.workspace.root = root.clone();
-            }
+            config.workspace.root = next_workspace_root.clone();
             config.workspace.container_roots = next_container_roots.clone();
             if !next_language.trim().is_empty() {
                 if !config
@@ -642,14 +669,21 @@ async fn desktop_seed_start(
 ) -> Result<Json<Value>, Response> {
     let (settings_path, app_dir, default_workspace_root) =
         resolve_desktop_paths().map_err(bad_request)?;
+    let user_id = resolve_desktop_user_id();
     let mut settings = load_desktop_settings(&settings_path).map_err(internal_error)?;
+    let resolved_workspace_root =
+        resolve_desktop_workspace_root(&settings, &default_workspace_root, &app_dir);
     settings.container_roots = normalize_desktop_container_roots(
         &settings.container_roots,
-        &default_workspace_root,
+        &resolved_workspace_root,
+        &user_id,
         &app_dir,
     );
     settings.container_cloud_workspaces =
         normalize_desktop_container_cloud_workspaces(&settings.container_cloud_workspaces);
+    settings
+        .container_cloud_workspaces
+        .retain(|container_id, _| settings.container_roots.contains_key(container_id));
 
     let access_token = payload.access_token.trim().to_string();
     if access_token.is_empty() {
@@ -663,7 +697,11 @@ async fn desktop_seed_start(
             .container_roots
             .get(&container_id)
             .cloned()
-            .ok_or_else(|| bad_request(format!("container root not configured: {container_id}")))?
+            .unwrap_or_else(|| {
+                build_default_container_root(&resolved_workspace_root, &user_id, container_id)
+                    .to_string_lossy()
+                    .to_string()
+            })
     } else {
         payload.local_root.trim().to_string()
     };
@@ -758,15 +796,14 @@ fn build_settings_payload(
     settings: &DesktopSettingsFile,
     seed_statuses: &HashMap<i32, String>,
 ) -> Value {
-    let workspace_root = settings
-        .container_roots
-        .get(&USER_PRIVATE_CONTAINER_ID)
-        .cloned()
-        .or_else(|| {
-            let trimmed = settings.workspace_root.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        })
-        .unwrap_or_else(|| config.workspace.root.clone());
+    let workspace_root = {
+        let trimmed = settings.workspace_root.trim();
+        if trimmed.is_empty() {
+            config.workspace.root.clone()
+        } else {
+            trimmed.to_string()
+        }
+    };
 
     let mut container_roots = settings
         .container_roots
@@ -1246,6 +1283,10 @@ fn resolve_desktop_list_path(
         .get(&USER_PRIVATE_CONTAINER_ID)
         .cloned()
         .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            let trimmed = settings.workspace_root.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        })
         .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
     let cleaned = raw_path.map(str::trim).filter(|value| !value.is_empty());
     let selected = cleaned.unwrap_or(fallback.as_str());
@@ -1272,32 +1313,42 @@ fn list_desktop_directory_roots() -> Vec<String> {
 
 fn normalize_desktop_container_roots(
     source: &HashMap<i32, String>,
-    default_workspace_root: &Path,
+    workspace_root: &Path,
+    user_id: &str,
     app_dir: &Path,
 ) -> HashMap<i32, String> {
-    let mut output = HashMap::new();
-    let user_default_root = source
-        .get(&USER_PRIVATE_CONTAINER_ID)
-        .or_else(|| source.get(&1))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| default_workspace_root.to_string_lossy().to_string());
-    let resolved_user_root = resolve_workspace_path(&user_default_root, app_dir);
-    output.insert(
-        USER_PRIVATE_CONTAINER_ID,
-        resolved_user_root.to_string_lossy().to_string(),
-    );
+    let normalized_user_id = sanitize_workspace_scope(user_id);
+    let workspace_root_cmp = normalize_path_for_compare(workspace_root);
+    let mut seen_paths = HashSet::new();
+    seen_paths.insert(workspace_root_cmp);
+    for container_id in USER_PRIVATE_CONTAINER_ID..=MAX_SANDBOX_CONTAINER_ID {
+        let default_root =
+            build_default_container_root(workspace_root, &normalized_user_id, container_id);
+        seen_paths.insert(normalize_path_for_compare(&default_root));
+    }
+
+    let mut explicit = HashMap::new();
     for (container_id, root) in source {
         let normalized_id = normalize_workspace_container_id(*container_id);
-        if normalized_id == USER_PRIVATE_CONTAINER_ID {
-            continue;
-        }
         let trimmed = root.trim();
         if trimmed.is_empty() {
             continue;
         }
         let resolved = resolve_workspace_path(trimmed, app_dir);
-        output.insert(normalized_id, resolved.to_string_lossy().to_string());
+        let resolved_cmp = normalize_path_for_compare(&resolved);
+        if resolved_cmp.is_empty() || seen_paths.contains(&resolved_cmp) {
+            continue;
+        }
+        seen_paths.insert(resolved_cmp);
+        explicit.insert(normalized_id, resolved);
+    }
+
+    let mut output = HashMap::new();
+    for container_id in USER_PRIVATE_CONTAINER_ID..=MAX_SANDBOX_CONTAINER_ID {
+        let root = explicit.remove(&container_id).unwrap_or_else(|| {
+            build_default_container_root(workspace_root, &normalized_user_id, container_id)
+        });
+        output.insert(container_id, root.to_string_lossy().to_string());
     }
     output
 }
@@ -1336,6 +1387,70 @@ fn resolve_workspace_path(raw: &str, app_dir: &Path) -> PathBuf {
     } else {
         app_dir.join(path)
     }
+}
+
+fn resolve_desktop_workspace_root(
+    settings: &DesktopSettingsFile,
+    default_workspace_root: &Path,
+    app_dir: &Path,
+) -> PathBuf {
+    let candidate = settings.workspace_root.trim().to_string();
+    if !candidate.is_empty() {
+        return resolve_workspace_path(&candidate, app_dir);
+    }
+    if let Some(legacy_user_root) = settings
+        .container_roots
+        .get(&USER_PRIVATE_CONTAINER_ID)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        return resolve_workspace_path(legacy_user_root, app_dir);
+    }
+    default_workspace_root.to_path_buf()
+}
+
+fn resolve_desktop_user_id() -> String {
+    let raw = std::env::var(DESKTOP_USER_ID_ENV).unwrap_or_else(|_| "desktop_user".to_string());
+    sanitize_workspace_scope(raw.trim())
+}
+
+fn sanitize_workspace_scope(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.trim().is_empty() {
+        "desktop_user".to_string()
+    } else {
+        output
+    }
+}
+
+fn build_default_container_root(
+    workspace_root: &Path,
+    user_id: &str,
+    container_id: i32,
+) -> PathBuf {
+    if container_id == USER_PRIVATE_CONTAINER_ID {
+        return workspace_root.join(user_id);
+    }
+    workspace_root.join(format!("{user_id}__c__{container_id}"))
+}
+
+fn normalize_path_for_compare(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().replace('\\', "/");
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        normalized.make_ascii_lowercase();
+    }
+    normalized
 }
 
 fn now_ts() -> f64 {

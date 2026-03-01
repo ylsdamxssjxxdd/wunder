@@ -485,9 +485,66 @@ impl Orchestrator {
         }
 
         let detail = last_err.to_string();
-        Err(OrchestratorError::internal(i18n::t_with_params(
+        let message = i18n::t_with_params(
             "error.llm_call_failed",
             &HashMap::from([("detail".to_string(), detail)]),
-        )))
+        );
+        if is_context_window_error_text(&message) {
+            return Err(OrchestratorError::context_window_exceeded(message));
+        }
+        Err(OrchestratorError::internal(message))
+    }
+}
+
+pub(super) fn is_context_window_error_text(message: &str) -> bool {
+    let normalized = message.trim().to_ascii_lowercase();
+    if normalized.is_empty() {
+        return false;
+    }
+    [
+        "context_length_exceeded",
+        "context length",
+        "context window",
+        "maximum context",
+        "max context",
+        "too many tokens",
+        "prompt is too long",
+        "input is too long",
+        "maximum number of tokens",
+        "requested tokens",
+        "reduce the length",
+        "exceeds the model's context window",
+        "上下文",
+        "超出上下文",
+        "超过上下文",
+        "token 超过",
+        "输入太长",
+        "prompt 太长",
+    ]
+    .iter()
+    .any(|needle| normalized.contains(needle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_context_window_error_text;
+
+    #[test]
+    fn detects_context_window_error_from_common_phrases() {
+        assert!(is_context_window_error_text(
+            "LLM call failed: context_length_exceeded"
+        ));
+        assert!(is_context_window_error_text(
+            "Prompt is too long and exceeds the model's context window."
+        ));
+        assert!(is_context_window_error_text("输入太长，超过上下文限制"));
+    }
+
+    #[test]
+    fn ignores_non_context_window_error_messages() {
+        assert!(!is_context_window_error_text(
+            "LLM call failed: invalid api key"
+        ));
+        assert!(!is_context_window_error_text("network timeout"));
     }
 }

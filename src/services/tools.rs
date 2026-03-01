@@ -1529,14 +1529,14 @@ fn extract_user_world_file_refs(
         if token.trim().is_empty() {
             continue;
         }
-        let (raw_path, suffix) =
-            if token.starts_with('"') && token.ends_with('"') && token.len() >= 2 {
-                (&token[1..token.len().saturating_sub(1)], "")
-            } else if token.starts_with('\'') && token.ends_with('\'') && token.len() >= 2 {
-                (&token[1..token.len().saturating_sub(1)], "")
-            } else {
-                split_user_world_file_ref_suffix(token)
-            };
+        let wrapped_in_quotes = ((token.starts_with('"') && token.ends_with('"'))
+            || (token.starts_with('\'') && token.ends_with('\'')))
+            && token.len() >= 2;
+        let (raw_path, suffix) = if wrapped_in_quotes {
+            (&token[1..token.len().saturating_sub(1)], "")
+        } else {
+            split_user_world_file_ref_suffix(token)
+        };
         let Some(normalized_path) =
             normalize_user_world_file_ref_path(raw_path, source_workspace_id)
         else {

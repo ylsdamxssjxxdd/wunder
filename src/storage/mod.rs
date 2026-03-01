@@ -130,6 +130,7 @@ pub struct UserAgentRecord {
     pub system_prompt: String,
     pub tool_names: Vec<String>,
     pub access_level: String,
+    pub approval_mode: String,
     pub is_shared: bool,
     pub status: String,
     pub icon: Option<String>,

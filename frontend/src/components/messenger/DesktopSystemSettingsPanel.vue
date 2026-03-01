@@ -1,5 +1,9 @@
 <template>
-  <section class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm" v-loading="loading">
+  <section
+    v-if="showModelPanel"
+    class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
+    v-loading="loading"
+  >
     <div class="desktop-system-settings-head">
       <div>
         <div class="messenger-settings-title">{{ t('desktop.system.llm') }}</div>
@@ -40,6 +44,15 @@
             />
           </el-select>
         </label>
+
+        <label class="desktop-system-settings-field">
+          <span class="desktop-system-settings-field-label">{{ t('desktop.system.toolCallMode') }}</span>
+          <el-select v-model="toolCallMode" class="desktop-system-settings-input">
+            <el-option label="tool_call" value="tool_call" />
+            <el-option label="function_call" value="function_call" />
+          </el-select>
+          <span class="desktop-system-settings-field-hint">{{ t('desktop.system.toolCallHint') }}</span>
+        </label>
       </div>
     </div>
 
@@ -78,7 +91,7 @@
     </div>
   </section>
 
-  <section class="messenger-settings-card desktop-system-settings-panel">
+  <section v-if="showRemotePanel" class="messenger-settings-card desktop-system-settings-panel">
     <div class="desktop-system-settings-head">
       <div>
         <div class="messenger-settings-title">{{ t('desktop.system.remote.title') }}</div>
@@ -115,19 +128,22 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 
 import { fetchDesktopSettings, updateDesktopSettings, type DesktopRemoteGatewaySettings } from '@/api/desktop';
 import {
   clearDesktopRemoteApiBaseOverride,
+  getDesktopToolCallMode,
   getDesktopLocalToken,
   getDesktopRemoteApiBaseOverride,
   isDesktopRemoteAuthMode,
+  setDesktopToolCallMode,
   setDesktopRemoteApiBaseOverride
 } from '@/config/desktop';
 import { useI18n, getLanguageLabel, setLanguage } from '@/i18n';
+import type { DesktopToolCallMode } from '@/config/desktop';
 
 type ModelRow = {
   uid: string;
@@ -137,6 +153,15 @@ type ModelRow = {
   model: string;
   raw: Record<string, unknown>;
 };
+
+const props = withDefaults(
+  defineProps<{
+    panel?: 'models' | 'remote' | 'all';
+  }>(),
+  {
+    panel: 'all'
+  }
+);
 
 const { t } = useI18n();
 const router = useRouter();
@@ -148,11 +173,23 @@ const supportedLanguages = ref<string[]>(['zh-CN', 'en-US']);
 const language = ref('zh-CN');
 const defaultModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
+const toolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
 const remoteServerBaseUrl = ref('');
 const remoteConnected = ref(false);
 let nextModelUid = 1;
 
 const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
+
+const showModelPanel = computed(() => props.panel !== 'remote');
+const showRemotePanel = computed(() => props.panel !== 'models');
+
+const normalizeToolCallMode = (value: unknown): DesktopToolCallMode =>
+  String(value || '').trim().toLowerCase() === 'function_call' ? 'function_call' : 'tool_call';
+
+const resolveToolCallMode = (models: Record<string, Record<string, unknown>>, fallbackModel: string): DesktopToolCallMode => {
+  const preferredModel = models[fallbackModel] || Object.values(models)[0] || {};
+  return normalizeToolCallMode(preferredModel?.tool_call_mode || getDesktopToolCallMode());
+};
 
 const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelRow[] =>
   Object.entries(models || {}).map(([key, raw]) => ({
@@ -222,6 +259,11 @@ const applySettingsData = (data: Record<string, any>) => {
   if (!defaultModel.value) {
     defaultModel.value = modelRows.value[0]?.key || '';
   }
+  toolCallMode.value = resolveToolCallMode(
+    (llm.models as Record<string, Record<string, unknown>>) || {},
+    defaultModel.value
+  );
+  setDesktopToolCallMode(toolCallMode.value);
 
   remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
   refreshRemoteConnected();
@@ -254,7 +296,9 @@ const saveModelSettings = async () => {
       ElMessage.warning(t('desktop.system.modelKeyDuplicate', { key }));
       return;
     }
-    models[key] = buildModelPayload(row);
+    const payload = buildModelPayload(row);
+    payload.tool_call_mode = toolCallMode.value;
+    models[key] = payload;
   }
 
   const currentDefaultModel = defaultModel.value.trim() || Object.keys(models)[0] || '';
@@ -293,6 +337,7 @@ const saveModelSettings = async () => {
     const data = (response?.data?.data || {}) as Record<string, any>;
     applySettingsData(data);
     setLanguage(language.value, { force: true });
+    setDesktopToolCallMode(toolCallMode.value);
     ElMessage.success(t('desktop.common.saveSuccess'));
   } catch (error) {
     console.error(error);
@@ -426,6 +471,11 @@ onMounted(() => {
   display: grid;
   gap: 6px;
   font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.desktop-system-settings-field-hint {
+  font-size: 11px;
   color: var(--portal-muted);
 }
 

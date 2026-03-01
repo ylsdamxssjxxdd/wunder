@@ -1,94 +1,39 @@
 <template>
-  <section class="messenger-entity-panel desktop-container-entry" v-loading="loading">
-    <div class="desktop-container-entry-head">
-      <div>
-        <div class="messenger-entity-title">{{ t('desktop.containers.title') }}</div>
-        <div class="messenger-entity-meta">{{ t('desktop.containers.subtitle') }}</div>
-      </div>
-      <el-button type="primary" size="small" @click="openManager(activeContainerId)">
-        {{ t('desktop.containers.manage') }}
-      </el-button>
-    </div>
-    <div class="desktop-container-entry-current">
-      <span class="desktop-container-entry-badge">
-        {{ t('desktop.containers.id') }} #{{ activeContainerId }}
-      </span>
-      <span class="desktop-container-entry-path" :title="activeContainerRoot || '-'">
-        {{ activeContainerRoot || t('messenger.files.localLocationUnknown') }}
-      </span>
-    </div>
-  </section>
-
   <el-dialog
     v-model="dialogVisible"
     :title="t('desktop.containers.manageTitle', { id: selectedContainerId })"
-    width="860px"
+    width="720px"
     append-to-body
   >
-    <div class="desktop-container-dialog" v-loading="loading">
-      <aside class="desktop-container-list">
-        <div class="desktop-container-list-head">
-          <el-button
-            type="primary"
-            plain
-            size="small"
-            :disabled="!nextAvailableContainerId"
-            @click="addContainer"
-          >
-            {{ t('desktop.containers.add') }}
-          </el-button>
-        </div>
-        <button
-          v-for="row in rows"
-          :key="`desktop-container-row-${row.container_id}`"
-          class="desktop-container-list-item"
-          :class="{ active: selectedContainerId === row.container_id }"
-          type="button"
-          @click="selectContainer(row.container_id)"
-        >
-          <span class="desktop-container-list-item-id">{{ t('desktop.containers.id') }} #{{ row.container_id }}</span>
-          <span class="desktop-container-list-item-path">{{ row.root || t('common.none') }}</span>
-        </button>
-      </aside>
+    <div class="desktop-container-editor" v-loading="loading">
+      <div class="desktop-container-current">
+        <span class="desktop-container-entry-badge">
+          {{ t('desktop.containers.id') }} #{{ selectedContainerId }}
+        </span>
+        <span class="desktop-container-entry-path" :title="selectedEffectiveRoot || '-'">
+          {{ selectedEffectiveRoot || t('messenger.files.localLocationUnknown') }}
+        </span>
+      </div>
 
-      <section v-if="selectedContainer" class="desktop-container-editor">
-        <label class="desktop-container-field">
-          <span>{{ t('desktop.containers.path') }}</span>
-          <div class="desktop-container-field-input">
-            <el-input
-              v-model="selectedRoot"
-              clearable
-              :placeholder="t('desktop.containers.pathPlaceholder')"
-            />
-            <el-button type="primary" plain @click="openPathPicker">
-              {{ t('desktop.common.browse') }}
-            </el-button>
-          </div>
-          <span v-if="selectedContainer.container_id === USER_CONTAINER_ID" class="desktop-container-hint">
-            {{ t('messenger.files.userContainerDesc', { id: USER_CONTAINER_ID }) }}
-          </span>
-        </label>
-
-        <label class="desktop-container-field">
-          <span>{{ t('desktop.seed.cloudWorkspaceId') }}</span>
+      <label class="desktop-container-field">
+        <span>{{ t('desktop.containers.path') }}</span>
+        <div class="desktop-container-field-input">
           <el-input
-            v-model="selectedCloudWorkspaceId"
+            v-model="selectedRoot"
             clearable
-            :placeholder="t('desktop.seed.cloudWorkspacePlaceholder')"
+            :placeholder="t('desktop.containers.pathPlaceholder')"
           />
-        </label>
-
-        <div class="desktop-container-editor-actions">
-          <el-button
-            v-if="selectedContainer.container_id > 1"
-            type="danger"
-            plain
-            @click="removeContainer(selectedContainer.container_id)"
-          >
-            {{ t('desktop.common.remove') }}
+          <el-button type="primary" plain @click="openPathPicker">
+            {{ t('desktop.common.browse') }}
+          </el-button>
+          <el-button plain @click="resetSelectedRoot">
+            {{ t('common.reset') }}
           </el-button>
         </div>
-      </section>
+        <span class="desktop-container-hint">
+          {{ t('desktop.containers.pathHint') }}
+        </span>
+      </label>
     </div>
 
     <template #footer>
@@ -169,7 +114,6 @@ import { USER_CONTAINER_ID } from '@/views/messenger/model';
 type ContainerRow = {
   container_id: number;
   root: string;
-  cloud_workspace_id: string;
 };
 
 const props = withDefaults(
@@ -181,6 +125,10 @@ const props = withDefaults(
   }
 );
 
+const emit = defineEmits<{
+  (event: 'roots-change', roots: Record<number, string>): void;
+}>();
+
 const MIN_CONTAINER_ID = USER_CONTAINER_ID;
 const MAX_CONTAINER_ID = 10;
 
@@ -190,7 +138,6 @@ const loading = ref(false);
 const saving = ref(false);
 const dialogVisible = ref(false);
 const rows = ref<ContainerRow[]>([]);
-const workspaceRoot = ref('');
 const selectedContainerId = ref(USER_CONTAINER_ID);
 
 const pathPickerVisible = ref(false);
@@ -206,35 +153,35 @@ const normalizeContainerId = (value: unknown): number => {
   return Math.min(MAX_CONTAINER_ID, Math.max(MIN_CONTAINER_ID, parsed));
 };
 
+const normalizePathForCompare = (value: string): string => {
+  let normalized = String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '');
+  if (normalized === '/') return normalized;
+  if (/^[A-Za-z]:$/.test(normalized)) normalized += '/';
+  normalized = normalized.replace(/\/{2,}/g, '/');
+  if (typeof window !== 'undefined' && navigator.userAgent.toLowerCase().includes('windows')) {
+    normalized = normalized.toLowerCase();
+  }
+  return normalized;
+};
+
 const sortRows = () => {
   rows.value.sort((left, right) => left.container_id - right.container_id);
 };
 
-const ensureBaseRows = () => {
-  const userRoot = workspaceRoot.value.trim();
+const ensureAllRows = () => {
   const mapped = new Map<number, ContainerRow>();
   rows.value.forEach((item) => {
-    mapped.set(normalizeContainerId(item.container_id), {
-      container_id: normalizeContainerId(item.container_id),
-      root: String(item.root || '').trim(),
-      cloud_workspace_id: String(item.cloud_workspace_id || '').trim()
+    const containerId = normalizeContainerId(item.container_id);
+    mapped.set(containerId, {
+      container_id: containerId,
+      root: String(item.root || '').trim()
     });
   });
-
-  const userRow = mapped.get(USER_CONTAINER_ID) || {
-    container_id: USER_CONTAINER_ID,
-    root: '',
-    cloud_workspace_id: ''
-  };
-  if (!userRow.root && userRoot) {
-    userRow.root = userRoot;
+  for (let id = MIN_CONTAINER_ID; id <= MAX_CONTAINER_ID; id += 1) {
+    if (!mapped.has(id)) {
+      mapped.set(id, { container_id: id, root: '' });
+    }
   }
-  mapped.set(USER_CONTAINER_ID, userRow);
-
-  if (!mapped.has(1)) {
-    mapped.set(1, { container_id: 1, root: '', cloud_workspace_id: '' });
-  }
-
   rows.value = Array.from(mapped.values());
   sortRows();
 };
@@ -245,8 +192,7 @@ const parseRowsFromSettings = (data: Record<string, unknown>): ContainerRow[] =>
       .map((item) => item as Record<string, unknown>)
       .map((item) => ({
         container_id: normalizeContainerId(item.container_id),
-        root: String(item.root || '').trim(),
-        cloud_workspace_id: String(item.cloud_workspace_id || '').trim()
+        root: String(item.root || '').trim()
       }))
       .filter(
         (item) =>
@@ -255,13 +201,21 @@ const parseRowsFromSettings = (data: Record<string, unknown>): ContainerRow[] =>
           item.container_id <= MAX_CONTAINER_ID
       );
 
-  if (Array.isArray(data.container_mounts)) {
-    return parseItems(data.container_mounts as DesktopContainerMount[]);
-  }
   if (Array.isArray(data.container_roots)) {
     return parseItems(data.container_roots as DesktopContainerRoot[]);
   }
+  if (Array.isArray(data.container_mounts)) {
+    return parseItems(data.container_mounts as DesktopContainerMount[]);
+  }
   return [];
+};
+
+const emitRootsChange = () => {
+  const payload: Record<number, string> = {};
+  rows.value.forEach((row) => {
+    payload[row.container_id] = String(row.root || '').trim();
+  });
+  emit('roots-change', payload);
 };
 
 const loadSettings = async () => {
@@ -269,10 +223,10 @@ const loadSettings = async () => {
   try {
     const response = await fetchDesktopSettings();
     const data = (response?.data?.data || {}) as Record<string, unknown>;
-    workspaceRoot.value = String(data.workspace_root || '').trim();
     rows.value = parseRowsFromSettings(data);
-    ensureBaseRows();
+    ensureAllRows();
     selectContainer(selectedContainerId.value);
+    emitRootsChange();
   } catch (error) {
     console.error(error);
     ElMessage.error(t('desktop.common.loadFailed'));
@@ -290,128 +244,70 @@ const selectedRoot = computed({
   set: (value: string) => {
     if (!selectedContainer.value) return;
     selectedContainer.value.root = String(value || '').trim();
-    if (selectedContainer.value.container_id === USER_CONTAINER_ID) {
-      workspaceRoot.value = selectedContainer.value.root;
-    }
   }
 });
 
-const selectedCloudWorkspaceId = computed({
-  get: () => selectedContainer.value?.cloud_workspace_id || '',
-  set: (value: string) => {
-    if (!selectedContainer.value) return;
-    selectedContainer.value.cloud_workspace_id = String(value || '').trim();
-  }
-});
+const selectedEffectiveRoot = computed(() => selectedContainer.value?.root || '');
 
 const activeContainerId = computed(() => normalizeContainerId(props.activeContainerId));
-
-const activeContainerRoot = computed(() => {
-  const target = rows.value.find((item) => item.container_id === activeContainerId.value);
-  if (target?.root) {
-    return target.root;
-  }
-  if (activeContainerId.value === USER_CONTAINER_ID) {
-    return workspaceRoot.value.trim();
-  }
-  return '';
-});
-
-const nextAvailableContainerId = computed(() => {
-  for (let id = 1; id <= MAX_CONTAINER_ID; id += 1) {
-    if (!rows.value.some((item) => item.container_id === id)) {
-      return id;
-    }
-  }
-  return null;
-});
 
 const selectContainer = (containerId: number) => {
   const normalized = normalizeContainerId(containerId);
   let target = rows.value.find((item) => item.container_id === normalized);
   if (!target) {
-    target = {
-      container_id: normalized,
-      root: '',
-      cloud_workspace_id: ''
-    };
+    target = { container_id: normalized, root: '' };
     rows.value.push(target);
     sortRows();
   }
   selectedContainerId.value = normalized;
 };
 
-const addContainer = () => {
-  const nextId = nextAvailableContainerId.value;
-  if (!nextId) return;
-  rows.value.push({
-    container_id: nextId,
-    root: '',
-    cloud_workspace_id: ''
-  });
-  sortRows();
-  selectedContainerId.value = nextId;
-};
-
-const removeContainer = (containerId: number) => {
-  const normalized = normalizeContainerId(containerId);
-  if (normalized <= 1) return;
-  rows.value = rows.value.filter((item) => item.container_id !== normalized);
-  if (selectedContainerId.value === normalized) {
-    selectedContainerId.value = USER_CONTAINER_ID;
-  }
+const resetSelectedRoot = () => {
+  selectedRoot.value = '';
 };
 
 const saveSettings = async () => {
-  const workspace = String(
-    rows.value.find((item) => item.container_id === USER_CONTAINER_ID)?.root || workspaceRoot.value
-  ).trim();
-  if (!workspace) {
-    ElMessage.warning(t('desktop.containers.workspaceRequired'));
-    return;
-  }
-
   const normalizedRows = rows.value
     .map((item) => ({
       container_id: normalizeContainerId(item.container_id),
-      root: String(item.root || '').trim(),
-      cloud_workspace_id: String(item.cloud_workspace_id || '').trim()
+      root: String(item.root || '').trim()
     }))
-    .filter((item) => item.container_id >= MIN_CONTAINER_ID && item.container_id <= MAX_CONTAINER_ID)
-    .filter(
-      (item) =>
-        item.container_id === USER_CONTAINER_ID ||
-        Boolean(item.root) ||
-        Boolean(item.cloud_workspace_id)
-    );
+    .filter((item) => item.container_id >= MIN_CONTAINER_ID && item.container_id <= MAX_CONTAINER_ID);
 
-  const userRow = normalizedRows.find((item) => item.container_id === USER_CONTAINER_ID);
-  if (userRow) {
-    userRow.root = workspace;
-  } else {
-    normalizedRows.push({
-      container_id: USER_CONTAINER_ID,
-      root: workspace,
-      cloud_workspace_id: ''
-    });
+  const seen = new Map<string, number>();
+  for (const row of normalizedRows) {
+    if (!row.root) continue;
+    const key = normalizePathForCompare(row.root);
+    if (!key) continue;
+    if (seen.has(key)) {
+      ElMessage.warning(
+        t('desktop.containers.pathDuplicate', {
+          left: seen.get(key),
+          right: row.container_id
+        })
+      );
+      return;
+    }
+    seen.set(key, row.container_id);
   }
 
-  const rootRows = normalizedRows.filter((item) => Boolean(item.root));
+  const rootRows = normalizedRows
+    .filter((item) => Boolean(item.root))
+    .map((item) => ({
+      container_id: item.container_id,
+      root: item.root
+    }));
+
   saving.value = true;
   try {
     const response = await updateDesktopSettings({
-      workspace_root: workspace,
-      container_mounts: normalizedRows,
-      container_roots: rootRows.map((item) => ({
-        container_id: item.container_id,
-        root: item.root
-      }))
+      container_roots: rootRows
     });
     const data = (response?.data?.data || {}) as Record<string, unknown>;
-    workspaceRoot.value = String(data.workspace_root || workspace).trim();
     rows.value = parseRowsFromSettings(data);
-    ensureBaseRows();
+    ensureAllRows();
     selectContainer(selectedContainerId.value);
+    emitRootsChange();
     ElMessage.success(t('desktop.common.saveSuccess'));
     dialogVisible.value = false;
   } catch (error) {
@@ -451,7 +347,7 @@ const loadDirectory = async (path?: string) => {
 
 const openPathPicker = async () => {
   pathPickerVisible.value = true;
-  const initial = selectedRoot.value || workspaceRoot.value || undefined;
+  const initial = selectedRoot.value || undefined;
   await loadDirectory(initial);
 };
 
@@ -478,18 +374,12 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.desktop-container-entry {
+.desktop-container-editor {
+  display: grid;
   gap: 12px;
 }
 
-.desktop-container-entry-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.desktop-container-entry-current {
+.desktop-container-current {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -515,67 +405,6 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.desktop-container-dialog {
-  display: grid;
-  grid-template-columns: 240px 1fr;
-  gap: 14px;
-  min-height: 360px;
-}
-
-.desktop-container-list {
-  display: grid;
-  grid-template-rows: auto 1fr;
-  gap: 10px;
-  min-height: 0;
-}
-
-.desktop-container-list-head {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.desktop-container-list-item {
-  display: grid;
-  gap: 4px;
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--portal-border);
-  border-radius: 10px;
-  background: var(--portal-surface);
-  color: var(--portal-text);
-  padding: 8px 10px;
-  margin-bottom: 8px;
-  cursor: pointer;
-  transition: border-color 0.2s ease;
-}
-
-.desktop-container-list-item:hover {
-  border-color: rgba(var(--ui-accent-rgb), 0.45);
-}
-
-.desktop-container-list-item.active {
-  border-color: rgba(var(--ui-accent-rgb), 0.65);
-  background: var(--ui-accent-soft-2);
-}
-
-.desktop-container-list-item-id {
-  font-size: 12px;
-}
-
-.desktop-container-list-item-path {
-  font-size: 11px;
-  color: var(--portal-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.desktop-container-editor {
-  display: grid;
-  align-content: start;
-  gap: 14px;
-}
-
 .desktop-container-field {
   display: grid;
   gap: 8px;
@@ -585,18 +414,13 @@ onMounted(() => {
 
 .desktop-container-field-input {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 8px;
 }
 
 .desktop-container-hint {
   font-size: 11px;
   line-height: 1.45;
-}
-
-.desktop-container-editor-actions {
-  display: flex;
-  justify-content: flex-start;
 }
 
 .desktop-container-footer {
@@ -660,46 +484,29 @@ onMounted(() => {
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
+  border-radius: 8px;
   background: transparent;
   color: var(--portal-text);
-  border-radius: 8px;
-  padding: 8px;
+  font-size: 12px;
+  padding: 8px 10px;
   cursor: pointer;
   text-align: left;
 }
 
 .desktop-path-picker-item:hover {
-  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
   background: var(--ui-accent-soft-2);
 }
 
 .desktop-path-picker-empty {
-  padding: 22px 10px;
-  text-align: center;
   font-size: 12px;
   color: var(--portal-muted);
+  padding: 12px 4px;
 }
 
-.desktop-container-entry :deep(.el-input__wrapper) {
-  background: var(--portal-surface, rgba(255, 255, 255, 0.86));
-  box-shadow: 0 0 0 1px var(--portal-border) inset;
-  border-radius: 10px;
-}
-
-.desktop-container-entry :deep(.el-input__wrapper.is-focus),
-.desktop-container-entry :deep(.el-input__wrapper:hover) {
-  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.44) inset;
-}
-
-@media (max-width: 900px) {
-  .desktop-container-dialog {
+@media (max-width: 820px) {
+  .desktop-container-field-input {
     grid-template-columns: 1fr;
-    min-height: 0;
-  }
-
-  .desktop-container-list {
-    max-height: 220px;
-    overflow: auto;
   }
 }
 </style>

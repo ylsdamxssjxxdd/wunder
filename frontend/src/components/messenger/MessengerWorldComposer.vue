@@ -86,7 +86,7 @@
         :aria-label="t('userWorld.attachments.uploadLocal')"
         @click="emit('trigger-upload')"
       >
-        <i class="fa-solid fa-upload messenger-world-tool-fa-icon" aria-hidden="true"></i>
+        <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
       </button>
       <div class="messenger-world-tool-anchor messenger-world-tool-anchor--history">
         <button

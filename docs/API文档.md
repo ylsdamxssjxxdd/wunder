@@ -1994,22 +1994,23 @@
 ### 4.1.56 `/wunder/agents`
 
 - `GET /wunder/agents`：智能体列表
-  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/is_shared/status/icon/sandbox_container_id/created_at/updated_at）
+  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/approval_mode/is_shared/status/icon/sandbox_container_id/created_at/updated_at）
 - `GET /wunder/agents/shared`：共享智能体列表
   - 返回：`data.total`、`data.items`（同上）
 - `GET /wunder/agents/running`：智能体运行状态概览（默认入口 + 个人智能体 + 共享智能体）
   - 返回：`data.total`、`data.items`（agent_id/session_id/updated_at/expires_at/state/pending_question/is_default/last_error?）
   - `is_default`：表示通用聊天（无 agent_id 的默认入口会话）
   - `state`：`idle` | `waiting` | `running` | `cancelling` | `done` | `error`
-  - `pending_question`：表示当前会话存在待回复/待选择的问询面板（通常对应 `state=waiting`）
+  - `pending_question`：表示当前会话存在待处理交互（问询面板或工具审批；通常对应 `state=waiting`）
   - `last_error`：仅 `state=error` 时可能返回，表示最近一次错误的摘要（用于前端提示）
 - `POST /wunder/agents`：创建智能体
-  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）
+  - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
 - `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`icon`/`sandbox_container_id`（可选）
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`（可选）
   - 返回：`data`（同智能体详情）
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
   - 返回：`data.id`
@@ -2022,6 +2023,7 @@
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户工具白名单过滤。
+  - `approval_mode` 默认 `auto_edit`，用于控制命令执行/PTC 工具的审批强度。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。
   - `sandbox_container_id` 取值范围 1~10，默认 1；同一用户下相同容器编号的智能体共享同一文件工作区。
@@ -2339,6 +2341,8 @@
 - `type=error` 统一错误载荷字段：`code`/`message`/`status`/`hint`/`trace_id`/`timestamp`。
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
 - 实时订阅：客户端发送 `watch` + `after_event_id`，服务端持续推送会话流事件（直到取消或断线）
+- 审批回传：客户端可发送 `type=approval` 响应审批请求（`payload.approval_id`、`payload.decision=approve_once|approve_session|deny`，可选 `session_id`）
+- 审批事件：服务端会在流中发送 `event=approval_request` 与 `event=approval_result`
 - 详细协议与节点说明：见 `docs/方案/WebSocket-Transport.md`
 
 ### 4.2.3 Gateway WebSocket Control Plane
@@ -2379,6 +2383,7 @@
 - A2A 服务工具由管理员在 `/wunder/admin/a2a` 配置，启用后以 `a2a@service` 形式对模型可用；`tool_call` 模式下注入系统提示词。
 - 命令执行白名单由 `security.allow_commands` 控制，支持 `*` 放开全部命令。
 - 高风险命令在 `security.exec_policy_mode=enforce` 时需显式审批（tool args 支持 `approved=true`/`approval_key`），审批结果会在会话内短 TTL 缓存。
+- 用户侧聊天请求若绑定 `agent_id`，服务端会把该智能体 `approval_mode` 注入本轮 `config_overrides.security.approval_mode`（仅影响当前轮）。
 - 执行命令支持 `workdir` 指定工作目录（仅工作区内相对路径），`timeout_s` 可选。
 - 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，实际工作区根为 `workspace.root/<user_id>`。
 - 文件类内置工具默认仅允许访问工作区，可通过 `security.allow_paths` 放行白名单目录（允许绝对路径）。
@@ -2707,9 +2712,9 @@
 - `GET /wunder/desktop/settings`
   - 用途：读取 desktop 本地设置快照。
   - 返回字段：
-    - `workspace_root`：容器 1 的默认工作目录
+    - `workspace_root`：desktop 工作区基准目录（默认 `WUNDER_WORK`）
     - `container_roots`：数组，元素 `{ container_id, root }`
-    - `container_mounts`：数组，元素 `{ container_id, root, cloud_workspace_id, seed_status }`
+    - `container_mounts`：兼容字段，元素 `{ container_id, root, cloud_workspace_id, seed_status }`
     - `language` / `supported_languages`
     - `llm`（`default` + `models`）
     - `remote_gateway`（服务端连接配置，仅含 `enabled` 与 `server_base_url`）
@@ -2717,21 +2722,23 @@
 - `PUT /wunder/desktop/settings`
   - 用途：更新 desktop 本地设置并同步到运行态。
   - 请求字段（均可选）：
-    - `workspace_root`：字符串，容器 1 工作目录
+    - `workspace_root`：字符串，desktop 工作区基准目录
     - `container_roots`：数组，元素 `{ container_id, root }`
     - `container_mounts`：数组，元素 `{ container_id, root, cloud_workspace_id }`
     - `language`：字符串，例如 `zh-CN` / `en-US`
     - `llm`：对象（`default` + `models`）
     - `remote_gateway`：对象（仅 `enabled` 与 `server_base_url`）
   - 行为约束：
-    - 容器 id 会归一化到 `1..10`；容器 1 默认指向 `WUNDER_WORK`。
+    - 容器 id 会归一化到 `0..10`。
+    - 默认隔离目录规则：`container 0 -> {workspace_root}/{user_id}`；`container N(1..10) -> {workspace_root}/{user_id}__c__N`。
+    - 若映射路径为空、重复、或指向共享根目录，会自动回退到对应容器的默认隔离目录。
     - 相对路径按桌面程序目录解析，并在保存时自动创建目录。
     - 更新后会同步写入 `WUNDER_TEMPD/config/desktop.settings.json`、运行中的 `ConfigStore` 与 `WorkspaceManager`。
 
 - `GET /wunder/desktop/fs/list`
   - Purpose: local filesystem directory browsing for desktop container path picker.
   - Query:
-    - `path` (optional): directory to list; when omitted, starts from container 1 workspace root.
+    - `path` (optional): directory to list; when omitted, starts from container 0 workspace root.
   - Response fields:
     - `current_path`: current absolute directory path
     - `parent_path`: parent directory (`null` at filesystem root)

@@ -92,6 +92,17 @@
                 />
               </el-select>
             </label>
+            <label class="base-item base-item-select">
+              <span>{{ t('portal.agent.permission.title') }}</span>
+              <el-select v-model="form.approval_mode">
+                <el-option
+                  v-for="item in approvalModeOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+            </label>
           </div>
         </el-form-item>
       </el-form>
@@ -145,6 +156,11 @@ const emit = defineEmits(['update:modelValue', 'submit']);
 const { t } = useI18n();
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
+const approvalModeOptions = computed(() => [
+  { value: 'suggest', label: t('portal.agent.permission.option.suggest') },
+  { value: 'auto_edit', label: t('portal.agent.permission.option.auto_edit') },
+  { value: 'full_auto', label: t('portal.agent.permission.option.full_auto') }
+]);
 const toolLoading = ref(false);
 const toolError = ref('');
 const toolSummary = ref<Record<string, unknown> | null>(null);
@@ -157,7 +173,8 @@ const form = reactive({
   system_prompt: '',
   tool_names: [] as string[],
   is_shared: false,
-  sandbox_container_id: 1
+  sandbox_container_id: 1,
+  approval_mode: 'auto_edit'
 });
 
 const visible = computed({
@@ -246,6 +263,7 @@ const resetForm = () => {
   form.tool_names = [...allToolValues.value];
   form.is_shared = false;
   form.sandbox_container_id = 1;
+  form.approval_mode = 'auto_edit';
 };
 
 const loadToolSummary = async () => {
@@ -284,6 +302,14 @@ const normalizeSandboxContainerId = (value: unknown): number => {
   return Math.min(10, Math.max(1, parsed));
 };
 
+const normalizeApprovalMode = (value: unknown): string => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'suggest') return 'suggest';
+  if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
+  if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
+  return 'auto_edit';
+};
+
 const handleSave = async () => {
   const name = String(form.name || '').trim();
   if (!name) {
@@ -299,7 +325,8 @@ const handleSave = async () => {
       system_prompt: String(form.system_prompt || ''),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       is_shared: Boolean(form.is_shared),
-      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id)
+      sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+      approval_mode: normalizeApprovalMode(form.approval_mode)
     };
     if (!payload.copy_from_agent_id) {
       delete (payload as Record<string, unknown>).copy_from_agent_id;

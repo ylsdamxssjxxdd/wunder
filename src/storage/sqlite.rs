@@ -547,6 +547,12 @@ impl SqliteStorage {
                 [],
             )?;
         }
+        if !columns.contains("approval_mode") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'auto_edit'",
+                [],
+            )?;
+        }
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_user_agents_user_hive ON user_agents (user_id, hive_id, updated_at)",
             [],
@@ -1209,6 +1215,7 @@ impl StorageBackend for SqliteStorage {
               system_prompt TEXT,
               tool_names TEXT,
               access_level TEXT NOT NULL,
+              approval_mode TEXT NOT NULL DEFAULT 'auto_edit',
               is_shared INTEGER NOT NULL DEFAULT 0,
               status TEXT NOT NULL,
               icon TEXT,
@@ -4760,7 +4767,7 @@ impl StorageBackend for SqliteStorage {
                 cleaned_group
             ],
         )?;
-        if affected <= 0 {
+        if affected == 0 {
             tx.commit()?;
             return Ok(None);
         }
@@ -6621,10 +6628,10 @@ impl StorageBackend for SqliteStorage {
         };
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(agent_id) DO UPDATE SET user_id = excluded.user_id, hive_id = excluded.hive_id, name = excluded.name, description = excluded.description, \
-             system_prompt = excluded.system_prompt, tool_names = excluded.tool_names, access_level = excluded.access_level, \
+             system_prompt = excluded.system_prompt, tool_names = excluded.tool_names, access_level = excluded.access_level, approval_mode = excluded.approval_mode, \
              is_shared = excluded.is_shared, status = excluded.status, icon = excluded.icon, sandbox_container_id = excluded.sandbox_container_id, updated_at = excluded.updated_at",
             params![
                 record.agent_id,
@@ -6635,6 +6642,7 @@ impl StorageBackend for SqliteStorage {
                 record.system_prompt,
                 tool_names,
                 record.access_level,
+                record.approval_mode,
                 if record.is_shared { 1 } else { 0 },
                 record.status,
                 record.icon,
@@ -6656,12 +6664,12 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at                  FROM user_agents WHERE user_id = ? AND agent_id = ?",
+                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at                  FROM user_agents WHERE user_id = ? AND agent_id = ?",
                 params![cleaned_user, cleaned_agent],
                 |row| {
                     let tool_names: Option<String> = row.get(6)?;
-                    let is_shared: Option<i64> = row.get(8)?;
-                    let sandbox_container_id: Option<i64> = row.get(11)?;
+                    let is_shared: Option<i64> = row.get(9)?;
+                    let sandbox_container_id: Option<i64> = row.get(12)?;
                     Ok(UserAgentRecord {
                         agent_id: row.get(0)?,
                         user_id: row.get(1)?,
@@ -6671,14 +6679,15 @@ impl StorageBackend for SqliteStorage {
                         system_prompt: row.get(5)?,
                         tool_names: Self::parse_string_list(tool_names),
                         access_level: row.get(7)?,
+                        approval_mode: row.get(8)?,
                         is_shared: is_shared.unwrap_or(0) != 0,
-                        status: row.get(9)?,
-                        icon: row.get(10)?,
+                        status: row.get(10)?,
+                        icon: row.get(11)?,
                         sandbox_container_id: normalize_sandbox_container_id(
                             sandbox_container_id.unwrap_or(1) as i32,
                         ),
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
+                        created_at: row.get(13)?,
+                        updated_at: row.get(14)?,
                     })
                 },
             )
@@ -6695,12 +6704,12 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at                  FROM user_agents WHERE agent_id = ?",
+                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at                  FROM user_agents WHERE agent_id = ?",
                 params![cleaned_agent],
                 |row| {
                     let tool_names: Option<String> = row.get(6)?;
-                    let is_shared: Option<i64> = row.get(8)?;
-                    let sandbox_container_id: Option<i64> = row.get(11)?;
+                    let is_shared: Option<i64> = row.get(9)?;
+                    let sandbox_container_id: Option<i64> = row.get(12)?;
                     Ok(UserAgentRecord {
                         agent_id: row.get(0)?,
                         user_id: row.get(1)?,
@@ -6710,14 +6719,15 @@ impl StorageBackend for SqliteStorage {
                         system_prompt: row.get(5)?,
                         tool_names: Self::parse_string_list(tool_names),
                         access_level: row.get(7)?,
+                        approval_mode: row.get(8)?,
                         is_shared: is_shared.unwrap_or(0) != 0,
-                        status: row.get(9)?,
-                        icon: row.get(10)?,
+                        status: row.get(10)?,
+                        icon: row.get(11)?,
                         sandbox_container_id: normalize_sandbox_container_id(
                             sandbox_container_id.unwrap_or(1) as i32,
                         ),
-                        created_at: row.get(12)?,
-                        updated_at: row.get(13)?,
+                        created_at: row.get(13)?,
+                        updated_at: row.get(14)?,
                     })
                 },
             )
@@ -6733,13 +6743,13 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user], |row| {
                 let tool_names: Option<String> = row.get(6)?;
-                let is_shared: Option<i64> = row.get(8)?;
-                let sandbox_container_id: Option<i64> = row.get(11)?;
+                let is_shared: Option<i64> = row.get(9)?;
+                let sandbox_container_id: Option<i64> = row.get(12)?;
                 Ok(UserAgentRecord {
                     agent_id: row.get(0)?,
                     user_id: row.get(1)?,
@@ -6749,14 +6759,15 @@ impl StorageBackend for SqliteStorage {
                     system_prompt: row.get(5)?,
                     tool_names: Self::parse_string_list(tool_names),
                     access_level: row.get(7)?,
+                    approval_mode: row.get(8)?,
                     is_shared: is_shared.unwrap_or(0) != 0,
-                    status: row.get(9)?,
-                    icon: row.get(10)?,
+                    status: row.get(10)?,
+                    icon: row.get(11)?,
                     sandbox_container_id: normalize_sandbox_container_id(
                         sandbox_container_id.unwrap_or(1) as i32,
                     ),
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserAgentRecord>, _>>()?;
@@ -6776,13 +6787,13 @@ impl StorageBackend for SqliteStorage {
         let normalized_hive_id = normalize_hive_id(hive_id);
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE user_id = ? AND hive_id = ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE user_id = ? AND hive_id = ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user, normalized_hive_id], |row| {
                 let tool_names: Option<String> = row.get(6)?;
-                let is_shared: Option<i64> = row.get(8)?;
-                let sandbox_container_id: Option<i64> = row.get(11)?;
+                let is_shared: Option<i64> = row.get(9)?;
+                let sandbox_container_id: Option<i64> = row.get(12)?;
                 Ok(UserAgentRecord {
                     agent_id: row.get(0)?,
                     user_id: row.get(1)?,
@@ -6792,14 +6803,15 @@ impl StorageBackend for SqliteStorage {
                     system_prompt: row.get(5)?,
                     tool_names: Self::parse_string_list(tool_names),
                     access_level: row.get(7)?,
+                    approval_mode: row.get(8)?,
                     is_shared: is_shared.unwrap_or(0) != 0,
-                    status: row.get(9)?,
-                    icon: row.get(10)?,
+                    status: row.get(10)?,
+                    icon: row.get(11)?,
                     sandbox_container_id: normalize_sandbox_container_id(
                         sandbox_container_id.unwrap_or(1) as i32,
                     ),
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserAgentRecord>, _>>()?;
@@ -6814,13 +6826,13 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE is_shared = 1 AND user_id <> ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE is_shared = 1 AND user_id <> ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user], |row| {
                 let tool_names: Option<String> = row.get(6)?;
-                let is_shared: Option<i64> = row.get(8)?;
-                let sandbox_container_id: Option<i64> = row.get(11)?;
+                let is_shared: Option<i64> = row.get(9)?;
+                let sandbox_container_id: Option<i64> = row.get(12)?;
                 Ok(UserAgentRecord {
                     agent_id: row.get(0)?,
                     user_id: row.get(1)?,
@@ -6830,14 +6842,15 @@ impl StorageBackend for SqliteStorage {
                     system_prompt: row.get(5)?,
                     tool_names: Self::parse_string_list(tool_names),
                     access_level: row.get(7)?,
+                    approval_mode: row.get(8)?,
                     is_shared: is_shared.unwrap_or(0) != 0,
-                    status: row.get(9)?,
-                    icon: row.get(10)?,
+                    status: row.get(10)?,
+                    icon: row.get(11)?,
                     sandbox_container_id: normalize_sandbox_container_id(
                         sandbox_container_id.unwrap_or(1) as i32,
                     ),
-                    created_at: row.get(12)?,
-                    updated_at: row.get(13)?,
+                    created_at: row.get(13)?,
+                    updated_at: row.get(14)?,
                 })
             })?
             .collect::<std::result::Result<Vec<UserAgentRecord>, _>>()?;

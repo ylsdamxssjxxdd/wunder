@@ -576,17 +576,34 @@
           <button
             v-if="desktopMode"
             class="messenger-list-item"
-            :class="{ active: settingsPanelMode === 'desktop' }"
+            :class="{ active: settingsPanelMode === 'desktop-models' }"
             type="button"
-            @click="settingsPanelMode = 'desktop'"
+            @click="settingsPanelMode = 'desktop-models'"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-desktop" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('desktop.settings.title') }}</span>
+                <span class="messenger-list-name">{{ t('messenger.settings.desktopModels') }}</span>
               </div>
               <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('desktop.settings.systemHint') }}</span>
+                <span class="messenger-list-preview">{{ t('messenger.settings.desktopModelsHint') }}</span>
+              </div>
+            </div>
+          </button>
+          <button
+            v-if="desktopMode"
+            class="messenger-list-item"
+            :class="{ active: settingsPanelMode === 'desktop-remote' }"
+            type="button"
+            @click="settingsPanelMode = 'desktop-remote'"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-server" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('messenger.settings.desktopRemote') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('messenger.settings.desktopRemoteHint') }}</span>
               </div>
             </div>
           </button>
@@ -927,7 +944,21 @@
             <template v-else-if="sessionHub.activeSection === 'files'">
               <div class="messenger-files-panel">
                 <div class="messenger-entity-panel">
-                  <div class="messenger-entity-title">{{ t('messenger.files.title') }}</div>
+                  <div class="messenger-entity-head">
+                    <div class="messenger-entity-title">{{ t('messenger.files.title') }}</div>
+                    <button
+                      v-if="desktopMode"
+                      class="messenger-inline-btn"
+                      type="button"
+                      @click="
+                        openDesktopContainerSettings(
+                          fileScope === 'user' ? USER_CONTAINER_ID : selectedFileContainerId
+                        )
+                      "
+                    >
+                      {{ t('desktop.containers.manage') }}
+                    </button>
+                  </div>
                   <div class="messenger-entity-grid">
                     <div class="messenger-entity-field">
                       <span class="messenger-entity-label">{{ t('messenger.files.containerType') }}</span>
@@ -969,8 +1000,6 @@
                 </div>
                 <div
                   class="messenger-workspace-scope chat-shell messenger-files-workspace"
-                  @contextmenu.prevent.stop="openCurrentFileContainerMenu($event)"
-                  @mousedown.right.prevent.stop="openCurrentFileContainerMenu($event)"
                 >
                   <WorkspacePanel
                     :key="workspacePanelKey"
@@ -985,13 +1014,22 @@
                   v-if="desktopMode"
                   ref="desktopContainerManagerPanelRef"
                   :active-container-id="selectedFileContainerId"
+                  @roots-change="handleDesktopContainerRootsChange"
                 />
               </div>
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'more'">
+              <DesktopSystemSettingsPanel
+                v-if="
+                  desktopMode &&
+                  (settingsPanelMode === 'desktop-models' || settingsPanelMode === 'desktop-remote')
+                "
+                :panel="settingsPanelMode === 'desktop-remote' ? 'remote' : 'models'"
+              />
               <MessengerSettingsPanel
-                :mode="settingsPanelMode"
+                v-else
+                :mode="generalSettingsPanelMode"
                 :username="currentUsername"
                 :user-id="currentUserId"
                 :language-label="currentLanguageLabel"
@@ -999,19 +1037,16 @@
                 :theme-palette="themeStore.palette"
                 :performance-mode="performanceStore.mode"
                 :ui-font-size="uiFontSize"
-                :desktop-tool-call-mode="desktopToolCallMode"
                 :devtools-available="debugToolsAvailable"
                 :update-available="desktopUpdateAvailable"
                 @toggle-language="toggleLanguage"
                 @check-update="checkClientUpdate"
-                @open-tools="openDesktopTools"
                 @toggle-devtools="openDebugTools"
                 @logout="handleSettingsLogout"
                 @update:send-key="updateSendKey"
                 @update:theme-palette="updateThemePalette"
                 @update:performance-mode="updatePerformanceMode"
                 @update:ui-font-size="updateUiFontSize"
-                @update:desktop-tool-call-mode="updateDesktopToolCallMode"
               />
             </template>
           </div>
@@ -1029,45 +1064,56 @@
 
           <template v-else-if="isAgentConversationActive">
             <div
-              v-for="(message, index) in chatStore.messages"
-              :key="resolveAgentMessageKey(message, index)"
-              v-show="shouldRenderAgentMessage(message)"
+              v-if="messageVirtualTopSpacerHeight > 0"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${messageVirtualTopSpacerHeight}px` }"
+              aria-hidden="true"
+            ></div>
+            <div
+              v-for="item in visibleAgentMessages"
+              :key="item.key"
               class="messenger-message"
-              :class="{ mine: message.role === 'user' }"
+              :class="{ mine: item.message.role === 'user' }"
+              :data-virtual-key="item.key"
             >
-              <div v-if="message.role === 'user'" class="messenger-message-avatar">
-                {{ avatarLabel(message.role === 'user' ? currentUsername : activeAgentName) }}
+              <div v-if="item.message.role === 'user'" class="messenger-message-avatar">
+                {{ avatarLabel(item.message.role === 'user' ? currentUsername : activeAgentName) }}
               </div>
               <AgentAvatar
                 v-else
                 size="sm"
-                :state="resolveMessageAgentAvatarState(message)"
+                :state="resolveMessageAgentAvatarState(item.message)"
                 :title="activeAgentName"
               />
               <div class="messenger-message-main">
                 <div class="messenger-message-meta">
-                  <span>{{ message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
-                  <span>{{ formatTime(message.created_at) }}</span>
+                  <span>{{ item.message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
+                  <span>{{ formatTime(item.message.created_at) }}</span>
                   <MessageThinking
-                    v-if="message.role === 'assistant'"
-                    :content="String(message.reasoning || '')"
-                    :streaming="Boolean(message.reasoningStreaming)"
+                    v-if="item.message.role === 'assistant'"
+                    :content="String(item.message.reasoning || '')"
+                    :streaming="Boolean(item.message.reasoningStreaming)"
                   />
                 </div>
-                <div v-if="message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
+                <div v-if="item.message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
                   <MessageWorkflow
-                    :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
-                    :loading="Boolean(message.workflowStreaming)"
-                    :visible="Boolean(message.workflowStreaming || message.workflowItems?.length)"
+                    :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
+                    :loading="Boolean(item.message.workflowStreaming)"
+                    :visible="
+                      Boolean(
+                        item.message.workflowStreaming ||
+                          (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0)
+                      )
+                    "
                   />
                 </div>
                 <div
-                  v-if="message.role === 'user' || hasMessageContent(message.content)"
+                  v-if="item.message.role === 'user' || hasMessageContent(item.message.content)"
                   class="messenger-message-bubble messenger-markdown"
                 >
-                  <template v-if="isGreetingMessage(message)">
+                  <template v-if="isGreetingMessage(item.message)">
                     <div class="messenger-greeting-line">
-                      <div class="messenger-greeting-text">{{ message.content }}</div>
+                      <div class="messenger-greeting-text">{{ item.message.content }}</div>
                       <el-tooltip
                         ref="agentAbilityTooltipRef"
                         placement="bottom-end"
@@ -1157,20 +1203,24 @@
                       </el-tooltip>
                     </div>
                   </template>
-                  <div v-else class="markdown-body" v-html="renderAgentMarkdown(message, index)"></div>
+                  <div
+                    v-else
+                    class="markdown-body"
+                    v-html="renderAgentMarkdown(item.message, item.sourceIndex)"
+                  ></div>
                 </div>
                 <div
-                  v-if="hasMessageContent(message.content) || shouldShowMessageStats(message)"
+                  v-if="hasMessageContent(item.message.content) || shouldShowMessageStats(item.message)"
                   class="messenger-message-extra"
                 >
-                  <div v-if="shouldShowMessageStats(message)" class="messenger-message-stats">
+                  <div v-if="shouldShowMessageStats(item.message)" class="messenger-message-stats">
                     <span
-                      v-for="item in buildMessageStatsEntries(message)"
-                      :key="item.label"
+                      v-for="entry in buildMessageStatsEntries(item.message)"
+                      :key="entry.label"
                       class="messenger-message-stat"
                     >
-                      <span class="messenger-message-stat-label">{{ item.label }}:</span>
-                      <span class="messenger-message-stat-value">{{ item.value }}</span>
+                      <span class="messenger-message-stat-label">{{ entry.label }}:</span>
+                      <span class="messenger-message-stat-value">{{ entry.value }}</span>
                     </span>
                   </div>
                   <button
@@ -1178,47 +1228,66 @@
                     type="button"
                     :title="t('chat.message.copy')"
                     :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(message.content)"
+                    @click="copyMessageContent(item.message.content)"
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                 </div>
               </div>
             </div>
+            <div
+              v-if="messageVirtualBottomSpacerHeight > 0"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${messageVirtualBottomSpacerHeight}px` }"
+              aria-hidden="true"
+            ></div>
           </template>
 
           <template v-else-if="isWorldConversationActive">
             <div
-              v-for="message in userWorldStore.activeMessages"
-              :key="`uw-${message.message_id}`"
+              v-if="messageVirtualTopSpacerHeight > 0"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${messageVirtualTopSpacerHeight}px` }"
+              aria-hidden="true"
+            ></div>
+            <div
+              v-for="item in visibleWorldMessages"
+              :key="item.key"
               class="messenger-message"
-              :id="resolveWorldMessageDomId(message)"
-              :class="{ mine: isOwnMessage(message) }"
+              :id="item.domId"
+              :class="{ mine: isOwnMessage(item.message) }"
+              :data-virtual-key="item.key"
             >
               <div class="messenger-message-avatar">
-                {{ avatarLabel(resolveWorldMessageSender(message)) }}
+                {{ avatarLabel(resolveWorldMessageSender(item.message)) }}
               </div>
               <div class="messenger-message-main">
                 <div class="messenger-message-meta">
-                  <span>{{ resolveWorldMessageSender(message) }}</span>
-                  <span>{{ formatTime(message.created_at) }}</span>
+                  <span>{{ resolveWorldMessageSender(item.message) }}</span>
+                  <span>{{ formatTime(item.message.created_at) }}</span>
                 </div>
                 <div class="messenger-message-bubble messenger-markdown">
-                  <div class="markdown-body" v-html="renderWorldMarkdown(message)"></div>
+                  <div class="markdown-body" v-html="renderWorldMarkdown(item.message)"></div>
                 </div>
-                <div v-if="hasMessageContent(message.content)" class="messenger-message-extra">
+                <div v-if="hasMessageContent(item.message.content)" class="messenger-message-extra">
                   <button
                     class="messenger-message-footer-copy"
                     type="button"
                     :title="t('chat.message.copy')"
                     :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(message.content)"
+                    @click="copyMessageContent(item.message.content)"
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                 </div>
               </div>
             </div>
+            <div
+              v-if="messageVirtualBottomSpacerHeight > 0"
+              class="messenger-message-virtual-spacer"
+              :style="{ height: `${messageVirtualBottomSpacerHeight}px` }"
+              aria-hidden="true"
+            ></div>
           </template>
           <div v-else class="messenger-chat-empty">
             {{ t('messenger.empty.selectConversation') }}
@@ -1452,6 +1521,7 @@ import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsP
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import DesktopContainerManagerPanel from '@/components/messenger/DesktopContainerManagerPanel.vue';
+import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSettingsPanel.vue';
 import MessengerFileContainerMenu from '@/components/messenger/MessengerFileContainerMenu.vue';
 import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
 import MessengerGroupCreateDialog from '@/components/messenger/MessengerGroupCreateDialog.vue';
@@ -1472,12 +1542,7 @@ import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
 import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
 import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
-import {
-  getDesktopToolCallMode,
-  isDesktopModeEnabled,
-  setDesktopToolCallMode,
-  type DesktopToolCallMode
-} from '@/config/desktop';
+import { isDesktopModeEnabled } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -1624,12 +1689,16 @@ const agentAbilityTooltipOptions = {
 const worldRecentEmojis = ref<string[]>([]);
 const messageListRef = ref<HTMLElement | null>(null);
 const chatFooterRef = ref<HTMLElement | null>(null);
+const messageVirtualScrollTop = ref(0);
+const messageVirtualViewportHeight = ref(0);
+const messageVirtualLayoutVersion = ref(0);
+const messageVirtualHeightCache = new Map<string, number>();
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
 const agentSettingMode = ref<'agent' | 'cron' | 'channel'>('agent');
-const settingsPanelMode = ref<'general' | 'profile' | 'desktop'>('general');
+const settingsPanelMode = ref<'general' | 'profile' | 'desktop-models' | 'desktop-remote'>('general');
 const rightDockCollapsed = ref(false);
 const toolsCatalogLoading = ref(false);
 const customTools = ref<ToolEntry[]>([]);
@@ -1659,9 +1728,9 @@ const fileContainerContextMenu = ref<{
   y: 0,
   target: null
 });
+const desktopContainerRootMap = ref<Record<number, string>>({});
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
-const desktopToolCallMode = ref<DesktopToolCallMode>(getDesktopToolCallMode());
 const messengerSendKey = ref<MessengerSendKeyMode>('enter');
 const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
@@ -1694,6 +1763,7 @@ let timelinePrefetchTimer: number | null = null;
 let middlePaneOverlayHideTimer: number | null = null;
 let keywordDebounceTimer: number | null = null;
 let messageScrollFrame: number | null = null;
+let messageVirtualMeasureFrame: number | null = null;
 let contactVirtualFrame: number | null = null;
 let viewportResizeHandler: (() => void) | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
@@ -1702,6 +1772,10 @@ const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
 const CONTACT_VIRTUAL_ITEM_HEIGHT = 60;
 const CONTACT_VIRTUAL_OVERSCAN = 8;
+const MESSAGE_VIRTUAL_THRESHOLD = 180;
+const MESSAGE_VIRTUAL_OVERSCAN = 8;
+const MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = 118;
+const MESSAGE_VIRTUAL_GAP = 12;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
 type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
 type WorkspaceResourceCacheEntry = {
@@ -2086,6 +2160,16 @@ const resolveWorkspaceRootPrefix = (): { root: string; separator: '/' | '\\' } =
   };
 };
 
+const withTrailingSeparator = (path: string): string => {
+  const trimmed = String(path || '').trim();
+  if (!trimmed) return '';
+  const separator = trimmed.includes('\\') ? '\\' : '/';
+  if (trimmed.endsWith('/') || trimmed.endsWith('\\')) {
+    return trimmed;
+  }
+  return `${trimmed}${separator}`;
+};
+
 const resolveWorkspaceScopeSuffix = (): string => {
   const userId = String(currentUserId.value || '').trim() || 'anonymous';
   if (fileScope.value === 'user' || selectedFileContainerId.value === USER_CONTAINER_ID) {
@@ -2101,6 +2185,14 @@ const fileContainerCloudLocation = computed(() => {
 });
 
 const fileContainerLocalLocation = computed(() => {
+  const containerId =
+    fileScope.value === 'user' || selectedFileContainerId.value === USER_CONTAINER_ID
+      ? USER_CONTAINER_ID
+      : selectedFileContainerId.value;
+  const mapped = String(desktopContainerRootMap.value[containerId] || '').trim();
+  if (mapped) {
+    return withTrailingSeparator(mapped);
+  }
   const { root, separator } = resolveWorkspaceRootPrefix();
   const scope = resolveWorkspaceScopeSuffix();
   return `${root}${separator}${scope}${separator}`;
@@ -2605,6 +2697,10 @@ const activeConversationKindLabel = computed(() => {
   return t(`messenger.kind.${identity.kind}`);
 });
 
+const generalSettingsPanelMode = computed<'general' | 'profile'>(() =>
+  settingsPanelMode.value === 'profile' ? 'profile' : 'general'
+);
+
 const chatPanelTitle = computed(() => {
   if (!showChatSettingsView.value) {
     return activeConversationTitle.value;
@@ -2631,7 +2727,8 @@ const chatPanelTitle = computed(() => {
   }
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return t('user.profile.enter');
-    if (settingsPanelMode.value === 'desktop') return t('desktop.settings.title');
+    if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llm');
+    if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.title');
   }
   return activeSectionTitle.value;
 });
@@ -2659,7 +2756,8 @@ const chatPanelSubtitle = computed(() => {
   }
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return currentUsername.value;
-    if (settingsPanelMode.value === 'desktop') return t('desktop.settings.systemHint');
+    if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llmHint');
+    if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.hint');
   }
   return activeSectionSubtitle.value;
 });
@@ -3308,18 +3406,29 @@ const insertWorldEmoji = (emoji: string) => {
   focusWorldTextareaToEnd();
 };
 
-const locateWorldHistoryMessage = (entry: WorldHistoryRecord) => {
+const locateWorldHistoryMessage = async (entry: WorldHistoryRecord) => {
   const targetId = resolveWorldMessageDomId({ message_id: entry.messageId });
   worldHistoryDialogVisible.value = false;
-  nextTick(() => {
-    const target = typeof document !== 'undefined' ? document.getElementById(targetId) : null;
-    if (!target) return;
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    target.classList.add('is-history-target');
-    window.setTimeout(() => {
-      target.classList.remove('is-history-target');
-    }, 1400);
-  });
+  if (shouldVirtualizeMessages.value && isWorldConversationActive.value) {
+    const targetIndex = worldRenderableMessages.value.findIndex((item) => item.domId === targetId);
+    if (targetIndex >= 0) {
+      scrollVirtualMessageToIndex(
+        worldRenderableMessages.value.map((item) => item.key),
+        targetIndex,
+        'center'
+      );
+      await nextTick();
+    }
+  }
+  await nextTick();
+  const target = typeof document !== 'undefined' ? document.getElementById(targetId) : null;
+  if (!target) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.classList.add('is-history-target');
+  window.setTimeout(() => {
+    target.classList.remove('is-history-target');
+  }, 1400);
+  scheduleMessageVirtualMeasure();
 };
 
 const closeWorldQuickPanelWhenOutside = (event: Event) => {
@@ -3601,6 +3710,185 @@ const shouldRenderAgentMessage = (message: Record<string, unknown>): boolean => 
   if (String(message?.role || '') === 'user') return true;
   return hasMessageContent(message?.content) || hasWorkflowOrThinking(message);
 };
+
+type AgentRenderableMessage = {
+  key: string;
+  sourceIndex: number;
+  message: Record<string, unknown>;
+};
+
+type WorldRenderableMessage = {
+  key: string;
+  sourceIndex: number;
+  domId: string;
+  message: Record<string, unknown>;
+};
+
+type MessageVirtualWindow = {
+  start: number;
+  end: number;
+  topSpacer: number;
+  bottomSpacer: number;
+  total: number;
+};
+
+const agentRenderableMessages = computed<AgentRenderableMessage[]>(() =>
+  chatStore.messages.reduce<AgentRenderableMessage[]>((acc, rawMessage, sourceIndex) => {
+    const message = (rawMessage || {}) as Record<string, unknown>;
+    if (!shouldRenderAgentMessage(message)) {
+      return acc;
+    }
+    acc.push({
+      key: resolveAgentMessageKey(message, sourceIndex),
+      sourceIndex,
+      message
+    });
+    return acc;
+  }, [])
+);
+
+const worldRenderableMessages = computed<WorldRenderableMessage[]>(() =>
+  (Array.isArray(userWorldStore.activeMessages) ? userWorldStore.activeMessages : []).map((rawMessage, sourceIndex) => {
+    const message = (rawMessage || {}) as Record<string, unknown>;
+    return {
+      key: resolveWorldMessageKey(message),
+      sourceIndex,
+      domId: resolveWorldMessageDomId(message),
+      message
+    };
+  })
+);
+
+const activeVirtualMessageKeys = computed<string[]>(() => {
+  if (isAgentConversationActive.value) {
+    return agentRenderableMessages.value.map((item) => item.key);
+  }
+  if (isWorldConversationActive.value) {
+    return worldRenderableMessages.value.map((item) => item.key);
+  }
+  return [];
+});
+
+const shouldVirtualizeMessages = computed(
+  () =>
+    !showChatSettingsView.value &&
+    (isAgentConversationActive.value || isWorldConversationActive.value) &&
+    activeVirtualMessageKeys.value.length > MESSAGE_VIRTUAL_THRESHOLD
+);
+
+const resolveVirtualMessageHeight = (key: string): number => {
+  const normalized = String(key || '').trim();
+  if (!normalized) {
+    return MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
+  }
+  return messageVirtualHeightCache.get(normalized) || MESSAGE_VIRTUAL_ESTIMATED_HEIGHT;
+};
+
+const estimateVirtualOffsetTop = (keys: string[], index: number): number => {
+  const safeIndex = Math.max(0, Math.min(keys.length, Math.trunc(index)));
+  let offset = 0;
+  for (let cursor = 0; cursor < safeIndex; cursor += 1) {
+    offset += resolveVirtualMessageHeight(keys[cursor]);
+    if (cursor < keys.length - 1) {
+      offset += MESSAGE_VIRTUAL_GAP;
+    }
+  }
+  return offset;
+};
+
+const estimateVirtualTotalHeight = (keys: string[]): number => {
+  if (!keys.length) {
+    return 0;
+  }
+  let total = 0;
+  for (let cursor = 0; cursor < keys.length; cursor += 1) {
+    total += resolveVirtualMessageHeight(keys[cursor]);
+    if (cursor < keys.length - 1) {
+      total += MESSAGE_VIRTUAL_GAP;
+    }
+  }
+  return total;
+};
+
+const messageVirtualWindow = computed<MessageVirtualWindow>(() => {
+  // Depend on measured height cache revisions.
+  void messageVirtualLayoutVersion.value;
+  const keys = activeVirtualMessageKeys.value;
+  const total = keys.length;
+  if (!total) {
+    return { start: 0, end: 0, topSpacer: 0, bottomSpacer: 0, total: 0 };
+  }
+  if (!shouldVirtualizeMessages.value) {
+    return { start: 0, end: total, topSpacer: 0, bottomSpacer: 0, total };
+  }
+
+  const viewportHeight =
+    messageVirtualViewportHeight.value ||
+    messageListRef.value?.clientHeight ||
+    MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * 6;
+  const scrollTop = Math.max(0, messageVirtualScrollTop.value);
+
+  let start = 0;
+  let cursorTop = 0;
+  while (start < total) {
+    const height = resolveVirtualMessageHeight(keys[start]);
+    const itemBottom = cursorTop + height;
+    if (itemBottom >= scrollTop) {
+      break;
+    }
+    cursorTop = itemBottom + MESSAGE_VIRTUAL_GAP;
+    start += 1;
+  }
+
+  const overscanStart = Math.max(0, start - MESSAGE_VIRTUAL_OVERSCAN);
+  let end = overscanStart;
+  let covered = 0;
+  const targetCoverage =
+    viewportHeight + MESSAGE_VIRTUAL_OVERSCAN * MESSAGE_VIRTUAL_ESTIMATED_HEIGHT * 2;
+  while (end < total && (covered < targetCoverage || end === overscanStart)) {
+    covered += resolveVirtualMessageHeight(keys[end]) + MESSAGE_VIRTUAL_GAP;
+    end += 1;
+  }
+
+  const offsetBeforeStart = estimateVirtualOffsetTop(keys, overscanStart);
+  const topSpacer = overscanStart > 0
+    ? Math.max(0, offsetBeforeStart - MESSAGE_VIRTUAL_GAP)
+    : 0;
+  const offsetBeforeEnd = estimateVirtualOffsetTop(keys, end);
+  const totalHeight = estimateVirtualTotalHeight(keys);
+  const bottomSpacer = Math.max(0, totalHeight - offsetBeforeEnd);
+  return {
+    start: overscanStart,
+    end,
+    topSpacer,
+    bottomSpacer,
+    total
+  };
+});
+
+const visibleAgentMessages = computed<AgentRenderableMessage[]>(() => {
+  const items = agentRenderableMessages.value;
+  if (!isAgentConversationActive.value || !shouldVirtualizeMessages.value) {
+    return items;
+  }
+  return items.slice(messageVirtualWindow.value.start, messageVirtualWindow.value.end);
+});
+
+const visibleWorldMessages = computed<WorldRenderableMessage[]>(() => {
+  const items = worldRenderableMessages.value;
+  if (!isWorldConversationActive.value || !shouldVirtualizeMessages.value) {
+    return items;
+  }
+  return items.slice(messageVirtualWindow.value.start, messageVirtualWindow.value.end);
+});
+
+const messageVirtualTopSpacerHeight = computed(() =>
+  shouldVirtualizeMessages.value ? messageVirtualWindow.value.topSpacer : 0
+);
+
+const messageVirtualBottomSpacerHeight = computed(() =>
+  shouldVirtualizeMessages.value ? messageVirtualWindow.value.bottomSpacer : 0
+);
 
 const isGreetingMessage = (message: Record<string, unknown>): boolean =>
   String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
@@ -5056,12 +5344,6 @@ const openFileContainerMenu = async (
   fileContainerContextMenu.value.y = Math.min(Math.max(8, fileContainerContextMenu.value.y), maxTop);
 };
 
-const openCurrentFileContainerMenu = (event: MouseEvent) => {
-  const scope = fileScope.value;
-  const targetId = scope === 'user' ? USER_CONTAINER_ID : selectedFileContainerId.value;
-  void openFileContainerMenu(event, scope, targetId);
-};
-
 const handleFileContainerMenuOpen = () => {
   const target = fileContainerContextMenu.value.target;
   closeFileContainerMenu();
@@ -5126,6 +5408,15 @@ const handleFileWorkspaceStats = (payload: unknown) => {
   fileContainerEntryCount.value = Math.max(0, Number(source.entryCount || 0));
   fileContainerLatestUpdatedAt.value = normalizeTimestamp(source.latestUpdatedAt);
   fileLifecycleNowTick.value = Date.now();
+};
+
+const handleDesktopContainerRootsChange = (roots: Record<number, string>) => {
+  const normalized: Record<number, string> = {};
+  Object.entries(roots || {}).forEach(([key, value]) => {
+    const containerId = Math.min(10, Math.max(0, Number.parseInt(String(key), 10) || 0));
+    normalized[containerId] = String(value || '').trim();
+  });
+  desktopContainerRootMap.value = normalized;
 };
 
 const normalizeToolEntry = (item: unknown): ToolEntry | null => {
@@ -5765,10 +6056,6 @@ const checkClientUpdate = async () => {
   }
 };
 
-const updateDesktopToolCallMode = (value: DesktopToolCallMode) => {
-  desktopToolCallMode.value = value === 'function_call' ? 'function_call' : 'tool_call';
-};
-
 const updateSendKey = (value: MessengerSendKeyMode) => {
   const normalized = normalizeMessengerSendKey(value);
   messengerSendKey.value = normalized;
@@ -5792,11 +6079,6 @@ const updateUiFontSize = (value: number) => {
     window.localStorage.setItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY, String(normalized));
   }
   applyUiFontSize(normalized);
-};
-
-const openDesktopTools = () => {
-  if (!desktopMode.value) return;
-  router.push('/desktop/tools').catch(() => undefined);
 };
 
 const openDebugTools = async () => {
@@ -5890,7 +6172,69 @@ const refreshAll = async () => {
   ElMessage.success(t('common.refreshSuccess'));
 };
 
+const syncMessageVirtualMetrics = () => {
+  const container = messageListRef.value;
+  if (!container || showChatSettingsView.value) {
+    messageVirtualScrollTop.value = 0;
+    messageVirtualViewportHeight.value = 0;
+    return;
+  }
+  messageVirtualViewportHeight.value = container.clientHeight;
+  messageVirtualScrollTop.value = container.scrollTop;
+};
+
+const pruneMessageVirtualHeightCache = () => {
+  const keySet = new Set<string>([
+    ...agentRenderableMessages.value.map((item) => item.key),
+    ...worldRenderableMessages.value.map((item) => item.key)
+  ]);
+  let changed = false;
+  messageVirtualHeightCache.forEach((_value, key) => {
+    if (keySet.has(key)) {
+      return;
+    }
+    messageVirtualHeightCache.delete(key);
+    changed = true;
+  });
+  if (changed) {
+    messageVirtualLayoutVersion.value += 1;
+  }
+};
+
+const measureVisibleMessageHeights = () => {
+  const container = messageListRef.value;
+  if (!container || showChatSettingsView.value) {
+    return;
+  }
+  const nodes = container.querySelectorAll<HTMLElement>('.messenger-message[data-virtual-key]');
+  let changed = false;
+  nodes.forEach((node) => {
+    const key = String(node.dataset.virtualKey || '').trim();
+    if (!key) return;
+    const height = Math.max(1, Math.round(node.getBoundingClientRect().height));
+    const cached = messageVirtualHeightCache.get(key);
+    if (cached && Math.abs(cached - height) <= 1) {
+      return;
+    }
+    messageVirtualHeightCache.set(key, height);
+    changed = true;
+  });
+  if (changed) {
+    messageVirtualLayoutVersion.value += 1;
+  }
+};
+
+const scheduleMessageVirtualMeasure = () => {
+  if (typeof window === 'undefined') return;
+  if (messageVirtualMeasureFrame !== null) return;
+  messageVirtualMeasureFrame = window.requestAnimationFrame(() => {
+    messageVirtualMeasureFrame = null;
+    measureVisibleMessageHeights();
+  });
+};
+
 const updateMessageScrollState = () => {
+  syncMessageVirtualMetrics();
   const container = messageListRef.value;
   if (!container || showChatSettingsView.value) {
     showScrollBottomButton.value = false;
@@ -5913,6 +6257,7 @@ const handleMessageListScroll = () => {
   messageScrollFrame = window.requestAnimationFrame(() => {
     messageScrollFrame = null;
     updateMessageScrollState();
+    scheduleMessageVirtualMeasure();
   });
 };
 
@@ -5922,10 +6267,12 @@ const scrollMessagesToBottom = async (force = false) => {
   if (!container) return;
   if (!force && !autoStickToBottom.value) {
     updateMessageScrollState();
+    scheduleMessageVirtualMeasure();
     return;
   }
   container.scrollTop = container.scrollHeight;
   updateMessageScrollState();
+  scheduleMessageVirtualMeasure();
 };
 
 const jumpToMessageBottom = async () => {
@@ -5933,8 +6280,41 @@ const jumpToMessageBottom = async () => {
   await scrollMessagesToBottom(true);
 };
 
+const scrollVirtualMessageToIndex = (keys: string[], index: number, align: 'center' | 'start' = 'center') => {
+  const container = messageListRef.value;
+  if (!container || !keys.length) return;
+  const safeIndex = Math.max(0, Math.min(keys.length - 1, Math.trunc(index)));
+  const top = estimateVirtualOffsetTop(keys, safeIndex);
+  const height = resolveVirtualMessageHeight(keys[safeIndex]);
+  const targetTop =
+    align === 'center'
+      ? top - container.clientHeight / 2 + height / 2
+      : top;
+  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+  container.scrollTop = Math.max(0, Math.min(targetTop, maxTop));
+  syncMessageVirtualMetrics();
+};
+
 const scrollLatestAssistantToCenter = async () => {
   if (!isAgentConversationActive.value) return;
+  if (shouldVirtualizeMessages.value) {
+    const latestIndex = (() => {
+      for (let cursor = agentRenderableMessages.value.length - 1; cursor >= 0; cursor -= 1) {
+        const item = agentRenderableMessages.value[cursor];
+        if (String(item.message?.role || '') !== 'assistant') continue;
+        return cursor;
+      }
+      return -1;
+    })();
+    if (latestIndex >= 0) {
+      scrollVirtualMessageToIndex(
+        agentRenderableMessages.value.map((item) => item.key),
+        latestIndex,
+        'center'
+      );
+      await nextTick();
+    }
+  }
   await nextTick();
   const container = messageListRef.value;
   if (!container) return;
@@ -5949,6 +6329,7 @@ const scrollLatestAssistantToCenter = async () => {
     const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
     container.scrollTop = Math.max(0, Math.min(nextTop, maxTop));
     updateMessageScrollState();
+    scheduleMessageVirtualMeasure();
   });
 };
 
@@ -6097,8 +6478,10 @@ watch(
     const panelHint = String(route.query.panel || '').trim().toLowerCase();
     if (route.path.includes('/profile')) {
       settingsPanelMode.value = 'profile';
-    } else if (desktopMode.value && panelHint === 'desktop') {
-      settingsPanelMode.value = 'desktop';
+    } else if (desktopMode.value && (panelHint === 'desktop-models' || panelHint === 'desktop')) {
+      settingsPanelMode.value = 'desktop-models';
+    } else if (desktopMode.value && panelHint === 'desktop-remote') {
+      settingsPanelMode.value = 'desktop-remote';
     } else {
       settingsPanelMode.value = 'general';
     }
@@ -6303,23 +6686,21 @@ watch(
 );
 
 watch(
-  () => desktopToolCallMode.value,
-  (value) => {
-    if (!desktopMode.value) return;
-    setDesktopToolCallMode(value);
-  }
-);
-
-watch(
   () => showChatSettingsView.value,
   () => {
     updateMessageScrollState();
+    scheduleMessageVirtualMeasure();
   }
 );
 
 watch(
   () => [chatStore.messages.length, userWorldStore.activeMessages.length, sessionHub.activeConversationKey],
   () => {
+    pruneMessageVirtualHeightCache();
+    void nextTick(() => {
+      syncMessageVirtualMetrics();
+      scheduleMessageVirtualMeasure();
+    });
     scheduleWorkspaceResourceHydration();
     if (
       pendingAssistantCenter &&
@@ -6349,6 +6730,7 @@ watch(
   () => chatStore.messages[chatStore.messages.length - 1]?.content,
   () => {
     scheduleWorkspaceResourceHydration();
+    scheduleMessageVirtualMeasure();
   }
 );
 
@@ -6356,6 +6738,18 @@ watch(
   () => userWorldStore.activeMessages[userWorldStore.activeMessages.length - 1]?.content,
   () => {
     scheduleWorkspaceResourceHydration();
+    scheduleMessageVirtualMeasure();
+  }
+);
+
+watch(
+  () => [agentRenderableMessages.value.length, worldRenderableMessages.value.length],
+  () => {
+    pruneMessageVirtualHeightCache();
+    void nextTick(() => {
+      syncMessageVirtualMetrics();
+      scheduleMessageVirtualMeasure();
+    });
   }
 );
 
@@ -6393,6 +6787,8 @@ onMounted(async () => {
       viewportWidth.value = window.innerWidth;
       closeFileContainerMenu();
       syncContactVirtualMetrics();
+      syncMessageVirtualMetrics();
+      scheduleMessageVirtualMeasure();
     };
     viewportResizeHandler();
     window.addEventListener('resize', viewportResizeHandler);
@@ -6410,6 +6806,8 @@ onMounted(async () => {
   applyUiFontSize(uiFontSize.value);
   await bootstrap();
   updateMessageScrollState();
+  syncMessageVirtualMetrics();
+  scheduleMessageVirtualMeasure();
   scheduleWorkspaceResourceHydration();
   lifecycleTimer = window.setInterval(() => {
     fileLifecycleNowTick.value = Date.now();
@@ -6444,6 +6842,10 @@ onBeforeUnmount(() => {
     window.cancelAnimationFrame(messageScrollFrame);
     messageScrollFrame = null;
   }
+  if (typeof window !== 'undefined' && messageVirtualMeasureFrame !== null) {
+    window.cancelAnimationFrame(messageVirtualMeasureFrame);
+    messageVirtualMeasureFrame = null;
+  }
   if (typeof window !== 'undefined' && contactVirtualFrame !== null) {
     window.cancelAnimationFrame(contactVirtualFrame);
     contactVirtualFrame = null;
@@ -6461,6 +6863,7 @@ onBeforeUnmount(() => {
     timelinePrefetchTimer = null;
   }
   markdownCache.clear();
+  messageVirtualHeightCache.clear();
   clearWorkspaceResourceCache();
   timelinePreviewMap.value.clear();
   timelinePreviewLoadingSet.value.clear();

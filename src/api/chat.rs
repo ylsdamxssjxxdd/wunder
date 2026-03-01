@@ -670,24 +670,38 @@ pub(crate) async fn build_chat_request(
     };
 
     let tool_call_mode = normalize_tool_call_mode(tool_call_mode.as_deref())?;
-    let config_overrides = if let Some(mode) = tool_call_mode {
+    let agent_approval_mode = agent_record
+        .as_ref()
+        .map(|record| normalize_agent_approval_mode(Some(record.approval_mode.as_str())));
+    let mut config_override_map = serde_json::Map::new();
+    if let Some(mode) = tool_call_mode {
         let config = state.config_store.get().await;
         let selected_model = config.llm.default.trim().to_string();
-        if selected_model.is_empty() {
-            None
-        } else {
-            Some(json!({
-                "llm": {
+        if !selected_model.is_empty() {
+            config_override_map.insert(
+                "llm".to_string(),
+                json!({
                     "models": {
                         selected_model: {
                             "tool_call_mode": mode
                         }
                     }
-                }
-            }))
+                }),
+            );
         }
-    } else {
+    }
+    if let Some(mode) = agent_approval_mode {
+        config_override_map.insert(
+            "security".to_string(),
+            json!({
+                "approval_mode": mode
+            }),
+        );
+    }
+    let config_overrides = if config_override_map.is_empty() {
         None
+    } else {
+        Some(Value::Object(config_override_map))
     };
 
     Ok(WunderRequest {
@@ -722,6 +736,16 @@ fn normalize_tool_call_mode(raw: Option<&str>) -> Result<Option<String>, Respons
         StatusCode::BAD_REQUEST,
         "invalid tool_call_mode, expected tool_call or function_call".to_string(),
     ))
+}
+
+fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
+    let cleaned = raw.unwrap_or("").trim().to_ascii_lowercase();
+    match cleaned.as_str() {
+        "suggest" => "suggest".to_string(),
+        "auto_edit" | "auto-edit" => "auto_edit".to_string(),
+        "full_auto" | "full-auto" => "full_auto".to_string(),
+        _ => "auto_edit".to_string(),
+    }
 }
 
 async fn resume_session(

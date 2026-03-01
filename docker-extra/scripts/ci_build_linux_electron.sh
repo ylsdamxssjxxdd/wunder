@@ -9,10 +9,10 @@ CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target/ci-linux-${ARCH}}"
 
 case "${ARCH}" in
   x64)
-    BUILD_SCRIPT="build:linux:x64"
+    BUILD_ARCH_ARG="--x64"
     ;;
   arm64)
-    BUILD_SCRIPT="build:linux:arm64"
+    BUILD_ARCH_ARG="--arm64"
     ;;
   *)
     echo "Unsupported ARCH: ${ARCH}" >&2
@@ -48,7 +48,8 @@ fi
 echo "Building Electron AppImage (${ARCH})..."
 pushd "${ROOT_DIR}/wunder-desktop-electron" >/dev/null
 npm ci
-WUNDER_BRIDGE_BIN="${BRIDGE_BIN}" npm run "${BUILD_SCRIPT}" -- --publish never --config.directories.output="${OUTPUT_DIR}"
+WUNDER_BRIDGE_BIN="${BRIDGE_BIN}" npm run prepare:resources
+npx electron-builder --linux "${BUILD_ARCH_ARG}" --publish=never --config.directories.output="${OUTPUT_DIR}"
 popd >/dev/null
 
 echo "Linux Electron build completed. Output: ${OUTPUT_DIR}"

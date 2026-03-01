@@ -4051,9 +4051,7 @@ async fn admin_user_accounts_seed(
         for _ in 0..per_unit {
             let username = loop {
                 let candidate = format!("{DEFAULT_TEST_USER_PREFIX}_{next_seed_serial}");
-                if next_seed_serial < u64::MAX {
-                    next_seed_serial += 1;
-                }
+                next_seed_serial = next_seed_serial.saturating_add(1);
                 if existing_test_user_ids.insert(candidate.clone()) {
                     break candidate;
                 }

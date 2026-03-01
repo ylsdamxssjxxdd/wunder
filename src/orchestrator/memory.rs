@@ -282,11 +282,10 @@ impl Orchestrator {
         if is_admin && !force {
             return Ok(messages);
         }
-        let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) else {
+        let context_tokens = estimate_messages_tokens(&messages);
+        let Some(limit) = resolve_compaction_limit(llm_config, context_tokens, force) else {
             return Ok(messages);
         };
-
-        let context_tokens = estimate_messages_tokens(&messages);
         let max_context = llm_config.max_context.unwrap_or(0) as i64;
         let mut ratio = llm_config
             .history_compaction_ratio
@@ -1637,6 +1636,24 @@ fn should_compact_by_context(
     )
 }
 
+fn resolve_compaction_limit(
+    llm_config: &LlmModelConfig,
+    context_tokens: i64,
+    force: bool,
+) -> Option<i64> {
+    if let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) {
+        return Some(limit.max(1));
+    }
+    if !force {
+        return None;
+    }
+    let adaptive_limit = (context_tokens / 4).max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+    Some(adaptive_limit.clamp(
+        COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS,
+        COMPACTION_FORCE_FALLBACK_LIMIT,
+    ))
+}
+
 fn is_image_attachment(attachment: &AttachmentPayload, content: &str) -> bool {
     let content_type = attachment
         .content_type
@@ -1677,6 +1694,11 @@ fn data_url_regex() -> Option<&'static Regex> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    fn llm_config(value: Value) -> LlmModelConfig {
+        serde_json::from_value(value).expect("parse llm model config")
+    }
 
     #[test]
     fn test_should_compact_by_context_threshold() {
@@ -1697,5 +1719,29 @@ mod tests {
         let (by_history, should_compact) = should_compact_by_context(50, 100, Some(80));
         assert!(!by_history);
         assert!(!should_compact);
+    }
+
+    #[test]
+    fn test_resolve_compaction_limit_uses_configured_limit() {
+        let cfg = llm_config(json!({
+            "max_context": 8000,
+            "max_output": 512
+        }));
+        let limit = resolve_compaction_limit(&cfg, 32000, false).unwrap_or_default();
+        assert!(limit > 0);
+    }
+
+    #[test]
+    fn test_resolve_compaction_limit_skips_without_force_when_unknown() {
+        let cfg = llm_config(json!({}));
+        assert!(resolve_compaction_limit(&cfg, 32000, false).is_none());
+    }
+
+    #[test]
+    fn test_resolve_compaction_limit_uses_force_fallback_when_unknown() {
+        let cfg = llm_config(json!({}));
+        let limit = resolve_compaction_limit(&cfg, 48000, true).unwrap_or_default();
+        assert!(limit >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+        assert!(limit <= COMPACTION_FORCE_FALLBACK_LIMIT);
     }
 }

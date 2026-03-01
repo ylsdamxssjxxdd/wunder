@@ -61,7 +61,8 @@ jobs:
           Push-Location (Join-Path $env:GITHUB_WORKSPACE "wunder-desktop-electron")
           npm ci
           $env:WUNDER_BRIDGE_BIN = $bridge
-          npm run build -- --win --x64 --publish never --config.directories.output="$outDir"
+          npm run prepare:resources
+          npx electron-builder --win --x64 --publish=never --config.directories.output="$outDir"
           Pop-Location
 
       - name: Rename Windows artifacts
@@ -125,9 +126,9 @@ jobs:
           mkdir -p "$out_dir"
           cd "$GITHUB_WORKSPACE/wunder-desktop-electron"
           npm ci
+          WUNDER_BRIDGE_BIN="$bridge" npm run prepare:resources
           CSC_IDENTITY_AUTO_DISCOVERY=false \
-          WUNDER_BRIDGE_BIN="$bridge" \
-            npm run build -- --mac --x64 --arm64 --publish never --config.directories.output="$out_dir"
+            npx electron-builder --mac --x64 --arm64 --publish=never --config.directories.output="$out_dir"
 
       - name: Rename macOS artifacts
         shell: bash
@@ -173,8 +174,8 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: docker-extra
-          file: Dockerfile.ubuntu20-x86
+          context: .
+          file: docker-extra/Dockerfile.ubuntu20-x86
           platforms: linux/amd64
           tags: wunder-x86-20-ci:latest
           load: true
@@ -229,8 +230,8 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: docker-extra
-          file: Dockerfile.ubuntu20-arm
+          context: .
+          file: docker-extra/Dockerfile.ubuntu20-arm
           platforms: linux/arm64
           tags: wunder-arm-20-ci:latest
           load: true

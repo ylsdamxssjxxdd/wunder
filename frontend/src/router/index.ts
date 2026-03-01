@@ -139,7 +139,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'workspace', name: 'desktop-workspace', component: MessengerView },
       { path: 'settings', name: 'desktop-settings', component: MessengerView },
       { path: 'containers', redirect: '/desktop/files?section=files&panel=containers' },
-      { path: 'system', redirect: '/desktop/settings?section=more&panel=desktop' },
+      { path: 'system', redirect: '/desktop/settings?section=more&panel=desktop-models' },
       { path: 'profile', name: 'desktop-profile', component: MessengerView }
     ]
   },

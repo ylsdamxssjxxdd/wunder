@@ -752,6 +752,24 @@ impl MonitorState {
                     } else if event_type == "question_panel" {
                         record.stage = "question_panel".to_string();
                         record.summary = i18n::t("monitor.summary.question_panel");
+                    } else if event_type == "approval_request" {
+                        record.stage = "approval_pending".to_string();
+                        record.summary = data
+                            .get("summary")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| i18n::t("monitor.summary.question_panel"));
+                    } else if event_type == "approval_result" {
+                        record.stage = "approval_result".to_string();
+                        record.summary = data
+                            .get("summary")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string)
+                            .unwrap_or_else(|| i18n::t("monitor.summary.model_call"));
                     } else if event_type == "llm_request" {
                         record.stage = "llm_request".to_string();
                         record.summary = i18n::t("monitor.summary.model_call");
@@ -787,6 +805,14 @@ impl MonitorState {
             Self::STATUS_WAITING,
             Some(&i18n::t("monitor.summary.question_panel")),
         );
+    }
+
+    pub fn mark_approval_pending(&self, session_id: &str, summary: Option<&str>) {
+        self.mark_status(session_id, Self::STATUS_WAITING, summary);
+    }
+
+    pub fn mark_running(&self, session_id: &str, summary: Option<&str>) {
+        self.mark_status(session_id, Self::STATUS_RUNNING, summary);
     }
 
     pub fn mark_error(&self, session_id: &str, message: &str) {
@@ -1730,7 +1756,10 @@ impl MonitorState {
                     };
                     record.status = status.to_string();
                     record.updated_time = now;
-                    record.ended_time = if status == Self::STATUS_WAITING {
+                    record.ended_time = if status == Self::STATUS_WAITING
+                        || status == Self::STATUS_RUNNING
+                        || status == Self::STATUS_CANCELLING
+                    {
                         None
                     } else {
                         Some(now)
@@ -1741,6 +1770,12 @@ impl MonitorState {
                             record.summary = summary
                                 .map(str::to_string)
                                 .unwrap_or_else(|| i18n::t("monitor.summary.finished"));
+                        }
+                        Self::STATUS_RUNNING => {
+                            record.stage = "running".to_string();
+                            if let Some(summary) = summary {
+                                record.summary = summary.to_string();
+                            }
                         }
                         Self::STATUS_WAITING => {
                             record.stage = "question_panel".to_string();

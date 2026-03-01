@@ -32,6 +32,10 @@ impl OrchestratorError {
         Self::new("LLM_UNAVAILABLE", message, None)
     }
 
+    pub(super) fn context_window_exceeded(message: String) -> Self {
+        Self::new("CONTEXT_WINDOW_EXCEEDED", message, None)
+    }
+
     pub(super) fn internal(message: String) -> Self {
         Self::new("INTERNAL_ERROR", message, None)
     }

@@ -33,6 +33,12 @@ pygments
 pillow
 psutil
 sqlalchemy
+orjson
+jsonschema
+tabulate
+python-dateutil
+rapidfuzz
+Unidecode
 
 # ML / Data / Visualization
 scikit-learn
@@ -58,3 +64,4 @@ pypdf
 fpdf2
 odfpy
 msoffcrypto-tool
+docxtpl

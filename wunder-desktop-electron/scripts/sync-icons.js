@@ -11,6 +11,7 @@ const sourceIco = process.env.WUNDER_ICON_ICO
 const sourceSvg = process.env.WUNDER_ICON_SVG
   ? path.resolve(process.env.WUNDER_ICON_SVG)
   : path.join(repoRoot, 'images', 'eva01-head.svg')
+const minPngSize = 512
 
 const pngTargets = [path.join(repoRoot, 'wunder-desktop-electron', 'build', 'icon.png')]
 const icoTargets = [
@@ -45,11 +46,20 @@ const writeFromIco = async () => {
   const largest = parsed
     .slice()
     .sort((left, right) => right.width * right.height - left.width * left.height)[0]
-  const largestPng = Buffer.from(largest.buffer)
+  let pngBuffer = Buffer.from(largest.buffer)
+  let pngSource = sourceIco
+  if ((largest.width < minPngSize || largest.height < minPngSize) && fs.existsSync(sourceSvg)) {
+    const svgBuffer = fs.readFileSync(sourceSvg)
+    pngBuffer = renderPng(svgBuffer, 1024)
+    pngSource = sourceSvg
+    console.log(
+      `[sync-icons] ${sourceIco} max size is ${largest.width}x${largest.height}, use ${sourceSvg} for icon.png`
+    )
+  }
 
   for (const target of pngTargets) {
     ensureDir(target)
-    fs.writeFileSync(target, largestPng)
+    fs.writeFileSync(target, pngBuffer)
   }
 
   const icoBuffer = fs.readFileSync(sourceIco)
@@ -59,7 +69,7 @@ const writeFromIco = async () => {
   }
 
   console.log(
-    `[sync-icons] synced from ${sourceIco} -> ${pngTargets.length} png target(s), ${icoTargets.length} ico target(s)`
+    `[sync-icons] synced png from ${pngSource} and ico from ${sourceIco} -> ${pngTargets.length} png target(s), ${icoTargets.length} ico target(s)`
   )
   return true
 }

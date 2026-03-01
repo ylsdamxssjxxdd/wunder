@@ -1041,7 +1041,7 @@ const handleOpenSystemSettings = () => {
   if (!desktopMode.value) {
     return;
   }
-  router.push('/desktop/settings?section=more&panel=desktop');
+  router.push('/desktop/settings?section=more&panel=desktop-models');
 };
 
 const closeFeatureMenu = () => {

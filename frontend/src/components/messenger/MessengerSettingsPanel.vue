@@ -78,64 +78,6 @@
       </section>
     </template>
 
-    <template v-else-if="mode === 'desktop'">
-      <section class="messenger-settings-card">
-        <div class="messenger-settings-title">{{ t('desktop.settings.title') }}</div>
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('desktop.settings.toolCallMode') }}</div>
-            <div class="messenger-settings-hint">{{ t('desktop.settings.toolCallHint') }}</div>
-          </div>
-          <select
-            :value="desktopToolCallMode"
-            class="messenger-settings-select"
-            @change="handleDesktopToolCallModeChange"
-          >
-            <option value="tool_call">tool_call</option>
-            <option value="function_call">function_call</option>
-          </select>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('desktop.settings.tools') }}</div>
-            <div class="messenger-settings-hint">{{ t('desktop.settings.toolsHint') }}</div>
-          </div>
-          <button class="messenger-settings-action" type="button" @click="$emit('open-tools')">
-            {{ t('desktop.settings.openTools') }}
-          </button>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('desktop.settings.update') }}</div>
-            <div class="messenger-settings-hint">{{ t('desktop.settings.updateHint') }}</div>
-          </div>
-          <button
-            class="messenger-settings-action"
-            type="button"
-            :disabled="!updateAvailable"
-            @click="$emit('check-update')"
-          >
-            {{ t('desktop.settings.checkUpdate') }}
-          </button>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('desktop.settings.devtools') }}</div>
-            <div class="messenger-settings-hint">{{ t('desktop.settings.devtoolsHint') }}</div>
-          </div>
-          <button
-            class="messenger-settings-action"
-            type="button"
-            :disabled="!devtoolsAvailable"
-            @click="$emit('toggle-devtools')"
-          >
-            {{ t('desktop.settings.openDevtools') }}
-          </button>
-        </div>
-      </section>
-      <DesktopSystemSettingsPanel />
-    </template>
-
     <template v-else>
       <section class="messenger-settings-card">
         <div class="messenger-settings-head">
@@ -227,7 +169,6 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
-import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSettingsPanel.vue';
 
 type SendKeyMode = 'enter' | 'ctrl_enter';
 type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
@@ -235,7 +176,7 @@ type PerformanceMode = 'high' | 'low';
 
 const props = withDefaults(
   defineProps<{
-    mode?: 'general' | 'profile' | 'desktop';
+    mode?: 'general' | 'profile';
     username?: string;
     userId?: string;
     languageLabel?: string;
@@ -243,7 +184,6 @@ const props = withDefaults(
     themePalette?: ThemePalette;
     performanceMode?: PerformanceMode;
     uiFontSize?: number;
-    desktopToolCallMode?: 'tool_call' | 'function_call';
     devtoolsAvailable?: boolean;
     updateAvailable?: boolean;
   }>(),
@@ -256,7 +196,6 @@ const props = withDefaults(
     themePalette: 'eva-orange',
     performanceMode: 'high',
     uiFontSize: 14,
-    desktopToolCallMode: 'tool_call',
     devtoolsAvailable: false,
     updateAvailable: false
   }
@@ -265,11 +204,9 @@ const props = withDefaults(
 const emit = defineEmits<{
   (event: 'toggle-language'): void;
   (event: 'check-update'): void;
-  (event: 'open-tools'): void;
   (event: 'toggle-devtools'): void;
   (event: 'logout'): void;
   (event: 'update:send-key', value: SendKeyMode): void;
-  (event: 'update:desktop-tool-call-mode', value: 'tool_call' | 'function_call'): void;
   (event: 'update:theme-palette', value: ThemePalette): void;
   (event: 'update:performance-mode', value: PerformanceMode): void;
   (event: 'update:ui-font-size', value: number): void;
@@ -529,8 +466,4 @@ const formatK = (value: number | null): string => {
   return `${((value as number) / 1000).toFixed(1)}k`;
 };
 
-const handleDesktopToolCallModeChange = (event: Event) => {
-  const value = String((event.target as HTMLSelectElement)?.value || '').trim().toLowerCase();
-  emit('update:desktop-tool-call-mode', value === 'function_call' ? 'function_call' : 'tool_call');
-};
 </script>
