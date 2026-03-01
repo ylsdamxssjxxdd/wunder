@@ -383,6 +383,40 @@
   overflow: hidden;
 }
 
+.messenger-middle-footer {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--hula-border);
+  background: var(--hula-center-bg);
+}
+
+.messenger-middle-logout-btn {
+  width: 100%;
+  height: 40px;
+  border: 1px solid rgba(213, 90, 108, 0.4);
+  border-radius: 10px;
+  background: #fff3f5;
+  color: #c14053;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, transform 0.15s ease;
+}
+
+.messenger-middle-logout-btn:hover {
+  border-color: rgba(193, 64, 83, 0.55);
+  background: #ffe8ec;
+  transform: translateY(var(--messenger-hover-lift));
+}
+
+.messenger-middle-logout-btn:focus-visible {
+  outline: 2px solid rgba(193, 64, 83, 0.25);
+  outline-offset: 1px;
+}
+
 .messenger-users-pane {
   min-height: 0;
   height: 100%;
@@ -1326,8 +1360,13 @@
 }
 
 .messenger-world-tool-fa-icon {
+  width: 15px;
+  height: 15px;
   font-size: 15px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .messenger-world-tool-btn:hover:not(:disabled),
@@ -1465,10 +1504,11 @@
 .messenger-world-input {
   width: 100%;
   flex: 1;
-  min-height: 68px;
+  min-height: 0;
   max-height: none;
   border: 0;
   background: transparent;
+  appearance: none;
   resize: none;
   overflow-y: auto;
   color: #2f2f2f;
@@ -1479,11 +1519,25 @@
   margin: 0;
 }
 
+.messenger-world-input:focus,
+.messenger-world-input:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.messenger-world-input::placeholder {
+  color: #9a9a9a;
+}
+
 .messenger-world-footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .messenger-world-send-group {
@@ -2063,27 +2117,33 @@
 }
 
 .messenger-inline-btn {
-  height: 32px;
-  border: 1px solid #d8d8d8;
-  border-radius: 8px;
-  background: #f8f8f8;
-  color: #4a4a4a;
+  height: 30px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #4b5563;
   cursor: pointer;
-  padding: 0 10px;
+  padding: 0 12px;
   font-size: 12px;
-  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+  font-weight: 500;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
 }
 
 .messenger-inline-btn:hover {
-  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  border-color: rgba(var(--ui-accent-rgb), 0.36);
   color: var(--ui-accent-deep);
-  background: var(--ui-accent-soft-2);
+  background: #ffffff;
+  transform: translateY(-1px);
 }
 
 .messenger-inline-btn.active,
 .messenger-inline-btn.primary {
-  border-color: rgba(var(--ui-accent-rgb), 0.4);
-  background: var(--ui-accent-soft-4);
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+  background: var(--ui-accent-soft-2);
   color: var(--ui-accent-deep);
 }
 
@@ -4477,9 +4537,49 @@
 .messenger-form .el-input__wrapper,
 .messenger-form .el-textarea__inner,
 .messenger-form .el-select__wrapper {
-  background: #ffffff;
-  box-shadow: 0 0 0 1px #dddddd inset;
-  color: #202020;
+  background: var(--portal-surface, #ffffff);
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px var(--portal-border, #dfe3ea) inset;
+  color: var(--portal-text, #202020);
+  transition: box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.messenger-form .el-input__wrapper:hover,
+.messenger-form .el-select__wrapper:hover,
+.messenger-form .el-input__wrapper.is-focus,
+.messenger-form .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.4) inset;
+}
+
+.el-select__popper.el-popper {
+  border: 1px solid var(--portal-border, #dfe3ea);
+  border-radius: 12px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.15);
+  padding: 6px;
+}
+
+.el-select__popper.el-popper .el-select-dropdown {
+  padding: 0;
+}
+
+.el-select__popper.el-popper .el-select-dropdown__item {
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  height: 34px;
+  line-height: 34px;
+  color: var(--portal-text, #202020);
+}
+
+.el-select__popper.el-popper .el-select-dropdown__item.hover,
+.el-select__popper.el-popper .el-select-dropdown__item:hover {
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
+}
+
+.el-select__popper.el-popper .el-select-dropdown__item.is-selected {
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
 }
 
 .messenger-view .chat-shell .plan-panel,

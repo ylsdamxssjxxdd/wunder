@@ -152,13 +152,6 @@
             <input v-model.number="fontSize" class="messenger-settings-range" type="range" min="12" max="20" />
           </div>
         </div>
-        <div class="messenger-settings-row">
-          <div class="messenger-settings-label">{{ t('nav.logout') }}</div>
-          <button class="messenger-settings-action danger" type="button" @click="$emit('logout')">
-            <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
-            <span>{{ t('nav.logout') }}</span>
-          </button>
-        </div>
       </section>
     </template>
   </div>

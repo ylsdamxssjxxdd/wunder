@@ -23,7 +23,7 @@ enum TerminalTool {
 const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 8;
 const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
 const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = DEFAULT_NON_ADMIN_MAX_ROUNDS;
-const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 2;
+const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 4;
 
 impl Orchestrator {
     pub(super) async fn execute_request(
@@ -370,11 +370,12 @@ impl Orchestrator {
                     }
                 };
                 if !user_message_appended {
+                    let user_content = resolve_user_content_for_persist(&messages, &user_message);
                     self.append_chat(
                         &user_id,
                         &session_id,
                         "user",
-                        user_message.get("content"),
+                        user_content.as_ref(),
                         None,
                         None,
                         None,
@@ -1201,6 +1202,21 @@ fn should_recover_from_context_overflow(err: &OrchestratorError) -> bool {
         || super::llm::is_context_window_error_text(err.message())
 }
 
+fn resolve_user_content_for_persist(
+    messages: &[Value],
+    fallback_user_message: &Value,
+) -> Option<Value> {
+    if let Some(index) = Orchestrator::locate_current_user_index(messages) {
+        if let Some(content) = messages
+            .get(index)
+            .and_then(|message| message.get("content"))
+        {
+            return Some(content.clone());
+        }
+    }
+    fallback_user_message.get("content").cloned()
+}
+
 fn resolve_empty_answer_fallback(reached_max_rounds: bool) -> (String, &'static str) {
     if reached_max_rounds {
         return (i18n::t("error.max_rounds_no_final_answer"), "max_rounds");
@@ -1297,5 +1313,28 @@ mod tests {
     fn skip_context_overflow_recovery_for_other_errors() {
         let err = OrchestratorError::internal("LLM call failed: invalid api key".to_string());
         assert!(!should_recover_from_context_overflow(&err));
+    }
+
+    #[test]
+    fn resolve_user_content_for_persist_prefers_trimmed_message_in_context() {
+        let messages = vec![
+            json!({ "role": "system", "content": "system" }),
+            json!({ "role": "user", "content": "trimmed question ...(truncated)" }),
+        ];
+        let fallback = json!({ "role": "user", "content": "raw giant question" });
+        let content = resolve_user_content_for_persist(&messages, &fallback)
+            .and_then(|value| value.as_str().map(ToString::to_string))
+            .unwrap_or_default();
+        assert_eq!(content, "trimmed question ...(truncated)");
+    }
+
+    #[test]
+    fn resolve_user_content_for_persist_falls_back_to_original_message() {
+        let messages = vec![json!({ "role": "assistant", "content": "done" })];
+        let fallback = json!({ "role": "user", "content": "raw question" });
+        let content = resolve_user_content_for_persist(&messages, &fallback)
+            .and_then(|value| value.as_str().map(ToString::to_string))
+            .unwrap_or_default();
+        assert_eq!(content, "raw question");
     }
 }

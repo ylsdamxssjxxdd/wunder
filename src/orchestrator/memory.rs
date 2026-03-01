@@ -70,6 +70,21 @@ impl PartialEq for MemoryQueueItem {
 
 impl Eq for MemoryQueueItem {}
 
+#[derive(Debug, Default)]
+struct RebuiltContextGuardStats {
+    applied: bool,
+    tokens_before: i64,
+    tokens_after: i64,
+    current_user_trimmed: bool,
+    current_user_tokens_before: i64,
+    current_user_tokens_after: i64,
+    summary_trimmed: bool,
+    summary_tokens_before: i64,
+    summary_tokens_after: i64,
+    summary_removed: bool,
+    fallback_trim_applied: bool,
+}
+
 impl MemoryQueue {
     pub(super) fn new() -> Self {
         Self {
@@ -640,12 +655,22 @@ impl Orchestrator {
             None,
         );
 
+        let mut current_user_message_for_history_trimmed = false;
+        let current_user_message_for_history = current_user_message.as_ref().map(|message| {
+            if let Some(trimmed) = trim_message_to_fit_tokens(message, limit) {
+                current_user_message_for_history_trimmed = true;
+                trimmed
+            } else {
+                message.clone()
+            }
+        });
+
         if skipped_question {
             let should_reappend = compacted_until_ts.is_none()
                 || current_question_ts.is_none()
                 || current_question_ts <= compacted_until_ts;
             if should_reappend {
-                if let Some(current_user_message) = current_user_message.as_ref() {
+                if let Some(current_user_message) = current_user_message_for_history.as_ref() {
                     if let Some(content) = current_user_message.get("content") {
                         self.append_chat(
                             user_id,
@@ -679,13 +704,32 @@ impl Orchestrator {
             rebuilt.push(system_message);
         }
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
-        if let Some(current_user_message) = current_user_message {
+        if let Some(current_user_message) = current_user_message_for_history {
             rebuilt.push(current_user_message);
         } else if !question_text.is_empty() {
             rebuilt.push(json!({ "role": "user", "content": question_text }));
         }
-        let rebuilt = self.shrink_messages_to_limit(rebuilt, limit);
+        let mut rebuilt = self.shrink_messages_to_limit(rebuilt, limit);
+        let guard_stats = apply_rebuilt_context_guard(&mut rebuilt, limit);
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
+
+        if guard_stats.applied {
+            let mut guard_payload = json!({
+                "stage": "context_guard",
+                "summary": "Context guard trimmed oversized compaction payload.",
+                "tokens_before": guard_stats.tokens_before,
+                "tokens_after": guard_stats.tokens_after,
+                "current_user_replay_trimmed": current_user_message_for_history_trimmed,
+                "current_user_trimmed": guard_stats.current_user_trimmed,
+                "summary_trimmed": guard_stats.summary_trimmed,
+                "summary_removed": guard_stats.summary_removed,
+                "fallback_trim_applied": guard_stats.fallback_trim_applied,
+            });
+            if let Value::Object(ref mut map) = guard_payload {
+                compaction_round.insert_into(map);
+            }
+            emitter.emit("progress", guard_payload).await;
+        }
 
         let mut compaction_payload = json!({
             "reason": if should_compact_by_history { "history" } else { "overflow" },
@@ -700,6 +744,18 @@ impl Orchestrator {
             "history_threshold": history_threshold,
             "limit": limit,
             "reset_mode": reset_mode,
+            "context_guard_applied": guard_stats.applied,
+            "context_guard_tokens_before": guard_stats.tokens_before,
+            "context_guard_tokens_after": guard_stats.tokens_after,
+            "context_guard_current_user_replay_trimmed": current_user_message_for_history_trimmed,
+            "context_guard_current_user_trimmed": guard_stats.current_user_trimmed,
+            "context_guard_current_user_tokens_before": guard_stats.current_user_tokens_before,
+            "context_guard_current_user_tokens_after": guard_stats.current_user_tokens_after,
+            "context_guard_summary_trimmed": guard_stats.summary_trimmed,
+            "context_guard_summary_tokens_before": guard_stats.summary_tokens_before,
+            "context_guard_summary_tokens_after": guard_stats.summary_tokens_after,
+            "context_guard_summary_removed": guard_stats.summary_removed,
+            "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
         });
         if let Value::Object(ref mut map) = compaction_payload {
             compaction_round.insert_into(map);
@@ -1621,6 +1677,192 @@ impl Orchestrator {
     }
 }
 
+fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> RebuiltContextGuardStats {
+    let mut stats = RebuiltContextGuardStats {
+        tokens_before: estimate_messages_tokens(messages),
+        ..Default::default()
+    };
+    if limit <= 0 || stats.tokens_before <= limit || messages.is_empty() {
+        stats.tokens_after = stats.tokens_before;
+        return stats;
+    }
+
+    stats.applied = true;
+
+    let summary_index = messages
+        .iter()
+        .position(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+    let current_user_index = messages
+        .iter()
+        .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+    if let (Some(summary_index), Some(current_user_index)) = (summary_index, current_user_index) {
+        if current_user_index != summary_index {
+            stats.current_user_tokens_before =
+                estimate_message_tokens(&messages[current_user_index]);
+            let remaining_for_current =
+                (limit - (stats.tokens_before - stats.current_user_tokens_before)).max(1);
+            if let Some(trimmed) =
+                trim_message_to_fit_tokens(&messages[current_user_index], remaining_for_current)
+            {
+                stats.current_user_tokens_after = estimate_message_tokens(&trimmed);
+                stats.current_user_trimmed =
+                    stats.current_user_tokens_after < stats.current_user_tokens_before;
+                messages[current_user_index] = trimmed;
+            } else {
+                stats.current_user_tokens_after = stats.current_user_tokens_before;
+            }
+        }
+    }
+
+    let mut total_tokens = estimate_messages_tokens(messages);
+
+    if total_tokens > limit {
+        if let Some(summary_index) = messages
+            .iter()
+            .position(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        {
+            stats.summary_tokens_before = estimate_message_tokens(&messages[summary_index]);
+            let remaining_for_summary =
+                (limit - (total_tokens - stats.summary_tokens_before)).max(1);
+            if let Some(trimmed) =
+                trim_message_to_fit_tokens(&messages[summary_index], remaining_for_summary)
+            {
+                stats.summary_tokens_after = estimate_message_tokens(&trimmed);
+                stats.summary_trimmed = stats.summary_tokens_after < stats.summary_tokens_before;
+                messages[summary_index] = trimmed;
+            } else {
+                stats.summary_tokens_after = stats.summary_tokens_before;
+            }
+        }
+        total_tokens = estimate_messages_tokens(messages);
+    }
+
+    if total_tokens > limit {
+        let summary_index = messages
+            .iter()
+            .position(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let current_user_index = messages
+            .iter()
+            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        if let (Some(summary_index), Some(current_user_index)) = (summary_index, current_user_index)
+        {
+            if summary_index != current_user_index && summary_index < messages.len() {
+                messages.remove(summary_index);
+                stats.summary_removed = true;
+                total_tokens = estimate_messages_tokens(messages);
+            }
+        }
+    }
+
+    if total_tokens > limit {
+        if let Some(last_index) = messages.len().checked_sub(1) {
+            let last_tokens = estimate_message_tokens(&messages[last_index]);
+            let remaining_for_last = (limit - (total_tokens - last_tokens)).max(1);
+            if let Some(trimmed) =
+                trim_message_to_fit_tokens(&messages[last_index], remaining_for_last)
+            {
+                messages[last_index] = trimmed;
+                total_tokens = estimate_messages_tokens(messages);
+            }
+        }
+    }
+
+    if total_tokens > limit {
+        *messages = trim_messages_to_budget(messages, limit);
+        stats.fallback_trim_applied = true;
+        total_tokens = estimate_messages_tokens(messages);
+        if total_tokens > limit {
+            if let Some(last_index) = messages.len().checked_sub(1) {
+                if let Some(trimmed) =
+                    trim_message_to_fit_tokens(&messages[last_index], limit.max(1))
+                {
+                    *messages = vec![trimmed];
+                    total_tokens = estimate_messages_tokens(messages);
+                }
+            }
+        }
+    }
+
+    stats.tokens_after = total_tokens;
+    stats
+}
+
+fn trim_message_to_fit_tokens(message: &Value, max_tokens: i64) -> Option<Value> {
+    if max_tokens <= 0 || estimate_message_tokens(message) <= max_tokens {
+        return None;
+    }
+    let mut message_obj = message.as_object().cloned().unwrap_or_else(|| {
+        let mut fallback = serde_json::Map::new();
+        fallback.insert("role".to_string(), Value::String("user".to_string()));
+        fallback.insert("content".to_string(), message.clone());
+        fallback
+    });
+    let source = extract_guard_content_text(message_obj.get("content").unwrap_or(&Value::Null));
+    let source = if source.trim().is_empty() {
+        i18n::t("compaction.summary_fallback")
+    } else {
+        source
+    };
+    let mut target_tokens = max_tokens.max(1);
+    let mut trimmed_message: Option<Value> = None;
+    for _ in 0..4 {
+        let content = trim_text_to_tokens(&source, target_tokens, "...(truncated)");
+        message_obj.insert("content".to_string(), Value::String(content));
+        message_obj.remove("reasoning_content");
+        message_obj.remove("reasoning");
+        let candidate = Value::Object(message_obj.clone());
+        let cost = estimate_message_tokens(&candidate);
+        trimmed_message = Some(candidate.clone());
+        if cost <= max_tokens {
+            break;
+        }
+        let overflow = cost - max_tokens;
+        let next_target = (target_tokens - overflow).max(1);
+        if next_target == target_tokens {
+            break;
+        }
+        target_tokens = next_target;
+    }
+    trimmed_message
+}
+
+fn extract_guard_content_text(content: &Value) -> String {
+    match content {
+        Value::Null => String::new(),
+        Value::String(text) => strip_tool_calls(text).trim().to_string(),
+        Value::Array(parts) => {
+            let mut segments = Vec::new();
+            for part in parts {
+                let Some(obj) = part.as_object() else {
+                    continue;
+                };
+                let part_type = obj
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_lowercase();
+                if part_type == "text" {
+                    let text = obj.get("text").and_then(Value::as_str).unwrap_or("");
+                    let cleaned = strip_tool_calls(text).trim().to_string();
+                    if !cleaned.is_empty() {
+                        segments.push(cleaned);
+                    }
+                } else if part_type == "image_url" || obj.contains_key("image_url") {
+                    segments.push(i18n::t("memory.summary.image_placeholder"));
+                } else if let Some(text) = obj.get("text").and_then(Value::as_str) {
+                    let cleaned = strip_tool_calls(text).trim().to_string();
+                    if !cleaned.is_empty() {
+                        segments.push(cleaned);
+                    }
+                }
+            }
+            segments.join("\n").trim().to_string()
+        }
+        other => strip_tool_calls(&other.to_string()).trim().to_string(),
+    }
+}
+
 fn should_compact_by_context(
     context_tokens: i64,
     limit: i64,
@@ -1743,5 +1985,52 @@ mod tests {
         let limit = resolve_compaction_limit(&cfg, 48000, true).unwrap_or_default();
         assert!(limit >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
         assert!(limit <= COMPACTION_FORCE_FALLBACK_LIMIT);
+    }
+
+    #[test]
+    fn test_trim_message_to_fit_tokens_reduces_large_content() {
+        let message = json!({
+            "role": "user",
+            "content": "A".repeat(20_000),
+        });
+        let before = estimate_message_tokens(&message);
+        let target = (before / 8).max(32);
+        let trimmed = trim_message_to_fit_tokens(&message, target).expect("trimmed message");
+        let after = estimate_message_tokens(&trimmed);
+        assert!(after <= target);
+        assert!(after < before);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_trims_current_user_message() {
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "summary line" }),
+            json!({ "role": "user", "content": "B".repeat(24_000) }),
+        ];
+        let limit = 800;
+        let stats = apply_rebuilt_context_guard(&mut messages, limit);
+        assert!(stats.applied);
+        assert!(stats.current_user_trimmed || stats.fallback_trim_applied);
+        assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_handles_array_content() {
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "summary line" }),
+            json!({
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "C".repeat(12_000) },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,AAAA" } }
+                ]
+            }),
+        ];
+        let limit = 900;
+        let stats = apply_rebuilt_context_guard(&mut messages, limit);
+        assert!(stats.applied);
+        assert!(estimate_messages_tokens(&messages) <= limit);
     }
 }

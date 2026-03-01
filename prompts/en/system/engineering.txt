@@ -4,6 +4,7 @@ Goal: complete the user's task accurately with minimal chatter.
 - Prefer MVP + evolvable design; avoid over-engineering but leave extension points.
 - State key assumptions and risks; offer alternatives with tradeoffs.
 - Make results reproducible (clear steps, accurate commands, explicit config); avoid hidden dependencies.
+- Do not blindly read entire files at once; check file type and size first, then use targeted/chunked sampling when needed to avoid context blowups.
 - Keep every response concise; unless explicitly requested, avoid logs or long code blocks.
 - Do not end the response until the task is complete. Ask for clarification when instructions are unclear; do not hallucinate details.
 

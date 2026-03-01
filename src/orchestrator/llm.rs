@@ -506,20 +506,21 @@ pub(super) fn is_context_window_error_text(message: &str) -> bool {
         "context length",
         "context window",
         "maximum context",
+        "maximum context length",
         "max context",
+        "context size",
         "too many tokens",
         "prompt is too long",
         "input is too long",
+        "input token count",
+        "prompt token count",
         "maximum number of tokens",
         "requested tokens",
         "reduce the length",
         "exceeds the model's context window",
-        "上下文",
-        "超出上下文",
-        "超过上下文",
-        "token 超过",
-        "输入太长",
-        "prompt 太长",
+        "exceeds the available context size",
+        "this model's maximum context length is",
+        "requested tokens exceed",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
@@ -537,7 +538,12 @@ mod tests {
         assert!(is_context_window_error_text(
             "Prompt is too long and exceeds the model's context window."
         ));
-        assert!(is_context_window_error_text("输入太长，超过上下文限制"));
+        assert!(is_context_window_error_text(
+            "This model's maximum context length is 16384 tokens, but you requested 19000 tokens."
+        ));
+        assert!(is_context_window_error_text(
+            "input exceeds the available context size"
+        ));
     }
 
     #[test]

@@ -50,9 +50,9 @@
           ref="worldCommandAnchorRef"
           class="messenger-world-tool-anchor"
           :class="{ 'is-open': worldCommandPanelVisible }"
-          @mouseenter="openWorldCommandPanel"
-          @mouseleave="closeWorldCommandPanel"
-          @focusin="openWorldCommandPanel"
+          @mouseenter="handleWorldCommandAnchorMouseEnter"
+          @mouseleave="handleWorldCommandAnchorMouseLeave"
+          @focusin="handleWorldCommandAnchorFocusIn"
           @focusout="handleWorldCommandAnchorFocusOut"
         >
           <button
@@ -68,8 +68,8 @@
           <div
             v-if="worldCommandPanelVisible"
             class="chat-composer-command-panel"
-            @mouseenter="openWorldCommandPanel"
-            @mouseleave="closeWorldCommandPanel"
+            @mouseenter="handleWorldCommandPanelMouseEnter"
+            @mouseleave="handleWorldCommandPanelMouseLeave"
           >
             <button
               v-for="item in quickCommandItems"
@@ -247,10 +247,13 @@ const dragActive = ref(false);
 const dragCounter = ref(0);
 const worldCommandAnchorRef = ref<HTMLElement | null>(null);
 const worldCommandPanelVisible = ref(false);
+const worldCommandAnchorHovered = ref(false);
+const worldCommandPanelHovered = ref(false);
 const caretPosition = ref(0);
 const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
+let worldCommandPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
@@ -302,6 +305,7 @@ const DOC_EXTENSIONS = [
 const uploadAccept = ['image/*', ...DOC_EXTENSIONS].join(',');
 const INPUT_MAX_HEIGHT = 180;
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'messenger_agent_composer_height';
+const WORLD_COMMAND_PANEL_CLOSE_DELAY_MS = 160;
 const clampWorldComposerHeight = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 188;
@@ -456,7 +460,7 @@ const syncCaretPosition = () => {
 
 const handleInput = () => {
   if (worldCommandPanelVisible.value) {
-    worldCommandPanelVisible.value = false;
+    closeWorldCommandPanel();
   }
   commandMenuDismissed.value = false;
   resizeInput();
@@ -719,12 +723,59 @@ const startWorldComposerResize = (event: MouseEvent) => {
   window.addEventListener('mouseup', stopWorldComposerResize);
 };
 
+const clearWorldCommandPanelCloseTimer = () => {
+  if (worldCommandPanelCloseTimer) {
+    clearTimeout(worldCommandPanelCloseTimer);
+    worldCommandPanelCloseTimer = null;
+  }
+};
+
+const scheduleWorldCommandPanelClose = () => {
+  clearWorldCommandPanelCloseTimer();
+  worldCommandPanelCloseTimer = setTimeout(() => {
+    worldCommandPanelCloseTimer = null;
+    if (worldCommandAnchorHovered.value || worldCommandPanelHovered.value) {
+      return;
+    }
+    worldCommandPanelVisible.value = false;
+  }, WORLD_COMMAND_PANEL_CLOSE_DELAY_MS);
+};
+
 const openWorldCommandPanel = () => {
+  clearWorldCommandPanelCloseTimer();
   worldCommandPanelVisible.value = true;
 };
 
 const closeWorldCommandPanel = () => {
+  clearWorldCommandPanelCloseTimer();
+  worldCommandAnchorHovered.value = false;
+  worldCommandPanelHovered.value = false;
   worldCommandPanelVisible.value = false;
+};
+
+const handleWorldCommandAnchorMouseEnter = () => {
+  worldCommandAnchorHovered.value = true;
+  openWorldCommandPanel();
+};
+
+const handleWorldCommandAnchorMouseLeave = () => {
+  worldCommandAnchorHovered.value = false;
+  scheduleWorldCommandPanelClose();
+};
+
+const handleWorldCommandPanelMouseEnter = () => {
+  worldCommandPanelHovered.value = true;
+  openWorldCommandPanel();
+};
+
+const handleWorldCommandPanelMouseLeave = () => {
+  worldCommandPanelHovered.value = false;
+  scheduleWorldCommandPanelClose();
+};
+
+const handleWorldCommandAnchorFocusIn = () => {
+  worldCommandAnchorHovered.value = true;
+  openWorldCommandPanel();
 };
 
 const handleWorldCommandAnchorFocusOut = (event: FocusEvent) => {
@@ -733,11 +784,12 @@ const handleWorldCommandAnchorFocusOut = (event: FocusEvent) => {
   if (anchor && nextTarget && anchor.contains(nextTarget)) {
     return;
   }
-  closeWorldCommandPanel();
+  worldCommandAnchorHovered.value = false;
+  scheduleWorldCommandPanelClose();
 };
 
 const sendQuickCommand = async (command: string) => {
-  worldCommandPanelVisible.value = false;
+  closeWorldCommandPanel();
   if (!command) return;
   if (props.loading) {
     if (command === '/stop') {
@@ -793,7 +845,7 @@ const handleDocumentPointerDown = (event: PointerEvent) => {
   if (anchor && target && anchor.contains(target)) {
     return;
   }
-  worldCommandPanelVisible.value = false;
+  closeWorldCommandPanel();
 };
 
 onMounted(async () => {
@@ -812,6 +864,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   stopWorldComposerResize();
+  clearWorldCommandPanelCloseTimer();
   if (typeof document !== 'undefined') {
     document.removeEventListener('pointerdown', handleDocumentPointerDown);
   }

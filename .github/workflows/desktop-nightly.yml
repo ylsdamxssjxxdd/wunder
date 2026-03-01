@@ -170,6 +170,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .cargo/x86-20-ci/registry
+            .cargo/x86-20-ci/git
+            target/x86-20-ci
+            .npm-cache/linux-x64
+          key: ${{ runner.os }}-desktop-linux-x64-${{ hashFiles('Cargo.lock', 'frontend/package-lock.json', 'wunder-desktop-electron/package-lock.json', 'docker-extra/scripts/ci_build_linux_electron.sh', 'docker-extra/Dockerfile.ubuntu20-x86') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-linux-x64-
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/build-push-action@v6
@@ -192,6 +203,7 @@ jobs:
             -e ARCH=x64 \
             -e CARGO_HOME=/app/.cargo/x86-20-ci \
             -e CARGO_TARGET_DIR=/app/target/x86-20-ci \
+            -e NPM_CONFIG_CACHE=/app/.npm-cache/linux-x64 \
             -e OUTPUT_DIR=/app/target/nightly/linux-x64 \
             wunder-x86-20-ci:latest \
             bash /app/docker-extra/scripts/ci_build_linux_electron.sh
@@ -225,6 +237,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .cargo/arm64-20-ci/registry
+            .cargo/arm64-20-ci/git
+            target/arm64-20-ci
+            .npm-cache/linux-arm64
+          key: ${{ runner.os }}-desktop-linux-arm64-${{ hashFiles('Cargo.lock', 'frontend/package-lock.json', 'wunder-desktop-electron/package-lock.json', 'docker-extra/scripts/ci_build_linux_electron.sh', 'docker-extra/Dockerfile.ubuntu20-arm') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-linux-arm64-
+
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
 
@@ -248,6 +271,7 @@ jobs:
             -e ARCH=arm64 \
             -e CARGO_HOME=/app/.cargo/arm64-20-ci \
             -e CARGO_TARGET_DIR=/app/target/arm64-20-ci \
+            -e NPM_CONFIG_CACHE=/app/.npm-cache/linux-arm64 \
             -e OUTPUT_DIR=/app/target/nightly/linux-arm64 \
             wunder-arm-20-ci:latest \
             bash /app/docker-extra/scripts/ci_build_linux_electron.sh

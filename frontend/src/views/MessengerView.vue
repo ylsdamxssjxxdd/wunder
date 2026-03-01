@@ -472,7 +472,6 @@
             type="button"
             @click="selectContainer('user')"
             @contextmenu.prevent.stop="openFileContainerMenu($event, 'user', USER_CONTAINER_ID)"
-            @mousedown.right.prevent.stop="openFileContainerMenu($event, 'user', USER_CONTAINER_ID)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -500,7 +499,6 @@
             type="button"
             @click="selectContainer(container.id)"
             @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
-            @mousedown.right.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -526,7 +524,6 @@
             type="button"
             @click="selectContainer(container.id)"
             @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
-            @mousedown.right.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
           >
             <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
@@ -608,6 +605,12 @@
             </div>
           </button>
         </template>
+      </div>
+      <div v-if="sessionHub.activeSection === 'more'" class="messenger-middle-footer">
+        <button class="messenger-middle-logout-btn" type="button" @click="handleSettingsLogout">
+          <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
+          <span>{{ t('nav.logout') }}</span>
+        </button>
       </div>
       </section>
     </Transition>
@@ -1042,7 +1045,6 @@
                 @toggle-language="toggleLanguage"
                 @check-update="checkClientUpdate"
                 @toggle-devtools="openDebugTools"
-                @logout="handleSettingsLogout"
                 @update:send-key="updateSendKey"
                 @update:theme-palette="updateThemePalette"
                 @update:performance-mode="updatePerformanceMode"
@@ -1295,7 +1297,11 @@
         </template>
       </div>
 
-      <footer v-if="!showChatSettingsView" ref="chatFooterRef" class="messenger-chat-footer">
+      <footer
+        v-if="!showChatSettingsView && (isAgentConversationActive || isWorldConversationActive)"
+        ref="chatFooterRef"
+        class="messenger-chat-footer"
+      >
         <button
           v-if="showScrollBottomButton"
           class="messenger-scroll-bottom-btn"
@@ -1352,9 +1358,6 @@
           @send="sendWorldMessage"
           @upload-change="handleWorldUploadInput"
         />
-        <div v-else class="messenger-chat-empty">
-          {{ t('messenger.empty.input') }}
-        </div>
       </footer>
     </section>
 
@@ -1632,6 +1635,8 @@ const themeStore = useThemeStore();
 const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
 
+const DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY = 'messenger_desktop_first_launch_default_agent_hint_v1';
+
 const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
 const agentOverviewMode = ref<'detail' | 'grid'>('detail');
@@ -1700,6 +1705,9 @@ const cronPermissionDenied = ref(false);
 const agentSettingMode = ref<'agent' | 'cron' | 'channel'>('agent');
 const settingsPanelMode = ref<'general' | 'profile' | 'desktop-models' | 'desktop-remote'>('general');
 const rightDockCollapsed = ref(false);
+const desktopInitialSectionPinned = ref(false);
+const desktopShowFirstLaunchDefaultAgentHint = ref(false);
+const desktopFirstLaunchDefaultAgentHintAt = ref(0);
 const toolsCatalogLoading = ref(false);
 const customTools = ref<ToolEntry[]>([]);
 const sharedTools = ref<ToolEntry[]>([]);
@@ -1839,9 +1847,9 @@ const finishMessengerPerfTrace = (
 
 const sectionOptions = computed(() => [
   { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
+  { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
   { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
   { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
-  { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
   { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
   { key: 'files' as MessengerSection, icon: 'fa-solid fa-folder-open', label: t('messenger.section.files') },
   { key: 'more' as MessengerSection, icon: 'fa-solid fa-gear', label: t('messenger.section.settings') }
@@ -2645,7 +2653,22 @@ const mixedConversations = computed<MixedConversation[]>(() => {
     }
   );
 
-  return [...agentItems, ...worldItems].sort((left, right) => right.lastAt - left.lastAt);
+  const entries = [...agentItems, ...worldItems];
+  if (desktopShowFirstLaunchDefaultAgentHint.value && !entries.length) {
+    const defaultAgent = agentMap.value.get(DEFAULT_AGENT_KEY) || null;
+    entries.push({
+      key: `agent:${DEFAULT_AGENT_KEY}`,
+      kind: 'agent',
+      sourceId: '',
+      agentId: DEFAULT_AGENT_KEY,
+      title: String((defaultAgent as Record<string, unknown> | null)?.name || t('messenger.defaultAgent')),
+      preview: t('messenger.defaultAgentDesc'),
+      unread: 0,
+      lastAt: desktopFirstLaunchDefaultAgentHintAt.value || Date.now()
+    } as MixedConversation);
+  }
+
+  return entries.sort((left, right) => right.lastAt - left.lastAt);
 });
 
 const filteredMixedConversations = computed(() => {
@@ -4692,6 +4715,24 @@ const handleSettingsLogout = () => {
   router.push('/login').catch(() => undefined);
 };
 
+const initDesktopLaunchBehavior = () => {
+  desktopShowFirstLaunchDefaultAgentHint.value = false;
+  desktopFirstLaunchDefaultAgentHintAt.value = 0;
+  if (!desktopMode.value || typeof window === 'undefined') return;
+  try {
+    const alreadyShown =
+      String(window.localStorage.getItem(DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY) || '').trim() === '1';
+    if (!alreadyShown) {
+      desktopShowFirstLaunchDefaultAgentHint.value = true;
+      desktopFirstLaunchDefaultAgentHintAt.value = Date.now();
+      window.localStorage.setItem(DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY, '1');
+    }
+  } catch {
+    desktopShowFirstLaunchDefaultAgentHint.value = false;
+    desktopFirstLaunchDefaultAgentHintAt.value = 0;
+  }
+};
+
 const clearMiddlePaneOverlayHide = () => {
   if (typeof window !== 'undefined' && middlePaneOverlayHideTimer) {
     window.clearTimeout(middlePaneOverlayHideTimer);
@@ -5312,6 +5353,18 @@ const openFileContainerMenu = async (
   scope: 'user' | 'agent',
   containerId: number
 ) => {
+  const currentTarget = event.currentTarget as HTMLElement | null;
+  const targetElement = (event.target as HTMLElement | null) || currentTarget;
+  const fallbackRect = (currentTarget || targetElement)?.getBoundingClientRect();
+  const baseX =
+    Number.isFinite(event.clientX) && event.clientX > 0
+      ? event.clientX
+      : Math.round((fallbackRect?.left || 0) + (fallbackRect?.width || 0) / 2);
+  const baseY =
+    Number.isFinite(event.clientY) && event.clientY > 0
+      ? event.clientY
+      : Math.round((fallbackRect?.top || 0) + (fallbackRect?.height || 0) / 2);
+
   const normalizedId =
     scope === 'user'
       ? USER_CONTAINER_ID
@@ -5321,20 +5374,10 @@ const openFileContainerMenu = async (
     return;
   }
   selectContainer(scope === 'user' ? 'user' : normalizedId);
-  const eventTarget = event.target as HTMLElement | null;
-  const fallbackRect = eventTarget?.getBoundingClientRect();
-  const initialX =
-    Number.isFinite(event.clientX) && event.clientX > 0
-      ? event.clientX
-      : Math.round((fallbackRect?.left || 0) + (fallbackRect?.width || 0) / 2);
-  const initialY =
-    Number.isFinite(event.clientY) && event.clientY > 0
-      ? event.clientY
-      : Math.round((fallbackRect?.top || 0) + (fallbackRect?.height || 0) / 2);
   fileContainerContextMenu.value.target = { scope, id: normalizedId };
   fileContainerContextMenu.value.visible = true;
-  fileContainerContextMenu.value.x = initialX;
-  fileContainerContextMenu.value.y = initialY;
+  fileContainerContextMenu.value.x = Math.max(8, Math.round(baseX + 2));
+  fileContainerContextMenu.value.y = Math.max(8, Math.round(baseY + 2));
   await nextTick();
   const menuRect = fileContainerMenuViewRef.value?.getMenuElement()?.getBoundingClientRect();
   if (!menuRect) return;
@@ -6386,7 +6429,9 @@ const restoreConversationFromRoute = async () => {
     return;
   }
 
-  const preferredSection = resolveSectionFromRoute(route.path, query.section);
+  const preferredSection = desktopMode.value
+    ? ('messages' as MessengerSection)
+    : resolveSectionFromRoute(route.path, query.section);
   if (preferredSection === 'messages') {
     const first = mixedConversations.value[0];
     if (first) {
@@ -6486,6 +6531,11 @@ watch(
       settingsPanelMode.value = 'general';
     }
     const sectionHint = String(route.query.section || '').trim().toLowerCase();
+    if (desktopMode.value && !desktopInitialSectionPinned.value) {
+      desktopInitialSectionPinned.value = true;
+      sessionHub.setSection('messages');
+      return;
+    }
     if (route.path.includes('/user-world') && sectionHint === 'groups') {
       sessionHub.setSection('groups');
       return;
@@ -6803,6 +6853,7 @@ onMounted(async () => {
     window.addEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
     document.addEventListener('scroll', closeFileContainerMenu, true);
   }
+  initDesktopLaunchBehavior();
   applyUiFontSize(uiFontSize.value);
   await bootstrap();
   updateMessageScrollState();

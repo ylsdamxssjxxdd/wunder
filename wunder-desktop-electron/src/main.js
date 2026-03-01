@@ -605,6 +605,27 @@ if (!gotLock) {
       ipcMain.handle('wunder:update-check', () => checkAndDownloadUpdate())
       ipcMain.handle('wunder:update-status', () => getUpdateState())
       ipcMain.handle('wunder:update-install', () => installDownloadedUpdate())
+      ipcMain.handle('wunder:choose-directory', async (_event, payload) => {
+        const rawDefaultPath =
+          payload && typeof payload === 'object' ? String(payload.defaultPath || '').trim() : ''
+        const result = await withMainWindow(
+          (window) =>
+            dialog.showOpenDialog(window, {
+              title: 'Select Local Directory',
+              defaultPath: rawDefaultPath || undefined,
+              properties: ['openDirectory', 'createDirectory']
+            }),
+          dialog.showOpenDialog({
+            title: 'Select Local Directory',
+            defaultPath: rawDefaultPath || undefined,
+            properties: ['openDirectory', 'createDirectory']
+          })
+        )
+        if (result?.canceled || !Array.isArray(result?.filePaths) || !result.filePaths.length) {
+          return ''
+        }
+        return String(result.filePaths[0] || '').trim()
+      })
       Menu.setApplicationMenu(null)
       await createWindow()
     } catch (err) {

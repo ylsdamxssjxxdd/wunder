@@ -36,11 +36,11 @@
         :aria-label="windowMaximized ? t('desktop.action.restore') : t('desktop.action.maximize')"
         @click.stop="handleToggleMaximize"
       >
-        <i
-          class="fa-regular"
-          :class="windowMaximized ? 'fa-window-restore' : 'fa-square'"
+        <span
+          class="desktop-window-icon"
+          :class="windowMaximized ? 'desktop-window-icon--restore' : 'desktop-window-icon--maximize'"
           aria-hidden="true"
-        ></i>
+        ></span>
       </button>
       <button
         class="desktop-window-btn desktop-window-btn--close"
@@ -186,10 +186,11 @@ onBeforeUnmount(() => {
   --desktop-window-chrome-height: 36px;
   --desktop-window-chrome-bg: linear-gradient(
     180deg,
-    rgba(255, 255, 255, 0.96),
-    rgba(250, 251, 253, 0.92)
+    rgba(var(--ui-accent-rgb), 0.1),
+    rgba(255, 255, 255, 0.96) 44%,
+    rgba(248, 250, 252, 0.94)
   );
-  --desktop-window-chrome-border: rgba(var(--ui-accent-rgb), 0.24);
+  --desktop-window-chrome-border: rgba(140, 151, 167, 0.28);
   --desktop-window-chrome-title: #344255;
   --desktop-window-runtime-label: #7a8594;
   --desktop-window-runtime-value: #3d4f67;
@@ -204,6 +205,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   background: var(--desktop-window-chrome-bg);
   border-bottom: 1px solid var(--desktop-window-chrome-border);
+  box-shadow: none;
   z-index: 3000;
   user-select: none;
   -webkit-app-region: drag;
@@ -212,10 +214,11 @@ onBeforeUnmount(() => {
 :global(:root[data-user-theme='dark']) .desktop-window-chrome {
   --desktop-window-chrome-bg: linear-gradient(
     180deg,
-    rgba(31, 37, 46, 0.96),
-    rgba(26, 31, 40, 0.92)
+    rgba(var(--ui-accent-rgb), 0.2),
+    rgba(33, 40, 52, 0.95) 46%,
+    rgba(27, 33, 43, 0.92)
   );
-  --desktop-window-chrome-border: rgba(var(--ui-accent-rgb), 0.34);
+  --desktop-window-chrome-border: rgba(109, 122, 145, 0.48);
   --desktop-window-chrome-title: #edf2ff;
   --desktop-window-runtime-label: rgba(230, 237, 247, 0.78);
   --desktop-window-runtime-value: #f3f6ff;
@@ -298,6 +301,47 @@ onBeforeUnmount(() => {
 .desktop-window-btn:hover {
   background: var(--desktop-window-btn-hover-bg);
   color: var(--desktop-window-btn-hover-color);
+}
+
+.desktop-window-icon {
+  position: relative;
+  display: inline-block;
+  box-sizing: border-box;
+  color: currentColor;
+}
+
+.desktop-window-icon--maximize {
+  width: 11px;
+  height: 9px;
+  border: 1.45px solid currentColor;
+  border-radius: 1px;
+}
+
+.desktop-window-icon--restore {
+  width: 12px;
+  height: 10px;
+}
+
+.desktop-window-icon--restore::before,
+.desktop-window-icon--restore::after {
+  content: '';
+  position: absolute;
+  box-sizing: border-box;
+  width: 8px;
+  height: 7px;
+  border: 1.3px solid currentColor;
+  border-radius: 1px;
+  background: transparent;
+}
+
+.desktop-window-icon--restore::before {
+  top: 0;
+  right: 0;
+}
+
+.desktop-window-icon--restore::after {
+  left: 0;
+  bottom: 0;
 }
 
 .desktop-window-btn--close:hover {

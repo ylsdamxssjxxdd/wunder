@@ -348,10 +348,9 @@ export const setDesktopToolCallMode = (mode: DesktopToolCallMode): void => {
 };
 
 export const getDesktopToolCallModeForRequest = (): DesktopToolCallMode | null => {
-  if (!isDesktopModeEnabled()) {
-    return null;
-  }
-  return getDesktopToolCallMode();
+  // Desktop now uses per-model tool_call_mode from llm.models[*] config.
+  // Do not inject a global override into each chat request.
+  return null;
 };
 
 declare global {

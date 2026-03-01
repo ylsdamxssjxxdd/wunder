@@ -19,6 +19,7 @@ export type DesktopBridge = {
   checkForUpdates?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
+  chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
 };
 
 export const DEFAULT_AGENT_KEY = '__default__';

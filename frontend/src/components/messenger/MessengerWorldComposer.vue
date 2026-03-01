@@ -27,9 +27,7 @@
           :aria-label="t('messenger.world.emoji')"
           @click.prevent="emit('toggle-quick-panel', 'emoji')"
         >
-          <svg class="messenger-world-tool-icon" aria-hidden="true">
-            <use href="#smiling-face"></use>
-          </svg>
+          <i class="fa-solid fa-face-smile messenger-world-tool-fa-icon" aria-hidden="true"></i>
         </button>
         <div
           v-if="quickPanelMode === 'emoji'"
@@ -74,9 +72,7 @@
         :aria-label="t('userWorld.attachments.pick')"
         @click="emit('trigger-container-pick')"
       >
-        <svg class="messenger-world-tool-icon" aria-hidden="true">
-          <use href="#file2"></use>
-        </svg>
+        <i class="fa-solid fa-folder-open messenger-world-tool-fa-icon" aria-hidden="true"></i>
       </button>
       <button
         class="messenger-world-tool-btn"
@@ -96,9 +92,7 @@
           :aria-label="t('messenger.world.history')"
           @click="emit('open-history')"
         >
-          <svg class="messenger-world-tool-icon" aria-hidden="true">
-            <use href="#history"></use>
-          </svg>
+          <i class="fa-solid fa-clock-rotate-left messenger-world-tool-fa-icon" aria-hidden="true"></i>
         </button>
       </div>
     </div>

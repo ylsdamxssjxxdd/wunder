@@ -53,6 +53,10 @@
     append-to-body
   >
     <div class="desktop-path-picker">
+      <div v-if="!nativePickerSupported" class="desktop-path-picker-tip">
+        <i class="fa-regular fa-folder-open" aria-hidden="true"></i>
+        <span>{{ t('desktop.containers.pathPickerFallbackHint') }}</span>
+      </div>
       <div class="desktop-path-picker-toolbar">
         <el-button
           size="small"
@@ -114,6 +118,10 @@ import { USER_CONTAINER_ID } from '@/views/messenger/model';
 type ContainerRow = {
   container_id: number;
   root: string;
+};
+
+type DesktopDirectoryPickerBridge = {
+  chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
 };
 
 const props = withDefaults(
@@ -250,6 +258,11 @@ const selectedRoot = computed({
 const selectedEffectiveRoot = computed(() => selectedContainer.value?.root || '');
 
 const activeContainerId = computed(() => normalizeContainerId(props.activeContainerId));
+const nativePickerSupported = computed(() => {
+  if (typeof window === 'undefined') return false;
+  const bridge = (window as Window & { wunderDesktop?: DesktopDirectoryPickerBridge }).wunderDesktop;
+  return Boolean(bridge && typeof bridge.chooseDirectory === 'function');
+});
 
 const selectContainer = (containerId: number) => {
   const normalized = normalizeContainerId(containerId);
@@ -345,9 +358,36 @@ const loadDirectory = async (path?: string) => {
   }
 };
 
+const tryPickDirectoryWithSystemDialog = async (
+  defaultPath?: string
+): Promise<'unsupported' | 'cancelled' | 'selected'> => {
+  if (typeof window === 'undefined') return 'unsupported';
+  const bridge = (window as Window & { wunderDesktop?: DesktopDirectoryPickerBridge }).wunderDesktop;
+  if (!bridge || typeof bridge.chooseDirectory !== 'function') {
+    return 'unsupported';
+  }
+  try {
+    const picked = await bridge.chooseDirectory(defaultPath);
+    const normalized = String(picked || '').trim();
+    if (!normalized) {
+      return 'cancelled';
+    }
+    selectedRoot.value = normalized;
+    return 'selected';
+  } catch (error) {
+    console.error(error);
+    ElMessage.warning(t('desktop.containers.pathPickerNativeFailed'));
+    return 'unsupported';
+  }
+};
+
 const openPathPicker = async () => {
-  pathPickerVisible.value = true;
   const initial = selectedRoot.value || undefined;
+  const nativeResult = await tryPickDirectoryWithSystemDialog(initial);
+  if (nativeResult === 'selected' || nativeResult === 'cancelled') {
+    return;
+  }
+  pathPickerVisible.value = true;
   await loadDirectory(initial);
 };
 
@@ -431,7 +471,20 @@ onMounted(() => {
 
 .desktop-path-picker {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+}
+
+.desktop-path-picker-tip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--portal-border);
+  border-radius: 10px;
+  background: var(--portal-surface);
+  color: var(--portal-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 8px 10px;
 }
 
 .desktop-path-picker-toolbar {
@@ -442,11 +495,11 @@ onMounted(() => {
 
 .desktop-path-picker-current {
   font-size: 12px;
-  color: var(--portal-muted);
+  color: var(--portal-text);
   border: 1px solid var(--portal-border);
   background: var(--portal-surface);
-  border-radius: 8px;
-  padding: 6px 10px;
+  border-radius: 10px;
+  padding: 8px 10px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -462,16 +515,23 @@ onMounted(() => {
   border: 1px solid var(--portal-border);
   background: var(--portal-surface);
   color: var(--portal-text);
-  border-radius: 8px;
-  padding: 4px 10px;
+  border-radius: 999px;
+  padding: 5px 10px;
   font-size: 12px;
   cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease;
+}
+
+.desktop-path-picker-root:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
 }
 
 .desktop-path-picker-list {
   border: 1px solid var(--portal-border);
   background: var(--portal-surface);
-  border-radius: 10px;
+  border-radius: 12px;
   max-height: 320px;
   overflow: auto;
   padding: 8px;
@@ -496,6 +556,7 @@ onMounted(() => {
 .desktop-path-picker-item:hover {
   border-color: rgba(var(--ui-accent-rgb), 0.45);
   background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
 }
 
 .desktop-path-picker-empty {

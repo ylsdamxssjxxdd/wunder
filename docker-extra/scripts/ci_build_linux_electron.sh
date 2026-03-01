@@ -6,6 +6,7 @@ ARCH="${ARCH:-x64}"
 OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/target/nightly/linux-${ARCH}}"
 CARGO_HOME="${CARGO_HOME:-${ROOT_DIR}/.cargo/ci-linux-${ARCH}}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target/ci-linux-${ARCH}}"
+NPM_CACHE_DIR="${NPM_CACHE_DIR:-${ROOT_DIR}/.npm-cache/linux-${ARCH}}"
 
 case "${ARCH}" in
   x64)
@@ -23,9 +24,10 @@ esac
 export PATH="/usr/local/cargo/bin:${PATH}"
 export CARGO_HOME
 export CARGO_TARGET_DIR
+export NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-${NPM_CACHE_DIR}}"
 
 rm -rf "${OUTPUT_DIR}"
-mkdir -p "${OUTPUT_DIR}" "${CARGO_HOME}" "${CARGO_TARGET_DIR}"
+mkdir -p "${OUTPUT_DIR}" "${CARGO_HOME}" "${CARGO_TARGET_DIR}" "${NPM_CONFIG_CACHE}"
 
 if [ ! -d "${ROOT_DIR}/frontend/dist" ]; then
   echo "frontend/dist is missing, building frontend..."
