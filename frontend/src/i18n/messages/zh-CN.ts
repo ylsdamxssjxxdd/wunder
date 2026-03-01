@@ -1209,7 +1209,7 @@ export default {
   'userTools.skills.refresh.failed': '刷新失败',
   'userTools.skills.refresh.success': '刷新成功',
   'userTools.skills.saveFailed': '保存失败',
-  'userTools.skills.tip': '从技能目录读取可用技能，勾选启用/共享，并支持直接编辑文件。',
+  'userTools.skills.tip': '从技能目录读取可用技能，勾选启用，并支持直接编辑文件。',
   'userTools.skills.title': '技能',
   'userTools.skills.delete.title': '删除技能',
   'userTools.skills.deleteConfirm': '确定删除技能 {name} 吗？',

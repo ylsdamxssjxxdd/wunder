@@ -1210,7 +1210,7 @@ export default {
   'userTools.skills.refresh.failed': 'Refresh failed',
   'userTools.skills.refresh.success': 'Refresh succeeded',
   'userTools.skills.saveFailed': 'Save failed',
-  'userTools.skills.tip': 'Load skills from your directory, enable/share them, and edit files directly.',
+  'userTools.skills.tip': 'Load skills from your directory, enable them, and edit files directly.',
   'userTools.skills.title': 'Skills',
   'userTools.skills.delete.title': 'Delete skill',
   'userTools.skills.deleteConfirm': 'Delete skill {name}?',

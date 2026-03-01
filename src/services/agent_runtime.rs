@@ -550,7 +550,6 @@ impl AgentRuntime {
             let status = record.get("status").and_then(Value::as_str).unwrap_or("");
             if status == crate::monitor::MonitorState::STATUS_RUNNING
                 || status == crate::monitor::MonitorState::STATUS_CANCELLING
-                || status == crate::monitor::MonitorState::STATUS_WAITING
             {
                 return false;
             }

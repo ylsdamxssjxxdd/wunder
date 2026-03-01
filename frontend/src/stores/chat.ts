@@ -90,6 +90,7 @@ type OpenDraftSessionOptions = {
 
 type SendMessageOptions = {
   attachments?: unknown[];
+  suppressQueuedNotice?: boolean;
 };
 
 type AppendLocalMessageOptions = {
@@ -3839,6 +3840,7 @@ export const useChatStore = defineStore('chat', {
       this.messages.push(userMessage);
       const requestStartMs = resolveTimestampMs(userMessage.created_at) ?? Date.now();
       const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+      const suppressQueuedNotice = options.suppressQueuedNotice === true;
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);
       cacheSessionMessages(sessionId, this.messages);
@@ -3910,10 +3912,12 @@ export const useChatStore = defineStore('chat', {
           if (queuedFlag) {
             if (!queued) {
               queued = true;
-              assistantMessage.workflowItems.push(
-                buildWorkflowItem(t('chat.workflow.queued'), t('chat.workflow.queuedDetail'), 'pending')
-              );
-              notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+              if (!suppressQueuedNotice) {
+                assistantMessage.workflowItems.push(
+                  buildWorkflowItem(t('chat.workflow.queued'), t('chat.workflow.queuedDetail'), 'pending')
+                );
+                notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
+              }
             }
             assistantMessage.stream_incomplete = true;
             assistantMessage.workflowStreaming = true;

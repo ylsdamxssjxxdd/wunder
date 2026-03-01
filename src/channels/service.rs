@@ -11,6 +11,9 @@ use crate::channels::wechat;
 use crate::channels::wechat_mp;
 use crate::channels::whatsapp_cloud;
 use crate::config::{ChannelRateLimitConfig, Config};
+use crate::core::approval::{
+    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
+};
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
@@ -29,6 +32,7 @@ use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, AUTHOR
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{sleep, Duration};
 use tokio_stream::StreamExt;
 use tracing::{error, warn};
@@ -43,6 +47,34 @@ const FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
 const FEISHU_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const FEISHU_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
+const CHANNEL_APPROVAL_PROMPT: &str =
+    "请回复数字：1 同意一次，2 同意本会话，3 拒绝（也可发送 /stop 取消当前任务）。";
+
+struct PendingChannelApprovalEntry {
+    approval_id: String,
+    session_id: String,
+    channel: String,
+    account_id: String,
+    peer_id: String,
+    thread_id: Option<String>,
+    actor_id: String,
+    summary: String,
+    tool: String,
+    created_at: f64,
+    respond_to: tokio::sync::oneshot::Sender<ApprovalResponse>,
+}
+
+#[derive(Debug, Clone)]
+struct ChannelApprovalContext {
+    session_id: String,
+    channel: String,
+    account_id: String,
+    peer: crate::channels::types::ChannelPeer,
+    thread: Option<crate::channels::types::ChannelThread>,
+    binding_id: Option<String>,
+    source_message_id: Option<String>,
+    actor_id: String,
+}
 
 #[derive(Debug, Clone)]
 struct FeishuLongConnTarget {
@@ -134,6 +166,7 @@ pub struct ChannelHub {
     rate_limiter: ChannelRateLimiter,
     http: reqwest::Client,
     recent_inbound: Arc<Mutex<HashMap<String, f64>>>,
+    pending_approvals: Arc<AsyncMutex<HashMap<String, PendingChannelApprovalEntry>>>,
 }
 
 impl ChannelHub {
@@ -155,6 +188,7 @@ impl ChannelHub {
             rate_limiter: ChannelRateLimiter::new(),
             http: reqwest::Client::new(),
             recent_inbound: Arc::new(Mutex::new(HashMap::new())),
+            pending_approvals: Arc::new(AsyncMutex::new(HashMap::new())),
         };
         let worker = hub.clone();
         tokio::spawn(async move {
@@ -440,6 +474,13 @@ impl ChannelHub {
                 .await;
         }
 
+        if let Some(result) = self
+            .handle_channel_approval_response(&message, &session_info, resolved_binding.as_ref())
+            .await?
+        {
+            return Ok(result);
+        }
+
         let limiter_key = format!("{}:{}", message.channel, message.account_id);
         let rate_cfg = resolve_rate_limit(&config.channels.rate_limit, &message.channel);
         let _rate_guard = match self.rate_limiter.acquire(&limiter_key, rate_cfg) {
@@ -534,7 +575,7 @@ impl ChannelHub {
             .map(|record| record.system_prompt.trim().to_string())
             .filter(|value| !value.is_empty());
 
-        let request = WunderRequest {
+        let mut request = WunderRequest {
             user_id: session_info.user_id.clone(),
             question,
             tool_names: tool_names.clone(),
@@ -556,12 +597,34 @@ impl ChannelHub {
             is_admin: false,
             approval_tx: None,
         };
+        let approval_context = ChannelApprovalContext {
+            session_id: session_info.session_id.clone(),
+            channel: message.channel.clone(),
+            account_id: message.account_id.clone(),
+            peer: message.peer.clone(),
+            thread: message.thread.clone(),
+            binding_id: resolved_binding
+                .as_ref()
+                .and_then(|item| item.binding_id.clone()),
+            source_message_id: message.message_id.clone(),
+            actor_id: resolve_channel_actor_id(&message),
+        };
+        let (approval_tx, approval_rx) = new_approval_channel();
+        request.approval_tx = Some(approval_tx);
+        let approval_hub = self.clone();
+        let approval_context_clone = approval_context.clone();
+        let approval_task = tokio::spawn(async move {
+            approval_hub
+                .forward_channel_approval_requests(approval_rx, approval_context_clone)
+                .await;
+        });
         let response = match self
             .run_channel_request(request, &session_info.user_id, &session_info.session_id)
             .await?
         {
             ChannelModelResult::Answer(answer) => answer,
             ChannelModelResult::Busy => {
+                approval_task.abort();
                 return self
                     .respond_busy(
                         &message,
@@ -572,6 +635,7 @@ impl ChannelHub {
                     .await;
             }
         };
+        approval_task.abort();
         if response.trim().is_empty() {
             warn!(
                 "channel response empty: channel={}, account_id={}, peer_id={}",
@@ -636,17 +700,7 @@ impl ChannelHub {
         }
 
         let outbox_id = self.enqueue_outbox(&outbound).await?;
-        if !resolve_outbox_config(config.channels.outbox.clone()).worker_enabled {
-            let record = self.get_outbox(&outbox_id).await?;
-            if let Some(record) = record {
-                if let Err(err) = self.deliver_outbox_record(&record).await {
-                    warn!(
-                        "deliver outbox failed (worker disabled): outbox_id={}, channel={}, account_id={}, error={err}",
-                        record.outbox_id, record.channel, record.account_id
-                    );
-                }
-            }
-        }
+        self.try_deliver_outbox_if_worker_disabled(&outbox_id).await;
 
         if let Some(session_id) = outbound
             .meta
@@ -848,6 +902,299 @@ impl ChannelHub {
             .filter(|value| !value.is_empty()))
     }
 
+    async fn forward_channel_approval_requests(
+        &self,
+        mut approval_rx: ApprovalRequestRx,
+        context: ChannelApprovalContext,
+    ) {
+        while let Some(request) = approval_rx.recv().await {
+            if let Err(err) = self
+                .register_channel_approval_request(request, &context)
+                .await
+            {
+                warn!(
+                    "channel approval register failed: session_id={}, channel={}, account_id={}, error={err}",
+                    context.session_id, context.channel, context.account_id
+                );
+            }
+        }
+    }
+
+    async fn register_channel_approval_request(
+        &self,
+        request: ApprovalRequest,
+        context: &ChannelApprovalContext,
+    ) -> Result<()> {
+        let ApprovalRequest {
+            id,
+            kind,
+            tool,
+            summary,
+            respond_to,
+            ..
+        } = request;
+        let approval_id = id.trim().to_string();
+        if approval_id.is_empty() {
+            let _ = respond_to.send(ApprovalResponse::Deny);
+            return Ok(());
+        }
+
+        let mut replaced = Vec::new();
+        {
+            let mut guard = self.pending_approvals.lock().await;
+            let replaced_ids = guard
+                .iter()
+                .filter_map(|(id, entry)| {
+                    if entry.session_id == context.session_id
+                        && entry.channel.eq_ignore_ascii_case(context.channel.as_str())
+                        && entry.account_id == context.account_id
+                        && entry.peer_id == context.peer.id
+                        && normalize_optional_key(entry.thread_id.as_deref())
+                            == normalize_optional_key(
+                                context.thread.as_ref().map(|item| item.id.as_str()),
+                            )
+                    {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            for id in replaced_ids {
+                if let Some(entry) = guard.remove(&id) {
+                    replaced.push(entry);
+                }
+            }
+            guard.insert(
+                approval_id.clone(),
+                PendingChannelApprovalEntry {
+                    approval_id: approval_id.clone(),
+                    session_id: context.session_id.clone(),
+                    channel: context.channel.clone(),
+                    account_id: context.account_id.clone(),
+                    peer_id: context.peer.id.clone(),
+                    thread_id: context.thread.as_ref().map(|item| item.id.clone()),
+                    actor_id: context.actor_id.clone(),
+                    summary: summary.clone(),
+                    tool: tool.clone(),
+                    created_at: now_ts(),
+                    respond_to,
+                },
+            );
+        }
+        for stale in replaced {
+            let _ = stale.respond_to.send(ApprovalResponse::Deny);
+        }
+
+        let summary_preview = truncate_text(summary.trim(), 180);
+        let approval_text = if summary_preview.trim().is_empty() {
+            format!("检测到敏感操作需要审批。\n{CHANNEL_APPROVAL_PROMPT}")
+        } else {
+            format!("检测到敏感操作需要审批：{summary_preview}\n{CHANNEL_APPROVAL_PROMPT}")
+        };
+        let outbound = ChannelOutboundMessage {
+            channel: context.channel.clone(),
+            account_id: context.account_id.clone(),
+            peer: context.peer.clone(),
+            thread: context.thread.clone(),
+            text: Some(approval_text),
+            attachments: Vec::new(),
+            meta: Some(json!({
+                "session_id": context.session_id.clone(),
+                "binding_id": context.binding_id.clone(),
+                "message_id": context.source_message_id.clone(),
+                "approval_id": approval_id.clone(),
+                "approval_kind": kind,
+                "approval_tool": tool,
+                "approval_request": true,
+            })),
+        };
+        let outbox_id = match self.enqueue_outbox(&outbound).await {
+            Ok(value) => value,
+            Err(err) => {
+                self.clear_pending_channel_approvals(
+                    None,
+                    Some(&approval_id),
+                    ApprovalResponse::Deny,
+                )
+                .await;
+                return Err(err);
+            }
+        };
+        self.try_deliver_outbox_if_worker_disabled(&outbox_id).await;
+        Ok(())
+    }
+
+    async fn handle_channel_approval_response(
+        &self,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
+    ) -> Result<Option<ChannelInboundResult>> {
+        let actor_id = resolve_channel_actor_id(message);
+        let matched_ids = {
+            let guard = self.pending_approvals.lock().await;
+            guard
+                .iter()
+                .filter_map(|(id, entry)| {
+                    if entry.session_id == session_info.session_id
+                        && entry.channel.eq_ignore_ascii_case(message.channel.trim())
+                        && entry.account_id == message.account_id
+                        && entry.peer_id == message.peer.id
+                        && normalize_optional_key(entry.thread_id.as_deref())
+                            == normalize_optional_key(
+                                message.thread.as_ref().map(|item| item.id.as_str()),
+                            )
+                    {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+
+        if matched_ids.is_empty() {
+            return Ok(None);
+        }
+
+        let selected_id = {
+            let guard = self.pending_approvals.lock().await;
+            matched_ids
+                .iter()
+                .filter_map(|id| {
+                    guard.get(id).and_then(|entry| {
+                        if actor_id.is_empty()
+                            || entry.actor_id.is_empty()
+                            || entry.actor_id == actor_id
+                        {
+                            Some((id.clone(), entry.created_at))
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .min_by(|left, right| left.1.total_cmp(&right.1))
+                .map(|item| item.0)
+        };
+
+        if selected_id.is_none() {
+            let reply = "当前审批仅允许消息发起人处理，请联系发起人回复 1/2/3。".to_string();
+            let outbox_id = self
+                .enqueue_channel_text_reply(message, session_info, resolved_binding, &reply, None)
+                .await?;
+            return Ok(Some(ChannelInboundResult {
+                session_id: session_info.session_id.clone(),
+                outbox_id: Some(outbox_id),
+            }));
+        }
+
+        let Some(approval_id) = selected_id else {
+            return Ok(None);
+        };
+        let Some(decision) = parse_channel_approval_decision(message.text.as_deref()) else {
+            let summary = {
+                let guard = self.pending_approvals.lock().await;
+                guard
+                    .get(&approval_id)
+                    .map(|entry| truncate_text(entry.summary.trim(), 120))
+                    .unwrap_or_default()
+            };
+            let reply = if summary.trim().is_empty() {
+                CHANNEL_APPROVAL_PROMPT.to_string()
+            } else {
+                format!("当前待审批操作：{summary}\n{CHANNEL_APPROVAL_PROMPT}")
+            };
+            let outbox_id = self
+                .enqueue_channel_text_reply(message, session_info, resolved_binding, &reply, None)
+                .await?;
+            return Ok(Some(ChannelInboundResult {
+                session_id: session_info.session_id.clone(),
+                outbox_id: Some(outbox_id),
+            }));
+        };
+
+        let entry = {
+            let mut guard = self.pending_approvals.lock().await;
+            guard.remove(&approval_id)
+        };
+        if let Some(item) = entry {
+            let _ = item.respond_to.send(decision);
+            let reply = match decision {
+                ApprovalResponse::ApproveOnce => "已同意一次，正在继续执行。".to_string(),
+                ApprovalResponse::ApproveSession => {
+                    "已同意本会话同类操作，正在继续执行。".to_string()
+                }
+                ApprovalResponse::Deny => "已拒绝本次操作。".to_string(),
+            };
+            let outbox_id = self
+                .enqueue_channel_text_reply(
+                    message,
+                    session_info,
+                    resolved_binding,
+                    &reply,
+                    Some(json!({
+                        "approval_id": item.approval_id,
+                        "approval_tool": item.tool,
+                        "approval_response": true,
+                    })),
+                )
+                .await?;
+            return Ok(Some(ChannelInboundResult {
+                session_id: session_info.session_id.clone(),
+                outbox_id: Some(outbox_id),
+            }));
+        }
+
+        Ok(None)
+    }
+
+    async fn clear_pending_channel_approvals(
+        &self,
+        session_id: Option<&str>,
+        approval_id: Option<&str>,
+        decision: ApprovalResponse,
+    ) {
+        let target_session = session_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let target_approval = approval_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let mut removed = Vec::new();
+        {
+            let mut guard = self.pending_approvals.lock().await;
+            let ids = guard
+                .iter()
+                .filter_map(|(id, entry)| {
+                    let session_match = match target_session.as_deref() {
+                        Some(session) => entry.session_id == session,
+                        None => true,
+                    };
+                    let approval_match = match target_approval.as_deref() {
+                        Some(approval) => entry.approval_id == approval || id == approval,
+                        None => true,
+                    };
+                    if session_match && approval_match {
+                        Some(id.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            for id in ids {
+                if let Some(entry) = guard.remove(&id) {
+                    removed.push(entry);
+                }
+            }
+        }
+        for entry in removed {
+            let _ = entry.respond_to.send(decision);
+        }
+    }
+
     async fn run_channel_request(
         &self,
         request: WunderRequest,
@@ -968,6 +1315,68 @@ impl ChannelHub {
             delivered_at: None,
         };
         self.insert_outbox(&record).await?;
+        Ok(outbox_id)
+    }
+
+    async fn try_deliver_outbox_if_worker_disabled(&self, outbox_id: &str) {
+        let config = self.config_store.get().await;
+        if resolve_outbox_config(config.channels.outbox.clone()).worker_enabled {
+            return;
+        }
+        let outbox_id = outbox_id.trim();
+        if outbox_id.is_empty() {
+            return;
+        }
+        let record = match self.get_outbox(outbox_id).await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!("load outbox failed: outbox_id={outbox_id}, error={err}");
+                return;
+            }
+        };
+        if let Some(record) = record {
+            if let Err(err) = self.deliver_outbox_record(&record).await {
+                warn!(
+                    "deliver outbox failed (worker disabled): outbox_id={}, channel={}, account_id={}, error={err}",
+                    record.outbox_id, record.channel, record.account_id
+                );
+            }
+        }
+    }
+
+    async fn enqueue_channel_text_reply(
+        &self,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
+        text: &str,
+        extra_meta: Option<Value>,
+    ) -> Result<String> {
+        let mut meta = json!({
+            "session_id": session_info.session_id,
+            "binding_id": resolved_binding.and_then(|item| item.binding_id.clone()),
+            "message_id": message.message_id,
+        });
+        if let Some(extra) = extra_meta {
+            if let Some(meta_obj) = meta.as_object_mut() {
+                if let Some(extra_obj) = extra.as_object() {
+                    for (key, value) in extra_obj {
+                        meta_obj.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        let outbound = ChannelOutboundMessage {
+            channel: message.channel.clone(),
+            account_id: message.account_id.clone(),
+            peer: message.peer.clone(),
+            thread: message.thread.clone(),
+            text: Some(text.to_string()),
+            attachments: Vec::new(),
+            meta: Some(meta),
+        };
+        let outbox_id = self.enqueue_outbox(&outbound).await?;
+        self.try_deliver_outbox_if_worker_disabled(&outbox_id).await;
         Ok(outbox_id)
     }
 
@@ -1755,6 +2164,12 @@ impl ChannelHub {
                 (updated.session_id, "已创建新线程。".to_string())
             }
             ChannelCommand::Stop => {
+                self.clear_pending_channel_approvals(
+                    Some(&session_info.session_id),
+                    None,
+                    ApprovalResponse::Deny,
+                )
+                .await;
                 let cancelled = self.monitor.cancel(&session_info.session_id);
                 (
                     session_info.session_id.clone(),
@@ -1767,7 +2182,8 @@ impl ChannelHub {
             }
             ChannelCommand::Help => (
                 session_info.session_id.clone(),
-                "可用指令：/new 新建线程，/stop 停止当前会话。".to_string(),
+                "可用指令：/new 新建线程，/stop 停止当前会话。若收到审批提示，请回复 1/2/3。"
+                    .to_string(),
             ),
         };
 
@@ -2328,6 +2744,70 @@ fn resolve_allow_vision(config: &Config, model_name: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+fn resolve_channel_actor_id(message: &ChannelMessage) -> String {
+    message
+        .sender
+        .as_ref()
+        .and_then(|sender| {
+            let value = sender.id.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        })
+        .or_else(|| {
+            let value = message.peer.id.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_string())
+            }
+        })
+        .unwrap_or_default()
+}
+
+fn parse_channel_approval_decision(text: Option<&str>) -> Option<ApprovalResponse> {
+    let raw = text?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let token = raw
+        .split_whitespace()
+        .next()
+        .map(|value| {
+            value.trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    '.' | '。' | '、' | ')' | '）' | '(' | '（' | '[' | ']' | '【' | '】'
+                )
+            })
+        })
+        .unwrap_or(raw);
+    let normalized = token.to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "once" | "approve_once" | "approve-once" => Some(ApprovalResponse::ApproveOnce),
+        "2" | "session" | "approve_session" | "approve-session" => {
+            Some(ApprovalResponse::ApproveSession)
+        }
+        "3" | "deny" | "reject" => Some(ApprovalResponse::Deny),
+        _ => match token {
+            "同意一次" => Some(ApprovalResponse::ApproveOnce),
+            "同意会话" | "同意本会话" => Some(ApprovalResponse::ApproveSession),
+            "拒绝" | "不同意" => Some(ApprovalResponse::Deny),
+            _ => None,
+        },
+    }
+}
+
+fn normalize_optional_key(value: Option<&str>) -> String {
+    value
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .unwrap_or_default()
+}
+
 fn build_outbound_headers(config: &ChannelAccountConfig) -> Result<ReqHeaderMap> {
     let mut headers = ReqHeaderMap::new();
     if let Some(Value::Object(map)) = config.outbound_headers.as_ref() {
@@ -2398,4 +2878,64 @@ fn truncate_text(text: &str, max: usize) -> String {
 
 fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_channel_approval_decision_supports_numbers_and_keywords() {
+        assert_eq!(
+            parse_channel_approval_decision(Some("1")),
+            Some(ApprovalResponse::ApproveOnce)
+        );
+        assert_eq!(
+            parse_channel_approval_decision(Some("2")),
+            Some(ApprovalResponse::ApproveSession)
+        );
+        assert_eq!(
+            parse_channel_approval_decision(Some("3")),
+            Some(ApprovalResponse::Deny)
+        );
+        assert_eq!(
+            parse_channel_approval_decision(Some("同意一次")),
+            Some(ApprovalResponse::ApproveOnce)
+        );
+        assert_eq!(
+            parse_channel_approval_decision(Some("同意本会话")),
+            Some(ApprovalResponse::ApproveSession)
+        );
+        assert_eq!(
+            parse_channel_approval_decision(Some("拒绝")),
+            Some(ApprovalResponse::Deny)
+        );
+        assert_eq!(parse_channel_approval_decision(Some("继续")), None);
+    }
+
+    #[test]
+    fn resolve_channel_actor_id_prefers_sender() {
+        let message = ChannelMessage {
+            channel: "feishu".to_string(),
+            account_id: "acc".to_string(),
+            peer: crate::channels::types::ChannelPeer {
+                kind: "group".to_string(),
+                id: "chat_1".to_string(),
+                name: None,
+            },
+            thread: None,
+            message_id: None,
+            sender: Some(crate::channels::types::ChannelSender {
+                id: "user_42".to_string(),
+                name: None,
+            }),
+            message_type: "text".to_string(),
+            text: Some("hello".to_string()),
+            attachments: Vec::new(),
+            location: None,
+            ts: None,
+            meta: None,
+        };
+        assert_eq!(resolve_channel_actor_id(&message), "user_42".to_string());
+    }
 }

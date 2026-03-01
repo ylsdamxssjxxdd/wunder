@@ -1677,7 +1677,10 @@ const handleComposerSend = async ({ content, attachments }) => {
   pendingAssistantCenter = true;
   pendingAssistantCenterCount = chatStore.messages.length;
   try {
-    await chatStore.sendMessage(finalContent, { attachments: payloadAttachments });
+    await chatStore.sendMessage(finalContent, {
+      attachments: payloadAttachments,
+      suppressQueuedNotice: hasSelection
+    });
   } catch (error) {
     pendingAssistantCenter = false;
     pendingAssistantCenterCount = 0;

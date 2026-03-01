@@ -104,7 +104,6 @@
         @click="syncCaretPosition"
         @keyup="syncCaretPosition"
         @keydown="handleInputKeydown"
-        @keydown.enter="handleEnterKeydown"
       />
       <div
         v-if="commandSuggestionsVisible"
@@ -303,13 +302,42 @@ const DOC_EXTENSIONS = [
 ];
 const uploadAccept = ['image/*', ...DOC_EXTENSIONS].join(',');
 const INPUT_MAX_HEIGHT = 180;
-const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'messenger_agent_composer_height';
+const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'wunder_world_composer_height';
 const WORLD_COMMAND_PANEL_CLOSE_DELAY_MS = 160;
 const resolveDraftKey = (): string => String(props.draftKey || '').trim();
 const clampWorldComposerHeight = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 188;
-  return Math.min(420, Math.max(168, Math.round(parsed)));
+  return Math.min(340, Math.max(168, Math.round(parsed)));
+};
+const resolveKeyboardKeyCode = (event: KeyboardEvent): number =>
+  Number(
+    (
+      event as KeyboardEvent & {
+        keyCode?: number;
+        which?: number;
+      }
+    ).keyCode ??
+      (
+        event as KeyboardEvent & {
+          keyCode?: number;
+          which?: number;
+        }
+      ).which ??
+      0
+  );
+const isEnterKeyboardEvent = (event: KeyboardEvent): boolean => {
+  const key = String(event.key || '').toLowerCase();
+  const code = String(event.code || '').toLowerCase();
+  const keyCode = resolveKeyboardKeyCode(event);
+  return (
+    key === 'enter' ||
+    key === 'return' ||
+    code === 'enter' ||
+    code === 'numpadenter' ||
+    keyCode === 13 ||
+    keyCode === 10
+  );
 };
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
@@ -516,7 +544,11 @@ const applyCommandSuggestion = (index = commandMenuIndex.value) => {
   return true;
 };
 
-const handleInputKeydown = (event) => {
+const handleInputKeydown = async (event) => {
+  if (isEnterKeyboardEvent(event)) {
+    await handleEnterKeydown(event);
+    return;
+  }
   if (props.worldStyle) {
     return;
   }
@@ -620,6 +652,9 @@ const restoreDraftStateByKey = (key: string) => {
 };
 
 const handleEnterKeydown = async (event) => {
+  if (event.isComposing) {
+    return;
+  }
   const mode = resolveSendKeyMode();
   if (mode === 'ctrl_enter') {
     if (event.ctrlKey || event.metaKey) {

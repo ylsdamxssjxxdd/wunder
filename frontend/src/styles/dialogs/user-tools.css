@@ -546,7 +546,7 @@
 
 .user-tools-dialog .user-skill-item {
   display: grid;
-  grid-template-columns: 56px 56px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
   column-gap: 6px;
   align-items: center;
 }
@@ -590,6 +590,13 @@
 .user-tools-dialog .tool-check input {
   width: 14px;
   height: 14px;
+  margin: 0;
+}
+
+.user-tools-dialog .tool-check.tool-check-icon {
+  width: 22px;
+  justify-content: center;
+  gap: 0;
 }
 
 .user-tools-dialog .tool-item-info {
@@ -776,6 +783,13 @@
   z-index: 1;
   overflow: auto;
   box-sizing: border-box;
+  outline: none;
+  box-shadow: none;
+}
+
+.user-tools-dialog .skill-editor-text:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 .user-tools-dialog .skill-editor-text::placeholder {

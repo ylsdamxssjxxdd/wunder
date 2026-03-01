@@ -103,7 +103,7 @@
       :placeholder="inputPlaceholder"
       rows="3"
       @focus="emit('focus-input')"
-      @keydown.enter="emit('enter', $event)"
+      @keydown="handleTextareaKeydown"
     ></textarea>
     <div class="messenger-world-footer">
       <div class="messenger-world-send-group">
@@ -186,6 +186,44 @@ const sendShortcutHint = computed(() =>
 const inputPlaceholder = computed(
   () => `${t('userWorld.input.placeholder')} · ${sendShortcutHint.value}`
 );
+
+const resolveKeyboardKeyCode = (event: KeyboardEvent): number =>
+  Number(
+    (
+      event as KeyboardEvent & {
+        keyCode?: number;
+        which?: number;
+      }
+    ).keyCode ??
+      (
+        event as KeyboardEvent & {
+          keyCode?: number;
+          which?: number;
+        }
+      ).which ??
+      0
+  );
+const isEnterKeyboardEvent = (event: KeyboardEvent): boolean => {
+  const key = String(event.key || '').toLowerCase();
+  const code = String(event.code || '').toLowerCase();
+  const keyCode = resolveKeyboardKeyCode(event);
+  return (
+    key === 'enter' ||
+    key === 'return' ||
+    code === 'enter' ||
+    code === 'numpadenter' ||
+    keyCode === 13 ||
+    keyCode === 10
+  );
+};
+const handleTextareaKeydown = (event: KeyboardEvent) => {
+  if (event.isComposing) {
+    return;
+  }
+  if (isEnterKeyboardEvent(event)) {
+    emit('enter', event);
+  }
+};
 
 const getComposerElement = (): HTMLElement | null => composerElement.value;
 const getTextareaElement = (): HTMLTextAreaElement | null => textareaElement.value;

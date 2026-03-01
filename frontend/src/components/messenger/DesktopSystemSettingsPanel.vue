@@ -4,48 +4,6 @@
     class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
     v-loading="loading"
   >
-    <div class="desktop-system-settings-section">
-      <div class="desktop-system-settings-form-grid">
-        <label class="desktop-system-settings-field">
-          <span class="desktop-system-settings-field-label">{{ t('desktop.system.defaultChatModel') }}</span>
-          <el-select
-            v-model="defaultModel"
-            class="desktop-system-settings-input"
-            filterable
-            allow-create
-            popper-class="desktop-system-settings-popper"
-          >
-            <el-option
-              v-for="item in llmModelRows"
-              :key="item.key || item.uid"
-              :label="item.key || t('desktop.system.modelUnnamed')"
-              :value="item.key"
-            />
-          </el-select>
-        </label>
-
-        <label class="desktop-system-settings-field">
-          <span class="desktop-system-settings-field-label">
-            {{ t('desktop.system.defaultEmbeddingModel') }}
-          </span>
-          <el-select
-            v-model="defaultEmbeddingModel"
-            class="desktop-system-settings-input"
-            filterable
-            clearable
-            popper-class="desktop-system-settings-popper"
-          >
-            <el-option
-              v-for="item in embeddingModelRows"
-              :key="item.key || item.uid"
-              :label="item.key || t('desktop.system.modelUnnamed')"
-              :value="item.key"
-            />
-          </el-select>
-        </label>
-      </div>
-    </div>
-
     <div class="desktop-system-settings-layout">
       <aside class="desktop-system-settings-model-list-wrap">
         <div class="desktop-system-settings-model-list-head">
@@ -54,19 +12,11 @@
             <el-button class="desktop-system-settings-btn" size="small" @click="addModel()">
               {{ t('desktop.system.modelAdd') }}
             </el-button>
-            <el-button
-              class="desktop-system-settings-btn desktop-system-settings-btn--primary"
-              size="small"
-              :loading="savingModel"
-              @click="saveModelSettings"
-            >
-              {{ t('desktop.common.save') }}
-            </el-button>
           </div>
         </div>
         <div class="desktop-system-settings-model-list">
           <button
-            v-for="row in modelRows"
+            v-for="row in modelRowsForList"
             :key="row.uid"
             class="desktop-system-settings-model-item"
             :class="{ active: selectedModelUid === row.uid }"
@@ -75,6 +25,11 @@
           >
             <div class="desktop-system-settings-model-item-head">
               <span class="desktop-system-settings-model-item-name">
+                <i
+                  v-if="isDefaultModelRow(row)"
+                  class="fa-solid fa-star desktop-system-settings-model-item-star"
+                  aria-hidden="true"
+                ></i>
                 {{ row.key || t('desktop.system.modelUnnamed') }}
               </span>
               <span class="desktop-system-settings-model-item-type">
@@ -87,21 +42,6 @@
             </div>
             <div class="desktop-system-settings-model-item-meta">
               {{ row.model || '-' }} · {{ row.base_url || '-' }}
-            </div>
-            <div class="desktop-system-settings-model-item-badges">
-              <span v-if="row.key.trim() === defaultModel.trim()" class="desktop-system-settings-badge">
-                {{ t('desktop.system.defaultChatModel') }}
-              </span>
-              <span
-                v-if="
-                  row.key.trim() &&
-                  defaultEmbeddingModel.trim() &&
-                  row.key.trim() === defaultEmbeddingModel.trim()
-                "
-                class="desktop-system-settings-badge desktop-system-settings-badge--alt"
-              >
-                {{ t('desktop.system.defaultEmbeddingModel') }}
-              </span>
             </div>
           </button>
           <div v-if="!modelRows.length" class="desktop-system-settings-empty">
@@ -120,6 +60,14 @@
               {{ setCurrentDefaultLabel }}
             </el-button>
             <el-button
+              class="desktop-system-settings-btn desktop-system-settings-btn--primary"
+              size="small"
+              :loading="savingModel"
+              @click="saveModelSettings"
+            >
+              {{ t('desktop.common.save') }}
+            </el-button>
+            <el-button
               class="desktop-system-settings-btn desktop-system-settings-btn--danger"
               size="small"
               @click="removeModel(selectedModel)"
@@ -129,7 +77,7 @@
           </div>
         </div>
 
-        <div class="desktop-system-settings-section">
+        <div class="desktop-system-settings-group">
           <div class="desktop-system-settings-section-head">
             <div class="desktop-system-settings-section-title">
               <i class="fa-solid fa-gear" aria-hidden="true"></i>
@@ -177,7 +125,7 @@
           </div>
         </div>
 
-        <div class="desktop-system-settings-section">
+        <div class="desktop-system-settings-group">
           <div class="desktop-system-settings-section-head">
             <div class="desktop-system-settings-section-title">
               <i class="fa-solid fa-sliders" aria-hidden="true"></i>
@@ -221,7 +169,7 @@
           </div>
         </div>
 
-        <div class="desktop-system-settings-section">
+        <div class="desktop-system-settings-group">
           <div class="desktop-system-settings-section-head">
             <div class="desktop-system-settings-section-title">
               <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
@@ -259,7 +207,7 @@
           </div>
         </div>
 
-        <div class="desktop-system-settings-section">
+        <div class="desktop-system-settings-group">
           <div class="desktop-system-settings-section-head">
             <div class="desktop-system-settings-section-title">
               <i class="fa-solid fa-compress" aria-hidden="true"></i>
@@ -408,9 +356,28 @@ const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
 const showModelPanel = computed(() => props.panel !== 'remote');
 const showRemotePanel = computed(() => props.panel !== 'models');
 
-const llmModelRows = computed(() => modelRows.value.filter((item) => item.model_type === 'llm'));
 const embeddingModelRows = computed(() =>
   modelRows.value.filter((item) => item.model_type === 'embedding')
+);
+const isDefaultModelRow = (row: ModelRow): boolean => {
+  const key = String(row?.key || '').trim();
+  if (!key) return false;
+  return key === defaultModel.value.trim() || key === defaultEmbeddingModel.value.trim();
+};
+const modelRowsForList = computed(() =>
+  [...modelRows.value].sort((a, b) => {
+    const keyA = String(a.key || '').trim();
+    const keyB = String(b.key || '').trim();
+    const rank = (key: string, modelType: ModelType): number => {
+      if (!key) return 5;
+      if (key === defaultModel.value.trim() && modelType === 'llm') return 0;
+      if (key === defaultEmbeddingModel.value.trim() && modelType === 'embedding') return 1;
+      return 3;
+    };
+    const rankDiff = rank(keyA, a.model_type) - rank(keyB, b.model_type);
+    if (rankDiff !== 0) return rankDiff;
+    return a.uid.localeCompare(b.uid);
+  })
 );
 const selectedModel = computed(
   () => modelRows.value.find((item) => item.uid === selectedModelUid.value) || null
@@ -881,6 +848,12 @@ onMounted(() => {
 .desktop-system-settings-panel {
   display: grid;
   gap: 14px;
+  min-height: 0;
+}
+
+.desktop-system-settings-panel--llm {
+  height: 100%;
+  min-height: 0;
 }
 
 .desktop-system-settings-head {
@@ -896,17 +869,19 @@ onMounted(() => {
   grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
+  height: 100%;
 }
 
 .desktop-system-settings-model-list-wrap {
-  border: 1px solid var(--portal-border);
+  border: 1px solid #d8dee8;
   border-radius: 12px;
   background: var(--portal-panel);
   padding: 10px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  align-content: start;
   min-height: 0;
+  overflow: hidden;
 }
 
 .desktop-system-settings-model-list-head {
@@ -924,7 +899,7 @@ onMounted(() => {
 }
 
 .desktop-system-settings-section {
-  border: 1px solid var(--portal-border);
+  border: 1px solid #d8dee8;
   border-radius: 12px;
   background: var(--portal-panel);
   padding: 12px;
@@ -953,9 +928,17 @@ onMounted(() => {
 }
 
 .desktop-system-settings-detail {
-  display: grid;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   min-width: 0;
+  min-height: 0;
+  border: 1px solid #d8dee8;
+  border-radius: 12px;
+  background: var(--portal-panel);
+  padding: 12px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .desktop-system-settings-detail-head {
@@ -964,6 +947,16 @@ onMounted(() => {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e4e9f0;
+}
+
+.desktop-system-settings-group {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid #e4e9f0;
 }
 
 .desktop-system-settings-detail-title {
@@ -1079,10 +1072,13 @@ onMounted(() => {
 }
 
 .desktop-system-settings-model-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
-  max-height: 520px;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding-right: 2px;
 }
 
@@ -1117,12 +1113,21 @@ onMounted(() => {
 }
 
 .desktop-system-settings-model-item-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   color: var(--portal-text);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.desktop-system-settings-model-item-star {
+  color: #f59e0b;
+  font-size: 11px;
+  flex-shrink: 0;
 }
 
 .desktop-system-settings-model-item-type {
@@ -1140,28 +1145,6 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.desktop-system-settings-model-item-badges {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.desktop-system-settings-badge {
-  font-size: 10px;
-  color: var(--ui-accent-deep);
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.4);
-  border-radius: 999px;
-  background: var(--ui-accent-soft-2);
-  padding: 1px 7px;
-}
-
-.desktop-system-settings-badge--alt {
-  color: #4f46e5;
-  border-color: rgba(79, 70, 229, 0.35);
-  background: rgba(79, 70, 229, 0.08);
 }
 
 .desktop-system-settings-model-grid {
@@ -1219,6 +1202,18 @@ onMounted(() => {
 .desktop-system-settings-panel :deep(.el-select__selected-item),
 .desktop-system-settings-panel :deep(.el-select__placeholder) {
   color: #374151;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.desktop-system-settings-panel :deep(input:focus),
+.desktop-system-settings-panel :deep(input:focus-visible),
+.desktop-system-settings-panel :deep(textarea:focus),
+.desktop-system-settings-panel :deep(textarea:focus-visible),
+.desktop-system-settings-panel :deep(select:focus),
+.desktop-system-settings-panel :deep(select:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 .desktop-system-settings-panel :deep(.desktop-system-settings-popper.el-select__popper.el-popper) {
@@ -1247,10 +1242,6 @@ onMounted(() => {
 @media (max-width: 1100px) {
   .desktop-system-settings-layout {
     grid-template-columns: 1fr;
-  }
-
-  .desktop-system-settings-model-list {
-    max-height: 260px;
   }
 }
 

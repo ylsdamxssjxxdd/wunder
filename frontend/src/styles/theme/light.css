@@ -79,18 +79,19 @@
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel {
-  border-color: rgba(var(--chat-primary-rgb), 0.2);
+  border-color: rgba(var(--chat-primary-rgb), 0.18);
   background: linear-gradient(
-      140deg,
-      rgba(var(--chat-primary-rgb), 0.12),
-      rgba(var(--chat-accent-rgb), 0.1)
+      145deg,
+      rgba(var(--chat-primary-rgb), 0.1),
+      rgba(var(--chat-accent-rgb), 0.08) 56%,
+      rgba(255, 255, 255, 0.92)
     ),
-    #ffffff;
-  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.08);
+    rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel::before {
-  opacity: 0.75;
+  opacity: 0.62;
 }
 
 :root[data-user-theme='light'] .chat-shell .plan-tab {
@@ -103,23 +104,23 @@
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-route {
   background: #ffffff;
-  border-color: rgba(15, 23, 42, 0.1);
-  box-shadow: 0 1px 8px rgba(15, 23, 42, 0.06);
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: none;
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-route:hover {
-  border-color: rgba(var(--chat-primary-rgb), 0.4);
-  box-shadow: 0 0 0 4px rgba(var(--chat-primary-rgb), 0.12);
+  border-color: rgba(var(--chat-primary-rgb), 0.42);
+  box-shadow: 0 0 0 3px rgba(var(--chat-primary-rgb), 0.1);
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-route.active {
   background: linear-gradient(
-    140deg,
-    rgba(var(--chat-primary-rgb), 0.14),
-    rgba(var(--chat-accent-rgb), 0.1)
+    145deg,
+    rgba(var(--chat-primary-rgb), 0.12),
+    rgba(var(--chat-accent-rgb), 0.08)
   );
-  border-color: rgba(var(--chat-primary-rgb), 0.45);
-  box-shadow: 0 10px 20px rgba(var(--chat-primary-rgb), 0.18);
+  border-color: rgba(var(--chat-primary-rgb), 0.46);
+  box-shadow: 0 6px 14px rgba(var(--chat-primary-rgb), 0.14);
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-route.recommended {
@@ -133,8 +134,8 @@
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-btn {
-  border-color: rgba(15, 23, 42, 0.12);
-  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.85);
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-btn.secondary:hover {
@@ -146,11 +147,11 @@
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-btn.primary {
   background: linear-gradient(135deg, var(--chat-primary), var(--chat-accent));
   color: #ffffff;
-  box-shadow: 0 10px 18px rgba(var(--chat-primary-rgb), 0.25);
+  box-shadow: 0 8px 16px rgba(var(--chat-primary-rgb), 0.22);
 }
 
 :root[data-user-theme='light'] .chat-shell .inquiry-panel-btn.primary:hover:not(:disabled) {
-  box-shadow: 0 12px 22px rgba(var(--chat-primary-rgb), 0.3);
+  box-shadow: 0 10px 20px rgba(var(--chat-primary-rgb), 0.26);
 }
 
 :root[data-user-theme='light'] .chat-shell .theme-toggle {

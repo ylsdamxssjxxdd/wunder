@@ -3375,7 +3375,7 @@ const worldEmojiCatalog = computed(() =>
 const clampWorldComposerHeight = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 188;
-  return Math.min(340, Math.max(158, Math.round(parsed)));
+  return Math.min(340, Math.max(168, Math.round(parsed)));
 };
 
 const worldComposerStyle = computed<Record<string, string>>(() => ({
@@ -4075,7 +4075,13 @@ const isGreetingMessage = (message: Record<string, unknown>): boolean =>
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
+  const questionPanelStatus = String(
+    ((message?.questionPanel as Record<string, unknown> | null)?.status || '')
+  )
+    .trim()
+    .toLowerCase();
   const pendingQuestion =
+    questionPanelStatus === 'pending' ||
     Boolean(message?.pending_question) ||
     Boolean(message?.pendingQuestion) ||
     Boolean(message?.awaiting_confirmation) ||
@@ -4090,8 +4096,7 @@ const resolveMessageAgentAvatarState = (message: Record<string, unknown>): Agent
   }
   const messageState = normalizeRuntimeState(message?.state, pendingQuestion);
   if (messageState !== 'idle') return messageState;
-  const current = resolveAgentRuntimeState(activeAgentId.value);
-  return current === 'idle' ? 'done' : current;
+  return 'done';
 };
 
 const buildMessageStatsEntries = (message: Record<string, unknown>) =>
@@ -6091,7 +6096,10 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
   pendingAssistantCenter = true;
   pendingAssistantCenterCount = chatStore.messages.length;
   try {
-    await chatStore.sendMessage(finalContent, { attachments });
+    await chatStore.sendMessage(finalContent, {
+      attachments,
+      suppressQueuedNotice: hasInquirySelection
+    });
     setRuntimeStateOverride(targetAgentId, 'done', 8_000);
     if (chatStore.activeSessionId) {
       sessionHub.setActiveConversation({

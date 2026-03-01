@@ -257,15 +257,15 @@
   position: relative;
   margin: 10px 0 12px;
   padding: 12px 14px 12px 16px;
-  border-radius: 18px;
-  border: 1px solid rgba(var(--chat-primary-rgb), 0.22);
+  border-radius: 16px;
+  border: 1px solid rgba(var(--chat-primary-rgb), 0.24);
   background: linear-gradient(
-      140deg,
-      rgba(var(--chat-primary-rgb), 0.18),
-      rgba(var(--chat-accent-rgb), 0.12)
-    ),
-    rgba(12, 20, 38, 0.72);
-  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.45);
+    145deg,
+    rgba(var(--chat-primary-rgb), 0.16),
+    rgba(var(--chat-accent-rgb), 0.11) 52%,
+    rgba(255, 255, 255, 0.06)
+  );
+  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.28);
   overflow: hidden;
 }
 
@@ -274,10 +274,10 @@
   position: absolute;
   left: 0;
   top: 0;
-  width: 4px;
+  width: 3px;
   height: 100%;
   background: linear-gradient(180deg, var(--chat-primary), var(--chat-accent));
-  opacity: 0.85;
+  opacity: 0.7;
   pointer-events: none;
 }
 
@@ -307,8 +307,8 @@
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(var(--chat-primary-rgb), 0.35);
-  background: rgba(var(--chat-primary-rgb), 0.12);
+  border: 1px solid rgba(var(--chat-primary-rgb), 0.3);
+  background: rgba(var(--chat-primary-rgb), 0.14);
   color: var(--chat-primary);
 }
 
@@ -318,7 +318,7 @@
   height: 8px;
   border-radius: 999px;
   background: linear-gradient(135deg, var(--chat-primary), var(--chat-accent));
-  box-shadow: 0 0 0 4px rgba(var(--chat-primary-rgb), 0.16);
+  box-shadow: 0 0 0 3px rgba(var(--chat-primary-rgb), 0.14);
 }
 
 .chat-shell .inquiry-panel-question {
@@ -339,34 +339,32 @@
   text-align: left;
   border-radius: 14px;
   padding: 10px 12px;
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(15, 23, 42, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--chat-text);
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease,
     background 0.2s ease;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 .chat-shell .inquiry-panel-route:hover {
-  border-color: rgba(var(--chat-primary-rgb), 0.55);
+  border-color: rgba(var(--chat-primary-rgb), 0.5);
   transform: translateY(-1px);
-  box-shadow: 0 10px 24px rgba(2, 6, 23, 0.4),
-    0 0 0 4px rgba(var(--chat-primary-rgb), 0.14);
+  box-shadow: 0 0 0 3px rgba(var(--chat-primary-rgb), 0.12);
 }
 
 .chat-shell .inquiry-panel-route.active {
-  border-color: rgba(var(--chat-primary-rgb), 0.85);
+  border-color: rgba(var(--chat-primary-rgb), 0.75);
   background: linear-gradient(
-    140deg,
+    145deg,
     rgba(var(--chat-primary-rgb), 0.24),
-    rgba(var(--chat-accent-rgb), 0.2)
+    rgba(var(--chat-accent-rgb), 0.16)
   );
-  box-shadow: 0 12px 26px rgba(var(--chat-primary-rgb), 0.22);
+  box-shadow: 0 8px 18px rgba(var(--chat-primary-rgb), 0.2);
 }
 
 .chat-shell .inquiry-panel-route.recommended {
-  border-color: rgba(var(--chat-accent-rgb), 0.6);
+  border-color: rgba(var(--chat-accent-rgb), 0.5);
 }
 
 .chat-shell .inquiry-route-main {
@@ -390,11 +388,11 @@
   border-radius: 999px;
   background: linear-gradient(
     135deg,
-    rgba(var(--chat-accent-rgb), 0.28),
+    rgba(var(--chat-accent-rgb), 0.22),
     rgba(var(--chat-primary-rgb), 0.16)
   );
   color: var(--chat-text);
-  border: 1px solid rgba(var(--chat-accent-rgb), 0.5);
+  border: 1px solid rgba(var(--chat-accent-rgb), 0.45);
 }
 
 .chat-shell .inquiry-route-desc {
@@ -417,8 +415,8 @@
   padding: 6px 12px;
   font-size: 12px;
   font-weight: 600;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--chat-text);
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease,
@@ -427,7 +425,7 @@
 
 .chat-shell .inquiry-panel-btn.secondary:hover {
   border-color: rgba(var(--chat-primary-rgb), 0.4);
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.14);
   color: var(--chat-text);
 }
 
@@ -435,12 +433,12 @@
   border: none;
   background: linear-gradient(135deg, var(--chat-primary), var(--chat-accent));
   color: #0a0d19;
-  box-shadow: 0 12px 20px rgba(var(--chat-primary-rgb), 0.28);
+  box-shadow: 0 8px 16px rgba(var(--chat-primary-rgb), 0.25);
 }
 
 .chat-shell .inquiry-panel-btn.primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 14px 26px rgba(var(--chat-primary-rgb), 0.35);
+  box-shadow: 0 10px 20px rgba(var(--chat-primary-rgb), 0.3);
 }
 
 .chat-shell .inquiry-panel-btn:disabled {

@@ -306,6 +306,11 @@ impl SessionRecord {
     }
 
     fn to_summary(&self) -> Value {
+        let (context_tokens, context_tokens_peak) = derive_effective_context_tokens(&self.events)
+            .unwrap_or((
+                self.context_tokens,
+                self.context_tokens_peak.max(self.context_tokens),
+            ));
         json!({
             "session_id": self.session_id,
             "user_id": self.user_id,
@@ -322,8 +327,8 @@ impl SessionRecord {
             "elapsed_s": round2(self.elapsed_s()),
             "cancel_requested": self.cancel_requested,
             "user_rounds": self.user_rounds,
-            "context_tokens": self.context_tokens,
-            "context_tokens_peak": self.context_tokens_peak,
+            "context_tokens": context_tokens,
+            "context_tokens_peak": context_tokens_peak,
         })
     }
 
@@ -478,6 +483,31 @@ impl SessionRecord {
             last_persisted: updated_time,
         })
     }
+}
+
+fn derive_effective_context_tokens(events: &VecDeque<MonitorEvent>) -> Option<(i64, i64)> {
+    let mut latest: Option<i64> = None;
+    let mut peak = 0_i64;
+    for event in events {
+        if event.event_type != "token_usage" {
+            continue;
+        }
+        let input_tokens = parse_i64_value(event.data.get("input_tokens").or_else(|| {
+            event
+                .data
+                .get("usage")
+                .and_then(|usage| usage.get("input_tokens"))
+        }))
+        .unwrap_or_default();
+        if input_tokens <= 0 {
+            continue;
+        }
+        latest = Some(input_tokens);
+        if input_tokens > peak {
+            peak = input_tokens;
+        }
+    }
+    latest.map(|tokens| (tokens, peak.max(tokens)))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1329,7 +1359,9 @@ impl MonitorState {
                         continue;
                     }
                     total_sessions += 1;
-                    let context_peak = record.context_tokens_peak.max(record.context_tokens);
+                    let context_peak = derive_effective_context_tokens(&record.events)
+                        .map(|(_, peak)| peak)
+                        .unwrap_or(record.context_tokens_peak.max(record.context_tokens));
                     context_tokens_total += context_peak;
                     if record.status == Self::STATUS_RUNNING
                         || record.status == Self::STATUS_CANCELLING
@@ -2540,8 +2572,12 @@ fn localize_summary(summary: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use super::{should_skip_event_for_profile, trim_string_fields, MonitorLogProfile};
+    use super::{
+        derive_effective_context_tokens, should_skip_event_for_profile, trim_string_fields,
+        MonitorEvent, MonitorLogProfile,
+    };
     use serde_json::json;
+    use std::collections::VecDeque;
 
     #[test]
     fn normal_profile_skips_high_volume_events() {
@@ -2601,5 +2637,41 @@ mod tests {
         assert_eq!(trimmed["nested"]["inner"], json!("hijk...(truncated)"));
         assert_eq!(trimmed["arr"][0], json!("opqr...(truncated)"));
         assert_eq!(trimmed["arr"][1]["deep"], json!("uvwx...(truncated)"));
+    }
+
+    #[test]
+    fn derive_effective_context_tokens_prefers_token_usage() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "context_usage".to_string(),
+            data: json!({ "context_tokens": 290821 }),
+        });
+        events.push_back(MonitorEvent {
+            event_id: 2,
+            timestamp: 2.0,
+            event_type: "token_usage".to_string(),
+            data: json!({ "input_tokens": 5620, "output_tokens": 88, "total_tokens": 5708 }),
+        });
+        events.push_back(MonitorEvent {
+            event_id: 3,
+            timestamp: 3.0,
+            event_type: "token_usage".to_string(),
+            data: json!({ "input_tokens": 5750, "output_tokens": 32, "total_tokens": 5782 }),
+        });
+        assert_eq!(derive_effective_context_tokens(&events), Some((5750, 5750)));
+    }
+
+    #[test]
+    fn derive_effective_context_tokens_none_without_token_usage() {
+        let mut events = VecDeque::new();
+        events.push_back(MonitorEvent {
+            event_id: 1,
+            timestamp: 1.0,
+            event_type: "context_usage".to_string(),
+            data: json!({ "context_tokens": 1234 }),
+        });
+        assert_eq!(derive_effective_context_tokens(&events), None);
     }
 }

@@ -31,23 +31,13 @@
             :class="{ active: index === selectedIndex }"
             @click="selectSkill(skill, index)"
           >
-            <label class="tool-check" @click.stop>
+            <label class="tool-check tool-check-icon" :title="t('userTools.action.enable')" @click.stop>
               <input
                 type="checkbox"
                 :checked="skill.enabled"
                 @click.stop
                 @change="toggleEnable(skill, ($event.target as HTMLInputElement).checked)"
               />
-              <span>{{ t('userTools.action.enable') }}</span>
-            </label>
-            <label class="tool-check" @click.stop>
-              <input
-                type="checkbox"
-                :checked="skill.shared"
-                @click.stop
-                @change="toggleShared(skill, ($event.target as HTMLInputElement).checked)"
-              />
-              <span>{{ t('userTools.action.share') }}</span>
             </label>
             <label class="tool-item-info">
               <strong>{{ skill.name }}</strong>
@@ -128,6 +118,10 @@
               class="skill-editor-text"
               :placeholder="t('userTools.skills.file.placeholder')"
               :disabled="editorDisabled"
+              spellcheck="false"
+              autocorrect="off"
+              autocomplete="off"
+              autocapitalize="off"
               @input="handleEditorInput"
               @scroll="syncSkillEditorScroll"
             ></textarea>
@@ -242,6 +236,22 @@ const emitStatus = (message) => {
   emit('status', message || '');
 };
 
+const normalizeSkillDisplayPath = (value) => {
+  let normalized = String(value || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  normalized = normalized.replace(/^\\\\\?\\UNC\\/i, '\\\\');
+  normalized = normalized.replace(/^\\\\\?\\/, '');
+  normalized = normalized.replace(/^\/\/\?\//, '');
+  normalized = normalized.replace(/^\/\/\.\//, '');
+  normalized = normalized.replace(/\\/g, '/');
+  if (/^\/[A-Za-z]:\//.test(normalized)) {
+    normalized = normalized.slice(1);
+  }
+  return normalized;
+};
+
 const activeSkill = computed(() => {
   if (!Number.isInteger(selectedIndex.value)) {
     return null;
@@ -256,14 +266,10 @@ const detailTitle = computed(() =>
 const detailMeta = computed(() => {
   const skill = activeSkill.value;
   if (!skill) return '';
-  const parts = [];
-  if (skill.path) {
-    parts.push(skill.path);
-  }
-  if (skillRoot.value && skillRoot.value !== skill.path) {
-    parts.push(skillRoot.value);
-  }
-  return parts.join(' 路 ');
+  const parts = [normalizeSkillDisplayPath(skill.path), normalizeSkillDisplayPath(skillRoot.value)].filter(
+    Boolean
+  );
+  return [...new Set(parts)].join(' · ');
 });
 
 const editorDisabled = computed(() => editorLocked.value || !activeFile.value);
@@ -275,10 +281,11 @@ const buildSkillDesc = (skill) => {
   if (skill.description) {
     parts.push(skill.description);
   }
-  if (skill.path) {
-    parts.push(skill.path);
+  const displayPath = normalizeSkillDisplayPath(skill.path);
+  if (displayPath) {
+    parts.push(displayPath);
   }
-  return parts.join(' 路 ') || t('common.noDescription');
+  return parts.join(' · ') || t('common.noDescription');
 };
 
 const normalizeSkillPath = (path) => String(path || '').replace(/\\/g, '/');
@@ -497,14 +504,6 @@ const toggleEnable = (skill, checked) => {
   scheduleSave();
 };
 
-const toggleShared = (skill, checked) => {
-  skill.shared = checked;
-  if (skill.shared) {
-    skill.enabled = true;
-  }
-  scheduleSave();
-};
-
 const triggerUpload = () => {
   if (!uploadInputRef.value) return;
   uploadInputRef.value.value = '';
@@ -693,6 +692,7 @@ watch(
   (value) => {
     if (value) {
       scheduleSkillEditorHighlight();
+      void loadSkills({ refreshDetail: false });
     }
   }
 );

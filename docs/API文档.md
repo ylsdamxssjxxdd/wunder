@@ -899,6 +899,7 @@
 - `llm_request` 事件仅保存 `payload_summary` 与 `message_count`，不保留完整请求体。
 - `observability.monitor_drop_event_types` 主要作用于 `normal` 画像；`debug` 画像默认保留完整增量事件。
 - 预填充速度基于会话第一轮 LLM 请求计算，避免多轮缓存导致速度偏高；`prefill_speed_lower_bound` 为兼容字段，当前恒为 false。
+- `session.context_tokens/context_tokens_peak` 汇总优先采用 `token_usage.input_tokens`（模型实际接收上下文）作为有效占用；`context_usage` 仍保留估算值用于过程观测。
 
 
 ### 4.1.10 `/wunder/admin/monitor/{session_id}/cancel`
@@ -1778,6 +1779,7 @@
   - 包装结构 `{ messages: [ChannelMessage, ...] }`
 - 返回（JSON）：`data.accepted`、`data.session_ids`、`data.outbox_ids`、`data.errors`
 - 说明：raw_payload 与标准化消息会落库到 `channel_messages`。
+- 渠道审批交互：当工具命中审批策略时，系统会向渠道回发审批提示文本；用户可在原会话回复 `1/2/3`（分别对应同意一次/同意本会话/拒绝）继续流程，`/stop` 会同时取消当前会话与待审批请求。
 
 #### ChannelMessage
 
@@ -2263,7 +2265,7 @@
 - `event: llm_stream_retry`：流式断线重连提示（`data.attempt/max_attempts/delay_s` 说明重连进度，`data.will_retry=false` 或 `data.final=true` 表示已停止重连，`data.reset_output=true` 表示应清理已拼接的输出）
 - `event: llm_output`：模型原始输出内容（调试用，`data.content` 为正文，`data.reasoning` 为思考过程，流式模式下为完整聚合结果）
 - `event: token_usage`：单轮模型 token 统计（input_tokens/output_tokens/total_tokens；含 `user_round/model_round`）
-- `event: context_usage`：上下文占用量统计（data.context_tokens/message_count，含 `user_round/model_round`）
+- `event: context_usage`：上下文占用量估算（data.context_tokens/message_count，含 `user_round/model_round`）
 - `event: quota_usage`：额度消耗统计（每次模型调用都会触发；`data.consumed` 为本次消耗次数，`data.daily_quota/used/remaining/date` 为每日额度状态，含 `user_round/model_round`）
 - `event: tool_call`：工具调用信息（名称、参数）
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）

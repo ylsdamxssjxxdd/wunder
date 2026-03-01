@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, Menu, ipcMain } = require('electron')
+const { app, BrowserWindow, dialog, Menu, Tray, nativeImage, ipcMain } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
 const fs = require('fs')
@@ -12,6 +12,9 @@ let bridgePort = null
 let bridgeWebBase = null
 let updateTask = null
 let updaterReady = false
+let tray = null
+let closePromptInFlight = false
+let closeBehavior = 'ask'
 
 const createUpdateSnapshot = () => ({
   phase: 'idle',
@@ -35,6 +38,8 @@ if (process.env.WUNDER_DISABLE_GPU === '1') {
 const repoRoot = path.resolve(__dirname, '..', '..')
 const localResourcesRoot = path.resolve(__dirname, '..', 'resources')
 const desktopAppId = 'com.wunder.desktop'
+const closePreferenceFileName = 'window-close-preference.json'
+const closeBehaviorValues = new Set(['ask', 'tray', 'quit'])
 
 if (process.platform === 'win32') {
   app.setAppUserModelId(desktopAppId)
@@ -106,6 +111,44 @@ const resolveLinuxDesktopIconSource = () => {
     }
   }
   return null
+}
+
+const sanitizeCloseBehavior = (value) => {
+  if (closeBehaviorValues.has(value)) {
+    return value
+  }
+  return 'ask'
+}
+
+const resolveClosePreferencePath = () => path.join(app.getPath('userData'), closePreferenceFileName)
+
+const loadCloseBehavior = () => {
+  const preferencePath = resolveClosePreferencePath()
+  if (!fs.existsSync(preferencePath)) {
+    return 'ask'
+  }
+  try {
+    const raw = fs.readFileSync(preferencePath, 'utf8')
+    const parsed = JSON.parse(raw)
+    return sanitizeCloseBehavior(parsed?.closeBehavior)
+  } catch (error) {
+    console.warn('Failed to read close preference:', error)
+    return 'ask'
+  }
+}
+
+const saveCloseBehavior = (value) => {
+  const normalized = sanitizeCloseBehavior(value)
+  const preferencePath = resolveClosePreferencePath()
+  try {
+    fs.mkdirSync(path.dirname(preferencePath), { recursive: true })
+    fs.writeFileSync(preferencePath, JSON.stringify({ closeBehavior: normalized }, null, 2), 'utf8')
+    closeBehavior = normalized
+    return true
+  } catch (error) {
+    console.warn('Failed to persist close preference:', error)
+    return false
+  }
 }
 
 const writeFileIfChanged = (filePath, content, mode) => {
@@ -525,6 +568,135 @@ const withMainWindow = (handler, fallback) => {
   return handler(mainWindow)
 }
 
+const showMainWindow = () =>
+  withMainWindow((window) => {
+    if (window.isMinimized()) {
+      window.restore()
+    }
+    if (!window.isVisible()) {
+      window.show()
+    }
+    window.focus()
+    return true
+  }, false)
+
+const destroyTray = () => {
+  if (!tray) {
+    return
+  }
+  tray.destroy()
+  tray = null
+}
+
+const createTray = () => {
+  if (tray) {
+    return tray
+  }
+  const iconPath = resolveWindowIcon()
+  if (!iconPath) {
+    console.warn('Tray icon missing, skip tray integration.')
+    return null
+  }
+  const trayIcon = nativeImage.createFromPath(iconPath)
+  if (trayIcon.isEmpty()) {
+    console.warn(`Failed to load tray icon: ${iconPath}`)
+    return null
+  }
+  tray = new Tray(trayIcon)
+  tray.setToolTip('Wunder Desktop')
+  const trayMenu = Menu.buildFromTemplate([
+    {
+      label: '打开 Wunder Desktop',
+      click: () => {
+        showMainWindow()
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        app.isQuitting = true
+        app.quit()
+      }
+    }
+  ])
+  tray.setContextMenu(trayMenu)
+  tray.on('click', () => {
+    showMainWindow()
+  })
+  tray.on('double-click', () => {
+    showMainWindow()
+  })
+  return tray
+}
+
+const hideMainWindowToTray = () =>
+  withMainWindow((window) => {
+    const trayInstance = createTray()
+    if (!trayInstance) {
+      app.isQuitting = true
+      app.quit()
+      return false
+    }
+    window.hide()
+    return true
+  }, false)
+
+const promptCloseBehavior = async (window) => {
+  if (closePromptInFlight) {
+    return
+  }
+  closePromptInFlight = true
+  try {
+    const result = await dialog.showMessageBox(window, {
+      type: 'question',
+      title: 'Wunder Desktop',
+      message: '关闭窗口时，您希望如何处理？',
+      detail: '可选择隐藏到托盘继续后台运行，或直接退出程序。',
+      buttons: ['隐藏到托盘', '关闭退出', '取消'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      checkboxLabel: '下次不再提示',
+      checkboxChecked: false
+    })
+
+    if (result.response === 0) {
+      if (result.checkboxChecked) {
+        saveCloseBehavior('tray')
+      }
+      hideMainWindowToTray()
+      return
+    }
+
+    if (result.response === 1) {
+      if (result.checkboxChecked) {
+        saveCloseBehavior('quit')
+      }
+      app.isQuitting = true
+      app.quit()
+    }
+  } finally {
+    closePromptInFlight = false
+  }
+}
+
+const handleMainWindowClose = (window, event) => {
+  if (app.isQuitting) {
+    return
+  }
+  const behavior = sanitizeCloseBehavior(closeBehavior)
+  if (behavior === 'quit') {
+    return
+  }
+  event.preventDefault()
+  if (behavior === 'tray') {
+    hideMainWindowToTray()
+    return
+  }
+  void promptCloseBehavior(window)
+}
+
 const createWindow = async () => {
   const port = await startBridge()
   mainWindow = new BrowserWindow({
@@ -551,6 +723,9 @@ const createWindow = async () => {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
   })
+  mainWindow.on('close', (event) => {
+    handleMainWindowClose(mainWindow, event)
+  })
   mainWindow.on('closed', () => {
     mainWindow = null
   })
@@ -563,18 +738,14 @@ if (!gotLock) {
   app.quit()
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore()
-      }
-      mainWindow.focus()
-    }
+    showMainWindow()
   })
 
   app.whenReady().then(async () => {
     try {
       configureUpdaterEvents()
       ensureLinuxDesktopIntegration()
+      closeBehavior = loadCloseBehavior()
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       ipcMain.handle('wunder:window-minimize', () =>
         withMainWindow((window) => {
@@ -637,6 +808,7 @@ if (!gotLock) {
 
 app.on('before-quit', () => {
   app.isQuitting = true
+  destroyTray()
   stopBridge()
 })
 

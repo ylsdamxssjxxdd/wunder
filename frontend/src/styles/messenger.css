@@ -4436,7 +4436,8 @@
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skill-editor-text {
-  color: #1f2937;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 .messenger-dialog.el-dialog {
