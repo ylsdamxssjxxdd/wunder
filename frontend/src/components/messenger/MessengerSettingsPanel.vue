@@ -119,8 +119,8 @@
         <div class="messenger-settings-row">
           <div class="messenger-settings-label">{{ t('messenger.settings.sendKey') }}</div>
           <select v-model="sendKey" class="messenger-settings-select">
-            <option value="enter">Enter</option>
             <option value="ctrl_enter">Ctrl + Enter</option>
+            <option value="enter">Enter</option>
           </select>
         </div>
         <div class="messenger-settings-row">
@@ -326,7 +326,7 @@ const props = withDefaults(
     username: '',
     userId: '',
     languageLabel: '',
-    sendKey: 'enter',
+    sendKey: 'ctrl_enter',
     themePalette: 'eva-orange',
     performanceMode: 'high',
     approvalMode: 'auto_edit',
@@ -357,7 +357,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
-const sendKey = ref<SendKeyMode>('enter');
+const sendKey = ref<SendKeyMode>('ctrl_enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const performanceMode = ref<PerformanceMode>('high');
 const approvalMode = ref<ApprovalMode>('auto_edit');
@@ -367,7 +367,7 @@ const avatarDialogIcon = ref(DEFAULT_AVATAR_ICON);
 const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
 
 const normalizeSendKey = (value: unknown): SendKeyMode =>
-  String(value || '').trim().toLowerCase() === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
+  String(value || '').trim().toLowerCase() === 'enter' ? 'enter' : 'ctrl_enter';
 
 const normalizeThemePalette = (value: unknown): ThemePalette => {
   const text = String(value || '').trim().toLowerCase();

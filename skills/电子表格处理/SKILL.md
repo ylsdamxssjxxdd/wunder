@@ -1,292 +1,214 @@
 ---
-名称: 电子表格处理
-描述: "全面的电子表格创建、编辑与分析，支持公式、格式、数据分析与可视化。当需要处理电子表格（.xlsx、.xlsm、.csv、.tsv 等）时使用：(1) 新建带公式与格式的表格，(2) 读取或分析数据，(3) 在保留公式的情况下修改现有表格，(4) 在表格内进行数据分析与可视化，或 (5) 重新计算公式"
+name: 电子表格处理
+description: "通用电子表格处理技能：面向 .xlsx/.xlsm/.csv/.tsv 的读取、清洗、分析、回写与可视化（含 matplotlib 高质量图表）。"
 ---
 
-# 目标与适用场景
-- 目标：用稳定、可复用的流程生成或修改 Excel，并产出清晰的分析与图表
-- 适用：报表生成、业务数据分析、财务模型、运营/销售数据看板
-- 优先：快速生成可读的模板结构，保证公式可重算与图表可复用
+# 适用范围
+- 新建或修改电子表格。
+- 读取并分析结构未知或字段命名不统一的数据。
+- 生成统计图、趋势图、占比图、组合图，并导出到图片或回写 Excel。
 
-# 输出要求
+# 关键原则
+1. **先元信息，后处理**：先读取表格元信息（sheet、列、类型、缺失、样本），再决定字段映射和计算逻辑。
+2. **字段按“角色”映射，不写死列名**：用 `id_col/time_col/category_cols/metric_cols` 这类角色驱动流程。
+3. **先聚合再出图**：图表引用聚合结果，不直接对明细全量作图。
+4. **可复现**：相同输入与参数，产出应一致。
 
-## 通用要求
-### 公式错误为零
-- 所有 Excel 模型必须零公式错误（#REF!, #DIV/0!, #VALUE!, #N/A, #NAME?）
+# 标准流程（建议照此执行）
+1. 获取元信息（结构体检）。
+2. 建立字段角色映射（用户确认口径）。
+3. 清洗与标准化（类型、缺失、时间、异常值）。
+4. 计算指标与聚合（明细 -> 统计表）。
+5. 绘图（matplotlib）。
+6. 输出（PNG/SVG/Excel）。
+7. 质量校验（口径、范围、空值、可读性）。
 
-### 保留现有模板（更新模板时）
-- 修改文件时必须研究并严格匹配现有格式、样式与约定
-- 已有固定样式的文件不要强行套用统一格式
-- 现有模板约定始终优先于以下指南
-
-### 图表要求（需要可视化时）
-- 至少包含 1 个图表，标题、轴标签完整
-- 图表数据范围必须覆盖完整数据区
-- 图表与数据区保持一致（同表或摘要表）
-
-# 快速流程（推荐）
-1. **环境预检**：检查 Python、pandas、openpyxl、LibreOffice（若需要公式重算）
-2. **识别任务类型**：新建 / 编辑 / 分析 / 可视化 / 公式重算
-3. **准备数据**：数据清洗、字段校验、日期/数值规范化
-4. **写入与公式**：优先用公式表达计算关系，避免硬编码结果
-5. **可视化**：插入折线/柱状/组合图
-6. **公式重算**：使用 `recalc.py`（需 LibreOffice）
-7. **质量检查**：错误扫描、行列范围、格式与单位检查
-
-# 环境预检
-## 依赖检查（推荐）
-```bash
-python3 - <<'PY'
-import importlib, shutil
-mods = ["pandas", "openpyxl"]
-for m in mods:
-    try:
-        importlib.import_module(m)
-        print(f"{m} ok")
-    except Exception as e:
-        print(f"{m} missing: {e}")
-print("soffice", "ok" if shutil.which("soffice") else "missing")
-PY
-```
-
-## 公式重算（可选）
-- 需要 LibreOffice（`soffice` 可执行）才可重算公式
-- 命令：
-  ```bash
-  python recalc.py output.xlsx
-  ```
-
-# 财务模型规范（保留原约定）
-## 颜色编码规范
-除非用户或现有模板另有说明。
-
-### 行业通用颜色约定
-- **蓝色文本（RGB: 0,0,255）**：硬编码输入值，以及用户会调整的情景变量
-- **黑色文本（RGB: 0,0,0）**：所有公式与计算结果
-- **绿色文本（RGB: 0,128,0）**：同一工作簿内其他工作表的引用链接
-- **红色文本（RGB: 255,0,0）**：外部文件链接
-- **黄色背景（RGB: 255,255,0）**：关键假设或需要更新的单元格
-
-## 数字格式规范
-### 必须遵循的格式规则
-- **年份**：格式化为文本字符串（如 "2024"，不要 "2,024"）
-- **货币**：使用 $#,##0 格式；表头必须标注单位（如 "Revenue ($mm)"）
-- **零值**：使用格式将所有 0 显示为 "-"，包含百分比（如 "$#,##0;($#,##0);-"）
-- **百分比**：默认 0.0% 格式（1 位小数）
-- **倍数**：估值倍数使用 0.0x（EV/EBITDA、P/E）
-- **负数**：使用括号 (123)，不要 -123
-
-## 公式构建规则
-### 假设项放置
-- 所有假设（增长率、毛利率、倍数等）放在独立的假设单元格
-- 公式中使用单元格引用而非硬编码数值
-- 示例：使用 `=B5*(1+$B$6)`，不要 `=B5*1.05`
-
-### 公式错误预防
-- 校验所有单元格引用是否正确
-- 检查范围是否存在 off-by-one
-- 确保所有预测期公式一致
-- 用边界情况测试（零值、负值）
-- 确认没有意外的循环引用
-
-### 硬编码来源标注要求
-- 在单元格内或旁边（若表尾）标注来源。格式："Source: [系统/文档], [日期], [具体引用], [URL 如适用]"
-- 示例：
-  - "Source: Company 10-K, FY2024, Page 45, Revenue Note, [SEC EDGAR URL]"
-  - "Source: Company 10-Q, Q2 2025, Exhibit 99.1, [SEC EDGAR URL]"
-  - "Source: Bloomberg Terminal, 8/15/2025, AAPL US Equity"
-  - "Source: FactSet, 8/20/2025, Consensus Estimates Screen"
-
-# XLSX 创建、编辑与分析
-## 工具选择
-1. **pandas**：用于数据分析、统计、摘要输出
-2. **openpyxl**：用于公式、格式、Excel 结构与图表
-
-## 关键原则：用公式，不要硬编码结果
-必须使用 Excel 公式，而不是在 Python 中计算后写死数值，这样数据变化才能自动重算。
-
-### 错误示例 - 硬编码计算结果
+# 1) 元信息获取（必须先做）
 ```python
-# 错误：在 Python 中计算后写死结果
-total = df['Sales'].sum()
-sheet['B10'] = total
+from pathlib import Path
+import pandas as pd
+
+def inspect_table(path: str, sheet: str | None = None, sample_n: int = 5):
+    p = Path(path)
+    if p.suffix.lower() in {".xlsx", ".xlsm"}:
+        xls = pd.ExcelFile(path)
+        target_sheet = sheet or xls.sheet_names[0]
+        df = pd.read_excel(path, sheet_name=target_sheet, nrows=2000)
+        meta = {"file_type": p.suffix.lower(), "sheet_names": xls.sheet_names, "active_sheet": target_sheet}
+    else:
+        df = pd.read_csv(path, nrows=2000)
+        meta = {"file_type": p.suffix.lower(), "sheet_names": [], "active_sheet": None}
+
+    profile = pd.DataFrame({
+        "column": df.columns,
+        "dtype": [str(t) for t in df.dtypes],
+        "null_ratio": df.isna().mean().round(4).values,
+        "sample": [str(df[c].dropna().head(1).iloc[0]) if df[c].dropna().shape[0] else "" for c in df.columns],
+    })
+    return meta, profile
+
+# 用法
+# meta, profile = inspect_table("input.xlsx")
+# print(meta)
+# print(profile)
 ```
 
-### 正确示例 - 使用 Excel 公式
+# 2) 字段角色映射（通用模板）
+不要直接假设列名；先把“业务字段”映射到“角色字段”。
+
 ```python
-# 正确：让 Excel 自行计算
-sheet['B10'] = '=SUM(B2:B9)'
+role_map = {
+    "id_col": "...",              # 主键/人员ID/订单号
+    "time_col": "...",            # 日期/月份/时间戳（可选）
+    "category_cols": ["..."],     # 部门/区域/产品线等分类字段
+    "metric_cols": ["..."],       # 需要统计的数值字段
+}
 ```
 
-## 编辑现有 Excel 注意事项
-- 读取计算值使用 `data_only=True`：`load_workbook('file.xlsx', data_only=True)`
-- 警告：以 `data_only=True` 打开并保存会用值覆盖公式且不可恢复
-- 大文件读取用 `read_only=True`，写入用 `write_only=True`
+当字段名不一致时，优先做“候选别名表”，再由用户确认最终映射。
 
-# 图表与可视化（新增强化）
-## 图表选择建议
-- **折线图**：趋势分析（收入、利润、用户）
-- **柱状图**：分组对比（部门/区域）
-- **组合图**：双指标（收入 + 利润率）
-
-## 图表模板（openpyxl）
-```python
-from openpyxl.chart import LineChart, Reference
-
-# 图表：收入 vs 利润
-chart = LineChart()
-chart.title = "收入与利润趋势"
-chart.y_axis.title = "金额"
-chart.x_axis.title = "月份"
-
-data1 = Reference(ws, min_col=2, max_col=2, min_row=1, max_row=last_row)
-data2 = Reference(ws, min_col=3, max_col=3, min_row=1, max_row=last_row)
-chart.add_data(data1, titles_from_data=True)
-chart.add_data(data2, titles_from_data=True)
-chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=last_row))
-
-ws.add_chart(chart, "E2")
-```
-
-# 模板脚本（提高效率）
-## 模板 A：新建数据 + 公式 + 图表（推荐）
-```python
-from datetime import date
-from openpyxl import Workbook
-from openpyxl.chart import LineChart, Reference
-from openpyxl.styles import Alignment, Font
-
-# 1) 准备数据（示例）
-months = [date(2024, m, 1) for m in range(1, 13)]
-orders = [820, 860, 900, 950, 980, 1020, 1100, 1180, 1120, 1050, 990, 1210]
-arpu = [110, 112, 115, 118, 120, 123, 126, 128, 125, 122, 121, 130]
-marketing = [42000, 43000, 47000, 44000, 45000, 46000, 48000, 49000, 47000, 45500, 44000, 52000]
-
-wb = Workbook()
-ws = wb.active
-ws.title = "Data"
-ws.append(["Month", "Orders", "ARPU", "Revenue", "Marketing", "Net Profit", "Margin"])
-
-for i in range(12):
-    ws.append([months[i], orders[i], arpu[i], None, marketing[i], None, None])
-
-# 2) 公式（禁止硬编码结果）
-for r in range(2, 14):
-    ws[f"D{r}"] = f"=B{r}*C{r}"
-    ws[f"F{r}"] = f"=D{r}-E{r}"
-    ws[f"G{r}"] = f"=IFERROR(F{r}/D{r},0)"
-
-# 3) 图表
-chart = LineChart()
-chart.title = "收入与利润"
-chart.y_axis.title = "金额"
-chart.x_axis.title = "月份"
-chart.add_data(Reference(ws, min_col=4, max_col=4, min_row=1, max_row=13), titles_from_data=True)
-chart.add_data(Reference(ws, min_col=6, max_col=6, min_row=1, max_row=13), titles_from_data=True)
-chart.set_categories(Reference(ws, min_col=1, min_row=2, max_row=13))
-ws.add_chart(chart, "I2")
-
-# 4) 简单格式
-ws["A1"].font = Font(bold=True)
-ws.freeze_panes = "A2"
-for cell in ws["A"]:
-    cell.alignment = Alignment(horizontal="center")
-
-wb.save("output.xlsx")
-```
-
-## 模板 B：数据分析（pandas）并输出结论
+# 3) 清洗与标准化（通用模板）
 ```python
 import pandas as pd
 
-df = pd.read_excel("output.xlsx", sheet_name="Data")
+def normalize(df: pd.DataFrame, role_map: dict) -> pd.DataFrame:
+    out = df.copy()
 
-summary = {
-    "总收入": float(df["Revenue"].sum()),
-    "总净利润": float(df["Net Profit"].sum()),
-    "平均利润率": float(df["Margin"].mean()),
-    "最高收入月份": df.loc[df["Revenue"].idxmax(), "Month"],
-}
-print(summary)
+    # 时间列
+    t = role_map.get("time_col")
+    if t:
+        out[t] = pd.to_datetime(out[t], errors="coerce")
+
+    # 数值列
+    for col in role_map.get("metric_cols", []):
+        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    # 分类列
+    for col in role_map.get("category_cols", []):
+        out[col] = out[col].fillna("未分类").astype(str).str.strip()
+
+    # 去重（如果有主键）
+    k = role_map.get("id_col")
+    if k and k in out.columns:
+        out = out.drop_duplicates(subset=[k])
+
+    return out
 ```
 
-# 公式重算与错误检查
-```bash
-python recalc.py output.xlsx
-```
-- 脚本返回 JSON，包含错误明细与公式数量
-- 若 `status` 为 `errors_found`，需先修复再交付
+# 4) 聚合（示例）
+```python
+def build_aggregates(df, role_map):
+    cat = role_map["category_cols"][0]
+    metric = role_map["metric_cols"][0]
 
-# 质量检查清单（交付前）
-- [ ] 公式错误为 0
-- [ ] 图表已生成，标题与坐标轴完整
-- [ ] 单位标注清晰（$ / % / x）
-- [ ] 数据范围完整，无 NaN/空行
-- [ ] 日期与数值格式符合规范
+    # 分类汇总
+    by_cat = df.groupby(cat, dropna=False)[metric].sum().reset_index()
+    by_cat = by_cat.sort_values(metric, ascending=False)
 
-# 公式校验清单（详细版）
-## 关键校验
-- [ ] **抽查 2-3 个引用**：确认引用范围正确后再批量应用
-- [ ] **列映射**：确认 Excel 列号对应正确（如第 64 列是 BL 不是 BK）
-- [ ] **行偏移**：Excel 行号从 1 开始（DataFrame 第 5 行对应 Excel 第 6 行）
-
-## 常见陷阱
-- [ ] **NaN 处理**：用 `pd.notna()` 检查空值
-- [ ] **超范围引用**：检查数据是否超过预期列数
-- [ ] **多次匹配**：查找全部出现位置，不只用第一个
-- [ ] **除以零**：公式中 `/` 前先检查分母
-- [ ] **错误引用**：确认引用指向目标单元格
-- [ ] **跨表引用**：使用正确格式（Sheet1!A1）
-
-## 公式测试策略
-- [ ] **先小规模测试**：先在 2-3 个单元格验证公式
-- [ ] **验证依赖**：确保公式引用的单元格存在
-- [ ] **覆盖边界情况**：包含 0、负数、极大值
-
-## recalc.py 输出解读
-```json
-{
-  "status": "success",
-  "total_errors": 0,
-  "total_formulas": 42,
-  "error_summary": {
-    "#REF!": {
-      "count": 2,
-      "locations": ["Sheet1!B5", "Sheet1!C10"]
-    }
-  }
-}
+    # 时间趋势（若有）
+    by_time = None
+    t = role_map.get("time_col")
+    if t:
+        by_time = (
+            df.dropna(subset=[t])
+              .assign(period=df[t].dt.to_period("M").astype(str))
+              .groupby("period", dropna=False)[metric]
+              .sum()
+              .reset_index()
+        )
+    return by_cat, by_time
 ```
 
-# 最佳实践
-## 库选择
-- **pandas**：适合数据分析、批量操作与简单导出
-- **openpyxl**：适合复杂格式、公式与 Excel 专有特性
+# 5) matplotlib 高质量图表（详细示例）
+下面示例演示：**渐变柱状图 + 趋势折线图 + 环形占比图 + 热力图**（2x2 面板）。
 
-## openpyxl 注意事项
-- 单元格索引从 1 开始（row=1, column=1 即 A1）
-- 读取计算值使用 `data_only=True`
-- **警告**：`data_only=True` 打开并保存会用值覆盖公式且不可恢复
-- 大文件读取用 `read_only=True`，写入用 `write_only=True`
-- 公式会被保存但不会计算，需用 `recalc.py` 更新值
+```python
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import numpy as np
 
-## pandas 注意事项
-- 指定类型避免自动推断：`pd.read_excel('file.xlsx', dtype={'id': str})`
-- 大文件可只读特定列：`pd.read_excel('file.xlsx', usecols=['A', 'C', 'E'])`
-- 正确处理日期：`pd.read_excel('file.xlsx', parse_dates=['date_column'])`
+def draw_dashboard(by_cat, by_time, share_df, heat_values, heat_x, heat_y, out_png="dashboard.png"):
+    # 主题（深色风格）
+    plt.style.use("dark_background")
+    mpl.rcParams["figure.dpi"] = 140
+    mpl.rcParams["axes.unicode_minus"] = False
 
-# 代码风格指南
-## Python（Excel 相关）
-- 代码保持简洁，避免冗余变量与重复操作
-- 注释使用中文，并在关键步骤给出清晰说明
-- 避免不必要的 print 输出
+    fig = plt.figure(figsize=(16, 10), constrained_layout=True)
+    gs = fig.add_gridspec(2, 2)
 
-## Excel 文件本身
-- 复杂公式或关键假设应在单元格中添加注释
-- 硬编码值标注数据来源
-- 为关键计算与模型模块添加说明
+    # 1) 渐变柱状图
+    ax1 = fig.add_subplot(gs[0, 0])
+    x = np.arange(len(by_cat))
+    y = by_cat.iloc[:, 1].to_numpy()
+    colors = plt.cm.viridis(np.linspace(0.2, 0.95, len(y)))
+    bars = ax1.bar(x, y, color=colors, edgecolor="white", linewidth=0.6)
+    ax1.set_title("Top Categories", fontsize=13, fontweight="bold")
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(by_cat.iloc[:, 0].astype(str), rotation=35, ha="right")
+    ax1.grid(axis="y", alpha=0.25, linestyle="--")
+    for b in bars:
+        ax1.text(b.get_x() + b.get_width() / 2, b.get_height(), f"{b.get_height():.0f}",
+                 ha="center", va="bottom", fontsize=8)
 
-# 常见问题与排查
-- **图表不显示**：检查数据范围、是否有空列、类别轴设置
-- **公式结果为 0**：检查引用列偏移、是否被覆盖为数值
-- **pandas 读取空值**：检查列名是否一致、是否有隐藏行/列
+    # 2) 趋势折线图（含面积）
+    ax2 = fig.add_subplot(gs[0, 1])
+    if by_time is not None and len(by_time) > 0:
+        xt = np.arange(len(by_time))
+        yt = by_time.iloc[:, 1].to_numpy()
+        ax2.plot(xt, yt, color="#4cc9f0", linewidth=2.6, marker="o")
+        ax2.fill_between(xt, yt, color="#4cc9f0", alpha=0.2)
+        ax2.set_xticks(xt)
+        ax2.set_xticklabels(by_time.iloc[:, 0].astype(str), rotation=35, ha="right")
+    ax2.set_title("Trend", fontsize=13, fontweight="bold")
+    ax2.grid(alpha=0.25, linestyle="--")
+
+    # 3) 环形占比图（Donut）
+    ax3 = fig.add_subplot(gs[1, 0])
+    vals = share_df.iloc[:, 1].to_numpy()
+    labels = share_df.iloc[:, 0].astype(str).to_list()
+    pie_colors = plt.cm.plasma(np.linspace(0.15, 0.9, len(vals)))
+    wedges, texts, autotexts = ax3.pie(
+        vals, labels=labels, autopct="%1.1f%%", startangle=90,
+        colors=pie_colors, pctdistance=0.78, wedgeprops={"width": 0.42, "edgecolor": "black"}
+    )
+    for t in autotexts:
+        t.set_fontsize(8)
+    ax3.set_title("Share", fontsize=13, fontweight="bold")
+
+    # 4) 热力图（二维矩阵）
+    ax4 = fig.add_subplot(gs[1, 1])
+    im = ax4.imshow(heat_values, cmap="magma", aspect="auto")
+    ax4.set_xticks(np.arange(len(heat_x)))
+    ax4.set_xticklabels(heat_x, rotation=35, ha="right")
+    ax4.set_yticks(np.arange(len(heat_y)))
+    ax4.set_yticklabels(heat_y)
+    ax4.set_title("Heatmap", fontsize=13, fontweight="bold")
+    fig.colorbar(im, ax=ax4, fraction=0.046, pad=0.04)
+
+    fig.suptitle("Analytics Dashboard", fontsize=16, fontweight="bold")
+    fig.savefig(out_png, bbox_inches="tight")
+    plt.close(fig)
+```
+
+# 6) 导出建议
+- 图表：同时导出 `PNG + SVG`（汇报 + 二次编辑）。
+- 表格：保留 `raw_data`、`chart_data`、`charts` 三层。
+- 命名：`<主题>_<YYYYMMDD>_v1`，便于版本管理。
+
+# 性能建议（大数据时启用）
+- `usecols` 只读必要列。
+- 明确 `dtype`，减少推断开销。
+- 超大 CSV 用 `chunksize` 分块聚合。
+- Excel 大文件优先“读分析 -> 写结果”两段式，不在明细层做重操作。
+
+# 交付检查清单
+- [ ] 元信息与字段映射已明确（可复查）。
+- [ ] 统计口径有说明（分母/时间窗口/去重规则）。
+- [ ] 图表引用的是聚合层而非明细全列。
+- [ ] 图表标题、轴标签、单位完整。
+- [ ] 输出文件/图片可复现，且无明显异常值误导。
+
+# 常见失败点
+- 没先做元信息检查，直接假设列名。
+- 口径混用（全量 vs 去重 vs 在岗等）。
+- 图表直接绑明细层，导致卡顿和范围错误。

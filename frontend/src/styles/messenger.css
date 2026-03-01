@@ -145,7 +145,6 @@
 }
 
 :root[data-user-accent='minimal'] .messenger-world-send-main,
-:root[data-user-accent='minimal'] .messenger-world-send-menu,
 :root[data-user-accent='minimal'] .messenger-composer-scope.chat-shell .send-btn {
   background: #f3f4f6;
   color: #374151;
@@ -183,7 +182,6 @@
     .messenger-settings-action,
     .messenger-settings-select-like,
     .messenger-world-send-main,
-    .messenger-world-send-menu,
     .messenger-world-pop-trigger,
     .messenger-world-quick-btn,
     .messenger-world-emoji-item,
@@ -987,6 +985,10 @@
   max-width: 100%;
 }
 
+.messenger-chat-body.is-agent {
+  padding-bottom: clamp(120px, 34vh, 280px);
+}
+
 .messenger-chat-body.is-agent .messenger-message:not(.mine) {
   align-items: stretch;
 }
@@ -1568,38 +1570,22 @@
 
 .messenger-world-send-group {
   display: inline-flex;
-  align-items: stretch;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 0;
-  box-shadow: none;
+  align-items: center;
 }
 
-.messenger-world-send-main,
-.messenger-world-send-menu {
+.messenger-world-send-main {
   border: 0;
+  border-radius: 10px;
   background: var(--ui-accent);
   color: #ffffff;
   cursor: pointer;
   transition: background-color 0.15s ease;
-}
-
-.messenger-world-send-main {
   width: 40px;
   height: 32px;
   padding: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-.messenger-world-send-menu {
-  width: 26px;
-  height: 32px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-left: 1px solid rgba(255, 255, 255, 0.35);
 }
 
 .messenger-world-send-icon {
@@ -1609,25 +1595,14 @@
   stroke: currentColor;
 }
 
-.messenger-world-send-icon--menu {
-  width: 13px;
-  height: 13px;
-}
-
-.messenger-world-send-main:hover:not(:disabled),
-.messenger-world-send-menu:hover {
+.messenger-world-send-main:hover:not(:disabled) {
   background: var(--ui-accent-hover);
 }
 
-.messenger-world-send-main:disabled,
-.messenger-world-send-main:disabled + .messenger-world-send-menu {
+.messenger-world-send-main:disabled {
   background: var(--ui-accent-disabled);
   cursor: not-allowed;
   box-shadow: none;
-}
-
-.messenger-world-send-main:disabled + .messenger-world-send-menu {
-  border-left-color: rgba(255, 255, 255, 0.22);
 }
 
 @media (max-width: 1024px) {
@@ -1982,14 +1957,12 @@
 }
 
 .messenger-timeline-item.is-main .messenger-timeline-delete-btn {
-  opacity: 0;
-  pointer-events: none;
+  display: none;
 }
 
 .messenger-timeline-item.is-main:hover .messenger-timeline-delete-btn,
 .messenger-timeline-item.is-main:focus-within .messenger-timeline-delete-btn {
-  opacity: 1;
-  pointer-events: auto;
+  display: inline-flex;
 }
 
 .messenger-timeline-main-btn:hover:not(:disabled) {
@@ -3657,10 +3630,6 @@
 
 .messenger-composer-scope.chat-shell .chat-composer-world-send-stop-icon {
   color: #ffffff;
-}
-
-.messenger-composer-scope.chat-shell .chat-composer-world-send-menu {
-  cursor: default;
 }
 
 .messenger-workspace-scope.chat-shell .workspace-panel {

@@ -1362,10 +1362,18 @@
             v-model:expanded="agentPlanExpanded"
             :plan="activeAgentPlan"
           />
+          <ToolApprovalComposer
+            v-if="activeSessionApproval"
+            :approval="activeSessionApproval"
+            :busy="approvalResponding"
+            @decide="handleSessionApprovalDecision"
+          />
           <ChatComposer
+            v-else
             world-style
             :loading="agentSessionLoading"
             :send-key="messengerSendKey"
+            :draft-key="agentComposerDraftKey"
             :inquiry-active="Boolean(activeAgentInquiryPanel)"
             :inquiry-selection="agentInquirySelection"
             @send="sendAgentMessage"
@@ -1380,6 +1388,7 @@
           :recent-emojis="worldRecentEmojis"
           :emoji-catalog="worldEmojiCatalog"
           :draft="worldDraft"
+          :send-key="messengerSendKey"
           :can-send="canSendWorldMessage"
           :uploading="worldUploading"
           @update:draft="worldDraft = $event"
@@ -1580,6 +1589,7 @@ import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
+import ToolApprovalComposer from '@/components/chat/ToolApprovalComposer.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
 import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
 import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
@@ -1714,6 +1724,7 @@ const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const selectedCustomToolName = ref('');
 const worldDraft = ref('');
+const worldDraftMap = new Map<string, string>();
 const dismissedAgentConversationMap = ref<Record<string, number>>({});
 const dismissedAgentStorageKey = ref('');
 const leftRailRef = ref<HTMLElement | null>(null);
@@ -1809,7 +1820,8 @@ const fileContainerContextMenu = ref<{
 const desktopContainerRootMap = ref<Record<number, string>>({});
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
-const messengerSendKey = ref<MessengerSendKeyMode>('enter');
+const approvalResponding = ref(false);
+const messengerSendKey = ref<MessengerSendKeyMode>('ctrl_enter');
 const messengerApprovalMode = ref<AgentApprovalMode>('auto_edit');
 const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
@@ -2079,6 +2091,37 @@ const activeAgentSession = computed(() => {
     chatStore.sessions.find((item) => String(item?.id || '').trim() === sessionId) || null
   );
 });
+
+const activeSessionApproval = computed(() => {
+  if (!isAgentConversationActive.value) return null;
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId || !Array.isArray(chatStore.pendingApprovals)) return null;
+  return (
+    chatStore.pendingApprovals.find(
+      (item) => String(item?.session_id || '').trim() === sessionId
+    ) || null
+  );
+});
+
+const resolveCurrentUserScope = (): string => String(currentUserId.value || '').trim() || 'guest';
+
+const resolveAgentDraftIdentity = (): string => {
+  const identity = activeConversation.value;
+  if (identity?.kind === 'agent') {
+    const conversationId = String(identity.id || '').trim();
+    if (conversationId) return `conversation:${conversationId}`;
+    const agentId = normalizeAgentId(identity.agentId || activeAgentId.value || selectedAgentId.value);
+    return `draft:${agentId || DEFAULT_AGENT_KEY}`;
+  }
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (sessionId) return `session:${sessionId}`;
+  const draftAgentId = normalizeAgentId(chatStore.draftAgentId || activeAgentId.value || selectedAgentId.value);
+  return `draft:${draftAgentId || DEFAULT_AGENT_KEY}`;
+};
+
+const agentComposerDraftKey = computed(() =>
+  `messenger:agent:${resolveCurrentUserScope()}:${resolveAgentDraftIdentity()}`
+);
 
 const normalizeAbilityItemName = (item: unknown): string => {
   if (!item) return '';
@@ -2392,7 +2435,7 @@ const normalizeUiFontSize = (value: unknown): number => {
 };
 
 const normalizeMessengerSendKey = (value: unknown): MessengerSendKeyMode =>
-  String(value || '').trim().toLowerCase() === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
+  String(value || '').trim().toLowerCase() === 'enter' ? 'enter' : 'ctrl_enter';
 
 const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
   const text = String(value || '').trim().toLowerCase();
@@ -3228,6 +3271,29 @@ const activeWorldConversationId = computed(() => {
   if (!isWorldConversationActive.value) return '';
   return String(activeConversation.value?.id || '').trim();
 });
+
+const buildWorldDraftKey = (conversationId: unknown): string => {
+  const normalizedConversationId = String(conversationId || '').trim();
+  if (!normalizedConversationId) return '';
+  return `messenger:world:${resolveCurrentUserScope()}:${normalizedConversationId}`;
+};
+
+const readWorldDraft = (conversationId: unknown): string => {
+  const draftKey = buildWorldDraftKey(conversationId);
+  if (!draftKey) return '';
+  return String(worldDraftMap.get(draftKey) || '');
+};
+
+const writeWorldDraft = (conversationId: unknown, value: unknown) => {
+  const draftKey = buildWorldDraftKey(conversationId);
+  if (!draftKey) return;
+  const normalized = String(value || '');
+  if (!normalized.trim()) {
+    worldDraftMap.delete(draftKey);
+    return;
+  }
+  worldDraftMap.set(draftKey, normalized);
+};
 
 const normalizeWorldMessageTimestamp = (value: unknown): number => {
   const numeric = Number(value);
@@ -6020,6 +6086,7 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
   }
 
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  autoStickToBottom.value = true;
   setRuntimeStateOverride(targetAgentId, 'running', 30_000);
   pendingAssistantCenter = true;
   pendingAssistantCenterCount = chatStore.messages.length;
@@ -6280,6 +6347,24 @@ const updateAgentApprovalMode = (value: AgentApprovalMode) => {
   messengerApprovalMode.value = normalized;
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY, normalized);
+  }
+};
+
+const handleSessionApprovalDecision = async (
+  decision: 'approve_once' | 'approve_session' | 'deny'
+) => {
+  const approval = activeSessionApproval.value;
+  if (!approval || approvalResponding.value) return;
+  approvalResponding.value = true;
+  try {
+    await chatStore.respondApproval(decision, approval.approval_id);
+    if (decision !== 'deny') {
+      ElMessage.success(t('chat.approval.sent'));
+    }
+  } catch (error) {
+    showApiError(error, t('chat.approval.sendFailed'));
+  } finally {
+    approvalResponding.value = false;
   }
 };
 
@@ -7001,10 +7086,21 @@ watch(
 
 watch(
   () => activeWorldConversationId.value,
-  () => {
+  (nextConversationId, previousConversationId) => {
+    if (previousConversationId) {
+      writeWorldDraft(previousConversationId, worldDraft.value);
+    }
+    worldDraft.value = readWorldDraft(nextConversationId);
     clearWorldQuickPanelClose();
     worldQuickPanelMode.value = '';
     worldHistoryDialogVisible.value = false;
+  }
+);
+
+watch(
+  () => worldDraft.value,
+  (value) => {
+    writeWorldDraft(activeWorldConversationId.value, value);
   }
 );
 

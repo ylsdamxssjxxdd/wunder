@@ -148,17 +148,6 @@
                 <use href="#send"></use>
               </svg>
             </button>
-            <button
-              class="messenger-world-send-menu chat-composer-world-send-menu"
-              type="button"
-              :title="t('messenger.settings.sendKey')"
-              :aria-label="t('messenger.settings.sendKey')"
-              tabindex="-1"
-            >
-              <svg class="messenger-world-send-icon messenger-world-send-icon--menu" aria-hidden="true">
-                <use href="#down"></use>
-              </svg>
-            </button>
           </div>
         </div>
       </template>
@@ -207,6 +196,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus';
 
 import { convertChatAttachment } from '@/api/chat';
+import {
+  clearComposerDraftState,
+  readComposerDraftState,
+  writeComposerDraftState,
+  type ComposerDraftAttachment
+} from '@/components/chat/composerDraftCache';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -228,7 +223,11 @@ const props = defineProps({
   },
   sendKey: {
     type: String,
-    default: 'enter'
+    default: 'ctrl_enter'
+  },
+  draftKey: {
+    type: String,
+    default: ''
   },
   worldStyle: {
     type: Boolean,
@@ -241,7 +240,7 @@ const emit = defineEmits(['send', 'stop']);
 const inputText = ref('');
 const inputRef = ref(null);
 const uploadInputRef = ref(null);
-const attachments = ref([]);
+const attachments = ref<ComposerDraftAttachment[]>([]);
 const attachmentBusy = ref(0);
 const dragActive = ref(false);
 const dragCounter = ref(0);
@@ -306,6 +305,7 @@ const uploadAccept = ['image/*', ...DOC_EXTENSIONS].join(',');
 const INPUT_MAX_HEIGHT = 180;
 const WORLD_COMPOSER_HEIGHT_STORAGE_KEY = 'messenger_agent_composer_height';
 const WORLD_COMMAND_PANEL_CLOSE_DELAY_MS = 160;
+const resolveDraftKey = (): string => String(props.draftKey || '').trim();
 const clampWorldComposerHeight = (value: unknown): number => {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 188;
@@ -316,13 +316,19 @@ const showUploadArea = computed(() => attachments.value.length > 0 || attachment
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
-const inputPlaceholder = computed(() =>
-  props.inquiryActive
+const sendShortcutHint = computed(() =>
+  props.sendKey === 'ctrl_enter'
+    ? t('chat.input.sendHintCtrlEnter')
+    : t('chat.input.sendHintEnter')
+);
+const inputPlaceholder = computed(() => {
+  const base = props.inquiryActive
     ? t('chat.input.inquiryPlaceholder')
     : props.worldStyle
       ? t('chat.input.placeholder')
-      : t('chat.input.placeholderCommands')
-);
+      : t('chat.input.placeholderCommands');
+  return `${base} · ${sendShortcutHint.value}`;
+});
 const canSendOrStop = computed(() => {
   if (props.loading) return true;
   if (attachmentBusy.value > 0) return false;
@@ -413,8 +419,8 @@ const isImageFile = (file) => {
   return ext ? IMAGE_EXTENSIONS.has(ext) : false;
 };
 
-const readFileAsDataUrl = (file) =>
-  new Promise((resolve, reject) => {
+const readFileAsDataUrl = (file): Promise<string> =>
+  new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ''));
     reader.onerror = () => reject(new Error(t('chat.attachments.imageReadFailed')));
@@ -540,6 +546,78 @@ const handleInputKeydown = (event) => {
 
 const resolveSendKeyMode = (): SendKeyMode =>
   props.sendKey === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
+
+const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | null => {
+  if (!value || typeof value !== 'object') return null;
+  const source = value as Record<string, unknown>;
+  const id = String(source.id || '').trim();
+  const type = String(source.type || '').trim();
+  const name = String(source.name || '').trim();
+  const content = String(source.content || '');
+  if (!id || !type || !name || !content.trim()) return null;
+  const attachment: ComposerDraftAttachment = {
+    id,
+    type,
+    name,
+    content
+  };
+  const mimeType = String(source.mime_type || '').trim();
+  if (mimeType) attachment.mime_type = mimeType;
+  const converter = String(source.converter || '').trim();
+  if (converter) attachment.converter = converter;
+  return attachment;
+};
+
+const buildDraftAttachments = (): ComposerDraftAttachment[] =>
+  attachments.value
+    .map((item) => normalizeDraftAttachment(item))
+    .filter(Boolean) as ComposerDraftAttachment[];
+
+const persistDraftStateByKey = (key: string) => {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) return;
+  const content = String(inputText.value || '');
+  const normalizedAttachments = buildDraftAttachments();
+  if (!content.trim() && normalizedAttachments.length === 0) {
+    clearComposerDraftState(normalizedKey);
+    return;
+  }
+  writeComposerDraftState(normalizedKey, {
+    content,
+    attachments: normalizedAttachments
+  });
+};
+
+const persistDraftState = () => {
+  persistDraftStateByKey(resolveDraftKey());
+};
+
+const restoreDraftStateByKey = (key: string) => {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) {
+    inputText.value = '';
+    attachments.value = [];
+    commandMenuDismissed.value = false;
+    caretPosition.value = 0;
+    void nextTick(() => {
+      resizeInput();
+      syncCaretPosition();
+    });
+    return;
+  }
+  const cached = readComposerDraftState(normalizedKey);
+  inputText.value = String(cached?.content || '');
+  attachments.value = Array.isArray(cached?.attachments)
+    ? (cached!.attachments
+        .map((item) => normalizeDraftAttachment(item))
+        .filter(Boolean) as ComposerDraftAttachment[])
+    : [];
+  commandMenuDismissed.value = false;
+  void nextTick(() => {
+    resizeInput();
+    syncCaretPosition();
+  });
+};
 
 const handleEnterKeydown = async (event) => {
   const mode = resolveSendKeyMode();
@@ -855,8 +933,6 @@ onMounted(async () => {
     );
   }
   await nextTick();
-  resizeInput();
-  syncCaretPosition();
   if (typeof document !== 'undefined') {
     document.addEventListener('pointerdown', handleDocumentPointerDown);
   }
@@ -900,6 +976,30 @@ watch(
       clearAttachments();
     }
   }
+);
+
+watch(
+  () => props.draftKey,
+  (value, previousValue) => {
+    persistDraftStateByKey(String(previousValue || ''));
+    restoreDraftStateByKey(String(value || ''));
+  },
+  { immediate: true }
+);
+
+watch(
+  () => inputText.value,
+  () => {
+    persistDraftState();
+  }
+);
+
+watch(
+  () => attachments.value,
+  () => {
+    persistDraftState();
+  },
+  { deep: true }
 );
 
 watch(

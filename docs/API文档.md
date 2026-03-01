@@ -2280,9 +2280,11 @@
 - `event: a2a_result`：A2A 任务结束摘要（status/elapsed_ms）
 - `event: a2ui`：A2UI 渲染消息（`data.uid`/`data.messages`/`data.content`）
 - `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态；压缩请求使用独立 system 提示词、历史消息合并为单条 user 内容，压缩后摘要以 user 注入）
-  - 关键字段：`context_guard_applied/context_guard_tokens_before/context_guard_tokens_after/context_guard_current_user_trimmed/context_guard_summary_trimmed/context_guard_summary_removed`，用于说明压缩后为适配上下文窗口执行的二次裁剪动作。
+  - `reason` 取值：`history/overflow/hard_guard`；其中 `hard_guard` 表示触发了上下文硬阈值守卫压缩（用于无 `max_context` 或 `max_context` 过高导致上下文膨胀的场景）。
+  - `status` 新增 `guard_only`：表示当前轮缺少可摘要历史（常见于首轮超长输入），系统仅执行 `context_guard` 直接裁剪当前消息后继续调用模型。
+  - 关键字段：`hard_guard_triggered/context_guard_applied/context_guard_tokens_before/context_guard_tokens_after/context_guard_current_user_trimmed/context_guard_summary_trimmed/context_guard_summary_removed`，用于说明压缩触发来源及压缩后为适配上下文窗口执行的二次裁剪动作。
 - `event: final`：最终回复（`data.answer`/`data.usage`/`data.stop_reason`）
-  - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`question_panel`（等待问询面板选择）、`max_rounds`（达到最大轮次兜底）、`empty_response`（模型未返回可展示最终答复）、`unknown`（兜底）
+  - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`question_panel`（等待问询面板选择）、`tool_failure_guard`（检测到连续工具失败并主动止损）、`max_rounds`（达到最大轮次兜底）、`empty_response`（模型未返回可展示最终答复）、`unknown`（兜底）
 - `event: error`：错误信息（包含错误码与建议）
 - SSE 会附带 `id` 行，代表事件序号，可用于客户端排序或去重。
 - 当 SSE 队列满时事件会写入 `stream_events`，流式通道会回放补齐。

@@ -4,7 +4,6 @@
     <div class="app-shell-content">
       <router-view />
     </div>
-    <ToolApprovalDialog />
     <MaintenanceOverlay />
   </div>
 </template>
@@ -14,7 +13,6 @@ import { computed, onBeforeUnmount, watchEffect } from 'vue';
 import { useRoute } from 'vue-router';
 
 import DesktopWindowChrome from '@/components/common/DesktopWindowChrome.vue';
-import ToolApprovalDialog from '@/components/chat/ToolApprovalDialog.vue';
 import { isDesktopModeEnabled } from '@/config/desktop';
 import MaintenanceOverlay from '@/components/system/MaintenanceOverlay.vue';
 

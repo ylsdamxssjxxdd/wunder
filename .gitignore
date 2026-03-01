@@ -58,3 +58,4 @@ squashfs-root
 dist
 frontend-old
 wunder-desktop-electron/dist-setup
+tmp

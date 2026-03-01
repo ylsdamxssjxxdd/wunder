@@ -98,9 +98,9 @@
     </div>
     <textarea
       ref="textareaElement"
-      v-model.trim="draftModel"
+      v-model="draftModel"
       class="messenger-world-input"
-      :placeholder="t('userWorld.input.placeholder')"
+      :placeholder="inputPlaceholder"
       rows="3"
       @focus="emit('focus-input')"
       @keydown.enter="emit('enter', $event)"
@@ -115,11 +115,6 @@
         >
           <svg class="messenger-world-send-icon" aria-hidden="true">
             <use href="#send"></use>
-          </svg>
-        </button>
-        <button class="messenger-world-send-menu" type="button" :title="t('messenger.settings.sendKey')">
-          <svg class="messenger-world-send-icon messenger-world-send-icon--menu" aria-hidden="true">
-            <use href="#down"></use>
           </svg>
         </button>
       </div>
@@ -139,15 +134,23 @@ import { computed, ref } from 'vue';
 
 import { useI18n } from '@/i18n';
 
-const props = defineProps<{
-  style: Record<string, string>;
-  quickPanelMode: '' | 'emoji';
-  recentEmojis: string[];
-  emojiCatalog: string[];
-  draft: string;
-  canSend: boolean;
-  uploading: boolean;
-}>();
+type SendKeyMode = 'enter' | 'ctrl_enter';
+
+const props = withDefaults(
+  defineProps<{
+    style: Record<string, string>;
+    quickPanelMode: '' | 'emoji';
+    recentEmojis: string[];
+    emojiCatalog: string[];
+    draft: string;
+    canSend: boolean;
+    uploading: boolean;
+    sendKey?: SendKeyMode;
+  }>(),
+  {
+    sendKey: 'ctrl_enter'
+  }
+);
 
 const emit = defineEmits<{
   'update:draft': [value: string];
@@ -173,8 +176,16 @@ const uploadInputElement = ref<HTMLInputElement | null>(null);
 
 const draftModel = computed({
   get: () => props.draft,
-  set: (value: string) => emit('update:draft', String(value || '').trim())
+  set: (value: string) => emit('update:draft', String(value || ''))
 });
+const sendShortcutHint = computed(() =>
+  props.sendKey === 'ctrl_enter'
+    ? t('chat.input.sendHintCtrlEnter')
+    : t('chat.input.sendHintEnter')
+);
+const inputPlaceholder = computed(
+  () => `${t('userWorld.input.placeholder')} · ${sendShortcutHint.value}`
+);
 
 const getComposerElement = (): HTMLElement | null => composerElement.value;
 const getTextareaElement = (): HTMLTextAreaElement | null => textareaElement.value;

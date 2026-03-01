@@ -298,6 +298,8 @@ impl Orchestrator {
             return Ok(messages);
         }
         let context_tokens = estimate_messages_tokens(&messages);
+        let hard_guard_triggered =
+            should_trigger_hard_context_guard(llm_config, context_tokens, force);
         let Some(limit) = resolve_compaction_limit(llm_config, context_tokens, force) else {
             return Ok(messages);
         };
@@ -354,7 +356,11 @@ impl Orchestrator {
             user_round: round_info.user_round,
             model_round: None,
         };
-        let mut compacting_payload = json!({ "stage": "compacting", "summary": summary_text });
+        let mut compacting_payload = json!({
+            "stage": if hard_guard_triggered { "context_hard_guard" } else { "compacting" },
+            "summary": summary_text,
+            "hard_guard_triggered": hard_guard_triggered,
+        });
         if let Value::Object(ref mut map) = compacting_payload {
             compaction_round.insert_into(map);
         }
@@ -413,23 +419,58 @@ impl Orchestrator {
         let user_content = self.build_compaction_user_content(&source_messages);
         let has_candidates = !source_messages.is_empty();
         if user_content.trim().is_empty() && (!force || !has_candidates) {
-            emitter
-                .emit(
-                    "compaction",
-                    json!({
-                        "reason": if should_compact_by_history { "history" } else { "overflow" },
-                        "status": "skipped",
-                        "skip_reason": if has_candidates { "no_candidates" } else { "no_history" },
-                        "history_usage": history_usage,
-                        "context_tokens": history_usage,
-                        "history_threshold": history_threshold,
-                        "limit": limit,
-                        "total_tokens": total_tokens,
-                        "reset_mode": reset_mode,
-                    }),
-                )
-                .await;
-            return Ok(messages);
+            let mut guarded_messages = messages.clone();
+            let guard_stats = apply_rebuilt_context_guard(&mut guarded_messages, limit);
+            if guard_stats.applied {
+                let mut guard_payload = json!({
+                    "stage": "context_guard",
+                    "summary": "Context guard trimmed oversized user input before model call.",
+                    "tokens_before": guard_stats.tokens_before,
+                    "tokens_after": guard_stats.tokens_after,
+                    "current_user_trimmed": guard_stats.current_user_trimmed,
+                    "summary_trimmed": guard_stats.summary_trimmed,
+                    "summary_removed": guard_stats.summary_removed,
+                    "fallback_trim_applied": guard_stats.fallback_trim_applied,
+                });
+                if let Value::Object(ref mut map) = guard_payload {
+                    compaction_round.insert_into(map);
+                }
+                emitter.emit("progress", guard_payload).await;
+            }
+            let mut compaction_payload = json!({
+                "reason": if hard_guard_triggered {
+                    "hard_guard"
+                } else if should_compact_by_history {
+                    "history"
+                } else {
+                    "overflow"
+                },
+                "status": if guard_stats.applied { "guard_only" } else { "skipped" },
+                "skip_reason": if has_candidates { "no_candidates" } else { "no_history" },
+                "history_usage": history_usage,
+                "context_tokens": history_usage,
+                "history_threshold": history_threshold,
+                "limit": limit,
+                "total_tokens": total_tokens,
+                "reset_mode": reset_mode,
+                "hard_guard_triggered": hard_guard_triggered,
+                "context_guard_applied": guard_stats.applied,
+                "context_guard_tokens_before": guard_stats.tokens_before,
+                "context_guard_tokens_after": guard_stats.tokens_after,
+                "context_guard_current_user_trimmed": guard_stats.current_user_trimmed,
+                "context_guard_summary_trimmed": guard_stats.summary_trimmed,
+                "context_guard_summary_removed": guard_stats.summary_removed,
+                "context_guard_fallback_trim_applied": guard_stats.fallback_trim_applied,
+            });
+            if let Value::Object(ref mut map) = compaction_payload {
+                compaction_round.insert_into(map);
+            }
+            emitter.emit("compaction", compaction_payload).await;
+            return Ok(if guard_stats.applied {
+                guarded_messages
+            } else {
+                messages
+            });
         }
 
         let compaction_prompt = HistoryManager::load_compaction_prompt();
@@ -732,7 +773,13 @@ impl Orchestrator {
         }
 
         let mut compaction_payload = json!({
-            "reason": if should_compact_by_history { "history" } else { "overflow" },
+            "reason": if hard_guard_triggered {
+                "hard_guard"
+            } else if should_compact_by_history {
+                "history"
+            } else {
+                "overflow"
+            },
             "status": if summary_fallback { "fallback" } else { "done" },
             "summary_fallback": summary_fallback,
             "summary_tokens": approx_token_count(&summary_text),
@@ -744,6 +791,7 @@ impl Orchestrator {
             "history_threshold": history_threshold,
             "limit": limit,
             "reset_mode": reset_mode,
+            "hard_guard_triggered": hard_guard_triggered,
             "context_guard_applied": guard_stats.applied,
             "context_guard_tokens_before": guard_stats.tokens_before,
             "context_guard_tokens_after": guard_stats.tokens_after,
@@ -1883,7 +1931,13 @@ fn resolve_compaction_limit(
     context_tokens: i64,
     force: bool,
 ) -> Option<i64> {
-    if let Some(limit) = HistoryManager::get_auto_compact_limit(llm_config) {
+    let configured_limit =
+        HistoryManager::get_auto_compact_limit(llm_config).map(|limit| limit.max(1));
+    let hard_guard_limit = resolve_hard_context_guard_limit(llm_config, context_tokens);
+    if let (Some(configured), Some(hard_guard)) = (configured_limit, hard_guard_limit) {
+        return Some(configured.min(hard_guard).max(1));
+    }
+    if let Some(limit) = configured_limit.or(hard_guard_limit) {
         return Some(limit.max(1));
     }
     if !force {
@@ -1894,6 +1948,47 @@ fn resolve_compaction_limit(
         COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS,
         COMPACTION_FORCE_FALLBACK_LIMIT,
     ))
+}
+
+fn should_trigger_hard_context_guard(
+    llm_config: &LlmModelConfig,
+    context_tokens: i64,
+    force: bool,
+) -> bool {
+    if force {
+        return false;
+    }
+    resolve_hard_context_guard_limit(llm_config, context_tokens).is_some()
+}
+
+fn resolve_hard_context_guard_limit(
+    llm_config: &LlmModelConfig,
+    context_tokens: i64,
+) -> Option<i64> {
+    let max_context = llm_config.max_context.unwrap_or(0).max(0) as i64;
+    let configured_trigger = if max_context > 0 {
+        ((max_context as f64) * COMPACTION_HARD_GUARD_TRIGGER_RATIO).round() as i64
+    } else {
+        COMPACTION_HARD_GUARD_TRIGGER_TOKENS
+    };
+    let trigger = configured_trigger
+        .max(COMPACTION_HARD_GUARD_TRIGGER_TOKENS)
+        .min(COMPACTION_HARD_GUARD_MAX_TRIGGER_TOKENS)
+        .max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+    if context_tokens < trigger {
+        return None;
+    }
+    let upper_bound = if max_context > 0 {
+        max_context.max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS)
+    } else {
+        COMPACTION_FORCE_FALLBACK_LIMIT
+    };
+    let target = ((trigger as f64) * COMPACTION_HARD_GUARD_TARGET_RATIO).round() as i64;
+    Some(
+        target
+            .max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS)
+            .min(upper_bound.max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS)),
+    )
 }
 
 fn is_image_attachment(attachment: &AttachmentPayload, content: &str) -> bool {
@@ -1974,9 +2069,50 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_compaction_limit_skips_without_force_when_unknown() {
+    fn test_resolve_compaction_limit_skips_without_force_when_below_hard_guard() {
         let cfg = llm_config(json!({}));
-        assert!(resolve_compaction_limit(&cfg, 32000, false).is_none());
+        assert!(resolve_compaction_limit(&cfg, 6000, false).is_none());
+    }
+
+    #[test]
+    fn test_resolve_compaction_limit_uses_hard_guard_when_unknown() {
+        let cfg = llm_config(json!({}));
+        let limit = resolve_compaction_limit(&cfg, 32000, false).unwrap_or_default();
+        assert!(limit >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
+        assert!(limit <= COMPACTION_FORCE_FALLBACK_LIMIT);
+    }
+
+    #[test]
+    fn test_should_trigger_hard_context_guard_respects_force() {
+        let unknown_cfg = llm_config(json!({}));
+        assert!(should_trigger_hard_context_guard(
+            &unknown_cfg,
+            32000,
+            false
+        ));
+        assert!(!should_trigger_hard_context_guard(
+            &unknown_cfg,
+            32000,
+            true
+        ));
+    }
+
+    #[test]
+    fn test_should_trigger_hard_context_guard_uses_absolute_ceiling() {
+        let configured_cfg = llm_config(json!({
+            "max_context": 8192,
+            "max_output": 512
+        }));
+        assert!(should_trigger_hard_context_guard(
+            &configured_cfg,
+            32000,
+            false
+        ));
+        assert!(!should_trigger_hard_context_guard(
+            &configured_cfg,
+            4000,
+            false
+        ));
     }
 
     #[test]
@@ -2031,6 +2167,19 @@ mod tests {
         let limit = 900;
         let stats = apply_rebuilt_context_guard(&mut messages, limit);
         assert!(stats.applied);
+        assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_trims_single_user_message() {
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "D".repeat(36_000) }),
+        ];
+        let limit = 900;
+        let stats = apply_rebuilt_context_guard(&mut messages, limit);
+        assert!(stats.applied);
+        assert!(stats.summary_trimmed || stats.fallback_trim_applied);
         assert!(estimate_messages_tokens(&messages) <= limit);
     }
 }

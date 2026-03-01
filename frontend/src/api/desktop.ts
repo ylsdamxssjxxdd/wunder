@@ -21,6 +21,14 @@ export type DesktopRemoteGatewaySettings = {
   server_base_url: string;
 };
 
+export type DesktopLlmContextProbePayload = {
+  provider: string;
+  base_url: string;
+  api_key?: string;
+  model: string;
+  timeout_s?: number;
+};
+
 export type DesktopLlmConfig = {
   default: string;
   models: Record<string, Record<string, unknown>>;
@@ -111,6 +119,11 @@ export const fetchDesktopSettings = () =>
 
 export const updateDesktopSettings = (payload: ApiPayload) =>
   desktopApi.put('/wunder/desktop/settings', payload, {
+    headers: buildDesktopHeaders()
+  });
+
+export const probeDesktopLlmContextWindow = (payload: DesktopLlmContextProbePayload) =>
+  desktopApi.post('/wunder/admin/llm/context_window', payload, {
     headers: buildDesktopHeaders()
   });
 

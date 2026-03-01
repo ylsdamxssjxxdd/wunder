@@ -4,23 +4,17 @@
     class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
     v-loading="loading"
   >
-    <div class="desktop-system-settings-head">
-      <div>
-        <div class="messenger-settings-title">{{ t('desktop.system.llm') }}</div>
-        <div class="messenger-settings-subtitle">{{ t('desktop.system.llmHint') }}</div>
-      </div>
-      <div class="desktop-system-settings-actions">
-        <el-button type="primary" size="small" :loading="savingModel" @click="saveModelSettings">
-          {{ t('desktop.common.save') }}
-        </el-button>
-      </div>
-    </div>
-
     <div class="desktop-system-settings-section">
       <div class="desktop-system-settings-form-grid">
         <label class="desktop-system-settings-field">
           <span class="desktop-system-settings-field-label">{{ t('desktop.system.defaultChatModel') }}</span>
-          <el-select v-model="defaultModel" class="desktop-system-settings-input" filterable allow-create>
+          <el-select
+            v-model="defaultModel"
+            class="desktop-system-settings-input"
+            filterable
+            allow-create
+            popper-class="desktop-system-settings-popper"
+          >
             <el-option
               v-for="item in llmModelRows"
               :key="item.key || item.uid"
@@ -39,6 +33,7 @@
             class="desktop-system-settings-input"
             filterable
             clearable
+            popper-class="desktop-system-settings-popper"
           >
             <el-option
               v-for="item in embeddingModelRows"
@@ -55,9 +50,19 @@
       <aside class="desktop-system-settings-model-list-wrap">
         <div class="desktop-system-settings-model-list-head">
           <span class="desktop-system-settings-model-list-title">{{ t('desktop.system.modelsTitle') }}</span>
-          <el-button type="primary" plain size="small" @click="addModel()">
-            {{ t('desktop.system.modelAdd') }}
-          </el-button>
+          <div class="desktop-system-settings-model-list-head-actions">
+            <el-button class="desktop-system-settings-btn" size="small" @click="addModel()">
+              {{ t('desktop.system.modelAdd') }}
+            </el-button>
+            <el-button
+              class="desktop-system-settings-btn desktop-system-settings-btn--primary"
+              size="small"
+              :loading="savingModel"
+              @click="saveModelSettings"
+            >
+              {{ t('desktop.common.save') }}
+            </el-button>
+          </div>
         </div>
         <div class="desktop-system-settings-model-list">
           <button
@@ -111,19 +116,26 @@
             {{ selectedModel.key || t('desktop.system.modelUnnamed') }}
           </div>
           <div class="desktop-system-settings-actions">
-            <el-button plain size="small" @click="setCurrentAsDefault('llm')">
-              {{ t('desktop.system.setDefaultChatModel') }}
+            <el-button class="desktop-system-settings-btn" size="small" @click="setCurrentAsDefault">
+              {{ setCurrentDefaultLabel }}
             </el-button>
-            <el-button plain size="small" @click="setCurrentAsDefault('embedding')">
-              {{ t('desktop.system.setDefaultEmbeddingModel') }}
-            </el-button>
-            <el-button plain type="danger" size="small" @click="removeModel(selectedModel)">
+            <el-button
+              class="desktop-system-settings-btn desktop-system-settings-btn--danger"
+              size="small"
+              @click="removeModel(selectedModel)"
+            >
               {{ t('desktop.common.remove') }}
             </el-button>
           </div>
         </div>
 
         <div class="desktop-system-settings-section">
+          <div class="desktop-system-settings-section-head">
+            <div class="desktop-system-settings-section-title">
+              <i class="fa-solid fa-gear" aria-hidden="true"></i>
+              <span>{{ t('desktop.system.section.basic') }}</span>
+            </div>
+          </div>
           <div class="desktop-system-settings-model-grid">
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelKey') }}</span>
@@ -131,7 +143,11 @@
             </label>
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelType') }}</span>
-              <el-select v-model="selectedModel.model_type" class="desktop-system-settings-input">
+              <el-select
+                v-model="selectedModel.model_type"
+                class="desktop-system-settings-input"
+                popper-class="desktop-system-settings-popper"
+              >
                 <el-option :label="t('desktop.system.modelTypeLlm')" value="llm" />
                 <el-option :label="t('desktop.system.modelTypeEmbedding')" value="embedding" />
               </el-select>
@@ -162,6 +178,12 @@
         </div>
 
         <div class="desktop-system-settings-section">
+          <div class="desktop-system-settings-section-head">
+            <div class="desktop-system-settings-section-title">
+              <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+              <span>{{ t('desktop.system.section.generation') }}</span>
+            </div>
+          </div>
           <div class="desktop-system-settings-model-grid">
             <label v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.temperature') }}</span>
@@ -179,17 +201,91 @@
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.maxOutput') }}</span>
               <el-input v-model="selectedModel.max_output" />
             </label>
-            <label class="desktop-system-settings-field">
-              <span class="desktop-system-settings-field-label">{{ t('desktop.system.maxContext') }}</span>
-              <el-input v-model="selectedModel.max_context" />
-            </label>
             <label v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-field">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.maxRounds') }}</span>
+              <el-input v-model="selectedModel.max_rounds" />
+            </label>
+            <label v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-field desktop-system-settings-field--full">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.maxContext') }}</span>
+              <div class="desktop-system-settings-inline">
+                <el-input v-model="selectedModel.max_context" />
+                <el-button
+                  class="desktop-system-settings-btn"
+                  :loading="probingContext"
+                  @click="probeMaxContext"
+                >
+                  {{ t('desktop.system.maxContextProbe') }}
+                </el-button>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="desktop-system-settings-section">
+          <div class="desktop-system-settings-section-head">
+            <div class="desktop-system-settings-section-title">
+              <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+              <span>{{ t('desktop.system.section.capabilities') }}</span>
+            </div>
+          </div>
+          <div v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-model-grid">
+            <div class="desktop-system-settings-field desktop-system-settings-field--full">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.capabilityToggle') }}</span>
+              <div class="desktop-system-settings-checkbox-group">
+                <label class="desktop-system-settings-checkbox">
+                  <input v-model="selectedModel.support_vision" type="checkbox" />
+                  <span>{{ t('desktop.system.supportVision') }}</span>
+                </label>
+                <label class="desktop-system-settings-checkbox">
+                  <input v-model="selectedModel.stream_include_usage" type="checkbox" />
+                  <span>{{ t('desktop.system.streamIncludeUsage') }}</span>
+                </label>
+              </div>
+            </div>
+            <label class="desktop-system-settings-field desktop-system-settings-field--full">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.toolCallMode') }}</span>
-              <el-select v-model="selectedModel.tool_call_mode" class="desktop-system-settings-input">
+              <el-select
+                v-model="selectedModel.tool_call_mode"
+                class="desktop-system-settings-input"
+                popper-class="desktop-system-settings-popper"
+              >
                 <el-option label="tool_call" value="tool_call" />
                 <el-option label="function_call" value="function_call" />
               </el-select>
             </label>
+          </div>
+          <div v-else class="desktop-system-settings-section-empty">
+            {{ t('desktop.system.sectionLlmOnly') }}
+          </div>
+        </div>
+
+        <div class="desktop-system-settings-section">
+          <div class="desktop-system-settings-section-head">
+            <div class="desktop-system-settings-section-title">
+              <i class="fa-solid fa-compress" aria-hidden="true"></i>
+              <span>{{ t('desktop.system.section.compaction') }}</span>
+            </div>
+          </div>
+          <div v-if="selectedModel.model_type === 'llm'" class="desktop-system-settings-model-grid">
+            <label class="desktop-system-settings-field">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.historyCompactionRatio') }}</span>
+              <el-input v-model="selectedModel.history_compaction_ratio" />
+            </label>
+            <label class="desktop-system-settings-field">
+              <span class="desktop-system-settings-field-label">{{ t('desktop.system.historyCompactionReset') }}</span>
+              <el-select
+                v-model="selectedModel.history_compaction_reset"
+                class="desktop-system-settings-input"
+                popper-class="desktop-system-settings-popper"
+              >
+                <el-option :label="t('desktop.system.compactionReset.zero')" value="zero" />
+                <el-option :label="t('desktop.system.compactionReset.current')" value="current" />
+                <el-option :label="t('desktop.system.compactionReset.keep')" value="keep" />
+              </el-select>
+            </label>
+          </div>
+          <div v-else class="desktop-system-settings-section-empty">
+            {{ t('desktop.system.sectionLlmOnly') }}
           </div>
         </div>
       </section>
@@ -225,10 +321,10 @@
       </label>
 
       <div class="desktop-system-settings-actions">
-        <el-button type="primary" :loading="connectingRemote" @click="connectRemoteServer">
+        <el-button class="desktop-system-settings-btn desktop-system-settings-btn--primary" :loading="connectingRemote" @click="connectRemoteServer">
           {{ t('desktop.system.remote.connect') }}
         </el-button>
-        <el-button :disabled="!remoteConnected || connectingRemote" @click="disconnectRemoteServer">
+        <el-button class="desktop-system-settings-btn" :disabled="!remoteConnected || connectingRemote" @click="disconnectRemoteServer">
           {{ t('desktop.system.remote.disconnect') }}
         </el-button>
       </div>
@@ -241,7 +337,12 @@ import { computed, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 
-import { fetchDesktopSettings, updateDesktopSettings, type DesktopRemoteGatewaySettings } from '@/api/desktop';
+import {
+  fetchDesktopSettings,
+  probeDesktopLlmContextWindow,
+  updateDesktopSettings,
+  type DesktopRemoteGatewaySettings
+} from '@/api/desktop';
 import {
   clearDesktopRemoteApiBaseOverride,
   getDesktopLocalToken,
@@ -253,6 +354,7 @@ import { useI18n } from '@/i18n';
 
 type ModelType = 'llm' | 'embedding';
 type ToolCallMode = 'tool_call' | 'function_call';
+type HistoryCompactionReset = 'zero' | 'current' | 'keep';
 type ModelRow = {
   uid: string;
   key: string;
@@ -264,9 +366,14 @@ type ModelRow = {
   temperature: string;
   timeout_s: string;
   retry: string;
+  max_rounds: string;
   max_output: string;
   max_context: string;
+  support_vision: boolean;
+  stream_include_usage: boolean;
   tool_call_mode: ToolCallMode;
+  history_compaction_ratio: string;
+  history_compaction_reset: HistoryCompactionReset;
   raw: Record<string, unknown>;
 };
 
@@ -286,6 +393,7 @@ const router = useRouter();
 
 const loading = ref(false);
 const savingModel = ref(false);
+const probingContext = ref(false);
 const connectingRemote = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
@@ -307,6 +415,13 @@ const embeddingModelRows = computed(() =>
 const selectedModel = computed(
   () => modelRows.value.find((item) => item.uid === selectedModelUid.value) || null
 );
+const setCurrentDefaultLabel = computed(() => {
+  const current = selectedModel.value;
+  if (!current) return t('desktop.system.setDefaultChatModel');
+  return normalizeModelType(current.model_type) === 'embedding'
+    ? t('desktop.system.setDefaultEmbeddingModel')
+    : t('desktop.system.setDefaultChatModel');
+});
 
 const normalizeModelType = (value: unknown): ModelType => {
   const raw = String(value || '').trim().toLowerCase();
@@ -318,6 +433,13 @@ const normalizeModelType = (value: unknown): ModelType => {
 
 const normalizeToolCallMode = (value: unknown): ToolCallMode =>
   String(value || '').trim().toLowerCase() === 'function_call' ? 'function_call' : 'tool_call';
+
+const normalizeHistoryCompactionReset = (value: unknown): HistoryCompactionReset => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'current') return 'current';
+  if (raw === 'keep') return 'keep';
+  return 'zero';
+};
 
 const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelRow[] =>
   Object.entries(models || {}).map(([key, raw]) => ({
@@ -331,9 +453,15 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     temperature: raw.temperature == null ? '0.7' : String(raw.temperature),
     timeout_s: raw.timeout_s == null ? '120' : String(raw.timeout_s),
     retry: raw.retry == null ? '1' : String(raw.retry),
+    max_rounds: raw.max_rounds == null ? '10' : String(raw.max_rounds),
     max_output: raw.max_output == null ? '' : String(raw.max_output),
     max_context: raw.max_context == null ? '' : String(raw.max_context),
+    support_vision: raw.support_vision === true,
+    stream_include_usage: raw.stream_include_usage !== false,
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode),
+    history_compaction_ratio:
+      raw.history_compaction_ratio == null ? '0.8' : String(raw.history_compaction_ratio),
+    history_compaction_reset: normalizeHistoryCompactionReset(raw.history_compaction_reset),
     raw: { ...raw }
   }));
 
@@ -397,9 +525,14 @@ const addModel = (modelType: ModelType = 'llm') => {
     temperature: modelType === 'llm' ? '0.7' : '',
     timeout_s: '120',
     retry: '1',
+    max_rounds: modelType === 'llm' ? '10' : '',
     max_output: '',
     max_context: '',
+    support_vision: false,
+    stream_include_usage: true,
     tool_call_mode: 'tool_call',
+    history_compaction_ratio: modelType === 'llm' ? '0.8' : '',
+    history_compaction_reset: 'zero',
     raw: {}
   };
   modelRows.value.push(row);
@@ -410,7 +543,7 @@ const selectModel = (uid: string) => {
   selectedModelUid.value = uid;
 };
 
-const setCurrentAsDefault = (modelType: ModelType) => {
+const setCurrentAsDefault = () => {
   const current = selectedModel.value;
   if (!current) return;
   const key = current.key.trim();
@@ -418,17 +551,7 @@ const setCurrentAsDefault = (modelType: ModelType) => {
     ElMessage.warning(t('desktop.system.modelKeyRequired'));
     return;
   }
-  if (normalizeModelType(current.model_type) !== modelType) {
-    ElMessage.warning(
-      t('desktop.system.modelTypeMismatch', {
-        type:
-          modelType === 'embedding'
-            ? t('desktop.system.modelTypeEmbedding')
-            : t('desktop.system.modelTypeLlm')
-      })
-    );
-    return;
-  }
+  const modelType = normalizeModelType(current.model_type);
   if (modelType === 'embedding') {
     defaultEmbeddingModel.value = key;
   } else {
@@ -494,19 +617,71 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
   setText('model', row.model);
   setInt('timeout_s', row.timeout_s);
   setInt('retry', row.retry);
-  setInt('max_context', row.max_context);
 
   if (row.model_type === 'llm') {
     setFloat('temperature', row.temperature);
+    setInt('max_rounds', row.max_rounds);
     setInt('max_output', row.max_output);
+    setInt('max_context', row.max_context);
+    output.support_vision = row.support_vision === true;
+    output.stream_include_usage = row.stream_include_usage !== false;
     setText('tool_call_mode', row.tool_call_mode);
+    setFloat('history_compaction_ratio', row.history_compaction_ratio);
+    setText('history_compaction_reset', normalizeHistoryCompactionReset(row.history_compaction_reset));
   } else {
     delete output.temperature;
+    delete output.max_rounds;
     delete output.max_output;
+    delete output.max_context;
+    delete output.support_vision;
+    delete output.stream_include_usage;
     delete output.tool_call_mode;
+    delete output.history_compaction_ratio;
+    delete output.history_compaction_reset;
   }
 
   return output;
+};
+
+const probeMaxContext = async () => {
+  const current = selectedModel.value;
+  if (!current || normalizeModelType(current.model_type) !== 'llm') return;
+  const modelName = current.model.trim();
+  if (!modelName) {
+    ElMessage.warning(t('desktop.system.modelNameRequired'));
+    return;
+  }
+  const targetUid = current.uid;
+  probingContext.value = true;
+  try {
+    const response = await probeDesktopLlmContextWindow({
+      provider: String(current.provider || '').trim(),
+      base_url: String(current.base_url || '').trim(),
+      api_key: String(current.api_key || '').trim(),
+      model: modelName,
+      timeout_s: 15
+    });
+    const payload = (response?.data || {}) as Record<string, unknown>;
+    const maxContext = Number(payload.max_context);
+    const message = String(payload.message || '').trim();
+    const latest = selectedModel.value;
+    if (!latest || latest.uid !== targetUid) return;
+    if (Number.isFinite(maxContext) && maxContext > 0) {
+      latest.max_context = String(Math.round(maxContext));
+      ElMessage.success(t('desktop.system.maxContextProbeSuccess', { value: latest.max_context }));
+      return;
+    }
+    if (message) {
+      ElMessage.info(message);
+      return;
+    }
+    ElMessage.info(t('desktop.system.maxContextProbeNoResult'));
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(t('desktop.system.maxContextProbeFailed'));
+  } finally {
+    probingContext.value = false;
+  }
 };
 
 const refreshRemoteConnected = () => {
@@ -742,6 +917,12 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.desktop-system-settings-model-list-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .desktop-system-settings-section {
   border: 1px solid var(--portal-border);
   border-radius: 12px;
@@ -749,6 +930,26 @@ onMounted(() => {
   padding: 12px;
   display: grid;
   gap: 12px;
+}
+
+.desktop-system-settings-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.desktop-system-settings-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
+.desktop-system-settings-section-title i {
+  color: var(--portal-muted);
 }
 
 .desktop-system-settings-detail {
@@ -778,6 +979,46 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 
+.desktop-system-settings-btn {
+  border-radius: 9px;
+  border: 1px solid #d8dce4;
+  background: #ffffff;
+  color: #4b5563;
+  font-weight: 600;
+  box-shadow: none;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.desktop-system-settings-btn:hover:not(:disabled) {
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+  color: var(--ui-accent-deep);
+  background: var(--ui-accent-soft-2);
+}
+
+.desktop-system-settings-btn--primary {
+  border-color: transparent;
+  background: var(--ui-accent);
+  color: #ffffff;
+}
+
+.desktop-system-settings-btn--primary:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--ui-accent-hover);
+  color: #ffffff;
+}
+
+.desktop-system-settings-btn--danger {
+  border-color: rgba(185, 28, 28, 0.22);
+  color: #b91c1c;
+  background: #fff4f4;
+}
+
+.desktop-system-settings-btn--danger:hover:not(:disabled) {
+  border-color: rgba(185, 28, 28, 0.38);
+  background: #ffe9e9;
+  color: #991b1b;
+}
+
 .desktop-system-settings-field-label {
   color: var(--portal-text);
   font-size: 12px;
@@ -802,6 +1043,33 @@ onMounted(() => {
 
 .desktop-system-settings-input {
   width: 100%;
+}
+
+.desktop-system-settings-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.desktop-system-settings-checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.desktop-system-settings-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--portal-text);
+  font-size: 12px;
+}
+
+.desktop-system-settings-section-empty {
+  color: var(--portal-muted);
+  font-size: 12px;
+  padding: 2px 0;
 }
 
 .desktop-system-settings-model-list-title {
@@ -927,20 +1195,53 @@ onMounted(() => {
 
 .desktop-system-settings-panel :deep(.el-input__wrapper),
 .desktop-system-settings-panel :deep(.el-select__wrapper) {
-  background: var(--portal-surface, rgba(255, 255, 255, 0.86));
-  box-shadow: 0 0 0 1px var(--portal-border) inset;
+  background: #ffffff;
+  border: 1px solid #d8dce4;
+  box-shadow: none;
   border-radius: 10px;
-  transition: box-shadow 0.15s ease, background-color 0.15s ease;
+  min-height: 36px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
 .desktop-system-settings-panel :deep(.el-input__wrapper:hover),
 .desktop-system-settings-panel :deep(.el-select__wrapper:hover) {
-  box-shadow: 0 0 0 1px rgba(var(--ui-accent-rgb), 0.35) inset;
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+  box-shadow: none;
 }
 
 .desktop-system-settings-panel :deep(.el-input__wrapper.is-focus),
 .desktop-system-settings-panel :deep(.el-select__wrapper.is-focused) {
-  box-shadow: 0 0 0 1.5px rgba(var(--ui-accent-rgb), 0.58) inset;
+  border-color: rgba(var(--ui-accent-rgb), 0.62);
+  box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), 0.14);
+}
+
+.desktop-system-settings-panel :deep(.el-input__inner),
+.desktop-system-settings-panel :deep(.el-select__selected-item),
+.desktop-system-settings-panel :deep(.el-select__placeholder) {
+  color: #374151;
+}
+
+.desktop-system-settings-panel :deep(.desktop-system-settings-popper.el-select__popper.el-popper) {
+  border: 1px solid #d8dce4;
+  border-radius: 10px;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+.desktop-system-settings-panel :deep(.desktop-system-settings-popper .el-select-dropdown__item) {
+  color: #374151;
+  font-size: 12px;
+}
+
+.desktop-system-settings-panel :deep(.desktop-system-settings-popper .el-select-dropdown__item.hover),
+.desktop-system-settings-panel :deep(.desktop-system-settings-popper .el-select-dropdown__item:hover) {
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
+}
+
+.desktop-system-settings-panel :deep(.desktop-system-settings-popper .el-select-dropdown__item.is-selected) {
+  color: var(--ui-accent-deep);
+  font-weight: 600;
+  background: rgba(var(--ui-accent-rgb), 0.1);
 }
 
 @media (max-width: 1100px) {
@@ -956,6 +1257,10 @@ onMounted(() => {
 @media (max-width: 900px) {
   .desktop-system-settings-form-grid,
   .desktop-system-settings-model-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-system-settings-inline {
     grid-template-columns: 1fr;
   }
 }

@@ -24,6 +24,8 @@ const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 8;
 const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
 const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = DEFAULT_NON_ADMIN_MAX_ROUNDS;
 const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 4;
+const MAX_REPEATED_TOOL_FAILURES: u32 = 3;
+const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
 
 impl Orchestrator {
     pub(super) async fn execute_request(
@@ -230,6 +232,8 @@ impl Orchestrator {
             let mut last_round_info = request_round;
 
             let mut model_round = 0_i64;
+            let mut repeated_tool_failure_signature = String::new();
+            let mut repeated_tool_failure_count = 0_u32;
             loop {
                 if let Some(max_rounds) = max_rounds {
                     if model_round >= max_rounds {
@@ -699,6 +703,56 @@ impl Orchestrator {
                                 None,
                                 None,
                             );
+                        }
+
+                        if result.ok {
+                            repeated_tool_failure_signature.clear();
+                            repeated_tool_failure_count = 0;
+                        } else {
+                            let signature = build_tool_failure_signature(&name, &result);
+                            if signature == repeated_tool_failure_signature {
+                                repeated_tool_failure_count =
+                                    repeated_tool_failure_count.saturating_add(1);
+                            } else {
+                                repeated_tool_failure_signature = signature;
+                                repeated_tool_failure_count = 1;
+                            }
+                            if repeated_tool_failure_count >= MAX_REPEATED_TOOL_FAILURES {
+                                answer = build_tool_failure_guard_answer(&name, &result);
+                                stop_reason = Some("tool_failure_guard".to_string());
+                                let mut guard_payload = json!({
+                                    "stage": "tool_failure_guard",
+                                    "summary": "Repeated tool failures detected; stopped retries to keep session alive.",
+                                    "tool": name.clone(),
+                                    "repeat_count": repeated_tool_failure_count,
+                                    "threshold": MAX_REPEATED_TOOL_FAILURES,
+                                    "tool_error": if result.error.trim().is_empty() {
+                                        Value::Null
+                                    } else {
+                                        Value::String(result.error.clone())
+                                    },
+                                });
+                                if let Value::Object(ref mut map) = guard_payload {
+                                    round_info.insert_into(map);
+                                }
+                                emitter.emit("progress", guard_payload).await;
+                                self.append_chat(
+                                    &user_id,
+                                    &session_id,
+                                    "assistant",
+                                    Some(&json!(answer.clone())),
+                                    Some(&json!({
+                                        "type": "tool_failure_guard",
+                                        "tool": name.clone(),
+                                        "repeat_count": repeated_tool_failure_count,
+                                    })),
+                                    None,
+                                    None,
+                                    None,
+                                );
+                                should_finish = true;
+                                break;
+                            }
                         }
 
                         self.ensure_not_cancelled(&session_id)?;
@@ -1230,6 +1284,41 @@ fn resolve_empty_answer_fallback(reached_max_rounds: bool) -> (String, &'static 
     (i18n::t("error.empty_no_final_answer"), "empty_response")
 }
 
+fn build_tool_failure_signature(tool_name: &str, result: &ToolResultPayload) -> String {
+    let detail = if !result.error.trim().is_empty() {
+        result.error.trim().to_string()
+    } else {
+        serde_json::to_string(&result.data).unwrap_or_default()
+    };
+    let normalized = detail
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    let clipped = normalized
+        .chars()
+        .take(TOOL_FAILURE_SIGNATURE_MAX_CHARS)
+        .collect::<String>();
+    format!("{tool_name}|{clipped}")
+}
+
+fn build_tool_failure_guard_answer(tool_name: &str, result: &ToolResultPayload) -> String {
+    let detail = result.error.trim();
+    if detail.is_empty() {
+        return format!(
+            "Tool `{tool_name}` keeps failing repeatedly. I stopped retrying to keep this thread alive. Please adjust the request or tool args and retry."
+        );
+    }
+    let clipped = detail
+        .chars()
+        .take(TOOL_FAILURE_SIGNATURE_MAX_CHARS)
+        .collect::<String>();
+    format!(
+        "Tool `{tool_name}` failed repeatedly ({clipped}). I stopped retrying to keep this thread alive. Please adjust the request or tool args and retry."
+    )
+}
+
 fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
     let total = usage.total.max(usage.input.saturating_add(usage.output));
     target.input = target.input.saturating_add(usage.input);
@@ -1342,5 +1431,35 @@ mod tests {
             .and_then(|value| value.as_str().map(ToString::to_string))
             .unwrap_or_default();
         assert_eq!(content, "raw question");
+    }
+
+    #[test]
+    fn tool_failure_signature_prefers_error_text() {
+        let result = ToolResultPayload {
+            ok: false,
+            data: json!({"stderr":"ignored"}),
+            error: "command failed".to_string(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let signature = build_tool_failure_signature("执行命令", &result);
+        assert!(signature.contains("执行命令"));
+        assert!(signature.contains("command failed"));
+    }
+
+    #[test]
+    fn tool_failure_guard_answer_contains_tool_name() {
+        let result = ToolResultPayload {
+            ok: false,
+            data: json!({}),
+            error: String::new(),
+            sandbox: false,
+            timestamp: Utc::now(),
+            meta: None,
+        };
+        let answer = build_tool_failure_guard_answer("读取文件", &result);
+        assert!(answer.contains("读取文件"));
+        assert!(answer.contains("stopped retrying"));
     }
 }

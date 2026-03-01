@@ -136,6 +136,13 @@ impl DesktopRuntime {
         let i18n_path = repo_root.join("config/i18n.messages.json");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
+        if let Err(err) = seed_user_tool_skills(&repo_root, &user_tools_root, &user_id) {
+            warn!(
+                "seed desktop user tool skills failed: {} -> {}: {err}",
+                repo_root.join("skills").display(),
+                user_tools_root.display()
+            );
+        }
         let vector_root = temp_root.join("vector_knowledge");
 
         set_env_path("WUNDER_CONFIG_PATH", &base_config);
@@ -330,6 +337,16 @@ fn seed_workspace_skills(repo_root: &Path, workspace_root: &Path) -> Result<()> 
     merge_directory_if_missing(&source, &target)
 }
 
+fn seed_user_tool_skills(repo_root: &Path, user_tools_root: &Path, user_id: &str) -> Result<()> {
+    let source = repo_root.join("skills");
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let safe_user_id = sanitize_user_tools_user_id(user_id);
+    let target = user_tools_root.join(safe_user_id).join("skills");
+    merge_directory_if_missing(&source, &target)
+}
+
 fn merge_directory_if_missing(source: &Path, target: &Path) -> Result<()> {
     fs::create_dir_all(target)
         .with_context(|| format!("create skills target dir failed: {}", target.display()))?;
@@ -487,6 +504,22 @@ fn sanitize_workspace_scope(value: &str) -> String {
     } else {
         output
     }
+}
+
+fn sanitize_user_tools_user_id(value: &str) -> String {
+    let cleaned = value.trim();
+    if cleaned.is_empty() {
+        return "anonymous".to_string();
+    }
+    let mut output = String::with_capacity(cleaned.len());
+    for ch in cleaned.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    output
 }
 
 fn build_default_container_root(
