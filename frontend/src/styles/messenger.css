@@ -242,6 +242,22 @@
   text-transform: uppercase;
 }
 
+.messenger-avatar-btn--profile {
+  color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+}
+
+.messenger-user-avatar-icon {
+  width: 15px;
+  height: 15px;
+  line-height: 1;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .messenger-left-nav {
   display: flex;
   flex: 1;
@@ -1139,6 +1155,11 @@
   color: var(--ui-accent-deep);
 }
 
+.messenger-message-avatar--mine-profile {
+  color: #ffffff !important;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.26);
+}
+
 .messenger-message-main {
   max-width: min(84%, 860px);
   display: flex;
@@ -1291,6 +1312,7 @@
   min-height: var(--messenger-world-composer-height);
   height: var(--messenger-world-composer-height);
   overflow: visible;
+  box-shadow: none;
 }
 
 .messenger-world-resize-edge {
@@ -1506,24 +1528,27 @@
   flex: 1;
   min-height: 0;
   max-height: none;
-  border: 0;
-  background: transparent;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
   appearance: none;
+  -webkit-appearance: none;
   resize: none;
   overflow-y: auto;
   color: #2f2f2f;
   font-size: calc(14px * var(--messenger-font-scale, 1));
   line-height: 1.45;
-  outline: none;
+  outline: none !important;
   padding: 0;
   margin: 0;
 }
 
 .messenger-world-input:focus,
 .messenger-world-input:focus-visible {
-  border: 0;
-  outline: none;
-  box-shadow: none;
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
   background: transparent;
 }
 
@@ -1538,6 +1563,7 @@
   gap: 8px;
   margin-top: auto;
   flex-shrink: 0;
+  min-height: 32px;
 }
 
 .messenger-world-send-group {
@@ -1545,8 +1571,8 @@
   align-items: stretch;
   border-radius: 10px;
   overflow: hidden;
-  border: 1px solid var(--ui-accent-gradient-mid);
-  box-shadow: 0 6px 16px rgba(var(--ui-accent-rgb), 0.18);
+  border: 0;
+  box-shadow: none;
 }
 
 .messenger-world-send-main,
@@ -2701,6 +2727,15 @@
   padding: 0 12px;
 }
 
+.messenger-settings-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.4 4.8L6 8.2L9.6 4.8' fill='none' stroke='%236b7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px;
+}
+
 .messenger-settings-select-like {
   cursor: pointer;
 }
@@ -2895,13 +2930,154 @@
   width: 56px;
   height: 56px;
   border-radius: 50%;
-  background: var(--ui-accent-soft-4);
-  color: var(--ui-accent-deep);
+  background: var(--ui-accent);
+  color: #ffffff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   font-size: 21px;
   font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+
+.messenger-settings-profile-avatar-icon {
+  width: 22px;
+  height: 22px;
+  line-height: 1;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.messenger-settings-avatar-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.messenger-settings-avatar-icon-btn {
+  height: 34px;
+  border: 1px solid #d9dee8;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #4b5563;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+
+.messenger-settings-avatar-icon-btn:hover,
+.messenger-settings-avatar-icon-btn.active {
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  color: var(--ui-accent-deep);
+  background: var(--ui-accent-soft-2);
+}
+
+.messenger-settings-avatar-icon-btn .messenger-settings-profile-avatar-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.messenger-settings-profile-actions {
+  padding-top: 8px;
+}
+
+.messenger-settings-action--avatar {
+  min-width: 0;
+  width: auto;
+  max-width: 100%;
+}
+
+.messenger-settings-action-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+  color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+}
+
+.messenger-settings-action-avatar .messenger-settings-profile-avatar-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.messenger-avatar-dialog .el-dialog__body {
+  padding-top: 8px;
+}
+
+.messenger-avatar-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.messenger-avatar-dialog-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #e6e6e6;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.messenger-settings-profile-avatar--dialog {
+  width: 48px;
+  height: 48px;
+  font-size: 18px;
+}
+
+.messenger-settings-profile-avatar--dialog .messenger-settings-profile-avatar-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.messenger-settings-row--compact {
+  padding: 8px 0 0;
+  border-bottom: 0;
+}
+
+.messenger-settings-avatar-color-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.messenger-settings-avatar-color-chip {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.2);
+  background: var(--avatar-color);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.messenger-settings-select--avatar {
+  min-width: 198px;
+  background: #ffffff;
+}
+
+.messenger-avatar-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.messenger-avatar-dialog-footer-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .messenger-settings-profile-name {
@@ -3425,6 +3601,14 @@
   outline: none;
   padding: 0;
   margin: 0;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-input--world:focus,
+.messenger-composer-scope.chat-shell .chat-composer-input--world:focus-visible {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent;
 }
 
 .messenger-composer-scope.chat-shell .chat-composer-world-footer {

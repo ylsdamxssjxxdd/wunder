@@ -13,8 +13,14 @@
       @mouseenter="cancelMiddlePaneOverlayHide"
       @mouseleave="scheduleMiddlePaneOverlayHide"
     >
-      <button class="messenger-avatar-btn" type="button" @click="openProfilePage">
-        <span class="messenger-avatar-text">{{ avatarLabel(currentUsername) }}</span>
+      <button class="messenger-avatar-btn messenger-avatar-btn--profile" :style="currentUserAvatarStyle" type="button" @click="openProfilePage">
+        <UserAvatarGlyph
+          v-if="currentUserAvatarIcon !== 'initial'"
+          class="messenger-user-avatar-icon"
+          :glyph="currentUserAvatarIcon"
+          :size="15"
+        />
+        <span v-else class="messenger-avatar-text">{{ avatarLabel(currentUsername) }}</span>
       </button>
       <div class="messenger-left-nav">
         <button
@@ -1037,18 +1043,26 @@
                 :user-id="currentUserId"
                 :language-label="currentLanguageLabel"
                 :send-key="messengerSendKey"
+                :approval-mode="messengerApprovalMode"
                 :theme-palette="themeStore.palette"
                 :performance-mode="performanceStore.mode"
                 :ui-font-size="uiFontSize"
                 :devtools-available="debugToolsAvailable"
                 :update-available="desktopUpdateAvailable"
+                :profile-avatar-icon="currentUserAvatarIcon"
+                :profile-avatar-color="currentUserAvatarColor"
+                :profile-avatar-options="profileAvatarOptions"
+                :profile-avatar-colors="profileAvatarColors"
                 @toggle-language="toggleLanguage"
                 @check-update="checkClientUpdate"
                 @toggle-devtools="openDebugTools"
                 @update:send-key="updateSendKey"
+                @update:approval-mode="updateAgentApprovalMode"
                 @update:theme-palette="updateThemePalette"
                 @update:performance-mode="updatePerformanceMode"
                 @update:ui-font-size="updateUiFontSize"
+                @update:profile-avatar-icon="updateCurrentUserAvatarIcon"
+                @update:profile-avatar-color="updateCurrentUserAvatarColor"
               />
             </template>
           </div>
@@ -1078,8 +1092,18 @@
               :class="{ mine: item.message.role === 'user' }"
               :data-virtual-key="item.key"
             >
-              <div v-if="item.message.role === 'user'" class="messenger-message-avatar">
-                {{ avatarLabel(item.message.role === 'user' ? currentUsername : activeAgentName) }}
+              <div
+                v-if="item.message.role === 'user'"
+                class="messenger-message-avatar messenger-message-avatar--mine-profile"
+                :style="currentUserAvatarStyle"
+              >
+                <UserAvatarGlyph
+                  v-if="currentUserAvatarIcon !== 'initial'"
+                  class="messenger-user-avatar-icon"
+                  :glyph="currentUserAvatarIcon"
+                  :size="14"
+                />
+                <span v-else>{{ avatarLabel(currentUsername) }}</span>
               </div>
               <AgentAvatar
                 v-else
@@ -1260,8 +1284,23 @@
               :class="{ mine: isOwnMessage(item.message) }"
               :data-virtual-key="item.key"
             >
-              <div class="messenger-message-avatar">
-                {{ avatarLabel(resolveWorldMessageSender(item.message)) }}
+              <div
+                class="messenger-message-avatar"
+                :class="{ 'messenger-message-avatar--mine-profile': isOwnMessage(item.message) }"
+                :style="isOwnMessage(item.message) ? currentUserAvatarStyle : undefined"
+              >
+                <template v-if="isOwnMessage(item.message)">
+                  <UserAvatarGlyph
+                    v-if="currentUserAvatarIcon !== 'initial'"
+                    class="messenger-user-avatar-icon"
+                    :glyph="currentUserAvatarIcon"
+                    :size="14"
+                  />
+                  <span v-else>{{ avatarLabel(currentUsername) }}</span>
+                </template>
+                <template v-else>
+                  {{ avatarLabel(resolveWorldMessageSender(item.message)) }}
+                </template>
               </div>
               <div class="messenger-message-main">
                 <div class="messenger-message-meta">
@@ -1534,6 +1573,7 @@ import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
 import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
+import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
@@ -1590,6 +1630,7 @@ import {
 } from '@/views/messenger/orgUnits';
 import {
   AGENT_CONTAINER_IDS,
+  MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY,
   AGENT_MAIN_READ_AT_STORAGE_PREFIX,
   AGENT_MAIN_UNREAD_STORAGE_PREFIX,
   AGENT_TOOL_OVERRIDE_NONE,
@@ -1606,6 +1647,7 @@ import {
   WORLD_UPLOAD_SIZE_LIMIT,
   sectionRouteMap,
   type AgentFileContainer,
+  type AgentApprovalMode,
   type AgentLocalCommand,
   type AgentOverviewCard,
   type AgentRuntimeState,
@@ -1636,6 +1678,32 @@ const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
 
 const DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY = 'messenger_desktop_first_launch_default_agent_hint_v1';
+const USER_PROFILE_AVATAR_STORAGE_PREFIX = 'messenger_user_avatar_v1:';
+const PROFILE_AVATAR_ICON_OPTIONS = [
+  { key: 'initial', label: 'portal.agent.avatar.icon.initial' },
+  { key: 'check', label: 'portal.agent.avatar.icon.check' },
+  { key: 'spark', label: 'portal.agent.avatar.icon.spark' },
+  { key: 'target', label: 'portal.agent.avatar.icon.target' },
+  { key: 'idea', label: 'portal.agent.avatar.icon.idea' },
+  { key: 'code', label: 'portal.agent.avatar.icon.code' },
+  { key: 'pen', label: 'portal.agent.avatar.icon.pen' },
+  { key: 'briefcase', label: 'portal.agent.avatar.icon.briefcase' },
+  { key: 'shield', label: 'portal.agent.avatar.icon.shield' }
+] as const;
+const PROFILE_AVATAR_COLORS = [
+  '#f97316',
+  '#ef4444',
+  '#ec4899',
+  '#8b5cf6',
+  '#6366f1',
+  '#3b82f6',
+  '#06b6d4',
+  '#14b8a6',
+  '#10b981',
+  '#84cc16',
+  '#f59e0b',
+  '#64748b'
+] as const;
 
 const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
@@ -1708,6 +1776,8 @@ const rightDockCollapsed = ref(false);
 const desktopInitialSectionPinned = ref(false);
 const desktopShowFirstLaunchDefaultAgentHint = ref(false);
 const desktopFirstLaunchDefaultAgentHintAt = ref(0);
+const currentUserAvatarIcon = ref('initial');
+const currentUserAvatarColor = ref('#3b82f6');
 const toolsCatalogLoading = ref(false);
 const customTools = ref<ToolEntry[]>([]);
 const sharedTools = ref<ToolEntry[]>([]);
@@ -1740,6 +1810,7 @@ const desktopContainerRootMap = ref<Record<number, string>>({});
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
 const messengerSendKey = ref<MessengerSendKeyMode>('enter');
+const messengerApprovalMode = ref<AgentApprovalMode>('auto_edit');
 const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
 const orgUnitTree = ref<UnitTreeNode[]>([]);
@@ -1885,6 +1956,19 @@ const currentUserId = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
   return String(user?.id || '');
 });
+const profileAvatarStorageKey = computed(() =>
+  `${USER_PROFILE_AVATAR_STORAGE_PREFIX}${String(currentUserId.value || 'guest').trim() || 'guest'}`
+);
+const profileAvatarOptions = computed(() =>
+  PROFILE_AVATAR_ICON_OPTIONS.map((item) => ({
+    key: item.key,
+    label: t(item.label)
+  }))
+);
+const profileAvatarColors = computed(() => [...PROFILE_AVATAR_COLORS]);
+const currentUserAvatarStyle = computed(() => ({
+  background: String(currentUserAvatarColor.value || '#3b82f6')
+}));
 const userWorldPermissionDenied = computed(() => userWorldStore.permissionDenied === true);
 
 const activeSectionTitle = computed(() =>
@@ -2309,6 +2393,13 @@ const normalizeUiFontSize = (value: unknown): number => {
 
 const normalizeMessengerSendKey = (value: unknown): MessengerSendKeyMode =>
   String(value || '').trim().toLowerCase() === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
+
+const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'suggest') return 'suggest';
+  if (text === 'full_auto' || text === 'full-auto') return 'full_auto';
+  return 'auto_edit';
+};
 
 const applyUiFontSize = (value: number) => {
   if (typeof document === 'undefined') return;
@@ -4715,6 +4806,83 @@ const handleSettingsLogout = () => {
   router.push('/login').catch(() => undefined);
 };
 
+const normalizeCurrentUserAvatarIcon = (value: unknown): string => {
+  const text = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (!text) return 'initial';
+  const aliasMap: Record<string, string> = {
+    initial: 'initial',
+    check: 'check',
+    spark: 'spark',
+    target: 'target',
+    idea: 'idea',
+    code: 'code',
+    pen: 'pen',
+    briefcase: 'briefcase',
+    shield: 'shield',
+    'fa-user': 'check',
+    'fa-user-astronaut': 'spark',
+    'fa-rocket': 'target',
+    'fa-lightbulb': 'idea',
+    'fa-code': 'code',
+    'fa-pen': 'pen',
+    'fa-briefcase': 'briefcase',
+    'fa-shield-halved': 'shield'
+  };
+  const normalized = aliasMap[text] || text;
+  const allowed = new Set<string>(PROFILE_AVATAR_ICON_OPTIONS.map((item) => item.key));
+  return allowed.has(normalized) ? normalized : 'initial';
+};
+
+const normalizeCurrentUserAvatarColor = (value: unknown): string => {
+  const text = String(value || '').trim();
+  if (!text) return '#3b82f6';
+  if (/^#[0-9a-fA-F]{6}$/.test(text)) return text;
+  return '#3b82f6';
+};
+
+const persistCurrentUserAvatar = () => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(
+      profileAvatarStorageKey.value,
+      JSON.stringify({
+        icon: normalizeCurrentUserAvatarIcon(currentUserAvatarIcon.value),
+        color: normalizeCurrentUserAvatarColor(currentUserAvatarColor.value)
+      })
+    );
+  } catch {
+    // ignore localStorage errors
+  }
+};
+
+const loadCurrentUserAvatar = () => {
+  currentUserAvatarIcon.value = 'initial';
+  currentUserAvatarColor.value = '#3b82f6';
+  if (typeof window === 'undefined') return;
+  try {
+    const raw = window.localStorage.getItem(profileAvatarStorageKey.value);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    currentUserAvatarIcon.value = normalizeCurrentUserAvatarIcon(parsed.icon);
+    currentUserAvatarColor.value = normalizeCurrentUserAvatarColor(parsed.color);
+  } catch {
+    currentUserAvatarIcon.value = 'initial';
+    currentUserAvatarColor.value = '#3b82f6';
+  }
+};
+
+const updateCurrentUserAvatarIcon = (value: unknown) => {
+  currentUserAvatarIcon.value = normalizeCurrentUserAvatarIcon(value);
+  persistCurrentUserAvatar();
+};
+
+const updateCurrentUserAvatarColor = (value: unknown) => {
+  currentUserAvatarColor.value = normalizeCurrentUserAvatarColor(value);
+  persistCurrentUserAvatar();
+};
+
 const initDesktopLaunchBehavior = () => {
   desktopShowFirstLaunchDefaultAgentHint.value = false;
   desktopFirstLaunchDefaultAgentHintAt.value = 0;
@@ -6107,6 +6275,14 @@ const updateSendKey = (value: MessengerSendKeyMode) => {
   }
 };
 
+const updateAgentApprovalMode = (value: AgentApprovalMode) => {
+  const normalized = normalizeAgentApprovalMode(value);
+  messengerApprovalMode.value = normalized;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY, normalized);
+  }
+};
+
 const updateThemePalette = (value: 'hula-green' | 'eva-orange' | 'minimal') => {
   themeStore.setPalette(value);
 };
@@ -6548,6 +6724,7 @@ watch(
 watch(
   () => currentUserId.value,
   () => {
+    loadCurrentUserAvatar();
     cronPermissionDenied.value = false;
     cronAgentIds.value = new Set<string>();
     clearWorkspaceResourceCache();
@@ -6844,6 +7021,9 @@ onMounted(async () => {
     window.addEventListener('resize', viewportResizeHandler);
     messengerSendKey.value = normalizeMessengerSendKey(
       window.localStorage.getItem(MESSENGER_SEND_KEY_STORAGE_KEY)
+    );
+    messengerApprovalMode.value = normalizeAgentApprovalMode(
+      window.localStorage.getItem(MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY)
     );
     uiFontSize.value = normalizeUiFontSize(window.localStorage.getItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY));
     worldComposerHeight.value = clampWorldComposerHeight(

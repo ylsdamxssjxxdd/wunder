@@ -1965,7 +1965,8 @@
   - 会同时删除该会话关联的定时任务
   - 返回：`data.id`
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
-  - 入参（JSON）：`content`、`stream`（默认 true）、`attachments`（可选）
+  - 入参（JSON）：`content`、`stream`（默认 true）、`attachments`（可选）、`tool_call_mode`（可选）、`approval_mode`（可选）
+  - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
   - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
   - 注册用户每日请求额度超额时返回 429（`detail.code=USER_QUOTA_EXCEEDED`）
 - `GET /wunder/chat/sessions/{session_id}/resume`：恢复流式（SSE）
@@ -2279,6 +2280,7 @@
 - `event: a2a_result`：A2A 任务结束摘要（status/elapsed_ms）
 - `event: a2ui`：A2UI 渲染消息（`data.uid`/`data.messages`/`data.content`）
 - `event: compaction`：上下文压缩信息（原因/阈值/重置策略/执行状态；压缩请求使用独立 system 提示词、历史消息合并为单条 user 内容，压缩后摘要以 user 注入）
+  - 关键字段：`context_guard_applied/context_guard_tokens_before/context_guard_tokens_after/context_guard_current_user_trimmed/context_guard_summary_trimmed/context_guard_summary_removed`，用于说明压缩后为适配上下文窗口执行的二次裁剪动作。
 - `event: final`：最终回复（`data.answer`/`data.usage`/`data.stop_reason`）
   - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`question_panel`（等待问询面板选择）、`max_rounds`（达到最大轮次兜底）、`empty_response`（模型未返回可展示最终答复）、`unknown`（兜底）
 - `event: error`：错误信息（包含错误码与建议）
@@ -2807,8 +2809,10 @@
 
 - `POST /wunder/chat/sessions/{id}/messages`
   - 新增可选字段：`tool_call_mode`（`tool_call` 或 `function_call`）。
+  - 新增可选字段：`approval_mode`（`suggest` / `auto_edit` / `full_auto`）。
 - `WS /wunder/chat/ws` 的 `start` payload
   - 新增可选字段：`tool_call_mode`（`tool_call` 或 `function_call`）。
+  - 新增可选字段：`approval_mode`（`suggest` / `auto_edit` / `full_auto`）。
 - 当携带 `tool_call_mode` 时，服务端会在本次请求中生成 `config_overrides.llm.models.<default>.tool_call_mode`，仅影响当前轮请求。
 
 ### desktop 暴露路由范围（当前）

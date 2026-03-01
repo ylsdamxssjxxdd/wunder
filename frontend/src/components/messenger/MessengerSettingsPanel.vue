@@ -3,7 +3,15 @@
     <template v-if="mode === 'profile'">
       <section class="messenger-settings-card">
         <div class="messenger-settings-profile-head">
-          <div class="messenger-settings-profile-avatar">{{ profileInitial }}</div>
+          <div class="messenger-settings-profile-avatar" :style="profileAvatarStyle">
+            <UserAvatarGlyph
+              v-if="resolvedProfileAvatarIcon !== 'initial'"
+              class="messenger-settings-profile-avatar-icon"
+              :glyph="resolvedProfileAvatarIcon"
+              :size="22"
+            />
+            <span v-else>{{ profileInitial }}</span>
+          </div>
           <div class="messenger-settings-profile-meta">
             <div class="messenger-settings-profile-name">{{ username || t('user.guest') }}</div>
             <div class="messenger-settings-profile-id">{{ t('profile.idLabel', { id: userId || '-' }) }}</div>
@@ -12,6 +20,24 @@
               <span class="messenger-settings-profile-tag">{{ accountTypeLabel }}</span>
             </div>
           </div>
+        </div>
+        <div class="messenger-settings-profile-actions">
+          <button
+            class="messenger-settings-action messenger-settings-action--avatar"
+            type="button"
+            @click="openAvatarDialog"
+          >
+            <span class="messenger-settings-action-avatar" :style="profileAvatarStyle">
+              <UserAvatarGlyph
+                v-if="resolvedProfileAvatarIcon !== 'initial'"
+                class="messenger-settings-profile-avatar-icon"
+                :glyph="resolvedProfileAvatarIcon"
+                :size="14"
+              />
+              <span v-else>{{ profileInitial }}</span>
+            </span>
+            <span>{{ t('profile.avatar.settings') }}</span>
+          </button>
         </div>
       </section>
       <section class="messenger-settings-card">
@@ -126,6 +152,17 @@
         </div>
         <div class="messenger-settings-row">
           <div>
+            <div class="messenger-settings-label">{{ t('portal.agent.permission.title') }}</div>
+            <div class="messenger-settings-hint">{{ t('portal.agent.permission.hint') }}</div>
+          </div>
+          <select v-model="approvalMode" class="messenger-settings-select">
+            <option value="suggest">{{ t('portal.agent.permission.option.suggest') }}</option>
+            <option value="auto_edit">{{ t('portal.agent.permission.option.auto_edit') }}</option>
+            <option value="full_auto">{{ t('portal.agent.permission.option.full_auto') }}</option>
+          </select>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
             <div class="messenger-settings-label">{{ t('messenger.settings.debugTools') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.debugHint') }}</div>
           </div>
@@ -154,6 +191,78 @@
         </div>
       </section>
     </template>
+
+    <el-dialog
+      v-model="avatarDialogVisible"
+      class="messenger-dialog messenger-avatar-dialog"
+      :title="t('profile.avatar.settings')"
+      width="420px"
+      :close-on-click-modal="false"
+      append-to-body
+      destroy-on-close
+    >
+      <div class="messenger-avatar-dialog-body">
+        <div class="messenger-avatar-dialog-preview">
+          <div class="messenger-settings-profile-avatar messenger-settings-profile-avatar--dialog" :style="avatarDialogPreviewStyle">
+            <UserAvatarGlyph
+              v-if="avatarDialogIcon !== 'initial'"
+              class="messenger-settings-profile-avatar-icon"
+              :glyph="avatarDialogIcon"
+              :size="20"
+            />
+            <span v-else>{{ avatarDialogInitial }}</span>
+          </div>
+          <div class="messenger-settings-hint">{{ t('profile.avatar.tip') }}</div>
+        </div>
+        <div class="messenger-settings-label">{{ t('portal.agent.avatarIcon') }}</div>
+        <div class="messenger-settings-avatar-icon-grid">
+          <button
+            v-for="item in profileAvatarOptions"
+            :key="item.key"
+            class="messenger-settings-avatar-icon-btn"
+            :class="{ active: avatarDialogIcon === item.key }"
+            type="button"
+            :title="item.label"
+            :aria-label="item.label"
+            @click="avatarDialogIcon = item.key"
+          >
+            <UserAvatarGlyph
+              v-if="item.key !== 'initial'"
+              class="messenger-settings-profile-avatar-icon"
+              :glyph="item.key"
+              :size="15"
+            />
+            <span v-else>{{ avatarDialogInitial }}</span>
+          </button>
+        </div>
+        <div class="messenger-settings-row messenger-settings-row--compact">
+          <div class="messenger-settings-label">{{ t('portal.agent.avatarColor') }}</div>
+          <div class="messenger-settings-avatar-color-select-wrap">
+            <span class="messenger-settings-avatar-color-chip" :style="{ '--avatar-color': avatarDialogColor }"></span>
+            <select v-model="avatarDialogColor" class="messenger-settings-select messenger-settings-select--avatar">
+              <option v-for="item in avatarColorOptions" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <div class="messenger-avatar-dialog-footer">
+          <button class="messenger-settings-action ghost" type="button" @click="resetAvatarDialog">
+            {{ t('common.reset') }}
+          </button>
+          <div class="messenger-avatar-dialog-footer-actions">
+            <button class="messenger-settings-action ghost" type="button" @click="closeAvatarDialog">
+              {{ t('common.cancel') }}
+            </button>
+            <button class="messenger-settings-action" type="button" @click="applyAvatarDialog">
+              {{ t('common.confirm') }}
+            </button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -162,10 +271,37 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 
 type SendKeyMode = 'enter' | 'ctrl_enter';
 type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
 type PerformanceMode = 'high' | 'low';
+type ApprovalMode = 'suggest' | 'auto_edit' | 'full_auto';
+type ProfileAvatarOption = {
+  key: string;
+  label: string;
+};
+type AvatarColorOption = {
+  value: string;
+  label: string;
+};
+
+const DEFAULT_AVATAR_ICON = 'initial';
+const DEFAULT_AVATAR_COLOR = '#3b82f6';
+const AVATAR_COLOR_LABEL_KEY_BY_HEX: Record<string, string> = {
+  '#f97316': 'profile.avatar.color.sunset',
+  '#ef4444': 'profile.avatar.color.coral',
+  '#ec4899': 'profile.avatar.color.rose',
+  '#8b5cf6': 'profile.avatar.color.violet',
+  '#6366f1': 'profile.avatar.color.indigo',
+  '#3b82f6': 'profile.avatar.color.sky',
+  '#06b6d4': 'profile.avatar.color.cyan',
+  '#14b8a6': 'profile.avatar.color.teal',
+  '#10b981': 'profile.avatar.color.emerald',
+  '#84cc16': 'profile.avatar.color.lime',
+  '#f59e0b': 'profile.avatar.color.amber',
+  '#64748b': 'profile.avatar.color.slate'
+};
 
 const props = withDefaults(
   defineProps<{
@@ -176,9 +312,14 @@ const props = withDefaults(
     sendKey?: SendKeyMode;
     themePalette?: ThemePalette;
     performanceMode?: PerformanceMode;
+    approvalMode?: ApprovalMode;
     uiFontSize?: number;
     devtoolsAvailable?: boolean;
     updateAvailable?: boolean;
+    profileAvatarIcon?: string;
+    profileAvatarColor?: string;
+    profileAvatarOptions?: ProfileAvatarOption[];
+    profileAvatarColors?: string[];
   }>(),
   {
     mode: 'general',
@@ -188,9 +329,14 @@ const props = withDefaults(
     sendKey: 'enter',
     themePalette: 'eva-orange',
     performanceMode: 'high',
+    approvalMode: 'auto_edit',
     uiFontSize: 14,
     devtoolsAvailable: false,
-    updateAvailable: false
+    updateAvailable: false,
+    profileAvatarIcon: 'initial',
+    profileAvatarColor: 'var(--ui-accent)',
+    profileAvatarOptions: () => [],
+    profileAvatarColors: () => []
   }
 );
 
@@ -202,7 +348,10 @@ const emit = defineEmits<{
   (event: 'update:send-key', value: SendKeyMode): void;
   (event: 'update:theme-palette', value: ThemePalette): void;
   (event: 'update:performance-mode', value: PerformanceMode): void;
+  (event: 'update:approval-mode', value: ApprovalMode): void;
   (event: 'update:ui-font-size', value: number): void;
+  (event: 'update:profile-avatar-icon', value: string): void;
+  (event: 'update:profile-avatar-color', value: string): void;
 }>();
 
 const { t } = useI18n();
@@ -211,7 +360,11 @@ const chatStore = useChatStore();
 const sendKey = ref<SendKeyMode>('enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const performanceMode = ref<PerformanceMode>('high');
+const approvalMode = ref<ApprovalMode>('auto_edit');
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
+const avatarDialogVisible = ref(false);
+const avatarDialogIcon = ref(DEFAULT_AVATAR_ICON);
+const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
 
 const normalizeSendKey = (value: unknown): SendKeyMode =>
   String(value || '').trim().toLowerCase() === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
@@ -225,6 +378,13 @@ const normalizeThemePalette = (value: unknown): ThemePalette => {
 
 const normalizePerformanceMode = (value: unknown): PerformanceMode =>
   String(value || '').trim().toLowerCase() === 'low' ? 'low' : 'high';
+
+const normalizeApprovalMode = (value: unknown): ApprovalMode => {
+  const text = String(value || '').trim().toLowerCase();
+  if (text === 'suggest') return 'suggest';
+  if (text === 'full_auto' || text === 'full-auto') return 'full_auto';
+  return 'auto_edit';
+};
 
 watch(
   () => props.sendKey,
@@ -272,6 +432,21 @@ watch(performanceMode, (value) => {
 });
 
 watch(
+  () => props.approvalMode,
+  (value) => {
+    const normalized = normalizeApprovalMode(value);
+    if (approvalMode.value !== normalized) {
+      approvalMode.value = normalized;
+    }
+  },
+  { immediate: true }
+);
+
+watch(approvalMode, (value) => {
+  emit('update:approval-mode', normalizeApprovalMode(value));
+});
+
+watch(
   () => props.uiFontSize,
   (value) => {
     const normalized = Math.min(20, Math.max(12, Number(value) || 14));
@@ -290,6 +465,66 @@ const profileInitial = computed(() => {
   if (!source) return '?';
   return source.slice(0, 1).toUpperCase();
 });
+
+const resolvedProfileAvatarIcon = computed(() => {
+  const key = String(props.profileAvatarIcon || '').trim();
+  return key || DEFAULT_AVATAR_ICON;
+});
+
+const resolvedProfileAvatarColor = computed(() => {
+  const color = String(props.profileAvatarColor || '').trim();
+  return color || DEFAULT_AVATAR_COLOR;
+});
+
+const profileAvatarStyle = computed(() => ({
+  background: resolvedProfileAvatarColor.value
+}));
+
+const avatarDialogPreviewStyle = computed(() => ({
+  background: avatarDialogColor.value || DEFAULT_AVATAR_COLOR
+}));
+
+const avatarColorOptions = computed<AvatarColorOption[]>(() =>
+  props.profileAvatarColors.map((color) => {
+    const normalized = String(color || '')
+      .trim()
+      .toLowerCase();
+    const labelKey = AVATAR_COLOR_LABEL_KEY_BY_HEX[normalized];
+    const label = labelKey ? t(labelKey) : t('profile.avatar.color.custom');
+    return {
+      value: color,
+      label: `${label} · ${String(color || '').toUpperCase()}`
+    };
+  })
+);
+
+const avatarDialogInitial = computed(() => {
+  if (avatarDialogIcon.value === DEFAULT_AVATAR_ICON) {
+    return profileInitial.value;
+  }
+  return profileInitial.value;
+});
+
+const openAvatarDialog = () => {
+  avatarDialogIcon.value = resolvedProfileAvatarIcon.value || DEFAULT_AVATAR_ICON;
+  avatarDialogColor.value = resolvedProfileAvatarColor.value || DEFAULT_AVATAR_COLOR;
+  avatarDialogVisible.value = true;
+};
+
+const closeAvatarDialog = () => {
+  avatarDialogVisible.value = false;
+};
+
+const resetAvatarDialog = () => {
+  avatarDialogIcon.value = DEFAULT_AVATAR_ICON;
+  avatarDialogColor.value = avatarColorOptions.value[0]?.value || DEFAULT_AVATAR_COLOR;
+};
+
+const applyAvatarDialog = () => {
+  emit('update:profile-avatar-icon', avatarDialogIcon.value || DEFAULT_AVATAR_ICON);
+  emit('update:profile-avatar-color', avatarDialogColor.value || DEFAULT_AVATAR_COLOR);
+  avatarDialogVisible.value = false;
+};
 
 const userUnitLabel = computed(() => {
   const user = (authStore.user || {}) as Record<string, unknown>;

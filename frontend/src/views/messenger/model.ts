@@ -78,6 +78,7 @@ export const sectionRouteMap: Record<MessengerSection, string> = {
 
 export const MESSENGER_SEND_KEY_STORAGE_KEY = 'messenger_send_key';
 export const MESSENGER_UI_FONT_SIZE_STORAGE_KEY = 'messenger_ui_font_size';
+export const MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY = 'messenger_agent_approval_mode';
 export const AGENT_MAIN_READ_AT_STORAGE_PREFIX = 'messenger_agent_main_read_at';
 export const AGENT_MAIN_UNREAD_STORAGE_PREFIX = 'messenger_agent_main_unread';
 export const UNIT_UNGROUPED_ID = '__ungrouped__';
@@ -152,6 +153,7 @@ export type WorldHistoryRecord = {
 
 export type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
 export type MessengerSendKeyMode = 'enter' | 'ctrl_enter';
+export type AgentApprovalMode = 'suggest' | 'auto_edit' | 'full_auto';
 export type MessengerPerfTrace = {
   label: string;
   startedAt: number;

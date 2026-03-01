@@ -18,11 +18,16 @@ impl ContextManager {
         let mut output = Vec::with_capacity(messages.len());
         let mut pending: Vec<PendingToolCall> = Vec::new();
 
-        for message in messages {
-            let role = message.get("role").and_then(Value::as_str).unwrap_or("");
+        for raw_message in messages {
+            let mut message = raw_message;
+            let mut role = message
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             let content = message.get("content").unwrap_or(&Value::Null);
             let is_observation =
-                role == "user" && Orchestrator::is_observation_message(role, content);
+                role == "user" && Orchestrator::is_observation_message(role.as_str(), content);
 
             if !pending.is_empty() && role != "tool" && !is_observation {
                 append_missing_tool_results(&mut output, &pending);
@@ -31,15 +36,18 @@ impl ContextManager {
 
             if role == "tool" {
                 let tool_call_id = extract_tool_call_id(&message);
-                if let Some(id) = tool_call_id.as_deref() {
-                    if let Some(pos) = pending
+                let matched = if let Some(id) = tool_call_id.as_deref() {
+                    pending
                         .iter()
                         .position(|call| call.id.as_deref() == Some(id))
-                    {
-                        pending.remove(pos);
-                    }
-                } else if let Some(pos) = pending.iter().position(|call| call.id.is_none()) {
+                } else {
+                    pending.iter().position(|call| call.id.is_none())
+                };
+                if let Some(pos) = matched {
                     pending.remove(pos);
+                } else {
+                    message = convert_orphan_tool_message_to_observation(&message);
+                    role = "user".to_string();
                 }
             } else if is_observation {
                 if let Some(pos) = pending.iter().position(|call| call.id.is_none()) {
@@ -163,6 +171,25 @@ fn build_missing_tool_observation(tool_name: &str) -> String {
     serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
 }
 
+fn convert_orphan_tool_message_to_observation(message: &Value) -> Value {
+    let content = message.get("content").cloned().unwrap_or(Value::Null);
+    let content_text = match content {
+        Value::String(text) => {
+            if text.trim().is_empty() {
+                "{}".to_string()
+            } else {
+                text
+            }
+        }
+        Value::Null => "{}".to_string(),
+        other => serde_json::to_string(&other).unwrap_or_else(|_| "{}".to_string()),
+    };
+    json!({
+        "role": "user",
+        "content": format!("{OBSERVATION_PREFIX}{content_text}"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,5 +267,66 @@ mod tests {
         ];
         let normalized = manager.normalize_messages(messages);
         assert_eq!(normalized.len(), 3);
+    }
+
+    #[test]
+    fn test_normalize_converts_orphan_tool_message() {
+        let manager = ContextManager;
+        let messages = vec![
+            json!({ "role": "system", "content": "sys" }),
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_orphan",
+                "content": r#"{"tool":"read_file","ok":true,"data":{"text":"hello"}}"#
+            }),
+            json!({ "role": "user", "content": "next" }),
+        ];
+        let normalized = manager.normalize_messages(messages);
+        assert_eq!(normalized.len(), 3);
+        assert_eq!(
+            normalized[1].get("role").and_then(Value::as_str),
+            Some("user")
+        );
+        let text = normalized[1]
+            .get("content")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert!(text.starts_with(OBSERVATION_PREFIX));
+    }
+
+    #[test]
+    fn test_normalize_converts_mismatched_tool_message_and_keeps_pending_call() {
+        let manager = ContextManager;
+        let messages = vec![
+            json!({
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_expected",
+                    "type": "function",
+                    "function": { "name": "read_file", "arguments": r#"{"path":"a.txt"}"# }
+                }]
+            }),
+            json!({
+                "role": "tool",
+                "tool_call_id": "call_other",
+                "content": r#"{"tool":"read_file","ok":true,"data":{"text":"other"}}"#
+            }),
+            json!({ "role": "user", "content": "continue" }),
+        ];
+        let normalized = manager.normalize_messages(messages);
+        assert_eq!(normalized.len(), 4);
+        assert_eq!(
+            normalized[1].get("role").and_then(Value::as_str),
+            Some("user")
+        );
+        assert_eq!(
+            normalized[2].get("role").and_then(Value::as_str),
+            Some("tool")
+        );
+        assert_eq!(
+            normalized[2].get("tool_call_id").and_then(Value::as_str),
+            Some("call_expected")
+        );
     }
 }

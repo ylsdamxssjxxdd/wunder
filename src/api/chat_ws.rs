@@ -1,4 +1,4 @@
-use crate::api::chat::{build_chat_request, ChatAttachment};
+use crate::api::chat::{build_chat_request, ChatAttachment, ChatRequestOverrides};
 use crate::api::user_context::resolve_user;
 use crate::api::ws_helpers::{
     apply_ws_auth_headers, has_ws_protocol_token, negotiate_ws_protocol, parse_connect_payload,
@@ -49,6 +49,14 @@ struct WsStartPayload {
     attachments: Option<Vec<ChatAttachment>>,
     #[serde(default)]
     tool_call_mode: Option<String>,
+    #[serde(
+        default,
+        alias = "approvalMode",
+        alias = "approval_mode",
+        alias = "permissionLevel",
+        alias = "permission_level"
+    )]
+    approval_mode: Option<String>,
     #[serde(default)]
     session_id: Option<String>,
 }
@@ -335,7 +343,10 @@ async fn handle_ws(
                             payload.content,
                             stream,
                             payload.attachments,
-                            payload.tool_call_mode,
+                            ChatRequestOverrides {
+                                tool_call_mode: payload.tool_call_mode,
+                                approval_mode: payload.approval_mode,
+                            },
                         )
                         .await
                         {

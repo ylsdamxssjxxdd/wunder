@@ -433,7 +433,13 @@ impl Orchestrator {
 
                 let assistant_content = content.clone();
                 let assistant_reasoning = reasoning.clone();
-                if !assistant_content.trim().is_empty() || !assistant_reasoning.trim().is_empty() {
+                let has_tool_calls_payload = tool_calls_payload
+                    .as_ref()
+                    .is_some_and(|payload| !matches!(payload, Value::Null));
+                if has_tool_calls_payload
+                    || !assistant_content.trim().is_empty()
+                    || !assistant_reasoning.trim().is_empty()
+                {
                     let mut assistant_message = json!({
                         "role": "assistant",
                         "content": assistant_content.clone(),

@@ -117,6 +117,27 @@ type PendingApproval = {
   created_at: string;
 };
 
+const MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY = 'messenger_agent_approval_mode';
+
+const normalizeApprovalModeForRequest = (value: unknown): string | null => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'suggest') return 'suggest';
+  if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
+  if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
+  return null;
+};
+
+const getMessengerApprovalModeForRequest = (): string | null => {
+  if (typeof window === 'undefined') return null;
+  try {
+    return normalizeApprovalModeForRequest(
+      window.localStorage.getItem(MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY)
+    );
+  } catch {
+    return null;
+  }
+};
+
 const buildMessageStats = () => ({
   toolCalls: 0,
   usage: null,
@@ -3866,11 +3887,13 @@ export const useChatStore = defineStore('chat', {
           runtime.sendController = new AbortController();
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
+        const messengerApprovalMode = getMessengerApprovalModeForRequest();
         const payload = {
           content,
           stream: true,
           ...(attachments.length > 0 ? { attachments } : {}),
-          ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {})
+          ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
+          ...(messengerApprovalMode ? { approval_mode: messengerApprovalMode } : {})
         };
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);

@@ -120,6 +120,19 @@ struct SendMessageRequest {
     attachments: Option<Vec<ChatAttachment>>,
     #[serde(default)]
     tool_call_mode: Option<String>,
+    #[serde(
+        default,
+        alias = "approvalMode",
+        alias = "approval_mode",
+        alias = "permissionLevel",
+        alias = "permission_level"
+    )]
+    approval_mode: Option<String>,
+}
+
+pub(crate) struct ChatRequestOverrides {
+    pub(crate) tool_call_mode: Option<String>,
+    pub(crate) approval_mode: Option<String>,
 }
 
 async fn chat_transport(
@@ -499,7 +512,10 @@ async fn send_message(
         payload.content,
         payload.stream.unwrap_or(true),
         payload.attachments,
-        payload.tool_call_mode,
+        ChatRequestOverrides {
+            tool_call_mode: payload.tool_call_mode,
+            approval_mode: payload.approval_mode,
+        },
     )
     .await?;
     let wants_stream = request.stream;
@@ -584,7 +600,7 @@ pub(crate) async fn build_chat_request(
     content: String,
     stream: bool,
     attachments: Option<Vec<ChatAttachment>>,
-    tool_call_mode: Option<String>,
+    request_overrides: ChatRequestOverrides,
 ) -> Result<WunderRequest, Response> {
     let session_id = session_id.trim().to_string();
     if session_id.is_empty() {
@@ -669,10 +685,13 @@ pub(crate) async fn build_chat_request(
         Some(attachments)
     };
 
-    let tool_call_mode = normalize_tool_call_mode(tool_call_mode.as_deref())?;
+    let tool_call_mode = normalize_tool_call_mode(request_overrides.tool_call_mode.as_deref())?;
+    let request_approval_mode =
+        normalize_optional_approval_mode(request_overrides.approval_mode.as_deref());
     let agent_approval_mode = agent_record
         .as_ref()
         .map(|record| normalize_agent_approval_mode(Some(record.approval_mode.as_str())));
+    let resolved_approval_mode = request_approval_mode.or(agent_approval_mode);
     let mut config_override_map = serde_json::Map::new();
     if let Some(mode) = tool_call_mode {
         let config = state.config_store.get().await;
@@ -690,7 +709,7 @@ pub(crate) async fn build_chat_request(
             );
         }
     }
-    if let Some(mode) = agent_approval_mode {
+    if let Some(mode) = resolved_approval_mode {
         config_override_map.insert(
             "security".to_string(),
             json!({
@@ -746,6 +765,11 @@ fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
         "full_auto" | "full-auto" => "full_auto".to_string(),
         _ => "auto_edit".to_string(),
     }
+}
+
+fn normalize_optional_approval_mode(raw: Option<&str>) -> Option<String> {
+    let cleaned = raw.map(str::trim).filter(|value| !value.is_empty())?;
+    Some(normalize_agent_approval_mode(Some(cleaned)))
 }
 
 async fn resume_session(
