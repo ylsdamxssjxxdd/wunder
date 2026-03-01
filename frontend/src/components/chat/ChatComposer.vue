@@ -91,9 +91,7 @@
           :disabled="attachmentBusy > 0"
           @click="triggerUpload"
         >
-          <svg class="messenger-world-tool-icon" aria-hidden="true">
-            <use href="#file2"></use>
-          </svg>
+          <i class="fa-solid fa-upload messenger-world-tool-fa-icon" aria-hidden="true"></i>
         </button>
       </div>
       <textarea

@@ -46,13 +46,14 @@
       </button>
     </aside>
 
-    <section
-      v-if="showMiddlePane"
-      ref="middlePaneRef"
-      class="messenger-middle-pane messenger-middle-pane--overlay"
-      @mouseenter="cancelMiddlePaneOverlayHide"
-      @mouseleave="scheduleMiddlePaneOverlayHide"
-    >
+    <Transition name="messenger-middle-pane-slide">
+      <section
+        v-show="showMiddlePane"
+        ref="middlePaneRef"
+        class="messenger-middle-pane messenger-middle-pane--overlay"
+        @mouseenter="cancelMiddlePaneOverlayHide"
+        @mouseleave="scheduleMiddlePaneOverlayHide"
+      >
       <header class="messenger-middle-header">
         <div class="messenger-middle-title">{{ activeSectionTitle }}</div>
         <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
@@ -62,7 +63,7 @@
         <label class="messenger-search">
           <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
           <input
-            v-model.trim="keyword"
+            v-model="keywordInput"
             type="text"
             :placeholder="searchPlaceholder"
             autocomplete="off"
@@ -105,7 +106,10 @@
         </button>
       </div>
 
-      <div class="messenger-middle-list">
+      <div
+        class="messenger-middle-list"
+        :class="{ 'messenger-middle-list--users': sessionHub.activeSection === 'users' && !userWorldPermissionDenied }"
+      >
         <template v-if="sessionHub.activeSection === 'messages'">
           <div
             v-for="item in filteredMixedConversations"
@@ -152,95 +156,111 @@
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'users'">
-          <div class="messenger-unit-structure">
-            <div class="messenger-unit-structure-head">
-              <span class="messenger-unit-structure-title">{{ t('messenger.users.unitTitle') }}</span>
-              <span class="messenger-unit-structure-hint">{{ t('messenger.users.unitHint') }}</span>
-            </div>
-            <div class="messenger-unit-structure-actions">
-              <button
-                class="messenger-unit-all-btn"
-                :class="{ active: !selectedContactUnitId }"
-                type="button"
-                @click="selectedContactUnitId = ''"
-              >
-                <span class="messenger-unit-tree-name">{{ t('messenger.users.unitAll') }}</span>
-                <span class="messenger-unit-tree-count">{{ contactTotalCount }}</span>
-              </button>
-            </div>
-            <div class="messenger-unit-tree">
-              <div
-                v-for="row in contactUnitTreeRows"
-                :key="`unit-tree-${row.id}`"
-                class="messenger-unit-tree-row"
-                :class="{
-                  active: selectedContactUnitId === row.id,
-                  'messenger-unit-tree-row--dir': row.hasChildren,
-                  'messenger-unit-tree-row--leaf': !row.hasChildren
-                }"
-                :style="resolveUnitTreeRowStyle(row)"
-                role="button"
-                tabindex="0"
-                @click="selectedContactUnitId = row.id"
-                @keydown.enter.prevent="selectedContactUnitId = row.id"
-                @keydown.space.prevent="selectedContactUnitId = row.id"
-              >
-                <button
-                  v-if="row.hasChildren"
-                  class="messenger-unit-tree-toggle"
-                  :class="{ expanded: row.expanded }"
-                  type="button"
-                  :title="row.expanded ? t('common.collapse') : t('common.expand')"
-                  @click.stop="toggleContactUnitExpanded(row.id)"
-                >
-                  <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
-                </button>
-                <span v-else class="messenger-unit-tree-toggle messenger-unit-tree-toggle--placeholder"></span>
-                <span class="messenger-unit-tree-icon" aria-hidden="true">
-                  <i
-                    class="fa-solid"
-                    :class="row.hasChildren ? (row.expanded ? 'fa-folder-open' : 'fa-folder') : 'fa-file-lines'"
-                  ></i>
-                </span>
-                <span class="messenger-unit-tree-name">{{ row.label }}</span>
-                <span class="messenger-unit-tree-count">{{ row.count }}</span>
+          <div class="messenger-users-pane">
+            <div class="messenger-unit-structure">
+              <div class="messenger-unit-structure-head">
+                <span class="messenger-unit-structure-title">{{ t('messenger.users.unitTitle') }}</span>
+                <span class="messenger-unit-structure-hint">{{ t('messenger.users.unitHint') }}</span>
               </div>
-            </div>
-          </div>
-          <div v-if="userWorldPermissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
-          <template v-else>
-            <button
-              v-for="contact in filteredContacts"
-              :key="contact.user_id"
-              class="messenger-list-item"
-              :class="{ active: selectedContactUserId === String(contact.user_id || '') }"
-              type="button"
-              @click="selectContact(contact)"
-            >
-              <div class="messenger-list-avatar">{{ avatarLabel(contact.username || contact.user_id) }}</div>
-                <div class="messenger-list-main">
-                  <div class="messenger-list-row">
-                    <span class="messenger-list-name">{{ contact.username || contact.user_id }}</span>
-                    <span
-                      class="messenger-presence-tag"
-                      :class="{ online: isContactOnline(contact) }"
-                    >
-                      {{ formatContactPresence(contact) }}
-                    </span>
-                    <span class="messenger-list-time">{{ formatTime(contact.last_message_at) }}</span>
-                  </div>
-                  <div class="messenger-list-row">
-                  <span class="messenger-list-preview">
-                    {{ contact.last_message_preview || t('messenger.preview.empty') }}
+              <div class="messenger-unit-structure-actions">
+                <button
+                  class="messenger-unit-all-btn"
+                  :class="{ active: !selectedContactUnitId }"
+                  type="button"
+                  @click="selectedContactUnitId = ''"
+                >
+                  <span class="messenger-unit-tree-name">{{ t('messenger.users.unitAll') }}</span>
+                  <span class="messenger-unit-tree-count">{{ contactTotalCount }}</span>
+                </button>
+              </div>
+              <div class="messenger-unit-tree">
+                <div
+                  v-for="row in contactUnitTreeRows"
+                  :key="`unit-tree-${row.id}`"
+                  class="messenger-unit-tree-row"
+                  :class="{
+                    active: selectedContactUnitId === row.id,
+                    'messenger-unit-tree-row--dir': row.hasChildren,
+                    'messenger-unit-tree-row--leaf': !row.hasChildren
+                  }"
+                  :style="resolveUnitTreeRowStyle(row)"
+                  role="button"
+                  tabindex="0"
+                  @click="selectedContactUnitId = row.id"
+                  @keydown.enter.prevent="selectedContactUnitId = row.id"
+                  @keydown.space.prevent="selectedContactUnitId = row.id"
+                >
+                  <button
+                    v-if="row.hasChildren"
+                    class="messenger-unit-tree-toggle"
+                    :class="{ expanded: row.expanded }"
+                    type="button"
+                    :title="row.expanded ? t('common.collapse') : t('common.expand')"
+                    @click.stop="toggleContactUnitExpanded(row.id)"
+                  >
+                    <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+                  </button>
+                  <span v-else class="messenger-unit-tree-toggle messenger-unit-tree-toggle--placeholder"></span>
+                  <span class="messenger-unit-tree-icon" aria-hidden="true">
+                    <i
+                      class="fa-solid"
+                      :class="row.hasChildren ? (row.expanded ? 'fa-folder-open' : 'fa-folder') : 'fa-file-lines'"
+                    ></i>
                   </span>
-                  <span v-if="resolveUnread(contact.unread_count) > 0" class="messenger-list-unread">
-                    {{ resolveUnread(contact.unread_count) }}
-                  </span>
+                  <span class="messenger-unit-tree-name">{{ row.label }}</span>
+                  <span class="messenger-unit-tree-count">{{ row.count }}</span>
                 </div>
               </div>
-            </button>
-            <div v-if="!filteredContacts.length" class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
-          </template>
+            </div>
+            <div v-if="userWorldPermissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
+            <template v-else>
+              <div
+                v-if="filteredContacts.length"
+                ref="contactVirtualListRef"
+                class="messenger-contact-virtual-list"
+                @scroll.passive="handleContactVirtualScroll"
+              >
+                <div
+                  class="messenger-contact-virtual-spacer"
+                  :style="{ height: `${contactVirtualTopPadding}px` }"
+                  aria-hidden="true"
+                ></div>
+                <button
+                  v-for="contact in visibleFilteredContacts"
+                  :key="contact.user_id"
+                  class="messenger-list-item messenger-contact-item"
+                  :class="{ active: selectedContactUserId === String(contact.user_id || '') }"
+                  type="button"
+                  @click="selectContact(contact)"
+                >
+                  <div class="messenger-list-avatar">{{ avatarLabel(contact.username || contact.user_id) }}</div>
+                  <div class="messenger-list-main">
+                    <div class="messenger-list-row">
+                      <span class="messenger-list-name">{{ contact.username || contact.user_id }}</span>
+                      <span class="messenger-presence-tag" :class="{ online: isContactOnline(contact) }">
+                        {{ formatContactPresence(contact) }}
+                      </span>
+                      <span class="messenger-list-time">{{ formatTime(contact.last_message_at) }}</span>
+                    </div>
+                    <div class="messenger-list-row">
+                      <span class="messenger-list-preview">
+                        {{ contact.last_message_preview || t('messenger.preview.empty') }}
+                      </span>
+                      <span v-if="resolveUnread(contact.unread_count) > 0" class="messenger-list-unread">
+                        {{ resolveUnread(contact.unread_count) }}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+                <div
+                  class="messenger-contact-virtual-spacer"
+                  :style="{ height: `${contactVirtualBottomPadding}px` }"
+                  aria-hidden="true"
+                ></div>
+              </div>
+              <div v-else class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
+            </template>
+          </div>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'groups'">
@@ -572,7 +592,8 @@
           </button>
         </template>
       </div>
-    </section>
+      </section>
+    </Transition>
 
     <section class="messenger-chat chat-shell">
       <header class="messenger-chat-header">
@@ -976,6 +997,7 @@
                 :language-label="currentLanguageLabel"
                 :send-key="messengerSendKey"
                 :theme-palette="themeStore.palette"
+                :performance-mode="performanceStore.mode"
                 :ui-font-size="uiFontSize"
                 :desktop-tool-call-mode="desktopToolCallMode"
                 :devtools-available="debugToolsAvailable"
@@ -987,6 +1009,7 @@
                 @logout="handleSettingsLogout"
                 @update:send-key="updateSendKey"
                 @update:theme-palette="updateThemePalette"
+                @update:performance-mode="updatePerformanceMode"
                 @update:ui-font-size="updateUiFontSize"
                 @update:desktop-tool-call-mode="updateDesktopToolCallMode"
               />
@@ -1252,6 +1275,7 @@
           @clear-quick-panel-close="clearWorldQuickPanelClose"
           @schedule-quick-panel-close="scheduleWorldQuickPanelClose"
           @insert-emoji="insertWorldEmoji"
+          @trigger-container-pick="openWorldContainerPicker"
           @trigger-upload="triggerWorldUpload"
           @open-history="openWorldHistoryDialog"
           @focus-input="worldQuickPanelMode = ''"
@@ -1309,6 +1333,82 @@
       @locate="locateWorldHistoryMessage"
     />
 
+    <el-dialog
+      v-model="worldContainerPickerVisible"
+      class="messenger-dialog messenger-world-file-picker-dialog"
+      :title="t('userWorld.attachments.pickDialogTitle')"
+      width="520px"
+      destroy-on-close
+    >
+      <div class="messenger-world-file-picker">
+        <div class="messenger-world-file-picker-toolbar">
+          <button
+            class="messenger-inline-btn"
+            type="button"
+            :disabled="worldContainerPickerLoading || !worldContainerPickerPath"
+            :title="t('userWorld.attachments.pickParent')"
+            :aria-label="t('userWorld.attachments.pickParent')"
+            @click="openWorldContainerPickerParent"
+          >
+            <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
+          </button>
+          <button
+            class="messenger-inline-btn"
+            type="button"
+            :disabled="worldContainerPickerLoading"
+            :title="t('common.refresh')"
+            :aria-label="t('common.refresh')"
+            @click="refreshWorldContainerPicker"
+          >
+            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+          </button>
+          <div class="messenger-world-file-picker-path" :title="worldContainerPickerPathLabel">
+            {{ worldContainerPickerPathLabel }}
+          </div>
+        </div>
+        <label class="messenger-world-file-picker-search">
+          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+          <input
+            v-model.trim="worldContainerPickerKeyword"
+            type="text"
+            :placeholder="t('userWorld.attachments.pickSearchPlaceholder')"
+          />
+        </label>
+        <div v-if="worldContainerPickerLoading" class="messenger-world-file-picker-empty">
+          {{ t('common.loading') }}
+        </div>
+        <div
+          v-else-if="!worldContainerPickerDisplayEntries.length"
+          class="messenger-world-file-picker-empty"
+        >
+          {{ t('userWorld.attachments.pickEmpty') }}
+        </div>
+        <div v-else class="messenger-world-file-picker-list">
+          <button
+            v-for="entry in worldContainerPickerDisplayEntries"
+            :key="entry.path"
+            class="messenger-world-file-picker-item"
+            type="button"
+            @click="handleWorldContainerPickerEntry(entry)"
+          >
+            <i
+              class="messenger-world-file-picker-icon"
+              :class="entry.type === 'dir' ? 'fa-solid fa-folder' : 'fa-regular fa-file-lines'"
+              aria-hidden="true"
+            ></i>
+            <span class="messenger-world-file-picker-name" :title="entry.name">
+              {{ entry.name }}
+            </span>
+            <i
+              class="messenger-world-file-picker-action"
+              :class="entry.type === 'dir' ? 'fa-solid fa-chevron-right' : 'fa-solid fa-plus'"
+              aria-hidden="true"
+            ></i>
+          </button>
+        </div>
+      </div>
+    </el-dialog>
+
     <MessengerPromptPreviewDialog
       v-model:visible="agentPromptPreviewVisible"
       :loading="agentPromptPreviewLoading"
@@ -1347,7 +1447,7 @@ import { fetchOrgUnits } from '@/api/auth';
 import { getSession as getChatSessionApi, fetchSessionSystemPrompt, fetchRealtimeSystemPrompt } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
-import { downloadWunderWorkspaceFile, uploadWunderWorkspace } from '@/api/workspace';
+import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
@@ -1383,6 +1483,7 @@ import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import { usePerformanceStore } from '@/stores/performance';
 import { useThemeStore } from '@/stores/theme';
 import {
   useSessionHubStore,
@@ -1461,6 +1562,7 @@ const { t } = useI18n();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
+const performanceStore = usePerformanceStore();
 const themeStore = useThemeStore();
 const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
@@ -1487,6 +1589,16 @@ const worldHistoryDialogVisible = ref(false);
 const worldHistoryKeyword = ref('');
 const worldHistoryActiveTab = ref<WorldHistoryCategory>('all');
 const worldHistoryDateRange = ref<[string, string] | []>([]);
+const worldContainerPickerVisible = ref(false);
+const worldContainerPickerLoading = ref(false);
+const worldContainerPickerPath = ref('');
+const worldContainerPickerKeyword = ref('');
+type WorldContainerPickerEntry = {
+  path: string;
+  name: string;
+  type: 'dir' | 'file';
+};
+const worldContainerPickerEntries = ref<WorldContainerPickerEntry[]>([]);
 const agentPromptPreviewVisible = ref(false);
 const agentPromptPreviewLoading = ref(false);
 const agentPromptPreviewContent = ref('');
@@ -1570,17 +1682,26 @@ const quickCreatingAgent = ref(false);
 const agentMainReadAtMap = ref<Record<string, number>>({});
 const agentMainUnreadCountMap = ref<Record<string, number>>({});
 const agentUnreadStorageKeys = ref<{ readAt: string; unread: string }>({ readAt: '', unread: '' });
+const keywordInput = ref('');
+const contactVirtualListRef = ref<HTMLElement | null>(null);
+const contactVirtualScrollTop = ref(0);
+const contactVirtualViewportHeight = ref(0);
 
 let statusTimer: number | null = null;
 let lifecycleTimer: number | null = null;
 let worldQuickPanelCloseTimer: number | null = null;
 let timelinePrefetchTimer: number | null = null;
 let middlePaneOverlayHideTimer: number | null = null;
+let keywordDebounceTimer: number | null = null;
+let messageScrollFrame: number | null = null;
+let contactVirtualFrame: number | null = null;
 let viewportResizeHandler: (() => void) | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 const agentUnreadRefreshInFlight = new Set<string>();
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
+const CONTACT_VIRTUAL_ITEM_HEIGHT = 60;
+const CONTACT_VIRTUAL_OVERSCAN = 8;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
 type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
 type WorkspaceResourceCacheEntry = {
@@ -1589,6 +1710,7 @@ type WorkspaceResourceCacheEntry = {
   promise?: Promise<WorkspaceResourceCachePayload>;
 };
 const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
+const KEYWORD_INPUT_DEBOUNCE_MS = 120;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 let workspaceResourceHydrationFrame: number | null = null;
 let pendingAssistantCenter = false;
@@ -1671,10 +1793,7 @@ const desktopMode = computed(() => isDesktopModeEnabled());
 const debugToolsAvailable = computed(() => typeof getDesktopBridge()?.toggleDevTools === 'function');
 const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkForUpdates === 'function');
 
-const keyword = computed({
-  get: () => sessionHub.keyword,
-  set: (value: string) => sessionHub.setKeyword(value)
-});
+const keyword = computed(() => sessionHub.keyword);
 
 const currentUsername = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
@@ -2264,6 +2383,35 @@ const filteredContacts = computed(() => {
   });
 });
 
+const contactVirtualRange = computed(() => {
+  const total = filteredContacts.value.length;
+  if (!total) {
+    return { start: 0, end: 0 };
+  }
+  const viewportHeight =
+    contactVirtualViewportHeight.value ||
+    contactVirtualListRef.value?.clientHeight ||
+    CONTACT_VIRTUAL_ITEM_HEIGHT * 8;
+  const start = Math.max(
+    0,
+    Math.floor(contactVirtualScrollTop.value / CONTACT_VIRTUAL_ITEM_HEIGHT) - CONTACT_VIRTUAL_OVERSCAN
+  );
+  const visibleCount = Math.ceil(viewportHeight / CONTACT_VIRTUAL_ITEM_HEIGHT) + CONTACT_VIRTUAL_OVERSCAN * 2;
+  const end = Math.min(total, start + visibleCount);
+  return { start, end };
+});
+
+const visibleFilteredContacts = computed(() =>
+  filteredContacts.value.slice(contactVirtualRange.value.start, contactVirtualRange.value.end)
+);
+
+const contactVirtualTopPadding = computed(() => contactVirtualRange.value.start * CONTACT_VIRTUAL_ITEM_HEIGHT);
+
+const contactVirtualBottomPadding = computed(() => {
+  const remaining = filteredContacts.value.length - contactVirtualRange.value.end;
+  return Math.max(0, remaining * CONTACT_VIRTUAL_ITEM_HEIGHT);
+});
+
 const filteredGroups = computed(() => {
   const text = keyword.value.toLowerCase();
   return (Array.isArray(userWorldStore.groups) ? userWorldStore.groups : []).filter((item) => {
@@ -2536,6 +2684,22 @@ const canSendWorldMessage = computed(
     !worldUploading.value &&
     Boolean(worldDraft.value.trim())
 );
+
+const worldContainerPickerPathLabel = computed(() =>
+  worldContainerPickerPath.value ? `/${worldContainerPickerPath.value}` : '/'
+);
+
+const worldContainerPickerDisplayEntries = computed(() => {
+  const keyword = String(worldContainerPickerKeyword.value || '').trim().toLowerCase();
+  if (!keyword) {
+    return worldContainerPickerEntries.value;
+  }
+  return worldContainerPickerEntries.value.filter((entry) => {
+    const name = String(entry.name || '').toLowerCase();
+    const path = String(entry.path || '').toLowerCase();
+    return name.includes(keyword) || path.includes(keyword);
+  });
+});
 
 const normalizeDismissedAgentConversationMap = (value: unknown): Record<string, number> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -3012,6 +3176,106 @@ const openWorldHistoryDialog = () => {
   worldHistoryActiveTab.value = 'all';
   worldHistoryDateRange.value = [];
   worldHistoryDialogVisible.value = true;
+};
+
+const resolveWorldContainerPickerParent = (path: string): string => {
+  const normalized = normalizeUploadPath(path);
+  if (!normalized) return '';
+  const pivot = normalized.lastIndexOf('/');
+  if (pivot < 0) return '';
+  return normalized.slice(0, pivot);
+};
+
+const normalizeWorldContainerPickerEntry = (raw: unknown): WorldContainerPickerEntry | null => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return null;
+  }
+  const source = raw as Record<string, unknown>;
+  const path = normalizeUploadPath(source.path);
+  if (!path) {
+    return null;
+  }
+  const rawName = String(source.name || '').trim();
+  const fallbackName = path.split('/').pop() || path;
+  const normalizedType = String(source.type || '').toLowerCase();
+  const isDirectory = normalizedType === 'dir' || normalizedType === 'directory' || normalizedType === 'folder';
+  return {
+    path,
+    name: rawName || fallbackName,
+    type: isDirectory ? 'dir' : 'file'
+  };
+};
+
+const sortWorldContainerPickerEntries = (
+  left: WorldContainerPickerEntry,
+  right: WorldContainerPickerEntry
+): number => {
+  if (left.type !== right.type) {
+    return left.type === 'dir' ? -1 : 1;
+  }
+  return left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: 'base' });
+};
+
+const loadWorldContainerPickerEntries = async (path: string) => {
+  const normalizedPath = normalizeUploadPath(path);
+  worldContainerPickerLoading.value = true;
+  try {
+    const { data } = await fetchWunderWorkspaceContent({
+      path: normalizedPath,
+      include_content: true,
+      depth: 1,
+      container_id: USER_CONTAINER_ID
+    });
+    const payload = data && typeof data === 'object' && !Array.isArray(data) ? data : {};
+    const payloadRecord = payload as Record<string, unknown>;
+    worldContainerPickerPath.value = normalizeUploadPath(
+      payloadRecord.path ?? normalizedPath
+    );
+    const rawEntries = payloadRecord.entries;
+    const entries = Array.isArray(rawEntries) ? rawEntries : [];
+    worldContainerPickerEntries.value = entries
+      .map((entry) => normalizeWorldContainerPickerEntry(entry))
+      .filter((entry): entry is WorldContainerPickerEntry => Boolean(entry))
+      .sort(sortWorldContainerPickerEntries);
+  } catch (error) {
+    worldContainerPickerEntries.value = [];
+    showApiError(error, t('userWorld.attachments.pickFailed'));
+  } finally {
+    worldContainerPickerLoading.value = false;
+  }
+};
+
+const openWorldContainerPickerPath = async (path: string) => {
+  worldContainerPickerKeyword.value = '';
+  await loadWorldContainerPickerEntries(path);
+};
+
+const openWorldContainerPicker = async () => {
+  if (!isWorldConversationActive.value || worldUploading.value) return;
+  worldQuickPanelMode.value = '';
+  worldContainerPickerVisible.value = true;
+  await openWorldContainerPickerPath(worldContainerPickerPath.value);
+};
+
+const openWorldContainerPickerParent = () => {
+  if (worldContainerPickerLoading.value || !worldContainerPickerPath.value) return;
+  const parentPath = resolveWorldContainerPickerParent(worldContainerPickerPath.value);
+  void openWorldContainerPickerPath(parentPath);
+};
+
+const refreshWorldContainerPicker = () => {
+  if (worldContainerPickerLoading.value) return;
+  void loadWorldContainerPickerEntries(worldContainerPickerPath.value);
+};
+
+const handleWorldContainerPickerEntry = (entry: WorldContainerPickerEntry) => {
+  if (entry.type === 'dir') {
+    void openWorldContainerPickerPath(entry.path);
+    return;
+  }
+  appendWorldAttachmentTokens([entry.path]);
+  worldContainerPickerVisible.value = false;
+  focusWorldTextareaToEnd();
 };
 
 const rememberWorldEmoji = (emoji: string) => {
@@ -4147,6 +4411,51 @@ const clearMiddlePaneOverlayHide = () => {
   }
 };
 
+const clearKeywordDebounce = () => {
+  if (typeof window === 'undefined' || keywordDebounceTimer === null) return;
+  window.clearTimeout(keywordDebounceTimer);
+  keywordDebounceTimer = null;
+};
+
+const resetContactVirtualScroll = () => {
+  contactVirtualScrollTop.value = 0;
+  const container = contactVirtualListRef.value;
+  if (container && container.scrollTop !== 0) {
+    container.scrollTop = 0;
+  }
+};
+
+const syncContactVirtualMetrics = () => {
+  const container = contactVirtualListRef.value;
+  if (!container) {
+    contactVirtualViewportHeight.value = 0;
+    contactVirtualScrollTop.value = 0;
+    return;
+  }
+  contactVirtualViewportHeight.value = container.clientHeight;
+  contactVirtualScrollTop.value = container.scrollTop;
+  const maxScroll = Math.max(
+    0,
+    filteredContacts.value.length * CONTACT_VIRTUAL_ITEM_HEIGHT - contactVirtualViewportHeight.value
+  );
+  if (contactVirtualScrollTop.value > maxScroll) {
+    contactVirtualScrollTop.value = maxScroll;
+    container.scrollTop = maxScroll;
+  }
+};
+
+const handleContactVirtualScroll = () => {
+  if (typeof window === 'undefined') {
+    syncContactVirtualMetrics();
+    return;
+  }
+  if (contactVirtualFrame !== null) return;
+  contactVirtualFrame = window.requestAnimationFrame(() => {
+    contactVirtualFrame = null;
+    syncContactVirtualMetrics();
+  });
+};
+
 const openMiddlePaneOverlay = () => {
   if (!isMiddlePaneOverlay.value) return;
   clearMiddlePaneOverlayHide();
@@ -5273,6 +5582,7 @@ const triggerWorldUpload = () => {
   const uploadInput = worldComposerViewRef.value?.getUploadInputElement() || null;
   if (!isWorldConversationActive.value || worldUploading.value || !uploadInput) return;
   worldQuickPanelMode.value = '';
+  worldContainerPickerVisible.value = false;
   uploadInput.value = '';
   uploadInput.click();
 };
@@ -5471,6 +5781,10 @@ const updateThemePalette = (value: 'hula-green' | 'eva-orange' | 'minimal') => {
   themeStore.setPalette(value);
 };
 
+const updatePerformanceMode = (value: 'high' | 'low') => {
+  performanceStore.setMode(value);
+};
+
 const updateUiFontSize = (value: number) => {
   const normalized = normalizeUiFontSize(value);
   uiFontSize.value = normalized;
@@ -5591,7 +5905,15 @@ const updateMessageScrollState = () => {
 };
 
 const handleMessageListScroll = () => {
-  updateMessageScrollState();
+  if (typeof window === 'undefined') {
+    updateMessageScrollState();
+    return;
+  }
+  if (messageScrollFrame !== null) return;
+  messageScrollFrame = window.requestAnimationFrame(() => {
+    messageScrollFrame = null;
+    updateMessageScrollState();
+  });
 };
 
 const scrollMessagesToBottom = async (force = false) => {
@@ -5726,6 +6048,30 @@ const bootstrap = async () => {
 };
 
 watch(
+  () => sessionHub.keyword,
+  (value) => {
+    const normalized = String(value || '');
+    if (keywordInput.value !== normalized) {
+      keywordInput.value = normalized;
+    }
+  },
+  { immediate: true }
+);
+
+watch(keywordInput, (value) => {
+  const normalized = String(value || '').trimStart();
+  if (typeof window === 'undefined') {
+    sessionHub.setKeyword(normalized);
+    return;
+  }
+  clearKeywordDebounce();
+  keywordDebounceTimer = window.setTimeout(() => {
+    keywordDebounceTimer = null;
+    sessionHub.setKeyword(normalized);
+  }, KEYWORD_INPUT_DEBOUNCE_MS);
+});
+
+watch(
   () => isMiddlePaneOverlay.value,
   (overlay) => {
     if (!overlay) {
@@ -5787,9 +6133,30 @@ watch(
     if (section === 'tools' && !customTools.value.length && !sharedTools.value.length) {
       loadToolsCatalog();
     }
+    if (section === 'users' && !userWorldPermissionDenied.value) {
+      resetContactVirtualScroll();
+      void nextTick(syncContactVirtualMetrics);
+    }
     ensureSectionSelection();
   },
   { immediate: true }
+);
+
+watch(
+  () => [filteredContacts.value.length, sessionHub.activeSection, userWorldPermissionDenied.value],
+  () => {
+    if (sessionHub.activeSection !== 'users' || userWorldPermissionDenied.value) return;
+    void nextTick(syncContactVirtualMetrics);
+  }
+);
+
+watch(
+  () => [keyword.value, selectedContactUnitId.value],
+  () => {
+    if (sessionHub.activeSection !== 'users' || userWorldPermissionDenied.value) return;
+    resetContactVirtualScroll();
+    void nextTick(syncContactVirtualMetrics);
+  }
 );
 
 watch(
@@ -6025,6 +6392,7 @@ onMounted(async () => {
     viewportResizeHandler = () => {
       viewportWidth.value = window.innerWidth;
       closeFileContainerMenu();
+      syncContactVirtualMetrics();
     };
     viewportResizeHandler();
     window.addEventListener('resize', viewportResizeHandler);
@@ -6069,8 +6437,17 @@ onBeforeUnmount(() => {
   closeFileContainerMenu();
   clearWorldQuickPanelClose();
   clearMiddlePaneOverlayHide();
+  clearKeywordDebounce();
   closeImagePreview();
   stopWorldComposerResize();
+  if (typeof window !== 'undefined' && messageScrollFrame !== null) {
+    window.cancelAnimationFrame(messageScrollFrame);
+    messageScrollFrame = null;
+  }
+  if (typeof window !== 'undefined' && contactVirtualFrame !== null) {
+    window.cancelAnimationFrame(contactVirtualFrame);
+    contactVirtualFrame = null;
+  }
   if (statusTimer) {
     window.clearInterval(statusTimer);
     statusTimer = null;

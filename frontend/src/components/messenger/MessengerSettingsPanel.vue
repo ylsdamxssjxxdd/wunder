@@ -174,6 +174,16 @@
         </div>
         <div class="messenger-settings-row">
           <div>
+            <div class="messenger-settings-label">{{ t('messenger.settings.motion') }}</div>
+            <div class="messenger-settings-hint">{{ t('messenger.settings.motionHint') }}</div>
+          </div>
+          <select v-model="performanceMode" class="messenger-settings-select">
+            <option value="high">{{ t('messenger.settings.motionOptionHigh') }}</option>
+            <option value="low">{{ t('messenger.settings.motionOptionLow') }}</option>
+          </select>
+        </div>
+        <div class="messenger-settings-row">
+          <div>
             <div class="messenger-settings-label">{{ t('messenger.settings.debugTools') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.debugHint') }}</div>
           </div>
@@ -221,6 +231,7 @@ import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSett
 
 type SendKeyMode = 'enter' | 'ctrl_enter';
 type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
+type PerformanceMode = 'high' | 'low';
 
 const props = withDefaults(
   defineProps<{
@@ -230,6 +241,7 @@ const props = withDefaults(
     languageLabel?: string;
     sendKey?: SendKeyMode;
     themePalette?: ThemePalette;
+    performanceMode?: PerformanceMode;
     uiFontSize?: number;
     desktopToolCallMode?: 'tool_call' | 'function_call';
     devtoolsAvailable?: boolean;
@@ -242,6 +254,7 @@ const props = withDefaults(
     languageLabel: '',
     sendKey: 'enter',
     themePalette: 'eva-orange',
+    performanceMode: 'high',
     uiFontSize: 14,
     desktopToolCallMode: 'tool_call',
     devtoolsAvailable: false,
@@ -258,6 +271,7 @@ const emit = defineEmits<{
   (event: 'update:send-key', value: SendKeyMode): void;
   (event: 'update:desktop-tool-call-mode', value: 'tool_call' | 'function_call'): void;
   (event: 'update:theme-palette', value: ThemePalette): void;
+  (event: 'update:performance-mode', value: PerformanceMode): void;
   (event: 'update:ui-font-size', value: number): void;
 }>();
 
@@ -266,6 +280,7 @@ const authStore = useAuthStore();
 const chatStore = useChatStore();
 const sendKey = ref<SendKeyMode>('enter');
 const themePalette = ref<ThemePalette>('eva-orange');
+const performanceMode = ref<PerformanceMode>('high');
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
 
 const normalizeSendKey = (value: unknown): SendKeyMode =>
@@ -277,6 +292,9 @@ const normalizeThemePalette = (value: unknown): ThemePalette => {
   if (text === 'minimal') return 'minimal';
   return 'eva-orange';
 };
+
+const normalizePerformanceMode = (value: unknown): PerformanceMode =>
+  String(value || '').trim().toLowerCase() === 'low' ? 'low' : 'high';
 
 watch(
   () => props.sendKey,
@@ -306,6 +324,21 @@ watch(
 
 watch(themePalette, (value) => {
   emit('update:theme-palette', normalizeThemePalette(value));
+});
+
+watch(
+  () => props.performanceMode,
+  (value) => {
+    const normalized = normalizePerformanceMode(value);
+    if (performanceMode.value !== normalized) {
+      performanceMode.value = normalized;
+    }
+  },
+  { immediate: true }
+);
+
+watch(performanceMode, (value) => {
+  emit('update:performance-mode', normalizePerformanceMode(value));
 });
 
 watch(

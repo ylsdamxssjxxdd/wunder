@@ -13,7 +13,7 @@ const normalizePerformanceMode = (value) => {
 
 const readPerformanceFromStorage = () => {
   const stored = localStorage.getItem(PERFORMANCE_STORAGE_KEY);
-  const normalized = stored === 'low' ? DEFAULT_PERFORMANCE_MODE : normalizePerformanceMode(stored);
+  const normalized = normalizePerformanceMode(stored);
   if (normalized !== stored) {
     localStorage.setItem(PERFORMANCE_STORAGE_KEY, normalized);
   }

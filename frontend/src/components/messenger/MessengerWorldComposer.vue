@@ -70,14 +70,23 @@
       <button
         class="messenger-world-tool-btn"
         type="button"
-        :disabled="uploading"
-        :title="t('userWorld.attachments.upload')"
-        :aria-label="t('userWorld.attachments.upload')"
-        @click="emit('trigger-upload')"
+        :title="t('userWorld.attachments.pick')"
+        :aria-label="t('userWorld.attachments.pick')"
+        @click="emit('trigger-container-pick')"
       >
         <svg class="messenger-world-tool-icon" aria-hidden="true">
           <use href="#file2"></use>
         </svg>
+      </button>
+      <button
+        class="messenger-world-tool-btn"
+        type="button"
+        :disabled="uploading"
+        :title="t('userWorld.attachments.uploadLocal')"
+        :aria-label="t('userWorld.attachments.uploadLocal')"
+        @click="emit('trigger-upload')"
+      >
+        <i class="fa-solid fa-upload messenger-world-tool-fa-icon" aria-hidden="true"></i>
       </button>
       <div class="messenger-world-tool-anchor messenger-world-tool-anchor--history">
         <button
@@ -154,6 +163,7 @@ const emit = defineEmits<{
   'clear-quick-panel-close': [];
   'schedule-quick-panel-close': [];
   'insert-emoji': [emoji: string];
+  'trigger-container-pick': [];
   'trigger-upload': [];
   'open-history': [];
   'focus-input': [];
