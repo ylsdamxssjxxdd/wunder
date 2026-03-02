@@ -588,8 +588,7 @@
   transition: padding-right 0.16s ease;
 }
 
-.user-tools-dialog .user-skill-item:hover .tool-item-info,
-.user-tools-dialog .user-skill-item:focus-within .tool-item-info {
+.user-tools-dialog .user-skill-item:hover .tool-item-info {
   padding-right: 34px;
 }
 
@@ -603,8 +602,7 @@
   transition: opacity 0.16s ease, transform 0.16s ease;
 }
 
-.user-tools-dialog .skill-item:hover .user-skill-delete,
-.user-tools-dialog .skill-item:focus-within .user-skill-delete {
+.user-tools-dialog .skill-item:hover .user-skill-delete {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(-50%) translateX(0);

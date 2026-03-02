@@ -232,6 +232,7 @@
         v-if="desktopScreenshotSupported && screenshotMenuVisible"
         ref="screenshotMenuPanelRef"
         class="chat-screenshot-menu chat-screenshot-menu--floating"
+        :class="{ 'chat-screenshot-menu--world': worldStyle }"
         :style="screenshotMenuStyle"
       >
         <button

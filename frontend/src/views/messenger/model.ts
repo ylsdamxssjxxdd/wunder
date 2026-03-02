@@ -132,6 +132,8 @@ export type AgentOverviewCard = {
   isDefault: boolean;
   runtimeState: AgentRuntimeState;
   hasCron: boolean;
+  hasChannelBinding: boolean;
+  containerId: number;
 };
 
 export type UnitTreeNode = {

@@ -655,6 +655,33 @@
   margin-bottom: 0;
 }
 
+.chat-shell .message-user-image-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chat-shell .message-user-image-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  cursor: zoom-in;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.chat-shell .message-user-image {
+  display: block;
+  width: min(100%, 320px);
+  max-height: 260px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(15, 23, 42, 0.46);
+  object-fit: contain;
+}
+
 .chat-shell .markdown-body .ai-rich-table {
   margin: 8px 0;
   padding: 10px;

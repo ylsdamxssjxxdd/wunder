@@ -868,6 +868,44 @@ impl ChannelHub {
             spawned_by: None,
         };
         self.save_chat_session(&chat_record).await?;
+        if !use_main_thread {
+            if let Some(agent_key) = agent_value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                match self
+                    .agent_runtime
+                    .resolve_main_session_id(&user_id, agent_key)
+                    .await
+                {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        if let Err(err) = self
+                            .agent_runtime
+                            .set_main_session(
+                                &user_id,
+                                agent_key,
+                                &session_id,
+                                "channel_inbound_auto_create",
+                            )
+                            .await
+                        {
+                            warn!(
+                                "channel inbound failed to set main session: user_id={}, agent_id={}, session_id={}, error={err}",
+                                user_id, agent_key, session_id
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        warn!(
+                            "channel inbound failed to resolve main session: user_id={}, agent_id={}, session_id={}, error={err}",
+                            user_id, agent_key, session_id
+                        );
+                    }
+                }
+            }
+        }
 
         let record = ChannelSessionRecord {
             channel,

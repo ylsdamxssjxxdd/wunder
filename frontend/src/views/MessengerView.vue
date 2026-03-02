@@ -751,7 +751,6 @@
               <template v-if="showAgentGridOverview">
                 <div class="messenger-chat-settings-block messenger-agent-grid-panel">
                   <div class="messenger-agent-grid-header">
-                    <div class="messenger-agent-grid-title">{{ t('messenger.agent.overviewTitle') }}</div>
                     <div class="messenger-agent-grid-subtitle">{{ t('messenger.agent.overviewDesc') }}</div>
                   </div>
                   <div v-if="!agentOverviewCards.length" class="messenger-list-empty">
@@ -778,6 +777,9 @@
                             <span v-if="card.isDefault" class="messenger-kind-tag">{{ t('messenger.defaultAgent') }}</span>
                             <span v-else-if="card.shared" class="messenger-kind-tag">{{ t('messenger.agent.sharedTag') }}</span>
                             <span v-if="card.hasCron" class="messenger-kind-tag">{{ t('messenger.agent.cron') }}</span>
+                            <span v-if="card.hasChannelBinding" class="messenger-kind-tag">
+                              {{ t('messenger.agent.channelTag') }}
+                            </span>
                           </div>
                         </div>
                       </div>
@@ -799,6 +801,11 @@
                         >
                           {{ t('messenger.agent.openChat') }}
                         </button>
+                      </div>
+                      <div class="messenger-agent-grid-foot">
+                        <span class="messenger-agent-grid-container-id">
+                          {{ t('messenger.agent.containerId', { id: card.containerId }) }}
+                        </span>
                       </div>
                     </article>
                   </div>
@@ -857,7 +864,11 @@
                   v-else-if="agentSettingMode === 'channel'"
                   class="messenger-chat-settings-block messenger-channel-panel-wrap"
                 >
-                  <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
+                  <UserChannelSettingsPanel
+                    mode="page"
+                    :agent-id="settingsAgentIdForApi"
+                    @changed="loadChannelBoundAgentIds"
+                  />
                 </div>
 
                 <div v-else-if="agentSettingMode === 'runtime'" class="messenger-chat-settings-block">
@@ -1123,6 +1134,7 @@
                 :theme-palette="themeStore.palette"
                 :performance-mode="performanceStore.mode"
                 :ui-font-size="uiFontSize"
+                :username-saving="usernameSaving"
                 :devtools-available="debugToolsAvailable"
                 :update-available="desktopUpdateAvailable"
                 :profile-avatar-icon="currentUserAvatarIcon"
@@ -1137,6 +1149,7 @@
                 @update:theme-palette="updateThemePalette"
                 @update:performance-mode="updatePerformanceMode"
                 @update:ui-font-size="updateUiFontSize"
+                @update:username="updateCurrentUsername"
                 @update:profile-avatar-icon="updateCurrentUserAvatarIcon"
                 @update:profile-avatar-color="updateCurrentUserAvatarColor"
               />
@@ -1637,12 +1650,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
-import { fetchOrgUnits } from '@/api/auth';
+import { fetchOrgUnits, updateProfile } from '@/api/auth';
+import { listChannelBindings } from '@/api/channels';
 import { getSession as getChatSessionApi, fetchSessionSystemPrompt, fetchRealtimeSystemPrompt } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
@@ -1878,6 +1892,7 @@ const messageVirtualHeightCache = new Map<string, number>();
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
+const channelBoundAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
 const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime'>('agent');
 const settingsPanelMode = ref<
@@ -1887,6 +1902,7 @@ const rightDockCollapsed = ref(false);
 const desktopInitialSectionPinned = ref(false);
 const desktopShowFirstLaunchDefaultAgentHint = ref(false);
 const desktopFirstLaunchDefaultAgentHintAt = ref(0);
+const usernameSaving = ref(false);
 const currentUserAvatarIcon = ref('initial');
 const currentUserAvatarColor = ref('#3b82f6');
 const toolsCatalogLoading = ref(false);
@@ -1977,6 +1993,7 @@ const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const KEYWORD_INPUT_DEBOUNCE_MS = 120;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 let workspaceResourceHydrationFrame: number | null = null;
+let workspaceResourceHydrationPending = false;
 let pendingAssistantCenter = false;
 let pendingAssistantCenterCount = 0;
 const MESSENGER_PERF_TRACE_ENABLED = (() => {
@@ -2297,6 +2314,11 @@ const buildAbilityAllowedNameSet = (summary: Record<string, unknown>): Set<strin
   return new Set<string>([...(names.tools || []), ...(names.skills || [])]);
 };
 
+const buildAbilitySkillNameSet = (summary: Record<string, unknown>): Set<string> => {
+  const names = collectAbilityNames(summary);
+  return new Set<string>(names.skills || []);
+};
+
 const filterAbilitySummaryByNames = (
   summary: Record<string, unknown>,
   selectedNames: Set<string>
@@ -2323,6 +2345,7 @@ const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() =>
   const summary = agentPromptToolSummary.value;
   if (!summary) return null;
   const allowedSet = buildAbilityAllowedNameSet(summary);
+  const skillNameSet = buildAbilitySkillNameSet(summary);
   if (!allowedSet.size) return summary;
   const session = activeAgentSession.value as Record<string, unknown> | null;
   const sessionOverrides = Array.isArray(session?.tool_overrides)
@@ -2349,6 +2372,13 @@ const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() =>
       selectedNames.add(name);
     }
   });
+  if (desktopMode.value && skillNameSet.size > 0 && sourceOverrides.length > 0) {
+    skillNameSet.forEach((name) => {
+      if (allowedSet.has(name)) {
+        selectedNames.add(name);
+      }
+    });
+  }
   if (!selectedNames.size && !sourceOverrides.length) {
     allowedSet.forEach((name) => selectedNames.add(name));
   }
@@ -2577,6 +2607,7 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
     const id = normalizeAgentId(agent?.id || DEFAULT_AGENT_KEY);
     if (!id || seen.has(id)) return;
     seen.add(id);
+    const containerId = normalizeSandboxContainerId(agent?.sandbox_container_id);
     cards.push({
       id,
       name: String(agent?.name || id),
@@ -2584,7 +2615,9 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
       shared: options.shared === true,
       isDefault: options.isDefault === true,
       runtimeState: resolveAgentRuntimeState(id),
-      hasCron: hasCronTask(id)
+      hasCron: hasCronTask(id),
+      hasChannelBinding: channelBoundAgentIds.value.has(id),
+      containerId
     });
   };
 
@@ -2592,7 +2625,8 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
     {
       id: DEFAULT_AGENT_KEY,
       name: t('messenger.defaultAgent'),
-      description: t('messenger.defaultAgentDesc')
+      description: t('messenger.defaultAgentDesc'),
+      sandbox_container_id: 1
     },
     { isDefault: true }
   );
@@ -4784,10 +4818,15 @@ const hydrateWorkspaceResources = () => {
 };
 
 const scheduleWorkspaceResourceHydration = () => {
-  if (workspaceResourceHydrationFrame !== null || typeof window === 'undefined') return;
-  workspaceResourceHydrationFrame = window.requestAnimationFrame(() => {
-    workspaceResourceHydrationFrame = null;
-    hydrateWorkspaceResources();
+  if (workspaceResourceHydrationFrame !== null || workspaceResourceHydrationPending) return;
+  workspaceResourceHydrationPending = true;
+  void nextTick(() => {
+    workspaceResourceHydrationPending = false;
+    if (workspaceResourceHydrationFrame !== null || typeof window === 'undefined') return;
+    workspaceResourceHydrationFrame = window.requestAnimationFrame(() => {
+      workspaceResourceHydrationFrame = null;
+      hydrateWorkspaceResources();
+    });
   });
 };
 
@@ -4796,6 +4835,7 @@ const clearWorkspaceResourceCache = () => {
     window.cancelAnimationFrame(workspaceResourceHydrationFrame);
     workspaceResourceHydrationFrame = null;
   }
+  workspaceResourceHydrationPending = false;
   workspaceResourceCache.forEach((entry) => {
     if (entry?.objectUrl) {
       URL.revokeObjectURL(entry.objectUrl);
@@ -5554,8 +5594,12 @@ const updateAgentAbilityTooltip = async () => {
   });
 };
 
-const loadAgentToolSummary = async () => {
-  if (agentToolSummaryLoading.value || agentPromptToolSummary.value) {
+const loadAgentToolSummary = async (options: { force?: boolean } = {}) => {
+  const force = options.force === true;
+  if (agentToolSummaryLoading.value) {
+    return agentPromptToolSummary.value;
+  }
+  if (!force && agentPromptToolSummary.value) {
     return agentPromptToolSummary.value;
   }
   agentToolSummaryLoading.value = true;
@@ -5580,7 +5624,7 @@ const loadAgentToolSummary = async () => {
 
 const handleAgentAbilityTooltipShow = () => {
   agentAbilityTooltipVisible.value = true;
-  void loadAgentToolSummary();
+  void loadAgentToolSummary({ force: true });
   void updateAgentAbilityTooltip();
 };
 
@@ -5592,7 +5636,7 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewVisible.value = true;
   agentPromptPreviewLoading.value = true;
   agentPromptPreviewContent.value = '';
-  const summaryPromise = loadAgentToolSummary();
+  const summaryPromise = loadAgentToolSummary({ force: true });
   try {
     const session = activeAgentSession.value as Record<string, unknown> | null;
     const sessionId = String(chatStore.activeSessionId || '').trim();
@@ -5617,7 +5661,10 @@ const openAgentPromptPreview = async () => {
     const promptResult = await promptRequest;
     await summaryPromise;
     const promptPayload = (promptResult?.data?.data || {}) as Record<string, unknown>;
-    agentPromptPreviewContent.value = String(promptPayload.prompt || '');
+    agentPromptPreviewContent.value = String(promptPayload.prompt || '').replace(
+      /<<WUNDER_HISTORY_MEMORY>>/g,
+      ''
+    );
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     agentPromptPreviewContent.value = '';
@@ -6099,7 +6146,7 @@ const toolCategoryLabel = (category: string) => {
 };
 
 const handleAgentSettingsSaved = async () => {
-  const tasks: Promise<unknown>[] = [agentStore.loadAgents(), loadRunningAgents()];
+  const tasks: Promise<unknown>[] = [agentStore.loadAgents(), loadRunningAgents(), loadChannelBoundAgentIds()];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
   }
@@ -6108,7 +6155,7 @@ const handleAgentSettingsSaved = async () => {
 
 const handleAgentDeleted = async () => {
   selectedAgentId.value = DEFAULT_AGENT_KEY;
-  const tasks: Promise<unknown>[] = [chatStore.loadSessions(), loadRunningAgents()];
+  const tasks: Promise<unknown>[] = [chatStore.loadSessions(), loadRunningAgents(), loadChannelBoundAgentIds()];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
   }
@@ -6840,6 +6887,33 @@ const updateAgentApprovalMode = (value: AgentApprovalMode) => {
   }
 };
 
+const updateCurrentUsername = async (value: string) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    ElMessage.warning(t('profile.edit.usernameRequired'));
+    return;
+  }
+  const current = String((authStore.user as Record<string, unknown> | null)?.username || '').trim();
+  if (current === normalized || usernameSaving.value) {
+    return;
+  }
+  usernameSaving.value = true;
+  try {
+    const { data } = await updateProfile({ username: normalized });
+    const profile = data?.data;
+    if (profile && typeof profile === 'object') {
+      authStore.user = profile;
+    } else {
+      await authStore.loadProfile();
+    }
+    ElMessage.success(t('profile.edit.saved'));
+  } catch (error) {
+    showApiError(error, t('profile.edit.saveFailed'));
+  } finally {
+    usernameSaving.value = false;
+  }
+};
+
 const handleSessionApprovalDecision = async (
   decision: 'approve_once' | 'approve_session' | 'deny'
 ) => {
@@ -6949,6 +7023,28 @@ const loadCronAgentIds = async () => {
   }
 };
 
+const loadChannelBoundAgentIds = async () => {
+  try {
+    const response = await listChannelBindings();
+    const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
+    const bound = new Set<string>();
+    items.forEach((item: Record<string, unknown>) => {
+      if (item?.enabled !== true) return;
+      const agentId = normalizeAgentId(item?.agent_id);
+      if (!agentId || agentId === DEFAULT_AGENT_KEY) return;
+      bound.add(agentId);
+    });
+    channelBoundAgentIds.value = bound;
+  } catch (error) {
+    const status = resolveHttpStatus(error);
+    if (isAuthDeniedStatus(status)) {
+      channelBoundAgentIds.value = new Set<string>();
+      return;
+    }
+    channelBoundAgentIds.value = new Set<string>();
+  }
+};
+
 const refreshAll = async () => {
   const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
@@ -6956,7 +7052,8 @@ const refreshAll = async () => {
     userWorldStore.bootstrap(true),
     loadOrgUnits(),
     loadRunningAgents(),
-    loadToolsCatalog()
+    loadToolsCatalog(),
+    loadChannelBoundAgentIds()
   ];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
@@ -7213,7 +7310,8 @@ const bootstrap = async () => {
     userWorldStore.bootstrap(),
     loadOrgUnits(),
     loadRunningAgents(),
-    loadToolsCatalog()
+    loadToolsCatalog(),
+    loadChannelBoundAgentIds()
   ];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
@@ -7257,15 +7355,6 @@ watch(
     }
   },
   { immediate: true }
-);
-
-watch(
-  () => showRightDock.value,
-  (visible) => {
-    if (!visible) {
-      rightDockCollapsed.value = false;
-    }
-  }
 );
 
 watch(
@@ -7604,6 +7693,10 @@ watch(
     writeWorldDraft(activeWorldConversationId.value, value);
   }
 );
+
+onUpdated(() => {
+  scheduleWorkspaceResourceHydration();
+});
 
 onMounted(async () => {
   if (typeof window !== 'undefined') {

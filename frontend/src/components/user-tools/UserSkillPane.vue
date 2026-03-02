@@ -49,12 +49,11 @@
               <span class="muted">{{ buildSkillDesc(skill) }}</span>
             </label>
             <button
+              v-if="!isSkillReadonly(skill)"
               class="user-tools-btn danger btn-with-icon btn-compact icon-only user-skill-delete"
               type="button"
-              :disabled="deleteLoading || isSkillReadonly(skill)"
-              :title="
-                isSkillReadonly(skill) ? t('userTools.skills.readonlyHint') : t('userTools.skills.delete.title')
-              "
+              :disabled="deleteLoading"
+              :title="t('userTools.skills.delete.title')"
               @click.stop="deleteSkill(skill)"
             >
               <i class="fa-solid fa-trash" aria-hidden="true"></i>

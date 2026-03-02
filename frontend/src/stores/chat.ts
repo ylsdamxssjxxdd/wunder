@@ -3835,10 +3835,25 @@ export const useChatStore = defineStore('chat', {
         }
         this.draftToolOverrides = null;
       }
-      const userMessage = buildMessage('user', content);
+      const attachments = Array.isArray(options.attachments) ? options.attachments : [];
+      const userMessage = buildMessage('user', content) as ReturnType<typeof buildMessage> & {
+        attachments?: Array<{
+          type?: unknown;
+          name?: unknown;
+          content?: unknown;
+          mime_type?: unknown;
+        }>;
+      };
+      if (attachments.length > 0) {
+        userMessage.attachments = attachments.map((item) => ({
+          type: (item as { type?: unknown })?.type,
+          name: (item as { name?: unknown })?.name,
+          content: (item as { content?: unknown })?.content,
+          mime_type: (item as { mime_type?: unknown })?.mime_type
+        }));
+      }
       this.messages.push(userMessage);
       const requestStartMs = resolveTimestampMs(userMessage.created_at) ?? Date.now();
-      const attachments = Array.isArray(options.attachments) ? options.attachments : [];
       const suppressQueuedNotice = options.suppressQueuedNotice === true;
       const sessionId = this.activeSessionId;
       const runtime = ensureRuntime(sessionId);

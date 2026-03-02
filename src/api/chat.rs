@@ -1058,7 +1058,11 @@ async fn system_prompt(
             agent_prompt.as_deref(),
         )
         .await;
-    Ok(Json(json!({ "data": { "prompt": prompt } })))
+    Ok(Json(json!({
+        "data": {
+            "prompt": sanitize_system_prompt_preview(prompt),
+        }
+    })))
 }
 
 async fn session_system_prompt(
@@ -1099,7 +1103,11 @@ async fn session_system_prompt(
         .unwrap_or(None);
     if let Some(prompt) = stored_prompt {
         if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
-            return Ok(Json(json!({ "data": { "prompt": prompt } })));
+            return Ok(Json(json!({
+                "data": {
+                    "prompt": sanitize_system_prompt_preview(prompt),
+                }
+            })));
         }
     }
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
@@ -1149,7 +1157,11 @@ async fn session_system_prompt(
             agent_prompt.as_deref(),
         )
         .await;
-    Ok(Json(json!({ "data": { "prompt": prompt } })))
+    Ok(Json(json!({
+        "data": {
+            "prompt": sanitize_system_prompt_preview(prompt),
+        }
+    })))
 }
 
 async fn update_session_tools(
@@ -1671,6 +1683,33 @@ fn prompt_has_workdir(prompt: &str, public_workdir: &str, local_workdir: &str) -
     }
     let local = local_workdir.trim();
     !local.is_empty() && cleaned_prompt.contains(local)
+}
+
+fn sanitize_system_prompt_preview(prompt: String) -> String {
+    let placeholder = crate::prompting::SYSTEM_PROMPT_MEMORY_PLACEHOLDER;
+    if !prompt.contains(placeholder) {
+        return prompt;
+    }
+    let cleaned = prompt.replace(placeholder, "");
+    collapse_blank_lines(&cleaned)
+}
+
+fn collapse_blank_lines(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut out = String::with_capacity(normalized.len());
+    let mut run = 0usize;
+    for ch in normalized.chars() {
+        if ch == '\n' {
+            run = run.saturating_add(1);
+            if run <= 2 {
+                out.push('\n');
+            }
+        } else {
+            run = 0;
+            out.push(ch);
+        }
+    }
+    out.trim().to_string()
 }
 
 fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {

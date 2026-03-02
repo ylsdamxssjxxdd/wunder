@@ -1203,6 +1203,17 @@
   margin-top: auto;
 }
 
+.messenger-agent-grid-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.messenger-agent-grid-container-id {
+  font-size: 11px;
+  color: #8a8a8a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
 .messenger-message {
   display: flex;
   align-items: flex-start;
@@ -2489,12 +2500,18 @@
 }
 
 .messenger-agent-base-item--select {
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
 }
 
 .messenger-agent-base-item--select .el-select {
   width: 100%;
   min-width: 0;
+}
+
+.messenger-agent-base-item--select .messenger-agent-base-meta {
+  gap: 2px;
 }
 
 .messenger-agent-base-meta {
@@ -3250,6 +3267,37 @@
   padding-top: 8px;
 }
 
+.messenger-settings-profile-edit {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.messenger-settings-profile-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.messenger-settings-profile-edit-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid #d7d7d7;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #2f2f2f;
+  font-size: 13px;
+  padding: 0 10px;
+}
+
+.messenger-settings-profile-edit-input:focus {
+  outline: none;
+  border-color: rgba(var(--ui-accent-rgb), 0.46);
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.14);
+}
+
 .messenger-settings-action--avatar {
   min-width: 0;
   width: auto;
@@ -3810,7 +3858,8 @@
   gap: 5px;
 }
 
-.messenger-composer-scope.chat-shell .chat-screenshot-menu {
+.messenger-composer-scope.chat-shell .chat-screenshot-menu,
+.chat-screenshot-menu.chat-screenshot-menu--world {
   position: absolute;
   right: -2px;
   bottom: calc(100% + 10px);
@@ -3829,14 +3878,16 @@
   transform-origin: right bottom;
 }
 
-.messenger-composer-scope.chat-shell .chat-screenshot-menu.chat-screenshot-menu--floating {
+.messenger-composer-scope.chat-shell .chat-screenshot-menu.chat-screenshot-menu--floating,
+.chat-screenshot-menu.chat-screenshot-menu--world.chat-screenshot-menu--floating {
   position: fixed;
   right: auto;
   bottom: auto;
   z-index: 3600;
 }
 
-.messenger-composer-scope.chat-shell .chat-screenshot-menu-item {
+.messenger-composer-scope.chat-shell .chat-screenshot-menu-item,
+.chat-screenshot-menu.chat-screenshot-menu--world .chat-screenshot-menu-item {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
@@ -3847,7 +3898,8 @@
   cursor: pointer;
 }
 
-.messenger-composer-scope.chat-shell .chat-screenshot-menu-item:hover {
+.messenger-composer-scope.chat-shell .chat-screenshot-menu-item:hover,
+.chat-screenshot-menu.chat-screenshot-menu--world .chat-screenshot-menu-item:hover {
   border-color: rgba(var(--ui-accent-rgb), 0.28);
   background: var(--ui-accent-soft);
 }

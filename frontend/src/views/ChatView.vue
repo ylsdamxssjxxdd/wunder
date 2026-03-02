@@ -1254,6 +1254,29 @@ const renderUserMarkdown = (message) => {
   return html;
 };
 
+const hasUserMarkdownContent = (message): boolean =>
+  Boolean(String(message?.content || '').trim());
+
+const resolveUserImageAttachments = (message) => {
+  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+  return attachments
+    .map((item, index) => {
+      const src = String(item?.content || '').trim();
+      if (!src.startsWith('data:image/')) return null;
+      const fallbackName = `image-${index + 1}`;
+      const name = String(item?.name || fallbackName).trim() || fallbackName;
+      return {
+        key: `${name}-${index}`,
+        src,
+        name
+      };
+    })
+    .filter(Boolean);
+};
+
+const hasUserImageAttachments = (message): boolean =>
+  resolveUserImageAttachments(message).length > 0;
+
 type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
 type WorkspaceResourceCacheEntry = {
   objectUrl?: string;
@@ -1264,6 +1287,7 @@ type WorkspaceResourceCacheEntry = {
 const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 let workspaceResourceHydrationFrame = null;
+let workspaceResourceHydrationPending = false;
 let stopWorkspaceRefreshListener = null;
 
 const isAdminUser = (user) =>
@@ -1373,26 +1397,40 @@ const resolveWorkspaceResource = (publicPath) => {
   const currentId = String(user.id || '').trim();
   const safeCurrentId = normalizeWorkspaceOwnerId(currentId);
   const workspaceId = normalizeWorkspaceOwnerId(parsed.workspaceId || parsed.userId || '');
-  if (!workspaceId) return null;
+  const ownerId = normalizeWorkspaceOwnerId(parsed.ownerId || workspaceId);
+  const agentId = String(parsed.agentId || '').trim();
+  const containerId =
+    typeof parsed.containerId === 'number' && Number.isFinite(parsed.containerId)
+      ? parsed.containerId
+      : null;
+  if (!workspaceId || !ownerId) return null;
   const isOwner = workspaceBelongsToCurrentUser(workspaceId, safeCurrentId);
   if (isOwner) {
-    const requestUserId = workspaceId === safeCurrentId ? null : workspaceId;
+    const requestUserId = ownerId === safeCurrentId ? null : ownerId;
     return {
       ...parsed,
       requestUserId,
-      requestAgentId: null,
+      requestAgentId: agentId || null,
+      requestContainerId: containerId,
       allowed: true
     };
   }
   if (isAdminUser(user)) {
     return {
       ...parsed,
-      requestUserId: workspaceId,
-      requestAgentId: null,
+      requestUserId: ownerId,
+      requestAgentId: agentId || null,
+      requestContainerId: containerId,
       allowed: true
     };
   }
-  return { ...parsed, requestUserId: null, requestAgentId: null, allowed: false };
+  return {
+    ...parsed,
+    requestUserId: null,
+    requestAgentId: agentId || null,
+    requestContainerId: containerId,
+    allowed: false
+  };
 };
 
 const buildWorkspaceResourcePersistentCacheKey = (resource) => {
@@ -1401,6 +1439,7 @@ const buildWorkspaceResourcePersistentCacheKey = (resource) => {
     scope: currentUserId || 'anonymous',
     requestUserId: resource.requestUserId,
     requestAgentId: resource.requestAgentId,
+    requestContainerId: resource.requestContainerId,
     publicPath: resource.publicPath
   });
 };
@@ -1504,6 +1543,9 @@ const fetchWorkspaceResource = async (resource) => {
     }
     if (resource.requestAgentId) {
       params.agent_id = resource.requestAgentId;
+    }
+    if (resource.requestContainerId !== null && Number.isFinite(resource.requestContainerId)) {
+      params.container_id = String(resource.requestContainerId);
     }
     const response = await downloadWunderWorkspaceFile(params);
     try {
@@ -1626,10 +1668,15 @@ const handleWorkspaceRefresh = () => {
 };
 
 const scheduleWorkspaceResourceHydration = () => {
-  if (workspaceResourceHydrationFrame) return;
-  workspaceResourceHydrationFrame = requestAnimationFrame(() => {
-    workspaceResourceHydrationFrame = null;
-    hydrateWorkspaceResources();
+  if (workspaceResourceHydrationFrame || workspaceResourceHydrationPending) return;
+  workspaceResourceHydrationPending = true;
+  void nextTick(() => {
+    workspaceResourceHydrationPending = false;
+    if (workspaceResourceHydrationFrame) return;
+    workspaceResourceHydrationFrame = requestAnimationFrame(() => {
+      workspaceResourceHydrationFrame = null;
+      hydrateWorkspaceResources();
+    });
   });
 };
 
@@ -1638,6 +1685,7 @@ const clearWorkspaceResourceCache = () => {
     cancelAnimationFrame(workspaceResourceHydrationFrame);
     workspaceResourceHydrationFrame = null;
   }
+  workspaceResourceHydrationPending = false;
   workspaceResourceCache.forEach((entry) => {
     if (entry?.objectUrl) {
       URL.revokeObjectURL(entry.objectUrl);
@@ -2414,6 +2462,10 @@ const scrollLatestAssistantToCenter = async () => {
       container.scrollTop = Math.max(0, Math.min(nextTop, maxTop));
     });
   };
+
+onUpdated(() => {
+  scheduleWorkspaceResourceHydration();
+});
 
 onMounted(async () => {
   await init();

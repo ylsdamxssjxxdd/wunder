@@ -4,7 +4,7 @@ use crate::state::AppState;
 use crate::storage::{
     UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserToolAccessRecord,
 };
-use crate::tools::collect_available_tool_names;
+use crate::tools::{collect_available_tool_names, resolve_tool_name};
 use crate::user_tools::UserToolBindings;
 use std::collections::HashSet;
 
@@ -72,6 +72,21 @@ pub fn compute_allowed_tool_names(
                 .intersection(&allowed_set)
                 .cloned()
                 .collect::<HashSet<_>>();
+        }
+    }
+
+    if context
+        .config
+        .server
+        .mode
+        .trim()
+        .eq_ignore_ascii_case("desktop")
+    {
+        let has_plan_tool = allowed
+            .iter()
+            .any(|name| resolve_tool_name(name) == "计划面板");
+        if !has_plan_tool {
+            allowed.insert("计划面板".to_string());
         }
     }
 

@@ -51,6 +51,26 @@
             <span>{{ t('profile.avatar.settings') }}</span>
           </button>
         </div>
+        <div v-if="allowUsernameEdit" class="messenger-settings-profile-edit">
+          <div class="messenger-settings-hint">{{ t('profile.edit.username') }}</div>
+          <div class="messenger-settings-profile-edit-row">
+            <input
+              v-model.trim="usernameDraft"
+              class="messenger-settings-profile-edit-input"
+              type="text"
+              :placeholder="t('profile.edit.usernamePlaceholder')"
+              @keydown.enter.prevent="submitUsernameUpdate"
+            />
+            <button
+              class="messenger-settings-action"
+              type="button"
+              :disabled="!canSubmitUsername || usernameSaving"
+              @click="submitUsernameUpdate"
+            >
+              {{ usernameSaving ? t('common.saving') : t('common.save') }}
+            </button>
+          </div>
+        </div>
       </section>
       <section class="messenger-settings-card">
         <div class="messenger-settings-title">{{ t('profile.metrics.title') }}</div>
@@ -383,6 +403,7 @@ const props = withDefaults(
     themePalette?: ThemePalette;
     performanceMode?: PerformanceMode;
     approvalMode?: ApprovalMode;
+    usernameSaving?: boolean;
     desktopLocalMode?: boolean;
     uiFontSize?: number;
     devtoolsAvailable?: boolean;
@@ -401,6 +422,7 @@ const props = withDefaults(
     themePalette: 'eva-orange',
     performanceMode: 'high',
     approvalMode: 'auto_edit',
+    usernameSaving: false,
     desktopLocalMode: false,
     uiFontSize: 14,
     devtoolsAvailable: false,
@@ -422,6 +444,7 @@ const emit = defineEmits<{
   (event: 'update:performance-mode', value: PerformanceMode): void;
   (event: 'update:approval-mode', value: ApprovalMode): void;
   (event: 'update:ui-font-size', value: number): void;
+  (event: 'update:username', value: string): void;
   (event: 'update:profile-avatar-icon', value: string): void;
   (event: 'update:profile-avatar-color', value: string): void;
 }>();
@@ -433,6 +456,7 @@ const sendKey = ref<SendKeyMode>('ctrl_enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const performanceMode = ref<PerformanceMode>('high');
 const approvalMode = ref<ApprovalMode>('auto_edit');
+const usernameDraft = ref('');
 const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
 const windowCloseBehaviorLoading = ref(false);
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
@@ -491,6 +515,16 @@ const desktopWindowCloseAvailable = computed(() => {
       typeof bridge.setWindowCloseBehavior === 'function'
   );
 });
+const allowUsernameEdit = computed(
+  () => props.desktopLocalMode === true || Boolean(getDesktopWindowCloseBridge())
+);
+const usernameSaving = computed(() => props.usernameSaving === true);
+const canSubmitUsername = computed(() => {
+  if (!allowUsernameEdit.value) return false;
+  const target = String(usernameDraft.value || '').trim();
+  const current = String(props.username || '').trim();
+  return Boolean(target) && target !== current;
+});
 
 const loadWindowCloseBehavior = async () => {
   if (!desktopWindowCloseAvailable.value) {
@@ -545,6 +579,14 @@ watch(
       return;
     }
     void loadWindowCloseBehavior();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => props.username,
+  (value) => {
+    usernameDraft.value = String(value || '').trim();
   },
   { immediate: true }
 );
@@ -737,6 +779,13 @@ const applyAvatarDialog = () => {
   emit('update:profile-avatar-icon', avatarDialogIcon.value || DEFAULT_AVATAR_ICON);
   emit('update:profile-avatar-color', avatarDialogColor.value || DEFAULT_AVATAR_COLOR);
   avatarDialogVisible.value = false;
+};
+
+const submitUsernameUpdate = () => {
+  if (!canSubmitUsername.value || usernameSaving.value) {
+    return;
+  }
+  emit('update:username', String(usernameDraft.value || '').trim());
 };
 
 const userUnitLabel = computed(() => {
