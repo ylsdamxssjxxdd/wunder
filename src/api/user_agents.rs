@@ -13,24 +13,35 @@ use crate::user_access::{
     is_agent_allowed,
 };
 use anyhow::Result;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
 use axum::{routing::get, Json, Router};
+use chrono::{
+    DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use uuid::Uuid;
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "auto_edit";
+const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
+const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
+const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
+const HEATMAP_TOOL_LIMIT: usize = 24;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/agents", get(list_agents).post(create_agent))
         .route("/wunder/agents/shared", get(list_shared_agents))
         .route("/wunder/agents/running", get(list_running_agents))
+        .route(
+            "/wunder/agents/{agent_id}/runtime-records",
+            get(get_agent_runtime_records),
+        )
         .route(
             "/wunder/agents/{agent_id}",
             get(get_agent).put(update_agent).delete(delete_agent),
@@ -435,6 +446,268 @@ async fn get_agent(
     Ok(Json(json!({ "data": agent_payload(&record) })))
 }
 
+#[derive(Debug, Default, Clone)]
+struct AgentRuntimeDayStats {
+    runtime_seconds: f64,
+    billed_tokens: i64,
+    quota_consumed: i64,
+    tool_calls: i64,
+}
+
+async fn get_agent_runtime_records(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentRuntimeRecordsQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let normalized_agent_id = normalize_agent_id(&agent_id);
+    if normalized_agent_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let record = state
+        .user_store
+        .get_user_agent_by_id(&normalized_agent_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
+    let access = state
+        .user_store
+        .get_user_agent_access(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            i18n::t("error.agent_not_found"),
+        ));
+    }
+
+    let window_days = query
+        .days
+        .unwrap_or(DEFAULT_RUNTIME_WINDOW_DAYS)
+        .clamp(1, MAX_RUNTIME_WINDOW_DAYS);
+    let selected_date =
+        parse_runtime_date(query.date.as_deref()).unwrap_or_else(|| Local::now().date_naive());
+    let range_end = selected_date;
+    let range_start = range_end - Duration::days(window_days.saturating_sub(1));
+
+    let (range_start_ts, _) = local_day_bounds(range_start).ok_or_else(|| {
+        error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
+    })?;
+    let (_, range_end_ts) = local_day_bounds(range_end).ok_or_else(|| {
+        error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
+    })?;
+    let (selected_start_ts, selected_end_ts) =
+        local_day_bounds(selected_date).ok_or_else(|| {
+            error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
+        })?;
+
+    let since_time = Some((range_start_ts.min(selected_start_ts) - 86_400.0).max(0.0));
+    let records =
+        state
+            .monitor
+            .load_records_by_user(&user_id, None, since_time, MAX_RUNTIME_RECORD_LIMIT);
+    let mut daily = build_runtime_day_map(range_start, range_end);
+    let mut heatmap_by_tool: HashMap<String, [i64; 24]> = HashMap::new();
+
+    for record in records {
+        let current_agent_id = normalize_agent_id(
+            record
+                .get("agent_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
+        if current_agent_id != normalized_agent_id {
+            continue;
+        }
+
+        let session_start = parse_timestamp_value(record.get("start_time")).unwrap_or(0.0);
+        let mut session_end = parse_timestamp_value(record.get("ended_time"))
+            .or_else(|| parse_timestamp_value(record.get("updated_time")))
+            .unwrap_or(session_start);
+        if session_end < session_start {
+            session_end = session_start;
+        }
+        accumulate_runtime_seconds(
+            &mut daily,
+            session_start,
+            session_end,
+            range_start_ts,
+            range_end_ts,
+        );
+
+        let mut round_usage_by_day: HashMap<String, i64> = HashMap::new();
+        let mut token_usage_by_day: HashMap<String, i64> = HashMap::new();
+        let mut has_round_usage = false;
+
+        if let Some(events) = record.get("events").and_then(Value::as_array) {
+            for event in events {
+                let event_type = event
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if event_type.is_empty() {
+                    continue;
+                }
+                let data = event.get("data").unwrap_or(&Value::Null);
+                let event_ts = parse_timestamp_value(event.get("timestamp")).unwrap_or(session_end);
+                let Some(day_key) = runtime_day_key(event_ts) else {
+                    continue;
+                };
+                let in_range = daily.contains_key(&day_key);
+
+                match event_type {
+                    "round_usage" => {
+                        if !in_range {
+                            continue;
+                        }
+                        let total_tokens = parse_usage_total_tokens(data);
+                        if total_tokens > 0 {
+                            has_round_usage = true;
+                            let entry = round_usage_by_day.entry(day_key).or_default();
+                            *entry = entry.saturating_add(total_tokens);
+                        }
+                    }
+                    "token_usage" => {
+                        if !in_range {
+                            continue;
+                        }
+                        let total_tokens = parse_usage_total_tokens(data);
+                        if total_tokens > 0 {
+                            let entry = token_usage_by_day.entry(day_key).or_default();
+                            *entry = entry.saturating_add(total_tokens);
+                        }
+                    }
+                    "quota_usage" => {
+                        if !in_range {
+                            continue;
+                        }
+                        let consumed = parse_i64_value(data.get("consumed")).unwrap_or(1).max(0);
+                        if consumed <= 0 {
+                            continue;
+                        }
+                        if let Some(entry) = daily.get_mut(&day_key) {
+                            entry.quota_consumed = entry.quota_consumed.saturating_add(consumed);
+                        }
+                    }
+                    "tool_call" => {
+                        if in_range {
+                            if let Some(entry) = daily.get_mut(&day_key) {
+                                entry.tool_calls = entry.tool_calls.saturating_add(1);
+                            }
+                        }
+                        if event_ts < selected_start_ts || event_ts >= selected_end_ts {
+                            continue;
+                        }
+                        let tool_name = extract_event_tool_name(data);
+                        if tool_name.is_empty() {
+                            continue;
+                        }
+                        let Some(hour) = runtime_day_hour(event_ts) else {
+                            continue;
+                        };
+                        let bucket = heatmap_by_tool.entry(tool_name).or_insert([0; 24]);
+                        bucket[hour] = bucket[hour].saturating_add(1);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        let usage_source = if has_round_usage {
+            &round_usage_by_day
+        } else {
+            &token_usage_by_day
+        };
+        for (day_key, total_tokens) in usage_source {
+            if let Some(entry) = daily.get_mut(day_key) {
+                entry.billed_tokens = entry.billed_tokens.saturating_add((*total_tokens).max(0));
+            }
+        }
+    }
+
+    let mut total_runtime_seconds = 0.0;
+    let mut total_billed_tokens = 0_i64;
+    let mut total_quota_consumed = 0_i64;
+    let mut total_tool_calls = 0_i64;
+    let daily_items = daily
+        .iter()
+        .map(|(date, stats)| {
+            total_runtime_seconds += stats.runtime_seconds;
+            total_billed_tokens = total_billed_tokens.saturating_add(stats.billed_tokens.max(0));
+            total_quota_consumed = total_quota_consumed.saturating_add(stats.quota_consumed.max(0));
+            total_tool_calls = total_tool_calls.saturating_add(stats.tool_calls.max(0));
+            json!({
+                "date": date,
+                "runtime_seconds": round_f64(stats.runtime_seconds),
+                "billed_tokens": stats.billed_tokens.max(0),
+                "quota_consumed": stats.quota_consumed.max(0),
+                "tool_calls": stats.tool_calls.max(0),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut heatmap_items = heatmap_by_tool
+        .into_iter()
+        .map(|(tool, hourly)| {
+            let total_calls = hourly.iter().copied().sum::<i64>();
+            json!({
+                "tool": tool,
+                "hourly_calls": hourly.to_vec(),
+                "total_calls": total_calls.max(0),
+            })
+        })
+        .collect::<Vec<_>>();
+    heatmap_items.sort_by(|left, right| {
+        let left_calls = left.get("total_calls").and_then(Value::as_i64).unwrap_or(0);
+        let right_calls = right
+            .get("total_calls")
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let left_name = left.get("tool").and_then(Value::as_str).unwrap_or("");
+        let right_name = right.get("tool").and_then(Value::as_str).unwrap_or("");
+        right_calls
+            .cmp(&left_calls)
+            .then_with(|| left_name.cmp(right_name))
+    });
+    if heatmap_items.len() > HEATMAP_TOOL_LIMIT {
+        heatmap_items.truncate(HEATMAP_TOOL_LIMIT);
+    }
+    let heatmap_max_calls = heatmap_items
+        .iter()
+        .filter_map(|item| item.get("total_calls").and_then(Value::as_i64))
+        .max()
+        .unwrap_or(0);
+
+    Ok(Json(json!({
+        "data": {
+            "agent_id": normalized_agent_id,
+            "range": {
+                "days": window_days,
+                "start_date": range_start.format("%Y-%m-%d").to_string(),
+                "end_date": range_end.format("%Y-%m-%d").to_string(),
+                "selected_date": selected_date.format("%Y-%m-%d").to_string(),
+            },
+            "summary": {
+                "runtime_seconds": round_f64(total_runtime_seconds),
+                "billed_tokens": total_billed_tokens.max(0),
+                "quota_consumed": total_quota_consumed.max(0),
+                "tool_calls": total_tool_calls.max(0),
+            },
+            "daily": daily_items,
+            "heatmap": {
+                "date": selected_date.format("%Y-%m-%d").to_string(),
+                "max_calls": heatmap_max_calls.max(0),
+                "items": heatmap_items,
+            }
+        }
+    })))
+}
+
 async fn create_agent(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -821,6 +1094,186 @@ fn now_ts() -> f64 {
         .unwrap_or(0.0)
 }
 
+fn parse_runtime_date(raw: Option<&str>) -> Option<NaiveDate> {
+    let cleaned = raw.unwrap_or("").trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    NaiveDate::parse_from_str(cleaned, "%Y-%m-%d").ok()
+}
+
+fn build_runtime_day_map(
+    range_start: NaiveDate,
+    range_end: NaiveDate,
+) -> BTreeMap<String, AgentRuntimeDayStats> {
+    let mut result = BTreeMap::new();
+    let mut cursor = range_start;
+    while cursor <= range_end {
+        result.insert(
+            cursor.format("%Y-%m-%d").to_string(),
+            AgentRuntimeDayStats::default(),
+        );
+        cursor += Duration::days(1);
+    }
+    result
+}
+
+fn resolve_local_datetime(naive: NaiveDateTime) -> Option<DateTime<Local>> {
+    match Local.from_local_datetime(&naive) {
+        LocalResult::Single(dt) => Some(dt),
+        LocalResult::Ambiguous(early, _) => Some(early),
+        LocalResult::None => Some(Utc.from_utc_datetime(&naive).with_timezone(&Local)),
+    }
+}
+
+fn local_day_bounds(date: NaiveDate) -> Option<(f64, f64)> {
+    let start_naive = date.and_hms_opt(0, 0, 0)?;
+    let next_day_naive = (date + Duration::days(1)).and_hms_opt(0, 0, 0)?;
+    let start = resolve_local_datetime(start_naive)?;
+    let end = resolve_local_datetime(next_day_naive)?;
+    Some((
+        start.timestamp_millis() as f64 / 1000.0,
+        end.timestamp_millis() as f64 / 1000.0,
+    ))
+}
+
+fn runtime_local_datetime(ts: f64) -> Option<DateTime<Local>> {
+    if !ts.is_finite() || ts <= 0.0 {
+        return None;
+    }
+    let secs = ts.trunc() as i64;
+    let fract = (ts - secs as f64).max(0.0);
+    let mut nanos = (fract * 1_000_000_000.0).round() as u32;
+    if nanos >= 1_000_000_000 {
+        nanos = 999_999_999;
+    }
+    DateTime::<Utc>::from_timestamp(secs, nanos).map(|dt| dt.with_timezone(&Local))
+}
+
+fn runtime_day_key(ts: f64) -> Option<String> {
+    runtime_local_datetime(ts).map(|dt| dt.format("%Y-%m-%d").to_string())
+}
+
+fn runtime_day_hour(ts: f64) -> Option<usize> {
+    runtime_local_datetime(ts).map(|dt| dt.hour() as usize)
+}
+
+fn parse_timestamp_value(value: Option<&Value>) -> Option<f64> {
+    let Some(value) = value else {
+        return None;
+    };
+    if let Some(ts) = value.as_f64().filter(|ts| ts.is_finite() && *ts > 0.0) {
+        return Some(ts);
+    }
+    let text = value.as_str()?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if let Ok(parsed) = text.parse::<f64>() {
+        if parsed.is_finite() && parsed > 0.0 {
+            return Some(parsed);
+        }
+    }
+    DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|dt| dt.timestamp_millis() as f64 / 1000.0)
+}
+
+fn parse_i64_value(value: Option<&Value>) -> Option<i64> {
+    let value = value?;
+    if let Some(parsed) = value.as_i64() {
+        return Some(parsed);
+    }
+    if let Some(parsed) = value.as_u64() {
+        return Some(parsed as i64);
+    }
+    if let Some(parsed) = value.as_f64() {
+        if !parsed.is_finite() {
+            return None;
+        }
+        return Some(parsed.round() as i64);
+    }
+    value.as_str()?.trim().parse::<i64>().ok()
+}
+
+fn parse_usage_total_tokens(data: &Value) -> i64 {
+    let direct_total = parse_i64_value(data.get("total_tokens"));
+    let nested_total = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("total_tokens")));
+    if let Some(total) = direct_total.or(nested_total) {
+        return total.max(0);
+    }
+    let direct_input = parse_i64_value(data.get("input_tokens")).unwrap_or(0);
+    let direct_output = parse_i64_value(data.get("output_tokens")).unwrap_or(0);
+    if direct_input > 0 || direct_output > 0 {
+        return direct_input.saturating_add(direct_output).max(0);
+    }
+    let nested_input = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("input_tokens")))
+        .unwrap_or(0);
+    let nested_output = data
+        .get("usage")
+        .and_then(|usage| parse_i64_value(usage.get("output_tokens")))
+        .unwrap_or(0);
+    nested_input.saturating_add(nested_output).max(0)
+}
+
+fn extract_event_tool_name(data: &Value) -> String {
+    for key in ["tool", "tool_name", "toolName", "name"] {
+        let Some(value) = data.get(key).and_then(Value::as_str) else {
+            continue;
+        };
+        let cleaned = value.trim();
+        if !cleaned.is_empty() {
+            return cleaned.to_string();
+        }
+    }
+    "unknown".to_string()
+}
+
+fn accumulate_runtime_seconds(
+    daily: &mut BTreeMap<String, AgentRuntimeDayStats>,
+    start_ts: f64,
+    end_ts: f64,
+    range_start_ts: f64,
+    range_end_ts: f64,
+) {
+    if !start_ts.is_finite() || !end_ts.is_finite() {
+        return;
+    }
+    let mut cursor = start_ts.max(range_start_ts);
+    let end = end_ts.min(range_end_ts);
+    if end <= cursor {
+        return;
+    }
+    while cursor < end {
+        let Some(dt) = runtime_local_datetime(cursor) else {
+            break;
+        };
+        let day_key = dt.format("%Y-%m-%d").to_string();
+        let Some((_, day_end_ts)) = local_day_bounds(dt.date_naive()) else {
+            break;
+        };
+        let segment_end = end.min(day_end_ts);
+        if segment_end <= cursor {
+            break;
+        }
+        let duration = (segment_end - cursor).max(0.0);
+        if duration > 0.0 {
+            if let Some(entry) = daily.get_mut(&day_key) {
+                entry.runtime_seconds += duration;
+            }
+        }
+        cursor = segment_end;
+    }
+}
+
+fn round_f64(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
 const PRESET_META_PREFIX: &str = "user_agent_presets_v1:";
 const LEGACY_EMAIL_PRESET_NAME: &str = "邮件写作";
 const LEGACY_MEETING_NAME: &str = "会议纪要";
@@ -1137,6 +1590,14 @@ struct AgentCreateRequest {
 #[derive(Debug, Deserialize)]
 struct DefaultSessionRequest {
     session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentRuntimeRecordsQuery {
+    #[serde(default)]
+    days: Option<i64>,
+    #[serde(default)]
+    date: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

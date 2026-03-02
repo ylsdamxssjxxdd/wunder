@@ -123,7 +123,7 @@ export const updateDesktopSettings = (payload: ApiPayload) =>
   });
 
 export const probeDesktopLlmContextWindow = (payload: DesktopLlmContextProbePayload) =>
-  desktopApi.post('/wunder/admin/llm/context_window', payload, {
+  desktopApi.post('/wunder/desktop/llm/context_window', payload, {
     headers: buildDesktopHeaders()
   });
 

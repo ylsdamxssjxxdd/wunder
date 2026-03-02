@@ -7,6 +7,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/target/nightly/linux-${ARCH}}"
 CARGO_HOME="${CARGO_HOME:-${ROOT_DIR}/.cargo/ci-linux-${ARCH}}"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/target/ci-linux-${ARCH}}"
 NPM_CACHE_DIR="${NPM_CACHE_DIR:-${ROOT_DIR}/.npm-cache/linux-${ARCH}}"
+NIGHTLY_VERSION="${NIGHTLY_VERSION:-}"
 
 case "${ARCH}" in
   x64)
@@ -51,7 +52,11 @@ echo "Building Electron AppImage (${ARCH})..."
 pushd "${ROOT_DIR}/wunder-desktop-electron" >/dev/null
 npm ci
 WUNDER_BRIDGE_BIN="${BRIDGE_BIN}" npm run prepare:resources
-npx electron-builder --linux "${BUILD_ARCH_ARG}" --publish=never --config.directories.output="${OUTPUT_DIR}"
+extra_metadata_args=()
+if [ -n "${NIGHTLY_VERSION}" ]; then
+  extra_metadata_args+=(--config.extraMetadata.version="${NIGHTLY_VERSION}")
+fi
+npx electron-builder --linux "${BUILD_ARCH_ARG}" --publish=never --config.directories.output="${OUTPUT_DIR}" "${extra_metadata_args[@]}"
 popd >/dev/null
 
 echo "Linux Electron build completed. Output: ${OUTPUT_DIR}"

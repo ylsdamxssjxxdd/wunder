@@ -408,6 +408,30 @@ const normalizeHistoryCompactionReset = (value: unknown): HistoryCompactionReset
   return 'zero';
 };
 
+const FLOAT_INPUT_PRECISION = 7;
+
+const roundFloat = (value: number): number => {
+  const factor = 10 ** FLOAT_INPUT_PRECISION;
+  return Math.round(value * factor) / factor;
+};
+
+const trimTrailingZeros = (valueText: string): string => {
+  if (!valueText.includes('.')) {
+    return valueText;
+  }
+  const trimmed = valueText.replace(/(?:\.0+|(\.\d*?[1-9])0+)$/, '$1').replace(/\.$/, '');
+  return trimmed === '-0' ? '0' : trimmed;
+};
+
+const formatFloatForInput = (value: unknown, fallback: number): string => {
+  const numeric = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
+  const resolved = Number.isFinite(numeric) ? numeric : fallback;
+  if (!Number.isFinite(resolved)) {
+    return '';
+  }
+  return trimTrailingZeros(roundFloat(resolved).toFixed(FLOAT_INPUT_PRECISION));
+};
+
 const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelRow[] =>
   Object.entries(models || {}).map(([key, raw]) => ({
     uid: makeModelUid(),
@@ -417,7 +441,7 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     base_url: String(raw.base_url || ''),
     api_key: String(raw.api_key || ''),
     model: String(raw.model || ''),
-    temperature: raw.temperature == null ? '0.7' : String(raw.temperature),
+    temperature: formatFloatForInput(raw.temperature, 0.7),
     timeout_s: raw.timeout_s == null ? '120' : String(raw.timeout_s),
     retry: raw.retry == null ? '1' : String(raw.retry),
     max_rounds: raw.max_rounds == null ? '10' : String(raw.max_rounds),
@@ -426,8 +450,7 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     support_vision: raw.support_vision === true,
     stream_include_usage: raw.stream_include_usage !== false,
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode),
-    history_compaction_ratio:
-      raw.history_compaction_ratio == null ? '0.8' : String(raw.history_compaction_ratio),
+    history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.8),
     history_compaction_reset: normalizeHistoryCompactionReset(raw.history_compaction_reset),
     raw: { ...raw }
   }));
@@ -557,7 +580,7 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     }
     const parsed = Number.parseFloat(cleaned);
     if (Number.isFinite(parsed)) {
-      output[key] = parsed;
+      output[key] = roundFloat(parsed);
     } else {
       delete output[key];
     }

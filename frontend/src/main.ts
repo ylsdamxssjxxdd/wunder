@@ -2,6 +2,9 @@ import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import ElementPlus from 'element-plus';
 import 'element-plus/dist/index.css';
+import '@/vendor/fontawesome/css/fontawesome.min.css';
+import '@/vendor/fontawesome/css/solid.min.css';
+import '@/vendor/hula-icon.js';
 import '@/styles/main.css';
 
 import App from './App.vue';

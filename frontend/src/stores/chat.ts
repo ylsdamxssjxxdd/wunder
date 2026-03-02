@@ -3551,7 +3551,6 @@ export const useChatStore = defineStore('chat', {
         if (message?.role !== 'assistant') continue;
         if (message?.questionPanel?.status !== 'pending') continue;
         this.resolveInquiryPanel(message, { status: 'dismissed' });
-        return;
       }
     },
     appendLocalMessage(role: string, content: string, options: AppendLocalMessageOptions = {}) {
@@ -3883,6 +3882,7 @@ export const useChatStore = defineStore('chat', {
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef)
       );
       let queued = false;
+      let interruptedByStop = false;
 
       try {
         if (runtime) {
@@ -3978,6 +3978,8 @@ export const useChatStore = defineStore('chat', {
         }
       } catch (error) {
         if (error?.name === 'AbortError' || runtime?.stopRequested || pageUnloading) {
+          interruptedByStop = true;
+          assistantMessage.reasoningStreaming = false;
           if (!pageUnloading) {
             assistantMessage.workflowItems.push(
               buildWorkflowItem(
@@ -3986,6 +3988,9 @@ export const useChatStore = defineStore('chat', {
                 'failed'
               )
             );
+            if (!assistantMessage.content) {
+              assistantMessage.content = t('chat.workflow.aborted');
+            }
           }
         } else {
           assistantMessage.workflowItems.push(
@@ -4001,9 +4006,11 @@ export const useChatStore = defineStore('chat', {
         }
         this.dismissPendingInquiryPanel();
       } finally {
+        const stopped = interruptedByStop || Boolean(runtime?.stopRequested);
         const finishedRequestId = runtime?.sendRequestId || '';
         assistantMessage.workflowStreaming = false;
-        assistantMessage.stream_incomplete = queued ? true : false;
+        assistantMessage.reasoningStreaming = false;
+        assistantMessage.stream_incomplete = stopped ? false : queued ? true : false;
         setSessionLoading(this, sessionId, false);
         processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
@@ -4019,7 +4026,7 @@ export const useChatStore = defineStore('chat', {
           messages: sessionMessagesRef
         });
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
-        if (this.activeSessionId === sessionId && !pageUnloading) {
+        if (this.activeSessionId === sessionId && !pageUnloading && !stopped) {
           startSessionWatcher(this, sessionId);
         }
       }
@@ -4041,10 +4048,28 @@ export const useChatStore = defineStore('chat', {
       } catch (error) {
         // Ignore cancel API failures; local stop behavior still applies.
       }
-      setSessionLoading(this, sessionId, false);
-      if (!pageUnloading) {
-        startSessionWatcher(this, sessionId);
+      const targetMessages =
+        String(this.activeSessionId || '').trim() === sessionId ? this.messages : getSessionMessages(sessionId);
+      const pendingAssistant = findPendingAssistantMessage(targetMessages);
+      if (pendingAssistant) {
+        pendingAssistant.workflowStreaming = false;
+        pendingAssistant.reasoningStreaming = false;
+        pendingAssistant.stream_incomplete = false;
+        if (!pendingAssistant.content) {
+          pendingAssistant.content = t('chat.workflow.aborted');
+        }
+        const panel = normalizeInquiryPanelState(pendingAssistant.questionPanel);
+        if (panel && panel.status === 'pending') {
+          pendingAssistant.questionPanel = { ...panel, status: 'dismissed' };
+        }
       }
+      this.dismissPendingInquiryPanel();
+      if (Array.isArray(targetMessages)) {
+        cacheSessionMessages(sessionId, targetMessages);
+        touchSessionUpdatedAt(this, sessionId, Date.now());
+        notifySessionSnapshot(this, sessionId, targetMessages, true);
+      }
+      setSessionLoading(this, sessionId, false);
       return cancelled;
     },
     async resumeStream(sessionId, message, options: ResumeStreamOptions = {}) {

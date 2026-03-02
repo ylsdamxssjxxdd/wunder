@@ -152,7 +152,7 @@ export type WorldHistoryRecord = {
 };
 
 export type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
-export type MessengerSendKeyMode = 'enter' | 'ctrl_enter';
+export type MessengerSendKeyMode = 'enter' | 'ctrl_enter' | 'none';
 export type AgentApprovalMode = 'suggest' | 'auto_edit' | 'full_auto';
 export type MessengerPerfTrace = {
   label: string;

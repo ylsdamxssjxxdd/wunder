@@ -263,7 +263,7 @@ type AttachmentPayload = {
   mime_type?: string;
 };
 
-type SendKeyMode = 'enter' | 'ctrl_enter';
+type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
 
 type SlashCommandDefinition = {
   command: string;
@@ -339,25 +339,35 @@ const isEnterKeyboardEvent = (event: KeyboardEvent): boolean => {
     keyCode === 10
   );
 };
+const hasPrimarySendModifier = (event: KeyboardEvent): boolean =>
+  Boolean(
+    event.ctrlKey ||
+      event.metaKey ||
+      event.getModifierState?.('Control') ||
+      event.getModifierState?.('Meta')
+  );
+const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
+  Boolean(event.altKey && !hasPrimarySendModifier(event));
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
-const sendShortcutHint = computed(() =>
-  props.sendKey === 'ctrl_enter'
-    ? t('chat.input.sendHintCtrlEnter')
-    : t('chat.input.sendHintEnter')
-);
+const sendShortcutHint = computed(() => {
+  if (props.sendKey === 'ctrl_enter') return t('chat.input.sendHintCtrlEnterAlt');
+  if (props.sendKey === 'enter') return t('chat.input.sendHintEnterAlt');
+  return '';
+});
 const inputPlaceholder = computed(() => {
   const base = props.inquiryActive
     ? t('chat.input.inquiryPlaceholder')
     : props.worldStyle
       ? t('chat.input.placeholder')
       : t('chat.input.placeholderCommands');
-  return `${base} · ${sendShortcutHint.value}`;
+  return sendShortcutHint.value ? `${base} | ${sendShortcutHint.value}` : base;
 });
 const canSendOrStop = computed(() => {
+
   if (props.loading) return true;
   if (attachmentBusy.value > 0) return false;
   return (
@@ -577,7 +587,7 @@ const handleInputKeydown = async (event) => {
 };
 
 const resolveSendKeyMode = (): SendKeyMode =>
-  props.sendKey === 'ctrl_enter' ? 'ctrl_enter' : 'enter';
+  props.sendKey === 'enter' || props.sendKey === 'none' ? props.sendKey : 'ctrl_enter';
 
 const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | null => {
   if (!value || typeof value !== 'object') return null;
@@ -656,11 +666,20 @@ const handleEnterKeydown = async (event) => {
     return;
   }
   const mode = resolveSendKeyMode();
+  if (mode === 'none') {
+    return;
+  }
+  if (hasBackupSendModifier(event)) {
+    event.preventDefault();
+    await handleSend();
+    return;
+  }
+  if (hasPrimarySendModifier(event)) {
+    event.preventDefault();
+    await handleSend();
+    return;
+  }
   if (mode === 'ctrl_enter') {
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault();
-      await handleSend();
-    }
     return;
   }
   if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {

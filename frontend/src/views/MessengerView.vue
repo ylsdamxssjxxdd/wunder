@@ -14,29 +14,53 @@
       @mouseleave="scheduleMiddlePaneOverlayHide"
     >
       <button class="messenger-avatar-btn messenger-avatar-btn--profile" :style="currentUserAvatarStyle" type="button" @click="openProfilePage">
-        <UserAvatarGlyph
-          v-if="currentUserAvatarIcon !== 'initial'"
-          class="messenger-user-avatar-icon"
-          :glyph="currentUserAvatarIcon"
-          :size="15"
+        <img
+          v-if="currentUserAvatarImageUrl"
+          class="messenger-settings-profile-avatar-image"
+          :src="currentUserAvatarImageUrl"
+          alt=""
         />
         <span v-else class="messenger-avatar-text">{{ avatarLabel(currentUsername) }}</span>
       </button>
+      <div class="messenger-left-rail-divider messenger-left-rail-divider--profile" aria-hidden="true"></div>
       <div class="messenger-left-nav">
-        <button
-          v-for="item in primarySectionOptions"
-          :key="item.key"
-          class="messenger-left-nav-btn"
-          :class="{ active: sessionHub.activeSection === item.key }"
-          type="button"
-          :title="item.label"
-          :aria-label="item.label"
-          @mouseenter="openMiddlePaneOverlay"
-          @focus="openMiddlePaneOverlay"
-          @click="switchSection(item.key)"
-        >
-          <i :class="item.icon" aria-hidden="true"></i>
-        </button>
+        <div class="messenger-left-nav-group">
+          <button
+            v-for="item in leftRailMainSectionOptions"
+            :key="item.key"
+            class="messenger-left-nav-btn"
+            :class="{ active: sessionHub.activeSection === item.key }"
+            type="button"
+            :title="item.label"
+            :aria-label="item.label"
+            @mouseenter="openMiddlePaneOverlay"
+            @focus="openMiddlePaneOverlay"
+            @click="switchSection(item.key)"
+          >
+            <i :class="item.icon" aria-hidden="true"></i>
+          </button>
+        </div>
+        <div
+          v-if="leftRailSocialSectionOptions.length"
+          class="messenger-left-rail-divider messenger-left-rail-divider--section"
+          aria-hidden="true"
+        ></div>
+        <div v-if="leftRailSocialSectionOptions.length" class="messenger-left-nav-group">
+          <button
+            v-for="item in leftRailSocialSectionOptions"
+            :key="item.key"
+            class="messenger-left-nav-btn"
+            :class="{ active: sessionHub.activeSection === item.key }"
+            type="button"
+            :title="item.label"
+            :aria-label="item.label"
+            @mouseenter="openMiddlePaneOverlay"
+            @focus="openMiddlePaneOverlay"
+            @click="switchSection(item.key)"
+          >
+            <i :class="item.icon" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
       <button
         class="messenger-left-nav-btn messenger-left-nav-btn--settings"
@@ -368,23 +392,25 @@
           </button>
         </template>
         <template v-else-if="sessionHub.activeSection === 'tools'">
-          <div class="messenger-block-title">{{ t('messenger.tools.customTitle') }}</div>
+          <div class="messenger-block-title">{{ t('messenger.tools.adminTitle') }}</div>
           <button
             class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === 'category:builtin' }"
+            :class="{ active: selectedToolEntryKey === 'category:admin' }"
             type="button"
-            @click="selectToolCategory('builtin')"
+            @click="selectToolCategory('admin')"
           >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-cubes" aria-hidden="true"></i></div>
+            <div class="messenger-list-avatar"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i></div>
             <div class="messenger-list-main">
               <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('toolManager.system.builtin') }}</span>
+                <span class="messenger-list-name">{{ t('messenger.tools.adminTitle') }}</span>
               </div>
               <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.tools.builtinDesc') }}</span>
+                <span class="messenger-list-preview">{{ t('messenger.tools.adminDesc') }}</span>
               </div>
             </div>
           </button>
+
+          <div class="messenger-block-title">{{ t('messenger.tools.customTitle') }}</div>
           <button
             class="messenger-list-item"
             :class="{ active: selectedToolEntryKey === 'category:mcp' }"
@@ -433,6 +459,8 @@
               </div>
             </div>
           </button>
+
+          <div class="messenger-block-title">{{ t('messenger.tools.sharedTitle') }}</div>
           <button
             class="messenger-list-item"
             :class="{ active: selectedToolEntryKey === 'category:shared' }"
@@ -446,25 +474,6 @@
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ t('messenger.tools.sharedDesc') }}</span>
-              </div>
-            </div>
-          </button>
-
-          <button
-            v-for="tool in filteredCustomTools"
-            :key="`user-tool-${tool.name}`"
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === `custom:${tool.name}` }"
-            type="button"
-            @click="selectCustomTool(tool.name)"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-toolbox" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ tool.name }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ tool.description || t('common.noDescription') }}</span>
               </div>
             </div>
           </button>
@@ -613,7 +622,12 @@
         </template>
       </div>
       <div v-if="sessionHub.activeSection === 'more'" class="messenger-middle-footer">
-        <button class="messenger-middle-logout-btn" type="button" @click="handleSettingsLogout">
+        <button
+          class="messenger-middle-logout-btn"
+          type="button"
+          :disabled="settingsLogoutDisabled"
+          @click="handleSettingsLogout"
+        >
           <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
           <span>{{ t('nav.logout') }}</span>
         </button>
@@ -777,6 +791,14 @@
                   >
                     {{ t('chat.features.channels') }}
                   </button>
+                  <button
+                    class="messenger-inline-btn"
+                    :class="{ active: agentSettingMode === 'runtime' }"
+                    type="button"
+                    @click="agentSettingMode = 'runtime'"
+                  >
+                    {{ t('chat.features.runtimeRecords') }}
+                  </button>
                 </div>
 
                 <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
@@ -796,6 +818,10 @@
                   class="messenger-chat-settings-block messenger-channel-panel-wrap"
                 >
                   <UserChannelSettingsPanel mode="page" :agent-id="settingsAgentIdForApi" />
+                </div>
+
+                <div v-else-if="agentSettingMode === 'runtime'" class="messenger-chat-settings-block">
+                  <AgentRuntimeRecordsPanel :agent-id="settingsAgentIdForApi" />
                 </div>
               </template>
             </template>
@@ -875,6 +901,35 @@
 
             <template v-else-if="sessionHub.activeSection === 'tools'">
               <div v-if="toolsCatalogLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+              <template v-else-if="selectedToolCategory === 'admin'">
+                <div class="messenger-entity-panel messenger-entity-panel--fill">
+                  <div class="messenger-entity-title">{{ t('messenger.tools.adminTitle') }}</div>
+                  <div class="messenger-entity-meta">{{ t('messenger.tools.adminDesc') }}</div>
+                  <div class="messenger-tools-admin-groups">
+                    <section
+                      v-for="group in adminToolGroups"
+                      :key="`admin-tool-group-${group.key}`"
+                      class="messenger-tools-admin-group"
+                    >
+                      <div class="messenger-entity-meta messenger-tools-admin-group-title">
+                        {{ group.title }}
+                      </div>
+                      <div class="messenger-tool-tag-list">
+                        <span
+                          v-for="item in group.items"
+                          :key="`tool-admin-${group.key}-${item.name}`"
+                          class="messenger-tool-tag"
+                        >
+                          {{ item.name }}
+                        </span>
+                        <span v-if="!group.items.length" class="messenger-list-empty">
+                          {{ t('common.none') }}
+                        </span>
+                      </div>
+                    </section>
+                  </div>
+                </div>
+              </template>
               <template
                 v-else-if="
                   selectedToolCategory === 'mcp' ||
@@ -906,45 +961,6 @@
                     @status="toolPaneStatus = String($event || '')"
                   />
                   <UserSharedToolsPanel v-show="selectedToolCategory === 'shared'" />
-                </div>
-              </template>
-              <template v-else-if="selectedToolCategory">
-                <div class="messenger-entity-panel">
-                  <div class="messenger-entity-title">{{ toolCategoryLabel(selectedToolCategory) }}</div>
-                  <div class="messenger-entity-meta">{{ t('messenger.tools.customDesc') }}</div>
-                  <div class="messenger-tool-tag-list">
-                    <span
-                      v-for="item in selectedToolCategoryItems"
-                      :key="`tool-category-item-${selectedToolCategory}-${item.name}`"
-                      class="messenger-tool-tag"
-                    >
-                      {{ item.name }}
-                    </span>
-                    <span v-if="!selectedToolCategoryItems.length" class="messenger-list-empty">
-                      {{ t('common.none') }}
-                    </span>
-                  </div>
-                </div>
-              </template>
-              <template v-else-if="selectedCustomTool">
-                <div class="messenger-entity-panel messenger-entity-panel--fill">
-                  <div class="messenger-entity-title">{{ selectedCustomTool.name }}</div>
-                  <div class="messenger-entity-meta">{{ selectedCustomTool.description || t('common.noDescription') }}</div>
-                  <div class="messenger-entity-meta">{{ t('messenger.tools.customTitle') }}</div>
-                  <div class="messenger-entity-meta">
-                    {{ t('messenger.tools.customManageHint') }}
-                  </div>
-                  <div class="messenger-inline-actions">
-                    <button class="messenger-inline-btn" type="button" @click="selectToolCategory('mcp')">
-                      {{ t('toolManager.system.mcp') }}
-                    </button>
-                    <button class="messenger-inline-btn" type="button" @click="selectToolCategory('skills')">
-                      {{ t('toolManager.system.skills') }}
-                    </button>
-                    <button class="messenger-inline-btn" type="button" @click="selectToolCategory('knowledge')">
-                      {{ t('toolManager.system.knowledge') }}
-                    </button>
-                  </div>
                 </div>
               </template>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
@@ -1092,16 +1108,16 @@
               :class="{ mine: item.message.role === 'user' }"
               :data-virtual-key="item.key"
             >
-              <div
-                v-if="item.message.role === 'user'"
-                class="messenger-message-avatar messenger-message-avatar--mine-profile"
-                :style="currentUserAvatarStyle"
-              >
-                <UserAvatarGlyph
-                  v-if="currentUserAvatarIcon !== 'initial'"
-                  class="messenger-user-avatar-icon"
-                  :glyph="currentUserAvatarIcon"
-                  :size="14"
+                <div
+                  v-if="item.message.role === 'user'"
+                  class="messenger-message-avatar messenger-message-avatar--mine-profile"
+                  :style="currentUserAvatarStyle"
+                >
+                <img
+                  v-if="currentUserAvatarImageUrl"
+                  class="messenger-settings-profile-avatar-image"
+                  :src="currentUserAvatarImageUrl"
+                  alt=""
                 />
                 <span v-else>{{ avatarLabel(currentUsername) }}</span>
               </div>
@@ -1136,6 +1152,7 @@
                 <div
                   v-if="item.message.role === 'user' || hasMessageContent(item.message.content)"
                   class="messenger-message-bubble messenger-markdown"
+                  :class="{ 'messenger-message-bubble--greeting': isGreetingMessage(item.message) }"
                 >
                   <template v-if="isGreetingMessage(item.message)">
                     <div class="messenger-greeting-line">
@@ -1290,11 +1307,11 @@
                 :style="isOwnMessage(item.message) ? currentUserAvatarStyle : undefined"
               >
                 <template v-if="isOwnMessage(item.message)">
-                  <UserAvatarGlyph
-                    v-if="currentUserAvatarIcon !== 'initial'"
-                    class="messenger-user-avatar-icon"
-                    :glyph="currentUserAvatarIcon"
-                    :size="14"
+                  <img
+                    v-if="currentUserAvatarImageUrl"
+                    class="messenger-settings-profile-avatar-image"
+                    :src="currentUserAvatarImageUrl"
+                    alt=""
                   />
                   <span v-else>{{ avatarLabel(currentUsername) }}</span>
                 </template>
@@ -1560,7 +1577,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { ElLoading, ElMessage } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits } from '@/api/auth';
@@ -1582,7 +1599,7 @@ import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
 import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
-import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
+import AgentRuntimeRecordsPanel from '@/components/messenger/AgentRuntimeRecordsPanel.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
@@ -1595,7 +1612,7 @@ import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
 import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
 import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
-import { isDesktopModeEnabled } from '@/config/desktop';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
@@ -1689,17 +1706,35 @@ const sessionHub = useSessionHubStore();
 
 const DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY = 'messenger_desktop_first_launch_default_agent_hint_v1';
 const USER_PROFILE_AVATAR_STORAGE_PREFIX = 'messenger_user_avatar_v1:';
-const PROFILE_AVATAR_ICON_OPTIONS = [
-  { key: 'initial', label: 'portal.agent.avatar.icon.initial' },
-  { key: 'check', label: 'portal.agent.avatar.icon.check' },
-  { key: 'spark', label: 'portal.agent.avatar.icon.spark' },
-  { key: 'target', label: 'portal.agent.avatar.icon.target' },
-  { key: 'idea', label: 'portal.agent.avatar.icon.idea' },
-  { key: 'code', label: 'portal.agent.avatar.icon.code' },
-  { key: 'pen', label: 'portal.agent.avatar.icon.pen' },
-  { key: 'briefcase', label: 'portal.agent.avatar.icon.briefcase' },
-  { key: 'shield', label: 'portal.agent.avatar.icon.shield' }
-] as const;
+const PROFILE_AVATAR_IMAGE_FILES = import.meta.glob('../assets/qq-avatars/avatar-????.jpg', {
+  eager: true,
+  import: 'default'
+}) as Record<string, string>;
+const PROFILE_AVATAR_IMAGE_OPTIONS = Object.entries(PROFILE_AVATAR_IMAGE_FILES)
+  .map(([path, image]) => {
+    const fileName = path.split('/').pop() || '';
+    const stem = fileName.replace(/\.jpg$/i, '').trim();
+    const numericPart = stem.replace(/^avatar-/, '').trim();
+    const sequence = Number.parseInt(numericPart, 10);
+    const label = Number.isFinite(sequence)
+      ? `QQ Avatar ${String(sequence).padStart(4, '0')}`
+      : `QQ Avatar ${stem}`;
+    return {
+      key: `qq-${stem}`,
+      image,
+      label
+    };
+  })
+  .sort((left, right) =>
+    left.key.localeCompare(right.key, 'en', { numeric: true, sensitivity: 'base' })
+  );
+const PROFILE_AVATAR_IMAGE_MAP = new Map(
+  PROFILE_AVATAR_IMAGE_OPTIONS.map((item) => [item.key, item.image])
+);
+const PROFILE_AVATAR_OPTION_KEYS = new Set<string>([
+  'initial',
+  ...PROFILE_AVATAR_IMAGE_OPTIONS.map((item) => item.key)
+]);
 const PROFILE_AVATAR_COLORS = [
   '#f97316',
   '#ef4444',
@@ -1721,8 +1756,7 @@ const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
 const selectedContactUnitId = ref('');
-const selectedToolCategory = ref<'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
-const selectedCustomToolName = ref('');
+const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const worldDraft = ref('');
 const worldDraftMap = new Map<string, string>();
 const dismissedAgentConversationMap = ref<Record<string, number>>({});
@@ -1781,7 +1815,7 @@ const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
-const agentSettingMode = ref<'agent' | 'cron' | 'channel'>('agent');
+const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime'>('agent');
 const settingsPanelMode = ref<'general' | 'profile' | 'desktop-models' | 'desktop-remote'>('general');
 const rightDockCollapsed = ref(false);
 const desktopInitialSectionPinned = ref(false);
@@ -1790,7 +1824,6 @@ const desktopFirstLaunchDefaultAgentHintAt = ref(0);
 const currentUserAvatarIcon = ref('initial');
 const currentUserAvatarColor = ref('#3b82f6');
 const toolsCatalogLoading = ref(false);
-const customTools = ref<ToolEntry[]>([]);
 const sharedTools = ref<ToolEntry[]>([]);
 const builtinTools = ref<ToolEntry[]>([]);
 const mcpTools = ref<ToolEntry[]>([]);
@@ -1928,18 +1961,34 @@ const finishMessengerPerfTrace = (
   });
 };
 
-const sectionOptions = computed(() => [
-  { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
-  { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
-  { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
-  { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
-  { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
-  { key: 'files' as MessengerSection, icon: 'fa-solid fa-folder-open', label: t('messenger.section.files') },
-  { key: 'more' as MessengerSection, icon: 'fa-solid fa-gear', label: t('messenger.section.settings') }
-]);
+const sectionOptions = computed(() => {
+  const options = [
+    { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
+    { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
+    { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
+    { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
+    { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
+    { key: 'files' as MessengerSection, icon: 'fa-solid fa-folder-open', label: t('messenger.section.files') },
+    { key: 'more' as MessengerSection, icon: 'fa-solid fa-gear', label: t('messenger.section.settings') }
+  ];
+  if (desktopMode.value && !isDesktopRemoteAuthMode()) {
+    return options.filter((item) => item.key !== 'users' && item.key !== 'groups');
+  }
+  return options;
+});
 
-const primarySectionOptions = computed(() =>
-  sectionOptions.value.filter((item) => item.key !== 'more')
+const leftRailMainSectionOptions = computed(() =>
+  sectionOptions.value.filter(
+    (item) =>
+      item.key === 'messages' ||
+      item.key === 'agents' ||
+      item.key === 'tools' ||
+      item.key === 'files'
+  )
+);
+
+const leftRailSocialSectionOptions = computed(() =>
+  sectionOptions.value.filter((item) => item.key === 'users' || item.key === 'groups')
 );
 
 const basePrefix = computed(() => {
@@ -1955,6 +2004,9 @@ const getDesktopBridge = (): DesktopBridge | null => {
 };
 
 const desktopMode = computed(() => isDesktopModeEnabled());
+const settingsLogoutDisabled = computed(
+  () => desktopMode.value && !isDesktopRemoteAuthMode()
+);
 const debugToolsAvailable = computed(() => typeof getDesktopBridge()?.toggleDevTools === 'function');
 const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkForUpdates === 'function');
 
@@ -1972,14 +2024,22 @@ const profileAvatarStorageKey = computed(() =>
   `${USER_PROFILE_AVATAR_STORAGE_PREFIX}${String(currentUserId.value || 'guest').trim() || 'guest'}`
 );
 const profileAvatarOptions = computed(() =>
-  PROFILE_AVATAR_ICON_OPTIONS.map((item) => ({
-    key: item.key,
-    label: t(item.label)
-  }))
+  [
+    {
+      key: 'initial',
+      label: t('portal.agent.avatar.icon.initial')
+    },
+    ...PROFILE_AVATAR_IMAGE_OPTIONS
+  ]
 );
 const profileAvatarColors = computed(() => [...PROFILE_AVATAR_COLORS]);
+const currentUserAvatarImageUrl = computed(
+  () => PROFILE_AVATAR_IMAGE_MAP.get(String(currentUserAvatarIcon.value || '').trim()) || ''
+);
 const currentUserAvatarStyle = computed(() => ({
-  background: String(currentUserAvatarColor.value || '#3b82f6')
+  background: currentUserAvatarImageUrl.value
+    ? 'transparent'
+    : String(currentUserAvatarColor.value || '#3b82f6')
 }));
 const userWorldPermissionDenied = computed(() => userWorldStore.permissionDenied === true);
 
@@ -2435,7 +2495,12 @@ const normalizeUiFontSize = (value: unknown): number => {
 };
 
 const normalizeMessengerSendKey = (value: unknown): MessengerSendKeyMode =>
-  String(value || '').trim().toLowerCase() === 'enter' ? 'enter' : 'ctrl_enter';
+  (() => {
+    const text = String(value || '').trim().toLowerCase();
+    if (text === 'enter') return 'enter';
+    if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
+    return 'ctrl_enter';
+  })();
 
 const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
   const text = String(value || '').trim().toLowerCase();
@@ -2655,15 +2720,6 @@ const filteredGroups = computed(() => {
   });
 });
 
-const filteredCustomTools = computed(() => {
-  const text = keyword.value.toLowerCase();
-  return customTools.value.filter((item) => {
-    const name = String(item.name || '').toLowerCase();
-    const desc = String(item.description || '').toLowerCase();
-    return !text || name.includes(text) || desc.includes(text);
-  });
-});
-
 const filteredGroupCreateContacts = computed(() => {
   const text = String(groupCreateKeyword.value || '')
     .trim()
@@ -2682,22 +2738,15 @@ const filteredGroupCreateContacts = computed(() => {
 
 const selectedToolEntryKey = computed(() => {
   if (selectedToolCategory.value) return `category:${selectedToolCategory.value}`;
-  if (selectedCustomToolName.value) return `custom:${selectedCustomToolName.value}`;
   return '';
 });
 
-const selectedCustomTool = computed(
-  () => customTools.value.find((item) => item.name === selectedCustomToolName.value) || null
-);
-
-const selectedToolCategoryItems = computed(() => {
-  if (selectedToolCategory.value === 'builtin') return builtinTools.value;
-  if (selectedToolCategory.value === 'mcp') return mcpTools.value;
-  if (selectedToolCategory.value === 'skills') return skillTools.value;
-  if (selectedToolCategory.value === 'knowledge') return knowledgeTools.value;
-  if (selectedToolCategory.value === 'shared') return sharedTools.value;
-  return [];
-});
+const adminToolGroups = computed(() => [
+  { key: 'builtin', title: t('toolManager.system.builtin'), items: builtinTools.value },
+  { key: 'mcp', title: t('toolManager.system.mcp'), items: mcpTools.value },
+  { key: 'skills', title: t('toolManager.system.skills'), items: skillTools.value },
+  { key: 'knowledge', title: t('toolManager.system.knowledge'), items: knowledgeTools.value }
+]);
 
 const mixedConversations = computed<MixedConversation[]>(() => {
   const dismissedMap = dismissedAgentConversationMap.value;
@@ -2880,7 +2929,6 @@ const chatPanelTitle = computed(() => {
   }
   if (sessionHub.activeSection === 'tools') {
     if (selectedToolCategory.value) return toolCategoryLabel(selectedToolCategory.value);
-    if (selectedCustomTool.value?.name) return selectedCustomTool.value.name;
   }
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return t('user.profile.enter');
@@ -3830,12 +3878,18 @@ const normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRu
     raw === 'await_confirm' ||
     raw === 'question' ||
     raw === 'questioning' ||
-    raw === 'asking' ||
-    raw === 'waiting'
+    raw === 'asking'
   ) {
     return 'pending';
   }
-  if (raw === 'running' || raw === 'executing' || raw === 'processing' || raw === 'cancelling') {
+  if (
+    raw === 'running' ||
+    raw === 'executing' ||
+    raw === 'processing' ||
+    raw === 'cancelling' ||
+    raw === 'waiting' ||
+    raw === 'queued'
+  ) {
     return 'running';
   }
   if (raw === 'done' || raw === 'completed' || raw === 'finish' || raw === 'finished') return 'done';
@@ -4812,7 +4866,6 @@ const switchSection = (section: MessengerSection) => {
   }
   if (section !== 'tools') {
     selectedToolCategory.value = '';
-    selectedCustomToolName.value = '';
   }
   if (section !== 'users') {
     selectedContactUserId.value = '';
@@ -4869,6 +4922,9 @@ const openProfilePage = () => {
 };
 
 const handleSettingsLogout = () => {
+  if (settingsLogoutDisabled.value) {
+    return;
+  }
   if (desktopMode.value) {
     router.push('/desktop/home').catch(() => undefined);
     return;
@@ -4884,26 +4940,29 @@ const normalizeCurrentUserAvatarIcon = (value: unknown): string => {
   if (!text) return 'initial';
   const aliasMap: Record<string, string> = {
     initial: 'initial',
-    check: 'check',
-    spark: 'spark',
-    target: 'target',
-    idea: 'idea',
-    code: 'code',
-    pen: 'pen',
-    briefcase: 'briefcase',
-    shield: 'shield',
-    'fa-user': 'check',
-    'fa-user-astronaut': 'spark',
-    'fa-rocket': 'target',
-    'fa-lightbulb': 'idea',
-    'fa-code': 'code',
-    'fa-pen': 'pen',
-    'fa-briefcase': 'briefcase',
-    'fa-shield-halved': 'shield'
+    check: 'initial',
+    spark: 'initial',
+    target: 'initial',
+    idea: 'initial',
+    code: 'initial',
+    pen: 'initial',
+    briefcase: 'initial',
+    shield: 'initial',
+    'fa-user': 'initial',
+    'fa-user-astronaut': 'initial',
+    'fa-rocket': 'initial',
+    'fa-lightbulb': 'initial',
+    'fa-code': 'initial',
+    'fa-pen': 'initial',
+    'fa-briefcase': 'initial',
+    'fa-shield-halved': 'initial'
   };
   const normalized = aliasMap[text] || text;
-  const allowed = new Set<string>(PROFILE_AVATAR_ICON_OPTIONS.map((item) => item.key));
-  return allowed.has(normalized) ? normalized : 'initial';
+  const legacyMatch = normalized.match(/^qq-avatar-(\d{1,4})$/);
+  const upgraded = legacyMatch
+    ? `qq-avatar-${String(Number.parseInt(legacyMatch[1], 10)).padStart(4, '0')}`
+    : normalized;
+  return PROFILE_AVATAR_OPTION_KEYS.has(upgraded) ? upgraded : 'initial';
 };
 
 const normalizeCurrentUserAvatarColor = (value: unknown): string => {
@@ -5727,9 +5786,6 @@ const loadToolsCatalog = async () => {
     builtinTools.value = (Array.isArray(payload.builtin_tools) ? payload.builtin_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
-    customTools.value = (Array.isArray(payload.user_tools) ? payload.user_tools : [])
-      .map((item) => normalizeToolEntry(item))
-      .filter(Boolean) as ToolEntry[];
     sharedTools.value = (Array.isArray(payload.shared_tools) ? payload.shared_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
@@ -5742,14 +5798,8 @@ const loadToolsCatalog = async () => {
     knowledgeTools.value = (Array.isArray(payload.knowledge_tools) ? payload.knowledge_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
-    if (!selectedToolCategory.value && !selectedCustomToolName.value) {
-      if (customTools.value.length > 0) {
-        selectedCustomToolName.value = customTools.value[0].name;
-      } else if (sharedTools.value.length > 0) {
-        selectedToolCategory.value = 'shared';
-      } else {
-        selectedToolCategory.value = 'mcp';
-      }
+    if (!selectedToolCategory.value) {
+      selectedToolCategory.value = 'admin';
     }
   } catch (error) {
     showApiError(error, t('toolManager.loadFailed'));
@@ -5818,20 +5868,13 @@ const loadOrgUnits = async () => {
   }
 };
 
-const selectToolCategory = (category: 'builtin' | 'mcp' | 'skills' | 'knowledge' | 'shared') => {
+const selectToolCategory = (category: 'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared') => {
   toolPaneStatus.value = '';
   selectedToolCategory.value = category;
-  selectedCustomToolName.value = '';
-};
-
-const selectCustomTool = (toolName: string) => {
-  toolPaneStatus.value = '';
-  selectedCustomToolName.value = String(toolName || '').trim();
-  selectedToolCategory.value = '';
 };
 
 const toolCategoryLabel = (category: string) => {
-  if (category === 'builtin') return t('toolManager.system.builtin');
+  if (category === 'admin') return t('messenger.tools.adminTitle');
   if (category === 'mcp') return t('toolManager.system.mcp');
   if (category === 'skills') return t('toolManager.system.skills');
   if (category === 'knowledge') return t('toolManager.system.knowledge');
@@ -5907,13 +5950,7 @@ const ensureSectionSelection = () => {
 
   if (sessionHub.activeSection === 'tools') {
     if (!selectedToolEntryKey.value) {
-      if (customTools.value.length > 0) {
-        selectedCustomToolName.value = customTools.value[0].name;
-      } else if (sharedTools.value.length > 0) {
-        selectedToolCategory.value = 'shared';
-      } else {
-        selectedToolCategory.value = 'mcp';
-      }
+      selectedToolCategory.value = 'admin';
     }
     return;
   }
@@ -6120,6 +6157,10 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
 };
 
 const stopAgentMessage = async () => {
+  const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  setRuntimeStateOverride(targetAgentId, 'done', 20_000);
+  pendingAssistantCenter = false;
+  pendingAssistantCenterCount = 0;
   try {
     await chatStore.stopStream();
   } catch {
@@ -6222,11 +6263,25 @@ const sendWorldMessage = async () => {
 };
 
 const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
+  if (event.isComposing) {
+    return;
+  }
+  if (messengerSendKey.value === 'none') {
+    return;
+  }
+  const hasPrimaryModifier = Boolean(
+    event.ctrlKey ||
+      event.metaKey ||
+      event.getModifierState?.('Control') ||
+      event.getModifierState?.('Meta')
+  );
+  const hasBackupModifier = Boolean(event.altKey && !hasPrimaryModifier);
+  if (hasPrimaryModifier || hasBackupModifier) {
+    event.preventDefault();
+    await sendWorldMessage();
+    return;
+  }
   if (messengerSendKey.value === 'ctrl_enter') {
-    if (event.ctrlKey || event.metaKey) {
-      event.preventDefault();
-      await sendWorldMessage();
-    }
     return;
   }
   if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {
@@ -6254,6 +6309,75 @@ const toggleLanguage = () => {
   ElMessage.success(t('messenger.more.languageChanged'));
 };
 
+const normalizeDesktopUpdatePhase = (state?: DesktopUpdateState | null) =>
+  String(state?.phase || '')
+    .trim()
+    .toLowerCase();
+
+const resolveDesktopUpdateProgress = (state?: DesktopUpdateState | null) => {
+  const raw = Number(state?.progress);
+  if (!Number.isFinite(raw)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(raw)));
+};
+
+const isDesktopUpdatePending = (phase: string) =>
+  phase === 'checking' || phase === 'available' || phase === 'downloading';
+
+const isDesktopUpdateTerminal = (phase: string) =>
+  phase === 'downloaded' ||
+  phase === 'error' ||
+  phase === 'not-available' ||
+  phase === 'idle' ||
+  phase === 'unsupported';
+
+const buildDesktopUpdateStatusText = (state?: DesktopUpdateState | null) => {
+  const phase = normalizeDesktopUpdatePhase(state);
+  if (phase === 'checking') {
+    return t('desktop.settings.checkingUpdate');
+  }
+  if (phase === 'downloading' || phase === 'available') {
+    const progress = resolveDesktopUpdateProgress(state);
+    if (progress > 0) {
+      return t('desktop.settings.updateDownloadingProgress', { progress });
+    }
+    return t('desktop.settings.updateDownloading');
+  }
+  return t('desktop.settings.updateDownloading');
+};
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const pollDesktopUpdateState = async (
+  bridge: DesktopBridge,
+  initialState: DesktopUpdateState,
+  onTick: (state: DesktopUpdateState) => void
+) => {
+  if (typeof bridge.getUpdateState !== 'function') {
+    onTick(initialState);
+    return initialState;
+  }
+
+  let state = initialState;
+  const started = Date.now();
+  const timeoutMs = 15 * 60 * 1000;
+  while (Date.now() - started < timeoutMs) {
+    onTick(state);
+    const phase = normalizeDesktopUpdatePhase(state);
+    if (isDesktopUpdateTerminal(phase) || !isDesktopUpdatePending(phase)) {
+      return state;
+    }
+    await wait(700);
+    try {
+      state = await bridge.getUpdateState();
+    } catch {
+      return state;
+    }
+  }
+  return state;
+};
+
 const checkClientUpdate = async () => {
   if (!desktopMode.value) {
     ElMessage.success(t('common.refreshSuccess'));
@@ -6266,16 +6390,25 @@ const checkClientUpdate = async () => {
     return;
   }
 
-  const checkingMessage = ElMessage({
-    type: 'info',
-    message: t('desktop.settings.checkingUpdate'),
-    duration: 0,
-    showClose: true
+  const loading = ElLoading.service({
+    lock: false,
+    text: t('desktop.settings.checkingUpdate'),
+    background: 'rgba(0, 0, 0, 0.06)'
   });
 
   try {
-    const state = await bridge.checkForUpdates();
-    checkingMessage.close();
+    let state = await bridge.checkForUpdates();
+    let lastStatusText = '';
+    const updateLoadingText = (nextState: DesktopUpdateState) => {
+      const nextText = buildDesktopUpdateStatusText(nextState);
+      if (nextText && nextText !== lastStatusText) {
+        loading.setText(nextText);
+        lastStatusText = nextText;
+      }
+    };
+    state = await pollDesktopUpdateState(bridge, state, updateLoadingText);
+    loading.close();
+
     const phase = String(state?.phase || '').trim().toLowerCase();
     const latestVersion = String(state?.latestVersion || '').trim();
 
@@ -6296,7 +6429,12 @@ const checkClientUpdate = async () => {
     }
 
     if (phase === 'downloading' || phase === 'available' || phase === 'checking') {
-      ElMessage.info(t('desktop.settings.updateDownloading'));
+      const progress = resolveDesktopUpdateProgress(state);
+      if (progress > 0) {
+        ElMessage.info(t('desktop.settings.updateDownloadingProgress', { progress }));
+      } else {
+        ElMessage.info(t('desktop.settings.updateDownloading'));
+      }
       return;
     }
 
@@ -6336,7 +6474,7 @@ const checkClientUpdate = async () => {
 
     ElMessage.success(t('desktop.settings.updateInstalling'));
   } catch (error) {
-    checkingMessage.close();
+    loading.close();
     const reason = String((error as { message?: unknown })?.message || '').trim() || t('common.unknown');
     ElMessage.error(t('desktop.settings.updateCheckFailed', { reason }));
   }
@@ -6833,7 +6971,14 @@ watch(
   () => sessionHub.activeSection,
   (section) => {
     closeFileContainerMenu();
-    if (section === 'tools' && !customTools.value.length && !sharedTools.value.length) {
+    if (
+      section === 'tools' &&
+      !builtinTools.value.length &&
+      !mcpTools.value.length &&
+      !skillTools.value.length &&
+      !knowledgeTools.value.length &&
+      !sharedTools.value.length
+    ) {
       loadToolsCatalog();
     }
     if (section === 'users' && !userWorldPermissionDenied.value) {

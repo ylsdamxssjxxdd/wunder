@@ -5,19 +5,25 @@
     </div>
 
     <template v-else>
-      <el-form :model="form" label-position="top" class="messenger-agent-form">
-        <el-form-item :label="t('portal.agent.form.name')">
-          <el-input v-model="form.name" :placeholder="t('portal.agent.form.placeholder.name')" />
+      <el-form :model="form" label-position="top" class="messenger-agent-form messenger-form">
+        <el-form-item :label="t('portal.agent.form.name')" class="messenger-agent-form-item">
+          <el-input
+            v-model="form.name"
+            class="messenger-agent-field"
+            :placeholder="t('portal.agent.form.placeholder.name')"
+          />
         </el-form-item>
-        <el-form-item :label="t('portal.agent.form.description')">
+        <el-form-item :label="t('portal.agent.form.description')" class="messenger-agent-form-item">
           <el-input
             v-model="form.description"
+            class="messenger-agent-field"
             :placeholder="t('portal.agent.form.placeholder.description')"
           />
         </el-form-item>
-        <el-form-item :label="t('portal.agent.form.prompt')">
+        <el-form-item :label="t('portal.agent.form.prompt')" class="messenger-agent-form-item">
           <el-input
             v-model="form.system_prompt"
+            class="messenger-agent-field messenger-agent-field--prompt"
             type="textarea"
             :rows="6"
             :placeholder="t('portal.agent.form.placeholder.prompt')"
@@ -55,15 +61,18 @@
           </div>
         </el-form-item>
 
-        <el-form-item :label="t('portal.agent.form.base')">
+        <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item">
           <div class="messenger-agent-base">
             <label class="messenger-agent-base-item">
-              <span>{{ t('portal.agent.share.label') }}</span>
+              <span class="messenger-agent-base-label">{{ t('portal.agent.share.label') }}</span>
               <el-switch v-model="form.is_shared" />
             </label>
-            <label class="messenger-agent-base-item messenger-agent-base-item--select">
-              <span>{{ t('portal.agent.sandbox.title') }}</span>
-              <el-select v-model="form.sandbox_container_id">
+            <div class="messenger-agent-base-item messenger-agent-base-item--select">
+              <div class="messenger-agent-base-meta">
+                <span class="messenger-agent-base-label">{{ t('portal.agent.sandbox.title') }}</span>
+                <span class="messenger-inline-hint">{{ t('portal.agent.sandbox.hint') }}</span>
+              </div>
+              <el-select v-model="form.sandbox_container_id" class="messenger-agent-base-select">
                 <el-option
                   v-for="id in sandboxContainerOptions"
                   :key="id"
@@ -71,10 +80,13 @@
                   :value="id"
                 />
               </el-select>
-            </label>
-            <label class="messenger-agent-base-item messenger-agent-base-item--select">
-              <span>{{ t('portal.agent.permission.title') }}</span>
-              <el-select v-model="form.approval_mode">
+            </div>
+            <div class="messenger-agent-base-item messenger-agent-base-item--select">
+              <div class="messenger-agent-base-meta">
+                <span class="messenger-agent-base-label">{{ t('portal.agent.permission.title') }}</span>
+                <span class="messenger-inline-hint">{{ t('portal.agent.permission.hint') }}</span>
+              </div>
+              <el-select v-model="form.approval_mode" class="messenger-agent-base-select">
                 <el-option
                   v-for="item in approvalModeOptions"
                   :key="item.value"
@@ -82,9 +94,7 @@
                   :value="item.value"
                 />
               </el-select>
-            </label>
-            <div class="messenger-inline-hint">{{ t('portal.agent.sandbox.hint') }}</div>
-            <div class="messenger-inline-hint">{{ t('portal.agent.permission.hint') }}</div>
+            </div>
           </div>
         </el-form-item>
       </el-form>

@@ -3,6 +3,7 @@ use crate::state::AppState;
 use crate::storage::{
     normalize_workspace_container_id, MAX_SANDBOX_CONTAINER_ID, USER_PRIVATE_CONTAINER_ID,
 };
+use crate::{i18n, llm};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -38,6 +39,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/desktop/settings",
             get(desktop_settings_get).put(desktop_settings_update),
+        )
+        .route(
+            "/wunder/desktop/llm/context_window",
+            post(desktop_llm_context_window),
+        )
+        .route(
+            "/wunder/admin/llm/context_window",
+            post(desktop_llm_context_window),
         )
         .route("/wunder/desktop/fs/list", get(desktop_fs_list))
         .route("/wunder/desktop/sync/seed/start", post(desktop_seed_start))
@@ -135,6 +144,18 @@ struct DesktopSettingsUpdateRequest {
     llm: Option<LlmConfig>,
     #[serde(default)]
     remote_gateway: Option<DesktopRemoteGatewaySettings>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DesktopLlmContextProbeRequest {
+    #[serde(default)]
+    provider: Option<String>,
+    base_url: String,
+    #[serde(default)]
+    api_key: Option<String>,
+    model: String,
+    #[serde(default)]
+    timeout_s: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -446,6 +467,45 @@ async fn desktop_settings_get(State(state): State<Arc<AppState>>) -> Result<Json
     Ok(Json(
         json!({ "data": build_settings_payload(&config, &settings, &seed_statuses) }),
     ))
+}
+
+async fn desktop_llm_context_window(
+    Json(payload): Json<DesktopLlmContextProbeRequest>,
+) -> Result<Json<Value>, Response> {
+    let model = payload.model.trim();
+    let provider = llm::normalize_provider(payload.provider.as_deref());
+    let inline_base = payload.base_url.trim();
+    let base_url = if inline_base.is_empty() {
+        llm::provider_default_base_url(&provider).unwrap_or("")
+    } else {
+        inline_base
+    };
+    if base_url.is_empty() || model.is_empty() {
+        return Err(bad_request(i18n::t("error.base_url_or_model_required")));
+    }
+    if !llm::is_openai_compatible_provider(&provider) {
+        return Ok(Json(json!({
+            "max_context": Value::Null,
+            "message": i18n::t("probe.provider_unsupported")
+        })));
+    }
+
+    let timeout_s = payload.timeout_s.unwrap_or(15);
+    let timeout_s = if timeout_s == 0 { 15 } else { timeout_s };
+    let api_key = payload.api_key.as_deref().unwrap_or("");
+    let result = llm::probe_openai_context_window(base_url, api_key, model, timeout_s).await;
+    let payload = match result {
+        Ok(Some(value)) => json!({ "max_context": value, "message": i18n::t("probe.success") }),
+        Ok(None) => json!({ "max_context": Value::Null, "message": i18n::t("probe.no_context") }),
+        Err(err) => {
+            let message = i18n::t_with_params(
+                "probe.failed",
+                &HashMap::from([("detail".to_string(), err.to_string())]),
+            );
+            json!({ "max_context": Value::Null, "message": message })
+        }
+    };
+    Ok(Json(payload))
 }
 
 async fn desktop_fs_list(

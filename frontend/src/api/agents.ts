@@ -12,3 +12,5 @@ export const deleteAgent = (id: ApiId) => api.delete(`/agents/${id}`);
 export const getDefaultSession = (id: ApiId) => api.get(`/agents/${id}/default-session`);
 export const setDefaultSession = (id: ApiId, payload: ApiPayload) =>
   api.post(`/agents/${id}/default-session`, payload);
+export const getAgentRuntimeRecords = (id: ApiId, params: QueryParams = {}) =>
+  api.get(`/agents/${id}/runtime-records`, { params });

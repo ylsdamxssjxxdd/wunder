@@ -2012,6 +2012,9 @@
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
+- `GET /wunder/agents/{agent_id}/runtime-records`：智能体运行记录（用户侧）
+  - Query：`days`（可选，1~90，默认 14）、`date`（可选，`YYYY-MM-DD`，作为统计窗口终点与热力图日期）
+  - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`）、`data.daily[]`（按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
 - `PUT /wunder/agents/{agent_id}`：更新智能体
   - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`（可选）
   - 返回：`data`（同智能体详情）
@@ -2741,6 +2744,19 @@
     - 相对路径按桌面程序目录解析，并在保存时自动创建目录。
     - 更新后会同步写入 `WUNDER_TEMPD/config/desktop.settings.json`、运行中的 `ConfigStore` 与 `WorkspaceManager`。
 
+- `POST /wunder/desktop/llm/context_window`
+  - 用途：desktop 本地模式下探测模型上下文窗口（系统设置“自动探测”按钮）。
+  - 请求字段：
+    - `provider`：可选，模型提供商标识（默认按 openai_compatible 归一化处理）。
+    - `base_url`：模型网关地址；为空时按 provider 自动补默认地址。
+    - `api_key`：可选，接口密钥。
+    - `model`：模型名称。
+    - `timeout_s`：可选，探测超时秒数，默认 15。
+  - 返回字段：
+    - `max_context`：探测出的上下文窗口（失败或不支持时为 `null`）。
+    - `message`：探测提示信息。
+  - 兼容：保留 `POST /wunder/admin/llm/context_window` 在 desktop 路由中的等价入口，避免旧版前端 405。
+
 - `GET /wunder/desktop/fs/list`
   - Purpose: local filesystem directory browsing for desktop container path picker.
   - Query:
@@ -2822,6 +2838,7 @@
 ### desktop 暴露路由范围（当前）
 
 - 包含：`auth/chat/chat_ws/core/core_ws/desktop/external_links/workspace/user_tools/user_agents/user_channels/user_world/user_world_ws/mcp/temp_dir`
+- 例外：额外暴露 `POST /wunder/admin/llm/context_window` 作为 desktop 模型上下文探测兼容入口。
 - 不包含：`admin/channel/gateway/cron/a2a` 等管理或多租户路由
 
 ### 前端托管约定

@@ -4,8 +4,14 @@
       <section class="messenger-settings-card">
         <div class="messenger-settings-profile-head">
           <div class="messenger-settings-profile-avatar" :style="profileAvatarStyle">
+            <img
+              v-if="resolvedProfileAvatarImageUrl"
+              class="messenger-settings-profile-avatar-image"
+              :src="resolvedProfileAvatarImageUrl"
+              alt=""
+            />
             <UserAvatarGlyph
-              v-if="resolvedProfileAvatarIcon !== 'initial'"
+              v-else-if="resolvedProfileAvatarIcon !== 'initial'"
               class="messenger-settings-profile-avatar-icon"
               :glyph="resolvedProfileAvatarIcon"
               :size="22"
@@ -28,8 +34,14 @@
             @click="openAvatarDialog"
           >
             <span class="messenger-settings-action-avatar" :style="profileAvatarStyle">
+              <img
+                v-if="resolvedProfileAvatarImageUrl"
+                class="messenger-settings-profile-avatar-image"
+                :src="resolvedProfileAvatarImageUrl"
+                alt=""
+              />
               <UserAvatarGlyph
-                v-if="resolvedProfileAvatarIcon !== 'initial'"
+                v-else-if="resolvedProfileAvatarIcon !== 'initial'"
                 class="messenger-settings-profile-avatar-icon"
                 :glyph="resolvedProfileAvatarIcon"
                 :size="14"
@@ -121,6 +133,7 @@
           <select v-model="sendKey" class="messenger-settings-select">
             <option value="ctrl_enter">Ctrl + Enter</option>
             <option value="enter">Enter</option>
+            <option value="none">{{ t('messenger.settings.sendKeyNone') }}</option>
           </select>
         </div>
         <div class="messenger-settings-row">
@@ -204,8 +217,14 @@
       <div class="messenger-avatar-dialog-body">
         <div class="messenger-avatar-dialog-preview">
           <div class="messenger-settings-profile-avatar messenger-settings-profile-avatar--dialog" :style="avatarDialogPreviewStyle">
+            <img
+              v-if="avatarDialogImageUrl"
+              class="messenger-settings-profile-avatar-image"
+              :src="avatarDialogImageUrl"
+              alt=""
+            />
             <UserAvatarGlyph
-              v-if="avatarDialogIcon !== 'initial'"
+              v-else-if="avatarDialogIcon !== 'initial'"
               class="messenger-settings-profile-avatar-icon"
               :glyph="avatarDialogIcon"
               :size="20"
@@ -217,7 +236,7 @@
         <div class="messenger-settings-label">{{ t('portal.agent.avatarIcon') }}</div>
         <div class="messenger-settings-avatar-icon-grid">
           <button
-            v-for="item in profileAvatarOptions"
+            v-for="item in pagedAvatarOptions"
             :key="item.key"
             class="messenger-settings-avatar-icon-btn"
             :class="{ active: avatarDialogIcon === item.key }"
@@ -226,8 +245,14 @@
             :aria-label="item.label"
             @click="avatarDialogIcon = item.key"
           >
+            <img
+              v-if="item.image"
+              class="messenger-settings-avatar-option-image"
+              :src="item.image"
+              alt=""
+            />
             <UserAvatarGlyph
-              v-if="item.key !== 'initial'"
+              v-else-if="item.key !== 'initial'"
               class="messenger-settings-profile-avatar-icon"
               :glyph="item.key"
               :size="15"
@@ -235,7 +260,28 @@
             <span v-else>{{ avatarDialogInitial }}</span>
           </button>
         </div>
-        <div class="messenger-settings-row messenger-settings-row--compact">
+        <div v-if="avatarPageCount > 1" class="messenger-avatar-dialog-pager">
+          <button
+            class="messenger-settings-action ghost compact"
+            type="button"
+            :disabled="avatarPage <= 1"
+            @click="avatarPage = Math.max(1, avatarPage - 1)"
+          >
+            {{ t('profile.avatar.pagePrev') }}
+          </button>
+          <span class="messenger-settings-hint">
+            {{ t('profile.avatar.pageIndicator', { current: avatarPage, total: avatarPageCount }) }}
+          </span>
+          <button
+            class="messenger-settings-action ghost compact"
+            type="button"
+            :disabled="avatarPage >= avatarPageCount"
+            @click="avatarPage = Math.min(avatarPageCount, avatarPage + 1)"
+          >
+            {{ t('profile.avatar.pageNext') }}
+          </button>
+        </div>
+        <div v-if="!avatarDialogImageUrl" class="messenger-settings-row messenger-settings-row--compact">
           <div class="messenger-settings-label">{{ t('portal.agent.avatarColor') }}</div>
           <div class="messenger-settings-avatar-color-select-wrap">
             <span class="messenger-settings-avatar-color-chip" :style="{ '--avatar-color': avatarDialogColor }"></span>
@@ -273,13 +319,14 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 
-type SendKeyMode = 'enter' | 'ctrl_enter';
+type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
 type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
 type PerformanceMode = 'high' | 'low';
 type ApprovalMode = 'suggest' | 'auto_edit' | 'full_auto';
 type ProfileAvatarOption = {
   key: string;
   label: string;
+  image?: string;
 };
 type AvatarColorOption = {
   value: string;
@@ -288,6 +335,7 @@ type AvatarColorOption = {
 
 const DEFAULT_AVATAR_ICON = 'initial';
 const DEFAULT_AVATAR_COLOR = '#3b82f6';
+const AVATAR_PAGE_SIZE = 24;
 const AVATAR_COLOR_LABEL_KEY_BY_HEX: Record<string, string> = {
   '#f97316': 'profile.avatar.color.sunset',
   '#ef4444': 'profile.avatar.color.coral',
@@ -365,9 +413,15 @@ const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)))
 const avatarDialogVisible = ref(false);
 const avatarDialogIcon = ref(DEFAULT_AVATAR_ICON);
 const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
+const avatarPage = ref(1);
 
 const normalizeSendKey = (value: unknown): SendKeyMode =>
-  String(value || '').trim().toLowerCase() === 'enter' ? 'enter' : 'ctrl_enter';
+  (() => {
+    const text = String(value || '').trim().toLowerCase();
+    if (text === 'enter') return 'enter';
+    if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
+    return 'ctrl_enter';
+  })();
 
 const normalizeThemePalette = (value: unknown): ThemePalette => {
   const text = String(value || '').trim().toLowerCase();
@@ -476,12 +530,37 @@ const resolvedProfileAvatarColor = computed(() => {
   return color || DEFAULT_AVATAR_COLOR;
 });
 
+const resolveAvatarOptionImage = (key: unknown): string => {
+  const normalized = String(key || '').trim();
+  if (!normalized) return '';
+  const matched = props.profileAvatarOptions.find((item) => item.key === normalized);
+  return String(matched?.image || '').trim();
+};
+
+const resolvedProfileAvatarImageUrl = computed(() =>
+  resolveAvatarOptionImage(resolvedProfileAvatarIcon.value)
+);
+
+const avatarDialogImageUrl = computed(() => resolveAvatarOptionImage(avatarDialogIcon.value));
+
+const avatarPageCount = computed(() =>
+  Math.max(1, Math.ceil(Math.max(0, props.profileAvatarOptions.length) / AVATAR_PAGE_SIZE))
+);
+
+const pagedAvatarOptions = computed(() => {
+  const page = Math.min(Math.max(avatarPage.value, 1), avatarPageCount.value);
+  const start = (page - 1) * AVATAR_PAGE_SIZE;
+  return props.profileAvatarOptions.slice(start, start + AVATAR_PAGE_SIZE);
+});
+
 const profileAvatarStyle = computed(() => ({
-  background: resolvedProfileAvatarColor.value
+  background: resolvedProfileAvatarImageUrl.value ? 'transparent' : resolvedProfileAvatarColor.value
 }));
 
 const avatarDialogPreviewStyle = computed(() => ({
-  background: avatarDialogColor.value || DEFAULT_AVATAR_COLOR
+  background: avatarDialogImageUrl.value
+    ? 'transparent'
+    : avatarDialogColor.value || DEFAULT_AVATAR_COLOR
 }));
 
 const avatarColorOptions = computed<AvatarColorOption[]>(() =>
@@ -505,9 +584,33 @@ const avatarDialogInitial = computed(() => {
   return profileInitial.value;
 });
 
+const resolveAvatarPageByKey = (key: string): number => {
+  const normalized = String(key || '').trim();
+  if (!normalized) return 1;
+  const index = props.profileAvatarOptions.findIndex((item) => item.key === normalized);
+  if (index < 0) return 1;
+  return Math.floor(index / AVATAR_PAGE_SIZE) + 1;
+};
+
+watch(
+  () => props.profileAvatarOptions,
+  () => {
+    avatarPage.value = Math.min(Math.max(avatarPage.value, 1), avatarPageCount.value);
+  },
+  { immediate: true }
+);
+
+watch(avatarDialogIcon, (value) => {
+  const targetPage = resolveAvatarPageByKey(String(value || ''));
+  if (targetPage !== avatarPage.value) {
+    avatarPage.value = targetPage;
+  }
+});
+
 const openAvatarDialog = () => {
   avatarDialogIcon.value = resolvedProfileAvatarIcon.value || DEFAULT_AVATAR_ICON;
   avatarDialogColor.value = resolvedProfileAvatarColor.value || DEFAULT_AVATAR_COLOR;
+  avatarPage.value = resolveAvatarPageByKey(avatarDialogIcon.value);
   avatarDialogVisible.value = true;
 };
 
@@ -518,6 +621,7 @@ const closeAvatarDialog = () => {
 const resetAvatarDialog = () => {
   avatarDialogIcon.value = DEFAULT_AVATAR_ICON;
   avatarDialogColor.value = avatarColorOptions.value[0]?.value || DEFAULT_AVATAR_COLOR;
+  avatarPage.value = resolveAvatarPageByKey(DEFAULT_AVATAR_ICON);
 };
 
 const applyAvatarDialog = () => {

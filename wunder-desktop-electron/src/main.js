@@ -254,6 +254,7 @@ const configureUpdaterEvents = () => {
 
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
+  autoUpdater.allowPrerelease = true
   autoUpdater.logger = console
 
   autoUpdater.on('checking-for-update', () => {

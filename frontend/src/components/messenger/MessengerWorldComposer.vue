@@ -134,7 +134,7 @@ import { computed, ref } from 'vue';
 
 import { useI18n } from '@/i18n';
 
-type SendKeyMode = 'enter' | 'ctrl_enter';
+type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
 
 const props = withDefaults(
   defineProps<{
@@ -178,13 +178,16 @@ const draftModel = computed({
   get: () => props.draft,
   set: (value: string) => emit('update:draft', String(value || ''))
 });
-const sendShortcutHint = computed(() =>
-  props.sendKey === 'ctrl_enter'
-    ? t('chat.input.sendHintCtrlEnter')
-    : t('chat.input.sendHintEnter')
-);
+const sendShortcutHint = computed(() => {
+  if (props.sendKey === 'ctrl_enter') return t('chat.input.sendHintCtrlEnterAlt');
+  if (props.sendKey === 'enter') return t('chat.input.sendHintEnterAlt');
+  return '';
+});
 const inputPlaceholder = computed(
-  () => `${t('userWorld.input.placeholder')} · ${sendShortcutHint.value}`
+  () =>
+    sendShortcutHint.value
+      ? `${t('userWorld.input.placeholder')} | ${sendShortcutHint.value}`
+      : t('userWorld.input.placeholder')
 );
 
 const resolveKeyboardKeyCode = (event: KeyboardEvent): number =>
