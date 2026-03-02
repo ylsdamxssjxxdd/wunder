@@ -4,6 +4,9 @@
   background: rgba(15, 23, 42, 0.6);
   flex-shrink: 0;
   max-height: min(44vh, 320px);
+  position: relative;
+  z-index: 8;
+  overflow: visible;
 }
 
 .chat-shell .composer-shell {
@@ -572,6 +575,7 @@
 .chat-shell .chat-screenshot-anchor {
   position: relative;
   display: inline-flex;
+  z-index: 40;
 }
 
 .chat-shell .chat-screenshot-toggle {
@@ -594,8 +598,8 @@
 
 .chat-shell .chat-screenshot-menu {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  right: -2px;
+  bottom: calc(100% + 10px);
   min-width: 210px;
   border-radius: 10px;
   border: 1px solid rgba(148, 163, 184, 0.34);
@@ -605,7 +609,10 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 32;
+  max-height: min(264px, calc(100dvh - 180px));
+  overflow-y: auto;
+  z-index: 120;
+  transform-origin: right bottom;
 }
 
 .chat-shell .chat-screenshot-menu-item {
@@ -663,4 +670,3 @@
   opacity: 0.6;
   cursor: not-allowed;
 }
-

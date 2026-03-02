@@ -545,15 +545,52 @@ fn resolve_builtin_skills_root() -> Option<PathBuf> {
 }
 
 fn resolve_skill_top_dir(base_root: &Path, skill_root: &Path) -> Option<String> {
-    let relative = skill_root.strip_prefix(base_root).ok()?;
-    let mut components = relative.components();
-    let first = components.next()?;
-    let value = first.as_os_str().to_string_lossy().trim().to_string();
+    if let Ok(relative) = skill_root.strip_prefix(base_root) {
+        let mut components = relative.components();
+        if let Some(first) = components.next() {
+            let value = first.as_os_str().to_string_lossy().trim().to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+
+    let base_segments = split_skill_path_segments(base_root);
+    let skill_segments = split_skill_path_segments(skill_root);
+    if base_segments.is_empty() || skill_segments.len() <= base_segments.len() {
+        return None;
+    }
+    if !path_segments_has_prefix(&skill_segments, &base_segments) {
+        return None;
+    }
+    let value = skill_segments[base_segments.len()].trim().to_string();
     if value.is_empty() {
         None
     } else {
         Some(value)
     }
+}
+
+fn split_skill_path_segments(path: &Path) -> Vec<String> {
+    normalize_public_path_text(&path.to_string_lossy())
+        .split('/')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn path_segments_has_prefix(full: &[String], prefix: &[String]) -> bool {
+    if prefix.len() > full.len() {
+        return false;
+    }
+    full.iter().zip(prefix.iter()).all(|(left, right)| {
+        if cfg!(windows) {
+            left.eq_ignore_ascii_case(right)
+        } else {
+            left == right
+        }
+    })
 }
 
 fn read_builtin_skill_manifest(skill_root: &Path) -> HashSet<String> {
@@ -2153,7 +2190,13 @@ async fn user_tools_catalog(
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context_for_catalog(&state, &user_id).await;
     let allowed = compute_allowed_tool_names(&resolved.user, &context);
-    let summary = build_user_tools_summary(&user_id, &allowed, &context);
+    let mut summary = build_user_tools_summary(&user_id, &allowed, &context);
+    if is_desktop_mode(&context.config) {
+        summary.mcp_tools.clear();
+        summary.a2a_tools.clear();
+        summary.skills.clear();
+        summary.knowledge_tools.clear();
+    }
     Ok(Json(json!({ "data": summary })))
 }
 

@@ -455,6 +455,7 @@
 - 返回（JSON）：
   - 字段同 `/wunder/user_tools/tools`
 - 说明：用于工具管理页面，返回所有共享工具（不按勾选过滤）。
+- 说明：desktop 本地模式下，该接口的“管理员开放工具”仅返回 `builtin_tools`，`mcp_tools/a2a_tools/skills/knowledge_tools` 统一置空；其余工具通过用户自建与共享入口管理。
 
 ### 4.1.2.21 `/wunder/user_tools/shared_tools`
 

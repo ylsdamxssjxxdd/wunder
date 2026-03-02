@@ -5399,7 +5399,6 @@ const openAgentById = async (agentId: unknown) => {
 const selectAgentForSettings = (agentId: unknown) => {
   agentOverviewMode.value = 'detail';
   selectedAgentId.value = normalizeAgentId(agentId);
-  agentSettingMode.value = 'agent';
 };
 
 const toggleAgentOverviewMode = () => {

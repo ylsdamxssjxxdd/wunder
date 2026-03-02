@@ -657,6 +657,9 @@ const toggleMainDevTools = () => {
 
 const withMainWindow = (handler, fallback) => {
   if (!mainWindow || mainWindow.isDestroyed()) {
+    if (typeof fallback === 'function') {
+      return fallback()
+    }
     return fallback
   }
   return handler(mainWindow)
@@ -899,11 +902,12 @@ if (!gotLock) {
               defaultPath: rawDefaultPath || undefined,
               properties: ['openDirectory', 'createDirectory']
             }),
-          dialog.showOpenDialog({
-            title: 'Select Local Directory',
-            defaultPath: rawDefaultPath || undefined,
-            properties: ['openDirectory', 'createDirectory']
-          })
+          () =>
+            dialog.showOpenDialog({
+              title: 'Select Local Directory',
+              defaultPath: rawDefaultPath || undefined,
+              properties: ['openDirectory', 'createDirectory']
+            })
         )
         if (result?.canceled || !Array.isArray(result?.filePaths) || !result.filePaths.length) {
           return ''

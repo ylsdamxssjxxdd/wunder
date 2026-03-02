@@ -1,6 +1,7 @@
 // 管理端系统提示词模板包：切换启用包、编辑分段提示词文件。
 use crate::config::Config;
 use crate::i18n;
+use crate::services::user_prompt_templates;
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
@@ -13,7 +14,6 @@ use std::sync::Arc;
 
 const DEFAULT_PACK_ID: &str = "default";
 const DEFAULT_PACKS_ROOT: &str = "./data/prompt_templates";
-const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
 
 const SYSTEM_SEGMENTS: &[(&str, &str)] = &[
     ("role", "role.txt"),
@@ -113,42 +113,15 @@ fn resolve_packs_root(config: &Config) -> PathBuf {
     if path.is_absolute() {
         path
     } else {
-        resolve_prompts_root().join(path)
+        user_prompt_templates::resolve_prompts_root().join(path)
     }
 }
 
 fn resolve_pack_root(config: &Config, pack_id: &str) -> PathBuf {
     if pack_id.trim().eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-        return resolve_prompts_root();
+        return user_prompt_templates::resolve_prompts_root();
     }
     resolve_packs_root(config).join(pack_id.trim())
-}
-
-fn resolve_prompts_root() -> PathBuf {
-    let root = std::env::var(PROMPTS_ROOT_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    normalize_prompts_root(root)
-}
-
-fn normalize_prompts_root(root: PathBuf) -> PathBuf {
-    if root.join("prompts").is_dir() {
-        return root;
-    }
-    let looks_like_prompts_dir = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case("prompts"))
-        .unwrap_or(false);
-    if looks_like_prompts_dir && (root.join("zh").is_dir() || root.join("en").is_dir()) {
-        if let Some(parent) = root.parent() {
-            return parent.to_path_buf();
-        }
-    }
-    root
 }
 
 fn resolve_segment_file_name(key: &str) -> Option<&'static str> {
@@ -174,7 +147,7 @@ async fn list_prompt_templates(
     let config = state.config_store.get().await;
     let active = normalize_pack_id(Some(&config.prompt_templates.active));
     let packs_root = resolve_packs_root(&config);
-    let default_root = resolve_prompts_root();
+    let default_root = user_prompt_templates::resolve_prompts_root();
 
     let mut packs = Vec::new();
     packs.push(json!({

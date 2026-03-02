@@ -182,6 +182,43 @@ const resolveErrorMessage = (error: unknown, fallback: string) => {
 
 const resolveLocale = () => (String(language.value || '').toLowerCase().startsWith('en') ? 'en' : 'zh');
 
+const normalizeSegmentKey = (value: unknown) =>
+  String(value || '')
+    .trim()
+    .replace(/\.txt$/i, '')
+    .replace(/\s+/g, '_')
+    .toLowerCase();
+
+const normalizeSegments = (value: unknown): PromptSegment[] => {
+  if (!Array.isArray(value) || !value.length) {
+    return [...DEFAULT_SEGMENTS];
+  }
+  const normalized: PromptSegment[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const raw = (item || {}) as Record<string, unknown>;
+    const key = normalizeSegmentKey(raw.key || raw.id || raw.name || raw.segment || raw.file);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    const file = String(raw.file || `${key}.txt`).trim() || `${key}.txt`;
+    normalized.push({ key, file });
+    seen.add(key);
+  }
+  return normalized.length ? normalized : [...DEFAULT_SEGMENTS];
+};
+
+const resolveTemplateContent = (value: unknown) => {
+  const payload = (value || {}) as Record<string, unknown>;
+  const candidates = [payload.content, payload.text, payload.value, payload.prompt];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      return candidate;
+    }
+  }
+  return '';
+};
+
 const resolveSegmentLabel = (key: string) => {
   switch (String(key || '').trim()) {
     case 'role':
@@ -230,8 +267,7 @@ const loadStatus = async () => {
     const result = await listUserPromptTemplates();
     const data = ((result?.data?.data || {}) as PromptTemplateStatus) || {};
     const nextPacks = Array.isArray(data.packs) && data.packs.length ? data.packs : [{ id: 'default' }];
-    const nextSegments =
-      Array.isArray(data.segments) && data.segments.length ? data.segments : [...DEFAULT_SEGMENTS];
+    const nextSegments = normalizeSegments(data.segments);
     packs.value = nextPacks;
     segments.value = nextSegments;
     activePack.value = String(data.active || 'default').trim() || 'default';
@@ -261,7 +297,7 @@ const loadFile = async () => {
     if (currentSequence !== fileLoadSequence) {
       return;
     }
-    const nextContent = String(data.content || '');
+    const nextContent = resolveTemplateContent(data);
     editorContent.value = nextContent;
     loadedContent.value = nextContent;
     if (selectedPack.value === 'default') {

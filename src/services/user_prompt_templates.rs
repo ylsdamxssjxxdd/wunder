@@ -205,14 +205,51 @@ fn resolve_user_prompt_templates_root(_config: &Config) -> PathBuf {
     }
 }
 
-fn resolve_prompts_root() -> PathBuf {
-    let root = std::env::var(PROMPTS_ROOT_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    normalize_prompts_root(root)
+pub fn resolve_prompts_root() -> PathBuf {
+    for candidate in resolve_prompts_root_candidates() {
+        let normalized = normalize_prompts_root(candidate);
+        if normalized.join("prompts").is_dir() {
+            return normalized;
+        }
+    }
+    normalize_prompts_root(PathBuf::from("."))
+}
+
+fn resolve_prompts_root_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    push_candidate(
+        &mut candidates,
+        std::env::var(PROMPTS_ROOT_ENV)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from),
+    );
+    push_candidate(&mut candidates, std::env::current_dir().ok());
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(app_dir) = exe.parent() {
+            push_candidate(&mut candidates, Some(app_dir.to_path_buf()));
+            push_candidate(&mut candidates, Some(app_dir.join("resources")));
+            if let Some(parent) = app_dir.parent() {
+                push_candidate(&mut candidates, Some(parent.join("Resources")));
+            }
+        }
+    }
+    push_candidate(&mut candidates, Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))));
+    candidates
+}
+
+fn push_candidate(candidates: &mut Vec<PathBuf>, candidate: Option<PathBuf>) {
+    let Some(path) = candidate else {
+        return;
+    };
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    if candidates.iter().any(|item| item == &path) {
+        return;
+    }
+    candidates.push(path);
 }
 
 fn normalize_prompts_root(root: PathBuf) -> PathBuf {

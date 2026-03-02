@@ -1387,6 +1387,7 @@
   flex-shrink: 0;
   overflow: visible;
   position: relative;
+  z-index: 24;
 }
 
 .messenger-world-composer {
@@ -1512,8 +1513,8 @@
 
 .messenger-world-screenshot-menu {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  right: -2px;
+  bottom: calc(100% + 10px);
   min-width: 210px;
   border-radius: 10px;
   border: 1px solid #dce2df;
@@ -1523,7 +1524,10 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 24;
+  max-height: min(264px, calc(100dvh - 180px));
+  overflow-y: auto;
+  z-index: 120;
+  transform-origin: right bottom;
 }
 
 .messenger-world-screenshot-menu-item {
@@ -3661,6 +3665,9 @@
   border-top: 0;
   background: transparent;
   max-height: none;
+  overflow: visible;
+  position: relative;
+  z-index: 24;
 }
 
 .messenger-composer-scope.chat-shell .input-box {
@@ -3764,7 +3771,7 @@
 
 .messenger-composer-scope.chat-shell .chat-screenshot-anchor {
   position: relative;
-  z-index: 20;
+  z-index: 60;
 }
 
 .messenger-composer-scope.chat-shell .chat-screenshot-toggle {
@@ -3773,8 +3780,8 @@
 
 .messenger-composer-scope.chat-shell .chat-screenshot-menu {
   position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  right: -2px;
+  bottom: calc(100% + 10px);
   min-width: 210px;
   border: 1px solid #d7dbe2;
   border-radius: 10px;
@@ -3784,7 +3791,10 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 40;
+  max-height: min(264px, calc(100dvh - 180px));
+  overflow-y: auto;
+  z-index: 120;
+  transform-origin: right bottom;
 }
 
 .messenger-composer-scope.chat-shell .chat-screenshot-menu-item {
@@ -4744,6 +4754,11 @@
 .messenger-tools-pane-host.user-tools-dialog .skill-editor-text {
   color: transparent;
   -webkit-text-fill-color: transparent;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .skill-editor-body:focus-within .skill-editor-text {
+  color: var(--user-tools-text, #2f2f2f);
+  -webkit-text-fill-color: currentColor;
 }
 
 .messenger-dialog.el-dialog {

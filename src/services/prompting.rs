@@ -22,7 +22,6 @@ use tokio::sync::{Mutex as TokioMutex, Notify};
 
 const DEFAULT_CACHE_TTL_S: f64 = 10.0;
 const DEFAULT_CACHE_MAX_ITEMS: usize = 128;
-const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
 const SYSTEM_PROMPT_ROLE_PATH: &str = "prompts/system/role.txt";
 const SYSTEM_PROMPT_ENGINEERING_PATH: &str = "prompts/system/engineering.txt";
 const SYSTEM_PROMPT_TOOLS_PROTOCOL_PATH: &str = "prompts/system/tools_protocol.txt";
@@ -441,7 +440,7 @@ fn resolve_prompt_template_root(config: &Config, template_id: &str) -> PathBuf {
     let root = if root.is_absolute() {
         root
     } else {
-        resolve_prompts_root().join(root)
+        user_prompt_templates::resolve_prompts_root().join(root)
     };
     root.join(template_id.trim())
 }
@@ -728,7 +727,7 @@ fn resolve_prompt_path(path: &Path) -> PathBuf {
     let mut resolved = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        resolve_prompts_root().join(path)
+        user_prompt_templates::resolve_prompts_root().join(path)
     };
     let locale = match i18n::get_language().to_ascii_lowercase() {
         language if language.starts_with("en") => Some("en"),
@@ -794,33 +793,6 @@ fn insert_locale_after_prompts(path: &Path, locale: &str) -> Option<PathBuf> {
         candidate.push(component);
     }
     Some(candidate)
-}
-
-fn resolve_prompts_root() -> PathBuf {
-    let root = std::env::var(PROMPTS_ROOT_ENV)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    normalize_prompts_root(root)
-}
-
-fn normalize_prompts_root(root: PathBuf) -> PathBuf {
-    if root.join("prompts").is_dir() {
-        return root;
-    }
-    let looks_like_prompts_dir = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case("prompts"))
-        .unwrap_or(false);
-    if looks_like_prompts_dir && (root.join("zh").is_dir() || root.join("en").is_dir()) {
-        if let Some(parent) = root.parent() {
-            return parent.to_path_buf();
-        }
-    }
-    root
 }
 
 fn absolute_path_str(path: &Path) -> String {
