@@ -462,27 +462,38 @@ async fn get_agent_runtime_records(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
-    let normalized_agent_id = normalize_agent_id(&agent_id);
-    if normalized_agent_id.is_empty() {
+    let raw_agent_id = agent_id.trim();
+    let is_default_agent = raw_agent_id.eq_ignore_ascii_case("__default__")
+        || raw_agent_id.eq_ignore_ascii_case("default");
+    let normalized_agent_id = if is_default_agent {
+        String::new()
+    } else {
+        normalize_agent_id(&agent_id)
+    };
+    if !is_default_agent && normalized_agent_id.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
         ));
     }
-    let record = state
-        .user_store
-        .get_user_agent_by_id(&normalized_agent_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
-    let access = state
-        .user_store
-        .get_user_agent_access(&user_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.agent_not_found"),
-        ));
+    if !is_default_agent {
+        let record = state
+            .user_store
+            .get_user_agent_by_id(&normalized_agent_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .ok_or_else(|| {
+                error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found"))
+            })?;
+        let access = state
+            .user_store
+            .get_user_agent_access(&user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if !is_agent_allowed(&resolved.user, access.as_ref(), &record) {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                i18n::t("error.agent_not_found"),
+            ));
+        }
     }
 
     let window_days = query
@@ -520,7 +531,11 @@ async fn get_agent_runtime_records(
                 .and_then(Value::as_str)
                 .unwrap_or_default(),
         );
-        if current_agent_id != normalized_agent_id {
+        if is_default_agent {
+            if !current_agent_id.is_empty() {
+                continue;
+            }
+        } else if current_agent_id != normalized_agent_id {
             continue;
         }
 
@@ -682,10 +697,15 @@ async fn get_agent_runtime_records(
         .filter_map(|item| item.get("total_calls").and_then(Value::as_i64))
         .max()
         .unwrap_or(0);
+    let response_agent_id = if is_default_agent {
+        "__default__".to_string()
+    } else {
+        normalized_agent_id.clone()
+    };
 
     Ok(Json(json!({
         "data": {
-            "agent_id": normalized_agent_id,
+            "agent_id": response_agent_id,
             "range": {
                 "days": window_days,
                 "start_date": range_start.format("%Y-%m-%d").to_string(),

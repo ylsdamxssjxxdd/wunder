@@ -1391,7 +1391,7 @@ export default {
   'messenger.agent.runtime.days': 'Window',
   'messenger.agent.runtime.date': 'Heatmap Date',
   'messenger.agent.runtime.loadFailed': 'Failed to load runtime records',
-  'messenger.agent.runtime.unsupported': 'Runtime records are unavailable on this server. Please restart and update the desktop backend.',
+  'messenger.agent.runtime.unsupported': 'Runtime records are unavailable on this server. Please upgrade and restart the backend service.',
   'messenger.agent.runtime.empty': 'No runtime records yet',
   'messenger.agent.runtime.heatmapEmpty': 'No tool calls on this date',
   'messenger.agent.runtime.trendTitle': 'Daily Runtime Trend',

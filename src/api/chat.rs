@@ -1074,13 +1074,27 @@ async fn session_system_prompt(
         .get_chat_session(&resolved.user.user_id, &session_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let workspace_id = resolve_agent_workspace_id(
+        &state,
+        &resolved.user.user_id,
+        record.agent_id.as_deref().or(payload.agent_id.as_deref()),
+        None,
+    );
+    let workspace_root = state
+        .workspace
+        .ensure_user_root(&workspace_id)
+        .unwrap_or_else(|_| state.workspace.root().to_path_buf());
+    let expected_public_workdir = state.workspace.display_path(&workspace_id, &workspace_root);
+    let expected_local_workdir = workspace_root.to_string_lossy().replace('\\', "/");
     let stored_prompt = state
         .workspace
         .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
         .await
         .unwrap_or(None);
     if let Some(prompt) = stored_prompt {
-        return Ok(Json(json!({ "data": { "prompt": prompt } })));
+        if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
+            return Ok(Json(json!({ "data": { "prompt": prompt } })));
+        }
     }
     let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
     let agent_record = fetch_agent_record(
@@ -1599,10 +1613,18 @@ fn resolve_agent_workspace_id(
     agent_id: Option<&str>,
     agent_record: Option<&crate::storage::UserAgentRecord>,
 ) -> String {
+    let default_container_workspace = || {
+        state
+            .workspace
+            .scoped_user_id_by_container(user_id, state.user_store.default_sandbox_container_id())
+    };
     if let Some(record) = agent_record {
         return state
             .workspace
             .scoped_user_id_by_container(user_id, record.sandbox_container_id);
+    }
+    if is_default_agent_alias(agent_id) || agent_id.is_none() {
+        return default_container_workspace();
     }
     if let Some(container_id) = state
         .user_store
@@ -1613,6 +1635,26 @@ fn resolve_agent_workspace_id(
             .scoped_user_id_by_container(user_id, container_id);
     }
     state.workspace.scoped_user_id(user_id, agent_id)
+}
+
+fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
+    let Some(cleaned) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
+}
+
+fn prompt_has_workdir(prompt: &str, public_workdir: &str, local_workdir: &str) -> bool {
+    let cleaned_prompt = prompt.trim();
+    if cleaned_prompt.is_empty() {
+        return false;
+    }
+    let public = public_workdir.trim();
+    if !public.is_empty() && cleaned_prompt.contains(public) {
+        return true;
+    }
+    let local = local_workdir.trim();
+    !local.is_empty() && cleaned_prompt.contains(local)
 }
 
 fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {

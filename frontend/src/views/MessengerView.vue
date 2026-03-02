@@ -821,7 +821,7 @@
                 </div>
 
                 <div v-else-if="agentSettingMode === 'runtime'" class="messenger-chat-settings-block">
-                  <AgentRuntimeRecordsPanel :agent-id="settingsAgentIdForApi" />
+                  <AgentRuntimeRecordsPanel :agent-id="settingsRuntimeAgentIdForApi" />
                 </div>
               </template>
             </template>
@@ -2419,6 +2419,14 @@ const settingsAgentId = computed(() => {
 const settingsAgentIdForApi = computed(() => {
   const value = normalizeAgentId(settingsAgentId.value);
   return value === DEFAULT_AGENT_KEY ? '' : value;
+});
+
+const settingsRuntimeAgentIdForApi = computed(() => {
+  const value = normalizeAgentId(settingsAgentId.value);
+  if (value === DEFAULT_AGENT_KEY) {
+    return '__default__';
+  }
+  return value;
 });
 
 const selectedContact = computed(() =>

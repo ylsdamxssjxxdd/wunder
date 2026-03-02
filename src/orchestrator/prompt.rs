@@ -144,13 +144,25 @@ impl Orchestrator {
         language: Option<&str>,
         agent_prompt: Option<&str>,
     ) -> String {
+        let workdir = self
+            .workspace
+            .ensure_user_root(workspace_id)
+            .unwrap_or_else(|_| self.workspace.root().to_path_buf());
+        let expected_public_workdir = self.workspace.display_path(workspace_id, &workdir);
+        let expected_local_workdir = workdir.to_string_lossy().replace('\\', "/");
         let stored = self
             .workspace
             .load_session_system_prompt_async(user_id, session_id, None)
             .await
             .unwrap_or(None);
         if let Some(prompt) = stored {
-            return prompt;
+            if stored_prompt_matches_workdir(
+                &prompt,
+                &expected_public_workdir,
+                &expected_local_workdir,
+            ) {
+                return prompt;
+            }
         }
         let prompt = self
             .build_system_prompt_with_allowed(
@@ -170,6 +182,19 @@ impl Orchestrator {
             .save_session_system_prompt(user_id, session_id, &prompt, language);
         prompt
     }
+}
+
+fn stored_prompt_matches_workdir(prompt: &str, public_workdir: &str, local_workdir: &str) -> bool {
+    let cleaned_prompt = prompt.trim();
+    if cleaned_prompt.is_empty() {
+        return false;
+    }
+    let public = public_workdir.trim();
+    if !public.is_empty() && cleaned_prompt.contains(public) {
+        return true;
+    }
+    let local = local_workdir.trim();
+    !local.is_empty() && cleaned_prompt.contains(local)
 }
 
 fn select_preferred_tool_name(

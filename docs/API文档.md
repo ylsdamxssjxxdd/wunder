@@ -2015,6 +2015,7 @@
 - `GET /wunder/agents/{agent_id}/runtime-records`：智能体运行记录（用户侧）
   - Query：`days`（可选，1~90，默认 14）、`date`（可选，`YYYY-MM-DD`，作为统计窗口终点与热力图日期）
   - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`）、`data.daily[]`（按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
+  - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）查看通用聊天入口的运行记录
 - `PUT /wunder/agents/{agent_id}`：更新智能体
   - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`（可选）
   - 返回：`data`（同智能体详情）

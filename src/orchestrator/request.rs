@@ -72,6 +72,12 @@ impl Orchestrator {
 
     pub(crate) fn resolve_workspace_id(&self, user_id: &str, agent_id: Option<&str>) -> String {
         let agent_id = agent_id.map(str::trim).filter(|value| !value.is_empty());
+        if agent_id.is_none() || is_default_agent_alias(agent_id) {
+            return self.workspace.scoped_user_id_by_container(
+                user_id,
+                crate::storage::DEFAULT_SANDBOX_CONTAINER_ID,
+            );
+        }
         if let Some(agent_id) = agent_id {
             if let Ok(Some(record)) = self.storage.get_user_agent_by_id(agent_id) {
                 return self
@@ -199,4 +205,11 @@ impl Orchestrator {
             .await;
         self.append_memory_prompt(user_id, prompt, is_admin).await
     }
+}
+
+fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
+    let Some(cleaned) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
 }

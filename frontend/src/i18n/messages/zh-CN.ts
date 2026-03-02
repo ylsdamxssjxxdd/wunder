@@ -1390,7 +1390,7 @@ export default {
   'messenger.agent.runtime.days': '统计周期',
   'messenger.agent.runtime.date': '热力图日期',
   'messenger.agent.runtime.loadFailed': '运行记录加载失败',
-  'messenger.agent.runtime.unsupported': '当前服务暂不支持运行记录，请重启并更新桌面端服务。',
+  'messenger.agent.runtime.unsupported': '当前服务暂不支持运行记录，请升级并重启服务。',
   'messenger.agent.runtime.empty': '暂无运行记录',
   'messenger.agent.runtime.heatmapEmpty': '该日暂无工具调用',
   'messenger.agent.runtime.trendTitle': '日运行趋势',

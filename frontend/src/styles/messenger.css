@@ -2183,6 +2183,8 @@
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  padding-top: 2px;
+  overflow: visible;
 }
 
 .messenger-inline-btn {
