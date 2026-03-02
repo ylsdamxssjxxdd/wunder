@@ -866,6 +866,18 @@ if (!gotLock) {
       ipcMain.handle('wunder:window-is-maximized', () =>
         withMainWindow((window) => window.isMaximized(), false)
       )
+      ipcMain.handle('wunder:window-close-behavior-get', () => sanitizeCloseBehavior(closeBehavior))
+      ipcMain.handle('wunder:window-close-behavior-set', (_event, payload) => {
+        const source =
+          payload && typeof payload === 'object' ? payload.behavior ?? payload.closeBehavior : payload
+        const text = String(source || '')
+          .trim()
+          .toLowerCase()
+        const requested = text === 'hide' ? 'tray' : text
+        const normalized = sanitizeCloseBehavior(requested)
+        saveCloseBehavior(normalized)
+        return sanitizeCloseBehavior(closeBehavior)
+      })
       ipcMain.handle('wunder:window-start-drag', () => false)
       ipcMain.handle('wunder:update-check', () => checkAndDownloadUpdate())
       ipcMain.handle('wunder:update-status', () => getUpdateState())

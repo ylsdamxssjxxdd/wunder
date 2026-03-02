@@ -299,7 +299,8 @@ const resolveEnabledToolOverrides = async () => {
     payload.user_tools,
     payload.shared_tools
   ];
-  const overrides: Record<string, boolean> = {};
+  const overrides: string[] = [];
+  const seen = new Set<string>();
   for (const group of groups) {
     if (!Array.isArray(group)) {
       continue;
@@ -309,7 +310,11 @@ const resolveEnabledToolOverrides = async () => {
       if (!name) {
         continue;
       }
-      overrides[name] = true;
+      if (seen.has(name)) {
+        continue;
+      }
+      seen.add(name);
+      overrides.push(name);
     }
   }
   return overrides;
@@ -321,7 +326,7 @@ const loadPreview = async () => {
     const payload: Record<string, unknown> = {};
     try {
       const toolOverrides = await resolveEnabledToolOverrides();
-      if (Object.keys(toolOverrides).length) {
+      if (toolOverrides.length) {
         payload.tool_overrides = toolOverrides;
       }
     } catch {
@@ -535,7 +540,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
   gap: 10px;
-  min-height: 360px;
+  min-height: 420px;
   width: 100%;
   overflow: hidden;
 }
@@ -598,7 +603,7 @@ onMounted(async () => {
 
 .messenger-prompt-editor {
   flex: 1;
-  min-height: 0;
+  min-height: 280px;
   border-radius: 10px;
   border: 1px solid var(--hula-border);
   background: var(--hula-center-bg);

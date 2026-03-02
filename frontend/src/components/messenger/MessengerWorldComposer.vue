@@ -84,17 +84,40 @@
       >
         <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
       </button>
-      <button
+      <div
         v-if="screenshotSupported"
-        class="messenger-world-tool-btn"
-        type="button"
-        :disabled="uploading"
-        :title="t('chat.attachments.screenshot')"
-        :aria-label="t('chat.attachments.screenshot')"
-        @click="emit('trigger-screenshot')"
+        ref="screenshotMenuAnchorRef"
+        class="messenger-world-tool-anchor messenger-world-tool-anchor--screenshot"
+        :class="{ 'is-open': screenshotMenuVisible }"
       >
-        <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
-      </button>
+        <button
+          class="messenger-world-tool-btn messenger-world-screenshot-toggle"
+          type="button"
+          :class="{ active: screenshotMenuVisible }"
+          :disabled="uploading"
+          :title="t('chat.attachments.screenshot')"
+          :aria-label="t('chat.attachments.screenshot')"
+          :aria-expanded="screenshotMenuVisible"
+          @click.stop.prevent="toggleScreenshotMenu"
+        >
+          <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
+          <i class="fa-solid fa-chevron-down messenger-world-screenshot-caret" aria-hidden="true"></i>
+        </button>
+        <div v-if="screenshotMenuVisible" class="messenger-world-screenshot-menu">
+          <button
+            v-for="option in screenshotCaptureOptions"
+            :key="option.key"
+            class="messenger-world-screenshot-menu-item"
+            type="button"
+            @click="selectScreenshotOption(option)"
+          >
+            <span class="messenger-world-screenshot-menu-item-main">
+              <i :class="[option.icon, 'messenger-world-screenshot-menu-item-icon']" aria-hidden="true"></i>
+              <span>{{ option.label }}</span>
+            </span>
+          </button>
+        </div>
+      </div>
       <div class="messenger-world-tool-anchor messenger-world-tool-anchor--history">
         <button
           class="messenger-world-tool-btn"
@@ -141,11 +164,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
+type ScreenshotCapturePayload = {
+  hideWindow: boolean;
+  region: boolean;
+};
+
+type ScreenshotCaptureOption = ScreenshotCapturePayload & {
+  key: string;
+  icon: string;
+  label: string;
+};
 
 const props = withDefaults(
   defineProps<{
@@ -175,7 +208,7 @@ const emit = defineEmits<{
   'insert-emoji': [emoji: string];
   'trigger-container-pick': [];
   'trigger-upload': [];
-  'trigger-screenshot': [];
+  'trigger-screenshot': [payload: ScreenshotCapturePayload];
   'open-history': [];
   'focus-input': [];
   enter: [event: KeyboardEvent];
@@ -187,6 +220,8 @@ const { t } = useI18n();
 const composerElement = ref<HTMLElement | null>(null);
 const textareaElement = ref<HTMLTextAreaElement | null>(null);
 const uploadInputElement = ref<HTMLInputElement | null>(null);
+const screenshotMenuAnchorRef = ref<HTMLElement | null>(null);
+const screenshotMenuVisible = ref(false);
 
 const draftModel = computed({
   get: () => props.draft,
@@ -203,6 +238,36 @@ const inputPlaceholder = computed(
       ? `${t('userWorld.input.placeholder')} | ${sendShortcutHint.value}`
       : t('userWorld.input.placeholder')
 );
+const screenshotCaptureOptions = computed<ScreenshotCaptureOption[]>(() => [
+  {
+    key: 'full-keep',
+    hideWindow: false,
+    region: false,
+    icon: 'fa-solid fa-expand',
+    label: t('chat.attachments.screenshotOption.fullKeep')
+  },
+  {
+    key: 'full-hide',
+    hideWindow: true,
+    region: false,
+    icon: 'fa-solid fa-expand',
+    label: t('chat.attachments.screenshotOption.fullHide')
+  },
+  {
+    key: 'region-keep',
+    hideWindow: false,
+    region: true,
+    icon: 'fa-solid fa-crop-simple',
+    label: t('chat.attachments.screenshotOption.regionKeep')
+  },
+  {
+    key: 'region-hide',
+    hideWindow: true,
+    region: true,
+    icon: 'fa-solid fa-crop-simple',
+    label: t('chat.attachments.screenshotOption.regionHide')
+  }
+]);
 
 const resolveKeyboardKeyCode = (event: KeyboardEvent): number =>
   Number(
@@ -241,6 +306,68 @@ const handleTextareaKeydown = (event: KeyboardEvent) => {
     emit('enter', event);
   }
 };
+
+const closeScreenshotMenu = () => {
+  screenshotMenuVisible.value = false;
+};
+
+const toggleScreenshotMenu = () => {
+  if (!props.screenshotSupported || props.uploading) return;
+  screenshotMenuVisible.value = !screenshotMenuVisible.value;
+};
+
+const selectScreenshotOption = (option: ScreenshotCaptureOption) => {
+  closeScreenshotMenu();
+  emit('trigger-screenshot', {
+    hideWindow: option.hideWindow,
+    region: option.region
+  });
+};
+
+const handleDocumentPointerDown = (event: PointerEvent) => {
+  if (!screenshotMenuVisible.value) return;
+  const anchor = screenshotMenuAnchorRef.value;
+  const target = event.target as Node | null;
+  if (!anchor || !target || !anchor.contains(target)) {
+    closeScreenshotMenu();
+  }
+};
+
+const handleDocumentKeydown = (event: KeyboardEvent) => {
+  if (!screenshotMenuVisible.value || event.key !== 'Escape') return;
+  event.preventDefault();
+  closeScreenshotMenu();
+};
+
+onMounted(() => {
+  if (typeof document === 'undefined') return;
+  document.addEventListener('pointerdown', handleDocumentPointerDown);
+  document.addEventListener('keydown', handleDocumentKeydown, true);
+});
+
+onBeforeUnmount(() => {
+  if (typeof document === 'undefined') return;
+  document.removeEventListener('pointerdown', handleDocumentPointerDown);
+  document.removeEventListener('keydown', handleDocumentKeydown, true);
+});
+
+watch(
+  () => props.uploading,
+  (uploading) => {
+    if (uploading) {
+      closeScreenshotMenu();
+    }
+  }
+);
+
+watch(
+  () => props.screenshotSupported,
+  (supported) => {
+    if (!supported) {
+      closeScreenshotMenu();
+    }
+  }
+);
 
 const getComposerElement = (): HTMLElement | null => composerElement.value;
 const getTextareaElement = (): HTMLTextAreaElement | null => textareaElement.value;

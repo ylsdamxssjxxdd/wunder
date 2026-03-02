@@ -56,7 +56,12 @@
             {{ selectedModel.key || t('desktop.system.modelUnnamed') }}
           </div>
           <div class="desktop-system-settings-actions">
-            <el-button class="desktop-system-settings-btn" size="small" @click="setCurrentAsDefault">
+            <el-button
+              class="desktop-system-settings-btn"
+              size="small"
+              :loading="savingModel"
+              @click="setCurrentAsDefault"
+            >
               {{ setCurrentDefaultLabel }}
             </el-button>
             <el-button
@@ -655,19 +660,27 @@ const selectModel = (uid: string) => {
   selectedModelUid.value = uid;
 };
 
-const setCurrentAsDefault = () => {
+const setCurrentAsDefault = async () => {
   const current = selectedModel.value;
   if (!current) return;
+  if (savingModel.value) return;
   const key = current.key.trim();
   if (!key) {
     ElMessage.warning(t('desktop.system.modelKeyRequired'));
     return;
   }
+  const previousDefaultModel = defaultModel.value;
+  const previousDefaultEmbeddingModel = defaultEmbeddingModel.value;
   const modelType = normalizeModelType(current.model_type);
   if (modelType === 'embedding') {
     defaultEmbeddingModel.value = key;
   } else {
     defaultModel.value = key;
+  }
+  const saved = await saveModelSettings();
+  if (!saved) {
+    defaultModel.value = previousDefaultModel;
+    defaultEmbeddingModel.value = previousDefaultEmbeddingModel;
   }
 };
 
@@ -923,18 +936,18 @@ const saveLanSettings = async () => {
   }
 };
 
-const saveModelSettings = async () => {
+const saveModelSettings = async (): Promise<boolean> => {
   const models: Record<string, Record<string, unknown>> = {};
 
   for (const row of modelRows.value) {
     const key = row.key.trim();
     if (!key) {
       ElMessage.warning(t('desktop.system.modelKeyRequired'));
-      return;
+      return false;
     }
     if (models[key]) {
       ElMessage.warning(t('desktop.system.modelKeyDuplicate', { key }));
-      return;
+      return false;
     }
     models[key] = buildModelPayload(row);
   }
@@ -946,11 +959,11 @@ const saveModelSettings = async () => {
   );
   if (!currentDefaultModel) {
     ElMessage.warning(t('desktop.system.defaultModelRequired'));
-    return;
+    return false;
   }
   if (!models[currentDefaultModel]) {
     ElMessage.warning(t('desktop.system.defaultModelMissing'));
-    return;
+    return false;
   }
 
   const defaultModelConfig = models[currentDefaultModel] || {};
@@ -958,7 +971,7 @@ const saveModelSettings = async () => {
   const defaultModelName = String(defaultModelConfig.model || '').trim();
   if (!defaultBaseUrl || !defaultModelName) {
     ElMessage.warning(t('desktop.system.defaultModelConfigRequired'));
-    return;
+    return false;
   }
 
   const currentDefaultEmbedding = findDefaultModelKeyByType(
@@ -968,11 +981,11 @@ const saveModelSettings = async () => {
   );
   if (embeddingModelRows.value.length > 0 && !currentDefaultEmbedding) {
     ElMessage.warning(t('desktop.system.defaultEmbeddingModelRequired'));
-    return;
+    return false;
   }
   if (currentDefaultEmbedding && !models[currentDefaultEmbedding]) {
     ElMessage.warning(t('desktop.system.defaultEmbeddingModelMissing'));
-    return;
+    return false;
   }
 
   savingModel.value = true;
@@ -987,9 +1000,11 @@ const saveModelSettings = async () => {
     writeDefaultEmbeddingModel(currentDefaultEmbedding);
     applySettingsData(data);
     ElMessage.success(t('desktop.common.saveSuccess'));
+    return true;
   } catch (error) {
     console.error(error);
     ElMessage.error(t('desktop.common.saveFailed'));
+    return false;
   } finally {
     savingModel.value = false;
   }

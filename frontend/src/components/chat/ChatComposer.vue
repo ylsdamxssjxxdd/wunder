@@ -93,17 +93,40 @@
         >
           <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
         </button>
-        <button
+        <div
           v-if="desktopScreenshotSupported"
-          class="messenger-world-tool-btn"
-          type="button"
-          :title="t('chat.attachments.screenshot')"
-          :aria-label="t('chat.attachments.screenshot')"
-          :disabled="attachmentBusy > 0"
-          @click="captureDesktopScreenshotAttachment"
+          ref="screenshotMenuAnchorRef"
+          class="messenger-world-tool-anchor chat-screenshot-anchor"
+          :class="{ 'is-open': screenshotMenuVisible }"
         >
-          <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
-        </button>
+          <button
+            class="messenger-world-tool-btn chat-screenshot-toggle"
+            type="button"
+            :class="{ active: screenshotMenuVisible }"
+            :title="t('chat.attachments.screenshot')"
+            :aria-label="t('chat.attachments.screenshot')"
+            :aria-expanded="screenshotMenuVisible"
+            :disabled="attachmentBusy > 0"
+            @click.stop.prevent="toggleScreenshotMenu"
+          >
+            <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
+            <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
+          </button>
+          <div v-if="screenshotMenuVisible" class="chat-screenshot-menu">
+            <button
+              v-for="option in screenshotCaptureOptions"
+              :key="option.key"
+              class="chat-screenshot-menu-item"
+              type="button"
+              @click="selectScreenshotCaptureOption(option)"
+            >
+              <span class="chat-screenshot-menu-item-main">
+                <i :class="[option.icon, 'chat-screenshot-menu-item-icon']" aria-hidden="true"></i>
+                <span>{{ option.label }}</span>
+              </span>
+            </button>
+          </div>
+        </div>
       </div>
       <textarea
         v-model="inputText"
@@ -172,17 +195,39 @@
         >
           <i class="fa-solid fa-paperclip input-icon" aria-hidden="true"></i>
         </button>
-        <button
+        <div
           v-if="desktopScreenshotSupported"
-          class="input-icon-btn screenshot-btn"
-          type="button"
-          :title="t('chat.attachments.screenshot')"
-          :aria-label="t('chat.attachments.screenshot')"
-          :disabled="attachmentBusy > 0"
-          @click="captureDesktopScreenshotAttachment"
+          ref="screenshotMenuAnchorRef"
+          class="chat-screenshot-anchor"
         >
-          <i class="fa-solid fa-camera input-icon" aria-hidden="true"></i>
-        </button>
+          <button
+            class="input-icon-btn screenshot-btn chat-screenshot-toggle"
+            type="button"
+            :title="t('chat.attachments.screenshot')"
+            :aria-label="t('chat.attachments.screenshot')"
+            :aria-expanded="screenshotMenuVisible"
+            :class="{ active: screenshotMenuVisible }"
+            :disabled="attachmentBusy > 0"
+            @click.stop.prevent="toggleScreenshotMenu"
+          >
+            <i class="fa-solid fa-camera input-icon" aria-hidden="true"></i>
+            <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
+          </button>
+          <div v-if="screenshotMenuVisible" class="chat-screenshot-menu">
+            <button
+              v-for="option in screenshotCaptureOptions"
+              :key="option.key"
+              class="chat-screenshot-menu-item"
+              type="button"
+              @click="selectScreenshotCaptureOption(option)"
+            >
+              <span class="chat-screenshot-menu-item-main">
+                <i :class="[option.icon, 'chat-screenshot-menu-item-icon']" aria-hidden="true"></i>
+                <span>{{ option.label }}</span>
+              </span>
+            </button>
+          </div>
+        </div>
         <button
           class="input-icon-btn send-btn"
           type="button"
@@ -214,7 +259,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { ElMessage } from 'element-plus';
 
 import { convertChatAttachment } from '@/api/chat';
 import {
@@ -224,6 +269,7 @@ import {
   type ComposerDraftAttachment
 } from '@/components/chat/composerDraftCache';
 import { useI18n } from '@/i18n';
+import { pickScreenshotRegionFromDataUrl } from '@/utils/screenshotRegionPicker';
 
 const props = defineProps({
   loading: {
@@ -269,6 +315,8 @@ const worldCommandAnchorRef = ref<HTMLElement | null>(null);
 const worldCommandPanelVisible = ref(false);
 const worldCommandAnchorHovered = ref(false);
 const worldCommandPanelHovered = ref(false);
+const screenshotMenuAnchorRef = ref<HTMLElement | null>(null);
+const screenshotMenuVisible = ref(false);
 const caretPosition = ref(0);
 const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
@@ -298,6 +346,14 @@ type DesktopScreenshotBridge = {
   captureScreenshot?: (
     options?: { hideWindow?: boolean }
   ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
+};
+
+type ScreenshotCaptureOption = {
+  key: string;
+  hideWindow: boolean;
+  region: boolean;
+  icon: string;
+  label: string;
 };
 
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
@@ -396,6 +452,36 @@ const getDesktopScreenshotBridge = (): DesktopScreenshotBridge | null => {
   return candidate;
 };
 const desktopScreenshotSupported = computed(() => Boolean(getDesktopScreenshotBridge()));
+const screenshotCaptureOptions = computed<ScreenshotCaptureOption[]>(() => [
+  {
+    key: 'full-keep',
+    hideWindow: false,
+    region: false,
+    icon: 'fa-solid fa-expand',
+    label: t('chat.attachments.screenshotOption.fullKeep')
+  },
+  {
+    key: 'full-hide',
+    hideWindow: true,
+    region: false,
+    icon: 'fa-solid fa-expand',
+    label: t('chat.attachments.screenshotOption.fullHide')
+  },
+  {
+    key: 'region-keep',
+    hideWindow: false,
+    region: true,
+    icon: 'fa-solid fa-crop-simple',
+    label: t('chat.attachments.screenshotOption.regionKeep')
+  },
+  {
+    key: 'region-hide',
+    hideWindow: true,
+    region: true,
+    icon: 'fa-solid fa-crop-simple',
+    label: t('chat.attachments.screenshotOption.regionHide')
+  }
+]);
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
@@ -605,6 +691,11 @@ const handleInputKeydown = async (event) => {
     await handleEnterKeydown(event);
     return;
   }
+  if (event.key === 'Escape' && screenshotMenuVisible.value) {
+    event.preventDefault();
+    closeScreenshotMenu();
+    return;
+  }
   if (props.worldStyle) {
     return;
   }
@@ -750,6 +841,7 @@ const resetInputHeight = () => {
 
 const triggerUpload = () => {
   if (!uploadInputRef.value) return;
+  closeScreenshotMenu();
   uploadInputRef.value.value = '';
   uploadInputRef.value.click();
 };
@@ -866,28 +958,29 @@ const clearAttachments = () => {
   attachments.value = [];
 };
 
-const pickScreenshotCaptureMode = async (): Promise<boolean | null> => {
-  try {
-    await ElMessageBox.confirm(
-      t('chat.attachments.screenshotModePrompt'),
-      t('chat.attachments.screenshotModeTitle'),
-      {
-        type: 'info',
-        confirmButtonText: t('chat.attachments.screenshotModeHide'),
-        cancelButtonText: t('chat.attachments.screenshotModeKeep'),
-        distinguishCancelAndClose: true
-      }
-    );
-    return true;
-  } catch (action) {
-    if (action === 'cancel') {
-      return false;
-    }
-    return null;
-  }
+const closeScreenshotMenu = () => {
+  screenshotMenuVisible.value = false;
 };
 
-const captureDesktopScreenshotAttachment = async () => {
+const toggleScreenshotMenu = () => {
+  if (attachmentBusy.value > 0) {
+    ElMessage.warning(t('chat.attachments.busy'));
+    return;
+  }
+  closeWorldCommandPanel();
+  screenshotMenuVisible.value = !screenshotMenuVisible.value;
+};
+
+const appendFileNameSuffix = (fileName: string, suffix: string): string => {
+  const normalized = String(fileName || '').trim();
+  if (!normalized) return `screenshot${suffix}.png`;
+  const dotIndex = normalized.lastIndexOf('.');
+  if (dotIndex <= 0) return `${normalized}${suffix}`;
+  return `${normalized.slice(0, dotIndex)}${suffix}${normalized.slice(dotIndex)}`;
+};
+
+const captureDesktopScreenshotAttachment = async (option: ScreenshotCaptureOption) => {
+  closeScreenshotMenu();
   const bridge = getDesktopScreenshotBridge();
   if (!bridge || typeof bridge.captureScreenshot !== 'function') {
     ElMessage.warning(t('chat.attachments.screenshotUnavailable'));
@@ -897,25 +990,32 @@ const captureDesktopScreenshotAttachment = async () => {
     ElMessage.warning(t('chat.attachments.busy'));
     return;
   }
-  const hideWindow = await pickScreenshotCaptureMode();
-  if (hideWindow === null) {
-    return;
-  }
-
   attachmentBusy.value += 1;
   try {
-    const result = await bridge.captureScreenshot({ hideWindow });
+    const result = await bridge.captureScreenshot({ hideWindow: option.hideWindow });
     if (!result || result.ok === false) {
       throw new Error(
         String(result?.message || t('chat.attachments.screenshotFailed')).trim() ||
           t('chat.attachments.screenshotFailed')
       );
     }
-    const dataUrl = String(result.dataUrl || '').trim();
+    let dataUrl = String(result.dataUrl || '').trim();
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
       throw new Error(t('chat.attachments.screenshotFailed'));
     }
-    const name = String(result.name || '').trim() || `screenshot-${Date.now()}.png`;
+    let name = String(result.name || '').trim() || `screenshot-${Date.now()}.png`;
+    if (option.region) {
+      const cropped = await pickScreenshotRegionFromDataUrl(dataUrl, {
+        title: t('chat.attachments.screenshotRegionTitle'),
+        hint: t('chat.attachments.screenshotRegionHint'),
+        cancelText: t('common.cancel')
+      });
+      if (!cropped) {
+        return;
+      }
+      dataUrl = cropped;
+      name = appendFileNameSuffix(name, '-region');
+    }
     const mimeType = String(result.mimeType || '').trim() || 'image/png';
     attachments.value.push({
       id: buildAttachmentId(),
@@ -930,6 +1030,10 @@ const captureDesktopScreenshotAttachment = async () => {
   } finally {
     attachmentBusy.value = Math.max(0, attachmentBusy.value - 1);
   }
+};
+
+const selectScreenshotCaptureOption = async (option: ScreenshotCaptureOption) => {
+  await captureDesktopScreenshotAttachment(option);
 };
 
 const syncWorldComposerHeight = () => {
@@ -986,6 +1090,7 @@ const scheduleWorldCommandPanelClose = () => {
 };
 
 const openWorldCommandPanel = () => {
+  closeScreenshotMenu();
   clearWorldCommandPanelCloseTimer();
   worldCommandPanelVisible.value = true;
 };
@@ -1034,6 +1139,7 @@ const handleWorldCommandAnchorFocusOut = (event: FocusEvent) => {
 
 const sendQuickCommand = async (command: string) => {
   closeWorldCommandPanel();
+  closeScreenshotMenu();
   if (!command) return;
   if (props.loading) {
     if (command === '/stop') {
@@ -1055,6 +1161,7 @@ const sendQuickCommand = async (command: string) => {
 
 const handleSend = async () => {
   if (props.loading) return;
+  closeScreenshotMenu();
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
     return;
   }
@@ -1083,13 +1190,19 @@ const handleSendOrStop = async () => {
 };
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
-  if (!worldCommandPanelVisible.value) return;
-  const anchor = worldCommandAnchorRef.value;
   const target = event.target as Node | null;
-  if (anchor && target && anchor.contains(target)) {
-    return;
+  if (worldCommandPanelVisible.value) {
+    const commandAnchor = worldCommandAnchorRef.value;
+    if (!commandAnchor || !target || !commandAnchor.contains(target)) {
+      closeWorldCommandPanel();
+    }
   }
-  closeWorldCommandPanel();
+  if (screenshotMenuVisible.value) {
+    const screenshotAnchor = screenshotMenuAnchorRef.value;
+    if (!screenshotAnchor || !target || !screenshotAnchor.contains(target)) {
+      closeScreenshotMenu();
+    }
+  }
 };
 
 onMounted(async () => {
@@ -1130,6 +1243,15 @@ watch(
     }
     if (commandMenuIndex.value >= value) {
       commandMenuIndex.value = 0;
+    }
+  }
+);
+
+watch(
+  () => desktopScreenshotSupported.value,
+  (supported) => {
+    if (!supported) {
+      closeScreenshotMenu();
     }
   }
 );

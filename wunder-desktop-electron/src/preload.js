@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
   toggleMaximizeWindow: () => ipcRenderer.invoke('wunder:window-toggle-maximize'),
   closeWindow: () => ipcRenderer.invoke('wunder:window-close'),
   isWindowMaximized: () => ipcRenderer.invoke('wunder:window-is-maximized'),
+  getWindowCloseBehavior: () => ipcRenderer.invoke('wunder:window-close-behavior-get'),
+  setWindowCloseBehavior: (behavior) =>
+    ipcRenderer.invoke('wunder:window-close-behavior-set', { behavior }),
   startWindowDrag: () => ipcRenderer.invoke('wunder:window-start-drag'),
   checkForUpdates: () => ipcRenderer.invoke('wunder:update-check'),
   getUpdateState: () => ipcRenderer.invoke('wunder:update-status'),

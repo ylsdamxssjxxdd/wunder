@@ -40,6 +40,7 @@ use zip::ZipArchive;
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
+const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
 
 #[derive(Default)]
 struct BuiltinSkillCatalog {
@@ -232,7 +233,7 @@ async fn user_skills_get(
     let config = state.config_store.get().await;
     let desktop_mode = is_desktop_mode(&config);
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let builtin_catalog = load_builtin_skill_catalog(&config);
+    let builtin_catalog = load_builtin_skill_catalog(&config, Some(&skill_root));
     let builtin_enabled_set = if desktop_mode {
         resolve_builtin_enabled_set(&config, &builtin_catalog)
     } else {
@@ -299,7 +300,7 @@ async fn user_skills_update(
     let desktop_mode = is_desktop_mode(&config);
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let mut response_config = config.clone();
-    let builtin_catalog = load_builtin_skill_catalog(&config);
+    let builtin_catalog = load_builtin_skill_catalog(&config, Some(&skill_root));
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
@@ -412,7 +413,7 @@ async fn user_skills_update(
         }
     }
     state.user_tool_manager.clear_skill_cache(Some(&user_id));
-    let builtin_catalog = load_builtin_skill_catalog(&response_config);
+    let builtin_catalog = load_builtin_skill_catalog(&response_config, Some(&skill_root));
     let builtin_enabled_set = if desktop_mode {
         resolve_builtin_enabled_set(&response_config, &builtin_catalog)
     } else {
@@ -555,23 +556,70 @@ fn resolve_skill_top_dir(base_root: &Path, skill_root: &Path) -> Option<String> 
     }
 }
 
-fn load_builtin_skill_catalog(config: &Config) -> BuiltinSkillCatalog {
-    let Some(builtin_root) = resolve_builtin_skills_root() else {
-        return BuiltinSkillCatalog::default();
+fn read_builtin_skill_manifest(skill_root: &Path) -> HashSet<String> {
+    let manifest_path = skill_root.join(BUILTIN_SKILLS_MANIFEST_NAME);
+    let Ok(content) = std::fs::read_to_string(&manifest_path) else {
+        return HashSet::new();
     };
+    serde_json::from_str::<Vec<String>>(&content)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn load_builtin_skill_catalog_from_manifest(
+    config: &Config,
+    skill_root: &Path,
+) -> BuiltinSkillCatalog {
+    let dir_names = read_builtin_skill_manifest(skill_root);
+    if dir_names.is_empty() {
+        return BuiltinSkillCatalog::default();
+    }
     let mut scan_config = config.clone();
-    scan_config.skills.paths = vec![builtin_root.to_string_lossy().to_string()];
+    scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
     let mut names = HashSet::new();
-    let mut dir_names = HashSet::new();
     for spec in registry.list_specs() {
-        names.insert(spec.name.clone());
-        if let Some(top_dir) = resolve_skill_top_dir(&builtin_root, &spec.root) {
-            dir_names.insert(top_dir);
+        if let Some(top_dir) = resolve_skill_top_dir(skill_root, &spec.root) {
+            if dir_names.contains(&top_dir) {
+                names.insert(spec.name);
+            }
         }
     }
     BuiltinSkillCatalog { names, dir_names }
+}
+
+fn load_builtin_skill_catalog(config: &Config, skill_root: Option<&Path>) -> BuiltinSkillCatalog {
+    let mut catalog = if let Some(builtin_root) = resolve_builtin_skills_root() {
+        let mut scan_config = config.clone();
+        scan_config.skills.paths = vec![builtin_root.to_string_lossy().to_string()];
+        scan_config.skills.enabled = Vec::new();
+        let registry = load_skills(&scan_config, false, false, false);
+        let mut names = HashSet::new();
+        let mut dir_names = HashSet::new();
+        for spec in registry.list_specs() {
+            names.insert(spec.name.clone());
+            if let Some(top_dir) = resolve_skill_top_dir(&builtin_root, &spec.root) {
+                dir_names.insert(top_dir);
+            }
+        }
+        BuiltinSkillCatalog { names, dir_names }
+    } else {
+        BuiltinSkillCatalog::default()
+    };
+
+    if let Some(skill_root) = skill_root {
+        let manifest_catalog = load_builtin_skill_catalog_from_manifest(config, skill_root);
+        if catalog.names.is_empty() && catalog.dir_names.is_empty() {
+            return manifest_catalog;
+        }
+        catalog.names.extend(manifest_catalog.names);
+        catalog.dir_names.extend(manifest_catalog.dir_names);
+    }
+    catalog
 }
 
 fn is_desktop_mode(config: &Config) -> bool {
@@ -852,7 +900,7 @@ async fn user_skills_file_update(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let builtin_catalog = load_builtin_skill_catalog(&config);
+    let builtin_catalog = load_builtin_skill_catalog(&config, Some(&skill_root));
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
     if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
         return Err(error_response(
@@ -906,7 +954,7 @@ async fn user_skills_delete(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let builtin_catalog = load_builtin_skill_catalog(&config);
+    let builtin_catalog = load_builtin_skill_catalog(&config, Some(&skill_root));
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
     if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
         return Err(error_response(
@@ -1003,7 +1051,7 @@ async fn user_skills_upload(
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let config = state.config_store.get().await;
-    let builtin_catalog = load_builtin_skill_catalog(&config);
+    let builtin_catalog = load_builtin_skill_catalog(&config, Some(&skill_root));
     let cursor = Cursor::new(data);
     let mut archive = ZipArchive::new(cursor)
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, i18n::t("error.zip_invalid")))?;

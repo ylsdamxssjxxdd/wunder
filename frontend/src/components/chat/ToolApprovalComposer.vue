@@ -85,10 +85,12 @@ const detailText = computed(() => {
   flex-direction: column;
   gap: 10px;
   width: 100%;
+  max-height: min(46vh, 340px);
   padding: 12px 14px;
   border: 1px solid var(--messenger-line, rgba(148, 163, 184, 0.25));
   border-radius: 14px;
   background: var(--messenger-surface, #fff);
+  overflow: hidden;
 }
 
 .tool-approval-composer__header {
@@ -103,6 +105,8 @@ const detailText = computed(() => {
   font-size: 13px;
   line-height: 1.6;
   word-break: break-word;
+  max-height: 88px;
+  overflow: auto;
 }
 
 .tool-approval-composer__meta {
@@ -121,7 +125,8 @@ const detailText = computed(() => {
   background: var(--messenger-soft, #f8fafc);
   font-size: 12px;
   line-height: 1.5;
-  max-height: 180px;
+  max-height: 140px;
+  min-height: 56px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
@@ -131,6 +136,10 @@ const detailText = computed(() => {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding-top: 2px;
+  background: var(--messenger-surface, #fff);
 }
 
 .tool-approval-btn {

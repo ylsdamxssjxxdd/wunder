@@ -460,23 +460,25 @@
             </div>
           </button>
 
-          <div class="messenger-block-title">{{ t('messenger.tools.sharedTitle') }}</div>
-          <button
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === 'category:shared' }"
-            type="button"
-            @click="selectToolCategory('shared')"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-share-nodes" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.tools.sharedTitle') }}</span>
+          <template v-if="!desktopLocalMode">
+            <div class="messenger-block-title">{{ t('messenger.tools.sharedTitle') }}</div>
+            <button
+              class="messenger-list-item"
+              :class="{ active: selectedToolEntryKey === 'category:shared' }"
+              type="button"
+              @click="selectToolCategory('shared')"
+            >
+              <div class="messenger-list-avatar"><i class="fa-solid fa-share-nodes" aria-hidden="true"></i></div>
+              <div class="messenger-list-main">
+                <div class="messenger-list-row">
+                  <span class="messenger-list-name">{{ t('messenger.tools.sharedTitle') }}</span>
+                </div>
+                <div class="messenger-list-row">
+                  <span class="messenger-list-preview">{{ t('messenger.tools.sharedDesc') }}</span>
+                </div>
               </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.tools.sharedDesc') }}</span>
-              </div>
-            </div>
-          </button>
+            </button>
+          </template>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'files'">
@@ -968,7 +970,7 @@
                   selectedToolCategory === 'mcp' ||
                   selectedToolCategory === 'skills' ||
                   selectedToolCategory === 'knowledge' ||
-                  selectedToolCategory === 'shared'
+                  (selectedToolCategory === 'shared' && !desktopLocalMode)
                 "
               >
                 <div class="messenger-tools-pane-host user-tools-dialog">
@@ -993,7 +995,7 @@
                     :status="toolPaneStatus"
                     @status="toolPaneStatus = String($event || '')"
                   />
-                  <UserSharedToolsPanel v-show="selectedToolCategory === 'shared'" />
+                  <UserSharedToolsPanel v-if="!desktopLocalMode" v-show="selectedToolCategory === 'shared'" />
                 </div>
               </template>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
@@ -1104,6 +1106,7 @@
                 :language-label="currentLanguageLabel"
                 :send-key="messengerSendKey"
                 :approval-mode="messengerApprovalMode"
+                :desktop-local-mode="desktopLocalMode"
                 :theme-palette="themeStore.palette"
                 :performance-mode="performanceStore.mode"
                 :ui-font-size="uiFontSize"
@@ -1623,7 +1626,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
+import { ElLoading, ElMessage } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits } from '@/api/auth';
@@ -1686,6 +1689,7 @@ import {
 } from '@/utils/workspaceImagePersistentCache';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { pickScreenshotRegionFromDataUrl } from '@/utils/screenshotRegionPicker';
 import {
   classifyWorldHistoryMessage,
   normalizeWorldHistoryText,
@@ -2050,6 +2054,7 @@ const getDesktopBridge = (): DesktopBridge | null => {
 };
 
 const desktopMode = computed(() => isDesktopModeEnabled());
+const desktopLocalMode = computed(() => desktopMode.value && !isDesktopRemoteAuthMode());
 const settingsLogoutDisabled = computed(
   () => desktopMode.value && !isDesktopRemoteAuthMode()
 );
@@ -2210,6 +2215,40 @@ const activeSessionApproval = computed(() => {
       (item) => String(item?.session_id || '').trim() === sessionId
     ) || null
   );
+});
+
+const pendingApprovalAgentIdSet = computed(() => {
+  const approvals = Array.isArray(chatStore.pendingApprovals) ? chatStore.pendingApprovals : [];
+  const result = new Set<string>();
+  if (!approvals.length) {
+    return result;
+  }
+  const sessionAgentMap = new Map<string, string>();
+  (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).forEach((sessionRaw) => {
+    const session = (sessionRaw || {}) as Record<string, unknown>;
+    const sessionId = String(session?.id || '').trim();
+    if (!sessionId) return;
+    const resolvedAgentId =
+      normalizeAgentId(
+        session?.agent_id || (session?.is_default === true ? DEFAULT_AGENT_KEY : '')
+      ) || DEFAULT_AGENT_KEY;
+    sessionAgentMap.set(sessionId, resolvedAgentId);
+  });
+  approvals.forEach((item) => {
+    const sessionId = String((item as Record<string, unknown>)?.session_id || '').trim();
+    if (!sessionId) return;
+    const fromMap = sessionAgentMap.get(sessionId);
+    if (fromMap) {
+      result.add(fromMap);
+      return;
+    }
+    if (sessionId === String(chatStore.activeSessionId || '').trim()) {
+      result.add(
+        normalizeAgentId(activeAgentId.value || selectedAgentId.value || DEFAULT_AGENT_KEY)
+      );
+    }
+  });
+  return result;
 });
 
 const resolveCurrentUserScope = (): string => String(currentUserId.value || '').trim() || 'guest';
@@ -3936,6 +3975,13 @@ const normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRu
     raw === 'pending_confirmation' ||
     raw === 'awaiting_confirmation' ||
     raw === 'awaiting-confirmation' ||
+    raw === 'awaiting_approval' ||
+    raw === 'awaiting-approval' ||
+    raw === 'approval_pending' ||
+    raw === 'approval-pending' ||
+    raw === 'pending' ||
+    raw === 'waiting' ||
+    raw === 'queued' ||
     raw === 'await_confirm' ||
     raw === 'question' ||
     raw === 'questioning' ||
@@ -3947,9 +3993,7 @@ const normalizeRuntimeState = (state: unknown, pendingQuestion = false): AgentRu
     raw === 'running' ||
     raw === 'executing' ||
     raw === 'processing' ||
-    raw === 'cancelling' ||
-    raw === 'waiting' ||
-    raw === 'queued'
+    raw === 'cancelling'
   ) {
     return 'running';
   }
@@ -3974,6 +4018,9 @@ const setRuntimeStateOverride = (agentId: unknown, state: AgentRuntimeState, ttl
 
 const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
   const key = normalizeAgentId(agentId);
+  if (pendingApprovalAgentIdSet.value.has(key)) {
+    return 'pending';
+  }
   const now = Date.now();
   const override = runtimeStateOverrides.value.get(key);
   if (override && override.expiresAt > now) {
@@ -5930,6 +5977,11 @@ const loadOrgUnits = async () => {
 };
 
 const selectToolCategory = (category: 'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared') => {
+  if (category === 'shared' && desktopLocalMode.value) {
+    selectedToolCategory.value = 'admin';
+    toolPaneStatus.value = '';
+    return;
+  }
   toolPaneStatus.value = '';
   selectedToolCategory.value = category;
 };
@@ -6010,6 +6062,9 @@ const ensureSectionSelection = () => {
   }
 
   if (sessionHub.activeSection === 'tools') {
+    if (desktopLocalMode.value && selectedToolCategory.value === 'shared') {
+      selectedToolCategory.value = 'admin';
+    }
     if (!selectedToolEntryKey.value) {
       selectedToolCategory.value = 'admin';
     }
@@ -6298,27 +6353,6 @@ const uploadWorldFilesToUserContainer = async (files: File[]): Promise<string[]>
   return uploaded;
 };
 
-const pickWorldScreenshotCaptureMode = async (): Promise<boolean | null> => {
-  try {
-    await ElMessageBox.confirm(
-      t('chat.attachments.screenshotModePrompt'),
-      t('chat.attachments.screenshotModeTitle'),
-      {
-        type: 'info',
-        confirmButtonText: t('chat.attachments.screenshotModeHide'),
-        cancelButtonText: t('chat.attachments.screenshotModeKeep'),
-        distinguishCancelAndClose: true
-      }
-    );
-    return true;
-  } catch (action) {
-    if (action === 'cancel') {
-      return false;
-    }
-    return null;
-  }
-};
-
 const screenshotDataUrlToFile = (dataUrl: string, fileName: string, mimeTypeHint = ''): File => {
   const normalizedDataUrl = String(dataUrl || '').trim();
   const commaIndex = normalizedDataUrl.indexOf(',');
@@ -6339,7 +6373,22 @@ const screenshotDataUrlToFile = (dataUrl: string, fileName: string, mimeTypeHint
   return new File([bytes], fileName, { type: mimeType });
 };
 
-const captureWorldScreenshotFile = async (hideWindow: boolean): Promise<File> => {
+const appendScreenshotFileNameSuffix = (fileName: string, suffix: string): string => {
+  const normalized = String(fileName || '').trim();
+  if (!normalized) return `screenshot${suffix}.png`;
+  const dotIndex = normalized.lastIndexOf('.');
+  if (dotIndex <= 0) return `${normalized}${suffix}`;
+  return `${normalized.slice(0, dotIndex)}${suffix}${normalized.slice(dotIndex)}`;
+};
+
+type WorldScreenshotCaptureOption = {
+  hideWindow?: boolean;
+  region?: boolean;
+};
+
+const captureWorldScreenshotData = async (
+  hideWindow: boolean
+): Promise<{ dataUrl: string; fileName: string; mimeType: string }> => {
   const bridge = getDesktopBridge();
   if (!bridge || typeof bridge.captureScreenshot !== 'function') {
     throw new Error(t('chat.attachments.screenshotUnavailable'));
@@ -6351,7 +6400,11 @@ const captureWorldScreenshotFile = async (hideWindow: boolean): Promise<File> =>
   }
   const fileName = String(result.name || '').trim() || `screenshot-${Date.now()}.png`;
   const mimeType = String(result.mimeType || '').trim() || 'image/png';
-  return screenshotDataUrlToFile(String(result.dataUrl || ''), fileName, mimeType);
+  const dataUrl = String(result.dataUrl || '').trim();
+  if (!dataUrl.startsWith('data:image/')) {
+    throw new Error(t('chat.attachments.screenshotFailed'));
+  }
+  return { dataUrl, fileName, mimeType };
 };
 
 const triggerWorldUpload = () => {
@@ -6362,20 +6415,37 @@ const triggerWorldUpload = () => {
   uploadInput.click();
 };
 
-const triggerWorldScreenshot = async () => {
+const triggerWorldScreenshot = async (option?: WorldScreenshotCaptureOption) => {
   if (!isWorldConversationActive.value || worldUploading.value) return;
   if (!worldDesktopScreenshotSupported.value) {
     ElMessage.warning(t('chat.attachments.screenshotUnavailable'));
     return;
   }
   closeWorldAttachmentPanels();
-  const hideWindow = await pickWorldScreenshotCaptureMode();
-  if (hideWindow === null) {
-    return;
-  }
+  const hideWindow = option?.hideWindow === true;
+  const region = option?.region === true;
   worldUploading.value = true;
   try {
-    const screenshotFile = await captureWorldScreenshotFile(hideWindow);
+    const captured = await captureWorldScreenshotData(hideWindow);
+    let finalDataUrl = captured.dataUrl;
+    let finalFileName = captured.fileName;
+    if (region) {
+      const croppedDataUrl = await pickScreenshotRegionFromDataUrl(captured.dataUrl, {
+        title: t('chat.attachments.screenshotRegionTitle'),
+        hint: t('chat.attachments.screenshotRegionHint'),
+        cancelText: t('common.cancel')
+      });
+      if (!croppedDataUrl) {
+        return;
+      }
+      finalDataUrl = croppedDataUrl;
+      finalFileName = appendScreenshotFileNameSuffix(captured.fileName, '-region');
+    }
+    const screenshotFile = screenshotDataUrlToFile(
+      finalDataUrl,
+      finalFileName,
+      captured.mimeType
+    );
     const uploaded = await uploadWorldFilesToUserContainer([screenshotFile]);
     if (!uploaded.length) {
       throw new Error(t('workspace.upload.failed'));

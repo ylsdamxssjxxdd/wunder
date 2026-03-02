@@ -131,7 +131,8 @@
           <div
             v-for="tool in activeTools"
             :key="tool.name"
-            class="tool-item tool-item-dual"
+            class="tool-item"
+            :class="isLocalMode ? 'tool-item-single' : 'tool-item-dual'"
             tabindex="0"
             role="button"
             @click="openToolDetail(tool)"
@@ -146,7 +147,7 @@
                 />
                 <span>{{ t('userTools.action.enable') }}</span>
               </label>
-              <label class="tool-check" @click.stop>
+              <label v-if="!isLocalMode" class="tool-check" @click.stop>
                 <input
                   type="checkbox"
                   :checked="isToolShared(tool)"
@@ -166,7 +167,8 @@
     <el-dialog
       v-model="mcpModalVisible"
       class="user-tools-dialog user-tools-subdialog"
-      width="640px"
+      width="min(640px, calc(100vw - 32px))"
+      top="4vh"
       :show-close="false"
       :close-on-click-modal="false"
       append-to-body
@@ -248,7 +250,8 @@
     <el-dialog
       v-model="importModalVisible"
       class="user-tools-dialog user-tools-subdialog"
-      width="640px"
+      width="min(640px, calc(100vw - 32px))"
+      top="4vh"
       :show-close="false"
       :close-on-click-modal="false"
       append-to-body
@@ -282,7 +285,8 @@
     <el-dialog
       v-model="toolDetailVisible"
       class="user-tools-dialog user-tools-subdialog"
-      width="640px"
+      width="min(640px, calc(100vw - 32px))"
+      top="4vh"
       :show-close="false"
       append-to-body
     >
@@ -322,6 +326,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserMcpServers, fetchUserMcpTools, saveUserMcpServers } from '@/api/userTools';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 
@@ -366,6 +371,7 @@ const toolDetail = ref(null);
 
 const activeServer = computed(() => servers.value[selectedIndex.value] || null);
 const activeTools = computed(() => toolsByIndex.value[selectedIndex.value] || []);
+const isLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
 const hasConnected = computed(() =>
   toolsByIndex.value.some((tools) => Array.isArray(tools) && tools.length > 0)
 );
@@ -597,7 +603,11 @@ const saveServers = async () => {
         auth: server.auth || '',
         tool_specs: Array.isArray(server.tool_specs) ? server.tool_specs : [],
         allow_tools: Array.isArray(server.allow_tools) ? server.allow_tools : [],
-        shared_tools: Array.isArray(server.shared_tools) ? server.shared_tools : [],
+        shared_tools: isLocalMode.value
+          ? []
+          : Array.isArray(server.shared_tools)
+          ? server.shared_tools
+          : [],
         enabled: server.enabled !== false
       }))
     };
@@ -967,7 +977,9 @@ const openToolDetail = (tool) => {
     server.enabled !== false ? t('userTools.mcp.meta.serverEnabled') : t('userTools.mcp.meta.serverDisabled')
   );
   metaParts.push(isToolEnabled(tool) ? t('common.enabled') : t('common.disabled'));
-  metaParts.push(isToolShared(tool) ? t('userTools.shared.on') : t('userTools.shared.off'));
+  if (!isLocalMode.value) {
+    metaParts.push(isToolShared(tool) ? t('userTools.shared.on') : t('userTools.shared.off'));
+  }
   toolDetail.value = {
     title: tool.name || t('userTools.mcp.tool.detailTitle'),
     meta: metaParts.join(' · '),

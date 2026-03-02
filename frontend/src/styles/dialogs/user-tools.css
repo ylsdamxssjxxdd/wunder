@@ -39,6 +39,14 @@
   height: 72vh;
 }
 
+.user-tools-dialog.user-tools-subdialog.el-dialog {
+  max-height: 90vh;
+}
+
+.user-tools-dialog.user-tools-subdialog .el-dialog__body {
+  overflow-y: auto;
+}
+
 .user-tools-dialog .el-dialog__body {
   display: flex;
   flex-direction: column;
@@ -1792,6 +1800,12 @@
 .user-tools-dialog .knowledge-doc-chunk-item:hover {
   background: var(--ui-accent-soft-2);
   border-color: rgba(var(--ui-accent-rgb), 0.32);
+}
+
+.user-tools-dialog .list-item,
+.user-tools-dialog .list-item:hover,
+.user-tools-dialog .list-item.active {
+  box-shadow: none;
 }
 
 .user-tools-dialog .tool-item {

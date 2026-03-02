@@ -380,7 +380,7 @@
             <span>{{ t('common.enable') }}</span>
           </label>
         </div>
-        <div class="form-row">
+        <div v-if="!isLocalMode" class="form-row">
           <label class="checkbox-row">
             <input type="checkbox" v-model="knowledgeForm.shared" />
             <span>{{ t('common.share') }}</span>
@@ -500,6 +500,7 @@ import {
   testUserKnowledge,
   uploadUserKnowledgeFile
 } from '@/api/userTools';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 
@@ -852,7 +853,7 @@ const detailMeta = computed(() => {
       t('knowledge.doc.meta.embedding', { name: activeBase.value.embedding_model })
     );
   }
-  if (activeBase.value.shared) {
+  if (!isLocalMode.value && activeBase.value.shared) {
     parts.push(t('common.shared'));
   }
   return parts.join(' · ');
@@ -884,6 +885,7 @@ const embedActionLabel = computed(() =>
 );
 const embedActionIcon = computed(() => (embeddingActive.value ? 'fa-spinner' : 'fa-cube'));
 const uploadIcon = computed(() => (uploadLoading.value ? 'fa-spinner' : 'fa-upload'));
+const isLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
 const canBatchEmbed = computed(
   () => canSelectChunks.value && selectedChunkCount.value > 0 && !embeddingActive.value
 );
@@ -938,7 +940,7 @@ const buildConfigPayload = () => ({
       name: base.name.trim(),
       description: base.description || '',
       enabled: base.enabled !== false,
-      shared: base.shared === true,
+      shared: isLocalMode.value ? false : base.shared === true,
       base_type: normalizeBaseType(base.base_type),
       embedding_model: base.embedding_model || '',
       chunk_size: base.chunk_size ?? null,
@@ -1108,7 +1110,7 @@ const openKnowledgeModal = (base = null, index = -1) => {
   knowledgeForm.name = base?.name || '';
   knowledgeForm.description = base?.description || '';
   knowledgeForm.enabled = base?.enabled !== false;
-  knowledgeForm.shared = base?.shared === true;
+  knowledgeForm.shared = !isLocalMode.value && base?.shared === true;
   knowledgeForm.base_type = normalizeBaseType(base?.base_type);
   knowledgeForm.embedding_model = base?.embedding_model || '';
   knowledgeForm.chunk_size =
@@ -1156,7 +1158,7 @@ const getKnowledgeFormPayload = () => {
     name: knowledgeForm.name.trim(),
     description: knowledgeForm.description.trim(),
     enabled: knowledgeForm.enabled !== false,
-    shared: knowledgeForm.shared === true,
+    shared: !isLocalMode.value && knowledgeForm.shared === true,
     base_type: baseType,
     embedding_model: isVector ? knowledgeForm.embedding_model.trim() : '',
     chunk_size: isVector ? parseOptionalInt(knowledgeForm.chunk_size) : null,
