@@ -1,3 +1,4 @@
+use crate::channels::adapter::{ChannelAdapter, OutboundContext};
 use crate::channels::types::{
     ChannelAttachment, ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender,
     FeishuConfig,
@@ -6,6 +7,7 @@ use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockDecryptMut, KeyIvInit};
 use aes::Aes256;
 use anyhow::{anyhow, Context, Result};
+use async_trait::async_trait;
 use base64::Engine;
 use futures::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
@@ -41,6 +43,36 @@ const FEISHU_WS_HEADER_SUM: &str = "sum";
 const FEISHU_WS_HEADER_SEQ: &str = "seq";
 const FEISHU_WS_HEADER_BIZ_RT: &str = "biz_rt";
 const FEISHU_WS_SERVICE_ID_QUERY: &str = "service_id";
+
+#[derive(Debug, Default)]
+pub struct FeishuAdapter;
+
+#[async_trait]
+impl ChannelAdapter for FeishuAdapter {
+    fn channel(&self) -> &'static str {
+        FEISHU_CHANNEL
+    }
+
+    async fn send_outbound(&self, context: OutboundContext<'_>) -> Result<()> {
+        let config = context
+            .account_config
+            .feishu
+            .as_ref()
+            .ok_or_else(|| anyhow!("feishu config missing"))?;
+        let _ = send_outbound(context.http, context.outbound, config).await?;
+        if !is_processing_ack_outbound(context.outbound) {
+            if let Some(message_id) = extract_processing_ack_message_id_outbound(context.outbound) {
+                if let Err(err) = delete_message(context.http, &message_id, config).await {
+                    warn!(
+                        "cleanup feishu processing ack failed: account_id={}, message_id={}, error={err}",
+                        context.account.account_id, message_id
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct FeishuLongConnectionEndpoint {
@@ -721,6 +753,28 @@ pub fn extract_inbound_messages(
         ts,
         meta: Some(payload.clone()),
     }])
+}
+
+fn is_processing_ack_outbound(outbound: &ChannelOutboundMessage) -> bool {
+    outbound
+        .meta
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("processing_ack"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn extract_processing_ack_message_id_outbound(outbound: &ChannelOutboundMessage) -> Option<String> {
+    outbound
+        .meta
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("processing_ack_message_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 #[derive(Debug, Clone, Default)]

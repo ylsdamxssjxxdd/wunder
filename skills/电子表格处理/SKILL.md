@@ -1,111 +1,244 @@
 ---
 name: 电子表格处理
-description: "通用电子表格处理技能：面向 .xlsx/.xlsm/.csv/.tsv 的读取、清洗、分析、回写与可视化（含 matplotlib 高质量图表）。"
+description: "分析与可视化优先的电子表格处理技能：面向 .xlsx/.xlsm/.csv/.tsv 的结构体检、聚合分析、图表输出（PNG/SVG）。默认不修复原表。"
 ---
 
+# 核心定位（重要）
+- 本技能默认目标：**分析数据 + 绘制图表**。
+- 默认模式：**只读分析模式（read-only）**，不修改原始表格。
+- 仅当用户明确说“修复/回写/改表”时，才进入修复模式。
+
+# 推荐先用脚本做体检（强烈建议）
+先运行：
+```bash
+python skills/电子表格处理/scripts/spreadsheet_inspector.py <文件路径> --output-json temp_dir/spreadsheet_meta.json
+```
+脚本会自动：
+- 检测文件是否可读、是否疑似加密/损坏/格式不匹配；
+- 输出 sheet 级元信息、列画像、字段角色候选；
+- 给出可执行建议，降低模型在未知结构下的误判风险。
+
+# 一键分析出图脚本（推荐）
+在体检后直接运行：
+```bash
+python skills/电子表格处理/scripts/analysis_chart_runner.py <文件路径> --meta-json temp_dir/spreadsheet_meta.json --out-dir temp_dir
+```
+默认产物：
+- `*_analysis.png`：主看板 PNG
+- `*_analysis.svg`：可编辑矢量图
+- `*_analysis_chart_data.xlsx`：聚合层数据
+- `*_analysis_summary.md`：字段映射、口径与洞察
+
+常用参数：
+```bash
+# 指定 sheet
+--sheet 人员信息
+
+# 手动指定角色字段（逗号分隔）
+--time-col 入职日期
+--category-cols 一级部门,二级部门
+--metric-cols 本月学习时长(小时),本月加班时长(小时)
+
+# TopN 与时间粒度
+--top-n 10
+--period M
+
+# 文本拥挤控制（强烈建议保留默认）
+--max-x-ticks 12
+--label-max-len 12
+```
+
+图表防拥挤策略（analysis_chart_runner 内置）：
+- 时间轴标签过多时自动稀疏采样显示，不再全量挤在一起；
+- 标签自动截断（保留前缀 + `…`）；
+- 点位过多时趋势线自动去掉 marker；
+- 环形图类别过多时自动改为图例展示，避免文字重叠。
+
 # 适用范围
-- 新建或修改电子表格。
-- 读取并分析结构未知或字段命名不统一的数据。
-- 生成统计图、趋势图、占比图、组合图，并导出到图片或回写 Excel。
+- 结构未知或字段命名不统一的电子表格分析。
+- 生成统计摘要、洞察、图表看板（柱状图/折线图/占比图/热力图/散点图）。
+- 输出 `PNG/SVG` 图片与 `chart_data` 聚合表。
 
-# 关键原则
-1. **先元信息，后处理**：先读取表格元信息（sheet、列、类型、缺失、样本），再决定字段映射和计算逻辑。
-2. **字段按“角色”映射，不写死列名**：用 `id_col/time_col/category_cols/metric_cols` 这类角色驱动流程。
-3. **先聚合再出图**：图表引用聚合结果，不直接对明细全量作图。
-4. **可复现**：相同输入与参数，产出应一致。
+# 硬性原则（必须遵守）
+1. 先体检，后分析：先输出元信息，再做图。
+2. 先映射，后计算：先确定字段角色，不写死列名。
+3. 先聚合，后绘图：禁止直接用全量明细作图。
+4. 先结论，后美化：先保证口径正确，再优化视觉。
+5. 可复现：同输入 + 同参数 => 同输出。
 
-# 标准流程（建议照此执行）
-1. 获取元信息（结构体检）。
-2. 建立字段角色映射（用户确认口径）。
-3. 清洗与标准化（类型、缺失、时间、异常值）。
-4. 计算指标与聚合（明细 -> 统计表）。
-5. 绘图（matplotlib）。
-6. 输出（PNG/SVG/Excel）。
-7. 质量校验（口径、范围、空值、可读性）。
+# 机械执行流程（低能力模型也可照做）
 
-# 1) 元信息获取（必须先做）
+## Step 0. 任务判定（30 秒）
+输出并确认以下内容：
+- 任务类型：`分析出图` / `修复回写` / `混合`。
+- 目标文件：输入路径、输出路径。
+- 是否允许修改原表：默认 `否`。
+
+若用户未明确，默认：
+- 只读分析；
+- 输出图表和分析结论，不修改源文件。
+
+## Step 1. 元信息体检（必须）
+至少输出：
+- 文件类型、sheet 列表、行列数。
+- 每列 `dtype/null_ratio/sample`。
+- 候选字段：时间列、分类列、数值列。
+
+最小代码：
 ```python
 from pathlib import Path
 import pandas as pd
 
-def inspect_table(path: str, sheet: str | None = None, sample_n: int = 5):
+def inspect_table(path: str, sheet: str | None = None, nrows: int = 3000):
     p = Path(path)
     if p.suffix.lower() in {".xlsx", ".xlsm"}:
         xls = pd.ExcelFile(path)
-        target_sheet = sheet or xls.sheet_names[0]
-        df = pd.read_excel(path, sheet_name=target_sheet, nrows=2000)
-        meta = {"file_type": p.suffix.lower(), "sheet_names": xls.sheet_names, "active_sheet": target_sheet}
+        active = sheet or xls.sheet_names[0]
+        df = pd.read_excel(path, sheet_name=active, nrows=nrows)
+        meta = {"file_type": p.suffix.lower(), "sheet_names": xls.sheet_names, "active_sheet": active}
     else:
-        df = pd.read_csv(path, nrows=2000)
+        df = pd.read_csv(path, nrows=nrows)
         meta = {"file_type": p.suffix.lower(), "sheet_names": [], "active_sheet": None}
-
     profile = pd.DataFrame({
         "column": df.columns,
         "dtype": [str(t) for t in df.dtypes],
         "null_ratio": df.isna().mean().round(4).values,
-        "sample": [str(df[c].dropna().head(1).iloc[0]) if df[c].dropna().shape[0] else "" for c in df.columns],
+        "sample": [str(df[c].dropna().head(1).iloc[0]) if df[c].notna().any() else "" for c in df.columns],
     })
     return meta, profile
-
-# 用法
-# meta, profile = inspect_table("input.xlsx")
-# print(meta)
-# print(profile)
 ```
 
-# 2) 字段角色映射（通用模板）
-不要直接假设列名；先把“业务字段”映射到“角色字段”。
-
+## Step 2. 字段角色映射（必须）
+先给出角色映射，再分析：
 ```python
 role_map = {
-    "id_col": "...",              # 主键/人员ID/订单号
-    "time_col": "...",            # 日期/月份/时间戳（可选）
-    "category_cols": ["..."],     # 部门/区域/产品线等分类字段
-    "metric_cols": ["..."],       # 需要统计的数值字段
+    "id_col": "...",              # 可选：主键/ID
+    "time_col": "...",            # 可选：日期/月份
+    "category_cols": ["..."],     # 至少 1 个分类维度
+    "metric_cols": ["..."],       # 至少 1 个数值指标
 }
 ```
 
-当字段名不一致时，优先做“候选别名表”，再由用户确认最终映射。
+若列名不一致：
+- 先给候选映射 + 置信度；
+- 低置信度映射（<0.8）先向用户确认再继续。
 
-# 3) 清洗与标准化（通用模板）
+## Step 3. 标准化（最小必要）
+- 时间列：`to_datetime(errors="coerce")`
+- 数值列：`to_numeric(errors="coerce")`
+- 分类列：`fillna("未分类").str.strip()`
+- 不在原表上改，始终 `df.copy()`
+
+## Step 4. 聚合层构建（必须）
+至少构建两层：
+- `by_category`：按主分类汇总指标；
+- `by_time`：若有时间列，按日/周/月汇总趋势。
+
+可选：
+- `pivot_heatmap`：二维透视；
+- `top_n`：TopN 贡献分析。
+
+## Step 5. 图表类型自动决策（推荐）
+按字段类型选图：
+- 分类 + 单指标：柱状图（TopN）
+- 时间 + 单指标：折线图（趋势）
+- 分类占比：饼图/环形图（类别 <= 8）
+- 二维矩阵：热力图
+- 两指标关系：散点图
+
+禁止：
+- 类别 > 20 仍全部画柱图（应改 TopN + Others）
+- 明细点过多直接散点（应采样或聚合）
+
+## Step 6. 绘图与导出
+输出建议：
+- 图片：`PNG + SVG`
+- 数据：`chart_data.xlsx`（仅聚合层）
+- 报告：`summary.md`（口径 + 核心结论）
+
+图表最低规范：
+- 标题、坐标轴、单位齐全；
+- 标签不重叠（旋转/换行/缩短）；
+- 中文字体可显示；
+- 色板统一，避免过饱和。
+
+## Step 7. 质量校验（必须）
+发布前检查：
+- 图表值是否可追溯到聚合表；
+- 占比图总和是否约等于 100%；
+- 趋势图时间是否连续、有序；
+- 是否存在异常值误导（极端值未标注）；
+- 输出文件是否实际生成成功。
+
+## Step 8. 交付格式（固定模板）
+最终答复至少包含：
+1) 字段映射结果  
+2) 统计口径（分母、时间窗口、去重规则）  
+3) 生成文件列表（带路径）  
+4) 3~5 条关键洞察  
+5) 风险与假设（若有）
+
+# 特殊情况/错误处理手册（必须遵守）
+
+## A. 文件打不开/读取失败
+- 先检查路径、后缀、权限。
+- Excel 尝试 `engine="openpyxl"`；CSV 尝试 `encoding="utf-8-sig"` 再 `gbk`。
+- 仍失败：返回“无法读取原因 + 建议下一步”，不要瞎推断。
+
+## B. 列名乱码/中文路径异常
+- 使用 UTF-8 环境；
+- Python 中优先 `Path` 对象，不手写转义路径；
+- 禁止用“????”列名继续分析。
+- 若出现大量 `Unnamed:*` 列，优先运行 `spreadsheet_inspector.py` 与 `analysis_chart_runner.py`，两者内置“标题行自动探测”（可识别首行是标题/说明文本导致的表头偏移）。
+
+## C. 没有时间列
+- 不做趋势图；
+- 改做分类对比 + 占比 + 分布图，并在报告中说明“无时间维度”。
+
+## D. 数值列是字符串（如 `12,345`、`37%`）
+- 先去逗号和 `%` 再 `to_numeric`；
+- 百分比统一转换口径（0~1 或 0~100），并在报告写明。
+
+## E. 类别太多（>20）
+- 默认 Top10 + Others；
+- 或按业务分层（一级部门 -> 二级部门）。
+
+## F. 图表中文乱码
+- 设置字体回退链，如：
+```python
+import matplotlib as mpl
+mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Noto Sans CJK SC", "Arial Unicode MS", "DejaVu Sans"]
+mpl.rcParams["axes.unicode_minus"] = False
+```
+
+## G. 数据太大导致慢/内存高
+- `usecols` 只读必要列；
+- `dtype` 显式指定；
+- CSV 用 `chunksize` 分块聚合；
+- 先抽样做探索，再全量跑最终聚合。
+
+## H. 用户需求模糊
+- 必问 3 件事：时间窗口、核心指标、目标受众（管理层/业务/技术）。
+- 若用户不回复：使用默认口径并明确写出假设。
+
+# 通用代码骨架（分析出图模式）
 ```python
 import pandas as pd
 
 def normalize(df: pd.DataFrame, role_map: dict) -> pd.DataFrame:
     out = df.copy()
-
-    # 时间列
-    t = role_map.get("time_col")
-    if t:
-        out[t] = pd.to_datetime(out[t], errors="coerce")
-
-    # 数值列
+    if role_map.get("time_col"):
+        out[role_map["time_col"]] = pd.to_datetime(out[role_map["time_col"]], errors="coerce")
     for col in role_map.get("metric_cols", []):
-        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
-
-    # 分类列
+        out[col] = pd.to_numeric(out[col], errors="coerce")
     for col in role_map.get("category_cols", []):
         out[col] = out[col].fillna("未分类").astype(str).str.strip()
-
-    # 去重（如果有主键）
-    k = role_map.get("id_col")
-    if k and k in out.columns:
-        out = out.drop_duplicates(subset=[k])
-
     return out
-```
 
-# 4) 聚合（示例）
-```python
-def build_aggregates(df, role_map):
+def build_aggregates(df: pd.DataFrame, role_map: dict):
     cat = role_map["category_cols"][0]
     metric = role_map["metric_cols"][0]
-
-    # 分类汇总
-    by_cat = df.groupby(cat, dropna=False)[metric].sum().reset_index()
-    by_cat = by_cat.sort_values(metric, ascending=False)
-
-    # 时间趋势（若有）
+    by_cat = df.groupby(cat, dropna=False)[metric].sum().reset_index().sort_values(metric, ascending=False)
     by_time = None
     t = role_map.get("time_col")
     if t:
@@ -119,96 +252,16 @@ def build_aggregates(df, role_map):
     return by_cat, by_time
 ```
 
-# 5) matplotlib 高质量图表（详细示例）
-下面示例演示：**渐变柱状图 + 趋势折线图 + 环形占比图 + 热力图**（2x2 面板）。
-
-```python
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import numpy as np
-
-def draw_dashboard(by_cat, by_time, share_df, heat_values, heat_x, heat_y, out_png="dashboard.png"):
-    # 主题（深色风格）
-    plt.style.use("dark_background")
-    mpl.rcParams["figure.dpi"] = 140
-    mpl.rcParams["axes.unicode_minus"] = False
-
-    fig = plt.figure(figsize=(16, 10), constrained_layout=True)
-    gs = fig.add_gridspec(2, 2)
-
-    # 1) 渐变柱状图
-    ax1 = fig.add_subplot(gs[0, 0])
-    x = np.arange(len(by_cat))
-    y = by_cat.iloc[:, 1].to_numpy()
-    colors = plt.cm.viridis(np.linspace(0.2, 0.95, len(y)))
-    bars = ax1.bar(x, y, color=colors, edgecolor="white", linewidth=0.6)
-    ax1.set_title("Top Categories", fontsize=13, fontweight="bold")
-    ax1.set_xticks(x)
-    ax1.set_xticklabels(by_cat.iloc[:, 0].astype(str), rotation=35, ha="right")
-    ax1.grid(axis="y", alpha=0.25, linestyle="--")
-    for b in bars:
-        ax1.text(b.get_x() + b.get_width() / 2, b.get_height(), f"{b.get_height():.0f}",
-                 ha="center", va="bottom", fontsize=8)
-
-    # 2) 趋势折线图（含面积）
-    ax2 = fig.add_subplot(gs[0, 1])
-    if by_time is not None and len(by_time) > 0:
-        xt = np.arange(len(by_time))
-        yt = by_time.iloc[:, 1].to_numpy()
-        ax2.plot(xt, yt, color="#4cc9f0", linewidth=2.6, marker="o")
-        ax2.fill_between(xt, yt, color="#4cc9f0", alpha=0.2)
-        ax2.set_xticks(xt)
-        ax2.set_xticklabels(by_time.iloc[:, 0].astype(str), rotation=35, ha="right")
-    ax2.set_title("Trend", fontsize=13, fontweight="bold")
-    ax2.grid(alpha=0.25, linestyle="--")
-
-    # 3) 环形占比图（Donut）
-    ax3 = fig.add_subplot(gs[1, 0])
-    vals = share_df.iloc[:, 1].to_numpy()
-    labels = share_df.iloc[:, 0].astype(str).to_list()
-    pie_colors = plt.cm.plasma(np.linspace(0.15, 0.9, len(vals)))
-    wedges, texts, autotexts = ax3.pie(
-        vals, labels=labels, autopct="%1.1f%%", startangle=90,
-        colors=pie_colors, pctdistance=0.78, wedgeprops={"width": 0.42, "edgecolor": "black"}
-    )
-    for t in autotexts:
-        t.set_fontsize(8)
-    ax3.set_title("Share", fontsize=13, fontweight="bold")
-
-    # 4) 热力图（二维矩阵）
-    ax4 = fig.add_subplot(gs[1, 1])
-    im = ax4.imshow(heat_values, cmap="magma", aspect="auto")
-    ax4.set_xticks(np.arange(len(heat_x)))
-    ax4.set_xticklabels(heat_x, rotation=35, ha="right")
-    ax4.set_yticks(np.arange(len(heat_y)))
-    ax4.set_yticklabels(heat_y)
-    ax4.set_title("Heatmap", fontsize=13, fontweight="bold")
-    fig.colorbar(im, ax=ax4, fraction=0.046, pad=0.04)
-
-    fig.suptitle("Analytics Dashboard", fontsize=16, fontweight="bold")
-    fig.savefig(out_png, bbox_inches="tight")
-    plt.close(fig)
-```
-
-# 6) 导出建议
-- 图表：同时导出 `PNG + SVG`（汇报 + 二次编辑）。
-- 表格：保留 `raw_data`、`chart_data`、`charts` 三层。
-- 命名：`<主题>_<YYYYMMDD>_v1`，便于版本管理。
-
-# 性能建议（大数据时启用）
-- `usecols` 只读必要列。
-- 明确 `dtype`，减少推断开销。
-- 超大 CSV 用 `chunksize` 分块聚合。
-- Excel 大文件优先“读分析 -> 写结果”两段式，不在明细层做重操作。
-
 # 交付检查清单
-- [ ] 元信息与字段映射已明确（可复查）。
-- [ ] 统计口径有说明（分母/时间窗口/去重规则）。
-- [ ] 图表引用的是聚合层而非明细全列。
-- [ ] 图表标题、轴标签、单位完整。
-- [ ] 输出文件/图片可复现，且无明显异常值误导。
+- [ ] 已明确任务是“分析出图”还是“修复回写”。
+- [ ] 已输出元信息和字段角色映射。
+- [ ] 图表全部来自聚合层而非明细层。
+- [ ] 每张图有标题/轴标签/单位。
+- [ ] 已导出 PNG（推荐同时导出 SVG）。
+- [ ] 已输出口径说明与关键结论。
 
-# 常见失败点
-- 没先做元信息检查，直接假设列名。
-- 口径混用（全量 vs 去重 vs 在岗等）。
-- 图表直接绑明细层，导致卡顿和范围错误。
+# 修复模式声明（非默认）
+仅当用户明确要求“修复统计值/回写 Excel”时启用，且必须：
+1) 先输出差异报告（原值/应值/依据）；  
+2) 再执行回写；  
+3) 保留新文件，不覆盖原始文件。  

@@ -21,6 +21,35 @@ export type DesktopRemoteGatewaySettings = {
   server_base_url: string;
 };
 
+export type DesktopLanMeshSettings = {
+  enabled: boolean;
+  peer_id: string;
+  display_name: string;
+  listen_host: string;
+  listen_port: number;
+  discovery_port: number;
+  discovery_interval_ms: number;
+  peer_ttl_ms: number;
+  allow_subnets: string[];
+  deny_subnets: string[];
+  peer_blacklist: string[];
+  shared_secret: string;
+  max_inbound_dedup: number;
+  relay_http_fallback: boolean;
+  peer_ws_path: string;
+  peer_http_path: string;
+};
+
+export type DesktopLanPeer = {
+  peer_id: string;
+  user_id: string;
+  display_name: string;
+  lan_ip: string;
+  listen_port: number;
+  seen_at: number;
+  capabilities?: string[];
+};
+
 export type DesktopLlmContextProbePayload = {
   provider: string;
   base_url: string;
@@ -42,6 +71,7 @@ export type DesktopSettingsData = {
   supported_languages: string[];
   llm: DesktopLlmConfig;
   remote_gateway: DesktopRemoteGatewaySettings;
+  lan_mesh: DesktopLanMeshSettings;
   updated_at: number;
 };
 
@@ -151,5 +181,10 @@ export const getDesktopSeedJob = (jobId: string) =>
 
 export const controlDesktopSeedJob = (payload: DesktopSeedControlPayload) =>
   desktopApi.post('/wunder/desktop/sync/seed/control', payload, {
+    headers: buildDesktopHeaders()
+  });
+
+export const listDesktopLanPeers = () =>
+  desktopApi.get('/wunder/desktop/lan/peers', {
     headers: buildDesktopHeaders()
   });

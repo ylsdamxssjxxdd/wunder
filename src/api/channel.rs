@@ -1,3 +1,4 @@
+use crate::channels::adapter::{InboundParseContext, InboundVerifyContext};
 use crate::channels::feishu;
 use crate::channels::qqbot;
 use crate::channels::types::{ChannelAccountConfig, WechatConfig, WechatMpConfig};
@@ -874,7 +875,7 @@ async fn channel_webhook(
     Query(query): Query<WebhookQuery>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, Response> {
-    let provider = provider.trim().to_string();
+    let provider = provider.trim().to_ascii_lowercase();
     if provider.is_empty() {
         return Err(error_response(StatusCode::BAD_REQUEST, "missing provider"));
     }
@@ -883,8 +884,35 @@ async fn channel_webhook(
         .clone()
         .or_else(|| header_string(&headers, "x-channel-account"));
     let raw_payload = Some(payload.clone());
-    let messages = parse_channel_messages(payload)?;
-    let messages = apply_overrides(&provider, account_override.as_deref(), messages);
+    let adapter_registry = state.channels.adapter_registry();
+    let mut messages = if let Some(adapter) = adapter_registry.get(&provider) {
+        let verify_context = InboundVerifyContext {
+            provider: &provider,
+            headers: &headers,
+            payload: &payload,
+        };
+        adapter
+            .verify_inbound(verify_context)
+            .await
+            .map_err(|err| error_response(StatusCode::UNAUTHORIZED, &err.to_string()))?;
+        let parse_context = InboundParseContext {
+            provider: &provider,
+            headers: &headers,
+            account_override: account_override.as_deref(),
+            payload: &payload,
+        };
+        match adapter
+            .parse_inbound(parse_context)
+            .await
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?
+        {
+            Some(parsed) => parsed,
+            None => parse_channel_messages(payload)?,
+        }
+    } else {
+        parse_channel_messages(payload)?
+    };
+    messages = apply_overrides(&provider, account_override.as_deref(), messages);
     let result = state
         .channels
         .handle_inbound(&provider, &headers, messages, raw_payload)

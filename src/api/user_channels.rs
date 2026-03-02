@@ -1,4 +1,5 @@
 use crate::api::user_context::resolve_user;
+use crate::channels::catalog;
 use crate::channels::types::{ChannelAccountConfig, FeishuConfig, WechatConfig, WechatMpConfig};
 use crate::i18n;
 use crate::state::AppState;
@@ -21,15 +22,6 @@ const USER_CHANNEL_QQBOT: &str = "qqbot";
 const USER_CHANNEL_WHATSAPP: &str = "whatsapp";
 const USER_CHANNEL_WECHAT: &str = "wechat";
 const USER_CHANNEL_WECHAT_MP: &str = "wechat_mp";
-const USER_CHANNEL_TELEGRAM: &str = "telegram";
-const SUPPORTED_USER_CHANNELS: [&str; 6] = [
-    USER_CHANNEL_FEISHU,
-    USER_CHANNEL_QQBOT,
-    USER_CHANNEL_WHATSAPP,
-    USER_CHANNEL_WECHAT,
-    USER_CHANNEL_WECHAT_MP,
-    USER_CHANNEL_TELEGRAM,
-];
 const DEFAULT_GROUP_PEER_KIND: &str = "group";
 const WILDCARD_PEER_ID: &str = "*";
 
@@ -1238,23 +1230,31 @@ fn resolve_user_channels(channel: Option<&str>) -> Result<Vec<String>, Response>
     if let Some(channel) = channel {
         return Ok(vec![normalize_user_channel(Some(channel))?]);
     }
-    Ok(SUPPORTED_USER_CHANNELS
-        .iter()
-        .map(|item| (*item).to_string())
+    Ok(catalog::user_supported_channel_names()
+        .into_iter()
+        .map(str::to_string)
         .collect())
 }
 
 fn supported_user_channel_items() -> Vec<Value> {
-    SUPPORTED_USER_CHANNELS
-        .iter()
-        .map(|channel| json!({ "channel": channel }))
+    catalog::user_supported_channels()
+        .into_iter()
+        .map(|item| {
+            json!({
+                "channel": item.channel,
+                "display_name": item.display_name,
+                "description": item.description,
+                "webhook_mode": item.webhook_mode,
+                "docs_hint": item.docs_hint,
+            })
+        })
         .collect()
 }
 
 fn is_supported_user_channel(channel: &str) -> bool {
-    SUPPORTED_USER_CHANNELS
-        .iter()
-        .any(|item| item.eq_ignore_ascii_case(channel.trim()))
+    catalog::find_channel(channel)
+        .map(|item| item.user_supported)
+        .unwrap_or(false)
 }
 
 fn list_owned_account_keys(

@@ -1,15 +1,13 @@
+use crate::channels::adapter::OutboundContext;
 use crate::channels::binding::{resolve_binding, BindingResolution};
 use crate::channels::feishu;
 use crate::channels::media::{MediaProcessingResult, MediaProcessor};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
-use crate::channels::qqbot;
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
+use crate::channels::registry::{build_default_channel_adapter_registry, ChannelAdapterRegistry};
 use crate::channels::types::{
     ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig,
 };
-use crate::channels::wechat;
-use crate::channels::wechat_mp;
-use crate::channels::whatsapp_cloud;
 use crate::config::{ChannelRateLimitConfig, Config};
 use crate::core::approval::{
     new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
@@ -164,6 +162,7 @@ pub struct ChannelHub {
     user_store: Arc<UserStore>,
     monitor: Arc<MonitorState>,
     rate_limiter: ChannelRateLimiter,
+    adapter_registry: ChannelAdapterRegistry,
     http: reqwest::Client,
     recent_inbound: Arc<Mutex<HashMap<String, f64>>>,
     pending_approvals: Arc<AsyncMutex<HashMap<String, PendingChannelApprovalEntry>>>,
@@ -186,6 +185,7 @@ impl ChannelHub {
             user_store,
             monitor,
             rate_limiter: ChannelRateLimiter::new(),
+            adapter_registry: build_default_channel_adapter_registry(),
             http: reqwest::Client::new(),
             recent_inbound: Arc::new(Mutex::new(HashMap::new())),
             pending_approvals: Arc::new(AsyncMutex::new(HashMap::new())),
@@ -199,6 +199,10 @@ impl ChannelHub {
             feishu_worker.feishu_long_connection_supervisor_loop().await;
         });
         hub
+    }
+
+    pub fn adapter_registry(&self) -> ChannelAdapterRegistry {
+        self.adapter_registry.clone()
     }
 
     pub async fn handle_inbound(
@@ -1386,147 +1390,29 @@ impl ChannelHub {
             .load_channel_account(&record.channel, &record.account_id, &config)
             .await?;
         let account_cfg = ChannelAccountConfig::from_value(&account.config);
-        if record.channel.trim().eq_ignore_ascii_case("whatsapp") {
-            if let Some(wa_cfg) = account_cfg.whatsapp_cloud.as_ref() {
-                let has_token = wa_cfg
-                    .access_token
-                    .as_deref()
-                    .map(|value| !value.trim().is_empty())
-                    .unwrap_or(false);
-                if has_token {
-                    let outbound: ChannelOutboundMessage =
-                        serde_json::from_value(record.payload.clone())
-                            .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
-                    whatsapp_cloud::send_outbound(&self.http, &outbound, wa_cfg).await?;
-                    self.update_outbox_status(record, "sent", None).await?;
-                    if let Some(session_id) = extract_session_id(&record.payload) {
-                        self.monitor.record_event(
-                            &session_id,
-                            "channel_outbound",
-                            &json!({
-                                "channel": record.channel,
-                                "account_id": record.account_id,
-                                "outbox_id": record.outbox_id,
-                            }),
-                        );
-                    }
-                    return Ok(());
-                }
+        let outbound: ChannelOutboundMessage = serde_json::from_value(record.payload.clone())
+            .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
+        if let Some(adapter) = self.adapter_registry.get(&record.channel) {
+            let context = OutboundContext {
+                http: &self.http,
+                account: &account,
+                account_config: &account_cfg,
+                outbound: &outbound,
+            };
+            adapter.send_outbound(context).await?;
+            self.update_outbox_status(record, "sent", None).await?;
+            if let Some(session_id) = extract_session_id(&record.payload) {
+                self.monitor.record_event(
+                    &session_id,
+                    "channel_outbound",
+                    &json!({
+                        "channel": record.channel,
+                        "account_id": record.account_id,
+                        "outbox_id": record.outbox_id,
+                    }),
+                );
             }
-        }
-        if record
-            .channel
-            .trim()
-            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
-        {
-            if let Some(feishu_cfg) = account_cfg.feishu.as_ref() {
-                let processing_ack = is_processing_ack_payload(&record.payload);
-                let processing_ack_message_id = extract_processing_ack_message_id(&record.payload);
-                let outbound: ChannelOutboundMessage =
-                    serde_json::from_value(record.payload.clone())
-                        .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
-                feishu::send_outbound(&self.http, &outbound, feishu_cfg).await?;
-                self.update_outbox_status(record, "sent", None).await?;
-                if let Some(session_id) = extract_session_id(&record.payload) {
-                    self.monitor.record_event(
-                        &session_id,
-                        "channel_outbound",
-                        &json!({
-                            "channel": record.channel,
-                            "account_id": record.account_id,
-                            "outbox_id": record.outbox_id,
-                        }),
-                    );
-                }
-                if !processing_ack {
-                    if let Some(ack_message_id) = processing_ack_message_id.as_deref() {
-                        if let Err(err) =
-                            feishu::delete_message(&self.http, ack_message_id, feishu_cfg).await
-                        {
-                            warn!(
-                                "cleanup feishu processing ack failed: account_id={}, outbox_id={}, message_id={}, error={err}",
-                                record.account_id, record.outbox_id, ack_message_id
-                            );
-                        }
-                    }
-                }
-                return Ok(());
-            }
-        }
-        if record
-            .channel
-            .trim()
-            .eq_ignore_ascii_case(qqbot::QQBOT_CHANNEL)
-        {
-            if let Some(qqbot_cfg) = account_cfg.qqbot.as_ref() {
-                let outbound: ChannelOutboundMessage =
-                    serde_json::from_value(record.payload.clone())
-                        .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
-                qqbot::send_outbound(&self.http, &outbound, qqbot_cfg).await?;
-                self.update_outbox_status(record, "sent", None).await?;
-                if let Some(session_id) = extract_session_id(&record.payload) {
-                    self.monitor.record_event(
-                        &session_id,
-                        "channel_outbound",
-                        &json!({
-                            "channel": record.channel,
-                            "account_id": record.account_id,
-                            "outbox_id": record.outbox_id,
-                        }),
-                    );
-                }
-                return Ok(());
-            }
-        }
-        if record
-            .channel
-            .trim()
-            .eq_ignore_ascii_case(wechat::WECHAT_CHANNEL)
-        {
-            if let Some(wechat_cfg) = account_cfg.wechat.as_ref() {
-                let outbound: ChannelOutboundMessage =
-                    serde_json::from_value(record.payload.clone())
-                        .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
-                wechat::send_outbound(&self.http, &outbound, wechat_cfg).await?;
-                self.update_outbox_status(record, "sent", None).await?;
-                if let Some(session_id) = extract_session_id(&record.payload) {
-                    self.monitor.record_event(
-                        &session_id,
-                        "channel_outbound",
-                        &json!({
-                            "channel": record.channel,
-                            "account_id": record.account_id,
-                            "outbox_id": record.outbox_id,
-                        }),
-                    );
-                }
-                return Ok(());
-            }
-        }
-        if record
-            .channel
-            .trim()
-            .eq_ignore_ascii_case(wechat_mp::WECHAT_MP_CHANNEL)
-        {
-            if let Some(wechat_mp_cfg) = account_cfg.wechat_mp.as_ref() {
-                let outbound: ChannelOutboundMessage =
-                    serde_json::from_value(record.payload.clone())
-                        .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
-                wechat_mp::send_outbound(&self.http, &outbound, wechat_mp_cfg).await?;
-                self.update_outbox_status(record, "sent", None).await?;
-                if let Some(session_id) = extract_session_id(&record.payload) {
-                    self.monitor.record_event(
-                        &session_id,
-                        "channel_outbound",
-                        &json!({
-                            "channel": record.channel,
-                            "account_id": record.account_id,
-                            "outbox_id": record.outbox_id,
-                        }),
-                    );
-                }
-                return Ok(());
-            }
+            return Ok(());
         }
         let outbound_url = account_cfg
             .outbound_url
@@ -2841,26 +2727,6 @@ fn extract_session_id(payload: &Value) -> Option<String> {
         .and_then(|meta| meta.get("session_id"))
         .and_then(Value::as_str)
         .map(|value| value.to_string())
-}
-
-fn is_processing_ack_payload(payload: &Value) -> bool {
-    payload
-        .get("meta")
-        .and_then(Value::as_object)
-        .and_then(|meta| meta.get("processing_ack"))
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-fn extract_processing_ack_message_id(payload: &Value) -> Option<String> {
-    payload
-        .get("meta")
-        .and_then(Value::as_object)
-        .and_then(|meta| meta.get("processing_ack_message_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
 }
 
 fn truncate_text(text: &str, max: usize) -> String {

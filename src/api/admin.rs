@@ -1,8 +1,8 @@
 // 管理端 API：配置更新、监控查询、知识库与技能管理等。
 use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_filename_stem};
 use crate::auth;
+use crate::channels::feishu;
 use crate::channels::types::ChannelAccountConfig;
-use crate::channels::{feishu, ChannelMessage};
 use crate::config::{
     normalize_chat_stream_channel, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType, LspConfig, McpServerConfig,
@@ -29,9 +29,8 @@ use crate::vector_knowledge;
 use crate::{
     org_units,
     storage::{
-        ChannelAccountRecord, ChannelBindingRecord, ExternalLinkRecord, GatewayNodeRecord,
-        GatewayNodeTokenRecord, ListChannelUserBindingsQuery, OrgUnitRecord, StorageBackend,
-        UserAccountRecord,
+        ChannelAccountRecord, ExternalLinkRecord, GatewayNodeRecord, GatewayNodeTokenRecord,
+        ListChannelUserBindingsQuery, OrgUnitRecord, StorageBackend, UserAccountRecord,
     },
 };
 use anyhow::anyhow;
@@ -97,33 +96,20 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/wunder/admin/channels/accounts",
-            get(admin_channel_accounts).post(admin_channel_accounts_upsert),
-        )
-        .route(
-            "/wunder/admin/channels/accounts/{channel}/{account_id}",
-            delete(admin_channel_accounts_delete),
+            get(admin_channel_accounts),
         )
         .route(
             "/wunder/admin/channels/bindings",
-            get(admin_channel_bindings).post(admin_channel_bindings_upsert),
-        )
-        .route(
-            "/wunder/admin/channels/bindings/{binding_id}",
-            delete(admin_channel_bindings_delete),
+            get(admin_channel_bindings),
         )
         .route(
             "/wunder/admin/channels/user_bindings",
-            get(admin_channel_user_bindings).post(admin_channel_user_bindings_upsert),
-        )
-        .route(
-            "/wunder/admin/channels/user_bindings/{channel}/{account_id}/{peer_kind}/{peer_id}",
-            delete(admin_channel_user_bindings_delete),
+            get(admin_channel_user_bindings),
         )
         .route(
             "/wunder/admin/channels/sessions",
             get(admin_channel_sessions),
         )
-        .route("/wunder/admin/channels/test", post(admin_channel_test))
         .route("/wunder/admin/gateway/status", get(admin_gateway_status))
         .route(
             "/wunder/admin/gateway/presence",
@@ -6439,41 +6425,9 @@ struct ChannelAccountQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChannelAccountUpsertRequest {
-    channel: String,
-    account_id: String,
-    #[serde(default)]
-    config: Option<Value>,
-    #[serde(default)]
-    status: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
 struct ChannelBindingQuery {
     #[serde(default)]
     channel: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelBindingUpsertRequest {
-    #[serde(default)]
-    binding_id: Option<String>,
-    #[serde(default)]
-    channel: Option<String>,
-    #[serde(default)]
-    account_id: Option<String>,
-    #[serde(default)]
-    peer_kind: Option<String>,
-    #[serde(default)]
-    peer_id: Option<String>,
-    #[serde(default)]
-    agent_id: Option<String>,
-    #[serde(default)]
-    tool_overrides: Option<Vec<String>>,
-    #[serde(default)]
-    priority: Option<i64>,
-    #[serde(default)]
-    enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -6495,15 +6449,6 @@ struct ChannelUserBindingQuery {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChannelUserBindingUpsertRequest {
-    channel: String,
-    account_id: String,
-    peer_kind: String,
-    peer_id: String,
-    user_id: String,
-}
-
-#[derive(Debug, Deserialize)]
 struct ChannelSessionQuery {
     #[serde(default)]
     channel: Option<String>,
@@ -6517,11 +6462,6 @@ struct ChannelSessionQuery {
     offset: Option<i64>,
     #[serde(default)]
     limit: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChannelTestRequest {
-    message: ChannelMessage,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -6640,79 +6580,6 @@ async fn admin_channel_accounts(
     Ok(Json(json!({ "data": { "items": items } })))
 }
 
-async fn admin_channel_accounts_upsert(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ChannelAccountUpsertRequest>,
-) -> Result<Json<Value>, Response> {
-    let channel = payload.channel.trim().to_string();
-    let config_value = payload.config.unwrap_or(Value::Object(Default::default()));
-    let mut account_id = payload.account_id.trim().to_string();
-    if channel.eq_ignore_ascii_case(feishu::FEISHU_CHANNEL) && account_id.is_empty() {
-        account_id = ChannelAccountConfig::from_value(&config_value)
-            .feishu
-            .and_then(|config| config.app_id)
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_default();
-    }
-    if channel.is_empty() || account_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let now = now_ts();
-    let existing = state
-        .storage
-        .get_channel_account(&channel, &account_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let created_at = existing
-        .as_ref()
-        .map(|record| record.created_at)
-        .unwrap_or(now);
-    let record = ChannelAccountRecord {
-        channel: channel.clone(),
-        account_id: account_id.clone(),
-        config: config_value,
-        status: payload.status.unwrap_or_else(|| "active".to_string()),
-        created_at,
-        updated_at: now,
-    };
-    state
-        .storage
-        .upsert_channel_account(&record)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let runtime = build_channel_account_runtime(state.storage.as_ref(), &record);
-    Ok(Json(json!({ "data": {
-        "channel": record.channel,
-        "account_id": record.account_id,
-        "config": record.config,
-        "status": record.status,
-        "created_at": record.created_at,
-        "updated_at": record.updated_at,
-        "runtime": runtime,
-    }})))
-}
-
-async fn admin_channel_accounts_delete(
-    State(state): State<Arc<AppState>>,
-    AxumPath((channel, account_id)): AxumPath<(String, String)>,
-) -> Result<Json<Value>, Response> {
-    let channel = channel.trim().to_string();
-    let account_id = account_id.trim().to_string();
-    if channel.is_empty() || account_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let affected = state
-        .storage
-        .delete_channel_account(&channel, &account_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": { "deleted": affected } })))
-}
-
 async fn admin_channel_bindings(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ChannelBindingQuery>,
@@ -6741,64 +6608,6 @@ async fn admin_channel_bindings(
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "items": items } })))
-}
-
-async fn admin_channel_bindings_upsert(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ChannelBindingUpsertRequest>,
-) -> Result<Json<Value>, Response> {
-    let binding_id = payload
-        .binding_id
-        .unwrap_or_else(|| format!("bind_{}", Uuid::new_v4().simple()));
-    let now = now_ts();
-    let record = ChannelBindingRecord {
-        binding_id: binding_id.clone(),
-        channel: payload.channel.unwrap_or_default(),
-        account_id: payload.account_id.unwrap_or_default(),
-        peer_kind: payload.peer_kind,
-        peer_id: payload.peer_id,
-        agent_id: payload.agent_id,
-        tool_overrides: payload.tool_overrides.unwrap_or_default(),
-        priority: payload.priority.unwrap_or(0),
-        enabled: payload.enabled.unwrap_or(true),
-        created_at: now,
-        updated_at: now,
-    };
-    state
-        .storage
-        .upsert_channel_binding(&record)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": {
-        "binding_id": record.binding_id,
-        "channel": record.channel,
-        "account_id": record.account_id,
-        "peer_kind": record.peer_kind,
-        "peer_id": record.peer_id,
-        "agent_id": record.agent_id,
-        "tool_overrides": record.tool_overrides,
-        "priority": record.priority,
-        "enabled": record.enabled,
-        "created_at": record.created_at,
-        "updated_at": record.updated_at,
-    }})))
-}
-
-async fn admin_channel_bindings_delete(
-    State(state): State<Arc<AppState>>,
-    AxumPath(binding_id): AxumPath<String>,
-) -> Result<Json<Value>, Response> {
-    let binding_id = binding_id.trim().to_string();
-    if binding_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let affected = state
-        .storage
-        .delete_channel_binding(&binding_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": { "deleted": affected } })))
 }
 
 async fn admin_channel_user_bindings(
@@ -6832,72 +6641,6 @@ async fn admin_channel_user_bindings(
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "items": items, "total": total } })))
-}
-
-async fn admin_channel_user_bindings_upsert(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ChannelUserBindingUpsertRequest>,
-) -> Result<Json<Value>, Response> {
-    let channel = payload.channel.trim().to_string();
-    let account_id = payload.account_id.trim().to_string();
-    let peer_kind = payload.peer_kind.trim().to_string();
-    let peer_id = payload.peer_id.trim().to_string();
-    let user_id = payload.user_id.trim().to_string();
-    if channel.is_empty()
-        || account_id.is_empty()
-        || peer_kind.is_empty()
-        || peer_id.is_empty()
-        || user_id.is_empty()
-    {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let now = now_ts();
-    let record = crate::storage::ChannelUserBindingRecord {
-        channel,
-        account_id,
-        peer_kind,
-        peer_id,
-        user_id,
-        created_at: now,
-        updated_at: now,
-    };
-    state
-        .storage
-        .upsert_channel_user_binding(&record)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": {
-        "channel": record.channel,
-        "account_id": record.account_id,
-        "peer_kind": record.peer_kind,
-        "peer_id": record.peer_id,
-        "user_id": record.user_id,
-        "created_at": record.created_at,
-        "updated_at": record.updated_at,
-    }})))
-}
-
-async fn admin_channel_user_bindings_delete(
-    State(state): State<Arc<AppState>>,
-    AxumPath((channel, account_id, peer_kind, peer_id)): AxumPath<(String, String, String, String)>,
-) -> Result<Json<Value>, Response> {
-    let channel = channel.trim().to_string();
-    let account_id = account_id.trim().to_string();
-    let peer_kind = peer_kind.trim().to_string();
-    let peer_id = peer_id.trim().to_string();
-    if channel.is_empty() || account_id.is_empty() || peer_kind.is_empty() || peer_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let affected = state
-        .storage
-        .delete_channel_user_binding(&channel, &account_id, &peer_kind, &peer_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": { "deleted": affected } })))
 }
 
 async fn admin_channel_sessions(
@@ -6937,25 +6680,6 @@ async fn admin_channel_sessions(
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "items": items, "total": total } })))
-}
-
-async fn admin_channel_test(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<ChannelTestRequest>,
-) -> Result<Json<Value>, Response> {
-    let provider = payload.message.channel.clone();
-    let headers = AxumHeaderMap::new();
-    let result = state
-        .channels
-        .handle_inbound(&provider, &headers, vec![payload.message], None)
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": {
-        "accepted": result.accepted,
-        "session_ids": result.session_ids,
-        "outbox_ids": result.outbox_ids,
-        "errors": result.errors,
-    }})))
 }
 
 #[derive(Debug, Deserialize)]

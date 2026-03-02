@@ -462,20 +462,9 @@ async fn get_agent_runtime_records(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
-    let raw_agent_id = agent_id.trim();
-    let is_default_agent = raw_agent_id.eq_ignore_ascii_case("__default__")
-        || raw_agent_id.eq_ignore_ascii_case("default");
-    let normalized_agent_id = if is_default_agent {
-        String::new()
-    } else {
-        normalize_agent_id(&agent_id)
-    };
-    if !is_default_agent && normalized_agent_id.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
+    let normalized_agent_id =
+        normalize_agent_id(agent_id.trim().trim_matches('"').trim_matches('\''));
+    let is_default_agent = normalized_agent_id.is_empty();
     if !is_default_agent {
         let record = state
             .user_store

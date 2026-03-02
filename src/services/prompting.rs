@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::i18n;
 use crate::llm::ToolCallMode;
 use crate::schemas::ToolSpec;
+use crate::services::user_prompt_templates;
 use crate::skills::{SkillRegistry, SkillSpec};
 use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs, resolve_tool_name,
@@ -149,7 +150,8 @@ impl PromptComposer {
         config: &Config,
         config_version: u64,
         workspace: &WorkspaceManager,
-        user_id: &str,
+        workspace_id: &str,
+        prompt_owner_user_id: &str,
         workdir: &Path,
         overrides: Option<&Value>,
         allowed_tool_names: &HashSet<String>,
@@ -172,13 +174,14 @@ impl PromptComposer {
             .unwrap_or(0.0);
         let overrides_key = build_overrides_key(overrides);
         let agent_prompt_key = build_prompt_key(agent_prompt);
-        let prompt_template_id = resolve_prompt_template_id(config);
+        let prompt_template_scope = resolve_prompt_template_scope(config, prompt_owner_user_id);
+        let prompt_template_key = build_prompt_template_cache_key(&prompt_template_scope);
         let templates_revision = system_prompt_templates_revision();
         let workdir_key = workdir.to_string_lossy();
         let base_key = format!(
-            "{user_id}|{config_version}|{prompt_template_id}|{templates_revision}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
+            "{workspace_id}|{config_version}|{prompt_template_key}|{templates_revision}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
         );
-        let workspace_version = workspace.get_tree_cache_version(user_id);
+        let workspace_version = workspace.get_tree_cache_version(workspace_id);
         let cache_key = format!("{base_key}|{workspace_version}");
         let now = now_ts();
         if let Some(prompt) = self.get_cached_prompt(&cache_key, now) {
@@ -206,7 +209,7 @@ impl PromptComposer {
 
             if !is_leader {
                 notify.notified().await;
-                let workspace_version = workspace.get_tree_cache_version(user_id);
+                let workspace_version = workspace.get_tree_cache_version(workspace_id);
                 let cache_key = format!("{base_key}|{workspace_version}");
                 let now = now_ts();
                 if let Some(prompt) = self.get_cached_prompt(&cache_key, now) {
@@ -215,7 +218,7 @@ impl PromptComposer {
                 continue;
             }
 
-            let workspace_version = workspace.get_tree_cache_version(user_id);
+            let workspace_version = workspace.get_tree_cache_version(workspace_id);
             let cache_key = format!("{base_key}|{workspace_version}");
             let now = now_ts();
             if let Some(prompt) = self.get_cached_prompt(&cache_key, now) {
@@ -223,7 +226,7 @@ impl PromptComposer {
                 return prompt;
             }
 
-            let tree_snapshot = workspace.get_workspace_tree_snapshot(user_id);
+            let tree_snapshot = workspace.get_workspace_tree_snapshot(workspace_id);
             let workspace_version = tree_snapshot.version;
             let cache_key = format!("{base_key}|{workspace_version}");
             let workspace_tree = tree_snapshot.tree;
@@ -255,7 +258,7 @@ impl PromptComposer {
             let workdir_display = if is_local_runtime_mode(&config.server.mode) {
                 absolute_path_str(workdir)
             } else {
-                workspace.display_path(user_id, workdir)
+                workspace.display_path(workspace_id, workdir)
             };
             let base_skill_specs = skills.list_specs();
             let mut skills_for_prompt = filter_skill_specs(&base_skill_specs, allowed_tool_names);
@@ -270,6 +273,7 @@ impl PromptComposer {
 
             let prompt = build_system_prompt_skeleton(
                 config,
+                &prompt_template_scope,
                 allowed_tool_names,
                 tool_call_mode,
                 &tool_specs,
@@ -369,6 +373,13 @@ impl PromptComposer {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PromptTemplateScope {
+    system_pack_id: String,
+    user_pack_id: Option<String>,
+    owner_user_id: Option<String>,
+}
+
 fn resolve_prompt_template_id(config: &Config) -> String {
     let value = config.prompt_templates.active.trim();
     if value.is_empty() {
@@ -376,6 +387,45 @@ fn resolve_prompt_template_id(config: &Config) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn resolve_prompt_template_scope(
+    config: &Config,
+    prompt_owner_user_id: &str,
+) -> PromptTemplateScope {
+    let system_pack_id = resolve_prompt_template_id(config);
+    let user_pack_id =
+        user_prompt_templates::load_user_active_pack_id(config, prompt_owner_user_id);
+    if user_pack_id.eq_ignore_ascii_case(user_prompt_templates::DEFAULT_PACK_ID) {
+        return PromptTemplateScope {
+            system_pack_id,
+            user_pack_id: None,
+            owner_user_id: None,
+        };
+    }
+    PromptTemplateScope {
+        system_pack_id,
+        user_pack_id: Some(user_pack_id),
+        owner_user_id: Some(prompt_owner_user_id.trim().to_string()),
+    }
+}
+
+fn build_prompt_template_cache_key(scope: &PromptTemplateScope) -> String {
+    let system_pack = scope.system_pack_id.trim();
+    let system_pack = if system_pack.is_empty() {
+        user_prompt_templates::DEFAULT_PACK_ID
+    } else {
+        system_pack
+    };
+    if let Some(user_pack_id) = scope.user_pack_id.as_deref() {
+        let owner = scope
+            .owner_user_id
+            .as_deref()
+            .map(user_prompt_templates::safe_user_prompt_key)
+            .unwrap_or_else(|| "anonymous".to_string());
+        return format!("user:{owner}:{user_pack_id}|system:{system_pack}");
+    }
+    format!("system:{system_pack}")
 }
 
 fn resolve_prompt_template_root(config: &Config, template_id: &str) -> PathBuf {
@@ -410,9 +460,30 @@ fn read_prompt_template_from_pack(config: &Config, template_id: &str, path: &Pat
     read_prompt_template(path)
 }
 
+fn read_prompt_template_from_scope(
+    config: &Config,
+    scope: &PromptTemplateScope,
+    path: &Path,
+) -> String {
+    if let (Some(user_pack_id), Some(owner_user_id)) = (
+        scope.user_pack_id.as_deref(),
+        scope.owner_user_id.as_deref(),
+    ) {
+        let user_pack_root =
+            user_prompt_templates::resolve_user_pack_root(config, owner_user_id, user_pack_id);
+        let user_candidate = user_pack_root.join(path);
+        let (text, exists) = read_prompt_template_with_exists(&user_candidate);
+        if exists {
+            return text;
+        }
+    }
+    read_prompt_template_from_pack(config, &scope.system_pack_id, path)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_system_prompt_skeleton(
     config: &Config,
+    template_scope: &PromptTemplateScope,
     allowed_tool_names: &HashSet<String>,
     tool_call_mode: ToolCallMode,
     tools: &[ToolSpec],
@@ -422,13 +493,11 @@ fn build_system_prompt_skeleton(
     skills: &[SkillSpec],
     agent_prompt: Option<&str>,
 ) -> String {
-    let template_id = resolve_prompt_template_id(config);
-
     let os_name = system_name();
     let date_str = Local::now().format("%Y-%m-%d").to_string();
 
     let role =
-        read_prompt_template_from_pack(config, &template_id, Path::new(SYSTEM_PROMPT_ROLE_PATH));
+        read_prompt_template_from_scope(config, template_scope, Path::new(SYSTEM_PROMPT_ROLE_PATH));
 
     let mut engineering_flags = HashMap::new();
     let is_local = is_local_runtime_mode(&config.server.mode);
@@ -436,9 +505,9 @@ fn build_system_prompt_skeleton(
     engineering_flags.insert("RUNTIME_SERVER".to_string(), !is_local);
     engineering_flags.insert("HAS_PTC".to_string(), include_ptc);
 
-    let engineering_template = read_prompt_template_from_pack(
+    let engineering_template = read_prompt_template_from_scope(
         config,
-        &template_id,
+        template_scope,
         Path::new(SYSTEM_PROMPT_ENGINEERING_PATH),
     );
     let engineering_template = apply_prompt_flags(&engineering_template, &engineering_flags);
@@ -480,9 +549,9 @@ fn build_system_prompt_skeleton(
         tools_flags.insert("HAS_A2UI_TOOL".to_string(), has_a2ui);
         tools_flags.insert("HAS_PLAN_TOOL".to_string(), has_plan);
         tools_flags.insert("HAS_QUESTION_PANEL_TOOL".to_string(), has_question_panel);
-        let tools_template = read_prompt_template_from_pack(
+        let tools_template = read_prompt_template_from_scope(
             config,
-            &template_id,
+            template_scope,
             Path::new(SYSTEM_PROMPT_TOOLS_PROTOCOL_PATH),
         );
         let tools_template = apply_prompt_flags(&tools_template, &tools_flags);
@@ -498,9 +567,9 @@ fn build_system_prompt_skeleton(
         String::new()
     } else {
         let skills_list = render_skill_list(skills);
-        let skills_template = read_prompt_template_from_pack(
+        let skills_template = read_prompt_template_from_scope(
             config,
-            &template_id,
+            template_scope,
             Path::new(SYSTEM_PROMPT_SKILLS_PROTOCOL_PATH),
         );
         render_template(
@@ -512,8 +581,11 @@ fn build_system_prompt_skeleton(
         )
     };
 
-    let memory_template =
-        read_prompt_template_from_pack(config, &template_id, Path::new(SYSTEM_PROMPT_MEMORY_PATH));
+    let memory_template = read_prompt_template_from_scope(
+        config,
+        template_scope,
+        Path::new(SYSTEM_PROMPT_MEMORY_PATH),
+    );
     let memory_block = render_template(
         &memory_template,
         &HashMap::from([(
@@ -535,9 +607,9 @@ fn build_system_prompt_skeleton(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let extra_template = read_prompt_template_from_pack(
+        let extra_template = read_prompt_template_from_scope(
             config,
-            &template_id,
+            template_scope,
             Path::new(SYSTEM_PROMPT_EXTRA_PATH),
         );
         let extra_block = render_template(

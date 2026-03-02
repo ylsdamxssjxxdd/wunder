@@ -1,3 +1,4 @@
+use crate::channels::adapter::{ChannelAdapter, OutboundContext};
 use crate::channels::types::{
     ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender, WechatConfig,
 };
@@ -5,6 +6,7 @@ use aes::cipher::block_padding::Pkcs7;
 use aes::cipher::{BlockDecryptMut, KeyIvInit};
 use aes::Aes256;
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use base64::Engine;
 use quick_xml::events::Event;
 use quick_xml::Reader as XmlReader;
@@ -22,6 +24,25 @@ const TOKEN_REFRESH_LEEWAY_S: u64 = 300;
 const TOKEN_MIN_REUSE_S: u64 = 60;
 const TOKEN_FALLBACK_EXPIRES_S: u64 = 7200;
 const WECHAT_TEXT_MAX_BYTES: usize = 2048;
+
+#[derive(Debug, Default)]
+pub struct WechatAdapter;
+
+#[async_trait]
+impl ChannelAdapter for WechatAdapter {
+    fn channel(&self) -> &'static str {
+        WECHAT_CHANNEL
+    }
+
+    async fn send_outbound(&self, context: OutboundContext<'_>) -> Result<()> {
+        let config = context
+            .account_config
+            .wechat
+            .as_ref()
+            .ok_or_else(|| anyhow!("wechat config missing"))?;
+        send_outbound(context.http, context.outbound, config).await
+    }
+}
 
 #[derive(Debug, Clone)]
 struct CachedToken {

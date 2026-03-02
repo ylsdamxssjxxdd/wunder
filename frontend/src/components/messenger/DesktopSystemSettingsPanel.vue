@@ -278,6 +278,111 @@
       </div>
     </div>
   </section>
+
+  <section v-if="showLanPanel" class="messenger-settings-card desktop-system-settings-panel">
+    <div class="desktop-system-settings-head">
+      <div>
+        <div class="messenger-settings-title">{{ t('desktop.system.lan.title') }}</div>
+        <div class="messenger-settings-subtitle">{{ t('desktop.system.lan.hint') }}</div>
+      </div>
+      <span class="desktop-system-settings-remote-state" :class="{ connected: lanMeshEnabled }">
+        {{ lanMeshEnabled ? t('desktop.system.lan.enabled') : t('desktop.system.lan.disabled') }}
+      </span>
+    </div>
+
+    <div class="desktop-system-settings-section desktop-system-settings-form-grid">
+      <label class="desktop-system-settings-field">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.enabledSwitch') }}</span>
+        <el-switch v-model="lanMeshEnabled" />
+      </label>
+      <label class="desktop-system-settings-field">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.peerId') }}</span>
+        <el-input v-model="lanPeerId" />
+      </label>
+      <label class="desktop-system-settings-field">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.displayName') }}</span>
+        <el-input v-model="lanDisplayName" />
+      </label>
+      <label class="desktop-system-settings-field">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.listenHost') }}</span>
+        <el-input v-model="lanListenHost" />
+      </label>
+      <label class="desktop-system-settings-field">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.listenPort') }}</span>
+        <el-input v-model="lanListenPort" />
+      </label>
+      <label class="desktop-system-settings-field">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.discoveryPort') }}</span>
+        <el-input v-model="lanDiscoveryPort" />
+      </label>
+      <label class="desktop-system-settings-field desktop-system-settings-field--full">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.allowSubnets') }}</span>
+        <el-input
+          v-model="lanAllowSubnetsText"
+          type="textarea"
+          :autosize="{ minRows: 2, maxRows: 6 }"
+          :placeholder="t('desktop.system.lan.cidrPlaceholder')"
+        />
+      </label>
+      <label class="desktop-system-settings-field desktop-system-settings-field--full">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.denySubnets') }}</span>
+        <el-input
+          v-model="lanDenySubnetsText"
+          type="textarea"
+          :autosize="{ minRows: 2, maxRows: 6 }"
+          :placeholder="t('desktop.system.lan.cidrPlaceholder')"
+        />
+      </label>
+      <label class="desktop-system-settings-field desktop-system-settings-field--full">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.peerBlacklist') }}</span>
+        <el-input
+          v-model="lanPeerBlacklistText"
+          type="textarea"
+          :autosize="{ minRows: 2, maxRows: 6 }"
+          :placeholder="t('desktop.system.lan.peerBlacklistPlaceholder')"
+        />
+      </label>
+      <label class="desktop-system-settings-field desktop-system-settings-field--full">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.sharedSecret') }}</span>
+        <el-input v-model="lanSharedSecret" show-password />
+      </label>
+      <div class="desktop-system-settings-actions desktop-system-settings-field--full">
+        <el-button
+          class="desktop-system-settings-btn desktop-system-settings-btn--primary"
+          :loading="savingLan"
+          @click="saveLanSettings"
+        >
+          {{ t('desktop.common.save') }}
+        </el-button>
+        <el-button class="desktop-system-settings-btn" :loading="loadingLanPeers" @click="refreshLanPeers">
+          {{ t('desktop.system.lan.refreshPeers') }}
+        </el-button>
+      </div>
+    </div>
+
+    <div class="desktop-system-settings-section">
+      <div class="desktop-system-settings-section-title">
+        <i class="fa-solid fa-sitemap" aria-hidden="true"></i>
+        <span>{{ t('desktop.system.lan.peerListTitle') }}</span>
+      </div>
+      <div v-if="lanPeers.length" class="desktop-system-settings-model-list desktop-system-settings-peer-list">
+        <div
+          v-for="peer in lanPeers"
+          :key="`${peer.peer_id || ''}-${peer.lan_ip || ''}-${peer.listen_port || ''}`"
+          class="desktop-system-settings-model-item"
+        >
+          <div class="desktop-system-settings-model-item-head">
+            <span class="desktop-system-settings-model-item-name">{{ peer.display_name || peer.user_id || peer.peer_id }}</span>
+            <span class="desktop-system-settings-model-item-type">{{ peer.peer_id }}</span>
+          </div>
+          <div class="desktop-system-settings-model-item-meta">
+            {{ peer.lan_ip }}:{{ peer.listen_port }}
+          </div>
+        </div>
+      </div>
+      <div v-else class="desktop-system-settings-empty">{{ t('desktop.system.lan.peerListEmpty') }}</div>
+    </div>
+  </section>
 </template>
 
 <script setup lang="ts">
@@ -287,8 +392,11 @@ import { useRouter } from 'vue-router';
 
 import {
   fetchDesktopSettings,
+  listDesktopLanPeers,
   probeDesktopLlmContextWindow,
   updateDesktopSettings,
+  type DesktopLanMeshSettings,
+  type DesktopLanPeer,
   type DesktopRemoteGatewaySettings
 } from '@/api/desktop';
 import {
@@ -329,7 +437,7 @@ const EMBEDDING_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_embedding_mo
 
 const props = withDefaults(
   defineProps<{
-    panel?: 'models' | 'remote' | 'all';
+    panel?: 'models' | 'remote' | 'lan' | 'all';
   }>(),
   {
     panel: 'all'
@@ -349,12 +457,26 @@ const modelRows = ref<ModelRow[]>([]);
 const selectedModelUid = ref('');
 const remoteServerBaseUrl = ref('');
 const remoteConnected = ref(false);
+const savingLan = ref(false);
+const loadingLanPeers = ref(false);
+const lanMeshEnabled = ref(false);
+const lanPeerId = ref('');
+const lanDisplayName = ref('');
+const lanListenHost = ref('0.0.0.0');
+const lanListenPort = ref('18661');
+const lanDiscoveryPort = ref('18662');
+const lanAllowSubnetsText = ref('');
+const lanDenySubnetsText = ref('');
+const lanPeerBlacklistText = ref('');
+const lanSharedSecret = ref('');
+const lanPeers = ref<DesktopLanPeer[]>([]);
 let nextModelUid = 1;
 
 const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
 
-const showModelPanel = computed(() => props.panel !== 'remote');
-const showRemotePanel = computed(() => props.panel !== 'models');
+const showModelPanel = computed(() => props.panel === 'all' || props.panel === 'models');
+const showRemotePanel = computed(() => props.panel === 'all' || props.panel === 'remote');
+const showLanPanel = computed(() => props.panel === 'all' || props.panel === 'lan');
 
 const embeddingModelRows = computed(() =>
   modelRows.value.filter((item) => item.model_type === 'embedding')
@@ -679,6 +801,39 @@ const refreshRemoteConnected = () => {
   remoteConnected.value = isDesktopRemoteAuthMode() && Boolean(override);
 };
 
+const normalizeLineList = (value: string): string[] =>
+  String(value || '')
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+const formatLineList = (items: string[] | undefined): string =>
+  Array.isArray(items)
+    ? items
+        .map((item) => String(item || '').trim())
+        .filter((item) => item.length > 0)
+        .join('\n')
+    : '';
+
+const parsePositiveInt = (value: string, fallback: number): number => {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const applyLanSettings = (lanMesh: DesktopLanMeshSettings | Record<string, any> | undefined) => {
+  const data = (lanMesh || {}) as Record<string, any>;
+  lanMeshEnabled.value = data.enabled === true;
+  lanPeerId.value = String(data.peer_id || '').trim();
+  lanDisplayName.value = String(data.display_name || '').trim();
+  lanListenHost.value = String(data.listen_host || '0.0.0.0').trim() || '0.0.0.0';
+  lanListenPort.value = String(data.listen_port ?? 18661);
+  lanDiscoveryPort.value = String(data.discovery_port ?? 18662);
+  lanAllowSubnetsText.value = formatLineList(data.allow_subnets as string[]);
+  lanDenySubnetsText.value = formatLineList(data.deny_subnets as string[]);
+  lanPeerBlacklistText.value = formatLineList(data.peer_blacklist as string[]);
+  lanSharedSecret.value = String(data.shared_secret || '');
+};
+
 const applySettingsData = (data: Record<string, any>) => {
   const llm = data.llm || {};
   modelRows.value = parseModelRows((llm.models as Record<string, Record<string, unknown>>) || {});
@@ -699,7 +854,22 @@ const applySettingsData = (data: Record<string, any>) => {
 
   ensureSelectedModel();
   remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
+  applyLanSettings(data.lan_mesh as DesktopLanMeshSettings | undefined);
   refreshRemoteConnected();
+};
+
+const refreshLanPeers = async () => {
+  loadingLanPeers.value = true;
+  try {
+    const response = await listDesktopLanPeers();
+    const items = (response?.data?.data?.items || []) as DesktopLanPeer[];
+    lanPeers.value = Array.isArray(items) ? items : [];
+  } catch (error) {
+    console.error(error);
+    lanPeers.value = [];
+  } finally {
+    loadingLanPeers.value = false;
+  }
 };
 
 const loadSettings = async () => {
@@ -708,11 +878,48 @@ const loadSettings = async () => {
     const response = await fetchDesktopSettings();
     const data = (response?.data?.data || {}) as Record<string, any>;
     applySettingsData(data);
+    await refreshLanPeers();
   } catch (error) {
     console.error(error);
     ElMessage.error(t('desktop.common.loadFailed'));
   } finally {
     loading.value = false;
+  }
+};
+
+const saveLanSettings = async () => {
+  savingLan.value = true;
+  try {
+    const payload = {
+      lan_mesh: {
+        enabled: lanMeshEnabled.value,
+        peer_id: lanPeerId.value.trim(),
+        display_name: lanDisplayName.value.trim(),
+        listen_host: lanListenHost.value.trim() || '0.0.0.0',
+        listen_port: parsePositiveInt(lanListenPort.value, 18661),
+        discovery_port: parsePositiveInt(lanDiscoveryPort.value, 18662),
+        discovery_interval_ms: 2500,
+        peer_ttl_ms: 15000,
+        allow_subnets: normalizeLineList(lanAllowSubnetsText.value),
+        deny_subnets: normalizeLineList(lanDenySubnetsText.value),
+        peer_blacklist: normalizeLineList(lanPeerBlacklistText.value),
+        shared_secret: lanSharedSecret.value,
+        max_inbound_dedup: 4096,
+        relay_http_fallback: true,
+        peer_ws_path: '/wunder/desktop/lan/ws',
+        peer_http_path: '/wunder/desktop/lan/envelope'
+      }
+    };
+    const response = await updateDesktopSettings(payload);
+    const data = (response?.data?.data || {}) as Record<string, any>;
+    applySettingsData(data);
+    await refreshLanPeers();
+    ElMessage.success(t('desktop.common.saveSuccess'));
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(t('desktop.common.saveFailed'));
+  } finally {
+    savingLan.value = false;
   }
 };
 
@@ -1221,6 +1428,23 @@ onMounted(() => {
   box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), 0.14);
 }
 
+.desktop-system-settings-panel :deep(.el-textarea__inner) {
+  background: #ffffff;
+  border: 1px solid #d8dce4;
+  border-radius: 10px;
+  min-height: 64px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+
+.desktop-system-settings-panel :deep(.el-textarea__inner:hover) {
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+}
+
+.desktop-system-settings-panel :deep(.el-textarea__inner:focus) {
+  border-color: rgba(var(--ui-accent-rgb), 0.62);
+  box-shadow: 0 0 0 2px rgba(var(--ui-accent-rgb), 0.14);
+}
+
 .desktop-system-settings-panel :deep(.el-input__inner),
 .desktop-system-settings-panel :deep(.el-select__selected-item),
 .desktop-system-settings-panel :deep(.el-select__placeholder) {
@@ -1236,7 +1460,26 @@ onMounted(() => {
 .desktop-system-settings-panel :deep(select:focus),
 .desktop-system-settings-panel :deep(select:focus-visible) {
   outline: none !important;
-  box-shadow: none !important;
+}
+
+.desktop-system-settings-peer-list {
+  max-height: min(42vh, 360px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
+.desktop-system-settings-peer-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.desktop-system-settings-peer-list::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.45);
+}
+
+.desktop-system-settings-peer-list::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .desktop-system-settings-panel :deep(.desktop-system-settings-popper.el-select__popper.el-popper) {

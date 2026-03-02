@@ -1,8 +1,10 @@
+use crate::channels::adapter::{ChannelAdapter, InboundParseContext, OutboundContext};
 use crate::channels::types::{
     ChannelAttachment, ChannelLocation, ChannelMessage, ChannelOutboundMessage, ChannelPeer,
     ChannelSender, WhatsappCloudConfig,
 };
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use hmac::{Hmac, Mac};
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -14,6 +16,40 @@ type HmacSha256 = Hmac<Sha256>;
 
 pub const WHATSAPP_CHANNEL: &str = "whatsapp";
 const DEFAULT_API_VERSION: &str = "v20.0";
+
+#[derive(Debug, Default)]
+pub struct WhatsappCloudAdapter;
+
+#[async_trait]
+impl ChannelAdapter for WhatsappCloudAdapter {
+    fn channel(&self) -> &'static str {
+        WHATSAPP_CHANNEL
+    }
+
+    async fn parse_inbound(
+        &self,
+        context: InboundParseContext<'_>,
+    ) -> Result<Option<Vec<ChannelMessage>>> {
+        if !is_whatsapp_cloud_payload(context.payload) {
+            return Ok(None);
+        }
+        let inbound = extract_inbound_messages(context.payload, context.account_override)?;
+        let messages = inbound
+            .into_iter()
+            .map(|item| inbound_to_channel_message(item, Vec::new()))
+            .collect();
+        Ok(Some(messages))
+    }
+
+    async fn send_outbound(&self, context: OutboundContext<'_>) -> Result<()> {
+        let config = context
+            .account_config
+            .whatsapp_cloud
+            .as_ref()
+            .ok_or_else(|| anyhow!("whatsapp_cloud config missing"))?;
+        send_outbound(context.http, context.outbound, config).await
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct WhatsappCloudMedia {

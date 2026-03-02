@@ -103,7 +103,7 @@ impl Orchestrator {
         tool_call_mode: ToolCallMode,
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
-        _user_id: &str,
+        user_id: &str,
         workspace_id: &str,
         agent_prompt: Option<&str>,
     ) -> String {
@@ -118,6 +118,7 @@ impl Orchestrator {
                 config_version,
                 &self.workspace,
                 workspace_id,
+                user_id,
                 &workdir,
                 config_overrides,
                 allowed_tool_names,

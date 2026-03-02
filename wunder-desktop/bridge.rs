@@ -17,6 +17,7 @@ use tokio::sync::oneshot;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info, warn};
+use wunder_server::desktop_lan;
 
 #[derive(Clone)]
 struct DesktopGuardState {
@@ -49,6 +50,11 @@ pub struct DesktopRuntimeInfo {
     pub remote_connected: bool,
     pub remote_server_base_url: String,
     pub remote_error: Option<String>,
+    pub lan_enabled: bool,
+    pub lan_peer_id: String,
+    pub lan_listen_host: String,
+    pub lan_listen_port: u16,
+    pub lan_discovery_port: u16,
 }
 
 pub struct DesktopBridge {
@@ -57,14 +63,20 @@ pub struct DesktopBridge {
     server_task: Option<tokio::task::JoinHandle<()>>,
 }
 
+const DEFAULT_DESKTOP_BIND_PORT: u16 = 18123;
+
 impl DesktopBridge {
     pub async fn launch(args: &DesktopArgs) -> Result<Self> {
         let runtime = DesktopRuntime::init(args).await?;
-        let bind_host = sanitize_host(&args.host)?;
-        let listener = bind_desktop_listener(&bind_host, args.port).await?;
+        let (target_host, target_port) = resolve_bind_target(args, &runtime);
+        let bind_host = sanitize_host(&target_host)?;
+        let listener = bind_desktop_listener(&bind_host, target_port).await?;
         let local_addr = listener
             .local_addr()
             .context("resolve desktop bridge local addr failed")?;
+        desktop_lan::manager()
+            .set_bound_port(local_addr.port())
+            .await;
         let public_addr = resolve_public_addr(local_addr);
 
         let web_base = format!("http://{public_addr}");
@@ -223,6 +235,11 @@ fn build_runtime_info(
         remote_connected,
         remote_server_base_url: runtime.remote_gateway.server_base_url.trim().to_string(),
         remote_error: runtime.remote_error.clone(),
+        lan_enabled: runtime.lan_mesh.enabled,
+        lan_peer_id: runtime.lan_mesh.peer_id.trim().to_string(),
+        lan_listen_host: runtime.lan_mesh.listen_host.trim().to_string(),
+        lan_listen_port: runtime.lan_mesh.listen_port,
+        lan_discovery_port: runtime.lan_mesh.discovery_port,
     }
 }
 
@@ -294,6 +311,29 @@ fn build_frontend_router(frontend_root: &Path) -> Router {
         .route("/{*path}", get(frontend_index_handler))
 }
 
+fn resolve_bind_target(args: &DesktopArgs, runtime: &DesktopRuntime) -> (String, u16) {
+    if !runtime.lan_mesh.enabled {
+        return (args.host.clone(), args.port);
+    }
+
+    let host = if is_default_desktop_bind_host(&args.host) {
+        runtime.lan_mesh.listen_host.clone()
+    } else {
+        args.host.clone()
+    };
+    let port = if args.port == DEFAULT_DESKTOP_BIND_PORT {
+        runtime.lan_mesh.listen_port
+    } else {
+        args.port
+    };
+    (host, port)
+}
+
+fn is_default_desktop_bind_host(host: &str) -> bool {
+    let cleaned = host.trim().to_ascii_lowercase();
+    cleaned.is_empty() || matches!(cleaned.as_str(), "127.0.0.1" | "localhost")
+}
+
 fn sanitize_host(host: &str) -> Result<String> {
     let cleaned = host.trim();
     if cleaned.is_empty() {
@@ -355,6 +395,11 @@ async fn runtime_config_handler(
         "remote_connected": state.runtime.remote_connected,
         "remote_server_base_url": state.runtime.remote_server_base_url,
         "remote_error": state.runtime.remote_error,
+        "lan_enabled": state.runtime.lan_enabled,
+        "lan_peer_id": state.runtime.lan_peer_id,
+        "lan_listen_host": state.runtime.lan_listen_host,
+        "lan_listen_port": state.runtime.lan_listen_port,
+        "lan_discovery_port": state.runtime.lan_discovery_port,
     })))
 }
 
@@ -396,6 +441,9 @@ async fn desktop_token_guard(
     next: Next,
 ) -> Result<Response, StatusCode> {
     if request.method() == Method::OPTIONS {
+        return Ok(next.run(request).await);
+    }
+    if is_desktop_lan_public_route(request.uri().path()) {
         return Ok(next.run(request).await);
     }
 
@@ -462,4 +510,10 @@ fn extract_request_token(headers: &HeaderMap, query: Option<&str>) -> Option<Str
     }
 
     None
+}
+
+fn is_desktop_lan_public_route(path: &str) -> bool {
+    path == "/wunder/desktop/lan/envelope"
+        || path == "/wunder/desktop/lan/ws"
+        || path == "/wunder/desktop/lan/peers"
 }

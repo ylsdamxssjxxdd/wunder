@@ -10,7 +10,7 @@ use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -89,19 +89,34 @@ async fn register(
         ));
     }
     let access_level = payload.access_level.as_deref();
-    state
+    let desktop_mode = is_desktop_mode(&state).await;
+    let requested_unit_id = normalize_optional_id(payload.unit_id.as_deref());
+    let create_unit_id = if desktop_mode {
+        None
+    } else {
+        requested_unit_id.clone()
+    };
+    let mut created_user = state
         .user_store
         .create_user(
             username,
             payload.email,
             password,
             access_level,
-            payload.unit_id,
+            create_unit_id,
             vec!["user".to_string()],
             "active",
             false,
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if desktop_mode && requested_unit_id != created_user.unit_id {
+        created_user.unit_id = requested_unit_id;
+        created_user.updated_at = now_ts();
+        state
+            .user_store
+            .update_user(&created_user)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
     let session = state
         .user_store
         .login(username, password)
@@ -158,17 +173,20 @@ async fn external_login(
     }
 
     let unit_id = normalize_optional_id(payload.unit_id.as_deref());
+    let desktop_mode = is_desktop_mode(&state).await;
 
     let user_store = state.user_store.clone();
     let username_snapshot = username.to_string();
     let password_snapshot = password.to_string();
     let unit_snapshot = unit_id.clone();
+    let desktop_mode_snapshot = desktop_mode;
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
         provision_external_user(
             &user_store,
             &username_snapshot,
             &password_snapshot,
             unit_snapshot,
+            desktop_mode_snapshot,
         )
     })
     .await
@@ -202,17 +220,20 @@ async fn external_issue_code(
     }
 
     let unit_id = normalize_optional_id(payload.unit_id.as_deref());
+    let desktop_mode = is_desktop_mode(&state).await;
 
     let user_store = state.user_store.clone();
     let username_snapshot = username.to_string();
     let password_snapshot = password.to_string();
     let unit_snapshot = unit_id.clone();
+    let desktop_mode_snapshot = desktop_mode;
     let (session, created, updated) = tokio::task::spawn_blocking(move || {
         provision_external_user(
             &user_store,
             &username_snapshot,
             &password_snapshot,
             unit_snapshot,
+            desktop_mode_snapshot,
         )
     })
     .await
@@ -277,6 +298,7 @@ async fn update_me(
     Json(payload): Json<UpdateProfileRequest>,
 ) -> Result<Json<serde_json::Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
+    let desktop_mode = is_desktop_mode(&state).await;
     let mut record = resolved.user.clone();
     let mut changed = false;
     if let Some(username) = payload.username {
@@ -342,37 +364,44 @@ async fn update_me(
         }
     }
     if let Some(unit_id) = payload.unit_id {
-        let units = state
-            .user_store
-            .list_org_units()
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-        let unit_map = build_unit_map(&units);
-        let previous_level = record
-            .unit_id
-            .as_ref()
-            .and_then(|value| unit_map.get(value))
-            .map(|unit| unit.level);
         let next_unit_id = normalize_optional_id(Some(&unit_id));
-        if let Some(next_unit_id) = next_unit_id.as_deref() {
-            if !unit_map.contains_key(next_unit_id) {
-                return Err(error_response(
-                    StatusCode::NOT_FOUND,
-                    i18n::t("error.org_unit_not_found"),
-                ));
+        if desktop_mode {
+            if next_unit_id != record.unit_id {
+                record.unit_id = next_unit_id;
+                changed = true;
             }
-        }
-        if next_unit_id != record.unit_id {
-            let previous_default = UserStore::default_daily_quota_by_level(previous_level);
-            record.unit_id = next_unit_id;
-            let next_level = record
+        } else {
+            let units = state
+                .user_store
+                .list_org_units()
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            let unit_map = build_unit_map(&units);
+            let previous_level = record
                 .unit_id
                 .as_ref()
                 .and_then(|value| unit_map.get(value))
                 .map(|unit| unit.level);
-            if record.daily_quota == previous_default {
-                record.daily_quota = UserStore::default_daily_quota_by_level(next_level);
+            if let Some(next_unit_id) = next_unit_id.as_deref() {
+                if !unit_map.contains_key(next_unit_id) {
+                    return Err(error_response(
+                        StatusCode::NOT_FOUND,
+                        i18n::t("error.org_unit_not_found"),
+                    ));
+                }
             }
-            changed = true;
+            if next_unit_id != record.unit_id {
+                let previous_default = UserStore::default_daily_quota_by_level(previous_level);
+                record.unit_id = next_unit_id;
+                let next_level = record
+                    .unit_id
+                    .as_ref()
+                    .and_then(|value| unit_map.get(value))
+                    .map(|unit| unit.level);
+                if record.daily_quota == previous_default {
+                    record.daily_quota = UserStore::default_daily_quota_by_level(next_level);
+                }
+                changed = true;
+            }
         }
     }
     if changed {
@@ -389,10 +418,13 @@ async fn update_me(
 async fn list_org_units(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, Response> {
-    let units = state
+    let mut units = state
         .user_store
         .list_org_units()
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if is_desktop_mode(&state).await {
+        units = build_desktop_flat_org_units(&state, units)?;
+    }
     let tree = org_units::build_unit_tree(&units);
     let items = units.iter().map(org_unit_payload).collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "items": items, "tree": tree } })))
@@ -422,7 +454,13 @@ fn build_user_profile(
         })
         .transpose()?
         .flatten();
-    Ok(UserStore::to_profile_with_unit(user, unit.as_ref()))
+    let fallback_unit = normalize_optional_id(user.unit_id.as_deref())
+        .filter(|_| unit.is_none())
+        .map(|unit_id| lightweight_unit_record(&unit_id));
+    Ok(UserStore::to_profile_with_unit(
+        user,
+        unit.as_ref().or(fallback_unit.as_ref()),
+    ))
 }
 
 fn build_unit_map(units: &[OrgUnitRecord]) -> HashMap<String, OrgUnitRecord> {
@@ -451,6 +489,95 @@ fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
     raw.map(|value| value.trim())
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string())
+}
+
+fn lightweight_unit_record(unit_id: &str) -> OrgUnitRecord {
+    let cleaned = unit_id.trim();
+    let now = now_ts();
+    OrgUnitRecord {
+        unit_id: cleaned.to_string(),
+        parent_id: None,
+        name: cleaned.to_string(),
+        level: 1,
+        path: cleaned.to_string(),
+        path_name: cleaned.to_string(),
+        sort_order: 0,
+        leader_ids: Vec::new(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn normalize_flat_unit_record(record: &OrgUnitRecord) -> Option<OrgUnitRecord> {
+    let unit_id = record.unit_id.trim();
+    if unit_id.is_empty() {
+        return None;
+    }
+    let name = record.name.trim();
+    let display_name = if name.is_empty() { unit_id } else { name };
+    Some(OrgUnitRecord {
+        unit_id: unit_id.to_string(),
+        parent_id: None,
+        name: display_name.to_string(),
+        level: 1,
+        path: unit_id.to_string(),
+        path_name: display_name.to_string(),
+        sort_order: record.sort_order,
+        leader_ids: Vec::new(),
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    })
+}
+
+fn build_desktop_flat_org_units(
+    state: &AppState,
+    units: Vec<OrgUnitRecord>,
+) -> Result<Vec<OrgUnitRecord>, Response> {
+    let mut flat_map: BTreeMap<String, OrgUnitRecord> = BTreeMap::new();
+    for unit in units {
+        if let Some(flattened) = normalize_flat_unit_record(&unit) {
+            flat_map
+                .entry(flattened.unit_id.clone())
+                .or_insert(flattened);
+        }
+    }
+    let (users, _) = state
+        .user_store
+        .list_users(None, None, 0, 0)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    for user in users {
+        if let Some(unit_id) = normalize_optional_id(user.unit_id.as_deref()) {
+            flat_map
+                .entry(unit_id.clone())
+                .or_insert_with(|| lightweight_unit_record(&unit_id));
+        }
+    }
+    let mut output = flat_map.into_values().collect::<Vec<_>>();
+    output.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| left.unit_id.cmp(&right.unit_id))
+    });
+    for (index, unit) in output.iter_mut().enumerate() {
+        unit.parent_id = None;
+        unit.level = 1;
+        unit.path = unit.unit_id.clone();
+        unit.path_name = unit.name.clone();
+        unit.sort_order = i64::try_from(index).unwrap_or(i64::MAX);
+        unit.leader_ids.clear();
+    }
+    Ok(output)
+}
+
+async fn is_desktop_mode(state: &AppState) -> bool {
+    state
+        .config_store
+        .get()
+        .await
+        .server
+        .mode
+        .trim()
+        .eq_ignore_ascii_case("desktop")
 }
 
 async fn validate_external_key(state: &Arc<AppState>, key: &str) -> Result<(), Response> {
@@ -483,6 +610,7 @@ fn provision_external_user(
     username: &str,
     password: &str,
     unit_id: Option<String>,
+    desktop_mode: bool,
 ) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
     let normalized = UserStore::normalize_user_id(username)
         .ok_or_else(|| anyhow::anyhow!("invalid username"))?;
@@ -517,19 +645,23 @@ fn provision_external_user(
         // Update unit binding when provided.
         if let Some(next_unit_id) = unit_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
             if user.unit_id.as_deref() != Some(next_unit_id) {
-                let previous_level = user
-                    .unit_id
-                    .as_deref()
-                    .and_then(|id| user_store.get_org_unit(id).ok().flatten())
-                    .map(|unit| unit.level);
-                let next_unit = user_store
-                    .get_org_unit(next_unit_id)?
-                    .ok_or_else(|| anyhow::anyhow!("unit not found"))?;
-                let previous_default = UserStore::default_daily_quota_by_level(previous_level);
-                user.unit_id = Some(next_unit.unit_id.clone());
-                if user.daily_quota == previous_default {
-                    user.daily_quota =
-                        UserStore::default_daily_quota_by_level(Some(next_unit.level));
+                if desktop_mode {
+                    user.unit_id = Some(next_unit_id.to_string());
+                } else {
+                    let previous_level = user
+                        .unit_id
+                        .as_deref()
+                        .and_then(|id| user_store.get_org_unit(id).ok().flatten())
+                        .map(|unit| unit.level);
+                    let next_unit = user_store
+                        .get_org_unit(next_unit_id)?
+                        .ok_or_else(|| anyhow::anyhow!("unit not found"))?;
+                    let previous_default = UserStore::default_daily_quota_by_level(previous_level);
+                    user.unit_id = Some(next_unit.unit_id.clone());
+                    if user.daily_quota == previous_default {
+                        user.daily_quota =
+                            UserStore::default_daily_quota_by_level(Some(next_unit.level));
+                    }
                 }
                 user.updated_at = now_ts();
                 user_store.update_user(&user)?;
@@ -537,16 +669,28 @@ fn provision_external_user(
             }
         }
     } else {
-        user_store.create_user(
+        let create_unit_id = if desktop_mode { None } else { unit_id.clone() };
+        let mut created_user = user_store.create_user(
             &normalized,
             None,
             password,
             Some("A"),
-            unit_id,
+            create_unit_id,
             vec!["user".to_string()],
             "active",
             false,
         )?;
+        if desktop_mode {
+            if let Some(next_unit_id) = unit_id.as_deref().map(str::trim).filter(|v| !v.is_empty())
+            {
+                if created_user.unit_id.as_deref() != Some(next_unit_id) {
+                    created_user.unit_id = Some(next_unit_id.to_string());
+                    created_user.updated_at = now_ts();
+                    user_store.update_user(&created_user)?;
+                    updated = true;
+                }
+            }
+        }
         created = true;
     }
 

@@ -1,6 +1,8 @@
 use crate::api::errors::error_response;
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::services::desktop_lan::{self, DesktopLanEnvelope};
+use crate::services::user_world::{UserWorldContact, UserWorldConversationView};
 use crate::state::AppState;
 use crate::storage::normalize_workspace_container_id;
 use axum::body::Body;
@@ -11,10 +13,14 @@ use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
 use bytes::Bytes;
 use futures::Stream;
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::Sha256;
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::io;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -23,11 +29,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::io::ReaderStream;
+use tracing::warn;
+use uuid::Uuid;
 use walkdir::WalkDir;
 use zip::write::FileOptions;
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 500;
+type HmacSha256 = Hmac<Sha256>;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -166,6 +175,10 @@ async fn list_contacts(
             item.last_seen_at = None;
         }
     }
+    append_lan_contacts(state.as_ref(), &resolved.user.user_id, &mut items)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
+    let total = (total as usize).max(items.len()) as i64;
     Ok(Json(json!({
         "data": {
             "items": items,
@@ -229,6 +242,21 @@ async fn create_group(
             now_ts(),
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Some(group_id) = item
+        .group_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        desktop_lan::manager()
+            .register_group_link(group_id, &item.conversation_id)
+            .await;
+    }
+    if let Err(err) =
+        relay_group_upsert_to_lan(state.as_ref(), &resolved.user.user_id, &item, &payload).await
+    {
+        warn!("relay group upsert to lan failed: {err}");
+    }
     Ok(Json(json!({ "data": item })))
 }
 
@@ -267,6 +295,19 @@ async fn update_group_announcement(
     let Some(item) = item else {
         return Err(error_response(StatusCode::NOT_FOUND, "group not found"));
     };
+    desktop_lan::manager()
+        .register_group_link(&item.group_id, &item.conversation_id)
+        .await;
+    if let Err(err) = relay_group_announcement_to_lan(
+        state.as_ref(),
+        &resolved.user.user_id,
+        &item.group_id,
+        payload.announcement.as_deref(),
+    )
+    .await
+    {
+        warn!("relay group announcement to lan failed: {err}");
+    }
     Ok(Json(json!({ "data": item })))
 }
 
@@ -361,6 +402,18 @@ async fn send_message(
         )
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Err(err) = relay_message_to_lan(
+        state.as_ref(),
+        &resolved.user.user_id,
+        conversation_id.trim(),
+        &result.message.content,
+        &result.message.content_type,
+        result.message.client_msg_id.as_deref(),
+    )
+    .await
+    {
+        warn!("relay user_world message to lan failed: {err}");
+    }
     Ok(Json(json!({ "data": result })))
 }
 
@@ -579,6 +632,419 @@ async fn download_user_world_file(
         filename,
         "application/octet-stream",
     ))
+}
+
+async fn append_lan_contacts(
+    state: &AppState,
+    current_user_id: &str,
+    items: &mut Vec<UserWorldContact>,
+) -> Result<(), String> {
+    let settings = desktop_lan::manager().settings().await;
+    if !settings.enabled {
+        return Ok(());
+    }
+    let peers = desktop_lan::manager().list_peers().await;
+    if peers.is_empty() {
+        return Ok(());
+    }
+
+    let mut existing = items
+        .iter()
+        .map(|item| item.user_id.clone())
+        .collect::<HashSet<_>>();
+    let now = now_ts();
+    let ttl_seconds = settings.peer_ttl_ms as f64 / 1_000.0;
+    let self_peer_id = settings.peer_id.trim();
+
+    for peer in peers {
+        let peer_id = peer.peer_id.trim();
+        if peer_id.is_empty() || peer_id == self_peer_id {
+            continue;
+        }
+        let user_id = lan_peer_user_id(peer_id, Some(peer.lan_ip.as_str()));
+        if !existing.insert(user_id.clone()) {
+            continue;
+        }
+        let username = choose_non_empty(&[peer.display_name.trim(), peer.user_id.trim(), peer_id]);
+        let username = normalize_lan_ip(peer.lan_ip.as_str())
+            .map_or(username.clone(), |ip| format!("{username} · {ip}"));
+        let conversation = state
+            .user_world
+            .resolve_or_create_direct_conversation(current_user_id, &user_id, now)
+            .map_err(|err| err.to_string())?;
+        items.push(UserWorldContact {
+            user_id,
+            username,
+            status: "active".to_string(),
+            online: now - peer.seen_at <= ttl_seconds.max(3.0),
+            last_seen_at: Some(peer.seen_at),
+            unit_id: None,
+            conversation_id: Some(conversation.conversation_id.clone()),
+            last_message_preview: conversation.last_message_preview.clone(),
+            last_message_at: (conversation.last_message_at > 0.0)
+                .then_some(conversation.last_message_at),
+            unread_count: conversation.unread_count_cache,
+        });
+    }
+
+    items.sort_by(|left, right| {
+        let left_ts = left.last_message_at.unwrap_or(0.0);
+        let right_ts = right.last_message_at.unwrap_or(0.0);
+        right_ts
+            .total_cmp(&left_ts)
+            .then_with(|| left.username.cmp(&right.username))
+    });
+    Ok(())
+}
+
+async fn relay_message_to_lan(
+    state: &AppState,
+    sender_user_id: &str,
+    conversation_id: &str,
+    content: &str,
+    content_type: &str,
+    client_msg_id: Option<&str>,
+) -> Result<(), String> {
+    let settings = desktop_lan::manager().settings().await;
+    if !settings.enabled {
+        return Ok(());
+    }
+    let Some(conversation) = state
+        .storage
+        .get_user_world_conversation(conversation_id)
+        .map_err(|err| err.to_string())?
+    else {
+        return Ok(());
+    };
+
+    let conversation_type = conversation.conversation_type.trim().to_ascii_lowercase();
+    if conversation_type == "direct" {
+        let Some(member) = state
+            .storage
+            .get_user_world_member(conversation_id, sender_user_id)
+            .map_err(|err| err.to_string())?
+        else {
+            return Ok(());
+        };
+        let peer_user_id = member.peer_user_id.trim();
+        let Some(target_peer) = parse_lan_peer_identity(peer_user_id) else {
+            return Ok(());
+        };
+        let payload = json!({
+            "content": content,
+            "content_type": content_type,
+            "client_msg_id": client_msg_id.map(str::to_string),
+        });
+        relay_envelope_to_lan(
+            &settings,
+            sender_user_id,
+            "uw_direct_message",
+            Some(target_peer.peer_id.as_str()),
+            target_peer.lan_ip.as_deref(),
+            Some(conversation_id),
+            payload,
+        )
+        .await?;
+        return Ok(());
+    }
+
+    if conversation_type == "group" {
+        let global_group_id = desktop_lan::manager()
+            .global_group_id_by_conversation(conversation_id, conversation.group_id.as_deref())
+            .await
+            .or_else(|| conversation.group_id.clone())
+            .unwrap_or_else(|| conversation_id.to_string());
+        desktop_lan::manager()
+            .register_group_link(&global_group_id, conversation_id)
+            .await;
+        let payload = json!({
+            "global_group_id": global_group_id,
+            "group_name": conversation
+                .group_name
+                .clone()
+                .unwrap_or_else(|| "LAN Group".to_string()),
+            "content": content,
+            "content_type": content_type,
+            "client_msg_id": client_msg_id.map(str::to_string),
+        });
+        relay_envelope_to_lan(
+            &settings,
+            sender_user_id,
+            "uw_group_message",
+            None,
+            None,
+            Some(conversation_id),
+            payload,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn relay_group_upsert_to_lan(
+    _state: &AppState,
+    owner_user_id: &str,
+    group: &UserWorldConversationView,
+    payload: &GroupCreateRequest,
+) -> Result<(), String> {
+    let settings = desktop_lan::manager().settings().await;
+    if !settings.enabled {
+        return Ok(());
+    }
+    let Some(group_id) = group
+        .group_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(());
+    };
+    desktop_lan::manager()
+        .register_group_link(group_id, &group.conversation_id)
+        .await;
+    let mut members = payload
+        .member_user_ids
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect::<HashSet<_>>();
+    members.insert(owner_user_id.to_string());
+    let mut member_user_ids = members.into_iter().collect::<Vec<_>>();
+    member_user_ids.sort();
+    let payload = json!({
+        "global_group_id": group_id,
+        "group_name": payload.group_name.trim(),
+        "owner_user_id": owner_user_id,
+        "member_user_ids": member_user_ids,
+    });
+    relay_envelope_to_lan(
+        &settings,
+        owner_user_id,
+        "uw_group_upsert",
+        None,
+        None,
+        Some(&group.conversation_id),
+        payload,
+    )
+    .await
+}
+
+async fn relay_group_announcement_to_lan(
+    state: &AppState,
+    sender_user_id: &str,
+    group_id: &str,
+    announcement: Option<&str>,
+) -> Result<(), String> {
+    let settings = desktop_lan::manager().settings().await;
+    if !settings.enabled {
+        return Ok(());
+    }
+    let Some(group) = state
+        .storage
+        .get_user_world_group_by_id(group_id)
+        .map_err(|err| err.to_string())?
+    else {
+        return Ok(());
+    };
+    let global_group_id = desktop_lan::manager()
+        .global_group_id_by_conversation(&group.conversation_id, Some(group_id))
+        .await
+        .unwrap_or_else(|| group_id.to_string());
+    desktop_lan::manager()
+        .register_group_link(&global_group_id, &group.conversation_id)
+        .await;
+    let payload = json!({
+        "global_group_id": global_group_id,
+        "announcement": announcement.map(str::to_string),
+    });
+    relay_envelope_to_lan(
+        &settings,
+        sender_user_id,
+        "uw_group_announcement",
+        None,
+        None,
+        Some(&group.conversation_id),
+        payload,
+    )
+    .await
+}
+
+async fn relay_envelope_to_lan(
+    settings: &desktop_lan::DesktopLanMeshSettings,
+    source_user_id: &str,
+    envelope_type: &str,
+    target_peer_id: Option<&str>,
+    target_lan_ip: Option<&str>,
+    conversation_id: Option<&str>,
+    payload: Value,
+) -> Result<(), String> {
+    if settings.peer_id.trim().is_empty() {
+        return Ok(());
+    }
+    let peers = desktop_lan::manager().list_peers().await;
+    if peers.is_empty() {
+        return Ok(());
+    }
+
+    let target_peer = target_peer_id.map(|value| value.trim().to_string());
+    let target_lan_ip = target_lan_ip.and_then(normalize_lan_ip);
+    let candidates = peers
+        .into_iter()
+        .filter(|peer| {
+            let peer_id = peer.peer_id.trim();
+            if peer_id.is_empty() || peer_id == settings.peer_id.trim() {
+                return false;
+            }
+            if let Some(target) = target_peer.as_deref() {
+                if peer_id != target {
+                    return false;
+                }
+                if let Some(target_ip) = target_lan_ip.as_deref() {
+                    return normalize_lan_ip(peer.lan_ip.as_str()).as_deref() == Some(target_ip);
+                }
+            }
+            true
+        })
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+
+    let bound_port = desktop_lan::manager()
+        .bound_port()
+        .await
+        .unwrap_or(settings.listen_port);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(4))
+        .build()
+        .map_err(|err| format!("build lan relay client failed: {err}"))?;
+
+    for peer in candidates {
+        let peer_ip = peer.lan_ip.trim();
+        if peer_ip.is_empty() || peer.listen_port == 0 {
+            continue;
+        }
+        let local_lan_ip = resolve_local_ip_for_peer(peer_ip)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| settings.listen_host.clone());
+        let mut envelope = DesktopLanEnvelope {
+            envelope_id: format!("lan_{}", Uuid::new_v4().simple()),
+            envelope_type: envelope_type.to_string(),
+            source_peer_id: settings.peer_id.trim().to_string(),
+            source_user_id: source_user_id.trim().to_string(),
+            target_peer_id: Some(peer.peer_id.clone()),
+            target_user_id: None,
+            conversation_id: conversation_id.map(|value| value.trim().to_string()),
+            sent_at: now_ts(),
+            payload: payload.clone(),
+            signature: None,
+        };
+        if !settings.shared_secret.trim().is_empty() {
+            envelope.signature = Some(sign_lan_envelope(&settings.shared_secret, &envelope));
+        }
+        let local_peer = desktop_lan::DesktopLanPeerSnapshot {
+            peer_id: settings.peer_id.trim().to_string(),
+            user_id: source_user_id.trim().to_string(),
+            display_name: choose_non_empty(&[settings.display_name.trim(), source_user_id.trim()]),
+            lan_ip: local_lan_ip,
+            listen_port: bound_port,
+            seen_at: now_ts(),
+            capabilities: vec!["user_world".to_string()],
+        };
+        let endpoint = format!(
+            "http://{}:{}{}",
+            peer_ip, peer.listen_port, settings.peer_http_path
+        );
+        let body = json!({
+            "peer": local_peer,
+            "envelope": envelope,
+        });
+        let response = client.post(endpoint).json(&body).send().await;
+        if let Err(err) = response {
+            warn!("relay lan envelope failed: {err}");
+        }
+    }
+    Ok(())
+}
+
+fn resolve_local_ip_for_peer(peer_ip: &str) -> Option<IpAddr> {
+    let target = format!("{peer_ip}:9");
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect(target).ok()?;
+    Some(socket.local_addr().ok()?.ip())
+}
+
+fn sign_lan_envelope(shared_secret: &str, envelope: &DesktopLanEnvelope) -> String {
+    let content = format!(
+        "{}|{}|{}|{}|{}|{}",
+        envelope.envelope_id.trim(),
+        envelope.envelope_type.trim(),
+        envelope.source_peer_id.trim(),
+        envelope.source_user_id.trim(),
+        envelope.sent_at,
+        serde_json::to_string(&envelope.payload).unwrap_or_else(|_| "null".to_string())
+    );
+    let mut mac = match HmacSha256::new_from_slice(shared_secret.trim().as_bytes()) {
+        Ok(value) => value,
+        Err(_) => return String::new(),
+    };
+    mac.update(content.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+#[derive(Debug, Clone)]
+struct LanPeerIdentity {
+    peer_id: String,
+    lan_ip: Option<String>,
+}
+
+fn lan_peer_user_id(peer_id: &str, lan_ip: Option<&str>) -> String {
+    let peer_id = peer_id.trim();
+    let lan_ip = lan_ip.and_then(normalize_lan_ip);
+    if let Some(lan_ip) = lan_ip {
+        return format!("lan:{peer_id}@{lan_ip}");
+    }
+    format!("lan:{peer_id}")
+}
+
+fn parse_lan_peer_identity(user_id: &str) -> Option<LanPeerIdentity> {
+    let value = user_id
+        .trim()
+        .strip_prefix("lan:")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if let Some((peer_id, lan_ip_raw)) = value.split_once('@') {
+        let cleaned_peer_id = peer_id.trim();
+        if cleaned_peer_id.is_empty() {
+            return None;
+        }
+        return Some(LanPeerIdentity {
+            peer_id: cleaned_peer_id.to_string(),
+            lan_ip: normalize_lan_ip(lan_ip_raw),
+        });
+    }
+    Some(LanPeerIdentity {
+        peer_id: value.to_string(),
+        lan_ip: None,
+    })
+}
+
+fn normalize_lan_ip(value: &str) -> Option<String> {
+    let trimmed = value.trim().trim_matches(|ch| ch == '[' || ch == ']');
+    if trimmed.is_empty() {
+        return None;
+    }
+    trimmed.parse::<IpAddr>().ok().map(|ip| ip.to_string())
+}
+
+fn choose_non_empty(candidates: &[&str]) -> String {
+    candidates
+        .iter()
+        .map(|value| value.trim())
+        .find(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_default()
 }
 
 fn normalize_pagination(offset: Option<i64>, limit: Option<i64>) -> (i64, i64) {

@@ -117,9 +117,11 @@
             v-model="editForm.unit_id"
             :placeholder="t('profile.edit.unitPlaceholder')"
             filterable
+            :allow-create="desktopLocalMode"
+            :default-first-option="desktopLocalMode"
             clearable
             :loading="unitLoading"
-            :disabled="unitLoading || unitOptions.length === 0"
+            :disabled="unitLoading || (!desktopLocalMode && unitOptions.length === 0)"
             style="width: 100%"
           >
             <el-option
@@ -149,6 +151,7 @@ import { ElMessage } from 'element-plus';
 
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -176,6 +179,7 @@ const unitOptions = ref([]);
 const unitLoading = ref(false);
 
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
+const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
 const userName = computed(() => authStore.user?.username || t('user.guest'));
 const userId = computed(() => authStore.user?.id || '-');
 const userUnitLabel = computed(() => {
@@ -246,7 +250,7 @@ const saveProfile = async () => {
     const payload = {
       username,
       email: email || '',
-      unit_id: editForm.unit_id || ''
+      unit_id: String(editForm.unit_id || '').trim()
     };
     const { data } = await updateProfile(payload);
     const profile = data?.data;

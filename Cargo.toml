@@ -24,6 +24,7 @@ path = "wunder-desktop/bridge_main.rs"
 
 [dependencies]
 anyhow = "1"
+async-trait = "0.1"
 axum = { version = "0.8", features = ["macros", "multipart", "ws"] }
 bytes = "1"
 base64 = "0.22"

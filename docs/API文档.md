@@ -1710,6 +1710,7 @@
 
 - `POST /wunder/auth/register`
   - 入参（JSON）：`username`、`email`（可选）、`password`、`unit_id`（可选）
+  - desktop 本地模式下，若传入 `unit_id`，允许直接绑定任意非空字符串（不校验组织层级）。
   - 返回（JSON）：`data.access_token`、`data.user`（UserProfile）
 - `POST /wunder/auth/login`
   - 入参（JSON）：`username`、`password`
@@ -1721,6 +1722,7 @@
   - 用途：外部系统用户直连 wunder，账号不存在时自动创建，存在时自动对齐密码并登录。
   - 配置：需启用 `security.external_auth_key`（或环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）。
   - 入参（JSON）：`key`、`username`、`password`、`unit_id`（可选）
+  - desktop 本地模式下，`unit_id` 支持直接写入任意非空字符串（不依赖组织树）。
   - 返回（JSON）：`data.access_token`、`data.user`（UserProfile）、`data.created`（是否新建）、`data.updated`（是否更新既有账号信息）
 - `POST /wunder/auth/external/code`
   - 用途：为 iframe 嵌入场景签发一次性登录码（推荐由外部系统后端调用）。
@@ -1733,12 +1735,14 @@
 - `GET /wunder/auth/org_units`
   - 入参：无
   - 返回（JSON）：`data.items`（单位列表）、`data.tree`（单位树）
+  - desktop 本地模式下，单位按扁平结构返回（`parent_id=null`、`level=1`），并自动合并用户资料中出现过的 `unit_id`，用于“我的概况”直接录入单位名称后快速归拢联系人。
 - `GET /wunder/auth/me`
   - 鉴权：Bearer Token
   - 返回（JSON）：`data`（UserProfile）
 - `PATCH /wunder/auth/me`
   - 鉴权：Bearer Token
   - 入参（JSON）：`username`（可选）、`email`（可选）、`unit_id`（可选）
+  - desktop 本地模式下，`unit_id` 允许直接填写任意非空字符串（留空表示清除），不再校验组织树层级。
   - 返回（JSON）：`data`（UserProfile）
 - iframe 嵌入辅助：
   - 用户侧前端支持在 URL Query 中携带 `wunder_token`（或 `access_token`）自动登录，并在首跳时自动移除敏感参数。
@@ -1779,6 +1783,10 @@
   - 包装结构 `{ messages: [ChannelMessage, ...] }`
 - 返回（JSON）：`data.accepted`、`data.session_ids`、`data.outbox_ids`、`data.errors`
 - 说明：raw_payload 与标准化消息会落库到 `channel_messages`。
+- 适配器处理顺序（注册表驱动）：
+  1. 服务端会先将 `provider` 统一转为小写并查找 `ChannelAdapterRegistry`。
+  2. 若命中适配器，先执行 `verify_inbound`（失败返回 `401`），再执行 `parse_inbound`（失败返回 `400`）。
+  3. 若适配器 `parse_inbound` 返回 `None` 或未命中适配器，则回退到通用 `ChannelMessage` JSON 解析。
 - 渠道审批交互：当工具命中审批策略时，系统会向渠道回发审批提示文本；用户可在原会话回复 `1/2/3`（分别对应同意一次/同意本会话/拒绝）继续流程，`/stop` 会同时取消当前会话与待审批请求。
 
 #### ChannelMessage
@@ -2035,7 +2043,30 @@
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。
   - `sandbox_container_id` 取值范围 1~10，默认 1；同一用户下相同容器编号的智能体共享同一文件工作区。
 
-### 4.1.57 `/wunder/admin/user_accounts/*`
+### 4.1.57 `/wunder/prompt_templates`（用户侧）
+
+- `GET /wunder/prompt_templates`：获取当前用户提示词模板包状态
+  - 返回：`data.active`、`data.default_sync_pack_id`、`data.packs_root`、`data.packs[]`（`id/is_default/readonly/path/sync_pack_id?`）、`data.segments[]`（`key/file`）
+  - 说明：`default` 模板包为只读，内容同步自当前系统启用模板（`prompt_templates.active`）。
+- `POST /wunder/prompt_templates/active`：设置当前用户启用模板包
+  - 入参（JSON）：`active`（可选，默认 `default`）
+  - 返回：`data.active`
+- `GET /wunder/prompt_templates/file`：读取模板分段文件
+  - Query：`pack_id`（可选，默认当前用户 active）、`locale`（可选，`zh|en`）、`key`（必填：`role/engineering/tools_protocol/skills_protocol/memory/extra`）
+  - 返回：`data.pack_id/locale/key/path/exists/fallback_used/readonly/source_pack_id/content`
+  - 说明：当自建模板包缺少某分段时，自动回退显示系统启用模板对应分段（`fallback_used=true`）。
+- `PUT /wunder/prompt_templates/file`：写入模板分段文件
+  - 入参（JSON）：`pack_id`（可选，默认当前用户 active）、`locale`（可选）、`key`（必填）、`content`（必填）
+  - 返回：`data.pack_id/locale/key/path`
+  - 说明：`default` 模板包只读，不允许写入。
+- `POST /wunder/prompt_templates/packs`：创建用户模板包
+  - 入参（JSON）：`pack_id`（必填，仅字母/数字/_/-）、`copy_from`（可选，默认 `default`，支持从当前用户已有包复制）
+  - 返回：`data.pack_id/path/copied_from`
+- `DELETE /wunder/prompt_templates/packs/{pack_id}`：删除用户模板包
+  - 返回：`data.pack_id`
+  - 说明：删除当前 active 包时会自动回退到 `default`。
+
+### 4.1.58 `/wunder/admin/user_accounts/*`
 
 - `GET /wunder/admin/user_accounts`
   - Query：`keyword`、`offset`、`limit`
@@ -2138,41 +2169,23 @@
 
 ### 4.1.59 `/wunder/admin/channels/*`
 
+- 定位：管理员侧仅用于渠道运行态监控（只读），不提供渠道账号/绑定写入。
 - `GET /wunder/admin/channels/accounts`
   - Query：`channel`、`status`
   - 返回：`data.items`（channel/account_id/config/status/created_at/updated_at/runtime）
   - `runtime.feishu_long_connection`：飞书账号运行态（`running/missing_credentials/disabled/account_inactive/not_configured`）与 `binding_count`
-- `POST /wunder/admin/channels/accounts`
-  - 入参：`channel`、`account_id`、`config`、`status`（可选）
-  - 返回：账号记录（含 `runtime`）
-- `DELETE /wunder/admin/channels/accounts/{channel}/{account_id}`
-  - 返回：`data.deleted`
 
 - `GET /wunder/admin/channels/bindings`
   - Query：`channel`
   - 返回：`data.items`（binding_id/channel/account_id/peer_kind/peer_id/agent_id/tool_overrides/priority/enabled/created_at/updated_at）
-- `POST /wunder/admin/channels/bindings`
-  - 入参：`binding_id`（可选）、`channel`、`account_id`、`peer_kind`、`peer_id`、`agent_id`、`tool_overrides`、`priority`、`enabled`
-  - 返回：绑定记录
-- `DELETE /wunder/admin/channels/bindings/{binding_id}`
-  - 返回：`data.deleted`
 
 - `GET /wunder/admin/channels/user_bindings`
   - Query：`channel`、`account_id`、`peer_kind`、`peer_id`、`user_id`、`offset`、`limit`
   - 返回：`data.items`（channel/account_id/peer_kind/peer_id/user_id/created_at/updated_at）与 `data.total`
-- `POST /wunder/admin/channels/user_bindings`
-  - 入参：`channel`、`account_id`、`peer_kind`、`peer_id`、`user_id`
-  - 返回：绑定记录
-- `DELETE /wunder/admin/channels/user_bindings/{channel}/{account_id}/{peer_kind}/{peer_id}`
-  - 返回：`data.deleted`
 
 - `GET /wunder/admin/channels/sessions`
   - Query：`channel`、`account_id`、`peer_id`、`session_id`、`offset`、`limit`
   - 返回：`data.items`（channel/account_id/peer_kind/peer_id/thread_id/session_id/agent_id/user_id/tts_enabled/tts_voice/metadata/last_message_at/created_at/updated_at）与 `data.total`
-
-- `POST /wunder/admin/channels/test`
-  - 入参：`message`（ChannelMessage）
-  - 返回：`data.accepted`、`data.session_ids`、`data.outbox_ids`、`data.errors`
 
 补充说明：
 - `channels.session_strategy`：`main_thread`/`per_peer`/`hybrid`，控制渠道消息是否进入主线程（默认 `main_thread`）。
@@ -2200,7 +2213,12 @@
   - Query：`channel`（可选，按渠道过滤，如 `feishu`）
   - 返回：
     - `data.items`：当前用户的渠道账号列表（`channel/account_id/name/status/active/meta/config/raw_config/created_at/updated_at`）
-    - `data.supported_channels`：前端可用的渠道类型列表（`channel`）
+    - `data.supported_channels`：前端可用的渠道目录列表（由 `src/channels/catalog.rs` 生成），每项包含：
+      - `channel`：渠道标识
+      - `display_name`：展示名称
+      - `description`：渠道说明
+      - `webhook_mode`：接入模式（如 `specialized+generic` / `generic`）
+      - `docs_hint`：推荐 webhook 路径提示
   - `meta` 关键字段：
     - `configured`：是否已完成可用配置
     - `peer_kind`：默认会话类型（如 `group` / `user`）
@@ -2395,7 +2413,7 @@
 - 高风险命令在 `security.exec_policy_mode=enforce` 时需显式审批（tool args 支持 `approved=true`/`approval_key`），审批结果会在会话内短 TTL 缓存。
 - 用户侧聊天请求若绑定 `agent_id`，服务端会把该智能体 `approval_mode` 注入本轮 `config_overrides.security.approval_mode`（仅影响当前轮）。
 - 执行命令支持 `workdir` 指定工作目录（仅工作区内相对路径），`timeout_s` 可选。
-- 系统提示词中工作目录展示为 `/workspaces/<user_id>/`，实际工作区根为 `workspace.root/<user_id>`。
+- 系统提示词中工作目录按容器展示：默认入口（无 `agent_id` 或 `agent_id=__default__/default`）使用 `/workspaces/<user_id>__c__1/`；绑定智能体时使用 `/workspaces/<user_id>__c__<sandbox_container_id>/`。对应本地真实目录为 `workspace.root/<同名目录>`。
 - 文件类内置工具默认仅允许访问工作区，可通过 `security.allow_paths` 放行白名单目录（允许绝对路径）。
 - MCP 工具调用形式为 `server@tool`，技能工具按管理员启用的名称暴露。
 
@@ -2856,5 +2874,25 @@
 - `WUNDER_TEMPD/config/desktop.settings.json`
 - `WUNDER_TEMPD/user_tools/*`
 - `WUNDER_TEMPD/vector_knowledge/*`
+
+### Desktop LAN Mesh（内网互联）
+
+- 桌面设置新增 `lan_mesh` 字段（`/wunder/desktop/settings` GET/PUT）：
+  - `enabled`
+  - `peer_id` / `display_name`
+  - `listen_host` / `listen_port`
+  - `discovery_port` / `discovery_interval_ms` / `peer_ttl_ms`
+  - `allow_subnets` / `deny_subnets` / `peer_blacklist`
+  - `shared_secret`（可选，启用后对 envelope/discovery 做签名校验）
+  - `peer_ws_path` / `peer_http_path`
+- 新增 desktop 路由（仅 desktop router 暴露）：
+  - `GET /wunder/desktop/lan/peers`：返回已发现的 LAN 节点。
+  - `POST /wunder/desktop/lan/envelope`：接收 LAN envelope（消息/群同步）。
+  - `GET /wunder/desktop/lan/ws`：LAN WebSocket 通道（WS-first，HTTP 为兜底）。
+- desktop token 鉴权中放开上述 LAN 路由，便于局域网节点互联；其它 desktop API 仍要求本地 token。
+- `user_world` 联动：
+  - `contacts` 会追加 `lan:{peer_id}` 联系人并自动建立 direct conversation。
+  - `send_message` 对 direct/group 会话自动向 LAN 目标节点转发 envelope。
+  - `create_group` / `update_group_announcement` 会向 LAN 广播群元数据同步事件。
 
 

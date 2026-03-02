@@ -1,11 +1,32 @@
+use crate::channels::adapter::{ChannelAdapter, OutboundContext};
 use crate::channels::types::{ChannelOutboundMessage, QqBotConfig};
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
 
 pub const QQBOT_CHANNEL: &str = "qqbot";
 const QQ_API_BASE: &str = "https://api.sgroup.qq.com";
 const QQ_TOKEN_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
+
+#[derive(Debug, Default)]
+pub struct QqBotAdapter;
+
+#[async_trait]
+impl ChannelAdapter for QqBotAdapter {
+    fn channel(&self) -> &'static str {
+        QQBOT_CHANNEL
+    }
+
+    async fn send_outbound(&self, context: OutboundContext<'_>) -> Result<()> {
+        let config = context
+            .account_config
+            .qqbot
+            .as_ref()
+            .ok_or_else(|| anyhow!("qqbot config missing"))?;
+        send_outbound(context.http, context.outbound, config).await
+    }
+}
 
 pub async fn send_outbound(
     http: &Client,

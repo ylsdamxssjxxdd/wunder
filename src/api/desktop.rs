@@ -1,4 +1,5 @@
 use crate::config::{Config, LlmConfig};
+use crate::services::desktop_lan;
 use crate::state::AppState;
 use crate::storage::{
     normalize_workspace_container_id, MAX_SANDBOX_CONTAINER_ID, USER_PRIVATE_CONTAINER_ID,
@@ -83,6 +84,8 @@ struct DesktopSettingsFile {
     llm: Option<LlmConfig>,
     #[serde(default)]
     remote_gateway: DesktopRemoteGatewaySettings,
+    #[serde(default)]
+    lan_mesh: desktop_lan::DesktopLanMeshSettings,
     updated_at: f64,
 }
 
@@ -96,6 +99,7 @@ impl Default for DesktopSettingsFile {
             language: String::new(),
             llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
+            lan_mesh: desktop_lan::DesktopLanMeshSettings::default(),
             updated_at: now_ts(),
         }
     }
@@ -144,6 +148,8 @@ struct DesktopSettingsUpdateRequest {
     llm: Option<LlmConfig>,
     #[serde(default)]
     remote_gateway: Option<DesktopRemoteGatewaySettings>,
+    #[serde(default)]
+    lan_mesh: Option<desktop_lan::DesktopLanMeshSettings>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -461,6 +467,10 @@ async fn desktop_settings_get(State(state): State<Arc<AppState>>) -> Result<Json
         .container_cloud_workspaces
         .retain(|container_id, _| settings.container_roots.contains_key(container_id));
     settings.workspace_root = resolved_workspace_root.to_string_lossy().to_string();
+    settings.lan_mesh = settings.lan_mesh.clone().normalized();
+    desktop_lan::manager()
+        .apply_settings(settings.lan_mesh.clone())
+        .await;
 
     let config = state.config_store.get().await;
     let seed_statuses = desktop_seed_manager().container_seed_statuses().await;
@@ -684,8 +694,16 @@ async fn desktop_settings_update(
     if let Some(remote_gateway) = payload.remote_gateway {
         settings.remote_gateway = remote_gateway;
     }
+    if let Some(lan_mesh) = payload.lan_mesh {
+        settings.lan_mesh = lan_mesh.normalized();
+    } else {
+        settings.lan_mesh = settings.lan_mesh.clone().normalized();
+    }
     settings.updated_at = now_ts();
     save_desktop_settings(&settings_path, &settings).map_err(internal_error)?;
+    desktop_lan::manager()
+        .apply_settings(settings.lan_mesh.clone())
+        .await;
 
     let next_container_roots = settings.container_roots.clone();
     let next_workspace_root = settings.workspace_root.clone();
@@ -909,6 +927,7 @@ fn build_settings_payload(
         "supported_languages": config.i18n.supported_languages,
         "llm": llm,
         "remote_gateway": settings.remote_gateway,
+        "lan_mesh": settings.lan_mesh,
         "updated_at": settings.updated_at,
     })
 }

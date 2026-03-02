@@ -10,6 +10,7 @@ use tracing::warn;
 use url::Url;
 use wunder_server::config::{Config, LlmConfig};
 use wunder_server::config_store::ConfigStore;
+use wunder_server::desktop_lan::{self, DesktopLanMeshSettings};
 use wunder_server::state::{AppState, AppStateInitOptions};
 use wunder_server::storage::{
     normalize_workspace_container_id, UserTokenRecord, MAX_SANDBOX_CONTAINER_ID,
@@ -18,6 +19,9 @@ use wunder_server::storage::{
 use wunder_server::user_store::UserStore;
 
 pub const DESKTOP_DEFAULT_USER_ID: &str = "desktop_user";
+const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
+const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
+const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
 
 #[derive(Clone)]
 pub struct DesktopRuntime {
@@ -31,6 +35,7 @@ pub struct DesktopRuntime {
     pub user_id: String,
     pub desktop_token: String,
     pub remote_gateway: DesktopRemoteGatewaySettings,
+    pub lan_mesh: DesktopLanMeshSettings,
     pub remote_api_base: Option<String>,
     pub remote_ws_base: Option<String>,
     pub remote_error: Option<String>,
@@ -58,6 +63,8 @@ pub struct DesktopSettings {
     pub llm: Option<LlmConfig>,
     #[serde(default)]
     pub remote_gateway: DesktopRemoteGatewaySettings,
+    #[serde(default)]
+    pub lan_mesh: DesktopLanMeshSettings,
     pub updated_at: f64,
 }
 
@@ -71,6 +78,7 @@ impl Default for DesktopSettings {
             language: String::new(),
             llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
+            lan_mesh: DesktopLanMeshSettings::default(),
             updated_at: now_ts(),
         }
     }
@@ -128,6 +136,16 @@ impl DesktopRuntime {
             )
         })?;
         ensure_container_root_dirs(&settings.container_roots)?;
+        settings.lan_mesh = settings.lan_mesh.clone().normalized();
+        if settings.lan_mesh.peer_id.trim().is_empty() {
+            settings.lan_mesh.peer_id = build_default_lan_peer_id(&user_id);
+        }
+        if settings.lan_mesh.display_name.trim().is_empty() {
+            settings.lan_mesh.display_name = user_id.clone();
+        }
+        desktop_lan::manager()
+            .apply_settings(settings.lan_mesh.clone())
+            .await;
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;
 
@@ -136,6 +154,7 @@ impl DesktopRuntime {
         let i18n_path = repo_root.join("config/i18n.messages.json");
         let skill_runner = repo_root.join("scripts/skill_runner.py");
         let user_tools_root = temp_root.join("user_tools");
+        let admin_custom_skills_root = temp_root.join("admin_skills");
         if let Err(err) = seed_user_tool_skills(&repo_root, &user_tools_root, &user_id) {
             warn!(
                 "seed desktop user tool skills failed: {} -> {}: {err}",
@@ -151,10 +170,12 @@ impl DesktopRuntime {
         set_env_prompts_root_if_unset(&repo_root);
         set_env_path_if_exists("WUNDER_SKILL_RUNNER_PATH", &skill_runner);
         set_env_path("WUNDER_USER_TOOLS_ROOT", &user_tools_root);
+        set_env_path(ADMIN_CUSTOM_SKILLS_ROOT_ENV, &admin_custom_skills_root);
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
+        set_env_path(BUILTIN_SKILLS_ROOT_ENV, &repo_root.join("skills"));
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
 
@@ -198,6 +219,7 @@ impl DesktopRuntime {
         ensure_desktop_identity(state.as_ref(), &user_id, &desktop_token)?;
 
         let remote_gateway = settings.remote_gateway.clone();
+        let lan_mesh = settings.lan_mesh.clone();
         let (remote_api_base, remote_ws_base, remote_error) =
             resolve_remote_endpoints(&remote_gateway);
 
@@ -215,6 +237,7 @@ impl DesktopRuntime {
             user_id,
             desktop_token,
             remote_gateway,
+            lan_mesh,
             remote_api_base,
             remote_ws_base,
             remote_error,
@@ -321,6 +344,7 @@ fn ensure_runtime_dirs(temp_root: &Path) -> Result<()> {
         temp_root.join("logs"),
         temp_root.join("sessions"),
         temp_root.join("user_tools"),
+        temp_root.join("admin_skills"),
         temp_root.join("vector_knowledge"),
     ] {
         fs::create_dir_all(dir)?;
@@ -729,9 +753,9 @@ fn apply_desktop_defaults(
         config.security.api_key = Some(defaults.desktop_token.to_string());
     }
 
-    let launch_skills = workspace_root.join("skills");
     let repo_skills = repo_root.join("skills");
-    let mut skill_paths = vec![launch_skills, repo_skills];
+    let admin_custom_skills = temp_root.join("admin_skills");
+    let mut skill_paths = vec![repo_skills, admin_custom_skills];
     for existing in &config.skills.paths {
         if is_legacy_eva_skills_path(existing) {
             continue;
@@ -752,6 +776,12 @@ fn apply_desktop_defaults(
         .cloned()
         .collect::<Vec<_>>();
     allow_paths.push(repo_root.join("skills").to_string_lossy().to_string());
+    allow_paths.push(
+        temp_root
+            .join("admin_skills")
+            .to_string_lossy()
+            .to_string(),
+    );
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
 }
@@ -761,6 +791,15 @@ fn normalize_user_id(raw: Option<&str>) -> String {
         return DESKTOP_DEFAULT_USER_ID.to_string();
     };
     UserStore::normalize_user_id(raw).unwrap_or_else(|| DESKTOP_DEFAULT_USER_ID.to_string())
+}
+
+fn build_default_lan_peer_id(user_id: &str) -> String {
+    let machine = std::env::var("COMPUTERNAME")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "desktop".to_string());
+    format!("{machine}-{user_id}")
 }
 
 fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str) -> Result<()> {

@@ -586,6 +586,22 @@
             </div>
           </button>
           <button
+            class="messenger-list-item"
+            :class="{ active: settingsPanelMode === 'prompts' }"
+            type="button"
+            @click="settingsPanelMode = 'prompts'"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-file-lines" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('messenger.prompt.title') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('messenger.prompt.desc') }}</span>
+              </div>
+            </div>
+          </button>
+          <button
             v-if="desktopMode"
             class="messenger-list-item"
             :class="{ active: settingsPanelMode === 'desktop-models' }"
@@ -599,6 +615,23 @@
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ t('messenger.settings.desktopModelsHint') }}</span>
+              </div>
+            </div>
+          </button>
+          <button
+            v-if="desktopMode"
+            class="messenger-list-item"
+            :class="{ active: settingsPanelMode === 'desktop-lan' }"
+            type="button"
+            @click="settingsPanelMode = 'desktop-lan'"
+          >
+            <div class="messenger-list-avatar"><i class="fa-solid fa-network-wired" aria-hidden="true"></i></div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('messenger.settings.desktopLan') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('messenger.settings.desktopLanHint') }}</span>
               </div>
             </div>
           </button>
@@ -1045,12 +1078,21 @@
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'more'">
+              <UserPromptSettingsPanel v-if="settingsPanelMode === 'prompts'" />
               <DesktopSystemSettingsPanel
-                v-if="
+                v-else-if="
                   desktopMode &&
-                  (settingsPanelMode === 'desktop-models' || settingsPanelMode === 'desktop-remote')
+                  (settingsPanelMode === 'desktop-models' ||
+                    settingsPanelMode === 'desktop-remote' ||
+                    settingsPanelMode === 'desktop-lan')
                 "
-                :panel="settingsPanelMode === 'desktop-remote' ? 'remote' : 'models'"
+                :panel="
+                  settingsPanelMode === 'desktop-remote'
+                    ? 'remote'
+                    : settingsPanelMode === 'desktop-lan'
+                      ? 'lan'
+                      : 'models'
+                "
               />
               <MessengerSettingsPanel
                 v-else
@@ -1597,6 +1639,7 @@ import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePr
 import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
+import UserPromptSettingsPanel from '@/components/messenger/UserPromptSettingsPanel.vue';
 import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
 import AgentRuntimeRecordsPanel from '@/components/messenger/AgentRuntimeRecordsPanel.vue';
@@ -1816,7 +1859,9 @@ const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expire
 const cronAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
 const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime'>('agent');
-const settingsPanelMode = ref<'general' | 'profile' | 'desktop-models' | 'desktop-remote'>('general');
+const settingsPanelMode = ref<
+  'general' | 'profile' | 'prompts' | 'desktop-models' | 'desktop-remote' | 'desktop-lan'
+>('general');
 const rightDockCollapsed = ref(false);
 const desktopInitialSectionPinned = ref(false);
 const desktopShowFirstLaunchDefaultAgentHint = ref(false);
@@ -1962,7 +2007,7 @@ const finishMessengerPerfTrace = (
 };
 
 const sectionOptions = computed(() => {
-  const options = [
+  return [
     { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
     { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
     { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
@@ -1971,10 +2016,6 @@ const sectionOptions = computed(() => {
     { key: 'files' as MessengerSection, icon: 'fa-solid fa-folder-open', label: t('messenger.section.files') },
     { key: 'more' as MessengerSection, icon: 'fa-solid fa-gear', label: t('messenger.section.settings') }
   ];
-  if (desktopMode.value && !isDesktopRemoteAuthMode()) {
-    return options.filter((item) => item.key !== 'users' && item.key !== 'groups');
-  }
-  return options;
 });
 
 const leftRailMainSectionOptions = computed(() =>
@@ -2940,7 +2981,9 @@ const chatPanelTitle = computed(() => {
   }
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return t('user.profile.enter');
+    if (settingsPanelMode.value === 'prompts') return t('messenger.prompt.title');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llm');
+    if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.title');
     if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.title');
   }
   return activeSectionTitle.value;
@@ -2969,7 +3012,9 @@ const chatPanelSubtitle = computed(() => {
   }
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return currentUsername.value;
+    if (settingsPanelMode.value === 'prompts') return t('messenger.prompt.desc');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llmHint');
+    if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.hint');
     if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.hint');
   }
   return activeSectionSubtitle.value;
@@ -6938,8 +6983,12 @@ watch(
     const panelHint = String(route.query.panel || '').trim().toLowerCase();
     if (route.path.includes('/profile')) {
       settingsPanelMode.value = 'profile';
+    } else if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
+      settingsPanelMode.value = 'prompts';
     } else if (desktopMode.value && (panelHint === 'desktop-models' || panelHint === 'desktop')) {
       settingsPanelMode.value = 'desktop-models';
+    } else if (desktopMode.value && panelHint === 'desktop-lan') {
+      settingsPanelMode.value = 'desktop-lan';
     } else if (desktopMode.value && panelHint === 'desktop-remote') {
       settingsPanelMode.value = 'desktop-remote';
     } else {
