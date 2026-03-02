@@ -14,11 +14,23 @@ export type DesktopInstallResult = {
   state?: DesktopUpdateState;
 };
 
+export type DesktopScreenshotResult = {
+  ok?: boolean;
+  name?: string;
+  path?: string;
+  mimeType?: string;
+  dataUrl?: string;
+  message?: string;
+};
+
 export type DesktopBridge = {
   toggleDevTools?: () => Promise<boolean> | boolean;
   checkForUpdates?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
+  captureScreenshot?: (
+    options?: { hideWindow?: boolean }
+  ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
   chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
 };
 

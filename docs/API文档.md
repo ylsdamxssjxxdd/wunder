@@ -194,6 +194,7 @@
   - `enabled`：启用技能名列表
   - `shared`：共享技能名列表
 - `POST` 返回：同 `GET`
+- 说明：desktop 本地模式下，内置技能启用状态会同步写入全局 `skills.enabled`，不再作为 `user_id@技能名` 自建工具注入。
 - `DELETE` 入参（Query）：
   - `user_id`：用户唯一标识
   - `name`：技能名称

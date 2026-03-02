@@ -93,6 +93,17 @@
         >
           <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
         </button>
+        <button
+          v-if="desktopScreenshotSupported"
+          class="messenger-world-tool-btn"
+          type="button"
+          :title="t('chat.attachments.screenshot')"
+          :aria-label="t('chat.attachments.screenshot')"
+          :disabled="attachmentBusy > 0"
+          @click="captureDesktopScreenshotAttachment"
+        >
+          <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
+        </button>
       </div>
       <textarea
         v-model="inputText"
@@ -162,6 +173,17 @@
           <i class="fa-solid fa-paperclip input-icon" aria-hidden="true"></i>
         </button>
         <button
+          v-if="desktopScreenshotSupported"
+          class="input-icon-btn screenshot-btn"
+          type="button"
+          :title="t('chat.attachments.screenshot')"
+          :aria-label="t('chat.attachments.screenshot')"
+          :disabled="attachmentBusy > 0"
+          @click="captureDesktopScreenshotAttachment"
+        >
+          <i class="fa-solid fa-camera input-icon" aria-hidden="true"></i>
+        </button>
+        <button
           class="input-icon-btn send-btn"
           type="button"
           :disabled="!canSendOrStop"
@@ -192,7 +214,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { convertChatAttachment } from '@/api/chat';
 import {
@@ -261,6 +283,21 @@ type AttachmentPayload = {
   name: string;
   content: string;
   mime_type?: string;
+};
+
+type DesktopScreenshotResult = {
+  ok?: boolean;
+  name?: string;
+  path?: string;
+  mimeType?: string;
+  dataUrl?: string;
+  message?: string;
+};
+
+type DesktopScreenshotBridge = {
+  captureScreenshot?: (
+    options?: { hideWindow?: boolean }
+  ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
 };
 
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
@@ -350,6 +387,15 @@ const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
   Boolean(event.altKey && !hasPrimarySendModifier(event));
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
+const getDesktopScreenshotBridge = (): DesktopScreenshotBridge | null => {
+  if (typeof window === 'undefined') return null;
+  const candidate = (window as Window & { wunderDesktop?: DesktopScreenshotBridge }).wunderDesktop;
+  if (!candidate || typeof candidate.captureScreenshot !== 'function') {
+    return null;
+  }
+  return candidate;
+};
+const desktopScreenshotSupported = computed(() => Boolean(getDesktopScreenshotBridge()));
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
@@ -818,6 +864,72 @@ const removeAttachment = (id) => {
 
 const clearAttachments = () => {
   attachments.value = [];
+};
+
+const pickScreenshotCaptureMode = async (): Promise<boolean | null> => {
+  try {
+    await ElMessageBox.confirm(
+      t('chat.attachments.screenshotModePrompt'),
+      t('chat.attachments.screenshotModeTitle'),
+      {
+        type: 'info',
+        confirmButtonText: t('chat.attachments.screenshotModeHide'),
+        cancelButtonText: t('chat.attachments.screenshotModeKeep'),
+        distinguishCancelAndClose: true
+      }
+    );
+    return true;
+  } catch (action) {
+    if (action === 'cancel') {
+      return false;
+    }
+    return null;
+  }
+};
+
+const captureDesktopScreenshotAttachment = async () => {
+  const bridge = getDesktopScreenshotBridge();
+  if (!bridge || typeof bridge.captureScreenshot !== 'function') {
+    ElMessage.warning(t('chat.attachments.screenshotUnavailable'));
+    return;
+  }
+  if (attachmentBusy.value > 0) {
+    ElMessage.warning(t('chat.attachments.busy'));
+    return;
+  }
+  const hideWindow = await pickScreenshotCaptureMode();
+  if (hideWindow === null) {
+    return;
+  }
+
+  attachmentBusy.value += 1;
+  try {
+    const result = await bridge.captureScreenshot({ hideWindow });
+    if (!result || result.ok === false) {
+      throw new Error(
+        String(result?.message || t('chat.attachments.screenshotFailed')).trim() ||
+          t('chat.attachments.screenshotFailed')
+      );
+    }
+    const dataUrl = String(result.dataUrl || '').trim();
+    if (!dataUrl || !dataUrl.startsWith('data:image/')) {
+      throw new Error(t('chat.attachments.screenshotFailed'));
+    }
+    const name = String(result.name || '').trim() || `screenshot-${Date.now()}.png`;
+    const mimeType = String(result.mimeType || '').trim() || 'image/png';
+    attachments.value.push({
+      id: buildAttachmentId(),
+      type: 'image',
+      name,
+      content: dataUrl,
+      mime_type: mimeType
+    });
+    ElMessage.success(t('chat.attachments.screenshotAdded', { name }));
+  } catch (error) {
+    ElMessage.error(resolveUploadError(error, t('chat.attachments.screenshotFailed')));
+  } finally {
+    attachmentBusy.value = Math.max(0, attachmentBusy.value - 1);
+  }
 };
 
 const syncWorldComposerHeight = () => {

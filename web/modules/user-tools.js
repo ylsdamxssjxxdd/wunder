@@ -1126,7 +1126,7 @@ const renderUserSkills = () => {
     }
     const desc = document.createElement("span");
     desc.className = "muted";
-    desc.textContent = descParts.join(" 路 ");
+    desc.textContent = descParts.join(" · ");
     titleRow.append(title, sourceTag);
     info.append(titleRow);
     if (desc.textContent) {

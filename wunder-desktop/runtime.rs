@@ -859,6 +859,16 @@ fn apply_desktop_defaults(
         .into_iter()
         .map(|path| path.to_string_lossy().to_string())
         .collect();
+    for required in ["技能创建器", "公文写作", "电子表格处理"] {
+        if !config
+            .skills
+            .enabled
+            .iter()
+            .any(|name| name.trim() == required)
+        {
+            config.skills.enabled.push(required.to_string());
+        }
+    }
 
     let mut allow_paths = config
         .security

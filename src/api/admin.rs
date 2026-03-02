@@ -1071,13 +1071,30 @@ fn resolve_admin_skill_source(
     AdminSkillSourceKind::External
 }
 
+fn normalize_admin_public_path_text(raw: &str) -> String {
+    let mut path = raw.to_string();
+    if cfg!(windows) {
+        if let Some(stripped) = path.strip_prefix("\\\\?\\") {
+            path = stripped.to_string();
+        }
+        if let Some(stripped) = path.strip_prefix("//?/") {
+            path = stripped.to_string();
+        }
+    }
+    path.replace('\\', "/")
+}
+
+fn normalize_admin_public_path(path: &Path) -> String {
+    normalize_admin_public_path_text(&path.to_string_lossy())
+}
+
 fn admin_skill_to_value(spec: SkillSpec, enabled_set: &HashSet<String>) -> Value {
     let builtin_root = resolve_builtin_skills_root();
     let custom_root = resolve_admin_custom_skills_root();
     let source = resolve_admin_skill_source(&spec, builtin_root.as_deref(), &custom_root);
     let name = spec.name;
     let description = spec.description;
-    let path = spec.path;
+    let path = normalize_admin_public_path_text(&spec.path);
     let input_schema = spec.input_schema;
     let enabled = enabled_set.contains(&name);
     json!({
@@ -1116,6 +1133,10 @@ fn ensure_admin_skill_editable(spec: &SkillSpec) -> Result<PathBuf, Response> {
 async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
     let scan_paths = build_admin_skill_scan_paths(&config);
+    let public_paths = scan_paths
+        .iter()
+        .map(|path| normalize_admin_public_path_text(path))
+        .collect::<Vec<_>>();
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths.clone();
     scan_config.skills.enabled = Vec::new();
@@ -1127,7 +1148,7 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
         .map(|spec| admin_skill_to_value(spec, &enabled_set))
         .collect::<Vec<_>>();
     Ok(Json(json!({
-        "paths": scan_paths,
+        "paths": public_paths,
         "enabled": config.skills.enabled,
         "skills": skills
     })))
@@ -1204,7 +1225,7 @@ async fn admin_skills_content(
         })?;
     Ok(Json(json!({
         "name": spec.name,
-        "path": skill_path.to_string_lossy(),
+        "path": normalize_admin_public_path(&skill_path),
         "content": content
     })))
 }
@@ -1251,7 +1272,7 @@ async fn admin_skills_files(
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "name": spec.name,
-        "root": root.to_string_lossy().replace('\\', "/"),
+        "root": normalize_admin_public_path(&root),
         "entries": payload
     })))
 }
@@ -1276,7 +1297,7 @@ async fn admin_skills_file(
     }
     let config = state.config_store.get().await;
     let spec = resolve_admin_skill_spec(&config, name)?;
-    let root = ensure_admin_skill_editable(&spec)?;
+    let root = normalize_existing_path(&spec.root);
     let target = resolve_skill_file_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
         return Err(error_response(
@@ -1322,7 +1343,7 @@ async fn admin_skills_file_update(
     }
     let config = state.config_store.get().await;
     let spec = resolve_admin_skill_spec(&config, name)?;
-    let root = normalize_existing_path(&spec.root);
+    let root = ensure_admin_skill_editable(&spec)?;
     let target = resolve_skill_file_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
         return Err(error_response(
@@ -1408,6 +1429,10 @@ async fn admin_skills_update(
     }
     state.reload_skills(&updated).await;
     let scan_paths = build_admin_skill_scan_paths(&updated);
+    let public_paths = scan_paths
+        .iter()
+        .map(|path| normalize_admin_public_path_text(path))
+        .collect::<Vec<_>>();
     let mut scan_config = updated.clone();
     scan_config.skills.paths = scan_paths.clone();
     scan_config.skills.enabled = Vec::new();
@@ -1419,7 +1444,7 @@ async fn admin_skills_update(
         .map(|spec| admin_skill_to_value(spec, &enabled_set))
         .collect::<Vec<_>>();
     Ok(Json(json!({
-        "paths": scan_paths,
+        "paths": public_paths,
         "enabled": updated.skills.enabled,
         "skills": skills
     })))

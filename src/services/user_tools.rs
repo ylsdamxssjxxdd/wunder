@@ -574,12 +574,13 @@ impl UserToolManager {
             .into_iter()
             .map(|spec| spec.name)
             .collect();
+        let desktop_mode = config.server.mode.trim().eq_ignore_ascii_case("desktop");
         let knowledge_names = collect_knowledge_tool_names(config, &skill_names);
 
         let mut blocked_names: HashSet<String> = HashSet::new();
         blocked_names.extend(builtin_names);
         blocked_names.extend(mcp_names);
-        blocked_names.extend(skill_names);
+        blocked_names.extend(skill_names.clone());
         blocked_names.extend(knowledge_names);
 
         let mut alias_specs = HashMap::new();
@@ -739,6 +740,13 @@ impl UserToolManager {
                     .map(|name| name.trim().to_string())
                     .filter(|name| !name.is_empty())
                     .collect();
+                let mut enabled = enabled;
+                if desktop_mode {
+                    enabled.retain(|name| !skill_names.contains(name));
+                }
+                if enabled.is_empty() {
+                    return;
+                }
                 let specs = self.load_cached_skill_specs(config, owner_id, &skill_root, &enabled);
                 if specs.is_empty() {
                     return;

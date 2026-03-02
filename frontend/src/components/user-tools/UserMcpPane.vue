@@ -264,7 +264,9 @@
           <label>{{ t('userTools.mcp.import.structLabel') }}</label>
           <el-input
             v-model="importContent"
+            class="mcp-import-textarea"
             type="textarea"
+            :rows="10"
             :placeholder="t('userTools.mcp.import.placeholder')"
           />
         </div>
@@ -988,7 +990,8 @@ watch(
     if (value && !loaded.value) {
       loadServers();
     }
-  }
+  },
+  { immediate: true }
 );
 
 watch(activeServer, (server) => {

@@ -1078,7 +1078,9 @@
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'more'">
-              <UserPromptSettingsPanel v-if="settingsPanelMode === 'prompts'" />
+              <div v-if="settingsPanelMode === 'prompts'" class="messenger-chat-settings-block">
+                <UserPromptSettingsPanel />
+              </div>
               <DesktopSystemSettingsPanel
                 v-else-if="
                   desktopMode &&
@@ -1450,6 +1452,7 @@
           :send-key="messengerSendKey"
           :can-send="canSendWorldMessage"
           :uploading="worldUploading"
+          :screenshot-supported="worldDesktopScreenshotSupported"
           @update:draft="worldDraft = $event"
           @resize-mousedown="startWorldComposerResize"
           @open-quick-panel="openWorldQuickPanel"
@@ -1459,6 +1462,7 @@
           @insert-emoji="insertWorldEmoji"
           @trigger-container-pick="openWorldContainerPicker"
           @trigger-upload="triggerWorldUpload"
+          @trigger-screenshot="triggerWorldScreenshot"
           @open-history="openWorldHistoryDialog"
           @focus-input="worldQuickPanelMode = ''"
           @enter="handleWorldComposerEnterKeydown"
@@ -1619,7 +1623,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElLoading, ElMessage } from 'element-plus';
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 
 import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits } from '@/api/auth';
@@ -1723,6 +1727,7 @@ import {
   type AgentRuntimeState,
   type DesktopBridge,
   type DesktopInstallResult,
+  type DesktopScreenshotResult,
   type DesktopUpdateState,
   type FileContainerMenuTarget,
   type MessengerPerfTrace,
@@ -2050,6 +2055,9 @@ const settingsLogoutDisabled = computed(
 );
 const debugToolsAvailable = computed(() => typeof getDesktopBridge()?.toggleDevTools === 'function');
 const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkForUpdates === 'function');
+const worldDesktopScreenshotSupported = computed(
+  () => desktopMode.value && typeof getDesktopBridge()?.captureScreenshot === 'function'
+);
 
 const keyword = computed(() => sessionHub.keyword);
 
@@ -6249,20 +6257,143 @@ const appendWorldAttachmentTokens = (paths: string[]) => {
   worldDraft.value = `${worldDraft.value}${prefix}${tokens.join(' ')}`;
 };
 
+const closeWorldAttachmentPanels = () => {
+  worldQuickPanelMode.value = '';
+  worldContainerPickerVisible.value = false;
+};
+
+const findWorldOversizedFile = (files: File[]): File | undefined =>
+  files.find((file) => Number(file.size || 0) > WORLD_UPLOAD_SIZE_LIMIT);
+
+const resolveUploadedWorldPath = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return normalizeUploadPath(value);
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return normalizeUploadPath(record.path ?? record.relative_path ?? record.relativePath ?? '');
+  }
+  return '';
+};
+
+const uploadWorldFilesToUserContainer = async (files: File[]): Promise<string[]> => {
+  if (!files.length) return [];
+  const formData = new FormData();
+  formData.append('path', USER_WORLD_UPLOAD_BASE);
+  formData.append('container_id', String(USER_CONTAINER_ID));
+  files.forEach((file) => {
+    formData.append('files', file as Blob);
+  });
+  const { data } = await uploadWunderWorkspace(formData);
+  const uploaded = (Array.isArray(data?.files) ? data.files : [])
+    .map((item) => resolveUploadedWorldPath(item))
+    .filter(Boolean);
+  if (uploaded.length) {
+    appendWorldAttachmentTokens(uploaded);
+    emitWorkspaceRefresh({
+      reason: 'messenger-world-upload',
+      containerId: USER_CONTAINER_ID
+    });
+  }
+  return uploaded;
+};
+
+const pickWorldScreenshotCaptureMode = async (): Promise<boolean | null> => {
+  try {
+    await ElMessageBox.confirm(
+      t('chat.attachments.screenshotModePrompt'),
+      t('chat.attachments.screenshotModeTitle'),
+      {
+        type: 'info',
+        confirmButtonText: t('chat.attachments.screenshotModeHide'),
+        cancelButtonText: t('chat.attachments.screenshotModeKeep'),
+        distinguishCancelAndClose: true
+      }
+    );
+    return true;
+  } catch (action) {
+    if (action === 'cancel') {
+      return false;
+    }
+    return null;
+  }
+};
+
+const screenshotDataUrlToFile = (dataUrl: string, fileName: string, mimeTypeHint = ''): File => {
+  const normalizedDataUrl = String(dataUrl || '').trim();
+  const commaIndex = normalizedDataUrl.indexOf(',');
+  if (!normalizedDataUrl.startsWith('data:image/') || commaIndex <= 0) {
+    throw new Error(t('chat.attachments.screenshotFailed'));
+  }
+  const metadata = normalizedDataUrl.slice(5, commaIndex);
+  const payload = normalizedDataUrl.slice(commaIndex + 1);
+  if (!/;base64$/i.test(metadata)) {
+    throw new Error(t('chat.attachments.screenshotFailed'));
+  }
+  const binary = atob(payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const mimeType = String(mimeTypeHint || metadata.split(';')[0] || 'image/png').trim() || 'image/png';
+  return new File([bytes], fileName, { type: mimeType });
+};
+
+const captureWorldScreenshotFile = async (hideWindow: boolean): Promise<File> => {
+  const bridge = getDesktopBridge();
+  if (!bridge || typeof bridge.captureScreenshot !== 'function') {
+    throw new Error(t('chat.attachments.screenshotUnavailable'));
+  }
+  const result = (await bridge.captureScreenshot({ hideWindow })) as DesktopScreenshotResult | null;
+  if (!result || result.ok === false) {
+    const reason = String(result?.message || t('chat.attachments.screenshotFailed')).trim();
+    throw new Error(reason || t('chat.attachments.screenshotFailed'));
+  }
+  const fileName = String(result.name || '').trim() || `screenshot-${Date.now()}.png`;
+  const mimeType = String(result.mimeType || '').trim() || 'image/png';
+  return screenshotDataUrlToFile(String(result.dataUrl || ''), fileName, mimeType);
+};
+
 const triggerWorldUpload = () => {
   const uploadInput = worldComposerViewRef.value?.getUploadInputElement() || null;
   if (!isWorldConversationActive.value || worldUploading.value || !uploadInput) return;
-  worldQuickPanelMode.value = '';
-  worldContainerPickerVisible.value = false;
+  closeWorldAttachmentPanels();
   uploadInput.value = '';
   uploadInput.click();
+};
+
+const triggerWorldScreenshot = async () => {
+  if (!isWorldConversationActive.value || worldUploading.value) return;
+  if (!worldDesktopScreenshotSupported.value) {
+    ElMessage.warning(t('chat.attachments.screenshotUnavailable'));
+    return;
+  }
+  closeWorldAttachmentPanels();
+  const hideWindow = await pickWorldScreenshotCaptureMode();
+  if (hideWindow === null) {
+    return;
+  }
+  worldUploading.value = true;
+  try {
+    const screenshotFile = await captureWorldScreenshotFile(hideWindow);
+    const uploaded = await uploadWorldFilesToUserContainer([screenshotFile]);
+    if (!uploaded.length) {
+      throw new Error(t('workspace.upload.failed'));
+    }
+    ElMessage.success(t('chat.attachments.screenshotAdded', { name: screenshotFile.name }));
+    focusWorldTextareaToEnd();
+  } catch (error) {
+    showApiError(error, t('chat.attachments.screenshotFailed'));
+  } finally {
+    worldUploading.value = false;
+  }
 };
 
 const handleWorldUploadInput = async (event: Event) => {
   const target = event.target as HTMLInputElement | null;
   const files = target?.files ? Array.from(target.files) : [];
   if (!files.length) return;
-  const oversized = files.find((file) => Number(file.size || 0) > WORLD_UPLOAD_SIZE_LIMIT);
+  const oversized = findWorldOversizedFile(files);
   if (oversized) {
     ElMessage.warning(t('workspace.upload.tooLarge', { limit: '200 MB' }));
     if (target) target.value = '';
@@ -6270,23 +6401,7 @@ const handleWorldUploadInput = async (event: Event) => {
   }
   worldUploading.value = true;
   try {
-    const formData = new FormData();
-    formData.append('path', USER_WORLD_UPLOAD_BASE);
-    formData.append('container_id', String(USER_CONTAINER_ID));
-    files.forEach((file) => {
-      formData.append('files', file as Blob);
-    });
-    const { data } = await uploadWunderWorkspace(formData);
-    const uploaded = (Array.isArray(data?.files) ? data.files : [])
-      .map((item) => normalizeUploadPath(item))
-      .filter(Boolean);
-    if (uploaded.length) {
-      appendWorldAttachmentTokens(uploaded);
-      emitWorkspaceRefresh({
-        reason: 'messenger-world-upload',
-        containerId: USER_CONTAINER_ID
-      });
-    }
+    const uploaded = await uploadWorldFilesToUserContainer(files);
     ElMessage.success(
       t('userWorld.attachments.uploadSuccess', { count: uploaded.length || files.length })
     );

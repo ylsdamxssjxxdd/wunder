@@ -84,6 +84,17 @@
       >
         <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
       </button>
+      <button
+        v-if="screenshotSupported"
+        class="messenger-world-tool-btn"
+        type="button"
+        :disabled="uploading"
+        :title="t('chat.attachments.screenshot')"
+        :aria-label="t('chat.attachments.screenshot')"
+        @click="emit('trigger-screenshot')"
+      >
+        <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
+      </button>
       <div class="messenger-world-tool-anchor messenger-world-tool-anchor--history">
         <button
           class="messenger-world-tool-btn"
@@ -145,10 +156,12 @@ const props = withDefaults(
     draft: string;
     canSend: boolean;
     uploading: boolean;
+    screenshotSupported?: boolean;
     sendKey?: SendKeyMode;
   }>(),
   {
-    sendKey: 'ctrl_enter'
+    sendKey: 'ctrl_enter',
+    screenshotSupported: false
   }
 );
 
@@ -162,6 +175,7 @@ const emit = defineEmits<{
   'insert-emoji': [emoji: string];
   'trigger-container-pick': [];
   'trigger-upload': [];
+  'trigger-screenshot': [];
   'open-history': [];
   'focus-input': [];
   enter: [event: KeyboardEvent];

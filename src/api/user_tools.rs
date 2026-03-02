@@ -230,16 +230,30 @@ async fn user_skills_get(
     let user_id = resolved.user.user_id;
     let payload = state.user_tool_store.load_user_tools(&user_id);
     let config = state.config_store.get().await;
+    let desktop_mode = is_desktop_mode(&config);
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
     let builtin_catalog = load_builtin_skill_catalog(&config);
+    let builtin_enabled_set = if desktop_mode {
+        resolve_builtin_enabled_set(&config, &builtin_catalog)
+    } else {
+        HashSet::new()
+    };
+    let builtin_enabled_ref = if desktop_mode {
+        Some(&builtin_enabled_set)
+    } else {
+        None
+    };
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
     let enabled_set: std::collections::HashSet<String> =
         payload.skills.enabled.iter().cloned().collect();
-    let shared_set: std::collections::HashSet<String> =
+    let mut shared_set: std::collections::HashSet<String> =
         payload.skills.shared.iter().cloned().collect();
+    if desktop_mode {
+        shared_set.retain(|name| !builtin_catalog.names.contains(name));
+    }
     let skills = registry
         .list_specs()
         .into_iter()
@@ -250,13 +264,22 @@ async fn user_skills_get(
                 &shared_set,
                 &skill_root,
                 &builtin_catalog,
+                builtin_enabled_ref,
             )
         })
         .collect::<Vec<_>>();
+    let mut enabled = enabled_set.into_iter().collect::<Vec<_>>();
+    if desktop_mode {
+        enabled.extend(builtin_enabled_set.iter().cloned());
+    }
+    enabled.sort();
+    enabled.dedup();
+    let mut shared = shared_set.into_iter().collect::<Vec<_>>();
+    shared.sort();
     Ok(Json(json!({
         "data": {
-            "enabled": payload.skills.enabled,
-            "shared": payload.skills.shared,
+            "enabled": enabled,
+            "shared": shared,
             "skills": skills
         }
     })))
@@ -269,10 +292,84 @@ async fn user_skills_update(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, payload.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id;
+    let requested_enabled = normalize_skill_name_list(&payload.enabled);
+    let requested_shared = normalize_skill_name_list(&payload.shared);
     let previous = state.user_tool_store.load_user_tools(&user_id);
+    let config = state.config_store.get().await;
+    let desktop_mode = is_desktop_mode(&config);
+    let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let mut response_config = config.clone();
+    let builtin_catalog = load_builtin_skill_catalog(&config);
+    let mut scan_config = config.clone();
+    scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
+    scan_config.skills.enabled = Vec::new();
+    let registry = load_skills(&scan_config, false, false, false);
+    let mut builtin_names = HashSet::new();
+    for spec in registry.list_specs() {
+        if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
+            builtin_names.insert(spec.name.clone());
+        }
+    }
+
+    let requested_enabled_set: HashSet<String> = requested_enabled.iter().cloned().collect();
+    let mut persist_enabled = requested_enabled.clone();
+    let mut persist_shared = requested_shared.clone();
+    if desktop_mode {
+        persist_enabled.retain(|name| !builtin_names.contains(name));
+        persist_shared.retain(|name| !builtin_names.contains(name));
+        let before_enabled: Vec<String> = config
+            .skills
+            .enabled
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect();
+        let before_builtin_enabled = resolve_builtin_enabled_set(&config, &builtin_catalog);
+        let requested_builtin_enabled: HashSet<String> = requested_enabled_set
+            .intersection(&builtin_names)
+            .cloned()
+            .collect();
+        let mut next_enabled_set: HashSet<String> = before_enabled.iter().cloned().collect();
+        for name in &builtin_names {
+            next_enabled_set.remove(name);
+        }
+        next_enabled_set.extend(requested_builtin_enabled.iter().cloned());
+        let mut next_enabled = next_enabled_set.into_iter().collect::<Vec<_>>();
+        next_enabled.sort();
+        let mut before_enabled_sorted = before_enabled;
+        before_enabled_sorted.sort();
+        if next_enabled != before_enabled_sorted {
+            let apply_enabled = next_enabled.clone();
+            response_config = state
+                .config_store
+                .update(|config| {
+                    config.skills.enabled = apply_enabled.clone();
+                })
+                .await
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            state.reload_skills(&response_config).await;
+            let mut builtin_added: Vec<String> = requested_builtin_enabled
+                .difference(&before_builtin_enabled)
+                .cloned()
+                .collect();
+            let mut builtin_removed: Vec<String> = before_builtin_enabled
+                .difference(&requested_builtin_enabled)
+                .cloned()
+                .collect();
+            builtin_added.sort();
+            builtin_removed.sort();
+            if !builtin_added.is_empty() || !builtin_removed.is_empty() {
+                info!(
+                    "user {user_id} desktop builtin skill selection changed: +{added} -{removed}",
+                    added = builtin_added.join(", "),
+                    removed = builtin_removed.join(", "),
+                );
+            }
+        }
+    }
     let updated = state
         .user_tool_store
-        .update_skills(&user_id, payload.enabled.clone(), payload.shared.clone())
+        .update_skills(&user_id, persist_enabled, persist_shared)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let before_enabled: HashSet<String> = previous.skills.enabled.iter().cloned().collect();
     let after_enabled: HashSet<String> = updated.skills.enabled.iter().cloned().collect();
@@ -315,17 +412,28 @@ async fn user_skills_update(
         }
     }
     state.user_tool_manager.clear_skill_cache(Some(&user_id));
-    let config = state.config_store.get().await;
-    let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let builtin_catalog = load_builtin_skill_catalog(&config);
-    let mut scan_config = config.clone();
+    let builtin_catalog = load_builtin_skill_catalog(&response_config);
+    let builtin_enabled_set = if desktop_mode {
+        resolve_builtin_enabled_set(&response_config, &builtin_catalog)
+    } else {
+        HashSet::new()
+    };
+    let builtin_enabled_ref = if desktop_mode {
+        Some(&builtin_enabled_set)
+    } else {
+        None
+    };
+    let mut scan_config = response_config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
     let enabled_set: std::collections::HashSet<String> =
         updated.skills.enabled.iter().cloned().collect();
-    let shared_set: std::collections::HashSet<String> =
+    let mut shared_set: std::collections::HashSet<String> =
         updated.skills.shared.iter().cloned().collect();
+    if desktop_mode {
+        shared_set.retain(|name| !builtin_catalog.names.contains(name));
+    }
     let skills = registry
         .list_specs()
         .into_iter()
@@ -336,13 +444,22 @@ async fn user_skills_update(
                 &shared_set,
                 &skill_root,
                 &builtin_catalog,
+                builtin_enabled_ref,
             )
         })
         .collect::<Vec<_>>();
+    let mut enabled = enabled_set.into_iter().collect::<Vec<_>>();
+    if desktop_mode {
+        enabled.extend(builtin_enabled_set.into_iter());
+    }
+    enabled.sort();
+    enabled.dedup();
+    let mut shared = shared_set.into_iter().collect::<Vec<_>>();
+    shared.sort();
     Ok(Json(json!({
         "data": {
-            "enabled": updated.skills.enabled,
-            "shared": updated.skills.shared,
+            "enabled": enabled,
+            "shared": shared,
             "skills": skills
         }
     })))
@@ -457,6 +574,39 @@ fn load_builtin_skill_catalog(config: &Config) -> BuiltinSkillCatalog {
     BuiltinSkillCatalog { names, dir_names }
 }
 
+fn is_desktop_mode(config: &Config) -> bool {
+    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+}
+
+fn normalize_skill_name_list(values: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        let cleaned = raw.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if seen.insert(cleaned.to_string()) {
+            output.push(cleaned.to_string());
+        }
+    }
+    output
+}
+
+fn resolve_builtin_enabled_set(
+    config: &Config,
+    builtin_catalog: &BuiltinSkillCatalog,
+) -> HashSet<String> {
+    config
+        .skills
+        .enabled
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .filter(|value| builtin_catalog.names.contains(value))
+        .collect()
+}
+
 fn resolve_user_skill_source(
     skill_root: &Path,
     spec: &SkillSpec,
@@ -481,20 +631,48 @@ fn is_user_skill_builtin(
     resolve_user_skill_source(skill_root, spec, builtin_catalog).is_builtin()
 }
 
+fn normalize_public_path_text(raw: &str) -> String {
+    let mut path = raw.to_string();
+    if cfg!(windows) {
+        if let Some(stripped) = path.strip_prefix("\\\\?\\") {
+            path = stripped.to_string();
+        }
+        if let Some(stripped) = path.strip_prefix("//?/") {
+            path = stripped.to_string();
+        }
+    }
+    path.replace('\\', "/")
+}
+
+fn normalize_public_path(path: &Path) -> String {
+    normalize_public_path_text(&path.to_string_lossy())
+}
+
 fn user_skill_to_value(
     spec: SkillSpec,
     enabled_set: &HashSet<String>,
     shared_set: &HashSet<String>,
     skill_root: &Path,
     builtin_catalog: &BuiltinSkillCatalog,
+    builtin_enabled_set: Option<&HashSet<String>>,
 ) -> Value {
     let source = resolve_user_skill_source(skill_root, &spec, builtin_catalog);
     let name = spec.name;
     let description = spec.description;
-    let path = spec.path;
+    let path = normalize_public_path_text(&spec.path);
     let input_schema = spec.input_schema;
-    let enabled = enabled_set.contains(&name);
-    let shared = shared_set.contains(&name);
+    let enabled = if source.is_builtin() {
+        builtin_enabled_set
+            .map(|items| items.contains(&name))
+            .unwrap_or_else(|| enabled_set.contains(&name))
+    } else {
+        enabled_set.contains(&name)
+    };
+    let shared = if source.is_builtin() {
+        false
+    } else {
+        shared_set.contains(&name)
+    };
     json!({
         "name": name,
         "description": description,
@@ -546,7 +724,7 @@ async fn user_skills_content(
     Ok(Json(json!({
         "data": {
             "name": name,
-            "path": skill_path.to_string_lossy(),
+            "path": normalize_public_path(&skill_path),
             "content": content
         }
     })))
@@ -568,14 +746,7 @@ async fn user_skills_files(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let builtin_catalog = load_builtin_skill_catalog(&config);
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
-    if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
-        return Err(error_response(
-            StatusCode::FORBIDDEN,
-            i18n::t("error.skill_builtin_readonly"),
-        ));
-    }
     let root = resolve_user_skill_root(&skill_root, &spec)?;
     let mut entries: Vec<(String, String)> = Vec::new();
     for entry in WalkDir::new(&root).into_iter().filter_map(|item| item.ok()) {
@@ -600,7 +771,7 @@ async fn user_skills_files(
     Ok(Json(json!({
         "data": {
             "name": spec.name,
-            "root": root.to_string_lossy().replace('\\', "/"),
+            "root": normalize_public_path(&root),
             "entries": payload
         }
     })))
@@ -629,14 +800,7 @@ async fn user_skills_file(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
-    let builtin_catalog = load_builtin_skill_catalog(&config);
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
-    if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
-        return Err(error_response(
-            StatusCode::FORBIDDEN,
-            i18n::t("error.skill_builtin_readonly"),
-        ));
-    }
     let root = resolve_user_skill_root(&skill_root, &spec)?;
     let target = resolve_skill_file_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
@@ -688,7 +852,14 @@ async fn user_skills_file_update(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let builtin_catalog = load_builtin_skill_catalog(&config);
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.skill_builtin_readonly"),
+        ));
+    }
     let root = resolve_user_skill_root(&skill_root, &spec)?;
     let target = resolve_skill_file_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
@@ -735,7 +906,14 @@ async fn user_skills_delete(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let builtin_catalog = load_builtin_skill_catalog(&config);
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.skill_builtin_readonly"),
+        ));
+    }
     let root = resolve_user_skill_root(&skill_root, &spec)?;
     tokio::fs::remove_dir_all(&root).await.map_err(|err| {
         error_response(

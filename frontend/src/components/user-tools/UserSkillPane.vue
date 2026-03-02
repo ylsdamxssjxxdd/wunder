@@ -711,7 +711,8 @@ watch(
     if (value && !loaded.value) {
       loadSkills({ refreshDetail: true });
     }
-  }
+  },
+  { immediate: true }
 );
 
 watch(
@@ -721,7 +722,8 @@ watch(
       scheduleSkillEditorHighlight();
       void loadSkills({ refreshDetail: false });
     }
-  }
+  },
+  { immediate: true }
 );
 
 watch(fileContent, () => {

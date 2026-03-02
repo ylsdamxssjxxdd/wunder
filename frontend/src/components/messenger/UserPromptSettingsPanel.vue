@@ -98,7 +98,7 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue';
-import { ElMessage } from 'element-plus';
+import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   createUserPromptTemplatePack,
@@ -109,6 +109,7 @@ import {
   updateUserPromptTemplateFile
 } from '@/api/promptTemplates';
 import { fetchRealtimeSystemPrompt } from '@/api/chat';
+import { fetchUserToolsCatalog } from '@/api/userTools';
 import { useI18n } from '@/i18n';
 
 type PromptPack = {
@@ -165,6 +166,7 @@ const settingActive = ref(false);
 const creatingPack = ref(false);
 const deletingPack = ref(false);
 const previewLoading = ref(false);
+let fileLoadSequence = 0;
 
 const resolveErrorMessage = (error: unknown, fallback: string) => {
   const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -201,11 +203,25 @@ const resolveSegmentLabel = (key: string) => {
 
 const hasUnsavedChanges = () => editorContent.value !== loadedContent.value;
 
-const confirmDiscardChanges = () => {
+const isActionCanceled = (error: unknown) => {
+  const message = String((error as { message?: string })?.message || '').toLowerCase();
+  return message.includes('cancel') || message.includes('close');
+};
+
+const confirmDiscardChanges = async () => {
   if (!hasUnsavedChanges()) {
     return true;
   }
-  return window.confirm(t('messenger.prompt.confirmDiscard'));
+  try {
+    await ElMessageBox.confirm(t('messenger.prompt.confirmDiscard'), t('common.notice'), {
+      type: 'warning',
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel')
+    });
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const loadStatus = async () => {
@@ -232,6 +248,7 @@ const loadStatus = async () => {
 };
 
 const loadFile = async () => {
+  const currentSequence = ++fileLoadSequence;
   fileLoading.value = true;
   statusText.value = t('common.loading');
   try {
@@ -241,6 +258,9 @@ const loadFile = async () => {
       locale: resolveLocale()
     });
     const data = ((result?.data?.data || {}) as PromptTemplateFile) || {};
+    if (currentSequence !== fileLoadSequence) {
+      return;
+    }
     const nextContent = String(data.content || '');
     editorContent.value = nextContent;
     loadedContent.value = nextContent;
@@ -254,18 +274,60 @@ const loadFile = async () => {
       statusText.value = '';
     }
   } catch (error) {
+    if (currentSequence !== fileLoadSequence) {
+      return;
+    }
     statusText.value = resolveErrorMessage(error, t('messenger.prompt.loadFailed'));
     editorContent.value = '';
     loadedContent.value = '';
   } finally {
-    fileLoading.value = false;
+    if (currentSequence === fileLoadSequence) {
+      fileLoading.value = false;
+    }
   }
+};
+
+const resolveEnabledToolOverrides = async () => {
+  const result = await fetchUserToolsCatalog();
+  const payload = (result?.data?.data || {}) as Record<string, unknown>;
+  const groups = [
+    payload.builtin_tools,
+    payload.mcp_tools,
+    payload.a2a_tools,
+    payload.skills,
+    payload.knowledge_tools,
+    payload.user_tools,
+    payload.shared_tools
+  ];
+  const overrides: Record<string, boolean> = {};
+  for (const group of groups) {
+    if (!Array.isArray(group)) {
+      continue;
+    }
+    for (const item of group) {
+      const name = String((item as { name?: string })?.name || '').trim();
+      if (!name) {
+        continue;
+      }
+      overrides[name] = true;
+    }
+  }
+  return overrides;
 };
 
 const loadPreview = async () => {
   previewLoading.value = true;
   try {
-    const result = await fetchRealtimeSystemPrompt({});
+    const payload: Record<string, unknown> = {};
+    try {
+      const toolOverrides = await resolveEnabledToolOverrides();
+      if (Object.keys(toolOverrides).length) {
+        payload.tool_overrides = toolOverrides;
+      }
+    } catch {
+      // Fallback to backend default allowed-tool resolution.
+    }
+    const result = await fetchRealtimeSystemPrompt(payload);
     previewPrompt.value = String(result?.data?.data?.prompt || '');
   } catch (error) {
     previewPrompt.value = '';
@@ -281,7 +343,7 @@ const handlePackSelectChange = async (event: Event) => {
   if (nextPack === selectedPack.value) {
     return;
   }
-  if (!confirmDiscardChanges()) {
+  if (!(await confirmDiscardChanges())) {
     if (target) {
       target.value = selectedPack.value;
     }
@@ -296,7 +358,7 @@ const selectSegment = async (key: string) => {
   if (!next || next === selectedSegment.value) {
     return;
   }
-  if (!confirmDiscardChanges()) {
+  if (!(await confirmDiscardChanges())) {
     return;
   }
   selectedSegment.value = next;
@@ -351,11 +413,24 @@ const setActivePack = async () => {
 };
 
 const createPack = async () => {
-  if (!confirmDiscardChanges()) {
+  if (!(await confirmDiscardChanges())) {
     return;
   }
-  const value = window.prompt(t('messenger.prompt.newPackPrompt'));
-  const packId = String(value || '').trim();
+  let packId = '';
+  try {
+    const { value } = await ElMessageBox.prompt(t('messenger.prompt.newPackPrompt'), t('common.create'), {
+      inputPattern: /^[A-Za-z0-9_-]{1,64}$/,
+      inputErrorMessage: t('messenger.prompt.newPackPrompt'),
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel')
+    });
+    packId = String(value || '').trim();
+  } catch (error) {
+    if (!isActionCanceled(error)) {
+      ElMessage.error(resolveErrorMessage(error, t('messenger.prompt.packCreateFailed')));
+    }
+    return;
+  }
   if (!packId || packId.toLowerCase() === 'default') {
     return;
   }
@@ -377,7 +452,17 @@ const deletePack = async () => {
   if (!selectedPack.value || selectedPack.value === 'default') {
     return;
   }
-  if (!window.confirm(t('messenger.prompt.confirmDeletePack', { pack: selectedPack.value }))) {
+  try {
+    await ElMessageBox.confirm(
+      t('messenger.prompt.confirmDeletePack', { pack: selectedPack.value }),
+      t('common.notice'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel')
+      }
+    );
+  } catch {
     return;
   }
   deletingPack.value = true;
@@ -411,6 +496,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-width: 0;
 }
 
 .messenger-prompt-toolbar {
@@ -447,9 +533,11 @@ onMounted(async () => {
 
 .messenger-prompt-main {
   display: grid;
-  grid-template-columns: 220px 1fr;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
   gap: 10px;
-  min-height: 420px;
+  min-height: 360px;
+  width: 100%;
+  overflow: hidden;
 }
 
 .messenger-prompt-segments {
@@ -461,6 +549,8 @@ onMounted(async () => {
   flex-direction: column;
   gap: 6px;
   overflow: auto;
+  min-height: 0;
+  min-width: 0;
 }
 
 .messenger-prompt-segment-item {
@@ -494,6 +584,8 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .messenger-prompt-editor-head {
@@ -506,7 +598,7 @@ onMounted(async () => {
 
 .messenger-prompt-editor {
   flex: 1;
-  min-height: 320px;
+  min-height: 0;
   border-radius: 10px;
   border: 1px solid var(--hula-border);
   background: var(--hula-center-bg);

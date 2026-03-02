@@ -45,6 +45,9 @@ pub fn is_admin_path(path: &str) -> bool {
     if path.starts_with("/wunder/user_tools") {
         return false;
     }
+    if path.starts_with("/wunder/prompt_templates") {
+        return false;
+    }
     if path.starts_with("/wunder/agents") {
         return false;
     }
@@ -121,6 +124,8 @@ mod tests {
         assert!(!is_admin_path("/wunder/cron/list"));
         assert!(!is_admin_path("/wunder/channels/accounts"));
         assert!(!is_admin_path("/wunder/user_tools/mcp"));
+        assert!(!is_admin_path("/wunder/prompt_templates"));
+        assert!(!is_admin_path("/wunder/prompt_templates/file"));
         assert!(!is_admin_path("/wunder/agents"));
         assert!(!is_admin_path("/wunder/external_links"));
         assert!(is_admin_path("/wunder"));

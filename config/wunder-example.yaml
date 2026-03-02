@@ -194,6 +194,8 @@ skills: # Skills 技能配置
     - ./skills
   enabled: # 默认启用的技能名称列表
     - 技能创建器
+    - 公文写作
+    - 电子表格处理
 
 tools: # 内置工具配置
   builtin:

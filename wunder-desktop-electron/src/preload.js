@@ -10,5 +10,6 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
   checkForUpdates: () => ipcRenderer.invoke('wunder:update-check'),
   getUpdateState: () => ipcRenderer.invoke('wunder:update-status'),
   installUpdate: () => ipcRenderer.invoke('wunder:update-install'),
+  captureScreenshot: (options) => ipcRenderer.invoke('wunder:capture-screenshot', options || {}),
   chooseDirectory: (defaultPath) => ipcRenderer.invoke('wunder:choose-directory', { defaultPath })
 })

@@ -1,4 +1,14 @@
-const { app, BrowserWindow, dialog, Menu, Tray, nativeImage, ipcMain } = require('electron')
+const {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  Tray,
+  nativeImage,
+  ipcMain,
+  desktopCapturer,
+  screen
+} = require('electron')
 const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
 const fs = require('fs')
@@ -15,6 +25,8 @@ let updaterReady = false
 let tray = null
 let closePromptInFlight = false
 let closeBehavior = 'ask'
+
+const SCREENSHOT_HIDE_DELAY_MS = 220
 
 const createUpdateSnapshot = () => ({
   phase: 'idle',
@@ -410,6 +422,87 @@ const getFreePort = () =>
     })
   })
 
+const sleep = (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, Number(ms) || 0))
+  })
+
+const buildScreenshotFileName = () => {
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/:/g, '-')
+    .replace(/\./g, '-')
+  return `screenshot-${timestamp}.png`
+}
+
+const resolvePrimaryDisplaySource = async () => {
+  const primaryDisplay = screen.getPrimaryDisplay()
+  const captureWidth = Math.max(1, Number(primaryDisplay?.size?.width || 0))
+  const captureHeight = Math.max(1, Number(primaryDisplay?.size?.height || 0))
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: captureWidth, height: captureHeight },
+    fetchWindowIcons: false
+  })
+  if (!Array.isArray(sources) || sources.length === 0) {
+    throw new Error('No screen source available')
+  }
+  const primaryDisplayId = String(primaryDisplay?.id || '')
+  return (
+    sources.find((item) => String(item?.display_id || '') === primaryDisplayId) ||
+    sources.find((item) => !item?.thumbnail?.isEmpty?.()) ||
+    sources[0]
+  )
+}
+
+const captureDesktopScreenshot = async (options = {}) => {
+  const hideWindow = options && options.hideWindow === true
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  const wasVisible = Boolean(window?.isVisible?.())
+  const shouldRestore = Boolean(window && hideWindow && wasVisible)
+
+  try {
+    if (shouldRestore && window) {
+      window.hide()
+      await sleep(SCREENSHOT_HIDE_DELAY_MS)
+    }
+
+    const source = await resolvePrimaryDisplaySource()
+    if (!source || source.thumbnail.isEmpty()) {
+      throw new Error('Failed to capture screenshot')
+    }
+
+    const imageBuffer = source.thumbnail.toPNG()
+    if (!imageBuffer || imageBuffer.length === 0) {
+      throw new Error('Screenshot image is empty')
+    }
+
+    const screenshotDir = path.join(app.getPath('userData'), 'WUNDER_TEMPD', 'screenshots')
+    const fileName = buildScreenshotFileName()
+    const filePath = path.join(screenshotDir, fileName)
+    fs.mkdirSync(screenshotDir, { recursive: true })
+    fs.writeFileSync(filePath, imageBuffer)
+
+    return {
+      ok: true,
+      name: fileName,
+      path: filePath,
+      mimeType: 'image/png',
+      dataUrl: `data:image/png;base64,${imageBuffer.toString('base64')}`
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: String(error?.message || error || 'failed to capture screenshot')
+    }
+  } finally {
+    if (shouldRestore && window && !window.isDestroyed()) {
+      window.show()
+      window.focus()
+    }
+  }
+}
+
 const waitForBridge = (resolvePort, timeoutMs = 15000) =>
   new Promise((resolve, reject) => {
     const startedAt = Date.now()
@@ -777,6 +870,13 @@ if (!gotLock) {
       ipcMain.handle('wunder:update-check', () => checkAndDownloadUpdate())
       ipcMain.handle('wunder:update-status', () => getUpdateState())
       ipcMain.handle('wunder:update-install', () => installDownloadedUpdate())
+      ipcMain.handle('wunder:capture-screenshot', async (_event, payload) => {
+        const hideWindow =
+          payload && typeof payload === 'object'
+            ? payload.hideWindow === true
+            : false
+        return captureDesktopScreenshot({ hideWindow })
+      })
       ipcMain.handle('wunder:choose-directory', async (_event, payload) => {
         const rawDefaultPath =
           payload && typeof payload === 'object' ? String(payload.defaultPath || '').trim() : ''

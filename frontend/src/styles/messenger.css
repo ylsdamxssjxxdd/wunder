@@ -2577,11 +2577,12 @@
   border-radius: 12px;
   background: var(--hula-center-bg);
   padding: 10px;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .messenger-tools-pane-host .user-tools-pane {
-  min-height: 100%;
+  height: 100%;
+  min-height: 0;
 }
 
 .messenger-tools-pane-host.user-tools-dialog {
