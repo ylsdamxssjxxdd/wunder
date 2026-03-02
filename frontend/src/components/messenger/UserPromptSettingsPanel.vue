@@ -321,6 +321,9 @@ const saveCurrentFile = async () => {
     loadedContent.value = editorContent.value;
     statusText.value = t('messenger.prompt.saved');
     ElMessage.success(t('messenger.prompt.saved'));
+    if (selectedPack.value === activePack.value) {
+      await loadPreview();
+    }
   } catch (error) {
     const message = resolveErrorMessage(error, t('messenger.prompt.saveFailed'));
     statusText.value = message;

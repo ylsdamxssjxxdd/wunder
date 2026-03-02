@@ -39,6 +39,32 @@ use zip::ZipArchive;
 
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
+const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
+
+#[derive(Default)]
+struct BuiltinSkillCatalog {
+    names: HashSet<String>,
+    dir_names: HashSet<String>,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum UserSkillSourceKind {
+    Builtin,
+    Custom,
+}
+
+impl UserSkillSourceKind {
+    fn is_builtin(self) -> bool {
+        matches!(self, Self::Builtin)
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Custom => "custom",
+        }
+    }
+}
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -205,6 +231,7 @@ async fn user_skills_get(
     let payload = state.user_tool_store.load_user_tools(&user_id);
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let builtin_catalog = load_builtin_skill_catalog(&config);
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
@@ -217,14 +244,13 @@ async fn user_skills_get(
         .list_specs()
         .into_iter()
         .map(|spec| {
-            json!({
-                "name": spec.name,
-                "description": spec.description,
-                "path": spec.path,
-                "input_schema": spec.input_schema,
-                "enabled": enabled_set.contains(&spec.name),
-                "shared": shared_set.contains(&spec.name),
-            })
+            user_skill_to_value(
+                spec,
+                &enabled_set,
+                &shared_set,
+                &skill_root,
+                &builtin_catalog,
+            )
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({
@@ -291,6 +317,7 @@ async fn user_skills_update(
     state.user_tool_manager.clear_skill_cache(Some(&user_id));
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let builtin_catalog = load_builtin_skill_catalog(&config);
     let mut scan_config = config.clone();
     scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
     scan_config.skills.enabled = Vec::new();
@@ -303,14 +330,13 @@ async fn user_skills_update(
         .list_specs()
         .into_iter()
         .map(|spec| {
-            json!({
-                "name": spec.name,
-                "description": spec.description,
-                "path": spec.path,
-                "input_schema": spec.input_schema,
-                "enabled": enabled_set.contains(&spec.name),
-                "shared": shared_set.contains(&spec.name),
-            })
+            user_skill_to_value(
+                spec,
+                &enabled_set,
+                &shared_set,
+                &skill_root,
+                &builtin_catalog,
+            )
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({
@@ -381,6 +407,107 @@ fn resolve_skill_file_path(root: &Path, relative_path: &str) -> Result<PathBuf, 
     Ok(normalized)
 }
 
+fn resolve_builtin_skills_root() -> Option<PathBuf> {
+    if let Some(path) = std::env::var(BUILTIN_SKILLS_ROOT_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        let normalized = normalize_existing_path(&path);
+        if normalized.exists() && normalized.is_dir() {
+            return Some(normalized);
+        }
+    }
+    let fallback = PathBuf::from("skills");
+    if fallback.exists() && fallback.is_dir() {
+        return Some(normalize_existing_path(&fallback));
+    }
+    None
+}
+
+fn resolve_skill_top_dir(base_root: &Path, skill_root: &Path) -> Option<String> {
+    let relative = skill_root.strip_prefix(base_root).ok()?;
+    let mut components = relative.components();
+    let first = components.next()?;
+    let value = first.as_os_str().to_string_lossy().trim().to_string();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn load_builtin_skill_catalog(config: &Config) -> BuiltinSkillCatalog {
+    let Some(builtin_root) = resolve_builtin_skills_root() else {
+        return BuiltinSkillCatalog::default();
+    };
+    let mut scan_config = config.clone();
+    scan_config.skills.paths = vec![builtin_root.to_string_lossy().to_string()];
+    scan_config.skills.enabled = Vec::new();
+    let registry = load_skills(&scan_config, false, false, false);
+    let mut names = HashSet::new();
+    let mut dir_names = HashSet::new();
+    for spec in registry.list_specs() {
+        names.insert(spec.name.clone());
+        if let Some(top_dir) = resolve_skill_top_dir(&builtin_root, &spec.root) {
+            dir_names.insert(top_dir);
+        }
+    }
+    BuiltinSkillCatalog { names, dir_names }
+}
+
+fn resolve_user_skill_source(
+    skill_root: &Path,
+    spec: &SkillSpec,
+    builtin_catalog: &BuiltinSkillCatalog,
+) -> UserSkillSourceKind {
+    if let Some(top_dir) = resolve_skill_top_dir(skill_root, &spec.root) {
+        if builtin_catalog.dir_names.contains(&top_dir) {
+            return UserSkillSourceKind::Builtin;
+        }
+    }
+    if builtin_catalog.names.contains(&spec.name) {
+        return UserSkillSourceKind::Builtin;
+    }
+    UserSkillSourceKind::Custom
+}
+
+fn is_user_skill_builtin(
+    skill_root: &Path,
+    spec: &SkillSpec,
+    builtin_catalog: &BuiltinSkillCatalog,
+) -> bool {
+    resolve_user_skill_source(skill_root, spec, builtin_catalog).is_builtin()
+}
+
+fn user_skill_to_value(
+    spec: SkillSpec,
+    enabled_set: &HashSet<String>,
+    shared_set: &HashSet<String>,
+    skill_root: &Path,
+    builtin_catalog: &BuiltinSkillCatalog,
+) -> Value {
+    let source = resolve_user_skill_source(skill_root, &spec, builtin_catalog);
+    let name = spec.name;
+    let description = spec.description;
+    let path = spec.path;
+    let input_schema = spec.input_schema;
+    let enabled = enabled_set.contains(&name);
+    let shared = shared_set.contains(&name);
+    json!({
+        "name": name,
+        "description": description,
+        "path": path,
+        "input_schema": input_schema,
+        "enabled": enabled,
+        "shared": shared,
+        "builtin": source.is_builtin(),
+        "source": source.as_str(),
+        "readonly": source.is_builtin()
+    })
+}
+
 async fn user_skills_content(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -441,7 +568,14 @@ async fn user_skills_files(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let builtin_catalog = load_builtin_skill_catalog(&config);
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.skill_builtin_readonly"),
+        ));
+    }
     let root = resolve_user_skill_root(&skill_root, &spec)?;
     let mut entries: Vec<(String, String)> = Vec::new();
     for entry in WalkDir::new(&root).into_iter().filter_map(|item| item.ok()) {
@@ -495,7 +629,14 @@ async fn user_skills_file(
     }
     let config = state.config_store.get().await;
     let skill_root = state.user_tool_store.get_skill_root(&user_id);
+    let builtin_catalog = load_builtin_skill_catalog(&config);
     let spec = resolve_user_skill_spec(&config, &skill_root, name)?;
+    if is_user_skill_builtin(&skill_root, &spec, &builtin_catalog) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.skill_builtin_readonly"),
+        ));
+    }
     let root = resolve_user_skill_root(&skill_root, &spec)?;
     let target = resolve_skill_file_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
@@ -683,6 +824,8 @@ async fn user_skills_upload(
     tokio::fs::create_dir_all(&skill_root)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let config = state.config_store.get().await;
+    let builtin_catalog = load_builtin_skill_catalog(&config);
     let cursor = Cursor::new(data);
     let mut archive = ZipArchive::new(cursor)
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, i18n::t("error.zip_invalid")))?;
@@ -710,6 +853,15 @@ async fn user_skills_upload(
                 StatusCode::BAD_REQUEST,
                 i18n::t("error.zip_path_illegal"),
             ));
+        }
+        if let Some(top_dir) = path.components().next() {
+            let top_name = top_dir.as_os_str().to_string_lossy().trim().to_string();
+            if !top_name.is_empty() && builtin_catalog.dir_names.contains(&top_name) {
+                return Err(error_response(
+                    StatusCode::FORBIDDEN,
+                    i18n::t("error.skill_builtin_upload_conflict"),
+                ));
+            }
         }
         let dest = skill_root.join(path);
         let dest = dest.canonicalize().unwrap_or(dest);

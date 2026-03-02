@@ -186,7 +186,9 @@
 - `GET` 返回（JSON）：
   - `enabled`：已启用技能名列表
   - `shared`：已共享技能名列表
-  - `skills`：技能列表（name/description/path/input_schema/enabled/shared）
+  - `skills`：技能列表（name/description/path/input_schema/enabled/shared/builtin/source/readonly）
+    - `source`：`builtin` 或 `custom`
+    - `builtin=true`/`readonly=true` 表示内置技能（只读）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
   - `enabled`：启用技能名列表
@@ -199,6 +201,7 @@
   - `ok`：是否成功
   - `name`：技能名称
   - `message`：提示信息
+- 说明：内置技能只读，`DELETE` 会返回 `403`。
 
 ### 4.1.2.4 `/wunder/user_tools/skills/files`
 
@@ -231,6 +234,7 @@
   - `ok`：是否成功
   - `path`：文件路径
   - `reloaded`：是否触发技能刷新（编辑 SKILL.md 时为 true）
+- 说明：内置技能只读，`PUT` 会返回 `403`。
 
 ### 4.1.2.6 `/wunder/user_tools/skills/content`
 
@@ -252,6 +256,8 @@
   - `ok`：是否成功
   - `extracted`：解压文件数量
   - `message`：提示信息
+- 说明：上传内容写入自定义技能目录（`source=custom`），不会覆盖内置 `skills/` 源码目录。
+- 说明：上传目录若与内置技能目录冲突会返回 `403`（避免覆盖内置技能）。
 
 ### 4.1.2.8 `/wunder/user_tools/knowledge`
 
@@ -645,7 +651,8 @@
 - `GET` 返回：
   - `paths`：技能目录列表
   - `enabled`：已启用技能名列表
-  - `skills`：技能信息（name/description/path/input_schema/enabled）
+  - `skills`：技能信息（name/description/path/input_schema/enabled/builtin/source/readonly/editable）
+    - `source`：`builtin` / `custom` / `external`
 - `POST` 入参：
   - `enabled`：启用技能名列表
   - `paths`：技能目录列表（可选）
@@ -655,7 +662,7 @@
   - `ok`：是否删除成功
   - `name`：已删除技能名称
   - `message`：删除说明
-- 说明：仅允许删除 `skills` 目录内的技能。
+- 说明：仅允许删除自定义上传技能（`source=custom`）；内置技能只读会返回 `403`。
 
 ### 4.1.5.1 `/wunder/admin/skills/content`
 
@@ -695,6 +702,7 @@
   - `ok`：是否保存成功
   - `path`：文件相对路径
   - `reloaded`：是否触发技能刷新（更新 SKILL.md 时为 true）
+- 说明：仅 `source=custom` 技能允许写入；内置/外部技能只读会返回 `403`。
 
 ### 4.1.6 `/wunder/admin/llm`
 
@@ -2054,7 +2062,7 @@
 - `GET /wunder/prompt_templates/file`：读取模板分段文件
   - Query：`pack_id`（可选，默认当前用户 active）、`locale`（可选，`zh|en`）、`key`（必填：`role/engineering/tools_protocol/skills_protocol/memory/extra`）
   - 返回：`data.pack_id/locale/key/path/exists/fallback_used/readonly/source_pack_id/content`
-  - 说明：当自建模板包缺少某分段时，自动回退显示系统启用模板对应分段（`fallback_used=true`）。
+  - 说明：当自建模板包缺少某分段时，先回退系统启用模板；若系统启用模板也缺失，再回退系统 `default` 模板（`fallback_used=true`，`source_pack_id` 标记实际来源）。
 - `PUT /wunder/prompt_templates/file`：写入模板分段文件
   - 入参（JSON）：`pack_id`（可选，默认当前用户 active）、`locale`（可选）、`key`（必填）、`content`（必填）
   - 返回：`data.pack_id/locale/key/path`
@@ -2891,7 +2899,7 @@
   - `GET /wunder/desktop/lan/ws`：LAN WebSocket 通道（WS-first，HTTP 为兜底）。
 - desktop token 鉴权中放开上述 LAN 路由，便于局域网节点互联；其它 desktop API 仍要求本地 token。
 - `user_world` 联动：
-  - `contacts` 会追加 `lan:{peer_id}` 联系人并自动建立 direct conversation。
+  - `contacts` 会追加 `lan:{peer_id}@{lan_ip}` 联系人并自动建立 direct conversation（`lan_ip` 作为节点唯一标识，兼容旧格式 `lan:{peer_id}`）。
   - `send_message` 对 direct/group 会话自动向 LAN 目标节点转发 envelope。
   - `create_group` / `update_group_announcement` 会向 LAN 广播群元数据同步事件。
 

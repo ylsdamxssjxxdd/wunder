@@ -1034,9 +1034,10 @@ const loadUserSkills = async () => {
     throw new Error(t("common.requestFailed", { status: response.status }));
   }
   const result = await response.json();
-  state.userTools.skills.enabled = Array.isArray(result.enabled) ? result.enabled : [];
-  state.userTools.skills.shared = Array.isArray(result.shared) ? result.shared : [];
-  state.userTools.skills.skills = Array.isArray(result.skills) ? result.skills : [];
+  const payload = result?.data || result || {};
+  state.userTools.skills.enabled = Array.isArray(payload.enabled) ? payload.enabled : [];
+  state.userTools.skills.shared = Array.isArray(payload.shared) ? payload.shared : [];
+  state.userTools.skills.skills = Array.isArray(payload.skills) ? payload.skills : [];
   state.userTools.skills.loaded = true;
   renderUserSkills();
 };
@@ -1061,10 +1062,11 @@ const openUserSkillDetailModal = async (skill) => {
       throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
+    const payload = result?.data || result || {};
     if (currentVersion !== state.userTools.skills.detailVersion) {
       return;
     }
-    elements.skillModalContent.textContent = result.content || t("skills.detail.empty");
+    elements.skillModalContent.textContent = payload.content || t("skills.detail.empty");
   } catch (error) {
     if (currentVersion !== state.userTools.skills.detailVersion) {
       return;
@@ -1074,6 +1076,21 @@ const openUserSkillDetailModal = async (skill) => {
     });
   }
 };
+
+const resolveUserSkillSource = (skill) => {
+  if (!skill) {
+    return "custom";
+  }
+  if (skill.source === "builtin" || skill.builtin === true || skill.readonly === true) {
+    return "builtin";
+  }
+  return "custom";
+};
+
+const buildUserSkillSourceLabel = (skill) =>
+  resolveUserSkillSource(skill) === "builtin"
+    ? t("userTools.skills.source.builtin")
+    : t("userTools.skills.source.custom");
 
 const renderUserSkills = () => {
   elements.userSkillsList.textContent = "";
@@ -1089,23 +1106,17 @@ const renderUserSkills = () => {
     const enableCheckbox = document.createElement("input");
     enableCheckbox.type = "checkbox";
     enableCheckbox.checked = Boolean(skill.enabled);
-    const enableText = document.createElement("span");
-    enableText.textContent = t("userTools.action.enable");
     enableLabel.appendChild(enableCheckbox);
-    enableLabel.appendChild(enableText);
-
-    const shareLabel = document.createElement("label");
-    shareLabel.className = "tool-check";
-    const shareCheckbox = document.createElement("input");
-    shareCheckbox.type = "checkbox";
-    shareCheckbox.checked = Boolean(skill.shared);
-    const shareText = document.createElement("span");
-    shareText.textContent = t("userTools.action.share");
-    shareLabel.appendChild(shareCheckbox);
-    shareLabel.appendChild(shareText);
 
     const info = document.createElement("label");
     info.className = "tool-item-info";
+    const titleRow = document.createElement("div");
+    titleRow.className = "skill-title-row";
+    const title = document.createElement("strong");
+    title.textContent = skill.name || "";
+    const sourceTag = document.createElement("span");
+    sourceTag.className = `skill-source-tag is-${resolveUserSkillSource(skill)}`;
+    sourceTag.textContent = buildUserSkillSourceLabel(skill);
     const descParts = [];
     if (skill.description) {
       descParts.push(skill.description);
@@ -1113,8 +1124,14 @@ const renderUserSkills = () => {
     if (skill.path) {
       descParts.push(skill.path);
     }
-    const desc = descParts.length ? `<span class="muted">${descParts.join(" · ")}</span>` : "";
-    info.innerHTML = `<strong>${skill.name}</strong>${desc}`;
+    const desc = document.createElement("span");
+    desc.className = "muted";
+    desc.textContent = descParts.join(" 路 ");
+    titleRow.append(title, sourceTag);
+    info.append(titleRow);
+    if (desc.textContent) {
+      info.append(desc);
+    }
 
     enableCheckbox.addEventListener("change", (event) => {
       skill.enabled = event.target.checked;
@@ -1128,22 +1145,9 @@ const renderUserSkills = () => {
       renderUserSkills();
       scheduleUserSkillsSave();
     });
-    shareCheckbox.addEventListener("change", (event) => {
-      skill.shared = event.target.checked;
-      if (skill.shared) {
-        skill.enabled = true;
-      }
-      state.userTools.skills.lastAction = {
-        type: skill.shared ? "shared" : "unshared",
-        name: skill.name,
-      };
-      renderUserSkills();
-      scheduleUserSkillsSave();
-    });
     info.addEventListener("click", () => openUserSkillDetailModal(skill));
 
     item.appendChild(enableLabel);
-    item.appendChild(shareLabel);
     item.appendChild(info);
     elements.userSkillsList.appendChild(item);
   });
@@ -1195,9 +1199,10 @@ const saveUserSkills = async () => {
       throw new Error(t("common.requestFailed", { status: response.status }));
     }
     const result = await response.json();
-    state.userTools.skills.enabled = Array.isArray(result.enabled) ? result.enabled : [];
-    state.userTools.skills.shared = Array.isArray(result.shared) ? result.shared : [];
-    state.userTools.skills.skills = Array.isArray(result.skills) ? result.skills : [];
+    const payload = result?.data || result || {};
+    state.userTools.skills.enabled = Array.isArray(payload.enabled) ? payload.enabled : [];
+    state.userTools.skills.shared = Array.isArray(payload.shared) ? payload.shared : [];
+    state.userTools.skills.skills = Array.isArray(payload.skills) ? payload.skills : [];
     renderUserSkills();
     updateModalStatus(t("userTools.autoSaved"));
     syncPromptTools();

@@ -358,7 +358,7 @@ fn seed_workspace_skills(repo_root: &Path, workspace_root: &Path) -> Result<()> 
         return Ok(());
     }
     let target = workspace_root.join("skills");
-    merge_directory_if_missing(&source, &target)
+    sync_builtin_skills(&source, &target)
 }
 
 fn seed_user_tool_skills(repo_root: &Path, user_tools_root: &Path, user_id: &str) -> Result<()> {
@@ -368,19 +368,25 @@ fn seed_user_tool_skills(repo_root: &Path, user_tools_root: &Path, user_id: &str
     }
     let safe_user_id = sanitize_user_tools_user_id(user_id);
     let target = user_tools_root.join(safe_user_id).join("skills");
-    merge_directory_if_missing(&source, &target)
+    sync_builtin_skills(&source, &target)
 }
 
-fn merge_directory_if_missing(source: &Path, target: &Path) -> Result<()> {
+fn sync_builtin_skills(source: &Path, target: &Path) -> Result<()> {
     fs::create_dir_all(target)
         .with_context(|| format!("create skills target dir failed: {}", target.display()))?;
+    let previous = read_builtin_skill_manifest(target);
+    let mut current: HashSet<String> = HashSet::new();
     let entries = fs::read_dir(source)
         .with_context(|| format!("read skills source dir failed: {}", source.display()))?;
     for entry in entries {
         let entry = entry
             .with_context(|| format!("read skills source entry failed: {}", source.display()))?;
         let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
+        let entry_name = entry.file_name().to_string_lossy().to_string();
+        if entry_name.is_empty() {
+            continue;
+        }
+        let target_path = target.join(&entry_name);
         let file_type = entry.file_type().with_context(|| {
             format!(
                 "read skills source entry type failed: {}",
@@ -388,8 +394,12 @@ fn merge_directory_if_missing(source: &Path, target: &Path) -> Result<()> {
             )
         })?;
         if file_type.is_dir() {
-            merge_directory_if_missing(&source_path, &target_path)?;
-        } else if file_type.is_file() && !target_path.exists() {
+            remove_path_if_exists(&target_path)?;
+            copy_directory_recursive(&source_path, &target_path)?;
+            current.insert(entry_name);
+            continue;
+        }
+        if file_type.is_file() {
             if let Some(parent) = target_path.parent() {
                 fs::create_dir_all(parent).with_context(|| {
                     format!("create skills target parent failed: {}", parent.display())
@@ -404,7 +414,89 @@ fn merge_directory_if_missing(source: &Path, target: &Path) -> Result<()> {
             })?;
         }
     }
+    for stale in previous.difference(&current) {
+        remove_path_if_exists(&target.join(stale))?;
+    }
+    write_builtin_skill_manifest(target, &current)?;
     Ok(())
+}
+
+fn copy_directory_recursive(source: &Path, target: &Path) -> Result<()> {
+    fs::create_dir_all(target)
+        .with_context(|| format!("create target dir failed: {}", target.display()))?;
+    let entries = fs::read_dir(source)
+        .with_context(|| format!("read source dir failed: {}", source.display()))?;
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("read source entry failed: {}", source.display()))?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        let file_type = entry.file_type().with_context(|| {
+            format!(
+                "read source entry type failed: {}",
+                source_path.to_string_lossy()
+            )
+        })?;
+        if file_type.is_dir() {
+            copy_directory_recursive(&source_path, &target_path)?;
+            continue;
+        }
+        if file_type.is_file() {
+            if let Some(parent) = target_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("create target parent dir failed: {}", parent.display())
+                })?;
+            }
+            fs::copy(&source_path, &target_path).with_context(|| {
+                format!(
+                    "copy desktop skill file failed: {} -> {}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+            .with_context(|| format!("remove stale skill dir failed: {}", path.display()))?;
+        return Ok(());
+    }
+    fs::remove_file(path)
+        .with_context(|| format!("remove stale skill file failed: {}", path.display()))
+}
+
+fn read_builtin_skill_manifest(target: &Path) -> HashSet<String> {
+    let manifest_path = target.join(BUILTIN_SKILLS_MANIFEST_NAME);
+    let Ok(content) = fs::read_to_string(manifest_path) else {
+        return HashSet::new();
+    };
+    serde_json::from_str::<Vec<String>>(&content)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn write_builtin_skill_manifest(target: &Path, names: &HashSet<String>) -> Result<()> {
+    let mut ordered = names.iter().cloned().collect::<Vec<_>>();
+    ordered.sort();
+    let manifest_path = target.join(BUILTIN_SKILLS_MANIFEST_NAME);
+    let text = serde_json::to_string_pretty(&ordered)
+        .context("serialize builtin skills manifest failed")?;
+    fs::write(&manifest_path, text).with_context(|| {
+        format!(
+            "write builtin skills manifest failed: {}",
+            manifest_path.display()
+        )
+    })
 }
 
 pub(crate) fn load_desktop_settings(path: &Path) -> Result<DesktopSettings> {
@@ -776,12 +868,7 @@ fn apply_desktop_defaults(
         .cloned()
         .collect::<Vec<_>>();
     allow_paths.push(repo_root.join("skills").to_string_lossy().to_string());
-    allow_paths.push(
-        temp_root
-            .join("admin_skills")
-            .to_string_lossy()
-            .to_string(),
-    );
+    allow_paths.push(temp_root.join("admin_skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
 }

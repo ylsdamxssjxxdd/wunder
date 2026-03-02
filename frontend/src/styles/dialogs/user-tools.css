@@ -483,6 +483,14 @@
   font-size: 12px;
 }
 
+.user-tools-dialog .skill-path-line {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .user-tools-dialog .detail-actions {
   display: flex;
   justify-content: space-between;
@@ -610,6 +618,43 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.user-tools-dialog .user-skill-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.user-tools-dialog .user-skill-title-line strong {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.user-tools-dialog .skill-source-tag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.user-tools-dialog .skill-source-tag.is-builtin {
+  color: #ffd7a8;
+  border: 1px solid rgba(255, 184, 108, 0.45);
+  background: rgba(255, 184, 108, 0.18);
+}
+
+.user-tools-dialog .skill-source-tag.is-custom {
+  color: #9ecbff;
+  border: 1px solid rgba(126, 182, 255, 0.4);
+  background: rgba(126, 182, 255, 0.14);
 }
 
 .user-tools-dialog .skill-layout {
@@ -740,6 +785,10 @@
   scrollbar-width: none;
 }
 
+.user-tools-dialog .skill-editor-body:focus-within .skill-editor-highlight {
+  opacity: 0;
+}
+
 .user-tools-dialog .skill-editor-highlight::-webkit-scrollbar {
   width: 0;
   height: 0;
@@ -785,6 +834,11 @@
   box-sizing: border-box;
   outline: none;
   box-shadow: none;
+}
+
+.user-tools-dialog .skill-editor-body:focus-within .skill-editor-text {
+  color: var(--user-tools-text);
+  -webkit-text-fill-color: currentColor;
 }
 
 .user-tools-dialog .skill-editor-text:focus {
@@ -1622,5 +1676,139 @@
 .user-tools-dialog .knowledge-doc-chunk-preview,
 .user-tools-dialog .knowledge-test-result-content {
   color: #5f5f5f;
+}
+
+.user-tools-dialog .detail-schema {
+  background: #f7f7f7;
+  border-color: #dcdcdc;
+  color: #202020;
+}
+
+.user-tools-dialog .user-tools-btn,
+.user-tools-dialog .user-tools-tab,
+.user-tools-dialog .list-item,
+.user-tools-dialog .tool-item,
+.user-tools-dialog .skill-item,
+.user-tools-dialog .knowledge-file-item,
+.user-tools-dialog .knowledge-doc-item,
+.user-tools-dialog .knowledge-doc-chunk-item {
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease,
+    color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.user-tools-dialog .user-tools-btn {
+  border-color: rgba(var(--ui-accent-rgb), 0.26);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
+}
+
+.user-tools-dialog .user-tools-btn:hover:not(:disabled) {
+  border-color: rgba(var(--ui-accent-rgb), 0.48);
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent);
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.1);
+  transform: translateY(-1px);
+}
+
+.user-tools-dialog .user-tools-btn.secondary:hover:not(:disabled) {
+  border-color: rgba(var(--ui-accent-rgb), 0.34);
+  background: var(--ui-accent-soft-3);
+  color: var(--ui-accent);
+}
+
+.user-tools-dialog .user-tools-btn.danger:hover:not(:disabled) {
+  border-color: #e4a7b1;
+  background: #fae8ec;
+  color: #b93449;
+}
+
+.user-tools-dialog .user-tools-btn:disabled {
+  opacity: 0.58;
+}
+
+.user-tools-dialog .user-tools-footer-btn.primary {
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.3);
+  background: linear-gradient(
+    135deg,
+    rgba(var(--ui-accent-rgb), 0.14),
+    rgba(var(--ui-accent-rgb), 0.24)
+  );
+  color: var(--ui-accent-deep);
+}
+
+.user-tools-dialog .list-item:hover,
+.user-tools-dialog .tool-item:hover,
+.user-tools-dialog .skill-item:hover,
+.user-tools-dialog .knowledge-file-item:hover,
+.user-tools-dialog .knowledge-doc-item:hover,
+.user-tools-dialog .knowledge-doc-chunk-item:hover {
+  background: var(--ui-accent-soft-2);
+  border-color: rgba(var(--ui-accent-rgb), 0.32);
+}
+
+.user-tools-dialog .tool-item {
+  cursor: pointer;
+}
+
+.user-tools-dialog .tool-item:focus-visible,
+.user-tools-dialog .list-item:focus-visible,
+.user-tools-dialog .user-tools-btn:focus-visible,
+.user-tools-dialog .user-tools-tab:focus-visible,
+.user-tools-dialog .icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(var(--ui-accent-rgb), 0.16);
+}
+
+.user-tools-dialog .list-item-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.user-tools-dialog .list-item-title > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-tools-dialog .list-item.connecting {
+  background: var(--ui-accent-soft-2);
+  border-color: rgba(var(--ui-accent-rgb), 0.42);
+}
+
+.user-tools-dialog .mcp-connecting-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ui-accent);
+  background: rgba(var(--ui-accent-rgb), 0.12);
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.3);
+  flex: 0 0 auto;
+}
+
+.user-tools-dialog .mcp-connecting-hint {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ui-accent);
+}
+
+.user-tools-dialog .mcp-connecting-badge i,
+.user-tools-dialog .mcp-connecting-hint i,
+.user-tools-dialog .user-tools-btn-spinner {
+  animation: knowledge-spin 0.9s linear infinite;
 }
 

@@ -3,8 +3,19 @@
     <div class="list-header">
       <label>{{ t('userTools.mcp.title') }}</label>
       <div class="header-actions">
-        <button class="user-tools-btn secondary compact" type="button" :disabled="!hasConnected" @click="refreshAll">
-          {{ t('userTools.mcp.action.refreshAll') }}
+        <button
+          class="user-tools-btn secondary compact btn-with-icon"
+          :class="{ 'is-loading': refreshingAll }"
+          type="button"
+          :disabled="!hasConnected || refreshingAll || isActiveServerConnecting"
+          @click="refreshAll"
+        >
+          <i
+            class="fa-solid"
+            :class="refreshingAll ? 'fa-spinner user-tools-btn-spinner' : 'fa-arrows-rotate'"
+            aria-hidden="true"
+          ></i>
+          <span>{{ refreshingAll ? t('userTools.mcp.action.connecting') : t('userTools.mcp.action.refreshAll') }}</span>
         </button>
         <button class="user-tools-btn secondary compact" type="button" @click="openImportModal">
           {{ t('userTools.mcp.action.import') }}
@@ -30,11 +41,17 @@
               v-for="(server, index) in servers"
               :key="`${server.name || index}`"
               class="list-item"
-              :class="{ active: index === selectedIndex }"
+              :class="{ active: index === selectedIndex, connecting: isServerConnecting(index) }"
               type="button"
               @click="selectServer(index)"
             >
-              <div>{{ server.display_name || server.name || t('userTools.mcp.server.unnamed') }}</div>
+              <div class="list-item-title">
+                <span>{{ server.display_name || server.name || t('userTools.mcp.server.unnamed') }}</span>
+                <span v-if="isServerConnecting(index)" class="mcp-connecting-badge">
+                  <i class="fa-solid fa-spinner" aria-hidden="true"></i>
+                  {{ t('userTools.mcp.action.connecting') }}
+                </span>
+              </div>
               <small>{{ buildServerSubtitle(server) }}</small>
             </button>
           </template>
@@ -48,23 +65,33 @@
             <div class="detail-title">{{ detailTitle }}</div>
             <div class="muted">{{ detailMeta }}</div>
             <div class="muted">{{ detailDesc }}</div>
+            <div v-if="isActiveServerConnecting" class="mcp-connecting-hint">
+              <i class="fa-solid fa-spinner" aria-hidden="true"></i>
+              <span>{{ t('userTools.mcp.action.connecting') }}</span>
+            </div>
           </div>
         </div>
 
         <div class="detail-actions">
           <div class="actions">
             <button
-              class="user-tools-btn"
+              class="user-tools-btn btn-with-icon"
+              :class="{ 'is-loading': isActiveServerConnecting }"
               type="button"
-              :disabled="!activeServer"
+              :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
               @click="connectServer"
             >
-              {{ connectLabel }}
+              <i
+                class="fa-solid"
+                :class="isActiveServerConnecting ? 'fa-spinner user-tools-btn-spinner' : 'fa-plug'"
+                aria-hidden="true"
+              ></i>
+              <span>{{ connectLabel }}</span>
             </button>
             <button
               class="user-tools-btn secondary"
               type="button"
-              :disabled="!activeServer || !activeTools.length"
+              :disabled="!activeServer || !activeTools.length || isActiveServerConnecting"
               @click="enableAllTools"
             >
               {{ t('common.selectAll') }}
@@ -72,7 +99,7 @@
             <button
               class="user-tools-btn secondary"
               type="button"
-              :disabled="!activeServer"
+              :disabled="!activeServer || isActiveServerConnecting"
               @click="disableAllTools"
             >
               {{ t('common.unselectAll') }}
@@ -82,7 +109,7 @@
             <button
               class="user-tools-btn secondary"
               type="button"
-              :disabled="!activeServer"
+              :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
               @click="openEditModal"
             >
               {{ t('userTools.mcp.action.edit') }}
@@ -90,7 +117,7 @@
             <button
               class="user-tools-btn danger"
               type="button"
-              :disabled="!activeServer"
+              :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
               @click="removeServer"
             >
               {{ t('userTools.mcp.action.delete') }}
@@ -105,7 +132,11 @@
             v-for="tool in activeTools"
             :key="tool.name"
             class="tool-item tool-item-dual"
+            tabindex="0"
+            role="button"
             @click="openToolDetail(tool)"
+            @keydown.enter.prevent="handleToolItemKeydown(tool, $event)"
+            @keydown.space.prevent="handleToolItemKeydown(tool, $event)"
             >
               <label class="tool-check" @click.stop>
                 <input
@@ -318,6 +349,8 @@ const loading = ref(false);
 const saving = ref(false);
 const saveVersion = ref(0);
 const saveTimer = ref(null);
+const connectingIndexes = ref(new Set<number>());
+const refreshingAll = ref(false);
 
 const mcpModalVisible = ref(false);
 const importModalVisible = ref(false);
@@ -358,12 +391,22 @@ const detailMeta = computed(() => {
   return metaParts.join(' · ');
 });
 
+const isActiveServerConnecting = computed(
+  () => selectedIndex.value >= 0 && connectingIndexes.value.has(selectedIndex.value)
+);
 const connectLabel = computed(() =>
-  activeTools.value.length ? t('common.refresh') : t('userTools.mcp.action.connect')
+  isActiveServerConnecting.value
+    ? t('userTools.mcp.action.connecting')
+    : activeTools.value.length
+    ? t('common.refresh')
+    : t('userTools.mcp.action.connect')
 );
 const toolListMessage = computed(() => {
   if (!activeServer.value) {
     return t('userTools.mcp.tools.select');
+  }
+  if (isActiveServerConnecting.value) {
+    return t('userTools.mcp.action.connecting');
   }
   if (!activeTools.value.length) {
     return t('userTools.mcp.tools.connectHint');
@@ -608,6 +651,18 @@ const buildServerSubtitle = (server) => {
   return parts.join(' · ');
 };
 
+const isServerConnecting = (index) => connectingIndexes.value.has(index);
+
+const setServerConnecting = (index, connecting) => {
+  const next = new Set(connectingIndexes.value);
+  if (connecting) {
+    next.add(index);
+  } else {
+    next.delete(index);
+  }
+  connectingIndexes.value = next;
+};
+
 const handleHeadersInput = () => {
   const server = activeServer.value;
   if (!server) return;
@@ -749,7 +804,7 @@ const removeServer = async () => {
 
 const connectServerAtIndex = async (index) => {
   const server = servers.value[index];
-  if (!server || !server.name || !server.endpoint) {
+  if (!server || !server.name || !server.endpoint || isServerConnecting(index)) {
     return false;
   }
   const payload = {
@@ -759,6 +814,7 @@ const connectServerAtIndex = async (index) => {
     headers: server.headers || {},
     auth: server.auth || null
   };
+  setServerConnecting(index, true);
   try {
     const { data } = await fetchUserMcpTools(payload);
     const result = data?.data || {};
@@ -769,12 +825,14 @@ const connectServerAtIndex = async (index) => {
     return true;
   } catch (error) {
     return false;
+  } finally {
+    setServerConnecting(index, false);
   }
 };
 
 const connectServer = async () => {
   const index = selectedIndex.value;
-  if (index < 0) return;
+  if (index < 0 || refreshingAll.value || isServerConnecting(index)) return;
   const wasConnected = toolsByIndex.value[index]?.length;
   const ok = await connectServerAtIndex(index);
   if (!ok) {
@@ -787,16 +845,25 @@ const connectServer = async () => {
 };
 
 const refreshAll = async () => {
+  if (refreshingAll.value) return;
   const connectedIndexes = toolsByIndex.value
     .map((tools, index) => (Array.isArray(tools) && tools.length ? index : -1))
     .filter((index) => index >= 0);
   if (!connectedIndexes.length) return;
+  refreshingAll.value = true;
   let updated = false;
-  for (const index of connectedIndexes) {
-    const ok = await connectServerAtIndex(index);
-    if (ok) {
-      updated = true;
+  try {
+    for (const index of connectedIndexes) {
+      if (isServerConnecting(index)) {
+        continue;
+      }
+      const ok = await connectServerAtIndex(index);
+      if (ok) {
+        updated = true;
+      }
     }
+  } finally {
+    refreshingAll.value = false;
   }
   if (!updated) {
     ElMessage.error(t('userTools.mcp.refreshFailed'));
@@ -906,6 +973,13 @@ const openToolDetail = (tool) => {
     schema: formatToolSchema(getToolInputSchema(tool))
   };
   toolDetailVisible.value = true;
+};
+
+const handleToolItemKeydown = (tool, event) => {
+  if (event.target !== event.currentTarget) {
+    return;
+  }
+  openToolDetail(tool);
 };
 
 watch(

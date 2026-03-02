@@ -53,8 +53,9 @@ cargo tauri build -f desktop -c tauri.bundle.tmp.json --bundles nsis --no-sign -
   - `skills/`
   - `scripts/`
   - `frontend/dist/`
-- 运行时会将内置 `skills/` 增量同步到本地工作区：`<userData>/WUNDER_WORK/skills`
-  - 已存在的本地文件不会被覆盖，便于用户自行修改
+- 运行时会将内置 `skills/` 同步到本地工作区：`<userData>/WUNDER_WORK/skills`
+  - 同名内置技能会被覆盖为最新打包版本（用于升级后保持一致）
+  - 用户上传的自定义技能请放在 `admin_skills` 或 `user_tools/<user>/skills`，不会被内置同步覆盖
 
 ## 常见问题
 

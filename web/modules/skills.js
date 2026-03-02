@@ -32,6 +32,22 @@ const viewState = {
 
 const normalizeSkillPath = (rawPath) => String(rawPath || "").replace(/\\/g, "/");
 
+const normalizeSkillDisplayPath = (rawPath) => {
+  let normalized = String(rawPath || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  normalized = normalized.replace(/^\\\\\?\\UNC\\/i, "\\\\");
+  normalized = normalized.replace(/^\\\\\?\\/, "");
+  normalized = normalized.replace(/^\/\/\?\//, "");
+  normalized = normalized.replace(/^\/\/\.\//, "");
+  normalized = normalized.replace(/\\/g, "/");
+  if (/^\/[A-Za-z]:\//.test(normalized)) {
+    normalized = normalized.slice(1);
+  }
+  return normalized;
+};
+
 const resolveDefaultSkillFile = (entries) => {
   if (!Array.isArray(entries)) {
     return "";
@@ -173,9 +189,38 @@ const getActiveSkill = () =>
     ? state.skills.skills[viewState.selectedIndex] || null
     : null;
 
-const isSkillDeletable = (skill) => {
-  const normalized = normalizeSkillPath(skill?.path).toLowerCase();
-  return /(^|\/)skills(\/|$)/.test(normalized);
+const resolveSkillSource = (skill) => {
+  if (!skill) {
+    return "custom";
+  }
+  if (skill.source === "builtin" || skill.builtin === true || skill.readonly === true) {
+    return "builtin";
+  }
+  if (skill.source === "external") {
+    return "external";
+  }
+  return "custom";
+};
+
+const isSkillEditable = (skill) => {
+  if (!skill) {
+    return false;
+  }
+  if (typeof skill.editable === "boolean") {
+    return skill.editable;
+  }
+  return resolveSkillSource(skill) === "custom";
+};
+
+const buildSkillSourceLabel = (skill) => {
+  switch (resolveSkillSource(skill)) {
+    case "builtin":
+      return t("skills.source.builtin");
+    case "external":
+      return t("skills.source.external");
+    default:
+      return t("skills.source.custom");
+  }
 };
 
 const extractErrorMessage = async (response) => resolveApiErrorMessage(response, "");
@@ -187,17 +232,20 @@ const renderSkillDetailHeader = (skill) => {
   if (!skill) {
     skillDetailTitle.textContent = t("skills.detail.unselected");
     skillDetailMeta.textContent = "";
+    skillDetailMeta.title = "";
     return;
   }
   skillDetailTitle.textContent = skill.name || t("skills.detail.title");
+  const displayPath = normalizeSkillDisplayPath(skill.path || viewState.root);
   const metaParts = [];
-  if (skill.path) {
-    metaParts.push(skill.path);
+  if (!isSkillEditable(skill)) {
+    metaParts.push(t("skills.readonly.hint"));
   }
-  if (viewState.root && viewState.root !== skill.path) {
-    metaParts.push(viewState.root);
+  if (displayPath) {
+    metaParts.push(displayPath);
   }
   skillDetailMeta.textContent = metaParts.join(" · ");
+  skillDetailMeta.title = displayPath;
 };
 
 const setSkillEditorDisabled = (disabled) => {
@@ -219,7 +267,7 @@ const renderSkillEditor = () => {
   if (skillFileContent) {
     skillFileContent.value = viewState.fileContent || "";
   }
-  setSkillEditorDisabled(!viewState.activeFile);
+  setSkillEditorDisabled(!viewState.activeFile || !isSkillEditable(getActiveSkill()));
   scheduleSkillEditorHighlight();
 };
 
@@ -452,8 +500,13 @@ const renderSkills = () => {
         });
     });
     const label = document.createElement("label");
+    const titleRow = document.createElement("div");
+    titleRow.className = "skill-title-row";
     const title = document.createElement("strong");
     title.textContent = skill.name || "";
+    const sourceTag = document.createElement("span");
+    sourceTag.className = `skill-source-tag is-${resolveSkillSource(skill)}`;
+    sourceTag.textContent = buildSkillSourceLabel(skill);
     const meta = document.createElement("span");
     meta.className = "muted";
     const metaParts = [];
@@ -461,23 +514,24 @@ const renderSkills = () => {
       metaParts.push(skill.description);
     }
     if (skill.path) {
-      metaParts.push(skill.path);
+      metaParts.push(normalizeSkillDisplayPath(skill.path));
     }
     meta.textContent = metaParts.join(" · ");
-    label.append(title, meta);
+    titleRow.append(title, sourceTag);
+    label.append(titleRow, meta);
     const deleteButton = document.createElement("button");
     deleteButton.type = "button";
     deleteButton.className = "danger btn-with-icon btn-compact skill-delete-btn";
     deleteButton.innerHTML = '<i class="fa-solid fa-trash"></i>';
-    const deletable = isSkillDeletable(skill);
+    const deletable = isSkillEditable(skill);
     deleteButton.disabled = !deletable;
     deleteButton.title = deletable
       ? t("skills.delete.title")
-      : t("skills.delete.restricted");
+      : t("skills.readonly.hint");
     deleteButton.addEventListener("click", (event) => {
       event.stopPropagation();
       if (!deletable) {
-        notify(t("skills.delete.restricted"), "warn");
+        notify(t("skills.readonly.hint"), "warn");
         return;
       }
       deleteSkill(skill)
@@ -587,6 +641,10 @@ const saveSkillFile = async () => {
   const skill = getActiveSkill();
   if (!skill) {
     notify(t("skills.file.selectSkillRequired"), "warn");
+    return;
+  }
+  if (!isSkillEditable(skill)) {
+    notify(t("skills.file.readonly"), "warn");
     return;
   }
   if (!viewState.activeFile) {

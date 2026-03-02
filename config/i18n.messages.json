@@ -311,6 +311,14 @@
     "en-US": "Only skills under the skills directory can be deleted",
     "zh-CN": "仅支持删除 skills 目录内的技能"
   },
+  "error.skill_builtin_readonly": {
+    "en-US": "Built-in skill is read-only. Modify source files under skills/",
+    "zh-CN": "内置技能为只读，请直接修改源码 skills 目录"
+  },
+  "error.skill_builtin_upload_conflict": {
+    "en-US": "Upload path conflicts with built-in skill directory",
+    "zh-CN": "上传路径与内置技能目录冲突，请修改目录名称后重试"
+  },
   "error.skill_delete_update_failed": {
     "en-US": "Skill deleted but failed to update config: {detail}",
     "zh-CN": "技能已删除，但更新配置失败: {detail}"

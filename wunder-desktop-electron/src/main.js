@@ -701,8 +701,8 @@ const handleMainWindowClose = (window, event) => {
 const createWindow = async () => {
   const port = await startBridge()
   mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 860,
+    width: 1220,
+    height: 760,
     minWidth: 1024,
     minHeight: 700,
     title: 'Wunder Desktop',

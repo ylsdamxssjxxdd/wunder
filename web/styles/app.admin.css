@@ -1989,6 +1989,49 @@
   white-space: nowrap;
 }
 
+.skill-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.skill-title-row strong {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.skill-source-tag {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.skill-source-tag.is-builtin {
+  color: #b45309;
+  border: 1px solid #f7c99f;
+  background: #ffedd5;
+}
+
+.skill-source-tag.is-custom {
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+}
+
+.skill-source-tag.is-external {
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+}
+
 #skillsPanel .skill-delete-btn {
   margin-left: auto;
   opacity: 0;
@@ -2252,6 +2295,10 @@
   scrollbar-width: none;
 }
 
+#skillsPanel .skill-editor-body:focus-within .skill-editor-highlight {
+  opacity: 0;
+}
+
 .skill-editor-highlight::-webkit-scrollbar {
   width: 0;
   height: 0;
@@ -2295,6 +2342,18 @@
   z-index: 1;
   overflow: auto;
   box-sizing: border-box;
+  outline: none;
+  box-shadow: none;
+}
+
+#skillsPanel .skill-editor-body:focus-within .skill-editor-text {
+  color: #0f172a;
+  -webkit-text-fill-color: currentColor;
+}
+
+#skillsPanel .skill-editor-text:focus {
+  outline: none;
+  box-shadow: none;
 }
 
 #skillsPanel .skill-editor-text::placeholder {
@@ -3010,6 +3069,14 @@
 .muted {
   color: #94a3b8;
   font-size: 12px;
+}
+
+.skill-detail-meta-line {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .error-text {

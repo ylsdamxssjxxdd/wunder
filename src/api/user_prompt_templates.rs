@@ -10,6 +10,7 @@ use axum::response::Response;
 use axum::{routing::delete, routing::get, routing::post, Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -35,6 +36,30 @@ pub fn router() -> Router<Arc<AppState>> {
 
 fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
+}
+
+fn resolve_segment_path_or_bad_request(
+    pack_root: &Path,
+    locale: &str,
+    key: &str,
+) -> Result<PathBuf, Response> {
+    user_prompt_templates::resolve_segment_path(pack_root, locale, key)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))
+}
+
+async fn read_segment_content(
+    pack_root: &Path,
+    locale: &str,
+    key: &str,
+) -> Result<(PathBuf, bool, String), Response> {
+    let path = resolve_segment_path_or_bad_request(pack_root, locale, key)?;
+    let exists = path.is_file();
+    let content = if exists {
+        tokio::fs::read_to_string(&path).await.unwrap_or_default()
+    } else {
+        String::new()
+    };
+    Ok((path, exists, content))
 }
 
 async fn list_prompt_templates(
@@ -83,6 +108,17 @@ async fn list_prompt_templates(
     }
 
     packs.sort_by(|a, b| {
+        let a_default = a
+            .get("is_default")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let b_default = b
+            .get("is_default")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if a_default != b_default {
+            return b_default.cmp(&a_default);
+        }
         let a_id = a.get("id").and_then(Value::as_str).unwrap_or("");
         let b_id = b.get("id").and_then(Value::as_str).unwrap_or("");
         a_id.to_lowercase().cmp(&b_id.to_lowercase())
@@ -176,14 +212,25 @@ async fn get_prompt_template_file(
     let system_pack_id = user_prompt_templates::resolve_system_active_pack_id(&config);
     let system_pack_root =
         user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id);
+    let system_default_root =
+        user_prompt_templates::resolve_system_pack_root(&config, DEFAULT_PACK_ID);
     let (path, exists, fallback_used, content, readonly, source_pack_id) = if pack_id
         .eq_ignore_ascii_case(DEFAULT_PACK_ID)
     {
-        let path = user_prompt_templates::resolve_segment_path(&system_pack_root, &locale, key)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-        let exists = path.is_file();
-        let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
-        (path, exists, false, content, true, system_pack_id)
+        let (path, exists, mut content) =
+            read_segment_content(&system_pack_root, &locale, key).await?;
+        let mut fallback_used = false;
+        let mut source_pack_id = system_pack_id.clone();
+        if !exists && !system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+            let (_, fallback_exists, fallback_content) =
+                read_segment_content(&system_default_root, &locale, key).await?;
+            if fallback_exists {
+                fallback_used = true;
+                source_pack_id = DEFAULT_PACK_ID.to_string();
+                content = fallback_content;
+            }
+        }
+        (path, exists, fallback_used, content, true, source_pack_id)
     } else {
         let pack_root = user_prompt_templates::resolve_user_pack_root(&config, &user_id, &pack_id);
         if !pack_root.is_dir() {
@@ -192,20 +239,24 @@ async fn get_prompt_template_file(
                 "prompt template pack not found".to_string(),
             ));
         }
-        let path = user_prompt_templates::resolve_segment_path(&pack_root, &locale, key)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
+        let path = resolve_segment_path_or_bad_request(&pack_root, &locale, key)?;
         let exists = path.is_file();
         if exists {
             let content = tokio::fs::read_to_string(&path).await.unwrap_or_default();
             (path, true, false, content, false, pack_id.clone())
         } else {
-            let fallback_path =
-                user_prompt_templates::resolve_segment_path(&system_pack_root, &locale, key)
-                    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-            let content = tokio::fs::read_to_string(&fallback_path)
-                .await
-                .unwrap_or_default();
-            (path, false, true, content, false, system_pack_id)
+            let (_, system_exists, mut content) =
+                read_segment_content(&system_pack_root, &locale, key).await?;
+            let mut source_pack_id = system_pack_id.clone();
+            if !system_exists && !system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+                let (_, default_exists, default_content) =
+                    read_segment_content(&system_default_root, &locale, key).await?;
+                if default_exists {
+                    source_pack_id = DEFAULT_PACK_ID.to_string();
+                    content = default_content;
+                }
+            }
+            (path, false, true, content, false, source_pack_id)
         }
     };
 
@@ -324,9 +375,12 @@ async fn create_prompt_template_pack(
     let copy_from = normalize_pack_id(payload.copy_from.as_deref());
     user_prompt_templates::validate_pack_id(&copy_from)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-    let source_root = if copy_from.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+    let (source_root, fallback_source_root) = if copy_from.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
         let system_pack_id = user_prompt_templates::resolve_system_active_pack_id(&config);
-        user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id)
+        let source_root = user_prompt_templates::resolve_system_pack_root(&config, &system_pack_id);
+        let fallback_source_root = (!system_pack_id.eq_ignore_ascii_case(DEFAULT_PACK_ID))
+            .then(|| user_prompt_templates::resolve_system_pack_root(&config, DEFAULT_PACK_ID));
+        (source_root, fallback_source_root)
     } else {
         let root = user_prompt_templates::resolve_user_pack_root(&config, &user_id, &copy_from);
         if !root.is_dir() {
@@ -335,16 +389,26 @@ async fn create_prompt_template_pack(
                 "copy_from pack not found".to_string(),
             ));
         }
-        root
+        (root, None)
     };
 
     for locale in ["zh", "en"] {
         for (key, _) in SYSTEM_SEGMENTS {
             let src_path = user_prompt_templates::resolve_segment_path(&source_root, locale, key)
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
-            let content = tokio::fs::read_to_string(&src_path)
+            let mut content = tokio::fs::read_to_string(&src_path)
                 .await
                 .unwrap_or_default();
+            if content.is_empty() && !src_path.is_file() {
+                if let Some(fallback_root) = fallback_source_root.as_ref() {
+                    let fallback_path =
+                        user_prompt_templates::resolve_segment_path(fallback_root, locale, key)
+                            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
+                    content = tokio::fs::read_to_string(&fallback_path)
+                        .await
+                        .unwrap_or_default();
+                }
+            }
             let dst_path = user_prompt_templates::resolve_segment_path(&pack_root, locale, key)
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err))?;
             if let Some(parent) = dst_path.parent() {

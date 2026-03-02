@@ -58,6 +58,33 @@ use zip::ZipArchive;
 
 const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
+const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
+const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum AdminSkillSourceKind {
+    Builtin,
+    Custom,
+    External,
+}
+
+impl AdminSkillSourceKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Custom => "custom",
+            Self::External => "external",
+        }
+    }
+
+    fn editable(self) -> bool {
+        matches!(self, Self::Custom)
+    }
+
+    fn builtin(self) -> bool {
+        matches!(self, Self::Builtin)
+    }
+}
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -957,13 +984,138 @@ async fn admin_a2a_card(
     ))
 }
 
+fn resolve_builtin_skills_root() -> Option<PathBuf> {
+    if let Some(path) = std::env::var(BUILTIN_SKILLS_ROOT_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    {
+        let normalized = normalize_existing_path(&path);
+        if normalized.exists() && normalized.is_dir() {
+            return Some(normalized);
+        }
+    }
+    let fallback = PathBuf::from("skills");
+    if fallback.exists() && fallback.is_dir() {
+        return Some(normalize_existing_path(&fallback));
+    }
+    None
+}
+
+fn resolve_admin_custom_skills_root() -> PathBuf {
+    std::env::var(ADMIN_CUSTOM_SKILLS_ROOT_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("data").join("admin_skills"))
+}
+
+fn append_skill_scan_path(paths: &mut Vec<String>, seen: &mut HashSet<PathBuf>, path: PathBuf) {
+    let normalized = normalize_path_for_compare(&normalize_existing_path(&path));
+    if !seen.insert(normalized) {
+        return;
+    }
+    paths.push(path.to_string_lossy().to_string());
+}
+
+fn build_admin_skill_scan_paths(config: &Config) -> Vec<String> {
+    let builtin_root = resolve_builtin_skills_root();
+    let custom_root = resolve_admin_custom_skills_root();
+    let mut scan_paths = Vec::new();
+    let mut seen = HashSet::new();
+    if let Some(root) = builtin_root {
+        append_skill_scan_path(&mut scan_paths, &mut seen, root);
+    }
+    append_skill_scan_path(&mut scan_paths, &mut seen, custom_root);
+    for raw_path in &config.skills.paths {
+        let cleaned = raw_path.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        append_skill_scan_path(&mut scan_paths, &mut seen, PathBuf::from(cleaned));
+    }
+    scan_paths
+}
+
+fn normalize_admin_skill_paths(paths: Vec<String>) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for raw in paths {
+        let cleaned = raw.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        append_skill_scan_path(&mut output, &mut seen, PathBuf::from(cleaned));
+    }
+    output
+}
+
+fn resolve_admin_skill_source(
+    spec: &SkillSpec,
+    builtin_root: Option<&Path>,
+    custom_root: &Path,
+) -> AdminSkillSourceKind {
+    let root = normalize_existing_path(&spec.root);
+    if let Some(builtin_root) = builtin_root {
+        let normalized_builtin_root = normalize_existing_path(builtin_root);
+        if is_within_root(&normalized_builtin_root, &root) {
+            return AdminSkillSourceKind::Builtin;
+        }
+    }
+    let normalized_custom_root = normalize_existing_path(custom_root);
+    if is_within_root(&normalized_custom_root, &root) {
+        return AdminSkillSourceKind::Custom;
+    }
+    AdminSkillSourceKind::External
+}
+
+fn admin_skill_to_value(spec: SkillSpec, enabled_set: &HashSet<String>) -> Value {
+    let builtin_root = resolve_builtin_skills_root();
+    let custom_root = resolve_admin_custom_skills_root();
+    let source = resolve_admin_skill_source(&spec, builtin_root.as_deref(), &custom_root);
+    let name = spec.name;
+    let description = spec.description;
+    let path = spec.path;
+    let input_schema = spec.input_schema;
+    let enabled = enabled_set.contains(&name);
+    json!({
+        "name": name,
+        "description": description,
+        "path": path,
+        "input_schema": input_schema,
+        "enabled": enabled,
+        "builtin": source.builtin(),
+        "source": source.as_str(),
+        "readonly": !source.editable(),
+        "editable": source.editable(),
+    })
+}
+
+fn ensure_admin_skill_editable(spec: &SkillSpec) -> Result<PathBuf, Response> {
+    let custom_root = resolve_admin_custom_skills_root();
+    let source =
+        resolve_admin_skill_source(spec, resolve_builtin_skills_root().as_deref(), &custom_root);
+    if !source.editable() {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.skill_builtin_readonly"),
+        ));
+    }
+    let root = normalize_existing_path(&spec.root);
+    if !is_within_root(&custom_root, &root) {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.skill_builtin_readonly"),
+        ));
+    }
+    Ok(root)
+}
+
 async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
     let config = state.config_store.get().await;
-    let mut scan_paths = config.skills.paths.clone();
-    let skills_dir = Path::new("skills");
-    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
-        scan_paths.push("skills".to_string());
-    }
+    let scan_paths = build_admin_skill_scan_paths(&config);
     let mut scan_config = config.clone();
     scan_config.skills.paths = scan_paths.clone();
     scan_config.skills.enabled = Vec::new();
@@ -972,15 +1124,7 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
     let skills = registry
         .list_specs()
         .into_iter()
-        .map(|spec| {
-            json!({
-                "name": spec.name,
-                "description": spec.description,
-                "path": spec.path,
-                "input_schema": spec.input_schema,
-                "enabled": enabled_set.contains(&spec.name),
-            })
-        })
+        .map(|spec| admin_skill_to_value(spec, &enabled_set))
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "paths": scan_paths,
@@ -990,13 +1134,8 @@ async fn admin_skills_list(State(state): State<Arc<AppState>>) -> Result<Json<Va
 }
 
 fn resolve_admin_skill_spec(config: &Config, name: &str) -> Result<SkillSpec, Response> {
-    let mut scan_paths = config.skills.paths.clone();
-    let skills_dir = Path::new("skills");
-    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
-        scan_paths.push("skills".to_string());
-    }
     let mut scan_config = config.clone();
-    scan_config.skills.paths = scan_paths;
+    scan_config.skills.paths = build_admin_skill_scan_paths(config);
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
     registry
@@ -1044,18 +1183,7 @@ async fn admin_skills_content(
         ));
     }
     let config = state.config_store.get().await;
-    let mut scan_paths = config.skills.paths.clone();
-    let skills_dir = Path::new("skills");
-    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
-        scan_paths.push("skills".to_string());
-    }
-    let mut scan_config = config.clone();
-    scan_config.skills.paths = scan_paths;
-    scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false, false);
-    let spec = registry
-        .get(name)
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))?;
+    let spec = resolve_admin_skill_spec(&config, name)?;
     let skill_path = PathBuf::from(&spec.path);
     if !skill_path.exists() || !skill_path.is_file() {
         return Err(error_response(
@@ -1148,7 +1276,7 @@ async fn admin_skills_file(
     }
     let config = state.config_store.get().await;
     let spec = resolve_admin_skill_spec(&config, name)?;
-    let root = normalize_existing_path(&spec.root);
+    let root = ensure_admin_skill_editable(&spec)?;
     let target = resolve_skill_file_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
         return Err(error_response(
@@ -1227,11 +1355,20 @@ async fn admin_skills_update(
     Json(payload): Json<SkillsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
     let previous = state.config_store.get().await;
+    let custom_root = resolve_admin_custom_skills_root()
+        .to_string_lossy()
+        .to_string();
     let updated = state
         .config_store
         .update(|config| {
             if let Some(paths) = &payload.paths {
-                config.skills.paths = paths.clone();
+                let mut next_paths = paths.clone();
+                next_paths.push(custom_root.clone());
+                config.skills.paths = normalize_admin_skill_paths(next_paths);
+            } else {
+                let mut next_paths = config.skills.paths.clone();
+                next_paths.push(custom_root.clone());
+                config.skills.paths = normalize_admin_skill_paths(next_paths);
             }
             config.skills.enabled = payload.enabled.clone();
         })
@@ -1252,7 +1389,7 @@ async fn admin_skills_update(
     let paths_changed = payload
         .paths
         .as_ref()
-        .is_some_and(|paths| *paths != previous.skills.paths);
+        .is_some_and(|paths| normalize_admin_skill_paths(paths.clone()) != previous.skills.paths);
     if !enabled_added.is_empty() || !enabled_removed.is_empty() || paths_changed {
         info!(
             "技能配置已更新: 启用 +{enabled_added_len}, 停用 -{enabled_removed_len}, paths_changed={paths_changed}",
@@ -1270,11 +1407,7 @@ async fn admin_skills_update(
         }
     }
     state.reload_skills(&updated).await;
-    let mut scan_paths = updated.skills.paths.clone();
-    let skills_dir = Path::new("skills");
-    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
-        scan_paths.push("skills".to_string());
-    }
+    let scan_paths = build_admin_skill_scan_paths(&updated);
     let mut scan_config = updated.clone();
     scan_config.skills.paths = scan_paths.clone();
     scan_config.skills.enabled = Vec::new();
@@ -1283,15 +1416,7 @@ async fn admin_skills_update(
     let skills = registry
         .list_specs()
         .into_iter()
-        .map(|spec| {
-            json!({
-                "name": spec.name,
-                "description": spec.description,
-                "path": spec.path,
-                "input_schema": spec.input_schema,
-                "enabled": enabled_set.contains(&spec.name),
-            })
-        })
+        .map(|spec| admin_skill_to_value(spec, &enabled_set))
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "paths": scan_paths,
@@ -1312,42 +1437,8 @@ async fn admin_skills_delete(
         ));
     }
     let config = state.config_store.get().await;
-    let mut scan_paths = config.skills.paths.clone();
-    let skills_dir = Path::new("skills");
-    let skills_root = skills_dir
-        .canonicalize()
-        .unwrap_or_else(|_| skills_dir.to_path_buf());
-    if skills_dir.exists() && !scan_paths.iter().any(|item| item == "skills") {
-        scan_paths.push("skills".to_string());
-    }
-    let mut scan_config = config.clone();
-    scan_config.skills.paths = scan_paths;
-    scan_config.skills.enabled = Vec::new();
-    let registry = load_skills(&scan_config, false, false, false);
-    let spec = registry
-        .get(name)
-        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.skill_not_found")))?;
-    let skill_path = PathBuf::from(&spec.path);
-    if !skill_path.exists() || !skill_path.is_file() {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.skill_file_not_found"),
-        ));
-    }
-    if !skills_root.exists() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.skills_dir_missing"),
-        ));
-    }
-    let skill_dir = skill_path.parent().unwrap_or(&skills_root).to_path_buf();
-    let skill_dir = skill_dir.canonicalize().unwrap_or(skill_dir);
-    if skill_dir != skills_root && !skill_dir.starts_with(&skills_root) {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.skill_delete_restricted"),
-        ));
-    }
+    let spec = resolve_admin_skill_spec(&config, name)?;
+    let skill_dir = ensure_admin_skill_editable(&spec)?;
     tokio::fs::remove_dir_all(&skill_dir).await.map_err(|err| {
         error_response(
             StatusCode::BAD_REQUEST,
@@ -1414,7 +1505,7 @@ async fn admin_skills_upload(
             i18n::t("error.skill_upload_zip_only"),
         ));
     }
-    let skill_root = Path::new("skills").to_path_buf();
+    let skill_root = resolve_admin_custom_skills_root();
     tokio::fs::create_dir_all(&skill_root)
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -1464,8 +1555,17 @@ async fn admin_skills_upload(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         extracted += 1;
     }
-    let config = state.config_store.get().await;
-    state.reload_skills(&config).await;
+    let skill_root_text = skill_root.to_string_lossy().to_string();
+    let updated = state
+        .config_store
+        .update(|config| {
+            let mut paths = config.skills.paths.clone();
+            paths.push(skill_root_text.clone());
+            config.skills.paths = normalize_admin_skill_paths(paths);
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state.reload_skills(&updated).await;
     Ok(Json(
         json!({ "ok": true, "extracted": extracted, "message": i18n::t("message.upload_success") }),
     ))

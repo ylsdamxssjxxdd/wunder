@@ -40,14 +40,21 @@
               />
             </label>
             <label class="tool-item-info">
-              <strong>{{ skill.name }}</strong>
+              <div class="user-skill-title-line">
+                <strong>{{ skill.name }}</strong>
+                <span class="skill-source-tag" :class="`is-${resolveSkillSource(skill)}`">
+                  {{ buildSkillSourceLabel(skill) }}
+                </span>
+              </div>
               <span class="muted">{{ buildSkillDesc(skill) }}</span>
             </label>
             <button
               class="user-tools-btn danger btn-with-icon btn-compact icon-only user-skill-delete"
               type="button"
-              :disabled="deleteLoading"
-              :title="t('userTools.skills.delete.title')"
+              :disabled="deleteLoading || isSkillReadonly(skill)"
+              :title="
+                isSkillReadonly(skill) ? t('userTools.skills.readonlyHint') : t('userTools.skills.delete.title')
+              "
               @click.stop="deleteSkill(skill)"
             >
               <i class="fa-solid fa-trash" aria-hidden="true"></i>
@@ -61,7 +68,7 @@
           <div class="detail-header">
             <div>
               <div class="detail-title">{{ detailTitle }}</div>
-              <div class="muted">{{ detailMeta }}</div>
+              <div class="muted skill-path-line" :title="detailMeta || undefined">{{ detailMeta }}</div>
             </div>
           </div>
           <div class="skills-section-title">{{ t('userTools.skills.detail.structure') }}</div>
@@ -95,7 +102,10 @@
           <div class="detail-header">
             <div>
               <div class="detail-title">{{ t('userTools.skills.editor.title') }}</div>
-              <div class="muted">{{ activeFile || t('userTools.skills.file.unselected') }}</div>
+              <div class="muted skill-path-line" :title="activeFile || undefined">
+                {{ activeFile || t('userTools.skills.file.unselected') }}
+              </div>
+              <div v-if="activeSkillReadonly" class="muted">{{ t('userTools.skills.readonlyHint') }}</div>
             </div>
             <div class="detail-actions">
               <button
@@ -174,7 +184,6 @@ const deleteLoading = ref(false);
 const saveTimer = ref(null);
 
 const fileEntries = ref([]);
-const skillRoot = ref('');
 const activeFile = ref('');
 const fileContent = ref('');
 const fileTreeMessage = ref('');
@@ -266,13 +275,22 @@ const detailTitle = computed(() =>
 const detailMeta = computed(() => {
   const skill = activeSkill.value;
   if (!skill) return '';
-  const parts = [normalizeSkillDisplayPath(skill.path), normalizeSkillDisplayPath(skillRoot.value)].filter(
-    Boolean
-  );
-  return [...new Set(parts)].join(' · ');
+  return normalizeSkillDisplayPath(skill.path);
 });
 
-const editorDisabled = computed(() => editorLocked.value || !activeFile.value);
+const resolveSkillSource = (skill) => {
+  if (skill?.source === 'builtin' || skill?.builtin === true || skill?.readonly === true) {
+    return 'builtin';
+  }
+  return 'custom';
+};
+
+const isSkillReadonly = (skill) => resolveSkillSource(skill) === 'builtin';
+
+const activeSkillReadonly = computed(() => isSkillReadonly(activeSkill.value));
+const editorDisabled = computed(
+  () => editorLocked.value || !activeFile.value || activeSkillReadonly.value
+);
 
 const highlightHtml = ref('&nbsp;');
 
@@ -287,6 +305,11 @@ const buildSkillDesc = (skill) => {
   }
   return parts.join(' · ') || t('common.noDescription');
 };
+
+const buildSkillSourceLabel = (skill) =>
+  resolveSkillSource(skill) === 'builtin'
+    ? t('userTools.skills.source.builtin')
+    : t('userTools.skills.source.custom');
 
 const normalizeSkillPath = (path) => String(path || '').replace(/\\/g, '/');
 
@@ -460,7 +483,6 @@ const loadSkills = async ({ refreshDetail }: LoadSkillsOptions = {}) => {
     }
     selectedIndex.value = -1;
     fileEntries.value = [];
-    skillRoot.value = '';
     activeFile.value = '';
     showEditorMessage('');
     refreshFileTreeMessage();
@@ -542,7 +564,6 @@ const selectSkill = async (skill, index) => {
   if (!skill) {
     selectedIndex.value = -1;
     fileEntries.value = [];
-    skillRoot.value = '';
     activeFile.value = '';
     showEditorMessage('');
     refreshFileTreeMessage();
@@ -550,7 +571,6 @@ const selectSkill = async (skill, index) => {
   }
   selectedIndex.value = index;
   fileEntries.value = [];
-  skillRoot.value = '';
   activeFile.value = '';
   showEditorMessage('');
   fileTreeMessage.value = t('common.loading');
@@ -562,7 +582,6 @@ const selectSkill = async (skill, index) => {
     }
     const payload = data?.data || {};
     const entries = Array.isArray(payload.entries) ? payload.entries : [];
-    skillRoot.value = payload.root || '';
     fileEntries.value = buildFileEntries(entries);
     refreshFileTreeMessage();
     const defaultFile = resolveDefaultSkillFile(entries);
@@ -619,6 +638,10 @@ const saveSkillFile = async () => {
     ElMessage.warning(t('userTools.skills.file.selectSkillRequired'));
     return;
   }
+  if (isSkillReadonly(skill)) {
+    ElMessage.warning(t('userTools.skills.file.readonly'));
+    return;
+  }
   if (!activeFile.value) {
     ElMessage.warning(t('userTools.skills.file.selectRequired'));
     return;
@@ -645,6 +668,10 @@ const saveSkillFile = async () => {
 
 const deleteSkill = async (skill) => {
   if (!skill?.name) return;
+  if (isSkillReadonly(skill)) {
+    ElMessage.warning(t('userTools.skills.deleteBuiltinDenied'));
+    return;
+  }
   try {
     await ElMessageBox.confirm(
       t('userTools.skills.deleteConfirm', { name: skill.name }),
