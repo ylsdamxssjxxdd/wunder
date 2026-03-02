@@ -1367,6 +1367,8 @@ export default {
   'messenger.action.openConversation': 'Open conversation',
   'messenger.defaultAgent': 'Default Agent',
   'messenger.defaultAgentDesc': 'System default chat entry',
+  'messenger.defaultAgentReadonlyHint':
+    'Default agent settings are read-only, and mounted tools follow current enabled tools automatically.',
   'messenger.preview.empty': 'No content',
   'messenger.kind.agent': 'Agent',
   'messenger.kind.direct': 'Direct',

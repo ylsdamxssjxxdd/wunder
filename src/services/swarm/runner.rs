@@ -733,7 +733,7 @@ impl TeamRunRunner {
             updated_at: now,
             last_message_at: now,
             agent_id: Some(task.agent_id.clone()),
-            tool_overrides: agent.tool_names.clone(),
+            tool_overrides: Vec::new(),
             parent_session_id: Some(run.parent_session_id.clone()),
             parent_message_id: None,
             spawn_label: Some(format!("team:{}", run.team_run_id)),

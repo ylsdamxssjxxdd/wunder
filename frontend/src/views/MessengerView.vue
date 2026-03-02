@@ -262,6 +262,7 @@
                   :class="{ active: selectedContactUserId === String(contact.user_id || '') }"
                   type="button"
                   @click="selectContact(contact)"
+                  @dblclick="openContactConversationFromList(contact)"
                 >
                   <div class="messenger-list-avatar">{{ avatarLabel(contact.username || contact.user_id) }}</div>
                   <div class="messenger-list-main">
@@ -331,6 +332,7 @@
             :class="{ active: selectedAgentId === DEFAULT_AGENT_KEY }"
             type="button"
             @click="selectAgentForSettings(DEFAULT_AGENT_KEY)"
+            @dblclick="openAgentById(DEFAULT_AGENT_KEY)"
           >
             <AgentAvatar size="md" :state="resolveAgentRuntimeState(DEFAULT_AGENT_KEY)" />
             <div class="messenger-list-main">
@@ -352,6 +354,7 @@
             :class="{ active: selectedAgentId === normalizeAgentId(agent.id) }"
             type="button"
             @click="selectAgentForSettings(agent.id)"
+            @dblclick="openAgentById(agent.id)"
           >
             <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
             <div class="messenger-list-main">
@@ -378,6 +381,7 @@
             :class="{ active: selectedAgentId === normalizeAgentId(agent.id) }"
             type="button"
             @click="selectAgentForSettings(agent.id)"
+            @dblclick="openAgentById(agent.id)"
           >
             <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
             <div class="messenger-list-main">
@@ -838,7 +842,8 @@
 
                 <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
                   <AgentSettingsPanel
-                    :agent-id="settingsAgentIdForApi"
+                    :agent-id="settingsAgentIdForPanel"
+                    :readonly="isSettingsDefaultAgent"
                     @saved="handleAgentSettingsSaved"
                     @deleted="handleAgentDeleted"
                   />
@@ -863,7 +868,6 @@
 
             <template v-else-if="sessionHub.activeSection === 'users'">
               <div v-if="selectedContact" class="messenger-entity-panel messenger-entity-panel--fill">
-                <div class="messenger-entity-title">{{ selectedContact.username || selectedContact.user_id }}</div>
                 <div class="messenger-entity-grid">
                   <div class="messenger-entity-field">
                     <span class="messenger-entity-label">{{ t('messenger.entity.userId') }}</span>
@@ -950,13 +954,22 @@
                         {{ group.title }}
                       </div>
                       <div class="messenger-tool-tag-list">
-                        <span
-                          v-for="item in group.items"
-                          :key="`tool-admin-${group.key}-${item.name}`"
-                          class="messenger-tool-tag"
-                        >
-                          {{ item.name }}
-                        </span>
+                        <template v-for="item in group.items" :key="`tool-admin-${group.key}-${item.name}`">
+                          <el-tooltip
+                            v-if="group.key === 'builtin'"
+                            placement="top-start"
+                            :show-after="120"
+                            :content="resolveAdminToolDetail(item)"
+                            popper-class="messenger-tool-detail-popper"
+                          >
+                            <span class="messenger-tool-tag messenger-tool-tag--detail">
+                              {{ item.name }}
+                            </span>
+                          </el-tooltip>
+                          <span v-else class="messenger-tool-tag">
+                            {{ item.name }}
+                          </span>
+                        </template>
                         <span v-if="!group.items.length" class="messenger-list-empty">
                           {{ t('common.none') }}
                         </span>
@@ -1689,7 +1702,6 @@ import {
 } from '@/utils/workspaceImagePersistentCache';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
-import { pickScreenshotRegionFromDataUrl } from '@/utils/screenshotRegionPicker';
 import {
   classifyWorldHistoryMessage,
   normalizeWorldHistoryText,
@@ -2111,7 +2123,9 @@ const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
-const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 840);
+const isMiddlePaneOverlay = computed(() =>
+  desktopMode.value ? viewportWidth.value <= 1024 : viewportWidth.value <= 840
+);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
 const showMiddlePane = computed(() => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value);
 
@@ -2504,6 +2518,9 @@ const settingsAgentId = computed(() => {
   return '';
 });
 
+const settingsAgentIdForPanel = computed(() => normalizeAgentId(settingsAgentId.value));
+const isSettingsDefaultAgent = computed(() => settingsAgentIdForPanel.value === DEFAULT_AGENT_KEY);
+
 const settingsAgentIdForApi = computed(() => {
   const value = normalizeAgentId(settingsAgentId.value);
   return value === DEFAULT_AGENT_KEY ? '' : value;
@@ -2843,6 +2860,13 @@ const adminToolGroups = computed(() => [
   { key: 'skills', title: t('toolManager.system.skills'), items: skillTools.value },
   { key: 'knowledge', title: t('toolManager.system.knowledge'), items: knowledgeTools.value }
 ]);
+
+const resolveAdminToolDetail = (item: ToolEntry): string => {
+  const name = String(item?.name || '').trim();
+  const description = String(item?.description || '').trim();
+  const detail = description || t('common.noDescription');
+  return name ? `${name}\n${detail}` : detail;
+};
 
 const mixedConversations = computed<MixedConversation[]>(() => {
   const dismissedMap = dismissedAgentConversationMap.value;
@@ -4420,6 +4444,74 @@ const normalizeWorkspaceOwnerId = (value: unknown): string =>
     .trim()
     .replace(/[^a-zA-Z0-9_-]/g, '_');
 
+const encodeWorkspacePath = (value: string): string =>
+  String(value || '')
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+
+const buildWorkspacePublicPath = (
+  ownerId: string,
+  relativePath: string,
+  containerId?: number | null
+): string => {
+  const safeOwner = normalizeWorkspaceOwnerId(ownerId);
+  const normalized = normalizeUploadPath(relativePath);
+  if (!safeOwner || !normalized) return '';
+  if (containerId !== null && Number.isFinite(Number(containerId))) {
+    return `/workspaces/${safeOwner}__c__${Number(containerId)}/${encodeWorkspacePath(normalized)}`;
+  }
+  return `/workspaces/${safeOwner}/${encodeWorkspacePath(normalized)}`;
+};
+
+const WORLD_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
+const WORLD_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】]+)?$/;
+
+const decodeWorldAtPathToken = (value: string): string => {
+  if (!/%[0-9a-fA-F]{2}/.test(value)) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const replaceWorldAtPathTokens = (content: string, senderUserId: string): string => {
+  if (!content) return '';
+  const ownerId = normalizeWorkspaceOwnerId(senderUserId);
+  if (!ownerId) return content;
+  return content.replace(WORLD_AT_PATH_RE, (match, prefix, token, doubleQuoted, singleQuoted) => {
+    const raw = doubleQuoted ?? singleQuoted ?? token ?? '';
+    if (!raw) return match;
+    let value = raw;
+    let suffix = '';
+    if (!doubleQuoted && !singleQuoted) {
+      const split = WORLD_AT_PATH_SUFFIX_RE.exec(value);
+      if (split) {
+        value = split[1] ?? value;
+        suffix = split[2] ?? '';
+      }
+    }
+    const decoded = decodeWorldAtPathToken(String(value || '').trim());
+    const normalized = normalizeUploadPath(decoded);
+    if (!normalized) return match;
+    const pathLike =
+      decoded.startsWith('/') ||
+      decoded.startsWith('./') ||
+      decoded.startsWith('../') ||
+      normalized.includes('/') ||
+      normalized.includes('.');
+    if (!pathLike) return match;
+    const publicPath = buildWorkspacePublicPath(ownerId, normalized, USER_CONTAINER_ID);
+    if (!publicPath) return match;
+    const label = decoded;
+    const replacement = isImagePath(normalized)
+      ? `![${label}](${publicPath})`
+      : `[${label}](${publicPath})`;
+    return `${prefix}${replacement}${suffix}`;
+  });
+};
+
 type WorkspaceResolvedResource = ReturnType<typeof parseWorkspaceResourceUrl> & {
   requestUserId: string | null;
   requestAgentId: string | null;
@@ -4842,7 +4934,10 @@ const renderAgentMarkdown = (message: Record<string, unknown>, index: number): s
 
 const renderWorldMarkdown = (message: Record<string, unknown>): string => {
   const cacheKey = `world:${resolveWorldMessageKey(message)}`;
-  return renderMessageMarkdown(cacheKey, message?.content);
+  const content = String(message?.content || '');
+  const senderUserId = String(message?.sender_user_id || '').trim();
+  const patched = replaceWorldAtPathTokens(content, senderUserId);
+  return renderMessageMarkdown(cacheKey, patched);
 };
 
 const copyMessageContent = async (content: unknown) => {
@@ -5299,6 +5394,11 @@ const selectGroup = (group: Record<string, unknown>) => {
   selectedContactUserId.value = '';
 };
 
+const openContactConversationFromList = async (contact: Record<string, unknown>) => {
+  selectContact(contact);
+  await openContactConversation(contact);
+};
+
 const openWorldConversation = async (
   conversationId: string,
   kind: 'direct' | 'group',
@@ -5526,23 +5626,23 @@ const openAgentPromptPreview = async () => {
   }
 };
 
-const openSelectedContactConversation = async () => {
+const openContactConversation = async (targetContact: Record<string, unknown> | null | undefined) => {
   if (userWorldPermissionDenied.value) {
     ElMessage.warning(t('auth.login.noPermission'));
     return;
   }
-  if (!selectedContact.value) return;
+  if (!targetContact) return;
   const perfTrace = startMessengerPerfTrace('openSelectedContactConversation', {
-    selectedContactUserId: String(selectedContact.value?.user_id || '').trim()
+    selectedContactUserId: String(targetContact?.user_id || '').trim()
   });
-  const peerUserId = String(selectedContact.value.user_id || '').trim();
+  const peerUserId = String(targetContact.user_id || '').trim();
   const listMatchedConversationId = (Array.isArray(userWorldStore.conversations) ? userWorldStore.conversations : [])
     .find((item) => {
       const kind = String(item?.conversation_type || '').trim().toLowerCase();
       return kind !== 'group' && String(item?.peer_user_id || '').trim() === peerUserId;
     })
     ?.conversation_id;
-  const conversationId = String(selectedContact.value.conversation_id || listMatchedConversationId || '').trim();
+  const conversationId = String(targetContact.conversation_id || listMatchedConversationId || '').trim();
   if (conversationId) {
     markMessengerPerfTrace(perfTrace, 'hitExistingConversation');
     await openWorldConversation(conversationId, 'direct', 'messages');
@@ -5573,6 +5673,10 @@ const openSelectedContactConversation = async () => {
     });
     showApiError(error, t('userWorld.contact.openFailed'));
   }
+};
+
+const openSelectedContactConversation = async () => {
+  await openContactConversation(selectedContact.value);
 };
 
 const openSelectedGroupConversation = async () => {
@@ -6386,13 +6490,19 @@ type WorldScreenshotCaptureOption = {
 };
 
 const captureWorldScreenshotData = async (
-  hideWindow: boolean
+  option: WorldScreenshotCaptureOption
 ): Promise<{ dataUrl: string; fileName: string; mimeType: string }> => {
   const bridge = getDesktopBridge();
   if (!bridge || typeof bridge.captureScreenshot !== 'function') {
     throw new Error(t('chat.attachments.screenshotUnavailable'));
   }
-  const result = (await bridge.captureScreenshot({ hideWindow })) as DesktopScreenshotResult | null;
+  const result = (await bridge.captureScreenshot({
+    hideWindow: option.hideWindow === true,
+    region: option.region === true
+  })) as DesktopScreenshotResult | null;
+  if (result?.canceled) {
+    throw new Error('__SCREENSHOT_CANCELED__');
+  }
   if (!result || result.ok === false) {
     const reason = String(result?.message || t('chat.attachments.screenshotFailed')).trim();
     throw new Error(reason || t('chat.attachments.screenshotFailed'));
@@ -6421,27 +6531,19 @@ const triggerWorldScreenshot = async (option?: WorldScreenshotCaptureOption) => 
     return;
   }
   closeWorldAttachmentPanels();
-  const hideWindow = option?.hideWindow === true;
-  const region = option?.region === true;
+  const screenshotOption: WorldScreenshotCaptureOption = {
+    hideWindow: option?.hideWindow === true,
+    region: option?.region === true
+  };
   worldUploading.value = true;
   try {
-    const captured = await captureWorldScreenshotData(hideWindow);
-    let finalDataUrl = captured.dataUrl;
+    const captured = await captureWorldScreenshotData(screenshotOption);
     let finalFileName = captured.fileName;
-    if (region) {
-      const croppedDataUrl = await pickScreenshotRegionFromDataUrl(captured.dataUrl, {
-        title: t('chat.attachments.screenshotRegionTitle'),
-        hint: t('chat.attachments.screenshotRegionHint'),
-        cancelText: t('common.cancel')
-      });
-      if (!croppedDataUrl) {
-        return;
-      }
-      finalDataUrl = croppedDataUrl;
-      finalFileName = appendScreenshotFileNameSuffix(captured.fileName, '-region');
+    if (screenshotOption.region && !/[-_]region(\.[^./]+)?$/i.test(finalFileName)) {
+      finalFileName = appendScreenshotFileNameSuffix(finalFileName, '-region');
     }
     const screenshotFile = screenshotDataUrlToFile(
-      finalDataUrl,
+      captured.dataUrl,
       finalFileName,
       captured.mimeType
     );
@@ -6452,6 +6554,9 @@ const triggerWorldScreenshot = async (option?: WorldScreenshotCaptureOption) => 
     ElMessage.success(t('chat.attachments.screenshotAdded', { name: screenshotFile.name }));
     focusWorldTextareaToEnd();
   } catch (error) {
+    if ((error as { message?: string })?.message === '__SCREENSHOT_CANCELED__') {
+      return;
+    }
     showApiError(error, t('chat.attachments.screenshotFailed'));
   } finally {
     worldUploading.value = false;
@@ -6488,10 +6593,12 @@ const sendWorldMessage = async () => {
   if (!canSendWorldMessage.value) return;
   const text = worldDraft.value.trim();
   if (!text) return;
+  const senderUserId = String((authStore.user as Record<string, unknown> | null)?.id || '').trim();
+  const normalizedText = replaceWorldAtPathTokens(text, senderUserId);
   worldQuickPanelMode.value = '';
   worldDraft.value = '';
   try {
-    await userWorldStore.sendToActiveConversation(text);
+    await userWorldStore.sendToActiveConversation(normalizedText);
     await scrollMessagesToBottom();
   } catch (error) {
     worldDraft.value = text;

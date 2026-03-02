@@ -615,6 +615,13 @@
   transform-origin: right bottom;
 }
 
+.chat-shell .chat-screenshot-menu.chat-screenshot-menu--floating {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  z-index: 3600;
+}
+
 .chat-shell .chat-screenshot-menu-item {
   border: 1px solid transparent;
   border-radius: 8px;

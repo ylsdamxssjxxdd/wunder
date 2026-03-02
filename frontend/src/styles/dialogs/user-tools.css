@@ -494,6 +494,13 @@
   color: var(--user-tools-text);
 }
 
+.user-tools-dialog .mcp-detail-desc {
+  max-width: min(100%, 680px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .user-tools-dialog .muted {
   color: var(--user-tools-muted);
   font-size: 12px;

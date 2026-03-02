@@ -2208,12 +2208,14 @@ struct SwarmBatchDispatchTask {
 }
 
 fn resolve_swarm_batch_tool_names(
+    config: &Config,
+    skills: &SkillRegistry,
     allowed_tools: &HashSet<String>,
     session: &ChatSessionRecord,
     agent: &UserAgentRecord,
 ) -> Vec<String> {
     let overrides = resolve_session_tool_overrides(session, Some(agent));
-    let filtered = apply_tool_overrides(allowed_tools.clone(), &overrides);
+    let filtered = apply_tool_overrides(allowed_tools.clone(), &overrides, config, skills);
     finalize_tool_names(filtered)
 }
 
@@ -2510,7 +2512,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
                     updated_at: now,
                     last_message_at: now,
                     agent_id: Some(agent_id.clone()),
-                    tool_overrides: target_agent.tool_names.clone(),
+                    tool_overrides: Vec::new(),
                     parent_session_id,
                     parent_message_id: None,
                     spawn_label: label,
@@ -2712,7 +2714,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     updated_at: now,
                     last_message_at: now,
                     agent_id: Some(agent_id.clone()),
-                    tool_overrides: agent_record.tool_names.clone(),
+                    tool_overrides: Vec::new(),
                     parent_session_id,
                     parent_message_id: None,
                     spawn_label: label.clone(),
@@ -2729,8 +2731,13 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             }
         };
 
-        let tool_names =
-            resolve_swarm_batch_tool_names(&allowed_tools, &session_record, &agent_record);
+        let tool_names = resolve_swarm_batch_tool_names(
+            context.config,
+            context.skills,
+            &allowed_tools,
+            &session_record,
+            &agent_record,
+        );
         let agent_prompt = {
             let prompt = agent_record.system_prompt.trim();
             if prompt.is_empty() {
@@ -4095,22 +4102,54 @@ fn resolve_session_tool_overrides(
     }
 }
 
-fn apply_tool_overrides(allowed: HashSet<String>, overrides: &[String]) -> HashSet<String> {
+fn apply_tool_overrides(
+    allowed: HashSet<String>,
+    overrides: &[String],
+    config: &Config,
+    skills: &SkillRegistry,
+) -> HashSet<String> {
     if overrides.is_empty() {
         return allowed;
     }
     if overrides.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
         return HashSet::new();
     }
-    let override_set: HashSet<String> = overrides
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
-    allowed
-        .intersection(&override_set)
-        .cloned()
-        .collect::<HashSet<_>>()
+    let mut filtered = HashSet::new();
+    for raw in overrides {
+        if let Some(mapped) = resolve_override_name_with_allowed(raw, &allowed) {
+            filtered.insert(mapped);
+        }
+    }
+    if config.server.mode.trim().eq_ignore_ascii_case("desktop") {
+        let skill_names: HashSet<String> = skills
+            .list_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        for name in &allowed {
+            if skill_names.contains(name) {
+                filtered.insert(name.clone());
+            }
+        }
+    }
+    filtered
+}
+
+fn resolve_override_name_with_allowed(raw: &str, allowed: &HashSet<String>) -> Option<String> {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if allowed.contains(cleaned) {
+        return Some(cleaned.to_string());
+    }
+    for (index, _) in cleaned.match_indices('@') {
+        let suffix = cleaned[index + 1..].trim();
+        if !suffix.is_empty() && allowed.contains(suffix) {
+            return Some(suffix.to_string());
+        }
+    }
+    None
 }
 
 fn finalize_tool_names(mut allowed: HashSet<String>) -> Vec<String> {
@@ -4130,7 +4169,7 @@ fn build_effective_tool_names(
 ) -> Result<Vec<String>> {
     let allowed = collect_user_allowed_tools(context, user_id)?;
     let overrides = resolve_session_tool_overrides(record, agent);
-    let allowed = apply_tool_overrides(allowed, &overrides);
+    let allowed = apply_tool_overrides(allowed, &overrides, context.config, context.skills);
     Ok(finalize_tool_names(allowed))
 }
 

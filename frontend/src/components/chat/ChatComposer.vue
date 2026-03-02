@@ -112,20 +112,6 @@
             <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
             <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
           </button>
-          <div v-if="screenshotMenuVisible" class="chat-screenshot-menu">
-            <button
-              v-for="option in screenshotCaptureOptions"
-              :key="option.key"
-              class="chat-screenshot-menu-item"
-              type="button"
-              @click="selectScreenshotCaptureOption(option)"
-            >
-              <span class="chat-screenshot-menu-item-main">
-                <i :class="[option.icon, 'chat-screenshot-menu-item-icon']" aria-hidden="true"></i>
-                <span>{{ option.label }}</span>
-              </span>
-            </button>
-          </div>
         </div>
       </div>
       <textarea
@@ -213,20 +199,6 @@
             <i class="fa-solid fa-camera input-icon" aria-hidden="true"></i>
             <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
           </button>
-          <div v-if="screenshotMenuVisible" class="chat-screenshot-menu">
-            <button
-              v-for="option in screenshotCaptureOptions"
-              :key="option.key"
-              class="chat-screenshot-menu-item"
-              type="button"
-              @click="selectScreenshotCaptureOption(option)"
-            >
-              <span class="chat-screenshot-menu-item-main">
-                <i :class="[option.icon, 'chat-screenshot-menu-item-icon']" aria-hidden="true"></i>
-                <span>{{ option.label }}</span>
-              </span>
-            </button>
-          </div>
         </div>
         <button
           class="input-icon-btn send-btn"
@@ -254,6 +226,28 @@
       :accept="uploadAccept"
       @change="handleUploadInput"
     />
+
+    <Teleport to="body">
+      <div
+        v-if="desktopScreenshotSupported && screenshotMenuVisible"
+        ref="screenshotMenuPanelRef"
+        class="chat-screenshot-menu chat-screenshot-menu--floating"
+        :style="screenshotMenuStyle"
+      >
+        <button
+          v-for="option in screenshotCaptureOptions"
+          :key="option.key"
+          class="chat-screenshot-menu-item"
+          type="button"
+          @click="selectScreenshotCaptureOption(option)"
+        >
+          <span class="chat-screenshot-menu-item-main">
+            <i :class="[option.icon, 'chat-screenshot-menu-item-icon']" aria-hidden="true"></i>
+            <span>{{ option.label }}</span>
+          </span>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -269,7 +263,6 @@ import {
   type ComposerDraftAttachment
 } from '@/components/chat/composerDraftCache';
 import { useI18n } from '@/i18n';
-import { pickScreenshotRegionFromDataUrl } from '@/utils/screenshotRegionPicker';
 
 const props = defineProps({
   loading: {
@@ -316,7 +309,9 @@ const worldCommandPanelVisible = ref(false);
 const worldCommandAnchorHovered = ref(false);
 const worldCommandPanelHovered = ref(false);
 const screenshotMenuAnchorRef = ref<HTMLElement | null>(null);
+const screenshotMenuPanelRef = ref<HTMLElement | null>(null);
 const screenshotMenuVisible = ref(false);
+const screenshotMenuStyle = ref<Record<string, string>>({});
 const caretPosition = ref(0);
 const commandMenuIndex = ref(0);
 const commandMenuDismissed = ref(false);
@@ -335,6 +330,7 @@ type AttachmentPayload = {
 
 type DesktopScreenshotResult = {
   ok?: boolean;
+  canceled?: boolean;
   name?: string;
   path?: string;
   mimeType?: string;
@@ -344,7 +340,7 @@ type DesktopScreenshotResult = {
 
 type DesktopScreenshotBridge = {
   captureScreenshot?: (
-    options?: { hideWindow?: boolean }
+    options?: { hideWindow?: boolean; region?: boolean }
   ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
 };
 
@@ -482,6 +478,52 @@ const screenshotCaptureOptions = computed<ScreenshotCaptureOption[]>(() => [
     label: t('chat.attachments.screenshotOption.regionHide')
   }
 ]);
+const SCREENSHOT_MENU_EDGE_MARGIN = 10;
+const SCREENSHOT_MENU_GAP = 10;
+const SCREENSHOT_MENU_MIN_WIDTH = 210;
+
+const clampMenuPosition = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const updateScreenshotMenuPosition = () => {
+  if (!screenshotMenuVisible.value || typeof window === 'undefined') return;
+  const anchor = screenshotMenuAnchorRef.value;
+  if (!anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  const panel = screenshotMenuPanelRef.value;
+  const panelWidth = Math.max(
+    SCREENSHOT_MENU_MIN_WIDTH,
+    Number(panel?.offsetWidth || SCREENSHOT_MENU_MIN_WIDTH)
+  );
+  const panelHeight = Math.max(96, Number(panel?.offsetHeight || 160));
+  const viewportWidth = Math.max(1, window.innerWidth);
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const maxLeft = Math.max(SCREENSHOT_MENU_EDGE_MARGIN, viewportWidth - panelWidth - SCREENSHOT_MENU_EDGE_MARGIN);
+  let left = clampMenuPosition(rect.right - panelWidth, SCREENSHOT_MENU_EDGE_MARGIN, maxLeft);
+  let top = rect.top - panelHeight - SCREENSHOT_MENU_GAP;
+  if (top < SCREENSHOT_MENU_EDGE_MARGIN) {
+    top = rect.bottom + SCREENSHOT_MENU_GAP;
+  }
+  const maxTop = Math.max(SCREENSHOT_MENU_EDGE_MARGIN, viewportHeight - panelHeight - SCREENSHOT_MENU_EDGE_MARGIN);
+  top = clampMenuPosition(top, SCREENSHOT_MENU_EDGE_MARGIN, maxTop);
+  if (viewportWidth <= panelWidth + SCREENSHOT_MENU_EDGE_MARGIN * 2) {
+    left = SCREENSHOT_MENU_EDGE_MARGIN;
+  }
+  screenshotMenuStyle.value = {
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`,
+    minWidth: `${SCREENSHOT_MENU_MIN_WIDTH}px`
+  };
+};
+
+const handleScreenshotMenuViewportChange = () => {
+  updateScreenshotMenuPosition();
+};
+
+const syncScreenshotMenuPosition = async () => {
+  await nextTick();
+  updateScreenshotMenuPosition();
+};
 const hasInquirySelection = computed(
   () => Array.isArray(props.inquirySelection) && props.inquirySelection.length > 0
 );
@@ -960,6 +1002,7 @@ const clearAttachments = () => {
 
 const closeScreenshotMenu = () => {
   screenshotMenuVisible.value = false;
+  screenshotMenuStyle.value = {};
 };
 
 const toggleScreenshotMenu = () => {
@@ -968,7 +1011,11 @@ const toggleScreenshotMenu = () => {
     return;
   }
   closeWorldCommandPanel();
-  screenshotMenuVisible.value = !screenshotMenuVisible.value;
+  const nextVisible = !screenshotMenuVisible.value;
+  screenshotMenuVisible.value = nextVisible;
+  if (nextVisible) {
+    void syncScreenshotMenuPosition();
+  }
 };
 
 const appendFileNameSuffix = (fileName: string, suffix: string): string => {
@@ -992,7 +1039,13 @@ const captureDesktopScreenshotAttachment = async (option: ScreenshotCaptureOptio
   }
   attachmentBusy.value += 1;
   try {
-    const result = await bridge.captureScreenshot({ hideWindow: option.hideWindow });
+    const result = await bridge.captureScreenshot({
+      hideWindow: option.hideWindow,
+      region: option.region
+    });
+    if (result?.canceled) {
+      return;
+    }
     if (!result || result.ok === false) {
       throw new Error(
         String(result?.message || t('chat.attachments.screenshotFailed')).trim() ||
@@ -1004,16 +1057,7 @@ const captureDesktopScreenshotAttachment = async (option: ScreenshotCaptureOptio
       throw new Error(t('chat.attachments.screenshotFailed'));
     }
     let name = String(result.name || '').trim() || `screenshot-${Date.now()}.png`;
-    if (option.region) {
-      const cropped = await pickScreenshotRegionFromDataUrl(dataUrl, {
-        title: t('chat.attachments.screenshotRegionTitle'),
-        hint: t('chat.attachments.screenshotRegionHint'),
-        cancelText: t('common.cancel')
-      });
-      if (!cropped) {
-        return;
-      }
-      dataUrl = cropped;
+    if (option.region && !/[-_]region(\.[^./]+)?$/i.test(name)) {
       name = appendFileNameSuffix(name, '-region');
     }
     const mimeType = String(result.mimeType || '').trim() || 'image/png';
@@ -1199,7 +1243,10 @@ const handleDocumentPointerDown = (event: PointerEvent) => {
   }
   if (screenshotMenuVisible.value) {
     const screenshotAnchor = screenshotMenuAnchorRef.value;
-    if (!screenshotAnchor || !target || !screenshotAnchor.contains(target)) {
+    const screenshotPanel = screenshotMenuPanelRef.value;
+    const isInsideAnchor = Boolean(screenshotAnchor && target && screenshotAnchor.contains(target));
+    const isInsidePanel = Boolean(screenshotPanel && target && screenshotPanel.contains(target));
+    if (!isInsideAnchor && !isInsidePanel) {
       closeScreenshotMenu();
     }
   }
@@ -1220,6 +1267,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   stopWorldComposerResize();
   clearWorldCommandPanelCloseTimer();
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', handleScreenshotMenuViewportChange);
+    window.removeEventListener('scroll', handleScreenshotMenuViewportChange, true);
+  }
   if (typeof document !== 'undefined') {
     document.removeEventListener('pointerdown', handleDocumentPointerDown);
   }
@@ -1253,6 +1304,21 @@ watch(
     if (!supported) {
       closeScreenshotMenu();
     }
+  }
+);
+
+watch(
+  () => screenshotMenuVisible.value,
+  (visible) => {
+    if (typeof window === 'undefined') return;
+    if (visible) {
+      void syncScreenshotMenuPosition();
+      window.addEventListener('resize', handleScreenshotMenuViewportChange);
+      window.addEventListener('scroll', handleScreenshotMenuViewportChange, true);
+      return;
+    }
+    window.removeEventListener('resize', handleScreenshotMenuViewportChange);
+    window.removeEventListener('scroll', handleScreenshotMenuViewportChange, true);
   }
 );
 

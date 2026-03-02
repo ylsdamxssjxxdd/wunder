@@ -27,6 +27,8 @@ let closePromptInFlight = false
 let closeBehavior = 'ask'
 
 const SCREENSHOT_HIDE_DELAY_MS = 220
+const SCREENSHOT_SELECTOR_RESULT_CHANNEL = 'wunder:screenshot-region-selected'
+const SCREENSHOT_SELECTOR_CANCEL_CHANNEL = 'wunder:screenshot-region-canceled'
 
 const createUpdateSnapshot = () => ({
   phase: 'idle',
@@ -435,10 +437,47 @@ const buildScreenshotFileName = () => {
   return `screenshot-${timestamp}.png`
 }
 
-const resolvePrimaryDisplaySource = async () => {
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const captureWidth = Math.max(1, Number(primaryDisplay?.size?.width || 0))
-  const captureHeight = Math.max(1, Number(primaryDisplay?.size?.height || 0))
+const appendScreenshotFileNameSuffix = (fileName, suffix) => {
+  const normalized = String(fileName || '').trim()
+  if (!normalized) return `screenshot${suffix}.png`
+  const dotIndex = normalized.lastIndexOf('.')
+  if (dotIndex <= 0) return `${normalized}${suffix}`
+  return `${normalized.slice(0, dotIndex)}${suffix}${normalized.slice(dotIndex)}`
+}
+
+const resolveCaptureDisplay = (windowRef = null) => {
+  const allDisplays = screen.getAllDisplays()
+  if (!Array.isArray(allDisplays) || allDisplays.length === 0) {
+    return screen.getPrimaryDisplay()
+  }
+  if (windowRef && !windowRef.isDestroyed()) {
+    try {
+      const windowBounds = windowRef.getBounds()
+      const windowDisplay = screen.getDisplayMatching(windowBounds)
+      if (windowDisplay) {
+        return windowDisplay
+      }
+    } catch {
+      // ignore window bounds errors
+    }
+  }
+  try {
+    const cursorPoint = screen.getCursorScreenPoint()
+    const cursorDisplay = screen.getDisplayNearestPoint(cursorPoint)
+    if (cursorDisplay) {
+      return cursorDisplay
+    }
+  } catch {
+    // ignore cursor position errors
+  }
+  return screen.getPrimaryDisplay() || allDisplays[0]
+}
+
+const resolveDisplaySource = async (targetDisplay) => {
+  const display = targetDisplay || screen.getPrimaryDisplay()
+  const scaleFactor = Math.max(1, Number(display?.scaleFactor || 1))
+  const captureWidth = Math.max(1, Math.round(Number(display?.size?.width || 0) * scaleFactor))
+  const captureHeight = Math.max(1, Math.round(Number(display?.size?.height || 0) * scaleFactor))
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: captureWidth, height: captureHeight },
@@ -447,18 +486,307 @@ const resolvePrimaryDisplaySource = async () => {
   if (!Array.isArray(sources) || sources.length === 0) {
     throw new Error('No screen source available')
   }
-  const primaryDisplayId = String(primaryDisplay?.id || '')
-  return (
-    sources.find((item) => String(item?.display_id || '') === primaryDisplayId) ||
-    sources.find((item) => !item?.thumbnail?.isEmpty?.()) ||
-    sources[0]
-  )
+  const expectedArea = captureWidth * captureHeight
+  const targetDisplayId = String(display?.id || '')
+  const rankedSources = sources
+    .filter((item) => !item?.thumbnail?.isEmpty?.())
+    .map((item) => {
+      const imageSize = item.thumbnail.getSize()
+      const imageWidth = Math.max(1, Number(imageSize?.width || 1))
+      const imageHeight = Math.max(1, Number(imageSize?.height || 1))
+      const imageArea = imageWidth * imageHeight
+      const widthDiff = Math.abs(imageWidth - captureWidth) / captureWidth
+      const heightDiff = Math.abs(imageHeight - captureHeight) / captureHeight
+      const areaDiff = Math.abs(imageArea - expectedArea) / Math.max(1, expectedArea)
+      let score = widthDiff + heightDiff + areaDiff
+      if (targetDisplayId && String(item?.display_id || '') === targetDisplayId) {
+        score -= 5
+      }
+      return { source: item, score }
+    })
+    .sort((left, right) => left.score - right.score)
+  if (rankedSources.length > 0) {
+    return rankedSources[0].source
+  }
+  return sources[0]
+}
+
+const createScreenshotRegionSelectorHtml = (imageDataUrl) => `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Wunder Screenshot Selector</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      cursor: crosshair;
+      user-select: none;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    #screen {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      object-fit: fill;
+      pointer-events: none;
+    }
+    #mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 23, 0.2);
+      pointer-events: none;
+    }
+    #selection {
+      position: fixed;
+      border: 1px solid #f97316;
+      background: rgba(249, 115, 22, 0.16);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.25);
+      display: none;
+      pointer-events: none;
+    }
+    #hint {
+      position: fixed;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.36);
+      background: rgba(15, 23, 42, 0.86);
+      color: #e2e8f0;
+      font-size: 13px;
+      pointer-events: none;
+      z-index: 20;
+      max-width: calc(100vw - 24px);
+      box-sizing: border-box;
+    }
+    #cancel {
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      background: rgba(15, 23, 42, 0.9);
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 5px 10px;
+      font-size: 12px;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+  </style>
+</head>
+<body>
+  <img id="screen" src="${imageDataUrl}" alt="" />
+  <div id="mask"></div>
+  <div id="selection"></div>
+  <div id="hint">
+    <span>拖拽选择截图区域，按 Esc 取消</span>
+    <button id="cancel" type="button">取消</button>
+  </div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    const selection = document.getElementById('selection');
+    const hint = document.getElementById('hint');
+    const cancelButton = document.getElementById('cancel');
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+    const normalizeRect = (startX, startY, endX, endY) => {
+      const left = Math.min(startX, endX);
+      const top = Math.min(startY, endY);
+      const width = Math.abs(endX - startX);
+      const height = Math.abs(endY - startY);
+      return { left, top, width, height };
+    };
+
+    let dragging = false;
+    let startX = 0;
+    let startY = 0;
+
+    const updateSelection = (rect) => {
+      selection.style.display = 'block';
+      selection.style.left = rect.left + 'px';
+      selection.style.top = rect.top + 'px';
+      selection.style.width = rect.width + 'px';
+      selection.style.height = rect.height + 'px';
+    };
+
+    const cancelSelection = () => {
+      ipcRenderer.send('${SCREENSHOT_SELECTOR_CANCEL_CHANNEL}');
+    };
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelSelection();
+      }
+    });
+
+    cancelButton.addEventListener('click', (event) => {
+      event.preventDefault();
+      cancelSelection();
+    });
+
+    window.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      if (hint.contains(event.target)) return;
+      const maxX = Math.max(0, window.innerWidth - 1);
+      const maxY = Math.max(0, window.innerHeight - 1);
+      startX = clamp(event.clientX, 0, maxX);
+      startY = clamp(event.clientY, 0, maxY);
+      dragging = true;
+      updateSelection({ left: startX, top: startY, width: 0, height: 0 });
+    });
+
+    window.addEventListener('mousemove', (event) => {
+      if (!dragging) return;
+      const maxX = Math.max(0, window.innerWidth - 1);
+      const maxY = Math.max(0, window.innerHeight - 1);
+      const currentX = clamp(event.clientX, 0, maxX);
+      const currentY = clamp(event.clientY, 0, maxY);
+      updateSelection(normalizeRect(startX, startY, currentX, currentY));
+    });
+
+    window.addEventListener('mouseup', (event) => {
+      if (!dragging) return;
+      dragging = false;
+      const maxX = Math.max(0, window.innerWidth - 1);
+      const maxY = Math.max(0, window.innerHeight - 1);
+      const endX = clamp(event.clientX, 0, maxX);
+      const endY = clamp(event.clientY, 0, maxY);
+      const rect = normalizeRect(startX, startY, endX, endY);
+      if (rect.width < 3 || rect.height < 3) {
+        selection.style.display = 'none';
+        return;
+      }
+      ipcRenderer.send('${SCREENSHOT_SELECTOR_RESULT_CHANNEL}', {
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight
+      });
+    });
+  </script>
+</body>
+</html>`
+
+const pickScreenshotRegionFromBuffer = async (imageBuffer, targetDisplay) => {
+  const sourceImage = nativeImage.createFromBuffer(imageBuffer)
+  if (!sourceImage || sourceImage.isEmpty()) {
+    return null
+  }
+  const imageSize = sourceImage.getSize()
+  const display = targetDisplay || screen.getPrimaryDisplay()
+  const bounds = display?.bounds || { x: 0, y: 0, width: 1280, height: 720 }
+  const selectorWindow = new BrowserWindow({
+    x: Number(bounds.x || 0),
+    y: Number(bounds.y || 0),
+    width: Math.max(1, Number(bounds.width || 1280)),
+    height: Math.max(1, Number(bounds.height || 720)),
+    frame: false,
+    show: false,
+    transparent: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    fullscreen: false,
+    fullscreenable: false,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      sandbox: false,
+      devTools: false
+    }
+  })
+  selectorWindow.setMenuBarVisibility(false)
+  selectorWindow.setAlwaysOnTop(true, 'screen-saver')
+  selectorWindow.setBounds({
+    x: Number(bounds.x || 0),
+    y: Number(bounds.y || 0),
+    width: Math.max(1, Number(bounds.width || 1280)),
+    height: Math.max(1, Number(bounds.height || 720))
+  })
+
+  const imageDataUrl = `data:image/png;base64,${imageBuffer.toString('base64')}`
+  const html = createScreenshotRegionSelectorHtml(imageDataUrl)
+
+  return new Promise((resolve) => {
+    let settled = false
+    const cleanup = () => {
+      ipcMain.removeListener(SCREENSHOT_SELECTOR_RESULT_CHANNEL, handleRegionSelected)
+      ipcMain.removeListener(SCREENSHOT_SELECTOR_CANCEL_CHANNEL, handleRegionCanceled)
+      if (selectorWindow && !selectorWindow.isDestroyed()) {
+        selectorWindow.destroy()
+      }
+    }
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      resolve(result)
+    }
+    const handleRegionCanceled = (event) => {
+      if (event?.sender?.id !== selectorWindow.webContents.id) return
+      finish(null)
+    }
+    const handleRegionSelected = (event, payload) => {
+      if (event?.sender?.id !== selectorWindow.webContents.id) return
+      const viewportWidth = Math.max(1, Number(payload?.viewportWidth || 0))
+      const viewportHeight = Math.max(1, Number(payload?.viewportHeight || 0))
+      const scaleX = imageSize.width / viewportWidth
+      const scaleY = imageSize.height / viewportHeight
+      const rawX = Math.max(0, Math.floor(Number(payload?.x || 0) * scaleX))
+      const rawY = Math.max(0, Math.floor(Number(payload?.y || 0) * scaleY))
+      const rawWidth = Math.max(1, Math.floor(Number(payload?.width || 0) * scaleX))
+      const rawHeight = Math.max(1, Math.floor(Number(payload?.height || 0) * scaleY))
+      const maxWidth = Math.max(1, imageSize.width - rawX)
+      const maxHeight = Math.max(1, imageSize.height - rawY)
+      const cropWidth = Math.min(rawWidth, maxWidth)
+      const cropHeight = Math.min(rawHeight, maxHeight)
+      if (cropWidth < 2 || cropHeight < 2) {
+        finish(null)
+        return
+      }
+      const cropped = sourceImage.crop({
+        x: rawX,
+        y: rawY,
+        width: cropWidth,
+        height: cropHeight
+      })
+      if (!cropped || cropped.isEmpty()) {
+        finish(null)
+        return
+      }
+      finish(cropped.toPNG())
+    }
+
+    ipcMain.on(SCREENSHOT_SELECTOR_RESULT_CHANNEL, handleRegionSelected)
+    ipcMain.on(SCREENSHOT_SELECTOR_CANCEL_CHANNEL, handleRegionCanceled)
+    selectorWindow.once('closed', () => finish(null))
+    selectorWindow.webContents.on('did-fail-load', () => finish(null))
+    selectorWindow.once('ready-to-show', () => {
+      selectorWindow.show()
+      selectorWindow.focus()
+    })
+    selectorWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`).catch(() => finish(null))
+  })
 }
 
 const captureDesktopScreenshot = async (options = {}) => {
   const hideWindow = options && options.hideWindow === true
+  const region = options && options.region === true
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
   const wasVisible = Boolean(window?.isVisible?.())
+  const captureDisplay = resolveCaptureDisplay(window)
   const shouldRestore = Boolean(window && hideWindow && wasVisible)
 
   try {
@@ -467,7 +795,7 @@ const captureDesktopScreenshot = async (options = {}) => {
       await sleep(SCREENSHOT_HIDE_DELAY_MS)
     }
 
-    const source = await resolvePrimaryDisplaySource()
+    const source = await resolveDisplaySource(captureDisplay)
     if (!source || source.thumbnail.isEmpty()) {
       throw new Error('Failed to capture screenshot')
     }
@@ -477,18 +805,32 @@ const captureDesktopScreenshot = async (options = {}) => {
       throw new Error('Screenshot image is empty')
     }
 
+    let finalBuffer = imageBuffer
+    let fileName = buildScreenshotFileName()
+    if (region) {
+      const regionBuffer = await pickScreenshotRegionFromBuffer(imageBuffer, captureDisplay)
+      if (!regionBuffer || regionBuffer.length === 0) {
+        return {
+          ok: false,
+          canceled: true,
+          message: 'screenshot canceled'
+        }
+      }
+      finalBuffer = regionBuffer
+      fileName = appendScreenshotFileNameSuffix(fileName, '-region')
+    }
+
     const screenshotDir = path.join(app.getPath('userData'), 'WUNDER_TEMPD', 'screenshots')
-    const fileName = buildScreenshotFileName()
     const filePath = path.join(screenshotDir, fileName)
     fs.mkdirSync(screenshotDir, { recursive: true })
-    fs.writeFileSync(filePath, imageBuffer)
+    fs.writeFileSync(filePath, finalBuffer)
 
     return {
       ok: true,
       name: fileName,
       path: filePath,
       mimeType: 'image/png',
-      dataUrl: `data:image/png;base64,${imageBuffer.toString('base64')}`
+      dataUrl: `data:image/png;base64,${finalBuffer.toString('base64')}`
     }
   } catch (error) {
     return {
@@ -890,7 +1232,11 @@ if (!gotLock) {
           payload && typeof payload === 'object'
             ? payload.hideWindow === true
             : false
-        return captureDesktopScreenshot({ hideWindow })
+        const region =
+          payload && typeof payload === 'object'
+            ? payload.region === true
+            : false
+        return captureDesktopScreenshot({ hideWindow, region })
       })
       ipcMain.handle('wunder:choose-directory', async (_event, payload) => {
         const rawDefaultPath =

@@ -1366,6 +1366,7 @@ export default {
   'messenger.action.openConversation': '进入聊天',
   'messenger.defaultAgent': '默认智能体',
   'messenger.defaultAgentDesc': '系统默认对话入口',
+  'messenger.defaultAgentReadonlyHint': '默认智能体配置为只读，工具随当前启用状态自动挂载。',
   'messenger.preview.empty': '暂无内容',
   'messenger.kind.agent': '智能体',
   'messenger.kind.direct': '私聊',

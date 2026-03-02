@@ -103,20 +103,6 @@
           <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
           <i class="fa-solid fa-chevron-down messenger-world-screenshot-caret" aria-hidden="true"></i>
         </button>
-        <div v-if="screenshotMenuVisible" class="messenger-world-screenshot-menu">
-          <button
-            v-for="option in screenshotCaptureOptions"
-            :key="option.key"
-            class="messenger-world-screenshot-menu-item"
-            type="button"
-            @click="selectScreenshotOption(option)"
-          >
-            <span class="messenger-world-screenshot-menu-item-main">
-              <i :class="[option.icon, 'messenger-world-screenshot-menu-item-icon']" aria-hidden="true"></i>
-              <span>{{ option.label }}</span>
-            </span>
-          </button>
-        </div>
       </div>
       <div class="messenger-world-tool-anchor messenger-world-tool-anchor--history">
         <button
@@ -160,11 +146,33 @@
       hidden
       @change="emit('upload-change', $event)"
     />
+
+    <Teleport to="body">
+      <div
+        v-if="screenshotSupported && screenshotMenuVisible"
+        ref="screenshotMenuPanelRef"
+        class="messenger-world-screenshot-menu messenger-world-screenshot-menu--floating"
+        :style="screenshotMenuStyle"
+      >
+        <button
+          v-for="option in screenshotCaptureOptions"
+          :key="option.key"
+          class="messenger-world-screenshot-menu-item"
+          type="button"
+          @click="selectScreenshotOption(option)"
+        >
+          <span class="messenger-world-screenshot-menu-item-main">
+            <i :class="[option.icon, 'messenger-world-screenshot-menu-item-icon']" aria-hidden="true"></i>
+            <span>{{ option.label }}</span>
+          </span>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 
@@ -221,7 +229,9 @@ const composerElement = ref<HTMLElement | null>(null);
 const textareaElement = ref<HTMLTextAreaElement | null>(null);
 const uploadInputElement = ref<HTMLInputElement | null>(null);
 const screenshotMenuAnchorRef = ref<HTMLElement | null>(null);
+const screenshotMenuPanelRef = ref<HTMLElement | null>(null);
 const screenshotMenuVisible = ref(false);
+const screenshotMenuStyle = ref<Record<string, string>>({});
 
 const draftModel = computed({
   get: () => props.draft,
@@ -268,6 +278,52 @@ const screenshotCaptureOptions = computed<ScreenshotCaptureOption[]>(() => [
     label: t('chat.attachments.screenshotOption.regionHide')
   }
 ]);
+const SCREENSHOT_MENU_EDGE_MARGIN = 10;
+const SCREENSHOT_MENU_GAP = 10;
+const SCREENSHOT_MENU_MIN_WIDTH = 210;
+
+const clampMenuPosition = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
+
+const updateScreenshotMenuPosition = () => {
+  if (!screenshotMenuVisible.value || typeof window === 'undefined') return;
+  const anchor = screenshotMenuAnchorRef.value;
+  if (!anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  const panel = screenshotMenuPanelRef.value;
+  const panelWidth = Math.max(
+    SCREENSHOT_MENU_MIN_WIDTH,
+    Number(panel?.offsetWidth || SCREENSHOT_MENU_MIN_WIDTH)
+  );
+  const panelHeight = Math.max(96, Number(panel?.offsetHeight || 160));
+  const viewportWidth = Math.max(1, window.innerWidth);
+  const viewportHeight = Math.max(1, window.innerHeight);
+  const maxLeft = Math.max(SCREENSHOT_MENU_EDGE_MARGIN, viewportWidth - panelWidth - SCREENSHOT_MENU_EDGE_MARGIN);
+  let left = clampMenuPosition(rect.right - panelWidth, SCREENSHOT_MENU_EDGE_MARGIN, maxLeft);
+  let top = rect.top - panelHeight - SCREENSHOT_MENU_GAP;
+  if (top < SCREENSHOT_MENU_EDGE_MARGIN) {
+    top = rect.bottom + SCREENSHOT_MENU_GAP;
+  }
+  const maxTop = Math.max(SCREENSHOT_MENU_EDGE_MARGIN, viewportHeight - panelHeight - SCREENSHOT_MENU_EDGE_MARGIN);
+  top = clampMenuPosition(top, SCREENSHOT_MENU_EDGE_MARGIN, maxTop);
+  if (viewportWidth <= panelWidth + SCREENSHOT_MENU_EDGE_MARGIN * 2) {
+    left = SCREENSHOT_MENU_EDGE_MARGIN;
+  }
+  screenshotMenuStyle.value = {
+    left: `${Math.round(left)}px`,
+    top: `${Math.round(top)}px`,
+    minWidth: `${SCREENSHOT_MENU_MIN_WIDTH}px`
+  };
+};
+
+const handleScreenshotMenuViewportChange = () => {
+  updateScreenshotMenuPosition();
+};
+
+const syncScreenshotMenuPosition = async () => {
+  await nextTick();
+  updateScreenshotMenuPosition();
+};
 
 const resolveKeyboardKeyCode = (event: KeyboardEvent): number =>
   Number(
@@ -309,11 +365,16 @@ const handleTextareaKeydown = (event: KeyboardEvent) => {
 
 const closeScreenshotMenu = () => {
   screenshotMenuVisible.value = false;
+  screenshotMenuStyle.value = {};
 };
 
 const toggleScreenshotMenu = () => {
   if (!props.screenshotSupported || props.uploading) return;
-  screenshotMenuVisible.value = !screenshotMenuVisible.value;
+  const nextVisible = !screenshotMenuVisible.value;
+  screenshotMenuVisible.value = nextVisible;
+  if (nextVisible) {
+    void syncScreenshotMenuPosition();
+  }
 };
 
 const selectScreenshotOption = (option: ScreenshotCaptureOption) => {
@@ -327,8 +388,11 @@ const selectScreenshotOption = (option: ScreenshotCaptureOption) => {
 const handleDocumentPointerDown = (event: PointerEvent) => {
   if (!screenshotMenuVisible.value) return;
   const anchor = screenshotMenuAnchorRef.value;
+  const panel = screenshotMenuPanelRef.value;
   const target = event.target as Node | null;
-  if (!anchor || !target || !anchor.contains(target)) {
+  const isInsideAnchor = Boolean(anchor && target && anchor.contains(target));
+  const isInsidePanel = Boolean(panel && target && panel.contains(target));
+  if (!isInsideAnchor && !isInsidePanel) {
     closeScreenshotMenu();
   }
 };
@@ -346,6 +410,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('resize', handleScreenshotMenuViewportChange);
+    window.removeEventListener('scroll', handleScreenshotMenuViewportChange, true);
+  }
   if (typeof document === 'undefined') return;
   document.removeEventListener('pointerdown', handleDocumentPointerDown);
   document.removeEventListener('keydown', handleDocumentKeydown, true);
@@ -366,6 +434,21 @@ watch(
     if (!supported) {
       closeScreenshotMenu();
     }
+  }
+);
+
+watch(
+  () => screenshotMenuVisible.value,
+  (visible) => {
+    if (typeof window === 'undefined') return;
+    if (visible) {
+      void syncScreenshotMenuPosition();
+      window.addEventListener('resize', handleScreenshotMenuViewportChange);
+      window.addEventListener('scroll', handleScreenshotMenuViewportChange, true);
+      return;
+    }
+    window.removeEventListener('resize', handleScreenshotMenuViewportChange);
+    window.removeEventListener('scroll', handleScreenshotMenuViewportChange, true);
   }
 );
 

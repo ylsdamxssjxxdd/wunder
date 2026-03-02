@@ -64,7 +64,7 @@
           <div>
             <div class="detail-title">{{ detailTitle }}</div>
             <div class="muted">{{ detailMeta }}</div>
-            <div class="muted">{{ detailDesc }}</div>
+            <div class="muted mcp-detail-desc" :title="detailDesc">{{ detailDesc }}</div>
             <div v-if="isActiveServerConnecting" class="mcp-connecting-hint">
               <i class="fa-solid fa-spinner" aria-hidden="true"></i>
               <span>{{ t('userTools.mcp.action.connecting') }}</span>

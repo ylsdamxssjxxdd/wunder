@@ -1,12 +1,6 @@
 <template>
   <div class="messenger-prompt-settings">
     <section class="messenger-settings-card">
-      <div class="messenger-settings-head">
-        <div>
-          <div class="messenger-settings-title">{{ t('messenger.prompt.title') }}</div>
-          <div class="messenger-settings-subtitle">{{ t('messenger.prompt.desc') }}</div>
-        </div>
-      </div>
       <div class="messenger-prompt-toolbar">
         <label class="messenger-prompt-field">
           <span>{{ t('messenger.prompt.pack') }}</span>

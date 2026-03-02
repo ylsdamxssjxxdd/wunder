@@ -209,12 +209,8 @@ async fn create_session(
         .as_deref()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let agent_record =
+    let _agent_record =
         fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
-    let tool_overrides = agent_record
-        .as_ref()
-        .map(|record| record.tool_names.clone())
-        .unwrap_or_default();
     let record = crate::storage::ChatSessionRecord {
         session_id: session_id.clone(),
         user_id: resolved.user.user_id.clone(),
@@ -227,7 +223,7 @@ async fn create_session(
         updated_at: now,
         last_message_at: now,
         agent_id,
-        tool_overrides,
+        tool_overrides: Vec::new(),
         parent_session_id: None,
         parent_message_id: None,
         spawn_label: None,
@@ -645,7 +641,12 @@ pub(crate) async fn build_chat_request(
     let agent_record = fetch_agent_record(state, user, record.agent_id.as_deref(), true).await?;
     let mut allowed = compute_allowed_tool_names(user, &user_context);
     let overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
-    allowed = apply_tool_overrides(allowed, &overrides);
+    allowed = apply_tool_overrides(
+        allowed,
+        &overrides,
+        &user_context.config,
+        &user_context.skills,
+    );
     let tool_names = finalize_tool_names(allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -1026,7 +1027,12 @@ async fn system_prompt(
         .tool_overrides
         .map(normalize_tool_overrides)
         .unwrap_or_else(|| resolve_agent_tool_defaults(agent_record.as_ref()));
-    allowed = apply_tool_overrides(allowed, &overrides);
+    allowed = apply_tool_overrides(
+        allowed,
+        &overrides,
+        &user_context.config,
+        &user_context.skills,
+    );
     let tool_names = finalize_tool_names(allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -1112,7 +1118,12 @@ async fn session_system_prompt(
     } else {
         resolve_agent_tool_defaults(agent_record.as_ref())
     };
-    allowed = apply_tool_overrides(allowed, &overrides);
+    allowed = apply_tool_overrides(
+        allowed,
+        &overrides,
+        &user_context.config,
+        &user_context.skills,
+    );
     let tool_names = finalize_tool_names(allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -1176,7 +1187,12 @@ async fn update_session_tools(
         fetch_agent_record(&state, &resolved.user, record.agent_id.as_deref(), true).await?;
     let mut effective_allowed = compute_allowed_tool_names(&resolved.user, &user_context);
     let effective_overrides = resolve_session_tool_overrides(&record, agent_record.as_ref());
-    effective_allowed = apply_tool_overrides(effective_allowed, &effective_overrides);
+    effective_allowed = apply_tool_overrides(
+        effective_allowed,
+        &effective_overrides,
+        &user_context.config,
+        &user_context.skills,
+    );
     let tool_names = finalize_tool_names(effective_allowed);
     let agent_prompt = agent_record
         .as_ref()
@@ -1683,28 +1699,66 @@ fn filter_tool_overrides(values: Vec<String>, allowed: &HashSet<String>) -> Vec<
     if values.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
         return vec![TOOL_OVERRIDE_NONE.to_string()];
     }
-    values
-        .into_iter()
-        .filter(|name| allowed.contains(name))
-        .collect()
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        if let Some(mapped) = resolve_override_name_with_allowed(&raw, allowed) {
+            if seen.insert(mapped.clone()) {
+                output.push(mapped);
+            }
+        }
+    }
+    output
 }
 
-fn apply_tool_overrides(allowed: HashSet<String>, overrides: &[String]) -> HashSet<String> {
+fn apply_tool_overrides(
+    allowed: HashSet<String>,
+    overrides: &[String],
+    config: &crate::config::Config,
+    skills: &crate::skills::SkillRegistry,
+) -> HashSet<String> {
     if overrides.is_empty() {
         return allowed;
     }
     if overrides.iter().any(|name| name == TOOL_OVERRIDE_NONE) {
         return HashSet::new();
     }
-    let override_set: HashSet<String> = overrides
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty())
-        .collect();
-    allowed
-        .intersection(&override_set)
-        .cloned()
-        .collect::<HashSet<_>>()
+    let mut filtered = HashSet::new();
+    for raw in overrides {
+        if let Some(mapped) = resolve_override_name_with_allowed(raw, &allowed) {
+            filtered.insert(mapped);
+        }
+    }
+    if config.server.mode.trim().eq_ignore_ascii_case("desktop") {
+        let skill_names: HashSet<String> = skills
+            .list_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect();
+        for name in &allowed {
+            if skill_names.contains(name) {
+                filtered.insert(name.clone());
+            }
+        }
+    }
+    filtered
+}
+
+fn resolve_override_name_with_allowed(raw: &str, allowed: &HashSet<String>) -> Option<String> {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if allowed.contains(cleaned) {
+        return Some(cleaned.to_string());
+    }
+    for (index, _) in cleaned.match_indices('@') {
+        let suffix = cleaned[index + 1..].trim();
+        if !suffix.is_empty() && allowed.contains(suffix) {
+            return Some(suffix.to_string());
+        }
+    }
+    None
 }
 
 fn should_auto_title(title: &str) -> bool {

@@ -1,6 +1,6 @@
 ﻿<template>
   <div class="messenger-agent-settings">
-    <div v-if="!canEdit" class="messenger-list-empty">
+    <div v-if="!canView" class="messenger-list-empty">
       {{ t('chat.features.agentMissing') }}
     </div>
 
@@ -11,6 +11,7 @@
             v-model="form.name"
             class="messenger-agent-field"
             :placeholder="t('portal.agent.form.placeholder.name')"
+            :disabled="isReadonlyMode"
           />
         </el-form-item>
         <el-form-item :label="t('portal.agent.form.description')" class="messenger-agent-form-item">
@@ -18,6 +19,7 @@
             v-model="form.description"
             class="messenger-agent-field"
             :placeholder="t('portal.agent.form.placeholder.description')"
+            :disabled="isReadonlyMode"
           />
         </el-form-item>
         <el-form-item :label="t('portal.agent.form.prompt')" class="messenger-agent-form-item">
@@ -27,6 +29,7 @@
             type="textarea"
             :rows="6"
             :placeholder="t('portal.agent.form.placeholder.prompt')"
+            :disabled="isReadonlyMode"
           />
         </el-form-item>
         <el-form-item :label="t('portal.agent.form.tools')">
@@ -36,11 +39,21 @@
             <div v-else-if="!toolGroups.length" class="messenger-list-empty">
               {{ t('portal.agent.tools.loadFailed') }}
             </div>
-            <el-checkbox-group v-else v-model="form.tool_names" class="messenger-tool-groups">
+            <el-checkbox-group
+              v-else
+              v-model="form.tool_names"
+              class="messenger-tool-groups"
+              :disabled="isReadonlyMode"
+            >
               <div v-for="group in toolGroups" :key="group.label" class="messenger-tool-group">
                 <div class="messenger-tool-group-head">
                   <span>{{ group.label }}</span>
-                  <button class="messenger-tool-group-toggle" type="button" @click.prevent="toggleGroup(group)">
+                  <button
+                    class="messenger-tool-group-toggle"
+                    type="button"
+                    :disabled="isReadonlyMode"
+                    @click.prevent="toggleGroup(group)"
+                  >
                     {{
                       isGroupFullSelected(group)
                         ? t('portal.agent.tools.unselectAll')
@@ -65,14 +78,18 @@
           <div class="messenger-agent-base">
             <label class="messenger-agent-base-item">
               <span class="messenger-agent-base-label">{{ t('portal.agent.share.label') }}</span>
-              <el-switch v-model="form.is_shared" />
+              <el-switch v-model="form.is_shared" :disabled="isReadonlyMode" />
             </label>
             <div class="messenger-agent-base-item messenger-agent-base-item--select">
               <div class="messenger-agent-base-meta">
                 <span class="messenger-agent-base-label">{{ t('portal.agent.sandbox.title') }}</span>
                 <span class="messenger-inline-hint">{{ t('portal.agent.sandbox.hint') }}</span>
               </div>
-              <el-select v-model="form.sandbox_container_id" class="messenger-agent-base-select">
+              <el-select
+                v-model="form.sandbox_container_id"
+                class="messenger-agent-base-select"
+                :disabled="isReadonlyMode"
+              >
                 <el-option
                   v-for="id in sandboxContainerOptions"
                   :key="id"
@@ -86,7 +103,11 @@
                 <span class="messenger-agent-base-label">{{ t('portal.agent.permission.title') }}</span>
                 <span class="messenger-inline-hint">{{ t('portal.agent.permission.hint') }}</span>
               </div>
-              <el-select v-model="form.approval_mode" class="messenger-agent-base-select">
+              <el-select
+                v-model="form.approval_mode"
+                class="messenger-agent-base-select"
+                :disabled="isReadonlyMode"
+              >
                 <el-option
                   v-for="item in approvalModeOptions"
                   :key="item.value"
@@ -103,12 +124,17 @@
         <button class="messenger-inline-btn" type="button" :disabled="saving" @click="reloadAgent">
           {{ t('common.refresh') }}
         </button>
-        <button class="messenger-inline-btn danger" type="button" :disabled="saving" @click="deleteAgent">
-          {{ t('portal.agent.delete') }}
-        </button>
-        <button class="messenger-inline-btn primary" type="button" :disabled="saving" @click="saveAgent">
-          {{ saving ? t('common.saving') : t('portal.agent.save') }}
-        </button>
+        <template v-if="!isReadonlyMode">
+          <button class="messenger-inline-btn danger" type="button" :disabled="saving" @click="deleteAgent">
+            {{ t('portal.agent.delete') }}
+          </button>
+          <button class="messenger-inline-btn primary" type="button" :disabled="saving" @click="saveAgent">
+            {{ saving ? t('common.saving') : t('portal.agent.save') }}
+          </button>
+        </template>
+      </div>
+      <div v-if="isReadonlyMode" class="messenger-inline-hint">
+        {{ t('messenger.defaultAgentReadonlyHint') }}
       </div>
     </template>
   </div>
@@ -138,6 +164,10 @@ const props = defineProps({
   agentId: {
     type: String,
     default: ''
+  },
+  readonly: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -156,8 +186,16 @@ const approvalModeOptions = computed(() => [
   { value: 'full_auto', label: t('portal.agent.permission.option.full_auto') }
 ]);
 
+const isDefaultAgentAlias = (value: string): boolean => {
+  const lowered = value.trim().toLowerCase();
+  return !lowered || lowered === '__default__' || lowered === 'default';
+};
+
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
-const canEdit = computed(() => Boolean(normalizedAgentId.value));
+const isDefaultAgent = computed(() => isDefaultAgentAlias(normalizedAgentId.value));
+const isReadonlyMode = computed(() => Boolean(props.readonly) || isDefaultAgent.value);
+const canView = computed(() => isReadonlyMode.value || Boolean(normalizedAgentId.value));
+const canEdit = computed(() => !isReadonlyMode.value && Boolean(normalizedAgentId.value));
 
 const form = reactive({
   name: '',
@@ -210,8 +248,7 @@ const normalizeOptions = (list: unknown): ToolOption[] => {
   return list.map((item) => normalizeOption(item)).filter(Boolean) as ToolOption[];
 };
 
-const toolGroups = computed<ToolGroup[]>(() => {
-  const summary = toolSummary.value || {};
+const resolveSharedTools = (summary: Record<string, unknown>): unknown[] => {
   const sharedPool = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
   const sharedSelected = new Set(
     Array.isArray(summary.shared_tools_selected)
@@ -224,6 +261,38 @@ const toolGroups = computed<ToolGroup[]>(() => {
           sharedSelected.has(String((tool as Record<string, unknown>)?.name || '').trim())
         )
       : sharedPool;
+  return sharedTools;
+};
+
+const collectSummaryToolNames = (summary: Record<string, unknown>): string[] => {
+  const names = new Set<string>();
+  const collect = (items: unknown) => {
+    normalizeOptions(items).forEach((option) => names.add(option.value));
+  };
+  collect(summary.builtin_tools);
+  collect(summary.mcp_tools);
+  collect(summary.skills);
+  collect(summary.knowledge_tools);
+  collect(summary.user_tools);
+  collect(resolveSharedTools(summary));
+  const output = Array.from(names);
+  output.sort();
+  return output;
+};
+
+const applyReadonlyDefaultAgentForm = () => {
+  form.name = t('messenger.defaultAgent');
+  form.description = t('messenger.defaultAgentDesc');
+  form.is_shared = false;
+  form.system_prompt = '';
+  form.tool_names = collectSummaryToolNames(toolSummary.value || {});
+  form.sandbox_container_id = 1;
+  form.approval_mode = 'auto_edit';
+};
+
+const toolGroups = computed<ToolGroup[]>(() => {
+  const summary = toolSummary.value || {};
+  const sharedTools = resolveSharedTools(summary);
 
   return [
     { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(summary.builtin_tools) },
@@ -249,6 +318,7 @@ const isGroupFullSelected = (group: ToolGroup): boolean => {
 };
 
 const toggleGroup = (group: ToolGroup) => {
+  if (isReadonlyMode.value) return;
   const selected = new Set(form.tool_names);
   if (isGroupFullSelected(group)) {
     group.options.forEach((option) => selected.delete(option.value));
@@ -265,6 +335,9 @@ const loadToolSummary = async () => {
   try {
     const result = await fetchUserToolsSummary();
     toolSummary.value = (result?.data?.data as Record<string, unknown>) || {};
+    if (isDefaultAgent.value) {
+      form.tool_names = collectSummaryToolNames(toolSummary.value || {});
+    }
   } catch (error) {
     toolError.value =
       (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
@@ -275,7 +348,11 @@ const loadToolSummary = async () => {
 };
 
 const loadAgent = async () => {
-  if (!canEdit.value) return;
+  if (!canView.value) return;
+  if (isDefaultAgent.value) {
+    applyReadonlyDefaultAgentForm();
+    return;
+  }
   try {
     const agent = await agentStore.getAgent(normalizedAgentId.value, { force: true });
     if (!agent) {
@@ -295,6 +372,11 @@ const loadAgent = async () => {
 };
 
 const reloadAgent = async () => {
+  if (isDefaultAgent.value) {
+    await loadToolSummary();
+    applyReadonlyDefaultAgentForm();
+    return;
+  }
   await Promise.all([loadAgent(), loadToolSummary()]);
 };
 
@@ -349,9 +431,7 @@ const deleteAgent = async () => {
 watch(
   () => normalizedAgentId.value,
   async () => {
-    if (!toolSummary.value) {
-      await loadToolSummary();
-    }
+    await loadToolSummary();
     await loadAgent();
   },
   { immediate: true }

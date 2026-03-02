@@ -1973,6 +1973,7 @@
 - `POST /wunder/chat/sessions`：创建会话
   - 入参（JSON）：`title`（可选）、`agent_id`（可选）
 - 返回：`data`（id/title/created_at/updated_at/last_message_at/agent_id/tool_overrides/parent_session_id/parent_message_id/spawn_label/spawned_by/is_main）
+- 说明：新会话默认不再固化智能体 `tool_names` 到 `tool_overrides`；空覆盖表示继承最新智能体默认与当前可用工具集合。
 - `GET /wunder/chat/sessions`：会话列表
   - Query：`page`/`page_size` 或 `offset`/`limit`，可选 `agent_id`（空值表示通用聊天，省略表示不过滤），可选 `parent_session_id`（或 `parent_id`/`parentId`/`parentSessionId`）
 - 返回：`data.total`、`data.items`（每项含 is_main 标记主线程）
@@ -2000,6 +2001,7 @@
 - `POST /wunder/chat/sessions/{session_id}/tools`：设置会话工具覆盖
   - 入参（JSON）：`tool_overrides`（字符串数组，空数组表示恢复默认；传入 `__no_tools__` 表示禁用全部工具）
   - 返回：`data.id`、`data.tool_overrides`
+  - desktop 本地模式说明：技能挂载遵循用户技能总开关（`/wunder/user_tools/skills`），会话/智能体 `tool_overrides` 仅过滤非技能工具；`__no_tools__` 仍可禁用全部工具。
 - `POST /wunder/chat/system-prompt`：系统提示词预览
   - 入参（JSON）：`agent_id`（可选）、`tool_overrides`（可选）
   - 返回：`data.prompt`
@@ -2048,6 +2050,7 @@
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户工具白名单过滤。
+  - 默认入口（`agent_id` 为空或 `__default__/default`）不持久化 `tool_names`，始终按当前用户可用工具集实时生效（desktop 本地模式默认额外启用 `计划面板`）。
   - `approval_mode` 默认 `auto_edit`，用于控制命令执行/PTC 工具的审批强度。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。

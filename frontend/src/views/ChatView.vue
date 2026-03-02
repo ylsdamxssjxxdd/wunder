@@ -409,7 +409,27 @@
                     <div v-else class="markdown-body" v-html="renderAssistantMarkdown(message)"></div>
                   </template>
                   <template v-else>
-                    {{ message.content }}
+                    <div
+                      v-if="hasUserMarkdownContent(message)"
+                      class="markdown-body"
+                      v-html="renderUserMarkdown(message)"
+                    ></div>
+                    <div
+                      v-if="hasUserImageAttachments(message)"
+                      class="message-user-image-grid"
+                    >
+                      <button
+                        v-for="item in resolveUserImageAttachments(message)"
+                        :key="item.key"
+                        class="message-user-image-btn"
+                        type="button"
+                        :title="item.name"
+                        :aria-label="item.name"
+                        @click="openImagePreview(item.src, item.name)"
+                      >
+                        <img :src="item.src" :alt="item.name" class="message-user-image" />
+                      </button>
+                    </div>
                   </template>
                   <div v-if="shouldShowMessageStats(message)" class="message-stats">
                     <span
@@ -631,7 +651,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
@@ -1201,6 +1221,8 @@ const latestAssistantIndex = computed(() => {
 const isLatestAssistant = (index) => index === latestAssistantIndex.value;
 
 const markdownCache = new WeakMap();
+const AGENT_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
+const AGENT_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】]+)?$/;
 
 const isAssistantStreaming = (message) => {
   if (!message || message.role !== 'assistant') return false;
@@ -1209,7 +1231,19 @@ const isAssistantStreaming = (message) => {
 
 // AI 回复使用 Markdown 渲染，主要用于表格等富文本展示
 const renderAssistantMarkdown = (message) => {
-  const content = String(message?.content || '');
+  const content = normalizeChatMessageContentForMarkdown(message?.content);
+  if (!content) return '';
+  const cached = markdownCache.get(message);
+  if (cached && cached.source === content) {
+    return cached.html;
+  }
+  const html = renderMarkdown(content);
+  markdownCache.set(message, { source: content, html });
+  return html;
+};
+
+const renderUserMarkdown = (message) => {
+  const content = normalizeChatMessageContentForMarkdown(message?.content);
   if (!content) return '';
   const cached = markdownCache.get(message);
   if (cached && cached.source === content) {
@@ -1239,6 +1273,87 @@ const normalizeWorkspaceOwnerId = (value) =>
   String(value || '')
     .trim()
     .replace(/[^a-zA-Z0-9_-]/g, '_');
+
+const normalizeUploadPath = (value: unknown): string =>
+  String(value || '')
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .trim();
+
+const encodeWorkspacePath = (value: string): string =>
+  String(value || '')
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+
+const buildChatWorkspaceId = (): string => {
+  const ownerId = normalizeWorkspaceOwnerId(authStore.user?.id);
+  if (!ownerId) return '';
+  const agentId = normalizeWorkspaceOwnerId(activeAgentId.value);
+  if (agentId) {
+    return `${ownerId}__a__${agentId}`;
+  }
+  const containerId = Number(activeSandboxContainerId.value);
+  if (Number.isFinite(containerId) && containerId > 0) {
+    return `${ownerId}__c__${Math.trunc(containerId)}`;
+  }
+  return ownerId;
+};
+
+const buildChatWorkspacePublicPath = (relativePath: string): string => {
+  const workspaceId = buildChatWorkspaceId();
+  const normalized = normalizeUploadPath(relativePath);
+  if (!workspaceId || !normalized) return '';
+  return `/workspaces/${workspaceId}/${encodeWorkspacePath(normalized)}`;
+};
+
+const decodeAgentAtPathToken = (value: string): string => {
+  if (!/%[0-9a-fA-F]{2}/.test(value)) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const replaceAgentAtPathTokens = (content: string): string => {
+  if (!content) return '';
+  return content.replace(AGENT_AT_PATH_RE, (match, prefix, token, doubleQuoted, singleQuoted) => {
+    const raw = doubleQuoted ?? singleQuoted ?? token ?? '';
+    if (!raw) return match;
+    let value = raw;
+    let suffix = '';
+    if (!doubleQuoted && !singleQuoted) {
+      const split = AGENT_AT_PATH_SUFFIX_RE.exec(value);
+      if (split) {
+        value = split[1] ?? value;
+        suffix = split[2] ?? '';
+      }
+    }
+    const decoded = decodeAgentAtPathToken(String(value || '').trim());
+    const normalized = normalizeUploadPath(decoded);
+    if (!normalized) return match;
+    const pathLike =
+      decoded.startsWith('/') ||
+      decoded.startsWith('./') ||
+      decoded.startsWith('../') ||
+      normalized.includes('/') ||
+      normalized.includes('.');
+    if (!pathLike) return match;
+    const publicPath = buildChatWorkspacePublicPath(normalized);
+    if (!publicPath) return match;
+    const replacement = isImagePath(normalized)
+      ? `![${decoded}](${publicPath})`
+      : `[${decoded}](${publicPath})`;
+    return `${prefix}${replacement}${suffix}`;
+  });
+};
+
+const normalizeChatMessageContentForMarkdown = (value: unknown): string => {
+  const content = String(value || '');
+  if (!content) return '';
+  return replaceAgentAtPathTokens(content);
+};
 
 const workspaceBelongsToCurrentUser = (workspaceId: string, currentUserId: string) => {
   if (!workspaceId || !currentUserId) return false;
@@ -1677,7 +1792,8 @@ const handleComposerSend = async ({ content, attachments }) => {
   pendingAssistantCenter = true;
   pendingAssistantCenterCount = chatStore.messages.length;
   try {
-    await chatStore.sendMessage(finalContent, {
+    const normalizedContent = normalizeChatMessageContentForMarkdown(finalContent);
+    await chatStore.sendMessage(normalizedContent, {
       attachments: payloadAttachments,
       suppressQueuedNotice: hasSelection
     });

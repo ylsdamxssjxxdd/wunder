@@ -1115,13 +1115,15 @@ const handleSend = async () => {
   }
   const message = draft.value.trim();
   if (!message) return;
+  const senderUserId = String((authStore.user as Record<string, unknown> | null)?.id || '').trim();
+  const normalizedMessage = replaceAtPathTokens(message, senderUserId);
   draft.value = '';
   mentionMenuDismissed.value = true;
   nextTick(() => {
     resetDraftInputHeight();
   });
   try {
-    await userWorldStore.sendToActiveConversation(message);
+    await userWorldStore.sendToActiveConversation(normalizedMessage);
     await scrollToBottom();
   } catch (error) {
     draft.value = message;

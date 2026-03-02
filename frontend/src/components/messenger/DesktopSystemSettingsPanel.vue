@@ -249,22 +249,20 @@
     </div>
   </section>
 
-  <section v-if="showRemotePanel" class="messenger-settings-card desktop-system-settings-panel">
-    <div class="desktop-system-settings-head">
-      <div>
-        <div class="messenger-settings-title">{{ t('desktop.system.remote.title') }}</div>
-        <div class="messenger-settings-subtitle">{{ t('desktop.system.remote.hint') }}</div>
-      </div>
-      <span class="desktop-system-settings-remote-state" :class="{ connected: remoteConnected }">
-        {{
-          remoteConnected
-            ? t('desktop.system.remote.connected')
-            : t('desktop.system.remote.disconnected')
-        }}
-      </span>
-    </div>
-
+  <section
+    v-if="showRemotePanel"
+    class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--stack"
+  >
     <div class="desktop-system-settings-section">
+      <div class="desktop-system-settings-status-line">
+        <span class="desktop-system-settings-remote-state" :class="{ connected: remoteConnected }">
+          {{
+            remoteConnected
+              ? t('desktop.system.remote.connected')
+              : t('desktop.system.remote.disconnected')
+          }}
+        </span>
+      </div>
       <label class="desktop-system-settings-field">
         <span class="desktop-system-settings-field-label">{{ t('desktop.system.remote.serverBaseUrl') }}</span>
         <el-input
@@ -284,18 +282,16 @@
     </div>
   </section>
 
-  <section v-if="showLanPanel" class="messenger-settings-card desktop-system-settings-panel">
-    <div class="desktop-system-settings-head">
-      <div>
-        <div class="messenger-settings-title">{{ t('desktop.system.lan.title') }}</div>
-        <div class="messenger-settings-subtitle">{{ t('desktop.system.lan.hint') }}</div>
-      </div>
-      <span class="desktop-system-settings-remote-state" :class="{ connected: lanMeshEnabled }">
-        {{ lanMeshEnabled ? t('desktop.system.lan.enabled') : t('desktop.system.lan.disabled') }}
-      </span>
-    </div>
-
+  <section
+    v-if="showLanPanel"
+    class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--stack"
+  >
     <div class="desktop-system-settings-section desktop-system-settings-form-grid">
+      <div class="desktop-system-settings-status-line desktop-system-settings-field--full">
+        <span class="desktop-system-settings-remote-state" :class="{ connected: lanMeshEnabled }">
+          {{ lanMeshEnabled ? t('desktop.system.lan.enabled') : t('desktop.system.lan.disabled') }}
+        </span>
+      </div>
       <label class="desktop-system-settings-field">
         <span class="desktop-system-settings-field-label">{{ t('desktop.system.lan.enabledSwitch') }}</span>
         <el-switch v-model="lanMeshEnabled" />
@@ -1101,12 +1097,26 @@ onMounted(() => {
   min-height: 0;
 }
 
+.desktop-system-settings-panel--stack {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+}
+
 .desktop-system-settings-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.desktop-system-settings-status-line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
 }
 
 .desktop-system-settings-layout {

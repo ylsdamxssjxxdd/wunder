@@ -869,6 +869,7 @@ fn apply_desktop_defaults(
             config.skills.enabled.push(required.to_string());
         }
     }
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
 
     let mut allow_paths = config
         .security
@@ -881,6 +882,19 @@ fn apply_desktop_defaults(
     allow_paths.push(temp_root.join("admin_skills").to_string_lossy().to_string());
     allow_paths.push(workspace_root.to_string_lossy().to_string());
     config.security.allow_paths = dedupe_strings(allow_paths);
+}
+
+fn ensure_desktop_builtin_tool(enabled: &mut Vec<String>, required: &str) {
+    let required = required.trim();
+    if required.is_empty() {
+        return;
+    }
+    let has_required = enabled
+        .iter()
+        .any(|name| wunder_server::tools::resolve_tool_name(name.trim()) == required);
+    if !has_required {
+        enabled.push(required.to_string());
+    }
 }
 
 fn normalize_user_id(raw: Option<&str>) -> String {

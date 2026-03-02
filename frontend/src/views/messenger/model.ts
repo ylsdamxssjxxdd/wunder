@@ -16,6 +16,7 @@ export type DesktopInstallResult = {
 
 export type DesktopScreenshotResult = {
   ok?: boolean;
+  canceled?: boolean;
   name?: string;
   path?: string;
   mimeType?: string;
@@ -29,7 +30,7 @@ export type DesktopBridge = {
   getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
   captureScreenshot?: (
-    options?: { hideWindow?: boolean }
+    options?: { hideWindow?: boolean; region?: boolean }
   ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
   chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
 };

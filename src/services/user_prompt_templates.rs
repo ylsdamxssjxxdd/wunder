@@ -235,7 +235,10 @@ fn resolve_prompts_root_candidates() -> Vec<PathBuf> {
             }
         }
     }
-    push_candidate(&mut candidates, Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))));
+    push_candidate(
+        &mut candidates,
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+    );
     candidates
 }
 
