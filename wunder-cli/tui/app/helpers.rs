@@ -1043,8 +1043,130 @@ pub(super) fn format_tool_call_line(tool: &str, args: &Value) -> String {
     format!("[tool_call] {tool} {}", compact_json(args))
 }
 
+fn is_apply_patch_tool_name(tool: &str) -> bool {
+    let normalized = tool.trim().to_ascii_lowercase();
+    normalized == "apply_patch" || tool.contains("应用补丁")
+}
+
+fn extract_tool_result_object(payload: &Value) -> &Value {
+    payload.get("result").unwrap_or(payload)
+}
+
+fn extract_tool_result_data(result: &Value) -> &Value {
+    result.get("data").unwrap_or(result)
+}
+
+fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
+    let file_obj = file.as_object()?;
+    let action = file_obj
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let path = file_obj
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let to_path = file_obj
+        .get("to_path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if path.is_empty() && to_path.is_empty() {
+        return None;
+    }
+
+    let marker = match action.as_str() {
+        "add" => '+',
+        "delete" => '-',
+        _ => '~',
+    };
+    let text = if !path.is_empty() && !to_path.is_empty() && to_path != path {
+        format!("{path} -> {to_path}")
+    } else if !path.is_empty() {
+        path.to_string()
+    } else {
+        to_path.to_string()
+    };
+    Some(format!("  {marker} {text}"))
+}
+
+fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
+    let result = extract_tool_result_object(payload);
+    let data = extract_tool_result_data(result);
+    let ok = result.get("ok").and_then(Value::as_bool);
+    let changed_files = value_as_i64(data.get("changed_files"))
+        .or_else(|| value_as_i64(result.get("changed_files")))
+        .unwrap_or(0)
+        .max(0);
+    let hunks = value_as_i64(data.get("hunks_applied"))
+        .or_else(|| value_as_i64(result.get("hunks_applied")))
+        .unwrap_or(0)
+        .max(0);
+    let mut header = format!("[tool_result] {tool}");
+    if let Some(ok) = ok {
+        header.push_str(if ok { " ok" } else { " failed" });
+    }
+    if changed_files > 0 || hunks > 0 {
+        header.push_str(&format!(" (files={changed_files}, hunks={hunks})"));
+    }
+
+    let mut lines = vec![header];
+    if let Some(error) = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  error: {error}"));
+    }
+    if let Some(code) = data
+        .get("error_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  code: {code}"));
+    }
+    if let Some(hint) = data
+        .get("hint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  hint: {hint}"));
+    }
+
+    if let Some(files) = data.get("files").and_then(Value::as_array) {
+        const MAX_FILE_LINES: usize = 24;
+        let mut appended = 0usize;
+        for file in files.iter().take(MAX_FILE_LINES) {
+            if let Some(line) = extract_apply_patch_file_line(file) {
+                lines.push(line);
+                appended = appended.saturating_add(1);
+            }
+        }
+        if files.len() > appended {
+            lines.push(format!(
+                "  ... ({} more)",
+                files.len().saturating_sub(appended)
+            ));
+        }
+    }
+
+    if lines.len() == 1 {
+        lines.push(format!("  data: {}", compact_json(data)));
+    }
+    lines
+}
+
 pub(super) fn format_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> {
-    let result = payload.get("result").unwrap_or(payload);
+    if is_apply_patch_tool_name(tool) {
+        return format_apply_patch_result_lines(tool, payload);
+    }
+    let result = extract_tool_result_object(payload);
     if tool == "执行命令" {
         let lines = format_execute_command_result_lines(tool, result);
         if !lines.is_empty() {
@@ -1068,7 +1190,7 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value) -> Vec<Strin
         lines.push(format!("  error: {error}"));
     }
 
-    let data = result.get("data").unwrap_or(result);
+    let data = extract_tool_result_data(result);
     lines.push(format!("  data: {}", compact_json(data)));
     lines
 }

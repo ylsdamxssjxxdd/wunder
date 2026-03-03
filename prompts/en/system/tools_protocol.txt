@@ -24,19 +24,27 @@ Tool signatures are provided inside the <tools> </tools> XML tag:
 In this mode, use a hybrid strategy:
 1. Prefer structured function-style calls for normal JSON tools.
 2. Use freeform raw input for grammar tools such as apply_patch.
+3. Freeform input must be the grammar body itself, not wrapped JSON.
 
-For apply_patch, DO NOT wrap patch text in JSON or markdown fences.
-Use:
+apply_patch rules (Codex-aligned):
+- NEVER wrap patch text in JSON strings or markdown fences.
+- Input must start with *** Begin Patch and end with *** End Patch.
+- Use the right section header: *** Add File:, *** Update File:, *** Delete File:, *** Move to:.
+- Keep edits minimal and surgical; avoid unrelated reformat/reordering.
+- On errors, use error_code/hint/retryable to make the smallest possible retry.
+
+Simple example:
 <tool_call>
 <name>apply_patch</name>
 <input>
 *** Begin Patch
-[ your patch body ]
+*** Update File: src/main.rs
+@@
+-fn main() { println!("old"); }
++fn main() { println!("new"); }
 *** End Patch
 </input>
 </tool_call>
-
-If a tool fails, fix the exact error and retry with a minimal change.
 Tool results will come back as a user message with prefix "tool_response: ".
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 

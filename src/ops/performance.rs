@@ -342,12 +342,11 @@ async fn measure_file_ops(concurrency: usize, context: &PerformanceContext) -> M
         .await?;
         run_tool(
             &tool_context,
-            "替换文本",
+            "应用补丁",
             json!({
-                "path": file_path,
-                "old_string": "needle",
-                "new_string": "needle_replaced",
-                "expected_replacements": 1
+                "input": format!(
+                    "*** Begin Patch\n*** Update File: {file_path}\n@@\n-needle\n+needle_replaced\n*** End Patch"
+                )
             }),
         )
         .await?;

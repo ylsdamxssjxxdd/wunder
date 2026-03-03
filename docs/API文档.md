@@ -1516,7 +1516,7 @@
     - `error`：错误信息（可选）
 - 说明：
   - `prompt_build`：系统提示词构建耗时。
-  - `file_ops`：列出文件/写入/读取/搜索/替换文本组合耗时。
+  - `file_ops`：列出文件/写入/读取/搜索/应用补丁组合耗时。
   - `command_exec`：内置工具“执行命令”的耗时。
   - `tool_access`：用户工具绑定与权限解析的耗时。
   - `log_write`：写入工具日志耗时。
@@ -2332,6 +2332,7 @@
 - `tool_call_mode=tool_call`（默认）：模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具，工具结果以 `tool_response: ` 前缀的 user 消息回填。
 - `tool_call_mode=function_call`：模型通过 OpenAI 风格 `tool_calls/function_call` 返回工具调用，工具结果以 role=tool + tool_call_id 回填。
 - `tool_call_mode=freeform_call`：用于“结构化 + freeform”混合调用；普通工具可走结构化参数，语法类工具（如 `apply_patch`）可通过 `<tool_call><name>...</name><input>...</input></tool_call>` 发送原文补丁，工具结果同样以 role=tool + tool_call_id（有 id 时）或 `tool_response` 回填。
+- `apply_patch` 失败返回统一结构：`{"ok":false,"error":"...","data":{"error_code":"PATCH_*","hint":"...","retryable":true|false}}`；其中 `error_code` 为稳定机器可读码，`hint` 为可执行重试建议。
 - `function_call` 模式下系统提示词不注入工具清单与工具调用引导，工具清单仅通过请求 `tools` 传入；`freeform_call` 模式会注入带 freeform 规则的工具协议片段。
 - `function_call/freeform_call` 模式需要在后续请求中携带历史的 assistant `tool_calls` 与 role=tool/tool_call_id 结果；wunder 会将其写入对话历史并自动回填。
 - 系统提示词按职能模块拼装（角色/安全/产品/编程/运行环境/协议/工程师信息）；运行环境模块按 `server.mode` 选择：`api/sandbox` 使用 server 运行模块，`cli/desktop` 使用本地运行模块（无固定依赖清单）。

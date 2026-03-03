@@ -44,7 +44,6 @@ const APP_CONFIG_DEFAULTS = {
           "读取文件",
           "写入文件",
           "搜索内容",
-          "替换文本",
           "应用补丁",
         ],
         steps: [
@@ -79,7 +78,6 @@ const APP_CONFIG_DEFAULTS = {
           "读取文件",
           "写入文件",
           "搜索内容",
-          "替换文本",
           "应用补丁",
         ],
         steps: [

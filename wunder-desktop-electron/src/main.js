@@ -25,6 +25,7 @@ let updaterReady = false
 let tray = null
 let closePromptInFlight = false
 let closeBehavior = 'ask'
+const disableBackgroundThrottling = process.env.WUNDER_DISABLE_BACKGROUND_THROTTLING === '1'
 
 const SCREENSHOT_HIDE_DELAY_MS = 220
 const SCREENSHOT_SELECTOR_RESULT_CHANNEL = 'wunder:screenshot-region-selected'
@@ -1065,6 +1066,15 @@ const showMainWindow = () =>
       window.show()
     }
     window.focus()
+    // Force an immediate repaint after restore/show to avoid stale blank frames.
+    if (!window.webContents.isDestroyed()) {
+      window.webContents.invalidate()
+      setTimeout(() => {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+          window.webContents.invalidate()
+        }
+      }, 80)
+    }
     return true
   }, false)
 
@@ -1204,13 +1214,30 @@ const createWindow = async () => {
       preload: path.join(__dirname, 'preload.js'),
       sandbox: true,
       spellcheck: false,
-      backgroundThrottling: false
+      // Keep throttling enabled by default. Disabling it can cause hidden frameless
+      // windows on Windows to come back as blank until a resize/maximize repaint.
+      backgroundThrottling: !disableBackgroundThrottling
     }
   })
+  const scheduleWindowRepaint = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+      return
+    }
+    mainWindow.webContents.invalidate()
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+        return
+      }
+      mainWindow.webContents.invalidate()
+    }, 80)
+  }
   mainWindow.setMenuBarVisibility(false)
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
+    scheduleWindowRepaint()
   })
+  mainWindow.on('show', scheduleWindowRepaint)
+  mainWindow.on('restore', scheduleWindowRepaint)
   mainWindow.on('close', (event) => {
     handleMainWindowClose(mainWindow, event)
   })

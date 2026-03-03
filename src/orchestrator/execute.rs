@@ -27,6 +27,13 @@ const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 4;
 const MAX_REPEATED_TOOL_FAILURES: u32 = 3;
 const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
 
+fn should_enable_local_full_event_logs(server_mode: &str) -> bool {
+    matches!(
+        server_mode.trim().to_ascii_lowercase().as_str(),
+        "desktop" | "cli"
+    )
+}
+
 impl Orchestrator {
     pub(super) async fn execute_request(
         &self,
@@ -110,13 +117,16 @@ impl Orchestrator {
                 }));
             }
 
+            let local_full_event_logs =
+                should_enable_local_full_event_logs(&request_config.server.mode);
+            let monitor_debug_payload = prepared.debug_payload || local_full_event_logs;
             let user_round = self.monitor.register(
                 &session_id,
                 &user_id,
                 prepared.agent_id.as_deref().unwrap_or(""),
                 &question,
                 is_admin,
-                prepared.debug_payload,
+                monitor_debug_payload,
             );
             let request_round = RoundInfo::user_only(user_round);
             let mut start_payload = json!({
@@ -131,7 +141,7 @@ impl Orchestrator {
 
             let config = request_config.clone();
             let log_payload =
-                is_debug_log_level(&config.observability.log_level) || prepared.debug_payload;
+                is_debug_log_level(&config.observability.log_level) || monitor_debug_payload;
             let (_llm_name, llm_config) =
                 self.resolve_llm_config(&config, prepared.model_name.as_deref())?;
             let skills = if prepared.config_overrides.is_some() {

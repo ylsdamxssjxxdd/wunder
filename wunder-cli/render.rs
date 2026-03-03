@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use wunder_server::schemas::StreamEvent;
 
 const MAX_INLINE_JSON_CHARS: usize = 180;
+const MAX_PATCH_RESULT_FILES: usize = 24;
 
 #[derive(Debug, Clone, Default)]
 pub struct FinalEvent {
@@ -87,11 +88,17 @@ impl StreamRenderer {
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let result = payload
-                    .get("result")
-                    .map(compact_json)
-                    .unwrap_or_else(|| compact_json(payload));
-                println!("[tool_result] {tool} {result}");
+                if is_apply_patch_tool_name(tool) {
+                    for line in format_apply_patch_result_lines(tool, payload) {
+                        println!("{line}");
+                    }
+                } else {
+                    let result = payload
+                        .get("result")
+                        .map(compact_json)
+                        .unwrap_or_else(|| compact_json(payload));
+                    println!("[tool_result] {tool} {result}");
+                }
                 let tool_key = tool.trim().to_ascii_lowercase();
                 let is_question_tool = tool_key == "question_panel"
                     || tool_key == "ask_panel"
@@ -298,6 +305,130 @@ fn parse_final(event: &StreamEvent) -> Option<FinalEvent> {
     })
 }
 
+fn is_apply_patch_tool_name(tool: &str) -> bool {
+    let normalized = tool.trim().to_ascii_lowercase();
+    normalized == "apply_patch" || tool.contains("应用补丁")
+}
+
+fn extract_tool_result_object(payload: &Value) -> &Value {
+    payload.get("result").unwrap_or(payload)
+}
+
+fn extract_tool_result_data(result: &Value) -> &Value {
+    result.get("data").unwrap_or(result)
+}
+
+fn number_value(value: Option<&Value>) -> i64 {
+    value
+        .and_then(|item| {
+            item.as_i64()
+                .or_else(|| item.as_u64().map(|num| num.min(i64::MAX as u64) as i64))
+                .or_else(|| {
+                    item.as_str()
+                        .and_then(|text| text.trim().parse::<i64>().ok())
+                })
+        })
+        .unwrap_or(0)
+        .max(0)
+}
+
+fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
+    let obj = file.as_object()?;
+    let action = obj
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let path = obj.get("path").and_then(Value::as_str).unwrap_or("").trim();
+    let to_path = obj
+        .get("to_path")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if path.is_empty() && to_path.is_empty() {
+        return None;
+    }
+
+    let marker = match action.as_str() {
+        "add" => '+',
+        "delete" => '-',
+        _ => '~',
+    };
+    let text = if !path.is_empty() && !to_path.is_empty() && to_path != path {
+        format!("{path} -> {to_path}")
+    } else if !path.is_empty() {
+        path.to_string()
+    } else {
+        to_path.to_string()
+    };
+    Some(format!("  {marker} {text}"))
+}
+
+fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
+    let result = extract_tool_result_object(payload);
+    let data = extract_tool_result_data(result);
+    let ok = result.get("ok").and_then(Value::as_bool);
+    let changed_files =
+        number_value(data.get("changed_files")).max(number_value(result.get("changed_files")));
+    let hunks =
+        number_value(data.get("hunks_applied")).max(number_value(result.get("hunks_applied")));
+    let mut header = format!("[tool_result] {tool}");
+    if let Some(ok) = ok {
+        header.push_str(if ok { " ok" } else { " failed" });
+    }
+    if changed_files > 0 || hunks > 0 {
+        header.push_str(&format!(" (files={changed_files}, hunks={hunks})"));
+    }
+
+    let mut lines = vec![header];
+    if let Some(error) = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  error: {error}"));
+    }
+    if let Some(code) = data
+        .get("error_code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  code: {code}"));
+    }
+    if let Some(hint) = data
+        .get("hint")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  hint: {hint}"));
+    }
+
+    if let Some(files) = data.get("files").and_then(Value::as_array) {
+        let mut appended = 0usize;
+        for file in files.iter().take(MAX_PATCH_RESULT_FILES) {
+            if let Some(line) = extract_apply_patch_file_line(file) {
+                lines.push(line);
+                appended = appended.saturating_add(1);
+            }
+        }
+        if files.len() > appended {
+            lines.push(format!(
+                "  ... ({} more)",
+                files.len().saturating_sub(appended)
+            ));
+        }
+    }
+
+    if lines.len() == 1 {
+        lines.push(format!("  data: {}", compact_json(data)));
+    }
+    lines
+}
+
 fn compact_json(value: &Value) -> String {
     let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
     if text.len() > MAX_INLINE_JSON_CHARS {
@@ -305,4 +436,52 @@ fn compact_json(value: &Value) -> String {
         text.push_str("...");
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_patch_result_lines_include_change_markers() {
+        let payload = serde_json::json!({
+            "tool": "应用补丁",
+            "result": {
+                "ok": true,
+                "data": {
+                    "changed_files": 2,
+                    "hunks_applied": 3,
+                    "files": [
+                        { "action": "add", "path": "src/new.rs" },
+                        { "action": "delete", "path": "src/old.rs" }
+                    ]
+                }
+            }
+        });
+        let lines = format_apply_patch_result_lines("应用补丁", &payload);
+        assert!(lines.iter().any(|line| line.contains("+ src/new.rs")));
+        assert!(lines.iter().any(|line| line.contains("- src/old.rs")));
+    }
+
+    #[test]
+    fn apply_patch_result_lines_include_error_code_and_hint() {
+        let payload = serde_json::json!({
+            "tool": "apply_patch",
+            "result": {
+                "ok": false,
+                "error": "Patch apply failed",
+                "data": {
+                    "error_code": "PATCH_CONTEXT_NOT_FOUND",
+                    "hint": "Read file and retry"
+                }
+            }
+        });
+        let lines = format_apply_patch_result_lines("apply_patch", &payload);
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("PATCH_CONTEXT_NOT_FOUND")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("Read file and retry")));
+    }
 }

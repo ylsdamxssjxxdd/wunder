@@ -300,7 +300,7 @@
                     </button>
                   </div>
                 </div>
-                <MessageWorkflow
+                <MessageToolWorkflow
                   v-if="message.role === 'assistant'"
                   :items="message.workflowItems || []"
                   :loading="Boolean(message.workflowStreaming)"
@@ -665,7 +665,7 @@ import FeatureChannelDialog from '@/components/chat/FeatureChannelDialog.vue';
 import FeatureCronDialog from '@/components/chat/FeatureCronDialog.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
-import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
+import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';

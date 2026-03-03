@@ -480,20 +480,6 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: "替换文本".to_string(),
-            description: t("tool.spec.replace.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": t("tool.spec.replace.args.path")},
-                    "old_string": {"type": "string", "description": t("tool.spec.replace.args.old_string")},
-                    "new_string": {"type": "string", "description": t("tool.spec.replace.args.new_string")},
-                    "expected_replacements": {"type": "integer", "description": t("tool.spec.replace.args.expected_replacements")}
-                },
-                "required": ["path", "old_string", "new_string"]
-            }),
-        },
-        ToolSpec {
             name: "应用补丁".to_string(),
             description: t("tool.spec.apply_patch.description"),
             input_schema: json!({
@@ -578,23 +564,8 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
                     "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
-                    "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
-                    "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
-                    "activeMinutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
-                    "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
                     "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
-                    "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
                     "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
-                    "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
-                    "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
-                    "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
-                    "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
-                    "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
-                    "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]},
-                    "createIfMissing": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.create_if_missing")},
-                    "includeCurrent": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.include_current")},
-                    "hiveId": {"type": "string", "description": t("tool.spec.agent_swarm.args.hive_id")},
-                    "hive_id": {"type": "string", "description": t("tool.spec.agent_swarm.args.hive_id")},
                     "tasks": {
                         "type": "array",
                         "description": t("tool.spec.agent_swarm.args.tasks"),
@@ -602,19 +573,13 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                             "type": "object",
                             "properties": {
                                 "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
-                                "agent_id": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
-                                "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
                                 "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
-                                "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
-                                "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
-                                "createIfMissing": {"type": "boolean", "description": t("tool.spec.agent_swarm.args.create_if_missing")}
+                                "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")}
                             }
                         }
                     },
                     "runIds": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}},
-                    "run_ids": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}},
-                    "waitSeconds": {"type": "number", "description": t("tool.spec.agent_swarm.args.wait_seconds")},
-                    "pollIntervalSeconds": {"type": "number", "description": t("tool.spec.agent_swarm.args.poll_interval")}
+                    "waitSeconds": {"type": "number", "description": t("tool.spec.agent_swarm.args.wait_seconds"), "default": 0}
                 },
                 "required": ["action"]
             }),
@@ -676,7 +641,6 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("skill_call".to_string(), "技能调用".to_string());
     map.insert("skill_get".to_string(), "技能调用".to_string());
     map.insert("write_file".to_string(), "写入文件".to_string());
-    map.insert("replace_text".to_string(), "替换文本".to_string());
     map.insert("apply_patch".to_string(), "应用补丁".to_string());
     map.insert("lsp".to_string(), "LSP查询".to_string());
     map.insert("subagent_control".to_string(), "子智能体控制".to_string());
@@ -1024,7 +988,6 @@ pub async fn execute_builtin_tool(
         "读取文件" => read_files(context, args).await,
         "技能调用" => execute_skill_call(context, args).await,
         "写入文件" => write_file(context, args).await,
-        "替换文本" => replace_text(context, args).await,
         "应用补丁" => apply_patch_tool::apply_patch(context, args).await,
         "LSP查询" => lsp_query(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,
@@ -6646,55 +6609,6 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     }))
 }
 
-async fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("缺少 path"))?;
-    let old = args
-        .get("old_string")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("缺少 old_string"))?;
-    let new_str = args.get("new_string").and_then(Value::as_str).unwrap_or("");
-    let expected = args.get("expected_replacements").and_then(Value::as_u64);
-    let path = path.to_string();
-    let old = old.to_string();
-    let new_str = new_str.to_string();
-    let allow_roots = collect_allow_roots(context);
-    let target = resolve_tool_path(
-        context.workspace.as_ref(),
-        context.workspace_id,
-        &path,
-        &allow_roots,
-    )?;
-    let target_for_read = target.clone();
-    let content = tokio::task::spawn_blocking(move || std::fs::read_to_string(&target_for_read))
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??;
-    let replaced = content.replace(&old, &new_str);
-    let count = content.matches(&old).count() as u64;
-    if let Some(expected) = expected {
-        if count != expected {
-            return Err(anyhow!("替换次数不匹配，期望 {expected}，实际 {count}"));
-        }
-    }
-    let target_for_write = target.clone();
-    tokio::task::spawn_blocking(move || std::fs::write(&target_for_write, replaced))
-        .await
-        .map_err(|err| anyhow!(err.to_string()))??;
-    let workspace_root = context.workspace.workspace_root(context.workspace_id);
-    if is_within_root(&workspace_root, &target) {
-        context.workspace.bump_version(context.workspace_id);
-    }
-    let lsp_info = touch_lsp_file(context, &target, true).await;
-    Ok(json!({
-        "ok": true,
-        "path": path,
-        "replaced": count,
-        "lsp": lsp_info
-    }))
-}
-
 async fn lsp_query(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     if !context.config.lsp.enabled {
         return Err(anyhow!("LSP 未启用"));
@@ -7616,6 +7530,23 @@ mod tests {
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].path, "Cargo.toml");
+    }
+
+    #[test]
+    fn builtin_tool_specs_excludes_replace_text() {
+        let specs = builtin_tool_specs_with_language("zh-CN");
+        assert!(specs.iter().all(|spec| spec.name != "替换文本"));
+        assert!(specs.iter().any(|spec| spec.name == "应用补丁"));
+    }
+
+    #[test]
+    fn builtin_aliases_excludes_replace_text() {
+        let aliases = builtin_aliases();
+        assert!(!aliases.contains_key("replace_text"));
+        assert_eq!(
+            aliases.get("apply_patch").map(String::as_str),
+            Some("应用补丁")
+        );
     }
 
     #[test]

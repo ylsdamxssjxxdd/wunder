@@ -64,21 +64,6 @@
       ]
     },
     {
-      "id": "tool_replace_text",
-      "dimension": "tool",
-      "prompt": "将 eval/{run_id}/outputs/replace.txt 中的 hello 替换为 hi，仅输出工具调用。",
-      "checker": {
-        "type": "tool_called",
-        "tool": "替换文本"
-      },
-      "prerequisites": [
-        "替换文本"
-      ],
-      "tags": [
-        "builtin"
-      ]
-    },
-    {
       "id": "tool_apply_patch",
       "dimension": "tool",
       "prompt": "使用 应用补丁 工具把 eval/{run_id}/outputs/edit.txt 的第一行替换为 edited，仅输出工具调用。",

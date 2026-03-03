@@ -71,11 +71,8 @@ pub fn evaluate_tool_call(
     let ptc_tool_name = resolve_tool_name("ptc");
     let write_tool_name = resolve_tool_name("write_file");
     let patch_tool_name = resolve_tool_name("apply_patch");
-    let replace_tool_name = resolve_tool_name("replace_text");
     let is_exec_tool = tool_name == exec_tool_name || tool_name == ptc_tool_name;
-    let is_write_tool = tool_name == write_tool_name
-        || tool_name == patch_tool_name
-        || tool_name == replace_tool_name;
+    let is_write_tool = tool_name == write_tool_name || tool_name == patch_tool_name;
     if !is_exec_tool && !is_write_tool {
         return None;
     }

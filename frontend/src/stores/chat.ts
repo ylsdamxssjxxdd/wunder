@@ -2965,7 +2965,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
         const item = buildWorkflowItem(`调用工具：${toolName}`, buildDetail(detailSource), 'loading', {
           isTool: true,
-          toolCategory
+          toolCategory,
+          eventType: 'tool_call',
+          toolName: String(toolName || '')
         });
         assistantMessage.workflowItems.push(item);
         registerToolItem(toolName, item.id);
@@ -3037,7 +3039,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             failed ? 'failed' : 'completed',
             {
               isTool: true,
-              toolCategory
+              toolCategory,
+              eventType: 'tool_result',
+              toolName: String(toolName || '')
             }
           )
         );

@@ -194,10 +194,7 @@ const TOOL_HEATMAP_ICON_RULES: ReadonlyArray<{ keyword: string; icon: string }> 
   { keyword: 'write_file', icon: 'fa-file-circle-plus' },
   { keyword: '应用补丁', icon: 'fa-pen-to-square' },
   { keyword: 'apply patch', icon: 'fa-pen-to-square' },
-  { keyword: 'apply_patch', icon: 'fa-pen-to-square' },
-  { keyword: '替换文本', icon: 'fa-arrow-right-arrow-left' },
-  { keyword: 'replace text', icon: 'fa-arrow-right-arrow-left' },
-  { keyword: 'replace_text', icon: 'fa-arrow-right-arrow-left' }
+  { keyword: 'apply_patch', icon: 'fa-pen-to-square' }
 ];
 
 const trendChartRef = ref<HTMLElement | null>(null);

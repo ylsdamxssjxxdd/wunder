@@ -88,10 +88,29 @@
           type="button"
           :title="t('chat.attachments.upload')"
           :aria-label="t('chat.attachments.upload')"
-          :disabled="attachmentBusy > 0"
+          :disabled="attachmentBusy > 0 || voiceRecording"
           @click="triggerUpload"
         >
           <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
+        </button>
+        <button
+          class="messenger-world-tool-btn"
+          type="button"
+          :class="{
+            'messenger-world-tool-btn--recording': voiceRecording
+          }"
+          :title="voiceButtonTitle"
+          :aria-label="voiceButtonTitle"
+          :disabled="attachmentBusy > 0 || loading || !voiceSupported"
+          @click="handleToggleVoiceRecord"
+        >
+          <i
+            :class="[
+              voiceRecording ? 'fa-solid fa-stop' : 'fa-solid fa-microphone',
+              'messenger-world-tool-fa-icon'
+            ]"
+            aria-hidden="true"
+          ></i>
         </button>
         <div
           v-if="desktopScreenshotSupported"
@@ -106,12 +125,16 @@
             :title="t('chat.attachments.screenshot')"
             :aria-label="t('chat.attachments.screenshot')"
             :aria-expanded="screenshotMenuVisible"
-            :disabled="attachmentBusy > 0"
+            :disabled="attachmentBusy > 0 || voiceRecording"
             @click.stop.prevent="toggleScreenshotMenu"
           >
             <i class="fa-solid fa-camera messenger-world-tool-fa-icon" aria-hidden="true"></i>
             <i class="fa-solid fa-chevron-down chat-screenshot-caret" aria-hidden="true"></i>
           </button>
+        </div>
+        <div v-if="voiceRecording" class="messenger-world-voice-indicator">
+          <i class="fa-solid fa-circle messenger-world-voice-indicator-dot" aria-hidden="true"></i>
+          <span>{{ voiceRecordingLabel }}</span>
         </div>
       </div>
       <textarea
@@ -149,6 +172,13 @@
       </div>
       <template v-if="worldStyle">
         <div class="messenger-world-footer chat-composer-world-footer">
+          <div
+            v-if="showApprovalLabel && approvalLabelText"
+            class="chat-composer-approval-label"
+            :title="approvalLabelText"
+          >
+            {{ approvalLabelText }}
+          </div>
           <div class="messenger-world-send-group">
             <button
               class="messenger-world-send-main"
@@ -293,10 +323,30 @@ const props = defineProps({
   worldStyle: {
     type: Boolean,
     default: false
+  },
+  voiceSupported: {
+    type: Boolean,
+    default: false
+  },
+  voiceRecording: {
+    type: Boolean,
+    default: false
+  },
+  voiceDurationMs: {
+    type: Number,
+    default: 0
+  },
+  showApprovalLabel: {
+    type: Boolean,
+    default: false
+  },
+  approvalLabel: {
+    type: String,
+    default: ''
   }
 });
 
-const emit = defineEmits(['send', 'stop']);
+const emit = defineEmits(['send', 'stop', 'toggle-voice-record']);
 
 const inputText = ref('');
 const inputRef = ref(null);
@@ -541,6 +591,33 @@ const inputPlaceholder = computed(() => {
       : t('chat.input.placeholderCommands');
   return sendShortcutHint.value ? `${base} | ${sendShortcutHint.value}` : base;
 });
+const formatVoiceDurationLabel = (durationMs: unknown): string => {
+  const value = Number(durationMs);
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0:00';
+  }
+  const totalSeconds = Math.max(1, Math.round(value / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+const voiceButtonTitle = computed(() => {
+  if (!props.voiceSupported) {
+    return t('messenger.world.voice.unsupported');
+  }
+  return props.voiceRecording ? t('messenger.world.voice.stop') : t('messenger.world.voice.start');
+});
+const voiceRecordingLabel = computed(() =>
+  t('messenger.world.voice.recording', {
+    duration: formatVoiceDurationLabel(props.voiceDurationMs)
+  })
+);
+const approvalLabelText = computed(() => String(props.approvalLabel || '').trim());
+const showApprovalLabel = computed(
+  () => props.worldStyle && props.showApprovalLabel && Boolean(approvalLabelText.value)
+);
+const voiceSupported = computed(() => props.worldStyle && props.voiceSupported);
+const voiceRecording = computed(() => props.worldStyle && props.voiceRecording);
 const canSendOrStop = computed(() => {
 
   if (props.loading) return true;
@@ -1206,6 +1283,7 @@ const sendQuickCommand = async (command: string) => {
 
 const handleSend = async () => {
   if (props.loading) return;
+  if (voiceRecording.value) return;
   closeScreenshotMenu();
   if (commandSuggestionsVisible.value && applyCommandSuggestion()) {
     return;
@@ -1232,6 +1310,12 @@ const handleSendOrStop = async () => {
     return;
   }
   await handleSend();
+};
+
+const handleToggleVoiceRecord = () => {
+  closeScreenshotMenu();
+  closeWorldCommandPanel();
+  emit('toggle-voice-record');
 };
 
 const handleDocumentPointerDown = (event: PointerEvent) => {
@@ -1303,6 +1387,15 @@ watch(
   () => desktopScreenshotSupported.value,
   (supported) => {
     if (!supported) {
+      closeScreenshotMenu();
+    }
+  }
+);
+
+watch(
+  () => props.voiceRecording,
+  (recording) => {
+    if (recording) {
       closeScreenshotMenu();
     }
   }

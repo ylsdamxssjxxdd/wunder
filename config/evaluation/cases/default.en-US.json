@@ -64,21 +64,6 @@
       ]
     },
     {
-      "id": "tool_replace_text",
-      "dimension": "tool",
-      "prompt": "Replace hello with hi in eval/{run_id}/outputs/replace.txt. Only output the tool call.",
-      "checker": {
-        "type": "tool_called",
-        "tool": "replace_text"
-      },
-      "prerequisites": [
-        "replace_text"
-      ],
-      "tags": [
-        "builtin"
-      ]
-    },
-    {
       "id": "tool_apply_patch",
       "dimension": "tool",
       "prompt": "Use apply_patch to update eval/{run_id}/outputs/edit.txt and replace the first line with edited. Only output the tool call.",

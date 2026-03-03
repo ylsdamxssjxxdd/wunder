@@ -1395,6 +1395,18 @@ async fn ensure_preset_agents(
         .iter()
         .map(|record| record.name.trim().to_string())
         .collect();
+    let context = build_user_tool_context(state, &user.user_id).await;
+    let allowed_tool_names = compute_allowed_tool_names(user, &context);
+    let required_preset_skill_names: Vec<String> = {
+        let config = state.config_store.get().await;
+        config
+            .skills
+            .enabled
+            .iter()
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty() && allowed_tool_names.contains(name))
+            .collect()
+    };
     let now = now_ts();
     let container_layout_seeded = state
         .user_store
@@ -1449,6 +1461,17 @@ async fn ensure_preset_agents(
                 }
             }
         }
+        if preset_name_set.contains(updated.name.trim()) && !required_preset_skill_names.is_empty()
+        {
+            let mut merged_tools = updated.tool_names.clone();
+            merged_tools.extend(required_preset_skill_names.iter().cloned());
+            merged_tools = normalize_tool_list(merged_tools);
+            merged_tools = filter_allowed_tools(&merged_tools, &allowed_tool_names);
+            if merged_tools != updated.tool_names {
+                updated.tool_names = merged_tools;
+                changed = true;
+            }
+        }
 
         if changed {
             updated.updated_at = now;
@@ -1465,10 +1488,7 @@ async fn ensure_preset_agents(
     if seeded.is_some() {
         return Ok(());
     }
-    let context = build_user_tool_context(state, &user.user_id).await;
-    let mut tool_names = compute_allowed_tool_names(user, &context)
-        .into_iter()
-        .collect::<Vec<_>>();
+    let mut tool_names = allowed_tool_names.into_iter().collect::<Vec<_>>();
     tool_names.sort();
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
     for preset in &preset_agents {

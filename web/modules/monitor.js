@@ -89,9 +89,6 @@ const TOOL_HEATMAP_ICON_RULES = [
   { keyword: "\u5e94\u7528\u8865\u4e01", icon: "fa-pen-to-square" },
   { keyword: "apply patch", icon: "fa-pen-to-square" },
   { keyword: "apply_patch", icon: "fa-pen-to-square" },
-  { keyword: "\u66ff\u6362\u6587\u672c", icon: "fa-arrow-right-arrow-left" },
-  { keyword: "replace text", icon: "fa-arrow-right-arrow-left" },
-  { keyword: "replace_text", icon: "fa-arrow-right-arrow-left" },
 ];
 // 线程状态环图配色与图例配置
 const STATUS_CHART_COLORS = ["#38bdf8", "#22c55e", "#fb7185", "#fbbf24"];

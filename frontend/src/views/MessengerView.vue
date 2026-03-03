@@ -353,9 +353,6 @@
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ t('messenger.defaultAgentDesc') }}</span>
-                <span v-if="hasCronTask(DEFAULT_AGENT_KEY)" class="messenger-kind-tag">
-                  {{ t('messenger.agent.cron') }}
-                </span>
               </div>
             </div>
           </button>
@@ -375,9 +372,6 @@
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ agent.description || t('messenger.preview.empty') }}</span>
-                <span v-if="hasCronTask(agent.id)" class="messenger-kind-tag">
-                  {{ t('messenger.agent.cron') }}
-                </span>
               </div>
             </div>
           </button>
@@ -399,7 +393,6 @@
             <div class="messenger-list-main">
               <div class="messenger-list-row">
                 <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
-                <span class="messenger-kind-tag">{{ t('messenger.agent.sharedTag') }}</span>
               </div>
               <div class="messenger-list-row">
                 <span class="messenger-list-preview">{{ agent.description || t('messenger.preview.empty') }}</span>
@@ -697,6 +690,14 @@
           </div>
           <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
         </div>
+        <div
+          v-if="agentHeaderModelDisplayName"
+          class="messenger-chat-header-model"
+          :aria-label="`${t('desktop.system.modelName')}: ${agentHeaderModelDisplayName}`"
+        >
+          <span class="messenger-chat-header-model-label">{{ t('desktop.system.modelName') }}</span>
+          <span class="messenger-chat-header-model-value">{{ agentHeaderModelDisplayName }}</span>
+        </div>
         <div class="messenger-chat-header-actions">
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview"
@@ -791,15 +792,6 @@
                         <AgentAvatar size="md" :state="card.runtimeState" />
                         <div class="messenger-agent-grid-main">
                           <div class="messenger-agent-grid-name">{{ card.name }}</div>
-                          <div class="messenger-agent-grid-meta">
-                            <span class="messenger-kind-tag">{{ formatAgentRuntimeState(card.runtimeState) }}</span>
-                            <span v-if="card.isDefault" class="messenger-kind-tag">{{ t('messenger.defaultAgent') }}</span>
-                            <span v-else-if="card.shared" class="messenger-kind-tag">{{ t('messenger.agent.sharedTag') }}</span>
-                            <span v-if="card.hasCron" class="messenger-kind-tag">{{ t('messenger.agent.cron') }}</span>
-                            <span v-if="card.hasChannelBinding" class="messenger-kind-tag">
-                              {{ t('messenger.agent.channelTag') }}
-                            </span>
-                          </div>
                         </div>
                       </div>
                       <p class="messenger-agent-grid-desc">
@@ -822,8 +814,23 @@
                         </button>
                       </div>
                       <div class="messenger-agent-grid-foot">
+                        <span class="messenger-agent-grid-foot-icons">
+                          <i
+                            v-if="card.hasCron"
+                            class="fa-solid fa-clock"
+                            :title="t('messenger.agent.cron')"
+                            :aria-label="t('messenger.agent.cron')"
+                          ></i>
+                          <i
+                            v-if="card.hasChannelBinding"
+                            class="fa-solid fa-comments"
+                            :title="t('messenger.agent.channelTag')"
+                            :aria-label="t('messenger.agent.channelTag')"
+                          ></i>
+                        </span>
                         <span class="messenger-agent-grid-container-id">
-                          {{ t('messenger.agent.containerId', { id: card.containerId }) }}
+                          <i class="fa-solid fa-box" aria-hidden="true"></i>
+                          #{{ card.containerId }}
                         </span>
                       </div>
                     </article>
@@ -876,7 +883,7 @@
                 </div>
 
                 <div v-else-if="agentSettingMode === 'cron'" class="messenger-chat-settings-block">
-                  <AgentCronPanel :agent-id="settingsAgentIdForApi" />
+                  <AgentCronPanel :agent-id="settingsAgentIdForApi" @changed="handleCronPanelChanged" />
                 </div>
 
                 <div
@@ -889,10 +896,10 @@
                     @changed="loadChannelBoundAgentIds"
                   />
                 </div>
-
                 <div v-else-if="agentSettingMode === 'runtime'" class="messenger-chat-settings-block">
                   <AgentRuntimeRecordsPanel :agent-id="settingsRuntimeAgentIdForApi" />
                 </div>
+
               </template>
             </template>
 
@@ -1224,7 +1231,7 @@
                   />
                 </div>
                 <div v-if="item.message.role === 'assistant'" class="messenger-workflow-scope chat-shell">
-                  <MessageWorkflow
+                  <MessageToolWorkflow
                     :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
                     :loading="Boolean(item.message.workflowStreaming)"
                     :visible="
@@ -1437,6 +1444,18 @@
                       </button>
                       <div class="messenger-world-voice-content">
                         <div class="messenger-world-voice-title">{{ t('messenger.world.voice.title') }}</div>
+                        <div
+                          class="messenger-world-voice-wave"
+                          :class="{ 'is-playing': isWorldVoicePlaying(item.message) }"
+                          aria-hidden="true"
+                        >
+                          <span
+                            v-for="waveIndex in 10"
+                            :key="waveIndex"
+                            class="messenger-world-voice-wave-bar"
+                            :style="{ '--voice-wave-delay': `${waveIndex * 0.09}s` }"
+                          ></span>
+                        </div>
                         <div class="messenger-world-voice-duration">
                           {{ resolveWorldVoiceDurationLabel(item.message) }}
                         </div>
@@ -1515,8 +1534,14 @@
             :draft-key="agentComposerDraftKey"
             :inquiry-active="Boolean(activeAgentInquiryPanel)"
             :inquiry-selection="agentInquirySelection"
+            :voice-supported="agentVoiceSupported"
+            :voice-recording="agentVoiceRecording"
+            :voice-duration-ms="agentVoiceDurationMs"
+            :show-approval-label="showAgentComposerApprovalHint"
+            :approval-label="agentComposerApprovalHintLabel"
             @send="sendAgentMessage"
             @stop="stopAgentMessage"
+            @toggle-voice-record="toggleAgentVoiceRecord"
           />
         </div>
         <MessengerWorldComposer
@@ -1722,11 +1747,13 @@ import {
   fetchRealtimeSystemPrompt
 } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
+import { fetchDesktopSettings } from '@/api/desktop';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
 import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
+import AgentRuntimeRecordsPanel from '@/components/messenger/AgentRuntimeRecordsPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import DesktopContainerManagerPanel from '@/components/messenger/DesktopContainerManagerPanel.vue';
 import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSettingsPanel.vue';
@@ -1742,12 +1769,11 @@ import MessengerTimelineDetailDialog from '@/components/messenger/MessengerTimel
 import UserPromptSettingsPanel from '@/components/messenger/UserPromptSettingsPanel.vue';
 import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
-import AgentRuntimeRecordsPanel from '@/components/messenger/AgentRuntimeRecordsPanel.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
-import MessageWorkflow from '@/components/chat/MessageWorkflow.vue';
+import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
 import ToolApprovalComposer from '@/components/chat/ToolApprovalComposer.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
@@ -1933,6 +1959,12 @@ const worldComposerViewRef = ref<WorldComposerViewRef | null>(null);
 const worldUploading = ref(false);
 const worldVoiceRecording = ref(false);
 const worldVoiceDurationMs = ref(0);
+const agentVoiceRecording = ref(false);
+const agentVoiceDurationMs = ref(0);
+const worldVoicePlaybackCurrentMs = ref(0);
+const worldVoicePlaybackDurationMs = ref(0);
+const agentVoiceModelHearingSupported = ref<boolean | null>(null);
+const desktopDefaultModelDisplayName = ref('');
 const worldVoicePlayingMessageKey = ref('');
 const worldVoiceLoadingMessageKey = ref('');
 const worldComposerHeight = ref(188);
@@ -2074,6 +2106,12 @@ type WorldVoiceRecordingRuntime = {
   timerId: number | null;
   conversationId: string;
 };
+type AgentVoiceRecordingRuntime = {
+  session: AudioRecordingSession;
+  startedAt: number;
+  timerId: number | null;
+  draftIdentity: string;
+};
 type WorldVoicePlaybackRuntime = {
   audio: HTMLAudioElement;
   objectUrlCache: Map<string, string>;
@@ -2081,7 +2119,15 @@ type WorldVoicePlaybackRuntime = {
   currentResourceKey: string;
 };
 let worldVoiceRecordingRuntime: WorldVoiceRecordingRuntime | null = null;
+let agentVoiceRecordingRuntime: AgentVoiceRecordingRuntime | null = null;
 let worldVoicePlaybackRuntime: WorldVoicePlaybackRuntime | null = null;
+let cronAgentIdsLoadVersion = 0;
+let channelBoundAgentIdsLoadVersion = 0;
+let desktopDefaultModelMetaFetchPromise: Promise<{
+  hearingSupported: boolean;
+  modelDisplayName: string;
+}> | null = null;
+let agentVoiceModelSupportCheckedAt = 0;
 const agentUnreadRefreshInFlight = new Set<string>();
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
@@ -2091,6 +2137,7 @@ const MESSAGE_VIRTUAL_THRESHOLD = 180;
 const MESSAGE_VIRTUAL_OVERSCAN = 8;
 const MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = 118;
 const MESSAGE_VIRTUAL_GAP = 12;
+const AGENT_VOICE_MODEL_SUPPORT_CACHE_MS = 30_000;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
 type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
 type WorkspaceResourceCacheEntry = {
@@ -2208,7 +2255,14 @@ const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkFo
 const worldDesktopScreenshotSupported = computed(
   () => desktopMode.value && typeof getDesktopBridge()?.captureScreenshot === 'function'
 );
-const worldVoiceSupported = computed(() => desktopMode.value && isAudioRecordingSupported());
+const audioRecordingSupported = computed(() => isAudioRecordingSupported());
+const worldVoiceSupported = computed(() => audioRecordingSupported.value);
+const agentVoiceSupported = computed(() => {
+  if (!audioRecordingSupported.value) return false;
+  if (!desktopMode.value) return true;
+  if (agentVoiceModelHearingSupported.value === null) return true;
+  return agentVoiceModelHearingSupported.value;
+});
 
 const keyword = computed(() => sessionHub.keyword);
 
@@ -2359,6 +2413,133 @@ const activeAgentSession = computed(() => {
     chatStore.sessions.find((item) => String(item?.id || '').trim() === sessionId) || null
   );
 });
+
+const asObjectRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
+type AgentApprovalMode = 'suggest' | 'auto_edit' | 'full_auto';
+
+const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (normalized === 'suggest') return 'suggest';
+  if (normalized === 'full_auto' || normalized === 'full-auto') return 'full_auto';
+  return 'auto_edit';
+};
+
+const resolveModelNameFromRecord = (value: unknown): string => {
+  const source = asObjectRecord(value);
+  const directKeys = [
+    'model_name',
+    'modelName',
+    'model',
+    'llm_model',
+    'llmModel',
+    'llm_model_name',
+    'llmModelName'
+  ] as const;
+  for (const key of directKeys) {
+    const candidate = source[key];
+    if (typeof candidate === 'string' || typeof candidate === 'number') {
+      const text = String(candidate).trim();
+      if (text) return text;
+      continue;
+    }
+    const nested = asObjectRecord(candidate);
+    const nestedText = String(nested.name || nested.model || nested.id || '').trim();
+    if (nestedText) return nestedText;
+  }
+  const meta = source.meta;
+  if (meta && typeof meta === 'object' && meta !== value) {
+    const nested = resolveModelNameFromRecord(meta);
+    if (nested) return nested;
+  }
+  return '';
+};
+
+const resolveMessageModelName = (message: Record<string, unknown>): string => {
+  const direct = resolveModelNameFromRecord(message);
+  if (direct) return direct;
+  const workflowItems = Array.isArray(message.workflowItems)
+    ? (message.workflowItems as unknown[])
+    : [];
+  for (let cursor = workflowItems.length - 1; cursor >= 0; cursor -= 1) {
+    const item = workflowItems[cursor];
+    const fromItem = resolveModelNameFromRecord(item);
+    if (fromItem) {
+      return fromItem;
+    }
+    const detail = asObjectRecord(asObjectRecord(item).detail);
+    const fromDetail = resolveModelNameFromRecord(detail);
+    if (fromDetail) {
+      return fromDetail;
+    }
+  }
+  return '';
+};
+
+const activeAgentSessionModelName = computed(() =>
+  resolveModelNameFromRecord(activeAgentSession.value)
+);
+
+const activeAgentRuntimeModelName = computed(() => {
+  if (!isAgentConversationActive.value) return '';
+  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
+    const message = asObjectRecord(messages[cursor]);
+    if (String(message.role || '').trim().toLowerCase() !== 'assistant') {
+      continue;
+    }
+    const modelName = resolveMessageModelName(message);
+    if (modelName) return modelName;
+  }
+  return '';
+});
+
+const agentHeaderModelDisplayName = computed(() => {
+  if (!isAgentConversationActive.value) return '';
+  const sessionModelName = activeAgentSessionModelName.value;
+  if (sessionModelName) return sessionModelName;
+  const runtimeModelName = activeAgentRuntimeModelName.value;
+  if (runtimeModelName) return runtimeModelName;
+  if (desktopMode.value) {
+    const desktopModelName = String(desktopDefaultModelDisplayName.value || '').trim();
+    if (desktopModelName) return desktopModelName;
+    if (desktopLocalMode.value) return t('desktop.system.modelUnnamed');
+  }
+  return '';
+});
+
+const activeAgentApprovalMode = computed<AgentApprovalMode>(() => {
+  const session = asObjectRecord(activeAgentSession.value);
+  const sessionMode = String(session.approval_mode || session.approvalMode || '').trim();
+  if (sessionMode) {
+    return normalizeAgentApprovalMode(sessionMode);
+  }
+  const agent = asObjectRecord(activeAgent.value);
+  return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'auto_edit');
+});
+
+const resolveCompactApprovalOptionLabel = (value: string): string => {
+  const source = String(value || '').trim();
+  if (!source) return '';
+  const splitIndex = ['（', '(']
+    .map((marker) => source.indexOf(marker))
+    .filter((index) => index > 0)
+    .sort((left, right) => left - right)[0];
+  return typeof splitIndex === 'number' ? source.slice(0, splitIndex).trim() : source;
+};
+
+const agentComposerApprovalHintLabel = computed(() => {
+  const optionLabel = t(`portal.agent.permission.option.${activeAgentApprovalMode.value}`);
+  const compactOption = resolveCompactApprovalOptionLabel(optionLabel) || optionLabel;
+  return `${t('portal.agent.permission.title')}: ${compactOption}`;
+});
+
+const showAgentComposerApprovalHint = computed(
+  () => desktopLocalMode.value && isAgentConversationActive.value
+);
 
 const activeSessionApproval = computed(() => {
   if (!isAgentConversationActive.value) return null;
@@ -5169,12 +5350,35 @@ const isWorldVoicePlaying = (message: Record<string, unknown>): boolean =>
 const isWorldVoiceLoading = (message: Record<string, unknown>): boolean =>
   worldVoiceLoadingMessageKey.value === resolveWorldMessageKey(message);
 
-const resolveWorldVoiceDurationLabel = (message: Record<string, unknown>): string => {
+const resolveWorldVoiceTotalDurationMs = (message: Record<string, unknown>): number => {
   const payload = resolveWorldVoicePayloadFromMessage(message);
-  if (!payload?.duration_ms) {
+  const payloadDuration = Number(payload?.duration_ms || 0);
+  if (!Number.isFinite(payloadDuration) || payloadDuration <= 0) {
+    const messageKey = resolveWorldMessageKey(message);
+    if (messageKey && messageKey === worldVoicePlayingMessageKey.value) {
+      return Math.max(0, Number(worldVoicePlaybackDurationMs.value || 0));
+    }
+    return 0;
+  }
+  const messageKey = resolveWorldMessageKey(message);
+  if (messageKey && messageKey === worldVoicePlayingMessageKey.value) {
+    return Math.max(payloadDuration, Number(worldVoicePlaybackDurationMs.value || 0));
+  }
+  return payloadDuration;
+};
+
+const resolveWorldVoiceDurationLabel = (message: Record<string, unknown>): string => {
+  const totalDurationMs = resolveWorldVoiceTotalDurationMs(message);
+  if (!totalDurationMs) {
     return t('messenger.world.voice.durationUnknown');
   }
-  return formatWorldVoiceDuration(payload.duration_ms);
+  if (!isWorldVoicePlaying(message)) {
+    return formatWorldVoiceDuration(totalDurationMs);
+  }
+  const remainingMs = Math.max(0, totalDurationMs - Number(worldVoicePlaybackCurrentMs.value || 0));
+  return t('messenger.world.voice.remaining', {
+    duration: formatWorldVoiceDuration(remainingMs)
+  });
 };
 
 const resolveWorldVoiceActionLabel = (message: Record<string, unknown>): string =>
@@ -5226,12 +5430,37 @@ const resolveWorldMessageDomId = (message: Record<string, unknown>): string => {
   return `uw-message-${fallbackKey}`;
 };
 
+const resetWorldVoicePlaybackProgress = () => {
+  worldVoicePlaybackCurrentMs.value = 0;
+  worldVoicePlaybackDurationMs.value = 0;
+};
+
+const syncWorldVoicePlaybackProgress = (audio: HTMLAudioElement) => {
+  const currentMs = Number(audio.currentTime);
+  worldVoicePlaybackCurrentMs.value =
+    Number.isFinite(currentMs) && currentMs > 0 ? Math.round(currentMs * 1000) : 0;
+  const durationMs = Number(audio.duration);
+  if (Number.isFinite(durationMs) && durationMs > 0) {
+    worldVoicePlaybackDurationMs.value = Math.round(durationMs * 1000);
+  }
+};
+
 const ensureWorldVoicePlaybackRuntime = (): WorldVoicePlaybackRuntime | null => {
   if (typeof Audio === 'undefined') return null;
   if (worldVoicePlaybackRuntime) return worldVoicePlaybackRuntime;
   const audio = new Audio();
   audio.preload = 'none';
+  audio.addEventListener('loadedmetadata', () => {
+    syncWorldVoicePlaybackProgress(audio);
+  });
+  audio.addEventListener('durationchange', () => {
+    syncWorldVoicePlaybackProgress(audio);
+  });
+  audio.addEventListener('timeupdate', () => {
+    syncWorldVoicePlaybackProgress(audio);
+  });
   audio.addEventListener('ended', () => {
+    resetWorldVoicePlaybackProgress();
     worldVoicePlayingMessageKey.value = '';
     if (worldVoicePlaybackRuntime) {
       worldVoicePlaybackRuntime.currentMessageKey = '';
@@ -5239,6 +5468,7 @@ const ensureWorldVoicePlaybackRuntime = (): WorldVoicePlaybackRuntime | null => 
   });
   audio.addEventListener('pause', () => {
     if (audio.ended) return;
+    worldVoicePlaybackCurrentMs.value = 0;
     worldVoicePlayingMessageKey.value = '';
     if (worldVoicePlaybackRuntime) {
       worldVoicePlaybackRuntime.currentMessageKey = '';
@@ -5316,13 +5546,17 @@ const stopWorldVoicePlayback = () => {
   if (!runtime) return;
   runtime.audio.pause();
   runtime.currentMessageKey = '';
+  resetWorldVoicePlaybackProgress();
   worldVoicePlayingMessageKey.value = '';
   worldVoiceLoadingMessageKey.value = '';
 };
 
 const disposeWorldVoicePlayback = () => {
   const runtime = worldVoicePlaybackRuntime;
-  if (!runtime) return;
+  if (!runtime) {
+    resetWorldVoicePlaybackProgress();
+    return;
+  }
   stopWorldVoicePlayback();
   runtime.currentResourceKey = '';
   runtime.objectUrlCache.forEach((objectUrl) => {
@@ -5335,6 +5569,7 @@ const disposeWorldVoicePlayback = () => {
   } catch {
     // ignore runtime cleanup errors
   }
+  resetWorldVoicePlaybackProgress();
   worldVoicePlaybackRuntime = null;
 };
 
@@ -5363,6 +5598,7 @@ const toggleWorldVoicePlayback = async (message: Record<string, unknown>) => {
     }
     runtime.currentMessageKey = messageKey;
     await runtime.audio.play();
+    syncWorldVoicePlaybackProgress(runtime.audio);
     worldVoicePlayingMessageKey.value = messageKey;
   } catch (error) {
     worldVoicePlayingMessageKey.value = '';
@@ -6945,7 +7181,183 @@ const captureWorldScreenshotData = async (
   return { dataUrl, fileName, mimeType };
 };
 
+const resolveDesktopDefaultModelMeta = (
+  settings: unknown
+): { hearingSupported: boolean; modelDisplayName: string } => {
+  const root = asObjectRecord(settings);
+  const llm = asObjectRecord(root.llm);
+  const defaultModelKey = String(llm.default || '').trim();
+  const models = asObjectRecord(llm.models);
+  const currentModel = asObjectRecord(defaultModelKey ? models[defaultModelKey] : null);
+  const configuredModelName = String(
+    currentModel.model || currentModel.model_name || currentModel.name || ''
+  ).trim();
+  return {
+    hearingSupported: currentModel.support_hearing === true,
+    modelDisplayName: configuredModelName || defaultModelKey
+  };
+};
+
+const readDesktopDefaultModelMeta = async (
+  force = false
+): Promise<{ hearingSupported: boolean; modelDisplayName: string }> => {
+  if (!desktopMode.value) {
+    agentVoiceModelHearingSupported.value = true;
+    desktopDefaultModelDisplayName.value = '';
+    return { hearingSupported: true, modelDisplayName: '' };
+  }
+  const now = Date.now();
+  if (
+    !force &&
+    agentVoiceModelHearingSupported.value !== null &&
+    now - agentVoiceModelSupportCheckedAt <= AGENT_VOICE_MODEL_SUPPORT_CACHE_MS
+  ) {
+    return {
+      hearingSupported: agentVoiceModelHearingSupported.value,
+      modelDisplayName: String(desktopDefaultModelDisplayName.value || '').trim()
+    };
+  }
+  if (desktopDefaultModelMetaFetchPromise) {
+    return desktopDefaultModelMetaFetchPromise;
+  }
+  desktopDefaultModelMetaFetchPromise = (async () => {
+    try {
+      const response = await fetchDesktopSettings();
+      const settings = (response?.data?.data || {}) as Record<string, unknown>;
+      const meta = resolveDesktopDefaultModelMeta(settings);
+      agentVoiceModelHearingSupported.value = meta.hearingSupported;
+      desktopDefaultModelDisplayName.value = meta.modelDisplayName;
+      return meta;
+    } catch {
+      agentVoiceModelHearingSupported.value = false;
+      desktopDefaultModelDisplayName.value = '';
+      return { hearingSupported: false, modelDisplayName: '' };
+    } finally {
+      agentVoiceModelSupportCheckedAt = Date.now();
+      desktopDefaultModelMetaFetchPromise = null;
+    }
+  })();
+  return desktopDefaultModelMetaFetchPromise;
+};
+
+const readAgentVoiceModelSupport = async (force = false): Promise<boolean> => {
+  const meta = await readDesktopDefaultModelMeta(force);
+  return meta.hearingSupported;
+};
+
 const WORLD_VOICE_RECORDING_TICK_MS = 120;
+
+const clearAgentVoiceRecordingTimer = (runtime: AgentVoiceRecordingRuntime | null) => {
+  if (!runtime) return;
+  if (runtime.timerId !== null && typeof window !== 'undefined') {
+    window.clearInterval(runtime.timerId);
+  }
+  runtime.timerId = null;
+};
+
+const resetAgentVoiceRecordingState = () => {
+  agentVoiceRecording.value = false;
+  agentVoiceDurationMs.value = 0;
+};
+
+const cancelAgentVoiceRecording = async () => {
+  const runtime = agentVoiceRecordingRuntime;
+  if (!runtime) return;
+  agentVoiceRecordingRuntime = null;
+  clearAgentVoiceRecordingTimer(runtime);
+  resetAgentVoiceRecordingState();
+  await runtime.session.cancel().catch(() => undefined);
+};
+
+const startAgentVoiceRecording = async () => {
+  if (!isAgentConversationActive.value || agentSessionLoading.value) return;
+  if (!audioRecordingSupported.value) {
+    ElMessage.warning(t('messenger.world.voice.unsupported'));
+    return;
+  }
+  const modelHearingSupported = await readAgentVoiceModelSupport(true);
+  if (!modelHearingSupported) {
+    ElMessage.warning(t('messenger.agent.voice.modelUnsupported'));
+    return;
+  }
+  if (agentVoiceRecordingRuntime) return;
+  const draftIdentity = resolveAgentDraftIdentity();
+  if (!draftIdentity) return;
+  try {
+    const session = await startAudioRecording();
+    const runtime: AgentVoiceRecordingRuntime = {
+      session,
+      startedAt: Date.now(),
+      timerId: null,
+      draftIdentity
+    };
+    agentVoiceRecordingRuntime = runtime;
+    agentVoiceRecording.value = true;
+    agentVoiceDurationMs.value = 0;
+    if (typeof window !== 'undefined') {
+      runtime.timerId = window.setInterval(() => {
+        agentVoiceDurationMs.value = Math.max(0, Date.now() - runtime.startedAt);
+      }, WORLD_VOICE_RECORDING_TICK_MS);
+    }
+  } catch (error) {
+    resetAgentVoiceRecordingState();
+    showApiError(error, t('messenger.world.voice.startFailed'));
+  }
+};
+
+const buildAgentVoiceFileName = (): string => `agent-voice-${Date.now()}.wav`;
+
+const stopAgentVoiceRecordingAndSend = async () => {
+  const runtime = agentVoiceRecordingRuntime;
+  if (!runtime) return;
+  agentVoiceRecordingRuntime = null;
+  clearAgentVoiceRecordingTimer(runtime);
+  resetAgentVoiceRecordingState();
+  let recording: AudioRecordingResult;
+  try {
+    recording = await runtime.session.stop();
+  } catch (error) {
+    showApiError(error, t('messenger.world.voice.stopFailed'));
+    return;
+  }
+  if (!(recording?.blob instanceof Blob) || !recording.blob.size) {
+    ElMessage.warning(t('messenger.world.voice.empty'));
+    return;
+  }
+  if (runtime.draftIdentity !== resolveAgentDraftIdentity()) {
+    return;
+  }
+  try {
+    const voiceFile = new File([recording.blob], buildAgentVoiceFileName(), { type: 'audio/wav' });
+    const uploadedPaths = await uploadWorldFilesToUserContainer([voiceFile], { appendTokens: false });
+    const uploadedPath = String(uploadedPaths[0] || '').trim();
+    if (!uploadedPath) {
+      throw new Error(t('workspace.upload.failed'));
+    }
+    const attachmentToken = buildWorldAttachmentToken(uploadedPath);
+    await sendAgentMessage({
+      content: attachmentToken || uploadedPath,
+      attachments: [
+        {
+          type: 'file',
+          name: voiceFile.name,
+          content: uploadedPath,
+          mime_type: 'audio/wav'
+        }
+      ]
+    });
+  } catch (error) {
+    showApiError(error, t('chat.error.requestFailed'));
+  }
+};
+
+const toggleAgentVoiceRecord = async () => {
+  if (agentVoiceRecordingRuntime) {
+    await stopAgentVoiceRecordingAndSend();
+    return;
+  }
+  await startAgentVoiceRecording();
+};
 
 const clearWorldVoiceRecordingTimer = (runtime: WorldVoiceRecordingRuntime | null) => {
   if (!runtime) return;
@@ -7482,58 +7894,162 @@ const resolveHttpStatus = (error: unknown): number => {
 
 const isAuthDeniedStatus = (status: number): boolean => status === 401 || status === 403;
 
+const handleCronPanelChanged = (payload?: { agentId?: string; hasJobs?: boolean }) => {
+  const normalizeChangedAgentId = (value: unknown): string => {
+    const raw = String(value || '').trim();
+    if (!raw) return DEFAULT_AGENT_KEY;
+    const lowered = raw.toLowerCase();
+    if (lowered === 'default' || lowered === '__default__' || lowered === 'system') {
+      return DEFAULT_AGENT_KEY;
+    }
+    return normalizeAgentId(raw);
+  };
+  const hasJobs = payload?.hasJobs;
+  if (hasJobs === true || hasJobs === false) {
+    const next = new Set(cronAgentIds.value);
+    const changedAgentId = normalizeChangedAgentId(payload?.agentId);
+    if (hasJobs) {
+      next.add(changedAgentId);
+    } else {
+      next.delete(changedAgentId);
+    }
+    cronAgentIds.value = next;
+  }
+  void loadCronAgentIds();
+};
+
 const loadCronAgentIds = async () => {
+  const loadVersion = ++cronAgentIdsLoadVersion;
   if (cronPermissionDenied.value) {
-    cronAgentIds.value = new Set<string>();
+    if (loadVersion === cronAgentIdsLoadVersion) {
+      cronAgentIds.value = new Set<string>();
+    }
     return;
   }
   try {
+    const normalizeCronAgentKey = (value: unknown): string => {
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      const lowered = raw.toLowerCase();
+      if (lowered === 'default' || lowered === '__default__' || lowered === 'system') {
+        return DEFAULT_AGENT_KEY;
+      }
+      return normalizeAgentId(raw);
+    };
+    const sessionAgentMap = new Map<string, string>();
+    const sessions = Array.isArray(chatStore.sessions) ? chatStore.sessions : [];
+    sessions.forEach((session: Record<string, unknown>) => {
+      const sessionId = String(session?.id || '').trim();
+      if (!sessionId) return;
+      const explicitAgent = normalizeCronAgentKey(session?.agent_id ?? session?.agentId);
+      const fallbackAgent = session?.is_main === true ? DEFAULT_AGENT_KEY : '';
+      const resolvedAgent = explicitAgent || fallbackAgent;
+      if (resolvedAgent) {
+        sessionAgentMap.set(sessionId, resolvedAgent);
+      }
+    });
     const response = await fetchCronJobs();
-    const jobs = Array.isArray(response?.data?.data?.jobs) ? response.data.data.jobs : [];
+    if (loadVersion !== cronAgentIdsLoadVersion) {
+      return;
+    }
+    const jobs = Array.isArray(response?.data?.data?.jobs)
+      ? response.data.data.jobs
+      : Array.isArray(response?.data?.data?.items)
+        ? response.data.data.items
+        : [];
     const result = new Set<string>();
     jobs.forEach((job: Record<string, unknown>) => {
-      const rawAgentId = String(job?.agent_id || '').trim();
-      const target = String(job?.session_target || '').trim().toLowerCase();
+      const rawAgentId = String(
+        job?.agent_id ??
+          job?.agentId ??
+          (job?.agent as Record<string, unknown> | undefined)?.id ??
+          (job?.agent as Record<string, unknown> | undefined)?.agent_id ??
+          ''
+      ).trim();
+      const mappedSessionAgent = sessionAgentMap.get(
+        String(job?.session_id ?? job?.sessionId ?? '').trim()
+      );
+      const target = String(
+        job?.session_target ?? job?.sessionTarget ?? job?.session ?? ''
+      ).trim().toLowerCase();
+      const defaultTarget =
+        target === '' ||
+        target === 'main' ||
+        target === 'default' ||
+        target === 'system' ||
+        target === '__default__';
       const resolved =
         rawAgentId ||
-        (target === 'default' || target === 'system' || target === '__default__' || job?.is_default
+        mappedSessionAgent ||
+        (defaultTarget ||
+        job?.is_default === true ||
+        job?.isDefault === true
           ? DEFAULT_AGENT_KEY
           : '');
       if (!resolved) return;
-      result.add(normalizeAgentId(resolved));
+      result.add(normalizeCronAgentKey(resolved));
     });
+    if (loadVersion !== cronAgentIdsLoadVersion) {
+      return;
+    }
     cronAgentIds.value = result;
     cronPermissionDenied.value = false;
   } catch (error) {
+    if (loadVersion !== cronAgentIdsLoadVersion) {
+      return;
+    }
     const status = resolveHttpStatus(error);
     if (isAuthDeniedStatus(status)) {
       cronPermissionDenied.value = true;
       cronAgentIds.value = new Set<string>();
       return;
     }
-    cronAgentIds.value = new Set<string>();
   }
 };
 
 const loadChannelBoundAgentIds = async () => {
+  const loadVersion = ++channelBoundAgentIdsLoadVersion;
   try {
+    const normalizeChannelAgentKey = (value: unknown): string => {
+      const raw = String(value || '').trim();
+      if (!raw) return DEFAULT_AGENT_KEY;
+      const lowered = raw.toLowerCase();
+      if (lowered === 'default' || lowered === '__default__' || lowered === 'system') {
+        return DEFAULT_AGENT_KEY;
+      }
+      return normalizeAgentId(raw);
+    };
     const response = await listChannelBindings();
+    if (loadVersion !== channelBoundAgentIdsLoadVersion) {
+      return;
+    }
     const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
     const bound = new Set<string>();
     items.forEach((item: Record<string, unknown>) => {
-      if (item?.enabled !== true) return;
-      const agentId = normalizeAgentId(item?.agent_id);
-      if (!agentId || agentId === DEFAULT_AGENT_KEY) return;
+      const agentId = normalizeChannelAgentKey(
+        item?.agent_id ??
+          item?.agentId ??
+          (item?.agent as Record<string, unknown> | undefined)?.id ??
+          (item?.agent as Record<string, unknown> | undefined)?.agent_id ??
+          (item?.config as Record<string, unknown> | undefined)?.agent_id ??
+          (item?.raw_config as Record<string, unknown> | undefined)?.agent_id ??
+          ''
+      );
       bound.add(agentId);
     });
+    if (loadVersion !== channelBoundAgentIdsLoadVersion) {
+      return;
+    }
     channelBoundAgentIds.value = bound;
   } catch (error) {
+    if (loadVersion !== channelBoundAgentIdsLoadVersion) {
+      return;
+    }
     const status = resolveHttpStatus(error);
     if (isAuthDeniedStatus(status)) {
       channelBoundAgentIds.value = new Set<string>();
       return;
     }
-    channelBoundAgentIds.value = new Set<string>();
   }
 };
 
@@ -8171,6 +8687,38 @@ watch(
 );
 
 watch(
+  () => [isAgentConversationActive.value, desktopMode.value] as const,
+  ([active, desktop]) => {
+    if (!active) {
+      void cancelAgentVoiceRecording();
+      return;
+    }
+    if (desktop) {
+      void readDesktopDefaultModelMeta(false);
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => agentComposerDraftKey.value,
+  (nextKey, previousKey) => {
+    if (previousKey && previousKey !== nextKey) {
+      void cancelAgentVoiceRecording();
+    }
+  }
+);
+
+watch(
+  () => Boolean(activeSessionApproval.value),
+  (visible) => {
+    if (visible) {
+      void cancelAgentVoiceRecording();
+    }
+  }
+);
+
+watch(
   () => activeWorldConversationId.value,
   (nextConversationId, previousConversationId) => {
     if (previousConversationId && previousConversationId !== nextConversationId) {
@@ -8235,6 +8783,7 @@ onMounted(async () => {
     if (!cronPermissionDenied.value) {
       loadCronAgentIds();
     }
+    loadChannelBoundAgentIds();
     if (!userWorldPermissionDenied.value) {
       userWorldStore.refreshContacts().catch(() => {});
     }
@@ -8256,6 +8805,7 @@ onBeforeUnmount(() => {
   clearKeywordDebounce();
   closeImagePreview();
   stopWorldComposerResize();
+  void cancelAgentVoiceRecording();
   void cancelWorldVoiceRecording();
   disposeWorldVoicePlayback();
   if (typeof window !== 'undefined' && messageScrollFrame !== null) {

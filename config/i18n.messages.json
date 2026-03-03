@@ -1284,12 +1284,12 @@
     "zh-CN": "生成 A2UI 界面并返回给客户端渲染。"
   },
   "tool.spec.apply_patch.args.input": {
-    "en-US": "Complete apply_patch payload from *** Begin Patch to *** End Patch.",
-    "zh-CN": "完整的 apply_patch 补丁文本（从 *** Begin Patch 到 *** End Patch）。"
+    "en-US": "Raw apply_patch payload (no JSON wrapper / no markdown fence), from *** Begin Patch to *** End Patch. Supports Add/Update/Delete/Move hunks. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch",
+    "zh-CN": "freeform 原文补丁（不要包 JSON 或 Markdown 代码块），必须从 *** Begin Patch 到 *** End Patch。支持 Add/Update/Delete/Move。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch"
   },
   "tool.spec.apply_patch.description": {
-    "en-US": "Apply a multi-file patch using the apply_patch grammar.",
-    "zh-CN": "使用 apply_patch 语法对多个文件应用补丁。"
+    "en-US": "Apply precise, reviewable edits with apply_patch grammar. Best for small targeted multi-file changes; use write_file for full rewrites.",
+    "zh-CN": "使用 apply_patch 语法进行精确、可审计的补丁修改，适合多文件小步改动；整文件重写请使用写文件工具。"
   },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",
@@ -1615,26 +1615,6 @@
     "en-US": "Return full SKILL.md and directory tree for the specified skill name.",
     "zh-CN": "根据技能名称返回完整 SKILL.md 及技能目录结构。"
   },
-  "tool.spec.replace.args.expected_replacements": {
-    "en-US": "Expected number of replacements (default 1).",
-    "zh-CN": "期望替换的次数，省略则默认 1。"
-  },
-  "tool.spec.replace.args.new_string": {
-    "en-US": "Exact replacement text.",
-    "zh-CN": "用于替换 old_string 的精确文本。"
-  },
-  "tool.spec.replace.args.old_string": {
-    "en-US": "Exact text to replace (include context).",
-    "zh-CN": "要被替换的精确文本（请包含上下文）。"
-  },
-  "tool.spec.replace.args.path": {
-    "en-US": "File path to edit.",
-    "zh-CN": "要编辑的文件路径。"
-  },
-  "tool.spec.replace.description": {
-    "en-US": "Replace text in an existing file. By default, only the first occurrence of old_string is replaced.",
-    "zh-CN": "请求在现有文件中替换文本。默认只替换一次 old_string 的出现。"
-  },
   "tool.spec.search.args.file_pattern": {
     "en-US": "Optional. Glob pattern to filter files, e.g., *.cpp or src/**.ts.",
     "zh-CN": "可选，用于过滤文件的 glob，例如 *.cpp 或 src/**.ts。"
@@ -1680,40 +1660,40 @@
     "zh-CN": "操作类型：list/history/send/spawn。"
   },
   "tool.spec.agent_swarm.description": {
-    "en-US": "Swarm dispatcher for worker agents. For multi-agent collaboration, use batch_send for parallel dispatch and wait to collect run results.",
-    "zh-CN": "蜂群调度工具：可将任务并发分发给多个工蜂智能体。多工蜂协作优先使用 batch_send 并行派发，再用 wait 统一回收结果。"
+    "en-US": "Swarm dispatch tool. Typical flow: batch_send then wait.",
+    "zh-CN": "蜂群调度工具。常用流程：batch_send 后 wait。"
   },
   "tool.spec.agent_swarm.args.action": {
-    "en-US": "Action: list/status/send/history/spawn/batch_send/wait. Recommended workflow: batch_send -> wait.",
-    "zh-CN": "操作类型：list/status/send/history/spawn/batch_send/wait。推荐流程：batch_send 并发派发，再 wait 汇总结果。"
+    "en-US": "Action: list/status/send/history/spawn/batch_send/wait.",
+    "zh-CN": "操作类型：list/status/send/history/spawn/batch_send/wait。"
   },
   "tool.spec.agent_swarm.args.create_if_missing": {
-    "en-US": "Optional. Auto-create a session when sending to an agent without existing sessions.",
-    "zh-CN": "可选。发送给未创建会话的智能体时，是否自动创建会话。"
+    "en-US": "Optional. Auto-create session if missing.",
+    "zh-CN": "可选。无会话时自动创建。"
   },
   "tool.spec.agent_swarm.args.include_current": {
-    "en-US": "Optional. Include the current agent in swarm management actions.",
-    "zh-CN": "可选。是否允许在蜂群管理动作中包含当前智能体。"
+    "en-US": "Optional. Include current agent.",
+    "zh-CN": "可选。是否包含当前智能体。"
   },
   "tool.spec.agent_swarm.args.hive_id": {
-    "en-US": "Optional. Hive scope id used to limit visible agents and sessions.",
-    "zh-CN": "可选。指定蜂群可见范围的蜂巢 ID。"
+    "en-US": "Optional. Hive scope id.",
+    "zh-CN": "可选。蜂巢范围 ID。"
   },
   "tool.spec.agent_swarm.args.tasks": {
-    "en-US": "Task list for batch_send. Each item should include message plus agentId or session_id.",
-    "zh-CN": "batch_send 的任务列表。每项建议提供 message，并指定 agentId 或 session_id。"
+    "en-US": "Task list for batch_send (each item: message + agentId/sessionKey).",
+    "zh-CN": "batch_send 任务列表（每项：message + agentId/sessionKey）。"
   },
   "tool.spec.agent_swarm.args.run_ids": {
-    "en-US": "Run IDs to wait for. Usually use run_ids returned by batch_send.",
-    "zh-CN": "待收集的运行 ID 列表，通常使用 batch_send 返回的 run_ids。"
+    "en-US": "Run IDs to wait for.",
+    "zh-CN": "待等待的 run ID 列表。"
   },
   "tool.spec.agent_swarm.args.wait_seconds": {
-    "en-US": "Wait timeout in seconds. <=0 means return current snapshot without waiting.",
-    "zh-CN": "等待秒数。<=0 表示仅返回当前快照，不阻塞等待。"
+    "en-US": "Wait seconds (<=0 returns snapshot only).",
+    "zh-CN": "等待秒数（<=0 仅返回快照）。"
   },
   "tool.spec.agent_swarm.args.poll_interval": {
-    "en-US": "Polling interval in seconds when waiting for worker runs.",
-    "zh-CN": "等待工蜂运行结果时的轮询间隔（秒）。"
+    "en-US": "Polling interval in seconds.",
+    "zh-CN": "轮询间隔（秒）。"
   },
   "tool.spec.node_invoke.description": {
     "en-US": "List connected gateway nodes or invoke a command on a node.",

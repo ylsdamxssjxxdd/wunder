@@ -188,6 +188,9 @@ const props = defineProps({
     default: ''
   }
 });
+const emit = defineEmits<{
+  (e: 'changed', payload: { agentId: string; hasJobs: boolean }): void;
+}>();
 
 const { t } = useI18n();
 
@@ -404,6 +407,10 @@ const loadRuns = async (jobId: string) => {
 const refreshAll = async () => {
   await loadJobs();
   await loadRuns(selectedJobId.value);
+  emit('changed', {
+    agentId: contextAgentId.value || '__default__',
+    hasJobs: jobs.value.length > 0
+  });
 };
 
 const selectJob = async (job: Record<string, unknown>) => {

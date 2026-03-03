@@ -238,6 +238,52 @@ fn format_execute_command_result_lines_prioritizes_failure_output() {
 }
 
 #[test]
+fn format_tool_result_lines_formats_apply_patch_changes_with_markers() {
+    let payload = serde_json::json!({
+        "result": {
+            "ok": true,
+            "data": {
+                "changed_files": 3,
+                "hunks_applied": 4,
+                "files": [
+                    { "action": "add", "path": "src/new_file.rs", "hunks": 1 },
+                    { "action": "update", "path": "src/existing.rs", "hunks": 2 },
+                    { "action": "delete", "path": "src/old_file.rs", "hunks": 1 }
+                ]
+            }
+        }
+    });
+
+    let lines = format_tool_result_lines("应用补丁", &payload);
+    assert!(!lines.is_empty());
+    assert!(lines[0].contains("files=3"));
+    assert!(lines.iter().any(|line| line.contains("+ src/new_file.rs")));
+    assert!(lines.iter().any(|line| line.contains("~ src/existing.rs")));
+    assert!(lines.iter().any(|line| line.contains("- src/old_file.rs")));
+}
+
+#[test]
+fn format_tool_result_lines_surfaces_apply_patch_error_code_and_hint() {
+    let payload = serde_json::json!({
+        "result": {
+            "ok": false,
+            "error": "Patch apply failed",
+            "data": {
+                "error_code": "PATCH_CONTEXT_NOT_FOUND",
+                "hint": "Read latest file content and regenerate patch"
+            }
+        }
+    });
+
+    let lines = format_tool_result_lines("apply_patch", &payload);
+    assert!(lines.iter().any(|line| line.contains("failed")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("PATCH_CONTEXT_NOT_FOUND")));
+    assert!(lines.iter().any(|line| line.contains("regenerate patch")));
+}
+
+#[test]
 fn append_text_preview_truncates_long_output() {
     let mut lines = Vec::new();
     let value = "line1\nline2\nline3\nline4\nline5\nline6\nline7\n";

@@ -877,7 +877,6 @@ enum WorkerToolKind {
     SearchContent,
     ReadFile,
     WriteFile,
-    ReplaceText,
     ApplyPatch,
     ExecuteCommand,
     ProgrammaticToolCall,
@@ -891,7 +890,6 @@ impl WorkerToolKind {
             Self::SearchContent => "search_content",
             Self::ReadFile => "read_file",
             Self::WriteFile => "write_file",
-            Self::ReplaceText => "replace_text",
             Self::ApplyPatch => "apply_patch",
             Self::ExecuteCommand => "execute_command",
             Self::ProgrammaticToolCall => "programmatic_tool_call",
@@ -909,7 +907,6 @@ impl WorkerToolKind {
             Self::SearchContent => is_search_content_tool(tool_name),
             Self::ReadFile => is_read_file_tool(tool_name),
             Self::WriteFile => is_write_file_tool(tool_name),
-            Self::ReplaceText => is_replace_text_tool(tool_name),
             Self::ApplyPatch => is_apply_patch_tool(tool_name),
             Self::ExecuteCommand => is_execute_command_tool(tool_name),
             Self::ProgrammaticToolCall => is_ptc_tool(tool_name),
@@ -942,15 +939,9 @@ impl WorkerToolKind {
                 "path": worker_file,
                 "content": format!("worker={worker_tag}\nphase=alpha\nresult=pending\n"),
             }),
-            Self::ReplaceText => json!({
-                "path": worker_file,
-                "old_string": "phase=alpha",
-                "new_string": "phase=beta",
-                "expected_replacements": 1,
-            }),
             Self::ApplyPatch => json!({
                 "input": format!(
-                    "*** Begin Patch\n*** Update File: {worker_file}\n@@\n-result=pending\n+result=patched;r{task_round};{suffix}\n*** End Patch"
+                    "*** Begin Patch\n*** Update File: {worker_file}\n@@\n-phase=alpha\n+phase=beta\n-result=pending\n+result=patched;r{task_round};{suffix}\n*** End Patch"
                 ),
             }),
             Self::ExecuteCommand => json!({
@@ -1000,7 +991,7 @@ impl WorkerToolProfile {
         match self {
             Self::InspectSearch => (WorkerToolKind::ListFiles, WorkerToolKind::SearchContent),
             Self::InspectRead => (WorkerToolKind::ListFiles, WorkerToolKind::ReadFile),
-            Self::WriteReplace => (WorkerToolKind::WriteFile, WorkerToolKind::ReplaceText),
+            Self::WriteReplace => (WorkerToolKind::WriteFile, WorkerToolKind::ApplyPatch),
             Self::WriteEdit => (WorkerToolKind::WriteFile, WorkerToolKind::ApplyPatch),
             Self::CommandRead => (WorkerToolKind::ExecuteCommand, WorkerToolKind::ReadFile),
             Self::SearchFinal => (WorkerToolKind::SearchContent, WorkerToolKind::FinalResponse),
@@ -1385,13 +1376,6 @@ fn is_write_file_tool(name: &str) -> bool {
     )
 }
 
-fn is_replace_text_tool(name: &str) -> bool {
-    matches!(
-        name.trim(),
-        "replace_text" | "\u{66ff}\u{6362}\u{6587}\u{672c}"
-    )
-}
-
 fn is_apply_patch_tool(name: &str) -> bool {
     matches!(
         name.trim(),
@@ -1584,7 +1568,6 @@ fn seeded_worker_tools() -> Vec<String> {
         "search_content".to_string(),
         "read_file".to_string(),
         "write_file".to_string(),
-        "replace_text".to_string(),
         "apply_patch".to_string(),
         "execute_command".to_string(),
         "programmatic_tool_call".to_string(),

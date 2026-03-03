@@ -304,7 +304,6 @@ impl Orchestrator {
         let file_actions = HashMap::from([
             ("读取文件", "read"),
             ("写入文件", "write"),
-            ("替换文本", "replace"),
             ("应用补丁", "patch"),
         ]);
         if let Some(action) = file_actions.get(tool_name) {
@@ -312,11 +311,7 @@ impl Orchestrator {
             for path in paths {
                 let mut meta = serde_json::Map::new();
                 if let Value::Object(data) = &result.data {
-                    if *action == "replace" {
-                        if let Some(value) = data.get("replaced") {
-                            meta.insert("replaced".to_string(), value.clone());
-                        }
-                    } else if *action == "write" {
+                    if *action == "write" {
                         if let Some(value) = data.get("bytes") {
                             meta.insert("bytes".to_string(), value.clone());
                         }

@@ -23,20 +23,28 @@
 
 该模式使用“结构化 + 自由语法”混合调用：
 1. 普通 JSON 工具优先使用结构化参数；
-2. 语法类工具（如 apply_patch）使用 freeform 原文输入。
+2. 语法类工具（如 apply_patch）使用 freeform 原文输入；
+3. freeform 输入必须是语法本体，不要再包一层 JSON。
 
-调用 apply_patch 时，严禁把补丁包在 JSON 或 Markdown 代码块里。
-请使用：
+apply_patch 专用规则（对齐 codex）：
+- 严禁把补丁放进 JSON 字符串或 Markdown 代码块；
+- 输入必须以 *** Begin Patch 开始、以 *** End Patch 结束；
+- 按需使用 *** Add File: / *** Update File: / *** Delete File: / *** Move to:；
+- 修改要最小且精确：只改必要行，不做无关重排；
+- 失败时优先根据 error_code、hint、retryable 做最小修复并重试。
+
+简单示例：
 <tool_call>
 <name>apply_patch</name>
 <input>
 *** Begin Patch
-[ 在这里写补丁内容 ]
+*** Update File: src/main.rs
+@@
+-fn main() { println!("old"); }
++fn main() { println!("new"); }
 *** End Patch
 </input>
 </tool_call>
-
-工具失败后请根据报错做最小修复并重试。
 工具执行结果会作为以 "tool_response: " 前缀的 user 消息返回。
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 
