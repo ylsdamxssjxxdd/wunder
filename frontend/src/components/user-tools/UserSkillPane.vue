@@ -28,7 +28,7 @@
             v-for="(skill, index) in skills"
             :key="skill.name || index"
             class="skill-item user-skill-item"
-            :class="{ active: index === selectedIndex }"
+            :class="{ active: index === selectedIndex, 'has-delete': !isSkillReadonly(skill) }"
             @click="selectSkill(skill, index)"
           >
             <label class="tool-check tool-check-icon" :title="t('userTools.action.enable')" @click.stop>
@@ -56,7 +56,7 @@
               :title="t('userTools.skills.delete.title')"
               @click.stop="deleteSkill(skill)"
             >
-              <i class="fa-solid fa-trash" aria-hidden="true"></i>
+              <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
             </button>
           </div>
         </div>

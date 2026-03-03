@@ -1167,7 +1167,7 @@
 
 .workspace-context-menu {
   position: fixed;
-  z-index: 200;
+  z-index: 2600;
   background: #111a2f;
   border: 1px solid rgba(77, 216, 255, 0.22);
   border-radius: 8px;

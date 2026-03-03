@@ -143,8 +143,23 @@ impl Orchestrator {
         workspace_id: &str,
         session_id: &str,
         language: Option<&str>,
+        agent_id: Option<&str>,
+        is_admin: bool,
         agent_prompt: Option<&str>,
     ) -> String {
+        let resolved_agent_id = agent_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                self.storage
+                    .get_chat_session(user_id, session_id)
+                    .ok()
+                    .flatten()
+                    .and_then(|record| record.agent_id)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+            });
         let workdir = self
             .workspace
             .ensure_user_root(workspace_id)
@@ -177,6 +192,9 @@ impl Orchestrator {
                 workspace_id,
                 agent_prompt,
             )
+            .await;
+        let prompt = self
+            .append_memory_prompt(user_id, resolved_agent_id.as_deref(), prompt, is_admin)
             .await;
         let _ = self
             .workspace

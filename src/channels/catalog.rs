@@ -57,6 +57,38 @@ pub const CHANNEL_CATALOG: &[ChannelCatalogItem] = &[
         webhook_mode: "generic",
         docs_hint: "/wunder/channel/telegram/webhook",
     },
+    ChannelCatalogItem {
+        channel: "discord",
+        display_name: "Discord",
+        description: "Discord bot webhook/callback channel",
+        user_supported: true,
+        webhook_mode: "generic",
+        docs_hint: "/wunder/channel/discord/webhook",
+    },
+    ChannelCatalogItem {
+        channel: "slack",
+        display_name: "Slack",
+        description: "Slack bot webhook/callback channel",
+        user_supported: true,
+        webhook_mode: "generic",
+        docs_hint: "/wunder/channel/slack/webhook",
+    },
+    ChannelCatalogItem {
+        channel: "line",
+        display_name: "LINE",
+        description: "LINE webhook/callback channel",
+        user_supported: true,
+        webhook_mode: "generic",
+        docs_hint: "/wunder/channel/line/webhook",
+    },
+    ChannelCatalogItem {
+        channel: "dingtalk",
+        display_name: "DingTalk",
+        description: "DingTalk webhook/callback channel",
+        user_supported: true,
+        webhook_mode: "generic",
+        docs_hint: "/wunder/channel/dingtalk/webhook",
+    },
 ];
 
 pub fn find_channel(channel: &str) -> Option<&'static ChannelCatalogItem> {

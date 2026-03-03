@@ -37,9 +37,7 @@ use anyhow::anyhow;
 use axum::extract::{Multipart, Path as AxumPath, Query, State};
 use axum::http::{HeaderMap as AxumHeaderMap, StatusCode};
 use axum::response::Response;
-use axum::{
-    routing::delete, routing::get, routing::patch, routing::post, routing::put, Json, Router,
-};
+use axum::{routing::delete, routing::get, routing::patch, routing::post, Json, Router};
 use chrono::{Local, TimeZone, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde::Deserialize;
@@ -306,24 +304,6 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_user_sessions),
         )
         .route("/wunder/admin/users/{user_id}", delete(admin_user_delete))
-        .route("/wunder/admin/memory/users", get(admin_memory_users))
-        .route("/wunder/admin/memory/status", get(admin_memory_status))
-        .route(
-            "/wunder/admin/memory/status/{task_id}",
-            get(admin_memory_status_detail),
-        )
-        .route(
-            "/wunder/admin/memory/{user_id}",
-            get(admin_memory_records).delete(admin_memory_clear),
-        )
-        .route(
-            "/wunder/admin/memory/{user_id}/enabled",
-            post(admin_memory_enabled),
-        )
-        .route(
-            "/wunder/admin/memory/{user_id}/{session_id}",
-            put(admin_memory_update).delete(admin_memory_delete),
-        )
 }
 
 async fn admin_mcp_list(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
@@ -4902,195 +4882,6 @@ async fn admin_users_cleanup_throughput(
     })))
 }
 
-async fn admin_memory_users(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
-    state.monitor.warm_history(true);
-    let sessions = state.monitor.list_sessions(false);
-    let mut user_ids = HashSet::new();
-    for session in sessions {
-        if let Some(user_id) = session.get("user_id").and_then(Value::as_str) {
-            let cleaned = user_id.trim();
-            if !cleaned.is_empty() {
-                user_ids.insert(cleaned.to_string());
-            }
-        }
-    }
-
-    let settings = state.memory.list_settings();
-    let record_stats = state.memory.list_record_stats();
-    user_ids.extend(settings.keys().cloned());
-    user_ids.extend(record_stats.keys().cloned());
-
-    let mut users = Vec::new();
-    let mut sorted_ids = user_ids.into_iter().collect::<Vec<_>>();
-    sorted_ids.sort();
-    for user_id in sorted_ids {
-        let setting = settings.get(&user_id);
-        let stats = record_stats.get(&user_id);
-        let last_time = stats.map(|item| item.last_time).unwrap_or(0.0);
-        users.push(json!({
-            "user_id": user_id,
-            "enabled": setting.map(|item| item.enabled).unwrap_or(false),
-            "record_count": stats.map(|item| item.record_count).unwrap_or(0),
-            "last_updated_time": format_ts(last_time),
-            "last_updated_time_ts": last_time
-        }));
-    }
-    Ok(Json(json!({ "users": users })))
-}
-
-async fn admin_memory_status(State(state): State<Arc<AppState>>) -> Result<Json<Value>, Response> {
-    let status = state.orchestrator.get_memory_queue_status().await;
-    Ok(Json(status))
-}
-
-async fn admin_memory_status_detail(
-    State(state): State<Arc<AppState>>,
-    AxumPath(task_id): AxumPath<String>,
-) -> Result<Json<Value>, Response> {
-    let cleaned = task_id.trim();
-    if cleaned.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.task_id_required"),
-        ));
-    }
-    let detail = state.orchestrator.get_memory_queue_detail(cleaned).await;
-    match detail {
-        Some(value) => Ok(Json(value)),
-        None => Err(error_response(
-            StatusCode::NOT_FOUND,
-            i18n::t("error.task_not_found"),
-        )),
-    }
-}
-
-async fn admin_memory_records(
-    State(state): State<Arc<AppState>>,
-    AxumPath(user_id): AxumPath<String>,
-) -> Result<Json<Value>, Response> {
-    let cleaned = user_id.trim();
-    if cleaned.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
-    let enabled = state.memory.is_enabled(cleaned);
-    let is_admin = state
-        .user_store
-        .get_user_by_id(cleaned)
-        .ok()
-        .flatten()
-        .map(|user| UserStore::is_admin(&user))
-        .unwrap_or(false);
-    let records = state
-        .memory
-        .list_records(cleaned, if is_admin { Some(0) } else { None }, true);
-    let output = records
-        .into_iter()
-        .map(|record| {
-            json!({
-                "session_id": record.session_id,
-                "summary": record.summary,
-                "created_time": format_ts(record.created_time),
-                "updated_time": format_ts(record.updated_time),
-                "created_time_ts": record.created_time,
-                "updated_time_ts": record.updated_time
-            })
-        })
-        .collect::<Vec<_>>();
-    Ok(Json(
-        json!({ "user_id": cleaned, "enabled": enabled, "records": output }),
-    ))
-}
-
-async fn admin_memory_clear(
-    State(state): State<Arc<AppState>>,
-    AxumPath(user_id): AxumPath<String>,
-) -> Result<Json<Value>, Response> {
-    let cleaned = user_id.trim();
-    if cleaned.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
-    let deleted = state.memory.clear_records(cleaned);
-    Ok(Json(
-        json!({ "ok": true, "message": i18n::t("message.cleared"), "deleted": deleted }),
-    ))
-}
-
-async fn admin_memory_enabled(
-    State(state): State<Arc<AppState>>,
-    AxumPath(user_id): AxumPath<String>,
-    Json(payload): Json<MemoryEnabledRequest>,
-) -> Result<Json<Value>, Response> {
-    let cleaned = user_id.trim();
-    if cleaned.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.user_id_required"),
-        ));
-    }
-    state.memory.set_enabled(cleaned, payload.enabled);
-    Ok(Json(
-        json!({ "user_id": cleaned, "enabled": payload.enabled }),
-    ))
-}
-
-async fn admin_memory_update(
-    State(state): State<Arc<AppState>>,
-    AxumPath((user_id, session_id)): AxumPath<(String, String)>,
-    Json(payload): Json<MemoryUpdateRequest>,
-) -> Result<Json<Value>, Response> {
-    let cleaned = user_id.trim();
-    let cleaned_session = session_id.trim();
-    let summary = payload.summary.trim();
-    if cleaned.is_empty() || cleaned_session.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.param_required"),
-        ));
-    }
-    if summary.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    let ok = state
-        .memory
-        .update_record(cleaned, cleaned_session, summary, Some(now_ts()));
-    if !ok {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.content_required"),
-        ));
-    }
-    Ok(Json(
-        json!({ "ok": true, "message": i18n::t("message.updated") }),
-    ))
-}
-
-async fn admin_memory_delete(
-    State(state): State<Arc<AppState>>,
-    AxumPath((user_id, session_id)): AxumPath<(String, String)>,
-) -> Result<Json<Value>, Response> {
-    let cleaned = user_id.trim();
-    let cleaned_session = session_id.trim();
-    if cleaned.is_empty() || cleaned_session.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            i18n::t("error.param_required"),
-        ));
-    }
-    let deleted = state.memory.delete_record(cleaned, cleaned_session);
-    Ok(Json(
-        json!({ "ok": true, "message": i18n::t("message.deleted"), "deleted": deleted }),
-    ))
-}
-
 fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
@@ -6529,16 +6320,6 @@ struct ServerUpdateRequest {
     max_active_sessions: Option<usize>,
     #[serde(default)]
     sandbox_enabled: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryEnabledRequest {
-    enabled: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct MemoryUpdateRequest {
-    summary: String,
 }
 
 #[derive(Debug, Deserialize)]

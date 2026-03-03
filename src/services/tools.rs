@@ -1,4 +1,9 @@
 // 内置工具定义与执行入口，保持工具名称与协议一致。
+//
+// NOTE FOR CONTRIBUTORS:
+// This file is in maintenance mode due to its size and complexity.
+// Do not add new tool business logic directly in `tools.rs`.
+// Implement new capabilities in dedicated modules/files and only wire them here.
 use crate::a2a_store::{A2aStore, A2aTask};
 use crate::command_utils;
 use crate::config::{
@@ -14,6 +19,7 @@ use crate::knowledge;
 use crate::llm::embed_texts;
 use crate::lsp::{LspDiagnostic, LspManager};
 use crate::mcp;
+use crate::memory::{build_agent_memory_owner, normalize_agent_memory_scope, MemoryStore};
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::path_utils::{
@@ -318,6 +324,29 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: "记忆管理".to_string(),
+            description: t("tool.spec.memory_manager.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.memory_manager.args.action"),
+                        "enum": ["list", "add", "update", "delete", "clear"]
+                    },
+                    "memory_id": {"type": "string", "description": t("tool.spec.memory_manager.args.memory_id")},
+                    "content": {"type": "string", "description": t("tool.spec.memory_manager.args.content")},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.memory_manager.args.limit")},
+                    "order": {
+                        "type": "string",
+                        "description": t("tool.spec.memory_manager.args.order"),
+                        "enum": ["desc", "asc"]
+                    }
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolSpec {
             name: "a2a观察".to_string(),
             description: t("tool.spec.a2a_observe.description"),
             input_schema: json!({
@@ -468,7 +497,35 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": t("tool.spec.edit.args.path")},
-                    "edits": {"type": "array", "description": t("tool.spec.edit.args.edits")},
+                    "edits": {
+                        "type": "array",
+                        "description": t("tool.spec.edit.args.edits"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "action": {
+                                    "type": "string",
+                                    "description": t("tool.spec.edit.args.edits.action"),
+                                    "enum": ["replace", "insert_before", "insert_after", "delete"]
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": t("tool.spec.edit.args.edits.start_line")
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": t("tool.spec.edit.args.edits.end_line")
+                                },
+                                "new_content": {
+                                    "type": "string",
+                                    "description": t("tool.spec.edit.args.edits.new_content")
+                                }
+                            },
+                            "required": ["action", "start_line"]
+                        }
+                    },
                     "ensure_newline_at_eof": {"type": "boolean", "description": t("tool.spec.edit.args.ensure_newline")}
                 },
                 "required": ["path", "edits"]
@@ -634,6 +691,8 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("ask_panel".to_string(), "问询面板".to_string());
     map.insert("schedule_task".to_string(), "定时任务".to_string());
     map.insert("user_world".to_string(), "用户世界工具".to_string());
+    map.insert("memory_manager".to_string(), "记忆管理".to_string());
+    map.insert("memory_manage".to_string(), "记忆管理".to_string());
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
     map.insert("a2a_wait".to_string(), "a2a等待".to_string());
     map.insert("execute_command".to_string(), "执行命令".to_string());
@@ -676,6 +735,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "智能体蜂群" => Some("agent_swarm"),
         "节点调用" => Some("node_invoke"),
         "用户世界工具" => Some("user_world"),
+        "记忆管理" => Some("memory_manager"),
         _ => None,
     }
 }
@@ -1028,8 +1088,179 @@ pub async fn execute_builtin_tool(
             .map(compact_cron_tool_result)
         }
         "用户世界工具" => user_world_tool(context, args).await,
+        "记忆管理" => execute_memory_manager_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryManagerArgs {
+    action: String,
+    #[serde(default)]
+    memory_id: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    summary: Option<String>,
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    order: Option<String>,
+}
+
+fn normalize_memory_manager_action(raw: &str) -> String {
+    let cleaned = raw.trim().to_lowercase();
+    match cleaned.as_str() {
+        "list" => "list".to_string(),
+        "add" | "create" | "append" => "add".to_string(),
+        "update" | "upsert" => "update".to_string(),
+        "delete" | "remove" => "delete".to_string(),
+        "clear" | "reset" => "clear".to_string(),
+        _ => String::new(),
+    }
+}
+
+fn normalize_memory_record_id(payload: &MemoryManagerArgs) -> String {
+    payload
+        .memory_id
+        .as_deref()
+        .or(payload.id.as_deref())
+        .or(payload.session_id.as_deref())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn normalize_memory_content(payload: &MemoryManagerArgs) -> String {
+    payload
+        .content
+        .as_deref()
+        .or(payload.summary.as_deref())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+fn normalize_memory_list_limit(limit: Option<i64>) -> i64 {
+    limit.unwrap_or(50).clamp(1, 200)
+}
+
+fn normalize_memory_order_desc(order: Option<&str>) -> bool {
+    let cleaned = order.unwrap_or("").trim().to_lowercase();
+    if cleaned.is_empty() {
+        return true;
+    }
+    !matches!(cleaned.as_str(), "asc" | "ascending")
+}
+
+async fn execute_memory_manager_tool(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let payload: MemoryManagerArgs =
+        serde_json::from_value(args.clone()).map_err(|err| anyhow!(err.to_string()))?;
+    let action = normalize_memory_manager_action(&payload.action);
+    if action.is_empty() {
+        return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action")));
+    }
+
+    let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
+    let agent_scope = normalize_agent_memory_scope(context.agent_id);
+    let memory_store = MemoryStore::new(context.storage.clone());
+
+    let response = match action.as_str() {
+        "list" => {
+            let limit = normalize_memory_list_limit(payload.limit);
+            let records = memory_store.list_records(
+                &owner_key,
+                Some(limit),
+                normalize_memory_order_desc(payload.order.as_deref()),
+            );
+            let items = records
+                .into_iter()
+                .map(|record| {
+                    json!({
+                        "memory_id": record.session_id,
+                        "content": record.summary,
+                        "created_time_ts": record.created_time,
+                        "updated_time_ts": record.updated_time,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "action": action,
+                "agent_id": agent_scope,
+                "count": items.len(),
+                "items": items,
+                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
+            })
+        }
+        "add" => {
+            let content = normalize_memory_content(&payload);
+            if content.is_empty() {
+                return Err(anyhow!(i18n::t("error.content_required")));
+            }
+            let mut memory_id = normalize_memory_record_id(&payload);
+            if memory_id.is_empty() {
+                memory_id = format!("mem_{}", Uuid::new_v4().simple());
+            }
+            let saved =
+                memory_store.upsert_record(&owner_key, &memory_id, &content, Some(now_ts()), None);
+            json!({
+                "action": action,
+                "agent_id": agent_scope,
+                "memory_id": memory_id,
+                "saved": saved,
+                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
+            })
+        }
+        "update" => {
+            let memory_id = normalize_memory_record_id(&payload);
+            if memory_id.is_empty() {
+                return Err(anyhow!(i18n::t("error.content_required")));
+            }
+            let content = normalize_memory_content(&payload);
+            if content.is_empty() {
+                return Err(anyhow!(i18n::t("error.content_required")));
+            }
+            let updated =
+                memory_store.update_record(&owner_key, &memory_id, &content, Some(now_ts()));
+            json!({
+                "action": action,
+                "agent_id": agent_scope,
+                "memory_id": memory_id,
+                "updated": updated,
+                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
+            })
+        }
+        "delete" => {
+            let memory_id = normalize_memory_record_id(&payload);
+            if memory_id.is_empty() {
+                return Err(anyhow!(i18n::t("error.content_required")));
+            }
+            let deleted = memory_store.delete_record(&owner_key, &memory_id);
+            json!({
+                "action": action,
+                "agent_id": agent_scope,
+                "memory_id": memory_id,
+                "deleted": deleted,
+                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
+            })
+        }
+        "clear" => {
+            let deleted = memory_store.clear_records(&owner_key);
+            json!({
+                "action": action,
+                "agent_id": agent_scope,
+                "deleted": deleted,
+                "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
+            })
+        }
+        _ => return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action"))),
+    };
+
+    Ok(response)
 }
 
 fn compact_cron_tool_result(value: Value) -> Value {
@@ -6482,17 +6713,237 @@ async fn replace_text(context: &ToolContext<'_>, args: &Value) -> Result<Value> 
     }))
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileEditAction {
+    Replace,
+    InsertBefore,
+    InsertAfter,
+    Delete,
+}
+
+#[derive(Clone, Debug)]
+struct FileLineEdit {
+    action: FileEditAction,
+    start_line: usize,
+    end_line: usize,
+    new_content: Option<String>,
+}
+
+fn parse_file_edit_action(action: &str) -> Option<FileEditAction> {
+    let normalized = action.trim().to_lowercase();
+    match normalized.as_str() {
+        "" | "replace" | "替换" => Some(FileEditAction::Replace),
+        "insert_before" | "insertbefore" | "before" | "前插入" | "前插" => {
+            Some(FileEditAction::InsertBefore)
+        }
+        "insert_after" | "insertafter" | "after" | "append" | "后插入" | "后插" | "追加" => {
+            Some(FileEditAction::InsertAfter)
+        }
+        "delete" | "remove" | "删除" => Some(FileEditAction::Delete),
+        _ => None,
+    }
+}
+
+fn edit_value_by_alias<'a>(edit: &'a Value, aliases: &[&str]) -> Option<&'a Value> {
+    aliases.iter().find_map(|key| edit.get(*key))
+}
+
+fn parse_edit_line_number(
+    edit: &Value,
+    aliases: &[&str],
+    default: usize,
+    index: usize,
+    field: &str,
+) -> Result<usize> {
+    let Some(raw) = edit_value_by_alias(edit, aliases) else {
+        return Ok(default);
+    };
+    let raw_number = raw
+        .as_u64()
+        .ok_or_else(|| anyhow!("edits[{index}] {field} 必须是整数"))?;
+    if raw_number == 0 {
+        return Err(anyhow!("edits[{index}] {field} 必须 >= 1"));
+    }
+    usize::try_from(raw_number)
+        .map_err(|_| anyhow!("edits[{index}] {field} 超出支持范围"))
+}
+
+fn parse_edit_new_content(edit: &Value, index: usize) -> Result<String> {
+    let raw = edit_value_by_alias(edit, &["new_content", "newContent", "content", "text"])
+        .ok_or_else(|| anyhow!("edits[{index}] 缺少 new_content"))?;
+    raw.as_str()
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("edits[{index}] new_content 必须是字符串"))
+}
+
+fn parse_file_line_edits(edits: &[Value]) -> Result<Vec<FileLineEdit>> {
+    if edits.is_empty() {
+        return Err(anyhow!("edits 不能为空"));
+    }
+    let mut parsed = Vec::with_capacity(edits.len());
+    for (index, edit) in edits.iter().enumerate() {
+        if !edit.is_object() {
+            return Err(anyhow!("edits[{index}] 必须是对象"));
+        }
+        let action_raw = edit_value_by_alias(edit, &["action", "op"])
+            .and_then(Value::as_str)
+            .unwrap_or("replace");
+        let action = parse_file_edit_action(action_raw)
+            .ok_or_else(|| anyhow!("edits[{index}] action 不支持: {action_raw}"))?;
+        let start_line =
+            parse_edit_line_number(edit, &["start_line", "startLine", "line"], 1, index, "start_line")?;
+        let end_line =
+            parse_edit_line_number(edit, &["end_line", "endLine"], start_line, index, "end_line")?;
+        if end_line < start_line {
+            return Err(anyhow!(
+                "edits[{index}] end_line ({end_line}) 不能小于 start_line ({start_line})"
+            ));
+        }
+        let new_content = match action {
+            FileEditAction::Delete => None,
+            _ => Some(parse_edit_new_content(edit, index)?),
+        };
+        parsed.push(FileLineEdit {
+            action,
+            start_line,
+            end_line,
+            new_content,
+        });
+    }
+    Ok(parsed)
+}
+
+fn split_edit_new_content_lines(new_content: &str) -> Vec<String> {
+    new_content
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .split('\n')
+        .map(str::to_string)
+        .collect()
+}
+
+fn apply_file_line_edits(
+    content: &str,
+    edits: &[FileLineEdit],
+    ensure_newline: bool,
+) -> Result<(String, usize, usize)> {
+    let line_ending = if content.contains("\r\n") { "\r\n" } else { "\n" };
+    let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
+    let mut changed_edits = 0_usize;
+    let mut affected_lines = 0_usize;
+
+    for (index, edit) in edits.iter().enumerate() {
+        let start_idx = edit.start_line.saturating_sub(1);
+        let end_idx = edit.end_line.saturating_sub(1);
+        match edit.action {
+            FileEditAction::Replace => {
+                let replacement =
+                    split_edit_new_content_lines(edit.new_content.as_deref().unwrap_or_default());
+                if lines.is_empty() {
+                    if edit.start_line != 1 || edit.end_line != 1 {
+                        return Err(anyhow!(
+                            "edits[{index}] replace 范围超出文件行数（当前 0 行）"
+                        ));
+                    }
+                    lines.splice(0..0, replacement.clone());
+                    changed_edits += 1;
+                    affected_lines += replacement.len().max(1);
+                    continue;
+                }
+                if edit.start_line > lines.len() || edit.end_line > lines.len() {
+                    return Err(anyhow!(
+                        "edits[{index}] replace 范围 {}-{} 超出文件行数（当前 {} 行）",
+                        edit.start_line,
+                        edit.end_line,
+                        lines.len()
+                    ));
+                }
+                let original: Vec<String> = lines[start_idx..=end_idx].to_vec();
+                lines.splice(start_idx..=end_idx, replacement.clone());
+                if original != replacement {
+                    changed_edits += 1;
+                }
+                affected_lines += original.len().max(replacement.len());
+            }
+            FileEditAction::InsertBefore => {
+                if edit.start_line > lines.len() + 1 {
+                    return Err(anyhow!(
+                        "edits[{index}] insert_before 起始行 {} 超出可插入范围（当前 {} 行）",
+                        edit.start_line,
+                        lines.len()
+                    ));
+                }
+                let replacement =
+                    split_edit_new_content_lines(edit.new_content.as_deref().unwrap_or_default());
+                lines.splice(start_idx..start_idx, replacement.clone());
+                changed_edits += 1;
+                affected_lines += replacement.len().max(1);
+            }
+            FileEditAction::InsertAfter => {
+                let insert_idx = if lines.is_empty() {
+                    if edit.end_line != 1 {
+                        return Err(anyhow!(
+                            "edits[{index}] insert_after 结束行 {} 超出可插入范围（当前 0 行）",
+                            edit.end_line
+                        ));
+                    }
+                    0
+                } else {
+                    if edit.end_line > lines.len() {
+                        return Err(anyhow!(
+                            "edits[{index}] insert_after 结束行 {} 超出可插入范围（当前 {} 行）",
+                            edit.end_line,
+                            lines.len()
+                        ));
+                    }
+                    end_idx + 1
+                };
+                let replacement =
+                    split_edit_new_content_lines(edit.new_content.as_deref().unwrap_or_default());
+                lines.splice(insert_idx..insert_idx, replacement.clone());
+                changed_edits += 1;
+                affected_lines += replacement.len().max(1);
+            }
+            FileEditAction::Delete => {
+                if lines.is_empty() {
+                    return Err(anyhow!("edits[{index}] delete 范围超出文件行数（当前 0 行）"));
+                }
+                if edit.start_line > lines.len() || edit.end_line > lines.len() {
+                    return Err(anyhow!(
+                        "edits[{index}] delete 范围 {}-{} 超出文件行数（当前 {} 行）",
+                        edit.start_line,
+                        edit.end_line,
+                        lines.len()
+                    ));
+                }
+                let removed: Vec<String> = lines.drain(start_idx..=end_idx).collect();
+                if !removed.is_empty() {
+                    changed_edits += 1;
+                    affected_lines += removed.len();
+                }
+            }
+        }
+    }
+
+    let mut output = lines.join(line_ending);
+    if ensure_newline && !output.ends_with(line_ending) {
+        output.push_str(line_ending);
+    }
+    Ok((output, changed_edits, affected_lines))
+}
+
 async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let path = args
         .get("path")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("缺少 path"))?
         .to_string();
-    let edits = args
+    let raw_edits = args
         .get("edits")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow!("缺少 edits"))?
         .to_vec();
+    let edits = parse_file_line_edits(&raw_edits)?;
     let allow_roots = collect_allow_roots(context);
     let target = resolve_tool_path(
         context.workspace.as_ref(),
@@ -6504,54 +6955,14 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let content = tokio::task::spawn_blocking(move || std::fs::read_to_string(&target_for_read))
         .await
         .map_err(|err| anyhow!(err.to_string()))??;
-    let mut lines: Vec<String> = content.lines().map(|line| line.to_string()).collect();
-    for edit in edits {
-        let action = edit
-            .get("action")
-            .and_then(Value::as_str)
-            .unwrap_or("replace");
-        let start_line = edit.get("start_line").and_then(Value::as_u64).unwrap_or(1);
-        let end_line = edit
-            .get("end_line")
-            .and_then(Value::as_u64)
-            .unwrap_or(start_line);
-        let new_content = edit
-            .get("new_content")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let start_idx = (start_line.saturating_sub(1)) as usize;
-        let end_idx = (end_line.saturating_sub(1)) as usize;
-        match action {
-            "replace" => {
-                for idx in start_idx..=end_idx.min(lines.len().saturating_sub(1)) {
-                    lines[idx] = new_content.to_string();
-                }
-            }
-            "insert_before" => {
-                if start_idx <= lines.len() {
-                    lines.insert(start_idx, new_content.to_string());
-                }
-            }
-            "insert_after" => {
-                let idx = (end_idx + 1).min(lines.len());
-                lines.insert(idx, new_content.to_string());
-            }
-            "delete" => {
-                if start_idx < lines.len() {
-                    let end = end_idx.min(lines.len().saturating_sub(1));
-                    lines.drain(start_idx..=end);
-                }
-            }
-            _ => warn!("未知编辑动作: {action}"),
-        }
-    }
     let ensure_newline = args
         .get("ensure_newline_at_eof")
         .and_then(Value::as_bool)
         .unwrap_or(true);
-    let mut output = lines.join("\n");
-    if ensure_newline && !output.ends_with('\n') {
-        output.push('\n');
+    let (output, changed_edits, affected_lines) =
+        apply_file_line_edits(&content, &edits, ensure_newline)?;
+    if output == content {
+        return Err(anyhow!("编辑未产生任何变化，请检查行号与新内容"));
     }
     let target_for_write = target.clone();
     tokio::task::spawn_blocking(move || std::fs::write(&target_for_write, output))
@@ -6565,7 +6976,8 @@ async fn edit_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     Ok(json!({
         "ok": true,
         "path": path,
-        "lines": lines.len(),
+        "changed_edits": changed_edits,
+        "affected_lines": affected_lines,
         "lsp": lsp_info
     }))
 }
@@ -7491,6 +7903,52 @@ mod tests {
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].path, "Cargo.toml");
+    }
+
+    #[test]
+    fn parse_file_line_edits_accepts_camel_case_aliases() {
+        let raw = json!([
+            {
+                "action": "replace",
+                "startLine": 3,
+                "endLine": 4,
+                "newContent": "hello"
+            }
+        ]);
+        let edits = parse_file_line_edits(raw.as_array().expect("array")).expect("parse edits");
+        assert_eq!(edits.len(), 1);
+        assert!(matches!(edits[0].action, FileEditAction::Replace));
+        assert_eq!(edits[0].start_line, 3);
+        assert_eq!(edits[0].end_line, 4);
+        assert_eq!(edits[0].new_content.as_deref(), Some("hello"));
+    }
+
+    #[test]
+    fn apply_file_line_edits_rejects_out_of_range_replace() {
+        let edits = vec![FileLineEdit {
+            action: FileEditAction::Replace,
+            start_line: 6,
+            end_line: 6,
+            new_content: Some("x".to_string()),
+        }];
+        let err =
+            apply_file_line_edits("a\nb\n", &edits, true).expect_err("must reject out-of-range");
+        assert!(err.to_string().contains("超出文件行数"));
+    }
+
+    #[test]
+    fn apply_file_line_edits_replaces_range_with_multiline_block() {
+        let edits = vec![FileLineEdit {
+            action: FileEditAction::Replace,
+            start_line: 2,
+            end_line: 3,
+            new_content: Some("x\ny".to_string()),
+        }];
+        let (output, changed_edits, affected_lines) =
+            apply_file_line_edits("a\nb\nc\n", &edits, true).expect("replace should succeed");
+        assert_eq!(output, "a\nx\ny\n");
+        assert_eq!(changed_edits, 1);
+        assert_eq!(affected_lines, 2);
     }
 
     #[test]

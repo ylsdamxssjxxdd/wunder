@@ -4240,6 +4240,7 @@ pub(crate) async fn build_current_system_prompt(
             &skills,
             Some(&user_tool_bindings),
             &runtime.user_id,
+            None,
             false,
             &workspace_id,
             request_overrides.as_ref(),

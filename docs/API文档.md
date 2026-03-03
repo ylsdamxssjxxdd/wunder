@@ -1147,7 +1147,6 @@
 - 内部状态/线程详情：`/wunder/admin/monitor`、`/wunder/admin/monitor/tool_usage`、`/wunder/admin/monitor/{session_id}`、`/wunder/admin/monitor/{session_id}/cancel`、`/wunder/admin/monitor/{session_id}/compaction`。
 - 线程管理：`/wunder/admin/users`、`/wunder/admin/users/{user_id}/sessions`、`/wunder/admin/users/{user_id}`、`/wunder/admin/users/throughput/cleanup`。
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
-- 记忆管理：`/wunder/admin/memory/users`、`/wunder/admin/memory/status`、`/wunder/admin/memory/{user_id}`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 吞吐量/性能/评估/模拟：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/evaluation/*`、`/wunder/admin/sim_lab/*`。
@@ -1399,101 +1398,11 @@
   - `deleted_tool_records`：删除的工具日志数
   - `workspace_deleted`：删除的工作区数量
 
-### 4.1.35 `/wunder/admin/memory/users`
+### 4.1.35 记忆管理接口（已移除）
 
-- 方法：`GET`
-- 返回（JSON）：
-  - `users`：长期记忆用户列表
-    - `user_id`：用户标识
-    - `enabled`：是否启用长期记忆
-    - `record_count`：记忆记录数量
-    - `last_updated_time`：最近更新时间（ISO）
-    - `last_updated_time_ts`：最近更新时间戳（秒）
-
-### 4.1.36 `/wunder/admin/memory/status`
-
-- 方法：`GET`
-- 返回（JSON）：
-  - `active`：活动队列任务列表（包含正在处理与排队中）
-    - `task_id`：任务标识
-    - `user_id`：用户标识
-    - `session_id`：会话标识
-    - `status`：任务状态（正在处理/排队中）
-    - `queued_time`：排队时间（ISO）
-    - `queued_time_ts`：排队时间戳（秒）
-    - `started_time`：开始时间（ISO）
-    - `started_time_ts`：开始时间戳（秒）
-    - `finished_time`：完成时间（ISO）
-    - `finished_time_ts`：完成时间戳（秒）
-    - `elapsed_s`：耗时（秒）
-  - `history`：历史队列任务列表（字段同上，状态为已完成/失败）
-
-### 4.1.37 `/wunder/admin/memory/status/{task_id}`
-
-- 方法：`GET`
-- 返回（JSON）：
-  - `task_id`：任务标识
-  - `user_id`：用户标识
-  - `session_id`：会话标识
-  - `status`：任务状态
-  - `queued_time`：排队时间（ISO）
-  - `queued_time_ts`：排队时间戳（秒）
-  - `started_time`：开始时间（ISO）
-  - `started_time_ts`：开始时间戳（秒）
-  - `finished_time`：完成时间（ISO）
-  - `finished_time_ts`：完成时间戳（秒）
-  - `elapsed_s`：耗时（秒）
-  - `request`：记忆总结请求载荷（messages/tool_names/model_name/config_overrides 等）
-  - `result`：记忆总结结果（纯文本段落）
-  - `error`：失败原因（无则为空）
-
-### 4.1.38 `/wunder/admin/memory/{user_id}`
-
-- 方法：`GET`
-- 返回（JSON）：
-  - `user_id`：用户标识
-  - `enabled`：是否启用长期记忆
-  - `records`：记忆记录列表
-    - `session_id`：会话标识
-    - `summary`：记忆内容（纯文本段落）
-    - `created_time`：创建时间（ISO）
-    - `updated_time`：更新时间（ISO）
-    - `created_time_ts`：创建时间戳（秒）
-    - `updated_time_ts`：更新时间戳（秒）
-
-### 4.1.39 `/wunder/admin/memory/{user_id}/{session_id}`
-
-- 方法：`PUT`
-- 入参（JSON）：
-  - `summary`：记忆内容（纯文本段落）
-- 返回（JSON）：
-  - `ok`：是否成功
-  - `message`：提示信息
-
-### 4.1.40 `/wunder/admin/memory/{user_id}/enabled`
-
-- 方法：`POST`
-- 入参（JSON）：
-  - `enabled`：是否启用长期记忆
-- 返回（JSON）：
-  - `user_id`：用户标识
-  - `enabled`：是否启用长期记忆
-
-### 4.1.41 `/wunder/admin/memory/{user_id}/{session_id}`
-
-- 方法：`DELETE`
-- 返回（JSON）：
-  - `ok`：是否成功
-  - `message`：提示信息
-  - `deleted`：删除条数
-
-### 4.1.42 `/wunder/admin/memory/{user_id}`
-
-- 方法：`DELETE`
-- 返回（JSON）：
-  - `ok`：是否成功
-  - `message`：提示信息
-  - `deleted`：删除条数
+- 原 `/wunder/admin/memory/*` 管理端接口已下线，不再提供管理员侧记忆面板能力。
+- 当前推荐方式：通过内置工具 `记忆管理`（`memory_manager`）由智能体按需维护自己的长期记忆条目。
+- 作用域：按 `用户 + 智能体` 隔离；记忆变更仅影响新会话，已有会话保持原提示词快照。
 
 ### 4.1.43 `/wunder/admin/throughput/start`
 
@@ -2033,8 +1942,8 @@
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}/runtime-records`：智能体运行记录（用户侧）
-  - Query：`days`（可选，1~90，默认 14）、`date`（可选，`YYYY-MM-DD`，作为统计窗口终点与热力图日期）
-  - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`）、`data.daily[]`（按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
+  - Query：`days`（可选，1~90，默认 14，用于日趋势窗口）、`date`（可选，`YYYY-MM-DD`，用于工具调用热力图日期）
+  - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`，为该智能体累计汇总）、`data.daily[]`（最近 `days` 天按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
   - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）查看通用聊天入口的运行记录
 - `PUT /wunder/agents/{agent_id}`：更新智能体
   - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`（可选）
@@ -2232,6 +2141,7 @@
       - `description`：渠道说明
       - `webhook_mode`：接入模式（如 `specialized+generic` / `generic`）
       - `docs_hint`：推荐 webhook 路径提示
+    - 当前默认支持：`feishu`、`wechat`、`wechat_mp`、`qqbot`、`whatsapp`、`telegram`、`discord`、`slack`、`line`、`dingtalk`
   - `meta` 关键字段：
     - `configured`：是否已完成可用配置
     - `peer_kind`：默认会话类型（如 `group` / `user`）

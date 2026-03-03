@@ -182,6 +182,7 @@ impl Orchestrator {
         skills: &SkillRegistry,
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
+        agent_id: Option<&str>,
         is_admin: bool,
         workspace_id: &str,
         config_overrides: Option<&Value>,
@@ -203,7 +204,8 @@ impl Orchestrator {
                 agent_prompt,
             )
             .await;
-        self.append_memory_prompt(user_id, prompt, is_admin).await
+        self.append_memory_prompt(user_id, agent_id, prompt, is_admin)
+            .await
     }
 }
 

@@ -1,74 +1,4 @@
 use super::*;
-use crate::storage::UpsertMemoryTaskLogParams;
-
-const MEMORY_SUMMARY_PROMPT_PATH: &str = "prompts/memory_summary.txt";
-
-#[derive(Clone)]
-pub(super) struct MemorySummaryTask {
-    task_id: String,
-    user_id: String,
-    session_id: String,
-    is_admin: bool,
-    queued_time: f64,
-    config_overrides: Option<Value>,
-    model_name: Option<String>,
-    attachments: Option<Vec<AttachmentPayload>>,
-    request_messages: Option<Vec<Value>>,
-    language: String,
-    status: String,
-    start_time: f64,
-    end_time: f64,
-    request_payload: Option<Value>,
-    final_answer: String,
-    summary_result: String,
-    error: String,
-}
-
-pub(super) struct MemoryQueue {
-    state: Mutex<MemoryQueueState>,
-    notify: Notify,
-}
-
-struct MemoryQueueState {
-    queue: std::collections::BinaryHeap<MemoryQueueItem>,
-    seq: u64,
-    active: Option<MemorySummaryTask>,
-    history: VecDeque<MemorySummaryTask>,
-    worker: Option<JoinHandle<()>>,
-}
-
-struct MemoryQueueItem {
-    queued_time: f64,
-    seq: u64,
-    task: MemorySummaryTask,
-}
-
-impl Ord for MemoryQueueItem {
-    fn cmp(&self, other: &Self) -> Ordering {
-        let time_cmp = other
-            .queued_time
-            .partial_cmp(&self.queued_time)
-            .unwrap_or(Ordering::Equal);
-        if time_cmp != Ordering::Equal {
-            return time_cmp;
-        }
-        other.seq.cmp(&self.seq)
-    }
-}
-
-impl PartialOrd for MemoryQueueItem {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl PartialEq for MemoryQueueItem {
-    fn eq(&self, other: &Self) -> bool {
-        self.queued_time == other.queued_time && self.seq == other.seq
-    }
-}
-
-impl Eq for MemoryQueueItem {}
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -85,108 +15,7 @@ struct RebuiltContextGuardStats {
     fallback_trim_applied: bool,
 }
 
-impl MemoryQueue {
-    pub(super) fn new() -> Self {
-        Self {
-            state: Mutex::new(MemoryQueueState {
-                queue: std::collections::BinaryHeap::new(),
-                seq: 0,
-                active: None,
-                history: VecDeque::with_capacity(100),
-                worker: None,
-            }),
-            notify: Notify::new(),
-        }
-    }
-}
-
 impl Orchestrator {
-    pub async fn get_memory_queue_status(&self) -> Value {
-        let now = now_ts();
-        let (active, queued, history_fallback) = {
-            let state = self.memory_queue.state.lock().await;
-            let active = state.active.clone();
-            let queued = state
-                .queue
-                .iter()
-                .map(|item| item.task.clone())
-                .collect::<Vec<_>>();
-            let history = state.history.iter().cloned().collect::<Vec<_>>();
-            (active, queued, history)
-        };
-
-        let mut active_items = Vec::new();
-        if let Some(task) = active {
-            active_items.push(self.format_memory_task(&task, now));
-        }
-        let mut queued_sorted = queued;
-        queued_sorted.sort_by(|a, b| {
-            let time_cmp = a
-                .queued_time
-                .partial_cmp(&b.queued_time)
-                .unwrap_or(Ordering::Equal);
-            if time_cmp != Ordering::Equal {
-                return time_cmp;
-            }
-            a.task_id.cmp(&b.task_id)
-        });
-        for task in queued_sorted {
-            active_items.push(self.format_memory_task(&task, now));
-        }
-
-        let storage_history = self
-            .memory_store
-            .list_task_logs_async(None)
-            .await
-            .into_iter()
-            .map(|payload| Value::Object(payload.into_iter().collect::<Map<String, Value>>()))
-            .collect::<Vec<_>>();
-        let history = if storage_history.is_empty() {
-            history_fallback
-                .into_iter()
-                .map(|task| self.format_memory_task(&task, now))
-                .collect::<Vec<_>>()
-        } else {
-            storage_history
-        };
-
-        json!({
-            "active": active_items,
-            "history": history,
-        })
-    }
-
-    pub async fn get_memory_queue_detail(&self, task_id: &str) -> Option<Value> {
-        let cleaned = task_id.trim();
-        if cleaned.is_empty() {
-            return None;
-        }
-        if let Some(task) = self.find_memory_task(cleaned).await {
-            let mut detail = self.format_memory_task(&task, now_ts());
-            let log_payload = self.log_payload_enabled().await;
-            let mut request_payload = task.request_payload.clone();
-            if log_payload && request_payload.is_none() {
-                if let Ok(payload) = self.build_memory_summary_request_payload(&task).await {
-                    request_payload = Some(payload);
-                }
-            }
-            if let Value::Object(ref mut map) = detail {
-                if let Some(payload) = request_payload {
-                    map.insert("request".to_string(), payload);
-                }
-                map.insert("result".to_string(), json!(task.summary_result));
-                if !task.error.is_empty() {
-                    map.insert("error".to_string(), json!(task.error));
-                }
-            }
-            return Some(detail);
-        }
-        self.memory_store
-            .get_task_log_async(cleaned)
-            .await
-            .map(|payload| Value::Object(payload.into_iter().collect::<Map<String, Value>>()))
-    }
-
     pub(super) fn shrink_messages_to_limit(&self, messages: Vec<Value>, limit: i64) -> Vec<Value> {
         let total_tokens = estimate_messages_tokens(&messages);
         if total_tokens <= limit {
@@ -837,7 +666,7 @@ impl Orchestrator {
         );
         let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
         let workspace_id = self.resolve_workspace_id(user_id, agent_id);
-        let mut system_prompt = self
+        let system_prompt = self
             .resolve_session_prompt(
                 &config,
                 None,
@@ -849,11 +678,10 @@ impl Orchestrator {
                 &workspace_id,
                 session_id,
                 None,
+                agent_id,
+                is_admin,
                 agent_prompt,
             )
-            .await;
-        system_prompt = self
-            .append_memory_prompt(user_id, system_prompt, is_admin)
             .await;
 
         let _ = self.workspace.flush_writes_async().await;
@@ -919,6 +747,7 @@ impl Orchestrator {
     pub(super) async fn append_memory_prompt(
         &self,
         user_id: &str,
+        agent_id: Option<&str>,
         prompt: String,
         is_admin: bool,
     ) -> String {
@@ -947,16 +776,13 @@ impl Orchestrator {
         let placeholder = crate::prompting::SYSTEM_PROMPT_MEMORY_PLACEHOLDER;
         let has_placeholder = prompt.contains(placeholder);
 
-        let block = if self.memory_store.is_enabled_async(user_id).await {
-            let limit = if is_admin { Some(0) } else { None };
-            let records = self
-                .memory_store
-                .list_records_async(user_id, limit, false)
-                .await;
-            self.memory_store.build_prompt_block(&records)
-        } else {
-            String::new()
-        };
+        let memory_owner = crate::memory::build_agent_memory_owner(user_id, agent_id);
+        let limit = if is_admin { Some(0) } else { None };
+        let records = self
+            .memory_store
+            .list_records_async(&memory_owner, limit, false)
+            .await;
+        let block = self.memory_store.build_prompt_block(&records);
 
         if has_placeholder {
             let replacement = block.trim();
@@ -972,453 +798,6 @@ impl Orchestrator {
             return prompt;
         }
         format!("{}\n\n{}", prompt.trim_end(), block)
-    }
-
-    pub(super) fn load_memory_summary_prompt(&self) -> String {
-        let prompt = read_prompt_template(Path::new(MEMORY_SUMMARY_PROMPT_PATH))
-            .trim()
-            .to_string();
-        if prompt.is_empty() {
-            i18n::t("memory.summary_prompt_fallback")
-        } else {
-            prompt
-        }
-    }
-
-    pub(super) fn trim_attachments_for_memory(
-        &self,
-        attachments: Option<&[AttachmentPayload]>,
-    ) -> Option<Vec<AttachmentPayload>> {
-        let attachments = attachments?;
-        if attachments.is_empty() {
-            return None;
-        }
-        Some(
-            attachments
-                .iter()
-                .map(|item| AttachmentPayload {
-                    name: item.name.clone(),
-                    content: None,
-                    content_type: item.content_type.clone(),
-                })
-                .collect(),
-        )
-    }
-
-    pub(super) fn format_memory_task(&self, task: &MemorySummaryTask, now_ts: f64) -> Value {
-        let queued_ts = task.queued_time.max(0.0);
-        let start_ts = task.start_time.max(0.0);
-        let end_ts = task.end_time.max(0.0);
-        let mut status = task.status.trim().to_string();
-        if status.is_empty() {
-            status = if end_ts > 0.0 {
-                i18n::t("memory.status.done")
-            } else if start_ts > 0.0 {
-                i18n::t("memory.status.running")
-            } else {
-                i18n::t("memory.status.queued")
-            };
-        } else {
-            let normalized = match status.to_lowercase().as_str() {
-                "queued" | "排队中" => Some("queued"),
-                "running" | "processing" | "正在处理" => Some("running"),
-                "done" | "completed" | "已完成" => Some("done"),
-                "failed" | "失败" => Some("failed"),
-                _ => None,
-            };
-            if let Some(normalized) = normalized {
-                status = match normalized {
-                    "queued" => i18n::t("memory.status.queued"),
-                    "running" => i18n::t("memory.status.running"),
-                    "done" => i18n::t("memory.status.done"),
-                    "failed" => i18n::t("memory.status.failed"),
-                    _ => status,
-                };
-            }
-        }
-
-        fn format_ts(ts: f64) -> String {
-            if ts <= 0.0 {
-                return String::new();
-            }
-            Local
-                .timestamp_opt(ts as i64, 0)
-                .single()
-                .map(|dt| dt.to_rfc3339())
-                .unwrap_or_default()
-        }
-
-        let elapsed_s = if end_ts > 0.0 {
-            let base_ts = if start_ts > 0.0 { start_ts } else { queued_ts };
-            if base_ts > 0.0 {
-                (end_ts - base_ts).max(0.0)
-            } else {
-                0.0
-            }
-        } else if start_ts > 0.0 {
-            (now_ts - start_ts).max(0.0)
-        } else if queued_ts > 0.0 {
-            (now_ts - queued_ts).max(0.0)
-        } else {
-            0.0
-        };
-
-        json!({
-            "task_id": task.task_id,
-            "user_id": task.user_id,
-            "session_id": task.session_id,
-            "status": status,
-            "queued_time": format_ts(queued_ts),
-            "queued_time_ts": queued_ts,
-            "started_time": format_ts(start_ts),
-            "started_time_ts": start_ts,
-            "finished_time": format_ts(end_ts),
-            "finished_time_ts": end_ts,
-            "elapsed_s": elapsed_s,
-        })
-    }
-
-    pub(super) async fn find_memory_task(&self, task_id: &str) -> Option<MemorySummaryTask> {
-        let state = self.memory_queue.state.lock().await;
-        if let Some(active) = &state.active {
-            if active.task_id == task_id {
-                return Some(active.clone());
-            }
-        }
-        for item in state.queue.iter() {
-            if item.task.task_id == task_id {
-                return Some(item.task.clone());
-            }
-        }
-        for task in state.history.iter() {
-            if task.task_id == task_id {
-                return Some(task.clone());
-            }
-        }
-        None
-    }
-
-    pub(super) async fn ensure_memory_worker(&self) {
-        let mut state = self.memory_queue.state.lock().await;
-        let should_spawn = state
-            .worker
-            .as_ref()
-            .map(|handle| handle.is_finished())
-            .unwrap_or(true);
-        if !should_spawn {
-            return;
-        }
-        let orchestrator = self.clone();
-        state.worker = Some(tokio::spawn(async move {
-            orchestrator.memory_worker_loop().await;
-        }));
-    }
-
-    pub(super) async fn enqueue_memory_summary(
-        &self,
-        prepared: &PreparedRequest,
-        request_messages: Option<Vec<Value>>,
-        final_answer: &str,
-    ) {
-        if !self.memory_store.is_enabled_async(&prepared.user_id).await {
-            return;
-        }
-        self.ensure_memory_worker().await;
-
-        let task = MemorySummaryTask {
-            task_id: Uuid::new_v4().simple().to_string(),
-            user_id: prepared.user_id.clone(),
-            session_id: prepared.session_id.clone(),
-            is_admin: prepared.is_admin,
-            queued_time: now_ts(),
-            config_overrides: prepared.config_overrides.clone(),
-            model_name: prepared.model_name.clone(),
-            attachments: self.trim_attachments_for_memory(prepared.attachments.as_deref()),
-            request_messages,
-            language: prepared.language.clone(),
-            status: "queued".to_string(),
-            start_time: 0.0,
-            end_time: 0.0,
-            request_payload: None,
-            final_answer: final_answer.trim().to_string(),
-            summary_result: String::new(),
-            error: String::new(),
-        };
-
-        {
-            let mut state = self.memory_queue.state.lock().await;
-            state.seq = state.seq.saturating_add(1);
-            let seq = state.seq;
-            state.queue.push(MemoryQueueItem {
-                queued_time: task.queued_time,
-                seq,
-                task,
-            });
-        }
-        self.memory_queue.notify.notify_one();
-    }
-
-    pub(super) async fn memory_worker_loop(self) {
-        loop {
-            let mut task = loop {
-                let next = {
-                    let mut state = self.memory_queue.state.lock().await;
-                    state.queue.pop().map(|item| item.task)
-                };
-                match next {
-                    Some(task) => break task,
-                    None => self.memory_queue.notify.notified().await,
-                }
-            };
-
-            let stored = i18n::with_language(task.language.clone(), async {
-                task.start_time = now_ts();
-                task.status = "running".to_string();
-                {
-                    let mut state = self.memory_queue.state.lock().await;
-                    state.active = Some(task.clone());
-                }
-
-                match self.run_memory_summary_task(&mut task).await {
-                    Ok(stored) => {
-                        task.status = "done".to_string();
-                        stored
-                    }
-                    Err(err) => {
-                        task.status = "failed".to_string();
-                        task.error = err.to_string();
-                        warn!("记忆总结任务失败: {}", err);
-                        false
-                    }
-                }
-            })
-            .await;
-
-            task.end_time = now_ts();
-            {
-                let mut state = self.memory_queue.state.lock().await;
-                state.active = None;
-                state.history.push_front(task.clone());
-                while state.history.len() > 100 {
-                    state.history.pop_back();
-                }
-            }
-
-            if stored {
-                let base_ts = if task.start_time > 0.0 {
-                    task.start_time
-                } else {
-                    task.queued_time
-                };
-                let elapsed_s = if base_ts > 0.0 && task.end_time > 0.0 {
-                    (task.end_time - base_ts).max(0.0)
-                } else {
-                    0.0
-                };
-                self.memory_store
-                    .upsert_task_log_async(UpsertMemoryTaskLogParams {
-                        user_id: &task.user_id,
-                        session_id: &task.session_id,
-                        task_id: &task.task_id,
-                        status: &task.status,
-                        queued_time: task.queued_time,
-                        started_time: task.start_time,
-                        finished_time: task.end_time,
-                        elapsed_s,
-                        request_payload: task.request_payload.as_ref(),
-                        result: &task.summary_result,
-                        error: &task.error,
-                        updated_time: Some(task.end_time),
-                    })
-                    .await;
-            }
-        }
-    }
-
-    pub(super) async fn run_memory_summary_task(
-        &self,
-        task: &mut MemorySummaryTask,
-    ) -> Result<bool, OrchestratorError> {
-        if !self.memory_store.is_enabled_async(&task.user_id).await {
-            return Ok(false);
-        }
-        let config = self.resolve_config(task.config_overrides.as_ref()).await;
-        let log_payload = is_debug_log_level(&config.observability.log_level);
-        let (llm_name, llm_config) =
-            self.resolve_llm_config(&config, task.model_name.as_deref())?;
-        let mut summary_config = llm_config.clone();
-        let max_output = summary_config.max_output.unwrap_or(0);
-        if max_output == 0 || max_output as i64 > COMPACTION_SUMMARY_MAX_OUTPUT {
-            summary_config.max_output = Some(COMPACTION_SUMMARY_MAX_OUTPUT as u32);
-        }
-        summary_config.max_rounds = Some(1);
-
-        let messages = self
-            .build_memory_summary_messages(task, &summary_config, &config)
-            .await;
-        if log_payload {
-            let payload_messages =
-                self.sanitize_messages_for_log(messages.clone(), task.attachments.as_deref());
-            task.request_payload =
-                Some(self.build_memory_summary_payload(task, &llm_name, payload_messages));
-        } else {
-            task.request_payload = None;
-        }
-
-        let emitter = EventEmitter::new(
-            task.session_id.clone(),
-            task.user_id.clone(),
-            None,
-            None,
-            self.monitor.clone(),
-            task.is_admin,
-            0,
-        );
-        let (content, _, _, _) = self
-            .call_llm(
-                &llm_config,
-                &messages,
-                &task.user_id,
-                task.is_admin,
-                &emitter,
-                &task.session_id,
-                false,
-                RoundInfo::default(),
-                false,
-                false,
-                log_payload,
-                None,
-                Some(summary_config),
-            )
-            .await?;
-        let summary_text = strip_tool_calls(&content);
-        let normalized = MemoryStore::normalize_summary(&summary_text);
-        task.summary_result = normalized.clone();
-        Ok(self
-            .memory_store
-            .upsert_record_async(
-                &task.user_id,
-                &task.session_id,
-                &normalized,
-                Some(task.queued_time),
-                if task.is_admin { Some(0) } else { None },
-            )
-            .await)
-    }
-
-    pub(super) async fn build_memory_summary_request_payload(
-        &self,
-        task: &MemorySummaryTask,
-    ) -> Result<Value, OrchestratorError> {
-        i18n::with_language(task.language.clone(), async {
-            let config = self.resolve_config(task.config_overrides.as_ref()).await;
-            if !is_debug_log_level(&config.observability.log_level) {
-                return Err(OrchestratorError::internal(
-                    "memory payload logging disabled".to_string(),
-                ));
-            }
-            let (llm_name, llm_config) =
-                self.resolve_llm_config(&config, task.model_name.as_deref())?;
-            let mut summary_config = llm_config.clone();
-            let max_output = summary_config.max_output.unwrap_or(0);
-            if max_output == 0 || max_output as i64 > COMPACTION_SUMMARY_MAX_OUTPUT {
-                summary_config.max_output = Some(COMPACTION_SUMMARY_MAX_OUTPUT as u32);
-            }
-            summary_config.max_rounds = Some(1);
-            let messages = self
-                .build_memory_summary_messages(task, &summary_config, &config)
-                .await;
-            let payload_messages =
-                self.sanitize_messages_for_log(messages, task.attachments.as_deref());
-            Ok(self.build_memory_summary_payload(task, &llm_name, payload_messages))
-        })
-        .await
-    }
-
-    pub(super) async fn build_memory_summary_messages(
-        &self,
-        task: &MemorySummaryTask,
-        summary_llm_config: &LlmModelConfig,
-        config: &Config,
-    ) -> Vec<Value> {
-        let summary_instruction = self.load_memory_summary_prompt();
-        let source_messages = if let Some(request_messages) = &task.request_messages {
-            request_messages.clone()
-        } else {
-            let history_manager = HistoryManager;
-            history_manager.load_history_messages(
-                &self.workspace,
-                &task.user_id,
-                &task.session_id,
-                if task.is_admin {
-                    0
-                } else {
-                    config.workspace.max_history_items
-                },
-            )
-        };
-        let user_content =
-            self.build_memory_summary_user_content(&source_messages, &task.final_answer);
-        let mut messages = vec![
-            json!({ "role": "system", "content": summary_instruction }),
-            json!({ "role": "user", "content": user_content }),
-        ];
-        messages = self.prepare_summary_messages(messages, COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
-        if let Some(limit) = HistoryManager::get_auto_compact_limit(summary_llm_config) {
-            if estimate_messages_tokens(&messages) > limit && messages.len() > 1 {
-                let system_tokens = estimate_message_tokens(&messages[0]);
-                let remaining = (limit - system_tokens).max(1);
-                let tail = trim_messages_to_budget(messages.get(1..).unwrap_or(&[]), remaining);
-                messages = vec![messages[0].clone()];
-                messages.extend(tail);
-            }
-        }
-        messages
-    }
-
-    pub(super) fn build_memory_summary_user_content(
-        &self,
-        messages: &[Value],
-        final_answer: &str,
-    ) -> String {
-        let separator = i18n::t("memory.summary.role.separator");
-        let user_label = i18n::t("memory.summary.role.user");
-        let assistant_label = i18n::t("memory.summary.role.assistant");
-        let mut lines: Vec<String> = Vec::new();
-        let mut last_assistant = String::new();
-        for message in messages {
-            let Some(obj) = message.as_object() else {
-                continue;
-            };
-            let role = obj.get("role").and_then(Value::as_str).unwrap_or("").trim();
-            if role.is_empty() || role == "system" || role == "tool" {
-                continue;
-            }
-            if Self::is_observation_message(role, obj.get("content").unwrap_or(&Value::Null)) {
-                continue;
-            }
-            let content =
-                self.extract_memory_summary_text(obj.get("content").unwrap_or(&Value::Null));
-            if content.is_empty() {
-                continue;
-            }
-            let label = if role == "user" {
-                user_label.as_str()
-            } else if role == "assistant" {
-                assistant_label.as_str()
-            } else {
-                role
-            };
-            lines.push(format!("{label}{separator}{content}"));
-            if role == "assistant" {
-                last_assistant = content;
-            }
-        }
-        let final_text = final_answer.trim();
-        if !final_text.is_empty() && final_text != last_assistant {
-            lines.push(format!("{assistant_label}{separator}{final_text}"));
-        }
-        lines.join("\n").trim().to_string()
     }
 
     pub(super) fn build_compaction_user_content(&self, messages: &[Value]) -> String {
@@ -1493,27 +872,6 @@ impl Orchestrator {
             return false;
         };
         text.starts_with(OBSERVATION_PREFIX)
-    }
-
-    pub(super) fn build_memory_summary_payload(
-        &self,
-        task: &MemorySummaryTask,
-        llm_name: &str,
-        messages: Vec<Value>,
-    ) -> Value {
-        let mut payload = json!({
-            "user_id": task.user_id,
-            "session_id": task.session_id,
-            "model_name": llm_name,
-            "tool_names": [],
-            "messages": messages,
-        });
-        if let Some(overrides) = &task.config_overrides {
-            if let Value::Object(ref mut map) = payload {
-                map.insert("config_overrides".to_string(), overrides.clone());
-            }
-        }
-        payload
     }
 
     pub(super) fn build_user_message(
@@ -1965,15 +1323,17 @@ fn resolve_hard_context_guard_limit(
     llm_config: &LlmModelConfig,
     context_tokens: i64,
 ) -> Option<i64> {
-    let max_context = llm_config.max_context.unwrap_or(0).max(0) as i64;
+    let max_context = llm_config.max_context.unwrap_or(0) as i64;
     let configured_trigger = if max_context > 0 {
         ((max_context as f64) * COMPACTION_HARD_GUARD_TRIGGER_RATIO).round() as i64
     } else {
         COMPACTION_HARD_GUARD_TRIGGER_TOKENS
     };
     let trigger = configured_trigger
-        .max(COMPACTION_HARD_GUARD_TRIGGER_TOKENS)
-        .min(COMPACTION_HARD_GUARD_MAX_TRIGGER_TOKENS)
+        .clamp(
+            COMPACTION_HARD_GUARD_TRIGGER_TOKENS,
+            COMPACTION_HARD_GUARD_MAX_TRIGGER_TOKENS,
+        )
         .max(COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
     if context_tokens < trigger {
         return None;

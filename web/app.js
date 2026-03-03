@@ -46,17 +46,6 @@ import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
-import {
-
-  initMemoryPanel,
-
-  loadMemoryStatus,
-
-  loadMemoryUsers,
-
-  toggleMemoryPolling,
-
-} from "./modules/memory.js?v=20260215-01";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
 import {
@@ -168,7 +157,6 @@ const panelMap = {
   externalLinks: { panel: elements.externalLinksPanel, nav: elements.navExternalLinks },
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
-  memory: { panel: elements.memoryPanel, nav: elements.navMemory },
   channels: { panel: elements.channelsPanel, nav: elements.navChannels },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
@@ -361,8 +349,6 @@ const switchPanel = (panel) => {
 
   toggleDebugPolling(panel === "debug");
 
-  toggleMemoryPolling(panel === "memory");
-
   toggleThroughputPolling(panel === "throughput");
 
 };
@@ -502,30 +488,6 @@ const bindNavigation = () => {
         appendLog(t("app.panelLoadFailed", { panel: t("panel.orgUnits"), message: error.message }));
       }
     }
-  });
-
-  elements.navMemory.addEventListener("click", async () => {
-
-    switchPanel("memory");
-
-    if (!state.panelLoaded.memory) {
-
-      try {
-
-        await loadMemoryUsers();
-
-        await loadMemoryStatus();
-
-        state.panelLoaded.memory = true;
-
-      } catch (error) {
-
-        appendLog(t("app.panelLoadFailed", { panel: t("panel.memory"), message: error.message }));
-
-      }
-
-    }
-
   });
 
   elements.navChannels.addEventListener("click", async () => {
@@ -1252,8 +1214,6 @@ const bootstrap = async () => {
   initExternalLinksPanel();
   initOrgUnitsPanel();
   initChannelsPanel();
-
-  initMemoryPanel();
 
   initMcpPanel();
 

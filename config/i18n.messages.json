@@ -971,6 +971,14 @@
     "en-US": "At least one route is required.",
     "zh-CN": "至少提供一条路线。"
   },
+  "tool.memory_manager.invalid_action": {
+    "en-US": "Invalid memory action. Use list/add/update/delete/clear.",
+    "zh-CN": "记忆动作无效，可用 list/add/update/delete/clear。"
+  },
+  "tool.memory_manager.note_new_sessions_only": {
+    "en-US": "Memory changes apply to new sessions only; existing sessions keep their cached prompt snapshot.",
+    "zh-CN": "记忆变更仅对新会话生效；已有会话继续使用已缓存的提示词快照。"
+  },
   "tool.list.path_not_found": {
     "en-US": "Path not found.",
     "zh-CN": "路径不存在。"
@@ -1526,6 +1534,30 @@
   "tool.spec.user_world.description": {
     "en-US": "User world tool: list users or send direct messages.",
     "zh-CN": "用户世界工具：获取用户列表或发送私信。"
+  },
+  "tool.spec.memory_manager.description": {
+    "en-US": "Manage the current agent's long-term memory entries (list/add/update/delete/clear). Trigger after key facts, preferences, constraints, or persistent to-dos appear; avoid frequent writes for transient details. Changes affect new sessions only; existing sessions keep their prompt snapshot.",
+    "zh-CN": "管理当前智能体的长期记忆条目（list/add/update/delete/clear）。当出现稳定事实、用户偏好、长期约束或持续待办时调用；临时信息不要频繁写入。记忆变更仅对新会话生效，已有会话保持原提示词快照。"
+  },
+  "tool.spec.memory_manager.args.action": {
+    "en-US": "Action: list/add/update/delete/clear.",
+    "zh-CN": "动作类型：list/add/update/delete/clear。"
+  },
+  "tool.spec.memory_manager.args.memory_id": {
+    "en-US": "Memory entry id (required for update/delete).",
+    "zh-CN": "记忆条目 ID（update/delete 必填）。"
+  },
+  "tool.spec.memory_manager.args.content": {
+    "en-US": "Memory content (required for add/update).",
+    "zh-CN": "记忆内容（add/update 必填）。"
+  },
+  "tool.spec.memory_manager.args.limit": {
+    "en-US": "Max number of entries for list (1-200).",
+    "zh-CN": "list 时返回条目数量上限（1-200）。"
+  },
+  "tool.spec.memory_manager.args.order": {
+    "en-US": "List order: desc (latest first) or asc.",
+    "zh-CN": "list 排序：desc（新到旧）或 asc。"
   },
   "tool.spec.ptc.args.content": {
     "en-US": "Full Python script content.",

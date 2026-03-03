@@ -6,19 +6,6 @@
 
     <template v-else>
       <div class="messenger-agent-runtime-toolbar">
-        <div class="messenger-agent-runtime-range">
-          {{ runtimeRangeText }}
-        </div>
-        <label class="messenger-agent-runtime-control">
-          <span>{{ t('messenger.agent.runtime.days') }}</span>
-          <select v-model.number="windowDays" :disabled="loading">
-            <option v-for="option in dayOptions" :key="option" :value="option">{{ option }}d</option>
-          </select>
-        </label>
-        <label class="messenger-agent-runtime-control">
-          <span>{{ t('messenger.agent.runtime.date') }}</span>
-          <input v-model="selectedDate" type="date" :disabled="loading" />
-        </label>
         <button class="messenger-inline-btn" type="button" :disabled="loading" @click="loadRuntimeRecords">
           {{ loading ? t('common.loading') : t('common.refresh') }}
         </button>
@@ -172,6 +159,7 @@ const TOOL_HEATMAP_HUE_ANCHORS = [
 ] as const;
 const TOOL_HEATMAP_TILE_SIZE = 68;
 const TOOL_HEATMAP_GAP = 8;
+const RUNTIME_TREND_WINDOW_DAYS = 14;
 const TOOL_HEATMAP_ICON_RULES: ReadonlyArray<{ keyword: string; icon: string }> = [
   { keyword: '计划面板', icon: 'fa-table-columns' },
   { keyword: '计划看板', icon: 'fa-table-columns' },
@@ -218,13 +206,11 @@ const TOOL_HEATMAP_ICON_RULES: ReadonlyArray<{ keyword: string; icon: string }> 
   { keyword: 'replace_text', icon: 'fa-arrow-right-arrow-left' }
 ];
 
-const dayOptions = [7, 14, 30];
 const trendChartRef = ref<HTMLElement | null>(null);
 const heatmapWrapRef = ref<HTMLElement | null>(null);
 const loading = ref(false);
 const errorMessage = ref('');
 const runtimeData = ref<RuntimePayload | null>(null);
-const windowDays = ref(14);
 const selectedDate = ref(resolveTodayDate());
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const heatmapRows = ref(3);
@@ -287,16 +273,6 @@ const heatmapTiles = computed<RuntimeHeatmapTile[]>(() =>
 );
 
 const hasHeatmapData = computed(() => heatmapTiles.value.length > 0);
-const runtimeRangeText = computed(() => {
-  const range = runtimeData.value?.range;
-  const start = String(range?.start_date || '').trim();
-  const end = String(range?.end_date || '').trim();
-  const days = Number(range?.days || 0);
-  if (start && end) {
-    return `${start} ~ ${end} (${days || windowDays.value}d)`;
-  }
-  return t('messenger.agent.runtime.rangePlaceholder', { days: windowDays.value });
-});
 
 function toSafeNumber(value: unknown): number {
   const parsed = Number(value);
@@ -555,7 +531,7 @@ async function loadRuntimeRecords() {
   errorMessage.value = '';
   try {
     const { data } = await getAgentRuntimeRecords(normalizedAgentId.value, {
-      days: windowDays.value,
+      days: RUNTIME_TREND_WINDOW_DAYS,
       date: selectedDate.value
     });
     if (serial !== requestSerial) {
@@ -587,6 +563,18 @@ async function loadRuntimeRecords() {
   }
 }
 
+function handleTrendChartClick(params: { dataIndex?: number }) {
+  const index = Number(params?.dataIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= dailyRows.value.length) {
+    return;
+  }
+  const nextDate = String(dailyRows.value[index]?.date || '').trim();
+  if (!nextDate || nextDate === selectedDate.value) {
+    return;
+  }
+  selectedDate.value = nextDate;
+}
+
 function renderTrendChart() {
   const container = trendChartRef.value;
   if (!container) {
@@ -594,6 +582,7 @@ function renderTrendChart() {
   }
   if (!trendChart) {
     trendChart = echarts.init(container);
+    trendChart.on('click', handleTrendChartClick);
   }
   const palette = resolveChartPalette();
   const dates = dailyRows.value.map((item) => String(item.date || '').slice(5));
@@ -601,6 +590,10 @@ function renderTrendChart() {
   const billedTokens = dailyRows.value.map((item) => item.billed_tokens);
   const quotaConsumed = dailyRows.value.map((item) => item.quota_consumed);
   const toolCalls = dailyRows.value.map((item) => item.tool_calls);
+  const runtimeSeriesName = t('messenger.agent.runtime.series.runtime');
+  const tokenSeriesName = t('messenger.agent.runtime.series.tokens');
+  const quotaSeriesName = t('messenger.agent.runtime.series.quota');
+  const toolSeriesName = t('messenger.agent.runtime.series.tools');
   trendChart.setOption(
     {
       animation: false,
@@ -615,12 +608,14 @@ function renderTrendChart() {
       legend: {
         top: 0,
         textStyle: { color: palette.text },
-        data: [
-          t('messenger.agent.runtime.series.runtime'),
-          t('messenger.agent.runtime.series.tokens'),
-          t('messenger.agent.runtime.series.quota'),
-          t('messenger.agent.runtime.series.tools')
-        ]
+        selectedMode: 'single',
+        data: [runtimeSeriesName, tokenSeriesName, quotaSeriesName, toolSeriesName],
+        selected: {
+          [runtimeSeriesName]: false,
+          [tokenSeriesName]: true,
+          [quotaSeriesName]: false,
+          [toolSeriesName]: false
+        }
       },
       xAxis: {
         type: 'category',
@@ -636,28 +631,28 @@ function renderTrendChart() {
       },
       series: [
         {
-          name: t('messenger.agent.runtime.series.runtime'),
+          name: runtimeSeriesName,
           type: 'line',
           smooth: true,
           symbolSize: 6,
           data: runtimeMinutes
         },
         {
-          name: t('messenger.agent.runtime.series.tokens'),
+          name: tokenSeriesName,
           type: 'line',
           smooth: true,
           symbolSize: 6,
           data: billedTokens
         },
         {
-          name: t('messenger.agent.runtime.series.quota'),
+          name: quotaSeriesName,
           type: 'line',
           smooth: true,
           symbolSize: 6,
           data: quotaConsumed
         },
         {
-          name: t('messenger.agent.runtime.series.tools'),
+          name: toolSeriesName,
           type: 'line',
           smooth: true,
           symbolSize: 6,
@@ -684,13 +679,12 @@ watch(
     }
     if (previous && value !== previous) {
       selectedDate.value = resolveTodayDate();
-      windowDays.value = 14;
     }
   },
   { immediate: true }
 );
 
-watch([() => normalizedAgentId.value, windowDays, selectedDate], () => {
+watch([() => normalizedAgentId.value, selectedDate], () => {
   if (!normalizedAgentId.value) {
     return;
   }
@@ -760,48 +754,9 @@ onBeforeUnmount(() => {
 
 .messenger-agent-runtime-toolbar {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 10px;
-}
-
-.messenger-agent-runtime-range {
-  display: inline-flex;
+  justify-content: flex-end;
   align-items: center;
-  padding: 0 12px;
-  height: 34px;
-  border-radius: 9px;
-  border: 1px solid var(--hula-border);
-  background: var(--hula-center-bg);
-  color: var(--hula-muted);
-  font-size: 12px;
-}
-
-.messenger-agent-runtime-control {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 130px;
-  font-size: 12px;
-  color: var(--hula-muted);
-}
-
-.messenger-agent-runtime-control select,
-.messenger-agent-runtime-control input {
-  border: 1px solid var(--hula-border);
-  border-radius: 9px;
-  background: var(--hula-center-bg);
-  color: var(--hula-text);
-  height: 34px;
-  padding: 0 10px;
-  font-size: 12px;
-}
-
-.messenger-agent-runtime-control select:focus-visible,
-.messenger-agent-runtime-control input:focus-visible {
-  outline: 2px solid rgba(var(--ui-accent-rgb), 0.32);
-  outline-offset: 1px;
+  gap: 8px;
 }
 
 .messenger-agent-runtime-error {

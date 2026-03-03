@@ -27,7 +27,7 @@ use crate::orchestrator_constants::{
     TOOL_RESULT_TAIL_CHARS, TOOL_RESULT_TRUNCATION_MARKER,
 };
 use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
-use crate::prompting::{read_prompt_template, PromptComposer};
+use crate::prompting::PromptComposer;
 use crate::sandbox;
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
 use crate::skills::{load_skills, SkillRegistry};
@@ -45,19 +45,18 @@ use crate::user_tools::{UserToolBindings, UserToolManager};
 use crate::user_world::UserWorldService;
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Local, TimeZone, Utc};
+use chrono::{DateTime, Local, Utc};
 use futures::{Stream, StreamExt};
 use parking_lot::Mutex as ParkingMutex;
 use regex::Regex;
 use serde_json::{json, Map, Value};
-use std::cmp::Ordering;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Mutex, Notify, RwLock};
+use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{error, warn};
 use uuid::Uuid;
@@ -79,11 +78,9 @@ mod types;
 
 use context::ContextManager;
 pub(crate) use error::OrchestratorError;
-use event_stream::now_ts;
 use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
-use memory::MemoryQueue;
 use tool_calls::apply_tool_name_map;
 use tool_calls::collect_tool_calls_from_output;
 use tool_calls::compile_regex;
@@ -104,7 +101,6 @@ pub struct Orchestrator {
     prompt_composer: Arc<PromptComposer>,
     storage: Arc<dyn StorageBackend>,
     memory_store: Arc<MemoryStore>,
-    memory_queue: Arc<MemoryQueue>,
     user_world: Arc<UserWorldService>,
     http: reqwest::Client,
 }
@@ -137,7 +133,6 @@ impl Orchestrator {
             prompt_composer: Arc::new(PromptComposer::new(60.0, 256)),
             storage,
             memory_store,
-            memory_queue: Arc::new(MemoryQueue::new()),
             user_world,
             http: reqwest::Client::new(),
         }

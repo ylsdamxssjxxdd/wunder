@@ -1513,6 +1513,7 @@
       @toggle-collapse="rightDockCollapsed = !rightDockCollapsed"
       @restore-session="restoreTimelineSession"
       @set-main="setTimelineSessionMain"
+      @open-session-detail="openTimelineSessionDetail"
       @delete-session="deleteTimelineSession"
       @open-container="openContainerFromRightDock"
       @open-container-settings="openContainerSettingsFromRightDock"
@@ -1543,6 +1544,11 @@
       :records="filteredWorldHistoryRecords"
       :format-time="formatTime"
       @locate="locateWorldHistoryMessage"
+    />
+
+    <MessengerTimelineDetailDialog
+      v-model:visible="timelineDetailDialogVisible"
+      :session-id="timelineDetailSessionId"
     />
 
     <el-dialog
@@ -1657,7 +1663,11 @@ import { ElLoading, ElMessage } from 'element-plus';
 import { listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
 import { listChannelBindings } from '@/api/channels';
-import { getSession as getChatSessionApi, fetchSessionSystemPrompt, fetchRealtimeSystemPrompt } from '@/api/chat';
+import {
+  getSession as getChatSessionApi,
+  fetchSessionSystemPrompt,
+  fetchRealtimeSystemPrompt
+} from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
@@ -1673,6 +1683,7 @@ import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePr
 import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
+import MessengerTimelineDetailDialog from '@/components/messenger/MessengerTimelineDetailDialog.vue';
 import UserPromptSettingsPanel from '@/components/messenger/UserPromptSettingsPanel.vue';
 import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
@@ -1771,6 +1782,13 @@ import {
   type WorldHistoryRecord
 } from '@/views/messenger/model';
 
+/**
+ * NOTE FOR CONTRIBUTORS:
+ * This view has become too large and is now in maintenance mode.
+ * Do not add new business logic directly in `MessengerView.vue`.
+ * Add new features in dedicated files (for example under `views/messenger/` or composables),
+ * then import and wire them here.
+ */
 const route = useRoute();
 const router = useRouter();
 const { t } = useI18n();
@@ -1935,6 +1953,8 @@ const fileContainerContextMenu = ref<{
 const desktopContainerRootMap = ref<Record<number, string>>({});
 const timelinePreviewMap = ref<Map<string, string>>(new Map());
 const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
+const timelineDetailDialogVisible = ref(false);
+const timelineDetailSessionId = ref('');
 const approvalResponding = ref(false);
 const messengerSendKey = ref<MessengerSendKeyMode>('ctrl_enter');
 const messengerApprovalMode = ref<AgentApprovalMode>('auto_edit');
@@ -3844,7 +3864,8 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
     const hitInsideRightDock = Boolean(
       (rightDockElement && rightDockElement.contains(target)) ||
       targetElement?.closest('.messenger-right-dock') ||
-      targetElement?.closest('.messenger-files-context-menu')
+      targetElement?.closest('.messenger-files-context-menu') ||
+      targetElement?.closest('.workspace-context-menu')
     );
     if (!isSecondaryClick && !hitInsideRightDock) {
       rightDockCollapsed.value = true;
@@ -5835,6 +5856,22 @@ const restoreTimelineSession = async (sessionId: string) => {
   if (!sessionId) return;
   await openAgentSession(sessionId);
 };
+
+const openTimelineSessionDetail = (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return;
+  timelineDetailSessionId.value = targetId;
+  timelineDetailDialogVisible.value = true;
+};
+
+watch(
+  () => timelineDetailDialogVisible.value,
+  (visible) => {
+    if (!visible) {
+      timelineDetailSessionId.value = '';
+    }
+  }
+);
 
 const setTimelineSessionMain = async (sessionId: string) => {
   if (!sessionId) return;

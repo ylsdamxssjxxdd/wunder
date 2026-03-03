@@ -178,38 +178,40 @@
 
     <input ref="uploadInputRef" type="file" multiple style="display: none" @change="handleUploadInput" />
 
-    <div
-      v-show="contextMenu.visible"
-      ref="menuRef"
-      class="workspace-context-menu"
-      :style="menuStyle"
-      @contextmenu.prevent
-    >
-      <button class="workspace-menu-btn" @click="handleNewFile">
-        {{ t('workspace.menu.newFile') }}
-      </button>
-      <button class="workspace-menu-btn" :disabled="!canEdit" @click="handleEdit">
-        {{ t('common.edit') }}
-      </button>
-      <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleRename">
-        {{ t('workspace.menu.rename') }}
-      </button>
-      <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleMove">
-        {{ t('workspace.menu.move') }}
-      </button>
-      <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleCopy">
-        {{ t('workspace.menu.copy') }}
-      </button>
-      <button class="workspace-menu-btn" @click="handleNewFolder">
-        {{ t('workspace.menu.newFolder') }}
-      </button>
-      <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleDownload">
-        {{ t('common.download') }}
-      </button>
-      <button class="workspace-menu-btn danger" :disabled="!hasSelection" @click="handleDelete">
-        {{ t('common.delete') }}
-      </button>
-    </div>
+    <Teleport to="body">
+      <div
+        v-show="contextMenu.visible"
+        ref="menuRef"
+        class="workspace-context-menu"
+        :style="menuStyle"
+        @contextmenu.prevent
+      >
+        <button class="workspace-menu-btn" @click="handleNewFile">
+          {{ t('workspace.menu.newFile') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!canEdit" @click="handleEdit">
+          {{ t('common.edit') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleRename">
+          {{ t('workspace.menu.rename') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleMove">
+          {{ t('workspace.menu.move') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleCopy">
+          {{ t('workspace.menu.copy') }}
+        </button>
+        <button class="workspace-menu-btn" @click="handleNewFolder">
+          {{ t('workspace.menu.newFolder') }}
+        </button>
+        <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleDownload">
+          {{ t('common.download') }}
+        </button>
+        <button class="workspace-menu-btn danger" :disabled="!hasSelection" @click="handleDelete">
+          {{ t('common.delete') }}
+        </button>
+      </div>
+    </Teleport>
 
     <el-dialog
       v-model="preview.visible"
@@ -1519,10 +1521,10 @@ const openContextMenu = async (event, entry) => {
   await nextTick();
   const menuRect = menuRef.value?.getBoundingClientRect();
   if (!menuRect) return;
-  const maxLeft = window.innerWidth - menuRect.width - 8;
-  const maxTop = window.innerHeight - menuRect.height - 8;
-  state.contextMenu.x = Math.min(state.contextMenu.x, maxLeft);
-  state.contextMenu.y = Math.min(state.contextMenu.y, maxTop);
+  const maxLeft = Math.max(8, window.innerWidth - menuRect.width - 8);
+  const maxTop = Math.max(8, window.innerHeight - menuRect.height - 8);
+  state.contextMenu.x = Math.min(Math.max(8, state.contextMenu.x), maxLeft);
+  state.contextMenu.y = Math.min(Math.max(8, state.contextMenu.y), maxTop);
 };
 
 const handleEdit = () => {

@@ -1,0 +1,565 @@
+<template>
+  <el-dialog
+    v-model="dialogVisible"
+    class="messenger-dialog messenger-timeline-detail-dialog"
+    :title="dialogTitle"
+    width="900px"
+    destroy-on-close
+  >
+    <div v-if="loading" class="messenger-timeline-detail-loading">
+      {{ t('common.loading') }}
+    </div>
+    <div v-else class="messenger-timeline-detail-panel">
+      <div class="messenger-timeline-detail-toolbar">
+        <div class="messenger-timeline-detail-meta">{{ detailMeta }}</div>
+        <button
+          class="messenger-inline-btn messenger-timeline-detail-export-btn"
+          type="button"
+          :disabled="!sessionDetail"
+          :title="t('messenger.timeline.detail.export')"
+          :aria-label="t('messenger.timeline.detail.export')"
+          @click="exportTimelineDetail"
+        >
+          <i class="fa-solid fa-download" aria-hidden="true"></i>
+          <span>{{ t('messenger.timeline.detail.export') }}</span>
+        </button>
+      </div>
+
+      <div class="messenger-timeline-detail-section">
+        <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.question') }}</label>
+        <div class="messenger-timeline-detail-question">{{ detailQuestion }}</div>
+      </div>
+
+      <div class="messenger-timeline-detail-section">
+        <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.events') }}</label>
+        <div class="messenger-timeline-detail-filters">
+          <select v-model="eventTypeFilter" class="messenger-timeline-detail-filter-select">
+            <option value="">{{ t('messenger.timeline.detail.filterAllTypes') }}</option>
+            <option v-for="item in eventTypeOptions" :key="item" :value="item">
+              {{ item }}
+            </option>
+          </select>
+          <input
+            v-model.trim="keywordFilter"
+            class="messenger-timeline-detail-filter-input"
+            type="text"
+            :placeholder="t('messenger.timeline.detail.filterKeyword')"
+          />
+          <div class="messenger-timeline-detail-filter-stats">{{ filterStats }}</div>
+        </div>
+
+        <div v-if="!filteredEvents.length" class="messenger-timeline-detail-empty">
+          {{ t('messenger.timeline.detail.noEvents') }}
+        </div>
+        <div v-else class="messenger-timeline-detail-events">
+          <details
+            v-for="item in filteredEvents"
+            :key="item.key"
+            class="messenger-timeline-detail-event-item"
+          >
+            <summary class="messenger-timeline-detail-event-summary">
+              <span class="messenger-timeline-detail-event-time">[{{ item.timestampLabel }}]</span>
+              <span class="messenger-timeline-detail-event-type">#{{ item.order }} {{ item.eventType }}</span>
+              <span class="messenger-timeline-detail-event-title">{{ item.title }}</span>
+              <span class="messenger-timeline-detail-event-round">
+                {{ t('messenger.timeline.detail.round', { round: item.round }) }}
+              </span>
+            </summary>
+            <pre class="messenger-timeline-detail-event-raw">{{ item.raw }}</pre>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <template #footer>
+      <el-button @click="dialogVisible = false">{{ t('common.close') }}</el-button>
+    </template>
+  </el-dialog>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue';
+import { ElMessage } from 'element-plus';
+
+import { getSession as getChatSessionApi, getSessionEvents as getChatSessionEventsApi } from '@/api/chat';
+import { getCurrentLanguage, useI18n } from '@/i18n';
+import { showApiError } from '@/utils/apiError';
+
+type TimelineDetailRoundEvent = {
+  event?: unknown;
+  type?: unknown;
+  data?: unknown;
+  timestamp?: unknown;
+};
+
+type TimelineDetailRound = {
+  user_round?: unknown;
+  round?: unknown;
+  events?: TimelineDetailRoundEvent[];
+};
+
+type TimelineDetailEventItem = {
+  key: string;
+  order: number;
+  round: number;
+  eventType: string;
+  timestampLabel: string;
+  title: string;
+  raw: string;
+  searchText: string;
+};
+
+type TimelineDetailSession = {
+  id: string;
+  title: string;
+  createdAt: unknown;
+  updatedAt: unknown;
+  lastMessageAt: unknown;
+  messageCount: number;
+  historyIncomplete: boolean;
+  messages: Record<string, unknown>[];
+};
+
+const TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH = 120;
+
+const props = defineProps<{
+  visible: boolean;
+  sessionId: string;
+}>();
+
+const emit = defineEmits<{
+  'update:visible': [value: boolean];
+}>();
+
+const { t } = useI18n();
+
+const dialogVisible = computed({
+  get: () => props.visible,
+  set: (value: boolean) => emit('update:visible', value)
+});
+
+const loading = ref(false);
+const sessionDetail = ref<TimelineDetailSession | null>(null);
+const rounds = ref<TimelineDetailRound[]>([]);
+const running = ref(false);
+const lastEventId = ref(0);
+const eventTypeFilter = ref('');
+const keywordFilter = ref('');
+
+let requestToken = 0;
+
+const resetFilters = () => {
+  eventTypeFilter.value = '';
+  keywordFilter.value = '';
+};
+
+const resetDetailState = () => {
+  loading.value = false;
+  sessionDetail.value = null;
+  rounds.value = [];
+  running.value = false;
+  lastEventId.value = 0;
+  resetFilters();
+};
+
+const normalizeTimestamp = (value: unknown): number => {
+  if (value === null || value === undefined) return 0;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? 0 : value.getTime();
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  const text = String(value).trim();
+  if (!text) return 0;
+  if (/^-?\d+(\.\d+)?$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return 0;
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+};
+
+const unwrapEventData = (payload: unknown): unknown => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+  const source = payload as Record<string, unknown>;
+  const hasSessionId = typeof source.session_id === 'string' && source.session_id.trim().length > 0;
+  const hasTimestamp = typeof source.timestamp === 'string' && source.timestamp.trim().length > 0;
+  const inner = source.data;
+  if (hasSessionId && hasTimestamp && inner && typeof inner === 'object') {
+    return inner;
+  }
+  return payload;
+};
+
+const stringifyEventData = (payload: unknown, pretty = false): string => {
+  try {
+    const resolved = unwrapEventData(payload);
+    if (typeof resolved === 'string') {
+      return resolved;
+    }
+    const text = JSON.stringify(resolved ?? null, null, pretty ? 2 : undefined);
+    return typeof text === 'string' ? text : String(text);
+  } catch {
+    return String(payload ?? '');
+  }
+};
+
+const truncateText = (value: unknown): string => {
+  const text = String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) {
+    return '';
+  }
+  if (text.length <= TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH) {
+    return text;
+  }
+  return `${text.slice(0, TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH)}...`;
+};
+
+const resolveEventTitle = (eventType: string, payload: unknown): string => {
+  const normalizedType = String(eventType || '')
+    .trim()
+    .toLowerCase();
+  const data = unwrapEventData(payload);
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const source = data as Record<string, unknown>;
+    const userInputTitle =
+      normalizedType === 'user_input'
+        ? source.message || source.question || source.input || source.content
+        : '';
+    const summary =
+      userInputTitle ||
+      source.summary ||
+      source.message ||
+      source.question ||
+      source.error ||
+      source.reason ||
+      source.tool ||
+      source.tool_name ||
+      source.toolName ||
+      source.name ||
+      source.model ||
+      source.model_name ||
+      source.stage ||
+      source.status;
+    const title = truncateText(summary);
+    if (title) {
+      return title;
+    }
+  }
+  if (typeof data === 'string') {
+    const title = truncateText(data);
+    if (title) {
+      return title;
+    }
+  }
+  const fallback = truncateText(stringifyEventData(data, false));
+  return fallback || '-';
+};
+
+const formatEventTimestamp = (value: unknown): string => {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '-';
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return text;
+  }
+  return parsed.toLocaleString(getCurrentLanguage());
+};
+
+const normalizeRoundIndex = (value: unknown, fallback: number): number => {
+  const parsed = Number.parseInt(String(value ?? fallback), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return Math.max(1, fallback);
+  }
+  return parsed;
+};
+
+const normalizeRounds = (value: unknown): TimelineDetailRound[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      const source =
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? (item as Record<string, unknown>)
+          : {};
+      const events = Array.isArray(source.events)
+        ? source.events
+            .filter((event) => event && typeof event === 'object' && !Array.isArray(event))
+            .map((event) => event as TimelineDetailRoundEvent)
+        : [];
+      return {
+        user_round: source.user_round,
+        round: source.round,
+        events
+      } as TimelineDetailRound;
+    })
+    .filter((item) => Array.isArray(item.events) && item.events.length > 0);
+};
+
+const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSession => {
+  const source =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const messages = Array.isArray(source.messages)
+    ? source.messages
+        .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+        .map((item) => item as Record<string, unknown>)
+    : [];
+  return {
+    id: String(source.id || sessionId),
+    title: String(source.title || ''),
+    createdAt: source.created_at,
+    updatedAt: source.updated_at,
+    lastMessageAt: source.last_message_at,
+    messageCount: messages.length,
+    historyIncomplete: Boolean(source.history_incomplete),
+    messages
+  };
+};
+
+const resolveQuestion = (session: TimelineDetailSession | null): string => {
+  if (!session) {
+    return t('messenger.timeline.detail.questionEmpty');
+  }
+  for (const message of session.messages) {
+    if (String(message?.role || '').trim() !== 'user') continue;
+    const content = String(message?.content || '').trim();
+    if (content) {
+      return content;
+    }
+  }
+  const fallback = String(session.title || '').trim();
+  if (fallback) {
+    return fallback;
+  }
+  return t('messenger.timeline.detail.questionEmpty');
+};
+
+const formatMetaTime = (value: unknown): string => {
+  const ts = normalizeTimestamp(value);
+  if (!ts) {
+    return '-';
+  }
+  return new Date(ts).toLocaleString(getCurrentLanguage());
+};
+
+const events = computed<TimelineDetailEventItem[]>(() => {
+  const result: TimelineDetailEventItem[] = [];
+  let order = 0;
+  rounds.value.forEach((round, roundIndex) => {
+    const roundIndexValue = normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1);
+    const eventList = Array.isArray(round?.events) ? round.events : [];
+    eventList.forEach((event, eventIndex) => {
+      order += 1;
+      const eventType = String(event?.event || event?.type || 'unknown').trim() || 'unknown';
+      const raw = stringifyEventData(event?.data, true);
+      const title = resolveEventTitle(eventType, event?.data);
+      const timestampLabel = formatEventTimestamp(event?.timestamp);
+      const searchText = `${eventType} ${title} ${stringifyEventData(event?.data, false)}`.toLowerCase();
+      result.push({
+        key: `${roundIndexValue}-${eventType}-${order}-${eventIndex}`,
+        order,
+        round: roundIndexValue,
+        eventType,
+        timestampLabel,
+        title,
+        raw,
+        searchText
+      });
+    });
+  });
+  return result;
+});
+
+const eventTypeOptions = computed(() => {
+  const types = new Set<string>();
+  events.value.forEach((item) => {
+    if (item.eventType) {
+      types.add(item.eventType);
+    }
+  });
+  return Array.from(types).sort((left, right) => left.localeCompare(right));
+});
+
+const filteredEvents = computed(() => {
+  const selectedType = String(eventTypeFilter.value || '').trim();
+  const keyword = String(keywordFilter.value || '')
+    .trim()
+    .toLowerCase();
+  return events.value.filter((item) => {
+    if (selectedType && item.eventType !== selectedType) {
+      return false;
+    }
+    if (!keyword) {
+      return true;
+    }
+    return item.searchText.includes(keyword);
+  });
+});
+
+const dialogTitle = computed(() => {
+  const sessionId = String(sessionDetail.value?.id || props.sessionId || '').trim();
+  return sessionId
+    ? t('messenger.timeline.detail.titleWithId', { id: sessionId })
+    : t('messenger.timeline.detail.title');
+});
+
+const detailQuestion = computed(() => resolveQuestion(sessionDetail.value));
+
+const detailMeta = computed(() => {
+  const session = sessionDetail.value;
+  if (!session) {
+    return '';
+  }
+  const parts = [
+    t('messenger.timeline.detail.metaSessionId', { id: session.id || '-' }),
+    t('messenger.timeline.detail.metaCreatedAt', { time: formatMetaTime(session.createdAt) }),
+    t('messenger.timeline.detail.metaUpdatedAt', {
+      time: formatMetaTime(session.updatedAt || session.lastMessageAt)
+    }),
+    t('messenger.timeline.detail.metaMessageCount', { count: session.messageCount }),
+    t('messenger.timeline.detail.metaRoundCount', { count: rounds.value.length }),
+    t('messenger.timeline.detail.metaEventCount', { count: events.value.length })
+  ];
+  if (running.value) {
+    parts.push(t('messenger.timeline.detail.running'));
+  }
+  if (session.historyIncomplete) {
+    parts.push(t('messenger.timeline.detail.historyIncomplete'));
+  }
+  if (lastEventId.value > 0) {
+    parts.push(t('messenger.timeline.detail.metaLastEventId', { id: lastEventId.value }));
+  }
+  return parts.join(' · ');
+});
+
+const filterStats = computed(() =>
+  t('messenger.timeline.detail.filterStats', {
+    visible: filteredEvents.value.length,
+    total: events.value.length
+  })
+);
+
+const sanitizeFilenamePart = (value: unknown, fallback: string): string => {
+  const text = String(value || '').trim();
+  const safe = text.replace(/[\\/:*?"<>|]+/g, '_');
+  return safe || fallback;
+};
+
+const buildExportFilename = (sessionId: string): string => {
+  const safeSessionId = sanitizeFilenamePart(sessionId, 'session');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `timeline-detail-${safeSessionId}-${timestamp}.json`;
+};
+
+const saveBlobUrl = (url: string, filename: string) => {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+};
+
+const loadTimelineDetail = async (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) {
+    return;
+  }
+  const currentToken = ++requestToken;
+  loading.value = true;
+  sessionDetail.value = null;
+  rounds.value = [];
+  running.value = false;
+  lastEventId.value = 0;
+  resetFilters();
+  try {
+    const [sessionRes, eventsRes] = await Promise.all([
+      getChatSessionApi(targetId),
+      getChatSessionEventsApi(targetId).catch(() => null)
+    ]);
+    if (currentToken !== requestToken) {
+      return;
+    }
+    const sessionData = (sessionRes?.data as { data?: unknown } | undefined)?.data;
+    sessionDetail.value = normalizeSession(targetId, sessionData);
+    const eventPayload = (eventsRes?.data as { data?: Record<string, unknown> } | undefined)?.data;
+    rounds.value = normalizeRounds(eventPayload?.rounds);
+    running.value = Boolean(eventPayload?.running);
+    const parsedLastEventId = Number.parseInt(String(eventPayload?.last_event_id ?? 0), 10);
+    lastEventId.value = Number.isFinite(parsedLastEventId) && parsedLastEventId > 0 ? parsedLastEventId : 0;
+  } catch (error) {
+    if (currentToken !== requestToken) {
+      return;
+    }
+    dialogVisible.value = false;
+    showApiError(error, t('messenger.timeline.detail.loadFailed'));
+  } finally {
+    if (currentToken === requestToken) {
+      loading.value = false;
+    }
+  }
+};
+
+const exportTimelineDetail = () => {
+  const session = sessionDetail.value;
+  if (!session) {
+    return;
+  }
+  try {
+    const payload = {
+      exported_at: new Date().toISOString(),
+      session,
+      rounds: rounds.value,
+      running: running.value,
+      last_event_id: lastEventId.value
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json;charset=utf-8'
+    });
+    const objectUrl = URL.createObjectURL(blob);
+    saveBlobUrl(objectUrl, buildExportFilename(session.id));
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    ElMessage.success(t('messenger.timeline.detail.exported'));
+  } catch (error) {
+    const detail = String((error as { message?: string })?.message || t('common.requestFailed'));
+    ElMessage.error(t('messenger.timeline.detail.exportFailed', { message: detail }));
+  }
+};
+
+watch(
+  [() => dialogVisible.value, () => props.sessionId],
+  ([visible, sessionId]) => {
+    const targetId = String(sessionId || '').trim();
+    if (!visible || !targetId) {
+      return;
+    }
+    void loadTimelineDetail(targetId);
+  },
+  { immediate: true }
+);
+
+watch(
+  () => dialogVisible.value,
+  (visible) => {
+    if (visible) {
+      return;
+    }
+    requestToken += 1;
+    resetDetailState();
+  }
+);
+</script>

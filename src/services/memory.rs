@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tracing::{error, warn};
 
 const DEFAULT_MAX_RECORDS: i64 = 30;
+const DEFAULT_AGENT_MEMORY_SCOPE: &str = "__default__";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MemoryRecord {
@@ -33,6 +34,26 @@ pub struct MemoryRecordStat {
 pub struct MemoryStore {
     storage: Arc<dyn StorageBackend>,
     max_records: i64,
+}
+
+pub fn normalize_agent_memory_scope(agent_id: Option<&str>) -> String {
+    let cleaned = agent_id.map(str::trim).unwrap_or("");
+    if cleaned.is_empty()
+        || cleaned.eq_ignore_ascii_case("__default__")
+        || cleaned.eq_ignore_ascii_case("default")
+    {
+        return DEFAULT_AGENT_MEMORY_SCOPE.to_string();
+    }
+    cleaned.to_string()
+}
+
+pub fn build_agent_memory_owner(user_id: &str, agent_id: Option<&str>) -> String {
+    let cleaned_user = user_id.trim();
+    let agent_scope = normalize_agent_memory_scope(agent_id);
+    if cleaned_user.is_empty() {
+        return format!("agent_memory::{agent_scope}");
+    }
+    format!("agent_memory::{cleaned_user}::{agent_scope}")
 }
 
 impl MemoryStore {

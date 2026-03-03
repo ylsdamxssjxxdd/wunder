@@ -191,9 +191,26 @@ const resolveI18nEndpoint = (): string => {
   return `${base.replace(/\/+$/, '')}/i18n`;
 };
 
+const buildI18nRequestHeaders = (): HeadersInit | undefined => {
+  try {
+    const token = String(localStorage.getItem('access_token') || '').trim();
+    if (!token) {
+      return undefined;
+    }
+    return {
+      Authorization: `Bearer ${token}`
+    };
+  } catch {
+    return undefined;
+  }
+};
+
 export const initI18n = async (): Promise<void> => {
   try {
-    const response = await fetch(resolveI18nEndpoint(), { method: 'GET' });
+    const response = await fetch(resolveI18nEndpoint(), {
+      method: 'GET',
+      headers: buildI18nRequestHeaders()
+    });
     if (response.ok) {
       const payload = (await response.json()) as { data?: I18nConfigPayload } & Record<string, unknown>;
       configureI18n((payload.data as I18nConfigPayload) || (payload as I18nConfigPayload) || {});

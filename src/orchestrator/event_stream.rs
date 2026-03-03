@@ -727,10 +727,6 @@ fn enrich_event_payload(data: Value, session_id: Option<&str>, timestamp: DateTi
     Value::Object(map)
 }
 
-pub(super) fn now_ts() -> f64 {
-    Utc::now().timestamp_millis() as f64 / 1000.0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

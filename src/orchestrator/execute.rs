@@ -167,23 +167,22 @@ impl Orchestrator {
                     None
                 };
 
-            let mut system_prompt = self
+            let system_prompt = self
                 .resolve_session_prompt(
                     &config,
                     prepared.config_overrides.as_ref(),
                     &allowed_tool_names,
                     tool_call_mode,
-                &skills_snapshot,
-                Some(&user_tool_bindings),
-                &user_id,
-                &prepared.workspace_id,
-                &session_id,
-                Some(&prepared.language),
-                prepared.agent_prompt.as_deref(),
-            )
-                .await;
-            system_prompt = self
-                .append_memory_prompt(&user_id, system_prompt, is_admin)
+                    &skills_snapshot,
+                    Some(&user_tool_bindings),
+                    &user_id,
+                    &prepared.workspace_id,
+                    &session_id,
+                    Some(&prepared.language),
+                    prepared.agent_id.as_deref(),
+                    is_admin,
+                    prepared.agent_prompt.as_deref(),
+                )
                 .await;
 
             let history_manager = HistoryManager;
@@ -228,7 +227,6 @@ impl Orchestrator {
             let mut a2ui_uid: Option<String> = None;
             let mut a2ui_messages: Option<Value> = None;
             let mut last_response: Option<(String, String)> = None;
-            let mut last_request_messages: Option<Vec<Value>> = None;
             let mut last_round_info = request_round;
 
             let mut model_round = 0_i64;
@@ -276,12 +274,6 @@ impl Orchestrator {
                     round_info.insert_into(map);
                 }
                 emitter.emit("context_usage", context_payload).await;
-
-                last_request_messages =
-                    Some(self.sanitize_messages_for_log(
-                        messages.clone(),
-                        prepared.attachments.as_deref(),
-                    ));
 
                 let mut llm_call_payload = json!({
                     "stage": "llm_call",
@@ -869,9 +861,6 @@ impl Orchestrator {
                     stop_reason = Some(fallback_reason.to_string());
                 }
             }
-
-            self.enqueue_memory_summary(&prepared, last_request_messages, &answer)
-                .await;
 
             let stop_reason = stop_reason.unwrap_or_else(|| "unknown".to_string());
             let waiting_question_panel = stop_reason == "question_panel";

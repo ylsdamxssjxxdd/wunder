@@ -62,6 +62,15 @@
                   <i class="fa-solid fa-thumbtack" aria-hidden="true"></i>
                 </button>
                 <button
+                  class="messenger-timeline-detail-btn"
+                  type="button"
+                  :title="t('messenger.timeline.detail.open')"
+                  :aria-label="t('messenger.timeline.detail.open')"
+                  @click.stop="$emit('open-session-detail', item.id)"
+                >
+                  <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+                </button>
+                <button
                   class="messenger-timeline-delete-btn"
                   type="button"
                   :title="t('chat.history.delete')"
@@ -132,6 +141,7 @@ const emit = defineEmits<{
   (event: 'toggle-collapse'): void;
   (event: 'restore-session', sessionId: string): void;
   (event: 'set-main', sessionId: string): void;
+  (event: 'open-session-detail', sessionId: string): void;
   (event: 'delete-session', sessionId: string): void;
   (event: 'open-container', containerId: number): void;
   (event: 'open-container-settings', containerId: number): void;

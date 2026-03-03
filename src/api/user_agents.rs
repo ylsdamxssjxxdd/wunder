@@ -489,9 +489,8 @@ async fn get_agent_runtime_records(
         .days
         .unwrap_or(DEFAULT_RUNTIME_WINDOW_DAYS)
         .clamp(1, MAX_RUNTIME_WINDOW_DAYS);
-    let selected_date =
-        parse_runtime_date(query.date.as_deref()).unwrap_or_else(|| Local::now().date_naive());
-    let range_end = selected_date;
+    let range_end = Local::now().date_naive();
+    let selected_date = parse_runtime_date(query.date.as_deref()).unwrap_or(range_end);
     let range_start = range_end - Duration::days(window_days.saturating_sub(1));
 
     let (range_start_ts, _) = local_day_bounds(range_start).ok_or_else(|| {
@@ -505,13 +504,16 @@ async fn get_agent_runtime_records(
             error_response(StatusCode::BAD_REQUEST, i18n::t("error.content_required"))
         })?;
 
-    let since_time = Some((range_start_ts.min(selected_start_ts) - 86_400.0).max(0.0));
     let records =
         state
             .monitor
-            .load_records_by_user(&user_id, None, since_time, MAX_RUNTIME_RECORD_LIMIT);
+            .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
     let mut daily = build_runtime_day_map(range_start, range_end);
     let mut heatmap_by_tool: HashMap<String, [i64; 24]> = HashMap::new();
+    let mut summary_runtime_seconds = 0.0_f64;
+    let mut summary_billed_tokens = 0_i64;
+    let mut summary_quota_consumed = 0_i64;
+    let mut summary_tool_calls = 0_i64;
 
     for record in records {
         let current_agent_id = normalize_agent_id(
@@ -542,10 +544,14 @@ async fn get_agent_runtime_records(
             range_start_ts,
             range_end_ts,
         );
+        summary_runtime_seconds += (session_end - session_start).max(0.0);
 
         let mut round_usage_by_day: HashMap<String, i64> = HashMap::new();
         let mut token_usage_by_day: HashMap<String, i64> = HashMap::new();
         let mut has_round_usage = false;
+        let mut has_round_usage_total = false;
+        let mut session_round_usage = 0_i64;
+        let mut session_token_usage = 0_i64;
 
         if let Some(events) = record.get("events").and_then(Value::as_array) {
             for event in events {
@@ -566,32 +572,40 @@ async fn get_agent_runtime_records(
 
                 match event_type {
                     "round_usage" => {
+                        let total_tokens = parse_usage_total_tokens(data);
+                        if total_tokens <= 0 {
+                            continue;
+                        }
+                        has_round_usage_total = true;
+                        session_round_usage =
+                            session_round_usage.saturating_add(total_tokens.max(0));
                         if !in_range {
                             continue;
                         }
-                        let total_tokens = parse_usage_total_tokens(data);
-                        if total_tokens > 0 {
-                            has_round_usage = true;
-                            let entry = round_usage_by_day.entry(day_key).or_default();
-                            *entry = entry.saturating_add(total_tokens);
-                        }
+                        has_round_usage = true;
+                        let entry = round_usage_by_day.entry(day_key).or_default();
+                        *entry = entry.saturating_add(total_tokens);
                     }
                     "token_usage" => {
+                        let total_tokens = parse_usage_total_tokens(data);
+                        if total_tokens <= 0 {
+                            continue;
+                        }
+                        session_token_usage =
+                            session_token_usage.saturating_add(total_tokens.max(0));
                         if !in_range {
                             continue;
                         }
-                        let total_tokens = parse_usage_total_tokens(data);
-                        if total_tokens > 0 {
-                            let entry = token_usage_by_day.entry(day_key).or_default();
-                            *entry = entry.saturating_add(total_tokens);
-                        }
+                        let entry = token_usage_by_day.entry(day_key).or_default();
+                        *entry = entry.saturating_add(total_tokens);
                     }
                     "quota_usage" => {
-                        if !in_range {
-                            continue;
-                        }
                         let consumed = parse_i64_value(data.get("consumed")).unwrap_or(1).max(0);
                         if consumed <= 0 {
+                            continue;
+                        }
+                        summary_quota_consumed = summary_quota_consumed.saturating_add(consumed);
+                        if !in_range {
                             continue;
                         }
                         if let Some(entry) = daily.get_mut(&day_key) {
@@ -599,6 +613,7 @@ async fn get_agent_runtime_records(
                         }
                     }
                     "tool_call" => {
+                        summary_tool_calls = summary_tool_calls.saturating_add(1);
                         if in_range {
                             if let Some(entry) = daily.get_mut(&day_key) {
                                 entry.tool_calls = entry.tool_calls.saturating_add(1);
@@ -627,6 +642,12 @@ async fn get_agent_runtime_records(
         } else {
             &token_usage_by_day
         };
+        let session_billed_tokens = if has_round_usage_total {
+            session_round_usage
+        } else {
+            session_token_usage
+        };
+        summary_billed_tokens = summary_billed_tokens.saturating_add(session_billed_tokens.max(0));
         for (day_key, total_tokens) in usage_source {
             if let Some(entry) = daily.get_mut(day_key) {
                 entry.billed_tokens = entry.billed_tokens.saturating_add((*total_tokens).max(0));
@@ -634,17 +655,9 @@ async fn get_agent_runtime_records(
         }
     }
 
-    let mut total_runtime_seconds = 0.0;
-    let mut total_billed_tokens = 0_i64;
-    let mut total_quota_consumed = 0_i64;
-    let mut total_tool_calls = 0_i64;
     let daily_items = daily
         .iter()
         .map(|(date, stats)| {
-            total_runtime_seconds += stats.runtime_seconds;
-            total_billed_tokens = total_billed_tokens.saturating_add(stats.billed_tokens.max(0));
-            total_quota_consumed = total_quota_consumed.saturating_add(stats.quota_consumed.max(0));
-            total_tool_calls = total_tool_calls.saturating_add(stats.tool_calls.max(0));
             json!({
                 "date": date,
                 "runtime_seconds": round_f64(stats.runtime_seconds),
@@ -702,10 +715,10 @@ async fn get_agent_runtime_records(
                 "selected_date": selected_date.format("%Y-%m-%d").to_string(),
             },
             "summary": {
-                "runtime_seconds": round_f64(total_runtime_seconds),
-                "billed_tokens": total_billed_tokens.max(0),
-                "quota_consumed": total_quota_consumed.max(0),
-                "tool_calls": total_tool_calls.max(0),
+                "runtime_seconds": round_f64(summary_runtime_seconds.max(0.0)),
+                "billed_tokens": summary_billed_tokens.max(0),
+                "quota_consumed": summary_quota_consumed.max(0),
+                "tool_calls": summary_tool_calls.max(0),
             },
             "daily": daily_items,
             "heatmap": {

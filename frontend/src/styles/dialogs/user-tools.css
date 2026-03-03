@@ -588,7 +588,7 @@
   transition: padding-right 0.16s ease;
 }
 
-.user-tools-dialog .user-skill-item:hover .tool-item-info {
+.user-tools-dialog .user-skill-item.has-delete:hover .tool-item-info {
   padding-right: 34px;
 }
 

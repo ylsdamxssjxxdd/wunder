@@ -240,11 +240,6 @@ impl Orchestrator {
         }
     }
 
-    pub(super) async fn log_payload_enabled(&self) -> bool {
-        let config = self.config_store.get().await;
-        is_debug_log_level(&config.observability.log_level)
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub(super) async fn call_llm(
         &self,

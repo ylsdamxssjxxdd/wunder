@@ -268,6 +268,9 @@ fn is_tool_name_token(cleaned: &str) -> bool {
     if cleaned.is_empty() || cleaned.len() > 64 {
         return false;
     }
+    if !cleaned.chars().any(|ch| ch.is_alphabetic()) {
+        return false;
+    }
     if cleaned.contains('{')
         || cleaned.contains('[')
         || cleaned.contains('}')
@@ -1152,6 +1155,12 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_prefixed_tool_name_rejects_iso_date_token() {
+        let name = extract_prefixed_tool_name("summary generated at 2026-03-03", false);
+        assert!(name.is_none());
+    }
+
+    #[test]
     fn test_extract_prefixed_tool_name_reads_name_from_partial_json_prefix() {
         let name = extract_prefixed_tool_name(r#"{"name":"编辑文件","arguments":"#, false);
         assert_eq!(name.as_deref(), Some("编辑文件"));
@@ -1195,6 +1204,21 @@ def fibonacci(n):
             calls[0].arguments.get("file_path").and_then(Value::as_str),
             Some("Cargo.toml")
         );
+    }
+
+    #[test]
+    fn test_parse_tool_call_ignores_date_like_prefixed_name_with_fenced_json() {
+        let content = r#"## ✅ 编辑完成
+
+| 字段 | 值 |
+|------|----|
+| 时间 | 2026-03-03 |
+
+```json
+{"fields":["id","name","score"],"timestamp":"...","total_records":3}
+```"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert!(calls.is_empty());
     }
 
     #[test]

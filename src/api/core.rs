@@ -165,6 +165,7 @@ async fn wunder_system_prompt(
             &skills_snapshot,
             Some(&user_tool_bindings),
             &request.user_id,
+            None,
             false,
             &workspace_id,
             request.config_overrides.as_ref(),
