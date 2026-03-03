@@ -1283,6 +1283,14 @@
     "en-US": "Generate A2UI UI and send it to the client for rendering.",
     "zh-CN": "生成 A2UI 界面并返回给客户端渲染。"
   },
+  "tool.spec.apply_patch.args.input": {
+    "en-US": "Complete apply_patch payload from *** Begin Patch to *** End Patch.",
+    "zh-CN": "完整的 apply_patch 补丁文本（从 *** Begin Patch 到 *** End Patch）。"
+  },
+  "tool.spec.apply_patch.description": {
+    "en-US": "Apply a multi-file patch using the apply_patch grammar.",
+    "zh-CN": "使用 apply_patch 语法对多个文件应用补丁。"
+  },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",
     "zh-CN": "按顺序执行的编辑操作列表。"

@@ -660,6 +660,7 @@ async fn run_python_script(
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut cmd, runtime);
     }
+    command_utils::apply_platform_spawn_options(&mut cmd);
     run_command_output(cmd, timeout_s)
         .await
         .map_err(|err| err.detail)

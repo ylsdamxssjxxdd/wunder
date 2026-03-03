@@ -5,16 +5,11 @@
       <div class="header-actions">
         <button
           class="user-tools-btn secondary compact btn-with-icon"
-          :class="{ 'is-loading': refreshingAll }"
           type="button"
           :disabled="!hasConnected || refreshingAll || isActiveServerConnecting"
           @click="refreshAll"
         >
-          <i
-            class="fa-solid"
-            :class="refreshingAll ? 'fa-spinner user-tools-btn-spinner' : 'fa-arrows-rotate'"
-            aria-hidden="true"
-          ></i>
+          <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
           <span>{{ refreshingAll ? t('userTools.mcp.action.connecting') : t('userTools.mcp.action.refreshAll') }}</span>
         </button>
         <button class="user-tools-btn secondary compact" type="button" @click="openImportModal">
@@ -47,10 +42,6 @@
             >
               <div class="list-item-title">
                 <span>{{ server.display_name || server.name || t('userTools.mcp.server.unnamed') }}</span>
-                <span v-if="isServerConnecting(index)" class="mcp-connecting-badge">
-                  <i class="fa-solid fa-spinner" aria-hidden="true"></i>
-                  {{ t('userTools.mcp.action.connecting') }}
-                </span>
               </div>
               <small>{{ buildServerSubtitle(server) }}</small>
             </button>
@@ -76,16 +67,11 @@
           <div class="actions">
             <button
               class="user-tools-btn btn-with-icon"
-              :class="{ 'is-loading': isActiveServerConnecting }"
               type="button"
               :disabled="!activeServer || isActiveServerConnecting || refreshingAll"
               @click="connectServer"
             >
-              <i
-                class="fa-solid"
-                :class="isActiveServerConnecting ? 'fa-spinner user-tools-btn-spinner' : 'fa-plug'"
-                aria-hidden="true"
-              ></i>
+              <i class="fa-solid fa-plug" aria-hidden="true"></i>
               <span>{{ connectLabel }}</span>
             </button>
             <button

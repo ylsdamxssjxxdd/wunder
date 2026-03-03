@@ -60,7 +60,7 @@ const getProviderPreset = (provider) =>
 
 const resolveProviderBaseUrl = (provider) => getProviderPreset(provider)?.baseUrl || "";
 
-const TOOL_CALL_MODE_OPTIONS = new Set(["tool_call", "function_call"]);
+const TOOL_CALL_MODE_OPTIONS = new Set(["tool_call", "function_call", "freeform_call"]);
 const normalizeToolCallMode = (value) => {
   const raw = String(value || "").trim();
   if (!raw) {
@@ -69,6 +69,13 @@ const normalizeToolCallMode = (value) => {
   const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
   if (normalized === "function" || normalized === "functioncall" || normalized === "fc") {
     return "function_call";
+  }
+  if (
+    normalized === "freeform" ||
+    normalized === "freeformcall" ||
+    normalized === "custom_tool_call"
+  ) {
+    return "freeform_call";
   }
   if (
     normalized === "tool" ||
@@ -203,6 +210,7 @@ const normalizeLlmConfig = (raw) => ({
   max_output:
     typeof raw?.max_output === "number" && !Number.isNaN(raw.max_output) ? raw.max_output : null,
   support_vision: raw?.support_vision === true,
+  support_hearing: raw?.support_hearing === true,
   stream: raw?.stream === true,
   stream_include_usage: raw?.stream_include_usage !== false,
   tool_call_mode: normalizeToolCallMode(raw?.tool_call_mode),
@@ -271,6 +279,7 @@ const clearLlmForm = () => {
   elements.llmMaxContext.value = "";
   elements.llmMaxOutput.value = "";
   elements.llmVision.checked = false;
+  elements.llmHearing.checked = false;
   elements.llmStreamIncludeUsage.checked = true;
   if (elements.llmToolCallMode) {
     elements.llmToolCallMode.value = "function_call";
@@ -324,6 +333,7 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmMaxContext.value = llm.max_context ?? "";
   elements.llmMaxOutput.value = llm.max_output ?? "";
   elements.llmVision.checked = llm.support_vision;
+  elements.llmHearing.checked = llm.support_hearing;
   elements.llmStreamIncludeUsage.checked = llm.stream_include_usage === true;
   if (elements.llmToolCallMode) {
     elements.llmToolCallMode.value = llm.tool_call_mode || "function_call";
@@ -480,6 +490,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
       max_context: null,
       max_output: null,
       support_vision: false,
+      support_hearing: false,
       stream: false,
       stream_include_usage: false,
       tool_call_mode: null,
@@ -502,6 +513,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
     max_context: Number.isFinite(maxContext) && maxContext > 0 ? maxContext : null,
     max_output: Number.isFinite(maxOutput) && maxOutput > 0 ? maxOutput : null,
     support_vision: elements.llmVision.checked,
+    support_hearing: elements.llmHearing.checked,
     stream: base.stream,
     stream_include_usage: elements.llmStreamIncludeUsage.checked,
     tool_call_mode: normalizeToolCallMode(

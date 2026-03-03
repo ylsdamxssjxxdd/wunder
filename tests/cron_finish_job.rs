@@ -111,3 +111,42 @@ fn cron_finish_respects_disabled_job() {
 
     let _ = std::fs::remove_file(db_path);
 }
+
+#[test]
+fn cron_finish_auto_disables_after_consecutive_errors() {
+    let db_path = std::env::temp_dir().join(format!(
+        "wunder_cron_finish_autodisable_{}.db",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+    storage.ensure_initialized().unwrap();
+    let now = now_ts();
+    let job = build_job(now, "job_autodisable");
+    storage.upsert_cron_job(&job).unwrap();
+
+    for attempt in 0..5 {
+        persist_cron_run_and_update_job(
+            &storage,
+            job.clone(),
+            "timer".to_string(),
+            "error".to_string(),
+            None,
+            Some(format!("error attempt {}", attempt + 1)),
+            now + attempt as f64,
+            400,
+            now + attempt as f64,
+        )
+        .unwrap();
+    }
+
+    let fetched = storage
+        .get_cron_job(&job.user_id, &job.job_id)
+        .unwrap()
+        .expect("job should remain");
+    assert!(!fetched.enabled);
+    assert!(fetched.next_run_at.is_none());
+    assert_eq!(fetched.consecutive_failures, 5);
+    assert!(fetched.auto_disabled_reason.is_some());
+
+    let _ = std::fs::remove_file(db_path);
+}

@@ -23,6 +23,27 @@ async fn cron_action_add_update_remove() {
     let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store));
     let skills = Arc::new(RwLock::new(SkillRegistry::default()));
 
+    let empty_status_resp = handle_cron_action(
+        config.clone(),
+        storage.clone(),
+        None,
+        user_store.clone(),
+        user_tool_manager.clone(),
+        skills.clone(),
+        "cron_user",
+        None,
+        None,
+        CronActionRequest {
+            action: "status".to_string(),
+            job: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(empty_status_resp["action"], "status");
+    assert_eq!(empty_status_resp["user_jobs"]["total"], 0);
+    assert!(empty_status_resp["user_jobs"]["next_run_at"].is_null());
+
     let add_payload = CronActionRequest {
         action: "add".to_string(),
         job: Some(CronJobInput {
@@ -63,6 +84,29 @@ async fn cron_action_add_update_remove() {
     assert_eq!(add_resp["action"], "add");
     assert_eq!(add_resp["job"]["session_id"], "session_a");
     assert!(add_resp["job"]["next_run_at"].is_number());
+
+    let status_resp = handle_cron_action(
+        config.clone(),
+        storage.clone(),
+        None,
+        user_store.clone(),
+        user_tool_manager.clone(),
+        skills.clone(),
+        "cron_user",
+        None,
+        None,
+        CronActionRequest {
+            action: "status".to_string(),
+            job: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(status_resp["action"], "status");
+    assert_eq!(status_resp["scheduler"]["enabled"], true);
+    assert_eq!(status_resp["user_jobs"]["total"], 1);
+    assert_eq!(status_resp["user_jobs"]["enabled"], 1);
+    assert!(status_resp["user_jobs"]["next_run_at"].is_number());
 
     let list_resp = handle_cron_action(
         config.clone(),
@@ -148,6 +192,14 @@ async fn cron_action_add_update_remove() {
     assert_eq!(update_resp["job"]["enabled"], false);
     assert!(update_resp["job"]["next_run_at"].is_null());
 
+    let mut stored_job = storage
+        .get_cron_job("cron_user", &job_id)
+        .unwrap()
+        .expect("cron job should exist");
+    stored_job.consecutive_failures = 3;
+    stored_job.auto_disabled_reason = Some("auto disabled in previous run".to_string());
+    storage.upsert_cron_job(&stored_job).unwrap();
+
     let enable_resp = handle_cron_action(
         config.clone(),
         storage.clone(),
@@ -178,6 +230,8 @@ async fn cron_action_add_update_remove() {
     .await
     .unwrap();
     assert_eq!(enable_resp["job"]["enabled"], true);
+    assert_eq!(enable_resp["job"]["consecutive_failures"], 0);
+    assert!(enable_resp["job"]["auto_disabled_reason"].is_null());
     assert!(enable_resp["job"]["next_run_at"].is_number());
 
     let disable_resp = handle_cron_action(

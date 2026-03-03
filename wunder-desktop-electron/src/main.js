@@ -487,6 +487,7 @@ const resolveDisplaySource = async (targetDisplay) => {
     throw new Error('No screen source available')
   }
   const expectedArea = captureWidth * captureHeight
+  const expectedAspect = captureWidth / Math.max(1, captureHeight)
   const targetDisplayId = String(display?.id || '')
   const rankedSources = sources
     .filter((item) => !item?.thumbnail?.isEmpty?.())
@@ -498,13 +499,23 @@ const resolveDisplaySource = async (targetDisplay) => {
       const widthDiff = Math.abs(imageWidth - captureWidth) / captureWidth
       const heightDiff = Math.abs(imageHeight - captureHeight) / captureHeight
       const areaDiff = Math.abs(imageArea - expectedArea) / Math.max(1, expectedArea)
-      let score = widthDiff + heightDiff + areaDiff
+      const aspect = imageWidth / Math.max(1, imageHeight)
+      const aspectDiff = Math.abs(aspect - expectedAspect) / Math.max(expectedAspect, 1e-6)
+      let score = widthDiff + heightDiff + areaDiff + aspectDiff * 3
       if (targetDisplayId && String(item?.display_id || '') === targetDisplayId) {
         score -= 5
       }
       return { source: item, score }
     })
     .sort((left, right) => left.score - right.score)
+  if (targetDisplayId) {
+    const exactMatched = rankedSources.find(
+      (item) => String(item?.source?.display_id || '') === targetDisplayId
+    )
+    if (exactMatched) {
+      return exactMatched.source
+    }
+  }
   if (rankedSources.length > 0) {
     return rankedSources[0].source
   }
@@ -532,7 +543,9 @@ const createScreenshotRegionSelectorHtml = (imageDataUrl) => `<!doctype html>
       inset: 0;
       width: 100vw;
       height: 100vh;
-      object-fit: fill;
+      object-fit: contain;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: crisp-edges;
       pointer-events: none;
     }
     #mask {
@@ -590,6 +603,7 @@ const createScreenshotRegionSelectorHtml = (imageDataUrl) => `<!doctype html>
   </div>
   <script>
     const { ipcRenderer } = require('electron');
+    const screenImage = document.getElementById('screen');
     const selection = document.getElementById('selection');
     const hint = document.getElementById('hint');
     const cancelButton = document.getElementById('cancel');
@@ -600,6 +614,27 @@ const createScreenshotRegionSelectorHtml = (imageDataUrl) => `<!doctype html>
       const width = Math.abs(endX - startX);
       const height = Math.abs(endY - startY);
       return { left, top, width, height };
+    };
+    const getImageRect = () => {
+      const rect = screenImage.getBoundingClientRect();
+      return {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        right: rect.right,
+        bottom: rect.bottom
+      };
+    };
+    const clampToImage = (x, y) => {
+      const rect = getImageRect();
+      const maxX = Math.max(rect.left, rect.right - 1);
+      const maxY = Math.max(rect.top, rect.bottom - 1);
+      return {
+        x: clamp(x, rect.left, maxX),
+        y: clamp(y, rect.top, maxY),
+        rect
+      };
     };
 
     let dragging = false;
@@ -633,40 +668,42 @@ const createScreenshotRegionSelectorHtml = (imageDataUrl) => `<!doctype html>
     window.addEventListener('mousedown', (event) => {
       if (event.button !== 0) return;
       if (hint.contains(event.target)) return;
-      const maxX = Math.max(0, window.innerWidth - 1);
-      const maxY = Math.max(0, window.innerHeight - 1);
-      startX = clamp(event.clientX, 0, maxX);
-      startY = clamp(event.clientY, 0, maxY);
+      const clamped = clampToImage(event.clientX, event.clientY);
+      startX = clamped.x;
+      startY = clamped.y;
       dragging = true;
       updateSelection({ left: startX, top: startY, width: 0, height: 0 });
     });
 
     window.addEventListener('mousemove', (event) => {
       if (!dragging) return;
-      const maxX = Math.max(0, window.innerWidth - 1);
-      const maxY = Math.max(0, window.innerHeight - 1);
-      const currentX = clamp(event.clientX, 0, maxX);
-      const currentY = clamp(event.clientY, 0, maxY);
+      const clamped = clampToImage(event.clientX, event.clientY);
+      const currentX = clamped.x;
+      const currentY = clamped.y;
       updateSelection(normalizeRect(startX, startY, currentX, currentY));
     });
 
     window.addEventListener('mouseup', (event) => {
       if (!dragging) return;
       dragging = false;
-      const maxX = Math.max(0, window.innerWidth - 1);
-      const maxY = Math.max(0, window.innerHeight - 1);
-      const endX = clamp(event.clientX, 0, maxX);
-      const endY = clamp(event.clientY, 0, maxY);
+      const clamped = clampToImage(event.clientX, event.clientY);
+      const endX = clamped.x;
+      const endY = clamped.y;
       const rect = normalizeRect(startX, startY, endX, endY);
       if (rect.width < 3 || rect.height < 3) {
         selection.style.display = 'none';
         return;
       }
+      const imageRect = getImageRect();
       ipcRenderer.send('${SCREENSHOT_SELECTOR_RESULT_CHANNEL}', {
         x: rect.left,
         y: rect.top,
         width: rect.width,
         height: rect.height,
+        imageLeft: imageRect.left,
+        imageTop: imageRect.top,
+        imageWidth: imageRect.width,
+        imageHeight: imageRect.height,
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight
       });
@@ -740,14 +777,26 @@ const pickScreenshotRegionFromBuffer = async (imageBuffer, targetDisplay) => {
     }
     const handleRegionSelected = (event, payload) => {
       if (event?.sender?.id !== selectorWindow.webContents.id) return
-      const viewportWidth = Math.max(1, Number(payload?.viewportWidth || 0))
-      const viewportHeight = Math.max(1, Number(payload?.viewportHeight || 0))
-      const scaleX = imageSize.width / viewportWidth
-      const scaleY = imageSize.height / viewportHeight
-      const rawX = Math.max(0, Math.floor(Number(payload?.x || 0) * scaleX))
-      const rawY = Math.max(0, Math.floor(Number(payload?.y || 0) * scaleY))
-      const rawWidth = Math.max(1, Math.floor(Number(payload?.width || 0) * scaleX))
-      const rawHeight = Math.max(1, Math.floor(Number(payload?.height || 0) * scaleY))
+      const imageLeft = Number(payload?.imageLeft || 0)
+      const imageTop = Number(payload?.imageTop || 0)
+      const imageViewportWidth = Math.max(
+        1,
+        Number(payload?.imageWidth || payload?.viewportWidth || 0)
+      )
+      const imageViewportHeight = Math.max(
+        1,
+        Number(payload?.imageHeight || payload?.viewportHeight || 0)
+      )
+      const relativeX = Math.max(0, Number(payload?.x || 0) - imageLeft)
+      const relativeY = Math.max(0, Number(payload?.y || 0) - imageTop)
+      const relativeWidth = Math.max(1, Number(payload?.width || 0))
+      const relativeHeight = Math.max(1, Number(payload?.height || 0))
+      const scaleX = imageSize.width / imageViewportWidth
+      const scaleY = imageSize.height / imageViewportHeight
+      const rawX = Math.max(0, Math.floor(relativeX * scaleX))
+      const rawY = Math.max(0, Math.floor(relativeY * scaleY))
+      const rawWidth = Math.max(1, Math.floor(relativeWidth * scaleX))
+      const rawHeight = Math.max(1, Math.floor(relativeHeight * scaleY))
       const maxWidth = Math.max(1, imageSize.width - rawX)
       const maxHeight = Math.max(1, imageSize.height - rawY)
       const cropWidth = Math.min(rawWidth, maxWidth)

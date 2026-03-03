@@ -1144,7 +1144,6 @@
                 :user-id="currentUserId"
                 :language-label="currentLanguageLabel"
                 :send-key="messengerSendKey"
-                :approval-mode="messengerApprovalMode"
                 :desktop-local-mode="desktopLocalMode"
                 :theme-palette="themeStore.palette"
                 :performance-mode="performanceStore.mode"
@@ -1160,7 +1159,6 @@
                 @check-update="checkClientUpdate"
                 @toggle-devtools="openDebugTools"
                 @update:send-key="updateSendKey"
-                @update:approval-mode="updateAgentApprovalMode"
                 @update:theme-palette="updateThemePalette"
                 @update:performance-mode="updatePerformanceMode"
                 @update:ui-font-size="updateUiFontSize"
@@ -1788,7 +1786,11 @@ import {
   readWorkspaceImagePersistentCache,
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
-import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import {
+  isImagePath,
+  normalizeWorkspaceRelativeMarkdownPath,
+  parseWorkspaceResourceUrl
+} from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import {
   classifyWorldHistoryMessage,
@@ -1814,7 +1816,6 @@ import {
 } from '@/views/messenger/orgUnits';
 import {
   AGENT_CONTAINER_IDS,
-  MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY,
   AGENT_MAIN_READ_AT_STORAGE_PREFIX,
   AGENT_MAIN_UNREAD_STORAGE_PREFIX,
   AGENT_TOOL_OVERRIDE_NONE,
@@ -1831,7 +1832,6 @@ import {
   WORLD_UPLOAD_SIZE_LIMIT,
   sectionRouteMap,
   type AgentFileContainer,
-  type AgentApprovalMode,
   type AgentLocalCommand,
   type AgentOverviewCard,
   type AgentRuntimeState,
@@ -2031,7 +2031,6 @@ const timelineDetailDialogVisible = ref(false);
 const timelineDetailSessionId = ref('');
 const approvalResponding = ref(false);
 const messengerSendKey = ref<MessengerSendKeyMode>('ctrl_enter');
-const messengerApprovalMode = ref<AgentApprovalMode>('auto_edit');
 const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
 const orgUnitTree = ref<UnitTreeNode[]>([]);
@@ -2268,9 +2267,7 @@ const showMiddlePane = computed(() => {
   }
   return !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value;
 });
-const middlePaneTransitionName = computed(() =>
-  showHelperAppsWorkspace.value ? '' : 'messenger-middle-pane-slide'
-);
+const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
 const sharedAgents = computed(() => (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []));
@@ -2777,13 +2774,6 @@ const normalizeMessengerSendKey = (value: unknown): MessengerSendKeyMode =>
     if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
     return 'ctrl_enter';
   })();
-
-const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
-  const text = String(value || '').trim().toLowerCase();
-  if (text === 'suggest') return 'suggest';
-  if (text === 'full_auto' || text === 'full-auto') return 'full_auto';
-  return 'auto_edit';
-};
 
 const applyUiFontSize = (value: number) => {
   if (typeof document === 'undefined') return;
@@ -4660,6 +4650,22 @@ const buildWorkspacePublicPath = (
   return `/workspaces/${safeOwner}/${encodeWorkspacePath(normalized)}`;
 };
 
+const resolveAgentMarkdownWorkspacePath = (rawPath: string): string => {
+  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
+  if (!normalized) return '';
+  const ownerId = normalizeWorkspaceOwnerId(authStore.user?.id);
+  if (!ownerId) return '';
+  return buildWorkspacePublicPath(ownerId, normalized, currentContainerId.value);
+};
+
+const resolveWorldMarkdownWorkspacePath = (rawPath: string, senderUserId: string): string => {
+  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
+  if (!normalized) return '';
+  const ownerId = normalizeWorkspaceOwnerId(senderUserId);
+  if (!ownerId) return '';
+  return buildWorkspacePublicPath(ownerId, normalized, USER_CONTAINER_ID);
+};
+
 const WORLD_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
 const WORLD_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】]+)?$/;
 
@@ -5100,7 +5106,7 @@ const trimMarkdownCache = () => {
 const renderMessageMarkdown = (
   cacheKey: string,
   content: unknown,
-  options: { streaming?: boolean } = {}
+  options: { streaming?: boolean; resolveWorkspacePath?: (rawPath: string) => string } = {}
 ): string => {
   const source = String(content || '');
   const normalizedKey = String(cacheKey || '').trim();
@@ -5110,7 +5116,9 @@ const renderMessageMarkdown = (
     }
     return '';
   }
-  if (!normalizedKey) return renderMarkdown(source);
+  if (!normalizedKey) {
+    return renderMarkdown(source, { resolveWorkspacePath: options.resolveWorkspacePath });
+  }
   const cached = markdownCache.get(normalizedKey);
   if (cached && cached.source === source) {
     return cached.html;
@@ -5119,19 +5127,22 @@ const renderMessageMarkdown = (
   if (options.streaming && cached && now - cached.updatedAt < MARKDOWN_STREAM_THROTTLE_MS) {
     return cached.html;
   }
-  const html = renderMarkdown(source);
+  const html = renderMarkdown(source, { resolveWorkspacePath: options.resolveWorkspacePath });
   markdownCache.set(normalizedKey, { source, html, updatedAt: now });
   trimMarkdownCache();
   return html;
 };
 
 const renderAgentMarkdown = (message: Record<string, unknown>, index: number): string => {
-  const cacheKey = `agent:${resolveAgentMessageKey(message, index)}`;
+  const cacheKey = `agent:${resolveAgentMessageKey(message, index)}:c${currentContainerId.value}`;
   const streaming =
     Boolean(message?.stream_incomplete) ||
     Boolean(message?.workflowStreaming) ||
     Boolean(message?.reasoningStreaming);
-  return renderMessageMarkdown(cacheKey, message?.content, { streaming });
+  return renderMessageMarkdown(cacheKey, message?.content, {
+    streaming,
+    resolveWorkspacePath: resolveAgentMarkdownWorkspacePath
+  });
 };
 
 const renderWorldMarkdown = (message: Record<string, unknown>): string => {
@@ -5139,7 +5150,9 @@ const renderWorldMarkdown = (message: Record<string, unknown>): string => {
   const content = String(message?.content || '');
   const senderUserId = String(message?.sender_user_id || '').trim();
   const patched = replaceWorldAtPathTokens(content, senderUserId);
-  return renderMessageMarkdown(cacheKey, patched);
+  return renderMessageMarkdown(cacheKey, patched, {
+    resolveWorkspacePath: (rawPath: string) => resolveWorldMarkdownWorkspacePath(rawPath, senderUserId)
+  });
 };
 
 const resolveWorldVoicePayloadFromMessage = (message: Record<string, unknown>) => {
@@ -5431,10 +5444,16 @@ const deleteMixedConversation = async (item: MixedConversation) => {
   }
 };
 
-const switchSection = (section: MessengerSection) => {
+const switchSection = (
+  section: MessengerSection,
+  options: { preserveHelperWorkspace?: boolean } = {}
+) => {
+  const preserveHelperWorkspace = options.preserveHelperWorkspace === true;
   closeFileContainerMenu();
   openMiddlePaneOverlay();
-  helperAppsWorkspaceMode.value = false;
+  if (!preserveHelperWorkspace) {
+    helperAppsWorkspaceMode.value = false;
+  }
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
   worldHistoryDialogVisible.value = false;
@@ -6815,9 +6834,11 @@ const appendWorldAttachmentTokens = (paths: string[]) => {
 };
 
 const openHelperAppsDialog = () => {
-  switchSection('groups');
-  selectedGroupId.value = '';
+  clearMiddlePaneOverlayHide();
+  middlePaneOverlayVisible.value = false;
   helperAppsWorkspaceMode.value = true;
+  switchSection('groups', { preserveHelperWorkspace: true });
+  selectedGroupId.value = '';
 };
 
 const closeWorldAttachmentPanels = () => {
@@ -7355,14 +7376,6 @@ const updateSendKey = (value: MessengerSendKeyMode) => {
   messengerSendKey.value = normalized;
   if (typeof window !== 'undefined') {
     window.localStorage.setItem(MESSENGER_SEND_KEY_STORAGE_KEY, normalized);
-  }
-};
-
-const updateAgentApprovalMode = (value: AgentApprovalMode) => {
-  const normalized = normalizeAgentApprovalMode(value);
-  messengerApprovalMode.value = normalized;
-  if (typeof window !== 'undefined') {
-    window.localStorage.setItem(MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY, normalized);
   }
 };
 
@@ -8198,9 +8211,6 @@ onMounted(async () => {
     window.addEventListener('resize', viewportResizeHandler);
     messengerSendKey.value = normalizeMessengerSendKey(
       window.localStorage.getItem(MESSENGER_SEND_KEY_STORAGE_KEY)
-    );
-    messengerApprovalMode.value = normalizeAgentApprovalMode(
-      window.localStorage.getItem(MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY)
     );
     uiFontSize.value = normalizeUiFontSize(window.localStorage.getItem(MESSENGER_UI_FONT_SIZE_STORAGE_KEY));
     worldComposerHeight.value = clampWorldComposerHeight(

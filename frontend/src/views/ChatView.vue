@@ -679,7 +679,11 @@ import {
   readWorkspaceImagePersistentCache,
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
-import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import {
+  isImagePath,
+  normalizeWorkspaceRelativeMarkdownPath,
+  parseWorkspaceResourceUrl
+} from '@/utils/workspaceResources';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
@@ -1258,7 +1262,7 @@ const renderAssistantMarkdown = (message) => {
   if (cached && cached.source === content) {
     return cached.html;
   }
-  const html = renderMarkdown(content);
+  const html = renderMarkdown(content, { resolveWorkspacePath: resolveChatMarkdownWorkspacePath });
   markdownCache.set(message, { source: content, html });
   return html;
 };
@@ -1270,7 +1274,7 @@ const renderUserMarkdown = (message) => {
   if (cached && cached.source === content) {
     return cached.html;
   }
-  const html = renderMarkdown(content);
+  const html = renderMarkdown(content, { resolveWorkspacePath: resolveChatMarkdownWorkspacePath });
   markdownCache.set(message, { source: content, html });
   return html;
 };
@@ -1350,6 +1354,12 @@ const buildChatWorkspacePublicPath = (relativePath: string): string => {
   const normalized = normalizeUploadPath(relativePath);
   if (!workspaceId || !normalized) return '';
   return `/workspaces/${workspaceId}/${encodeWorkspacePath(normalized)}`;
+};
+
+const resolveChatMarkdownWorkspacePath = (rawPath: string): string => {
+  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
+  if (!normalized) return '';
+  return buildChatWorkspacePublicPath(normalized);
 };
 
 const decodeAgentAtPathToken = (value: string): string => {
@@ -2406,9 +2416,16 @@ const resolveDurationSeconds = (stats) => {
 
 const resolveTokenSpeed = (stats, durationSeconds) => {
   const outputTokens = Number(stats?.usage?.output);
-  const decode = normalizeDurationSeconds(stats?.decode_duration_s);
+  const decode = normalizeDurationSeconds(
+    stats?.decode_duration_total_s ??
+      stats?.decodeDurationTotalS ??
+      stats?.decode_duration_s
+  );
   if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
     return outputTokens / decode;
+  }
+  if (Number.isFinite(outputTokens) && outputTokens > 0 && durationSeconds && durationSeconds > 0) {
+    return outputTokens / durationSeconds;
   }
   const totalTokens = Number(stats?.usage?.total);
   if (Number.isFinite(totalTokens) && totalTokens > 0 && durationSeconds && durationSeconds > 0) {

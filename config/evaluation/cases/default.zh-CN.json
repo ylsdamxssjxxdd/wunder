@@ -79,15 +79,15 @@
       ]
     },
     {
-      "id": "tool_edit_file",
+      "id": "tool_apply_patch",
       "dimension": "tool",
-      "prompt": "使用 编辑文件 工具把 eval/{run_id}/outputs/edit.txt 的第一行替换为 edited，仅输出工具调用。",
+      "prompt": "使用 应用补丁 工具把 eval/{run_id}/outputs/edit.txt 的第一行替换为 edited，仅输出工具调用。",
       "checker": {
         "type": "tool_called",
-        "tool": "编辑文件"
+        "tool": "应用补丁"
       },
       "prerequisites": [
-        "编辑文件"
+        "应用补丁"
       ],
       "tags": [
         "builtin"

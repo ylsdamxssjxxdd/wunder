@@ -878,7 +878,7 @@ enum WorkerToolKind {
     ReadFile,
     WriteFile,
     ReplaceText,
-    EditFile,
+    ApplyPatch,
     ExecuteCommand,
     ProgrammaticToolCall,
     FinalResponse,
@@ -892,7 +892,7 @@ impl WorkerToolKind {
             Self::ReadFile => "read_file",
             Self::WriteFile => "write_file",
             Self::ReplaceText => "replace_text",
-            Self::EditFile => "edit_file",
+            Self::ApplyPatch => "apply_patch",
             Self::ExecuteCommand => "execute_command",
             Self::ProgrammaticToolCall => "programmatic_tool_call",
             Self::FinalResponse => "final_response",
@@ -910,7 +910,7 @@ impl WorkerToolKind {
             Self::ReadFile => is_read_file_tool(tool_name),
             Self::WriteFile => is_write_file_tool(tool_name),
             Self::ReplaceText => is_replace_text_tool(tool_name),
-            Self::EditFile => is_edit_file_tool(tool_name),
+            Self::ApplyPatch => is_apply_patch_tool(tool_name),
             Self::ExecuteCommand => is_execute_command_tool(tool_name),
             Self::ProgrammaticToolCall => is_ptc_tool(tool_name),
             Self::FinalResponse => is_final_response_tool(tool_name),
@@ -948,15 +948,10 @@ impl WorkerToolKind {
                 "new_string": "phase=beta",
                 "expected_replacements": 1,
             }),
-            Self::EditFile => json!({
-                "path": worker_file,
-                "edits": [{
-                    "action": "replace",
-                    "start_line": 3,
-                    "end_line": 3,
-                    "new_content": format!("result=edited;r{task_round};{suffix}"),
-                }],
-                "ensure_newline_at_eof": true,
+            Self::ApplyPatch => json!({
+                "input": format!(
+                    "*** Begin Patch\n*** Update File: {worker_file}\n@@\n-result=pending\n+result=patched;r{task_round};{suffix}\n*** End Patch"
+                ),
             }),
             Self::ExecuteCommand => json!({
                 "content": format!("echo swarm-worker-{worker_tag}-r{task_round}-{suffix}"),
@@ -1006,7 +1001,7 @@ impl WorkerToolProfile {
             Self::InspectSearch => (WorkerToolKind::ListFiles, WorkerToolKind::SearchContent),
             Self::InspectRead => (WorkerToolKind::ListFiles, WorkerToolKind::ReadFile),
             Self::WriteReplace => (WorkerToolKind::WriteFile, WorkerToolKind::ReplaceText),
-            Self::WriteEdit => (WorkerToolKind::WriteFile, WorkerToolKind::EditFile),
+            Self::WriteEdit => (WorkerToolKind::WriteFile, WorkerToolKind::ApplyPatch),
             Self::CommandRead => (WorkerToolKind::ExecuteCommand, WorkerToolKind::ReadFile),
             Self::SearchFinal => (WorkerToolKind::SearchContent, WorkerToolKind::FinalResponse),
             Self::PtcSearch => (
@@ -1397,10 +1392,10 @@ fn is_replace_text_tool(name: &str) -> bool {
     )
 }
 
-fn is_edit_file_tool(name: &str) -> bool {
+fn is_apply_patch_tool(name: &str) -> bool {
     matches!(
         name.trim(),
-        "edit_file" | "\u{7f16}\u{8f91}\u{6587}\u{4ef6}"
+        "apply_patch" | "\u{5e94}\u{7528}\u{8865}\u{4e01}"
     )
 }
 
@@ -1590,7 +1585,7 @@ fn seeded_worker_tools() -> Vec<String> {
         "read_file".to_string(),
         "write_file".to_string(),
         "replace_text".to_string(),
-        "edit_file".to_string(),
+        "apply_patch".to_string(),
         "execute_command".to_string(),
         "programmatic_tool_call".to_string(),
         "final_response".to_string(),

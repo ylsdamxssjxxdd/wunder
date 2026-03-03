@@ -477,7 +477,8 @@ export default {
   'settings.placeholder': '原型阶段预留设置面板。',
   'desktop.settings.title': '桌面端设置',
   'desktop.settings.toolCallMode': '工具调用方式',
-  'desktop.settings.toolCallHint': '对后续新消息生效，可在 tool_call 与 function_call 之间切换。',
+  'desktop.settings.toolCallHint':
+    '对后续新消息生效，可在 tool_call、function_call、freeform_call 之间切换。',
   'desktop.settings.tools': 'MCP / Skills',
   'desktop.settings.toolsHint': '在工具管理页配置 MCP 服务、Skills 与内置工具。',
   'desktop.settings.openTools': '打开工具管理',
@@ -630,7 +631,8 @@ export default {
   'desktop.system.compactionReset.current': 'current（重置为当前）',
   'desktop.system.compactionReset.keep': 'keep（不重置）',
   'desktop.system.toolCallMode': '工具调用方式',
-  'desktop.system.toolCallHint': '用于控制模型工具调用协议，建议默认使用 tool_call。',
+  'desktop.system.toolCallHint':
+    '用于控制模型工具调用协议，支持 freeform_call（更适合补丁语法能力较强的模型）。',
   'desktop.system.languageRequired': '请选择界面语言',
   'desktop.system.remote.title': '服务端连接',
   'desktop.system.remote.enabled': '启用服务端连接',

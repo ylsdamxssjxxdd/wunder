@@ -749,12 +749,12 @@ fn normalize_tool_call_mode(raw: Option<&str>) -> Result<Option<String>, Respons
         return Ok(None);
     };
     let normalized = raw.to_ascii_lowercase();
-    if normalized == "tool_call" || normalized == "function_call" {
+    if normalized == "tool_call" || normalized == "function_call" || normalized == "freeform_call" {
         return Ok(Some(normalized));
     }
     Err(error_response(
         StatusCode::BAD_REQUEST,
-        "invalid tool_call_mode, expected tool_call or function_call".to_string(),
+        "invalid tool_call_mode, expected tool_call/function_call/freeform_call".to_string(),
     ))
 }
 

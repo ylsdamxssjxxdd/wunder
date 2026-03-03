@@ -32,6 +32,7 @@ struct CronRunsQuery {
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/wunder/cron/status", get(cron_status))
         .route("/wunder/cron/list", get(cron_list))
         .route("/wunder/cron/runs", get(cron_runs))
         .route("/wunder/cron/add", post(cron_add))
@@ -42,6 +43,18 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/cron/get", post(cron_get))
         .route("/wunder/cron/run", post(cron_run))
         .route("/wunder/cron/action", post(cron_action))
+}
+
+async fn cron_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<CronActionQuery>,
+) -> Result<Json<Value>, Response> {
+    let payload = CronActionRequest {
+        action: "status".to_string(),
+        job: None,
+    };
+    handle_action(state, headers, query, payload, None).await
 }
 
 async fn cron_list(

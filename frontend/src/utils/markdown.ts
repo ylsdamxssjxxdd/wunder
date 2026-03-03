@@ -2,6 +2,14 @@ import MarkdownIt from 'markdown-it';
 import { t } from '@/i18n';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 
+type WorkspacePathResolver = (rawPath: string) => string;
+type MarkdownRenderEnv = {
+  resolveWorkspacePath?: WorkspacePathResolver;
+};
+type MarkdownRenderOptions = {
+  resolveWorkspacePath?: WorkspacePathResolver;
+};
+
 // 统一的 Markdown 渲染器：禁用原始 HTML，启用自动换行与链接识别
 const markdown = new MarkdownIt({
   html: false,
@@ -29,10 +37,20 @@ const defaultLinkOpenRenderer =
   markdown.renderer.rules.link_open ||
   ((tokens, idx, options, env, slf) => slf.renderToken(tokens, idx, options, env, slf));
 
+const parseMarkdownWorkspaceResource = (raw: string, env?: MarkdownRenderEnv) => {
+  const direct = parseWorkspaceResourceUrl(raw);
+  if (direct) return direct;
+  const resolver = env?.resolveWorkspacePath;
+  if (typeof resolver !== 'function') return null;
+  const resolved = resolver(raw);
+  if (!resolved) return null;
+  return parseWorkspaceResourceUrl(resolved);
+};
+
 markdown.renderer.rules.image = (tokens, idx, options, env, slf) => {
   const token = tokens[idx];
   const src = token.attrGet('src') || '';
-  const resource = parseWorkspaceResourceUrl(src);
+  const resource = parseMarkdownWorkspaceResource(src, env as MarkdownRenderEnv);
   if (!resource) {
     return defaultImageRenderer(tokens, idx, options, env, slf);
   }
@@ -44,7 +62,7 @@ markdown.renderer.rules.image = (tokens, idx, options, env, slf) => {
 markdown.renderer.rules.link_open = (tokens, idx, options, env, slf) => {
   const token = tokens[idx];
   const href = token.attrGet('href') || '';
-  const resource = parseWorkspaceResourceUrl(href);
+  const resource = parseMarkdownWorkspaceResource(href, env as MarkdownRenderEnv);
   if (resource) {
     const existingClass = token.attrGet('class');
     token.attrSet('class', existingClass ? `${existingClass} ai-resource-link` : 'ai-resource-link');
@@ -64,7 +82,7 @@ markdown.core.ruler.after('inline', 'workspace_resource_links', (state) => {
       const token = children[i];
       if (token.type === 'link_open') {
         const href = token.attrGet('href') || '';
-        const resource = parseWorkspaceResourceUrl(href);
+        const resource = parseMarkdownWorkspaceResource(href, state.env as MarkdownRenderEnv);
         if (resource && !isImagePath(resource.filename || resource.relativePath)) {
           let label = '';
           let j = i + 1;
@@ -407,9 +425,13 @@ markdown.renderer.rules.fence = (tokens, idx, options, env, slf) => {
  * @param {string} content 原始 Markdown 内容
  * @returns {string} 渲染后的 HTML
  */
-export function renderMarkdown(content = '') {
+export function renderMarkdown(content = '', options: MarkdownRenderOptions = {}) {
   if (!content) return '';
-  return markdown.render(String(content));
+  const env: MarkdownRenderEnv | undefined =
+    typeof options.resolveWorkspacePath === 'function'
+      ? { resolveWorkspacePath: options.resolveWorkspacePath }
+      : undefined;
+  return markdown.render(String(content), env);
 }
 
 function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') {

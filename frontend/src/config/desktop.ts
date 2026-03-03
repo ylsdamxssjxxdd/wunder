@@ -6,7 +6,7 @@ const DESKTOP_LOCAL_TOKEN_KEY = 'wunder_desktop_local_token';
 const DESKTOP_REMOTE_API_BASE_KEY = 'wunder_desktop_remote_api_base';
 const DESKTOP_REMOTE_MODE_CHANGE_EVENT = 'wunder:desktop-remote-mode-change';
 
-export const DESKTOP_TOOL_CALL_MODES = ['tool_call', 'function_call'] as const;
+export const DESKTOP_TOOL_CALL_MODES = ['tool_call', 'function_call', 'freeform_call'] as const;
 
 export type DesktopToolCallMode = (typeof DESKTOP_TOOL_CALL_MODES)[number];
 
@@ -43,6 +43,9 @@ const asString = (value: unknown): string => (typeof value === 'string' ? value.
 
 const normalizeToolCallMode = (value: unknown): DesktopToolCallMode => {
   const normalized = asString(value).toLowerCase();
+  if (normalized === 'freeform_call' || normalized === 'freeform') {
+    return 'freeform_call';
+  }
   if (normalized === 'function_call') {
     return 'function_call';
   }

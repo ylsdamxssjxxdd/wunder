@@ -15,6 +15,19 @@ const SHELL_META_CHARS: &[char] = &[
     '|', '&', ';', '<', '>', '(', ')', '$', '`', '*', '?', '~', '{', '}', '[', ']', '#', '\n', '\r',
 ];
 
+#[cfg(windows)]
+const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+pub fn apply_platform_spawn_options(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.as_std_mut().creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    let _ = cmd;
+}
+
 pub fn build_direct_command(command: &str, cwd: &Path) -> Option<Command> {
     let trimmed = command.trim();
     if trimmed.is_empty() || contains_shell_meta(trimmed) {
@@ -37,6 +50,7 @@ pub fn build_direct_command(command: &str, cwd: &Path) -> Option<Command> {
         cmd.env(key, value);
     }
     cmd.current_dir(cwd);
+    apply_platform_spawn_options(&mut cmd);
     Some(cmd)
 }
 
@@ -70,6 +84,7 @@ pub fn build_direct_command_with_python_override(
         cmd.env(key, value);
     }
     cmd.current_dir(cwd);
+    apply_platform_spawn_options(&mut cmd);
     Some(cmd)
 }
 
@@ -84,10 +99,12 @@ pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
                 "$Utf8 = [System.Text.UTF8Encoding]::new($false); [Console]::InputEncoding = $Utf8; [Console]::OutputEncoding = $Utf8; $OutputEncoding = $Utf8; {command}"
             );
             cmd.arg(wrapped).current_dir(cwd);
+            apply_platform_spawn_options(&mut cmd);
             cmd
         } else {
             let mut cmd = Command::new("cmd.exe");
             cmd.arg("/C").arg(command).current_dir(cwd);
+            apply_platform_spawn_options(&mut cmd);
             cmd
         }
     }

@@ -70,11 +70,11 @@ pub fn evaluate_tool_call(
     let exec_tool_name = resolve_tool_name("execute_command");
     let ptc_tool_name = resolve_tool_name("ptc");
     let write_tool_name = resolve_tool_name("write_file");
-    let edit_tool_name = resolve_tool_name("edit_file");
+    let patch_tool_name = resolve_tool_name("apply_patch");
     let replace_tool_name = resolve_tool_name("replace_text");
     let is_exec_tool = tool_name == exec_tool_name || tool_name == ptc_tool_name;
     let is_write_tool = tool_name == write_tool_name
-        || tool_name == edit_tool_name
+        || tool_name == patch_tool_name
         || tool_name == replace_tool_name;
     if !is_exec_tool && !is_write_tool {
         return None;
@@ -407,10 +407,9 @@ mod tests {
     fn test_auto_edit_mode_allows_write() {
         let mut config = Config::default();
         config.security.approval_mode = Some("auto_edit".to_string());
-        let tool_name = resolve_tool_name("edit_file");
+        let tool_name = resolve_tool_name("apply_patch");
         let args = json!({
-            "path": "src/lib.rs",
-            "edits": [{ "action": "replace", "start_line": 1, "end_line": 1, "new_content": "// hi" }]
+            "input": "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n-// old\n+// hi\n*** End Patch"
         });
         assert!(evaluate_tool_call(&config, &tool_name, &args, None, None).is_none());
     }

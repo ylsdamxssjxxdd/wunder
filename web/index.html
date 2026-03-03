@@ -2240,6 +2240,10 @@
                         <span data-i18n="llm.option.vision">支持视觉</span>
                       </label>
                       <label class="checkbox-row checkbox-compact">
+                        <input id="llmHearing" type="checkbox" />
+                        <span data-i18n="llm.option.hearing">支持听觉</span>
+                      </label>
+                      <label class="checkbox-row checkbox-compact">
                         <input id="llmStreamIncludeUsage" type="checkbox" />
                         <span data-i18n="llm.option.streamUsage">流式返回 usage</span>
                       </label>
@@ -2250,6 +2254,7 @@
                     <select id="llmToolCallMode">
                       <option value="tool_call" data-i18n="llm.toolCallMode.toolCall">tool_call</option>
                       <option value="function_call" data-i18n="llm.toolCallMode.functionCall">function_call</option>
+                      <option value="freeform_call" data-i18n="llm.toolCallMode.freeformCall">freeform_call</option>
                     </select>
                   </div>
                 </div>

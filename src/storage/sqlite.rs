@@ -6544,13 +6544,11 @@ impl StorageBackend for SqliteStorage {
     fn get_next_cron_run_at(&self, now: f64) -> Result<Option<f64>> {
         self.ensure_initialized()?;
         let conn = self.open()?;
-        let value: Option<f64> = conn
-            .query_row(
-                "SELECT MIN(next_run_at) FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at > ?",
-                params![now],
-                |row| row.get(0),
-            )
-            .optional()?;
+        let value: Option<f64> = conn.query_row(
+            "SELECT MIN(next_run_at) FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at > ?",
+            params![now],
+            |row| row.get::<_, Option<f64>>(0),
+        )?;
         Ok(value)
     }
 

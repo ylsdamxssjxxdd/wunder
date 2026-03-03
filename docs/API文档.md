@@ -16,7 +16,7 @@
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
 - docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；`/wunder/temp_dir/*` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`，可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、`frontend/node_modules/`）保持写入仓库目录便于管理。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
-- 工具清单与提示词注入复用统一的工具规格构建逻辑，确保输出一致性（`tool_call` 模式）；`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
+- 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 配置分层：基础配置优先读取 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
@@ -2331,8 +2331,9 @@
 
 - `tool_call_mode=tool_call`（默认）：模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具，工具结果以 `tool_response: ` 前缀的 user 消息回填。
 - `tool_call_mode=function_call`：模型通过 OpenAI 风格 `tool_calls/function_call` 返回工具调用，工具结果以 role=tool + tool_call_id 回填。
-- `function_call` 模式下系统提示词不再注入工具清单与工具调用引导，工具清单仅通过请求 `tools` 传入；技能提示词仍会注入。
-- `function_call` 模式需要在后续请求中携带历史的 assistant `tool_calls` 与 role=tool/tool_call_id 结果；wunder 会将其写入对话历史并自动回填。
+- `tool_call_mode=freeform_call`：用于“结构化 + freeform”混合调用；普通工具可走结构化参数，语法类工具（如 `apply_patch`）可通过 `<tool_call><name>...</name><input>...</input></tool_call>` 发送原文补丁，工具结果同样以 role=tool + tool_call_id（有 id 时）或 `tool_response` 回填。
+- `function_call` 模式下系统提示词不注入工具清单与工具调用引导，工具清单仅通过请求 `tools` 传入；`freeform_call` 模式会注入带 freeform 规则的工具协议片段。
+- `function_call/freeform_call` 模式需要在后续请求中携带历史的 assistant `tool_calls` 与 role=tool/tool_call_id 结果；wunder 会将其写入对话历史并自动回填。
 - 系统提示词按职能模块拼装（角色/安全/产品/编程/运行环境/协议/工程师信息）；运行环境模块按 `server.mode` 选择：`api/sandbox` 使用 server 运行模块，`cli/desktop` 使用本地运行模块（无固定依赖清单）。
 - 提示词模板按语言优先读取 `prompts/zh` 或 `prompts/en`；英文模式下内置工具名在提示词与 `/wunder/tools` 输出中优先英文别名。
 - JSON 结构：`{"name":"工具名","arguments":{...}}`。
@@ -2580,7 +2581,7 @@
   - `/help`：输出命令帮助清单（含描述）。
   - `/status`：输出会话状态（session/model/tool_call_mode/approval/turn_notify/workspace/db）。
   - `/model [name]`：查看当前模型，或切换默认模型。
-  - `/tool-call-mode <tool_call|function_call> [model]`（别名 `/mode`）：切换调用协议。
+  - `/tool-call-mode <tool_call|function_call|freeform_call> [model]`（别名 `/mode`）：切换调用协议。
   - `/approvals [show|suggest|auto_edit|full_auto]`：查看或切换审批模式。
   - `/diff [summary|files|show <index|path>|hunks <index|path>|stage <index|path>|unstage <index|path>|revert <index|path>]`：查看/操作当前 workspace 变更。
   - `/review [focus]`：基于当前 git 变更自动生成代码评审请求并调用模型分析。
@@ -2776,10 +2777,10 @@
 ### desktop 会话请求扩展
 
 - `POST /wunder/chat/sessions/{id}/messages`
-  - 新增可选字段：`tool_call_mode`（`tool_call` 或 `function_call`）。
+  - 新增可选字段：`tool_call_mode`（`tool_call` / `function_call` / `freeform_call`）。
   - 新增可选字段：`approval_mode`（`suggest` / `auto_edit` / `full_auto`）。
 - `WS /wunder/chat/ws` 的 `start` payload
-  - 新增可选字段：`tool_call_mode`（`tool_call` 或 `function_call`）。
+  - 新增可选字段：`tool_call_mode`（`tool_call` / `function_call` / `freeform_call`）。
   - 新增可选字段：`approval_mode`（`suggest` / `auto_edit` / `full_auto`）。
 - 当携带 `tool_call_mode` 时，服务端会在本次请求中生成 `config_overrides.llm.models.<default>.tool_call_mode`，仅影响当前轮请求。
 

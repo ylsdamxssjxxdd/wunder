@@ -26,48 +26,24 @@
               <span class="messenger-settings-profile-tag">{{ accountTypeLabel }}</span>
             </div>
           </div>
-        </div>
-        <div class="messenger-settings-profile-actions">
-          <button
-            class="messenger-settings-action messenger-settings-action--avatar"
-            type="button"
-            @click="openAvatarDialog"
-          >
-            <span class="messenger-settings-action-avatar" :style="profileAvatarStyle">
-              <img
-                v-if="resolvedProfileAvatarImageUrl"
-                class="messenger-settings-profile-avatar-image"
-                :src="resolvedProfileAvatarImageUrl"
-                alt=""
-              />
-              <UserAvatarGlyph
-                v-else-if="resolvedProfileAvatarIcon !== 'initial'"
-                class="messenger-settings-profile-avatar-icon"
-                :glyph="resolvedProfileAvatarIcon"
-                :size="14"
-              />
-              <span v-else>{{ profileInitial }}</span>
-            </span>
-            <span>{{ t('profile.avatar.settings') }}</span>
-          </button>
-        </div>
-        <div v-if="allowUsernameEdit" class="messenger-settings-profile-edit">
-          <div class="messenger-settings-hint">{{ t('profile.edit.username') }}</div>
-          <div class="messenger-settings-profile-edit-row">
-            <input
-              v-model.trim="usernameDraft"
-              class="messenger-settings-profile-edit-input"
-              type="text"
-              :placeholder="t('profile.edit.usernamePlaceholder')"
-              @keydown.enter.prevent="submitUsernameUpdate"
-            />
+          <div class="messenger-settings-profile-head-controls">
             <button
-              class="messenger-settings-action"
+              class="messenger-settings-action messenger-settings-action--avatar messenger-settings-action--icon"
               type="button"
-              :disabled="!canSubmitUsername || usernameSaving"
-              @click="submitUsernameUpdate"
+              :title="t('profile.avatar.settings')"
+              :aria-label="t('profile.avatar.settings')"
+              @click="openAvatarDialog"
             >
-              {{ usernameSaving ? t('common.saving') : t('common.save') }}
+              <i class="fa-solid fa-user" aria-hidden="true"></i>
+            </button>
+            <button
+              class="messenger-settings-action messenger-settings-action--icon"
+              type="button"
+              :title="t('profile.edit.username')"
+              :aria-label="t('profile.edit.username')"
+              @click="openUsernameDialog"
+            >
+              <i class="fa-solid fa-pen" aria-hidden="true"></i>
             </button>
           </div>
         </div>
@@ -202,17 +178,6 @@
         </div>
         <div class="messenger-settings-row">
           <div>
-            <div class="messenger-settings-label">{{ t('portal.agent.permission.title') }}</div>
-            <div class="messenger-settings-hint">{{ t('portal.agent.permission.hint') }}</div>
-          </div>
-          <select v-model="approvalMode" class="messenger-settings-select">
-            <option value="suggest">{{ t('portal.agent.permission.option.suggest') }}</option>
-            <option value="auto_edit">{{ t('portal.agent.permission.option.auto_edit') }}</option>
-            <option value="full_auto">{{ t('portal.agent.permission.option.full_auto') }}</option>
-          </select>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
             <div class="messenger-settings-label">{{ t('messenger.settings.debugTools') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.debugHint') }}</div>
           </div>
@@ -241,6 +206,42 @@
         </div>
       </section>
     </template>
+
+    <el-dialog
+      v-model="usernameDialogVisible"
+      class="messenger-dialog messenger-username-dialog"
+      :title="t('profile.edit.username')"
+      width="420px"
+      :close-on-click-modal="false"
+      append-to-body
+      destroy-on-close
+      @closed="closeUsernameDialog"
+    >
+      <div class="messenger-username-dialog-body">
+        <input
+          v-model.trim="usernameDraft"
+          class="messenger-settings-profile-edit-input messenger-settings-profile-edit-input--dialog"
+          type="text"
+          :placeholder="t('profile.edit.usernamePlaceholder')"
+          @keydown.enter.prevent="submitUsernameUpdate"
+        />
+      </div>
+      <template #footer>
+        <div class="messenger-username-dialog-footer">
+          <button class="messenger-settings-action ghost" type="button" @click="closeUsernameDialog">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            class="messenger-settings-action"
+            type="button"
+            :disabled="!canSubmitUsername || usernameSaving"
+            @click="submitUsernameUpdate"
+          >
+            {{ usernameSaving ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="avatarDialogVisible"
@@ -359,7 +360,6 @@ import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
 type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
 type PerformanceMode = 'high' | 'low';
-type ApprovalMode = 'suggest' | 'auto_edit' | 'full_auto';
 type WindowCloseBehavior = 'tray' | 'quit';
 type ProfileAvatarOption = {
   key: string;
@@ -402,7 +402,6 @@ const props = withDefaults(
     sendKey?: SendKeyMode;
     themePalette?: ThemePalette;
     performanceMode?: PerformanceMode;
-    approvalMode?: ApprovalMode;
     usernameSaving?: boolean;
     desktopLocalMode?: boolean;
     uiFontSize?: number;
@@ -421,7 +420,6 @@ const props = withDefaults(
     sendKey: 'ctrl_enter',
     themePalette: 'eva-orange',
     performanceMode: 'high',
-    approvalMode: 'auto_edit',
     usernameSaving: false,
     desktopLocalMode: false,
     uiFontSize: 14,
@@ -442,7 +440,6 @@ const emit = defineEmits<{
   (event: 'update:send-key', value: SendKeyMode): void;
   (event: 'update:theme-palette', value: ThemePalette): void;
   (event: 'update:performance-mode', value: PerformanceMode): void;
-  (event: 'update:approval-mode', value: ApprovalMode): void;
   (event: 'update:ui-font-size', value: number): void;
   (event: 'update:username', value: string): void;
   (event: 'update:profile-avatar-icon', value: string): void;
@@ -455,11 +452,11 @@ const chatStore = useChatStore();
 const sendKey = ref<SendKeyMode>('ctrl_enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const performanceMode = ref<PerformanceMode>('high');
-const approvalMode = ref<ApprovalMode>('auto_edit');
 const usernameDraft = ref('');
 const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
 const windowCloseBehaviorLoading = ref(false);
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
+const usernameDialogVisible = ref(false);
 const avatarDialogVisible = ref(false);
 const avatarDialogIcon = ref(DEFAULT_AVATAR_ICON);
 const avatarDialogColor = ref(DEFAULT_AVATAR_COLOR);
@@ -482,13 +479,6 @@ const normalizeThemePalette = (value: unknown): ThemePalette => {
 
 const normalizePerformanceMode = (value: unknown): PerformanceMode =>
   String(value || '').trim().toLowerCase() === 'low' ? 'low' : 'high';
-
-const normalizeApprovalMode = (value: unknown): ApprovalMode => {
-  const text = String(value || '').trim().toLowerCase();
-  if (text === 'suggest') return 'suggest';
-  if (text === 'full_auto' || text === 'full-auto') return 'full_auto';
-  return 'auto_edit';
-};
 
 const normalizeWindowCloseBehavior = (value: unknown): WindowCloseBehavior => {
   const text = String(value || '')
@@ -515,9 +505,7 @@ const desktopWindowCloseAvailable = computed(() => {
       typeof bridge.setWindowCloseBehavior === 'function'
   );
 });
-const allowUsernameEdit = computed(
-  () => props.desktopLocalMode === true || Boolean(getDesktopWindowCloseBridge())
-);
+const allowUsernameEdit = computed(() => true);
 const usernameSaving = computed(() => props.usernameSaving === true);
 const canSubmitUsername = computed(() => {
   if (!allowUsernameEdit.value) return false;
@@ -637,21 +625,6 @@ watch(performanceMode, (value) => {
 });
 
 watch(
-  () => props.approvalMode,
-  (value) => {
-    const normalized = normalizeApprovalMode(value);
-    if (approvalMode.value !== normalized) {
-      approvalMode.value = normalized;
-    }
-  },
-  { immediate: true }
-);
-
-watch(approvalMode, (value) => {
-  emit('update:approval-mode', normalizeApprovalMode(value));
-});
-
-watch(
   () => props.uiFontSize,
   (value) => {
     const normalized = Math.min(20, Math.max(12, Number(value) || 14));
@@ -765,6 +738,15 @@ const openAvatarDialog = () => {
   avatarDialogVisible.value = true;
 };
 
+const openUsernameDialog = () => {
+  usernameDraft.value = String(props.username || '').trim();
+  usernameDialogVisible.value = true;
+};
+
+const closeUsernameDialog = () => {
+  usernameDialogVisible.value = false;
+};
+
 const closeAvatarDialog = () => {
   avatarDialogVisible.value = false;
 };
@@ -786,6 +768,7 @@ const submitUsernameUpdate = () => {
     return;
   }
   emit('update:username', String(usernameDraft.value || '').trim());
+  usernameDialogVisible.value = false;
 };
 
 const userUnitLabel = computed(() => {

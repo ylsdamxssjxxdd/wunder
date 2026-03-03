@@ -192,9 +192,9 @@ const TOOL_HEATMAP_ICON_RULES: ReadonlyArray<{ keyword: string; icon: string }> 
   { keyword: '写入文件', icon: 'fa-file-circle-plus' },
   { keyword: 'write file', icon: 'fa-file-circle-plus' },
   { keyword: 'write_file', icon: 'fa-file-circle-plus' },
-  { keyword: '编辑文件', icon: 'fa-pen-to-square' },
-  { keyword: 'edit file', icon: 'fa-pen-to-square' },
-  { keyword: 'edit_file', icon: 'fa-pen-to-square' },
+  { keyword: '应用补丁', icon: 'fa-pen-to-square' },
+  { keyword: 'apply patch', icon: 'fa-pen-to-square' },
+  { keyword: 'apply_patch', icon: 'fa-pen-to-square' },
   { keyword: '替换文本', icon: 'fa-arrow-right-arrow-left' },
   { keyword: 'replace text', icon: 'fa-arrow-right-arrow-left' },
   { keyword: 'replace_text', icon: 'fa-arrow-right-arrow-left' }

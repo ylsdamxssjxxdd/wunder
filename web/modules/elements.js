@@ -774,6 +774,7 @@ export const elements = {
   llmProbeContextBtn: document.getElementById("llmProbeContextBtn"),
   llmMaxOutput: document.getElementById("llmMaxOutput"),
   llmVision: document.getElementById("llmVision"),
+  llmHearing: document.getElementById("llmHearing"),
   llmStreamIncludeUsage: document.getElementById("llmStreamIncludeUsage"),
   llmToolCallMode: document.getElementById("llmToolCallMode"),
   llmHistoryCompactionRatio: document.getElementById("llmHistoryCompactionRatio"),

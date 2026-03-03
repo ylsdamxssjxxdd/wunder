@@ -305,7 +305,7 @@ impl Orchestrator {
             ("读取文件", "read"),
             ("写入文件", "write"),
             ("替换文本", "replace"),
-            ("编辑文件", "edit"),
+            ("应用补丁", "patch"),
         ]);
         if let Some(action) = file_actions.get(tool_name) {
             let paths = extract_file_paths(args);
@@ -320,9 +320,12 @@ impl Orchestrator {
                         if let Some(value) = data.get("bytes") {
                             meta.insert("bytes".to_string(), value.clone());
                         }
-                    } else if *action == "edit" {
-                        if let Some(value) = data.get("lines") {
-                            meta.insert("lines".to_string(), value.clone());
+                    } else if *action == "patch" {
+                        if let Some(value) = data.get("changed_files") {
+                            meta.insert("changed_files".to_string(), value.clone());
+                        }
+                        if let Some(value) = data.get("hunks_applied") {
+                            meta.insert("hunks_applied".to_string(), value.clone());
                         }
                     }
                 }

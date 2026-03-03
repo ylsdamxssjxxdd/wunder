@@ -602,12 +602,19 @@ fn parse_tagged_tool_call_payload(payload: &str) -> Option<ToolCall> {
         .or_else(|| extract_tagged_text(payload, "tool"))
         .map(|value| clean_tool_call_name(value.as_str()))
         .filter(|value| !value.is_empty())?;
-    let arguments_text = extract_tagged_text(payload, "arguments")
-        .or_else(|| extract_tagged_text(payload, "args"))
-        .unwrap_or_else(|| "{}".to_string());
-    let arguments = serde_json::from_str::<Value>(arguments_text.as_str())
-        .map(normalize_tool_call_arguments)
-        .unwrap_or_else(|_| json!({ "raw": arguments_text }));
+    let arguments = if let Some(arguments_text) =
+        extract_tagged_text(payload, "arguments").or_else(|| extract_tagged_text(payload, "args"))
+    {
+        serde_json::from_str::<Value>(arguments_text.as_str())
+            .map(normalize_tool_call_arguments)
+            .unwrap_or_else(|_| json!({ "raw": arguments_text }))
+    } else if let Some(input_text) =
+        extract_tagged_text(payload, "input").or_else(|| extract_tagged_text(payload, "patch"))
+    {
+        json!({ "input": input_text })
+    } else {
+        json!({})
+    };
 
     Some(ToolCall {
         id: None,
@@ -1000,6 +1007,23 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_tool_call_name_input_tags_payload() {
+        let content = r#"<tool_call><name>apply_patch</name><input>*** Begin Patch
+*** Add File: note.txt
++hello
+*** End Patch</input></tool_call>"#;
+        let calls = parse_tool_calls_from_text(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "apply_patch");
+        assert!(calls[0]
+            .arguments
+            .get("input")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .contains("*** Begin Patch"));
+    }
+
+    #[test]
     fn test_parse_tool_call_open_tag_without_close() {
         let content = r#"<tool_call>{"name":"最终回复","arguments":{"content":"ok"}}"#;
         let calls = parse_tool_calls_from_text(content);
@@ -1162,8 +1186,8 @@ mod tests {
 
     #[test]
     fn test_extract_prefixed_tool_name_reads_name_from_partial_json_prefix() {
-        let name = extract_prefixed_tool_name(r#"{"name":"编辑文件","arguments":"#, false);
-        assert_eq!(name.as_deref(), Some("编辑文件"));
+        let name = extract_prefixed_tool_name(r#"{"name":"应用补丁","arguments":"#, false);
+        assert_eq!(name.as_deref(), Some("应用补丁"));
     }
 
     #[test]
@@ -1183,15 +1207,17 @@ def fibonacci(n):
     #[test]
     fn test_parse_tool_call_malformed_payload_prefers_declared_name_over_arguments() {
         let content = r#"<tool_call>
-{"name":"编辑文件","arguments":{"edits":[{"newText":"edited","oldText":"第一行内容"}],"path":"eval/run/outputs/edit.txt"}]}
+{"name":"应用补丁","arguments":{"input":"*** Begin Patch\n*** Add File: eval/run/outputs/edit.txt\n+edited\n*** End Patch"}]}
 </tool_call>"#;
         let calls = parse_tool_calls_from_text(content);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "编辑文件");
-        assert_eq!(
-            calls[0].arguments.get("path").and_then(Value::as_str),
-            Some("eval/run/outputs/edit.txt")
-        );
+        assert_eq!(calls[0].name, "应用补丁");
+        assert!(calls[0]
+            .arguments
+            .get("input")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .contains("*** Begin Patch"));
     }
 
     #[test]

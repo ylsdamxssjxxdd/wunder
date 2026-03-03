@@ -492,7 +492,11 @@ import {
   readWorkspaceImagePersistentCache,
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
-import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import {
+  isImagePath,
+  normalizeWorkspaceRelativeMarkdownPath,
+  parseWorkspaceResourceUrl
+} from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 
@@ -1487,6 +1491,15 @@ const buildWorkspacePublicPath = (ownerId: string, relativePath: string): string
   return `/workspaces/${safeOwner}/${encodeWorkspacePath(normalized)}`;
 };
 
+const resolveUserWorldMarkdownWorkspacePath = (
+  rawPath: string,
+  senderUserId: string
+): string => {
+  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
+  if (!normalized) return '';
+  return buildWorkspacePublicPath(senderUserId, normalized);
+};
+
 const AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
 const AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】]+)?$/;
 
@@ -1543,7 +1556,10 @@ const renderUserWorldMessage = (message: MessageItem): string => {
   if (cached && cached.source === patched) {
     return cached.html;
   }
-  const html = renderMarkdown(patched);
+  const html = renderMarkdown(patched, {
+    resolveWorkspacePath: (rawPath: string) =>
+      resolveUserWorldMarkdownWorkspacePath(rawPath, message.sender_user_id)
+  });
   markdownCache.set(message, { source: patched, html });
   return html;
 };

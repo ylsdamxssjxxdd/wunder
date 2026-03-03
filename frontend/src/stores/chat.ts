@@ -67,6 +67,8 @@ type WorkflowProcessorOptions = {
 
 type UsageStatsOptions = {
   updateUsage?: boolean;
+  round?: number | null;
+  accumulateDurations?: boolean;
 };
 
 type QuestionPanelApplyOptions = {
@@ -116,27 +118,6 @@ type PendingApproval = {
   detail: unknown;
   args: unknown;
   created_at: string;
-};
-
-const MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY = 'messenger_agent_approval_mode';
-
-const normalizeApprovalModeForRequest = (value: unknown): string | null => {
-  const raw = String(value || '').trim().toLowerCase();
-  if (raw === 'suggest') return 'suggest';
-  if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
-  if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
-  return null;
-};
-
-const getMessengerApprovalModeForRequest = (): string | null => {
-  if (typeof window === 'undefined') return null;
-  try {
-    return normalizeApprovalModeForRequest(
-      window.localStorage.getItem(MESSENGER_AGENT_APPROVAL_MODE_STORAGE_KEY)
-    );
-  } catch {
-    return null;
-  }
 };
 
 const buildMessageStats = () => ({
@@ -2414,6 +2395,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const approvalItemMap = new Map();
   const toolOutputItemMap = new Map();
   const toolOutputBufferMap = new Map();
+  const roundTimingMap = new Map<number, { prefill: number | null; decode: number | null }>();
   let outputItemId = null;
   const blockedRounds = new Set();
   const consumedQuotaRoundSet = new Set<number>();
@@ -2442,6 +2424,17 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     Boolean(assistantMessage.planVisible) || shouldAutoShowPlan(normalizedPlan, assistantMessage);
   assistantMessage.questionPanel = normalizeInquiryPanelState(assistantMessage.questionPanel);
   const stats = ensureMessageStats(assistantMessage);
+  if (stats) {
+    const seededRound = initialRound ?? 1;
+    const seededPrefill = normalizeDurationValue(stats.prefill_duration_s);
+    const seededDecode = normalizeDurationValue(stats.decode_duration_s);
+    if ((seededPrefill !== null || seededDecode !== null) && Number.isFinite(seededRound) && seededRound > 0) {
+      roundTimingMap.set(seededRound, {
+        prefill: seededPrefill,
+        decode: seededDecode
+      });
+    }
+  }
   const refreshInteractionDuration = () => {
     if (!stats) return;
     const duration = resolveInteractionDuration(
@@ -2521,6 +2514,30 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
   };
 
+  const recomputeTimingTotals = () => {
+    if (!stats) return;
+    let prefillTotal = 0;
+    let decodeTotal = 0;
+    let hasPrefill = false;
+    let hasDecode = false;
+    roundTimingMap.forEach((item) => {
+      if (item.prefill !== null) {
+        prefillTotal += item.prefill;
+        hasPrefill = true;
+      }
+      if (item.decode !== null) {
+        decodeTotal += item.decode;
+        hasDecode = true;
+      }
+    });
+    if (hasPrefill) {
+      stats.prefill_duration_s = prefillTotal;
+    }
+    if (hasDecode) {
+      stats.decode_duration_s = decodeTotal;
+    }
+  };
+
   const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options: UsageStatsOptions = {}) => {
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
@@ -2528,10 +2545,23 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       stats.usage = normalizedUsage;
     }
     const prefill = normalizeDurationValue(prefillDuration);
+    const decode = normalizeDurationValue(decodeDuration);
+    const roundNumber = normalizeStreamRound(options.round);
+    if (options.accumulateDurations && roundNumber !== null) {
+      const current = roundTimingMap.get(roundNumber) ?? { prefill: null, decode: null };
+      if (prefill !== null) {
+        current.prefill = prefill;
+      }
+      if (decode !== null) {
+        current.decode = decode;
+      }
+      roundTimingMap.set(roundNumber, current);
+      recomputeTimingTotals();
+      return;
+    }
     if (prefill !== null) {
       stats.prefill_duration_s = prefill;
     }
-    const decode = normalizeDurationValue(decodeDuration);
     if (decode !== null) {
       stats.decode_duration_s = decode;
     }
@@ -2678,8 +2708,42 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     roundState.currentRound = roundNumber;
   };
 
+  const resolveModelRound = (payload, data) => {
+    const directRound = normalizeStreamRound(
+      data?.model_round ??
+        payload?.model_round ??
+        data?.round ??
+        payload?.round ??
+        data?.user_round ??
+        payload?.user_round
+    );
+    if (directRound !== null) {
+      return directRound;
+    }
+    for (const source of [data, payload]) {
+      const segments = readDeltaSegments(source);
+      if (!segments.length) {
+        continue;
+      }
+      let segmentRound = null;
+      segments.forEach((segment) => {
+        if (!segment || typeof segment !== 'object') return;
+        const resolved = normalizeStreamRound(
+          segment.model_round ?? segment.round ?? segment.user_round
+        );
+        if (resolved !== null) {
+          segmentRound = resolved;
+        }
+      });
+      if (segmentRound !== null) {
+        return segmentRound;
+      }
+    }
+    return null;
+  };
+
   const resolveRound = (payload, data) => {
-    const roundNumber = resolveEventRoundNumber(payload, data);
+    const roundNumber = resolveModelRound(payload, data);
     if (roundNumber !== null) {
       updateRoundState(roundNumber);
       return roundNumber;
@@ -2907,11 +2971,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         registerToolItem(toolName, item.id);
         registerToolStats(toolName);
         if (lastRound !== null) {
-          // 工具调用轮次的模型输出不展示在正式回答区
+          // 工具调用后不再接收该轮后续增量，但保留当前已展示的内容/思考。
           blockedRounds.add(lastRound);
-          if (visibleRound === lastRound) {
-            clearVisibleOutput();
-          }
         }
         break;
       }
@@ -3116,7 +3177,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         updateUsageStats(
           data?.usage ?? payload?.usage ?? data,
           data?.prefill_duration_s ?? payload?.prefill_duration_s,
-          data?.decode_duration_s ?? payload?.decode_duration_s
+          data?.decode_duration_s ?? payload?.decode_duration_s,
+          { round, accumulateDurations: true }
         );
         if (round !== null) {
           lastRound = round;
@@ -3191,10 +3253,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'token_usage': {
+        const round = resolveRound(payload, data);
         updateUsageStats(
           data?.usage ?? payload?.usage ?? data,
-          data?.prefill_duration_s ?? payload?.prefill_duration_s,
-          data?.decode_duration_s ?? payload?.decode_duration_s
+          null,
+          null,
+          { round, updateUsage: true }
         );
         break;
       }
@@ -3202,8 +3266,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const round = resolveRound(payload, data);
         updateUsageStats(
           data?.usage ?? payload?.usage ?? data ?? payload,
-          data?.prefill_duration_s ?? payload?.prefill_duration_s,
-          data?.decode_duration_s ?? payload?.decode_duration_s
+          null,
+          null,
+          { round, updateUsage: true }
         );
         fallbackQuotaUsageFromRound(round);
         break;
@@ -3940,13 +4005,11 @@ export const useChatStore = defineStore('chat', {
           runtime.sendController = new AbortController();
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
-        const messengerApprovalMode = getMessengerApprovalModeForRequest();
         const payload = {
           content,
           stream: true,
           ...(attachments.length > 0 ? { attachments } : {}),
-          ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
-          ...(messengerApprovalMode ? { approval_mode: messengerApprovalMode } : {})
+          ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {})
         };
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);

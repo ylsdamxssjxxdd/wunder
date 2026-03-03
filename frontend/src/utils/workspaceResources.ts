@@ -3,6 +3,7 @@ const WORKSPACE_AGENT_MARKER = '__agent__';
 const WORKSPACE_SHORT_AGENT_MARKER = '__a__';
 const WORKSPACE_CONTAINER_MARKER = '__c__';
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
+const ABSOLUTE_URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
 
 const getBaseOrigin = () => {
   if (typeof window !== 'undefined' && window.location?.origin) {
@@ -17,6 +18,58 @@ const decodePath = (value) => {
   } catch (error) {
     return value;
   }
+};
+
+const splitPathWithSuffix = (value) => {
+  const queryIndex = value.indexOf('?');
+  const hashIndex = value.indexOf('#');
+  if (queryIndex < 0 && hashIndex < 0) {
+    return { path: value, suffix: '' };
+  }
+  let splitIndex = value.length;
+  if (queryIndex >= 0) {
+    splitIndex = Math.min(splitIndex, queryIndex);
+  }
+  if (hashIndex >= 0) {
+    splitIndex = Math.min(splitIndex, hashIndex);
+  }
+  return {
+    path: value.slice(0, splitIndex),
+    suffix: value.slice(splitIndex)
+  };
+};
+
+export const normalizeWorkspaceRelativeMarkdownPath = (raw) => {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (
+    text.startsWith('/') ||
+    text.startsWith('//') ||
+    text.startsWith('?') ||
+    text.startsWith('#') ||
+    ABSOLUTE_URI_SCHEME_RE.test(text)
+  ) {
+    return '';
+  }
+  const normalized = text.replace(/\\/g, '/');
+  const { path } = splitPathWithSuffix(normalized);
+  if (!path.startsWith('./') && !path.startsWith('../')) {
+    return '';
+  }
+  const segments = [];
+  path.split('/').forEach((segment) => {
+    const token = segment.trim();
+    if (!token || token === '.') return;
+    if (token === '..') {
+      if (segments.length) {
+        segments.pop();
+      }
+      return;
+    }
+    segments.push(token);
+  });
+  if (!segments.length) return '';
+  return segments.join('/');
 };
 
 export const parseWorkspaceResourceUrl = (raw) => {

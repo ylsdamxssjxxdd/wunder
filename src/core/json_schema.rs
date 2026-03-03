@@ -164,7 +164,10 @@ pub fn sanitize_json_schema_in_place(value: &mut Value) {
     }
 }
 
-pub fn normalize_tool_input_schema(schema: Option<&Value>) -> Value {
+fn normalize_tool_input_schema_inner(
+    schema: Option<&Value>,
+    strip_openai_top_level_forbidden: bool,
+) -> Value {
     let mut normalized = schema.cloned().unwrap_or_else(default_object_schema);
     sanitize_json_schema_in_place(&mut normalized);
 
@@ -180,8 +183,23 @@ pub fn normalize_tool_input_schema(schema: Option<&Value>) -> Value {
             );
         }
         ensure_object_properties(map);
+        if strip_openai_top_level_forbidden {
+            // OpenAI tool schemas require top-level object parameters and reject
+            // these composition/negation keywords at the root level.
+            for forbidden in ["oneOf", "anyOf", "allOf", "enum", "not"] {
+                map.remove(forbidden);
+            }
+        }
     }
     normalized
+}
+
+pub fn normalize_tool_input_schema(schema: Option<&Value>) -> Value {
+    normalize_tool_input_schema_inner(schema, false)
+}
+
+pub fn normalize_tool_input_schema_for_openai(schema: Option<&Value>) -> Value {
+    normalize_tool_input_schema_inner(schema, true)
 }
 
 #[cfg(test)]
@@ -231,5 +249,71 @@ mod tests {
         });
         sanitize_json_schema_in_place(&mut schema);
         assert_eq!(schema["type"], Value::String(SCHEMA_TYPE_ARRAY.to_string()));
+    }
+
+    #[test]
+    fn normalize_tool_input_schema_preserves_top_level_keywords_by_default() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["a", "b"]
+                }
+            },
+            "anyOf": [
+                { "required": ["mode"] }
+            ],
+            "allOf": [
+                { "properties": { "x": { "type": "string" } } }
+            ],
+            "oneOf": [
+                { "required": ["mode"] }
+            ],
+            "enum": ["x"],
+            "not": { "type": "null" }
+        });
+
+        let normalized = normalize_tool_input_schema(Some(&schema));
+
+        assert!(normalized.get("oneOf").is_some());
+        assert!(normalized.get("anyOf").is_some());
+        assert!(normalized.get("allOf").is_some());
+        assert!(normalized.get("enum").is_some());
+        assert!(normalized.get("not").is_some());
+        assert_eq!(normalized["properties"]["mode"]["enum"], json!(["a", "b"]));
+    }
+
+    #[test]
+    fn normalize_tool_input_schema_for_openai_strips_forbidden_top_level_keywords() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["a", "b"]
+                }
+            },
+            "anyOf": [
+                { "required": ["mode"] }
+            ],
+            "allOf": [
+                { "properties": { "x": { "type": "string" } } }
+            ],
+            "oneOf": [
+                { "required": ["mode"] }
+            ],
+            "enum": ["x"],
+            "not": { "type": "null" }
+        });
+
+        let normalized = normalize_tool_input_schema_for_openai(Some(&schema));
+
+        assert!(normalized.get("oneOf").is_none());
+        assert!(normalized.get("anyOf").is_none());
+        assert!(normalized.get("allOf").is_none());
+        assert!(normalized.get("enum").is_none());
+        assert!(normalized.get("not").is_none());
+        assert_eq!(normalized["properties"]["mode"]["enum"], json!(["a", "b"]));
     }
 }

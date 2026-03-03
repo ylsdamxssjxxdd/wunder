@@ -45,7 +45,7 @@ const APP_CONFIG_DEFAULTS = {
           "写入文件",
           "搜索内容",
           "替换文本",
-          "编辑文件",
+          "应用补丁",
         ],
         steps: [
           "你现在是稳定性测试助手，请简短回答 'ready'，并声明将持续执行任务；不要使用问询面板或 a2ui。",
@@ -80,7 +80,7 @@ const APP_CONFIG_DEFAULTS = {
           "写入文件",
           "搜索内容",
           "替换文本",
-          "编辑文件",
+          "应用补丁",
         ],
         steps: [
           "You are a stability test agent. Reply with 'ready' and confirm you will keep executing tasks; do not use question panel or a2ui.",

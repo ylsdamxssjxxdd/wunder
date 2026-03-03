@@ -155,17 +155,20 @@ impl Orchestrator {
                 Some(&user_tool_bindings),
             );
             let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
-            let function_tooling =
-                if tool_call_mode == ToolCallMode::FunctionCall && !prepared.skip_tool_calls {
-                    self.build_function_tooling(
-                        &config,
-                        &skills_snapshot,
-                        &allowed_tool_names,
-                        Some(&user_tool_bindings),
-                    )
-                } else {
-                    None
-                };
+            let function_tooling = if matches!(
+                tool_call_mode,
+                ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
+            ) && !prepared.skip_tool_calls
+            {
+                self.build_function_tooling(
+                    &config,
+                    &skills_snapshot,
+                    &allowed_tool_names,
+                    Some(&user_tool_bindings),
+                )
+            } else {
+                None
+            };
 
             let system_prompt = self
                 .resolve_session_prompt(
@@ -573,7 +576,10 @@ impl Orchestrator {
                         }
 
                         let observation = self.build_tool_observation(&name, &result);
-                        let tool_call_id = if tool_call_mode == ToolCallMode::FunctionCall {
+                        let tool_call_id = if matches!(
+                            tool_call_mode,
+                            ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
+                        ) {
                             id.as_deref()
                                 .map(str::trim)
                                 .filter(|value| !value.is_empty())
@@ -581,7 +587,10 @@ impl Orchestrator {
                         } else {
                             None
                         };
-                        if tool_call_mode == ToolCallMode::FunctionCall {
+                        if matches!(
+                            tool_call_mode,
+                            ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
+                        ) {
                             if let Some(tool_call_id) = tool_call_id.as_ref() {
                                 messages.push(json!({
                                     "role": "tool",

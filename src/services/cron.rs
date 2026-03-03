@@ -30,6 +30,8 @@ use uuid::Uuid;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const SUMMARY_MAX_CHARS: usize = 200;
+const DEFAULT_MAX_CONSECUTIVE_FAILURES: usize = 5;
+const AUTO_DISABLED_REASON_MAX_CHARS: usize = 240;
 
 type NormalizedSchedule = (
     String,
@@ -62,6 +64,61 @@ pub async fn handle_cron_action(
     let action = payload.action.trim().to_lowercase();
     let now = now_ts();
     match action.as_str() {
+        "status" => {
+            let global_running = {
+                let storage = storage.clone();
+                tokio::task::spawn_blocking(move || storage.count_running_cron_jobs())
+                    .await
+                    .map_err(|err| anyhow!(err.to_string()))??
+            };
+            let global_next_run_at = {
+                let storage = storage.clone();
+                tokio::task::spawn_blocking(move || storage.get_next_cron_run_at(now))
+                    .await
+                    .map_err(|err| anyhow!(err.to_string()))??
+            };
+            let user_jobs = {
+                let storage = storage.clone();
+                let cleaned_user = user_id.trim().to_string();
+                tokio::task::spawn_blocking(move || storage.list_cron_jobs(&cleaned_user, true))
+                    .await
+                    .map_err(|err| anyhow!(err.to_string()))??
+            };
+            let user_total_jobs = user_jobs.len();
+            let user_enabled_jobs = user_jobs.iter().filter(|job| job.enabled).count();
+            let user_running_jobs = user_jobs
+                .iter()
+                .filter(|job| job.running_at.is_some())
+                .count();
+            let user_next_run_at = user_jobs
+                .iter()
+                .filter(|job| job.enabled)
+                .filter_map(|job| job.next_run_at)
+                .min_by(f64::total_cmp);
+            Ok(json!({
+                "action": "status",
+                "scheduler": {
+                    "enabled": config.cron.enabled,
+                    "poll_interval_ms": config.cron.poll_interval_ms,
+                    "max_concurrent_runs": config.cron.max_concurrent_runs,
+                    "idle_retry_ms": config.cron.idle_retry_ms,
+                    "max_busy_wait_ms": config.cron.max_busy_wait_ms,
+                    "max_consecutive_failures": config.cron.max_consecutive_failures,
+                    "running_jobs": global_running,
+                    "next_run_at": global_next_run_at,
+                    "next_run_at_text": format_ts(global_next_run_at),
+                    "now": now,
+                    "now_text": format_ts(Some(now)),
+                },
+                "user_jobs": {
+                    "total": user_total_jobs,
+                    "enabled": user_enabled_jobs,
+                    "running": user_running_jobs,
+                    "next_run_at": user_next_run_at,
+                    "next_run_at_text": format_ts(user_next_run_at),
+                }
+            }))
+        }
         "list" => {
             let storage = storage.clone();
             let cleaned = user_id.trim().to_string();
@@ -214,6 +271,8 @@ pub async fn handle_cron_action(
             };
             record.enabled = action == "enable";
             if record.enabled {
+                record.consecutive_failures = 0;
+                record.auto_disabled_reason = None;
                 record.next_run_at = compute_next_run_at(
                     &record.schedule_kind,
                     record.schedule_at.as_deref(),
@@ -466,6 +525,10 @@ fn apply_job_patch(
     }
     if let Some(enabled) = input.enabled {
         record.enabled = enabled;
+        if enabled {
+            record.consecutive_failures = 0;
+            record.auto_disabled_reason = None;
+        }
     }
     if let Some(delete_after_run) = input.delete_after_run {
         record.delete_after_run = delete_after_run;
@@ -997,12 +1060,20 @@ impl CronRuntime {
             .build_request(user_id, session_id, agent_id, message, parent_session_id)
             .await?;
         let retry_ms = self.config.cron.idle_retry_ms.max(200);
+        let max_busy_wait_ms = self.config.cron.max_busy_wait_ms.max(retry_ms);
+        let wait_deadline = Instant::now() + Duration::from_millis(max_busy_wait_ms);
         loop {
             match self.run_stream_request(request.clone()).await {
                 Ok(response) => return Ok(response),
                 Err(err) => {
                     if is_user_busy(&err) {
-                        sleep(Duration::from_millis(retry_ms)).await;
+                        let now = Instant::now();
+                        if now >= wait_deadline {
+                            return Err(anyhow!("USER_BUSY timeout after {max_busy_wait_ms}ms"));
+                        }
+                        let remaining = wait_deadline.saturating_duration_since(now);
+                        let delay = remaining.min(Duration::from_millis(retry_ms));
+                        sleep(delay).await;
                         continue;
                     }
                     return Err(err);
@@ -1211,8 +1282,9 @@ impl CronRuntime {
         let status = status.to_string();
         let summary = summary.clone();
         let error_msg = error_msg.clone();
+        let max_consecutive_failures = self.config.cron.max_consecutive_failures.max(1);
         match tokio::task::spawn_blocking(move || {
-            persist_cron_run_and_update_job(
+            persist_cron_run_and_update_job_with_limits(
                 storage.as_ref(),
                 job_clone,
                 trigger,
@@ -1222,6 +1294,7 @@ impl CronRuntime {
                 start_ts,
                 duration_ms,
                 now,
+                max_consecutive_failures,
             )
         })
         .await
@@ -1250,6 +1323,33 @@ pub fn persist_cron_run_and_update_job(
     duration_ms: i64,
     now: f64,
 ) -> Result<()> {
+    persist_cron_run_and_update_job_with_limits(
+        storage,
+        job,
+        trigger,
+        status,
+        summary,
+        error_msg,
+        start_ts,
+        duration_ms,
+        now,
+        DEFAULT_MAX_CONSECUTIVE_FAILURES,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_cron_run_and_update_job_with_limits(
+    storage: &dyn StorageBackend,
+    job: CronJobRecord,
+    trigger: String,
+    status: String,
+    summary: Option<String>,
+    error_msg: Option<String>,
+    start_ts: f64,
+    duration_ms: i64,
+    now: f64,
+    max_consecutive_failures: usize,
+) -> Result<()> {
     let run_record = CronRunRecord {
         run_id: Uuid::new_v4().simple().to_string(),
         job_id: job.job_id.clone(),
@@ -1271,11 +1371,19 @@ pub fn persist_cron_run_and_update_job(
     let Some(mut record) = storage.get_cron_job(&job.user_id, &job.job_id)? else {
         return Ok(());
     };
+    let is_ok = status == "ok";
+    let is_error = status == "error";
     record.running_at = None;
     record.last_run_at = Some(start_ts);
     record.last_status = Some(status);
     record.last_error = error_msg;
     record.updated_at = now;
+    if is_ok {
+        record.consecutive_failures = 0;
+        record.auto_disabled_reason = None;
+    } else if is_error {
+        record.consecutive_failures = record.consecutive_failures.saturating_add(1);
+    }
     let mut next_run_at = None;
     if record.enabled {
         next_run_at = compute_next_run_at(
@@ -1296,6 +1404,19 @@ pub fn persist_cron_run_and_update_job(
         && record.last_status.as_deref() == Some("ok")
     {
         record.enabled = false;
+    }
+    let max_consecutive_failures = max_consecutive_failures.max(1) as i64;
+    if is_error && record.consecutive_failures >= max_consecutive_failures {
+        record.enabled = false;
+        record.next_run_at = None;
+        let reason = record.last_error.as_deref().unwrap_or("unknown error");
+        let reason = truncate_text(
+            &format!(
+                "auto disabled after {max_consecutive_failures} consecutive failures: {reason}"
+            ),
+            AUTO_DISABLED_REASON_MAX_CHARS,
+        );
+        record.auto_disabled_reason = Some(reason);
     }
     storage.upsert_cron_job(&record)?;
     Ok(())

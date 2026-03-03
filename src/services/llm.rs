@@ -1,6 +1,7 @@
 // LLM 适配：支持 OpenAI 兼容的 Chat Completions 调用。
 use crate::config::LlmModelConfig;
 use crate::core::json_schema::normalize_tool_input_schema;
+use crate::core::json_schema::normalize_tool_input_schema_for_openai;
 use crate::schemas::TokenUsage;
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
@@ -44,6 +45,7 @@ pub enum ModelType {
 pub enum ToolCallMode {
     ToolCall,
     FunctionCall,
+    FreeformCall,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +80,9 @@ pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
     }
     match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "function_call" | "functioncall" | "function" | "fc" => ToolCallMode::FunctionCall,
+        "freeform_call" | "freeformcall" | "freeform" | "custom_tool_call" => {
+            ToolCallMode::FreeformCall
+        }
         "tool_call" | "toolcall" | "tool" | "tag" | "xml" => ToolCallMode::ToolCall,
         _ => ToolCallMode::ToolCall,
     }
@@ -399,6 +404,8 @@ impl LlmClient {
         include_usage: bool,
         tools: Option<&[Value]>,
     ) -> Value {
+        let openai_top_level_schema_guard =
+            should_strip_openai_tool_schema(self.config.provider.as_deref());
         let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
         let mut payload = json!({
             "model": self.config.model.clone().unwrap_or_else(|| "gpt-4".to_string()),
@@ -424,7 +431,9 @@ impl LlmClient {
                 payload["tools"] = Value::Array(
                     tool_defs
                         .iter()
-                        .map(normalize_chat_tool_definition)
+                        .map(|tool| {
+                            normalize_chat_tool_definition(tool, openai_top_level_schema_guard)
+                        })
                         .collect(),
                 );
                 payload["tool_choice"] = json!("auto");
@@ -440,6 +449,8 @@ impl LlmClient {
         include_usage: bool,
         tools: Option<&[Value]>,
     ) -> Value {
+        let openai_top_level_schema_guard =
+            should_strip_openai_tool_schema(self.config.provider.as_deref());
         let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
         let input = build_responses_input(messages);
         let mut payload = json!({
@@ -466,7 +477,9 @@ impl LlmClient {
                 payload["tools"] = Value::Array(
                     tool_defs
                         .iter()
-                        .map(normalize_responses_tool_definition)
+                        .map(|tool| {
+                            normalize_responses_tool_definition(tool, openai_top_level_schema_guard)
+                        })
                         .collect(),
                 );
                 payload["tool_choice"] = json!("auto");
@@ -476,7 +489,14 @@ impl LlmClient {
     }
 }
 
-fn normalize_chat_tool_definition(tool: &Value) -> Value {
+fn normalize_chat_tool_definition(tool: &Value, openai_top_level_schema_guard: bool) -> Value {
+    let normalize_parameters = |schema: Option<&Value>| {
+        if openai_top_level_schema_guard {
+            normalize_tool_input_schema_for_openai(schema)
+        } else {
+            normalize_tool_input_schema(schema)
+        }
+    };
     if let Some(function) = tool.get("function").and_then(Value::as_object) {
         let name = function
             .get("name")
@@ -490,7 +510,7 @@ fn normalize_chat_tool_definition(tool: &Value) -> Value {
             .get("description")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let parameters = normalize_tool_input_schema(function.get("parameters"));
+        let parameters = normalize_parameters(function.get("parameters"));
         return json!({
             "type": "function",
             "function": {
@@ -513,7 +533,7 @@ fn normalize_chat_tool_definition(tool: &Value) -> Value {
         .get("description")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let parameters = normalize_tool_input_schema(tool.get("parameters"));
+    let parameters = normalize_parameters(tool.get("parameters"));
     json!({
         "type": "function",
         "function": {
@@ -524,7 +544,14 @@ fn normalize_chat_tool_definition(tool: &Value) -> Value {
     })
 }
 
-fn normalize_responses_tool_definition(tool: &Value) -> Value {
+fn normalize_responses_tool_definition(tool: &Value, openai_top_level_schema_guard: bool) -> Value {
+    let normalize_parameters = |schema: Option<&Value>| {
+        if openai_top_level_schema_guard {
+            normalize_tool_input_schema_for_openai(schema)
+        } else {
+            normalize_tool_input_schema(schema)
+        }
+    };
     if let Some(function) = tool.get("function").and_then(Value::as_object) {
         let name = function
             .get("name")
@@ -538,7 +565,7 @@ fn normalize_responses_tool_definition(tool: &Value) -> Value {
             .get("description")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let parameters = normalize_tool_input_schema(function.get("parameters"));
+        let parameters = normalize_parameters(function.get("parameters"));
         return json!({
             "type": "function",
             "name": name,
@@ -559,7 +586,7 @@ fn normalize_responses_tool_definition(tool: &Value) -> Value {
         .get("description")
         .and_then(Value::as_str)
         .unwrap_or("");
-    let parameters = normalize_tool_input_schema(tool.get("parameters"));
+    let parameters = normalize_parameters(tool.get("parameters"));
     json!({
         "type": "function",
         "name": name,
@@ -885,6 +912,10 @@ pub fn normalize_provider(provider: Option<&str>) -> String {
     }
 }
 
+fn should_strip_openai_tool_schema(provider: Option<&str>) -> bool {
+    normalize_provider(provider) == "openai"
+}
+
 pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
     match provider {
         "openai" => Some(DEFAULT_OPENAI_BASE_URL),
@@ -1130,6 +1161,11 @@ fn extract_responses_output(response: &Value) -> (String, String, Vec<Value>) {
                         tool_calls.push(tool_call);
                     }
                 }
+                "custom_tool_call" => {
+                    if let Some(tool_call) = response_tool_call_to_openai(item, idx) {
+                        tool_calls.push(tool_call);
+                    }
+                }
                 _ => {}
             }
         }
@@ -1199,8 +1235,13 @@ fn response_tool_call_to_openai(item: &Value, fallback_index: usize) -> Option<V
                 .and_then(|value| value.get("arguments"))
                 .and_then(Value::as_str)
         })
-        .unwrap_or("")
-        .to_string();
+        .map(str::to_string)
+        .or_else(|| {
+            map.get("input")
+                .and_then(Value::as_str)
+                .and_then(|input| serde_json::to_string(&json!({ "input": input })).ok())
+        })
+        .unwrap_or_default();
     let call_id = map
         .get("call_id")
         .or_else(|| map.get("id"))
@@ -1607,7 +1648,7 @@ fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Va
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_ascii_lowercase();
-    if item_type != "function_call" {
+    if item_type != "function_call" && item_type != "custom_tool_call" {
         return;
     }
     let item_id = map
@@ -1628,7 +1669,17 @@ fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Va
             .and_then(|value| value.get("arguments"))
             .and_then(Value::as_str)
     });
-    upsert_response_tool_call(acc, item_id, call_id, name, arguments);
+    let custom_arguments = map
+        .get("input")
+        .and_then(Value::as_str)
+        .and_then(|input| serde_json::to_string(&json!({ "input": input })).ok());
+    upsert_response_tool_call(
+        acc,
+        item_id,
+        call_id,
+        name,
+        arguments.or(custom_arguments.as_deref()),
+    );
 }
 
 fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: &Value) {
@@ -2502,6 +2553,22 @@ mod tests {
     }
 
     #[test]
+    fn normalize_tool_call_mode_accepts_freeform_call_aliases() {
+        assert_eq!(
+            normalize_tool_call_mode(Some("freeform_call")),
+            ToolCallMode::FreeformCall
+        );
+        assert_eq!(
+            normalize_tool_call_mode(Some("freeform")),
+            ToolCallMode::FreeformCall
+        );
+        assert_eq!(
+            normalize_tool_call_mode(Some("custom_tool_call")),
+            ToolCallMode::FreeformCall
+        );
+    }
+
+    #[test]
     fn resolve_openai_api_mode_defaults_to_responses_for_gpt5_on_openai_provider() {
         let config = LlmModelConfig {
             enable: Some(true),
@@ -2535,23 +2602,23 @@ mod tests {
         let tool = json!({
             "type": "function",
             "function": {
-                "name": "edit_file",
-                "description": "Edit file",
+                "name": "apply_patch",
+                "description": "Apply patch",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "edits": {
-                            "type": "array"
+                        "input": {
+                            "type": "string"
                         }
                     }
                 }
             }
         });
-        let normalized = normalize_responses_tool_definition(&tool);
+        let normalized = normalize_responses_tool_definition(&tool, false);
         assert_eq!(normalized["type"], "function");
-        assert_eq!(normalized["name"], "edit_file");
+        assert_eq!(normalized["name"], "apply_patch");
         assert_eq!(
-            normalized["parameters"]["properties"]["edits"]["items"]["type"],
+            normalized["parameters"]["properties"]["input"]["type"],
             "string"
         );
     }
@@ -2560,23 +2627,53 @@ mod tests {
     fn normalize_chat_tool_definition_wraps_responses_shape_and_fixes_schema() {
         let tool = json!({
             "type": "function",
-            "name": "edit_file",
-            "description": "Edit file",
+            "name": "apply_patch",
+            "description": "Apply patch",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "edits": {
-                        "type": "array"
+                    "input": {
+                        "type": "string"
                     }
                 }
             }
         });
-        let normalized = normalize_chat_tool_definition(&tool);
+        let normalized = normalize_chat_tool_definition(&tool, false);
         assert_eq!(normalized["type"], "function");
-        assert_eq!(normalized["function"]["name"], "edit_file");
+        assert_eq!(normalized["function"]["name"], "apply_patch");
         assert_eq!(
-            normalized["function"]["parameters"]["properties"]["edits"]["items"]["type"],
+            normalized["function"]["parameters"]["properties"]["input"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn normalize_responses_tool_definition_strips_forbidden_top_level_for_openai_only() {
+        let tool = json!({
+            "type": "function",
+            "name": "apply_patch",
+            "description": "Apply patch",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "input": {"type": "string"}
+                },
+                "allOf": [
+                    {"required": ["input"]}
+                ]
+            }
+        });
+        let preserved = normalize_responses_tool_definition(&tool, false);
+        let stripped = normalize_responses_tool_definition(&tool, true);
+
+        assert!(preserved["parameters"].get("allOf").is_some());
+        assert!(stripped["parameters"].get("allOf").is_none());
+    }
+
+    #[test]
+    fn should_strip_openai_tool_schema_only_for_openai_provider() {
+        assert!(should_strip_openai_tool_schema(Some("openai")));
+        assert!(!should_strip_openai_tool_schema(Some("openai_compatible")));
+        assert!(!should_strip_openai_tool_schema(Some("groq")));
     }
 }

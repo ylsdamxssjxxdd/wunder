@@ -79,15 +79,15 @@
       ]
     },
     {
-      "id": "tool_edit_file",
+      "id": "tool_apply_patch",
       "dimension": "tool",
-      "prompt": "Use edit_file to replace the first line of eval/{run_id}/outputs/edit.txt with edited. Only output the tool call.",
+      "prompt": "Use apply_patch to update eval/{run_id}/outputs/edit.txt and replace the first line with edited. Only output the tool call.",
       "checker": {
         "type": "tool_called",
-        "tool": "edit_file"
+        "tool": "apply_patch"
       },
       "prerequisites": [
-        "edit_file"
+        "apply_patch"
       ],
       "tags": [
         "builtin"

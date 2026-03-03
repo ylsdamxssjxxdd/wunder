@@ -52,9 +52,16 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 
 const resolveTokenSpeed = (stats: Record<string, any>, durationSeconds: number | null): number | null => {
   const outputTokens = Number(stats?.usage?.output);
-  const decode = normalizeDurationSeconds(stats?.decode_duration_s);
+  const decode = normalizeDurationSeconds(
+    stats?.decode_duration_total_s ??
+      stats?.decodeDurationTotalS ??
+      stats?.decode_duration_s
+  );
   if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
     return outputTokens / decode;
+  }
+  if (Number.isFinite(outputTokens) && outputTokens > 0 && durationSeconds && durationSeconds > 0) {
+    return outputTokens / durationSeconds;
   }
   const totalTokens = Number(stats?.usage?.total);
   if (Number.isFinite(totalTokens) && totalTokens > 0 && durationSeconds && durationSeconds > 0) {

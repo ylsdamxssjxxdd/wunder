@@ -164,6 +164,7 @@ impl PromptComposer {
         let tool_mode_key = match tool_call_mode {
             ToolCallMode::FunctionCall => "function_call",
             ToolCallMode::ToolCall => "tool_call",
+            ToolCallMode::FreeformCall => "freeform_call",
         };
         let user_tool_version = user_tool_bindings
             .map(|item| item.user_version)
@@ -232,7 +233,7 @@ impl PromptComposer {
             let include_ptc = allowed_tool_names
                 .iter()
                 .any(|name| resolve_tool_name(name) == "ptc");
-            let tool_specs = if tool_call_mode == ToolCallMode::ToolCall
+            let tool_specs = if tool_call_mode != ToolCallMode::FunctionCall
                 && !allowed_tool_names.is_empty()
             {
                 let tool_cache_key = format!(
@@ -523,7 +524,7 @@ fn build_system_prompt_skeleton(
     // When `tool_call_mode=function_call`, tool specs and invocation protocol are
     // provided by the LLM API itself, so we omit the entire tools-protocol block
     // to keep the system prompt minimal.
-    let tools_block = if tool_call_mode == ToolCallMode::ToolCall {
+    let tools_block = if tool_call_mode != ToolCallMode::FunctionCall {
         let tools_text = if !tools.is_empty() {
             tools
                 .iter()
@@ -534,8 +535,18 @@ fn build_system_prompt_skeleton(
             String::new()
         };
         let mut tools_flags = HashMap::new();
-        tools_flags.insert("TOOL_CALL_MODE_TOOL_CALL".to_string(), true);
-        tools_flags.insert("TOOL_CALL_MODE_FUNCTION_CALL".to_string(), false);
+        tools_flags.insert(
+            "TOOL_CALL_MODE_TOOL_CALL".to_string(),
+            tool_call_mode == ToolCallMode::ToolCall,
+        );
+        tools_flags.insert(
+            "TOOL_CALL_MODE_FUNCTION_CALL".to_string(),
+            tool_call_mode == ToolCallMode::FunctionCall,
+        );
+        tools_flags.insert(
+            "TOOL_CALL_MODE_FREEFORM_CALL".to_string(),
+            tool_call_mode == ToolCallMode::FreeformCall,
+        );
         let has_a2ui = allowed_tool_names
             .iter()
             .any(|name| resolve_tool_name(name) == "a2ui");

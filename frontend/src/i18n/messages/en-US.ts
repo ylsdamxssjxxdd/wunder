@@ -479,7 +479,8 @@ export default {
   'settings.placeholder': 'Settings panel reserved for prototype stage.',
   'desktop.settings.title': 'Desktop Client Settings',
   'desktop.settings.toolCallMode': 'Tool call mode',
-  'desktop.settings.toolCallHint': 'Used for new chat turns. Switch between tool_call and function_call.',
+  'desktop.settings.toolCallHint':
+    'Used for new chat turns. Switch between tool_call, function_call, and freeform_call.',
   'desktop.settings.tools': 'MCP / Skills',
   'desktop.settings.toolsHint': 'Manage MCP servers, Skills, and built-in tools in Tool Manager.',
   'desktop.settings.openTools': 'Open Tool Manager',
@@ -632,7 +633,8 @@ export default {
   'desktop.system.compactionReset.current': 'current (reset to current)',
   'desktop.system.compactionReset.keep': 'keep (no reset)',
   'desktop.system.toolCallMode': 'Tool call mode',
-  'desktop.system.toolCallHint': 'Controls the model tool protocol. Keep tool_call unless you need compatibility.',
+  'desktop.system.toolCallHint':
+    'Controls the model tool protocol. Use freeform_call for models that can follow patch grammar well.',
   'desktop.system.languageRequired': 'Please choose a language',
   'desktop.system.remote.title': 'Server Connection',
   'desktop.system.remote.enabled': 'Enable server connection',

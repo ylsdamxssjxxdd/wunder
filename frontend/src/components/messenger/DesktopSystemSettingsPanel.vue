@@ -123,10 +123,23 @@
             </label>
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelName') }}</span>
-              <el-input
+              <el-select
                 v-model="selectedModel.model"
+                class="desktop-system-settings-input"
+                popper-class="desktop-system-settings-popper"
+                filterable
+                allow-create
+                default-first-option
                 :placeholder="t('desktop.system.modelNamePlaceholder')"
-              />
+                @change="handleModelChange"
+              >
+                <el-option
+                  v-for="option in modelOptionsForSelectedModel"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
+                />
+              </el-select>
             </label>
             <label class="desktop-system-settings-field desktop-system-settings-field--full">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.baseUrl') }}</span>
@@ -220,6 +233,7 @@
               >
                 <el-option label="tool_call" value="tool_call" />
                 <el-option label="function_call" value="function_call" />
+                <el-option label="freeform_call" value="freeform_call" />
               </el-select>
             </label>
           </div>
@@ -424,9 +438,13 @@ import {
   setDesktopRemoteApiBaseOverride
 } from '@/config/desktop';
 import { useI18n } from '@/i18n';
+import {
+  getProviderModelPresets,
+  resolveProviderModelPresetMaxContext
+} from '@/views/messenger/providerModelPresets';
 
 type ModelType = 'llm' | 'embedding';
-type ToolCallMode = 'tool_call' | 'function_call';
+type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
 type HistoryCompactionReset = 'zero' | 'current' | 'keep';
 type ModelRow = {
   uid: string;
@@ -538,6 +556,37 @@ const modelRowsForList = computed(() =>
 const selectedModel = computed(
   () => modelRows.value.find((item) => item.uid === selectedModelUid.value) || null
 );
+const modelOptionsForSelectedModel = computed(() => {
+  const current = selectedModel.value;
+  if (!current) return [];
+
+  const options: Array<{ value: string; label: string }> = [];
+  const existing = new Set<string>();
+  for (const preset of getProviderModelPresets(current.provider)) {
+    const modelId = String(preset.id || '').trim();
+    if (!modelId) continue;
+    const normalized = modelId.toLowerCase();
+    if (existing.has(normalized)) continue;
+    existing.add(normalized);
+    options.push({
+      value: modelId,
+      label: preset.label || modelId
+    });
+  }
+
+  const currentModelId = String(current.model || '').trim();
+  if (currentModelId) {
+    const normalizedCurrent = currentModelId.toLowerCase();
+    if (!existing.has(normalizedCurrent)) {
+      options.unshift({
+        value: currentModelId,
+        label: currentModelId
+      });
+    }
+  }
+
+  return options;
+});
 const providerOptionsForSelectedModel = computed(() => {
   const currentProvider = normalizeProviderId(selectedModel.value?.provider);
   const options = PROVIDER_PRESETS.map((item) => ({
@@ -597,13 +646,33 @@ const getProviderPreset = (provider: unknown) => PROVIDER_PRESET_MAP.get(normali
 
 const resolveProviderBaseUrl = (provider: unknown): string => getProviderPreset(provider)?.baseUrl || '';
 
-const normalizeToolCallMode = (value: unknown): ToolCallMode =>
-  String(value || '').trim().toLowerCase() === 'function_call' ? 'function_call' : 'tool_call';
+const normalizeToolCallMode = (value: unknown): ToolCallMode => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'freeform_call' || normalized === 'freeform') return 'freeform_call';
+  if (normalized === 'function_call') return 'function_call';
+  return 'tool_call';
+};
+
+const applyModelPresetContext = (row: ModelRow, force = true) => {
+  if (!row || normalizeModelType(row.model_type) !== 'llm') return;
+  if (!force && String(row.max_context || '').trim()) return;
+  const maxContext = resolveProviderModelPresetMaxContext(row.provider, row.model);
+  if (!Number.isFinite(maxContext) || Number(maxContext) <= 0) return;
+  row.max_context = String(Math.round(Number(maxContext)));
+};
 
 const handleProviderChange = (value: string) => {
   const current = selectedModel.value;
   if (!current) return;
   current.provider = normalizeProviderId(value);
+  applyModelPresetContext(current);
+};
+
+const handleModelChange = (value: string) => {
+  const current = selectedModel.value;
+  if (!current) return;
+  current.model = String(value || '').trim();
+  applyModelPresetContext(current);
 };
 
 const normalizeHistoryCompactionReset = (value: unknown): HistoryCompactionReset => {
@@ -932,6 +1001,7 @@ const applyLanSettings = (lanMesh: DesktopLanMeshSettings | Record<string, any> 
 const applySettingsData = (data: Record<string, any>) => {
   const llm = data.llm || {};
   modelRows.value = parseModelRows((llm.models as Record<string, Record<string, unknown>>) || {});
+  modelRows.value.forEach((row) => applyModelPresetContext(row, false));
   if (!modelRows.value.length) {
     addModel('llm');
   }
