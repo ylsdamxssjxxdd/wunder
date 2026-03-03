@@ -396,7 +396,7 @@ impl Orchestrator {
                 } else {
                     tool_calls
                 };
-                let planned_calls = build_planned_tool_calls(tool_calls);
+                let planned_calls = build_planned_tool_calls(tool_calls, &allowed_tool_names);
                 if planned_calls.is_empty() {
                     if prepared.skip_tool_calls {
                         answer = content.trim().to_string();
@@ -1208,7 +1208,10 @@ impl Orchestrator {
     }
 }
 
-fn build_planned_tool_calls(calls: Vec<ToolCall>) -> Vec<PlannedToolCall> {
+fn build_planned_tool_calls(
+    calls: Vec<ToolCall>,
+    allowed_tool_names: &HashSet<String>,
+) -> Vec<PlannedToolCall> {
     calls
         .into_iter()
         .filter_map(|mut call| {
@@ -1218,6 +1221,9 @@ fn build_planned_tool_calls(calls: Vec<ToolCall>) -> Vec<PlannedToolCall> {
             }
             let resolved = resolve_tool_name(name);
             if resolved.trim().is_empty() {
+                return None;
+            }
+            if !allowed_tool_names.contains(&resolved) && !allowed_tool_names.contains(name) {
                 return None;
             }
             call.name = resolved.clone();
@@ -1450,5 +1456,38 @@ mod tests {
         let answer = build_tool_failure_guard_answer("读取文件", &result);
         assert!(answer.contains("读取文件"));
         assert!(answer.contains("stopped retrying"));
+    }
+
+    #[test]
+    fn build_planned_tool_calls_filters_disallowed_name() {
+        let allowed = HashSet::from([resolve_tool_name("read_file")]);
+        let calls = vec![
+            ToolCall {
+                id: None,
+                name: "read_file".to_string(),
+                arguments: json!({ "path": "Cargo.toml" }),
+            },
+            ToolCall {
+                id: None,
+                name: "2026-03-03".to_string(),
+                arguments: json!({ "timestamp": "..." }),
+            },
+        ];
+        let planned = build_planned_tool_calls(calls, &allowed);
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].name, resolve_tool_name("read_file"));
+    }
+
+    #[test]
+    fn build_planned_tool_calls_accepts_allowed_alias() {
+        let allowed = HashSet::from([resolve_tool_name("final_response")]);
+        let calls = vec![ToolCall {
+            id: None,
+            name: "final_response".to_string(),
+            arguments: json!({ "content": "ok" }),
+        }];
+        let planned = build_planned_tool_calls(calls, &allowed);
+        assert_eq!(planned.len(), 1);
+        assert_eq!(planned[0].name, resolve_tool_name("final_response"));
     }
 }

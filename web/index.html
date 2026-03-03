@@ -4281,7 +4281,13 @@
         <div class="modal-body">
           <div id="monitorDetailMeta" class="muted"></div>
           <div class="form-row">
-            <label data-i18n="monitor.detail.question">问题</label>
+            <div class="monitor-detail-question-head">
+              <label data-i18n="monitor.detail.question">问题</label>
+              <div class="monitor-detail-round-filter-wrap">
+                <span data-i18n="monitor.detail.userRound">用户轮次</span>
+                <select id="monitorDetailRoundFilter" class="select"></select>
+              </div>
+            </div>
             <div id="monitorDetailQuestion" class="log"></div>
           </div>
           <div class="form-row">

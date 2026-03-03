@@ -3,7 +3,7 @@
     v-model="dialogVisible"
     class="messenger-dialog messenger-timeline-detail-dialog"
     :title="dialogTitle"
-    width="900px"
+    width="760px"
     destroy-on-close
   >
     <div v-if="loading" class="messenger-timeline-detail-loading">
@@ -26,11 +26,23 @@
       </div>
 
       <div class="messenger-timeline-detail-section">
-        <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.question') }}</label>
+        <div class="messenger-timeline-detail-label-row">
+          <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.question') }}</label>
+          <div v-if="roundOptions.length" class="messenger-timeline-detail-round-picker">
+            <span class="messenger-timeline-detail-round-picker-label">
+              {{ t('messenger.timeline.detail.userRound') }}
+            </span>
+            <select v-model.number="selectedRound" class="messenger-timeline-detail-round-select">
+              <option v-for="item in roundOptions" :key="item.value" :value="item.value">
+                {{ item.label }}
+              </option>
+            </select>
+          </div>
+        </div>
         <div class="messenger-timeline-detail-question">{{ detailQuestion }}</div>
       </div>
 
-      <div class="messenger-timeline-detail-section">
+      <div class="messenger-timeline-detail-section messenger-timeline-detail-section-events">
         <label class="messenger-timeline-detail-label">{{ t('messenger.timeline.detail.events') }}</label>
         <div class="messenger-timeline-detail-filters">
           <select v-model="eventTypeFilter" class="messenger-timeline-detail-filter-select">
@@ -51,11 +63,12 @@
         <div v-if="!filteredEvents.length" class="messenger-timeline-detail-empty">
           {{ t('messenger.timeline.detail.noEvents') }}
         </div>
-        <div v-else class="messenger-timeline-detail-events">
+        <div v-else ref="eventsContainerRef" class="messenger-timeline-detail-events">
           <details
             v-for="item in filteredEvents"
             :key="item.key"
             class="messenger-timeline-detail-event-item"
+            :data-round="item.round"
           >
             <summary class="messenger-timeline-detail-event-summary">
               <span class="messenger-timeline-detail-event-time">[{{ item.timestampLabel }}]</span>
@@ -78,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { getSession as getChatSessionApi, getSessionEvents as getChatSessionEventsApi } from '@/api/chat';
@@ -107,6 +120,11 @@ type TimelineDetailEventItem = {
   title: string;
   raw: string;
   searchText: string;
+};
+
+type TimelineRoundOption = {
+  value: number;
+  label: string;
 };
 
 type TimelineDetailSession = {
@@ -145,6 +163,8 @@ const running = ref(false);
 const lastEventId = ref(0);
 const eventTypeFilter = ref('');
 const keywordFilter = ref('');
+const selectedRound = ref(0);
+const eventsContainerRef = ref<HTMLElement | null>(null);
 
 let requestToken = 0;
 
@@ -159,6 +179,7 @@ const resetDetailState = () => {
   rounds.value = [];
   running.value = false;
   lastEventId.value = 0;
+  selectedRound.value = 0;
   resetFilters();
 };
 
@@ -347,6 +368,28 @@ const resolveQuestion = (session: TimelineDetailSession | null): string => {
   return t('messenger.timeline.detail.questionEmpty');
 };
 
+const resolveQuestionFromEventPayload = (payload: unknown): string => {
+  const data = unwrapEventData(payload);
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    const source = data as Record<string, unknown>;
+    const candidate =
+      source.message ||
+      source.question ||
+      source.input ||
+      source.content ||
+      source.prompt ||
+      source.text;
+    const text = String(candidate || '').trim();
+    if (text) {
+      return text;
+    }
+  }
+  if (typeof data === 'string') {
+    return data.trim();
+  }
+  return '';
+};
+
 const formatMetaTime = (value: unknown): string => {
   const ts = normalizeTimestamp(value);
   if (!ts) {
@@ -379,6 +422,59 @@ const events = computed<TimelineDetailEventItem[]>(() => {
         searchText
       });
     });
+  });
+  return result;
+});
+
+const roundOptions = computed<TimelineRoundOption[]>(() => {
+  const values = new Set<number>();
+  rounds.value.forEach((round, roundIndex) => {
+    values.add(normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1));
+  });
+  return Array.from(values)
+    .sort((left, right) => left - right)
+    .map((value) => ({
+      value,
+      label: t('messenger.timeline.detail.round', { round: value })
+    }));
+});
+
+const roundQuestionMap = computed(() => {
+  const result = new Map<number, string>();
+  rounds.value.forEach((round, roundIndex) => {
+    const roundIndexValue = normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1);
+    const eventList = Array.isArray(round?.events) ? round.events : [];
+    let fallbackQuestion = '';
+    for (const event of eventList) {
+      const eventType = String(event?.event || event?.type || '')
+        .trim()
+        .toLowerCase();
+      const question = resolveQuestionFromEventPayload(event?.data);
+      if (!question) {
+        continue;
+      }
+      if (eventType === 'user_input' || eventType === 'received') {
+        result.set(roundIndexValue, question);
+        fallbackQuestion = '';
+        break;
+      }
+      if (!fallbackQuestion) {
+        fallbackQuestion = question;
+      }
+    }
+    if (!result.has(roundIndexValue) && fallbackQuestion) {
+      result.set(roundIndexValue, fallbackQuestion);
+    }
+  });
+
+  const userMessages = (sessionDetail.value?.messages || [])
+    .filter((item) => String(item?.role || '').trim() === 'user')
+    .map((item) => String(item?.content || '').trim())
+    .filter((item) => item.length > 0);
+  roundOptions.value.forEach((item, index) => {
+    if (!result.has(item.value) && userMessages[index]) {
+      result.set(item.value, userMessages[index]);
+    }
   });
   return result;
 });
@@ -416,7 +512,15 @@ const dialogTitle = computed(() => {
     : t('messenger.timeline.detail.title');
 });
 
-const detailQuestion = computed(() => resolveQuestion(sessionDetail.value));
+const detailQuestion = computed(() => {
+  if (selectedRound.value > 0) {
+    const question = String(roundQuestionMap.value.get(selectedRound.value) || '').trim();
+    if (question) {
+      return question;
+    }
+  }
+  return resolveQuestion(sessionDetail.value);
+});
 
 const detailMeta = computed(() => {
   const session = sessionDetail.value;
@@ -540,6 +644,29 @@ const exportTimelineDetail = () => {
   }
 };
 
+const scrollToSelectedRound = () => {
+  if (!selectedRound.value) {
+    return;
+  }
+  const container = eventsContainerRef.value;
+  if (!container) {
+    return;
+  }
+  const selector = `.messenger-timeline-detail-event-item[data-round="${selectedRound.value}"]`;
+  const target = container.querySelector<HTMLElement>(selector);
+  if (!target) {
+    return;
+  }
+  container
+    .querySelectorAll<HTMLElement>('.messenger-timeline-detail-event-item.is-round-target')
+    .forEach((node) => node.classList.remove('is-round-target'));
+  target.classList.add('is-round-target');
+  target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  window.setTimeout(() => {
+    target.classList.remove('is-round-target');
+  }, 1400);
+};
+
 watch(
   [() => dialogVisible.value, () => props.sessionId],
   ([visible, sessionId]) => {
@@ -550,6 +677,31 @@ watch(
     void loadTimelineDetail(targetId);
   },
   { immediate: true }
+);
+
+watch(
+  roundOptions,
+  (options) => {
+    if (!options.length) {
+      selectedRound.value = 0;
+      return;
+    }
+    const selectedValid = options.some((item) => item.value === selectedRound.value);
+    if (!selectedValid) {
+      selectedRound.value = options[options.length - 1]?.value || 0;
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  [selectedRound, () => filteredEvents.value.length],
+  () => {
+    void nextTick(() => {
+      scrollToSelectedRound();
+    });
+  },
+  { flush: 'post' }
 );
 
 watch(

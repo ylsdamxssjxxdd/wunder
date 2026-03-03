@@ -81,13 +81,15 @@ impl Orchestrator {
             let sanitized = sanitize_function_name(&preferred);
             let function_name =
                 ensure_unique_function_name(&sanitized, &spec.name, &mut used_names);
+            let parameters =
+                crate::core::json_schema::normalize_tool_input_schema(Some(&spec.input_schema));
             name_map.insert(function_name.clone(), spec.name.clone());
             tools.push(json!({
                 "type": "function",
                 "function": {
                     "name": function_name,
                     "description": spec.description,
-                    "parameters": spec.input_schema,
+                    "parameters": parameters,
                 }
             }));
         }

@@ -1,6 +1,7 @@
 // 核心 API：/wunder 入口、系统提示词、工具清单与 i18n 配置。
 use crate::api::attachment_convert::{build_ok_conversion_payload, convert_multipart_list};
 use crate::api::user_context::resolve_user;
+use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{
@@ -571,12 +572,7 @@ fn collect_user_knowledge_tools<F>(
 }
 
 fn normalize_mcp_input_schema(tool: &Value) -> Value {
-    if let Some(schema) = tool.get("inputSchema").or_else(|| tool.get("input_schema")) {
-        if schema.is_object() {
-            return schema.clone();
-        }
-    }
-    json!({"type": "object", "properties": {}})
+    normalize_tool_input_schema(tool.get("inputSchema").or_else(|| tool.get("input_schema")))
 }
 
 fn resolve_user_mcp_description(server: &UserMcpServer, tool: &Value) -> String {

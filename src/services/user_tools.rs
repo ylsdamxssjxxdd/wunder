@@ -1,5 +1,6 @@
 // 用户自建工具：负责配置存储、别名绑定与共享工具聚合。
 use crate::config::{Config, KnowledgeBaseType, McpServerConfig, McpToolSpec};
+use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
 use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::schemas::ToolSpec;
@@ -1285,12 +1286,7 @@ fn parse_optional_f32(value: Option<&Value>) -> Option<f32> {
 }
 
 fn normalize_mcp_input_schema(tool: &Value) -> Value {
-    if let Some(schema) = tool.get("inputSchema").or_else(|| tool.get("input_schema")) {
-        if schema.is_object() {
-            return schema.clone();
-        }
-    }
-    json!({"type": "object", "properties": {}})
+    normalize_tool_input_schema(tool.get("inputSchema").or_else(|| tool.get("input_schema")))
 }
 
 fn resolve_mcp_description(server: &UserMcpServer, tool: &Value) -> String {

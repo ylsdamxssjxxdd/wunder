@@ -5,12 +5,6 @@
     </div>
 
     <template v-else>
-      <div class="messenger-agent-runtime-toolbar">
-        <button class="messenger-inline-btn" type="button" :disabled="loading" @click="loadRuntimeRecords">
-          {{ loading ? t('common.loading') : t('common.refresh') }}
-        </button>
-      </div>
-
       <div v-if="errorMessage" class="messenger-agent-runtime-error">
         {{ errorMessage }}
       </div>
@@ -22,7 +16,7 @@
         </article>
         <article class="messenger-agent-runtime-card">
           <div class="messenger-agent-runtime-label">{{ t('messenger.agent.runtime.metric.tokens') }}</div>
-          <div class="messenger-agent-runtime-value">{{ formatNumber(summary.billed_tokens) }}</div>
+          <div class="messenger-agent-runtime-value">{{ formatBilledTokens(summary.billed_tokens) }}</div>
         </article>
         <article class="messenger-agent-runtime-card">
           <div class="messenger-agent-runtime-label">{{ t('messenger.agent.runtime.metric.quota') }}</div>
@@ -287,6 +281,20 @@ function resolveTodayDate() {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat(language.value || 'zh-CN').format(Math.max(0, Math.round(value)));
+}
+
+function formatBilledTokens(value: number) {
+  const normalized = Math.max(0, toSafeNumber(value));
+  const locale = language.value || 'zh-CN';
+  const formatScaled = (scaled: number) =>
+    new Intl.NumberFormat(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(scaled);
+  if (normalized >= 1_000_000) {
+    return `${formatScaled(normalized / 1_000_000)}M`;
+  }
+  if (normalized >= 1_000) {
+    return `${formatScaled(normalized / 1_000)}K`;
+  }
+  return formatNumber(normalized);
 }
 
 function formatDuration(seconds: number) {
@@ -626,7 +634,10 @@ function renderTrendChart() {
       yAxis: {
         type: 'value',
         axisLine: { lineStyle: { color: palette.axis } },
-        axisLabel: { color: palette.text },
+        axisLabel: {
+          color: palette.text,
+          formatter: (value: number) => formatBilledTokens(value)
+        },
         splitLine: { lineStyle: { color: palette.split } }
       },
       series: [
@@ -750,13 +761,6 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-}
-
-.messenger-agent-runtime-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
 }
 
 .messenger-agent-runtime-error {

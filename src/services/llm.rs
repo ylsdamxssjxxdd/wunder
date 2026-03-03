@@ -1,5 +1,6 @@
 // LLM 适配：支持 OpenAI 兼容的 Chat Completions 调用。
 use crate::config::LlmModelConfig;
+use crate::core::json_schema::normalize_tool_input_schema;
 use crate::schemas::TokenUsage;
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
@@ -420,7 +421,12 @@ impl LlmClient {
         }
         if let Some(tool_defs) = tools {
             if !tool_defs.is_empty() {
-                payload["tools"] = Value::Array(tool_defs.to_vec());
+                payload["tools"] = Value::Array(
+                    tool_defs
+                        .iter()
+                        .map(normalize_chat_tool_definition)
+                        .collect(),
+                );
                 payload["tool_choice"] = json!("auto");
             }
         }
@@ -457,12 +463,109 @@ impl LlmClient {
         }
         if let Some(tool_defs) = tools {
             if !tool_defs.is_empty() {
-                payload["tools"] = Value::Array(tool_defs.to_vec());
+                payload["tools"] = Value::Array(
+                    tool_defs
+                        .iter()
+                        .map(normalize_responses_tool_definition)
+                        .collect(),
+                );
                 payload["tool_choice"] = json!("auto");
             }
         }
         payload
     }
+}
+
+fn normalize_chat_tool_definition(tool: &Value) -> Value {
+    if let Some(function) = tool.get("function").and_then(Value::as_object) {
+        let name = function
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            return tool.clone();
+        }
+        let description = function
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let parameters = normalize_tool_input_schema(function.get("parameters"));
+        return json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": parameters
+            }
+        });
+    }
+
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if name.is_empty() {
+        return tool.clone();
+    }
+    let description = tool
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let parameters = normalize_tool_input_schema(tool.get("parameters"));
+    json!({
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": parameters
+        }
+    })
+}
+
+fn normalize_responses_tool_definition(tool: &Value) -> Value {
+    if let Some(function) = tool.get("function").and_then(Value::as_object) {
+        let name = function
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            return tool.clone();
+        }
+        let description = function
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let parameters = normalize_tool_input_schema(function.get("parameters"));
+        return json!({
+            "type": "function",
+            "name": name,
+            "description": description,
+            "parameters": parameters
+        });
+    }
+
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if name.is_empty() {
+        return tool.clone();
+    }
+    let description = tool
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let parameters = normalize_tool_input_schema(tool.get("parameters"));
+    json!({
+        "type": "function",
+        "name": name,
+        "description": description,
+        "parameters": parameters
+    })
 }
 
 fn build_responses_input(messages: &[ChatMessage]) -> Value {
@@ -833,7 +936,28 @@ fn resolve_openai_api_mode(config: &LlmModelConfig) -> OpenAiApiMode {
             return OpenAiApiMode::Responses;
         }
     }
+    if should_default_to_responses_api(config) {
+        return OpenAiApiMode::Responses;
+    }
     OpenAiApiMode::ChatCompletions
+}
+
+fn should_default_to_responses_api(config: &LlmModelConfig) -> bool {
+    let provider = normalize_provider(config.provider.as_deref());
+    if provider != "openai" {
+        return false;
+    }
+    let Some(model) = config.model.as_deref().map(str::trim) else {
+        return false;
+    };
+    if model.is_empty() {
+        return false;
+    }
+    let lowered = model.to_ascii_lowercase();
+    lowered.starts_with("gpt-5")
+        || lowered.starts_with("o1")
+        || lowered.starts_with("o3")
+        || lowered.starts_with("o4")
 }
 
 fn build_openai_resource_endpoint(base_url: &str, resource: &str) -> Option<String> {
@@ -2374,5 +2498,83 @@ mod tests {
         assert!(done);
         assert!(combined.is_empty());
         assert!(reasoning.is_empty());
+    }
+
+    #[test]
+    fn resolve_openai_api_mode_defaults_to_responses_for_gpt5_on_openai_provider() {
+        let config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai".to_string()),
+            api_mode: None,
+            base_url: Some("https://api.openai.com/v1".to_string()),
+            api_key: Some("test-key".to_string()),
+            model: Some("gpt-5.2".to_string()),
+            temperature: None,
+            timeout_s: None,
+            retry: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            support_vision: None,
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: Some("tool_call".to_string()),
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        assert_eq!(resolve_openai_api_mode(&config), OpenAiApiMode::Responses);
+    }
+
+    #[test]
+    fn normalize_responses_tool_definition_flattens_chat_shape_and_fixes_schema() {
+        let tool = json!({
+            "type": "function",
+            "function": {
+                "name": "edit_file",
+                "description": "Edit file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "edits": {
+                            "type": "array"
+                        }
+                    }
+                }
+            }
+        });
+        let normalized = normalize_responses_tool_definition(&tool);
+        assert_eq!(normalized["type"], "function");
+        assert_eq!(normalized["name"], "edit_file");
+        assert_eq!(
+            normalized["parameters"]["properties"]["edits"]["items"]["type"],
+            "string"
+        );
+    }
+
+    #[test]
+    fn normalize_chat_tool_definition_wraps_responses_shape_and_fixes_schema() {
+        let tool = json!({
+            "type": "function",
+            "name": "edit_file",
+            "description": "Edit file",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "edits": {
+                        "type": "array"
+                    }
+                }
+            }
+        });
+        let normalized = normalize_chat_tool_definition(&tool);
+        assert_eq!(normalized["type"], "function");
+        assert_eq!(normalized["function"]["name"], "edit_file");
+        assert_eq!(
+            normalized["function"]["parameters"]["properties"]["edits"]["items"]["type"],
+            "string"
+        );
     }
 }

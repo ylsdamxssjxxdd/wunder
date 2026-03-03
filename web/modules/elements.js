@@ -458,6 +458,7 @@ export const elements = {
   monitorDetailDecodeSpeed: document.getElementById("monitorDetailDecodeSpeed"),
   monitorDetailDecodeMeta: document.getElementById("monitorDetailDecodeMeta"),
   monitorDetailQuestion: document.getElementById("monitorDetailQuestion"),
+  monitorDetailRoundFilter: document.getElementById("monitorDetailRoundFilter"),
   monitorDetailTypeFilter: document.getElementById("monitorDetailTypeFilter"),
   monitorDetailKeyword: document.getElementById("monitorDetailKeyword"),
   monitorDetailFilterStats: document.getElementById("monitorDetailFilterStats"),

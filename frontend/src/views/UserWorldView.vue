@@ -177,6 +177,31 @@
               </div>
             </template>
             <div v-else class="user-world-empty">{{ t('userWorld.group.empty') }}</div>
+            <div class="user-world-helper-apps">
+              <div class="user-world-helper-header">
+                <div class="user-world-helper-title">{{ t('userWorld.helperApps.title') }}</div>
+                <div class="user-world-helper-subtitle">{{ t('userWorld.helperApps.subtitle') }}</div>
+              </div>
+              <div class="user-world-helper-grid">
+                <button
+                  class="user-world-helper-card"
+                  type="button"
+                  @click="openLocalFileSearchDialog"
+                >
+                  <span class="user-world-helper-card-icon">
+                    <i class="fa-solid fa-folder-tree" aria-hidden="true"></i>
+                  </span>
+                  <span class="user-world-helper-card-main">
+                    <span class="user-world-helper-card-title">
+                      {{ t('userWorld.helperApps.localFileSearch.cardTitle') }}
+                    </span>
+                    <span class="user-world-helper-card-desc">
+                      {{ t('userWorld.helperApps.localFileSearch.cardDesc') }}
+                    </span>
+                  </span>
+                </button>
+              </div>
+            </div>
           </template>
         </div>
 
@@ -349,6 +374,102 @@
         </span>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="localFileSearchDialogVisible"
+      :title="t('userWorld.helperApps.localFileSearch.dialogTitle')"
+      width="680px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="user-world-file-search-panel">
+        <div class="user-world-file-search-toolbar">
+          <input
+            v-model.trim="localFileSearchKeyword"
+            class="user-world-file-search-input"
+            type="text"
+            :placeholder="t('userWorld.helperApps.localFileSearch.placeholder')"
+            @keydown.enter.prevent="handleLocalFileSearch"
+          />
+          <button
+            class="user-world-file-search-submit"
+            type="button"
+            :disabled="localFileSearchLoading"
+            @click="handleLocalFileSearch"
+          >
+            {{ localFileSearchLoading ? t('common.loading') : t('userWorld.helperApps.localFileSearch.searchAction') }}
+          </button>
+        </div>
+        <div class="user-world-file-search-options">
+          <label class="user-world-file-search-option">
+            <input v-model="localFileSearchIncludeFiles" type="checkbox" />
+            <span>{{ t('userWorld.helperApps.localFileSearch.includeFiles') }}</span>
+          </label>
+          <label class="user-world-file-search-option">
+            <input v-model="localFileSearchIncludeDirs" type="checkbox" />
+            <span>{{ t('userWorld.helperApps.localFileSearch.includeDirs') }}</span>
+          </label>
+        </div>
+        <div class="user-world-file-search-summary">
+          <span>{{ t('userWorld.helperApps.localFileSearch.searchScope') }}</span>
+          <span v-if="localFileSearchTouched">
+            {{ t('userWorld.helperApps.localFileSearch.searchResult', { count: localFileSearchTotal }) }}
+          </span>
+        </div>
+        <div class="user-world-file-search-results">
+          <div
+            v-if="localFileSearchTouched && !localFileSearchLoading && !localFileSearchResults.length"
+            class="user-world-empty"
+          >
+            {{ t('userWorld.helperApps.localFileSearch.empty') }}
+          </div>
+          <div v-else-if="!localFileSearchTouched" class="user-world-empty">
+            {{ t('userWorld.helperApps.localFileSearch.guide') }}
+          </div>
+          <div
+            v-for="entry in localFileSearchResults"
+            :key="`${entry.path}:${entry.entry_type}`"
+            class="user-world-file-search-item"
+          >
+            <div class="user-world-file-search-item-main">
+              <div class="user-world-file-search-item-title">
+                <span class="user-world-file-search-container">C{{ entry.container_id }}</span>
+                <i
+                  :class="entry.entry_type === 'dir' ? 'fa-solid fa-folder' : 'fa-solid fa-file-lines'"
+                  aria-hidden="true"
+                ></i>
+                <span>{{ entry.name }}</span>
+              </div>
+              <div class="user-world-file-search-item-path">{{ entry.path }}</div>
+              <div class="user-world-file-search-item-meta">{{ formatLocalFileSearchMeta(entry) }}</div>
+            </div>
+            <button
+              class="user-world-file-search-insert"
+              type="button"
+              @click="insertLocalFileSearchResult(entry)"
+            >
+              {{ t('userWorld.helperApps.localFileSearch.insertAction') }}
+            </button>
+          </div>
+        </div>
+        <button
+          v-if="localFileSearchHasMore"
+          class="user-world-file-search-more"
+          type="button"
+          :disabled="localFileSearchLoading"
+          @click="loadMoreLocalFileSearch"
+        >
+          {{ localFileSearchLoading ? t('common.loading') : t('userWorld.helperApps.localFileSearch.loadMore') }}
+        </button>
+      </div>
+      <template #footer>
+        <span class="dialog-footer">
+          <button class="user-world-dialog-btn muted" type="button" @click="localFileSearchDialogVisible = false">
+            {{ t('common.close') }}
+          </button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -426,6 +547,15 @@ type MentionSuggestion = {
   type: 'file' | 'dir';
 };
 
+type WorkspaceSearchEntry = {
+  name: string;
+  path: string;
+  entry_type: 'file' | 'dir';
+  size: number;
+  updated_time: string;
+  container_id: number;
+};
+
 type UnitNode = {
   unit_id: string;
   name: string;
@@ -480,6 +610,15 @@ const mentionSuggestions = ref<MentionSuggestion[]>([]);
 const mentionMenuIndex = ref(0);
 const mentionMenuDismissed = ref(false);
 const draftCaretPosition = ref(0);
+const localFileSearchDialogVisible = ref(false);
+const localFileSearchKeyword = ref('');
+const localFileSearchLoading = ref(false);
+const localFileSearchTouched = ref(false);
+const localFileSearchIncludeFiles = ref(true);
+const localFileSearchIncludeDirs = ref(true);
+const localFileSearchTotal = ref(0);
+const localFileSearchOffset = ref(0);
+const localFileSearchResults = ref<WorkspaceSearchEntry[]>([]);
 
 const sidebarTabs = computed(() => [
   { value: 'chat' as SidebarTab, label: t('userWorld.tab.chat'), icon: 'fa-solid fa-comment-dots' },
@@ -491,6 +630,8 @@ const sidebarTabs = computed(() => [
 const DRAFT_INPUT_MAX_HEIGHT = 180;
 const MENTION_DEBOUNCE_MS = 160;
 const USER_WORLD_PREFIX = `${USER_WORLD_UPLOAD_BASE}/`;
+const LOCAL_FILE_SEARCH_LIMIT = 50;
+const SANDBOX_CONTAINER_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -783,6 +924,9 @@ const canCreateGroup = computed(
 const mentionMenuVisible = computed(
   () => !mentionMenuDismissed.value && mentionSuggestions.value.length > 0
 );
+const localFileSearchHasMore = computed(
+  () => localFileSearchResults.value.length < localFileSearchTotal.value
+);
 
 const resolveErrorMessage = (error: unknown): string => {
   const message = String((error as { message?: unknown })?.message || '').trim();
@@ -885,6 +1029,22 @@ const buildMentionSuggestion = (entry: { path?: string; type?: string; name?: st
     fullPath: `${USER_WORLD_UPLOAD_BASE}/${relative}`,
     type: entry?.type === 'dir' ? 'dir' : 'file'
   } as MentionSuggestion;
+};
+
+const normalizeSearchEntry = (entry: unknown, containerId: number): WorkspaceSearchEntry | null => {
+  const source = asRecord(entry);
+  const path = normalizeWorkspacePath(String(source.path || '').trim());
+  if (!path) return null;
+  const name = normalizeText(source.name) || path.split('/').pop() || path;
+  const entryType = String(source.type || source.entry_type || '').trim().toLowerCase();
+  return {
+    name,
+    path,
+    entry_type: entryType === 'dir' ? 'dir' : 'file',
+    size: Number(source.size || 0),
+    updated_time: String(source.updated_time || ''),
+    container_id: containerId
+  };
 };
 
 let mentionSearchTimer: number | null = null;
@@ -1070,6 +1230,123 @@ const appendAttachmentTokens = (paths: string[]) => {
   nextTick(() => {
     resizeDraftInput();
   });
+};
+
+const openLocalFileSearchDialog = () => {
+  localFileSearchDialogVisible.value = true;
+};
+
+const runLocalFileSearch = async (append = false) => {
+  const keywordValue = localFileSearchKeyword.value.trim();
+  if (!keywordValue) {
+    ElMessage.warning(t('userWorld.helperApps.localFileSearch.keywordRequired'));
+    return;
+  }
+  if (!localFileSearchIncludeFiles.value && !localFileSearchIncludeDirs.value) {
+    ElMessage.warning(t('userWorld.helperApps.localFileSearch.typeRequired'));
+    return;
+  }
+  localFileSearchLoading.value = true;
+  localFileSearchTouched.value = true;
+  const offset = append ? localFileSearchOffset.value : 0;
+  const requestLimit = Math.max(LOCAL_FILE_SEARCH_LIMIT, offset + LOCAL_FILE_SEARCH_LIMIT);
+  try {
+    const settled = await Promise.allSettled(
+      SANDBOX_CONTAINER_IDS.map(async (containerId) => {
+        const { data } = await searchWunderWorkspace({
+          keyword: keywordValue,
+          container_id: containerId,
+          offset: 0,
+          limit: requestLimit,
+          include_files: localFileSearchIncludeFiles.value,
+          include_dirs: localFileSearchIncludeDirs.value
+        });
+        const entries = Array.isArray(data?.entries) ? data.entries : [];
+        const normalizedEntries = entries
+          .map((entry) => normalizeSearchEntry(entry, containerId))
+          .filter((entry): entry is WorkspaceSearchEntry => Boolean(entry));
+        return {
+          containerId,
+          total: Number(data?.total || 0),
+          entries: normalizedEntries
+        };
+      })
+    );
+    let merged: WorkspaceSearchEntry[] = [];
+    let total = 0;
+    let failureCount = 0;
+    settled.forEach((item) => {
+      if (item.status !== 'fulfilled') {
+        failureCount += 1;
+        return;
+      }
+      total += item.value.total;
+      merged = merged.concat(item.value.entries);
+    });
+    if (failureCount > 0) {
+      ElMessage.warning(
+        t('userWorld.helperApps.localFileSearch.partialFailed', { count: failureCount })
+      );
+    }
+    const dedup = new Map<string, WorkspaceSearchEntry>();
+    merged.forEach((entry) => {
+      const key = `${entry.container_id}:${entry.entry_type}:${entry.path}`;
+      if (!dedup.has(key)) {
+        dedup.set(key, entry);
+      }
+    });
+    const normalized = [...dedup.values()].sort((left, right) => {
+      if (left.container_id !== right.container_id) {
+        return left.container_id - right.container_id;
+      }
+      return left.path.localeCompare(right.path, 'zh-CN');
+    });
+    const paged = normalized.slice(offset, offset + LOCAL_FILE_SEARCH_LIMIT);
+    localFileSearchResults.value = append
+      ? [...localFileSearchResults.value, ...paged]
+      : paged;
+    localFileSearchTotal.value = total;
+    localFileSearchOffset.value = localFileSearchResults.value.length;
+  } catch (error) {
+    ElMessage.error(resolveErrorMessage(error));
+  } finally {
+    localFileSearchLoading.value = false;
+  }
+};
+
+const handleLocalFileSearch = async () => {
+  await runLocalFileSearch(false);
+};
+
+const loadMoreLocalFileSearch = async () => {
+  if (!localFileSearchHasMore.value || localFileSearchLoading.value) return;
+  await runLocalFileSearch(true);
+};
+
+const insertLocalFileSearchResult = (entry: WorkspaceSearchEntry | string) => {
+  const path = typeof entry === 'string' ? entry : entry.path;
+  const containerId =
+    typeof entry === 'string' ? null : Number.isFinite(entry.container_id) ? entry.container_id : null;
+  const normalized = normalizeWorkspacePath(path);
+  if (!normalized) return;
+  appendAttachmentTokens([normalized]);
+  ElMessage.success(
+    t('userWorld.helperApps.localFileSearch.insertSuccess', {
+      container: containerId ? `C${containerId}` : '-'
+    })
+  );
+};
+
+const formatLocalFileSearchMeta = (entry: WorkspaceSearchEntry): string => {
+  const kind =
+    entry.entry_type === 'dir'
+      ? t('userWorld.helperApps.localFileSearch.dir')
+      : t('userWorld.helperApps.localFileSearch.file');
+  const updated = normalizeText(entry.updated_time);
+  if (!updated) return kind;
+  const date = new Date(updated);
+  if (Number.isNaN(date.getTime())) return kind;
+  return `${kind} · ${date.toLocaleString()}`;
 };
 
 const triggerUpload = () => {

@@ -223,6 +223,7 @@ const ensureMonitorState = () => {
     state.monitor.detailFilters = {
       eventType: "",
       keyword: "",
+      round: 0,
     };
   }
   if (typeof state.monitor.detailFilters.eventType !== "string") {
@@ -231,6 +232,14 @@ const ensureMonitorState = () => {
   if (typeof state.monitor.detailFilters.keyword !== "string") {
     state.monitor.detailFilters.keyword = "";
   }
+  const parsedDetailRound = Number.parseInt(
+    String(state.monitor.detailFilters.round ?? 0),
+    10
+  );
+  state.monitor.detailFilters.round =
+    Number.isFinite(parsedDetailRound) && parsedDetailRound > 0
+      ? parsedDetailRound
+      : 0;
   if (typeof state.monitor.tokenZoomLocked !== "boolean") {
     state.monitor.tokenZoomLocked = false;
   }
@@ -2669,6 +2678,178 @@ const resolveMonitorEventToolName = (event) => {
 
 const normalizeMonitorDetailEventType = (value) => String(value || "").trim();
 
+const parseMonitorDetailRound = (value, fallback = 0) => {
+  const parsed = Number.parseInt(String(value ?? fallback), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return Math.max(0, fallback);
+  }
+  return parsed;
+};
+
+const resolveMonitorEventRound = (event) => {
+  const data = event?.data && typeof event.data === "object" ? event.data : {};
+  return (
+    parseMonitorDetailRound(event?.__userRound) ||
+    parseMonitorDetailRound(event?.user_round) ||
+    parseMonitorDetailRound(event?.round) ||
+    parseMonitorDetailRound(data?.user_round) ||
+    parseMonitorDetailRound(data?.round)
+  );
+};
+
+const inferMonitorDetailRoundForEvent = (event, currentRound) => {
+  const explicitRound = resolveMonitorEventRound(event);
+  if (explicitRound > 0) {
+    return explicitRound;
+  }
+  const eventType = String(event?.type || "")
+    .trim()
+    .toLowerCase();
+  if (eventType === "round_start" || eventType === "user_input" || eventType === "received") {
+    return Math.max(1, currentRound + 1);
+  }
+  if (currentRound > 0) {
+    return currentRound;
+  }
+  return 1;
+};
+
+const normalizeMonitorDetailEvents = (events) => {
+  const normalized = [];
+  let inferredRound = 0;
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const userRound = inferMonitorDetailRoundForEvent(event, inferredRound);
+    inferredRound = Math.max(inferredRound, userRound);
+    normalized.push({
+      ...(event && typeof event === "object" ? event : {}),
+      __userRound: userRound,
+    });
+  });
+  return normalized;
+};
+
+const resolveMonitorDetailQuestionTextFromPayload = (payload) => {
+  const data = unwrapMonitorEventData(payload);
+  if (typeof data === "string") {
+    return data.trim();
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return "";
+  }
+  const candidate =
+    data.message || data.question || data.input || data.content || data.prompt || data.text;
+  return String(candidate || "").trim();
+};
+
+const collectMonitorDetailRoundOptions = (session, events) => {
+  const rounds = new Set();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const round = resolveMonitorEventRound(event);
+    if (round > 0) {
+      rounds.add(round);
+    }
+  });
+  const declaredRoundCount = parseMonitorDetailRound(session?.user_rounds || session?.rounds);
+  if (rounds.size === 0 && declaredRoundCount > 0) {
+    for (let round = 1; round <= declaredRoundCount; round += 1) {
+      rounds.add(round);
+    }
+  }
+  if (rounds.size === 0 && String(session?.question || "").trim()) {
+    rounds.add(1);
+  }
+  return Array.from(rounds).sort((left, right) => left - right);
+};
+
+const buildMonitorDetailRoundQuestionMap = (events, roundOptions, sessionQuestion) => {
+  const questionByRound = new Map();
+  (Array.isArray(events) ? events : []).forEach((event) => {
+    const round = resolveMonitorEventRound(event);
+    if (round <= 0) {
+      return;
+    }
+    const question = resolveMonitorDetailQuestionTextFromPayload(event?.data);
+    if (!question) {
+      return;
+    }
+    const eventType = String(event?.type || "")
+      .trim()
+      .toLowerCase();
+    if (eventType === "user_input" || eventType === "received") {
+      if (!questionByRound.has(round)) {
+        questionByRound.set(round, question);
+      }
+      return;
+    }
+    if (!questionByRound.has(round)) {
+      questionByRound.set(round, question);
+    }
+  });
+  const latestRound = Array.isArray(roundOptions) && roundOptions.length
+    ? roundOptions[roundOptions.length - 1]
+    : 0;
+  const cleanedSessionQuestion = String(sessionQuestion || "").trim();
+  if (latestRound > 0 && cleanedSessionQuestion && !questionByRound.has(latestRound)) {
+    questionByRound.set(latestRound, cleanedSessionQuestion);
+  }
+  return questionByRound;
+};
+
+const resolveMonitorDetailQuestionByRound = () => {
+  const detail = state.monitor?.detail;
+  if (!detail) {
+    return "";
+  }
+  const selectedRound = parseMonitorDetailRound(state.monitor?.detailFilters?.round);
+  if (selectedRound > 0 && detail.roundQuestions instanceof Map) {
+    const question = String(detail.roundQuestions.get(selectedRound) || "").trim();
+    if (question) {
+      return question;
+    }
+  }
+  return String(detail.session?.question || "").trim();
+};
+
+const renderMonitorDetailQuestion = () => {
+  if (!elements.monitorDetailQuestion) {
+    return;
+  }
+  elements.monitorDetailQuestion.textContent = resolveMonitorDetailQuestionByRound();
+};
+
+const syncMonitorDetailRoundFilter = () => {
+  if (!elements.monitorDetailRoundFilter) {
+    return;
+  }
+  const detail = state.monitor?.detail;
+  const roundOptions = Array.isArray(detail?.roundOptions) ? detail.roundOptions : [];
+  const filterNode = elements.monitorDetailRoundFilter;
+  filterNode.textContent = "";
+  if (roundOptions.length === 0) {
+    const option = document.createElement("option");
+    option.value = "0";
+    option.textContent = resolveMonitorDetailText("monitor.detail.round.none");
+    filterNode.appendChild(option);
+    filterNode.disabled = true;
+    filterNode.value = "0";
+    state.monitor.detailFilters.round = 0;
+    return;
+  }
+  roundOptions.forEach((round) => {
+    const option = document.createElement("option");
+    option.value = String(round);
+    option.textContent = resolveMonitorDetailText("monitor.detail.round", { round });
+    filterNode.appendChild(option);
+  });
+  filterNode.disabled = false;
+  const selectedRound = parseMonitorDetailRound(state.monitor?.detailFilters?.round);
+  const finalRound = roundOptions.includes(selectedRound)
+    ? selectedRound
+    : roundOptions[roundOptions.length - 1];
+  state.monitor.detailFilters.round = finalRound;
+  filterNode.value = String(finalRound);
+};
+
 const collectMonitorDetailEventTypes = (events) => {
   const types = new Set();
   (Array.isArray(events) ? events : []).forEach((event) => {
@@ -2684,11 +2865,21 @@ const resetMonitorDetailFilters = () => {
   ensureMonitorState();
   state.monitor.detailFilters.eventType = "";
   state.monitor.detailFilters.keyword = "";
+  state.monitor.detailFilters.round = 0;
   if (elements.monitorDetailTypeFilter) {
     elements.monitorDetailTypeFilter.value = "";
   }
   if (elements.monitorDetailKeyword) {
     elements.monitorDetailKeyword.value = "";
+  }
+  if (elements.monitorDetailRoundFilter) {
+    elements.monitorDetailRoundFilter.textContent = "";
+    const option = document.createElement("option");
+    option.value = "0";
+    option.textContent = resolveMonitorDetailText("monitor.detail.round.none");
+    elements.monitorDetailRoundFilter.appendChild(option);
+    elements.monitorDetailRoundFilter.value = "0";
+    elements.monitorDetailRoundFilter.disabled = true;
   }
   if (elements.monitorDetailFilterStats) {
     elements.monitorDetailFilterStats.textContent = "";
@@ -2760,9 +2951,16 @@ const renderMonitorDetailWithFilters = (events, options = {}) => {
   const filtered = resolveMonitorDetailFilteredEvents(events);
   renderMonitorDetailFilterStats(filtered.length, Array.isArray(events) ? events.length : 0);
   const focusTool = typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
-  const focusLine = renderMonitorDetailEvents(filtered, { focusTool });
+  const selectedRound = parseMonitorDetailRound(
+    options?.focusRound ?? state.monitor?.detailFilters?.round
+  );
+  const focusLine = renderMonitorDetailEvents(filtered, { focusTool, selectedRound });
   if (focusTool) {
     scrollMonitorDetailToLine(focusLine);
+    return focusLine;
+  }
+  if (selectedRound > 0) {
+    scrollMonitorDetailToRound(selectedRound);
   }
   return focusLine;
 };
@@ -2779,6 +2977,7 @@ const renderMonitorDetailEvents = (events, options = {}) => {
     return null;
   }
   const focusToolName = normalizeMonitorToolName(options.focusTool);
+  const selectedRound = parseMonitorDetailRound(options.selectedRound);
   const fragment = document.createDocumentFragment();
   let focusNode = null;
   let fallbackNode = null;
@@ -2787,8 +2986,15 @@ const renderMonitorDetailEvents = (events, options = {}) => {
     const normalizedLineText = normalizeMonitorToolName(lineText);
     const eventType = String(event?.type || "unknown");
     const eventTypeLower = eventType.toLowerCase();
+    const round = resolveMonitorEventRound(event);
     const item = document.createElement("details");
     item.className = "log-item monitor-event-item";
+    if (round > 0) {
+      item.dataset.round = String(round);
+      if (selectedRound > 0 && round === selectedRound) {
+        item.classList.add("monitor-event-item--round");
+      }
+    }
     const summary = document.createElement("summary");
     summary.className = "log-summary";
     const timeNode = document.createElement("span");
@@ -2805,6 +3011,12 @@ const renderMonitorDetailEvents = (events, options = {}) => {
     titleNode.className = "log-title";
     titleNode.textContent = resolveMonitorEventTitle(event);
     summary.appendChild(titleNode);
+    if (round > 0) {
+      const roundNode = document.createElement("span");
+      roundNode.className = "monitor-event-round";
+      roundNode.textContent = resolveMonitorDetailText("monitor.detail.round", { round });
+      summary.appendChild(roundNode);
+    }
     item.appendChild(summary);
     const detailNode = document.createElement("div");
     detailNode.className = "log-detail";
@@ -2872,6 +3084,25 @@ const scrollMonitorDetailToLine = (line) => {
       container.scrollTop = Math.max(0, target);
     });
   });
+};
+
+const scrollMonitorDetailToRound = (round) => {
+  if (!elements.monitorDetailEvents || round <= 0) {
+    return;
+  }
+  const selector = `.monitor-event-item[data-round="${round}"]`;
+  const target = elements.monitorDetailEvents.querySelector(selector);
+  if (!target) {
+    return;
+  }
+  elements.monitorDetailEvents
+    .querySelectorAll(".monitor-event-item--round-focus")
+    .forEach((node) => node.classList.remove("monitor-event-item--round-focus"));
+  target.classList.add("monitor-event-item--round-focus");
+  scrollMonitorDetailToLine(target);
+  window.setTimeout(() => {
+    target.classList.remove("monitor-event-item--round-focus");
+  }, 1400);
 };
 
 const setMonitorDetailExportEnabled = (enabled) => {
@@ -2965,18 +3196,30 @@ export const openMonitorDetail = async (sessionId, options = {}) => {
     elements.monitorDetailTitle.textContent = t("monitor.detail.title", {
       sessionId: session.session_id || "-",
     });
-    const events = Array.isArray(result.events) ? result.events : [];
+    const events = normalizeMonitorDetailEvents(result.events);
+    const roundOptions = collectMonitorDetailRoundOptions(session, events);
+    const roundQuestions = buildMonitorDetailRoundQuestionMap(
+      events,
+      roundOptions,
+      session.question
+    );
     elements.monitorDetailMeta.textContent = buildMonitorDetailMeta(session, events);
-    elements.monitorDetailQuestion.textContent = session.question || "";
     state.monitor.detail = {
       session,
       events,
+      roundOptions,
+      roundQuestions,
     };
     resetMonitorDetailFilters();
+    syncMonitorDetailRoundFilter();
+    renderMonitorDetailQuestion();
     setMonitorDetailExportEnabled(true);
     const focusTool =
       typeof options?.focusTool === "string" ? options.focusTool.trim() : "";
-    renderMonitorDetailWithFilters(events, { focusTool });
+    renderMonitorDetailWithFilters(events, {
+      focusTool,
+      focusRound: state.monitor.detailFilters.round,
+    });
     elements.monitorDetailModal.classList.add("active");
   } catch (error) {
     const message = t("monitor.detailLoadFailed", { message: error.message });
@@ -3095,6 +3338,20 @@ export const initMonitorPanel = () => {
       }
       state.monitor.detailFilters.keyword = String(elements.monitorDetailKeyword.value || "");
       renderMonitorDetailWithFilters(state.monitor.detail.events || []);
+    });
+  }
+  if (elements.monitorDetailRoundFilter) {
+    elements.monitorDetailRoundFilter.addEventListener("change", () => {
+      if (!state.monitor?.detail) {
+        return;
+      }
+      state.monitor.detailFilters.round = parseMonitorDetailRound(
+        elements.monitorDetailRoundFilter.value
+      );
+      renderMonitorDetailQuestion();
+      renderMonitorDetailWithFilters(state.monitor.detail.events || [], {
+        focusRound: state.monitor.detailFilters.round,
+      });
     });
   }
   elements.monitorDetailClose.addEventListener("click", closeMonitorDetail);

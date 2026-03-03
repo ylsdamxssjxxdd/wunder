@@ -5,6 +5,7 @@ pub mod config;
 pub mod config_store;
 pub mod exec_policy;
 pub mod i18n;
+pub mod json_schema;
 pub mod path_utils;
 pub mod python_runtime;
 pub mod schemas;

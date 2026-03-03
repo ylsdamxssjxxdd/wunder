@@ -3425,7 +3425,9 @@
 }
 
 #monitorDetailModal .modal-card {
-  height: 90vh;
+  width: min(620px, 100%);
+  max-height: calc(100vh - 32px);
+  height: auto;
 }
 
 #monitorDetailModal .modal-body {
@@ -3433,8 +3435,8 @@
   flex-direction: column;
   gap: 10px;
   min-height: 0;
-  overflow: hidden;
-  padding-right: 0;
+  overflow-y: auto;
+  padding-right: 6px;
 }
 
 #monitorDetailModal .modal-body .form-row {
@@ -3451,15 +3453,37 @@
   min-height: 0;
 }
 
+#monitorDetailModal .monitor-detail-question-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+#monitorDetailModal .monitor-detail-round-filter-wrap {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+#monitorDetailModal .monitor-detail-round-filter-wrap .select {
+  min-width: 148px;
+}
+
 #monitorDetailModal #monitorDetailEvents {
   flex: 1 1 auto;
   min-height: 0;
+  max-height: calc(100vh - 430px);
   overflow-y: auto;
   padding-right: 4px;
 }
 
 #monitorDetailModal #monitorDetailQuestion {
-  max-height: 88px;
+  max-height: 120px;
   overflow-y: auto;
 }
 

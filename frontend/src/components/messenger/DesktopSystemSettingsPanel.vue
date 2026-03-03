@@ -107,7 +107,19 @@
             </label>
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.provider') }}</span>
-              <el-input v-model="selectedModel.provider" />
+              <el-select
+                v-model="selectedModel.provider"
+                class="desktop-system-settings-input"
+                popper-class="desktop-system-settings-popper"
+                @change="handleProviderChange"
+              >
+                <el-option
+                  v-for="provider in providerOptionsForSelectedModel"
+                  :key="provider.id"
+                  :label="provider.label"
+                  :value="provider.id"
+                />
+              </el-select>
             </label>
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelName') }}</span>
@@ -120,7 +132,7 @@
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.baseUrl') }}</span>
               <el-input
                 v-model="selectedModel.base_url"
-                :placeholder="t('desktop.system.baseUrlPlaceholder')"
+                :placeholder="modelBaseUrlPlaceholder"
               />
             </label>
             <label class="desktop-system-settings-field desktop-system-settings-field--full">
@@ -472,6 +484,22 @@ const lanPeerBlacklistText = ref('');
 const lanSharedSecret = ref('');
 const lanPeers = ref<DesktopLanPeer[]>([]);
 let nextModelUid = 1;
+const DEFAULT_PROVIDER_ID = 'openai_compatible';
+const PROVIDER_PRESETS: Array<{ id: string; label: string; baseUrl: string }> = [
+  { id: 'openai_compatible', label: 'openai_compatible', baseUrl: '' },
+  { id: 'openai', label: 'openai', baseUrl: 'https://api.openai.com/v1' },
+  { id: 'openrouter', label: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1' },
+  { id: 'siliconflow', label: 'siliconflow', baseUrl: 'https://api.siliconflow.cn/v1' },
+  { id: 'deepseek', label: 'deepseek', baseUrl: 'https://api.deepseek.com' },
+  { id: 'moonshot', label: 'moonshot', baseUrl: 'https://api.moonshot.ai/v1' },
+  { id: 'qwen', label: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { id: 'groq', label: 'groq', baseUrl: 'https://api.groq.com/openai/v1' },
+  { id: 'mistral', label: 'mistral', baseUrl: 'https://api.mistral.ai/v1' },
+  { id: 'together', label: 'together', baseUrl: 'https://api.together.xyz/v1' },
+  { id: 'ollama', label: 'ollama', baseUrl: 'http://127.0.0.1:11434/v1' },
+  { id: 'lmstudio', label: 'lmstudio', baseUrl: 'http://127.0.0.1:1234/v1' }
+];
+const PROVIDER_PRESET_MAP = new Map(PROVIDER_PRESETS.map((item) => [item.id, item]));
 
 const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
 
@@ -505,6 +533,21 @@ const modelRowsForList = computed(() =>
 const selectedModel = computed(
   () => modelRows.value.find((item) => item.uid === selectedModelUid.value) || null
 );
+const providerOptionsForSelectedModel = computed(() => {
+  const currentProvider = normalizeProviderId(selectedModel.value?.provider);
+  const options = PROVIDER_PRESETS.map((item) => ({
+    id: item.id,
+    label: item.label
+  }));
+  if (currentProvider && !PROVIDER_PRESET_MAP.has(currentProvider)) {
+    options.unshift({ id: currentProvider, label: currentProvider });
+  }
+  return options;
+});
+const modelBaseUrlPlaceholder = computed(() => {
+  const provider = selectedModel.value?.provider;
+  return resolveProviderBaseUrl(provider) || t('desktop.system.baseUrlPlaceholder');
+});
 const setCurrentDefaultLabel = computed(() => {
   const current = selectedModel.value;
   if (!current) return t('desktop.system.setDefaultChatModel');
@@ -521,8 +564,42 @@ const normalizeModelType = (value: unknown): ModelType => {
   return 'llm';
 };
 
+const normalizeProviderId = (value: unknown): string => {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return DEFAULT_PROVIDER_ID;
+  }
+  const normalized = raw.toLowerCase().replace(/[\s-]+/g, '_');
+  switch (normalized) {
+    case 'openai_compat':
+      return 'openai_compatible';
+    case 'openai_native':
+      return 'openai';
+    case 'silicon_flow':
+      return 'siliconflow';
+    case 'kimi':
+      return 'moonshot';
+    case 'dashscope':
+      return 'qwen';
+    case 'lm_studio':
+      return 'lmstudio';
+    default:
+      return normalized;
+  }
+};
+
+const getProviderPreset = (provider: unknown) => PROVIDER_PRESET_MAP.get(normalizeProviderId(provider));
+
+const resolveProviderBaseUrl = (provider: unknown): string => getProviderPreset(provider)?.baseUrl || '';
+
 const normalizeToolCallMode = (value: unknown): ToolCallMode =>
   String(value || '').trim().toLowerCase() === 'function_call' ? 'function_call' : 'tool_call';
+
+const handleProviderChange = (value: string) => {
+  const current = selectedModel.value;
+  if (!current) return;
+  current.provider = normalizeProviderId(value);
+};
 
 const normalizeHistoryCompactionReset = (value: unknown): HistoryCompactionReset => {
   const raw = String(value || '').trim().toLowerCase();
@@ -560,7 +637,7 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     uid: makeModelUid(),
     key,
     model_type: normalizeModelType(raw.model_type),
-    provider: String(raw.provider || 'openai_compatible'),
+    provider: normalizeProviderId(raw.provider),
     base_url: String(raw.base_url || ''),
     api_key: String(raw.api_key || ''),
     model: String(raw.model || ''),
@@ -631,7 +708,7 @@ const addModel = (modelType: ModelType = 'llm') => {
     uid: makeModelUid(),
     key: '',
     model_type: modelType,
-    provider: 'openai_compatible',
+    provider: DEFAULT_PROVIDER_ID,
     base_url: '',
     api_key: '',
     model: '',
@@ -732,7 +809,7 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
   };
 
   setText('model_type', row.model_type);
-  setText('provider', row.provider);
+  setText('provider', normalizeProviderId(row.provider));
   setText('base_url', row.base_url);
   setText('api_key', row.api_key);
   setText('model', row.model);
@@ -776,7 +853,7 @@ const probeMaxContext = async () => {
   probingContext.value = true;
   try {
     const response = await probeDesktopLlmContextWindow({
-      provider: String(current.provider || '').trim(),
+      provider: normalizeProviderId(current.provider),
       base_url: String(current.base_url || '').trim(),
       api_key: String(current.api_key || '').trim(),
       model: modelName,
