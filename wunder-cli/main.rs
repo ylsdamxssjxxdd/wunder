@@ -6241,6 +6241,7 @@ fn build_cli_llm_model_config(
         max_context: None,
         max_output: None,
         support_vision: None,
+        support_hearing: None,
         stream: None,
         stream_include_usage: None,
         history_compaction_ratio: None,

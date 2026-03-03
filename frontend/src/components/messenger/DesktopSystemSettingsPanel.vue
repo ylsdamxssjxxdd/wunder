@@ -202,6 +202,10 @@
                   <span>{{ t('desktop.system.supportVision') }}</span>
                 </label>
                 <label class="desktop-system-settings-checkbox">
+                  <input v-model="selectedModel.support_hearing" type="checkbox" />
+                  <span>{{ t('desktop.system.supportHearing') }}</span>
+                </label>
+                <label class="desktop-system-settings-checkbox">
                   <input v-model="selectedModel.stream_include_usage" type="checkbox" />
                   <span>{{ t('desktop.system.streamIncludeUsage') }}</span>
                 </label>
@@ -439,6 +443,7 @@ type ModelRow = {
   max_output: string;
   max_context: string;
   support_vision: boolean;
+  support_hearing: boolean;
   stream_include_usage: boolean;
   tool_call_mode: ToolCallMode;
   history_compaction_ratio: string;
@@ -648,6 +653,7 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     max_output: raw.max_output == null ? '' : String(raw.max_output),
     max_context: raw.max_context == null ? '' : String(raw.max_context),
     support_vision: raw.support_vision === true,
+    support_hearing: raw.support_hearing === true,
     stream_include_usage: raw.stream_include_usage !== false,
     tool_call_mode: normalizeToolCallMode(raw.tool_call_mode),
     history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.8),
@@ -719,6 +725,7 @@ const addModel = (modelType: ModelType = 'llm') => {
     max_output: '',
     max_context: '',
     support_vision: false,
+    support_hearing: false,
     stream_include_usage: true,
     tool_call_mode: 'tool_call',
     history_compaction_ratio: modelType === 'llm' ? '0.8' : '',
@@ -822,6 +829,7 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     setInt('max_output', row.max_output);
     setInt('max_context', row.max_context);
     output.support_vision = row.support_vision === true;
+    output.support_hearing = row.support_hearing === true;
     output.stream_include_usage = row.stream_include_usage !== false;
     setText('tool_call_mode', row.tool_call_mode);
     setFloat('history_compaction_ratio', row.history_compaction_ratio);
@@ -832,6 +840,7 @@ const buildModelPayload = (row: ModelRow): Record<string, unknown> => {
     delete output.max_output;
     delete output.max_context;
     delete output.support_vision;
+    delete output.support_hearing;
     delete output.stream_include_usage;
     delete output.tool_call_mode;
     delete output.history_compaction_ratio;

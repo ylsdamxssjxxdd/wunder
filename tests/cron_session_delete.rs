@@ -28,6 +28,8 @@ fn build_job(now: f64, job_id: &str, session_id: &str) -> CronJobRecord {
         last_run_at: None,
         last_status: None,
         last_error: None,
+        consecutive_failures: 0,
+        auto_disabled_reason: None,
         created_at: now,
         updated_at: now,
     }

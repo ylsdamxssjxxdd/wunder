@@ -416,6 +416,8 @@ fn build_job_record(
         last_run_at: None,
         last_status: None,
         last_error: None,
+        consecutive_failures: 0,
+        auto_disabled_reason: None,
         created_at: now,
         updated_at: now,
     })
@@ -700,6 +702,8 @@ fn cron_job_to_value(record: &CronJobRecord) -> Value {
         "last_run_at_text": format_ts(record.last_run_at),
         "last_status": record.last_status,
         "last_error": record.last_error,
+        "consecutive_failures": record.consecutive_failures,
+        "auto_disabled_reason": record.auto_disabled_reason,
         "created_at": record.created_at,
         "created_at_text": format_ts(Some(record.created_at)),
         "updated_at": record.updated_at,

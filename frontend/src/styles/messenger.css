@@ -353,6 +353,11 @@
   margin-top: auto;
 }
 
+.messenger-left-nav-btn--helper {
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.24);
+  background: rgba(var(--ui-accent-rgb), 0.1);
+}
+
 .messenger-middle-pane {
   background: var(--hula-center-bg);
   border-right: 1px solid var(--hula-border);
@@ -1062,6 +1067,18 @@
   overflow: hidden;
 }
 
+.messenger-chat-body.is-helper-workspace {
+  overflow: auto;
+}
+
+.messenger-helper-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 100%;
+  padding: 12px;
+}
+
 .messenger-chat-body.is-agent .messenger-message:not(.mine) .messenger-message-main {
   width: 100%;
   max-width: 100%;
@@ -1298,6 +1315,56 @@
   border-color: rgba(var(--ui-accent-rgb), 0.3);
 }
 
+.messenger-message-bubble--voice {
+  padding: 10px 12px;
+}
+
+.messenger-world-voice-card {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: min(260px, 72vw);
+}
+
+.messenger-world-voice-play-btn {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.32);
+  border-radius: 999px;
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent-deep);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.messenger-world-voice-play-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.messenger-world-voice-content {
+  min-width: 0;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.messenger-world-voice-title {
+  font-size: calc(12px * var(--messenger-font-scale, 1));
+  line-height: 1.4;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.messenger-world-voice-duration {
+  font-size: calc(12px * var(--messenger-font-scale, 1));
+  line-height: 1.2;
+  color: #64748b;
+}
+
 .messenger-message-stats {
   display: flex;
   flex-wrap: wrap;
@@ -1512,6 +1579,39 @@
 .messenger-world-tool-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.messenger-world-tool-btn--recording,
+.messenger-world-tool-btn--recording:hover:not(:disabled) {
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.36);
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.messenger-world-voice-indicator {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #b91c1c;
+  user-select: none;
+}
+
+.messenger-world-voice-indicator-dot {
+  font-size: 8px;
+  line-height: 1;
+  animation: messenger-world-voice-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes messenger-world-voice-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .messenger-world-screenshot-toggle {

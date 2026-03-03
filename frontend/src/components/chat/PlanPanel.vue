@@ -16,23 +16,34 @@
         </div>
       </div>
     </div>
-    <button
-      class="plan-tab"
-      type="button"
-      :aria-expanded="expanded ? 'true' : 'false'"
-      :aria-label="t('chat.workflow.plan.title')"
-      @click="toggleExpanded"
-      @keydown.enter.prevent="toggleExpanded"
-      @keydown.space.prevent="toggleExpanded"
-    >
-      <span class="plan-tab-title">{{ t('chat.workflow.plan.title') }}</span>
-      <span class="plan-tab-divider" />
-      <span class="plan-tab-progress">{{ progressLabel }}</span>
-      <span v-if="currentStep" class="plan-tab-step" :title="currentStep.step">
-        {{ currentStep.step }}
-      </span>
-      <i class="fa-solid fa-chevron-up plan-tab-icon" :class="{ expanded }" aria-hidden="true"></i>
-    </button>
+    <div class="plan-tab-row">
+      <button
+        class="plan-tab"
+        type="button"
+        :aria-expanded="expanded ? 'true' : 'false'"
+        :aria-label="t('chat.workflow.plan.title')"
+        @click="toggleExpanded"
+        @keydown.enter.prevent="toggleExpanded"
+        @keydown.space.prevent="toggleExpanded"
+      >
+        <span class="plan-tab-title">{{ t('chat.workflow.plan.title') }}</span>
+        <span class="plan-tab-divider" />
+        <span class="plan-tab-progress">{{ progressLabel }}</span>
+        <span v-if="currentStep" class="plan-tab-step" :title="currentStep.step">
+          {{ currentStep.step }}
+        </span>
+        <i class="fa-solid fa-chevron-up plan-tab-icon" :class="{ expanded }" aria-hidden="true"></i>
+      </button>
+      <button
+        class="plan-remove-btn"
+        type="button"
+        :title="t('chat.workflow.plan.remove')"
+        :aria-label="t('chat.workflow.plan.remove')"
+        @click="removePanel"
+      >
+        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+      </button>
+    </div>
   </div>
 </template>
 
@@ -52,7 +63,7 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['update:expanded']);
+const emit = defineEmits(['update:expanded', 'remove']);
 const { t } = useI18n();
 
 const steps = computed(() => (Array.isArray(props.plan?.steps) ? props.plan.steps : []));
@@ -85,6 +96,10 @@ const progressLabel = computed(() => {
 
 const toggleExpanded = () => {
   emit('update:expanded', !props.expanded);
+};
+
+const removePanel = () => {
+  emit('remove');
 };
 
 const formatPlanStatus = (status) => {

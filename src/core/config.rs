@@ -332,6 +332,8 @@ pub struct LlmModelConfig {
     #[serde(default)]
     pub support_vision: Option<bool>,
     #[serde(default)]
+    pub support_hearing: Option<bool>,
+    #[serde(default)]
     pub stream: Option<bool>,
     #[serde(default)]
     pub stream_include_usage: Option<bool>,
@@ -367,6 +369,10 @@ pub struct CronConfig {
     pub poll_interval_ms: u64,
     #[serde(default, deserialize_with = "deserialize_u64_from_any")]
     pub idle_retry_ms: u64,
+    #[serde(default, deserialize_with = "deserialize_u64_from_any")]
+    pub max_busy_wait_ms: u64,
+    #[serde(default, deserialize_with = "deserialize_usize_from_any")]
+    pub max_consecutive_failures: usize,
 }
 
 impl Default for CronConfig {
@@ -376,6 +382,8 @@ impl Default for CronConfig {
             max_concurrent_runs: 1,
             poll_interval_ms: 1000,
             idle_retry_ms: 2000,
+            max_busy_wait_ms: 120_000,
+            max_consecutive_failures: 5,
         }
     }
 }

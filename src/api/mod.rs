@@ -69,7 +69,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 
 /// Build a reduced router for local desktop mode.
 ///
-/// It intentionally omits admin/channel/gateway/cron routes to keep the local
+/// It intentionally omits admin/channel/gateway/a2a routes to keep the local
 /// surface minimal while still reusing the same orchestrator/tooling pipeline.
 #[allow(dead_code)]
 pub fn build_desktop_router(state: Arc<AppState>) -> Router {
@@ -79,6 +79,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(chat_ws::router())
         .merge(core_ws::router())
         .merge(core::router())
+        .merge(cron::router())
         .merge(desktop::router())
         .merge(desktop_lan::router())
         .merge(external_links::router())

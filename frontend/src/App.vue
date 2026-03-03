@@ -59,4 +59,9 @@ body.desktop-shell-active .el-message,
 body.desktop-shell-active .el-notification {
   top: calc(var(--desktop-window-chrome-height, 36px) + 12px) !important;
 }
+
+body.desktop-shell-active .messenger-timeline-detail-dialog {
+  margin-top: calc(var(--desktop-window-chrome-height, 36px) + 12px) !important;
+  max-height: calc(100dvh - var(--desktop-window-chrome-height, 36px) - 24px);
+}
 </style>

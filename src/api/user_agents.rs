@@ -1181,9 +1181,7 @@ fn runtime_day_hour(ts: f64) -> Option<usize> {
 }
 
 fn parse_timestamp_value(value: Option<&Value>) -> Option<f64> {
-    let Some(value) = value else {
-        return None;
-    };
+    let value = value?;
     if let Some(ts) = value.as_f64().filter(|ts| ts.is_finite() && *ts > 0.0) {
         return Some(ts);
     }

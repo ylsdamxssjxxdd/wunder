@@ -68,6 +68,7 @@
       <button
         class="messenger-world-tool-btn"
         type="button"
+        :disabled="voiceRecording"
         :title="t('userWorld.attachments.pick')"
         :aria-label="t('userWorld.attachments.pick')"
         @click="emit('trigger-container-pick')"
@@ -77,12 +78,32 @@
       <button
         class="messenger-world-tool-btn"
         type="button"
-        :disabled="uploading"
+        :disabled="uploading || voiceRecording"
         :title="t('userWorld.attachments.uploadLocal')"
         :aria-label="t('userWorld.attachments.uploadLocal')"
         @click="emit('trigger-upload')"
       >
         <i class="fa-solid fa-paperclip messenger-world-tool-fa-icon" aria-hidden="true"></i>
+      </button>
+      <button
+        class="messenger-world-tool-btn"
+        type="button"
+        :class="{
+          active: voiceRecording,
+          'messenger-world-tool-btn--recording': voiceRecording
+        }"
+        :disabled="uploading || !voiceSupported"
+        :title="voiceButtonTitle"
+        :aria-label="voiceButtonTitle"
+        @click="emit('toggle-voice-record')"
+      >
+        <i
+          :class="[
+            voiceRecording ? 'fa-solid fa-stop' : 'fa-solid fa-microphone',
+            'messenger-world-tool-fa-icon'
+          ]"
+          aria-hidden="true"
+        ></i>
       </button>
       <div
         v-if="screenshotSupported"
@@ -94,7 +115,7 @@
           class="messenger-world-tool-btn messenger-world-screenshot-toggle"
           type="button"
           :class="{ active: screenshotMenuVisible }"
-          :disabled="uploading"
+          :disabled="uploading || voiceRecording"
           :title="t('chat.attachments.screenshot')"
           :aria-label="t('chat.attachments.screenshot')"
           :aria-expanded="screenshotMenuVisible"
@@ -114,6 +135,10 @@
         >
           <i class="fa-solid fa-clock-rotate-left messenger-world-tool-fa-icon" aria-hidden="true"></i>
         </button>
+      </div>
+      <div v-if="voiceRecording" class="messenger-world-voice-indicator">
+        <i class="fa-solid fa-circle messenger-world-voice-indicator-dot" aria-hidden="true"></i>
+        <span>{{ voiceRecordingLabel }}</span>
       </div>
     </div>
     <textarea
@@ -199,10 +224,16 @@ const props = withDefaults(
     uploading: boolean;
     screenshotSupported?: boolean;
     sendKey?: SendKeyMode;
+    voiceRecording?: boolean;
+    voiceDurationMs?: number;
+    voiceSupported?: boolean;
   }>(),
   {
     sendKey: 'ctrl_enter',
-    screenshotSupported: false
+    screenshotSupported: false,
+    voiceRecording: false,
+    voiceDurationMs: 0,
+    voiceSupported: true
   }
 );
 
@@ -216,6 +247,7 @@ const emit = defineEmits<{
   'insert-emoji': [emoji: string];
   'trigger-container-pick': [];
   'trigger-upload': [];
+  'toggle-voice-record': [];
   'trigger-screenshot': [payload: ScreenshotCapturePayload];
   'open-history': [];
   'focus-input': [];
@@ -247,6 +279,27 @@ const inputPlaceholder = computed(
     sendShortcutHint.value
       ? `${t('userWorld.input.placeholder')} | ${sendShortcutHint.value}`
       : t('userWorld.input.placeholder')
+);
+const formatVoiceDurationLabel = (durationMs: unknown): string => {
+  const value = Number(durationMs);
+  if (!Number.isFinite(value) || value <= 0) {
+    return '0:00';
+  }
+  const totalSeconds = Math.max(1, Math.round(value / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+};
+const voiceButtonTitle = computed(() => {
+  if (!props.voiceSupported) {
+    return t('messenger.world.voice.unsupported');
+  }
+  return props.voiceRecording ? t('messenger.world.voice.stop') : t('messenger.world.voice.start');
+});
+const voiceRecordingLabel = computed(() =>
+  t('messenger.world.voice.recording', {
+    duration: formatVoiceDurationLabel(props.voiceDurationMs)
+  })
 );
 const screenshotCaptureOptions = computed<ScreenshotCaptureOption[]>(() => [
   {
@@ -369,7 +422,7 @@ const closeScreenshotMenu = () => {
 };
 
 const toggleScreenshotMenu = () => {
-  if (!props.screenshotSupported || props.uploading) return;
+  if (!props.screenshotSupported || props.uploading || props.voiceRecording) return;
   const nextVisible = !screenshotMenuVisible.value;
   screenshotMenuVisible.value = nextVisible;
   if (nextVisible) {
@@ -423,6 +476,15 @@ watch(
   () => props.uploading,
   (uploading) => {
     if (uploading) {
+      closeScreenshotMenu();
+    }
+  }
+);
+
+watch(
+  () => props.voiceRecording,
+  (recording) => {
+    if (recording) {
       closeScreenshotMenu();
     }
   }

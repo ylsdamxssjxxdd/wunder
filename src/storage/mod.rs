@@ -593,6 +593,8 @@ pub struct CronJobRecord {
     pub last_run_at: Option<f64>,
     pub last_status: Option<String>,
     pub last_error: Option<String>,
+    pub consecutive_failures: i64,
+    pub auto_disabled_reason: Option<String>,
     pub created_at: f64,
     pub updated_at: f64,
 }

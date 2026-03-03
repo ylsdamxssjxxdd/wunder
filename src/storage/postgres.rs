@@ -734,6 +734,18 @@ impl PostgresStorage {
         Ok(())
     }
 
+    fn ensure_cron_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.execute(
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS consecutive_failures BIGINT NOT NULL DEFAULT 0",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS auto_disabled_reason TEXT",
+            &[],
+        )?;
+        Ok(())
+    }
+
     fn ensure_monitor_defaults(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.execute(
             "UPDATE monitor_sessions SET updated_time = 0 WHERE updated_time IS NULL",
@@ -1234,6 +1246,8 @@ impl StorageBackend for PostgresStorage {
                   last_run_at DOUBLE PRECISION,
                   last_status TEXT,
                   last_error TEXT,
+                  consecutive_failures BIGINT NOT NULL DEFAULT 0,
+                  auto_disabled_reason TEXT,
                   created_at DOUBLE PRECISION NOT NULL,
                   updated_at DOUBLE PRECISION NOT NULL
                 );
@@ -1556,6 +1570,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_session_lock_columns(&mut conn)?;
                     self.ensure_user_agent_columns(&mut conn)?;
                     self.ensure_user_world_group_columns(&mut conn)?;
+                    self.ensure_cron_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
@@ -4588,7 +4603,16 @@ impl StorageBackend for PostgresStorage {
             ],
         )?;
         let message_id: i64 = insert_row.get(0);
-        let preview = cleaned_content.chars().take(120).collect::<String>();
+        let normalized_content_type_lower = normalized_content_type.to_ascii_lowercase();
+        let preview = if normalized_content_type_lower == "voice"
+            || normalized_content_type_lower == "audio"
+            || normalized_content_type_lower.starts_with("audio/")
+            || normalized_content_type_lower.contains("voice")
+        {
+            "[Voice]".to_string()
+        } else {
+            cleaned_content.chars().take(120).collect::<String>()
+        };
         tx.execute(
             "UPDATE user_world_conversations SET updated_at = $1, last_message_at = $2, last_message_id = $3, \
              last_message_preview = $4 WHERE conversation_id = $5",
@@ -6172,15 +6196,16 @@ impl StorageBackend for PostgresStorage {
         conn.execute(
             "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, last_run_at, \
-             last_status, last_error, created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23) \
+             last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) \
              ON CONFLICT(job_id) DO UPDATE SET user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id, agent_id = EXCLUDED.agent_id, \
              name = EXCLUDED.name, session_target = EXCLUDED.session_target, payload = EXCLUDED.payload, deliver = EXCLUDED.deliver, \
              enabled = EXCLUDED.enabled, delete_after_run = EXCLUDED.delete_after_run, schedule_kind = EXCLUDED.schedule_kind, \
              schedule_at = EXCLUDED.schedule_at, schedule_every_ms = EXCLUDED.schedule_every_ms, schedule_cron = EXCLUDED.schedule_cron, \
              schedule_tz = EXCLUDED.schedule_tz, dedupe_key = EXCLUDED.dedupe_key, next_run_at = EXCLUDED.next_run_at, \
              running_at = EXCLUDED.running_at, last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status, \
-             last_error = EXCLUDED.last_error, updated_at = EXCLUDED.updated_at",
+             last_error = EXCLUDED.last_error, consecutive_failures = EXCLUDED.consecutive_failures, \
+             auto_disabled_reason = EXCLUDED.auto_disabled_reason, updated_at = EXCLUDED.updated_at",
             &[
                 &record.job_id,
                 &record.user_id,
@@ -6203,6 +6228,8 @@ impl StorageBackend for PostgresStorage {
                 &record.last_run_at,
                 &record.last_status,
                 &record.last_error,
+                &record.consecutive_failures,
+                &record.auto_disabled_reason,
                 &record.created_at,
                 &record.updated_at,
             ],
@@ -6221,7 +6248,8 @@ impl StorageBackend for PostgresStorage {
         let row = conn.query_opt(
             "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = $1 AND job_id = $2",
+             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+             FROM cron_jobs WHERE user_id = $1 AND job_id = $2",
             &[&cleaned_user, &cleaned_job],
         )?;
         Ok(row.map(|row| {
@@ -6251,8 +6279,10 @@ impl StorageBackend for PostgresStorage {
                 last_run_at: row.get(18),
                 last_status: row.get(19),
                 last_error: row.get(20),
-                created_at: row.get(21),
-                updated_at: row.get(22),
+                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
+                auto_disabled_reason: row.get(22),
+                created_at: row.get(23),
+                updated_at: row.get(24),
             }
         }))
     }
@@ -6272,7 +6302,8 @@ impl StorageBackend for PostgresStorage {
         let row = conn.query_opt(
             "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = $1 AND dedupe_key = $2 LIMIT 1",
+             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+             FROM cron_jobs WHERE user_id = $1 AND dedupe_key = $2 LIMIT 1",
             &[&cleaned_user, &cleaned_key],
         )?;
         Ok(row.map(|row| {
@@ -6302,8 +6333,10 @@ impl StorageBackend for PostgresStorage {
                 last_run_at: row.get(18),
                 last_status: row.get(19),
                 last_error: row.get(20),
-                created_at: row.get(21),
-                updated_at: row.get(22),
+                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
+                auto_disabled_reason: row.get(22),
+                created_at: row.get(23),
+                updated_at: row.get(24),
             }
         }))
     }
@@ -6318,7 +6351,8 @@ impl StorageBackend for PostgresStorage {
         let mut sql = String::from(
             "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = $1",
+             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+             FROM cron_jobs WHERE user_id = $1",
         );
         if !include_disabled {
             sql.push_str(" AND enabled = 1");
@@ -6353,8 +6387,10 @@ impl StorageBackend for PostgresStorage {
                 last_run_at: row.get(18),
                 last_status: row.get(19),
                 last_error: row.get(20),
-                created_at: row.get(21),
-                updated_at: row.get(22),
+                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
+                auto_disabled_reason: row.get(22),
+                created_at: row.get(23),
+                updated_at: row.get(24),
             });
         }
         Ok(output)
@@ -6442,7 +6478,8 @@ impl StorageBackend for PostgresStorage {
         let rows = tx.query(
             "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE job_id = ANY($1)",
+             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+             FROM cron_jobs WHERE job_id = ANY($1)",
             &[&ids],
         )?;
         let mut output = Vec::new();
@@ -6473,8 +6510,10 @@ impl StorageBackend for PostgresStorage {
                 last_run_at: row.get(18),
                 last_status: row.get(19),
                 last_error: row.get(20),
-                created_at: row.get(21),
-                updated_at: row.get(22),
+                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
+                auto_disabled_reason: row.get(22),
+                created_at: row.get(23),
+                updated_at: row.get(24),
             });
         }
         tx.commit()?;

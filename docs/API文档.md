@@ -79,6 +79,7 @@
   - 发送者身份以 Token 用户为准，不允许伪造。
   - 仅会话成员可读写与订阅事件。
   - 支持 `client_msg_id` 幂等去重（同会话内唯一）。
+  - 语音消息约定：当 `content_type=voice`（或 `audio/*`）时，`content` 推荐传 JSON 字符串，至少包含 `path`（容器相对路径）；可选字段 `duration_ms/mime_type/name/size/container_id/owner_user_id`。
   - 会话对象在群聊场景返回 `group_id/group_name/member_count`；单聊场景返回 `peer_user_id`。
   - 群聊对象返回 `announcement/announcement_updated_at` 字段；群详情额外返回 `members[]`。
 
@@ -565,12 +566,17 @@
 
 - 说明：定时任务管理（用户侧）。
 - `GET /wunder/cron/list`：列出当前用户的定时任务
-  - 返回：`data.jobs`（包含 job_id/name/schedule/next_run_at/last_status 等）
+  - 返回：`data.jobs`（包含 job_id/name/schedule/next_run_at/last_status/consecutive_failures/auto_disabled_reason 等）
+- `GET /wunder/cron/status`：查询调度器健康状态与当前用户任务概况
+  - 返回：`data.scheduler`（started/enabled/running_jobs/next_run_at/last_tick_at/last_error 等）+ `data.jobs_total/jobs_enabled/jobs_running`
 - `GET /wunder/cron/runs?job_id=...&limit=...`：查询任务运行记录
   - 返回：`data.runs`
-- `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行
+- `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行（`action=status` 与 `GET /wunder/cron/status` 等价）
   - 入参：与内置工具 `schedule_task` schema 一致（`action` + `job`）
-  - 说明：`job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点。
+  - 说明：
+    - `job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点，首次触发为“下一个间隔点”（严格晚于当前时刻，避免创建即触发）。
+    - 调度执行遇到 `USER_BUSY` 会按 `cron.idle_retry_ms` 重试，并受 `cron.max_busy_wait_ms` 上限保护，超时后写入 error 运行记录。
+    - 连续失败达到 `cron.max_consecutive_failures` 会自动停用任务并写入 `auto_disabled_reason`。
   - 返回：`data` 中包含 action 结果与 job 信息
 
 ### 4.1.3 `/wunder/admin/mcp`
@@ -711,7 +717,7 @@
 - 方法：`GET/POST`
 - `GET` 返回：
   - `llm.default`：默认模型配置名称
-- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
+- `llm.models`：模型配置映射（model_type/provider/api_mode/base_url/api_key/model/temperature/timeout_s/retry/max_rounds/max_context/max_output/support_vision/support_hearing/stream/stream_include_usage/tool_call_mode/history_compaction_ratio/history_compaction_reset/stop/enable/mock_if_unconfigured）
   - 说明：`retry` 同时用于请求失败重试与流式断线重连。
   - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
@@ -2779,9 +2785,9 @@
 
 ### desktop 暴露路由范围（当前）
 
-- 包含：`auth/chat/chat_ws/core/core_ws/desktop/external_links/workspace/user_tools/user_agents/user_channels/user_world/user_world_ws/mcp/temp_dir`
+- 包含：`auth/chat/chat_ws/core/core_ws/desktop/cron/external_links/workspace/user_tools/user_agents/user_channels/user_world/user_world_ws/mcp/temp_dir`
 - 例外：额外暴露 `POST /wunder/admin/llm/context_window` 作为 desktop 模型上下文探测兼容入口。
-- 不包含：`admin/channel/gateway/cron/a2a` 等管理或多租户路由
+- 不包含：`admin/channel/gateway/a2a` 等管理或多租户路由
 
 ### 前端托管约定
 

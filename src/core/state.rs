@@ -68,7 +68,7 @@ impl AppStateInitOptions {
             spawn_gateway_maintenance: false,
             start_team_run_runner: false,
             start_agent_runtime: false,
-            start_cron: false,
+            start_cron: true,
         }
     }
 }
@@ -288,5 +288,16 @@ fn init_storage_auto(config: &Config) -> Result<Arc<dyn StorageBackend>> {
             sqlite.ensure_initialized()?;
             Ok(sqlite)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppStateInitOptions;
+
+    #[test]
+    fn desktop_default_starts_cron_scheduler() {
+        let options = AppStateInitOptions::desktop_default();
+        assert!(options.start_cron);
     }
 }

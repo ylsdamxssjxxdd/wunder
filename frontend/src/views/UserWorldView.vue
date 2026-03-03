@@ -177,32 +177,33 @@
               </div>
             </template>
             <div v-else class="user-world-empty">{{ t('userWorld.group.empty') }}</div>
-            <div class="user-world-helper-apps">
-              <div class="user-world-helper-header">
-                <div class="user-world-helper-title">{{ t('userWorld.helperApps.title') }}</div>
-                <div class="user-world-helper-subtitle">{{ t('userWorld.helperApps.subtitle') }}</div>
-              </div>
-              <div class="user-world-helper-grid">
-                <button
-                  class="user-world-helper-card"
-                  type="button"
-                  @click="openLocalFileSearchDialog"
-                >
-                  <span class="user-world-helper-card-icon">
-                    <i class="fa-solid fa-folder-tree" aria-hidden="true"></i>
-                  </span>
-                  <span class="user-world-helper-card-main">
-                    <span class="user-world-helper-card-title">
-                      {{ t('userWorld.helperApps.localFileSearch.cardTitle') }}
-                    </span>
-                    <span class="user-world-helper-card-desc">
-                      {{ t('userWorld.helperApps.localFileSearch.cardDesc') }}
-                    </span>
-                  </span>
-                </button>
-              </div>
-            </div>
           </template>
+        </div>
+
+        <div v-if="activeTab === 'groups'" class="user-world-helper-apps">
+          <div class="user-world-helper-header">
+            <div class="user-world-helper-title">{{ t('userWorld.helperApps.title') }}</div>
+            <div class="user-world-helper-subtitle">{{ t('userWorld.helperApps.subtitle') }}</div>
+          </div>
+          <div class="user-world-helper-grid">
+            <button
+              class="user-world-helper-card"
+              type="button"
+              @click="openLocalFileSearchDialog"
+            >
+              <span class="user-world-helper-card-icon">
+                <i class="fa-solid fa-folder-tree" aria-hidden="true"></i>
+              </span>
+              <span class="user-world-helper-card-main">
+                <span class="user-world-helper-card-title">
+                  {{ t('userWorld.helperApps.localFileSearch.cardTitle') }}
+                </span>
+                <span class="user-world-helper-card-desc">
+                  {{ t('userWorld.helperApps.localFileSearch.cardDesc') }}
+                </span>
+              </span>
+            </button>
+          </div>
         </div>
 
         <div v-if="activeTab !== 'container'" class="user-world-search">

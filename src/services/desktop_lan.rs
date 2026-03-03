@@ -174,7 +174,7 @@ struct DesktopLanDiscoveryPacket {
     signature: Option<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct DesktopLanManagerState {
     settings: DesktopLanMeshSettings,
     peers: HashMap<String, DesktopLanPeerSnapshot>,
@@ -185,22 +185,6 @@ struct DesktopLanManagerState {
     bound_port: Option<u16>,
     runtime_key: Option<String>,
     runtime_cancel: Option<CancellationToken>,
-}
-
-impl Default for DesktopLanManagerState {
-    fn default() -> Self {
-        Self {
-            settings: DesktopLanMeshSettings::default(),
-            peers: HashMap::new(),
-            group_links: HashMap::new(),
-            conversation_links: HashMap::new(),
-            inbound_seen: HashSet::new(),
-            inbound_order: VecDeque::new(),
-            bound_port: None,
-            runtime_key: None,
-            runtime_cancel: None,
-        }
-    }
 }
 
 pub struct DesktopLanManager {

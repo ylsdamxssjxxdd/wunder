@@ -94,7 +94,7 @@ Wunder 的价值在于把这些趋势工程化：统一工具抽象能够将 UI 
 ### 4.3 运行时边界与依赖
 平台运行时依赖 LLM 服务端、MCP 服务端、沙盒服务与数据库。`wunder-server` 由同一二进制按 `api/sandbox` 双模式启动，配置采取“基础配置 + 覆盖配置”分层，环境变量用于覆盖关键参数（服务地址、端口、API key、数据库连接串等）。在容器化部署中建议使用独立 Postgres 与 Weaviate，并将沙盒服务与主服务解耦部署，以降低主链路负担并提升安全性。
 
-`wunder-cli` 与 `wunder-desktop` 复用同一核心模块，但采用本地优先初始化策略：CLI 使用 `cli_default` 轻量选项关闭不必要后台循环，并在配置缺失时自动生成 `WUNDER_TEMP/config/wunder.base.yaml`；Desktop 使用 `desktop_default` 轻量选项，默认关闭 channels/gateway/agent_queue/cron，并通过本地 bridge 暴露 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 供前端引导。Desktop 运行时会在本地模式自动注入本地 token 以降低门槛；若启用并连通 `remote_gateway`，请求会切向远端 `/wunder`，本地 token 自动退出用户登录态，改为远端正常鉴权流程；远端失败时再自动回退本地。
+`wunder-cli` 与 `wunder-desktop` 复用同一核心模块，但采用本地优先初始化策略：CLI 使用 `cli_default` 轻量选项关闭不必要后台循环，并在配置缺失时自动生成 `WUNDER_TEMP/config/wunder.base.yaml`；Desktop 使用 `desktop_default` 轻量选项，默认关闭 channels/gateway/agent_queue，保留 cron 调度能力，并通过本地 bridge 暴露 `GET /config.json` 与 `GET /wunder/desktop/bootstrap` 供前端引导。Desktop 运行时会在本地模式自动注入本地 token 以降低门槛；若启用并连通 `remote_gateway`，请求会切向远端 `/wunder`，本地 token 自动退出用户登录态，改为远端正常鉴权流程；远端失败时再自动回退本地。
 
 ### 4.4 多形态运行架构（server/cli/desktop）
 为保证“同一能力在不同场景可复用”，Wunder 将运行形态抽象为统一内核下的三个运行面，差异主要体现在入口协议、持久化路径与治理策略。

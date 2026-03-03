@@ -2416,6 +2416,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const toolOutputBufferMap = new Map();
   let outputItemId = null;
   const blockedRounds = new Set();
+  const consumedQuotaRoundSet = new Set<number>();
   let lastRound = null;
   const initialRound = normalizeStreamRound(assistantMessage.stream_round);
   let visibleRound = initialRound;
@@ -2536,8 +2537,18 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
   };
 
-  const updateQuotaUsage = (payload) => {
+  const markQuotaRoundConsumed = (roundNumber) => {
+    if (!Number.isFinite(roundNumber)) return false;
+    if (consumedQuotaRoundSet.has(roundNumber)) return false;
+    consumedQuotaRoundSet.add(roundNumber);
+    return true;
+  };
+
+  const updateQuotaUsage = (payload, roundNumber = null) => {
     if (!stats) return;
+    if (Number.isFinite(roundNumber) && !markQuotaRoundConsumed(roundNumber)) {
+      return;
+    }
     const rawIncrement =
       payload && typeof payload === 'object' ? payload.consumed ?? payload.count ?? payload.used : null;
     const increment = normalizeStatsCount(rawIncrement);
@@ -2546,6 +2557,20 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const snapshot = normalizeQuotaSnapshot(payload);
     if (snapshot) {
       stats.quotaSnapshot = snapshot;
+    }
+  };
+
+  const fallbackQuotaUsageFromRound = (roundNumber) => {
+    if (!stats) return;
+    if (Number.isFinite(roundNumber)) {
+      if (!markQuotaRoundConsumed(roundNumber)) {
+        return;
+      }
+      stats.quotaConsumed = normalizeStatsCount(stats.quotaConsumed) + 1;
+      return;
+    }
+    if (normalizeStatsCount(stats.quotaConsumed) <= 0) {
+      stats.quotaConsumed = 1;
     }
   };
 
@@ -3173,12 +3198,23 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         );
         break;
       }
+      case 'round_usage': {
+        const round = resolveRound(payload, data);
+        updateUsageStats(
+          data?.usage ?? payload?.usage ?? data ?? payload,
+          data?.prefill_duration_s ?? payload?.prefill_duration_s,
+          data?.decode_duration_s ?? payload?.decode_duration_s
+        );
+        fallbackQuotaUsageFromRound(round);
+        break;
+      }
       case 'context_usage': {
         updateContextUsage(data ?? payload ?? {});
         break;
       }
       case 'quota_usage': {
-        updateQuotaUsage(data ?? payload ?? {});
+        const round = resolveRound(payload, data);
+        updateQuotaUsage(data ?? payload ?? {}, round);
         break;
       }
       case 'final': {

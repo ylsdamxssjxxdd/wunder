@@ -838,7 +838,7 @@ fn apply_desktop_defaults(
     config.channels.enabled = true;
     config.gateway.enabled = false;
     config.agent_queue.enabled = false;
-    config.cron.enabled = false;
+    config.cron.enabled = true;
     config.sandbox.mode = "local".to_string();
 
     if !defaults.desktop_token.trim().is_empty() {
@@ -1048,6 +1048,7 @@ mod tests {
 
         assert!(config.channels.enabled);
         assert!(!config.gateway.enabled);
+        assert!(config.cron.enabled);
     }
 
     #[test]

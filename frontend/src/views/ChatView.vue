@@ -456,6 +456,7 @@
               v-if="activePlan"
               :plan="activePlan"
               v-model:expanded="planExpanded"
+              @remove="dismissActivePlan"
             />
             <ChatComposer
               :key="composerKey"
@@ -1195,19 +1196,39 @@ const shouldShowMessageText = (message) => {
 const hasPlanSteps = (plan) =>
   Array.isArray(plan?.steps) && plan.steps.length > 0;
 
+const isPlanMessageDismissed = (message) =>
+  Boolean(message) && dismissedPlanMessages.value.has(message);
+
+const markPlanMessageDismissed = (message) => {
+  if (!message) return;
+  dismissedPlanMessages.value.add(message);
+  dismissedPlanVersion.value += 1;
+};
+
 const activePlanMessage = computed(() => {
+  // Force recompute when manual dismiss state changes.
+  void dismissedPlanVersion.value;
   for (let i = chatStore.messages.length - 1; i >= 0; i -= 1) {
     const message = chatStore.messages[i];
     if (message?.role !== 'assistant') continue;
-    if (hasPlanSteps(message.plan)) {
-      return message;
-    }
+    if (!hasPlanSteps(message.plan)) continue;
+    if (isPlanMessageDismissed(message)) return null;
+    return message;
   }
   return null;
 });
 
 const activePlan = computed(() => activePlanMessage.value?.plan || null);
 const planExpanded = ref(false);
+const dismissedPlanMessages = ref(new WeakSet());
+const dismissedPlanVersion = ref(0);
+
+const dismissActivePlan = () => {
+  const target = activePlanMessage.value;
+  if (!target) return;
+  markPlanMessageDismissed(target);
+  planExpanded.value = false;
+};
 
 const latestAssistantIndex = computed(() => {
   for (let i = chatStore.messages.length - 1; i >= 0; i -= 1) {
@@ -2514,6 +2535,8 @@ watch(
       clearWorkspaceResourceCache();
       scheduleWorkspaceResourceHydration();
       planExpanded.value = false;
+      dismissedPlanMessages.value = new WeakSet();
+      dismissedPlanVersion.value += 1;
       scheduleExternalSessionSync(true);
     }
   }

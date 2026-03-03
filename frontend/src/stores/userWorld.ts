@@ -78,9 +78,14 @@ type OpenConversationByPeerOptions = {
   activate?: boolean;
 };
 
+type SendToActiveConversationOptions = {
+  contentType?: string;
+};
+
 const DEFAULT_TRANSPORT: 'ws' | 'sse' = 'ws';
 const WATCH_RETRY_DELAY_MS = 1000;
 const DISMISSED_STORAGE_PREFIX = 'user_world_dismissed_conversations';
+const WORLD_VOICE_PREVIEW_TEXT = '[Voice]';
 
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -142,6 +147,31 @@ const resolveDismissedStorageKey = (userId: unknown): string => {
 };
 
 const normalizeConversationId = (value: unknown): string => String(value || '').trim();
+
+const normalizeMessageContentType = (value: unknown): string => {
+  const cleaned = String(value || '')
+    .trim()
+    .toLowerCase();
+  return cleaned || 'text';
+};
+
+const isVoiceContentType = (value: unknown): boolean => {
+  const normalized = normalizeMessageContentType(value);
+  return (
+    normalized === 'voice' ||
+    normalized === 'audio' ||
+    normalized.startsWith('audio/') ||
+    normalized.includes('voice')
+  );
+};
+
+const resolveMessagePreview = (
+  content: string,
+  contentType: string
+): string => {
+  if (isVoiceContentType(contentType)) return WORLD_VOICE_PREVIEW_TEXT;
+  return String(content || '');
+};
 
 const parseDismissedConversationIds = (raw: unknown): string[] => {
   if (typeof raw !== 'string' || !raw.trim()) return [];
@@ -647,9 +677,10 @@ export const useUserWorldStore = defineStore('user-world', {
       this.messagesByConversation[cleaned] = normalized;
     },
 
-    async sendToActiveConversation(content: string) {
+    async sendToActiveConversation(content: string, options: SendToActiveConversationOptions = {}) {
       if (this.permissionDenied) return;
-      const text = content.trim();
+      const text = String(content || '').trim();
+      const contentType = normalizeMessageContentType(options.contentType);
       if (!text || !this.activeConversationId) return;
       const conversationId = this.activeConversationId;
       this.sending = true;
@@ -662,7 +693,7 @@ export const useUserWorldStore = defineStore('user-world', {
         conversation_id: conversationId,
         sender_user_id: currentUserId,
         content: text,
-        content_type: 'text',
+        content_type: contentType,
         client_msg_id: clientMsgId,
         created_at: Date.now() / 1000
       };
@@ -691,7 +722,7 @@ export const useUserWorldStore = defineStore('user-world', {
                 payload: {
                   conversation_id: conversationId,
                   content: text,
-                  content_type: 'text',
+                  content_type: contentType,
                   client_msg_id: clientMsgId
                 }
               },
@@ -724,7 +755,7 @@ export const useUserWorldStore = defineStore('user-world', {
         if (sentByWs) return;
         const response = await sendUserWorldMessage(conversationId, {
           content: text,
-          content_type: 'text',
+          content_type: contentType,
           client_msg_id: clientMsgId
         });
         const data = asRecord(response.data?.data);
@@ -1066,10 +1097,14 @@ export const useUserWorldStore = defineStore('user-world', {
       }
 
       const conversation = this.conversations.find((item) => item.conversation_id === cleaned);
+      const preview = resolveMessagePreview(
+        String(normalized.content || ''),
+        String(normalized.content_type || '')
+      );
       if (conversation) {
         conversation.last_message_at = normalized.created_at;
         conversation.last_message_id = normalized.message_id;
-        conversation.last_message_preview = normalized.content;
+        conversation.last_message_preview = preview;
         conversation.updated_at = normalized.created_at;
         conversation.unread_count_cache = toNumber(this.unreadByConversation[cleaned]);
       }
@@ -1079,14 +1114,14 @@ export const useUserWorldStore = defineStore('user-world', {
       if (contact) {
         contact.conversation_id = cleaned;
         contact.last_message_at = normalized.created_at;
-        contact.last_message_preview = normalized.content;
+        contact.last_message_preview = preview;
         contact.unread_count = toNumber(this.unreadByConversation[cleaned]);
       }
       const group = this.groups.find((item) => item.conversation_id === cleaned);
       if (group) {
         group.last_message_at = normalized.created_at;
         group.last_message_id = normalized.message_id;
-        group.last_message_preview = normalized.content;
+        group.last_message_preview = preview;
         group.updated_at = normalized.created_at;
         group.unread_count_cache = toNumber(this.unreadByConversation[cleaned]);
       }

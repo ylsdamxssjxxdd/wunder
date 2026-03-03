@@ -29,7 +29,7 @@
             v-for="item in leftRailMainSectionOptions"
             :key="item.key"
             class="messenger-left-nav-btn"
-            :class="{ active: sessionHub.activeSection === item.key }"
+            :class="{ active: isLeftNavSectionActive(item.key) }"
             type="button"
             :title="item.label"
             :aria-label="item.label"
@@ -50,7 +50,7 @@
             v-for="item in leftRailSocialSectionOptions"
             :key="item.key"
             class="messenger-left-nav-btn"
-            :class="{ active: sessionHub.activeSection === item.key }"
+            :class="{ active: isLeftNavSectionActive(item.key) }"
             type="button"
             :title="item.label"
             :aria-label="item.label"
@@ -59,6 +59,18 @@
             @click="switchSection(item.key)"
           >
             <i :class="item.icon" aria-hidden="true"></i>
+          </button>
+          <button
+            class="messenger-left-nav-btn messenger-left-nav-btn--helper"
+            :class="{ active: showHelperAppsWorkspace }"
+            type="button"
+            :title="t('userWorld.helperApps.title')"
+            :aria-label="t('userWorld.helperApps.title')"
+            @mouseenter="openMiddlePaneOverlay"
+            @focus="openMiddlePaneOverlay"
+            @click="openHelperAppsDialog"
+          >
+            <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
           </button>
         </div>
       </div>
@@ -76,7 +88,7 @@
       </button>
     </aside>
 
-    <Transition name="messenger-middle-pane-slide">
+    <Transition :name="middlePaneTransitionName">
       <section
         v-show="showMiddlePane"
         ref="middlePaneRef"
@@ -89,7 +101,7 @@
         <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
       </header>
 
-      <div v-if="sessionHub.activeSection !== 'more'" class="messenger-search-row">
+      <div v-if="sessionHub.activeSection !== 'more' && !showHelperAppsWorkspace" class="messenger-search-row">
         <label class="messenger-search">
           <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
           <input
@@ -103,7 +115,7 @@
         <button
           v-if="
             sessionHub.activeSection === 'agents' ||
-            (sessionHub.activeSection === 'groups' && !userWorldPermissionDenied)
+            (sessionHub.activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace)
           "
           class="messenger-plus-btn"
           type="button"
@@ -703,7 +715,7 @@
             {{ t('messenger.action.openConversation') }}
           </button>
           <button
-            v-if="showChatSettingsView && sessionHub.activeSection === 'groups' && selectedGroup"
+            v-if="showChatSettingsView && sessionHub.activeSection === 'groups' && selectedGroup && !showHelperAppsWorkspace"
             class="messenger-header-action-text"
             type="button"
             @click="openSelectedGroupConversation"
@@ -737,15 +749,22 @@
         ref="messageListRef"
         class="messenger-chat-body"
         :class="{
-          'is-settings': showChatSettingsView,
-          'is-messages': !showChatSettingsView,
+          'is-settings': showChatSettingsView && !showHelperAppsWorkspace,
+          'is-messages': !showChatSettingsView && !showHelperAppsWorkspace,
+          'is-helper-workspace': showHelperAppsWorkspace,
           'is-agent': isAgentConversationActive,
           'is-world': isWorldConversationActive
         }"
         @scroll="handleMessageListScroll"
         @click="handleMessageContentClick"
       >
-        <template v-if="showChatSettingsView">
+        <template v-if="showHelperAppsWorkspace">
+          <div class="messenger-helper-workspace">
+            <MessengerHelperAppsPlaza />
+          </div>
+        </template>
+
+        <template v-else-if="showChatSettingsView">
           <div class="messenger-chat-settings">
             <template v-if="showAgentSettingsPanel">
               <template v-if="showAgentGridOverview">
@@ -967,7 +986,6 @@
                       <div class="messenger-tool-tag-list">
                         <template v-for="item in group.items" :key="`tool-admin-${group.key}-${item.name}`">
                           <el-tooltip
-                            v-if="group.key === 'builtin'"
                             placement="top-start"
                             :show-after="120"
                             :content="resolveAdminToolDetail(item)"
@@ -977,9 +995,6 @@
                               {{ item.name }}
                             </span>
                           </el-tooltip>
-                          <span v-else class="messenger-tool-tag">
-                            {{ item.name }}
-                          </span>
                         </template>
                         <span v-if="!group.items.length" class="messenger-list-empty">
                           {{ t('common.none') }}
@@ -1397,10 +1412,45 @@
                   <span>{{ resolveWorldMessageSender(item.message) }}</span>
                   <span>{{ formatTime(item.message.created_at) }}</span>
                 </div>
-                <div class="messenger-message-bubble messenger-markdown">
-                  <div class="markdown-body" v-html="renderWorldMarkdown(item.message)"></div>
+                <div
+                  class="messenger-message-bubble"
+                  :class="isWorldVoiceMessage(item.message) ? 'messenger-message-bubble--voice' : 'messenger-markdown'"
+                >
+                  <template v-if="isWorldVoiceMessage(item.message)">
+                    <div class="messenger-world-voice-card">
+                      <button
+                        class="messenger-world-voice-play-btn"
+                        type="button"
+                        :disabled="isWorldVoiceLoading(item.message)"
+                        :title="resolveWorldVoiceActionLabel(item.message)"
+                        :aria-label="resolveWorldVoiceActionLabel(item.message)"
+                        @click="toggleWorldVoicePlayback(item.message)"
+                      >
+                        <i
+                          v-if="isWorldVoiceLoading(item.message)"
+                          class="fa-solid fa-spinner fa-spin"
+                          aria-hidden="true"
+                        ></i>
+                        <i
+                          v-else
+                          :class="isWorldVoicePlaying(item.message) ? 'fa-solid fa-pause' : 'fa-solid fa-play'"
+                          aria-hidden="true"
+                        ></i>
+                      </button>
+                      <div class="messenger-world-voice-content">
+                        <div class="messenger-world-voice-title">{{ t('messenger.world.voice.title') }}</div>
+                        <div class="messenger-world-voice-duration">
+                          {{ resolveWorldVoiceDurationLabel(item.message) }}
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <div v-else class="markdown-body" v-html="renderWorldMarkdown(item.message)"></div>
                 </div>
-                <div v-if="hasMessageContent(item.message.content)" class="messenger-message-extra">
+                <div
+                  v-if="!isWorldVoiceMessage(item.message) && hasMessageContent(item.message.content)"
+                  class="messenger-message-extra"
+                >
                   <button
                     class="messenger-message-footer-copy"
                     type="button"
@@ -1451,6 +1501,7 @@
             v-if="activeAgentPlan"
             v-model:expanded="agentPlanExpanded"
             :plan="activeAgentPlan"
+            @remove="dismissActiveAgentPlan"
           />
           <ToolApprovalComposer
             v-if="activeSessionApproval"
@@ -1482,6 +1533,9 @@
           :can-send="canSendWorldMessage"
           :uploading="worldUploading"
           :screenshot-supported="worldDesktopScreenshotSupported"
+          :voice-recording="worldVoiceRecording"
+          :voice-duration-ms="worldVoiceDurationMs"
+          :voice-supported="worldVoiceSupported"
           @update:draft="worldDraft = $event"
           @resize-mousedown="startWorldComposerResize"
           @open-quick-panel="openWorldQuickPanel"
@@ -1491,6 +1545,7 @@
           @insert-emoji="insertWorldEmoji"
           @trigger-container-pick="openWorldContainerPicker"
           @trigger-upload="triggerWorldUpload"
+          @toggle-voice-record="toggleWorldVoiceRecord"
           @trigger-screenshot="triggerWorldScreenshot"
           @open-history="openWorldHistoryDialog"
           @focus-input="worldQuickPanelMode = ''"
@@ -1669,6 +1724,7 @@ import {
   fetchRealtimeSystemPrompt
 } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
+import { downloadUserWorldFile } from '@/api/userWorld';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
 import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
@@ -1679,6 +1735,7 @@ import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSett
 import MessengerFileContainerMenu from '@/components/messenger/MessengerFileContainerMenu.vue';
 import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
 import MessengerGroupCreateDialog from '@/components/messenger/MessengerGroupCreateDialog.vue';
+import MessengerHelperAppsPlaza from '@/components/messenger/MessengerHelperAppsPlaza.vue';
 import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePreviewDialog.vue';
 import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
@@ -1719,6 +1776,12 @@ import { showApiError } from '@/utils/apiError';
 import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
+import {
+  isAudioRecordingSupported,
+  startAudioRecording,
+  type AudioRecordingResult,
+  type AudioRecordingSession
+} from '@/utils/audioRecorder';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
 import {
   buildWorkspaceImagePersistentCacheKey,
@@ -1732,6 +1795,12 @@ import {
   normalizeWorldHistoryText,
   resolveWorldHistoryIcon
 } from '@/views/messenger/worldHistory';
+import {
+  buildWorldVoicePayloadContent,
+  formatWorldVoiceDuration,
+  isWorldVoiceContentType,
+  parseWorldVoicePayload
+} from '@/views/messenger/worldVoice';
 import {
   buildUnitTreeFromFlat,
   buildUnitTreeRows,
@@ -1862,9 +1931,14 @@ const middlePaneRef = ref<HTMLElement | null>(null);
 const rightDockRef = ref<{ $el?: HTMLElement } | null>(null);
 const worldComposerViewRef = ref<WorldComposerViewRef | null>(null);
 const worldUploading = ref(false);
+const worldVoiceRecording = ref(false);
+const worldVoiceDurationMs = ref(0);
+const worldVoicePlayingMessageKey = ref('');
+const worldVoiceLoadingMessageKey = ref('');
 const worldComposerHeight = ref(188);
 const worldQuickPanelMode = ref<'' | 'emoji'>('');
 const worldHistoryDialogVisible = ref(false);
+const helperAppsWorkspaceMode = ref(false);
 const worldHistoryKeyword = ref('');
 const worldHistoryActiveTab = ref<WorldHistoryCategory>('all');
 const worldHistoryDateRange = ref<[string, string] | []>([]);
@@ -1966,6 +2040,8 @@ const showScrollBottomButton = ref(false);
 const autoStickToBottom = ref(true);
 const agentInquirySelection = ref<number[]>([]);
 const agentPlanExpanded = ref(false);
+const dismissedPlanMessages = ref<WeakSet<Record<string, unknown>>>(new WeakSet());
+const dismissedPlanVersion = ref(0);
 const groupCreateVisible = ref(false);
 const groupCreateName = ref('');
 const groupCreateKeyword = ref('');
@@ -1993,6 +2069,20 @@ let messageVirtualMeasureFrame: number | null = null;
 let contactVirtualFrame: number | null = null;
 let viewportResizeHandler: (() => void) | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
+type WorldVoiceRecordingRuntime = {
+  session: AudioRecordingSession;
+  startedAt: number;
+  timerId: number | null;
+  conversationId: string;
+};
+type WorldVoicePlaybackRuntime = {
+  audio: HTMLAudioElement;
+  objectUrlCache: Map<string, string>;
+  currentMessageKey: string;
+  currentResourceKey: string;
+};
+let worldVoiceRecordingRuntime: WorldVoiceRecordingRuntime | null = null;
+let worldVoicePlaybackRuntime: WorldVoicePlaybackRuntime | null = null;
 const agentUnreadRefreshInFlight = new Set<string>();
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
@@ -2090,6 +2180,13 @@ const leftRailSocialSectionOptions = computed(() =>
   sectionOptions.value.filter((item) => item.key === 'users' || item.key === 'groups')
 );
 
+const isLeftNavSectionActive = (section: MessengerSection): boolean => {
+  if (helperAppsWorkspaceMode.value && sessionHub.activeSection === 'groups') {
+    return false;
+  }
+  return sessionHub.activeSection === section;
+};
+
 const basePrefix = computed(() => {
   if (route.path.startsWith('/desktop')) return '/desktop';
   if (route.path.startsWith('/demo')) return '/demo';
@@ -2112,6 +2209,7 @@ const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkFo
 const worldDesktopScreenshotSupported = computed(
   () => desktopMode.value && typeof getDesktopBridge()?.captureScreenshot === 'function'
 );
+const worldVoiceSupported = computed(() => desktopMode.value && isAudioRecordingSupported());
 
 const keyword = computed(() => sessionHub.keyword);
 
@@ -2164,7 +2262,15 @@ const isMiddlePaneOverlay = computed(() =>
   desktopMode.value ? viewportWidth.value <= 1024 : viewportWidth.value <= 840
 );
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
-const showMiddlePane = computed(() => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value);
+const showMiddlePane = computed(() => {
+  if (showHelperAppsWorkspace.value) {
+    return false;
+  }
+  return !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value;
+});
+const middlePaneTransitionName = computed(() =>
+  showHelperAppsWorkspace.value ? '' : 'messenger-middle-pane-slide'
+);
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
 const sharedAgents = computed(() => (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []));
@@ -2597,6 +2703,9 @@ const selectedGroup = computed(() =>
 );
 
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
+const showHelperAppsWorkspace = computed(
+  () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
+);
 
 const filteredOwnedAgents = computed(() => {
   const text = keyword.value.toLowerCase();
@@ -3095,6 +3204,9 @@ const chatPanelTitle = computed(() => {
     const target = agentMap.value.get(normalizeAgentId(settingsAgentId.value));
     return String(target?.name || settingsAgentId.value || t('messenger.section.agents'));
   }
+  if (showHelperAppsWorkspace.value) {
+    return t('userWorld.helperApps.title');
+  }
   if (sessionHub.activeSection === 'users') {
     return String(selectedContact.value?.username || selectedContact.value?.user_id || t('messenger.section.users'));
   }
@@ -3123,6 +3235,9 @@ const chatPanelSubtitle = computed(() => {
   }
   if (showAgentSettingsPanel.value) {
     return t('messenger.agent.subtitle');
+  }
+  if (showHelperAppsWorkspace.value) {
+    return t('userWorld.helperApps.subtitle');
   }
   if (sessionHub.activeSection === 'users') {
     return selectedContact.value
@@ -3163,6 +3278,7 @@ const canSendWorldMessage = computed(
     Boolean(activeConversation.value?.id) &&
     !userWorldStore.sending &&
     !worldUploading.value &&
+    !worldVoiceRecording.value &&
     Boolean(worldDraft.value.trim())
 );
 
@@ -4100,6 +4216,12 @@ const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
   if (pendingApprovalAgentIdSet.value.has(key)) {
     return 'pending';
   }
+  const inquiryAgentId = activeAgentInquiryPanel.value
+    ? normalizeAgentId(activeAgentId.value || selectedAgentId.value)
+    : '';
+  if (inquiryAgentId && inquiryAgentId === key) {
+    return 'pending';
+  }
   const now = Date.now();
   const override = runtimeStateOverrides.value.get(key);
   if (override && override.expiresAt > now) {
@@ -4350,14 +4472,26 @@ const hasPlanSteps = (plan: unknown): boolean =>
   Array.isArray((plan as { steps?: unknown[] } | null)?.steps) &&
   ((plan as { steps?: unknown[] } | null)?.steps?.length || 0) > 0;
 
+const isPlanMessageDismissed = (message: Record<string, unknown>): boolean =>
+  dismissedPlanMessages.value.has(message);
+
+const markPlanMessageDismissed = (message: Record<string, unknown>) => {
+  dismissedPlanMessages.value.add(message);
+  dismissedPlanVersion.value += 1;
+};
+
 const activeAgentPlanMessage = computed<Record<string, unknown> | null>(() => {
+  // Trigger recompute when manual dismiss state changes.
+  void dismissedPlanVersion.value;
   if (!isAgentConversationActive.value) return null;
   for (let index = chatStore.messages.length - 1; index >= 0; index -= 1) {
     const message = chatStore.messages[index] as Record<string, unknown> | undefined;
     if (String(message?.role || '') !== 'assistant') continue;
-    if (hasPlanSteps(message?.plan)) {
-      return message || null;
+    if (!hasPlanSteps(message?.plan)) continue;
+    if (message && isPlanMessageDismissed(message)) {
+      return null;
     }
+    return message || null;
   }
   return null;
 });
@@ -4366,6 +4500,13 @@ const activeAgentPlan = computed(() => {
   const message = activeAgentPlanMessage.value as { plan?: unknown } | null;
   return message?.plan || null;
 });
+
+const dismissActiveAgentPlan = () => {
+  const target = activeAgentPlanMessage.value;
+  if (!target) return;
+  markPlanMessageDismissed(target);
+  agentPlanExpanded.value = false;
+};
 
 type AgentInquiryPanelRoute = { label: string; description?: string };
 type AgentInquiryPanelData = { question?: string; routes?: AgentInquiryPanelRoute[]; status?: string };
@@ -5001,6 +5142,31 @@ const renderWorldMarkdown = (message: Record<string, unknown>): string => {
   return renderMessageMarkdown(cacheKey, patched);
 };
 
+const resolveWorldVoicePayloadFromMessage = (message: Record<string, unknown>) => {
+  if (!isWorldVoiceContentType(message?.content_type)) return null;
+  return parseWorldVoicePayload(message?.content);
+};
+
+const isWorldVoiceMessage = (message: Record<string, unknown>): boolean =>
+  Boolean(resolveWorldVoicePayloadFromMessage(message));
+
+const isWorldVoicePlaying = (message: Record<string, unknown>): boolean =>
+  worldVoicePlayingMessageKey.value === resolveWorldMessageKey(message);
+
+const isWorldVoiceLoading = (message: Record<string, unknown>): boolean =>
+  worldVoiceLoadingMessageKey.value === resolveWorldMessageKey(message);
+
+const resolveWorldVoiceDurationLabel = (message: Record<string, unknown>): string => {
+  const payload = resolveWorldVoicePayloadFromMessage(message);
+  if (!payload?.duration_ms) {
+    return t('messenger.world.voice.durationUnknown');
+  }
+  return formatWorldVoiceDuration(payload.duration_ms);
+};
+
+const resolveWorldVoiceActionLabel = (message: Record<string, unknown>): string =>
+  isWorldVoicePlaying(message) ? t('messenger.world.voice.pause') : t('messenger.world.voice.play');
+
 const copyMessageContent = async (content: unknown) => {
   const text = String(content || '').trim();
   if (!text) return;
@@ -5045,6 +5211,154 @@ const resolveWorldMessageDomId = (message: Record<string, unknown>): string => {
   }
   const fallbackKey = resolveWorldMessageKey(message).replace(/[^a-zA-Z0-9_-]/g, '_');
   return `uw-message-${fallbackKey}`;
+};
+
+const ensureWorldVoicePlaybackRuntime = (): WorldVoicePlaybackRuntime | null => {
+  if (typeof Audio === 'undefined') return null;
+  if (worldVoicePlaybackRuntime) return worldVoicePlaybackRuntime;
+  const audio = new Audio();
+  audio.preload = 'none';
+  audio.addEventListener('ended', () => {
+    worldVoicePlayingMessageKey.value = '';
+    if (worldVoicePlaybackRuntime) {
+      worldVoicePlaybackRuntime.currentMessageKey = '';
+    }
+  });
+  audio.addEventListener('pause', () => {
+    if (audio.ended) return;
+    worldVoicePlayingMessageKey.value = '';
+    if (worldVoicePlaybackRuntime) {
+      worldVoicePlaybackRuntime.currentMessageKey = '';
+    }
+  });
+  worldVoicePlaybackRuntime = {
+    audio,
+    objectUrlCache: new Map<string, string>(),
+    currentMessageKey: '',
+    currentResourceKey: ''
+  };
+  return worldVoicePlaybackRuntime;
+};
+
+const resolveWorldVoiceContainerId = (value: unknown): number => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return USER_CONTAINER_ID;
+  return Math.max(0, Math.round(parsed));
+};
+
+const buildWorldVoiceResourceKey = (
+  conversationId: string,
+  ownerUserId: string,
+  containerId: number,
+  path: string
+): string => `${conversationId}|${ownerUserId}|${containerId}|${path}`;
+
+const fetchWorldVoiceObjectUrl = async (
+  message: Record<string, unknown>,
+  payload: {
+    path: string;
+    container_id?: number;
+    owner_user_id?: string;
+  },
+  runtime: WorldVoicePlaybackRuntime
+): Promise<{ resourceKey: string; objectUrl: string }> => {
+  const conversationId = String(message?.conversation_id || activeWorldConversationId.value || '').trim();
+  if (!conversationId) {
+    throw new Error(t('messenger.world.voice.playFailed'));
+  }
+  const path = normalizeUploadPath(payload.path);
+  if (!path) {
+    throw new Error(t('messenger.world.voice.playFailed'));
+  }
+  const ownerUserId =
+    String(payload.owner_user_id || '').trim() ||
+    String(message?.sender_user_id || '').trim() ||
+    String(currentUserId.value || '').trim();
+  if (!ownerUserId) {
+    throw new Error(t('messenger.world.voice.playFailed'));
+  }
+  const containerId = resolveWorldVoiceContainerId(payload.container_id);
+  const resourceKey = buildWorldVoiceResourceKey(conversationId, ownerUserId, containerId, path);
+  const cached = runtime.objectUrlCache.get(resourceKey);
+  if (cached) {
+    return { resourceKey, objectUrl: cached };
+  }
+  const response = await downloadUserWorldFile({
+    conversation_id: conversationId,
+    owner_user_id: ownerUserId,
+    container_id: containerId,
+    path
+  });
+  const blob = response.data as Blob;
+  if (!(blob instanceof Blob) || !blob.size) {
+    throw new Error(t('messenger.world.voice.playFailed'));
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  runtime.objectUrlCache.set(resourceKey, objectUrl);
+  return { resourceKey, objectUrl };
+};
+
+const stopWorldVoicePlayback = () => {
+  const runtime = worldVoicePlaybackRuntime;
+  if (!runtime) return;
+  runtime.audio.pause();
+  runtime.currentMessageKey = '';
+  worldVoicePlayingMessageKey.value = '';
+  worldVoiceLoadingMessageKey.value = '';
+};
+
+const disposeWorldVoicePlayback = () => {
+  const runtime = worldVoicePlaybackRuntime;
+  if (!runtime) return;
+  stopWorldVoicePlayback();
+  runtime.currentResourceKey = '';
+  runtime.objectUrlCache.forEach((objectUrl) => {
+    URL.revokeObjectURL(objectUrl);
+  });
+  runtime.objectUrlCache.clear();
+  runtime.audio.removeAttribute('src');
+  try {
+    runtime.audio.load();
+  } catch {
+    // ignore runtime cleanup errors
+  }
+  worldVoicePlaybackRuntime = null;
+};
+
+const toggleWorldVoicePlayback = async (message: Record<string, unknown>) => {
+  if (!isWorldConversationActive.value) return;
+  const payload = resolveWorldVoicePayloadFromMessage(message);
+  if (!payload) return;
+  const messageKey = resolveWorldMessageKey(message);
+  if (!messageKey || worldVoiceLoadingMessageKey.value === messageKey) return;
+  const runtime = ensureWorldVoicePlaybackRuntime();
+  if (!runtime) {
+    ElMessage.warning(t('messenger.world.voice.unsupported'));
+    return;
+  }
+  if (runtime.currentMessageKey === messageKey && !runtime.audio.paused) {
+    runtime.audio.pause();
+    return;
+  }
+  worldVoiceLoadingMessageKey.value = messageKey;
+  try {
+    const { resourceKey, objectUrl } = await fetchWorldVoiceObjectUrl(message, payload, runtime);
+    if (runtime.currentResourceKey !== resourceKey || runtime.audio.src !== objectUrl) {
+      runtime.audio.pause();
+      runtime.audio.src = objectUrl;
+      runtime.currentResourceKey = resourceKey;
+    }
+    runtime.currentMessageKey = messageKey;
+    await runtime.audio.play();
+    worldVoicePlayingMessageKey.value = messageKey;
+  } catch (error) {
+    worldVoicePlayingMessageKey.value = '';
+    showApiError(error, t('messenger.world.voice.playFailed'));
+  } finally {
+    if (worldVoiceLoadingMessageKey.value === messageKey) {
+      worldVoiceLoadingMessageKey.value = '';
+    }
+  }
 };
 
 const resolveAgentMessageKey = (message: Record<string, unknown>, index: number): string =>
@@ -5120,6 +5434,7 @@ const deleteMixedConversation = async (item: MixedConversation) => {
 const switchSection = (section: MessengerSection) => {
   closeFileContainerMenu();
   openMiddlePaneOverlay();
+  helperAppsWorkspaceMode.value = false;
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
   worldHistoryDialogVisible.value = false;
@@ -6499,6 +6814,12 @@ const appendWorldAttachmentTokens = (paths: string[]) => {
   worldDraft.value = `${worldDraft.value}${prefix}${tokens.join(' ')}`;
 };
 
+const openHelperAppsDialog = () => {
+  switchSection('groups');
+  selectedGroupId.value = '';
+  helperAppsWorkspaceMode.value = true;
+};
+
 const closeWorldAttachmentPanels = () => {
   worldQuickPanelMode.value = '';
   worldContainerPickerVisible.value = false;
@@ -6518,7 +6839,10 @@ const resolveUploadedWorldPath = (value: unknown): string => {
   return '';
 };
 
-const uploadWorldFilesToUserContainer = async (files: File[]): Promise<string[]> => {
+const uploadWorldFilesToUserContainer = async (
+  files: File[],
+  options: { appendTokens?: boolean } = {}
+): Promise<string[]> => {
   if (!files.length) return [];
   const formData = new FormData();
   formData.append('path', USER_WORLD_UPLOAD_BASE);
@@ -6530,7 +6854,7 @@ const uploadWorldFilesToUserContainer = async (files: File[]): Promise<string[]>
   const uploaded = (Array.isArray(data?.files) ? data.files : [])
     .map((item) => resolveUploadedWorldPath(item))
     .filter(Boolean);
-  if (uploaded.length) {
+  if (uploaded.length && options.appendTokens !== false) {
     appendWorldAttachmentTokens(uploaded);
     emitWorkspaceRefresh({
       reason: 'messenger-world-upload',
@@ -6600,16 +6924,129 @@ const captureWorldScreenshotData = async (
   return { dataUrl, fileName, mimeType };
 };
 
+const WORLD_VOICE_RECORDING_TICK_MS = 120;
+
+const clearWorldVoiceRecordingTimer = (runtime: WorldVoiceRecordingRuntime | null) => {
+  if (!runtime) return;
+  if (runtime.timerId !== null && typeof window !== 'undefined') {
+    window.clearInterval(runtime.timerId);
+  }
+  runtime.timerId = null;
+};
+
+const resetWorldVoiceRecordingState = () => {
+  worldVoiceRecording.value = false;
+  worldVoiceDurationMs.value = 0;
+};
+
+const cancelWorldVoiceRecording = async () => {
+  const runtime = worldVoiceRecordingRuntime;
+  if (!runtime) return;
+  worldVoiceRecordingRuntime = null;
+  clearWorldVoiceRecordingTimer(runtime);
+  resetWorldVoiceRecordingState();
+  await runtime.session.cancel().catch(() => undefined);
+};
+
+const startWorldVoiceRecording = async () => {
+  if (!isWorldConversationActive.value || worldUploading.value || userWorldStore.sending) return;
+  if (!worldVoiceSupported.value) {
+    ElMessage.warning(t('messenger.world.voice.unsupported'));
+    return;
+  }
+  if (worldVoiceRecordingRuntime) return;
+  const conversationId = String(activeConversation.value?.id || '').trim();
+  if (!conversationId) return;
+  closeWorldAttachmentPanels();
+  try {
+    const session = await startAudioRecording();
+    const runtime: WorldVoiceRecordingRuntime = {
+      session,
+      startedAt: Date.now(),
+      timerId: null,
+      conversationId
+    };
+    worldVoiceRecordingRuntime = runtime;
+    worldVoiceRecording.value = true;
+    worldVoiceDurationMs.value = 0;
+    if (typeof window !== 'undefined') {
+      runtime.timerId = window.setInterval(() => {
+        worldVoiceDurationMs.value = Math.max(0, Date.now() - runtime.startedAt);
+      }, WORLD_VOICE_RECORDING_TICK_MS);
+    }
+  } catch (error) {
+    resetWorldVoiceRecordingState();
+    showApiError(error, t('messenger.world.voice.startFailed'));
+  }
+};
+
+const buildWorldVoiceFileName = (): string => `voice-${Date.now()}.wav`;
+
+const stopWorldVoiceRecordingAndSend = async () => {
+  const runtime = worldVoiceRecordingRuntime;
+  if (!runtime) return;
+  worldVoiceRecordingRuntime = null;
+  clearWorldVoiceRecordingTimer(runtime);
+  resetWorldVoiceRecordingState();
+  let recording: AudioRecordingResult;
+  try {
+    recording = await runtime.session.stop();
+  } catch (error) {
+    showApiError(error, t('messenger.world.voice.stopFailed'));
+    return;
+  }
+  if (!(recording?.blob instanceof Blob) || !recording.blob.size) {
+    ElMessage.warning(t('messenger.world.voice.empty'));
+    return;
+  }
+  if (runtime.conversationId !== String(activeConversation.value?.id || '').trim()) {
+    return;
+  }
+  worldUploading.value = true;
+  try {
+    const voiceFile = new File([recording.blob], buildWorldVoiceFileName(), { type: 'audio/wav' });
+    const uploadedPaths = await uploadWorldFilesToUserContainer([voiceFile], { appendTokens: false });
+    const uploadedPath = String(uploadedPaths[0] || '').trim();
+    if (!uploadedPath) {
+      throw new Error(t('workspace.upload.failed'));
+    }
+    const senderUserId = String((authStore.user as Record<string, unknown> | null)?.id || '').trim();
+    const payloadText = buildWorldVoicePayloadContent({
+      path: uploadedPath,
+      durationMs: recording.durationMs,
+      mimeType: 'audio/wav',
+      name: voiceFile.name,
+      size: voiceFile.size,
+      containerId: USER_CONTAINER_ID,
+      ownerUserId: senderUserId
+    });
+    await userWorldStore.sendToActiveConversation(payloadText, { contentType: 'voice' });
+    await scrollMessagesToBottom();
+  } catch (error) {
+    showApiError(error, t('userWorld.input.sendFailed'));
+  } finally {
+    worldUploading.value = false;
+  }
+};
+
+const toggleWorldVoiceRecord = async () => {
+  if (worldVoiceRecordingRuntime) {
+    await stopWorldVoiceRecordingAndSend();
+    return;
+  }
+  await startWorldVoiceRecording();
+};
+
 const triggerWorldUpload = () => {
   const uploadInput = worldComposerViewRef.value?.getUploadInputElement() || null;
-  if (!isWorldConversationActive.value || worldUploading.value || !uploadInput) return;
+  if (!isWorldConversationActive.value || worldUploading.value || worldVoiceRecording.value || !uploadInput) return;
   closeWorldAttachmentPanels();
   uploadInput.value = '';
   uploadInput.click();
 };
 
 const triggerWorldScreenshot = async (option?: WorldScreenshotCaptureOption) => {
-  if (!isWorldConversationActive.value || worldUploading.value) return;
+  if (!isWorldConversationActive.value || worldUploading.value || worldVoiceRecording.value) return;
   if (!worldDesktopScreenshotSupported.value) {
     ElMessage.warning(t('chat.attachments.screenshotUnavailable'));
     return;
@@ -6649,6 +7086,10 @@ const triggerWorldScreenshot = async (option?: WorldScreenshotCaptureOption) => 
 
 const handleWorldUploadInput = async (event: Event) => {
   const target = event.target as HTMLInputElement | null;
+  if (worldVoiceRecording.value) {
+    if (target) target.value = '';
+    return;
+  }
   const files = target?.files ? Array.from(target.files) : [];
   if (!files.length) return;
   const oversized = findWorldOversizedFile(files);
@@ -6674,6 +7115,7 @@ const handleWorldUploadInput = async (event: Event) => {
 };
 
 const sendWorldMessage = async () => {
+  if (worldVoiceRecording.value) return;
   if (!canSendWorldMessage.value) return;
   const text = worldDraft.value.trim();
   if (!text) return;
@@ -7538,6 +7980,8 @@ watch(
     pendingAssistantCenter = false;
     pendingAssistantCenterCount = 0;
     agentPlanExpanded.value = false;
+    dismissedPlanMessages.value = new WeakSet<Record<string, unknown>>();
+    dismissedPlanVersion.value += 1;
     agentInquirySelection.value = [];
     scheduleWorkspaceResourceHydration();
   }
@@ -7707,6 +8151,8 @@ watch(
     if (!active) {
       clearWorldQuickPanelClose();
       worldQuickPanelMode.value = '';
+      void cancelWorldVoiceRecording();
+      disposeWorldVoicePlayback();
     }
   }
 );
@@ -7714,6 +8160,10 @@ watch(
 watch(
   () => activeWorldConversationId.value,
   (nextConversationId, previousConversationId) => {
+    if (previousConversationId && previousConversationId !== nextConversationId) {
+      void cancelWorldVoiceRecording();
+      disposeWorldVoicePlayback();
+    }
     if (previousConversationId) {
       writeWorldDraft(previousConversationId, worldDraft.value);
     }
@@ -7796,6 +8246,8 @@ onBeforeUnmount(() => {
   clearKeywordDebounce();
   closeImagePreview();
   stopWorldComposerResize();
+  void cancelWorldVoiceRecording();
+  disposeWorldVoicePlayback();
   if (typeof window !== 'undefined' && messageScrollFrame !== null) {
     window.cancelAnimationFrame(messageScrollFrame);
     messageScrollFrame = null;

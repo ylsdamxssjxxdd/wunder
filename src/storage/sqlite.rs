@@ -581,6 +581,28 @@ impl SqliteStorage {
         }
         Ok(())
     }
+
+    fn ensure_cron_columns(&self, conn: &Connection) -> Result<()> {
+        let mut stmt = conn.prepare("PRAGMA table_info(cron_jobs)")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        let mut columns = HashSet::new();
+        for name in rows.flatten() {
+            columns.insert(name);
+        }
+        if !columns.contains("consecutive_failures") {
+            conn.execute(
+                "ALTER TABLE cron_jobs ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        if !columns.contains("auto_disabled_reason") {
+            conn.execute(
+                "ALTER TABLE cron_jobs ADD COLUMN auto_disabled_reason TEXT",
+                [],
+            )?;
+        }
+        Ok(())
+    }
 }
 
 fn append_tool_log_exclusions(filters: &mut Vec<String>, params_list: &mut Vec<SqlValue>) {
@@ -993,6 +1015,8 @@ impl StorageBackend for SqliteStorage {
               last_run_at REAL,
               last_status TEXT,
               last_error TEXT,
+              consecutive_failures INTEGER NOT NULL DEFAULT 0,
+              auto_disabled_reason TEXT,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL
             );
@@ -1313,6 +1337,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_session_lock_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;
         self.ensure_user_world_group_columns(&conn)?;
+        self.ensure_cron_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -4444,7 +4469,16 @@ impl StorageBackend for SqliteStorage {
             ],
         )?;
         let message_id = tx.last_insert_rowid();
-        let preview = cleaned_content.chars().take(120).collect::<String>();
+        let normalized_content_type_lower = normalized_content_type.to_ascii_lowercase();
+        let preview = if normalized_content_type_lower == "voice"
+            || normalized_content_type_lower == "audio"
+            || normalized_content_type_lower.starts_with("audio/")
+            || normalized_content_type_lower.contains("voice")
+        {
+            "[Voice]".to_string()
+        } else {
+            cleaned_content.chars().take(120).collect::<String>()
+        };
         tx.execute(
             "UPDATE user_world_conversations SET updated_at = ?, last_message_at = ?, last_message_id = ?, last_message_preview = ? \
              WHERE conversation_id = ?",
@@ -6093,15 +6127,16 @@ impl StorageBackend for SqliteStorage {
         conn.execute(
             "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, last_run_at, \
-             last_status, last_error, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+             last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(job_id) DO UPDATE SET user_id = excluded.user_id, session_id = excluded.session_id, agent_id = excluded.agent_id, \
              name = excluded.name, session_target = excluded.session_target, payload = excluded.payload, deliver = excluded.deliver, \
              enabled = excluded.enabled, delete_after_run = excluded.delete_after_run, schedule_kind = excluded.schedule_kind, \
              schedule_at = excluded.schedule_at, schedule_every_ms = excluded.schedule_every_ms, schedule_cron = excluded.schedule_cron, \
              schedule_tz = excluded.schedule_tz, dedupe_key = excluded.dedupe_key, next_run_at = excluded.next_run_at, \
              running_at = excluded.running_at, last_run_at = excluded.last_run_at, last_status = excluded.last_status, \
-             last_error = excluded.last_error, updated_at = excluded.updated_at",
+             last_error = excluded.last_error, consecutive_failures = excluded.consecutive_failures, \
+             auto_disabled_reason = excluded.auto_disabled_reason, updated_at = excluded.updated_at",
             params![
                 record.job_id,
                 record.user_id,
@@ -6124,6 +6159,8 @@ impl StorageBackend for SqliteStorage {
                 record.last_run_at,
                 record.last_status,
                 record.last_error,
+                record.consecutive_failures,
+                record.auto_disabled_reason,
                 record.created_at,
                 record.updated_at
             ],
@@ -6143,7 +6180,8 @@ impl StorageBackend for SqliteStorage {
             .query_row(
                 "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
                  schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-                 last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = ? AND job_id = ?",
+                 last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+                 FROM cron_jobs WHERE user_id = ? AND job_id = ?",
                 params![cleaned_user, cleaned_job],
                 |row| {
                     let payload_text: Option<String> = row.get(6)?;
@@ -6175,8 +6213,10 @@ impl StorageBackend for SqliteStorage {
                         last_run_at: row.get(18)?,
                         last_status: row.get(19)?,
                         last_error: row.get(20)?,
-                        created_at: row.get(21)?,
-                        updated_at: row.get(22)?,
+                        consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
+                        auto_disabled_reason: row.get(22)?,
+                        created_at: row.get(23)?,
+                        updated_at: row.get(24)?,
                     })
                 },
             )
@@ -6200,7 +6240,8 @@ impl StorageBackend for SqliteStorage {
             .query_row(
                 "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
                  schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-                 last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = ? AND dedupe_key = ? LIMIT 1",
+                 last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+                 FROM cron_jobs WHERE user_id = ? AND dedupe_key = ? LIMIT 1",
                 params![cleaned_user, cleaned_key],
                 |row| {
                     let payload_text: Option<String> = row.get(6)?;
@@ -6232,8 +6273,10 @@ impl StorageBackend for SqliteStorage {
                         last_run_at: row.get(18)?,
                         last_status: row.get(19)?,
                         last_error: row.get(20)?,
-                        created_at: row.get(21)?,
-                        updated_at: row.get(22)?,
+                        consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
+                        auto_disabled_reason: row.get(22)?,
+                        created_at: row.get(23)?,
+                        updated_at: row.get(24)?,
                     })
                 },
             )
@@ -6251,7 +6294,8 @@ impl StorageBackend for SqliteStorage {
         let mut sql = String::from(
             "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE user_id = ?",
+             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+             FROM cron_jobs WHERE user_id = ?",
         );
         if !include_disabled {
             sql.push_str(" AND enabled = 1");
@@ -6288,8 +6332,10 @@ impl StorageBackend for SqliteStorage {
                 last_run_at: row.get(18)?,
                 last_status: row.get(19)?,
                 last_error: row.get(20)?,
-                created_at: row.get(21)?,
-                updated_at: row.get(22)?,
+                consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
+                auto_disabled_reason: row.get(22)?,
+                created_at: row.get(23)?,
+                updated_at: row.get(24)?,
             })
         })?;
         let mut output = Vec::new();
@@ -6382,7 +6428,8 @@ impl StorageBackend for SqliteStorage {
         let sql = format!(
             "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
              schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, created_at, updated_at FROM cron_jobs WHERE job_id IN ({placeholders})"
+             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
+             FROM cron_jobs WHERE job_id IN ({placeholders})"
         );
         let mut output = Vec::new();
         {
@@ -6417,8 +6464,10 @@ impl StorageBackend for SqliteStorage {
                     last_run_at: row.get(18)?,
                     last_status: row.get(19)?,
                     last_error: row.get(20)?,
-                    created_at: row.get(21)?,
-                    updated_at: row.get(22)?,
+                    consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
+                    auto_disabled_reason: row.get(22)?,
+                    created_at: row.get(23)?,
+                    updated_at: row.get(24)?,
                 })
             })?;
             for record in rows.flatten() {
