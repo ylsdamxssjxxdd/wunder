@@ -359,6 +359,8 @@ pub struct ToolsConfig {
     pub swarm: AgentSwarmConfig,
     #[serde(default)]
     pub browser: BrowserToolConfig,
+    #[serde(default)]
+    pub desktop_controller: DesktopControllerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -416,6 +418,20 @@ pub struct BrowserToolConfig {
     pub python_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesktopControllerConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_desktop_controller_norm_width")]
+    pub norm_width: i32,
+    #[serde(default = "default_desktop_controller_norm_height")]
+    pub norm_height: i32,
+    #[serde(default = "default_desktop_controller_max_frames")]
+    pub max_frames: usize,
+    #[serde(default = "default_desktop_controller_capture_timeout_ms")]
+    pub capture_timeout_ms: u64,
+}
+
 impl Default for BrowserToolConfig {
     fn default() -> Self {
         Self {
@@ -430,6 +446,19 @@ impl Default for BrowserToolConfig {
         }
     }
 }
+
+impl Default for DesktopControllerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            norm_width: default_desktop_controller_norm_width(),
+            norm_height: default_desktop_controller_norm_height(),
+            max_frames: default_desktop_controller_max_frames(),
+            capture_timeout_ms: default_desktop_controller_capture_timeout_ms(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSwarmConfig {
     #[serde(default = "default_agent_swarm_runner")]
@@ -505,6 +534,22 @@ fn default_browser_idle_timeout_secs() -> u64 {
 
 fn default_browser_max_sessions() -> usize {
     5
+}
+
+fn default_desktop_controller_norm_width() -> i32 {
+    1000
+}
+
+fn default_desktop_controller_norm_height() -> i32 {
+    1000
+}
+
+fn default_desktop_controller_max_frames() -> usize {
+    6
+}
+
+fn default_desktop_controller_capture_timeout_ms() -> u64 {
+    5000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

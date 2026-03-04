@@ -68,6 +68,7 @@
 import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue';
 
 import { useI18n } from '@/i18n';
+import { buildToolResultPreview } from './toolWorkflowPreview';
 
 type WorkflowItem = {
   id?: string | number;
@@ -1354,20 +1355,20 @@ const buildExecuteCommandView = (
 const buildGenericResultBlock = (resultObject: UnknownObject | null, dataObject: UnknownObject | null): string => {
   if (!resultObject && !dataObject) return '';
 
-  const rows: string[] = [];
+  const headerRows: string[] = [];
   const path = pickString(dataObject?.path, resultObject?.path);
-  if (path) rows.push(path);
+  if (path) headerRows.push(path);
   const bytes = toInt(dataObject?.bytes, resultObject?.bytes);
-  if (bytes > 0) rows.push(`${bytes} bytes`);
+  if (bytes > 0) headerRows.push(`${bytes} bytes`);
 
   const summary = pickString(dataObject?.summary, resultObject?.summary, dataObject?.message, resultObject?.message);
-  if (summary) rows.push(truncateSingleLine(summary, 180));
+  if (summary) headerRows.push(truncateSingleLine(summary, 180));
 
-  if (!rows.length) {
-    const dataText = typeof dataObject === 'string' ? dataObject : '';
-    if (dataText.trim()) rows.push(buildTextPreview(dataText, 8, 900, '    '));
-  }
-  return rows.join('\n');
+  const previewBlock = buildToolResultPreview(dataObject, resultObject);
+  const blocks: string[] = [];
+  if (headerRows.length > 0) blocks.push(headerRows.join('\n'));
+  if (previewBlock) blocks.push(previewBlock);
+  return blocks.join('\n\n');
 };
 
 const buildResultBlock = (entry: RawEntry): string => {

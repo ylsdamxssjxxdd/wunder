@@ -15,6 +15,8 @@ PREFER_PREBUILT_GIT="${PREFER_PREBUILT_GIT:-1}"
 PREBUILT_GIT_ROOT="${BUILD_ROOT}/stage/opt/git"
 BUNDLE_PLAYWRIGHT_DEPS="${BUNDLE_PLAYWRIGHT_DEPS:-auto}"
 PLAYWRIGHT_INSTALL_DEPS="${PLAYWRIGHT_INSTALL_DEPS:-1}"
+EMBED_PYTHON="${EMBED_PYTHON:-1}"
+APPIMAGE_SUFFIX="${APPIMAGE_SUFFIX:-}"
 
 patch_appimage_runtime_magic() {
   local target_file=$1
@@ -42,7 +44,7 @@ extract_appimage() {
 
 bundle_playwright_deps() {
   local appdir=$1
-  local pw_dir="${appdir}/opt/python/playwright"
+  local pw_dir="${PLAYWRIGHT_SOURCE_DIR:-${appdir}/opt/python/playwright}"
   local bundle_dir="${appdir}/usr/lib/wunder-playwright"
 
   if [ ! -d "${pw_dir}" ]; then
@@ -163,10 +165,12 @@ if [ -z "${APPIMAGE_PATH}" ] || [ ! -f "${APPIMAGE_PATH}" ]; then
   exit 1
 fi
 
-if [ "${PREFER_PREBUILT_PYTHON}" = "1" ] && [ -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
-  echo "Using prebuilt embedded Python under ${PREBUILT_PYTHON_ROOT}."
-else
-  "${ROOT_DIR}/docker-extra/scripts/build_embedded_python.sh"
+if [ "${EMBED_PYTHON}" = "1" ]; then
+  if [ "${PREFER_PREBUILT_PYTHON}" = "1" ] && [ -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
+    echo "Using prebuilt embedded Python under ${PREBUILT_PYTHON_ROOT}."
+  else
+    "${ROOT_DIR}/docker-extra/scripts/build_embedded_python.sh"
+  fi
 fi
 
 if [ "${PREFER_PREBUILT_GIT}" = "1" ] && [ -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
@@ -182,10 +186,6 @@ if [ ! -d "${APPDIR}" ]; then
   echo "Extracted AppDir not found at ${APPDIR}." >&2
   exit 1
 fi
-if [ ! -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
-  echo "Embedded Python not found under ${PREBUILT_PYTHON_ROOT}." >&2
-  exit 1
-fi
 if [ ! -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
   echo "Embedded Git not found under ${PREBUILT_GIT_ROOT}." >&2
   exit 1
@@ -193,30 +193,69 @@ fi
 
 mkdir -p "${APPDIR}/opt"
 rm -rf "${APPDIR}/opt/python"
-cp -a "${PREBUILT_PYTHON_ROOT}" "${APPDIR}/opt/"
+if [ "${EMBED_PYTHON}" = "1" ]; then
+  if [ ! -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
+    echo "Embedded Python not found under ${PREBUILT_PYTHON_ROOT}." >&2
+    exit 1
+  fi
+  cp -a "${PREBUILT_PYTHON_ROOT}" "${APPDIR}/opt/"
+fi
 rm -rf "${APPDIR}/opt/git"
 cp -a "${PREBUILT_GIT_ROOT}" "${APPDIR}/opt/"
-if [ ! -e "${APPDIR}/opt/python/bin/python" ] && [ -x "${APPDIR}/opt/python/bin/python3" ]; then
-  ln -s python3 "${APPDIR}/opt/python/bin/python"
-fi
-if [ ! -e "${APPDIR}/opt/python/bin/pip" ] && [ -x "${APPDIR}/opt/python/bin/pip3" ]; then
-  ln -s pip3 "${APPDIR}/opt/python/bin/pip"
+if [ "${EMBED_PYTHON}" = "1" ]; then
+  if [ ! -e "${APPDIR}/opt/python/bin/python" ] && [ -x "${APPDIR}/opt/python/bin/python3" ]; then
+    ln -s python3 "${APPDIR}/opt/python/bin/python"
+  fi
+  if [ ! -e "${APPDIR}/opt/python/bin/pip" ] && [ -x "${APPDIR}/opt/python/bin/pip3" ]; then
+    ln -s pip3 "${APPDIR}/opt/python/bin/pip"
+  fi
 fi
 
 if [ -f "${APPDIR}/AppRun" ]; then
   mv "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
-  cat > "${APPDIR}/AppRun" <<'EOF'
+cat > "${APPDIR}/AppRun" <<'EOF'
 #!/usr/bin/env bash
 set -e
 HERE="$(dirname "$(readlink -f "$0")")"
 export APPDIR="$HERE"
-PY_VER="$(cat "$APPDIR/opt/python/.wunder-python-version" 2>/dev/null || echo "3.11")"
-export PYTHONHOME="$APPDIR/opt/python"
-export PYTHONPATH="$APPDIR/opt/python/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/opt/git/lib:$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
-export PATH="$APPDIR/opt/git/bin:$APPDIR/opt/python/bin:${PATH:-}"
-if [ -d "$APPDIR/opt/python/playwright" ]; then
-  export PLAYWRIGHT_BROWSERS_PATH="$APPDIR/opt/python/playwright"
+APPIMAGE_DIR=""
+if [ -n "${APPIMAGE:-}" ]; then
+  APPIMAGE_DIR="$(dirname "$APPIMAGE")"
+fi
+PYTHON_ROOT=""
+if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-python" ]; then
+  PYTHON_ROOT="$APPIMAGE_DIR/wunder-python"
+elif [ -d "$APPDIR/opt/python" ]; then
+  PYTHON_ROOT="$APPDIR/opt/python"
+fi
+PY_VER="3.11"
+if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
+  PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
+fi
+PYTHON_LD=""
+if [ -n "$PYTHON_ROOT" ]; then
+  export PYTHONHOME="$PYTHON_ROOT"
+  export PYTHONPATH="$PYTHON_ROOT/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+  export WUNDER_PYTHON_BIN="$PYTHON_ROOT/bin/python3"
+  export PATH="$APPDIR/opt/git/bin:$PYTHON_ROOT/bin:${PATH:-}"
+  PYTHON_LD="$PYTHON_ROOT/lib:"
+  export PYTHONNOUSERSITE=1
+  export PIP_NO_INDEX=1
+  if [ -f "$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
+    export SSL_CERT_FILE="$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
+  fi
+else
+  export PATH="$APPDIR/opt/git/bin:${PATH:-}"
+fi
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/opt/git/lib:${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+PLAYWRIGHT_DIR=""
+if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
+  PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
+elif [ -n "$PYTHON_ROOT" ] && [ -d "$PYTHON_ROOT/playwright" ]; then
+  PLAYWRIGHT_DIR="$PYTHON_ROOT/playwright"
+fi
+if [ -n "$PLAYWRIGHT_DIR" ]; then
+  export PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_DIR"
 fi
 if [ -d "$APPDIR/opt/git/libexec/git-core" ]; then
   export GIT_EXEC_PATH="$APPDIR/opt/git/libexec/git-core"
@@ -224,34 +263,54 @@ fi
 if [ -d "$APPDIR/opt/git/share/git-core/templates" ]; then
   export GIT_TEMPLATE_DIR="$APPDIR/opt/git/share/git-core/templates"
 fi
-if [ -f "$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
-  export SSL_CERT_FILE="$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
-fi
-export PYTHONNOUSERSITE=1
-export PIP_NO_INDEX=1
-export WUNDER_PYTHON_BIN="$APPDIR/opt/python/bin/python3"
 export WUNDER_GIT_BIN="$APPDIR/opt/git/bin/git"
 exec "$APPDIR/AppRun.orig" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
 else
-  cat > "${APPDIR}/AppRun" <<'EOF'
+cat > "${APPDIR}/AppRun" <<'EOF'
 #!/usr/bin/env bash
 set -e
 HERE="$(dirname "$(readlink -f "$0")")"
 export APPDIR="$HERE"
-PY_VER="$(cat "$APPDIR/opt/python/.wunder-python-version" 2>/dev/null || echo "3.11")"
-export PYTHONHOME="$APPDIR/opt/python"
-export PYTHONPATH="$APPDIR/opt/python/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/opt/git/lib:$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
-export PATH="$APPDIR/opt/git/bin:$APPDIR/opt/python/bin:${PATH:-}"
-if [ -d "$APPDIR/opt/python/playwright" ]; then
-  export PLAYWRIGHT_BROWSERS_PATH="$APPDIR/opt/python/playwright"
+APPIMAGE_DIR=""
+if [ -n "${APPIMAGE:-}" ]; then
+  APPIMAGE_DIR="$(dirname "$APPIMAGE")"
 fi
-
-if [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "1" ] || \
-   { [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "auto" ] && [ -d "${APPDIR}/opt/python/playwright" ]; }; then
-  bundle_playwright_deps "${APPDIR}"
+PYTHON_ROOT=""
+if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-python" ]; then
+  PYTHON_ROOT="$APPIMAGE_DIR/wunder-python"
+elif [ -d "$APPDIR/opt/python" ]; then
+  PYTHON_ROOT="$APPDIR/opt/python"
+fi
+PY_VER="3.11"
+if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
+  PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
+fi
+PYTHON_LD=""
+if [ -n "$PYTHON_ROOT" ]; then
+  export PYTHONHOME="$PYTHON_ROOT"
+  export PYTHONPATH="$PYTHON_ROOT/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+  export WUNDER_PYTHON_BIN="$PYTHON_ROOT/bin/python3"
+  export PATH="$APPDIR/opt/git/bin:$PYTHON_ROOT/bin:${PATH:-}"
+  PYTHON_LD="$PYTHON_ROOT/lib:"
+  export PYTHONNOUSERSITE=1
+  export PIP_NO_INDEX=1
+  if [ -f "$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
+    export SSL_CERT_FILE="$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
+  fi
+else
+  export PATH="$APPDIR/opt/git/bin:${PATH:-}"
+fi
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/opt/git/lib:${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+PLAYWRIGHT_DIR=""
+if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
+  PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
+elif [ -n "$PYTHON_ROOT" ] && [ -d "$PYTHON_ROOT/playwright" ]; then
+  PLAYWRIGHT_DIR="$PYTHON_ROOT/playwright"
+fi
+if [ -n "$PLAYWRIGHT_DIR" ]; then
+  export PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_DIR"
 fi
 if [ -d "$APPDIR/opt/git/libexec/git-core" ]; then
   export GIT_EXEC_PATH="$APPDIR/opt/git/libexec/git-core"
@@ -259,16 +318,25 @@ fi
 if [ -d "$APPDIR/opt/git/share/git-core/templates" ]; then
   export GIT_TEMPLATE_DIR="$APPDIR/opt/git/share/git-core/templates"
 fi
-if [ -f "$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
-  export SSL_CERT_FILE="$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
-fi
-export PYTHONNOUSERSITE=1
-export PIP_NO_INDEX=1
-export WUNDER_PYTHON_BIN="$APPDIR/opt/python/bin/python3"
 export WUNDER_GIT_BIN="$APPDIR/opt/git/bin/git"
 exec "$APPDIR/usr/bin/wunder-desktop" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun"
+fi
+
+if [ -z "${APPIMAGE_SUFFIX}" ]; then
+  if [ "${EMBED_PYTHON}" = "1" ]; then
+    APPIMAGE_SUFFIX="python"
+  else
+    APPIMAGE_SUFFIX="sidecar"
+  fi
+fi
+
+if [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "1" ] || \
+   { [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "auto" ] && [ -d "${APPDIR}/opt/python/playwright" ]; }; then
+  bundle_playwright_deps "${APPDIR}"
+elif [ "${BUNDLE_PLAYWRIGHT_DEPS}" = "1" ] && [ "${EMBED_PYTHON}" = "0" ] && [ -d "${PREBUILT_PYTHON_ROOT}/playwright" ]; then
+  PLAYWRIGHT_SOURCE_DIR="${PREBUILT_PYTHON_ROOT}/playwright" bundle_playwright_deps "${APPDIR}"
 fi
 
 APPIMAGETOOL_BIN="${APPIMAGETOOL:-}"
@@ -299,7 +367,7 @@ fi
 
 mkdir -p "${OUTPUT_DIR}"
 OUT_NAME=$(basename "${APPIMAGE_PATH}")
-OUT_NAME="${OUT_NAME%.AppImage}-python.AppImage"
+OUT_NAME="${OUT_NAME%.AppImage}-${APPIMAGE_SUFFIX}.AppImage"
 OUT_PATH="${OUTPUT_DIR}/${OUT_NAME}"
 
 if [[ "${APPIMAGETOOL_RUNNER}" == *.AppImage ]]; then
@@ -308,4 +376,8 @@ else
   "${APPIMAGETOOL_RUNNER}" "${APPDIR}" "${OUT_PATH}"
 fi
 
-echo "AppImage with embedded Python and Git: ${OUT_PATH}"
+if [ "${EMBED_PYTHON}" = "1" ]; then
+  echo "AppImage with embedded Python and Git: ${OUT_PATH}"
+else
+  echo "AppImage with sidecar Python and embedded Git: ${OUT_PATH}"
+fi

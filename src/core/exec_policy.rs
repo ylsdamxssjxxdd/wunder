@@ -71,9 +71,12 @@ pub fn evaluate_tool_call(
     let ptc_tool_name = resolve_tool_name("ptc");
     let write_tool_name = resolve_tool_name("write_file");
     let patch_tool_name = resolve_tool_name("apply_patch");
+    let controller_tool_name = resolve_tool_name("desktop_controller");
+    let monitor_tool_name = resolve_tool_name("desktop_monitor");
     let is_exec_tool = tool_name == exec_tool_name || tool_name == ptc_tool_name;
     let is_write_tool = tool_name == write_tool_name || tool_name == patch_tool_name;
-    if !is_exec_tool && !is_write_tool {
+    let is_control_tool = tool_name == controller_tool_name || tool_name == monitor_tool_name;
+    if !is_exec_tool && !is_write_tool && !is_control_tool {
         return None;
     }
 
@@ -88,8 +91,10 @@ pub fn evaluate_tool_call(
         } else {
             command.clone()
         }
-    } else {
+    } else if is_write_tool {
         build_write_signature(tool_name, args)
+    } else {
+        build_control_signature(tool_name, args)
     };
 
     let session_key = resolve_session_key(session_id, user_id);
@@ -137,6 +142,20 @@ pub fn evaluate_tool_call(
         }
     }
 
+    if is_control_tool {
+        if matches!(
+            approval_mode,
+            ApprovalMode::Suggest | ApprovalMode::AutoEdit
+        ) && !approved
+        {
+            requires_approval = true;
+            allowed = false;
+            if reason.is_empty() {
+                reason = "control_requires_approval".to_string();
+            }
+        }
+    }
+
     if !requires_approval && allowed {
         return None;
     }
@@ -167,6 +186,35 @@ fn build_write_signature(tool_name: &str, args: &Value) -> String {
         format!("{tool_name}:{}", &compact[..512])
     } else {
         format!("{tool_name}:{compact}")
+    }
+}
+
+fn build_control_signature(tool_name: &str, args: &Value) -> String {
+    let mut parts = vec![tool_name.to_string()];
+    if let Some(action) = args
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("action={action}"));
+    }
+    if let Some(desc) = args
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("desc={desc}"));
+    }
+    if let Some(wait_ms) = args.get("wait_ms").and_then(Value::as_i64) {
+        parts.push(format!("wait_ms={wait_ms}"));
+    }
+    let signature = parts.join("|");
+    if signature.len() > 512 {
+        signature[..512].to_string()
+    } else {
+        signature
     }
 }
 

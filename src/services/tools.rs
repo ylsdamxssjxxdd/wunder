@@ -6,6 +6,7 @@
 // Implement new capabilities in dedicated modules/files and only wire them here.
 mod apply_patch_tool;
 mod browser_tool;
+mod desktop_control;
 mod read_image_tool;
 mod sleep_tool;
 
@@ -672,6 +673,73 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 ]
             }),
         },
+        ToolSpec {
+            name: desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+            description: t("tool.spec.desktop_controller.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "bbox": {
+                        "anyOf": [
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+                        ],
+                        "description": t("tool.spec.desktop_controller.args.bbox")
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.desktop_controller.args.action"),
+                        "enum": [
+                            "left_click",
+                            "left_double_click",
+                            "right_click",
+                            "middle_click",
+                            "left_hold",
+                            "right_hold",
+                            "middle_hold",
+                            "left_release",
+                            "right_release",
+                            "middle_release",
+                            "scroll_down",
+                            "scroll_up",
+                            "press_key",
+                            "type_text",
+                            "delay",
+                            "move_mouse",
+                            "drag_drop"
+                        ]
+                    },
+                    "description": {"type": "string", "description": t("tool.spec.desktop_controller.args.description")},
+                    "key": {"type": "string", "description": t("tool.spec.desktop_controller.args.key")},
+                    "text": {"type": "string", "description": t("tool.spec.desktop_controller.args.text")},
+                    "delay_ms": {"type": "integer", "minimum": 0, "description": t("tool.spec.desktop_controller.args.delay_ms")},
+                    "duration_ms": {"type": "integer", "minimum": 0, "description": t("tool.spec.desktop_controller.args.duration_ms")},
+                    "scroll_steps": {"type": "integer", "minimum": 1, "description": t("tool.spec.desktop_controller.args.scroll_steps")},
+                    "to_bbox": {
+                        "anyOf": [
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+                        ],
+                        "description": t("tool.spec.desktop_controller.args.to_bbox")
+                    }
+                },
+                "required": ["bbox", "action", "description"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+            description: t("tool.spec.desktop_monitor.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "wait_ms": {"type": "integer", "minimum": 0, "maximum": 30000, "description": t("tool.spec.desktop_monitor.args.wait_ms")},
+                    "note": {"type": "string", "description": t("tool.spec.desktop_monitor.args.note")}
+                },
+                "required": ["wait_ms"],
+                "additionalProperties": false
+            }),
+        },
     ]
 }
 
@@ -739,6 +807,22 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         browser_tool::TOOL_BROWSER.to_string(),
     );
     map.insert(
+        desktop_control::TOOL_DESKTOP_CONTROLLER_ALIAS.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+    );
+    map.insert(
+        desktop_control::TOOL_DESKTOP_CONTROLLER_ALIAS_SHORT.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+    );
+    map.insert(
+        desktop_control::TOOL_DESKTOP_MONITOR_ALIAS.to_string(),
+        desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+    );
+    map.insert(
+        desktop_control::TOOL_DESKTOP_MONITOR_ALIAS_SHORT.to_string(),
+        desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+    );
+    map.insert(
         "browser_navigate".to_string(),
         browser_tool::TOOL_BROWSER_NAVIGATE.to_string(),
     );
@@ -773,6 +857,18 @@ pub fn browser_tools_available(config: &Config) -> bool {
     browser_tool::browser_tools_enabled(config)
 }
 
+pub fn desktop_tools_available(config: &Config) -> bool {
+    desktop_control::desktop_tools_enabled(config)
+}
+
+pub fn is_desktop_control_tool_name(name: &str) -> bool {
+    desktop_control::is_desktop_control_tool_name(name)
+}
+
+pub async fn build_desktop_followup_user_message(result: &Value) -> Result<Option<Value>> {
+    desktop_control::build_followup_user_message(result).await
+}
+
 pub fn is_read_image_tool_name(name: &str) -> bool {
     read_image_tool::is_read_image_tool_name(name)
 }
@@ -802,6 +898,8 @@ pub fn filter_tool_names_by_model_capability(
             let canonical = resolve_tool_name(name);
             !read_image_tool::is_read_image_tool_name(&canonical)
                 && !read_image_tool::is_read_image_tool_name(name)
+                && !desktop_control::is_desktop_control_tool_name(&canonical)
+                && !desktop_control::is_desktop_control_tool_name(name)
         })
         .collect()
 }
@@ -823,6 +921,8 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "用户世界工具" => Some("user_world"),
         "记忆管理" => Some("memory_manager"),
         browser_tool::TOOL_BROWSER => Some("browser"),
+        desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
+        desktop_control::TOOL_DESKTOP_MONITOR => Some("desktop_monitor"),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         sleep_tool::TOOL_SLEEP_WAIT => Some(sleep_tool::TOOL_SLEEP_ALIAS),
         _ => None,
@@ -889,6 +989,11 @@ pub fn collect_available_tool_names(
         }
         if browser_tool::is_browser_tool_name(&canonical)
             && !browser_tool::browser_tools_enabled(config)
+        {
+            continue;
+        }
+        if desktop_control::is_desktop_control_tool_name(&canonical)
+            && !desktop_control::desktop_tools_enabled(config)
         {
             continue;
         }
@@ -1166,6 +1271,12 @@ pub async fn execute_builtin_tool(
             browser_tool::tool_browser_read_page(context, args).await
         }
         browser_tool::TOOL_BROWSER_CLOSE => browser_tool::tool_browser_close(context, args).await,
+        desktop_control::TOOL_DESKTOP_CONTROLLER => {
+            desktop_control::tool_desktop_controller(context, args).await
+        }
+        desktop_control::TOOL_DESKTOP_MONITOR => {
+            desktop_control::tool_desktop_monitor(context, args).await
+        }
         "a2a观察" => a2a_observe(context, args).await,
         "a2a等待" => a2a_wait(context, args).await,
         "a2ui" => Ok(

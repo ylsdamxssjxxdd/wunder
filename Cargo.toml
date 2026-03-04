@@ -93,8 +93,17 @@ prost = "0.13"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 pulldown-cmark = "0.10"
 textwrap = "0.16.2"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [build-dependencies]
 tauri-build = { version = "2", features = ["codegen"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]

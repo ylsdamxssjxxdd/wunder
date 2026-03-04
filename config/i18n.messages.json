@@ -1059,6 +1059,74 @@
     "en-US": "The specified file is not a supported image.",
     "zh-CN": "指定文件不是受支持的图片格式。"
   },
+  "tool.desktop_controller.disabled": {
+    "en-US": "Desktop controller is disabled.",
+    "zh-CN": "桌面控制器未启用。"
+  },
+  "tool.desktop_controller.invalid_args": {
+    "en-US": "Invalid desktop controller arguments.",
+    "zh-CN": "桌面控制器参数无效。"
+  },
+  "tool.desktop_controller.bbox_required": {
+    "en-US": "bbox is required.",
+    "zh-CN": "必须提供 bbox。"
+  },
+  "tool.desktop_controller.invalid_bbox": {
+    "en-US": "bbox must be [x1,y1,x2,y2] or [cx,cy].",
+    "zh-CN": "bbox 必须是 [x1,y1,x2,y2] 或 [cx,cy]。"
+  },
+  "tool.desktop_controller.action_required": {
+    "en-US": "action is required.",
+    "zh-CN": "必须提供 action。"
+  },
+  "tool.desktop_controller.description_required": {
+    "en-US": "description is required.",
+    "zh-CN": "必须提供 description。"
+  },
+  "tool.desktop_controller.unknown_action": {
+    "en-US": "Unknown desktop action.",
+    "zh-CN": "未知的桌面动作。"
+  },
+  "tool.desktop_controller.key_required": {
+    "en-US": "key is required for press_key.",
+    "zh-CN": "press_key 需要 key。"
+  },
+  "tool.desktop_controller.text_required": {
+    "en-US": "text is required for type_text.",
+    "zh-CN": "type_text 需要 text。"
+  },
+  "tool.desktop_controller.to_bbox_required": {
+    "en-US": "to_bbox is required for drag_drop.",
+    "zh-CN": "drag_drop 需要 to_bbox。"
+  },
+  "tool.desktop_controller.capture_failed": {
+    "en-US": "Failed to capture desktop screenshot.",
+    "zh-CN": "桌面截图失败。"
+  },
+  "tool.desktop_controller.capture_timeout": {
+    "en-US": "Desktop screenshot timed out.",
+    "zh-CN": "桌面截图超时。"
+  },
+  "tool.desktop_controller.capture_too_large": {
+    "en-US": "Desktop screenshot is too large.",
+    "zh-CN": "桌面截图过大。"
+  },
+  "tool.desktop_controller.unsupported_platform": {
+    "en-US": "Desktop controller is not supported on this platform.",
+    "zh-CN": "当前平台不支持桌面控制器。"
+  },
+  "tool.desktop_controller.followup_prompt": {
+    "en-US": "Here is the latest desktop screenshot.",
+    "zh-CN": "这里是最新的桌面截图。"
+  },
+  "tool.desktop_monitor.wait_required": {
+    "en-US": "wait_ms is required.",
+    "zh-CN": "必须提供 wait_ms。"
+  },
+  "tool.desktop_monitor.followup_prompt": {
+    "en-US": "Desktop monitor captured a new screenshot.",
+    "zh-CN": "桌面监视器已捕获新截图。"
+  },
   "tool.sleep.invalid_seconds": {
     "en-US": "Sleep duration must be greater than 0 seconds.",
     "zh-CN": "休眠时长必须大于 0 秒。"
@@ -1446,6 +1514,58 @@
   "tool.spec.browser_close.description": {
     "en-US": "Close the current browser session.",
     "zh-CN": "关闭当前浏览器会话"
+  },
+  "tool.spec.desktop_controller.description": {
+    "en-US": "Desktop controller. Use bbox + action + description in normalized screenshot space (default 1000x1000). One call = one atomic action; multi-step actions should use multiple rounds with the latest screenshot.",
+    "zh-CN": "桌面控制器：使用 bbox + action + description（归一化截图坐标，默认 1000x1000）。一次调用完成一个原子动作，多步操作需多轮并使用最新截图。"
+  },
+  "tool.spec.desktop_controller.args.bbox": {
+    "en-US": "Target bbox in normalized screenshot space. Format: [x1,y1,x2,y2] or [cx,cy].",
+    "zh-CN": "归一化截图坐标中的目标框，格式：[x1,y1,x2,y2] 或 [cx,cy]。"
+  },
+  "tool.spec.desktop_controller.args.action": {
+    "en-US": "Action: left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/delay/move_mouse/drag_drop.",
+    "zh-CN": "动作类型：left_click/left_double_click/right_click/middle_click/left_hold/right_hold/middle_hold/left_release/right_release/middle_release/scroll_down/scroll_up/press_key/type_text/delay/move_mouse/drag_drop。"
+  },
+  "tool.spec.desktop_controller.args.description": {
+    "en-US": "Short description of the intended action (for audit).",
+    "zh-CN": "动作意图描述（便于审计与确认）。"
+  },
+  "tool.spec.desktop_controller.args.key": {
+    "en-US": "Key for press_key, e.g., ctrl+c, enter, f5.",
+    "zh-CN": "press_key 使用的按键，如 ctrl+c、enter、f5。"
+  },
+  "tool.spec.desktop_controller.args.text": {
+    "en-US": "Text to type for type_text.",
+    "zh-CN": "type_text 输入的文本。"
+  },
+  "tool.spec.desktop_controller.args.delay_ms": {
+    "en-US": "Delay in milliseconds for action=delay.",
+    "zh-CN": "delay 动作的等待毫秒数。"
+  },
+  "tool.spec.desktop_controller.args.duration_ms": {
+    "en-US": "Duration in milliseconds for move_mouse/drag_drop.",
+    "zh-CN": "move_mouse/drag_drop 的移动耗时（毫秒）。"
+  },
+  "tool.spec.desktop_controller.args.scroll_steps": {
+    "en-US": "Scroll steps for scroll_up/scroll_down (>=1).",
+    "zh-CN": "scroll_up/scroll_down 的滚动步数（>=1）。"
+  },
+  "tool.spec.desktop_controller.args.to_bbox": {
+    "en-US": "Target bbox for drag_drop, same format as bbox.",
+    "zh-CN": "drag_drop 的目标 bbox，格式同 bbox。"
+  },
+  "tool.spec.desktop_monitor.description": {
+    "en-US": "Desktop monitor. Wait for wait_ms and then return a fresh screenshot.",
+    "zh-CN": "桌面监视器：等待 wait_ms 后返回新的截图。"
+  },
+  "tool.spec.desktop_monitor.args.wait_ms": {
+    "en-US": "Wait milliseconds (0-30000).",
+    "zh-CN": "等待毫秒数（0-30000）。"
+  },
+  "tool.spec.desktop_monitor.args.note": {
+    "en-US": "Optional note for monitoring purpose.",
+    "zh-CN": "可选备注（监视目的）。"
   },
   "tool.spec.final.args.content": {
     "en-US": "Final response content.",

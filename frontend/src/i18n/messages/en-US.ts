@@ -199,6 +199,11 @@ export default {
   'userWorld.group.createFailed': 'Failed to create group',
   'userWorld.helperApps.title': 'Helper Apps',
   'userWorld.helperApps.subtitle': 'Quick utilities for local work',
+  'userWorld.helperApps.offlineTitle': 'Offline Helper Apps',
+  'userWorld.helperApps.offlineDesc': 'Local tools available offline',
+  'userWorld.helperApps.onlineTitle': 'Online Helper Apps',
+  'userWorld.helperApps.onlineDesc': 'External links and online services',
+  'userWorld.helperApps.onlineEmpty': 'No online helper apps yet.',
   'userWorld.helperApps.localFileSearch.cardTitle': 'Container Content Search',
   'userWorld.helperApps.localFileSearch.cardDesc':
     'Search entries across your private container and sandbox containers',

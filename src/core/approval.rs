@@ -42,6 +42,7 @@ pub enum ApprovalResponse {
 pub enum ApprovalRequestKind {
     Exec,
     Patch,
+    Control,
 }
 
 pub struct ApprovalRequest {

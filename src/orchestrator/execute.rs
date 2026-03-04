@@ -602,6 +602,19 @@ impl Orchestrator {
                         } else {
                             None
                         };
+                        let desktop_followup = if result.ok && is_desktop_control_tool_name(&name) {
+                            match build_desktop_followup_user_message(&result.data).await {
+                                Ok(payload) => payload,
+                                Err(err) => {
+                                    warn!(
+                                        "failed to prepare desktop followup for session {session_id}: {err}"
+                                    );
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         let tool_call_id = if matches!(
                             tool_call_mode,
                             ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
@@ -636,6 +649,9 @@ impl Orchestrator {
                             }));
                         }
                         if let Some(followup_message) = read_image_followup {
+                            messages.push(followup_message);
+                        }
+                        if let Some(followup_message) = desktop_followup {
                             messages.push(followup_message);
                         }
                         self.append_chat(
@@ -1362,8 +1378,12 @@ fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
 fn approval_kind_for_tool(tool_name: &str) -> ApprovalRequestKind {
     let exec_tool = resolve_tool_name("execute_command");
     let ptc_tool = resolve_tool_name("ptc");
+    let controller_tool = resolve_tool_name("desktop_controller");
+    let monitor_tool = resolve_tool_name("desktop_monitor");
     if tool_name == exec_tool || tool_name == ptc_tool {
         ApprovalRequestKind::Exec
+    } else if tool_name == controller_tool || tool_name == monitor_tool {
+        ApprovalRequestKind::Control
     } else {
         ApprovalRequestKind::Patch
     }
@@ -1381,7 +1401,36 @@ fn approval_summary_for_tool(tool_name: &str, args: &Value, kind: ApprovalReques
             .filter(|value| !value.is_empty())
             .map(|path| format!("{tool_name}: {path}"))
             .unwrap_or_else(|| tool_name.to_string()),
+        ApprovalRequestKind::Control => extract_control_summary(args)
+            .map(|summary| format!("{tool_name}: {summary}"))
+            .unwrap_or_else(|| tool_name.to_string()),
     }
+}
+
+fn extract_control_summary(args: &Value) -> Option<String> {
+    let obj = args.as_object()?;
+    let action = obj
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(action) = action {
+        let desc = obj
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(desc) = desc {
+            return Some(format!("action={action} {desc}"));
+        }
+        return Some(format!("action={action}"));
+    }
+    if let Some(wait_ms) = obj.get("wait_ms") {
+        if let Some(value) = wait_ms.as_i64().or_else(|| wait_ms.as_u64().map(|v| v as i64)) {
+            return Some(format!("wait_ms={value}"));
+        }
+    }
+    None
 }
 
 fn extract_command_text(args: &Value) -> Option<String> {

@@ -60,6 +60,11 @@ const openLocalFileSearch = () => {
 const openGlobeApp = () => {
   globeVisible.value = true;
 };
+
+defineExpose({
+  openLocalFileSearch,
+  openGlobeApp
+});
 </script>
 
 <style scoped>

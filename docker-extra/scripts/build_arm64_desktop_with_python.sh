@@ -11,7 +11,7 @@ TARGET_DIR="${ROOT_DIR}/target/arm64-20"
 DIST_DIR="${TARGET_DIR}/dist"
 BUILD_ROOT="${TARGET_DIR}/.build/python"
 
-echo "[1/6] Checking prerequisites..."
+echo "[1/7] Checking prerequisites..."
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is not installed or not in PATH." >&2
   exit 1
@@ -38,10 +38,10 @@ fi
 
 mkdir -p "${CARGO_HOME_DIR}" "${TARGET_DIR}" "${DIST_DIR}"
 
-echo "[2/6] Starting arm build container (no image rebuild)..."
+echo "[2/7] Starting arm build container (no image rebuild)..."
 docker compose -f "${COMPOSE_FILE}" --profile arm up -d --no-build
 
-echo "[3/6] Building arm64 bridge with arm64-20 cache/target..."
+echo "[3/7] Building arm64 bridge with arm64-20 cache/target..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   export PATH=/usr/local/cargo/bin:\$PATH
@@ -50,7 +50,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   cargo build --release --bin wunder-desktop-bridge
 "
 
-echo "[4/6] Packaging Electron arm64 AppImage..."
+echo "[4/7] Packaging Electron arm64 AppImage..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   cd /app/wunder-desktop-electron
@@ -59,7 +59,14 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
     npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 "
 
-echo "[5/6] Repacking AppImage with embedded Python + Git from arm64-20 (qemu may take 10-30 min)..."
+echo "[5/7] Packaging Python sidecar (wunder-python)..."
+docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
+  set -euo pipefail
+  BUILD_ROOT=/app/target/arm64-20/.build/python \
+    bash /app/docker-extra/scripts/package_sidecar_python.sh
+"
+
+echo "[6/7] Repacking AppImage with sidecar Python + embedded Git (qemu may take 10-30 min)..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   set -euo pipefail
   output_dir=/app/target/arm64-20/dist
@@ -81,10 +88,14 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   OUTPUT_DIR="${output_dir}" \
   PREFER_PREBUILT_PYTHON=1 \
   PREFER_PREBUILT_GIT=1 \
+  EMBED_PYTHON=0 \
+  BUNDLE_PLAYWRIGHT_DEPS=0 \
+  PLAYWRIGHT_INSTALL_DEPS=0 \
     bash /app/docker-extra/scripts/package_appimage_with_python.sh
 '
 
-echo "[6/6] Done. Artifacts:"
+echo "[7/7] Done. Artifacts:"
 echo "  - ${TARGET_DIR}/release/wunder-desktop-bridge"
 echo "  - ${DIST_DIR}/wunder-desktop-arm64.AppImage"
-echo "  - ${DIST_DIR}/wunder-desktop-arm64-python.AppImage (embedded Python + Git)"
+echo "  - ${DIST_DIR}/wunder-desktop-arm64-sidecar.AppImage (sidecar Python)"
+echo "  - ${DIST_DIR}/wunder-python-arm64.tar.gz (sidecar Python package)"

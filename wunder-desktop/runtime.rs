@@ -870,6 +870,9 @@ fn apply_desktop_defaults(
         }
     }
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
+    config.tools.desktop_controller.enabled = true;
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面控制器");
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "桌面监视器");
     config.tools.browser.enabled = true;
     let legacy_browser_tools = [
         "浏览器导航",

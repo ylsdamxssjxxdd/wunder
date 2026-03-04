@@ -152,7 +152,46 @@
         class="messenger-middle-list"
         :class="{ 'messenger-middle-list--users': sessionHub.activeSection === 'users' && !userWorldPermissionDenied }"
       >
-        <template v-if="sessionHub.activeSection === 'messages'">
+        <template v-if="showHelperAppsWorkspace">
+          <button
+            class="messenger-list-item"
+            :class="{ active: helperAppsPanelMode === 'offline' }"
+            type="button"
+            @click="openHelperAppsPanel('offline')"
+          >
+            <div class="messenger-list-avatar">
+              <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
+            </div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('userWorld.helperApps.offlineTitle') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('userWorld.helperApps.offlineDesc') }}</span>
+              </div>
+            </div>
+          </button>
+          <button
+            class="messenger-list-item"
+            :class="{ active: helperAppsPanelMode === 'online' }"
+            type="button"
+            @click="openHelperAppsPanel('online')"
+          >
+            <div class="messenger-list-avatar">
+              <i class="fa-solid fa-globe" aria-hidden="true"></i>
+            </div>
+            <div class="messenger-list-main">
+              <div class="messenger-list-row">
+                <span class="messenger-list-name">{{ t('userWorld.helperApps.onlineTitle') }}</span>
+              </div>
+              <div class="messenger-list-row">
+                <span class="messenger-list-preview">{{ t('userWorld.helperApps.onlineDesc') }}</span>
+              </div>
+            </div>
+          </button>
+        </template>
+
+        <template v-else-if="sessionHub.activeSection === 'messages'">
           <div
             v-for="item in filteredMixedConversations"
             :key="item.key"
@@ -772,7 +811,46 @@
       >
         <template v-if="showHelperAppsWorkspace">
           <div class="messenger-helper-workspace">
-            <MessengerHelperAppsPlaza />
+            <MessengerHelperAppsPlaza
+              v-if="helperAppsPanelMode === 'offline'"
+              ref="helperAppsPlazaRef"
+            />
+            <template v-else>
+              <div class="messenger-block-title">{{ t('userWorld.helperApps.onlineTitle') }}</div>
+              <div v-if="helperAppsOnlineLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+              <template v-else>
+                <button
+                  v-for="item in helperAppsOnlineItems"
+                  :key="item.linkId"
+                  class="messenger-list-item"
+                  type="button"
+                  @click="openExternalHelperApp(item)"
+                >
+                  <div class="messenger-list-avatar">
+                    <i
+                      class="fa-solid"
+                      :class="resolveExternalIcon(item.icon)"
+                      :style="resolveExternalIconStyle(item.icon)"
+                      aria-hidden="true"
+                    ></i>
+                  </div>
+                  <div class="messenger-list-main">
+                    <div class="messenger-list-row">
+                      <span class="messenger-list-name">{{ item.title }}</span>
+                      <span class="messenger-list-time">{{ resolveExternalHost(item.url) }}</span>
+                    </div>
+                    <div class="messenger-list-row">
+                      <span class="messenger-list-preview">
+                        {{ item.description || resolveExternalHost(item.url) }}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+                <div v-if="!helperAppsOnlineItems.length" class="messenger-list-empty">
+                  {{ t('userWorld.helperApps.onlineEmpty') }}
+                </div>
+              </template>
+            </template>
           </div>
         </template>
 
@@ -1759,6 +1837,7 @@ import {
 } from '@/api/chat';
 import { fetchCronJobs } from '@/api/cron';
 import { fetchDesktopSettings } from '@/api/desktop';
+import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
@@ -1989,6 +2068,23 @@ const worldComposerHeight = ref(188);
 const worldQuickPanelMode = ref<'' | 'emoji'>('');
 const worldHistoryDialogVisible = ref(false);
 const helperAppsWorkspaceMode = ref(false);
+const helperAppsPanelMode = ref<'offline' | 'online'>('offline');
+type HelperAppsPlazaExpose = {
+  openLocalFileSearch: () => void;
+  openGlobeApp: () => void;
+};
+type HelperAppExternalItem = {
+  linkId: string;
+  title: string;
+  description: string;
+  url: string;
+  icon: string;
+  sortOrder: number;
+};
+const helperAppsPlazaRef = ref<HelperAppsPlazaExpose | null>(null);
+const helperAppsOnlineLoading = ref(false);
+const helperAppsOnlineLoaded = ref(false);
+const helperAppsOnlineItems = ref<HelperAppExternalItem[]>([]);
 const worldHistoryKeyword = ref('');
 const worldHistoryActiveTab = ref<WorldHistoryCategory>('all');
 const worldHistoryDateRange = ref<[string, string] | []>([]);
@@ -2325,28 +2421,31 @@ const currentUserAvatarStyle = computed(() => ({
 }));
 const userWorldPermissionDenied = computed(() => userWorldStore.permissionDenied === true);
 
-const activeSectionTitle = computed(() =>
-  sessionHub.activeSection === 'more'
+const activeSectionTitle = computed(() => {
+  if (helperAppsWorkspaceMode.value && sessionHub.activeSection === 'groups') {
+    return t('userWorld.helperApps.title');
+  }
+  return sessionHub.activeSection === 'more'
     ? t('messenger.section.settings')
-    : t(`messenger.section.${sessionHub.activeSection}`)
-);
-const activeSectionSubtitle = computed(() =>
-  sessionHub.activeSection === 'more'
+    : t(`messenger.section.${sessionHub.activeSection}`);
+});
+const activeSectionSubtitle = computed(() => {
+  if (helperAppsWorkspaceMode.value && sessionHub.activeSection === 'groups') {
+    return t('userWorld.helperApps.subtitle');
+  }
+  return sessionHub.activeSection === 'more'
     ? t('messenger.section.settings.desc')
-    : t(`messenger.section.${sessionHub.activeSection}.desc`)
-);
+    : t(`messenger.section.${sessionHub.activeSection}.desc`);
+});
 const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 1024);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
-const showMiddlePane = computed(() => {
-  if (showHelperAppsWorkspace.value) {
-    return false;
-  }
-  return !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value;
-});
+const showMiddlePane = computed(
+  () => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value
+);
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
@@ -7132,10 +7231,110 @@ const appendWorldAttachmentTokens = (paths: string[]) => {
   worldDraft.value = `${worldDraft.value}${prefix}${tokens.join(' ')}`;
 };
 
+const openHelperAppsPanel = (mode: 'offline' | 'online') => {
+  helperAppsPanelMode.value = mode;
+  if (mode === 'online') {
+    loadHelperExternalApps();
+  }
+};
+
+const normalizeHexColor = (value: unknown) => {
+  const cleaned = String(value || '').trim();
+  if (!cleaned) return '';
+  const matched = cleaned.match(/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/);
+  if (!matched) return '';
+  let hex = matched[1].toLowerCase();
+  if (hex.length === 3) {
+    hex = hex
+      .split('')
+      .map((part) => part + part)
+      .join('');
+  }
+  return `#${hex}`;
+};
+
+const resolveExternalIconConfig = (icon: unknown) => {
+  const raw = String(icon || '').trim();
+  if (!raw) {
+    return { name: 'fa-globe', color: '' };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      const name = String((parsed as Record<string, unknown>)?.name || '').trim();
+      const match = name.split(/\s+/).find((part) => part.startsWith('fa-'));
+      return {
+        name: match || 'fa-globe',
+        color: normalizeHexColor((parsed as Record<string, unknown>)?.color)
+      };
+    }
+  } catch {
+    // fallback to plain icon name
+  }
+  const match = raw.split(/\s+/).find((part) => part.startsWith('fa-'));
+  return {
+    name: match || 'fa-globe',
+    color: ''
+  };
+};
+
+const normalizeExternalLink = (item: Record<string, unknown>): HelperAppExternalItem => ({
+  linkId: String(item?.link_id || '').trim(),
+  title: String(item?.title || '').trim(),
+  description: String(item?.description || '').trim(),
+  url: String(item?.url || '').trim(),
+  icon: String(item?.icon || '').trim(),
+  sortOrder: Number.isFinite(Number(item?.sort_order)) ? Number(item.sort_order) : 0
+});
+
+const resolveExternalIcon = (icon: unknown) => resolveExternalIconConfig(icon).name;
+
+const resolveExternalIconStyle = (icon: unknown) => {
+  const color = resolveExternalIconConfig(icon).color;
+  return color ? { color } : {};
+};
+
+const resolveExternalHost = (url: unknown) => {
+  const value = String(url || '').trim();
+  if (!value) return '-';
+  try {
+    const parsed = new URL(value);
+    return parsed.host || value;
+  } catch {
+    return value;
+  }
+};
+
+const loadHelperExternalApps = async () => {
+  if (helperAppsOnlineLoading.value || helperAppsOnlineLoaded.value) return;
+  helperAppsOnlineLoading.value = true;
+  try {
+    const { data } = await fetchExternalLinks();
+    const items = Array.isArray(data?.data?.items) ? data.data.items : [];
+    helperAppsOnlineItems.value = items
+      .map((item) => normalizeExternalLink(item as Record<string, unknown>))
+      .filter((item) => item.linkId && item.title && item.url)
+      .sort((left, right) => left.sortOrder - right.sortOrder);
+  } catch {
+    helperAppsOnlineItems.value = [];
+  } finally {
+    helperAppsOnlineLoading.value = false;
+    helperAppsOnlineLoaded.value = true;
+  }
+};
+
+const openExternalHelperApp = (item: HelperAppExternalItem) => {
+  if (!item.linkId) return;
+  const targetPath = `${basePrefix.value}/external/${encodeURIComponent(item.linkId)}`;
+  router.push({ path: targetPath }).catch(() => undefined);
+};
+
 const openHelperAppsDialog = () => {
   clearMiddlePaneOverlayHide();
-  middlePaneOverlayVisible.value = false;
+  middlePaneOverlayVisible.value = true;
   helperAppsWorkspaceMode.value = true;
+  helperAppsPanelMode.value = 'offline';
+  loadHelperExternalApps();
   switchSection('groups', { preserveHelperWorkspace: true });
   selectedGroupId.value = '';
 };

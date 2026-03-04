@@ -50,17 +50,17 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 
 - 直接复用 `wunder-arm-20:latest`（`--no-build`）
 - 使用 `arm64-20` 目录作为 Cargo 与 target 优先路径
-- 生成 Electron arm64 AppImage
-- 基于 `target/arm64-20/.build/python` 产出附带 Python + Git 的 AppImage
-- 在 AppImage 内补齐 `python -> python3`、`pip -> pip3`，并将 `opt/python/bin` 置于 `PATH` 最前，确保 `执行命令` 工具里的 `python` 默认命中内置解释器
+- 生成 Electron arm64 AppImage（基础包）
+- 基于 `target/arm64-20/.build/python` 产出 Python sidecar 压缩包（`wunder-python-*.tar.*`）
+- 重打包生成 `*-sidecar.AppImage`（默认不内置 Python，运行时自动识别同目录 `wunder-python`）
 - 在 AppImage 内注入内置 `git`，自动设置 `GIT_EXEC_PATH`，并将 `opt/git/bin` 置于 `PATH` 最前，确保 `执行命令` 工具里的 `git` 默认命中内置版本
-- 内置 Python 依赖默认包含一组“优先、轻量、高价值”库（`orjson`、`tabulate`、`rapidfuzz`、`Unidecode`、`docxtpl`），用于文本匹配、结构化输出、JSON 处理与文档模板生成
+- sidecar Python 依赖默认包含一组“优先、轻量、高价值”库（`orjson`、`tabulate`、`rapidfuzz`、`Unidecode`、`docxtpl`），用于文本匹配、结构化输出、JSON 处理与文档模板生成
 
-> 提示：第 5 步 AppImage 重打包在 qemu 下可能持续 10~30 分钟，看起来像“卡住”但通常仍在运行。
+> 提示：第 6 步 AppImage 重打包在 qemu 下可能持续 10~30 分钟，看起来像“卡住”但通常仍在运行。
 > 可用以下命令观察进度（文件大小持续增长即正常）：
 > ```bash
 > docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-arm \
->   bash -lc 'pgrep -af appimagetool || true; ls -lh /app/target/arm64-20/dist/wunder-desktop-arm64-python.AppImage'
+>   bash -lc 'pgrep -af appimagetool || true; ls -lh /app/target/arm64-20/dist/wunder-desktop-arm64-sidecar.AppImage'
 > ```
 
 ### 可选：打包 Playwright（浏览器自动化）
@@ -77,6 +77,43 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-
 
 > 说明：重打包 AppImage 时会自动将 Playwright 运行库（如 libnss3/libnspr4 等）收集进 AppImage 并设置 `LD_LIBRARY_PATH`，
 > 旧系统缺依赖时可直接使用。若需手动控制，可设置 `BUNDLE_PLAYWRIGHT_DEPS=0/1` 或 `PLAYWRIGHT_INSTALL_DEPS=0/1`。
+> 若希望浏览器也以 sidecar 分发，可将 `${PYTHON_ROOT}/playwright` 打包为 `wunder-playwright` 并与 AppImage 同目录放置。
+
+### 默认：Python Sidecar（AppImage 不内置 Python）
+
+一键打包脚本已默认使用 sidecar；如需手动分步执行，可按以下流程：
+
+```bash
+docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-arm \
+  bash -lc 'BUILD_ROOT=/app/target/arm64-20/.build/python \
+  bash /app/docker-extra/scripts/package_sidecar_python.sh'
+```
+
+然后用 sidecar 模式重打包 AppImage（默认输出 `*-sidecar.AppImage`）：
+
+```bash
+docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-arm \
+  bash -lc 'ARCH=arm64 APPIMAGE_PATH=/app/target/arm64-20/dist/wunder-desktop-arm64.AppImage \
+  BUILD_ROOT=/app/target/arm64-20/.build/python APPIMAGE_WORK=/app/target/arm64-20/.build/python/appimage \
+  OUTPUT_DIR=/app/target/arm64-20/dist PREFER_PREBUILT_PYTHON=1 PREFER_PREBUILT_GIT=1 \
+  EMBED_PYTHON=0 BUNDLE_PLAYWRIGHT_DEPS=0 PLAYWRIGHT_INSTALL_DEPS=0 \
+  bash /app/docker-extra/scripts/package_appimage_with_python.sh'
+```
+
+运行时将 `wunder-python` 解压到 AppImage 同目录即可（AppRun 会自动识别并设置 `WUNDER_PYTHON_BIN`）。
+
+### 可选：内置 Python（单文件 AppImage）
+
+如需单文件交付，可切换为内置模式重打包：
+
+```bash
+docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-arm \
+  bash -lc 'ARCH=arm64 APPIMAGE_PATH=/app/target/arm64-20/dist/wunder-desktop-arm64.AppImage \
+  BUILD_ROOT=/app/target/arm64-20/.build/python APPIMAGE_WORK=/app/target/arm64-20/.build/python/appimage \
+  OUTPUT_DIR=/app/target/arm64-20/dist PREFER_PREBUILT_PYTHON=1 PREFER_PREBUILT_GIT=1 \
+  EMBED_PYTHON=1 BUNDLE_PLAYWRIGHT_DEPS=0 PLAYWRIGHT_INSTALL_DEPS=0 \
+  bash /app/docker-extra/scripts/package_appimage_with_python.sh'
+```
 
 ### CI 专用（不附带 Python / Git）
 
@@ -139,7 +176,9 @@ OUTPUT_DIR=/app/target/arm64-20/dist \
 - `wunder-cli`
 - `wunder-desktop-bridge`
 - Electron AppImage: `target/arm64-20/dist/wunder-desktop-arm64.AppImage`
-- Electron AppImage（附带 Python + Git）: `target/arm64-20/dist/wunder-desktop-arm64-python.AppImage`
+- Electron AppImage（sidecar Python）: `target/arm64-20/dist/wunder-desktop-arm64-sidecar.AppImage`
+- Python sidecar 包：`target/arm64-20/dist/wunder-python-arm64.tar.gz`
+- Electron AppImage（内置 Python + Git，可选）: `target/arm64-20/dist/wunder-desktop-arm64-python.AppImage`
 
 ## 5. 缓存与目录复用说明
 
