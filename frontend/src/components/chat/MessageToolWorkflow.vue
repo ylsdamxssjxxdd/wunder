@@ -20,42 +20,44 @@
       >
         <summary class="tool-workflow-entry-summary">
           <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
+          <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
           <span :class="['tool-workflow-entry-status', `is-${entry.status}`]">{{ entry.statusLabel }}</span>
         </summary>
 
         <div class="tool-workflow-entry-body">
-          <div v-if="entry.resultNote" class="tool-workflow-note">{{ entry.resultNote }}</div>
+          <div
+            v-if="entry.viewKind === 'command' && entry.commandView"
+            class="tool-workflow-main tool-workflow-main--command"
+          >
+            <div class="tool-workflow-terminal-head">{{ entry.commandView.shell }}</div>
 
-          <ul v-if="entry.patchEntries.length" class="tool-workflow-patch-list">
-            <li
-              v-for="patch in entry.patchEntries"
-              :key="patch.key"
-              :class="['tool-workflow-patch-item', `tool-workflow-patch-item--${patch.kind}`]"
-            >
-              <span class="tool-workflow-patch-sign">{{ patch.sign }}</span>
-              <span class="tool-workflow-patch-path">{{ patch.text }}</span>
-            </li>
-          </ul>
+            <pre
+              class="tool-workflow-terminal-body"
+              :ref="(el) => bindStreamBodyRef(entry.key, 'stdout', el)"
+              @scroll="handleStreamBodyScroll(entry.key, 'stdout', $event)"
+            >{{ entry.commandView.terminalText }}</pre>
 
-          <div v-if="entry.patchDiffBlocks.length" class="tool-workflow-diff-list">
-            <div v-for="block in entry.patchDiffBlocks" :key="block.key" class="tool-workflow-diff-block">
-              <div class="tool-workflow-diff-title">{{ block.title }}</div>
-              <div class="tool-workflow-diff-code">
-                <span
-                  v-for="line in block.lines"
-                  :key="line.key"
-                  :class="['tool-workflow-diff-line', `is-${line.kind}`]"
-                >
-                  {{ line.text }}
-                </span>
-              </div>
+            <div class="tool-workflow-terminal-footer">
+              <span
+                v-if="entry.commandView.exitCode !== null"
+                class="tool-workflow-terminal-exit-code"
+              >
+                exit {{ entry.commandView.exitCode }}
+              </span>
             </div>
           </div>
 
-          <pre v-if="entry.resultBlock" class="tool-workflow-result">{{ entry.resultBlock }}</pre>
-          <pre v-if="entry.commandBlock" class="tool-workflow-code">{{ entry.commandBlock }}</pre>
-          <pre v-if="entry.outputBlock" class="tool-workflow-output">{{ entry.outputBlock }}</pre>
-          <div v-if="entry.errorText" class="tool-workflow-error">{{ entry.errorText }}</div>
+          <div v-else-if="entry.viewKind === 'patch'" class="tool-workflow-main tool-workflow-main--patch">
+            <div
+              v-for="line in entry.patchLines"
+              :key="line.key"
+              :class="['tool-workflow-patch-line', `is-${line.kind}`]"
+            >
+              {{ line.text }}
+            </div>
+          </div>
+
+          <pre v-else-if="entry.mainBlock" class="tool-workflow-main">{{ entry.mainBlock }}</pre>
         </div>
       </details>
     </div>
@@ -63,7 +65,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue';
 
 import { useI18n } from '@/i18n';
 
@@ -102,13 +104,31 @@ type ToolEntryView = {
   summaryTitle: string;
   status: string;
   statusLabel: string;
-  resultBlock: string;
-  commandBlock: string;
-  outputBlock: string;
-  resultNote: string;
-  errorText: string;
-  patchEntries: PatchEntry[];
-  patchDiffBlocks: PatchDiffBlock[];
+  durationLabel: string;
+  viewKind: 'text' | 'command' | 'patch';
+  mainBlock: string;
+  commandView: CommandView | null;
+  patchLines: PatchLine[];
+};
+
+type CommandView = {
+  command: string;
+  shell: string;
+  terminalText: string;
+  exitCode: number | null;
+};
+
+type CommandRecord = {
+  command: string;
+  stdout: string;
+  stderr: string;
+  returncode: number | null;
+};
+
+type PatchLine = {
+  key: string;
+  kind: 'meta' | 'note' | 'add' | 'delete' | 'move' | 'update' | 'error';
+  text: string;
 };
 
 type RawEntry = {
@@ -119,10 +139,14 @@ type RawEntry = {
   resultItem: WorkflowItem | null;
 };
 
+type TerminalAutoStickMode = 'always' | 'smart' | 'off';
+type CommandStreamName = 'stdout' | 'stderr';
+
 type Props = {
   items?: WorkflowItem[];
   loading?: boolean;
   visible?: boolean;
+  terminalAutoStick?: TerminalAutoStickMode;
 };
 
 type UnknownObject = Record<string, unknown>;
@@ -166,11 +190,80 @@ const PATH_HINT_KEYS = [
 const props = withDefaults(defineProps<Props>(), {
   items: () => [],
   loading: false,
-  visible: false
+  visible: false,
+  terminalAutoStick: 'smart'
 });
 
 const { t } = useI18n();
 const expandedKeys = ref<Set<string>>(new Set());
+const streamBodyRefMap = new Map<string, HTMLPreElement>();
+const streamFollowState = new Map<string, boolean>();
+
+const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
+
+const isNearBottom = (element: HTMLElement, threshold = 20): boolean =>
+  element.scrollTop + element.clientHeight >= element.scrollHeight - threshold;
+
+const terminalAutoStickMode = computed<TerminalAutoStickMode>(() =>
+  normalizeTerminalAutoStickMode(props.terminalAutoStick)
+);
+
+const shouldAutoStickStream = (key: string): boolean => {
+  const mode = terminalAutoStickMode.value;
+  if (mode === 'off') return false;
+  if (mode === 'always') return true;
+  return streamFollowState.get(key) ?? true;
+};
+
+const scrollStreamToBottom = (key: string) => {
+  const element = streamBodyRefMap.get(key);
+  if (!element) return;
+  element.scrollTop = element.scrollHeight;
+};
+
+const bindStreamBodyRef = (
+  entryKey: string,
+  stream: CommandStreamName,
+  element: Element | ComponentPublicInstance | null
+) => {
+  const key = streamKey(entryKey, stream);
+  if (!(element instanceof HTMLPreElement)) {
+    streamBodyRefMap.delete(key);
+    streamFollowState.delete(key);
+    return;
+  }
+  streamBodyRefMap.set(key, element);
+  if (!streamFollowState.has(key)) {
+    streamFollowState.set(key, true);
+  }
+  if (shouldAutoStickStream(key)) {
+    requestAnimationFrame(() => scrollStreamToBottom(key));
+  }
+};
+
+const handleStreamBodyScroll = (entryKey: string, stream: CommandStreamName, event: Event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  streamFollowState.set(streamKey(entryKey, stream), isNearBottom(target));
+};
+
+const syncStreamAutoStick = () => {
+  streamBodyRefMap.forEach((_element, key) => {
+    if (shouldAutoStickStream(key)) {
+      scrollStreamToBottom(key);
+    }
+  });
+};
+
+const pruneStreamTracking = (validEntryKeys: Set<string>) => {
+  Array.from(streamBodyRefMap.keys()).forEach((key) => {
+    const entryKey = key.split('::', 1)[0];
+    if (!validEntryKeys.has(entryKey)) {
+      streamBodyRefMap.delete(key);
+      streamFollowState.delete(key);
+    }
+  });
+};
 
 const asObject = (value: unknown): UnknownObject | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -245,13 +338,6 @@ const truncateSingleLine = (text: string, maxLength = 120): string => {
   return `${normalized.slice(0, maxLength)}...`;
 };
 
-const truncateMultiline = (text: string, maxLength = 3600): string => {
-  const normalized = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  if (!normalized) return '';
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, maxLength)}\n...`;
-};
-
 const truncateByChars = (text: string, maxChars: number): { value: string; truncated: boolean } => {
   if (maxChars <= 0) return { value: '', truncated: text.length > 0 };
   const chars = Array.from(String(text || ''));
@@ -281,6 +367,62 @@ const buildTextPreview = (
     rows.push(`${indent}... (${extras.join(', ')})`);
   }
   return rows.join('\n');
+};
+
+const normalizeTerminalAutoStickMode = (value: unknown): TerminalAutoStickMode => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (normalized === 'always' || normalized === 'off') return normalized;
+  return 'smart';
+};
+
+const normalizeMultiline = (text: string): string =>
+  String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+const truncateByMiddle = (
+  text: string,
+  maxChars: number
+): { value: string; truncated: boolean } => {
+  if (maxChars <= 0) return { value: '', truncated: text.length > 0 };
+  const chars = Array.from(text);
+  if (chars.length <= maxChars) return { value: chars.join(''), truncated: false };
+  const headChars = Math.max(1, Math.floor(maxChars * 0.58));
+  const tailChars = Math.max(1, maxChars - headChars);
+  const omitted = Math.max(chars.length - headChars - tailChars, 0);
+  const head = chars.slice(0, headChars).join('');
+  const tail = chars.slice(chars.length - tailChars).join('');
+  return {
+    value: `${head}\n... (${omitted} chars omitted)\n${tail}`,
+    truncated: true
+  };
+};
+
+const buildTerminalStream = (
+  text: string,
+  _status: string,
+  maxLines = 260,
+  maxChars = 16000
+): string => {
+  const normalized = normalizeMultiline(text);
+  if (!normalized.trim()) return '';
+
+  const lines = normalized.split('\n');
+  const keepLines = Math.max(maxLines, 1);
+  let lineText = normalized;
+  let hiddenLines = 0;
+  if (lines.length > keepLines) {
+    const headLines = Math.max(1, Math.floor(keepLines * 0.62));
+    const tailLines = Math.max(1, keepLines - headLines);
+    hiddenLines = Math.max(lines.length - headLines - tailLines, 0);
+    const head = lines.slice(0, headLines);
+    const tail = lines.slice(lines.length - tailLines);
+    lineText = [...head, `... (${hiddenLines} lines omitted)`, ...tail].join('\n');
+  }
+
+  const { value, truncated } = truncateByMiddle(lineText, maxChars);
+  if (!hiddenLines && !truncated) return value;
+  return value;
 };
 
 const isApplyPatchTool = (toolName: string): boolean => {
@@ -353,17 +495,161 @@ const resolveToolEventKind = (item: WorkflowItem): 'call' | 'output' | 'result' 
   return item.isTool ? 'result' : null;
 };
 
+const extractFirstCommandLine = (text: unknown): string => {
+  if (typeof text !== 'string') return '';
+  const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const firstLine = normalized
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+  return firstLine ? truncateSingleLine(firstLine, 180) : '';
+};
+
 const resolveCommandFromCall = (item: WorkflowItem | null): string => {
   if (!item) return '';
   const detailObject = parseDetailObject(item.detail);
-  const args = detailObject ? asObject(detailObject.args) : null;
+  const args = extractCallArgs(item);
   return pickString(
     args?.command,
+    extractFirstCommandLine(args?.content),
+    extractFirstCommandLine(args?.input),
+    extractFirstCommandLine(args?.raw),
     args?.cmd,
     args?.script,
     detailObject?.command,
+    extractFirstCommandLine(detailObject?.content),
+    extractFirstCommandLine(detailObject?.input),
     detailObject?.cmd,
     detailObject?.script
+  );
+};
+
+const decodeEscapedText = (raw: string): string => {
+  const value = String(raw || '');
+  if (!value) return '';
+  try {
+    return JSON.parse(`"${value}"`);
+  } catch {
+    return value
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\');
+  }
+};
+
+const emptyCommandRecord = (): CommandRecord => ({
+  command: '',
+  stdout: '',
+  stderr: '',
+  returncode: null
+});
+
+const extractCommandRecordFromObject = (root: UnknownObject | null): CommandRecord => {
+  if (!root) return emptyCommandRecord();
+  const data = asObject(root.data) || root;
+  const firstResult = Array.isArray(data?.results)
+    ? (data.results.find((value) => asObject(value)) as UnknownObject | undefined)
+    : undefined;
+  const source = firstResult || data;
+
+  return {
+    command: pickString(
+      source?.command,
+      data?.command,
+      root.command,
+      extractFirstCommandLine(source?.content),
+      extractFirstCommandLine(source?.input),
+      extractFirstCommandLine(data?.content),
+      extractFirstCommandLine(data?.input),
+      extractFirstCommandLine(root.content),
+      extractFirstCommandLine(root.input)
+    ),
+    stdout: pickString(
+      source?.stdout,
+      source?.output,
+      source?.result,
+      data?.stdout,
+      data?.output,
+      data?.result,
+      root.stdout,
+      root.output,
+      root.result
+    ),
+    stderr: pickString(
+      source?.stderr,
+      source?.error,
+      data?.stderr,
+      data?.error,
+      root.stderr,
+      root.error
+    ),
+    returncode: toOptionalInt(source?.returncode, data?.returncode, root.returncode)
+  };
+};
+
+const extractCommandRecordFromUnknown = (candidate: unknown): CommandRecord => {
+  const directObject = asObject(candidate);
+  if (directObject) return extractCommandRecordFromObject(directObject);
+  if (typeof candidate === 'string') {
+    const parsedDirect = parseDetailObject(candidate);
+    if (parsedDirect) return extractCommandRecordFromObject(parsedDirect);
+    const decoded = decodeEscapedText(candidate);
+    const parsedDecoded = parseDetailObject(decoded);
+    if (parsedDecoded) return extractCommandRecordFromObject(parsedDecoded);
+  }
+  return emptyCommandRecord();
+};
+
+const extractPreviewField = (preview: string, field: string): string => {
+  if (!preview) return '';
+  const patterns = [
+    new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`, 'i'),
+    new RegExp(`\\\\"${field}\\\\"\\s*:\\s*\\\\"([\\s\\S]*?)(?:\\\\"\\s*,\\s*\\\\"|\\\\"\\s*[}\\]])`, 'i'),
+    new RegExp(`"${field}"\\s*:\\s*"([\\s\\S]+)$`, 'i')
+  ];
+  for (const pattern of patterns) {
+    const match = preview.match(pattern);
+    if (match?.[1]) return decodeEscapedText(match[1]);
+  }
+  return '';
+};
+
+const extractCompactedCommandPayload = (
+  resultObject: UnknownObject | null,
+  dataObject: UnknownObject | null
+): { preview: string; command: string; stdout: string; stderr: string; returncode: number | null } => {
+  const preview = pickString(
+    dataObject?.preview,
+    resultObject?.preview,
+    dataObject?.result_preview,
+    resultObject?.result_preview
+  );
+  if (!preview) return { preview: '', command: '', stdout: '', stderr: '', returncode: null };
+
+  const parsed = extractCommandRecordFromUnknown(preview);
+  const command = pickString(parsed.command, extractPreviewField(preview, 'command'));
+  const stdout = pickString(parsed.stdout, extractPreviewField(preview, 'stdout'));
+  const stderr = pickString(parsed.stderr, extractPreviewField(preview, 'stderr'));
+  const returncode = toOptionalInt(parsed.returncode, extractPreviewField(preview, 'returncode'));
+  return { preview, command, stdout, stderr, returncode };
+};
+
+const resolveCommandFromResult = (item: WorkflowItem | null): string => {
+  if (!item) return '';
+  const detailObject = parseDetailObject(item.detail);
+  const resultObject = extractToolResultObject(detailObject);
+  const dataObject = extractToolResultData(resultObject);
+  const firstResult = Array.isArray(dataObject?.results)
+    ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
+    : undefined;
+  const compacted = extractCompactedCommandPayload(resultObject, dataObject);
+  return pickString(
+    firstResult?.command,
+    dataObject?.command,
+    resultObject?.command,
+    compacted.command
   );
 };
 
@@ -382,22 +668,35 @@ const resolveCommandFromOutput = (item: WorkflowItem | null): string => {
   return pickString(extractTaggedSection(item.detail, 'command'));
 };
 
-const resolveCommandFromResult = (item: WorkflowItem | null): string => {
-  if (!item) return '';
-  const detailObject = parseDetailObject(item.detail);
-  const resultObject = extractToolResultObject(detailObject);
-  const dataObject = extractToolResultData(resultObject);
-  const firstResult = Array.isArray(dataObject?.results)
-    ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
-    : undefined;
-  return pickString(firstResult?.command, dataObject?.command, resultObject?.command);
+const extractToolOutputStreams = (
+  outputItem: WorkflowItem | null
+): { command: string; stdout: string; stderr: string } => {
+  const detail = String(outputItem?.detail || '').trim();
+  if (!detail) {
+    return { command: '', stdout: '', stderr: '' };
+  }
+  return {
+    command: extractTaggedSection(detail, 'command'),
+    stdout: extractTaggedSection(detail, 'stdout'),
+    stderr: extractTaggedSection(detail, 'stderr')
+  };
 };
 
 const extractCallArgs = (item: WorkflowItem | null): UnknownObject | null => {
   if (!item) return null;
   const detailObject = parseDetailObject(item.detail);
   if (!detailObject) return null;
-  return asObject(detailObject.args) || detailObject;
+  const nestedFunction = asObject(detailObject.function);
+  const candidates: unknown[] = [detailObject.args, detailObject.arguments, nestedFunction?.arguments];
+  for (const candidate of candidates) {
+    const directObject = asObject(candidate);
+    if (directObject) return directObject;
+    if (typeof candidate === 'string') {
+      const parsed = parseDetailObject(candidate);
+      if (parsed) return parsed;
+    }
+  }
+  return detailObject;
 };
 
 const appendPathCandidate = (target: Set<string>, value: unknown) => {
@@ -675,6 +974,66 @@ const buildApplyPatchResultNote = (resultItem: WorkflowItem | null, toolName: st
   return parts.join(' · ');
 };
 
+const buildApplyPatchLines = (
+  command: string,
+  resultNote: string,
+  patchEntries: PatchEntry[],
+  patchDiffBlocks: PatchDiffBlock[],
+  errorText: string
+): PatchLine[] => {
+  const rows: PatchLine[] = [];
+  let cursor = 0;
+  const push = (kind: PatchLine['kind'], text: string) => {
+    if (!text.trim()) return;
+    rows.push({ key: `patch-${cursor}`, kind, text });
+    cursor += 1;
+  };
+
+  if (command) push('meta', `$ ${command}`);
+  if (resultNote) push('note', resultNote);
+  patchEntries.forEach((entry) => {
+    const kind: PatchLine['kind'] =
+      entry.kind === 'add'
+        ? 'add'
+        : entry.kind === 'delete'
+          ? 'delete'
+          : entry.kind === 'move'
+            ? 'move'
+            : 'update';
+    push(kind, `${entry.sign} ${entry.text}`);
+  });
+  patchDiffBlocks.forEach((block) => {
+    push('meta', `@@ ${block.title}`);
+    block.lines.forEach((line) => {
+      if (line.kind === 'add') push('add', line.text);
+      else if (line.kind === 'delete') push('delete', line.text);
+      else push('meta', line.text);
+    });
+  });
+  if (errorText) push('error', `error: ${errorText}`);
+  return rows;
+};
+
+const extractDurationMs = (entry: RawEntry): number | null => {
+  const detailObject = parseDetailObject(entry.resultItem?.detail);
+  const resultObject = extractToolResultObject(detailObject);
+  const dataObject = extractToolResultData(resultObject);
+  return toOptionalInt(
+    asObject(resultObject?.meta)?.duration_ms,
+    dataObject?.duration_ms,
+    dataObject?.elapsed_ms,
+    dataObject?.durationMs,
+    dataObject?.elapsedMs
+  );
+};
+
+const formatDurationLabel = (durationMs: number | null): string => {
+  if (durationMs === null || durationMs <= 0) return '';
+  if (durationMs < 1000) return `${durationMs}ms`;
+  const seconds = durationMs / 1000;
+  return seconds >= 10 ? `${seconds.toFixed(0)}s` : `${seconds.toFixed(1)}s`;
+};
+
 const collectEntryPathHints = (
   entry: RawEntry,
   patchEntries: PatchEntry[],
@@ -699,7 +1058,14 @@ const composeSummaryTitle = (base: string, pathHints: string[]): string => {
   const visible = pathHints.slice(0, FILE_HINT_SUMMARY_LIMIT);
   const moreCount = Math.max(pathHints.length - visible.length, 0);
   const suffix = moreCount > 0 ? ` +${moreCount}` : '';
-  return truncateSingleLine(`${base} · ${visible.join(', ')}${suffix}`);
+  return truncateSingleLine(`${base} ${visible.join(', ')}${suffix}`);
+};
+
+const composeEntryTitle = (toolDisplay: string, command: string, pathHints: string[]): string => {
+  if (command) {
+    return truncateSingleLine(`${toolDisplay} ${command}`);
+  }
+  return composeSummaryTitle(toolDisplay, pathHints);
 };
 
 const extractResultPayload = (
@@ -737,11 +1103,11 @@ const buildReadFileResultBlock = (dataObject: UnknownObject | null): string => {
   const content = pickString(dataObject.content);
   if (!content) return '';
   const sections = parseReadFileSections(content);
-  if (!sections.length) return buildTextPreview(content, 14, 1800, '    ');
+  if (!sections.length) return buildTextPreview(content, 14, 1800, '');
 
   const fileBlocks = sections.slice(0, 3).map((section) => {
     const path = section.path || '(unknown)';
-    const preview = buildTextPreview(section.body, 12, 1400, '    ');
+    const preview = buildTextPreview(section.body, 12, 1400, '');
     return `${path}\n${preview}`;
   });
   if (sections.length > fileBlocks.length) {
@@ -776,51 +1142,213 @@ const buildSearchResultBlock = (dataObject: UnknownObject | null): string => {
   return rows.join('\n');
 };
 
-const buildWriteFileResultBlock = (resultObject: UnknownObject | null): string => {
-  if (!resultObject) return '';
-  const path = pickString(resultObject.path);
-  const bytes = toInt(resultObject.bytes);
-  const parts: string[] = [];
-  if (path) parts.push(path);
-  if (bytes > 0) parts.push(`${bytes} bytes`);
-  return parts.join(' · ');
-};
-
-const buildExecuteCommandResultBlock = (
+const buildWriteFileResultBlock = (
   resultObject: UnknownObject | null,
-  dataObject: UnknownObject | null,
-  outputBlock: string
+  dataObject: UnknownObject | null
 ): string => {
   const firstResult = Array.isArray(dataObject?.results)
     ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
     : undefined;
-  if (!firstResult && !resultObject) return '';
+  const path = pickString(
+    firstResult?.path,
+    firstResult?.file,
+    firstResult?.file_path,
+    dataObject?.path,
+    dataObject?.file,
+    dataObject?.file_path,
+    resultObject?.path,
+    resultObject?.file,
+    resultObject?.file_path
+  );
+  const bytes = toInt(
+    firstResult?.bytes,
+    firstResult?.written_bytes,
+    dataObject?.bytes,
+    dataObject?.written_bytes,
+    resultObject?.bytes,
+    resultObject?.written_bytes
+  );
 
-  const returnCode = toOptionalInt(
+  const rows: string[] = [];
+  if (path) rows.push(path);
+  if (bytes > 0) rows.push(`${bytes} bytes`);
+  return rows.join('\n');
+};
+
+const resolveExecuteCommandExitCode = (
+  resultObject: UnknownObject | null,
+  dataObject: UnknownObject | null
+): number | null => {
+  const firstResult = Array.isArray(dataObject?.results)
+    ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
+    : undefined;
+  return toOptionalInt(
     firstResult?.returncode,
+    dataObject?.returncode,
+    resultObject?.returncode,
     resultObject?.meta && asObject(resultObject.meta)?.exit_code
   );
-  const rows: string[] = [];
-  if (returnCode !== null) rows.push(`exit ${returnCode}`);
-  const durationMs = toOptionalInt(asObject(resultObject?.meta)?.duration_ms);
-  if (durationMs !== null && durationMs > 0) rows.push(`${durationMs}ms`);
+};
 
-  if (!outputBlock) {
-    const stderr = pickString(firstResult?.stderr, dataObject?.stderr, resultObject?.stderr);
-    const stdout = pickString(firstResult?.stdout, dataObject?.stdout, resultObject?.stdout);
-    if (returnCode === null || returnCode === 0) {
-      const stdoutPreview = buildTextPreview(stdout, 6, 1200, '    ');
-      if (stdoutPreview) rows.push(`stdout\n${stdoutPreview}`);
-      const stderrPreview = buildTextPreview(stderr, 3, 480, '    ');
-      if (stderrPreview) rows.push(`stderr\n${stderrPreview}`);
-    } else {
-      const stderrPreview = buildTextPreview(stderr, 6, 1200, '    ');
-      if (stderrPreview) rows.push(`stderr\n${stderrPreview}`);
-      const stdoutPreview = buildTextPreview(stdout, 3, 480, '    ');
-      if (stdoutPreview) rows.push(`stdout\n${stdoutPreview}`);
-    }
+const looksStructuredResultText = (text: string): boolean => {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return false;
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return false;
+  return (
+    trimmed.includes('"results"') ||
+    trimmed.includes('"stdout"') ||
+    trimmed.includes('"stderr"') ||
+    trimmed.includes('"returncode"')
+  );
+};
+
+const normalizeCommandStreamText = (text: string, stream: 'stdout' | 'stderr'): string => {
+  const raw = String(text || '');
+  if (!raw.trim()) return '';
+  const unwrapped = extractCommandRecordFromUnknown(raw);
+  if (stream === 'stdout' && unwrapped.stdout) return unwrapped.stdout;
+  if (stream === 'stderr' && unwrapped.stderr) return unwrapped.stderr;
+  if (looksStructuredResultText(raw)) return '';
+  return raw;
+};
+
+const stripBackendTruncationMarkers = (text: string): string =>
+  String(text || '')
+    .replace(/\.\.\.\(truncated\)\.\.\./gi, '')
+    .replace(/\.\.\.\(truncated\)/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+const buildExecuteCommandTerminalText = (
+  command: string,
+  stdoutRaw: string,
+  stderrRaw: string,
+  previewRaw: string,
+  errorText: string,
+  status: string
+): string => {
+  const lines: string[] = [];
+  lines.push(`$ ${command || '(command)'}`);
+
+  const stdout = buildTerminalStream(stdoutRaw, status, 140, 18000);
+  const stderr = buildTerminalStream(stderrRaw, status, 100, 12000);
+  if (stdout) {
+    lines.push(stdout);
   }
-  return rows.join('\n\n');
+  if (stderr) {
+    if (lines.length > 0) lines.push('');
+    lines.push('[stderr]');
+    lines.push(stderr);
+  }
+
+  const previewTrimmed = previewRaw.trim();
+  const previewLooksLikeJson =
+    (previewTrimmed.startsWith('{') || previewTrimmed.startsWith('[')) &&
+    (previewTrimmed.includes('"results"') ||
+      previewTrimmed.includes('"stdout"') ||
+      previewTrimmed.includes('"returncode"'));
+
+  if (!stdout && !stderr && previewRaw && !previewLooksLikeJson) {
+    lines.push(buildTerminalStream(previewRaw, status, 320, 20000));
+  }
+  if (errorText) {
+    if (lines.length > 0) lines.push('');
+    lines.push(`error: ${errorText}`);
+  }
+  return lines.join('\n').trim();
+};
+
+const buildExecuteCommandView = (
+  entry: RawEntry,
+  command: string,
+  status: string,
+  errorText: string
+): CommandView => {
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const firstResult = Array.isArray(dataObject?.results)
+    ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
+    : undefined;
+  const outputStreams = extractToolOutputStreams(entry.outputItem);
+  const compacted = extractCompactedCommandPayload(resultObject, dataObject);
+  const structuredCandidates = [
+    extractCommandRecordFromUnknown(firstResult),
+    extractCommandRecordFromUnknown(firstResult?.result),
+    extractCommandRecordFromUnknown(firstResult?.output),
+    extractCommandRecordFromUnknown(dataObject),
+    extractCommandRecordFromUnknown(dataObject?.result),
+    extractCommandRecordFromUnknown(dataObject?.output),
+    extractCommandRecordFromUnknown(resultObject),
+    extractCommandRecordFromUnknown(resultObject?.result),
+    extractCommandRecordFromUnknown(resultObject?.output)
+  ];
+  const structuredCommand = pickString(...structuredCandidates.map((item) => item.command));
+  const structuredStdout = pickString(...structuredCandidates.map((item) => item.stdout));
+  const structuredStderr = pickString(...structuredCandidates.map((item) => item.stderr));
+  const structuredReturncode = toOptionalInt(...structuredCandidates.map((item) => item.returncode));
+
+  const resolvedCommand = pickString(
+    command,
+    outputStreams.command,
+    firstResult?.command,
+    extractFirstCommandLine(firstResult?.content),
+    extractFirstCommandLine(firstResult?.input),
+    dataObject?.command,
+    extractFirstCommandLine(dataObject?.content),
+    extractFirstCommandLine(dataObject?.input),
+    resultObject?.command,
+    structuredCommand,
+    compacted.command
+  );
+  const exitCode = toOptionalInt(
+    resolveExecuteCommandExitCode(resultObject, dataObject),
+    structuredReturncode,
+    compacted.returncode
+  );
+  const stdoutRaw = pickString(
+    outputStreams.stdout,
+    firstResult?.stdout,
+    structuredStdout,
+    compacted.stdout,
+    dataObject?.stdout,
+    resultObject?.stdout,
+    firstResult?.output,
+    firstResult?.result,
+    dataObject?.output,
+    dataObject?.result,
+    resultObject?.output,
+    resultObject?.result
+  );
+  const stderrRaw = pickString(
+    outputStreams.stderr,
+    firstResult?.stderr,
+    structuredStderr,
+    compacted.stderr,
+    firstResult?.error,
+    dataObject?.stderr,
+    dataObject?.error,
+    resultObject?.stderr,
+    resultObject?.error
+  );
+  const normalizedStdout = normalizeCommandStreamText(stdoutRaw, 'stdout');
+  const normalizedStderr = normalizeCommandStreamText(stderrRaw, 'stderr');
+  const previewRaw = compacted.preview;
+  const commandText = resolvedCommand || '(command)';
+  const displayStdout = stripBackendTruncationMarkers(normalizedStdout);
+  const displayStderr = stripBackendTruncationMarkers(normalizedStderr);
+
+  return {
+    command: commandText,
+    shell: 'bash',
+    terminalText: buildExecuteCommandTerminalText(
+      commandText,
+      displayStdout,
+      displayStderr,
+      previewRaw,
+      errorText,
+      status
+    ),
+    exitCode
+  };
 };
 
 const buildGenericResultBlock = (resultObject: UnknownObject | null, dataObject: UnknownObject | null): string => {
@@ -842,15 +1370,13 @@ const buildGenericResultBlock = (resultObject: UnknownObject | null, dataObject:
   return rows.join('\n');
 };
 
-const buildResultBlock = (entry: RawEntry, outputBlock: string): string => {
+const buildResultBlock = (entry: RawEntry): string => {
   if (!entry.resultItem) return '';
   if (isApplyPatchTool(entry.toolName)) return '';
+  if (isExecuteCommandTool(entry.toolName)) return '';
 
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
 
-  if (isExecuteCommandTool(entry.toolName)) {
-    return buildExecuteCommandResultBlock(resultObject, dataObject, outputBlock);
-  }
   if (isReadFileTool(entry.toolName)) {
     return buildReadFileResultBlock(dataObject);
   }
@@ -861,12 +1387,13 @@ const buildResultBlock = (entry: RawEntry, outputBlock: string): string => {
     return buildSearchResultBlock(dataObject);
   }
   if (isWriteFileTool(entry.toolName)) {
-    return buildWriteFileResultBlock(resultObject);
+    return buildWriteFileResultBlock(resultObject, dataObject);
   }
   return buildGenericResultBlock(resultObject, dataObject);
 };
 
 const buildOutputBlock = (entry: RawEntry, command: string): string => {
+  if (isExecuteCommandTool(entry.toolName)) return '';
   const outputDetail = String(entry.outputItem?.detail || '').trim();
   if (outputDetail) {
     const commandText = extractTaggedSection(outputDetail, 'command');
@@ -914,6 +1441,42 @@ const buildOutputBlock = (entry: RawEntry, command: string): string => {
   return '';
 };
 
+const buildMainBlock = (
+  command: string,
+  resultBlock: string,
+  outputBlock: string,
+  errorText: string
+): string => {
+  const rows: string[] = [];
+  if (command) rows.push(`$ ${command}`);
+  if (resultBlock) {
+    if (rows.length > 0) rows.push('');
+    rows.push(resultBlock);
+  }
+  if (outputBlock) {
+    if (rows.length > 0) rows.push('');
+    rows.push(outputBlock);
+  }
+  if (errorText) {
+    if (rows.length > 0) rows.push('');
+    rows.push(`error: ${errorText}`);
+  }
+  return rows.join('\n').trim();
+};
+
+const buildWriteFileMainBlock = (entry: RawEntry): string => {
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const metaBlock = buildWriteFileResultBlock(resultObject, dataObject);
+  const args = extractCallArgs(entry.callItem);
+  const content = pickString(args?.content, args?.text, args?.input);
+  if (!content) return metaBlock;
+
+  const contentPreview = buildTerminalStream(content, 'completed', 80, 12000);
+  if (!contentPreview) return metaBlock;
+  if (!metaBlock) return contentPreview;
+  return `${metaBlock}\n\n${contentPreview}`;
+};
+
 const buildErrorText = (resultItem: WorkflowItem | null): string => {
   if (!resultItem) return '';
   const detailObject = parseDetailObject(resultItem.detail);
@@ -930,32 +1493,78 @@ const resolveEntryStatus = (entry: RawEntry): string =>
   normalizeStatus(entry.resultItem?.status || entry.outputItem?.status || entry.callItem?.status || 'completed');
 
 const buildEntryView = (entry: RawEntry): ToolEntryView => {
-  const command = pickString(
+  const rawCommand = pickString(
     resolveCommandFromCall(entry.callItem),
     resolveCommandFromOutput(entry.outputItem),
     resolveCommandFromResult(entry.resultItem)
   );
+  const command = isExecuteCommandTool(entry.toolName) ? rawCommand : '';
   const toolDisplay = entry.toolName || t('chat.workflow.toolUnknown');
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
-  const summaryTitle = command ? truncateSingleLine(command) : composeSummaryTitle(toolDisplay, pathHints);
+  const summaryTitle = composeEntryTitle(toolDisplay, command, pathHints);
   const status = resolveEntryStatus(entry);
+  const errorText = status === 'failed' ? buildErrorText(entry.resultItem) : '';
+  const durationLabel = formatDurationLabel(extractDurationMs(entry));
+
+  if (isApplyPatchTool(entry.toolName)) {
+    const resultNote = buildApplyPatchResultNote(entry.resultItem, entry.toolName);
+    return {
+      key: entry.key,
+      summaryTitle,
+      status,
+      statusLabel: statusLabel(status),
+      durationLabel,
+      viewKind: 'patch',
+      mainBlock: '',
+      commandView: null,
+      patchLines: buildApplyPatchLines(command, resultNote, patchEntries, patchDiffBlocks, errorText)
+    };
+  }
+
+  if (isExecuteCommandTool(entry.toolName)) {
+    return {
+      key: entry.key,
+      summaryTitle,
+      status,
+      statusLabel: statusLabel(status),
+      durationLabel,
+      viewKind: 'command',
+      mainBlock: '',
+      commandView: buildExecuteCommandView(entry, command, status, errorText),
+      patchLines: []
+    };
+  }
+
+  if (isWriteFileTool(entry.toolName)) {
+    return {
+      key: entry.key,
+      summaryTitle,
+      status,
+      statusLabel: statusLabel(status),
+      durationLabel,
+      viewKind: 'text',
+      mainBlock: buildWriteFileMainBlock(entry),
+      commandView: null,
+      patchLines: []
+    };
+  }
+
   const outputBlock = buildOutputBlock(entry, command);
-  const resultBlock = buildResultBlock(entry, outputBlock);
+  const resultBlock = buildResultBlock(entry);
+  const mainBlock = buildMainBlock(command, resultBlock, outputBlock, errorText);
 
   return {
     key: entry.key,
     summaryTitle,
     status,
     statusLabel: statusLabel(status),
-    resultBlock,
-    commandBlock: command ? `$ ${command}` : '',
-    outputBlock,
-    resultNote: buildApplyPatchResultNote(entry.resultItem, entry.toolName),
-    errorText: status === 'failed' ? buildErrorText(entry.resultItem) : '',
-    patchEntries,
-    patchDiffBlocks
+    durationLabel,
+    viewKind: 'text',
+    mainBlock,
+    commandView: null,
+    patchLines: []
   };
 };
 
@@ -1043,11 +1652,22 @@ watch(
   entries,
   (nextEntries) => {
     const validKeys = new Set(nextEntries.map((entry) => entry.key));
+    pruneStreamTracking(validKeys);
     const nextExpanded = new Set<string>();
     expandedKeys.value.forEach((key) => {
       if (validKeys.has(key)) nextExpanded.add(key);
     });
+    for (let index = nextEntries.length - 1; index >= 0; index -= 1) {
+      const entry = nextEntries[index];
+      if (entry.status === 'loading' || entry.status === 'pending') {
+        nextExpanded.add(entry.key);
+        break;
+      }
+    }
     expandedKeys.value = nextExpanded;
+    void nextTick(() => {
+      syncStreamAutoStick();
+    });
   },
   { immediate: true }
 );
@@ -1067,38 +1687,51 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
 
 <style scoped>
 .message-tool-workflow {
+  --workflow-term-bg: #0f1622;
+  --workflow-term-bg-soft: #141e2e;
+  --workflow-term-bg-hover: #1a2739;
+  --workflow-term-border: #263348;
+  --workflow-term-border-strong: #32445f;
+  --workflow-term-text: #e5edf8;
+  --workflow-term-muted: #93a5c0;
+  --workflow-term-code: #f1f5ff;
+  --workflow-term-scroll-track: #0d1420;
+  --workflow-term-scroll-thumb: #3b4b63;
   border: none;
   background: transparent;
   padding: 6px 0 0;
+  color: var(--workflow-term-text);
 }
 
-.message-tool-workflow summary {
+.message-tool-workflow > summary {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--chat-muted);
+  color: var(--chat-text);
   cursor: pointer;
   font-weight: 600;
   list-style: none;
   font-size: 12px;
 }
 
-.message-tool-workflow summary::marker {
+.message-tool-workflow > summary::marker {
   display: none;
 }
 
-.message-tool-workflow summary::before {
-  content: '>';
+.message-tool-workflow > summary::before {
+  content: '▸';
   display: inline-block;
-  transition: transform 0.2s ease;
+  transition: color 0.2s ease;
+  color: var(--chat-text);
+  opacity: 0.85;
 }
 
-.message-tool-workflow[open] summary::before {
-  transform: rotate(90deg);
+.message-tool-workflow[open] > summary::before {
+  content: '▾';
 }
 
 .tool-workflow-title {
-  color: var(--chat-muted);
+  color: var(--chat-text);
 }
 
 .tool-workflow-spacer {
@@ -1108,10 +1741,10 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
 .tool-workflow-latest {
   flex: 1 1 auto;
   min-width: 0;
-  color: var(--chat-text);
+  color: var(--chat-muted);
   font-size: 12px;
   font-weight: 500;
-  opacity: 0.85;
+  opacity: 0.95;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1121,26 +1754,39 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
   margin-top: 6px;
   height: 280px;
   max-height: 280px;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   padding: 8px;
   border-radius: 12px;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.24);
-  background: rgba(var(--ui-accent-rgb), 0.06);
+  border: 1px solid var(--workflow-term-border);
+  background: var(--workflow-term-bg);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+  scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
+  clip-path: inset(0 round 12px);
 }
 
 .tool-workflow-list::-webkit-scrollbar {
   width: 8px;
 }
 
+.tool-workflow-list::-webkit-scrollbar-track {
+  background: var(--workflow-term-scroll-track);
+}
+
+.tool-workflow-list::-webkit-scrollbar-thumb {
+  background: var(--workflow-term-scroll-thumb);
+  border-radius: 999px;
+}
+
 .tool-workflow-empty {
-  color: var(--chat-muted);
+  color: var(--workflow-term-muted);
   font-size: 12px;
   padding: 8px 10px;
   border-radius: 10px;
-  border: 1px dashed rgba(var(--ui-accent-rgb), 0.28);
-  background: rgba(var(--ui-accent-rgb), 0.08);
+  border: 1px dashed var(--workflow-term-border-strong);
+  background: var(--workflow-term-bg-soft);
 }
 
 .tool-workflow-entry {
@@ -1157,8 +1803,8 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
 
 .tool-workflow-entry:hover,
 .tool-workflow-entry[open] {
-  border-color: rgba(var(--ui-accent-rgb), 0.34);
-  background: rgba(var(--ui-accent-rgb), 0.1);
+  border-color: var(--workflow-term-border-strong);
+  background: var(--workflow-term-bg-hover);
 }
 
 .tool-workflow-entry > summary {
@@ -1168,7 +1814,7 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
   gap: 8px;
   padding: 8px 10px;
   cursor: pointer;
-  color: var(--chat-text);
+  color: var(--workflow-term-text);
 }
 
 .tool-workflow-entry > summary::marker {
@@ -1176,14 +1822,14 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
 }
 
 .tool-workflow-entry > summary::before {
-  content: '>';
+  content: '▸';
   font-size: 10px;
-  color: var(--chat-muted);
-  transition: transform 0.18s ease;
+  color: var(--workflow-term-muted);
+  transition: color 0.18s ease;
 }
 
 .tool-workflow-entry[open] > summary::before {
-  transform: rotate(90deg);
+  content: '▾';
 }
 
 .tool-workflow-entry-title {
@@ -1191,10 +1837,18 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
   flex: 1 1 auto;
   font-size: 12px;
   font-weight: 600;
-  color: var(--chat-text);
+  color: var(--workflow-term-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tool-workflow-entry-duration {
+  flex: 0 0 auto;
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
 }
 
 .tool-workflow-entry-status {
@@ -1208,21 +1862,21 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
 
 .tool-workflow-entry-status.is-loading,
 .tool-workflow-entry-status.is-pending {
-  background: rgba(96, 165, 250, 0.16);
-  border: 1px solid rgba(59, 130, 246, 0.4);
-  color: #1d4ed8;
+  background: rgba(59, 130, 246, 0.26);
+  border: 1px solid rgba(147, 197, 253, 0.5);
+  color: #dbeafe;
 }
 
 .tool-workflow-entry-status.is-completed {
-  background: rgba(34, 197, 94, 0.16);
-  border: 1px solid rgba(22, 163, 74, 0.42);
-  color: #166534;
+  background: rgba(22, 163, 74, 0.24);
+  border: 1px solid rgba(134, 239, 172, 0.48);
+  color: #dcfce7;
 }
 
 .tool-workflow-entry-status.is-failed {
-  background: rgba(248, 113, 113, 0.14);
-  border: 1px solid rgba(220, 38, 38, 0.4);
-  color: #b91c1c;
+  background: rgba(220, 38, 38, 0.24);
+  border: 1px solid rgba(254, 202, 202, 0.45);
+  color: #fee2e2;
 }
 
 .tool-workflow-entry-body {
@@ -1232,147 +1886,127 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
   gap: 8px;
 }
 
-.tool-workflow-note {
-  color: var(--chat-muted);
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-.tool-workflow-result,
-.tool-workflow-code,
-.tool-workflow-output {
+.tool-workflow-main {
   margin: 0;
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.24);
-  background: rgba(var(--ui-accent-rgb), 0.08);
-  color: var(--chat-text);
+  border: 1px solid var(--workflow-term-border);
+  background: var(--workflow-term-bg-soft);
+  color: var(--workflow-term-text);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 220px;
+  max-height: 320px;
   overflow: auto;
+  scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
+  clip-path: inset(0 round 10px);
 }
 
-.tool-workflow-result {
-  max-height: 240px;
+.tool-workflow-main::-webkit-scrollbar,
+.tool-workflow-terminal-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
 }
 
-.tool-workflow-patch-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.tool-workflow-main::-webkit-scrollbar-track,
+.tool-workflow-terminal-body::-webkit-scrollbar-track {
+  background: var(--workflow-term-scroll-track);
 }
 
-.tool-workflow-patch-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  min-width: 0;
-  color: var(--chat-muted);
-  font-size: 12px;
+.tool-workflow-main::-webkit-scrollbar-thumb,
+.tool-workflow-terminal-body::-webkit-scrollbar-thumb {
+  background: var(--workflow-term-scroll-thumb);
+  border-radius: 999px;
 }
 
-.tool-workflow-patch-sign {
-  width: 16px;
-  flex: 0 0 16px;
-  text-align: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-.tool-workflow-patch-path {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-.tool-workflow-patch-item--add .tool-workflow-patch-sign {
-  color: #15803d;
-}
-
-.tool-workflow-patch-item--delete .tool-workflow-patch-sign {
-  color: #b91c1c;
-}
-
-.tool-workflow-patch-item--update .tool-workflow-patch-sign,
-.tool-workflow-patch-item--move .tool-workflow-patch-sign {
-  color: #2563eb;
-}
-
-.tool-workflow-diff-list {
+.tool-workflow-main--command {
+  white-space: normal;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.tool-workflow-diff-block {
-  border-left: 2px solid rgba(var(--ui-accent-rgb), 0.35);
-  padding-left: 8px;
-}
-
-.tool-workflow-diff-title {
-  color: var(--chat-muted);
+.tool-workflow-terminal-head {
+  color: var(--workflow-term-muted);
   font-size: 11px;
-  margin-bottom: 4px;
+  letter-spacing: 0.2px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
 }
 
-.tool-workflow-diff-code {
+.tool-workflow-terminal-body {
   margin: 0;
-  padding: 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.22);
-  background: rgba(var(--ui-accent-rgb), 0.08);
-  max-height: 180px;
-  overflow: auto;
-  font-size: 12px;
-  line-height: 1.45;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-.tool-workflow-diff-line {
-  display: block;
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.tool-workflow-diff-line.is-add {
-  color: #166534;
-  background: rgba(34, 197, 94, 0.12);
-}
-
-.tool-workflow-diff-line.is-delete {
-  color: #991b1b;
-  background: rgba(239, 68, 68, 0.11);
-}
-
-.tool-workflow-diff-line.is-meta {
-  color: var(--chat-muted);
-}
-
-.tool-workflow-diff-line.is-omit {
-  color: var(--chat-muted);
-  opacity: 0.85;
-}
-
-.tool-workflow-error {
   font-size: 12px;
-  line-height: 1.45;
-  color: #991b1b;
-  border: 1px solid rgba(220, 38, 38, 0.34);
-  background: rgba(248, 113, 113, 0.14);
-  border-radius: 8px;
-  padding: 8px 10px;
+  line-height: 1.5;
+  color: var(--workflow-term-code);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+  max-height: 260px;
+  overflow: auto;
+  padding: 0;
+  scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
+}
+
+.tool-workflow-terminal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tool-workflow-terminal-exit-code {
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}
+
+.tool-workflow-main--patch {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
+    'Courier New', monospace;
+}
+
+.tool-workflow-patch-line {
+  display: block;
+  padding: 1px 4px;
+  border-radius: 5px;
+}
+
+.tool-workflow-patch-line.is-meta {
+  color: var(--workflow-term-muted);
+}
+
+.tool-workflow-patch-line.is-note {
+  color: var(--workflow-term-muted);
+  font-weight: 600;
+}
+
+.tool-workflow-patch-line.is-add {
+  color: #bbf7d0;
+  background: rgba(22, 101, 52, 0.44);
+  border-left: 2px solid rgba(74, 222, 128, 0.62);
+}
+
+.tool-workflow-patch-line.is-delete {
+  color: #fecaca;
+  background: rgba(127, 29, 29, 0.5);
+  border-left: 2px solid rgba(248, 113, 113, 0.56);
+}
+
+.tool-workflow-patch-line.is-move,
+.tool-workflow-patch-line.is-update {
+  color: #bfdbfe;
+  background: rgba(30, 64, 175, 0.36);
+}
+
+.tool-workflow-patch-line.is-error {
+  color: #fecaca;
+  background: rgba(153, 27, 27, 0.48);
 }
 </style>

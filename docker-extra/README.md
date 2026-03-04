@@ -51,8 +51,9 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 - 直接复用 `wunder-arm-20:latest`（`--no-build`）
 - 使用 `arm64-20` 目录作为 Cargo 与 target 优先路径
 - 生成 Electron arm64 AppImage
-- 基于 `target/arm64-20/.build/python` 产出附带 Python 的 AppImage
+- 基于 `target/arm64-20/.build/python` 产出附带 Python + Git 的 AppImage
 - 在 AppImage 内补齐 `python -> python3`、`pip -> pip3`，并将 `opt/python/bin` 置于 `PATH` 最前，确保 `执行命令` 工具里的 `python` 默认命中内置解释器
+- 在 AppImage 内注入内置 `git`，自动设置 `GIT_EXEC_PATH`，并将 `opt/git/bin` 置于 `PATH` 最前，确保 `执行命令` 工具里的 `git` 默认命中内置版本
 - 内置 Python 依赖默认包含一组“优先、轻量、高价值”库（`orjson`、`tabulate`、`rapidfuzz`、`Unidecode`、`docxtpl`），用于文本匹配、结构化输出、JSON 处理与文档模板生成
 
 > 提示：第 5 步 AppImage 重打包在 qemu 下可能持续 10~30 分钟，看起来像“卡住”但通常仍在运行。
@@ -62,7 +63,7 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 >   bash -lc 'pgrep -af appimagetool || true; ls -lh /app/target/arm64-20/dist/wunder-desktop-arm64-python.AppImage'
 > ```
 
-### CI 专用（不附带 Python）
+### CI 专用（不附带 Python / Git）
 
 GitHub Actions 的 Linux Nightly 使用以下脚本在 Ubuntu20 基线容器中打包 Electron AppImage（x64/arm64）：
 
@@ -99,7 +100,7 @@ npm install
 WUNDER_BRIDGE_BIN=/app/target/arm64-20/release/wunder-desktop-bridge \
   npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 
-# package Electron AppImage with embedded Python (uses /app/target/arm64-20/.build/python)
+# package Electron AppImage with embedded Python + Git (uses /app/target/arm64-20/.build/python)
 cp "$(ls -1t /app/target/arm64-20/dist/*.AppImage | grep -v python | head -n 1)" \
   /app/target/arm64-20/dist/wunder-desktop-arm64.AppImage
 ARCH=arm64 \
@@ -123,7 +124,7 @@ OUTPUT_DIR=/app/target/arm64-20/dist \
 - `wunder-cli`
 - `wunder-desktop-bridge`
 - Electron AppImage: `target/arm64-20/dist/wunder-desktop-arm64.AppImage`
-- Electron AppImage（附带 Python）: `target/arm64-20/dist/wunder-desktop-arm64-python.AppImage`
+- Electron AppImage（附带 Python + Git）: `target/arm64-20/dist/wunder-desktop-arm64-python.AppImage`
 
 ## 5. 缓存与目录复用说明
 

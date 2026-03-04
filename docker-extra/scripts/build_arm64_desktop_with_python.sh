@@ -31,6 +31,10 @@ if [ ! -x "${BUILD_ROOT}/stage/opt/python/bin/python3" ]; then
   echo "Please prepare target/arm64-20/.build/python first." >&2
   exit 1
 fi
+if [ ! -x "${BUILD_ROOT}/stage/opt/git/bin/git" ]; then
+  echo "Prebuilt embedded Git not found at ${BUILD_ROOT}/stage/opt/git/bin/git."
+  echo "Will prepare it automatically during AppImage repack."
+fi
 
 mkdir -p "${CARGO_HOME_DIR}" "${TARGET_DIR}" "${DIST_DIR}"
 
@@ -55,7 +59,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
     npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 "
 
-echo "[5/6] Repacking AppImage with embedded Python from arm64-20 (qemu may take 10-30 min)..."
+echo "[5/6] Repacking AppImage with embedded Python + Git from arm64-20 (qemu may take 10-30 min)..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   set -euo pipefail
   output_dir=/app/target/arm64-20/dist
@@ -76,10 +80,11 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   APPIMAGE_WORK=/app/target/arm64-20/.build/python/appimage \
   OUTPUT_DIR="${output_dir}" \
   PREFER_PREBUILT_PYTHON=1 \
+  PREFER_PREBUILT_GIT=1 \
     bash /app/docker-extra/scripts/package_appimage_with_python.sh
 '
 
 echo "[6/6] Done. Artifacts:"
 echo "  - ${TARGET_DIR}/release/wunder-desktop-bridge"
 echo "  - ${DIST_DIR}/wunder-desktop-arm64.AppImage"
-echo "  - ${DIST_DIR}/wunder-desktop-arm64-python.AppImage"
+echo "  - ${DIST_DIR}/wunder-desktop-arm64-python.AppImage (embedded Python + Git)"

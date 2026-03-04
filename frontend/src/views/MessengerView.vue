@@ -690,8 +690,19 @@
           </div>
           <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
         </div>
+        <button
+          v-if="agentHeaderModelDisplayName && agentHeaderModelJumpEnabled"
+          class="messenger-chat-header-model messenger-chat-header-model--action"
+          type="button"
+          :title="t('messenger.settings.desktopModels')"
+          :aria-label="`${t('desktop.system.modelName')}: ${agentHeaderModelDisplayName}`"
+          @click="openDesktopModelSettingsFromHeader"
+        >
+          <span class="messenger-chat-header-model-label">{{ t('desktop.system.modelName') }}</span>
+          <span class="messenger-chat-header-model-value">{{ agentHeaderModelDisplayName }}</span>
+        </button>
         <div
-          v-if="agentHeaderModelDisplayName"
+          v-else-if="agentHeaderModelDisplayName"
           class="messenger-chat-header-model"
           :aria-label="`${t('desktop.system.modelName')}: ${agentHeaderModelDisplayName}`"
         >
@@ -1494,7 +1505,7 @@
       </div>
 
       <footer
-        v-if="!showChatSettingsView && (isAgentConversationActive || isWorldConversationActive)"
+        v-if="showChatComposerFooter"
         ref="chatFooterRef"
         class="messenger-chat-footer"
       >
@@ -2428,8 +2439,23 @@ const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
   return 'auto_edit';
 };
 
+const tryParseJsonRecord = (value: unknown): Record<string, unknown> | null => {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text || !text.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 const resolveModelNameFromRecord = (value: unknown): string => {
-  const source = asObjectRecord(value);
+  const source = tryParseJsonRecord(value) || asObjectRecord(value);
+  if (!Object.keys(source).length) return '';
   const directKeys = [
     'model_name',
     'modelName',
@@ -2444,11 +2470,23 @@ const resolveModelNameFromRecord = (value: unknown): string => {
     if (typeof candidate === 'string' || typeof candidate === 'number') {
       const text = String(candidate).trim();
       if (text) return text;
+      const parsed = tryParseJsonRecord(candidate);
+      if (parsed) {
+        const parsedName = resolveModelNameFromRecord(parsed);
+        if (parsedName) return parsedName;
+      }
       continue;
     }
     const nested = asObjectRecord(candidate);
     const nestedText = String(nested.name || nested.model || nested.id || '').trim();
     if (nestedText) return nestedText;
+    const nestedName = resolveModelNameFromRecord(nested);
+    if (nestedName) return nestedName;
+  }
+  const nestedContainerKeys = ['payload', 'data', 'request', 'response', 'detail', 'args'] as const;
+  for (const key of nestedContainerKeys) {
+    const nestedName = resolveModelNameFromRecord(source[key]);
+    if (nestedName) return nestedName;
   }
   const meta = source.meta;
   if (meta && typeof meta === 'object' && meta !== value) {
@@ -2470,8 +2508,7 @@ const resolveMessageModelName = (message: Record<string, unknown>): string => {
     if (fromItem) {
       return fromItem;
     }
-    const detail = asObjectRecord(asObjectRecord(item).detail);
-    const fromDetail = resolveModelNameFromRecord(detail);
+    const fromDetail = resolveModelNameFromRecord(asObjectRecord(item).detail);
     if (fromDetail) {
       return fromDetail;
     }
@@ -2508,8 +2545,10 @@ const agentHeaderModelDisplayName = computed(() => {
     if (desktopModelName) return desktopModelName;
     if (desktopLocalMode.value) return t('desktop.system.modelUnnamed');
   }
-  return '';
+  return t('common.unknown');
 });
+
+const agentHeaderModelJumpEnabled = computed(() => desktopMode.value && isAgentConversationActive.value);
 
 const activeAgentApprovalMode = computed<AgentApprovalMode>(() => {
   const session = asObjectRecord(activeAgentSession.value);
@@ -2884,6 +2923,13 @@ const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messag
 const showHelperAppsWorkspace = computed(
   () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
 );
+const showChatComposerFooter = computed(() => {
+  const routeSection = resolveSectionFromRoute(route.path, route.query.section);
+  if (routeSection !== 'messages') {
+    return false;
+  }
+  return !showChatSettingsView.value && (isAgentConversationActive.value || isWorldConversationActive.value);
+});
 
 const filteredOwnedAgents = computed(() => {
   const text = keyword.value.toLowerCase();
@@ -5739,6 +5785,12 @@ const switchSection = (
 const openSettingsPage = () => {
   settingsPanelMode.value = 'general';
   switchSection('more');
+};
+
+const openDesktopModelSettingsFromHeader = () => {
+  if (!desktopMode.value) return;
+  switchSection('more');
+  settingsPanelMode.value = 'desktop-models';
 };
 
 const openProfilePage = () => {

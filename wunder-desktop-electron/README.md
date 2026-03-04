@@ -54,12 +54,12 @@ Ubuntu 20.04 目标建议优先使用：
 - 构建产物：`target/arm64-20`
 - 嵌入式 Python：`target/arm64-20/.build/python`
 
-如果希望一键完成 bridge 编译 + Electron 打包 + 附带 Python 重打包，推荐直接在仓库根目录执行：
+如果希望一键完成 bridge 编译 + Electron 打包 + 附带 Python + Git 重打包，推荐直接在仓库根目录执行：
 ```bash
 bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 ```
 
-如果需要生成附带 Python 的 Electron AppImage，可在仓库根目录执行：
+如果需要生成附带 Python + Git 的 Electron AppImage，可在仓库根目录执行：
 ```bash
 cp "$(ls -1t target/arm64-20/dist/*.AppImage | grep -v python | head -n 1)" \
   target/arm64-20/dist/wunder-desktop-arm64.AppImage
@@ -71,7 +71,7 @@ OUTPUT_DIR=target/arm64-20/dist \
   bash docker-extra/scripts/package_appimage_with_python.sh
 ```
 
-该重打包脚本会自动把 `opt/python/bin` 提前到 `PATH`，并在缺失时补齐 `python`/`pip` 软链接到 `python3`/`pip3`，这样 `执行命令` 工具里直接跑 `python` 也会走内置运行时。
+该重打包脚本会自动把 `opt/git/bin` 与 `opt/python/bin` 提前到 `PATH`，并在缺失时补齐 `python`/`pip` 软链接到 `python3`/`pip3`。这样 `执行命令` 工具里直接跑 `python`/`git` 都会优先走内置运行时。
 
 ## 资源打包机制
 
@@ -139,6 +139,6 @@ WUNDER_DISABLE_GPU=1
 - 产物平台：
   - Windows x64
   - macOS（x64 + arm64）
-  - Linux x64 / arm64（AppImage，Ubuntu 20 兼容基线，不附带 Python）
+  - Linux x64 / arm64（AppImage，Ubuntu 20 兼容基线，不附带 Python/Git）
 - 发布方式：自动更新 `nightly` 标签与 Nightly Release，始终保留最新提交对应产物
 - 产物命名示例：`Wunder-Desktop-linux-arm64-YYYYMMDD.AppImage`

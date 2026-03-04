@@ -11,6 +11,8 @@ APPIMAGE_WORK="${APPIMAGE_WORK:-${BUILD_ROOT}/appimage}"
 TOOLS_DIR="${BUILD_ROOT}/tools"
 PREFER_PREBUILT_PYTHON="${PREFER_PREBUILT_PYTHON:-1}"
 PREBUILT_PYTHON_ROOT="${BUILD_ROOT}/stage/opt/python"
+PREFER_PREBUILT_GIT="${PREFER_PREBUILT_GIT:-1}"
+PREBUILT_GIT_ROOT="${BUILD_ROOT}/stage/opt/git"
 
 patch_appimage_runtime_magic() {
   local target_file=$1
@@ -72,6 +74,12 @@ else
   "${ROOT_DIR}/docker-extra/scripts/build_embedded_python.sh"
 fi
 
+if [ "${PREFER_PREBUILT_GIT}" = "1" ] && [ -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
+  echo "Using prebuilt embedded Git under ${PREBUILT_GIT_ROOT}."
+else
+  "${ROOT_DIR}/docker-extra/scripts/build_embedded_git.sh"
+fi
+
 extract_appimage "${APPIMAGE_PATH}" "${APPIMAGE_WORK}"
 
 APPDIR="${APPIMAGE_WORK}/squashfs-root"
@@ -83,10 +91,16 @@ if [ ! -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
   echo "Embedded Python not found under ${PREBUILT_PYTHON_ROOT}." >&2
   exit 1
 fi
+if [ ! -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
+  echo "Embedded Git not found under ${PREBUILT_GIT_ROOT}." >&2
+  exit 1
+fi
 
 mkdir -p "${APPDIR}/opt"
 rm -rf "${APPDIR}/opt/python"
 cp -a "${PREBUILT_PYTHON_ROOT}" "${APPDIR}/opt/"
+rm -rf "${APPDIR}/opt/git"
+cp -a "${PREBUILT_GIT_ROOT}" "${APPDIR}/opt/"
 if [ ! -e "${APPDIR}/opt/python/bin/python" ] && [ -x "${APPDIR}/opt/python/bin/python3" ]; then
   ln -s python3 "${APPDIR}/opt/python/bin/python"
 fi
@@ -104,14 +118,21 @@ export APPDIR="$HERE"
 PY_VER="$(cat "$APPDIR/opt/python/.wunder-python-version" 2>/dev/null || echo "3.11")"
 export PYTHONHOME="$APPDIR/opt/python"
 export PYTHONPATH="$APPDIR/opt/python/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-export LD_LIBRARY_PATH="$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
-export PATH="$APPDIR/opt/python/bin:${PATH:-}"
+export LD_LIBRARY_PATH="$APPDIR/opt/git/lib:$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+export PATH="$APPDIR/opt/git/bin:$APPDIR/opt/python/bin:${PATH:-}"
+if [ -d "$APPDIR/opt/git/libexec/git-core" ]; then
+  export GIT_EXEC_PATH="$APPDIR/opt/git/libexec/git-core"
+fi
+if [ -d "$APPDIR/opt/git/share/git-core/templates" ]; then
+  export GIT_TEMPLATE_DIR="$APPDIR/opt/git/share/git-core/templates"
+fi
 if [ -f "$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
   export SSL_CERT_FILE="$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
 fi
 export PYTHONNOUSERSITE=1
 export PIP_NO_INDEX=1
 export WUNDER_PYTHON_BIN="$APPDIR/opt/python/bin/python3"
+export WUNDER_GIT_BIN="$APPDIR/opt/git/bin/git"
 exec "$APPDIR/AppRun.orig" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
@@ -124,14 +145,21 @@ export APPDIR="$HERE"
 PY_VER="$(cat "$APPDIR/opt/python/.wunder-python-version" 2>/dev/null || echo "3.11")"
 export PYTHONHOME="$APPDIR/opt/python"
 export PYTHONPATH="$APPDIR/opt/python/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-export LD_LIBRARY_PATH="$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
-export PATH="$APPDIR/opt/python/bin:${PATH:-}"
+export LD_LIBRARY_PATH="$APPDIR/opt/git/lib:$APPDIR/opt/python/lib:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+export PATH="$APPDIR/opt/git/bin:$APPDIR/opt/python/bin:${PATH:-}"
+if [ -d "$APPDIR/opt/git/libexec/git-core" ]; then
+  export GIT_EXEC_PATH="$APPDIR/opt/git/libexec/git-core"
+fi
+if [ -d "$APPDIR/opt/git/share/git-core/templates" ]; then
+  export GIT_TEMPLATE_DIR="$APPDIR/opt/git/share/git-core/templates"
+fi
 if [ -f "$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
   export SSL_CERT_FILE="$APPDIR/opt/python/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
 fi
 export PYTHONNOUSERSITE=1
 export PIP_NO_INDEX=1
 export WUNDER_PYTHON_BIN="$APPDIR/opt/python/bin/python3"
+export WUNDER_GIT_BIN="$APPDIR/opt/git/bin/git"
 exec "$APPDIR/usr/bin/wunder-desktop" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun"
@@ -174,4 +202,4 @@ else
   "${APPIMAGETOOL_RUNNER}" "${APPDIR}" "${OUT_PATH}"
 fi
 
-echo "AppImage with embedded Python: ${OUT_PATH}"
+echo "AppImage with embedded Python and Git: ${OUT_PATH}"
