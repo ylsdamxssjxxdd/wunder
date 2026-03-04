@@ -1433,6 +1433,42 @@
                     class="markdown-body"
                     v-html="renderAgentMarkdown(item.message, item.sourceIndex)"
                   ></div>
+                  <div
+                    v-if="item.message.role === 'user' && hasUserImageAttachments(item.message)"
+                    class="message-user-image-grid"
+                  >
+                    <button
+                      v-for="imageItem in resolveUserImageAttachments(item.message)"
+                      :key="imageItem.key"
+                      class="message-user-image-btn"
+                      type="button"
+                      :title="imageItem.name"
+                      :aria-label="imageItem.name"
+                      @click="openImagePreview(imageItem.src, imageItem.name)"
+                    >
+                      <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" />
+                    </button>
+                  </div>
+                  <div
+                    v-if="item.message.role === 'user' && hasUserAudioAttachments(item.message)"
+                    class="message-user-audio-grid"
+                  >
+                    <div
+                      v-for="audioItem in resolveUserAudioAttachments(item.message)"
+                      :key="audioItem.key"
+                      class="message-user-audio-card"
+                    >
+                      <span class="message-user-audio-name" :title="audioItem.name">
+                        {{ audioItem.name }}
+                      </span>
+                      <audio
+                        class="message-user-audio-player"
+                        :src="audioItem.src"
+                        controls
+                        preload="metadata"
+                      ></audio>
+                    </div>
+                  </div>
                 </div>
                 <div
                   v-if="hasMessageContent(item.message.content) || shouldShowMessageStats(item.message)"
@@ -4586,6 +4622,46 @@ const formatAgentRuntimeState = (state: AgentRuntimeState): string => {
 };
 
 const hasMessageContent = (value: unknown): boolean => Boolean(String(value || '').trim());
+
+const resolveUserImageAttachments = (message: Record<string, unknown>) => {
+  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+  return attachments
+    .map((item, index) => {
+      const src = String((item as Record<string, unknown>)?.content || '').trim();
+      if (!src.startsWith('data:image/')) return null;
+      const fallbackName = `image-${index + 1}`;
+      const name = String((item as Record<string, unknown>)?.name || fallbackName).trim() || fallbackName;
+      return {
+        key: `${name}-${index}`,
+        src,
+        name
+      };
+    })
+    .filter(Boolean);
+};
+
+const resolveUserAudioAttachments = (message: Record<string, unknown>) => {
+  const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
+  return attachments
+    .map((item, index) => {
+      const src = String((item as Record<string, unknown>)?.content || '').trim();
+      if (!src.startsWith('data:audio/')) return null;
+      const fallbackName = `audio-${index + 1}`;
+      const name = String((item as Record<string, unknown>)?.name || fallbackName).trim() || fallbackName;
+      return {
+        key: `${name}-${index}`,
+        src,
+        name
+      };
+    })
+    .filter(Boolean);
+};
+
+const hasUserImageAttachments = (message: Record<string, unknown>): boolean =>
+  resolveUserImageAttachments(message).length > 0;
+
+const hasUserAudioAttachments = (message: Record<string, unknown>): boolean =>
+  resolveUserAudioAttachments(message).length > 0;
 
 const hasWorkflowOrThinking = (message: Record<string, unknown>): boolean =>
   Boolean(message?.workflowStreaming) ||

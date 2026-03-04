@@ -682,6 +682,37 @@
   object-fit: contain;
 }
 
+.chat-shell .message-user-audio-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.chat-shell .message-user-audio-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  background: rgba(15, 23, 42, 0.46);
+}
+
+.chat-shell .message-user-audio-name {
+  font-size: 12px;
+  color: var(--chat-text-muted);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-shell .message-user-audio-player {
+  width: min(100%, 320px);
+  max-width: 100%;
+}
+
 .chat-shell .markdown-body .ai-rich-table {
   margin: 8px 0;
   padding: 10px;
