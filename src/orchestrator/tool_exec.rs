@@ -676,6 +676,13 @@ impl Orchestrator {
             if timeout_s <= 0.0 {
                 timeout_s = config.a2a.timeout_s as f64;
             }
+        } else if crate::tools::is_sleep_tool_name(tool_name) {
+            if let Some(seconds) = crate::tools::extract_sleep_seconds(args) {
+                timeout_s = timeout_s.max(seconds + 10.0);
+            }
+            if timeout_s <= 0.0 {
+                timeout_s = DEFAULT_TOOL_TIMEOUT_S;
+            }
         } else if tool_name == "a2a观察" || tool_name.starts_with("a2a@") {
             if timeout_s <= 0.0 {
                 timeout_s = config.a2a.timeout_s as f64;

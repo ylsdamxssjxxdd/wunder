@@ -1059,6 +1059,14 @@
     "en-US": "The specified file is not a supported image.",
     "zh-CN": "指定文件不是受支持的图片格式。"
   },
+  "tool.sleep.invalid_seconds": {
+    "en-US": "Sleep duration must be greater than 0 seconds.",
+    "zh-CN": "休眠时长必须大于 0 秒。"
+  },
+  "tool.sleep.seconds_too_large": {
+    "en-US": "Sleep duration exceeds the allowed maximum (3600 seconds).",
+    "zh-CN": "休眠时长超过允许上限（3600 秒）。"
+  },
   "tool.replace.count_mismatch": {
     "en-US": "Replacement count mismatch.",
     "zh-CN": "实际替换数量与期望不一致。"
@@ -1379,6 +1387,26 @@
     "en-US": "Run CLI commands when needed to complete the task. Defaults to the workspace root; workdir must stay within the current workspace (relative path only). Command content has no path restrictions.",
     "zh-CN": "请求执行 CLI 命令。默认在工作区根目录执行；workdir 只能在当前工作目录以内（相对路径），不允许绝对路径；content 不限制路径格式。"
   },
+  "tool.spec.browser.description": {
+    "en-US": "Operate the built-in browser via action: navigate/click/type/screenshot/read_page/close.",
+    "zh-CN": "通过 action 操作内置浏览器：navigate/click/type/screenshot/read_page/close。"
+  },
+  "tool.spec.browser.args.action": {
+    "en-US": "Action: navigate/click/type/screenshot/read_page/close.",
+    "zh-CN": "动作类型：navigate/click/type/screenshot/read_page/close。"
+  },
+  "tool.spec.browser.args.url": {
+    "en-US": "The URL to open (http/https only).",
+    "zh-CN": "要打开的网页地址（http/https）。"
+  },
+  "tool.spec.browser.args.selector": {
+    "en-US": "CSS selector or visible text.",
+    "zh-CN": "CSS 选择器或可见文本。"
+  },
+  "tool.spec.browser.args.text": {
+    "en-US": "Text to type.",
+    "zh-CN": "要输入的文本。"
+  },
   "tool.spec.browser_navigate.args.url": {
     "en-US": "The URL to open (http/https only).",
     "zh-CN": "要打开的网页地址（http/https）"
@@ -1554,6 +1582,18 @@
   "tool.spec.schedule_task.description": {
     "en-US": "Schedule tasks: add/update/remove/enable/disable/get/list/run.",
     "zh-CN": "定时任务：add/update/remove/enable/disable/get/list/run。"
+  },
+  "tool.spec.sleep.args.reason": {
+    "en-US": "Optional reason for this sleep.",
+    "zh-CN": "可选，本次休眠原因。"
+  },
+  "tool.spec.sleep.args.seconds": {
+    "en-US": "Sleep duration in seconds (0 < seconds <= 3600).",
+    "zh-CN": "休眠秒数（0 < seconds <= 3600）。"
+  },
+  "tool.spec.sleep.description": {
+    "en-US": "Pause execution for a specified number of seconds, useful for active waiting between steps.",
+    "zh-CN": "按指定秒数主动休眠，适用于步骤之间的等待。"
   },
   "tool.spec.user_world.args.action": {
     "en-US": "Action: list_users/send_message.",

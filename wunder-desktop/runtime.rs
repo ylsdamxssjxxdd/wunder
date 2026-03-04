@@ -871,12 +871,21 @@ fn apply_desktop_defaults(
     }
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
     config.tools.browser.enabled = true;
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器导航");
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器点击");
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器输入");
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器截图");
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器读页");
-    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器关闭");
+    let legacy_browser_tools = [
+        "浏览器导航",
+        "浏览器点击",
+        "浏览器输入",
+        "浏览器截图",
+        "浏览器读页",
+        "浏览器关闭",
+    ];
+    config.tools.builtin.enabled.retain(|name| {
+        let canonical = wunder_server::tools::resolve_tool_name(name.trim());
+        !legacy_browser_tools
+            .iter()
+            .any(|legacy| canonical == *legacy)
+    });
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器");
 
     let mut allow_paths = config
         .security

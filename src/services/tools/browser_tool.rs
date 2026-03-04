@@ -19,12 +19,50 @@ use uuid::Uuid;
 const BRIDGE_SCRIPT: &str = include_str!("browser_bridge.py");
 const TEMP_DIR_ROOT_ENV: &str = "WUNDER_TEMP_DIR_ROOT";
 
+pub const TOOL_BROWSER: &str = "浏览器";
 pub const TOOL_BROWSER_NAVIGATE: &str = "浏览器导航";
 pub const TOOL_BROWSER_CLICK: &str = "浏览器点击";
 pub const TOOL_BROWSER_TYPE: &str = "浏览器输入";
 pub const TOOL_BROWSER_SCREENSHOT: &str = "浏览器截图";
 pub const TOOL_BROWSER_READ_PAGE: &str = "浏览器读页";
 pub const TOOL_BROWSER_CLOSE: &str = "浏览器关闭";
+
+#[derive(Debug, Copy, Clone)]
+enum BrowserAction {
+    Navigate,
+    Click,
+    Type,
+    Screenshot,
+    ReadPage,
+    Close,
+}
+
+impl BrowserAction {
+    fn from_str(raw: &str) -> Option<Self> {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "navigate" | "nav" | "open" => Some(Self::Navigate),
+            "click" => Some(Self::Click),
+            "type" | "input" | "fill" => Some(Self::Type),
+            "screenshot" | "shot" | "capture" => Some(Self::Screenshot),
+            "read_page" | "readpage" | "read" | "page" => Some(Self::ReadPage),
+            "close" | "quit" | "exit" => Some(Self::Close),
+            _ => None,
+        }
+    }
+}
+
+fn action_from_tool_name(name: &str) -> Option<BrowserAction> {
+    match name.trim() {
+        TOOL_BROWSER_NAVIGATE | "browser_navigate" => Some(BrowserAction::Navigate),
+        TOOL_BROWSER_CLICK | "browser_click" => Some(BrowserAction::Click),
+        TOOL_BROWSER_TYPE | "browser_type" => Some(BrowserAction::Type),
+        TOOL_BROWSER_SCREENSHOT | "browser_screenshot" => Some(BrowserAction::Screenshot),
+        TOOL_BROWSER_READ_PAGE | "browser_read_page" => Some(BrowserAction::ReadPage),
+        TOOL_BROWSER_CLOSE | "browser_close" => Some(BrowserAction::Close),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "action")]
@@ -353,13 +391,35 @@ pub fn browser_tools_enabled(config: &Config) -> bool {
 pub fn is_browser_tool_name(name: &str) -> bool {
     matches!(
         name,
-        TOOL_BROWSER_NAVIGATE
+        TOOL_BROWSER
+            | TOOL_BROWSER_NAVIGATE
             | TOOL_BROWSER_CLICK
             | TOOL_BROWSER_TYPE
             | TOOL_BROWSER_SCREENSHOT
             | TOOL_BROWSER_READ_PAGE
             | TOOL_BROWSER_CLOSE
     )
+}
+
+pub async fn tool_browser(
+    context: &ToolContext<'_>,
+    tool_name: &str,
+    args: &Value,
+) -> Result<Value> {
+    let action = if let Some(raw) = args.get("action").and_then(Value::as_str) {
+        BrowserAction::from_str(raw)
+            .ok_or_else(|| anyhow!("Unknown browser action: {raw}"))?
+    } else {
+        action_from_tool_name(tool_name).ok_or_else(|| anyhow!("Missing 'action' parameter"))?
+    };
+    match action {
+        BrowserAction::Navigate => tool_browser_navigate(context, args).await,
+        BrowserAction::Click => tool_browser_click(context, args).await,
+        BrowserAction::Type => tool_browser_type(context, args).await,
+        BrowserAction::Screenshot => tool_browser_screenshot(context, args).await,
+        BrowserAction::ReadPage => tool_browser_read_page(context, args).await,
+        BrowserAction::Close => tool_browser_close(context, args).await,
+    }
 }
 
 pub async fn tool_browser_navigate(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

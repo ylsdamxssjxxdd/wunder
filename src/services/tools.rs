@@ -7,6 +7,7 @@
 mod apply_patch_tool;
 mod browser_tool;
 mod read_image_tool;
+mod sleep_tool;
 
 use crate::a2a_store::{A2aStore, A2aTask};
 use crate::command_utils;
@@ -291,6 +292,18 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                     }
                 },
                 "required": ["action"]
+            }),
+        },
+        ToolSpec {
+            name: sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+            description: t("tool.spec.sleep.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "seconds": {"type": "number", "description": t("tool.spec.sleep.args.seconds"), "minimum": 0.001},
+                    "reason": {"type": "string", "description": t("tool.spec.sleep.args.reason")}
+                },
+                "required": ["seconds"]
             }),
         },
         ToolSpec {
@@ -628,61 +641,35 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
-            name: browser_tool::TOOL_BROWSER_NAVIGATE.to_string(),
-            description: t("tool.spec.browser_navigate.description"),
+            name: browser_tool::TOOL_BROWSER.to_string(),
+            description: t("tool.spec.browser.description"),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "url": { "type": "string", "description": t("tool.spec.browser_navigate.args.url") }
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.browser.args.action"),
+                        "enum": ["navigate", "click", "type", "screenshot", "read_page", "close"]
+                    },
+                    "url": { "type": "string", "description": t("tool.spec.browser.args.url") },
+                    "selector": { "type": "string", "description": t("tool.spec.browser.args.selector") },
+                    "text": { "type": "string", "description": t("tool.spec.browser.args.text") }
                 },
-                "required": ["url"]
-            }),
-        },
-        ToolSpec {
-            name: browser_tool::TOOL_BROWSER_CLICK.to_string(),
-            description: t("tool.spec.browser_click.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "selector": { "type": "string", "description": t("tool.spec.browser_click.args.selector") }
-                },
-                "required": ["selector"]
-            }),
-        },
-        ToolSpec {
-            name: browser_tool::TOOL_BROWSER_TYPE.to_string(),
-            description: t("tool.spec.browser_type.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "selector": { "type": "string", "description": t("tool.spec.browser_type.args.selector") },
-                    "text": { "type": "string", "description": t("tool.spec.browser_type.args.text") }
-                },
-                "required": ["selector", "text"]
-            }),
-        },
-        ToolSpec {
-            name: browser_tool::TOOL_BROWSER_SCREENSHOT.to_string(),
-            description: t("tool.spec.browser_screenshot.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        ToolSpec {
-            name: browser_tool::TOOL_BROWSER_READ_PAGE.to_string(),
-            description: t("tool.spec.browser_read_page.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        ToolSpec {
-            name: browser_tool::TOOL_BROWSER_CLOSE.to_string(),
-            description: t("tool.spec.browser_close.description"),
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
+                "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "navigate"}}},
+                        "then": {"required": ["url"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "click"}}},
+                        "then": {"required": ["selector"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "type"}}},
+                        "then": {"required": ["selector", "text"]}
+                    }
+                ]
             }),
         },
     ]
@@ -700,6 +687,18 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("question_panel".to_string(), "问询面板".to_string());
     map.insert("ask_panel".to_string(), "问询面板".to_string());
     map.insert("schedule_task".to_string(), "定时任务".to_string());
+    map.insert(
+        sleep_tool::TOOL_SLEEP_ALIAS.to_string(),
+        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+    );
+    map.insert(
+        sleep_tool::TOOL_SLEEP_WAIT_ALIAS.to_string(),
+        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+    );
+    map.insert(
+        sleep_tool::TOOL_SLEEP_PAUSE_ALIAS.to_string(),
+        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+    );
     map.insert("user_world".to_string(), "用户世界工具".to_string());
     map.insert("memory_manager".to_string(), "记忆管理".to_string());
     map.insert("memory_manage".to_string(), "记忆管理".to_string());
@@ -734,6 +733,11 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     );
     map.insert("node.invoke".to_string(), "节点调用".to_string());
     map.insert("node_invoke".to_string(), "节点调用".to_string());
+    map.insert("browser".to_string(), browser_tool::TOOL_BROWSER.to_string());
+    map.insert(
+        "browser_tool".to_string(),
+        browser_tool::TOOL_BROWSER.to_string(),
+    );
     map.insert(
         "browser_navigate".to_string(),
         browser_tool::TOOL_BROWSER_NAVIGATE.to_string(),
@@ -777,6 +781,14 @@ pub async fn build_read_image_followup_user_message(result: &Value) -> Result<Op
     read_image_tool::build_followup_user_message(result).await
 }
 
+pub fn is_sleep_tool_name(name: &str) -> bool {
+    sleep_tool::is_sleep_tool_name(name)
+}
+
+pub fn extract_sleep_seconds(args: &Value) -> Option<f64> {
+    sleep_tool::extract_sleep_seconds(args)
+}
+
 pub fn filter_tool_names_by_model_capability(
     allowed_tool_names: HashSet<String>,
     support_vision: bool,
@@ -810,7 +822,9 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "节点调用" => Some("node_invoke"),
         "用户世界工具" => Some("user_world"),
         "记忆管理" => Some("memory_manager"),
+        browser_tool::TOOL_BROWSER => Some("browser"),
         read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
+        sleep_tool::TOOL_SLEEP_WAIT => Some(sleep_tool::TOOL_SLEEP_ALIAS),
         _ => None,
     }
 }
@@ -1137,6 +1151,9 @@ pub async fn execute_builtin_tool(
         "子智能体控制" => subagent_control(context, args).await,
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}" => agent_swarm(context, args).await,
         "节点调用" => execute_node_invoke(context, args).await,
+        browser_tool::TOOL_BROWSER => {
+            browser_tool::tool_browser(context, browser_tool::TOOL_BROWSER, args).await
+        }
         browser_tool::TOOL_BROWSER_NAVIGATE => {
             browser_tool::tool_browser_navigate(context, args).await
         }
@@ -1180,6 +1197,7 @@ pub async fn execute_builtin_tool(
             .await
             .map(compact_cron_tool_result)
         }
+        sleep_tool::TOOL_SLEEP_WAIT => sleep_tool::tool_sleep_wait(context, args).await,
         "用户世界工具" => user_world_tool(context, args).await,
         "记忆管理" => execute_memory_manager_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
@@ -7708,6 +7726,12 @@ mod tests {
                 .get(read_image_tool::TOOL_VIEW_IMAGE_ALIAS)
                 .map(String::as_str),
             Some(read_image_tool::TOOL_READ_IMAGE)
+        );
+        assert_eq!(
+            aliases
+                .get(sleep_tool::TOOL_SLEEP_ALIAS)
+                .map(String::as_str),
+            Some(sleep_tool::TOOL_SLEEP_WAIT)
         );
     }
 

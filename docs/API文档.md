@@ -150,7 +150,8 @@
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
-- 新增内置工具 `浏览器导航/浏览器点击/浏览器输入/浏览器截图/浏览器读页/浏览器关闭`（英文别名 `browser_navigate`/`browser_click`/`browser_type`/`browser_screenshot`/`browser_read_page`/`browser_close`），仅 desktop 模式可用。
+- 新增内置工具 `浏览器`（英文别名 `browser`），通过 `action=navigate|click|type|screenshot|read_page|close` 统一操作，仅 desktop 模式可用。
+- 新增内置工具 `休眠等待`（英文别名 `sleep`/`sleep_wait`/`pause`），参数 `seconds` 必填；用于主动等待（如 `300` 秒），并自动适配工具超时。
 - 新增内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填、`prompt` 可选；执行成功后会在下一轮自动附加 `image_url` 供模型视觉分析。
 - `读图工具` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中，非视觉模型会自动隐藏并拒绝调用。
 - `action=list` 返回当前在线节点清单（含 `node_id/commands/caps/scopes` 等信息）；`action=invoke` 需要 `node_id + command`，可选 `args/timeout_s/metadata`。

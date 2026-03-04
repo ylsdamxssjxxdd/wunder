@@ -5756,9 +5756,10 @@ const deleteMixedConversation = async (item: MixedConversation) => {
 
 const switchSection = (
   section: MessengerSection,
-  options: { preserveHelperWorkspace?: boolean } = {}
+  options: { preserveHelperWorkspace?: boolean; panelHint?: string } = {}
 ) => {
   const preserveHelperWorkspace = options.preserveHelperWorkspace === true;
+  const panelHint = String(options.panelHint || '').trim().toLowerCase();
   closeFileContainerMenu();
   openMiddlePaneOverlay();
   if (!preserveHelperWorkspace) {
@@ -5794,7 +5795,11 @@ const switchSection = (
   }
   const targetPath = `${basePrefix.value}/${sectionRouteMap[section]}`;
   const nextQuery = { ...route.query, section } as Record<string, any>;
-  delete nextQuery.panel;
+  if (panelHint && section === 'more') {
+    nextQuery.panel = panelHint;
+  } else {
+    delete nextQuery.panel;
+  }
   if (section !== 'messages') {
     delete nextQuery.session_id;
     delete nextQuery.agent_id;
@@ -5817,7 +5822,7 @@ const openSettingsPage = () => {
 
 const openDesktopModelSettingsFromHeader = () => {
   if (!desktopMode.value) return;
-  switchSection('more');
+  switchSection('more', { panelHint: 'desktop-models' });
   settingsPanelMode.value = 'desktop-models';
 };
 
