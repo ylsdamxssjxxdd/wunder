@@ -2,6 +2,7 @@ pub mod adapter;
 pub mod binding;
 pub mod catalog;
 pub mod feishu;
+pub mod feishu_files;
 pub mod media;
 pub mod outbox;
 pub mod qqbot;

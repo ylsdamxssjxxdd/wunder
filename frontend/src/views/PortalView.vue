@@ -338,7 +338,7 @@
                     />
                   </el-select>
                 </div>
-                <div class="agent-share-row agent-share-row--sandbox">
+                <div v-if="showApprovalModeSetting" class="agent-share-row agent-share-row--sandbox">
                   <span>{{ t('portal.agent.permission.title') }}</span>
                   <el-select v-model="form.approval_mode" size="small" class="agent-sandbox-select">
                     <el-option
@@ -350,7 +350,9 @@
                   </el-select>
                 </div>
                 <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
-                <div class="agent-editor-hint">{{ t('portal.agent.permission.hint') }}</div>
+                <div v-if="showApprovalModeSetting" class="agent-editor-hint">
+                  {{ t('portal.agent.permission.hint') }}
+                </div>
               </div>
             </div>
           </el-form-item>
@@ -377,6 +379,7 @@ import { fetchCronJobs } from '@/api/cron';
 import { listChannelAccounts, listChannelBindings } from '@/api/channels';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserTopbar from '@/components/user/UserTopbar.vue';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
@@ -391,6 +394,11 @@ const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
 const { t } = useI18n();
+const showApprovalModeSetting = computed(
+  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+);
+const resolveDefaultApprovalMode = (): string =>
+  showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
 const PORTAL_PREFETCH_HOVER_DELAY_MS = 120;
@@ -628,11 +636,12 @@ const normalizeSandboxContainerId = (value) => {
 };
 
 const normalizeApprovalMode = (value) => {
+  if (!showApprovalModeSetting.value) return 'full_auto';
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'suggest') return 'suggest';
   if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
   if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
-  return 'auto_edit';
+  return resolveDefaultApprovalMode();
 };
 
 const sortAgentsByContainerId = (list) =>
@@ -669,7 +678,7 @@ const form = reactive({
   tool_names: [],
   system_prompt: '',
   sandbox_container_id: 1,
-  approval_mode: 'auto_edit'
+  approval_mode: resolveDefaultApprovalMode()
 });
 
 const basePath = computed(() => resolveUserBasePath(route.path));
@@ -1043,7 +1052,7 @@ const resetForm = () => {
   form.copy_from_agent_id = '';
   form.system_prompt = '';
   form.sandbox_container_id = 1;
-  form.approval_mode = 'auto_edit';
+  form.approval_mode = resolveDefaultApprovalMode();
   applyDefaultTools();
   editingId.value = '';
 };

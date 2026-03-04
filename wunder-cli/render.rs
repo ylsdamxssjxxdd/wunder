@@ -62,13 +62,7 @@ impl StreamRenderer {
                 }
             }
             "progress" => {
-                self.ensure_newline();
-                let stage = payload.get("stage").and_then(Value::as_str).unwrap_or("");
-                let summary = payload.get("summary").and_then(Value::as_str).unwrap_or("");
-                if !stage.is_empty() || !summary.is_empty() {
-                    let line = format!("[progress] {stage} {summary}");
-                    println!("{}", line.trim());
-                }
+                // Skip progress events in tool-only workflow rendering.
             }
             "tool_call" => {
                 self.ensure_newline();
@@ -76,11 +70,8 @@ impl StreamRenderer {
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                let args = payload
-                    .get("args")
-                    .map(compact_json)
-                    .unwrap_or_else(|| "{}".to_string());
-                println!("[tool_call] {tool} {args}");
+                let args = payload.get("args").unwrap_or(&Value::Null);
+                println!("{}", format_tool_call_line(tool, args));
             }
             "tool_result" => {
                 self.ensure_newline();
@@ -164,6 +155,82 @@ impl StreamRenderer {
             self.line_open = false;
         }
     }
+}
+
+fn format_tool_call_line(tool: &str, args: &Value) -> String {
+    if tool == "执行命令" {
+        if let Some(command) = args
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return format!("[tool_call] {tool} `{command}`");
+        }
+    }
+
+    if is_apply_patch_tool_name(tool) {
+        if let Some(patch) = extract_patch_input(args)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let summary = summarize_patch_input(patch);
+            if !summary.is_empty() {
+                return format!("[tool_call] {tool} ({summary})");
+            }
+        }
+        return format!("[tool_call] {tool}");
+    }
+
+    if args.is_null() {
+        return format!("[tool_call] {tool} {{}}");
+    }
+
+    format!("[tool_call] {tool} {}", compact_json(args))
+}
+
+fn extract_patch_input(args: &Value) -> Option<&str> {
+    if let Value::String(value) = args {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+
+    let obj = args.as_object()?;
+    for key in ["input", "patch", "content", "raw"] {
+        if let Some(value) = obj.get(key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+    None
+}
+
+fn summarize_patch_input(patch: &str) -> String {
+    let line_count = patch.lines().count();
+    let op_count = count_patch_ops(patch);
+    if op_count > 0 {
+        format!("files={op_count}, lines={line_count}")
+    } else if line_count > 0 {
+        format!("lines={line_count}")
+    } else {
+        String::new()
+    }
+}
+
+fn count_patch_ops(patch: &str) -> usize {
+    patch
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("*** Add File")
+                || trimmed.starts_with("*** Update File")
+                || trimmed.starts_with("*** Delete File")
+        })
+        .count()
 }
 
 fn render_question_panel_lines(payload: &Value) -> bool {
@@ -350,10 +417,14 @@ fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
         return None;
     }
 
+    let has_move = !path.is_empty() && !to_path.is_empty() && to_path != path;
     let marker = match action.as_str() {
-        "add" => '+',
-        "delete" => '-',
-        _ => '~',
+        "add" => "A",
+        "delete" => "D",
+        "update" if has_move => "R",
+        "update" => "M",
+        "move" => "R",
+        _ => "M",
     };
     let text = if !path.is_empty() && !to_path.is_empty() && to_path != path {
         format!("{path} -> {to_path}")
@@ -382,6 +453,13 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     }
 
     let mut lines = vec![header];
+    let files = data.get("files").and_then(Value::as_array);
+    let has_files = files.map(|value| !value.is_empty()).unwrap_or(false);
+    if ok == Some(true) && has_files {
+        lines.push("  Success. Updated the following files:".to_string());
+    } else if ok == Some(false) {
+        lines.push("  Failed to apply patch".to_string());
+    }
     if let Some(error) = result
         .get("error")
         .and_then(Value::as_str)
@@ -407,7 +485,7 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
         lines.push(format!("  hint: {hint}"));
     }
 
-    if let Some(files) = data.get("files").and_then(Value::as_array) {
+    if let Some(files) = files {
         let mut appended = 0usize;
         for file in files.iter().take(MAX_PATCH_RESULT_FILES) {
             if let Some(line) = extract_apply_patch_file_line(file) {
@@ -459,8 +537,11 @@ mod tests {
             }
         });
         let lines = format_apply_patch_result_lines("应用补丁", &payload);
-        assert!(lines.iter().any(|line| line.contains("+ src/new.rs")));
-        assert!(lines.iter().any(|line| line.contains("- src/old.rs")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("Success. Updated the following files")));
+        assert!(lines.iter().any(|line| line.contains("A src/new.rs")));
+        assert!(lines.iter().any(|line| line.contains("D src/old.rs")));
     }
 
     #[test]

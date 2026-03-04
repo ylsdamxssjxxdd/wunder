@@ -73,7 +73,7 @@
                   />
                 </el-select>
               </div>
-              <div class="agent-share-row agent-share-row--sandbox">
+              <div v-if="showApprovalModeSetting" class="agent-share-row agent-share-row--sandbox">
                 <span>{{ t('portal.agent.permission.title') }}</span>
                 <el-select v-model="form.approval_mode" size="small" class="agent-sandbox-select">
                   <el-option
@@ -85,7 +85,9 @@
                 </el-select>
               </div>
               <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
-              <div class="agent-editor-hint">{{ t('portal.agent.permission.hint') }}</div>
+              <div v-if="showApprovalModeSetting" class="agent-editor-hint">
+                {{ t('portal.agent.permission.hint') }}
+              </div>
             </div>
           </div>
         </el-form-item>
@@ -108,6 +110,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { showApiError } from '@/utils/apiError';
@@ -126,6 +129,11 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'deleted']);
 const { t } = useI18n();
 const agentStore = useAgentStore();
+const showApprovalModeSetting = computed(
+  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+);
+const resolveDefaultApprovalMode = (): string =>
+  showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
 const visible = computed({
   get: () => props.modelValue,
@@ -149,11 +157,12 @@ const normalizeSandboxContainerId = (value) => {
 };
 
 const normalizeApprovalMode = (value) => {
+  if (!showApprovalModeSetting.value) return 'full_auto';
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'suggest') return 'suggest';
   if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
   if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
-  return 'auto_edit';
+  return resolveDefaultApprovalMode();
 };
 
 const form = reactive({
@@ -163,7 +172,7 @@ const form = reactive({
   system_prompt: '',
   tool_names: [],
   sandbox_container_id: 1,
-  approval_mode: 'auto_edit'
+  approval_mode: resolveDefaultApprovalMode()
 });
 
 const saving = ref(false);

@@ -257,9 +257,12 @@ fn format_tool_result_lines_formats_apply_patch_changes_with_markers() {
     let lines = format_tool_result_lines("应用补丁", &payload);
     assert!(!lines.is_empty());
     assert!(lines[0].contains("files=3"));
-    assert!(lines.iter().any(|line| line.contains("+ src/new_file.rs")));
-    assert!(lines.iter().any(|line| line.contains("~ src/existing.rs")));
-    assert!(lines.iter().any(|line| line.contains("- src/old_file.rs")));
+    assert!(lines
+        .iter()
+        .any(|line| line.contains("Success. Updated the following files")));
+    assert!(lines.iter().any(|line| line.contains("A src/new_file.rs")));
+    assert!(lines.iter().any(|line| line.contains("M src/existing.rs")));
+    assert!(lines.iter().any(|line| line.contains("D src/old_file.rs")));
 }
 
 #[test]

@@ -92,7 +92,7 @@
                 />
               </el-select>
             </label>
-            <label class="base-item base-item-select">
+            <label v-if="showApprovalModeSetting" class="base-item base-item-select">
               <span>{{ t('portal.agent.permission.title') }}</span>
               <el-select v-model="form.approval_mode">
                 <el-option
@@ -123,6 +123,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 
 type ToolOption = {
@@ -154,6 +155,11 @@ const props = defineProps({
 
 const emit = defineEmits(['update:modelValue', 'submit']);
 const { t } = useI18n();
+const showApprovalModeSetting = computed(
+  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+);
+const resolveDefaultApprovalMode = (): string =>
+  showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 const approvalModeOptions = computed(() => [
@@ -174,7 +180,7 @@ const form = reactive({
   tool_names: [] as string[],
   is_shared: false,
   sandbox_container_id: 1,
-  approval_mode: 'auto_edit'
+  approval_mode: resolveDefaultApprovalMode()
 });
 
 const visible = computed({
@@ -263,7 +269,7 @@ const resetForm = () => {
   form.tool_names = [...allToolValues.value];
   form.is_shared = false;
   form.sandbox_container_id = 1;
-  form.approval_mode = 'auto_edit';
+  form.approval_mode = resolveDefaultApprovalMode();
 };
 
 const loadToolSummary = async () => {
@@ -303,11 +309,12 @@ const normalizeSandboxContainerId = (value: unknown): number => {
 };
 
 const normalizeApprovalMode = (value: unknown): string => {
+  if (!showApprovalModeSetting.value) return 'full_auto';
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'suggest') return 'suggest';
   if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
   if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
-  return 'auto_edit';
+  return resolveDefaultApprovalMode();
 };
 
 const handleSave = async () => {

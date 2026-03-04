@@ -1,6 +1,7 @@
 use crate::channels::adapter::OutboundContext;
 use crate::channels::binding::{resolve_binding, BindingResolution};
 use crate::channels::feishu;
+use crate::channels::feishu_files;
 use crate::channels::media::{MediaProcessingResult, MediaProcessor};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
@@ -22,6 +23,7 @@ use crate::storage::{
     UpdateChannelOutboxStatusParams, UserAgentRecord,
 };
 use crate::user_store::UserStore;
+use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use axum::http::{HeaderMap, HeaderValue as AxumHeaderValue};
 use chrono::Local;
@@ -160,6 +162,7 @@ pub struct ChannelHub {
     orchestrator: Arc<Orchestrator>,
     agent_runtime: Arc<AgentRuntime>,
     user_store: Arc<UserStore>,
+    workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
     rate_limiter: ChannelRateLimiter,
     adapter_registry: ChannelAdapterRegistry,
@@ -175,6 +178,7 @@ impl ChannelHub {
         orchestrator: Arc<Orchestrator>,
         agent_runtime: Arc<AgentRuntime>,
         user_store: Arc<UserStore>,
+        workspace: Arc<WorkspaceManager>,
         monitor: Arc<MonitorState>,
     ) -> Self {
         let hub = Self {
@@ -183,6 +187,7 @@ impl ChannelHub {
             orchestrator,
             agent_runtime,
             user_store,
+            workspace,
             monitor,
             rate_limiter: ChannelRateLimiter::new(),
             adapter_registry: build_default_channel_adapter_registry(),
@@ -271,6 +276,7 @@ impl ChannelHub {
         raw_payload: Option<Value>,
     ) -> Result<ChannelInboundResult> {
         let config = self.config_store.get().await;
+        let public_base_url = feishu_files::resolve_public_base_url(headers, &config);
         if !channels_runtime_enabled(&config) {
             return Err(anyhow!("channels disabled"));
         }
@@ -540,6 +546,30 @@ impl ChannelHub {
                 );
             }
         }
+        if message
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+        {
+            if let Some(feishu_cfg) = account_cfg.feishu.as_ref() {
+                if let Err(err) = feishu_files::download_feishu_attachments_to_workspace(
+                    &self.http,
+                    &self.workspace,
+                    &self.user_store,
+                    feishu_cfg,
+                    &session_info.user_id,
+                    resolved_agent_id.as_deref(),
+                    &mut message,
+                )
+                .await
+                {
+                    warn!(
+                        "download feishu attachments failed: channel={}, account_id={}, session_id={}, error={err}",
+                        message.channel, message.account_id, session_info.session_id
+                    );
+                }
+            }
+        }
 
         let media_processor = MediaProcessor::new(config.channels.media.clone());
         let allow_vision = resolve_allow_vision(&config, None);
@@ -652,6 +682,21 @@ impl ChannelHub {
             "message_id": message.message_id,
             "media": meta,
         });
+        if let Some(meta_obj) = outbound_meta.as_object_mut() {
+            meta_obj.insert(
+                "user_id".to_string(),
+                Value::String(session_info.user_id.clone()),
+            );
+            if let Some(agent_id) = resolved_agent_id.as_ref() {
+                meta_obj.insert("agent_id".to_string(), Value::String(agent_id.clone()));
+            }
+            if !public_base_url.trim().is_empty() {
+                meta_obj.insert(
+                    "public_base_url".to_string(),
+                    Value::String(public_base_url.clone()),
+                );
+            }
+        }
         if let Some(ack_message_id) = processing_ack_message_id.as_deref() {
             if let Some(meta_obj) = outbound_meta.as_object_mut() {
                 meta_obj.insert(
@@ -1430,6 +1475,26 @@ impl ChannelHub {
         let account_cfg = ChannelAccountConfig::from_value(&account.config);
         let outbound: ChannelOutboundMessage = serde_json::from_value(record.payload.clone())
             .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
+        let mut outbound = outbound;
+        if record
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+        {
+            if let Err(err) = feishu_files::append_temp_dir_links_for_outbound(
+                &self.workspace,
+                &self.user_store,
+                &config,
+                &mut outbound,
+            )
+            .await
+            {
+                warn!(
+                    "append feishu temp dir links failed: channel={}, account_id={}, outbox_id={}, error={err}",
+                    record.channel, record.account_id, record.outbox_id
+                );
+            }
+        }
         if let Some(adapter) = self.adapter_registry.get(&record.channel) {
             let context = OutboundContext {
                 http: &self.http,

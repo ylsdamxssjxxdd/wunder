@@ -197,6 +197,7 @@ impl AppState {
             orchestrator.clone(),
             agent_runtime.clone(),
             user_store.clone(),
+            workspace.clone(),
             monitor.clone(),
         ));
         let cron = CronScheduler::new(

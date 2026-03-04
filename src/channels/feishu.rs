@@ -487,7 +487,7 @@ fn parse_positive_i64(raw: Option<i64>, fallback: u64) -> u64 {
         .unwrap_or(fallback)
 }
 
-fn resolve_openapi_base_url(config: &FeishuConfig) -> String {
+pub(crate) fn resolve_openapi_base_url(config: &FeishuConfig) -> String {
     let domain = config
         .domain
         .as_deref()
@@ -874,7 +874,10 @@ pub async fn delete_message(http: &Client, message_id: &str, config: &FeishuConf
     Ok(())
 }
 
-async fn fetch_tenant_access_token(http: &Client, config: &FeishuConfig) -> Result<String> {
+pub(crate) async fn fetch_tenant_access_token(
+    http: &Client,
+    config: &FeishuConfig,
+) -> Result<String> {
     let (app_id, app_secret) = app_credentials(config)?;
     let base_url = resolve_openapi_base_url(config);
     let token_url = format!("{base_url}/open-apis/auth/v3/tenant_access_token/internal");

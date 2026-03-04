@@ -2322,9 +2322,7 @@ const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
-const isMiddlePaneOverlay = computed(() =>
-  desktopMode.value ? viewportWidth.value <= 1024 : viewportWidth.value <= 840
-);
+const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 1024);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
 const showMiddlePane = computed(() => {
   if (showHelperAppsWorkspace.value) {
@@ -8817,7 +8815,7 @@ onMounted(async () => {
       window.localStorage.getItem(WORLD_COMPOSER_HEIGHT_STORAGE_KEY)
     );
     worldRecentEmojis.value = loadStoredStringArray(WORLD_QUICK_EMOJI_STORAGE_KEY, 12);
-    window.addEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
+    window.addEventListener('pointerdown', closeWorldQuickPanelWhenOutside, true);
     document.addEventListener('scroll', closeFileContainerMenu, true);
   }
   initDesktopLaunchBehavior();
@@ -8848,7 +8846,7 @@ onBeforeUnmount(() => {
       window.removeEventListener('resize', viewportResizeHandler);
       viewportResizeHandler = null;
     }
-    window.removeEventListener('pointerdown', closeWorldQuickPanelWhenOutside);
+    window.removeEventListener('pointerdown', closeWorldQuickPanelWhenOutside, true);
     document.removeEventListener('scroll', closeFileContainerMenu, true);
   }
   closeFileContainerMenu();

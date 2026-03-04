@@ -1040,12 +1040,73 @@ pub(super) fn format_tool_call_line(tool: &str, args: &Value) -> String {
         }
     }
 
+    if is_apply_patch_tool_name(tool) {
+        if let Some(patch) = extract_patch_input(args)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            let summary = summarize_patch_input(patch);
+            if !summary.is_empty() {
+                return format!("[tool_call] {tool} ({summary})");
+            }
+        }
+        return format!("[tool_call] {tool}");
+    }
+
+    if args.is_null() {
+        return format!("[tool_call] {tool} {{}}");
+    }
+
     format!("[tool_call] {tool} {}", compact_json(args))
 }
 
 fn is_apply_patch_tool_name(tool: &str) -> bool {
     let normalized = tool.trim().to_ascii_lowercase();
     normalized == "apply_patch" || tool.contains("应用补丁")
+}
+
+fn extract_patch_input(args: &Value) -> Option<&str> {
+    if let Value::String(value) = args {
+        let trimmed = value.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+
+    let obj = args.as_object()?;
+    for key in ["input", "patch", "content", "raw"] {
+        if let Some(value) = obj.get(key).and_then(Value::as_str) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+    None
+}
+
+fn summarize_patch_input(patch: &str) -> String {
+    let line_count = patch.lines().count();
+    let op_count = count_patch_ops(patch);
+    if op_count > 0 {
+        format!("files={op_count}, lines={line_count}")
+    } else if line_count > 0 {
+        format!("lines={line_count}")
+    } else {
+        String::new()
+    }
+}
+
+fn count_patch_ops(patch: &str) -> usize {
+    patch
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("*** Add File")
+                || trimmed.starts_with("*** Update File")
+                || trimmed.starts_with("*** Delete File")
+        })
+        .count()
 }
 
 fn extract_tool_result_object(payload: &Value) -> &Value {
@@ -1078,10 +1139,14 @@ fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
         return None;
     }
 
+    let has_move = !path.is_empty() && !to_path.is_empty() && to_path != path;
     let marker = match action.as_str() {
-        "add" => '+',
-        "delete" => '-',
-        _ => '~',
+        "add" => "A",
+        "delete" => "D",
+        "update" if has_move => "R",
+        "update" => "M",
+        "move" => "R",
+        _ => "M",
     };
     let text = if !path.is_empty() && !to_path.is_empty() && to_path != path {
         format!("{path} -> {to_path}")
@@ -1114,6 +1179,13 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     }
 
     let mut lines = vec![header];
+    let files = data.get("files").and_then(Value::as_array);
+    let has_files = files.map(|value| !value.is_empty()).unwrap_or(false);
+    if ok == Some(true) && has_files {
+        lines.push("  Success. Updated the following files:".to_string());
+    } else if ok == Some(false) {
+        lines.push("  Failed to apply patch".to_string());
+    }
     if let Some(error) = result
         .get("error")
         .and_then(Value::as_str)
@@ -1139,7 +1211,7 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
         lines.push(format!("  hint: {hint}"));
     }
 
-    if let Some(files) = data.get("files").and_then(Value::as_array) {
+    if let Some(files) = files {
         const MAX_FILE_LINES: usize = 24;
         let mut appended = 0usize;
         for file in files.iter().take(MAX_FILE_LINES) {

@@ -4746,7 +4746,9 @@ button.messenger-chat-header-model {
 }
 
 .messenger-view .chat-shell .message-thinking {
-  max-width: min(380px, 58vw);
+  flex: 1 1 480px;
+  min-width: min(320px, 56vw);
+  max-width: min(760px, 82vw);
 }
 
 .messenger-view .chat-shell .message-thinking-label {

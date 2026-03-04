@@ -98,7 +98,7 @@
                 />
               </el-select>
             </div>
-            <div class="messenger-agent-base-item messenger-agent-base-item--select">
+            <div v-if="showApprovalModeSetting" class="messenger-agent-base-item messenger-agent-base-item--select">
               <div class="messenger-agent-base-meta">
                 <span class="messenger-agent-base-label">{{ t('portal.agent.permission.title') }}</span>
                 <span class="messenger-inline-hint">{{ t('portal.agent.permission.hint') }}</span>
@@ -145,6 +145,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { showApiError } from '@/utils/apiError';
@@ -178,6 +179,11 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const agentStore = useAgentStore();
+const showApprovalModeSetting = computed(
+  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+);
+const resolveDefaultApprovalMode = (): string =>
+  showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 const approvalModeOptions = computed(() => [
@@ -204,7 +210,7 @@ const form = reactive({
   system_prompt: '',
   tool_names: [] as string[],
   sandbox_container_id: 1,
-  approval_mode: 'auto_edit'
+  approval_mode: resolveDefaultApprovalMode()
 });
 
 const saving = ref(false);
@@ -219,11 +225,12 @@ const normalizeSandboxContainerId = (value: unknown): number => {
 };
 
 const normalizeApprovalMode = (value: unknown): string => {
+  if (!showApprovalModeSetting.value) return 'full_auto';
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'suggest') return 'suggest';
   if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
   if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
-  return 'auto_edit';
+  return resolveDefaultApprovalMode();
 };
 
 const normalizeOption = (item: unknown): ToolOption | null => {
@@ -287,7 +294,7 @@ const applyReadonlyDefaultAgentForm = () => {
   form.system_prompt = '';
   form.tool_names = collectSummaryToolNames(toolSummary.value || {});
   form.sandbox_container_id = 1;
-  form.approval_mode = 'auto_edit';
+  form.approval_mode = resolveDefaultApprovalMode();
 };
 
 const toolGroups = computed<ToolGroup[]>(() => {

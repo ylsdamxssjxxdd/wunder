@@ -4061,18 +4061,7 @@ impl TuiApp {
                 self.stream_tool_markup_open = false;
             }
             "progress" => {
-                let stage = payload
-                    .get("stage")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let summary = payload
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let message = format!("[progress] {stage} {summary}").trim().to_string();
-                if !message.is_empty() {
-                    self.push_log(LogKind::Info, message);
-                }
+                // Skip progress events in tool-only workflow rendering.
             }
             "llm_request" => {
                 self.session_stats.model_calls = self.session_stats.model_calls.saturating_add(1);
