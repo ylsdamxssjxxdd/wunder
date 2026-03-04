@@ -77,7 +77,7 @@
         </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.base')">
           <div class="base-grid">
-            <label class="base-item">
+            <label v-if="showShareSetting" class="base-item">
               <span>{{ t('messenger.agentCreate.isShared') }}</span>
               <el-switch v-model="form.is_shared" />
             </label>
@@ -157,6 +157,9 @@ const emit = defineEmits(['update:modelValue', 'submit']);
 const { t } = useI18n();
 const showApprovalModeSetting = computed(
   () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+);
+const showShareSetting = computed(
+  () => !isDesktopModeEnabled() || isDesktopRemoteAuthMode()
 );
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
@@ -331,7 +334,7 @@ const handleSave = async () => {
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       system_prompt: String(form.system_prompt || ''),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
-      is_shared: Boolean(form.is_shared),
+      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };

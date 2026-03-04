@@ -45,6 +45,14 @@ impl Orchestrator {
         allowed_tool_names
     }
 
+    pub(super) fn filter_tools_for_model_capability(
+        &self,
+        allowed_tool_names: HashSet<String>,
+        support_vision: bool,
+    ) -> HashSet<String> {
+        filter_tool_names_by_model_capability(allowed_tool_names, support_vision)
+    }
+
     pub(super) fn build_function_tooling(
         &self,
         config: &Config,

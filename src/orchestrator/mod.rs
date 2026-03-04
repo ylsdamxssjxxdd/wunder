@@ -37,8 +37,9 @@ use crate::token_utils::{
     trim_text_to_tokens,
 };
 use crate::tools::{
-    builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs_with_language,
-    resolve_tool_name, ToolContext, ToolEventEmitter,
+    build_read_image_followup_user_message, builtin_aliases, collect_available_tool_names,
+    collect_prompt_tool_specs_with_language, filter_tool_names_by_model_capability,
+    is_read_image_tool_name, resolve_tool_name, ToolContext, ToolEventEmitter,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserToolBindings, UserToolManager};

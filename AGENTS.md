@@ -32,6 +32,7 @@
 
 ## Rust 开发提示
 
+- 不要构建debug版本
 - format! 中可以内联变量时使用 `{var}`，避免额外参数。
 - 能合并的 if 语句请合并（clippy::collapsible_if）。
 - 能用方法引用时优先用方法引用，减少多余闭包（clippy::redundant_closure_for_method_calls）。

@@ -357,6 +357,8 @@ pub struct ToolsConfig {
     pub builtin: BuiltinToolsConfig,
     #[serde(default)]
     pub swarm: AgentSwarmConfig,
+    #[serde(default)]
+    pub browser: BrowserToolConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -392,6 +394,41 @@ impl Default for CronConfig {
 pub struct BuiltinToolsConfig {
     #[serde(default)]
     pub enabled: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserToolConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_browser_headless")]
+    pub headless: bool,
+    #[serde(default = "default_browser_viewport_width")]
+    pub viewport_width: u32,
+    #[serde(default = "default_browser_viewport_height")]
+    pub viewport_height: u32,
+    #[serde(default = "default_browser_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_browser_idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
+    #[serde(default = "default_browser_max_sessions")]
+    pub max_sessions: usize,
+    #[serde(default)]
+    pub python_path: Option<String>,
+}
+
+impl Default for BrowserToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            headless: default_browser_headless(),
+            viewport_width: default_browser_viewport_width(),
+            viewport_height: default_browser_viewport_height(),
+            timeout_secs: default_browser_timeout_secs(),
+            idle_timeout_secs: default_browser_idle_timeout_secs(),
+            max_sessions: default_browser_max_sessions(),
+            python_path: None,
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentSwarmConfig {
@@ -444,6 +481,30 @@ fn default_agent_swarm_max_retry() -> u32 {
 
 fn default_agent_swarm_max_depth() -> u32 {
     2
+}
+
+fn default_browser_headless() -> bool {
+    true
+}
+
+fn default_browser_viewport_width() -> u32 {
+    1280
+}
+
+fn default_browser_viewport_height() -> u32 {
+    720
+}
+
+fn default_browser_timeout_secs() -> u64 {
+    30
+}
+
+fn default_browser_idle_timeout_secs() -> u64 {
+    300
+}
+
+fn default_browser_max_sessions() -> usize {
+    5
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

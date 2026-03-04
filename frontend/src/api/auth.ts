@@ -7,4 +7,6 @@ export const register = (payload: ApiPayload) => api.post('/auth/register', payl
 export const loginDemo = (payload: ApiPayload) => api.post('/auth/demo', payload);
 export const fetchMe = () => api.get('/auth/me');
 export const updateProfile = (payload: ApiPayload) => api.patch('/auth/me', payload);
+export const fetchMyPreferences = () => api.get('/auth/me/preferences');
+export const updateMyPreferences = (payload: ApiPayload) => api.patch('/auth/me/preferences', payload);
 export const fetchOrgUnits = () => api.get('/auth/org_units');

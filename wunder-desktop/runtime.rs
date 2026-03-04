@@ -870,6 +870,13 @@ fn apply_desktop_defaults(
         }
     }
     ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "计划面板");
+    config.tools.browser.enabled = true;
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器导航");
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器点击");
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器输入");
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器截图");
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器读页");
+    ensure_desktop_builtin_tool(&mut config.tools.builtin.enabled, "浏览器关闭");
 
     let mut allow_paths = config
         .security

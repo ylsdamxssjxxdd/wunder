@@ -188,8 +188,15 @@ impl Orchestrator {
         config_overrides: Option<&Value>,
         agent_prompt: Option<&str>,
     ) -> String {
-        let allowed_tool_names =
-            self.resolve_allowed_tool_names(config, tool_names, skills, user_tool_bindings);
+        let allow_vision = self
+            .resolve_llm_config(config, None)
+            .ok()
+            .map(|(_, llm_config)| llm_config.support_vision.unwrap_or(false))
+            .unwrap_or(false);
+        let allowed_tool_names = self.filter_tools_for_model_capability(
+            self.resolve_allowed_tool_names(config, tool_names, skills, user_tool_bindings),
+            allow_vision,
+        );
         let tool_call_mode = self.resolve_tool_call_mode(config, None);
         let prompt = self
             .build_system_prompt_with_allowed(

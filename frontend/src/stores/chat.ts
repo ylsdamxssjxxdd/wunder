@@ -93,6 +93,8 @@ type OpenDraftSessionOptions = {
 type SendMessageOptions = {
   attachments?: unknown[];
   suppressQueuedNotice?: boolean;
+  approvalMode?: string;
+  approval_mode?: string;
 };
 
 type AppendLocalMessageOptions = {
@@ -639,6 +641,14 @@ const assignStreamEventId = (message, eventId) => {
 };
 
 const normalizeFlag = (value) => value === true || value === 'true';
+const normalizeApprovalMode = (value) => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw === 'suggest') return 'suggest';
+  if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
+  if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
+  return '';
+};
 
 const normalizeSnapshotMessage = (message) => {
   if (!message || typeof message !== 'object') return null;
@@ -4009,11 +4019,13 @@ export const useChatStore = defineStore('chat', {
           runtime.sendController = new AbortController();
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
+        const approvalMode = normalizeApprovalMode(options.approvalMode ?? options.approval_mode);
         const payload = {
           content,
           stream: true,
           ...(attachments.length > 0 ? { attachments } : {}),
-          ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {})
+          ...(desktopToolCallMode ? { tool_call_mode: desktopToolCallMode } : {}),
+          ...(approvalMode ? { approval_mode: approvalMode } : {})
         };
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);

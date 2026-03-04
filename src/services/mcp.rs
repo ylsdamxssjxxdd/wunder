@@ -4,7 +4,9 @@ use crate::config::{Config, McpServerConfig};
 use crate::i18n;
 use crate::schemas::{ToolSpec, WunderRequest};
 use crate::state::AppState;
-use crate::tools::{builtin_aliases, resolve_tool_name};
+use crate::tools::{
+    browser_tools_available, builtin_aliases, is_browser_tool_name, resolve_tool_name,
+};
 use anyhow::{anyhow, Result};
 use axum::Router;
 use futures::StreamExt;
@@ -108,7 +110,11 @@ impl WunderMcpServer {
     fn build_allowed_tool_names(config: &Config) -> Vec<String> {
         let mut names: HashSet<String> = HashSet::new();
         for name in &config.tools.builtin.enabled {
-            names.insert(resolve_tool_name(name));
+            let canonical = resolve_tool_name(name);
+            if is_browser_tool_name(&canonical) && !browser_tools_available(config) {
+                continue;
+            }
+            names.insert(canonical);
         }
         let alias_map = builtin_aliases();
         for (alias, canonical) in alias_map {

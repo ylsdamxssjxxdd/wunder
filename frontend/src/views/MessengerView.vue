@@ -887,7 +887,7 @@
                 <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
                   <AgentSettingsPanel
                     :agent-id="settingsAgentIdForPanel"
-                    :readonly="isSettingsDefaultAgent"
+                    :readonly="isSettingsDefaultAgentReadonly"
                     @saved="handleAgentSettingsSaved"
                     @deleted="handleAgentDeleted"
                   />
@@ -1830,10 +1830,18 @@ import {
 } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import {
+  normalizeAvatarColor,
+  normalizeAvatarIcon,
+  normalizeThemeMode,
+  normalizeThemePalette,
+  type UserAppearancePreferences
+} from '@/utils/userPreferences';
+import {
   classifyWorldHistoryMessage,
   normalizeWorldHistoryText,
   resolveWorldHistoryIcon
 } from '@/views/messenger/worldHistory';
+import { loadUserAppearance, saveUserAppearance } from '@/views/messenger/userAppearanceSync';
 import {
   buildWorldVoicePayloadContent,
   formatWorldVoiceDuration,
@@ -1907,7 +1915,6 @@ const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
 
 const DESKTOP_FIRST_LAUNCH_DEFAULT_AGENT_HINT_KEY = 'messenger_desktop_first_launch_default_agent_hint_v1';
-const USER_PROFILE_AVATAR_STORAGE_PREFIX = 'messenger_user_avatar_v1:';
 const PROFILE_AVATAR_IMAGE_FILES = import.meta.glob('../assets/qq-avatars/avatar-????.jpg', {
   eager: true,
   import: 'default'
@@ -2038,6 +2045,7 @@ const desktopInitialSectionPinned = ref(false);
 const desktopShowFirstLaunchDefaultAgentHint = ref(false);
 const desktopFirstLaunchDefaultAgentHintAt = ref(0);
 const usernameSaving = ref(false);
+const appearanceHydrating = ref(false);
 const currentUserAvatarIcon = ref('initial');
 const currentUserAvatarColor = ref('#3b82f6');
 const toolsCatalogLoading = ref(false);
@@ -2110,6 +2118,8 @@ let messageScrollFrame: number | null = null;
 let messageVirtualMeasureFrame: number | null = null;
 let contactVirtualFrame: number | null = null;
 let viewportResizeHandler: (() => void) | null = null;
+let audioRecordingSupportHandler: (() => void) | null = null;
+let audioRecordingSupportRetryTimer: number | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 type WorldVoiceRecordingRuntime = {
   session: AudioRecordingSession;
@@ -2266,7 +2276,17 @@ const desktopUpdateAvailable = computed(() => typeof getDesktopBridge()?.checkFo
 const worldDesktopScreenshotSupported = computed(
   () => desktopMode.value && typeof getDesktopBridge()?.captureScreenshot === 'function'
 );
-const audioRecordingSupported = computed(() => isAudioRecordingSupported());
+const detectAudioRecordingSupport = (): boolean => {
+  try {
+    return isAudioRecordingSupported();
+  } catch {
+    return false;
+  }
+};
+const audioRecordingSupported = ref(detectAudioRecordingSupport());
+const refreshAudioRecordingSupport = () => {
+  audioRecordingSupported.value = detectAudioRecordingSupport();
+};
 const worldVoiceSupported = computed(() => audioRecordingSupported.value);
 const agentVoiceSupported = computed(() => {
   if (!audioRecordingSupported.value) return false;
@@ -2285,9 +2305,6 @@ const currentUserId = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
   return String(user?.id || '');
 });
-const profileAvatarStorageKey = computed(() =>
-  `${USER_PROFILE_AVATAR_STORAGE_PREFIX}${String(currentUserId.value || 'guest').trim() || 'guest'}`
-);
 const profileAvatarOptions = computed(() =>
   [
     {
@@ -2333,15 +2350,19 @@ const showMiddlePane = computed(() => {
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
-const sharedAgents = computed(() => (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []));
+const sharedAgents = computed(() =>
+  desktopLocalMode.value ? [] : (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : [])
+);
 
+const defaultAgentApprovalMode = computed(() => 'full_auto');
 const agentMap = computed(() => {
   const map = new Map<string, Record<string, unknown>>();
   map.set(DEFAULT_AGENT_KEY, {
     id: DEFAULT_AGENT_KEY,
     name: t('messenger.defaultAgent'),
     description: t('messenger.defaultAgentDesc'),
-    sandbox_container_id: 1
+    sandbox_container_id: 1,
+    approval_mode: defaultAgentApprovalMode.value
   });
   ownedAgents.value.forEach((item) => {
     const id = normalizeAgentId(item?.id);
@@ -2549,10 +2570,16 @@ const agentHeaderModelDisplayName = computed(() => {
 const agentHeaderModelJumpEnabled = computed(() => desktopMode.value && isAgentConversationActive.value);
 
 const activeAgentApprovalMode = computed<AgentApprovalMode>(() => {
+  if (!desktopLocalMode.value) {
+    return 'full_auto';
+  }
   const session = asObjectRecord(activeAgentSession.value);
   const sessionMode = String(session.approval_mode || session.approvalMode || '').trim();
   if (sessionMode) {
     return normalizeAgentApprovalMode(sessionMode);
+  }
+  if (activeAgentId.value === DEFAULT_AGENT_KEY && desktopLocalMode.value) {
+    return 'full_auto';
   }
   const agent = asObjectRecord(activeAgent.value);
   return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'auto_edit');
@@ -2891,6 +2918,9 @@ const settingsAgentId = computed(() => {
 
 const settingsAgentIdForPanel = computed(() => normalizeAgentId(settingsAgentId.value));
 const isSettingsDefaultAgent = computed(() => settingsAgentIdForPanel.value === DEFAULT_AGENT_KEY);
+const isSettingsDefaultAgentReadonly = computed(
+  () => isSettingsDefaultAgent.value && !desktopLocalMode.value
+);
 
 const settingsAgentIdForApi = computed(() => {
   const value = normalizeAgentId(settingsAgentId.value);
@@ -5817,84 +5847,61 @@ const handleSettingsLogout = () => {
   router.push('/login').catch(() => undefined);
 };
 
-const normalizeCurrentUserAvatarIcon = (value: unknown): string => {
-  const text = String(value || '')
-    .trim()
-    .toLowerCase();
-  if (!text) return 'initial';
-  const aliasMap: Record<string, string> = {
-    initial: 'initial',
-    check: 'initial',
-    spark: 'initial',
-    target: 'initial',
-    idea: 'initial',
-    code: 'initial',
-    pen: 'initial',
-    briefcase: 'initial',
-    shield: 'initial',
-    'fa-user': 'initial',
-    'fa-user-astronaut': 'initial',
-    'fa-rocket': 'initial',
-    'fa-lightbulb': 'initial',
-    'fa-code': 'initial',
-    'fa-pen': 'initial',
-    'fa-briefcase': 'initial',
-    'fa-shield-halved': 'initial'
-  };
-  const normalized = aliasMap[text] || text;
-  const legacyMatch = normalized.match(/^qq-avatar-(\d{1,4})$/);
-  const upgraded = legacyMatch
-    ? `qq-avatar-${String(Number.parseInt(legacyMatch[1], 10)).padStart(4, '0')}`
-    : normalized;
-  return PROFILE_AVATAR_OPTION_KEYS.has(upgraded) ? upgraded : 'initial';
+const applyCurrentUserAppearance = (appearance: UserAppearancePreferences) => {
+  appearanceHydrating.value = true;
+  themeStore.setMode(normalizeThemeMode(appearance.themeMode));
+  themeStore.setPalette(normalizeThemePalette(appearance.themePalette));
+  currentUserAvatarIcon.value = normalizeAvatarIcon(appearance.avatarIcon, PROFILE_AVATAR_OPTION_KEYS);
+  currentUserAvatarColor.value = normalizeAvatarColor(appearance.avatarColor);
+  appearanceHydrating.value = false;
 };
 
-const normalizeCurrentUserAvatarColor = (value: unknown): string => {
-  const text = String(value || '').trim();
-  if (!text) return '#3b82f6';
-  if (/^#[0-9a-fA-F]{6}$/.test(text)) return text;
-  return '#3b82f6';
-};
+const resolveCurrentUserAppearance = (): UserAppearancePreferences => ({
+  themeMode: normalizeThemeMode(themeStore.mode),
+  themePalette: normalizeThemePalette(themeStore.palette),
+  avatarIcon: normalizeAvatarIcon(currentUserAvatarIcon.value, PROFILE_AVATAR_OPTION_KEYS),
+  avatarColor: normalizeAvatarColor(currentUserAvatarColor.value),
+  updatedAt: 0
+});
 
-const persistCurrentUserAvatar = () => {
-  if (typeof window === 'undefined') return;
+const hydrateCurrentUserAppearance = async () => {
+  const scopedUserId = String(currentUserId.value || '').trim();
+  if (!scopedUserId) {
+    applyCurrentUserAppearance({
+      ...resolveCurrentUserAppearance(),
+      avatarIcon: 'initial',
+      avatarColor: '#3b82f6'
+    });
+    return;
+  }
+  appearanceHydrating.value = true;
   try {
-    window.localStorage.setItem(
-      profileAvatarStorageKey.value,
-      JSON.stringify({
-        icon: normalizeCurrentUserAvatarIcon(currentUserAvatarIcon.value),
-        color: normalizeCurrentUserAvatarColor(currentUserAvatarColor.value)
-      })
-    );
-  } catch {
-    // ignore localStorage errors
+    const appearance = await loadUserAppearance(scopedUserId, PROFILE_AVATAR_OPTION_KEYS);
+    if (String(currentUserId.value || '').trim() !== scopedUserId) return;
+    applyCurrentUserAppearance(appearance);
+  } finally {
+    appearanceHydrating.value = false;
   }
 };
 
-const loadCurrentUserAvatar = () => {
-  currentUserAvatarIcon.value = 'initial';
-  currentUserAvatarColor.value = '#3b82f6';
-  if (typeof window === 'undefined') return;
-  try {
-    const raw = window.localStorage.getItem(profileAvatarStorageKey.value);
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    currentUserAvatarIcon.value = normalizeCurrentUserAvatarIcon(parsed.icon);
-    currentUserAvatarColor.value = normalizeCurrentUserAvatarColor(parsed.color);
-  } catch {
-    currentUserAvatarIcon.value = 'initial';
-    currentUserAvatarColor.value = '#3b82f6';
-  }
+const persistCurrentUserAppearance = async () => {
+  if (appearanceHydrating.value) return;
+  const scopedUserId = String(currentUserId.value || '').trim();
+  if (!scopedUserId) return;
+  const appearance = resolveCurrentUserAppearance();
+  const persisted = await saveUserAppearance(scopedUserId, appearance, PROFILE_AVATAR_OPTION_KEYS);
+  if (String(currentUserId.value || '').trim() !== scopedUserId) return;
+  applyCurrentUserAppearance(persisted);
 };
 
 const updateCurrentUserAvatarIcon = (value: unknown) => {
-  currentUserAvatarIcon.value = normalizeCurrentUserAvatarIcon(value);
-  persistCurrentUserAvatar();
+  currentUserAvatarIcon.value = normalizeAvatarIcon(value, PROFILE_AVATAR_OPTION_KEYS);
+  void persistCurrentUserAppearance();
 };
 
 const updateCurrentUserAvatarColor = (value: unknown) => {
-  currentUserAvatarColor.value = normalizeCurrentUserAvatarColor(value);
-  persistCurrentUserAvatar();
+  currentUserAvatarColor.value = normalizeAvatarColor(value);
+  void persistCurrentUserAppearance();
 };
 
 const initDesktopLaunchBehavior = () => {
@@ -7058,7 +7065,8 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
   try {
     await chatStore.sendMessage(finalContent, {
       attachments,
-      suppressQueuedNotice: hasInquirySelection
+      suppressQueuedNotice: hasInquirySelection,
+      approvalMode: activeAgentApprovalMode.value
     });
     setRuntimeStateOverride(targetAgentId, 'done', 8_000);
     if (chatStore.activeSessionId) {
@@ -7321,6 +7329,7 @@ const cancelAgentVoiceRecording = async () => {
 
 const startAgentVoiceRecording = async () => {
   if (!isAgentConversationActive.value || agentSessionLoading.value) return;
+  refreshAudioRecordingSupport();
   if (!audioRecordingSupported.value) {
     ElMessage.warning(t('messenger.world.voice.unsupported'));
     return;
@@ -7433,6 +7442,7 @@ const cancelWorldVoiceRecording = async () => {
 
 const startWorldVoiceRecording = async () => {
   if (!isWorldConversationActive.value || worldUploading.value || userWorldStore.sending) return;
+  refreshAudioRecordingSupport();
   if (!worldVoiceSupported.value) {
     ElMessage.warning(t('messenger.world.voice.unsupported'));
     return;
@@ -7887,7 +7897,7 @@ const handleSessionApprovalDecision = async (
 };
 
 const updateThemePalette = (value: 'hula-green' | 'eva-orange' | 'minimal') => {
-  themeStore.setPalette(value);
+  themeStore.setPalette(normalizeThemePalette(value));
 };
 
 const updatePerformanceMode = (value: 'high' | 'low') => {
@@ -8450,7 +8460,7 @@ watch(
 watch(
   () => currentUserId.value,
   () => {
-    loadCurrentUserAvatar();
+    void hydrateCurrentUserAppearance();
     cronPermissionDenied.value = false;
     cronAgentIds.value = new Set<string>();
     clearWorkspaceResourceCache();
@@ -8460,6 +8470,14 @@ watch(
     scheduleWorkspaceResourceHydration();
   },
   { immediate: true }
+);
+
+watch(
+  () => [themeStore.mode, themeStore.palette],
+  () => {
+    if (appearanceHydrating.value) return;
+    void persistCurrentUserAppearance();
+  }
 );
 
 watch(
@@ -8817,10 +8835,25 @@ onMounted(async () => {
     worldRecentEmojis.value = loadStoredStringArray(WORLD_QUICK_EMOJI_STORAGE_KEY, 12);
     window.addEventListener('pointerdown', closeWorldQuickPanelWhenOutside, true);
     document.addEventListener('scroll', closeFileContainerMenu, true);
+    audioRecordingSupportHandler = () => {
+      refreshAudioRecordingSupport();
+    };
+    window.addEventListener('focus', audioRecordingSupportHandler);
+    window.addEventListener('pageshow', audioRecordingSupportHandler);
+    document.addEventListener('visibilitychange', audioRecordingSupportHandler);
+    refreshAudioRecordingSupport();
+    if (audioRecordingSupportRetryTimer !== null) {
+      window.clearTimeout(audioRecordingSupportRetryTimer);
+    }
+    audioRecordingSupportRetryTimer = window.setTimeout(() => {
+      refreshAudioRecordingSupport();
+      audioRecordingSupportRetryTimer = null;
+    }, 1200);
   }
   initDesktopLaunchBehavior();
   applyUiFontSize(uiFontSize.value);
   await bootstrap();
+  refreshAudioRecordingSupport();
   updateMessageScrollState();
   syncMessageVirtualMetrics();
   scheduleMessageVirtualMeasure();
@@ -8848,6 +8881,16 @@ onBeforeUnmount(() => {
     }
     window.removeEventListener('pointerdown', closeWorldQuickPanelWhenOutside, true);
     document.removeEventListener('scroll', closeFileContainerMenu, true);
+    if (audioRecordingSupportHandler) {
+      window.removeEventListener('focus', audioRecordingSupportHandler);
+      window.removeEventListener('pageshow', audioRecordingSupportHandler);
+      document.removeEventListener('visibilitychange', audioRecordingSupportHandler);
+      audioRecordingSupportHandler = null;
+    }
+    if (audioRecordingSupportRetryTimer !== null) {
+      window.clearTimeout(audioRecordingSupportRetryTimer);
+      audioRecordingSupportRetryTimer = null;
+    }
   }
   closeFileContainerMenu();
   clearWorldQuickPanelClose();

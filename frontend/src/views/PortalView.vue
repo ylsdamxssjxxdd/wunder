@@ -323,7 +323,7 @@
             <div class="agent-basic-settings">
               <div class="agent-share-card agent-share-card--combined">
                 <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
-                <div class="agent-share-row">
+                <div v-if="showShareSetting" class="agent-share-row">
                   <el-switch v-model="form.is_shared" />
                   <span>{{ t('portal.agent.share.label') }}</span>
                 </div>
@@ -394,9 +394,9 @@ const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
 const { t } = useI18n();
-const showApprovalModeSetting = computed(
-  () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
-);
+const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
+const showApprovalModeSetting = computed(() => desktopLocalMode.value);
+const showShareSetting = computed(() => !desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 const RUNNING_REFRESH_MS = 6000;
@@ -410,7 +410,6 @@ const RUNNING_STATE_CACHE_KEY = 'wunder.portal.running_state';
 const AGENT_LIST_CACHE_TTL_MS = 10 * 60 * 1000;
 const RUNNING_STATE_CACHE_TTL_MS = 5 * 60 * 1000;
 const searchQuery = ref('');
-const showSharedAgents = ref(false);
 const showMoreApps = ref(false);
 const dialogVisible = ref(false);
 const saving = ref(false);
@@ -759,7 +758,7 @@ onBeforeUnmount(() => {
 });
 
 const agents = computed(() => agentStore.agents || []);
-const sharedAgents = computed(() => agentStore.sharedAgents || []);
+const sharedAgents = computed(() => (desktopLocalMode.value ? [] : agentStore.sharedAgents || []));
 const agentLoading = computed(() => agentStore.loading);
 const showOwnedAgentLoading = computed(() => agentLoading.value && agents.value.length === 0);
 const showSharedAgentLoading = computed(() => agentLoading.value && sharedAgents.value.length === 0);
@@ -773,6 +772,9 @@ const filteredSharedAgents = computed(() => {
   const matched = query ? sharedAgents.value.filter((agent) => matchesQuery(agent, query)) : sharedAgents.value;
   return sortAgentsByContainerId(matched);
 });
+const showSharedAgents = computed(
+  () => !desktopLocalMode.value && filteredSharedAgents.value.length > 0
+);
 const filteredExternalLinks = computed(() => {
   const query = normalizedQuery.value;
   if (!query) return externalLinks.value;
@@ -1363,7 +1365,7 @@ const saveAgent = async () => {
     const payload = {
       name,
       description: form.description || '',
-      is_shared: Boolean(form.is_shared),
+      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || '',

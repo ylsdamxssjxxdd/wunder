@@ -8,7 +8,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -22,6 +22,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/auth/external/code", post(external_issue_code))
         .route("/wunder/auth/external/exchange", post(external_exchange))
         .route("/wunder/auth/org_units", get(list_org_units))
+        .route(
+            "/wunder/auth/me/preferences",
+            get(me_preferences).patch(update_me_preferences),
+        )
         .route("/wunder/auth/me", get(me).patch(update_me))
 }
 
@@ -74,6 +78,32 @@ struct UpdateProfileRequest {
     email: Option<String>,
     #[serde(default)]
     unit_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateMyPreferencesRequest {
+    #[serde(default)]
+    theme_mode: Option<String>,
+    #[serde(default)]
+    theme_palette: Option<String>,
+    #[serde(default)]
+    avatar_icon: Option<String>,
+    #[serde(default)]
+    avatar_color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct UserPreferenceRecord {
+    #[serde(default = "default_theme_mode")]
+    theme_mode: String,
+    #[serde(default = "default_theme_palette")]
+    theme_palette: String,
+    #[serde(default = "default_avatar_icon")]
+    avatar_icon: String,
+    #[serde(default = "default_avatar_color")]
+    avatar_color: String,
+    #[serde(default)]
+    updated_at: f64,
 }
 
 async fn register(
@@ -415,6 +445,46 @@ async fn update_me(
     Ok(Json(json!({ "data": profile })))
 }
 
+async fn me_preferences(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let preferences = load_user_preferences(&state, &resolved.user.user_id)?;
+    Ok(Json(json!({ "data": preferences })))
+}
+
+async fn update_me_preferences(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<UpdateMyPreferencesRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let mut record = load_user_preferences(&state, &resolved.user.user_id)?;
+    let before = record.clone();
+
+    if let Some(theme_mode) = payload.theme_mode {
+        record.theme_mode = normalize_theme_mode(&theme_mode);
+    }
+    if let Some(theme_palette) = payload.theme_palette {
+        record.theme_palette = normalize_theme_palette(&theme_palette);
+    }
+    if let Some(avatar_icon) = payload.avatar_icon {
+        record.avatar_icon = normalize_avatar_icon(&avatar_icon);
+    }
+    if let Some(avatar_color) = payload.avatar_color {
+        record.avatar_color = normalize_avatar_color(&avatar_color);
+    }
+    normalize_user_preferences_in_place(&mut record);
+
+    if record != before {
+        record.updated_at = now_ts();
+        save_user_preferences(&state, &resolved.user.user_id, &record)?;
+    }
+
+    Ok(Json(json!({ "data": record })))
+}
+
 async fn list_org_units(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, Response> {
@@ -483,6 +553,124 @@ fn org_unit_payload(record: &OrgUnitRecord) -> Value {
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     })
+}
+
+fn default_theme_mode() -> String {
+    "light".to_string()
+}
+
+fn default_theme_palette() -> String {
+    "eva-orange".to_string()
+}
+
+fn default_avatar_icon() -> String {
+    "initial".to_string()
+}
+
+fn default_avatar_color() -> String {
+    "#3b82f6".to_string()
+}
+
+impl Default for UserPreferenceRecord {
+    fn default() -> Self {
+        Self {
+            theme_mode: default_theme_mode(),
+            theme_palette: default_theme_palette(),
+            avatar_icon: default_avatar_icon(),
+            avatar_color: default_avatar_color(),
+            updated_at: 0.0,
+        }
+    }
+}
+
+fn user_preferences_meta_key(user_id: &str) -> String {
+    format!("user_preferences:v1:{}", user_id.trim())
+}
+
+fn load_user_preferences(
+    state: &AppState,
+    user_id: &str,
+) -> Result<UserPreferenceRecord, Response> {
+    let key = user_preferences_meta_key(user_id);
+    let raw = state
+        .user_store
+        .get_meta(&key)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut record = raw
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<UserPreferenceRecord>(value).ok())
+        .unwrap_or_default();
+    normalize_user_preferences_in_place(&mut record);
+    Ok(record)
+}
+
+fn save_user_preferences(
+    state: &AppState,
+    user_id: &str,
+    record: &UserPreferenceRecord,
+) -> Result<(), Response> {
+    let key = user_preferences_meta_key(user_id);
+    let payload = serde_json::to_string(record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state
+        .user_store
+        .set_meta(&key, &payload)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
+}
+
+fn normalize_user_preferences_in_place(record: &mut UserPreferenceRecord) {
+    record.theme_mode = normalize_theme_mode(&record.theme_mode);
+    record.theme_palette = normalize_theme_palette(&record.theme_palette);
+    record.avatar_icon = normalize_avatar_icon(&record.avatar_icon);
+    record.avatar_color = normalize_avatar_color(&record.avatar_color);
+    if !record.updated_at.is_finite() || record.updated_at < 0.0 {
+        record.updated_at = 0.0;
+    }
+}
+
+fn normalize_theme_mode(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    if normalized == "dark" {
+        "dark".to_string()
+    } else {
+        default_theme_mode()
+    }
+}
+
+fn normalize_theme_palette(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    if normalized == "hula-green" || normalized == "minimal" {
+        normalized
+    } else {
+        default_theme_palette()
+    }
+}
+
+fn normalize_avatar_icon(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    if normalized == "initial" {
+        return "initial".to_string();
+    }
+    let Some(number) = normalized.strip_prefix("qq-avatar-") else {
+        return default_avatar_icon();
+    };
+    if number.is_empty() || number.len() > 4 || !number.chars().all(|ch| ch.is_ascii_digit()) {
+        return default_avatar_icon();
+    }
+    let parsed = number.parse::<u16>().ok().unwrap_or(0);
+    format!("qq-avatar-{parsed:04}")
+}
+
+fn normalize_avatar_color(value: &str) -> String {
+    let normalized = value.trim().to_lowercase();
+    if normalized.len() == 7
+        && normalized.starts_with('#')
+        && normalized.chars().skip(1).all(|ch| ch.is_ascii_hexdigit())
+    {
+        normalized
+    } else {
+        default_avatar_color()
+    }
 }
 
 fn normalize_optional_id(raw: Option<&str>) -> Option<String> {
@@ -707,4 +895,37 @@ fn now_ts() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
+        normalize_theme_palette,
+    };
+
+    #[test]
+    fn normalize_theme_defaults_to_light() {
+        assert_eq!(normalize_theme_mode(""), "light");
+        assert_eq!(normalize_theme_mode("unknown"), "light");
+    }
+
+    #[test]
+    fn normalize_theme_palette_defaults_to_eva_orange() {
+        assert_eq!(normalize_theme_palette(""), "eva-orange");
+        assert_eq!(normalize_theme_palette("other"), "eva-orange");
+    }
+
+    #[test]
+    fn normalize_avatar_icon_supports_legacy_digits() {
+        assert_eq!(normalize_avatar_icon("qq-avatar-7"), "qq-avatar-0007");
+        assert_eq!(normalize_avatar_icon("QQ-AVATAR-0080"), "qq-avatar-0080");
+        assert_eq!(normalize_avatar_icon("unknown"), "initial");
+    }
+
+    #[test]
+    fn normalize_avatar_color_accepts_hex_only() {
+        assert_eq!(normalize_avatar_color("#AbCdEf"), "#abcdef");
+        assert_eq!(normalize_avatar_color("rgb(0,0,0)"), "#3b82f6");
+    }
 }

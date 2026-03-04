@@ -158,11 +158,14 @@ impl Orchestrator {
                 &skills_snapshot,
                 Some(&user_tool_bindings),
             );
-            let allowed_tool_names = self.resolve_allowed_tool_names(
-                &config,
-                prepared.tool_names.as_deref().unwrap_or(&[]),
-                &skills_snapshot,
-                Some(&user_tool_bindings),
+            let allowed_tool_names = self.filter_tools_for_model_capability(
+                self.resolve_allowed_tool_names(
+                    &config,
+                    prepared.tool_names.as_deref().unwrap_or(&[]),
+                    &skills_snapshot,
+                    Some(&user_tool_bindings),
+                ),
+                llm_config.support_vision.unwrap_or(false),
             );
             let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
             let function_tooling = if matches!(
@@ -586,6 +589,19 @@ impl Orchestrator {
                         }
 
                         let observation = self.build_tool_observation(&name, &result);
+                        let read_image_followup = if result.ok && is_read_image_tool_name(&name) {
+                            match build_read_image_followup_user_message(&result.data).await {
+                                Ok(payload) => payload,
+                                Err(err) => {
+                                    warn!(
+                                        "failed to prepare read-image followup for session {session_id}: {err}"
+                                    );
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
                         let tool_call_id = if matches!(
                             tool_call_mode,
                             ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
@@ -618,6 +634,9 @@ impl Orchestrator {
                                 "role": "user",
                                 "content": format!("{OBSERVATION_PREFIX}{observation}"),
                             }));
+                        }
+                        if let Some(followup_message) = read_image_followup {
+                            messages.push(followup_message);
                         }
                         self.append_chat(
                             &user_id,

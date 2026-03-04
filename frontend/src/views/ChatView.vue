@@ -669,6 +669,7 @@ import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
+import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -707,6 +708,7 @@ const currentUserUnitLabel = computed(() => {
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => resolveUserBasePath(route.path));
 const desktopMode = computed(() => basePath.value === '/desktop');
+const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
 const featureTransport = computed(() => (chatStore.streamTransport === 'sse' ? 'sse' : 'ws'));
 const featureTransportClass = computed(() => (featureTransport.value === 'sse' ? 'sse' : 'ws'));
 const featureTransportText = computed(() =>
@@ -841,6 +843,24 @@ const activeAgentId = computed(
 const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
 );
+const normalizeAgentApprovalMode = (value: unknown): string => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'suggest') return 'suggest';
+  if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
+  if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
+  return 'auto_edit';
+};
+const approvalModeForRequest = computed(() => {
+  if (!desktopLocalMode.value) {
+    return 'full_auto';
+  }
+  const agentId = String(activeAgentId.value || '').trim();
+  if (!agentId) {
+    return 'full_auto';
+  }
+  const agent = activeAgent.value || {};
+  return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'auto_edit');
+});
 const normalizeSandboxContainerId = (value) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed)) return 1;
@@ -1874,7 +1894,8 @@ const handleComposerSend = async ({ content, attachments }) => {
     const normalizedContent = normalizeChatMessageContentForMarkdown(finalContent);
     await chatStore.sendMessage(normalizedContent, {
       attachments: payloadAttachments,
-      suppressQueuedNotice: hasSelection
+      suppressQueuedNotice: hasSelection,
+      approvalMode: approvalModeForRequest.value
     });
   } catch (error) {
     pendingAssistantCenter = false;

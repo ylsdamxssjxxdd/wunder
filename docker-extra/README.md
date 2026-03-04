@@ -63,6 +63,21 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 >   bash -lc 'pgrep -af appimagetool || true; ls -lh /app/target/arm64-20/dist/wunder-desktop-arm64-python.AppImage'
 > ```
 
+### 可选：打包 Playwright（浏览器自动化）
+
+若需要在内置 Python 中附带 Playwright + Chromium，先在容器内重建 embedded Python：
+
+```bash
+docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-arm \
+  bash -lc 'INCLUDE_PLAYWRIGHT=1 BUILD_ROOT=/app/target/arm64-20/.build/python \
+  bash /app/docker-extra/scripts/build_embedded_python.sh'
+```
+
+完成后再执行 “一键打包” 或重跑 AppImage 重打包步骤即可。
+
+> 说明：重打包 AppImage 时会自动将 Playwright 运行库（如 libnss3/libnspr4 等）收集进 AppImage 并设置 `LD_LIBRARY_PATH`，
+> 旧系统缺依赖时可直接使用。若需手动控制，可设置 `BUNDLE_PLAYWRIGHT_DEPS=0/1` 或 `PLAYWRIGHT_INSTALL_DEPS=0/1`。
+
 ### CI 专用（不附带 Python / Git）
 
 GitHub Actions 的 Linux Nightly 使用以下脚本在 Ubuntu20 基线容器中打包 Electron AppImage（x64/arm64）：

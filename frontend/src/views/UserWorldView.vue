@@ -203,6 +203,23 @@
                 </span>
               </span>
             </button>
+            <button
+              class="user-world-helper-card"
+              type="button"
+              @click="openGlobeDialog"
+            >
+              <span class="user-world-helper-card-icon">
+                <i class="fa-solid fa-earth-asia" aria-hidden="true"></i>
+              </span>
+              <span class="user-world-helper-card-main">
+                <span class="user-world-helper-card-title">
+                  {{ t('userWorld.helperApps.globe.cardTitle') }}
+                </span>
+                <span class="user-world-helper-card-desc">
+                  {{ t('userWorld.helperApps.globe.cardDesc') }}
+                </span>
+              </span>
+            </button>
           </div>
         </div>
 
@@ -471,6 +488,7 @@
         </span>
       </template>
     </el-dialog>
+    <GlobeAppDialog v-model:visible="globeDialogVisible" />
   </div>
 </template>
 
@@ -482,6 +500,7 @@ import { fetchOrgUnits } from '@/api/auth';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import { fetchWunderWorkspaceContent, searchWunderWorkspace, uploadWunderWorkspace } from '@/api/workspace';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
+import GlobeAppDialog from '@/components/globe/GlobeAppDialog.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
@@ -616,6 +635,7 @@ const mentionMenuIndex = ref(0);
 const mentionMenuDismissed = ref(false);
 const draftCaretPosition = ref(0);
 const localFileSearchDialogVisible = ref(false);
+const globeDialogVisible = ref(false);
 const localFileSearchKeyword = ref('');
 const localFileSearchLoading = ref(false);
 const localFileSearchTouched = ref(false);
@@ -1239,6 +1259,10 @@ const appendAttachmentTokens = (paths: string[]) => {
 
 const openLocalFileSearchDialog = () => {
   localFileSearchDialogVisible.value = true;
+};
+
+const openGlobeDialog = () => {
+  globeDialogVisible.value = true;
 };
 
 const runLocalFileSearch = async (append = false) => {

@@ -12,6 +12,9 @@ REQ_FILE="${REQ_FILE:-${ROOT_DIR}/packaging/python/requirements-full.txt}"
 WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-${BUILD_ROOT}/wheelhouse}"
 # Allow source fallback for a small set of pure-python packages without wheels on arm64.
 SOURCE_FALLBACK_PACKAGES="${SOURCE_FALLBACK_PACKAGES:-odfpy}"
+EXTRA_REQUIREMENTS="${EXTRA_REQUIREMENTS:-}"
+INCLUDE_PLAYWRIGHT="${INCLUDE_PLAYWRIGHT:-0}"
+PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${PYTHON_ROOT}/playwright}"
 
 mkdir -p "${SRC_DIR}" "${STAGE_DIR}" "${WHEELHOUSE_DIR}"
 
@@ -48,6 +51,30 @@ else
   "${PYTHON_ROOT}/bin/python3" -m pip download -r "${REQ_FILE}" -d "${WHEELHOUSE_DIR}" --only-binary=:all:
 fi
 "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation -r "${REQ_FILE}"
+
+if [ "${INCLUDE_PLAYWRIGHT}" = "1" ]; then
+  EXTRA_REQUIREMENTS="${EXTRA_REQUIREMENTS} playwright"
+fi
+
+if [ -n "${EXTRA_REQUIREMENTS}" ]; then
+  "${PYTHON_ROOT}/bin/python3" -m pip download ${EXTRA_REQUIREMENTS} -d "${WHEELHOUSE_DIR}" --only-binary=:all:
+  "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation ${EXTRA_REQUIREMENTS}
+fi
+
+if [ "${INCLUDE_PLAYWRIGHT}" = "1" ]; then
+  export PLAYWRIGHT_BROWSERS_PATH
+  mkdir -p "${PLAYWRIGHT_BROWSERS_PATH}"
+  for cache_dir in \
+    "${BUILD_ROOT}/playwright-cache/ms-playwright" \
+    "${BUILD_ROOT}/playwright-test/ms-playwright" \
+    "${BUILD_ROOT}/ms-playwright"; do
+    if [ -d "${cache_dir}" ]; then
+      cp -a "${cache_dir}/." "${PLAYWRIGHT_BROWSERS_PATH}/"
+      break
+    fi
+  done
+  "${PYTHON_ROOT}/bin/python3" -m playwright install chromium
+fi
 
 PY_VER=$("${PYTHON_ROOT}/bin/python3" - <<'PY'
 import sys

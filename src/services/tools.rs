@@ -5,6 +5,8 @@
 // Do not add new tool business logic directly in `tools.rs`.
 // Implement new capabilities in dedicated modules/files and only wire them here.
 mod apply_patch_tool;
+mod browser_tool;
+mod read_image_tool;
 
 use crate::a2a_store::{A2aStore, A2aTask};
 use crate::command_utils;
@@ -457,6 +459,18 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
             }),
         },
         ToolSpec {
+            name: read_image_tool::TOOL_READ_IMAGE.to_string(),
+            description: t("tool.spec.read_image.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": t("tool.spec.read_image.args.path")},
+                    "prompt": {"type": "string", "description": t("tool.spec.read_image.args.prompt")}
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolSpec {
             name: "技能调用".to_string(),
             description: t("tool.spec.skill_call.description"),
             input_schema: json!({
@@ -613,6 +627,64 @@ fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
                 ]
             }),
         },
+        ToolSpec {
+            name: browser_tool::TOOL_BROWSER_NAVIGATE.to_string(),
+            description: t("tool.spec.browser_navigate.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": t("tool.spec.browser_navigate.args.url") }
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolSpec {
+            name: browser_tool::TOOL_BROWSER_CLICK.to_string(),
+            description: t("tool.spec.browser_click.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "selector": { "type": "string", "description": t("tool.spec.browser_click.args.selector") }
+                },
+                "required": ["selector"]
+            }),
+        },
+        ToolSpec {
+            name: browser_tool::TOOL_BROWSER_TYPE.to_string(),
+            description: t("tool.spec.browser_type.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "selector": { "type": "string", "description": t("tool.spec.browser_type.args.selector") },
+                    "text": { "type": "string", "description": t("tool.spec.browser_type.args.text") }
+                },
+                "required": ["selector", "text"]
+            }),
+        },
+        ToolSpec {
+            name: browser_tool::TOOL_BROWSER_SCREENSHOT.to_string(),
+            description: t("tool.spec.browser_screenshot.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolSpec {
+            name: browser_tool::TOOL_BROWSER_READ_PAGE.to_string(),
+            description: t("tool.spec.browser_read_page.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolSpec {
+            name: browser_tool::TOOL_BROWSER_CLOSE.to_string(),
+            description: t("tool.spec.browser_close.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
     ]
 }
 
@@ -638,6 +710,14 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("list_files".to_string(), "列出文件".to_string());
     map.insert("search_content".to_string(), "搜索内容".to_string());
     map.insert("read_file".to_string(), "读取文件".to_string());
+    map.insert(
+        read_image_tool::TOOL_READ_IMAGE_ALIAS.to_string(),
+        read_image_tool::TOOL_READ_IMAGE.to_string(),
+    );
+    map.insert(
+        read_image_tool::TOOL_VIEW_IMAGE_ALIAS.to_string(),
+        read_image_tool::TOOL_READ_IMAGE.to_string(),
+    );
     map.insert("skill_call".to_string(), "技能调用".to_string());
     map.insert("skill_get".to_string(), "技能调用".to_string());
     map.insert("write_file".to_string(), "写入文件".to_string());
@@ -654,7 +734,64 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     );
     map.insert("node.invoke".to_string(), "节点调用".to_string());
     map.insert("node_invoke".to_string(), "节点调用".to_string());
+    map.insert(
+        "browser_navigate".to_string(),
+        browser_tool::TOOL_BROWSER_NAVIGATE.to_string(),
+    );
+    map.insert(
+        "browser_click".to_string(),
+        browser_tool::TOOL_BROWSER_CLICK.to_string(),
+    );
+    map.insert(
+        "browser_type".to_string(),
+        browser_tool::TOOL_BROWSER_TYPE.to_string(),
+    );
+    map.insert(
+        "browser_screenshot".to_string(),
+        browser_tool::TOOL_BROWSER_SCREENSHOT.to_string(),
+    );
+    map.insert(
+        "browser_read_page".to_string(),
+        browser_tool::TOOL_BROWSER_READ_PAGE.to_string(),
+    );
+    map.insert(
+        "browser_close".to_string(),
+        browser_tool::TOOL_BROWSER_CLOSE.to_string(),
+    );
     map
+}
+
+pub fn is_browser_tool_name(name: &str) -> bool {
+    browser_tool::is_browser_tool_name(name)
+}
+
+pub fn browser_tools_available(config: &Config) -> bool {
+    browser_tool::browser_tools_enabled(config)
+}
+
+pub fn is_read_image_tool_name(name: &str) -> bool {
+    read_image_tool::is_read_image_tool_name(name)
+}
+
+pub async fn build_read_image_followup_user_message(result: &Value) -> Result<Option<Value>> {
+    read_image_tool::build_followup_user_message(result).await
+}
+
+pub fn filter_tool_names_by_model_capability(
+    allowed_tool_names: HashSet<String>,
+    support_vision: bool,
+) -> HashSet<String> {
+    if support_vision {
+        return allowed_tool_names;
+    }
+    allowed_tool_names
+        .into_iter()
+        .filter(|name| {
+            let canonical = resolve_tool_name(name);
+            !read_image_tool::is_read_image_tool_name(&canonical)
+                && !read_image_tool::is_read_image_tool_name(name)
+        })
+        .collect()
 }
 
 pub fn resolve_tool_name(name: &str) -> String {
@@ -673,6 +810,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "节点调用" => Some("node_invoke"),
         "用户世界工具" => Some("user_world"),
         "记忆管理" => Some("memory_manager"),
+        read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
         _ => None,
     }
 }
@@ -733,6 +871,11 @@ pub fn collect_available_tool_names(
     for name in &config.tools.builtin.enabled {
         let canonical = resolve_tool_name(name);
         if canonical.is_empty() {
+            continue;
+        }
+        if browser_tool::is_browser_tool_name(&canonical)
+            && !browser_tool::browser_tools_enabled(config)
+        {
             continue;
         }
         enabled_builtin.insert(canonical.clone());
@@ -986,6 +1129,7 @@ pub async fn execute_builtin_tool(
         "列出文件" => list_files(context, args).await,
         "搜索内容" => search_content(context, args).await,
         "读取文件" => read_files(context, args).await,
+        read_image_tool::TOOL_READ_IMAGE => read_image_tool::tool_read_image(context, args).await,
         "技能调用" => execute_skill_call(context, args).await,
         "写入文件" => write_file(context, args).await,
         "应用补丁" => apply_patch_tool::apply_patch(context, args).await,
@@ -993,6 +1137,18 @@ pub async fn execute_builtin_tool(
         "子智能体控制" => subagent_control(context, args).await,
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}" => agent_swarm(context, args).await,
         "节点调用" => execute_node_invoke(context, args).await,
+        browser_tool::TOOL_BROWSER_NAVIGATE => {
+            browser_tool::tool_browser_navigate(context, args).await
+        }
+        browser_tool::TOOL_BROWSER_CLICK => browser_tool::tool_browser_click(context, args).await,
+        browser_tool::TOOL_BROWSER_TYPE => browser_tool::tool_browser_type(context, args).await,
+        browser_tool::TOOL_BROWSER_SCREENSHOT => {
+            browser_tool::tool_browser_screenshot(context, args).await
+        }
+        browser_tool::TOOL_BROWSER_READ_PAGE => {
+            browser_tool::tool_browser_read_page(context, args).await
+        }
+        browser_tool::TOOL_BROWSER_CLOSE => browser_tool::tool_browser_close(context, args).await,
         "a2a观察" => a2a_observe(context, args).await,
         "a2a等待" => a2a_wait(context, args).await,
         "a2ui" => Ok(
@@ -7547,6 +7703,25 @@ mod tests {
             aliases.get("apply_patch").map(String::as_str),
             Some("应用补丁")
         );
+        assert_eq!(
+            aliases
+                .get(read_image_tool::TOOL_VIEW_IMAGE_ALIAS)
+                .map(String::as_str),
+            Some(read_image_tool::TOOL_READ_IMAGE)
+        );
+    }
+
+    #[test]
+    fn filter_tool_names_by_model_capability_blocks_read_image_when_vision_disabled() {
+        let names = HashSet::from([
+            read_image_tool::TOOL_READ_IMAGE.to_string(),
+            read_image_tool::TOOL_READ_IMAGE_ALIAS.to_string(),
+            "read_file".to_string(),
+        ]);
+        let filtered = filter_tool_names_by_model_capability(names, false);
+        assert!(!filtered.contains(read_image_tool::TOOL_READ_IMAGE));
+        assert!(!filtered.contains(read_image_tool::TOOL_READ_IMAGE_ALIAS));
+        assert!(filtered.contains("read_file"));
     }
 
     #[test]

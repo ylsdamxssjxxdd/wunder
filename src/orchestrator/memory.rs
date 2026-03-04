@@ -658,11 +658,14 @@ impl Orchestrator {
         let user_tool_bindings =
             self.user_tool_manager
                 .build_bindings(&config, &skills_snapshot, user_id);
-        let allowed_tool_names = self.resolve_allowed_tool_names(
-            &config,
-            &[],
-            &skills_snapshot,
-            Some(&user_tool_bindings),
+        let allowed_tool_names = self.filter_tools_for_model_capability(
+            self.resolve_allowed_tool_names(
+                &config,
+                &[],
+                &skills_snapshot,
+                Some(&user_tool_bindings),
+            ),
+            llm_config.support_vision.unwrap_or(false),
         );
         let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
         let workspace_id = self.resolve_workspace_id(user_id, agent_id);

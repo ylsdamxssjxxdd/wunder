@@ -19,6 +19,8 @@
     "element-plus": "^2.8.8",
     "markdown-it": "^14.1.0",
     "pinia": "^2.2.6",
+    "three": "^0.164.1",
+    "topojson-client": "^3.1.0",
     "vue": "^3.5.25",
     "vue-router": "^4.4.5"
   },

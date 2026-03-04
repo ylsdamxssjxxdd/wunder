@@ -1047,6 +1047,18 @@
     "en-US": "File too large to read.",
     "zh-CN": "文件过大，已拒绝读取。"
   },
+  "tool.read_image.followup_prompt": {
+    "en-US": "Please analyze this local image and continue the current task.",
+    "zh-CN": "请分析这张本地图片，并继续完成当前任务。"
+  },
+  "tool.read_image.not_file": {
+    "en-US": "Image path must point to a file.",
+    "zh-CN": "图片路径必须指向文件。"
+  },
+  "tool.read_image.not_image": {
+    "en-US": "The specified file is not a supported image.",
+    "zh-CN": "指定文件不是受支持的图片格式。"
+  },
   "tool.replace.count_mismatch": {
     "en-US": "Replacement count mismatch.",
     "zh-CN": "实际替换数量与期望不一致。"
@@ -1367,6 +1379,46 @@
     "en-US": "Run CLI commands when needed to complete the task. Defaults to the workspace root; workdir must stay within the current workspace (relative path only). Command content has no path restrictions.",
     "zh-CN": "请求执行 CLI 命令。默认在工作区根目录执行；workdir 只能在当前工作目录以内（相对路径），不允许绝对路径；content 不限制路径格式。"
   },
+  "tool.spec.browser_navigate.args.url": {
+    "en-US": "The URL to open (http/https only).",
+    "zh-CN": "要打开的网页地址（http/https）"
+  },
+  "tool.spec.browser_navigate.description": {
+    "en-US": "Navigate the browser to a URL and return the page title and readable content.",
+    "zh-CN": "导航浏览器到指定 URL，并返回页面标题与可读内容。"
+  },
+  "tool.spec.browser_click.args.selector": {
+    "en-US": "CSS selector or visible text to click.",
+    "zh-CN": "CSS 选择器或可见文本"
+  },
+  "tool.spec.browser_click.description": {
+    "en-US": "Click an element on the current page by CSS selector or visible text.",
+    "zh-CN": "在当前页面点击元素（CSS 选择器或可见文本）"
+  },
+  "tool.spec.browser_type.args.selector": {
+    "en-US": "CSS selector for the input field.",
+    "zh-CN": "输入框的 CSS 选择器"
+  },
+  "tool.spec.browser_type.args.text": {
+    "en-US": "Text to type.",
+    "zh-CN": "要输入的文本"
+  },
+  "tool.spec.browser_type.description": {
+    "en-US": "Type text into an input field on the current page.",
+    "zh-CN": "在指定输入框输入文本"
+  },
+  "tool.spec.browser_screenshot.description": {
+    "en-US": "Take a screenshot of the current page and return image info.",
+    "zh-CN": "截取当前页面截图并返回图片信息。"
+  },
+  "tool.spec.browser_read_page.description": {
+    "en-US": "Read the current page and return structured content.",
+    "zh-CN": "读取当前页面并返回结构化内容"
+  },
+  "tool.spec.browser_close.description": {
+    "en-US": "Close the current browser session.",
+    "zh-CN": "关闭当前浏览器会话"
+  },
   "tool.spec.final.args.content": {
     "en-US": "Final response content.",
     "zh-CN": "最终回复内容。"
@@ -1606,6 +1658,18 @@
   "tool.spec.read.description": {
     "en-US": "Read file contents from specified paths, with batch and line-range support.",
     "zh-CN": "读取指定路径的文件内容，支持批量读取并指定行号范围。"
+  },
+  "tool.spec.read_image.args.path": {
+    "en-US": "Local image path, relative to workspace or an allowed absolute path.",
+    "zh-CN": "本地图片路径，可使用工作区相对路径或允许的绝对路径。"
+  },
+  "tool.spec.read_image.args.prompt": {
+    "en-US": "Optional follow-up instruction for image analysis.",
+    "zh-CN": "可选，附加给模型的读图说明。"
+  },
+  "tool.spec.read_image.description": {
+    "en-US": "Read a local image and attach it to the next model turn for visual analysis.",
+    "zh-CN": "读取本地图片，并在下一轮模型上下文中附加用于视觉分析。"
   },
   "tool.spec.skill_call.args.name": {
     "en-US": "Skill name to load.",

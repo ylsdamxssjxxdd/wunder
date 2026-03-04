@@ -88,15 +88,13 @@ export const buildAssistantMessageStatsEntries = (
   const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
-  const hasQuota = Number.isFinite(Number(stats?.quotaConsumed)) && Number(stats.quotaConsumed) > 0;
-  if (!hasUsage && !hasDuration && !hasToolCalls && !hasQuota) {
+  if (!hasUsage && !hasDuration && !hasToolCalls) {
     return [];
   }
   return [
     { label: t('chat.stats.duration'), value: formatDuration(durationSeconds) },
     { label: t('chat.stats.speed'), value: formatSpeed(speed) },
     { label: t('chat.stats.contextTokens'), value: formatCount(contextTokens) },
-    { label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls) },
-    { label: t('chat.stats.quota'), value: formatCount(stats?.quotaConsumed) }
+    { label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls) }
   ];
 };

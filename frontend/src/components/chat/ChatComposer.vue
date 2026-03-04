@@ -175,7 +175,8 @@
           <div
             v-if="showApprovalLabel && approvalLabelText"
             class="chat-composer-approval-label"
-            :title="approvalLabelText"
+            :title="approvalLabelTooltip"
+            :aria-label="approvalLabelTooltip"
           >
             {{ approvalLabelText }}
           </div>
@@ -613,6 +614,12 @@ const voiceRecordingLabel = computed(() =>
   })
 );
 const approvalLabelText = computed(() => String(props.approvalLabel || '').trim());
+const approvalLabelTooltip = computed(() => {
+  if (!approvalLabelText.value) return '';
+  const hint = t('portal.agent.permission.tooltip');
+  if (!hint) return approvalLabelText.value;
+  return `${approvalLabelText.value} · ${hint}`;
+});
 const showApprovalLabel = computed(
   () => props.worldStyle && props.showApprovalLabel && Boolean(approvalLabelText.value)
 );

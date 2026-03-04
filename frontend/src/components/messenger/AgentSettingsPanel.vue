@@ -76,7 +76,7 @@
 
         <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item">
           <div class="messenger-agent-base">
-            <label class="messenger-agent-base-item">
+            <label v-if="showShareSetting" class="messenger-agent-base-item">
               <span class="messenger-agent-base-label">{{ t('portal.agent.share.label') }}</span>
               <el-switch v-model="form.is_shared" :disabled="isReadonlyMode" />
             </label>
@@ -133,7 +133,7 @@
           </button>
         </template>
       </div>
-      <div v-if="isReadonlyMode" class="messenger-inline-hint">
+      <div v-if="isDefaultReadonlyMode" class="messenger-inline-hint">
         {{ t('messenger.defaultAgentReadonlyHint') }}
       </div>
     </template>
@@ -179,9 +179,16 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const agentStore = useAgentStore();
-const showApprovalModeSetting = computed(
+const desktopLocalMode = computed(
   () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
 );
+const showApprovalModeSetting = computed(
+  () => desktopLocalMode.value
+);
+const showShareSetting = computed(
+  () => !isDesktopModeEnabled() || isDesktopRemoteAuthMode()
+);
+const restrictDefaultAgentConfig = computed(() => !desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
@@ -199,7 +206,10 @@ const isDefaultAgentAlias = (value: string): boolean => {
 
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const isDefaultAgent = computed(() => isDefaultAgentAlias(normalizedAgentId.value));
-const isReadonlyMode = computed(() => Boolean(props.readonly) || isDefaultAgent.value);
+const isDefaultReadonlyMode = computed(
+  () => isDefaultAgent.value && restrictDefaultAgentConfig.value
+);
+const isReadonlyMode = computed(() => Boolean(props.readonly) || isDefaultReadonlyMode.value);
 const canView = computed(() => isReadonlyMode.value || Boolean(normalizedAgentId.value));
 const canEdit = computed(() => !isReadonlyMode.value && Boolean(normalizedAgentId.value));
 
@@ -294,7 +304,7 @@ const applyReadonlyDefaultAgentForm = () => {
   form.system_prompt = '';
   form.tool_names = collectSummaryToolNames(toolSummary.value || {});
   form.sandbox_container_id = 1;
-  form.approval_mode = resolveDefaultApprovalMode();
+  form.approval_mode = 'full_auto';
 };
 
 const toolGroups = computed<ToolGroup[]>(() => {
@@ -342,7 +352,7 @@ const loadToolSummary = async () => {
   try {
     const result = await fetchUserToolsSummary();
     toolSummary.value = (result?.data?.data as Record<string, unknown>) || {};
-    if (isDefaultAgent.value) {
+    if (isDefaultReadonlyMode.value) {
       form.tool_names = collectSummaryToolNames(toolSummary.value || {});
     }
   } catch (error) {
@@ -356,7 +366,7 @@ const loadToolSummary = async () => {
 
 const loadAgent = async () => {
   if (!canView.value) return;
-  if (isDefaultAgent.value) {
+  if (isDefaultReadonlyMode.value) {
     applyReadonlyDefaultAgentForm();
     return;
   }
@@ -368,7 +378,7 @@ const loadAgent = async () => {
     }
     form.name = String(agent.name || '');
     form.description = String(agent.description || '');
-    form.is_shared = Boolean(agent.is_shared);
+    form.is_shared = showShareSetting.value ? Boolean(agent.is_shared) : false;
     form.system_prompt = String(agent.system_prompt || '');
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
@@ -379,7 +389,7 @@ const loadAgent = async () => {
 };
 
 const reloadAgent = async () => {
-  if (isDefaultAgent.value) {
+  if (isDefaultReadonlyMode.value) {
     await loadToolSummary();
     applyReadonlyDefaultAgentForm();
     return;
@@ -399,7 +409,7 @@ const saveAgent = async () => {
     await agentStore.updateAgent(normalizedAgentId.value, {
       name,
       description: String(form.description || '').trim(),
-      is_shared: Boolean(form.is_shared),
+      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: String(form.system_prompt || ''),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),

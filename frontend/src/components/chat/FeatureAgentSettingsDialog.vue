@@ -58,7 +58,7 @@
           <div class="agent-basic-settings">
             <div class="agent-share-card agent-share-card--combined">
               <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
-              <div class="agent-share-row">
+              <div v-if="showShareSetting" class="agent-share-row">
                 <el-switch v-model="form.is_shared" />
                 <span>{{ t('portal.agent.share.label') }}</span>
               </div>
@@ -131,6 +131,9 @@ const { t } = useI18n();
 const agentStore = useAgentStore();
 const showApprovalModeSetting = computed(
   () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
+);
+const showShareSetting = computed(
+  () => !isDesktopModeEnabled() || isDesktopRemoteAuthMode()
 );
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
@@ -270,7 +273,7 @@ const loadAgent = async () => {
     }
     form.name = agent.name || '';
     form.description = agent.description || '';
-    form.is_shared = Boolean(agent.is_shared);
+    form.is_shared = showShareSetting.value ? Boolean(agent.is_shared) : false;
     form.system_prompt = agent.system_prompt || '';
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
@@ -292,7 +295,7 @@ const saveAgent = async () => {
     const payload = {
       name,
       description: form.description || '',
-      is_shared: Boolean(form.is_shared),
+      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       system_prompt: form.system_prompt || '',
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),

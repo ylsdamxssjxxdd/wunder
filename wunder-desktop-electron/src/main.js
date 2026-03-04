@@ -936,18 +936,33 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
     attempt()
   })
 
+const isLoopbackHostname = (host) => {
+  const normalized = String(host || '').trim().toLowerCase()
+  if (!normalized) {
+    return false
+  }
+  return (
+    normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized === '[::1]' ||
+    normalized.startsWith('127.')
+  )
+}
+
 const parseBridgePort = (line) => {
   const trimmed = line.trim()
-  const match = trimmed.match(/- (web_base|api_base):\s*(https?:\/\/\S+)/)
+  const match = trimmed.match(/- web_base:\s*(https?:\/\/\S+)/)
   if (!match) {
     return null
   }
   try {
-    const url = new URL(match[2])
+    const url = new URL(match[1])
     if (!url.port) {
       return null
     }
-    bridgeWebBase = url.origin
+    // Keep renderer on a secure loopback origin to preserve mic/camera APIs.
+    bridgeWebBase = isLoopbackHostname(url.hostname) ? url.origin : null
     return Number(url.port)
   } catch {
     return null
