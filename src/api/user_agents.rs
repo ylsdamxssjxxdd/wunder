@@ -139,6 +139,7 @@ async fn list_running_agents(
     const DONE_TTL_S: f64 = 15.0;
     const ERROR_TTL_S: f64 = 30.0;
     const RECENT_WINDOW_S: f64 = 120.0;
+    const WAITING_TTL_S: f64 = 10.0 * 60.0;
 
     fn state_rank(state: &str) -> i32 {
         match state {
@@ -151,7 +152,32 @@ async fn list_running_agents(
         }
     }
 
-    fn should_replace(current: &AgentStatusCandidate, next: &AgentStatusCandidate) -> bool {
+    fn is_waiting_state(state: &str) -> bool {
+        state == STATE_WAITING
+    }
+
+    fn is_waiting_stale(candidate: &AgentStatusCandidate, now: f64) -> bool {
+        if !is_waiting_state(candidate.state) {
+            return false;
+        }
+        if candidate.updated_time <= 0.0 {
+            return true;
+        }
+        (now - candidate.updated_time).max(0.0) > WAITING_TTL_S
+    }
+
+    fn should_replace(current: &AgentStatusCandidate, next: &AgentStatusCandidate, now: f64) -> bool {
+        let current_waiting = is_waiting_state(current.state);
+        let next_waiting = is_waiting_state(next.state);
+        if next_waiting && is_waiting_stale(next, now) {
+            return false;
+        }
+        if current_waiting && is_waiting_stale(current, now) {
+            return true;
+        }
+        if current_waiting && !next_waiting && next.updated_time > current.updated_time {
+            return true;
+        }
         let current_rank = state_rank(current.state);
         let next_rank = state_rank(next.state);
         if next_rank != current_rank {
@@ -218,6 +244,7 @@ async fn list_running_agents(
             },
         );
     }
+    let now = now_ts();
 
     // 1) Session locks (authoritative for long-running sessions via heartbeat).
     let locks = state
@@ -241,7 +268,7 @@ async fn list_running_agents(
             last_error: None,
         };
         if let Some(current) = status_by_agent.get(&cleaned_agent) {
-            if should_replace(current, &next) {
+            if should_replace(current, &next, now) {
                 status_by_agent.insert(cleaned_agent, next);
             }
         }
@@ -291,6 +318,12 @@ async fn list_running_agents(
             .and_then(Value::as_f64)
             .filter(|value| value.is_finite())
             .unwrap_or(0.0);
+        if state == STATE_WAITING {
+            let waiting_age = (now - updated_time).max(0.0);
+            if updated_time <= 0.0 || waiting_age > WAITING_TTL_S {
+                continue;
+            }
+        }
         let session_id = record
             .get("session_id")
             .and_then(Value::as_str)
@@ -306,14 +339,13 @@ async fn list_running_agents(
             last_error: None,
         };
         if let Some(current) = status_by_agent.get(agent_id) {
-            if should_replace(current, &next) {
+            if should_replace(current, &next, now) {
                 status_by_agent.insert(agent_id.to_string(), next);
             }
         }
     }
 
     // 3) Recently completed/error sessions, used to display a transient state without frontend inference.
-    let now = now_ts();
     let recent_records = state.monitor.load_records_by_user(
         &user_id,
         Some(&[
@@ -339,12 +371,6 @@ async fn list_running_agents(
             .unwrap_or("")
             .trim();
         if !allowed_set.contains(agent_id) {
-            continue;
-        }
-        let Some(current) = status_by_agent.get(agent_id) else {
-            continue;
-        };
-        if state_rank(current.state) > state_rank(STATE_IDLE) {
             continue;
         }
         let status = record
@@ -383,17 +409,21 @@ async fn list_running_agents(
         } else {
             None
         };
-        status_by_agent.insert(
-            agent_id.to_string(),
-            AgentStatusCandidate {
-                state,
-                updated_time,
-                session_id,
-                expires_at: None,
-                pending_question: false,
-                last_error,
-            },
-        );
+        let next = AgentStatusCandidate {
+            state,
+            updated_time,
+            session_id,
+            expires_at: None,
+            pending_question: false,
+            last_error,
+        };
+        if let Some(current) = status_by_agent.get(agent_id) {
+            if should_replace(current, &next, now) {
+                status_by_agent.insert(agent_id.to_string(), next);
+            }
+        } else {
+            status_by_agent.insert(agent_id.to_string(), next);
+        }
     }
 
     let items = agent_order
@@ -1023,9 +1053,10 @@ async fn delete_agent(
     }
     let normalized_agent_id = normalize_agent_id(cleaned);
     if normalized_agent_id.is_empty() {
-        let key = default_agent_meta_key(&resolved.user.user_id);
-        let _ = state.user_store.set_meta(&key, "");
-        return Ok(Json(json!({ "data": { "id": DEFAULT_AGENT_ID_ALIAS } })));
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
+        ));
     }
     state
         .user_store

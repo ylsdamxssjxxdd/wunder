@@ -29,6 +29,7 @@ export type DesktopBridge = {
   checkForUpdates?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
+  notify?: (payload: { title: string; body?: string; silent?: boolean }) => Promise<boolean> | boolean;
   captureScreenshot?: (
     options?: { hideWindow?: boolean; region?: boolean }
   ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;

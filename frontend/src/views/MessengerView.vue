@@ -174,30 +174,8 @@
         <div class="messenger-chat-heading">
           <div class="messenger-chat-title-row">
             <div class="messenger-chat-title">{{ chatPanelTitle }}</div>
-            <span v-if="chatPanelKindLabel" class="messenger-chat-kind-pill">
-              {{ chatPanelKindLabel }}
-            </span>
           </div>
           <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
-        </div>
-        <button
-          v-if="agentHeaderModelDisplayName && agentHeaderModelJumpEnabled"
-          class="messenger-chat-header-model messenger-chat-header-model--action"
-          type="button"
-          :title="t('messenger.settings.desktopModels')"
-          :aria-label="`${t('desktop.system.modelName')}: ${agentHeaderModelDisplayName}`"
-          @click="openDesktopModelSettingsFromHeader"
-        >
-          <span class="messenger-chat-header-model-label">{{ t('desktop.system.modelName') }}</span>
-          <span class="messenger-chat-header-model-value">{{ agentHeaderModelDisplayName }}</span>
-        </button>
-        <div
-          v-else-if="agentHeaderModelDisplayName"
-          class="messenger-chat-header-model"
-          :aria-label="`${t('desktop.system.modelName')}: ${agentHeaderModelDisplayName}`"
-        >
-          <span class="messenger-chat-header-model-label">{{ t('desktop.system.modelName') }}</span>
-          <span class="messenger-chat-header-model-value">{{ agentHeaderModelDisplayName }}</span>
         </div>
         <div class="messenger-chat-header-actions">
           <button
@@ -226,13 +204,14 @@
           </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
-            class="messenger-header-btn"
+            class="messenger-header-btn messenger-header-btn--text"
             type="button"
             :title="t('chat.newSession')"
             :aria-label="t('chat.newSession')"
             @click="startNewDraftSession"
           >
-            <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+            <i class="fa-solid fa-plus" aria-hidden="true"></i>
+            {{ t('chat.newSession') }}
           </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
@@ -1115,9 +1094,12 @@
             :voice-duration-ms="agentVoiceDurationMs"
             :show-approval-label="showAgentComposerApprovalHint"
             :approval-label="agentComposerApprovalHintLabel"
+            :model-name="agentHeaderModelDisplayName"
+            :model-jump-enabled="agentHeaderModelJumpEnabled"
             @send="sendAgentMessage"
             @stop="stopAgentMessage"
             @toggle-voice-record="toggleAgentVoiceRecord"
+            @open-model-settings="openDesktopModelSettingsFromHeader"
           />
         </div>
         <MessengerWorldComposer
@@ -2438,10 +2420,7 @@ const settingsAgentId = computed(() => {
 });
 
 const settingsAgentIdForPanel = computed(() => normalizeAgentId(settingsAgentId.value));
-const isSettingsDefaultAgent = computed(() => settingsAgentIdForPanel.value === DEFAULT_AGENT_KEY);
-const isSettingsDefaultAgentReadonly = computed(
-  () => isSettingsDefaultAgent.value && !desktopLocalMode.value
-);
+const isSettingsDefaultAgentReadonly = computed(() => false);
 
 const settingsAgentIdForApi = computed(() => {
   const value = normalizeAgentId(settingsAgentId.value);
@@ -4050,7 +4029,20 @@ const requestSystemNotificationPermission = async (): Promise<NotificationPermis
   }
 };
 
+const sendDesktopNotification = async (title: string, body: string): Promise<boolean> => {
+  const bridge = getDesktopBridge();
+  if (!bridge || typeof bridge.notify !== 'function') return false;
+  try {
+    const result = await bridge.notify({ title, body });
+    return result === true;
+  } catch {
+    return false;
+  }
+};
+
 const sendSystemNotification = async (title: string, body: string): Promise<boolean> => {
+  const desktopNotified = await sendDesktopNotification(title, body);
+  if (desktopNotified) return true;
   if (typeof window === 'undefined' || !('Notification' in window)) return false;
   try {
     if (window.Notification.permission === 'granted') {

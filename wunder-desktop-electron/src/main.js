@@ -7,7 +7,8 @@ const {
   nativeImage,
   ipcMain,
   desktopCapturer,
-  screen
+  screen,
+  Notification
 } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
@@ -126,6 +127,29 @@ const resolveLinuxDesktopIconSource = () => {
     }
   }
   return null
+}
+
+const showDesktopNotification = (payload) => {
+  try {
+    if (!Notification || !Notification.isSupported()) {
+      return false
+    }
+    const title = String(payload?.title || '').trim()
+    if (!title) {
+      return false
+    }
+    const body = String(payload?.body || '').trim()
+    const silent = payload?.silent === true
+    const notification = new Notification({
+      title,
+      body: body || undefined,
+      silent
+    })
+    notification.show()
+    return true
+  } catch (error) {
+    return false
+  }
 }
 
 const sanitizeCloseBehavior = (value) => {
@@ -474,31 +498,36 @@ const resolveCaptureDisplay = (windowRef = null) => {
   return screen.getPrimaryDisplay() || allDisplays[0]
 }
 
-const resolveDisplaySource = async (targetDisplay) => {
-  const display = targetDisplay || screen.getPrimaryDisplay()
+const resolveDisplayCaptureSize = (display, useScaleFactor = true) => {
   const scaleFactor = Math.max(1, Number(display?.scaleFactor || 1))
-  const captureWidth = Math.max(1, Math.round(Number(display?.size?.width || 0) * scaleFactor))
-  const captureHeight = Math.max(1, Math.round(Number(display?.size?.height || 0) * scaleFactor))
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: captureWidth, height: captureHeight },
-    fetchWindowIcons: false
-  })
-  if (!Array.isArray(sources) || sources.length === 0) {
-    throw new Error('No screen source available')
-  }
-  const expectedArea = captureWidth * captureHeight
-  const expectedAspect = captureWidth / Math.max(1, captureHeight)
-  const targetDisplayId = String(display?.id || '')
-  const rankedSources = sources
+  const logicalWidth = Math.max(
+    1,
+    Number(display?.bounds?.width || display?.size?.width || 0)
+  )
+  const logicalHeight = Math.max(
+    1,
+    Number(display?.bounds?.height || display?.size?.height || 0)
+  )
+  const factor = useScaleFactor ? scaleFactor : 1
+  const width = Math.max(1, Math.round(logicalWidth * factor))
+  const height = Math.max(1, Math.round(logicalHeight * factor))
+  return { width, height, scaleFactor }
+}
+
+const rankDisplaySources = (sources, expectedSize, targetDisplayId) => {
+  const expectedWidth = Math.max(1, Number(expectedSize?.width || 1))
+  const expectedHeight = Math.max(1, Number(expectedSize?.height || 1))
+  const expectedArea = expectedWidth * expectedHeight
+  const expectedAspect = expectedWidth / Math.max(1, expectedHeight)
+  return sources
     .filter((item) => !item?.thumbnail?.isEmpty?.())
     .map((item) => {
       const imageSize = item.thumbnail.getSize()
       const imageWidth = Math.max(1, Number(imageSize?.width || 1))
       const imageHeight = Math.max(1, Number(imageSize?.height || 1))
       const imageArea = imageWidth * imageHeight
-      const widthDiff = Math.abs(imageWidth - captureWidth) / captureWidth
-      const heightDiff = Math.abs(imageHeight - captureHeight) / captureHeight
+      const widthDiff = Math.abs(imageWidth - expectedWidth) / expectedWidth
+      const heightDiff = Math.abs(imageHeight - expectedHeight) / expectedHeight
       const areaDiff = Math.abs(imageArea - expectedArea) / Math.max(1, expectedArea)
       const aspect = imageWidth / Math.max(1, imageHeight)
       const aspectDiff = Math.abs(aspect - expectedAspect) / Math.max(expectedAspect, 1e-6)
@@ -509,6 +538,13 @@ const resolveDisplaySource = async (targetDisplay) => {
       return { source: item, score }
     })
     .sort((left, right) => left.score - right.score)
+}
+
+const pickBestDisplaySource = (sources, expectedSize, targetDisplayId) => {
+  if (!Array.isArray(sources) || sources.length === 0) {
+    return null
+  }
+  const rankedSources = rankDisplaySources(sources, expectedSize, targetDisplayId)
   if (targetDisplayId) {
     const exactMatched = rankedSources.find(
       (item) => String(item?.source?.display_id || '') === targetDisplayId
@@ -521,6 +557,87 @@ const resolveDisplaySource = async (targetDisplay) => {
     return rankedSources[0].source
   }
   return sources[0]
+}
+
+const resolveDisplaySourceWithSize = async (thumbnailSize, expectedSize, targetDisplayId) => {
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize,
+    fetchWindowIcons: false
+  })
+  return pickBestDisplaySource(sources, expectedSize, targetDisplayId)
+}
+
+const shouldRetryForSharpness = (actualSize, expectedSize) => {
+  const actualWidth = Math.max(1, Number(actualSize?.width || 1))
+  const actualHeight = Math.max(1, Number(actualSize?.height || 1))
+  const expectedWidth = Math.max(1, Number(expectedSize?.width || 1))
+  const expectedHeight = Math.max(1, Number(expectedSize?.height || 1))
+  const actualArea = actualWidth * actualHeight
+  const expectedArea = expectedWidth * expectedHeight
+  if (!expectedArea) return false
+  return actualArea / expectedArea < 0.85
+}
+
+const resolveDisplaySource = async (targetDisplay) => {
+  const display = targetDisplay || screen.getPrimaryDisplay()
+  const targetDisplayId = String(display?.id || '')
+  const preferredSize = resolveDisplayCaptureSize(display, true)
+  let bestSource = await resolveDisplaySourceWithSize(
+    { width: preferredSize.width, height: preferredSize.height },
+    preferredSize,
+    targetDisplayId
+  )
+
+  if (!bestSource) {
+    throw new Error('No screen source available')
+  }
+
+  let bestSize = bestSource.thumbnail.getSize()
+  if (display?.scaleFactor > 1 && shouldRetryForSharpness(bestSize, preferredSize)) {
+    const fallbackSize = resolveDisplayCaptureSize(display, false)
+    if (
+      fallbackSize.width !== preferredSize.width ||
+      fallbackSize.height !== preferredSize.height
+    ) {
+      const fallbackSource = await resolveDisplaySourceWithSize(
+        { width: fallbackSize.width, height: fallbackSize.height },
+        preferredSize,
+        targetDisplayId
+      )
+      if (fallbackSource && !fallbackSource.thumbnail.isEmpty()) {
+        const fallbackSizeActual = fallbackSource.thumbnail.getSize()
+        const bestArea = bestSize.width * bestSize.height
+        const fallbackArea = fallbackSizeActual.width * fallbackSizeActual.height
+        if (fallbackArea > bestArea) {
+          bestSource = fallbackSource
+          bestSize = fallbackSizeActual
+        }
+      }
+    }
+  }
+
+  if (display?.scaleFactor > 1 && shouldRetryForSharpness(bestSize, preferredSize)) {
+    try {
+      const fullSizeSource = await resolveDisplaySourceWithSize(
+        { width: 0, height: 0 },
+        preferredSize,
+        targetDisplayId
+      )
+      if (fullSizeSource && !fullSizeSource.thumbnail.isEmpty()) {
+        const fullSize = fullSizeSource.thumbnail.getSize()
+        const bestArea = bestSize.width * bestSize.height
+        const fullArea = fullSize.width * fullSize.height
+        if (fullArea > bestArea) {
+          bestSource = fullSizeSource
+        }
+      }
+    } catch {
+      // ignore fallback failures
+    }
+  }
+
+  return bestSource
 }
 
 const createScreenshotRegionSelectorHtml = (imageDataUrl) => `<!doctype html>
@@ -1315,6 +1432,7 @@ if (!gotLock) {
         return sanitizeCloseBehavior(closeBehavior)
       })
       ipcMain.handle('wunder:window-start-drag', () => false)
+      ipcMain.handle('wunder:notify', (_event, payload) => showDesktopNotification(payload))
       ipcMain.handle('wunder:update-check', () => checkAndDownloadUpdate())
       ipcMain.handle('wunder:update-status', () => getUpdateState())
       ipcMain.handle('wunder:update-install', () => installDownloadedUpdate())

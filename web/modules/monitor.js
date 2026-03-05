@@ -49,6 +49,13 @@ const TOOL_LIST_CACHE_MS = 5 * 60 * 1000;
 const USER_DASHBOARD_TTL_MS = 60 * 1000;
 // 热力图需要区分常见文件操作工具的图标，避免全部显示为同一文件样式
 const TOOL_HEATMAP_ICON_RULES = [
+  { keyword: "\u684c\u9762\u63a7\u5236\u5668", icon: "fa-computer-mouse" },
+  { keyword: "desktop_controller", icon: "fa-computer-mouse" },
+  { keyword: "desktop controller", icon: "fa-computer-mouse" },
+  { keyword: "\u684c\u9762\u76d1\u89c6\u5668", icon: "fa-display" },
+  { keyword: "\u684c\u9762\u76d1\u63a7", icon: "fa-display" },
+  { keyword: "desktop_monitor", icon: "fa-display" },
+  { keyword: "desktop monitor", icon: "fa-display" },
   { keyword: "\u8ba1\u5212\u9762\u677f", icon: "fa-table-columns" },
   { keyword: "\u8ba1\u5212\u770b\u677f", icon: "fa-table-columns" },
   { keyword: "update_plan", icon: "fa-table-columns" },

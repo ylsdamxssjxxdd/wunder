@@ -180,6 +180,7 @@ impl UserToolStore {
     pub fn load_user_tools(&self, user_id: &str) -> UserToolsPayload {
         let safe_id = safe_user_id(user_id);
         let path = self.config_path(&safe_id);
+        let config_exists = path.exists();
         let version = file_modified_ts(&path);
         if let Some(cached) = self
             .cache
@@ -192,6 +193,12 @@ impl UserToolStore {
             }
         }
         let mut payload = self.read_payload(&path, user_id);
+        if !config_exists && payload.skills.enabled.is_empty() {
+            let default_enabled = self.resolve_default_skill_enabled(user_id);
+            if !default_enabled.is_empty() {
+                payload.skills = normalize_skill_config(default_enabled, payload.skills.shared.clone());
+            }
+        }
         payload.version = version;
         self.cache
             .lock()
@@ -469,6 +476,25 @@ impl UserToolStore {
 
     fn config_path(&self, safe_user_id: &str) -> PathBuf {
         self.user_dir(safe_user_id).join("config.json")
+    }
+
+    fn resolve_default_skill_enabled(&self, user_id: &str) -> Vec<String> {
+        let skill_root = self.get_skill_root(user_id);
+        if !skill_root.exists() || !skill_root.is_dir() {
+            return Vec::new();
+        }
+        let mut scan_config = Config::default();
+        scan_config.skills.paths = vec![skill_root.to_string_lossy().to_string()];
+        scan_config.skills.enabled = Vec::new();
+        let registry = load_skills(&scan_config, false, false, false);
+        let mut names = registry
+            .list_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>();
+        names.sort();
+        names.dedup();
+        names
     }
 }
 

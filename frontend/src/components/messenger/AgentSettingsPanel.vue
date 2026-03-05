@@ -125,16 +125,18 @@
           {{ t('common.refresh') }}
         </button>
         <template v-if="!isReadonlyMode">
-          <button class="messenger-inline-btn danger" type="button" :disabled="saving" @click="deleteAgent">
+          <button
+            class="messenger-inline-btn danger"
+            type="button"
+            :disabled="saving || isDefaultAgent"
+            @click="deleteAgent"
+          >
             {{ t('portal.agent.delete') }}
           </button>
           <button class="messenger-inline-btn primary" type="button" :disabled="saving" @click="saveAgent">
             {{ saving ? t('common.saving') : t('portal.agent.save') }}
           </button>
         </template>
-      </div>
-      <div v-if="isDefaultReadonlyMode" class="messenger-inline-hint">
-        {{ t('messenger.defaultAgentReadonlyHint') }}
       </div>
     </template>
   </div>
@@ -188,7 +190,6 @@ const showApprovalModeSetting = computed(
 const showShareSetting = computed(
   () => !isDesktopModeEnabled() || isDesktopRemoteAuthMode()
 );
-const restrictDefaultAgentConfig = computed(() => !desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
@@ -206,10 +207,7 @@ const isDefaultAgentAlias = (value: string): boolean => {
 
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const isDefaultAgent = computed(() => isDefaultAgentAlias(normalizedAgentId.value));
-const isDefaultReadonlyMode = computed(
-  () => isDefaultAgent.value && restrictDefaultAgentConfig.value
-);
-const isReadonlyMode = computed(() => Boolean(props.readonly) || isDefaultReadonlyMode.value);
+const isReadonlyMode = computed(() => Boolean(props.readonly));
 const canView = computed(() => isReadonlyMode.value || Boolean(normalizedAgentId.value));
 const canEdit = computed(() => !isReadonlyMode.value && Boolean(normalizedAgentId.value));
 
@@ -281,32 +279,6 @@ const resolveSharedTools = (summary: Record<string, unknown>): unknown[] => {
   return sharedTools;
 };
 
-const collectSummaryToolNames = (summary: Record<string, unknown>): string[] => {
-  const names = new Set<string>();
-  const collect = (items: unknown) => {
-    normalizeOptions(items).forEach((option) => names.add(option.value));
-  };
-  collect(summary.builtin_tools);
-  collect(summary.mcp_tools);
-  collect(summary.skills);
-  collect(summary.knowledge_tools);
-  collect(summary.user_tools);
-  collect(resolveSharedTools(summary));
-  const output = Array.from(names);
-  output.sort();
-  return output;
-};
-
-const applyReadonlyDefaultAgentForm = () => {
-  form.name = t('messenger.defaultAgent');
-  form.description = t('messenger.defaultAgentDesc');
-  form.is_shared = false;
-  form.system_prompt = '';
-  form.tool_names = collectSummaryToolNames(toolSummary.value || {});
-  form.sandbox_container_id = 1;
-  form.approval_mode = 'full_auto';
-};
-
 const toolGroups = computed<ToolGroup[]>(() => {
   const summary = toolSummary.value || {};
   const sharedTools = resolveSharedTools(summary);
@@ -352,9 +324,6 @@ const loadToolSummary = async () => {
   try {
     const result = await fetchUserToolsSummary();
     toolSummary.value = (result?.data?.data as Record<string, unknown>) || {};
-    if (isDefaultReadonlyMode.value) {
-      form.tool_names = collectSummaryToolNames(toolSummary.value || {});
-    }
   } catch (error) {
     toolError.value =
       (error as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail ||
@@ -366,10 +335,6 @@ const loadToolSummary = async () => {
 
 const loadAgent = async () => {
   if (!canView.value) return;
-  if (isDefaultReadonlyMode.value) {
-    applyReadonlyDefaultAgentForm();
-    return;
-  }
   try {
     const agent = await agentStore.getAgent(normalizedAgentId.value, { force: true });
     if (!agent) {
@@ -389,11 +354,6 @@ const loadAgent = async () => {
 };
 
 const reloadAgent = async () => {
-  if (isDefaultReadonlyMode.value) {
-    await loadToolSummary();
-    applyReadonlyDefaultAgentForm();
-    return;
-  }
   await Promise.all([loadAgent(), loadToolSummary()]);
 };
 
@@ -425,7 +385,7 @@ const saveAgent = async () => {
 };
 
 const deleteAgent = async () => {
-  if (!canEdit.value) return;
+  if (!canEdit.value || isDefaultAgent.value) return;
   const targetName = String(form.name || normalizedAgentId.value || '').trim();
   try {
     await ElMessageBox.confirm(t('portal.agent.deleteConfirm', { name: targetName }), t('common.notice'), {

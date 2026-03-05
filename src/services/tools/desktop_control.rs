@@ -719,6 +719,7 @@ fn screen_size() -> Result<(i32, i32)> {
 
 #[cfg(windows)]
 fn screen_metrics() -> Result<(i32, i32)> {
+    crate::core::dpi::init_process_dpi_awareness();
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
     let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
     let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };

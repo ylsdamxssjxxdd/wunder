@@ -7,7 +7,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use tokio::task_local;
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Clone, Debug)]
 struct I18nState {
@@ -42,6 +42,7 @@ task_local! {
 }
 
 const DEFAULT_I18N_MESSAGES_PATH: &str = "config/i18n.messages.json";
+const DEFAULT_I18N_MESSAGES_EMBED: &str = include_str!("../../config/i18n.messages.json");
 
 fn state() -> &'static RwLock<I18nState> {
     I18N_STATE.get_or_init(|| {
@@ -132,16 +133,13 @@ pub fn t_with_params(key: &str, params: &HashMap<String, String>) -> String {
     }
     let language = get_language();
     let state = state().read();
-    let entry = state.messages.get(key);
-    let template = entry
-        .and_then(|map| map.get(&language))
-        .or_else(|| entry.and_then(|map| map.get(&state.default_language)))
-        .map(|value| value.as_str())
-        .unwrap_or(key);
+    let template = find_template(&state.messages, key, &language, &state.default_language)
+        .or_else(|| find_template(embedded_messages(), key, &language, &state.default_language))
+        .unwrap_or_else(|| key.to_string());
     if params.is_empty() {
-        return template.to_string();
+        return template;
     }
-    format_template(template, params)
+    format_template(&template, params)
 }
 
 /// 使用指定语言翻译 key，忽略当前任务上下文语言。
@@ -155,16 +153,13 @@ pub fn t_with_params_in_language(
     }
     let normalized = normalize_language(Some(language), true);
     let state = state().read();
-    let entry = state.messages.get(key);
-    let template = entry
-        .and_then(|map| map.get(&normalized))
-        .or_else(|| entry.and_then(|map| map.get(&state.default_language)))
-        .map(|value| value.as_str())
-        .unwrap_or(key);
+    let template = find_template(&state.messages, key, &normalized, &state.default_language)
+        .or_else(|| find_template(embedded_messages(), key, &normalized, &state.default_language))
+        .unwrap_or_else(|| key.to_string());
     if params.is_empty() {
-        return template.to_string();
+        return template;
     }
-    format_template(template, params)
+    format_template(&template, params)
 }
 
 /// 使用指定语言翻译 key（无参数）。
@@ -287,6 +282,27 @@ fn compile_regex(pattern: &str, label: &str) -> Option<Regex> {
     }
 }
 
+fn embedded_messages() -> &'static HashMap<String, HashMap<String, String>> {
+    static EMBEDDED: OnceLock<HashMap<String, HashMap<String, String>>> = OnceLock::new();
+    EMBEDDED.get_or_init(|| {
+        let content = DEFAULT_I18N_MESSAGES_EMBED.trim_start_matches('\u{FEFF}');
+        parse_json_messages(content).unwrap_or_default()
+    })
+}
+
+fn find_template(
+    messages: &HashMap<String, HashMap<String, String>>,
+    key: &str,
+    language: &str,
+    default_language: &str,
+) -> Option<String> {
+    let entry = messages.get(key)?;
+    entry
+        .get(language)
+        .or_else(|| entry.get(default_language))
+        .cloned()
+}
+
 fn format_with_spec(value: &str, spec: &str) -> Option<String> {
     if !spec.ends_with('d') {
         return None;
@@ -317,12 +333,22 @@ fn resolve_messages_path() -> PathBuf {
 
 fn load_messages_from_json() -> Option<HashMap<String, HashMap<String, String>>> {
     let path = resolve_messages_path();
-    if !path.exists() {
-        return None;
+    if path.exists() {
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                let content = content.trim_start_matches('\u{FEFF}');
+                if let Some(messages) = parse_json_messages(content) {
+                    return Some(messages);
+                }
+                warn!("i18n messages parse failed: {}", path.display());
+            }
+            Err(err) => {
+                warn!("i18n messages read failed: {}, {}", path.display(), err);
+            }
+        }
     }
-    let content = std::fs::read_to_string(path).ok()?;
-    let content = content.trim_start_matches('\u{FEFF}');
-    parse_json_messages(content)
+    let embedded = DEFAULT_I18N_MESSAGES_EMBED.trim_start_matches('\u{FEFF}');
+    parse_json_messages(embedded)
 }
 
 fn parse_json_messages(text: &str) -> Option<HashMap<String, HashMap<String, String>>> {

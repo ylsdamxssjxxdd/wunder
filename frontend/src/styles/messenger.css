@@ -529,8 +529,8 @@
 
 .messenger-middle-logout-btn:disabled {
   border-color: var(--hula-border);
-  background: var(--hula-panel);
-  color: var(--hula-text-muted);
+  background: var(--hula-main-bg);
+  color: var(--hula-muted);
   cursor: not-allowed;
   transform: none;
 }
@@ -1111,6 +1111,17 @@ button.messenger-chat-header-model {
     color var(--messenger-motion-fast) var(--messenger-ease-standard),
     background-color var(--messenger-motion-fast) var(--messenger-ease-standard),
     transform var(--messenger-motion-fast) var(--messenger-ease-standard);
+}
+
+.messenger-header-btn--text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  min-width: 72px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .messenger-header-btn:hover {
@@ -2039,6 +2050,38 @@ button.messenger-chat-header-model {
   margin-top: auto;
   flex-shrink: 0;
   min-height: 32px;
+}
+
+.chat-composer-world-model {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(48vw, 320px);
+  color: var(--hula-muted);
+  font-size: calc(12px * var(--messenger-font-scale, 1));
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.chat-composer-world-model-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-composer-world-model--action {
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.chat-composer-world-model--action:hover {
+  color: var(--hula-accent);
 }
 
 .chat-composer-approval-label {

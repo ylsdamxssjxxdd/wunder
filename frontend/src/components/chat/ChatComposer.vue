@@ -172,6 +172,24 @@
       </div>
       <template v-if="worldStyle">
         <div class="messenger-world-footer chat-composer-world-footer">
+          <button
+            v-if="composerModelName && modelJumpEnabled"
+            class="chat-composer-world-model chat-composer-world-model--action"
+            type="button"
+            :title="composerModelName"
+            :aria-label="`${t('desktop.system.modelName')}: ${composerModelName}`"
+            @click="emit('open-model-settings')"
+          >
+            <span class="chat-composer-world-model-text">{{ composerModelName }}</span>
+          </button>
+          <div
+            v-else-if="composerModelName"
+            class="chat-composer-world-model"
+            :title="composerModelName"
+            :aria-label="`${t('desktop.system.modelName')}: ${composerModelName}`"
+          >
+            <span class="chat-composer-world-model-text">{{ composerModelName }}</span>
+          </div>
           <div
             v-if="showApprovalLabel && approvalLabelText"
             class="chat-composer-approval-label"
@@ -344,10 +362,18 @@ const props = defineProps({
   approvalLabel: {
     type: String,
     default: ''
+  },
+  modelName: {
+    type: String,
+    default: ''
+  },
+  modelJumpEnabled: {
+    type: Boolean,
+    default: false
   }
 });
 
-const emit = defineEmits(['send', 'stop', 'toggle-voice-record']);
+const emit = defineEmits(['send', 'stop', 'toggle-voice-record', 'open-model-settings']);
 
 const inputText = ref('');
 const inputRef = ref(null);
@@ -491,6 +517,7 @@ const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
   Boolean(event.altKey && !hasPrimarySendModifier(event));
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
+const composerModelName = computed(() => String(props.modelName || '').trim());
 const getDesktopScreenshotBridge = (): DesktopScreenshotBridge | null => {
   if (typeof window === 'undefined') return null;
   const candidate = (window as Window & { wunderDesktop?: DesktopScreenshotBridge }).wunderDesktop;

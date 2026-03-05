@@ -1556,8 +1556,8 @@
     "zh-CN": "drag_drop 的目标 bbox，格式同 bbox。"
   },
   "tool.spec.desktop_monitor.description": {
-    "en-US": "Desktop monitor. Wait for wait_ms and then return a fresh screenshot.",
-    "zh-CN": "桌面监视器：等待 wait_ms 后返回新的截图。"
+    "en-US": "Desktop monitor. Use this when you need the latest screen info; wait for wait_ms and then return a fresh screenshot.",
+    "zh-CN": "桌面监视器：需要屏幕信息时使用，等待 wait_ms 后返回新的截图。"
   },
   "tool.spec.desktop_monitor.args.wait_ms": {
     "en-US": "Wait milliseconds (0-30000).",
