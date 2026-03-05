@@ -70,6 +70,7 @@ export const elements = {
   workspaceUploadBtn: document.getElementById("workspaceUploadBtn"),
   workspaceDownloadAllBtn: document.getElementById("workspaceDownloadAllBtn"),
   workspaceSearchInput: document.getElementById("workspaceSearchInput"),
+  workspaceContainerSelect: document.getElementById("workspaceContainerSelect"),
   workspaceSortSelect: document.getElementById("workspaceSortSelect"),
   workspaceSortOrderBtn: document.getElementById("workspaceSortOrderBtn"),
   workspaceSelectionMeta: document.getElementById("workspaceSelectionMeta"),

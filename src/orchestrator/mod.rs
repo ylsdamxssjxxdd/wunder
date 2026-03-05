@@ -6,8 +6,7 @@ use crate::gateway::GatewayHub;
 use crate::history::HistoryManager;
 use crate::i18n;
 use crate::llm::{
-    build_llm_client, is_llm_configured, is_llm_model, normalize_tool_call_mode, ChatMessage,
-    ToolCallMode,
+    build_llm_client, is_llm_configured, is_llm_model, ChatMessage, ToolCallMode,
 };
 use crate::lsp::LspManager;
 use crate::memory::MemoryStore;

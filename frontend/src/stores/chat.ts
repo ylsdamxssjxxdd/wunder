@@ -20,7 +20,7 @@ import { consumeSseStream } from '@/utils/sse';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
-import { getDesktopToolCallModeForRequest } from '@/config/desktop';
+import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 
 type SnapshotAssistantMessage = {
   role: string;
@@ -79,6 +79,23 @@ type QuestionPanelApplyOptions = {
 type InquiryPanelPatch = {
   status?: unknown;
   selected?: unknown[];
+};
+
+type DesktopOverlayBridge = {
+  showControllerHint?: (payload: {
+    x: number;
+    y: number;
+    description?: string;
+    durationMs?: number;
+  }) => Promise<boolean> | boolean;
+  showControllerDone?: (payload: {
+    x: number;
+    y: number;
+    description?: string;
+    durationMs?: number;
+  }) => Promise<boolean> | boolean;
+  showMonitorCountdown?: (payload: { waitMs: number }) => Promise<boolean> | boolean;
+  hideOverlay?: () => Promise<boolean> | boolean;
 };
 
 type LoadSessionsOptions = {
@@ -546,6 +563,68 @@ const MAX_SNAPSHOT_MESSAGES = 50;
 const SNAPSHOT_MATCH_WINDOW_MS = 2000;
 let snapshotTimer = null;
 let pageUnloading = false;
+
+const getDesktopOverlayBridge = (): DesktopOverlayBridge | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  const candidate = (window as Window & { wunderDesktop?: DesktopOverlayBridge }).wunderDesktop;
+  return candidate || null;
+};
+
+const applyDesktopOverlayEvent = (eventType: string, data: unknown): boolean => {
+  if (!isDesktopModeEnabled()) {
+    return false;
+  }
+  const bridge = getDesktopOverlayBridge();
+  if (!bridge) {
+    return false;
+  }
+  const payload = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  const toNumber = (value: unknown): number | null => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  if (eventType === 'desktop_controller_hint' && typeof bridge.showControllerHint === 'function') {
+    const x = toNumber(payload.x);
+    const y = toNumber(payload.y);
+    if (x === null || y === null) return true;
+    const durationMs = toNumber(payload.duration_ms ?? payload.durationMs) ?? undefined;
+    bridge.showControllerHint({
+      x,
+      y,
+      description: typeof payload.description === 'string' ? payload.description : undefined,
+      durationMs
+    });
+    return true;
+  }
+  if (eventType === 'desktop_controller_hint_done' && typeof bridge.showControllerDone === 'function') {
+    const x = toNumber(payload.x);
+    const y = toNumber(payload.y);
+    if (x === null || y === null) return true;
+    const durationMs = toNumber(payload.duration_ms ?? payload.durationMs) ?? undefined;
+    bridge.showControllerDone({
+      x,
+      y,
+      description: typeof payload.description === 'string' ? payload.description : undefined,
+      durationMs
+    });
+    return true;
+  }
+  if (eventType === 'desktop_monitor_countdown' && typeof bridge.showMonitorCountdown === 'function') {
+    const waitMs = toNumber(payload.wait_ms ?? payload.waitMs ?? 0) ?? 0;
+    bridge.showMonitorCountdown({ waitMs });
+    return true;
+  }
+  if (
+    eventType === 'desktop_monitor_countdown_done' &&
+    typeof bridge.hideOverlay === 'function'
+  ) {
+    bridge.hideOverlay();
+    return true;
+  }
+  return false;
+};
 
 const normalizeStreamEventId = (value) => {
   if (value === null || value === undefined) return null;
@@ -2965,6 +3044,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
     // 基于事件类型生成工作流条目并更新回复内容
     switch (eventType) {
+      case 'desktop_controller_hint':
+      case 'desktop_controller_hint_done':
+      case 'desktop_monitor_countdown':
+      case 'desktop_monitor_countdown_done': {
+        applyDesktopOverlayEvent(eventType, data);
+        return;
+      }
       case 'progress': {
         const stage = data?.stage ?? payload?.stage;
         let summary = data?.summary ?? payload?.summary;
@@ -4084,6 +4170,16 @@ export const useChatStore = defineStore('chat', {
             assistantMessage.workflowStreaming = true;
             return;
           }
+          const normalizedEventId = normalizeStreamEventId(eventId);
+          if (normalizedEventId !== null) {
+            const currentEventId = Math.max(
+              normalizeStreamEventId(assistantMessage.stream_event_id) || 0,
+              getRuntimeLastEventId(runtime)
+            );
+            if (normalizedEventId <= currentEventId) {
+              return;
+            }
+          }
           assignStreamEventId(assistantMessage, eventId);
           updateRuntimeLastEventId(runtime, eventId);
           processor.handleEvent(eventType, dataText);
@@ -4161,9 +4257,6 @@ export const useChatStore = defineStore('chat', {
               'failed'
             )
           );
-          if (!assistantMessage.content) {
-            assistantMessage.content = t('chat.error.requestFailed');
-          }
         }
         this.dismissPendingInquiryPanel();
       } finally {

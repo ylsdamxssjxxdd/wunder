@@ -185,7 +185,7 @@ impl Orchestrator {
                 ),
                 llm_config.support_vision.unwrap_or(false),
             );
-            let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
+                let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
             let function_tooling = if matches!(
                 tool_call_mode,
                 ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
@@ -424,6 +424,7 @@ impl Orchestrator {
                         &content,
                         &reasoning,
                         tool_calls_payload.as_ref(),
+                        tool_call_mode,
                     )
                 };
                 let tool_calls = if let Some(tooling) = function_tooling.as_ref() {

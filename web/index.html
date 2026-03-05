@@ -1031,23 +1031,18 @@
                         data-i18n-placeholder="workspace.search.placeholder"
                       />
                     </div>
-                    <div class="workspace-sort">
-                      <select id="workspaceSortSelect">
-                        <option value="name" data-i18n="workspace.sort.name">名称排序</option>
-                        <option value="updated_time" data-i18n="workspace.sort.updated">更新时间</option>
-                        <option value="size" data-i18n="workspace.sort.size">大小</option>
-                      </select>
-                      <button
-                        id="workspaceSortOrderBtn"
-                        class="secondary btn-with-icon icon-only"
-                        type="button"
-                        title="排序方向"
-                        aria-label="排序方向"
-                        data-i18n-title="workspace.sort.order"
-                        data-i18n-aria-label="workspace.sort.order"
+                    <div class="workspace-container">
+                      <label
+                        for="workspaceContainerSelect"
+                        data-i18n="workspace.container.label"
                       >
-                        <i class="fa-solid fa-arrow-up-short-wide"></i>
-                      </button>
+                        容器
+                      </label>
+                      <select
+                        id="workspaceContainerSelect"
+                        aria-label="容器"
+                        data-i18n-aria-label="workspace.container.label"
+                      ></select>
                     </div>
                     <div id="workspaceSelectionMeta" class="workspace-selection-meta muted"></div>
                   </div>

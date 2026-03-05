@@ -1526,6 +1526,22 @@ button.danger {
   padding: 4px 6px;
 }
 
+.workspace-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-container label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.workspace-container select {
+  font-size: 12px;
+  padding: 4px 6px;
+}
+
 .workspace-selection-meta {
   font-size: 12px;
   color: #64748b;

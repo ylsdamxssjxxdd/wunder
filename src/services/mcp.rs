@@ -941,7 +941,13 @@ pub(crate) fn normalize_transport(transport: Option<&str>) -> String {
     if value.eq_ignore_ascii_case("http") {
         return "streamable-http".to_string();
     }
-    value.to_lowercase()
+    let lowered = value.to_ascii_lowercase();
+    match lowered.as_str() {
+        "streamable-http" | "streamable_http" | "streamablehttp" => {
+            "streamable-http".to_string()
+        }
+        _ => lowered,
+    }
 }
 
 fn mcp_client_cache() -> &'static Mutex<HashMap<String, reqwest::Client>> {

@@ -671,10 +671,18 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
         return Vec::new();
     }
 
+    let stripped_content = if strict {
+        fenced_code_block_regex()
+            .and_then(|regex| regex.is_match(content).then(|| regex.replace_all(content, "").to_string()))
+    } else {
+        None
+    };
+    let scan_content = stripped_content.as_deref().unwrap_or(content);
+
     let mut calls = Vec::new();
     let mut blocks: Vec<(usize, String)> = Vec::new();
     if let Some(regex) = tool_call_block_regex() {
-        for captures in regex.captures_iter(content) {
+        for captures in regex.captures_iter(scan_content) {
             if let Some(mat) = captures.get(0) {
                 let payload = captures.name("payload").map(|m| m.as_str()).unwrap_or("");
                 blocks.push((mat.start(), payload.to_string()));
@@ -682,7 +690,7 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
         }
     }
     if let Some(regex) = tool_block_regex() {
-        for captures in regex.captures_iter(content) {
+        for captures in regex.captures_iter(scan_content) {
             if let Some(mat) = captures.get(0) {
                 let payload = captures.name("payload").map(|m| m.as_str()).unwrap_or("");
                 blocks.push((mat.start(), payload.to_string()));
@@ -698,7 +706,7 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
     }
 
     let open_matches = tool_open_tag_regex()
-        .map(|regex| regex.find_iter(content).collect::<Vec<_>>())
+        .map(|regex| regex.find_iter(scan_content).collect::<Vec<_>>())
         .unwrap_or_default();
     if !open_matches.is_empty() {
         for (index, mat) in open_matches.iter().enumerate() {
@@ -706,9 +714,9 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
             let end = if index + 1 < open_matches.len() {
                 open_matches[index + 1].start()
             } else {
-                content.len()
+                scan_content.len()
             };
-            let Some(payload) = content.get(start..end) else {
+            let Some(payload) = scan_content.get(start..end) else {
                 continue;
             };
             calls.extend(parse_tool_calls_payload(payload, true, true));
@@ -882,11 +890,26 @@ pub(super) fn collect_tool_calls_from_output(
     content: &str,
     reasoning: &str,
     tool_calls_payload: Option<&Value>,
+    tool_call_mode: ToolCallMode,
 ) -> Vec<ToolCall> {
-    let mut calls = parse_tool_calls_from_text(content);
-    if calls.is_empty() {
-        calls.extend(parse_tool_calls_from_text_strict(reasoning));
-    }
+    let mut calls = match tool_call_mode {
+        ToolCallMode::FunctionCall => Vec::new(),
+        ToolCallMode::ToolCall => {
+            let mut calls = parse_tool_calls_from_text_strict(content);
+            if !reasoning.trim().is_empty() {
+                calls.extend(parse_tool_calls_from_text_strict(reasoning));
+            }
+            calls
+        }
+        ToolCallMode::FreeformCall => {
+            let mut calls = parse_tool_calls_from_text(content);
+            if calls.is_empty() {
+                calls.extend(parse_tool_calls_from_text_strict(reasoning));
+            }
+            calls
+        }
+    };
+
     if let Some(payload) = tool_calls_payload {
         calls.extend(normalize_tool_calls(payload.clone()));
     }
@@ -1066,7 +1089,7 @@ mod tests {
             "<tool_call>{\"name\":\"read_file\",\"arguments\":{\"path\":\"a.txt\"}}</tool_call>",
             "<tool_call>{\"name\":\"write_file\",\"arguments\":{\"path\":\"b.txt\",\"content\":\"x\"}}</tool_call>"
         );
-        let calls = collect_tool_calls_from_output(content, "", None);
+        let calls = collect_tool_calls_from_output(content, "", None, ToolCallMode::ToolCall);
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[1].name, "write_file");
@@ -1083,7 +1106,7 @@ mod tests {
         let content = "no tools here";
         let reasoning =
             r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
-        let calls = collect_tool_calls_from_output(content, reasoning, None);
+        let calls = collect_tool_calls_from_output(content, reasoning, None, ToolCallMode::ToolCall);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
     }
@@ -1091,7 +1114,7 @@ mod tests {
     #[test]
     fn test_collect_tool_calls_dedup() {
         let payload = r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
-        let calls = collect_tool_calls_from_output(payload, payload, None);
+        let calls = collect_tool_calls_from_output(payload, payload, None, ToolCallMode::ToolCall);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
     }
@@ -1105,10 +1128,22 @@ mod tests {
                 "function": { "name": "read_file", "arguments": "{\"path\":\"a.txt\"}" }
             }]
         });
-        let calls = collect_tool_calls_from_output("", "", Some(&payload));
+        let calls = collect_tool_calls_from_output(
+            "",
+            "",
+            Some(&payload),
+            ToolCallMode::FunctionCall,
+        );
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn test_collect_tool_calls_tool_call_mode_ignores_unwrapped_json() {
+        let content = r#"{"name":"read_file","arguments":{"path":"a.txt"}}"#;
+        let calls = collect_tool_calls_from_output(content, "", None, ToolCallMode::ToolCall);
+        assert!(calls.is_empty());
     }
 
     #[test]

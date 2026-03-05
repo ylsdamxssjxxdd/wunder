@@ -43,13 +43,19 @@ const asString = (value: unknown): string => (typeof value === 'string' ? value.
 
 const normalizeToolCallMode = (value: unknown): DesktopToolCallMode => {
   const normalized = asString(value).toLowerCase();
+  if (!normalized) {
+    return 'function_call';
+  }
   if (normalized === 'freeform_call' || normalized === 'freeform') {
     return 'freeform_call';
   }
   if (normalized === 'function_call') {
     return 'function_call';
   }
-  return 'tool_call';
+  if (normalized === 'tool_call') {
+    return 'tool_call';
+  }
+  return 'function_call';
 };
 
 const normalizeRemoteApiBase = (raw: string): string => {
@@ -221,7 +227,7 @@ const ensureDesktopDefaultToolCallMode = (): void => {
   try {
     const stored = localStorage.getItem(DESKTOP_TOOL_CALL_MODE_KEY);
     if (!stored) {
-      localStorage.setItem(DESKTOP_TOOL_CALL_MODE_KEY, 'tool_call');
+      localStorage.setItem(DESKTOP_TOOL_CALL_MODE_KEY, 'function_call');
     }
   } catch {
     // Ignore localStorage write failures.
@@ -337,7 +343,7 @@ export const getDesktopToolCallMode = (): DesktopToolCallMode => {
   try {
     return normalizeToolCallMode(localStorage.getItem(DESKTOP_TOOL_CALL_MODE_KEY));
   } catch {
-    return 'tool_call';
+    return 'function_call';
   }
 };
 

@@ -8,7 +8,8 @@ const {
   ipcMain,
   desktopCapturer,
   screen,
-  Notification
+  Notification,
+  session
 } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
@@ -31,6 +32,13 @@ const disableBackgroundThrottling = process.env.WUNDER_DISABLE_BACKGROUND_THROTT
 const SCREENSHOT_HIDE_DELAY_MS = 220
 const SCREENSHOT_SELECTOR_RESULT_CHANNEL = 'wunder:screenshot-region-selected'
 const SCREENSHOT_SELECTOR_CANCEL_CHANNEL = 'wunder:screenshot-region-canceled'
+const OVERLAY_UPDATE_CHANNEL = 'wunder:overlay-update'
+const OVERLAY_HIDE_CHANNEL = 'wunder:overlay-hide'
+
+const DEFAULT_OVERLAY_HINT_MS = 2000
+const DEFAULT_OVERLAY_DONE_MS = 2000
+const DEFAULT_OVERLAY_MIN_HIDE_MS = 400
+const OVERLAY_BOX_SIZE = 80
 
 const createUpdateSnapshot = () => ({
   phase: 'idle',
@@ -42,6 +50,382 @@ const createUpdateSnapshot = () => ({
 })
 
 let updateState = createUpdateSnapshot()
+
+let overlayWindow = null
+let overlayHideTimer = null
+
+const createOverlayHtml = () => `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    pointer-events: none;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  #overlay-root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  #controller-hint {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+  }
+  #controller-box {
+    position: absolute;
+    width: ${OVERLAY_BOX_SIZE}px;
+    height: ${OVERLAY_BOX_SIZE}px;
+    border-radius: 6px;
+    border: 3px solid rgba(255, 60, 60, 0.9);
+    background: rgba(255, 60, 60, 0.18);
+    box-sizing: border-box;
+  }
+  #controller-box.done {
+    border-color: rgba(60, 220, 120, 0.9);
+    background: rgba(60, 220, 120, 0.18);
+  }
+  #controller-cross {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 24px;
+    height: 24px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  #controller-cross::before,
+  #controller-cross::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    background: rgba(255, 80, 80, 0.9);
+    transform: translate(-50%, -50%);
+  }
+  #controller-box.done #controller-cross::before,
+  #controller-box.done #controller-cross::after {
+    background: rgba(80, 255, 160, 0.9);
+  }
+  #controller-cross::before {
+    width: 20px;
+    height: 2px;
+  }
+  #controller-cross::after {
+    width: 2px;
+    height: 20px;
+  }
+  #controller-label {
+    position: absolute;
+    padding: 6px 10px;
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: 600;
+    color: rgba(255, 235, 235, 0.95);
+    background: rgba(20, 20, 20, 0.6);
+    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    max-width: 420px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #controller-box.done + #controller-label {
+    color: rgba(230, 255, 240, 0.95);
+  }
+  #monitor-countdown {
+    position: absolute;
+    left: 50%;
+    top: 18px;
+    transform: translateX(-50%);
+    font-size: 26px;
+    font-weight: 700;
+    color: rgba(70, 160, 255, 0.95);
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    padding: 6px 12px;
+    border-radius: 10px;
+    background: rgba(10, 14, 20, 0.4);
+    white-space: nowrap;
+  }
+  .hidden {
+    display: none;
+  }
+</style>
+</head>
+<body>
+  <div id="overlay-root">
+    <div id="controller-hint" class="hidden">
+      <div id="controller-box">
+        <div id="controller-cross"></div>
+      </div>
+      <div id="controller-label"></div>
+    </div>
+    <div id="monitor-countdown" class="hidden"></div>
+  </div>
+  <script>
+    const { ipcRenderer } = require('electron');
+    const hint = document.getElementById('controller-hint');
+    const box = document.getElementById('controller-box');
+    const label = document.getElementById('controller-label');
+    const monitor = document.getElementById('monitor-countdown');
+    let monitorTimer = null;
+    let monitorDeadline = 0;
+    let monitorTotal = 0;
+
+    const clearMonitor = () => {
+      if (monitorTimer) {
+        clearInterval(monitorTimer);
+        monitorTimer = null;
+      }
+      monitorDeadline = 0;
+      monitorTotal = 0;
+      monitor.textContent = '';
+      monitor.classList.add('hidden');
+    };
+
+    const clearController = () => {
+      hint.classList.add('hidden');
+    };
+
+    const updateMonitorText = () => {
+      if (!monitorDeadline) return;
+      const now = Date.now();
+      const remainMs = Math.max(0, monitorDeadline - now);
+      const remainSec = remainMs <= 0 ? 0 : Math.ceil(remainMs / 1000);
+      if (monitorTotal <= 0 || remainSec <= 0) {
+        monitor.textContent = 'Capturing soon...';
+      } else {
+        monitor.textContent = 'Capturing in ' + remainSec + 's';
+      }
+    };
+
+    const showController = (payload) => {
+      const x = Number(payload?.x || 0);
+      const y = Number(payload?.y || 0);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+      const desc = String(payload?.description || 'controller').trim() || 'controller';
+      const state = String(payload?.state || '').toLowerCase();
+      const half = ${OVERLAY_BOX_SIZE} / 2;
+
+      box.classList.toggle('done', state === 'done');
+      label.textContent = desc;
+      hint.classList.remove('hidden');
+
+      const left = Math.round(x - half);
+      const top = Math.round(y - half);
+      box.style.left = left + 'px';
+      box.style.top = top + 'px';
+
+      requestAnimationFrame(() => {
+        const labelRect = label.getBoundingClientRect();
+        let labelLeft = Math.round(x - labelRect.width / 2);
+        labelLeft = Math.max(8, Math.min(labelLeft, window.innerWidth - labelRect.width - 8));
+        let labelTop = top - labelRect.height - 10;
+        if (labelTop < 6) {
+          labelTop = top + ${OVERLAY_BOX_SIZE} + 10;
+        }
+        label.style.left = labelLeft + 'px';
+        label.style.top = labelTop + 'px';
+      });
+    };
+
+    const showMonitor = (payload) => {
+      const waitMs = Math.max(0, Number(payload?.waitMs ?? payload?.wait_ms ?? 0));
+      monitorTotal = waitMs;
+      monitorDeadline = Date.now() + waitMs;
+      monitor.classList.remove('hidden');
+      updateMonitorText();
+      if (!monitorTimer) {
+        monitorTimer = setInterval(updateMonitorText, 120);
+      }
+    };
+
+    ipcRenderer.on('${OVERLAY_UPDATE_CHANNEL}', (event, payload) => {
+      if (!payload || typeof payload !== 'object') return;
+      if (payload.mode === 'monitor') {
+        clearController();
+        showMonitor(payload);
+        return;
+      }
+      clearMonitor();
+      showController(payload);
+    });
+
+    ipcRenderer.on('${OVERLAY_HIDE_CHANNEL}', () => {
+      clearController();
+      clearMonitor();
+    });
+  </script>
+</body>
+</html>`;
+
+const getVirtualDisplayBounds = () => {
+  const displays = screen.getAllDisplays();
+  let left = 0;
+  let top = 0;
+  let right = 0;
+  let bottom = 0;
+  let initialized = false;
+  for (const display of displays) {
+    const bounds = display?.bounds;
+    if (!bounds) continue;
+    if (!initialized) {
+      left = bounds.x;
+      top = bounds.y;
+      right = bounds.x + bounds.width;
+      bottom = bounds.y + bounds.height;
+      initialized = true;
+      continue;
+    }
+    left = Math.min(left, bounds.x);
+    top = Math.min(top, bounds.y);
+    right = Math.max(right, bounds.x + bounds.width);
+    bottom = Math.max(bottom, bounds.y + bounds.height);
+  }
+  if (!initialized) {
+    return { x: 0, y: 0, width: 1, height: 1 };
+  }
+  return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
+};
+
+const ensureOverlayWindow = () => {
+  if (overlayWindow && !overlayWindow.isDestroyed()) {
+    return overlayWindow;
+  }
+  const bounds = getVirtualDisplayBounds();
+  overlayWindow = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    show: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    fullscreen: false,
+    fullscreenable: false,
+    focusable: false,
+    hasShadow: false,
+    backgroundColor: '#00000000',
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      sandbox: false,
+      devTools: false,
+      backgroundThrottling: false
+    }
+  })
+  overlayWindow.setMenuBarVisibility(false)
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver')
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true })
+  overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+  overlayWindow.on('closed', () => {
+    overlayWindow = null
+  })
+  overlayWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(createOverlayHtml())}`)
+  return overlayWindow
+}
+
+const updateOverlayBounds = () => {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return
+  }
+  const bounds = getVirtualDisplayBounds()
+  overlayWindow.setBounds(bounds, false)
+}
+
+const scheduleOverlayHide = (delayMs) => {
+  if (overlayHideTimer) {
+    clearTimeout(overlayHideTimer)
+    overlayHideTimer = null
+  }
+  const delay = Math.max(0, Number(delayMs || 0))
+  if (!delay) {
+    return
+  }
+  overlayHideTimer = setTimeout(() => {
+    overlayHideTimer = null
+    hideOverlayNow()
+  }, delay)
+}
+
+const hideOverlayNow = () => {
+  if (overlayHideTimer) {
+    clearTimeout(overlayHideTimer)
+    overlayHideTimer = null
+  }
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    return
+  }
+  overlayWindow.webContents.send(OVERLAY_HIDE_CHANNEL)
+  overlayWindow.hide()
+}
+
+const sendOverlayPayload = (payload) => {
+  const window = ensureOverlayWindow()
+  if (!window || window.isDestroyed()) {
+    return
+  }
+  updateOverlayBounds()
+  window.webContents.send(OVERLAY_UPDATE_CHANNEL, payload)
+  if (!window.isVisible()) {
+    window.showInactive()
+  }
+}
+
+const resolveOverlayPoint = (x, y) => {
+  const primary = screen.getPrimaryDisplay()
+  const scale = primary?.scaleFactor || 1
+  const logicalX = Number(x) / scale
+  const logicalY = Number(y) / scale
+  const bounds = getVirtualDisplayBounds()
+  const baseX = primary?.bounds?.x || 0
+  const baseY = primary?.bounds?.y || 0
+  return {
+    x: Math.round(baseX + logicalX - bounds.x),
+    y: Math.round(baseY + logicalY - bounds.y)
+  }
+}
+
+const showControllerOverlay = (payload, state) => {
+  const x = Number(payload?.x)
+  const y = Number(payload?.y)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return false
+  }
+  const point = resolveOverlayPoint(x, y)
+  const description = String(payload?.description || '').trim()
+  const duration = Number(payload?.durationMs ?? payload?.duration_ms)
+  const delayMs = Number.isFinite(duration) && duration > 0 ? duration : state === 'done' ? DEFAULT_OVERLAY_DONE_MS : DEFAULT_OVERLAY_HINT_MS
+  sendOverlayPayload({
+    mode: 'controller',
+    state,
+    x: point.x,
+    y: point.y,
+    description
+  })
+  scheduleOverlayHide(delayMs)
+  return true
+}
+
+const showMonitorOverlay = (payload) => {
+  const waitMs = Math.max(0, Number(payload?.waitMs ?? payload?.wait_ms ?? 0))
+  sendOverlayPayload({ mode: 'monitor', waitMs })
+  scheduleOverlayHide(waitMs > 0 ? waitMs : DEFAULT_OVERLAY_MIN_HIDE_MS)
+  return true
+}
 
 app.commandLine.appendSwitch('log-level', '2')
 if (process.platform === 'linux') {
@@ -1067,6 +1451,49 @@ const isLoopbackHostname = (host) => {
   )
 }
 
+const isTrustedMediaOrigin = (originUrl) => {
+  if (!originUrl) {
+    return false
+  }
+  try {
+    const parsed = new URL(originUrl)
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return false
+    }
+    return isLoopbackHostname(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
+const configureMediaPermissions = () => {
+  if (!session || !session.defaultSession) {
+    return
+  }
+  const mediaPermissions = new Set([
+    'media',
+    'mediaAudioCapture',
+    'mediaVideoCapture',
+    'microphone',
+    'camera'
+  ])
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (!mediaPermissions.has(permission)) {
+      callback(false)
+      return
+    }
+    const origin = webContents?.getURL?.() || ''
+    callback(isTrustedMediaOrigin(origin))
+  })
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    if (!mediaPermissions.has(permission)) {
+      return false
+    }
+    const origin = webContents?.getURL?.() || ''
+    return isTrustedMediaOrigin(origin)
+  })
+}
+
 const parseBridgePort = (line) => {
   const trimmed = line.trim()
   const match = trimmed.match(/- web_base:\s*(https?:\/\/\S+)/)
@@ -1393,6 +1820,10 @@ if (!gotLock) {
       configureUpdaterEvents()
       ensureLinuxDesktopIntegration()
       closeBehavior = loadCloseBehavior()
+      configureMediaPermissions()
+      screen.on('display-added', updateOverlayBounds)
+      screen.on('display-removed', updateOverlayBounds)
+      screen.on('display-metrics-changed', updateOverlayBounds)
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       ipcMain.handle('wunder:window-minimize', () =>
         withMainWindow((window) => {
@@ -1468,6 +1899,19 @@ if (!gotLock) {
           return ''
         }
         return String(result.filePaths[0] || '').trim()
+      })
+      ipcMain.handle('wunder:overlay-controller-hint', (_event, payload) =>
+        showControllerOverlay(payload, 'pending')
+      )
+      ipcMain.handle('wunder:overlay-controller-done', (_event, payload) =>
+        showControllerOverlay(payload, 'done')
+      )
+      ipcMain.handle('wunder:overlay-monitor-countdown', (_event, payload) =>
+        showMonitorOverlay(payload)
+      )
+      ipcMain.handle('wunder:overlay-hide', () => {
+        hideOverlayNow()
+        return true
       })
       Menu.setApplicationMenu(null)
       await createWindow()

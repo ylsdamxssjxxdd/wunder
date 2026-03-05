@@ -604,7 +604,8 @@ Example payload:
 
 ## 4.4 Tool protocol (EVA style)
 
-- `tool_call_mode=tool_call` (default): model wraps tool calls in `<tool_call>...</tool_call>`, tool results are returned as `tool_response: ` user messages.
+- Default: `function_call` (when provider=openai and not explicitly set, defaults to `freeform_call`).
+- `tool_call_mode=tool_call`: model wraps tool calls in `<tool_call>...</tool_call>`, tool results are returned as `tool_response: ` user messages.
 - `tool_call_mode=function_call`: model returns OpenAI-style `tool_calls/function_call`, tool results are returned as role="tool" messages with tool_call_id.
 - JSON: `{"name":"tool","arguments":{...}}`.
 - Tool results are returned as a user message prefixed with `tool_response: ` (`tool_call` mode).

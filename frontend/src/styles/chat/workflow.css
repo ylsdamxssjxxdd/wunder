@@ -72,6 +72,7 @@
 .chat-shell .workflow-item {
   --workflow-border: rgba(255, 255, 255, 0.08);
   --workflow-bg: rgba(15, 23, 42, 0.35);
+  --workflow-flow-highlight: rgba(255, 255, 255, 0.08);
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -84,6 +85,31 @@
   background: transparent;
   box-shadow: none;
   transition: background 0.2s ease;
+}
+
+.chat-shell .workflow-item.workflow-item--waiting {
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-shell .workflow-item.workflow-item--waiting::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    var(--workflow-flow-highlight) 45%,
+    transparent 70%
+  );
+  background-size: 200% 100%;
+  animation: workflow-flow 1.6s ease-in-out infinite;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.chat-shell .message-workflow:not([open]) .workflow-item.workflow-item--waiting::after {
+  animation-play-state: paused;
 }
 
 .chat-shell .workflow-item:last-child {
@@ -211,6 +237,21 @@
   border-top-color: var(--chat-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
+}
+
+@keyframes workflow-flow {
+  0% {
+    background-position: -150% 0;
+  }
+  100% {
+    background-position: 150% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-shell .workflow-item.workflow-item--waiting::after {
+    animation: none;
+  }
 }
 
 .workflow-dialog {
@@ -475,4 +516,3 @@
   background: rgba(15, 23, 42, 0.45);
   text-align: center;
 }
-

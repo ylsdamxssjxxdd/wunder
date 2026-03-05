@@ -81,9 +81,18 @@ const openDetail = (item: WorkflowItem) => {
 };
 
 const getItemClasses = (item: WorkflowItem) => {
-  if (!item?.isTool) return [];
-  const category = item.toolCategory || 'default';
-  return ['workflow-item--tool', `workflow-item--tool-${category}`];
+  const classes: string[] = [];
+  if (item?.status) {
+    classes.push(`workflow-item--${item.status}`);
+  }
+  if (item?.isTool) {
+    const category = item.toolCategory || 'default';
+    classes.push('workflow-item--tool', `workflow-item--tool-${category}`);
+    if (item.status === 'loading' || item.status === 'pending') {
+      classes.push('workflow-item--waiting');
+    }
+  }
+  return classes;
 };
 
 const dialogTitle = computed(() =>

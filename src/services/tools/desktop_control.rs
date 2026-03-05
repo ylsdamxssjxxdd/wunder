@@ -22,6 +22,10 @@ pub const TOOL_DESKTOP_MONITOR_ALIAS_SHORT: &str = "monitor";
 
 const MAX_MONITOR_WAIT_MS: u64 = 30_000;
 const MAX_SCREENSHOT_BYTES: u64 = 8 * 1024 * 1024;
+const OVERLAY_HINT_MS: u64 = 2000;
+const OVERLAY_DONE_MS: u64 = 2000;
+const OVERLAY_JITTER_MS: u64 = 120;
+const OVERLAY_HIDE_DELAY_MS: u64 = 80;
 
 #[derive(Clone, Copy, Debug)]
 struct BBox {
@@ -119,6 +123,23 @@ struct DesktopScreenshot {
     size_bytes: usize,
 }
 
+fn overlay_stream_enabled(context: &ToolContext<'_>) -> bool {
+    context
+        .event_emitter
+        .as_ref()
+        .map(|emitter| emitter.stream_enabled())
+        .unwrap_or(false)
+}
+
+fn emit_overlay_event(context: &ToolContext<'_>, event_type: &str, payload: Value) {
+    if !overlay_stream_enabled(context) {
+        return;
+    }
+    if let Some(emitter) = context.event_emitter.as_ref() {
+        emitter.emit(event_type, payload);
+    }
+}
+
 pub fn is_desktop_controller_tool_name(name: &str) -> bool {
     let cleaned = name.trim();
     if cleaned == TOOL_DESKTOP_CONTROLLER {
@@ -168,6 +189,26 @@ pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) ->
     let cy_norm = cy_norm_raw.clamp(0, norm_height);
     let cx = map_coord(cx_norm, norm_width, screen_max_x);
     let cy = map_coord(cy_norm, norm_height, screen_max_y);
+    let description = payload.description.clone();
+    let mut done_coords: Option<(i32, i32)> = None;
+    if overlay_stream_enabled(context) {
+        emit_overlay_event(
+            context,
+            "desktop_controller_hint",
+            json!({
+                "x": cx,
+                "y": cy,
+                "description": &description,
+                "duration_ms": OVERLAY_HINT_MS,
+            }),
+        );
+        if OVERLAY_HINT_MS > 0 {
+            sleep(Duration::from_millis(
+                OVERLAY_HINT_MS.saturating_add(OVERLAY_JITTER_MS),
+            ))
+            .await;
+        }
+    }
 
     match payload.action {
         DesktopAction::LeftClick => {
@@ -254,11 +295,31 @@ pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) ->
             };
             smooth_move(to_cx, to_cy, drag_duration).await?;
             mouse_up(MouseButton::Left, to_cx, to_cy)?;
+            done_coords = Some((to_cx, to_cy));
         }
     }
 
     let screenshot = capture_screenshot(&config).await?;
     persist_screenshot_to_user_container(context, &screenshot).await;
+    if overlay_stream_enabled(context) {
+        let (done_x, done_y) = done_coords.unwrap_or((cx, cy));
+        emit_overlay_event(
+            context,
+            "desktop_controller_hint_done",
+            json!({
+                "x": done_x,
+                "y": done_y,
+                "description": &description,
+                "duration_ms": OVERLAY_DONE_MS,
+            }),
+        );
+        if OVERLAY_DONE_MS > 0 {
+            sleep(Duration::from_millis(
+                OVERLAY_DONE_MS.saturating_add(OVERLAY_JITTER_MS),
+            ))
+            .await;
+        }
+    }
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
     let prompt = build_followup_prompt(
         crate::i18n::t("tool.desktop_controller.followup_prompt"),
@@ -268,7 +329,7 @@ pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) ->
     Ok(json!({
         "status": "ok",
         "action": payload.action_raw,
-        "description": payload.description,
+        "description": description,
         "center_norm": [cx_norm, cy_norm],
         "center_screen": [cx, cy],
         "normalized_width": screenshot.norm_width,
@@ -287,8 +348,21 @@ pub async fn tool_desktop_monitor(context: &ToolContext<'_>, args: &Value) -> Re
     ensure_desktop_enabled(context.config)?;
     let wait_ms = parse_monitor_wait_ms(args)?;
     let config = context.config.tools.desktop_controller.clone();
+    if overlay_stream_enabled(context) {
+        emit_overlay_event(
+            context,
+            "desktop_monitor_countdown",
+            json!({ "wait_ms": wait_ms }),
+        );
+    }
     if wait_ms > 0 {
         sleep(Duration::from_millis(wait_ms)).await;
+    }
+    if overlay_stream_enabled(context) {
+        emit_overlay_event(context, "desktop_monitor_countdown_done", json!({}));
+        if OVERLAY_HIDE_DELAY_MS > 0 {
+            sleep(Duration::from_millis(OVERLAY_HIDE_DELAY_MS)).await;
+        }
     }
     let screenshot = capture_screenshot(&config).await?;
     persist_screenshot_to_user_container(context, &screenshot).await;
@@ -415,9 +489,28 @@ fn parse_monitor_wait_ms(args: &Value) -> Result<u64> {
 }
 
 fn parse_bbox(value: &Value) -> Result<BBox> {
-    let arr = value
-        .as_array()
-        .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+    let arr = match value {
+        Value::Array(arr) => arr.clone(),
+        Value::String(raw) => {
+            let raw = raw.trim();
+            if raw.is_empty() {
+                return Err(anyhow!(crate::i18n::t(
+                    "tool.desktop_controller.invalid_bbox"
+                )));
+            }
+            let parsed = serde_json::from_str::<Value>(raw)
+                .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;
+            parsed
+                .as_array()
+                .cloned()
+                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?
+        }
+        _ => {
+            return Err(anyhow!(crate::i18n::t(
+                "tool.desktop_controller.invalid_bbox"
+            )))
+        }
+    };
     if arr.len() == 4 {
         let x1 = parse_i32(Some(&arr[0]))
             .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.invalid_bbox")))?;

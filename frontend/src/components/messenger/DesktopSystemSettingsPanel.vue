@@ -646,11 +646,18 @@ const getProviderPreset = (provider: unknown) => PROVIDER_PRESET_MAP.get(normali
 
 const resolveProviderBaseUrl = (provider: unknown): string => getProviderPreset(provider)?.baseUrl || '';
 
-const normalizeToolCallMode = (value: unknown): ToolCallMode => {
+const resolveDefaultToolCallMode = (provider: unknown): ToolCallMode =>
+  normalizeProviderId(provider) === 'openai' ? 'freeform_call' : 'function_call';
+
+const normalizeToolCallMode = (value: unknown, provider?: unknown): ToolCallMode => {
   const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return resolveDefaultToolCallMode(provider);
+  }
   if (normalized === 'freeform_call' || normalized === 'freeform') return 'freeform_call';
   if (normalized === 'function_call') return 'function_call';
-  return 'tool_call';
+  if (normalized === 'tool_call') return 'tool_call';
+  return resolveDefaultToolCallMode(provider);
 };
 
 const applyModelPresetContext = (row: ModelRow, force = true) => {
@@ -664,7 +671,14 @@ const applyModelPresetContext = (row: ModelRow, force = true) => {
 const handleProviderChange = (value: string) => {
   const current = selectedModel.value;
   if (!current) return;
-  current.provider = normalizeProviderId(value);
+  const previousProvider = current.provider;
+  const nextProvider = normalizeProviderId(value);
+  current.provider = nextProvider;
+  const prevDefault = resolveDefaultToolCallMode(previousProvider);
+  const currentMode = normalizeToolCallMode(current.tool_call_mode, previousProvider);
+  if (!current.tool_call_mode || currentMode === prevDefault) {
+    current.tool_call_mode = resolveDefaultToolCallMode(nextProvider);
+  }
   applyModelPresetContext(current);
 };
 
@@ -724,7 +738,7 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     support_vision: raw.support_vision === true,
     support_hearing: raw.support_hearing === true,
     stream_include_usage: raw.stream_include_usage !== false,
-    tool_call_mode: normalizeToolCallMode(raw.tool_call_mode),
+    tool_call_mode: normalizeToolCallMode(raw.tool_call_mode, raw.provider),
     history_compaction_ratio: formatFloatForInput(raw.history_compaction_ratio, 0.8),
     history_compaction_reset: normalizeHistoryCompactionReset(raw.history_compaction_reset),
     raw: { ...raw }
@@ -796,7 +810,7 @@ const addModel = (modelType: ModelType = 'llm') => {
     support_vision: false,
     support_hearing: false,
     stream_include_usage: true,
-    tool_call_mode: 'tool_call',
+    tool_call_mode: resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID),
     history_compaction_ratio: modelType === 'llm' ? '0.8' : '',
     history_compaction_reset: 'zero',
     raw: {}

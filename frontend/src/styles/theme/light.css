@@ -436,6 +436,7 @@
 :root[data-user-theme='light'] .chat-shell .workflow-item {
   --workflow-border: rgba(15, 23, 42, 0.08);
   --workflow-bg: rgba(15, 23, 42, 0.04);
+  --workflow-flow-highlight: rgba(59, 130, 246, 0.08);
   color: var(--chat-muted);
 }
 
@@ -1058,4 +1059,3 @@
 :root[data-user-theme='light'] .ability-tooltip-popper .ability-error {
   color: #ef4444;
 }
-

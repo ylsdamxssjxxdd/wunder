@@ -2354,7 +2354,8 @@
 
 ### 4.4 工具协议（EVA 风格）
 
-- `tool_call_mode=tool_call`（默认）：模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具，工具结果以 `tool_response: ` 前缀的 user 消息回填。
+- 默认：`function_call`（provider=openai 且未显式设置时默认 `freeform_call`）。
+- `tool_call_mode=tool_call`：模型以 `<tool_call>...</tool_call>` 包裹 JSON 调用工具，工具结果以 `tool_response: ` 前缀的 user 消息回填。
 - `tool_call_mode=function_call`：模型通过 OpenAI 风格 `tool_calls/function_call` 返回工具调用，工具结果以 role=tool + tool_call_id 回填。
 - `tool_call_mode=freeform_call`：用于“结构化 + freeform”混合调用；普通工具可走结构化参数，语法类工具（如 `apply_patch`）可通过 `<tool_call><name>...</name><input>...</input></tool_call>` 发送原文补丁，工具结果同样以 role=tool + tool_call_id（有 id 时）或 `tool_response` 回填。
 - `apply_patch` 失败返回统一结构：`{"ok":false,"error":"...","data":{"error_code":"PATCH_*","hint":"...","retryable":true|false}}`；其中 `error_code` 为稳定机器可读码，`hint` 为可执行重试建议。

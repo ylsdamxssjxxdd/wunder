@@ -105,8 +105,8 @@ impl Orchestrator {
         model_name: Option<&str>,
     ) -> ToolCallMode {
         self.resolve_llm_config(config, model_name)
-            .map(|(_, config)| normalize_tool_call_mode(config.tool_call_mode.as_deref()))
-            .unwrap_or(ToolCallMode::ToolCall)
+            .map(|(_, config)| crate::llm::resolve_tool_call_mode(&config))
+            .unwrap_or(ToolCallMode::FunctionCall)
     }
 
     pub(super) fn ensure_not_cancelled(&self, session_id: &str) -> Result<(), OrchestratorError> {

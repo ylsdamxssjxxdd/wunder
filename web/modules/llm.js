@@ -60,11 +60,14 @@ const getProviderPreset = (provider) =>
 
 const resolveProviderBaseUrl = (provider) => getProviderPreset(provider)?.baseUrl || "";
 
+const resolveDefaultToolCallMode = (provider) =>
+  normalizeProviderId(provider) === "openai" ? "freeform_call" : "function_call";
+
 const TOOL_CALL_MODE_OPTIONS = new Set(["tool_call", "function_call", "freeform_call"]);
-const normalizeToolCallMode = (value) => {
+const normalizeToolCallMode = (value, provider) => {
   const raw = String(value || "").trim();
   if (!raw) {
-    return "function_call";
+    return resolveDefaultToolCallMode(provider);
   }
   const normalized = raw.toLowerCase().replace(/[\s-]+/g, "_");
   if (normalized === "function" || normalized === "functioncall" || normalized === "fc") {
@@ -85,7 +88,9 @@ const normalizeToolCallMode = (value) => {
   ) {
     return "tool_call";
   }
-  return TOOL_CALL_MODE_OPTIONS.has(normalized) ? normalized : "function_call";
+  return TOOL_CALL_MODE_OPTIONS.has(normalized)
+    ? normalized
+    : resolveDefaultToolCallMode(provider);
 };
 
 const MODEL_TYPE_OPTIONS = new Set(["llm", "embedding"]);
@@ -161,6 +166,17 @@ const applyProviderDefaults = (provider, options = {}) => {
   }
 };
 
+const syncToolCallModeForProvider = (nextProvider, previousProvider) => {
+  if (!elements.llmToolCallMode) {
+    return;
+  }
+  const prevDefault = resolveDefaultToolCallMode(previousProvider || DEFAULT_PROVIDER_ID);
+  const current = normalizeToolCallMode(elements.llmToolCallMode.value, previousProvider);
+  if (!elements.llmToolCallMode.value || current === prevDefault) {
+    elements.llmToolCallMode.value = resolveDefaultToolCallMode(nextProvider);
+  }
+};
+
 const roundFloat = (value) => {
   const factor = 10 ** FLOAT_INPUT_PRECISION;
   return Math.round(value * factor) / factor;
@@ -191,10 +207,12 @@ const parseFloatInput = (input, fallback) => {
 };
 
 // 规范化 LLM 配置，避免空值影响展示。
-const normalizeLlmConfig = (raw) => ({
-  enable: raw?.enable !== false,
-  model_type: normalizeModelType(raw?.model_type),
-  provider: normalizeProviderId(raw?.provider || DEFAULT_PROVIDER_ID),
+const normalizeLlmConfig = (raw) => {
+  const provider = normalizeProviderId(raw?.provider || DEFAULT_PROVIDER_ID);
+  return {
+    enable: raw?.enable !== false,
+    model_type: normalizeModelType(raw?.model_type),
+    provider,
   base_url: raw?.base_url || "",
   api_key: raw?.api_key || "",
   model: raw?.model || "",
@@ -213,7 +231,7 @@ const normalizeLlmConfig = (raw) => ({
   support_hearing: raw?.support_hearing === true,
   stream: raw?.stream === true,
   stream_include_usage: raw?.stream_include_usage !== false,
-  tool_call_mode: normalizeToolCallMode(raw?.tool_call_mode),
+  tool_call_mode: normalizeToolCallMode(raw?.tool_call_mode, provider),
   history_compaction_ratio:
     typeof raw?.history_compaction_ratio === "number" && !Number.isNaN(raw.history_compaction_ratio)
       ? raw.history_compaction_ratio
@@ -224,7 +242,8 @@ const normalizeLlmConfig = (raw) => ({
     ? String(raw?.history_compaction_reset || "zero").trim()
     : "zero",
   mock_if_unconfigured: raw?.mock_if_unconfigured !== false,
-});
+  };
+};
 
 // 规范化多模型配置集合。
 const normalizeLlmSet = (raw) => {
@@ -282,7 +301,7 @@ const clearLlmForm = () => {
   elements.llmHearing.checked = false;
   elements.llmStreamIncludeUsage.checked = true;
   if (elements.llmToolCallMode) {
-    elements.llmToolCallMode.value = "function_call";
+    elements.llmToolCallMode.value = resolveDefaultToolCallMode(DEFAULT_PROVIDER_ID);
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(0.8, 0.8);
   elements.llmHistoryCompactionReset.value = "zero";
@@ -336,7 +355,7 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmHearing.checked = llm.support_hearing;
   elements.llmStreamIncludeUsage.checked = llm.stream_include_usage === true;
   if (elements.llmToolCallMode) {
-    elements.llmToolCallMode.value = llm.tool_call_mode || "function_call";
+    elements.llmToolCallMode.value = normalizeToolCallMode(llm.tool_call_mode, llm.provider);
   }
   elements.llmHistoryCompactionRatio.value = formatFloatForInput(
     llm.history_compaction_ratio ?? 0.8,
@@ -517,7 +536,8 @@ const buildLlmConfigFromForm = (baseConfig) => {
     stream: base.stream,
     stream_include_usage: elements.llmStreamIncludeUsage.checked,
     tool_call_mode: normalizeToolCallMode(
-      elements.llmToolCallMode?.value || base.tool_call_mode
+      elements.llmToolCallMode?.value || base.tool_call_mode,
+      provider
     ),
     history_compaction_ratio:
       Number.isFinite(historyCompactionRatio) && historyCompactionRatio > 0
@@ -980,7 +1000,9 @@ export const initLlmPanel = () => {
   elements.llmApiKey.addEventListener("input", handleProbeInput);
   elements.llmProvider.addEventListener("change", () => {
     const nextProvider = normalizeProviderId(elements.llmProvider.value);
+    const previousProvider = lastProviderSelection;
     elements.llmProvider.value = nextProvider;
+    syncToolCallModeForProvider(nextProvider, previousProvider);
     applyProviderDefaults(nextProvider, { previousProvider: lastProviderSelection });
     lastProviderSelection = nextProvider;
     handleProbeInput();

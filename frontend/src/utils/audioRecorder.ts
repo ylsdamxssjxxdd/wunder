@@ -3,6 +3,7 @@ type RecorderAudioContext = AudioContext;
 type RecorderWindow = Window &
   typeof globalThis & {
   webkitAudioContext?: typeof AudioContext;
+  MediaRecorder?: typeof MediaRecorder;
 };
 
 type LegacyGetUserMedia = (
@@ -50,6 +51,31 @@ const resolveLegacyGetUserMedia = (): LegacyGetUserMedia | null => {
     source.msGetUserMedia ||
     null
   );
+};
+
+const resolveMediaRecorderCtor = (): typeof MediaRecorder | null => {
+  if (typeof window === 'undefined') return null;
+  const host = window as RecorderWindow;
+  if (typeof host.MediaRecorder === 'function') return host.MediaRecorder;
+  return null;
+};
+
+const resolveMediaRecorderMimeType = (ctor: typeof MediaRecorder): string => {
+  if (typeof ctor.isTypeSupported !== 'function') {
+    return '';
+  }
+  const candidates = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/ogg;codecs=opus',
+    'audio/ogg'
+  ];
+  for (const candidate of candidates) {
+    if (ctor.isTypeSupported(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
 };
 
 const clampPcmSample = (value: number): number => {
@@ -129,26 +155,34 @@ export const isAudioRecordingSupported = (): boolean => {
     navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function'
   );
   const hasLegacyGetUserMedia = Boolean(resolveLegacyGetUserMedia());
-  return (hasMediaDevices || hasLegacyGetUserMedia) && Boolean(resolveAudioContextCtor());
+  if (!hasMediaDevices && !hasLegacyGetUserMedia) {
+    return false;
+  }
+  return Boolean(resolveAudioContextCtor() || resolveMediaRecorderCtor());
 };
 
 export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
   const AudioContextCtor = resolveAudioContextCtor();
+  const MediaRecorderCtor = resolveMediaRecorderCtor();
   const mediaDevices = navigator.mediaDevices;
   const modernGetUserMedia = mediaDevices?.getUserMedia?.bind(mediaDevices);
   const legacyGetUserMedia = resolveLegacyGetUserMedia();
-  if (!AudioContextCtor || (!modernGetUserMedia && !legacyGetUserMedia)) {
+  if ((!AudioContextCtor && !MediaRecorderCtor) || (!modernGetUserMedia && !legacyGetUserMedia)) {
     throw new Error('audio recording is not supported');
   }
-  const stream = modernGetUserMedia
-    ? await modernGetUserMedia({ audio: true })
-    : await new Promise<MediaStream>((resolve, reject) => {
-        if (!legacyGetUserMedia) {
-          reject(new Error('audio recording is not supported'));
-          return;
-        }
-        legacyGetUserMedia.call(navigator, { audio: true }, resolve, reject);
-      });
+  const requestStream = async () => {
+    if (modernGetUserMedia) {
+      return modernGetUserMedia({ audio: true });
+    }
+    return new Promise<MediaStream>((resolve, reject) => {
+      if (!legacyGetUserMedia) {
+        reject(new Error('audio recording is not supported'));
+        return;
+      }
+      legacyGetUserMedia.call(navigator, { audio: true }, resolve, reject);
+    });
+  };
+  const stream = await requestStream();
   let context: RecorderAudioContext | null = null;
   let sourceNode: MediaStreamAudioSourceNode | null = null;
   let processorNode: ScriptProcessorNode | null = null;
@@ -196,31 +230,43 @@ export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
     }
   };
 
-  try {
-    context = new AudioContextCtor();
-    sampleRate = Number(context.sampleRate) || DEFAULT_SAMPLE_RATE;
-    sourceNode = context.createMediaStreamSource(stream);
-    processorNode = context.createScriptProcessor(SCRIPT_PROCESSOR_BUFFER_SIZE, 1, 1);
-    silentNode = context.createGain();
-    silentNode.gain.value = 0;
-    processorNode.onaudioprocess = (event: AudioProcessingEvent) => {
-      if (finalized) return;
-      const source = event.inputBuffer.getChannelData(0);
-      if (!source || !source.length) return;
-      const snapshot = new Float32Array(source.length);
-      snapshot.set(source);
-      chunks.push(snapshot);
-      totalSamples += snapshot.length;
-    };
-    sourceNode.connect(processorNode);
-    processorNode.connect(silentNode);
-    silentNode.connect(context.destination);
-    if (context.state === 'suspended') {
-      await context.resume();
+  const canUseWebAudio = Boolean(AudioContextCtor);
+  if (canUseWebAudio) {
+    try {
+      context = new AudioContextCtor();
+      if (typeof context.createScriptProcessor !== 'function') {
+        throw new Error('audio recording is not supported');
+      }
+      sampleRate = Number(context.sampleRate) || DEFAULT_SAMPLE_RATE;
+      sourceNode = context.createMediaStreamSource(stream);
+      processorNode = context.createScriptProcessor(SCRIPT_PROCESSOR_BUFFER_SIZE, 1, 1);
+      silentNode = context.createGain();
+      silentNode.gain.value = 0;
+      processorNode.onaudioprocess = (event: AudioProcessingEvent) => {
+        if (finalized) return;
+        const source = event.inputBuffer.getChannelData(0);
+        if (!source || !source.length) return;
+        const snapshot = new Float32Array(source.length);
+        snapshot.set(source);
+        chunks.push(snapshot);
+        totalSamples += snapshot.length;
+      };
+      sourceNode.connect(processorNode);
+      processorNode.connect(silentNode);
+      silentNode.connect(context.destination);
+      if (context.state === 'suspended') {
+        await context.resume();
+      }
+    } catch (error) {
+      await cleanupGraph();
+      if (!MediaRecorderCtor) {
+        throw error;
+      }
+      const fallbackStream = await requestStream();
+      return createMediaRecorderSession(fallbackStream, MediaRecorderCtor);
     }
-  } catch (error) {
-    await cleanupGraph();
-    throw error;
+  } else if (MediaRecorderCtor) {
+    return createMediaRecorderSession(stream, MediaRecorderCtor);
   }
 
   const finalizeRecording = async (discard: boolean): Promise<AudioRecordingResult> => {
@@ -259,6 +305,115 @@ export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
         return;
       }
       await finalizeRecording(true).catch(() => undefined);
+    }
+  };
+};
+
+const createMediaRecorderSession = (
+  stream: MediaStream,
+  ctor: typeof MediaRecorder
+): AudioRecordingSession => {
+  let recorder: MediaRecorder | null = null;
+  let finalized = false;
+  let stopPromise: Promise<AudioRecordingResult> | null = null;
+  const chunks: BlobPart[] = [];
+  const startedAt = Date.now();
+  const mimeType = resolveMediaRecorderMimeType(ctor);
+  const options = mimeType ? { mimeType } : undefined;
+
+  const cleanup = () => {
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      recorder = null;
+    }
+    stopMediaTracks(stream);
+  };
+
+  recorder = new ctor(stream, options);
+  recorder.ondataavailable = (event: BlobEvent) => {
+    if (event.data && event.data.size > 0) {
+      chunks.push(event.data);
+    }
+  };
+  try {
+    recorder.start();
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+
+  const finalize = (discard: boolean): Promise<AudioRecordingResult> => {
+    if (finalized) {
+      if (stopPromise) return stopPromise;
+      return Promise.reject(new Error('recording has already finished'));
+    }
+    finalized = true;
+    stopPromise = new Promise<AudioRecordingResult>((resolve, reject) => {
+      let settled = false;
+      let fallbackTimer: number | null = null;
+      const settleResolve = (result: AudioRecordingResult) => {
+        if (settled) return;
+        settled = true;
+        if (fallbackTimer !== null) {
+          window.clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+        resolve(result);
+      };
+      const settleReject = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        if (fallbackTimer !== null) {
+          window.clearTimeout(fallbackTimer);
+          fallbackTimer = null;
+        }
+        reject(error);
+      };
+      const handleStop = () => {
+        cleanup();
+        if (discard) {
+          settleResolve({ blob: new Blob([], { type: mimeType || 'audio/webm' }), durationMs: 0, sampleRate: 0 });
+          return;
+        }
+        const blob = new Blob(chunks, { type: mimeType || chunks[0]?.type || 'audio/webm' });
+        if (!blob.size) {
+          settleReject(new Error('recorded audio is empty'));
+          return;
+        }
+        const durationMs = Math.max(1, Date.now() - startedAt);
+        settleResolve({ blob, durationMs, sampleRate: 0 });
+      };
+      const handleError = (event: Event) => {
+        cleanup();
+        const error = (event as { error?: Error }).error;
+        settleReject(error || new Error('recording failed'));
+      };
+      recorder?.addEventListener('stop', handleStop, { once: true });
+      recorder?.addEventListener('error', handleError, { once: true });
+      fallbackTimer = window.setTimeout(() => {
+        cleanup();
+        settleReject(new Error('recording failed'));
+      }, 2000);
+      if (recorder && recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch (error) {
+          cleanup();
+          settleReject((error as Error) || new Error('recording failed'));
+        }
+      } else {
+        handleStop();
+      }
+    });
+    return stopPromise;
+  };
+
+  return {
+    stop: () => finalize(false),
+    cancel: async () => {
+      await finalize(true).catch(() => undefined);
     }
   };
 };

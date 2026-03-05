@@ -1947,6 +1947,15 @@
   transition: background 0.15s ease, box-shadow 0.15s ease;
 }
 
+#skillsPanel .skill-item {
+  position: relative;
+}
+
+#skillsPanel .skill-item:hover label,
+#skillsPanel .skill-item:focus-within label {
+  padding-right: 34px;
+}
+
 .tool-list .tool-item:hover,
 .skills-list .skill-item:hover {
   background: #e2e8f0;
@@ -2033,7 +2042,8 @@
 }
 
 #skillsPanel .skill-delete-btn {
-  margin-left: auto;
+  position: absolute;
+  right: 10px;
   opacity: 0;
   visibility: hidden;
   pointer-events: none;

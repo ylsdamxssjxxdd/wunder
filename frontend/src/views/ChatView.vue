@@ -2414,6 +2414,16 @@ const formatSpeed = (value) => {
   return `${parsed.toFixed(2)} token/s`;
 };
 
+const MIN_SPEED_DURATION_S = 0.2;
+const MAX_REASONABLE_SPEED = 2000;
+
+const normalizeSpeed = (speed, durationSeconds) => {
+  if (!Number.isFinite(speed) || speed <= 0) return null;
+  if (durationSeconds !== null && durationSeconds < MIN_SPEED_DURATION_S) return null;
+  if (speed > MAX_REASONABLE_SPEED) return null;
+  return speed;
+};
+
 const normalizeDurationSeconds = (value) => {
   if (value === null || value === undefined) return null;
   const parsed = Number(value);
@@ -2443,14 +2453,16 @@ const resolveTokenSpeed = (stats, durationSeconds) => {
       stats?.decode_duration_s
   );
   if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
-    return outputTokens / decode;
+    const speed = normalizeSpeed(outputTokens / decode, decode);
+    if (speed !== null) return speed;
   }
   if (Number.isFinite(outputTokens) && outputTokens > 0 && durationSeconds && durationSeconds > 0) {
-    return outputTokens / durationSeconds;
+    const speed = normalizeSpeed(outputTokens / durationSeconds, durationSeconds);
+    if (speed !== null) return speed;
   }
   const totalTokens = Number(stats?.usage?.total);
   if (Number.isFinite(totalTokens) && totalTokens > 0 && durationSeconds && durationSeconds > 0) {
-    return totalTokens / durationSeconds;
+    return normalizeSpeed(totalTokens / durationSeconds, durationSeconds);
   }
   return null;
 };

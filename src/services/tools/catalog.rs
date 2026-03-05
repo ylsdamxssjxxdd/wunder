@@ -522,6 +522,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "bbox": {
+                        "type": "array",
+                        "items": {"type": "integer"},
                         "anyOf": [
                             {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
                             {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
@@ -558,6 +560,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "duration_ms": {"type": "integer", "minimum": 0, "description": t("tool.spec.desktop_controller.args.duration_ms")},
                     "scroll_steps": {"type": "integer", "minimum": 1, "description": t("tool.spec.desktop_controller.args.scroll_steps")},
                     "to_bbox": {
+                        "type": "array",
+                        "items": {"type": "integer"},
                         "anyOf": [
                             {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
                             {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}

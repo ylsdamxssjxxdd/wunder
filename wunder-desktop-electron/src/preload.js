@@ -15,5 +15,12 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
   installUpdate: () => ipcRenderer.invoke('wunder:update-install'),
   notify: (payload) => ipcRenderer.invoke('wunder:notify', payload || {}),
   captureScreenshot: (options) => ipcRenderer.invoke('wunder:capture-screenshot', options || {}),
-  chooseDirectory: (defaultPath) => ipcRenderer.invoke('wunder:choose-directory', { defaultPath })
+  chooseDirectory: (defaultPath) => ipcRenderer.invoke('wunder:choose-directory', { defaultPath }),
+  showControllerHint: (payload) =>
+    ipcRenderer.invoke('wunder:overlay-controller-hint', payload || {}),
+  showControllerDone: (payload) =>
+    ipcRenderer.invoke('wunder:overlay-controller-done', payload || {}),
+  showMonitorCountdown: (payload) =>
+    ipcRenderer.invoke('wunder:overlay-monitor-countdown', payload || {}),
+  hideOverlay: () => ipcRenderer.invoke('wunder:overlay-hide')
 })

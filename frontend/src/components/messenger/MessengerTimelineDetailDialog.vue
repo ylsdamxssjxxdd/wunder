@@ -328,6 +328,13 @@ const normalizeRounds = (value: unknown): TimelineDetailRound[] => {
     .filter((item) => Array.isArray(item.events) && item.events.length > 0);
 };
 
+const isStreamingEventType = (eventType: string): boolean => {
+  const normalized = String(eventType || '')
+    .trim()
+    .toLowerCase();
+  return normalized.endsWith('_delta');
+};
+
 const normalizeSession = (sessionId: string, value: unknown): TimelineDetailSession => {
   const source =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -496,6 +503,9 @@ const filteredEvents = computed(() => {
     .toLowerCase();
   return events.value.filter((item) => {
     if (selectedType && item.eventType !== selectedType) {
+      return false;
+    }
+    if (!selectedType && isStreamingEventType(item.eventType)) {
       return false;
     }
     if (!keyword) {

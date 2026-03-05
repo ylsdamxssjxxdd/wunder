@@ -51,6 +51,10 @@ const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "aac", "ogg", "m4a"]);
 const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "avi", "mkv", "webm"]);
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
 const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
+const WORKSPACE_CONTAINER_STORAGE_KEY = "wunder_workspace_container_id";
+const DEFAULT_WORKSPACE_CONTAINER_ID = 1;
+const MIN_WORKSPACE_CONTAINER_ID = 0;
+const MAX_WORKSPACE_CONTAINER_ID = 10;
 const WORKSPACE_DRAG_KEY = "application/x-wunder-workspace-entry";
 const WORKSPACE_SORT_ICONS = {
   asc: "fa-arrow-up-short-wide",
@@ -115,6 +119,53 @@ const endWorkspaceUploadProgress = () => {
   workspaceUploadCount = Math.max(0, workspaceUploadCount - 1);
   if (workspaceUploadCount === 0) {
     resetWorkspaceUploadProgress();
+  }
+};
+
+const resolveWorkspaceContainerId = (raw) => {
+  const parsed = Number.parseInt(String(raw ?? "").trim(), 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  if (parsed < MIN_WORKSPACE_CONTAINER_ID) {
+    return MIN_WORKSPACE_CONTAINER_ID;
+  }
+  if (parsed > MAX_WORKSPACE_CONTAINER_ID) {
+    return MAX_WORKSPACE_CONTAINER_ID;
+  }
+  return parsed;
+};
+
+const readStoredWorkspaceContainerId = () => {
+  if (typeof localStorage === "undefined") {
+    return null;
+  }
+  try {
+    return resolveWorkspaceContainerId(localStorage.getItem(WORKSPACE_CONTAINER_STORAGE_KEY));
+  } catch (error) {
+    return null;
+  }
+};
+
+const storeWorkspaceContainerId = (value) => {
+  if (typeof localStorage === "undefined") {
+    return;
+  }
+  try {
+    localStorage.setItem(WORKSPACE_CONTAINER_STORAGE_KEY, String(value));
+  } catch (error) {
+    // ignore storage errors
+  }
+};
+
+const getWorkspaceContainerId = () => {
+  return resolveWorkspaceContainerId(elements.workspaceContainerSelect?.value);
+};
+
+const appendWorkspaceContainerParam = (params) => {
+  const containerId = getWorkspaceContainerId();
+  if (Number.isFinite(containerId)) {
+    params.set("container_id", String(containerId));
   }
 };
 
@@ -792,6 +843,42 @@ const renderWorkspaceList = (entries) => {
   state.workspace.flatEntries = flatEntries;
 };
 
+const initWorkspaceContainerSelect = () => {
+  const select = elements.workspaceContainerSelect;
+  if (!select) {
+    return;
+  }
+  select.innerHTML = "";
+  for (
+    let containerId = MIN_WORKSPACE_CONTAINER_ID;
+    containerId <= MAX_WORKSPACE_CONTAINER_ID;
+    containerId += 1
+  ) {
+    const option = document.createElement("option");
+    option.value = String(containerId);
+    option.textContent =
+      containerId === MIN_WORKSPACE_CONTAINER_ID
+        ? t("workspace.container.private")
+        : String(containerId);
+    select.appendChild(option);
+  }
+  const stored = readStoredWorkspaceContainerId();
+  const initial =
+    resolveWorkspaceContainerId(stored ?? DEFAULT_WORKSPACE_CONTAINER_ID) ??
+    DEFAULT_WORKSPACE_CONTAINER_ID;
+  select.value = String(initial);
+  storeWorkspaceContainerId(initial);
+  select.addEventListener("change", () => {
+    const next = resolveWorkspaceContainerId(select.value);
+    if (!Number.isFinite(next)) {
+      return;
+    }
+    storeWorkspaceContainerId(next);
+    resetWorkspaceState();
+    loadWorkspace({ refreshTree: true, resetExpanded: true, resetSearch: true });
+  });
+};
+
 const updateWorkspacePath = () => {
   const displayPath = state.workspace.path ? `/${state.workspace.path}` : "/";
   elements.workspacePath.textContent = displayPath;
@@ -1095,6 +1182,7 @@ const buildWorkspaceDownloadUrl = (entry) => {
     user_id: elements.userId.value.trim(),
     path: entry.path,
   });
+  appendWorkspaceContainerParam(params);
   return `${wunderBase}/workspace/download?${params.toString()}`;
 };
 
@@ -1108,6 +1196,7 @@ const buildWorkspaceArchiveUrl = (path = "") => {
   const params = new URLSearchParams({
     user_id: userId,
   });
+  appendWorkspaceContainerParam(params);
   const normalizedPath = normalizeWorkspacePath(path);
   if (normalizedPath) {
     params.set("path", normalizedPath);
@@ -1206,6 +1295,7 @@ const buildWorkspaceContentUrl = (path, options = {}) => {
     user_id: getWorkspaceUserId(),
     path: normalizeWorkspacePath(path || ""),
   });
+  appendWorkspaceContainerParam(params);
   if (options.includeContent !== undefined) {
     params.set("include_content", options.includeContent ? "true" : "false");
   }
@@ -1259,6 +1349,7 @@ const fetchWorkspaceSearch = async (keyword, options = {}) => {
     user_id: userId,
     keyword,
   });
+  appendWorkspaceContainerParam(params);
   if (options.offset) {
     params.set("offset", String(options.offset));
   }
@@ -1282,18 +1373,23 @@ const batchWorkspaceAction = async (action, paths, destination) => {
     return null;
   }
   const wunderBase = getWunderBase();
+  const payload = {
+    user_id: userId,
+    action,
+    paths,
+    destination,
+  };
+  const containerId = getWorkspaceContainerId();
+  if (Number.isFinite(containerId)) {
+    payload.container_id = containerId;
+  }
   const response = await fetch(`${wunderBase}/workspace/batch`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...getWorkspaceAuthHeaders(),
     },
-    body: JSON.stringify({
-      user_id: userId,
-      action,
-      paths,
-      destination,
-    }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
@@ -1318,13 +1414,18 @@ const createWorkspaceDirectory = async (path) => {
     return false;
   }
   const wunderBase = getWunderBase();
+  const payload = { user_id: userId, path };
+  const containerId = getWorkspaceContainerId();
+  if (Number.isFinite(containerId)) {
+    payload.container_id = containerId;
+  }
   const response = await fetch(`${wunderBase}/workspace/dir`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...getWorkspaceAuthHeaders(),
     },
-    body: JSON.stringify({ user_id: userId, path }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
@@ -1343,13 +1444,18 @@ const moveWorkspaceEntry = async (source, destination) => {
     return false;
   }
   const wunderBase = getWunderBase();
+  const payload = { user_id: userId, source, destination };
+  const containerId = getWorkspaceContainerId();
+  if (Number.isFinite(containerId)) {
+    payload.container_id = containerId;
+  }
   const response = await fetch(`${wunderBase}/workspace/move`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...getWorkspaceAuthHeaders(),
     },
-    body: JSON.stringify({ user_id: userId, source, destination }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
@@ -1368,18 +1474,23 @@ const saveWorkspaceFileContent = async (path, content, options = {}) => {
     return false;
   }
   const wunderBase = getWunderBase();
+  const payload = {
+    user_id: userId,
+    path,
+    content,
+    create_if_missing: Boolean(options.createIfMissing),
+  };
+  const containerId = getWorkspaceContainerId();
+  if (Number.isFinite(containerId)) {
+    payload.container_id = containerId;
+  }
   const response = await fetch(`${wunderBase}/workspace/file`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...getWorkspaceAuthHeaders(),
     },
-    body: JSON.stringify({
-      user_id: userId,
-      path,
-      content,
-      create_if_missing: Boolean(options.createIfMissing),
-    }),
+    body: JSON.stringify(payload),
   });
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
@@ -2061,6 +2172,10 @@ export const uploadWorkspaceFiles = async (files, targetPath = "", options = {})
   const endpoint = `${wunderBase}/workspace/upload`;
   const form = new FormData();
   form.append("user_id", userId);
+  const containerId = getWorkspaceContainerId();
+  if (Number.isFinite(containerId)) {
+    form.append("container_id", String(containerId));
+  }
   form.append("path", normalizeWorkspacePath(targetPath));
   const fileList = Array.from(files);
   const totalBytes = fileList.reduce((sum, file) => sum + (Number(file?.size) || 0), 0);
@@ -2343,6 +2458,7 @@ export const resetWorkspaceState = () => {
 
 // 初始化工作区相关交互
 export const initWorkspace = () => {
+  initWorkspaceContainerSelect();
   updateWorkspaceSortIcon();
   if (elements.workspaceSortSelect) {
     elements.workspaceSortSelect.value = state.workspace.sortBy || "name";

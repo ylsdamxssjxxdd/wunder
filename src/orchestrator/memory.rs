@@ -670,7 +670,7 @@ impl Orchestrator {
             ),
             llm_config.support_vision.unwrap_or(false),
         );
-        let tool_call_mode = normalize_tool_call_mode(llm_config.tool_call_mode.as_deref());
+        let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
         let workspace_id = self.resolve_workspace_id(user_id, agent_id);
         let system_prompt = self
             .resolve_session_prompt(

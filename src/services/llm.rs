@@ -76,7 +76,7 @@ pub fn is_llm_model(config: &LlmModelConfig) -> bool {
 pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
     let raw = value.unwrap_or("").trim();
     if raw.is_empty() {
-        return ToolCallMode::ToolCall;
+        return ToolCallMode::FunctionCall;
     }
     match raw.to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
         "function_call" | "functioncall" | "function" | "fc" => ToolCallMode::FunctionCall,
@@ -85,6 +85,22 @@ pub fn normalize_tool_call_mode(value: Option<&str>) -> ToolCallMode {
         }
         "tool_call" | "toolcall" | "tool" | "tag" | "xml" => ToolCallMode::ToolCall,
         _ => ToolCallMode::ToolCall,
+    }
+}
+
+pub fn resolve_tool_call_mode(config: &LlmModelConfig) -> ToolCallMode {
+    if let Some(value) = config
+        .tool_call_mode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return normalize_tool_call_mode(Some(value));
+    }
+    if normalize_provider(config.provider.as_deref()) == "openai" {
+        ToolCallMode::FreeformCall
+    } else {
+        ToolCallMode::FunctionCall
     }
 }
 
@@ -2566,6 +2582,43 @@ mod tests {
             normalize_tool_call_mode(Some("custom_tool_call")),
             ToolCallMode::FreeformCall
         );
+    }
+
+    #[test]
+    fn normalize_tool_call_mode_defaults_to_function_call() {
+        assert_eq!(normalize_tool_call_mode(None), ToolCallMode::FunctionCall);
+    }
+
+    #[test]
+    fn resolve_tool_call_mode_defaults_by_provider() {
+        let mut config = LlmModelConfig {
+            enable: Some(true),
+            provider: Some("openai".to_string()),
+            api_mode: None,
+            base_url: None,
+            api_key: None,
+            model: Some("gpt-4.1".to_string()),
+            temperature: None,
+            timeout_s: None,
+            retry: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            support_vision: None,
+            support_hearing: None,
+            stream: Some(true),
+            stream_include_usage: Some(true),
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: None,
+            model_type: Some("llm".to_string()),
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        assert_eq!(resolve_tool_call_mode(&config), ToolCallMode::FreeformCall);
+
+        config.provider = Some("openai_compatible".to_string());
+        assert_eq!(resolve_tool_call_mode(&config), ToolCallMode::FunctionCall);
     }
 
     #[test]

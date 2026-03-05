@@ -4494,6 +4494,7 @@ button.messenger-chat-header-model {
   border-radius: 8px;
   box-shadow: none;
   position: relative;
+  --workflow-flow-highlight: rgba(59, 130, 246, 0.08);
 }
 
 .messenger-workflow-scope.chat-shell .workflow-item + .workflow-item {

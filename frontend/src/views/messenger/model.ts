@@ -34,6 +34,20 @@ export type DesktopBridge = {
     options?: { hideWindow?: boolean; region?: boolean }
   ) => Promise<DesktopScreenshotResult | null> | DesktopScreenshotResult | null;
   chooseDirectory?: (defaultPath?: string) => Promise<string | null> | string | null;
+  showControllerHint?: (payload: {
+    x: number;
+    y: number;
+    description?: string;
+    durationMs?: number;
+  }) => Promise<boolean> | boolean;
+  showControllerDone?: (payload: {
+    x: number;
+    y: number;
+    description?: string;
+    durationMs?: number;
+  }) => Promise<boolean> | boolean;
+  showMonitorCountdown?: (payload: { waitMs: number }) => Promise<boolean> | boolean;
+  hideOverlay?: () => Promise<boolean> | boolean;
 };
 
 export const DEFAULT_AGENT_KEY = '__default__';

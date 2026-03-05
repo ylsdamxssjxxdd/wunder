@@ -1,5 +1,10 @@
 <template>
-  <details v-if="shouldRender" class="message-tool-workflow">
+  <details
+    v-if="shouldRender"
+    ref="workflowRef"
+    class="message-tool-workflow"
+    @toggle="handleWorkflowToggle"
+  >
     <summary>
       <span class="tool-workflow-title">{{ t('chat.toolWorkflow.title') }}</span>
       <span v-if="latestEntry" class="tool-workflow-latest" :title="latestEntry.summaryTitle">
@@ -8,7 +13,7 @@
       <span v-else class="tool-workflow-spacer" />
     </summary>
 
-    <div class="tool-workflow-list">
+    <div ref="workflowListRef" class="tool-workflow-list" @scroll="handleWorkflowScroll">
       <div v-if="entries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
 
       <details
@@ -199,6 +204,9 @@ const { t } = useI18n();
 const expandedKeys = ref<Set<string>>(new Set());
 const streamBodyRefMap = new Map<string, HTMLPreElement>();
 const streamFollowState = new Map<string, boolean>();
+const workflowRef = ref<HTMLDetailsElement | null>(null);
+const workflowListRef = ref<HTMLElement | null>(null);
+const workflowFollow = ref(true);
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
 
@@ -218,6 +226,18 @@ const shouldAutoStickStream = (key: string): boolean => {
 
 const scrollStreamToBottom = (key: string) => {
   const element = streamBodyRefMap.get(key);
+  if (!element) return;
+  element.scrollTop = element.scrollHeight;
+};
+
+const shouldAutoScrollWorkflow = (): boolean => {
+  if (!props.visible) return false;
+  if (workflowRef.value && !workflowRef.value.open) return false;
+  return workflowFollow.value;
+};
+
+const scrollWorkflowToBottom = () => {
+  const element = workflowListRef.value;
   if (!element) return;
   element.scrollTop = element.scrollHeight;
 };
@@ -246,6 +266,25 @@ const handleStreamBodyScroll = (entryKey: string, stream: CommandStreamName, eve
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
   streamFollowState.set(streamKey(entryKey, stream), isNearBottom(target));
+};
+
+const handleWorkflowScroll = (event: Event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  workflowFollow.value = isNearBottom(target);
+};
+
+const handleWorkflowToggle = (event: Event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLDetailsElement)) return;
+  if (target.open) {
+    workflowFollow.value = true;
+    void nextTick(() => {
+      if (shouldAutoScrollWorkflow()) {
+        scrollWorkflowToBottom();
+      }
+    });
+  }
 };
 
 const syncStreamAutoStick = () => {
@@ -1651,23 +1690,32 @@ const entries = computed<ToolEntryView[]>(() => {
 
 watch(
   entries,
-  (nextEntries) => {
+  (nextEntries, prevEntries = []) => {
     const validKeys = new Set(nextEntries.map((entry) => entry.key));
     pruneStreamTracking(validKeys);
+    const previousKeys = new Set(prevEntries.map((entry) => entry.key));
+    const newestEntry = [...nextEntries].reverse().find((entry) => !previousKeys.has(entry.key));
     const nextExpanded = new Set<string>();
-    expandedKeys.value.forEach((key) => {
-      if (validKeys.has(key)) nextExpanded.add(key);
-    });
-    for (let index = nextEntries.length - 1; index >= 0; index -= 1) {
-      const entry = nextEntries[index];
-      if (entry.status === 'loading' || entry.status === 'pending') {
-        nextExpanded.add(entry.key);
-        break;
+    if (newestEntry) {
+      nextExpanded.add(newestEntry.key);
+    } else {
+      expandedKeys.value.forEach((key) => {
+        if (validKeys.has(key)) nextExpanded.add(key);
+      });
+      for (let index = nextEntries.length - 1; index >= 0; index -= 1) {
+        const entry = nextEntries[index];
+        if (entry.status === 'loading' || entry.status === 'pending') {
+          nextExpanded.add(entry.key);
+          break;
+        }
       }
     }
     expandedKeys.value = nextExpanded;
     void nextTick(() => {
       syncStreamAutoStick();
+      if (shouldAutoScrollWorkflow()) {
+        scrollWorkflowToBottom();
+      }
     });
   },
   { immediate: true }
@@ -1753,13 +1801,14 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
 
 .tool-workflow-list {
   margin-top: 6px;
-  height: 280px;
-  max-height: 280px;
+  height: 320px;
+  max-height: 320px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
-  padding: 8px;
+  padding: 10px 10px 14px;
+  scroll-padding-bottom: 14px;
   border-radius: 12px;
   border: 1px solid var(--workflow-term-border);
   background: var(--workflow-term-bg);
