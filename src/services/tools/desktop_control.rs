@@ -1129,7 +1129,11 @@ fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn send_key_event(_key: VkCode, _key_up: bool) -> Result<()> {
+fn send_key_event(key: VkCode, _key_up: bool) -> Result<()> {
+    let _ = match key {
+        VkCode::Raw(value) => value,
+        VkCode::Control | VkCode::Shift | VkCode::Alt | VkCode::LWin => 0,
+    };
     Err(anyhow!(crate::i18n::t(
         "tool.desktop_controller.unsupported_platform"
     )))
@@ -1154,11 +1158,6 @@ fn is_extended_key(vk: u16) -> bool {
             | VK_UP
             | VK_DOWN
     )
-}
-
-#[cfg(not(windows))]
-fn is_extended_key(_vk: u16) -> bool {
-    false
 }
 
 #[cfg(windows)]
