@@ -1355,6 +1355,19 @@ button.messenger-chat-header-model {
   gap: 8px;
 }
 
+.messenger-agent-grid-rounds {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #8a8a8a;
+  margin-right: auto;
+}
+
+.messenger-agent-grid-rounds i {
+  font-size: 12px;
+}
+
 .messenger-agent-grid-container-id {
   font-size: 11px;
   color: #8a8a8a;

@@ -133,6 +133,7 @@ export type AgentOverviewCard = {
   hasCron: boolean;
   hasChannelBinding: boolean;
   containerId: number;
+  userRounds: number;
 };
 
 export type UnitTreeNode = {

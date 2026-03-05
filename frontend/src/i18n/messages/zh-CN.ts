@@ -1584,6 +1584,7 @@ export default {
   'messenger.agent.overviewTitle': '智能体应用总览',
   'messenger.agent.overviewDesc': '在这里快速查看并进入任意智能体应用',
   'messenger.agent.overviewEmpty': '暂无可展示的智能体应用',
+  'messenger.agent.userRoundsLabel': '用户轮次',
   'messenger.agent.openSettings': '进入设置',
   'messenger.agent.openChat': '进入聊天',
   'messenger.agent.runtime.days': '统计周期',

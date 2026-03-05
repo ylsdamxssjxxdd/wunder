@@ -38,6 +38,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/agents", get(list_agents).post(create_agent))
         .route("/wunder/agents/shared", get(list_shared_agents))
         .route("/wunder/agents/running", get(list_running_agents))
+        .route("/wunder/agents/user-rounds", get(list_agent_user_rounds))
         .route(
             "/wunder/agents/{agent_id}/runtime-records",
             get(get_agent_runtime_records),
@@ -409,6 +410,48 @@ async fn list_running_agents(
         })
         .collect::<Vec<_>>();
 
+    Ok(Json(
+        json!({ "data": { "total": items.len(), "items": items } }),
+    ))
+}
+
+async fn list_agent_user_rounds(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+    let records = state
+        .monitor
+        .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
+    let mut totals: HashMap<String, i64> = HashMap::new();
+    for record in records {
+        let raw_agent_id = record
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if raw_agent_id.starts_with("subagent:") {
+            continue;
+        }
+        let agent_id = normalize_agent_id(raw_agent_id);
+        let user_rounds = parse_i64_value(record.get("user_rounds").or_else(|| record.get("rounds")))
+            .unwrap_or(0)
+            .max(0);
+        if user_rounds <= 0 {
+            continue;
+        }
+        *totals.entry(agent_id).or_insert(0) += user_rounds;
+    }
+    let items = totals
+        .into_iter()
+        .map(|(agent_id, user_rounds)| {
+            json!({
+                "agent_id": agent_id,
+                "user_rounds": user_rounds.max(0),
+            })
+        })
+        .collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))

@@ -5,6 +5,7 @@ import type { ApiId, ApiPayload, QueryParams } from './types';
 export const listAgents = (params: QueryParams = {}) => api.get('/agents', { params });
 export const listSharedAgents = () => api.get('/agents/shared');
 export const listRunningAgents = () => api.get('/agents/running');
+export const listAgentUserRounds = () => api.get('/agents/user-rounds');
 export const getAgent = (id: ApiId) => api.get(`/agents/${id}`);
 export const createAgent = (payload: ApiPayload) => api.post('/agents', payload);
 export const updateAgent = (id: ApiId, payload: ApiPayload) => api.put(`/agents/${id}`, payload);

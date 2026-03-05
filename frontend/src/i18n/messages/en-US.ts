@@ -1590,6 +1590,7 @@ export default {
   'messenger.agent.overviewTitle': 'Agent app overview',
   'messenger.agent.overviewDesc': 'Quickly scan and jump into any agent app',
   'messenger.agent.overviewEmpty': 'No agent apps to display',
+  'messenger.agent.userRoundsLabel': 'User turns',
   'messenger.agent.openSettings': 'Open settings',
   'messenger.agent.openChat': 'Open chat',
   'messenger.agent.runtime.days': 'Window',

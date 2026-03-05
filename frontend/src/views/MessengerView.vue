@@ -923,6 +923,13 @@
                         </button>
                       </div>
                       <div class="messenger-agent-grid-foot">
+                        <span
+                          class="messenger-agent-grid-rounds"
+                          :title="t('messenger.agent.userRoundsLabel')"
+                        >
+                          <i class="fa-solid fa-user" aria-hidden="true"></i>
+                          <span>{{ formatUserRounds(card.userRounds) }}</span>
+                        </span>
                         <span class="messenger-agent-grid-foot-icons">
                           <i
                             v-if="card.hasCron"
@@ -1883,7 +1890,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch }
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage } from 'element-plus';
 
-import { listRunningAgents } from '@/api/agents';
+import { listAgentUserRounds, listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
 import { listChannelBindings } from '@/api/channels';
 import {
@@ -2187,6 +2194,7 @@ const messageVirtualViewportHeight = ref(0);
 const messageVirtualLayoutVersion = ref(0);
 const messageVirtualHeightCache = new Map<string, number>();
 const agentRuntimeStateMap = ref<Map<string, AgentRuntimeState>>(new Map());
+const agentUserRoundsMap = ref<Map<string, number>>(new Map());
 const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expiresAt: number }>>(new Map());
 const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
@@ -3163,7 +3171,8 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
       runtimeState: resolveAgentRuntimeState(id),
       hasCron: hasCronTask(id),
       hasChannelBinding: channelBoundAgentIds.value.has(id),
-      containerId
+      containerId,
+      userRounds: resolveAgentUserRounds(id)
     });
   };
 
@@ -4641,6 +4650,22 @@ const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
     runtimeStateOverrides.value.delete(key);
   }
   return agentRuntimeStateMap.value.get(key) || 'idle';
+};
+
+const normalizeAgentUserRoundsKey = (value: unknown): string => {
+  const raw = String(value || '').trim();
+  if (!raw) return DEFAULT_AGENT_KEY;
+  return normalizeAgentId(raw) || DEFAULT_AGENT_KEY;
+};
+
+const resolveAgentUserRounds = (agentId: unknown): number => {
+  const key = normalizeAgentUserRoundsKey(agentId);
+  return agentUserRoundsMap.value.get(key) ?? 0;
+};
+
+const formatUserRounds = (value: number): string => {
+  const normalized = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  return normalized.toLocaleString();
 };
 
 const formatAgentRuntimeState = (state: AgentRuntimeState): string => {
@@ -7154,7 +7179,12 @@ const toolCategoryLabel = (category: string) => {
 };
 
 const handleAgentSettingsSaved = async () => {
-  const tasks: Promise<unknown>[] = [agentStore.loadAgents(), loadRunningAgents(), loadChannelBoundAgentIds()];
+  const tasks: Promise<unknown>[] = [
+    agentStore.loadAgents(),
+    loadRunningAgents(),
+    loadAgentUserRounds(),
+    loadChannelBoundAgentIds()
+  ];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
   }
@@ -7163,7 +7193,12 @@ const handleAgentSettingsSaved = async () => {
 
 const handleAgentDeleted = async () => {
   selectedAgentId.value = DEFAULT_AGENT_KEY;
-  const tasks: Promise<unknown>[] = [chatStore.loadSessions(), loadRunningAgents(), loadChannelBoundAgentIds()];
+  const tasks: Promise<unknown>[] = [
+    chatStore.loadSessions(),
+    loadRunningAgents(),
+    loadAgentUserRounds(),
+    loadChannelBoundAgentIds()
+  ];
   if (!cronPermissionDenied.value) {
     tasks.push(loadCronAgentIds());
   }
@@ -8453,6 +8488,23 @@ const loadRunningAgents = async () => {
   }
 };
 
+const loadAgentUserRounds = async () => {
+  try {
+    const response = await listAgentUserRounds();
+    const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
+    const roundsMap = new Map<string, number>();
+    items.forEach((item: Record<string, unknown>) => {
+      const key = normalizeAgentUserRoundsKey(item?.agent_id);
+      const raw = Number(item?.user_rounds ?? item?.rounds ?? 0);
+      const value = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+      roundsMap.set(key, value);
+    });
+    agentUserRoundsMap.value = roundsMap;
+  } catch {
+    agentUserRoundsMap.value = new Map<string, number>();
+  }
+};
+
 const resolveHttpStatus = (error: unknown): number => {
   const status = Number((error as { response?: { status?: unknown } })?.response?.status ?? 0);
   return Number.isFinite(status) ? status : 0;
@@ -8626,6 +8678,7 @@ const refreshAll = async () => {
     userWorldStore.bootstrap(true),
     loadOrgUnits(),
     loadRunningAgents(),
+    loadAgentUserRounds(),
     loadToolsCatalog(),
     loadChannelBoundAgentIds()
   ];
@@ -8884,6 +8937,7 @@ const bootstrap = async () => {
     userWorldStore.bootstrap(),
     loadOrgUnits(),
     loadRunningAgents(),
+    loadAgentUserRounds(),
     loadToolsCatalog(),
     loadChannelBoundAgentIds()
   ];
@@ -9025,6 +9079,15 @@ watch(
     ensureSectionSelection();
   },
   { immediate: true }
+);
+
+watch(
+  () => showAgentGridOverview.value,
+  (visible) => {
+    if (visible) {
+      loadAgentUserRounds();
+    }
+  }
 );
 
 watch(

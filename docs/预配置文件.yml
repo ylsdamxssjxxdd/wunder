@@ -1,0 +1,50 @@
+﻿# wunder desktop 预配置（覆盖配置）
+# 作用：为首次启动预置默认模型与可选运行参数
+# 用法：将本文件复制为 <WUNDER_TEMPD>/config/wunder.override.yaml
+#      AppImage 默认路径（Linux）：~/.config/Wunder Desktop/WUNDER_TEMPD/config/wunder.override.yaml
+# 注意：override 只写入需要覆盖的字段，未写字段会沿用 base 配置。
+
+llm:
+  # 默认聊天模型配置名称（必须在 models 中存在）
+  default: default_chat
+  models:
+    # 主要聊天模型
+    default_chat:
+      model_type: llm
+      provider: openai_compatible   # openai/openrouter/deepseek/qwen/ollama/lmstudio 等
+      api_mode: chat_completions    # chat_completions | responses
+      base_url: https://api.openai.com/v1
+      api_key: ${WUNDER_LLM_API_KEY:-}  # 或直接写 key
+      model: gpt-4o-mini
+      temperature: 0.6
+      timeout_s: 90
+      retry: 2
+      max_context: 128000
+      max_output: 4096
+      tool_call_mode: function_call   # tool_call/function_call/freeform_call
+      stream: true
+      stream_include_usage: true
+      support_vision: true
+      support_hearing: false
+      history_compaction_ratio: 0.2
+      history_compaction_reset: zero
+      mock_if_unconfigured: false
+
+    # 向量知识库/嵌入模型（可选）
+    default_embedding:
+      model_type: embedding
+      provider: openai_compatible
+      base_url: https://api.openai.com/v1
+      api_key: ${WUNDER_LLM_API_KEY:-}
+      model: text-embedding-3-large
+      timeout_s: 60
+      retry: 2
+
+# 其它灵活配置（按需开启/修改）
+observability:
+  log_level: INFO
+
+tools:
+  browser:
+    # 若有独立 Python 包，可设置绝对路径；留空或 auto 则自动探测
+    python_path: ${WUNDER_PYTHON_BIN:-auto}

@@ -133,6 +133,8 @@ const pointer = new Vector2();
 const intersectionPoint = new Vector3();
 let pendingPointerEvent: PointerEvent | null = null;
 let pointerRafId: number | null = null;
+let lastPointerEvent: PointerEvent | null = null;
+let isInteracting = false;
 
 const tooltipText = ref('');
 const tooltipVisible = ref(false);
@@ -619,6 +621,8 @@ const updatePointerHover = (event: PointerEvent) => {
 };
 
 const handlePointerMove = (event: PointerEvent) => {
+  lastPointerEvent = event;
+  if (isInteracting) return;
   pendingPointerEvent = event;
   if (pointerRafId) return;
   pointerRafId = requestAnimationFrame(() => {
@@ -631,9 +635,25 @@ const handlePointerMove = (event: PointerEvent) => {
 
 const handlePointerLeave = () => {
   pendingPointerEvent = null;
+  lastPointerEvent = null;
   hideTooltip();
   latLonText.value = '--, --';
   updateHighlight(null);
+};
+
+const handleControlStart = () => {
+  isInteracting = true;
+  pendingPointerEvent = null;
+  hideTooltip();
+  latLonText.value = '--, --';
+  updateHighlight(null);
+};
+
+const handleControlEnd = () => {
+  isInteracting = false;
+  if (lastPointerEvent) {
+    updatePointerHover(lastPointerEvent);
+  }
 };
 
 const updateHighlight = (hit: HitShape | null) => {
@@ -700,8 +720,11 @@ const setupScene = () => {
     const nineDashPositions = buildNineDashPositions();
     const nineDashGeometry = new BufferGeometry();
     nineDashGeometry.setAttribute('position', new Float32BufferAttribute(nineDashPositions, 3));
+    nineDashGeometry.computeBoundingSphere();
     nineDashMaterial = new LineBasicMaterial({ color: new Color('#ea580c'), transparent: true, opacity: 1 });
+    nineDashMaterial.depthWrite = false;
     nineDashMesh = new LineSegments(nineDashGeometry, nineDashMaterial);
+    nineDashMesh.renderOrder = 2;
 
     const highlightGeometry = new BufferGeometry();
     highlightMaterial = new LineBasicMaterial({ color: new Color('#ea580c'), transparent: true, opacity: 0.95 });
@@ -725,13 +748,15 @@ const setupScene = () => {
     controls = new OrbitControls(camera, renderer.domElement);
     controls.enablePan = false;
     controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
-    controls.rotateSpeed = 0.55;
-    controls.zoomSpeed = 0.85;
+    controls.dampingFactor = 0.12;
+    controls.rotateSpeed = 0.35;
+    controls.zoomSpeed = 0.8;
     controls.autoRotate = false;
     controls.autoRotateSpeed = 0.0;
     controls.minDistance = 1.6;
     controls.maxDistance = 4.2;
+    controls.addEventListener('start', handleControlStart);
+    controls.addEventListener('end', handleControlEnd);
 
     applyTheme();
     startRenderLoop();
@@ -807,7 +832,11 @@ const cleanup = () => {
   resizeObserver = null;
   themeObserver?.disconnect();
   themeObserver = null;
-  controls?.dispose();
+  if (controls) {
+    controls.removeEventListener('start', handleControlStart);
+    controls.removeEventListener('end', handleControlEnd);
+    controls.dispose();
+  }
   controls = null;
   if (globeMesh) {
     globeMesh.geometry.dispose();

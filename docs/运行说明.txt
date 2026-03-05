@@ -1,0 +1,39 @@
+﻿Wunder Desktop AppImage 运行说明（Linux）
+
+配套文件：
+- wunder-desktop*.AppImage
+- 预配置文件.yml
+- python-*.zip（可选，用于浏览器/脚本能力）
+- 运行说明.txt
+
+一、首次运行
+1) 将 AppImage 放到一个可写目录（建议与预配置文件、python 包同目录）。
+2) 赋予执行权限：
+   chmod +x wunder-desktop*.AppImage
+3) 启动：
+   ./wunder-desktop*.AppImage
+
+首次启动会在用户数据目录创建：
+- ~/.config/Wunder Desktop/WUNDER_TEMPD    （配置/数据库）
+- ~/.config/Wunder Desktop/WUNDER_WORK     （工作区）
+说明：以上路径是 Linux 常见默认值，如系统目录不同，以实际 userData 目录为准。
+
+二、应用预配置文件（默认模型）
+1) 先退出程序。
+2) 将 预配置文件.yml 复制为：
+   ~/.config/Wunder Desktop/WUNDER_TEMPD/config/wunder.override.yaml
+3) 重新启动 AppImage。
+
+提示：也可在首次启动前手动创建上述目录并放入 override 文件。
+
+三、使用 Python 包（可选）
+用途：浏览器工具、部分脚本/数据处理能力。
+1) 解压 python-*.zip 到任意目录，例如：
+   ~/wunder-python
+2) 启动时指定 Python：
+   WUNDER_PYTHON_BIN=~/wunder-python/bin/python3 ./wunder-desktop*.AppImage
+   或在 预配置文件.yml 中填写 tools.browser.python_path 为该 python 路径。
+
+四、常见问题
+- 模型不可用：检查 预配置文件.yml 中的 api_key/base_url/model 是否正确。
+- 未生成 WUNDER_TEMPD：确认 AppImage 所在目录与 userData 目录可写，必要时删除旧配置后重试。

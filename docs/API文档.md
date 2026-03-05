@@ -1958,6 +1958,9 @@
   - `state`：`idle` | `waiting` | `running` | `cancelling` | `done` | `error`
   - `pending_question`：表示当前会话存在待处理交互（问询面板或工具审批；通常对应 `state=waiting`）
   - `last_error`：仅 `state=error` 时可能返回，表示最近一次错误的摘要（用于前端提示）
+- `GET /wunder/agents/user-rounds`：当前用户按智能体汇总的历史用户轮次
+  - 返回：`data.total`、`data.items`（agent_id/user_rounds）
+  - `agent_id` 为空表示默认入口（通用聊天）
 - `POST /wunder/agents`：创建智能体
   - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）
   - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
