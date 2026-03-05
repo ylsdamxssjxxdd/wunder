@@ -197,6 +197,11 @@ skills: # Skills 技能配置
     - 公文写作
     - 电子表格处理
     - 文稿校对
+    - PDF处理
+    - PPTX生成
+    - SVG生成
+    - 人员成长路径规划
+    - 情报收集
 
 tools: # 内置工具配置
   builtin:
