@@ -1593,6 +1593,8 @@ export default {
   'messenger.agent.userRoundsLabel': 'User turns',
   'messenger.agent.openSettings': 'Open settings',
   'messenger.agent.openChat': 'Open chat',
+  'messenger.agent.taskCompletedTitle': 'Agent task completed',
+  'messenger.agent.taskCompleted': 'Agent {name} has completed the task',
   'messenger.agent.runtime.days': 'Window',
   'messenger.agent.runtime.date': 'Heatmap Date',
   'messenger.agent.runtime.loadFailed': 'Failed to load runtime records',

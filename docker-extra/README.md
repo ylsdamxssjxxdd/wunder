@@ -51,8 +51,8 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 - 直接复用 `wunder-arm-20:latest`（`--no-build`）
 - 使用 `arm64-20` 目录作为 Cargo 与 target 优先路径
 - 生成 Electron arm64 AppImage（基础包）
-- 基于 `target/arm64-20/.build/python` 产出 Python sidecar 压缩包（`wunder-python-*.tar.*`）
-- 重打包生成 `*-sidecar.AppImage`（默认不内置 Python，运行时自动识别同目录 `wunder-python`）
+- 基于 `target/arm64-20/.build/python` 产出补充包 sidecar 压缩包（`wunder补充包-*.tar.*`，内含 python + git）
+- 重打包生成 `*-sidecar.AppImage`（默认不内置 Python/Git，运行时自动识别同目录 `wunder补充包`）
 - 在 AppImage 内注入内置 `git`，自动设置 `GIT_EXEC_PATH`，并将 `opt/git/bin` 置于 `PATH` 最前，确保 `执行命令` 工具里的 `git` 默认命中内置版本
 - sidecar Python 依赖默认包含一组“优先、轻量、高价值”库（`orjson`、`tabulate`、`rapidfuzz`、`Unidecode`、`docxtpl`），用于文本匹配、结构化输出、JSON 处理与文档模板生成
 
@@ -100,7 +100,7 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-
   bash /app/docker-extra/scripts/package_appimage_with_python.sh'
 ```
 
-运行时将 `wunder-python` 解压到 AppImage 同目录即可（AppRun 会自动识别并设置 `WUNDER_PYTHON_BIN`）。
+运行时将 `wunder补充包` 解压到 AppImage 同目录即可（AppRun 会自动识别并设置 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`）。
 
 ### 可选：内置 Python（单文件 AppImage）
 
@@ -176,8 +176,8 @@ OUTPUT_DIR=/app/target/arm64-20/dist \
 - `wunder-cli`
 - `wunder-desktop-bridge`
 - Electron AppImage: `target/arm64-20/dist/wunder-desktop-arm64.AppImage`
-- Electron AppImage（sidecar Python）: `target/arm64-20/dist/wunder-desktop-arm64-sidecar.AppImage`
-- Python sidecar 包：`target/arm64-20/dist/wunder-python-arm64.tar.gz`
+- Electron AppImage（sidecar 补充包）: `target/arm64-20/dist/wunder-desktop-arm64-sidecar.AppImage`
+- 补充包 sidecar：`target/arm64-20/dist/wunder补充包-arm64.tar.gz`
 - Electron AppImage（内置 Python + Git，可选）: `target/arm64-20/dist/wunder-desktop-arm64-python.AppImage`
 
 ## 5. 缓存与目录复用说明

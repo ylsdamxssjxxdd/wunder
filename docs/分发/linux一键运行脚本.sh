@@ -10,7 +10,18 @@ else
   TARGET_DIR="$SCRIPT_DIR"
 fi
 
-PY_DIR="${TARGET_DIR}/wunder-python"
+EXTRA_DIR=""
+if [ -n "${WUNDER_EXTRA_DIR:-}" ] && [ -d "${WUNDER_EXTRA_DIR}" ]; then
+  EXTRA_DIR="${WUNDER_EXTRA_DIR}"
+fi
+if [ -z "${EXTRA_DIR}" ]; then
+  for candidate in "${TARGET_DIR}/wunder补充包" "${TARGET_DIR}/wunder-extra" "${TARGET_DIR}/wunder-python"; do
+    if [ -d "${candidate}" ]; then
+      EXTRA_DIR="${candidate}"
+      break
+    fi
+  done
+fi
 
 detect_arch() {
   local arch
@@ -68,13 +79,32 @@ find_appimage() {
 }
 
 find_tarball() {
+  if [ -n "${WUNDER_EXTRA_TARBALL:-}" ] && [ -f "${WUNDER_EXTRA_TARBALL}" ]; then
+    echo "${WUNDER_EXTRA_TARBALL}"
+    return 0
+  fi
   if [ -n "${WUNDER_PYTHON_TARBALL:-}" ] && [ -f "${WUNDER_PYTHON_TARBALL}" ]; then
     echo "${WUNDER_PYTHON_TARBALL}"
     return 0
   fi
   for arch in "${ARCH_CANDIDATES[@]}"; do
+    local candidate_extra_zst="${TARGET_DIR}/wunder补充包-${arch}.tar.zst"
+    local candidate_extra_gz="${TARGET_DIR}/wunder补充包-${arch}.tar.gz"
+    local candidate_extra_legacy="${TARGET_DIR}/wunder-extra-${arch}.tar.gz"
     local candidate_zst="${TARGET_DIR}/wunder-python-${arch}.tar.zst"
     local candidate_gz="${TARGET_DIR}/wunder-python-${arch}.tar.gz"
+    if [ -f "${candidate_extra_zst}" ]; then
+      echo "${candidate_extra_zst}"
+      return 0
+    fi
+    if [ -f "${candidate_extra_gz}" ]; then
+      echo "${candidate_extra_gz}"
+      return 0
+    fi
+    if [ -f "${candidate_extra_legacy}" ]; then
+      echo "${candidate_extra_legacy}"
+      return 0
+    fi
     if [ -f "${candidate_zst}" ]; then
       echo "${candidate_zst}"
       return 0
@@ -85,7 +115,7 @@ find_tarball() {
     fi
   done
   shopt -s nullglob
-  local matches=("${TARGET_DIR}"/wunder-python-*.tar.*)
+  local matches=("${TARGET_DIR}"/wunder补充包-*.tar.* "${TARGET_DIR}"/wunder-extra-*.tar.* "${TARGET_DIR}"/wunder-python-*.tar.*)
   shopt -u nullglob
   if [ "${#matches[@]}" -gt 0 ]; then
     ls -1t -- "${matches[@]}" | head -n 1
@@ -100,15 +130,15 @@ if [ -z "${APPIMAGE}" ] || [ ! -f "${APPIMAGE}" ]; then
   exit 1
 fi
 
-if [ -d "${PY_DIR}" ]; then
-  echo "Python sidecar already extracted: ${PY_DIR}"
+if [ -n "${EXTRA_DIR}" ]; then
+  echo "Extra sidecar already extracted: ${EXTRA_DIR}"
 else
   TARBALL="$(find_tarball || true)"
   if [ -z "${TARBALL}" ] || [ ! -f "${TARBALL}" ]; then
-    echo "Python sidecar tarball not found under: ${TARGET_DIR}" >&2
+    echo "Extra sidecar tarball not found under: ${TARGET_DIR}" >&2
     exit 1
   fi
-  echo "Extracting Python sidecar..."
+  echo "Extracting extra sidecar..."
   case "${TARBALL}" in
     *.tar.zst)
       if command -v zstd >/dev/null 2>&1; then
@@ -126,13 +156,19 @@ else
       exit 1
       ;;
   esac
-  if [ ! -d "${PY_DIR}" ]; then
-    echo "Python sidecar directory not found after extraction: ${PY_DIR}" >&2
+  for candidate in "${TARGET_DIR}/wunder补充包" "${TARGET_DIR}/wunder-extra" "${TARGET_DIR}/wunder-python"; do
+    if [ -d "${candidate}" ]; then
+      EXTRA_DIR="${candidate}"
+      break
+    fi
+  done
+  if [ -z "${EXTRA_DIR}" ]; then
+    echo "Extra sidecar directory not found after extraction under: ${TARGET_DIR}" >&2
     exit 1
   fi
 fi
 
-chmod -R 777 "${PY_DIR}"
+chmod -R 777 "${EXTRA_DIR}"
 chmod 777 "${APPIMAGE}"
 
 echo "Launching AppImage..."

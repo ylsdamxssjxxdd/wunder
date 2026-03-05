@@ -118,6 +118,7 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                 },
                                 "required": ["kind"]
                             },
+                            "schedule_text": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule_text")},
                             "session": {"type": "string", "description": t("tool.spec.schedule_task.args.job.session"), "enum": ["main", "isolated"]},
                             "payload": {
                                 "type": "object",

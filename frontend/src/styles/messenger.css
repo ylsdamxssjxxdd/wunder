@@ -17,7 +17,7 @@
   --messenger-ease-emphasis: cubic-bezier(0.22, 1, 0.36, 1);
   --messenger-hover-lift: -1px;
   --messenger-left-rail-width: 60px;
-  --messenger-middle-pane-width: 248px;
+  --messenger-middle-pane-width: 220px;
   --messenger-chat-min-width: 460px;
   --messenger-right-dock-width: 284px;
   display: grid;
@@ -5943,7 +5943,7 @@ button.messenger-chat-header-model {
   }
 }
 
-@media (max-width: 1024px) {
+@media (max-width: 960px) {
   .messenger-view,
   .messenger-view.messenger-view--without-right,
   .messenger-view.messenger-view--right-collapsed,

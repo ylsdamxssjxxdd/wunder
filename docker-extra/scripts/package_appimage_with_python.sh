@@ -222,22 +222,48 @@ APPIMAGE_DIR=""
 if [ -n "${APPIMAGE:-}" ]; then
   APPIMAGE_DIR="$(dirname "$APPIMAGE")"
 fi
+EXTRA_ROOT=""
+if [ -n "${WUNDER_EXTRA_DIR:-}" ] && [ -d "${WUNDER_EXTRA_DIR}" ]; then
+  EXTRA_ROOT="${WUNDER_EXTRA_DIR}"
+fi
+if [ -z "$EXTRA_ROOT" ] && [ -n "$APPIMAGE_DIR" ]; then
+  for candidate in "$APPIMAGE_DIR/wunder补充包" "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python"; do
+    if [ -d "$candidate" ]; then
+      EXTRA_ROOT="$candidate"
+      break
+    fi
+  done
+fi
 PYTHON_ROOT=""
-if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-python" ]; then
-  PYTHON_ROOT="$APPIMAGE_DIR/wunder-python"
+if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/python" ]; then
+  PYTHON_ROOT="$EXTRA_ROOT/opt/python"
+elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/python" ]; then
+  PYTHON_ROOT="$EXTRA_ROOT/python"
 elif [ -d "$APPDIR/opt/python" ]; then
   PYTHON_ROOT="$APPDIR/opt/python"
+fi
+GIT_ROOT=""
+if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/git" ]; then
+  GIT_ROOT="$EXTRA_ROOT/opt/git"
+elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/git" ]; then
+  GIT_ROOT="$EXTRA_ROOT/git"
+elif [ -d "$APPDIR/opt/git" ]; then
+  GIT_ROOT="$APPDIR/opt/git"
 fi
 PY_VER="3.11"
 if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
   PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
 fi
 PYTHON_LD=""
+PATH_PREFIX=""
+if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/bin" ]; then
+  PATH_PREFIX="$GIT_ROOT/bin"
+fi
 if [ -n "$PYTHON_ROOT" ]; then
   export PYTHONHOME="$PYTHON_ROOT"
   export PYTHONPATH="$PYTHON_ROOT/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
   export WUNDER_PYTHON_BIN="$PYTHON_ROOT/bin/python3"
-  export PATH="$APPDIR/opt/git/bin:$PYTHON_ROOT/bin:${PATH:-}"
+  export PATH="${PATH_PREFIX:+$PATH_PREFIX:}$PYTHON_ROOT/bin:${PATH:-}"
   PYTHON_LD="$PYTHON_ROOT/lib:"
   export PYTHONNOUSERSITE=1
   export PIP_NO_INDEX=1
@@ -245,25 +271,35 @@ if [ -n "$PYTHON_ROOT" ]; then
     export SSL_CERT_FILE="$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
   fi
 else
-  export PATH="$APPDIR/opt/git/bin:${PATH:-}"
+  export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"
 fi
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/opt/git/lib:${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+GIT_LD=""
+if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/lib" ]; then
+  GIT_LD="$GIT_ROOT/lib:"
+fi
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:${GIT_LD}${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
 PLAYWRIGHT_DIR=""
 if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
   PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
+elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/playwright" ]; then
+  PLAYWRIGHT_DIR="$EXTRA_ROOT/playwright"
 elif [ -n "$PYTHON_ROOT" ] && [ -d "$PYTHON_ROOT/playwright" ]; then
   PLAYWRIGHT_DIR="$PYTHON_ROOT/playwright"
 fi
 if [ -n "$PLAYWRIGHT_DIR" ]; then
   export PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_DIR"
 fi
-if [ -d "$APPDIR/opt/git/libexec/git-core" ]; then
-  export GIT_EXEC_PATH="$APPDIR/opt/git/libexec/git-core"
+if [ -n "$GIT_ROOT" ]; then
+  if [ -d "$GIT_ROOT/libexec/git-core" ]; then
+    export GIT_EXEC_PATH="$GIT_ROOT/libexec/git-core"
+  fi
+  if [ -d "$GIT_ROOT/share/git-core/templates" ]; then
+    export GIT_TEMPLATE_DIR="$GIT_ROOT/share/git-core/templates"
+  fi
+  if [ -x "$GIT_ROOT/bin/git" ]; then
+    export WUNDER_GIT_BIN="$GIT_ROOT/bin/git"
+  fi
 fi
-if [ -d "$APPDIR/opt/git/share/git-core/templates" ]; then
-  export GIT_TEMPLATE_DIR="$APPDIR/opt/git/share/git-core/templates"
-fi
-export WUNDER_GIT_BIN="$APPDIR/opt/git/bin/git"
 exec "$APPDIR/AppRun.orig" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
@@ -277,22 +313,48 @@ APPIMAGE_DIR=""
 if [ -n "${APPIMAGE:-}" ]; then
   APPIMAGE_DIR="$(dirname "$APPIMAGE")"
 fi
+EXTRA_ROOT=""
+if [ -n "${WUNDER_EXTRA_DIR:-}" ] && [ -d "${WUNDER_EXTRA_DIR}" ]; then
+  EXTRA_ROOT="${WUNDER_EXTRA_DIR}"
+fi
+if [ -z "$EXTRA_ROOT" ] && [ -n "$APPIMAGE_DIR" ]; then
+  for candidate in "$APPIMAGE_DIR/wunder补充包" "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python"; do
+    if [ -d "$candidate" ]; then
+      EXTRA_ROOT="$candidate"
+      break
+    fi
+  done
+fi
 PYTHON_ROOT=""
-if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-python" ]; then
-  PYTHON_ROOT="$APPIMAGE_DIR/wunder-python"
+if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/python" ]; then
+  PYTHON_ROOT="$EXTRA_ROOT/opt/python"
+elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/python" ]; then
+  PYTHON_ROOT="$EXTRA_ROOT/python"
 elif [ -d "$APPDIR/opt/python" ]; then
   PYTHON_ROOT="$APPDIR/opt/python"
+fi
+GIT_ROOT=""
+if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/git" ]; then
+  GIT_ROOT="$EXTRA_ROOT/opt/git"
+elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/git" ]; then
+  GIT_ROOT="$EXTRA_ROOT/git"
+elif [ -d "$APPDIR/opt/git" ]; then
+  GIT_ROOT="$APPDIR/opt/git"
 fi
 PY_VER="3.11"
 if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
   PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
 fi
 PYTHON_LD=""
+PATH_PREFIX=""
+if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/bin" ]; then
+  PATH_PREFIX="$GIT_ROOT/bin"
+fi
 if [ -n "$PYTHON_ROOT" ]; then
   export PYTHONHOME="$PYTHON_ROOT"
   export PYTHONPATH="$PYTHON_ROOT/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
   export WUNDER_PYTHON_BIN="$PYTHON_ROOT/bin/python3"
-  export PATH="$APPDIR/opt/git/bin:$PYTHON_ROOT/bin:${PATH:-}"
+  export PATH="${PATH_PREFIX:+$PATH_PREFIX:}$PYTHON_ROOT/bin:${PATH:-}"
   PYTHON_LD="$PYTHON_ROOT/lib:"
   export PYTHONNOUSERSITE=1
   export PIP_NO_INDEX=1
@@ -300,25 +362,35 @@ if [ -n "$PYTHON_ROOT" ]; then
     export SSL_CERT_FILE="$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
   fi
 else
-  export PATH="$APPDIR/opt/git/bin:${PATH:-}"
+  export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"
 fi
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/opt/git/lib:${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+GIT_LD=""
+if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/lib" ]; then
+  GIT_LD="$GIT_ROOT/lib:"
+fi
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:${GIT_LD}${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
 PLAYWRIGHT_DIR=""
 if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
   PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
+elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/playwright" ]; then
+  PLAYWRIGHT_DIR="$EXTRA_ROOT/playwright"
 elif [ -n "$PYTHON_ROOT" ] && [ -d "$PYTHON_ROOT/playwright" ]; then
   PLAYWRIGHT_DIR="$PYTHON_ROOT/playwright"
 fi
 if [ -n "$PLAYWRIGHT_DIR" ]; then
   export PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_DIR"
 fi
-if [ -d "$APPDIR/opt/git/libexec/git-core" ]; then
-  export GIT_EXEC_PATH="$APPDIR/opt/git/libexec/git-core"
+if [ -n "$GIT_ROOT" ]; then
+  if [ -d "$GIT_ROOT/libexec/git-core" ]; then
+    export GIT_EXEC_PATH="$GIT_ROOT/libexec/git-core"
+  fi
+  if [ -d "$GIT_ROOT/share/git-core/templates" ]; then
+    export GIT_TEMPLATE_DIR="$GIT_ROOT/share/git-core/templates"
+  fi
+  if [ -x "$GIT_ROOT/bin/git" ]; then
+    export WUNDER_GIT_BIN="$GIT_ROOT/bin/git"
+  fi
 fi
-if [ -d "$APPDIR/opt/git/share/git-core/templates" ]; then
-  export GIT_TEMPLATE_DIR="$APPDIR/opt/git/share/git-core/templates"
-fi
-export WUNDER_GIT_BIN="$APPDIR/opt/git/bin/git"
 exec "$APPDIR/usr/bin/wunder-desktop" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun"

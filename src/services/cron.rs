@@ -8,6 +8,10 @@ use crate::storage::{
     ChatSessionRecord, CronJobRecord, CronRunRecord, StorageBackend, UserAccountRecord,
     UserAgentRecord,
 };
+use crate::services::cron_schedule::{
+    normalize_every_ms, parse_schedule_text, validate_cron_expr, validate_message, validate_name,
+    validate_schedule_at, ParsedScheduleText, MIN_EVERY_MS,
+};
 use crate::user_access::{compute_allowed_tool_names, is_agent_allowed, UserToolContext};
 use crate::user_store::UserStore;
 use crate::user_tools::UserToolManager;
@@ -407,16 +411,11 @@ fn build_job_record(
     now: f64,
     input: CronJobInput,
 ) -> Result<CronJobRecord> {
-    let schedule = input
-        .schedule
-        .as_ref()
-        .ok_or_else(|| anyhow!("schedule required"))?;
     let (schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz) =
-        normalize_schedule_input(schedule)?;
+        normalize_schedule_input_with_text(input.schedule.as_ref(), input.schedule_text.as_deref())?;
     let payload = input.payload.unwrap_or(Value::Null);
-    if extract_payload_message(Some(&payload)).is_none() {
-        return Err(anyhow!("payload.message required"));
-    }
+    let message = extract_payload_message(Some(&payload)).ok_or_else(|| anyhow!("payload.message required"))?;
+    validate_message(&message)?;
     let enabled = input.enabled.unwrap_or(true);
     let delete_after_run = input.delete_after_run.unwrap_or(false);
     let session_target = normalize_session_target(input.session.as_deref());
@@ -427,6 +426,16 @@ fn build_job_record(
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string())
         .or_else(|| extract_payload_message(Some(&payload)).map(|value| truncate_text(&value, 24)));
+    if let Some(name) = name.as_deref() {
+        validate_name(name)?;
+    }
+    validate_schedule_fields(
+        &schedule_kind,
+        schedule_at.as_deref(),
+        schedule_every_ms,
+        schedule_cron.as_deref(),
+        now,
+    )?;
     let dedupe_key = input
         .dedupe_key
         .as_deref()
@@ -490,6 +499,7 @@ fn apply_job_patch(
     now: f64,
     allow_missing_payload: bool,
 ) -> Result<()> {
+    let mut schedule_changed = false;
     if let Some(name) = input.name.as_deref() {
         let trimmed = name.trim();
         record.name = if trimmed.is_empty() {
@@ -513,11 +523,11 @@ fn apply_job_patch(
         record.session_target = normalize_session_target(Some(session_target));
     }
     if let Some(payload) = input.payload.as_ref() {
-        if extract_payload_message(Some(payload)).is_none() && !allow_missing_payload {
-            return Err(anyhow!("payload.message required"));
-        }
         record.payload = payload.clone();
-    } else if !allow_missing_payload && extract_payload_message(Some(&record.payload)).is_none() {
+    }
+    if let Some(message) = extract_payload_message(Some(&record.payload)) {
+        validate_message(&message)?;
+    } else if !allow_missing_payload {
         return Err(anyhow!("payload.message required"));
     }
     if let Some(deliver) = input.deliver.as_ref() {
@@ -548,6 +558,28 @@ fn apply_job_patch(
         record.schedule_every_ms = every;
         record.schedule_cron = cron;
         record.schedule_tz = tz;
+        schedule_changed = true;
+    } else if let Some(schedule_text) = input.schedule_text.as_deref() {
+        let (kind, at, every, cron, tz) =
+            normalize_schedule_input_with_text(None, Some(schedule_text))?;
+        record.schedule_kind = kind;
+        record.schedule_at = at;
+        record.schedule_every_ms = every;
+        record.schedule_cron = cron;
+        record.schedule_tz = tz;
+        schedule_changed = true;
+    }
+    if let Some(name) = record.name.as_deref() {
+        validate_name(name)?;
+    }
+    if schedule_changed {
+        validate_schedule_fields(
+            &record.schedule_kind,
+            record.schedule_at.as_deref(),
+            record.schedule_every_ms,
+            record.schedule_cron.as_deref(),
+            now,
+        )?;
     }
     record.updated_at = now;
     if record.enabled {
@@ -583,7 +615,8 @@ fn normalize_schedule_input(schedule: &CronScheduleInput) -> Result<NormalizedSc
             Ok((kind, Some(at.to_string()), None, None, None))
         }
         "every" => {
-            let every_ms = schedule.every_ms.unwrap_or(0).max(1000);
+            let raw_every_ms = schedule.every_ms.unwrap_or(MIN_EVERY_MS);
+            let every_ms = normalize_every_ms(raw_every_ms)?;
             let start_at = schedule
                 .at
                 .as_deref()
@@ -609,6 +642,7 @@ fn normalize_schedule_input(schedule: &CronScheduleInput) -> Result<NormalizedSc
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| anyhow!("schedule.cron required"))?;
+            validate_cron_expr(expr)?;
             let _ = normalize_cron_expr(expr)?;
             let tz = schedule
                 .tz
@@ -620,6 +654,74 @@ fn normalize_schedule_input(schedule: &CronScheduleInput) -> Result<NormalizedSc
         }
         _ => Err(anyhow!("unsupported schedule kind")),
     }
+}
+
+fn normalize_schedule_input_with_text(
+    schedule: Option<&CronScheduleInput>,
+    schedule_text: Option<&str>,
+) -> Result<NormalizedSchedule> {
+    if let Some(schedule) = schedule {
+        return normalize_schedule_input(schedule);
+    }
+    let text = schedule_text
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("schedule required"))?;
+    let parsed = parse_schedule_text(text)?;
+    match parsed {
+        ParsedScheduleText::EveryMs(ms) => {
+            let every_ms = normalize_every_ms(ms)?;
+            Ok(("every".to_string(), None, Some(every_ms), None, None))
+        }
+        ParsedScheduleText::Cron(expr) => {
+            validate_cron_expr(&expr)?;
+            Ok(("cron".to_string(), None, None, Some(expr), None))
+        }
+    }
+}
+
+fn validate_schedule_fields(
+    kind: &str,
+    schedule_at: Option<&str>,
+    schedule_every_ms: Option<i64>,
+    schedule_cron: Option<&str>,
+    now: f64,
+) -> Result<()> {
+    let kind = kind.trim().to_lowercase();
+    match kind.as_str() {
+        "at" => {
+            let at = schedule_at
+                .and_then(parse_rfc3339)
+                .ok_or_else(|| anyhow!("invalid schedule.at"))?;
+            let now_dt =
+                DateTime::<Utc>::from_timestamp_millis((now * 1000.0) as i64).ok_or_else(
+                    || anyhow!("invalid current timestamp"),
+                )?;
+            validate_schedule_at(at, now_dt)?;
+        }
+        "every" => {
+            let raw_every_ms = schedule_every_ms.unwrap_or(MIN_EVERY_MS);
+            let _ = normalize_every_ms(raw_every_ms)?;
+            if let Some(at) = schedule_at {
+                if parse_rfc3339(at).is_none() {
+                    return Err(anyhow!("invalid schedule.at"));
+                }
+            }
+        }
+        "cron" => {
+            let expr = schedule_cron
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| anyhow!("schedule.cron required"))?;
+            validate_cron_expr(expr)?;
+            let normalized = normalize_cron_expr(expr)?;
+            if Schedule::from_str(&normalized).is_err() {
+                return Err(anyhow!("invalid schedule.cron"));
+            }
+        }
+        _ => return Err(anyhow!("unsupported schedule kind")),
+    }
+    Ok(())
 }
 
 fn normalize_session_target(input: Option<&str>) -> String {
@@ -645,7 +747,7 @@ fn compute_next_run_at(
             .and_then(parse_rfc3339)
             .map(|dt| dt.timestamp_millis() as f64 / 1000.0),
         "every" => {
-            let every_ms = schedule_every_ms.unwrap_or(0).max(1);
+            let every_ms = schedule_every_ms.unwrap_or(MIN_EVERY_MS).max(MIN_EVERY_MS);
             if every_ms <= 0 {
                 return None;
             }
@@ -659,7 +761,7 @@ fn compute_next_run_at(
                 return Some(anchor_ms as f64 / 1000.0);
             }
             let elapsed = now_ms - anchor_ms;
-            let steps = (elapsed + every_ms - 1) / every_ms;
+            let steps = (elapsed / every_ms) + 1;
             let next_ms = anchor_ms + steps * every_ms;
             Some(next_ms as f64 / 1000.0)
         }
@@ -672,7 +774,7 @@ fn compute_next_cron(expr: Option<&str>, tz: Option<&str>, now: f64) -> Option<f
     let expr = expr.and_then(|value| normalize_cron_expr(value).ok())?;
     let schedule = Schedule::from_str(&expr).ok()?;
     let now_ms = (now * 1000.0) as i64;
-    let base = DateTime::<Utc>::from_timestamp_millis(now_ms)?;
+    let base = DateTime::<Utc>::from_timestamp_millis(now_ms)? + chrono::Duration::seconds(1);
     if let Some(tz) = tz {
         if let Ok(tz) = Tz::from_str(tz) {
             let base_tz = base.with_timezone(&tz);
@@ -1400,10 +1502,18 @@ fn persist_cron_run_and_update_job_with_limits(
         next_run_at = None;
     }
     record.next_run_at = next_run_at;
-    if record.schedule_kind.eq_ignore_ascii_case("at")
-        && record.last_status.as_deref() == Some("ok")
-    {
+    if record.schedule_kind.eq_ignore_ascii_case("at") {
         record.enabled = false;
+        if !is_ok {
+            let reason = record
+                .last_error
+                .as_deref()
+                .unwrap_or("one-shot task failed");
+            record.auto_disabled_reason = Some(truncate_text(
+                &format!("one-shot disabled: {reason}"),
+                AUTO_DISABLED_REASON_MAX_CHARS,
+            ));
+        }
     }
     let max_consecutive_failures = max_consecutive_failures.max(1) as i64;
     if is_error && record.consecutive_failures >= max_consecutive_failures {
@@ -1430,6 +1540,8 @@ pub struct CronJobInput {
     pub name: Option<String>,
     #[serde(default)]
     pub schedule: Option<CronScheduleInput>,
+    #[serde(default)]
+    pub schedule_text: Option<String>,
     #[serde(default)]
     pub session: Option<String>,
     #[serde(default)]

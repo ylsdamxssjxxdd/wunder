@@ -45,15 +45,24 @@ export const useAgentStore = defineStore('agents', {
     async getAgent(id, options: { force?: boolean } = {}) {
       const key = String(id || '').trim();
       if (!key) return null;
-      if (!options.force && this.agentMap[key]) {
-        return this.agentMap[key];
+      if (!options.force && Object.prototype.hasOwnProperty.call(this.agentMap, key)) {
+        return this.agentMap[key] || null;
       }
-      const { data } = await getAgentApi(key);
-      const agent = data?.data || null;
-      if (agent) {
-        this.agentMap = { ...this.agentMap, [key]: agent };
+      try {
+        const { data } = await getAgentApi(key);
+        const agent = data?.data || null;
+        if (agent) {
+          this.agentMap = { ...this.agentMap, [key]: agent };
+        }
+        return agent;
+      } catch (error) {
+        const status = (error as { response?: { status?: number } })?.response?.status;
+        if (status === 404) {
+          this.agentMap = { ...this.agentMap, [key]: null };
+          return null;
+        }
+        throw error;
       }
-      return agent;
     },
 
     async createAgent(payload) {

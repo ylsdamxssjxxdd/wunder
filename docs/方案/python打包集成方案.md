@@ -4,13 +4,13 @@
 - 目标：桌面端默认采用 **AppImage + Python Sidecar** 的交付形态，减少 AppImage 体积并便于独立升级 Python 运行时。
 - 平台：Ubuntu 20.04（glibc 2.31），需要确保二进制与动态库兼容。
 - 依赖：运行时不依赖系统在线安装（无 apt 在线安装、无 pip 在线安装）。
-- 交付：默认两个产物（AppImage + sidecar Python），可选单文件 AppImage（内置 Python）。
+- 交付：默认两个产物（AppImage + sidecar 补充包），可选单文件 AppImage（内置 Python）。
 
 ## 2. 方案概览（推荐）
 **推荐方案：AppImage + Python Sidecar（默认）**
 - 在 Ubuntu 20.04 构建 Python 基座与离线依赖仓库（wheelhouse）。
-- Python 以 sidecar 形式独立打包（`wunder-python`），与 AppImage 同目录分发。
-- AppRun 在启动时自动识别同目录 `wunder-python`，设置 `WUNDER_PYTHON_BIN` 与运行时环境。
+- Python + Git 以 sidecar 形式独立打包（`wunder补充包`），与 AppImage 同目录分发。
+- AppRun 在启动时自动识别同目录 `wunder补充包`，设置 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN` 与运行时环境。
 - 可选：Playwright 浏览器单独 sidecar（`wunder-playwright`），避免 AppImage 体积暴涨。
 
 ## 3. 方案对比
@@ -26,10 +26,10 @@
 ```
 release/
   wunder-desktop-arm64-sidecar.AppImage
-  wunder-python/                 # 解压后的 Python sidecar
+  wunder补充包/                   # 解压后的补充包（含 python/git）
   wunder-playwright/             # 可选：浏览器 sidecar
 ```
-- `wunder-python` 目录必须与 AppImage **同级**，AppRun 会自动识别。
+- `wunder补充包` 目录必须与 AppImage **同级**，AppRun 会自动识别。
 - `wunder-playwright` 目录同级时，会自动设置 `PLAYWRIGHT_BROWSERS_PATH`。
 
 ### 4.2 AppDir 内部（AppImage）
@@ -51,13 +51,13 @@ BUILD_ROOT=/app/target/arm64-20/.build/python \
 - Python 会安装到 `${BUILD_ROOT}/stage/opt/python`。
 - 依赖清单默认使用 `packaging/python/requirements-full.txt`。
 
-### 5.2 打包 Python Sidecar
+### 5.2 打包补充包 Sidecar
 ```
 BUILD_ROOT=/app/target/arm64-20/.build/python \
   bash /app/docker-extra/scripts/package_sidecar_python.sh
 ```
-- 产物：`wunder-python-<arch>.tar.*`
-- 解压后目录名为 `wunder-python`（必须保持该名称）。
+- 产物：`wunder补充包-<arch>.tar.*`
+- 解压后目录名为 `wunder补充包`（必须保持该名称，内部包含 `opt/python` 与 `opt/git`）。
 
 ### 5.3 重打包 Sidecar AppImage（不内置 Python）
 ```
@@ -74,7 +74,7 @@ PLAYWRIGHT_INSTALL_DEPS=0 \
   bash /app/docker-extra/scripts/package_appimage_with_python.sh
 ```
 - 输出：`wunder-desktop-*-sidecar.AppImage`
-- AppRun 会自动识别同目录 `wunder-python` 并注入 `WUNDER_PYTHON_BIN`。
+- AppRun 会自动识别同目录 `wunder补充包` 并注入 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`。
 
 ## 6. 可选：内置 Python（单文件 AppImage）
 若需要单文件交付，使用内置模式：
@@ -95,6 +95,7 @@ INCLUDE_PLAYWRIGHT=1 BUILD_ROOT=/app/target/arm64-20/.build/python \
 
 ### 7.2 浏览器独立 Sidecar（推荐）
 - 将 `${PYTHON_ROOT}/playwright` 打包为 `wunder-playwright` 目录，与 AppImage 同级分发。
+- 或将 `playwright` 目录放入 `wunder补充包/playwright`，AppRun 也可自动识别。
 - AppRun 会自动设置 `PLAYWRIGHT_BROWSERS_PATH`。
 
 > 说明：若目标系统缺少 `libnss3/libnspr4` 等运行库，可在 AppImage 重打包阶段使用
@@ -107,13 +108,13 @@ INCLUDE_PLAYWRIGHT=1 BUILD_ROOT=/app/target/arm64-20/.build/python \
 
 ## 9. 验收清单
 - Ubuntu 20.04 无系统 Python 环境可启动 AppImage。
-- `wunder-python` 在同目录时，工具调用能命中 `WUNDER_PYTHON_BIN`。
+- `wunder补充包` 在同目录时，工具调用能命中 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`。
 - 断网环境下可用（pip 不访问网络）。
 - `ldd` 检查无 “not found”。
 
 ## 10. 交付清单
 - `wunder-desktop-*-sidecar.AppImage`
-- `wunder-python-<arch>.tar.*`（解压为 `wunder-python/`）
+- `wunder补充包-<arch>.tar.*`（解压为 `wunder补充包/`）
 - （可选）`wunder-playwright-<arch>.tar.*` 或 `wunder-playwright/`
 - （可选）`wunder-desktop-*-python.AppImage`（内置 Python）
 

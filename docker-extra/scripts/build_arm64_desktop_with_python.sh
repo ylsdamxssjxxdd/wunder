@@ -59,7 +59,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
     npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 "
 
-echo "[5/7] Packaging Python sidecar (wunder-python)..."
+echo "[5/7] Packaging extra sidecar (wunder补充包)..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   BUILD_ROOT=/app/target/arm64-20/.build/python \
@@ -98,4 +98,4 @@ echo "[7/7] Done. Artifacts:"
 echo "  - ${TARGET_DIR}/release/wunder-desktop-bridge"
 echo "  - ${DIST_DIR}/wunder-desktop-arm64.AppImage"
 echo "  - ${DIST_DIR}/wunder-desktop-arm64-sidecar.AppImage (sidecar Python)"
-echo "  - ${DIST_DIR}/wunder-python-arm64.tar.gz (sidecar Python package)"
+echo "  - ${DIST_DIR}/wunder补充包-arm64.tar.gz (sidecar extra package)"

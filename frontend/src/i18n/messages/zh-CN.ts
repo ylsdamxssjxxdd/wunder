@@ -1587,6 +1587,8 @@ export default {
   'messenger.agent.userRoundsLabel': '用户轮次',
   'messenger.agent.openSettings': '进入设置',
   'messenger.agent.openChat': '进入聊天',
+  'messenger.agent.taskCompletedTitle': '智能体任务完成',
+  'messenger.agent.taskCompleted': '智能体 {name} 已完成任务',
   'messenger.agent.runtime.days': '统计周期',
   'messenger.agent.runtime.date': '热力图日期',
   'messenger.agent.runtime.loadFailed': '运行记录加载失败',

@@ -1861,7 +1861,7 @@ const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
-const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 1024);
+const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 960);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
 const showMiddlePane = computed(
   () => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value
@@ -2086,7 +2086,9 @@ const agentHeaderModelDisplayName = computed(() => {
   return t('common.unknown');
 });
 
-const agentHeaderModelJumpEnabled = computed(() => desktopMode.value && isAgentConversationActive.value);
+const agentHeaderModelJumpEnabled = computed(
+  () => desktopMode.value || route.path.startsWith('/desktop')
+);
 
 const activeAgentApprovalMode = computed<AgentApprovalMode>(() => {
   if (!desktopLocalMode.value) {
@@ -4022,6 +4024,91 @@ const formatAgentRuntimeState = (state: AgentRuntimeState): string => {
   return t('portal.card.idle');
 };
 
+let agentRuntimeStateSnapshot = new Map<string, AgentRuntimeState>();
+let agentRuntimeStateHydrated = false;
+let systemNotificationPermissionRequested = false;
+
+const resolveAgentDisplayName = (agentId: string): string => {
+  const normalized = normalizeAgentId(agentId);
+  const agent = agentMap.value.get(normalized);
+  const name = String(agent?.name || '').trim();
+  if (name) return name;
+  if (normalized === DEFAULT_AGENT_KEY) return t('messenger.defaultAgent');
+  return normalized || t('messenger.defaultAgent');
+};
+
+const requestSystemNotificationPermission = async (): Promise<NotificationPermission | ''> => {
+  if (systemNotificationPermissionRequested) {
+    return typeof window !== 'undefined' ? window.Notification?.permission ?? '' : '';
+  }
+  systemNotificationPermissionRequested = true;
+  if (typeof window === 'undefined' || !('Notification' in window)) return '';
+  try {
+    return await window.Notification.requestPermission();
+  } catch {
+    return '';
+  }
+};
+
+const sendSystemNotification = async (title: string, body: string): Promise<boolean> => {
+  if (typeof window === 'undefined' || !('Notification' in window)) return false;
+  try {
+    if (window.Notification.permission === 'granted') {
+      new window.Notification(title, { body });
+      return true;
+    }
+    if (window.Notification.permission === 'default') {
+      const permission = await requestSystemNotificationPermission();
+      if (permission === 'granted') {
+        new window.Notification(title, { body });
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+};
+
+const notifyAgentTaskCompleted = async (agentId: string) => {
+  const title = t('messenger.agent.taskCompletedTitle');
+  const message = t('messenger.agent.taskCompleted', { name: resolveAgentDisplayName(agentId) });
+  if (agentHeaderModelJumpEnabled.value) {
+    const notified = await sendSystemNotification(title, message);
+    if (notified) return;
+  }
+  ElMessage.success(message);
+};
+
+const shouldNotifyAgentCompletion = (
+  previousState: AgentRuntimeState,
+  nextState: AgentRuntimeState
+): boolean => {
+  if (nextState === 'done') return previousState !== 'done';
+  if (nextState === 'idle') return previousState === 'running' || previousState === 'pending';
+  return false;
+};
+
+const handleAgentRuntimeStateUpdate = (stateMap: Map<string, AgentRuntimeState>) => {
+  if (agentRuntimeStateHydrated) {
+    const keys = new Set<string>([
+      ...Array.from(agentRuntimeStateSnapshot.keys()),
+      ...Array.from(stateMap.keys())
+    ]);
+    keys.forEach((agentId) => {
+      const previousState = agentRuntimeStateSnapshot.get(agentId) ?? 'idle';
+      const nextState = stateMap.get(agentId) ?? 'idle';
+      if (previousState === nextState) return;
+      if (shouldNotifyAgentCompletion(previousState, nextState)) {
+        void notifyAgentTaskCompleted(agentId);
+      }
+    });
+  }
+  agentRuntimeStateSnapshot = new Map(stateMap);
+  agentRuntimeStateHydrated = true;
+  agentRuntimeStateMap.value = stateMap;
+};
+
 const hasMessageContent = (value: unknown): boolean => Boolean(String(value || '').trim());
 
 const AUDIO_ATTACHMENT_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'opus', 'aac', 'flac', 'm4a', 'webm']);
@@ -5531,7 +5618,7 @@ const openSettingsPage = () => {
 };
 
 const openDesktopModelSettingsFromHeader = () => {
-  if (!desktopMode.value) return;
+  if (!agentHeaderModelJumpEnabled.value) return;
   switchSection('more', { panelHint: 'desktop-models' });
   settingsPanelMode.value = 'desktop-models';
 };
@@ -7137,8 +7224,9 @@ const resolveDesktopDefaultModelMeta = (
   const configuredModelName = String(
     currentModel.model || currentModel.model_name || currentModel.name || ''
   ).trim();
+  const supportHearing = currentModel.support_hearing;
   return {
-    hearingSupported: currentModel.support_hearing === true,
+    hearingSupported: supportHearing === false ? false : true,
     modelDisplayName: configuredModelName || defaultModelKey
   };
 };
@@ -7174,9 +7262,9 @@ const readDesktopDefaultModelMeta = async (
       desktopDefaultModelDisplayName.value = meta.modelDisplayName;
       return meta;
     } catch {
-      agentVoiceModelHearingSupported.value = false;
+      agentVoiceModelHearingSupported.value = null;
       desktopDefaultModelDisplayName.value = '';
-      return { hearingSupported: false, modelDisplayName: '' };
+      return { hearingSupported: true, modelDisplayName: '' };
     } finally {
       agentVoiceModelSupportCheckedAt = Date.now();
       desktopDefaultModelMetaFetchPromise = null;
@@ -7828,9 +7916,11 @@ const loadRunningAgents = async () => {
       const state = normalizeRuntimeState(item?.state, item?.pending_question === true);
       stateMap.set(key, state);
     });
-    agentRuntimeStateMap.value = stateMap;
+    handleAgentRuntimeStateUpdate(stateMap);
   } catch {
     agentRuntimeStateMap.value = new Map<string, AgentRuntimeState>();
+    agentRuntimeStateSnapshot = new Map<string, AgentRuntimeState>();
+    agentRuntimeStateHydrated = false;
   }
 };
 

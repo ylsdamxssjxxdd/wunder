@@ -5,6 +5,19 @@ type RecorderWindow = Window &
   webkitAudioContext?: typeof AudioContext;
 };
 
+type LegacyGetUserMedia = (
+  constraints: MediaStreamConstraints,
+  success: (stream: MediaStream) => void,
+  failure: (error: Error) => void
+) => void;
+
+type RecorderNavigator = Navigator & {
+  getUserMedia?: LegacyGetUserMedia;
+  webkitGetUserMedia?: LegacyGetUserMedia;
+  mozGetUserMedia?: LegacyGetUserMedia;
+  msGetUserMedia?: LegacyGetUserMedia;
+};
+
 export type AudioRecordingResult = {
   blob: Blob;
   durationMs: number;
@@ -25,6 +38,18 @@ const resolveAudioContextCtor = (): typeof AudioContext | null => {
   if (typeof host.AudioContext === 'function') return host.AudioContext;
   if (typeof host.webkitAudioContext === 'function') return host.webkitAudioContext;
   return null;
+};
+
+const resolveLegacyGetUserMedia = (): LegacyGetUserMedia | null => {
+  if (typeof navigator === 'undefined') return null;
+  const source = navigator as RecorderNavigator;
+  return (
+    source.getUserMedia ||
+    source.webkitGetUserMedia ||
+    source.mozGetUserMedia ||
+    source.msGetUserMedia ||
+    null
+  );
 };
 
 const clampPcmSample = (value: number): number => {
@@ -103,15 +128,27 @@ export const isAudioRecordingSupported = (): boolean => {
   const hasMediaDevices = Boolean(
     navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function'
   );
-  return hasMediaDevices && Boolean(resolveAudioContextCtor());
+  const hasLegacyGetUserMedia = Boolean(resolveLegacyGetUserMedia());
+  return (hasMediaDevices || hasLegacyGetUserMedia) && Boolean(resolveAudioContextCtor());
 };
 
 export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
   const AudioContextCtor = resolveAudioContextCtor();
-  if (!AudioContextCtor || !navigator.mediaDevices?.getUserMedia) {
+  const mediaDevices = navigator.mediaDevices;
+  const modernGetUserMedia = mediaDevices?.getUserMedia?.bind(mediaDevices);
+  const legacyGetUserMedia = resolveLegacyGetUserMedia();
+  if (!AudioContextCtor || (!modernGetUserMedia && !legacyGetUserMedia)) {
     throw new Error('audio recording is not supported');
   }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const stream = modernGetUserMedia
+    ? await modernGetUserMedia({ audio: true })
+    : await new Promise<MediaStream>((resolve, reject) => {
+        if (!legacyGetUserMedia) {
+          reject(new Error('audio recording is not supported'));
+          return;
+        }
+        legacyGetUserMedia.call(navigator, { audio: true }, resolve, reject);
+      });
   let context: RecorderAudioContext | null = null;
   let sourceNode: MediaStreamAudioSourceNode | null = null;
   let processorNode: ScriptProcessorNode | null = null;

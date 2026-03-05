@@ -3,6 +3,7 @@ pub mod agent_runtime;
 pub mod attachment;
 pub mod chat_attachments;
 pub mod cron;
+pub mod cron_schedule;
 pub mod desktop_lan;
 pub mod doc2md;
 pub mod external_auth;

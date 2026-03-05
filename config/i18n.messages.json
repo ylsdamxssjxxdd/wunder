@@ -1671,6 +1671,10 @@
     "en-US": "Timezone.",
     "zh-CN": "时区。"
   },
+  "tool.spec.schedule_task.args.job.schedule_text": {
+    "en-US": "Natural language or cron expression (optional).",
+    "zh-CN": "自然语言或 cron 表达式（选填）"
+  },
   "tool.spec.schedule_task.args.job.session": {
     "en-US": "main or isolated.",
     "zh-CN": "main/isolated。"

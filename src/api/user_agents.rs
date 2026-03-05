@@ -20,7 +20,7 @@ use axum::{routing::get, Json, Router};
 use chrono::{
     DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -28,6 +28,10 @@ use uuid::Uuid;
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "auto_edit";
+const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
+const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
+const DEFAULT_AGENT_NAME: &str = "Default Agent";
+const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
 const MAX_RUNTIME_WINDOW_DAYS: i64 = 90;
 const MAX_RUNTIME_RECORD_LIMIT: i64 = 5000;
@@ -73,7 +77,11 @@ async fn list_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
-    let items = filtered.iter().map(agent_payload).collect::<Vec<_>>();
+    let items = filtered
+        .into_iter()
+        .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
+        .map(|record| agent_payload(&record))
+        .collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))
@@ -94,7 +102,11 @@ async fn list_shared_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
-    let items = filtered.iter().map(agent_payload).collect::<Vec<_>>();
+    let items = filtered
+        .into_iter()
+        .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
+        .map(|record| agent_payload(&record))
+        .collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))
@@ -166,14 +178,19 @@ async fn list_running_agents(
         .user_store
         .list_user_agents(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let owned_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), owned_agents);
+    let owned_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), owned_agents)
+        .into_iter()
+        .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
+        .collect::<Vec<_>>();
 
     let shared_agents = state
         .user_store
         .list_shared_user_agents(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let shared_agents =
-        filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents);
+    let shared_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents)
+        .into_iter()
+        .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
+        .collect::<Vec<_>>();
 
     let mut agent_order = Vec::new();
     agent_order.push("".to_string()); // default entry
@@ -471,9 +488,14 @@ async fn get_agent(
             i18n::t("error.content_required"),
         ));
     }
+    let normalized_agent_id = normalize_agent_id(cleaned);
+    if normalized_agent_id.is_empty() {
+        let config = resolve_default_agent_config(&state, &resolved.user).await?;
+        return Ok(Json(json!({ "data": default_agent_payload(&config) })));
+    }
     let record = state
         .user_store
-        .get_user_agent_by_id(cleaned)
+        .get_user_agent_by_id(&normalized_agent_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
     let access = state
@@ -893,9 +915,52 @@ async fn update_agent(
             i18n::t("error.content_required"),
         ));
     }
+    let normalized_agent_id = normalize_agent_id(cleaned);
+    if normalized_agent_id.is_empty() {
+        let mut config = resolve_default_agent_config(&state, &resolved.user).await?;
+        if let Some(name) = payload.name {
+            let cleaned = name.trim();
+            if !cleaned.is_empty() {
+                config.name = cleaned.to_string();
+            }
+        }
+        if let Some(description) = payload.description {
+            config.description = description;
+        }
+        if let Some(system_prompt) = payload.system_prompt {
+            config.system_prompt = system_prompt;
+        }
+        if let Some(tool_names) = payload.tool_names {
+            let mut normalized = normalize_tool_list(tool_names);
+            if !normalized.is_empty() {
+                let context = build_user_tool_context(&state, &user_id).await;
+                let allowed = compute_allowed_tool_names(&resolved.user, &context);
+                normalized = filter_allowed_tools(&normalized, &allowed);
+            }
+            config.tool_names = normalized;
+        }
+        if let Some(status) = payload.status {
+            config.status = normalize_agent_status(Some(&status));
+        }
+        if let Some(approval_mode) = payload.approval_mode {
+            config.approval_mode = normalize_agent_approval_mode(Some(&approval_mode));
+        }
+        if payload.icon.is_some() {
+            config.icon = payload.icon;
+        }
+        if let Some(sandbox_container_id) = payload.sandbox_container_id {
+            config.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
+        }
+        config.updated_at = now_ts();
+        if config.created_at <= 0.0 {
+            config.created_at = config.updated_at;
+        }
+        save_default_agent_config(&state, &user_id, &config)?;
+        return Ok(Json(json!({ "data": default_agent_payload(&config) })));
+    }
     let mut record = state
         .user_store
-        .get_user_agent(&user_id, cleaned)
+        .get_user_agent(&user_id, &normalized_agent_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
     if let Some(name) = payload.name {
@@ -956,9 +1021,15 @@ async fn delete_agent(
             i18n::t("error.content_required"),
         ));
     }
+    let normalized_agent_id = normalize_agent_id(cleaned);
+    if normalized_agent_id.is_empty() {
+        let key = default_agent_meta_key(&resolved.user.user_id);
+        let _ = state.user_store.set_meta(&key, "");
+        return Ok(Json(json!({ "data": { "id": DEFAULT_AGENT_ID_ALIAS } })));
+    }
     state
         .user_store
-        .delete_user_agent(&resolved.user.user_id, cleaned)
+        .delete_user_agent(&resolved.user.user_id, &normalized_agent_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut workspace_ids = state
         .workspace
@@ -1633,6 +1704,158 @@ fn normalize_agent_id(raw: &str) -> String {
     cleaned.to_string()
 }
 
+fn is_default_agent_alias_value(raw: &str) -> bool {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return false;
+    }
+    cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
+        || cleaned.eq_ignore_ascii_case("default")
+}
+
+fn default_agent_meta_key(user_id: &str) -> String {
+    format!("{DEFAULT_AGENT_META_PREFIX}{user_id}")
+}
+
+fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
+    if config.name.trim().is_empty() {
+        config.name = DEFAULT_AGENT_NAME.to_string();
+    }
+    if config.status.trim().is_empty() {
+        config.status = DEFAULT_AGENT_STATUS.to_string();
+    } else {
+        config.status = normalize_agent_status(Some(&config.status));
+    }
+    if config.approval_mode.trim().is_empty() {
+        config.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
+    } else {
+        config.approval_mode = normalize_agent_approval_mode(Some(&config.approval_mode));
+    }
+    if config.sandbox_container_id <= 0 {
+        config.sandbox_container_id = DEFAULT_SANDBOX_CONTAINER_ID;
+    }
+}
+
+async fn load_default_agent_config(
+    state: &AppState,
+    user_id: &str,
+) -> Result<Option<DefaultAgentConfig>, Response> {
+    let key = default_agent_meta_key(user_id);
+    let raw = state
+        .user_store
+        .get_meta(&key)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+    let mut parsed: DefaultAgentConfig = match serde_json::from_str(cleaned) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    normalize_default_agent_config(&mut parsed);
+    Ok(Some(parsed))
+}
+
+async fn build_default_agent_config(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> DefaultAgentConfig {
+    let context = build_user_tool_context(state, &user.user_id).await;
+    let allowed = compute_allowed_tool_names(user, &context);
+    let mut tool_names = allowed.into_iter().collect::<Vec<_>>();
+    tool_names.sort();
+    let now = now_ts();
+    let mut config = DefaultAgentConfig {
+        name: DEFAULT_AGENT_NAME.to_string(),
+        description: String::new(),
+        system_prompt: String::new(),
+        tool_names,
+        approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+        status: DEFAULT_AGENT_STATUS.to_string(),
+        icon: None,
+        sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+        created_at: now,
+        updated_at: now,
+    };
+    normalize_default_agent_config(&mut config);
+    config
+}
+
+async fn resolve_default_agent_config(
+    state: &AppState,
+    user: &crate::storage::UserAccountRecord,
+) -> Result<DefaultAgentConfig, Response> {
+    if let Some(mut config) = load_default_agent_config(state, &user.user_id).await? {
+        let now = now_ts();
+        if config.created_at <= 0.0 {
+            config.created_at = now;
+        }
+        if config.updated_at <= 0.0 {
+            config.updated_at = config.created_at;
+        }
+        return Ok(config);
+    }
+    let record = state
+        .user_store
+        .get_user_agent(&user.user_id, DEFAULT_AGENT_ID_ALIAS)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Some(record) = record {
+        let mut config = DefaultAgentConfig {
+            name: record.name,
+            description: record.description,
+            system_prompt: record.system_prompt,
+            tool_names: record.tool_names,
+            approval_mode: record.approval_mode,
+            status: record.status,
+            icon: record.icon,
+            sandbox_container_id: record.sandbox_container_id,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        };
+        normalize_default_agent_config(&mut config);
+        return Ok(config);
+    }
+    Ok(build_default_agent_config(state, user).await)
+}
+
+fn default_agent_payload(config: &DefaultAgentConfig) -> Value {
+    json!({
+        "id": DEFAULT_AGENT_ID_ALIAS,
+        "name": config.name,
+        "description": config.description,
+        "system_prompt": config.system_prompt,
+        "tool_names": config.tool_names,
+        "access_level": DEFAULT_AGENT_ACCESS_LEVEL,
+        "approval_mode": normalize_agent_approval_mode(Some(&config.approval_mode)),
+        "is_shared": false,
+        "status": normalize_agent_status(Some(&config.status)),
+        "icon": config.icon,
+        "hive_id": DEFAULT_HIVE_ID,
+        "sandbox_container_id": normalize_sandbox_container_id(config.sandbox_container_id),
+        "created_at": format_ts(config.created_at),
+        "updated_at": format_ts(config.updated_at),
+    })
+}
+
+fn save_default_agent_config(
+    state: &AppState,
+    user_id: &str,
+    config: &DefaultAgentConfig,
+) -> Result<(), Response> {
+    let key = default_agent_meta_key(user_id);
+    let payload = serde_json::to_string(config)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state
+        .user_store
+        .set_meta(&key, &payload)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(())
+}
+
 fn build_icon_payload(name: &str, color: &str) -> String {
     serde_json::json!({ "name": name, "color": color }).to_string()
 }
@@ -1709,4 +1932,28 @@ struct AgentUpdateRequest {
     icon: Option<String>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DefaultAgentConfig {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    system_prompt: String,
+    #[serde(default)]
+    tool_names: Vec<String>,
+    #[serde(default)]
+    approval_mode: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    sandbox_container_id: i32,
+    #[serde(default)]
+    created_at: f64,
+    #[serde(default)]
+    updated_at: f64,
 }

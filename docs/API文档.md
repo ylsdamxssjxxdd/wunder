@@ -582,6 +582,8 @@
   - 入参：与内置工具 `schedule_task` schema 一致（`action` + `job`）
   - 说明：
     - `job.schedule.kind=every` 时支持可选 `schedule.at` 作为首次触发时间锚点；若未提供则默认以任务创建时间为起点，首次触发为“下一个间隔点”（严格晚于当前时刻，避免创建即触发）。
+    - 可选 `job.schedule_text` 支持自然语言或 cron（如 `every 5 minutes`、`daily at 9am`、`0 */6 * * *`）；若同时传 `schedule` 与 `schedule_text`，以 `schedule` 为准。
+    - `schedule.at` 必须是未来时间且不超过 1 年；`schedule.every_ms` 最大 24 小时；`schedule.cron` 需为 5-7 段字段。
     - 调度执行遇到 `USER_BUSY` 会按 `cron.idle_retry_ms` 重试，并受 `cron.max_busy_wait_ms` 上限保护，超时后写入 error 运行记录。
     - 连续失败达到 `cron.max_consecutive_failures` 会自动停用任务并写入 `auto_disabled_reason`。
   - 返回：`data` 中包含 action 结果与 job 信息
@@ -1967,6 +1969,7 @@
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
+  - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）读取默认入口配置（未配置时返回系统默认值）
 - `GET /wunder/agents/{agent_id}/runtime-records`：智能体运行记录（用户侧）
   - Query：`days`（可选，1~90，默认 14，用于日趋势窗口）、`date`（可选，`YYYY-MM-DD`，用于工具调用热力图日期）
   - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`，为该智能体累计汇总）、`data.daily[]`（最近 `days` 天按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
@@ -1974,8 +1977,10 @@
 - `PUT /wunder/agents/{agent_id}`：更新智能体
   - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`（可选）
   - 返回：`data`（同智能体详情）
+  - 默认入口支持：`agent_id` 为 `__default__`（或 `default`）时更新默认入口配置
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
   - 返回：`data.id`
+  - 默认入口支持：`agent_id` 为 `__default__`（或 `default`）时清空默认入口配置（恢复系统默认值）
 - `GET /wunder/agents/{agent_id}/default-session`：获取智能体主线程会话
   - 返回：`data.agent_id`、`data.session_id`
 - `POST /wunder/agents/{agent_id}/default-session`：设置智能体主线程会话
@@ -1985,7 +1990,7 @@
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户工具白名单过滤。
-  - 默认入口（`agent_id` 为空或 `__default__/default`）不持久化 `tool_names`，始终按当前用户可用工具集实时生效（desktop 本地模式默认额外启用 `计划面板`）。
+- 默认入口（`agent_id` 为空或 `__default__/default`）未配置时按当前用户可用工具集兜底（desktop 本地模式默认额外启用 `计划面板`）。
   - `approval_mode` 默认 `auto_edit`，用于控制命令执行/PTC 工具的审批强度。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。
