@@ -3,6 +3,7 @@ use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
+use crate::services::chat_attachments::persist_user_chat_attachments;
 
 struct PlannedToolCall {
     call: ToolCall,
@@ -42,6 +43,7 @@ impl Orchestrator {
     ) -> Result<WunderResponse, OrchestratorError> {
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut acquired = false;
+        let mut prepared = prepared;
         let request_config = self
             .resolve_config(prepared.config_overrides.as_ref())
             .await;
@@ -83,6 +85,22 @@ impl Orchestrator {
                 )));
             }
             acquired = true;
+
+            if let Some(attachments) = prepared.attachments.as_mut() {
+                if let Err(err) = persist_user_chat_attachments(
+                    self.workspace.as_ref(),
+                    &user_id,
+                    &session_id,
+                    attachments,
+                )
+                .await
+                {
+                    warn!(
+                        "persist chat attachments failed for user {} session {}: {}",
+                        user_id, session_id, err
+                    );
+                }
+            }
 
             if prepared.stream && !is_admin {
                 let cleanup_session = session_id.clone();
@@ -388,6 +406,7 @@ impl Orchestrator {
                         &session_id,
                         "user",
                         user_content.as_ref(),
+                        prepared.attachments.as_deref(),
                         None,
                         None,
                         None,
@@ -432,6 +451,7 @@ impl Orchestrator {
                             "assistant",
                             Some(&json!(assistant_content)),
                             None,
+                            None,
                             Some(&reasoning),
                             None,
                             None,
@@ -469,6 +489,7 @@ impl Orchestrator {
                         &session_id,
                         "assistant",
                         Some(&json!(assistant_content)),
+                        None,
                         Some(&meta),
                         Some(&assistant_reasoning),
                         tool_calls_payload.as_ref(),
@@ -662,6 +683,7 @@ impl Orchestrator {
                             None,
                             None,
                             None,
+                            None,
                             tool_call_id.as_deref(),
                         );
 
@@ -744,6 +766,7 @@ impl Orchestrator {
                                 &session_id,
                                 "assistant",
                                 content,
+                                None,
                                 question_panel_meta.as_ref(),
                                 None,
                                 None,
@@ -787,6 +810,7 @@ impl Orchestrator {
                                     &session_id,
                                     "assistant",
                                     Some(&json!(answer.clone())),
+                                    None,
                                     Some(&json!({
                                         "type": "tool_failure_guard",
                                         "tool": name.clone(),
@@ -863,6 +887,7 @@ impl Orchestrator {
                                         None,
                                         None,
                                         None,
+                                        None,
                                     );
                                 }
                                 should_finish = true;
@@ -883,6 +908,7 @@ impl Orchestrator {
                                         &session_id,
                                         "assistant",
                                         Some(&json!(answer.clone())),
+                                        None,
                                         None,
                                         None,
                                         None,

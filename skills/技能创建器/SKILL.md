@@ -1,76 +1,81 @@
+﻿---
+name: 技能创建器
+description: 创建新技能、修改/优化已有技能并评估效果。当用户希望从零创建技能、更新或优化现有技能、运行评测验证技能、做基准对比/方差分析，或优化技能描述以提升触发准确性时使用。本技能也适用于任何与“技能设计、测试、迭代、触发”相关的请求。
 ---
-name: skill-creator
-description: Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, update or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.
----
 
-# Skill Creator
+# 技能创建器
 
-A skill for creating new skills and iteratively improving them.
+用于创建新技能并进行迭代改进的技能。
 
-At a high level, the process of creating a skill goes like this:
+从高层看，创建技能的大致流程如下：
 
-- Decide what you want the skill to do and roughly how it should do it
-- Write a draft of the skill
-- Create a few test prompts and run claude-with-access-to-the-skill on them
-- Help the user evaluate the results both qualitatively and quantitatively
-  - While the runs happen in the background, draft some quantitative evals if there aren't any (if there are some, you can either use as is or modify if you feel something needs to change about them). Then explain them to the user (or if they already existed, explain the ones that already exist)
-  - Use the `eval-viewer/generate_review.py` script to show the user the results for them to look at, and also let them look at the quantitative metrics
-- Rewrite the skill based on feedback from the user's evaluation of the results (and also if there are any glaring flaws that become apparent from the quantitative benchmarks)
-- Repeat until you're satisfied
-- Expand the test set and try again at larger scale
+- 明确技能要做什么，以及大致如何做
+- 写出技能草案
+- 编写少量测试提示词，并用“可访问该技能的 Claude”运行测试
+- 帮助用户从定性与定量角度评估结果
+  - 在运行进行时，如果还没有定量评测，就起草一些（如果已有，可沿用或必要时修改），并向用户解释
+  - 使用 `eval-viewer/generate_review.py` 生成可视化评审界面，方便用户查看结果与指标
+- 基于用户反馈和定量问题改写技能
+- 重复以上流程，直到满意
+- 扩充测试集并在更大规模上再跑一轮
 
-Your job when using this skill is to figure out where the user is in this process and then jump in and help them progress through these stages. So for instance, maybe they're like "I want to make a skill for X". You can help narrow down what they mean, write a draft, write the test cases, figure out how they want to evaluate, run all the prompts, and repeat.
+你的任务是判断用户当前处于流程的哪一步，并帮助他们推进下一步。比如：
+- 用户说“我想做一个 X 的技能”，你可以帮他们梳理目标、写草案、准备测试、跑评测并迭代。
+- 若用户已有草案，则可直接进入评测/迭代环节。
 
-On the other hand, maybe they already have a draft of the skill. In this case you can go straight to the eval/iterate part of the loop.
+当然也要灵活：若用户说“不要评测，先随便做做”，也可以先按他们的节奏来。
 
-Of course, you should always be flexible and if the user is like "I don't need to run a bunch of evaluations, just vibe with me", you can do that instead.
-
-Then after the skill is done (but again, the order is flexible), you can also run the skill description improver, which we have a whole separate script for, to optimize the triggering of the skill.
-
-Cool? Cool.
-
-## Communicating with the user
-
-The skill creator is liable to be used by people across a wide range of familiarity with coding jargon. If you haven't heard (and how could you, it's only very recently that it started), there's a trend now where the power of Claude is inspiring plumbers to open up their terminals, parents and grandparents to google "how to install npm". On the other hand, the bulk of users are probably fairly computer-literate.
-
-So please pay attention to context cues to understand how to phrase your communication! In the default case, just to give you some idea:
-
-- "evaluation" and "benchmark" are borderline, but OK
-- for "JSON" and "assertion" you want to see serious cues from the user that they know what those things are before using them without explaining them
-
-It's OK to briefly explain terms if you're in doubt, and feel free to clarify terms with a short definition if you're unsure if the user will get it.
+另外，在技能完成后（流程灵活），你还可以运行“技能描述优化”脚本，用于提高触发准确性。
 
 ---
 
-## Creating a skill
+## 与用户沟通
 
-### Capture Intent
+技能创建器会被不同熟悉程度的用户使用——有的人非常懂技术，也有人几乎不懂术语。你需要根据上下文选择表达方式。默认情况下：
 
-Start by understanding the user's intent. The current conversation might already contain a workflow the user wants to capture (e.g., they say "turn this into a skill"). If so, extract answers from the conversation history first — the tools used, the sequence of steps, corrections the user made, input/output formats observed. The user may need to fill the gaps, and should confirm before proceeding to the next step.
+- “评测”“基准”是边缘术语，但可以使用
+- “JSON”“断言”等术语，只有在用户明显熟悉时才不解释
 
-1. What should this skill enable Claude to do?
-2. When should this skill trigger? (what user phrases/contexts)
-3. What's the expected output format?
-4. Should we set up test cases to verify the skill works? Skills with objectively verifiable outputs (file transforms, data extraction, code generation, fixed workflow steps) benefit from test cases. Skills with subjective outputs (writing style, art) often don't need them. Suggest the appropriate default based on the skill type, but let the user decide.
+如果不确定，就简短解释；必要时给出一句定义。
 
-### Interview and Research
+---
 
-Proactively ask questions about edge cases, input/output formats, example files, success criteria, and dependencies. Wait to write test prompts until you've got this part ironed out.
+## 创建技能
 
-Check available MCPs - if useful for research (searching docs, finding similar skills, looking up best practices), research in parallel via subagents if available, otherwise inline. Come prepared with context to reduce burden on the user.
+### 捕捉意图
 
-### Write the SKILL.md
+先理解用户的意图。当前对话可能已经包含他们想固化的流程（例如“把这段对话变成技能”）。这时先从对话历史中提取关键信息：用到的工具、步骤顺序、用户修正、输入/输出格式等。缺口由用户补全，并在下一步前确认。
 
-Based on the user interview, fill in these components:
+1. 这个技能要让 Claude 做什么？
+2. 什么时候应该触发该技能？（用户会用什么说法/上下文）
+3. 期望输出的格式是什么？
+4. 是否需要测试用例验证？
+   - 可验证输出（文件转换、数据抽取、代码生成、固定流程）通常建议做测试
+   - 主观输出（写作风格、艺术）往往不需要
+   - 给出合适建议，但让用户决定
 
-- **name**: Skill identifier
-- **description**: When to trigger, what it does. This is the primary triggering mechanism - include both what the skill does AND specific contexts for when to use it. All "when to use" info goes here, not in the body. Note: currently Claude has a tendency to "undertrigger" skills -- to not use them when they'd be useful. To combat this, please make the skill descriptions a little bit "pushy". So for instance, instead of "How to build a simple fast dashboard to display internal Anthropic data.", you might write "How to build a simple fast dashboard to display internal Anthropic data. Make sure to use this skill whenever the user mentions dashboards, data visualization, internal metrics, or wants to display any kind of company data, even if they don't explicitly ask for a 'dashboard.'"
-- **compatibility**: Required tools, dependencies (optional, rarely needed)
-- **the rest of the skill :)**
+### 访谈与研究
 
-### Skill Writing Guide
+主动询问边界条件、输入/输出格式、示例文件、成功标准与依赖。不要在这些不清晰时就写测试提示词。
 
-#### Anatomy of a Skill
+检查可用 MCP：如果研究有帮助（查文档、找类似技能、最佳实践），可以并行调用子代理；否则就直接在当前对话中完成。尽量带着上下文来，减少用户负担。
+
+### 编写 SKILL.md
+
+基于访谈结果，填写以下组件：
+
+- **name**：技能标识符
+- **description**：触发场景 + 技能作用。描述是主要触发机制，所以必须同时写“做什么”和“什么时候用”。
+  - 注意：当前模型倾向于“触发不足”。为了避免漏触发，描述要更“积极”。
+  - 例如：不要写“展示公司数据的仪表盘”，而是写“凡是用户提到仪表盘/可视化/内部指标/展示公司数据，即使没说‘仪表盘’也要触发”。
+- **compatibility**：依赖/工具（可选，通常不必）
+- **技能正文内容**
+
+---
+
+## 技能写作指南
+
+### 技能结构
 
 ```
 skill-name/
@@ -83,21 +88,19 @@ skill-name/
     └── assets/     - Files used in output (templates, icons, fonts)
 ```
 
-#### Progressive Disclosure
+### 渐进式加载（Progressive Disclosure）
 
-Skills use a three-level loading system:
-1. **Metadata** (name + description) - Always in context (~100 words)
-2. **SKILL.md body** - In context whenever skill triggers (<500 lines ideal)
-3. **Bundled resources** - As needed (unlimited, scripts can execute without loading)
+技能采用三层加载机制：
+1. **元数据**（name + description）— 永远在上下文（~100 词）
+2. **SKILL.md 正文** — 技能触发时加载（建议 <500 行）
+3. **资源包** — 按需加载（无上限，脚本可直接执行无需加载）
 
-These word counts are approximate and you can feel free to go longer if needed.
+**关键模式：**
+- SKILL.md 尽量 <500 行，接近上限时拆层级并明确引用路径
+- 在 SKILL.md 中清楚说明何时读取引用文件
+- 参考文件很大（>300 行）时，提供目录
 
-**Key patterns:**
-- Keep SKILL.md under 500 lines; if you're approaching this limit, add an additional layer of hierarchy along with clear pointers about where the model using the skill should go next to follow up.
-- Reference files clearly from SKILL.md with guidance on when to read them
-- For large reference files (>300 lines), include a table of contents
-
-**Domain organization**: When a skill supports multiple domains/frameworks, organize by variant:
+**多域组织**：多框架/多域时按变体组织：
 ```
 cloud-deploy/
 ├── SKILL.md (workflow + selection)
@@ -106,27 +109,27 @@ cloud-deploy/
     ├── gcp.md
     └── azure.md
 ```
-Claude reads only the relevant reference file.
+只加载当前需要的 reference 文件。
 
-#### Principle of Lack of Surprise
+### “避免惊吓”原则
 
-This goes without saying, but skills must not contain malware, exploit code, or any content that could compromise system security. A skill's contents should not surprise the user in their intent if described. Don't go along with requests to create misleading skills or skills designed to facilitate unauthorized access, data exfiltration, or other malicious activities. Things like a "roleplay as an XYZ" are OK though.
+技能不得包含恶意内容、利用漏洞或危害安全的代码。技能内容必须符合用户意图，不能暗含“越权/误导”。“角色扮演”类技能可以接受，但不得欺骗用户。
 
-#### Writing Patterns
+### 写作模式
 
-Prefer using the imperative form in instructions.
+优先使用祈使语态（直接指令）。
 
-**Defining output formats** - You can do it like this:
+**定义输出格式**：
 ```markdown
-## Report structure
-ALWAYS use this exact template:
+## 报告结构
+必须使用以下模板：
 # [Title]
 ## Executive summary
 ## Key findings
 ## Recommendations
 ```
 
-**Examples pattern** - It's useful to include examples. You can format them like this (but if "Input" and "Output" are in the examples you might want to deviate a little):
+**示例格式**：
 ```markdown
 ## Commit message format
 **Example 1:**
@@ -134,15 +137,18 @@ Input: Added user authentication with JWT tokens
 Output: feat(auth): implement JWT-based authentication
 ```
 
-### Writing Style
+### 写作风格
 
-Try to explain to the model why things are important in lieu of heavy-handed musty MUSTs. Use theory of mind and try to make the skill general and not super-narrow to specific examples. Start by writing a draft and then look at it with fresh eyes and improve it.
+尽量解释“为什么”，而不是堆砌 MUST。强调理论依据与用户心理模型，让技能更通用，避免过拟合。
 
-### Test Cases
+---
 
-After writing the skill draft, come up with 2-3 realistic test prompts — the kind of thing a real user would actually say. Share them with the user: [you don't have to use this exact language] "Here are a few test cases I'd like to try. Do these look right, or do you want to add more?" Then run them.
+## 测试用例
 
-Save test cases to `evals/evals.json`. Don't write assertions yet — just the prompts. You'll draft assertions in the next step while the runs are in progress.
+完成技能草案后，给出 2-3 条真实测试提示词。和用户确认：
+“这里是建议的测试用例，你看看是否合适，要不要加？”
+
+保存到 `evals/evals.json`。先只写 prompt，断言留到后面。
 
 ```json
 {
@@ -158,19 +164,24 @@ Save test cases to `evals/evals.json`. Don't write assertions yet — just the p
 }
 ```
 
-See `references/schemas.md` for the full schema (including the `assertions` field, which you'll add later).
+完整 schema 见 `references/schemas.md`（包含 `assertions` 字段）。
 
-## Running and evaluating test cases
+---
 
-This section is one continuous sequence — don't stop partway through. Do NOT use `/skill-test` or any other testing skill.
+## 运行与评测测试用例
 
-Put results in `<skill-name>-workspace/` as a sibling to the skill directory. Within the workspace, organize results by iteration (`iteration-1/`, `iteration-2/`, etc.) and within that, each test case gets a directory (`eval-0/`, `eval-1/`, etc.). Don't create all of this upfront — just create directories as you go.
+本节是一条连续流程，不要中途停。**不要使用 `/skill-test`** 或其他测试技能。
 
-### Step 1: Spawn all runs (with-skill AND baseline) in the same turn
+将结果放在与技能目录同级的 `<skill-name>-workspace/`。组织方式：
+- `iteration-1/`, `iteration-2/`...
+- 每个 eval 建一个目录：`eval-0/`, `eval-1/`...
+- 不要提前创建全部目录，边跑边建
 
-For each test case, spawn two subagents in the same turn — one with the skill, one without. This is important: don't spawn the with-skill runs first and then come back for baselines later. Launch everything at once so it all finishes around the same time.
+### 步骤 1：同一轮中同时发起 with-skill 与 baseline
 
-**With-skill run:**
+每个测试用例必须同时启动两个子代理：一个带技能，一个不带（或旧版本）。不要先跑 with-skill 再跑 baseline。
+
+**With-skill 运行格式：**
 
 ```
 Execute this task:
@@ -181,11 +192,11 @@ Execute this task:
 - Outputs to save: <what the user cares about — e.g., "the .docx file", "the final CSV">
 ```
 
-**Baseline run** (same prompt, but the baseline depends on context):
-- **Creating a new skill**: no skill at all. Same prompt, no skill path, save to `without_skill/outputs/`.
-- **Improving an existing skill**: the old version. Before editing, snapshot the skill (`cp -r <skill-path> <workspace>/skill-snapshot/`), then point the baseline subagent at the snapshot. Save to `old_skill/outputs/`.
+**Baseline 规则：**
+- **新技能**：无技能（same prompt, no skill）输出到 `without_skill/outputs/`
+- **改进现有技能**：先快照旧技能（`cp -r <skill-path> <workspace>/skill-snapshot/`），baseline 用快照，输出到 `old_skill/outputs/`
 
-Write an `eval_metadata.json` for each test case (assertions can be empty for now). Give each eval a descriptive name based on what it's testing — not just "eval-0". Use this name for the directory too. If this iteration uses new or modified eval prompts, create these files for each new eval directory — don't assume they carry over from previous iterations.
+每个测试用例要写 `eval_metadata.json`，名字要描述测试内容（不要叫 eval-0）。目录名也用该名字。若新增或修改 eval prompt，必须为该 eval 生成 metadata 文件，不要假设会沿用上次。
 
 ```json
 {
@@ -196,17 +207,17 @@ Write an `eval_metadata.json` for each test case (assertions can be empty for no
 }
 ```
 
-### Step 2: While runs are in progress, draft assertions
+### 步骤 2：运行中起草断言
 
-Don't just wait for the runs to finish — you can use this time productively. Draft quantitative assertions for each test case and explain them to the user. If assertions already exist in `evals/evals.json`, review them and explain what they check.
+不要干等运行结束。为每个测试用例起草可量化断言并向用户解释；如果 `evals/evals.json` 已有断言，则审阅并解释。
 
-Good assertions are objectively verifiable and have descriptive names — they should read clearly in the benchmark viewer so someone glancing at the results immediately understands what each one checks. Subjective skills (writing style, design quality) are better evaluated qualitatively — don't force assertions onto things that need human judgment.
+好的断言应该可客观验证，并且名称直观，方便在评测界面一眼看懂。主观任务（写作、设计）不必强行写断言。
 
-Update the `eval_metadata.json` files and `evals/evals.json` with the assertions once drafted. Also explain to the user what they'll see in the viewer — both the qualitative outputs and the quantitative benchmark.
+完成后更新 `eval_metadata.json` 与 `evals/evals.json`，并告诉用户评测界面会显示哪些质检指标。
 
-### Step 3: As runs complete, capture timing data
+### 步骤 3：记录 timing 数据
 
-When each subagent task completes, you receive a notification containing `total_tokens` and `duration_ms`. Save this data immediately to `timing.json` in the run directory:
+每个子代理完成时，会返回 `total_tokens` 与 `duration_ms`。这信息不会再次出现，必须立即写入 `timing.json`：
 
 ```json
 {
@@ -216,24 +227,24 @@ When each subagent task completes, you receive a notification containing `total_
 }
 ```
 
-This is the only opportunity to capture this data — it comes through the task notification and isn't persisted elsewhere. Process each notification as it arrives rather than trying to batch them.
+### 步骤 4：评分、聚合、生成评审界面
 
-### Step 4: Grade, aggregate, and launch the viewer
+全部运行结束后：
 
-Once all runs are done:
+1. **评分**：用 grader 子代理（或人工）读取 `agents/grader.md` 对照断言打分。保存 `grading.json`。
+   - 评分结果数组字段必须是 `text`、`passed`、`evidence`，不要用其他字段名。
+   - 若断言可程序化检查，写脚本执行，而不要主观判断。
 
-1. **Grade each run** — spawn a grader subagent (or grade inline) that reads `agents/grader.md` and evaluates each assertion against the outputs. Save results to `grading.json` in each run directory. The grading.json expectations array must use the fields `text`, `passed`, and `evidence` (not `name`/`met`/`details` or other variants) — the viewer depends on these exact field names. For assertions that can be checked programmatically, write and run a script rather than eyeballing it — scripts are faster, more reliable, and can be reused across iterations.
-
-2. **Aggregate into benchmark** — run the aggregation script from the skill-creator directory:
+2. **聚合基准**：在 skill-creator 目录运行：
    ```bash
    python -m scripts.aggregate_benchmark <workspace>/iteration-N --skill-name <name>
    ```
-   This produces `benchmark.json` and `benchmark.md` with pass_rate, time, and tokens for each configuration, with mean ± stddev and the delta. If generating benchmark.json manually, see `references/schemas.md` for the exact schema the viewer expects.
-Put each with_skill version before its baseline counterpart.
+   生成 `benchmark.json` 与 `benchmark.md`（包含均值±方差与对比）。若手动生成 benchmark，遵循 `references/schemas.md`。
+   *顺序要求：with_skill 放在 baseline 前面。*
 
-3. **Do an analyst pass** — read the benchmark data and surface patterns the aggregate stats might hide. See `agents/analyzer.md` (the "Analyzing Benchmark Results" section) for what to look for — things like assertions that always pass regardless of skill (non-discriminating), high-variance evals (possibly flaky), and time/token tradeoffs.
+3. **分析者视角**：阅读 benchmark 结果，找出隐藏问题（例如断言全部通过但不区分优劣、某些 eval 波动大、耗时/成本权衡）。参考 `agents/analyzer.md` 的 “Analyzing Benchmark Results”。
 
-4. **Launch the viewer** with both qualitative outputs and quantitative data:
+4. **启动评审界面**：
    ```bash
    nohup python <skill-creator-path>/eval-viewer/generate_review.py \
      <workspace>/iteration-N \
@@ -242,31 +253,29 @@ Put each with_skill version before its baseline counterpart.
      > /dev/null 2>&1 &
    VIEWER_PID=$!
    ```
-   For iteration 2+, also pass `--previous-workspace <workspace>/iteration-<N-1>`.
+   如果是 iteration 2+，加 `--previous-workspace <workspace>/iteration-<N-1>`。
 
-   **Cowork / headless environments:** If `webbrowser.open()` is not available or the environment has no display, use `--static <output_path>` to write a standalone HTML file instead of starting a server. Feedback will be downloaded as a `feedback.json` file when the user clicks "Submit All Reviews". After download, copy `feedback.json` into the workspace directory for the next iteration to pick up.
+   **Cowork / 无 GUI 环境**：若 `webbrowser.open()` 不可用或无显示，使用 `--static <output_path>` 生成独立 HTML 文件。用户点“Submit All Reviews”会下载 `feedback.json`；把它拷回 workspace。
 
-Note: please use generate_review.py to create the viewer; there's no need to write custom HTML.
+   **注意**：必须使用 `generate_review.py`，无需自建 HTML。
 
-5. **Tell the user** something like: "I've opened the results in your browser. There are two tabs — 'Outputs' lets you click through each test case and leave feedback, 'Benchmark' shows the quantitative comparison. When you're done, come back here and let me know."
+5. **提示用户**：告诉他们已打开评审页面，解释 “Outputs” 与 “Benchmark” 两个标签页，并让他们评审后回到对话。
 
-### What the user sees in the viewer
+### 评审界面内容
 
-The "Outputs" tab shows one test case at a time:
-- **Prompt**: the task that was given
-- **Output**: the files the skill produced, rendered inline where possible
-- **Previous Output** (iteration 2+): collapsed section showing last iteration's output
-- **Formal Grades** (if grading was run): collapsed section showing assertion pass/fail
-- **Feedback**: a textbox that auto-saves as they type
-- **Previous Feedback** (iteration 2+): their comments from last time, shown below the textbox
+“Outputs” 页：
+- **Prompt**：测试任务
+- **Output**：输出文件（可视化渲染）
+- **Previous Output**（iteration 2+）
+- **Formal Grades**（断言评分）
+- **Feedback**：用户评论
+- **Previous Feedback**（iteration 2+）
 
-The "Benchmark" tab shows the stats summary: pass rates, timing, and token usage for each configuration, with per-eval breakdowns and analyst observations.
+“Benchmark” 页显示：各配置的通过率、耗时与 token，对每个 eval 的拆分与分析结论。
 
-Navigation is via prev/next buttons or arrow keys. When done, they click "Submit All Reviews" which saves all feedback to `feedback.json`.
+### 步骤 5：读取反馈
 
-### Step 5: Read the feedback
-
-When the user tells you they're done, read `feedback.json`:
+用户完成后读取 `feedback.json`：
 
 ```json
 {
@@ -279,64 +288,55 @@ When the user tells you they're done, read `feedback.json`:
 }
 ```
 
-Empty feedback means the user thought it was fine. Focus your improvements on the test cases where the user had specific complaints.
+空反馈表示用户满意，重点改进有明确问题的用例。
 
-Kill the viewer server when you're done with it:
-
+结束后关闭评审服务：
 ```bash
 kill $VIEWER_PID 2>/dev/null
 ```
 
 ---
 
-## Improving the skill
+## 改进技能
 
-This is the heart of the loop. You've run the test cases, the user has reviewed the results, and now you need to make the skill better based on their feedback.
+这是迭代核心：用户评审后，你需要根据反馈改技能。
 
-### How to think about improvements
+### 改进思路
 
-1. **Generalize from the feedback.** The big picture thing that's happening here is that we're trying to create skills that can be used a million times (maybe literally, maybe even more who knows) across many different prompts. Here you and the user are iterating on only a few examples over and over again because it helps move faster. The user knows these examples in and out and it's quick for them to assess new outputs. But if the skill you and the user are codeveloping works only for those examples, it's useless. Rather than put in fiddly overfitty changes, or oppressively constrictive MUSTs, if there's some stubborn issue, you might try branching out and using different metaphors, or recommending different patterns of working. It's relatively cheap to try and maybe you'll land on something great.
+1. **抽象反馈，避免过拟合**：不要只对某个示例做死修正，思考更通用的改法。
+2. **保持精简**：删掉不必要的内容，避免指令冗余。
+3. **解释“为什么”**：与其写 MUST，不如让模型理解为什么重要。
+4. **识别重复劳动**：若多个测试都生成类似脚本，应收敛成 `scripts/` 并在技能里引用。
 
-2. **Keep the prompt lean.** Remove things that aren't pulling their weight. Make sure to read the transcripts, not just the final outputs — if it looks like the skill is making the model waste a bunch of time doing things that are unproductive, you can try getting rid of the parts of the skill that are making it do that and seeing what happens.
+### 迭代流程
 
-3. **Explain the why.** Try hard to explain the **why** behind everything you're asking the model to do. Today's LLMs are *smart*. They have good theory of mind and when given a good harness can go beyond rote instructions and really make things happen. Even if the feedback from the user is terse or frustrated, try to actually understand the task and why the user is writing what they wrote, and what they actually wrote, and then transmit this understanding into the instructions. If you find yourself writing ALWAYS or NEVER in all caps, or using super rigid structures, that's a yellow flag — if possible, reframe and explain the reasoning so that the model understands why the thing you're asking for is important. That's a more humane, powerful, and effective approach.
+改进后：
+1. 应用修改
+2. 重新运行全部测试（新 iteration 目录），并包含 baseline
+3. 使用 `--previous-workspace` 启动评审
+4. 等用户评审
+5. 读取反馈并继续改
 
-4. **Look for repeated work across test cases.** Read the transcripts from the test runs and notice if the subagents all independently wrote similar helper scripts or took the same multi-step approach to something. If all 3 test cases resulted in the subagent writing a `create_docx.py` or a `build_chart.py`, that's a strong signal the skill should bundle that script. Write it once, put it in `scripts/`, and tell the skill to use it. This saves every future invocation from reinventing the wheel.
-
-This task is pretty important (we are trying to create billions a year in economic value here!) and your thinking time is not the blocker; take your time and really mull things over. I'd suggest writing a draft revision and then looking at it anew and making improvements. Really do your best to get into the head of the user and understand what they want and need.
-
-### The iteration loop
-
-After improving the skill:
-
-1. Apply your improvements to the skill
-2. Rerun all test cases into a new `iteration-<N+1>/` directory, including baseline runs. If you're creating a new skill, the baseline is always `without_skill` (no skill) — that stays the same across iterations. If you're improving an existing skill, use your judgment on what makes sense as the baseline: the original version the user came in with, or the previous iteration.
-3. Launch the reviewer with `--previous-workspace` pointing at the previous iteration
-4. Wait for the user to review and tell you they're done
-5. Read the new feedback, improve again, repeat
-
-Keep going until:
-- The user says they're happy
-- The feedback is all empty (everything looks good)
-- You're not making meaningful progress
+停止条件：
+- 用户满意
+- 反馈为空
+- 迭代不再带来改进
 
 ---
 
-## Advanced: Blind comparison
+## 高阶：盲测比较
 
-For situations where you want a more rigorous comparison between two versions of a skill (e.g., the user asks "is the new version actually better?"), there's a blind comparison system. Read `agents/comparator.md` and `agents/analyzer.md` for the details. The basic idea is: give two outputs to an independent agent without telling it which is which, and let it judge quality. Then analyze why the winner won.
-
-This is optional, requires subagents, and most users won't need it. The human review loop is usually sufficient.
+当用户要求严谨比较（例如“新版本真的更好吗？”）时，可使用盲测。阅读 `agents/comparator.md` 与 `agents/analyzer.md`。这一步可选，多数用户不需要。
 
 ---
 
-## Description Optimization
+## 描述优化（Description Optimization）
 
-The description field in SKILL.md frontmatter is the primary mechanism that determines whether Claude invokes a skill. After creating or improving a skill, offer to optimize the description for better triggering accuracy.
+技能 frontmatter 中的 `description` 是触发机制。完成技能后，可优化描述提升触发率。
 
-### Step 1: Generate trigger eval queries
+### 步骤 1：生成触发评测集
 
-Create 20 eval queries — a mix of should-trigger and should-not-trigger. Save as JSON:
+生成 20 条查询（混合触发/不触发）并保存为 JSON：
 
 ```json
 [
@@ -345,38 +345,29 @@ Create 20 eval queries — a mix of should-trigger and should-not-trigger. Save 
 ]
 ```
 
-The queries must be realistic and something a Claude Code or Claude.ai user would actually type. Not abstract requests, but requests that are concrete and specific and have a good amount of detail. For instance, file paths, personal context about the user's job or situation, column names and values, company names, URLs. A little bit of backstory. Some might be in lowercase or contain abbreviations or typos or casual speech. Use a mix of different lengths, and focus on edge cases rather than making them clear-cut (the user will get a chance to sign off on them).
+要求：
+- 真实用户语气，包含细节（文件名、字段、URL、背景等）
+- should-trigger 8-10 条，涵盖多种表述与边缘情况
+- should-not-trigger 8-10 条，必须是“近似但不该触发”的难例
+- 不要用明显无关的负例
 
-Bad: `"Format this data"`, `"Extract text from PDF"`, `"Create a chart"`
+### 步骤 2：用户审阅
 
-Good: `"ok so my boss just sent me this xlsx file (its in my downloads, called something like 'Q4 sales final FINAL v2.xlsx') and she wants me to add a column that shows the profit margin as a percentage. The revenue is in column C and costs are in column D i think"`
+用 HTML 模板让用户审阅并导出：
+1. 读取 `assets/eval_review.html`
+2. 替换占位符：
+   - `__EVAL_DATA_PLACEHOLDER__` → JSON 数组
+   - `__SKILL_NAME_PLACEHOLDER__` → 技能名
+   - `__SKILL_DESCRIPTION_PLACEHOLDER__` → 当前描述
+3. 写到临时文件并打开：`open /tmp/eval_review_<skill-name>.html`
+4. 用户调整后点击 “Export Eval Set”
+5. 导出文件在 `~/Downloads/eval_set.json`（注意可能有重复文件）
 
-For the **should-trigger** queries (8-10), think about coverage. You want different phrasings of the same intent — some formal, some casual. Include cases where the user doesn't explicitly name the skill or file type but clearly needs it. Throw in some uncommon use cases and cases where this skill competes with another but should win.
+### 步骤 3：运行优化循环
 
-For the **should-not-trigger** queries (8-10), the most valuable ones are the near-misses — queries that share keywords or concepts with the skill but actually need something different. Think adjacent domains, ambiguous phrasing where a naive keyword match would trigger but shouldn't, and cases where the query touches on something the skill does but in a context where another tool is more appropriate.
+告诉用户：“这需要一些时间，我会后台运行并定期汇报。”
 
-The key thing to avoid: don't make should-not-trigger queries obviously irrelevant. "Write a fibonacci function" as a negative test for a PDF skill is too easy — it doesn't test anything. The negative cases should be genuinely tricky.
-
-### Step 2: Review with user
-
-Present the eval set to the user for review using the HTML template:
-
-1. Read the template from `assets/eval_review.html`
-2. Replace the placeholders:
-   - `__EVAL_DATA_PLACEHOLDER__` → the JSON array of eval items (no quotes around it — it's a JS variable assignment)
-   - `__SKILL_NAME_PLACEHOLDER__` → the skill's name
-   - `__SKILL_DESCRIPTION_PLACEHOLDER__` → the skill's current description
-3. Write to a temp file (e.g., `/tmp/eval_review_<skill-name>.html`) and open it: `open /tmp/eval_review_<skill-name>.html`
-4. The user can edit queries, toggle should-trigger, add/remove entries, then click "Export Eval Set"
-5. The file downloads to `~/Downloads/eval_set.json` — check the Downloads folder for the most recent version in case there are multiple (e.g., `eval_set (1).json`)
-
-This step matters — bad eval queries lead to bad descriptions.
-
-### Step 3: Run the optimization loop
-
-Tell the user: "This will take some time — I'll run the optimization loop in the background and check on it periodically."
-
-Save the eval set to the workspace, then run in the background:
+运行：
 
 ```bash
 python -m scripts.run_loop \
@@ -387,93 +378,79 @@ python -m scripts.run_loop \
   --verbose
 ```
 
-Use the model ID from your system prompt (the one powering the current session) so the triggering test matches what the user actually experiences.
+使用当前会话的模型 ID，确保触发评测一致。
 
-While it runs, periodically tail the output to give the user updates on which iteration it's on and what the scores look like.
+脚本会：
+- 60% 训练 / 40% 测试
+- 每条查询跑 3 次
+- 迭代优化描述
+- 最终输出 `best_description`（以测试集为准）
 
-This handles the full optimization loop automatically. It splits the eval set into 60% train and 40% held-out test, evaluates the current description (running each query 3 times to get a reliable trigger rate), then calls Claude with extended thinking to propose improvements based on what failed. It re-evaluates each new description on both train and test, iterating up to 5 times. When it's done, it opens an HTML report in the browser showing the results per iteration and returns JSON with `best_description` — selected by test score rather than train score to avoid overfitting.
+### 步骤 4：应用结果
 
-### How skill triggering works
-
-Understanding the triggering mechanism helps design better eval queries. Skills appear in Claude's `available_skills` list with their name + description, and Claude decides whether to consult a skill based on that description. The important thing to know is that Claude only consults skills for tasks it can't easily handle on its own — simple, one-step queries like "read this PDF" may not trigger a skill even if the description matches perfectly, because Claude can handle them directly with basic tools. Complex, multi-step, or specialized queries reliably trigger skills when the description matches.
-
-This means your eval queries should be substantive enough that Claude would actually benefit from consulting a skill. Simple queries like "read file X" are poor test cases — they won't trigger skills regardless of description quality.
-
-### Step 4: Apply the result
-
-Take `best_description` from the JSON output and update the skill's SKILL.md frontmatter. Show the user before/after and report the scores.
+用 `best_description` 更新 SKILL.md frontmatter，并向用户展示前后对比与评分。
 
 ---
 
-### Package and Present (only if `present_files` tool is available)
+## 技能触发机制说明
 
-Check whether you have access to the `present_files` tool. If you don't, skip this step. If you do, package the skill and present the .skill file to the user:
+Claude 只会在需要技能时才触发。过于简单的请求（如“读这个 PDF”）即使描述匹配，也可能不触发，因为它可直接完成。因此测试查询必须足够具体且复杂。
+
+---
+
+## 打包与交付（仅当 present_files 可用）
+
+如果具备 `present_files` 工具，可打包并交付 `.skill` 文件：
 
 ```bash
 python -m scripts.package_skill <path/to/skill-folder>
 ```
 
-After packaging, direct the user to the resulting `.skill` file path so they can install it.
+打包后告知用户 `.skill` 文件路径。
 
 ---
 
-## Claude.ai-specific instructions
+## Claude.ai 专用说明
 
-In Claude.ai, the core workflow is the same (draft → test → review → improve → repeat), but because Claude.ai doesn't have subagents, some mechanics change. Here's what to adapt:
+Claude.ai 无子代理，流程需调整：
 
-**Running test cases**: No subagents means no parallel execution. For each test case, read the skill's SKILL.md, then follow its instructions to accomplish the test prompt yourself. Do them one at a time. This is less rigorous than independent subagents (you wrote the skill and you're also running it, so you have full context), but it's a useful sanity check — and the human review step compensates. Skip the baseline runs — just use the skill to complete the task as requested.
-
-**Reviewing results**: If you can't open a browser (e.g., Claude.ai's VM has no display, or you're on a remote server), skip the browser reviewer entirely. Instead, present results directly in the conversation. For each test case, show the prompt and the output. If the output is a file the user needs to see (like a .docx or .xlsx), save it to the filesystem and tell them where it is so they can download and inspect it. Ask for feedback inline: "How does this look? Anything you'd change?"
-
-**Benchmarking**: Skip the quantitative benchmarking — it relies on baseline comparisons which aren't meaningful without subagents. Focus on qualitative feedback from the user.
-
-**The iteration loop**: Same as before — improve the skill, rerun the test cases, ask for feedback — just without the browser reviewer in the middle. You can still organize results into iteration directories on the filesystem if you have one.
-
-**Description optimization**: This section requires the `claude` CLI tool (specifically `claude -p`) which is only available in Claude Code. Skip it if you're on Claude.ai.
-
-**Blind comparison**: Requires subagents. Skip it.
-
-**Packaging**: The `package_skill.py` script works anywhere with Python and a filesystem. On Claude.ai, you can run it and the user can download the resulting `.skill` file.
+- **测试用例**：逐条执行，使用技能完成任务。跳过 baseline。
+- **评审**：无法打开浏览器时，直接在对话中展示结果并询问反馈。
+- **量化评测**：无 baseline，跳过。
+- **迭代**：继续改进 → 重跑 → 收反馈。
+- **描述优化**：依赖 `claude -p` CLI，仅 Claude Code 可用。
+- **盲测**：需要子代理，跳过。
+- **打包**：可用 `package_skill.py`。
 
 ---
 
-## Cowork-Specific Instructions
+## Cowork 专用说明
 
-If you're in Cowork, the main things to know are:
-
-- You have subagents, so the main workflow (spawn test cases in parallel, run baselines, grade, etc.) all works. (However, if you run into severe problems with timeouts, it's OK to run the test prompts in series rather than parallel.)
-- You don't have a browser or display, so when generating the eval viewer, use `--static <output_path>` to write a standalone HTML file instead of starting a server. Then proffer a link that the user can click to open the HTML in their browser.
-- For whatever reason, the Cowork setup seems to disincline Claude from generating the eval viewer after running the tests, so just to reiterate: whether you're in Cowork or in Claude Code, after running tests, you should always generate the eval viewer for the human to look at examples before revising the skill yourself and trying to make corrections, using `generate_review.py` (not writing your own boutique html code). Sorry in advance but I'm gonna go all caps here: GENERATE THE EVAL VIEWER *BEFORE* evaluating inputs yourself. You want to get them in front of the human ASAP!
-- Feedback works differently: since there's no running server, the viewer's "Submit All Reviews" button will download `feedback.json` as a file. You can then read it from there (you may have to request access first).
-- Packaging works — `package_skill.py` just needs Python and a filesystem.
-- Description optimization (`run_loop.py` / `run_eval.py`) should work in Cowork just fine since it uses `claude -p` via subprocess, not a browser, but please save it until you've fully finished making the skill and the user agrees it's in good shape.
+- 有子代理，可并行跑测试（若超时可退化为串行）。
+- 无浏览器，`generate_review.py` 用 `--static` 输出 HTML。
+- 评审后 `feedback.json` 会下载，需放回 workspace。
+- `run_loop.py` 可用，但应在技能稳定后再跑。
 
 ---
 
-## Reference files
+## 参考文件
 
-The agents/ directory contains instructions for specialized subagents. Read them when you need to spawn the relevant subagent.
-
-- `agents/grader.md` — How to evaluate assertions against outputs
-- `agents/comparator.md` — How to do blind A/B comparison between two outputs
-- `agents/analyzer.md` — How to analyze why one version beat another
-
-The references/ directory has additional documentation:
-- `references/schemas.md` — JSON structures for evals.json, grading.json, etc.
+- `agents/grader.md` — 断言评分说明
+- `agents/comparator.md` — 盲测对比
+- `agents/analyzer.md` — 结果分析
+- `references/schemas.md` — evals / grading / benchmark schema
 
 ---
 
-Repeating one more time the core loop here for emphasis:
+再次强调核心流程：
 
-- Figure out what the skill is about
-- Draft or edit the skill
-- Run claude-with-access-to-the-skill on test prompts
-- With the user, evaluate the outputs:
-  - Create benchmark.json and run `eval-viewer/generate_review.py` to help the user review them
-  - Run quantitative evals
-- Repeat until you and the user are satisfied
-- Package the final skill and return it to the user.
+- 明确技能目标
+- 写草案
+- 跑测试
+- 生成评审界面 + 定量评测
+- 迭代改进
+- 打包交付
 
-Please add steps to your TodoList, if you have such a thing, to make sure you don't forget. If you're in Cowork, please specifically put "Create evals JSON and run `eval-viewer/generate_review.py` so human can review test cases" in your TodoList to make sure it happens.
+如果你有 TodoList，请把关键步骤写进去（尤其是“创建 evals JSON 与生成评审界面”）。
 
 Good luck!

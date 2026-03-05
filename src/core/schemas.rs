@@ -52,6 +52,8 @@ pub struct AttachmentPayload {
     pub content: Option<String>,
     #[serde(default)]
     pub content_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "publicPath")]
+    pub public_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

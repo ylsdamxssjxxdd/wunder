@@ -204,6 +204,7 @@ export default {
   'userWorld.helperApps.onlineTitle': '在线辅助应用',
   'userWorld.helperApps.onlineDesc': '外链与在线服务入口',
   'userWorld.helperApps.onlineEmpty': '暂无在线辅助应用',
+  'userWorld.helperApps.selectHint': '从中栏选择一个辅助应用开始使用',
   'userWorld.helperApps.localFileSearch.cardTitle': '容器内容搜索',
   'userWorld.helperApps.localFileSearch.cardDesc': '按关键词检索用户私有容器与沙盒容器内容',
   'userWorld.helperApps.localFileSearch.dialogTitle': '容器内容搜索',

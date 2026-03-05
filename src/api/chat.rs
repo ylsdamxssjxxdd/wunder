@@ -157,6 +157,8 @@ pub(crate) struct ChatAttachment {
     content: Option<String>,
     #[serde(default)]
     mime_type: Option<String>,
+    #[serde(default, alias = "publicPath")]
+    public_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -673,11 +675,17 @@ pub(crate) async fn build_chat_request(
                 .as_ref()
                 .map(|value| !value.trim().is_empty())
                 .unwrap_or(false)
+                || item
+                    .public_path
+                    .as_ref()
+                    .map(|value| !value.trim().is_empty())
+                    .unwrap_or(false)
         })
         .map(|item| AttachmentPayload {
             name: item.name,
             content: item.content,
             content_type: item.mime_type,
+            public_path: item.public_path,
         })
         .collect::<Vec<_>>();
     let attachments = if attachments.is_empty() {
@@ -1301,6 +1309,18 @@ fn map_history_message(item: Value) -> Option<Value> {
     if role == "assistant" && !reasoning.is_empty() {
         if let Value::Object(ref mut map) = message {
             map.insert("reasoning".to_string(), json!(reasoning));
+        }
+    }
+    if let Some(attachments) = item.get("attachments") {
+        let should_include = match attachments {
+            Value::Array(items) => !items.is_empty(),
+            Value::Null => false,
+            _ => true,
+        };
+        if should_include {
+            if let Value::Object(ref mut map) = message {
+                map.insert("attachments".to_string(), attachments.clone());
+            }
         }
     }
     Some(message)

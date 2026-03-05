@@ -110,6 +110,7 @@ impl Orchestrator {
         session_id: &str,
         role: &str,
         content: Option<&Value>,
+        attachments: Option<&[AttachmentPayload]>,
         meta: Option<&Value>,
         reasoning: Option<&str>,
         tool_calls: Option<&Value>,
@@ -150,6 +151,11 @@ impl Orchestrator {
             let cleaned = tool_call_id.trim();
             if !cleaned.is_empty() {
                 payload["tool_call_id"] = Value::String(cleaned.to_string());
+            }
+        }
+        if let Some(attachments) = attachments {
+            if let Some(value) = build_history_attachments(attachments) {
+                payload["attachments"] = value;
             }
         }
         if let Err(err) = self.workspace.append_chat(user_id, &payload) {
@@ -715,6 +721,69 @@ impl Orchestrator {
         } else {
             Some(Duration::from_secs_f64(timeout_s.max(MIN_TOOL_TIMEOUT_S)))
         }
+    }
+}
+
+fn build_history_attachments(attachments: &[AttachmentPayload]) -> Option<Value> {
+    if attachments.is_empty() {
+        return None;
+    }
+    let mut items = Vec::new();
+    for attachment in attachments {
+        let name = attachment
+            .name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let content_type = attachment
+            .content_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let public_path = attachment
+            .public_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        let content_value = if let Some(public_path) = public_path {
+            Some(public_path.to_string())
+        } else {
+            attachment
+                .content
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .filter(|value| !value.starts_with("data:"))
+                .map(ToString::to_string)
+        };
+        if name.is_none() && content_type.is_none() && public_path.is_none() && content_value.is_none() {
+            continue;
+        }
+        let mut entry = Map::new();
+        if let Some(name) = name {
+            entry.insert("name".to_string(), Value::String(name.to_string()));
+        }
+        if let Some(content_type) = content_type {
+            entry.insert(
+                "content_type".to_string(),
+                Value::String(content_type.to_string()),
+            );
+        }
+        if let Some(public_path) = public_path {
+            entry.insert(
+                "public_path".to_string(),
+                Value::String(public_path.to_string()),
+            );
+        }
+        if let Some(content_value) = content_value {
+            entry.insert("content".to_string(), Value::String(content_value));
+        }
+        items.push(Value::Object(entry));
+    }
+    if items.is_empty() {
+        None
+    } else {
+        Some(Value::Array(items))
     }
 }
 

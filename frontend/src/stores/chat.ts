@@ -38,6 +38,7 @@ type SnapshotAssistantMessage = {
   stats?: unknown;
   planVisible?: boolean;
   isGreeting?: boolean;
+  attachments?: unknown[];
 };
 
 type DemoChatCachePatch = {
@@ -650,6 +651,32 @@ const normalizeApprovalMode = (value) => {
   return '';
 };
 
+const normalizeSnapshotAttachments = (attachments) => {
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const record = item;
+      const name = String(record?.name || '').trim();
+      const contentType = String(
+        record?.content_type ?? record?.mime_type ?? record?.mimeType ?? ''
+      )
+        .trim()
+        .toLowerCase();
+      const publicPath = String(record?.public_path ?? record?.publicPath ?? '').trim();
+      const rawContent = String(record?.content || '').trim();
+      const content = publicPath || (!rawContent.startsWith('data:') ? rawContent : '');
+      if (!name && !contentType && !publicPath && !content) return null;
+      const normalized: Record<string, unknown> = {};
+      if (name) normalized.name = name;
+      if (contentType) normalized.content_type = contentType;
+      if (publicPath) normalized.public_path = publicPath;
+      if (content) normalized.content = content;
+      return normalized;
+    })
+    .filter(Boolean);
+};
+
 const normalizeSnapshotMessage = (message) => {
   if (!message || typeof message !== 'object') return null;
   const normalizedAssistant =
@@ -698,6 +725,10 @@ const normalizeSnapshotMessage = (message) => {
   }
   if (message.isGreeting) {
     base.isGreeting = true;
+  }
+  const attachments = normalizeSnapshotAttachments(message.attachments);
+  if (attachments.length) {
+    base.attachments = attachments;
   }
   return base;
 };

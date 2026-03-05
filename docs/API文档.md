@@ -97,7 +97,7 @@
   - `agent_id`：字符串，可选，智能体应用 id（用于附加提示词与沙盒容器工作区路由）
   - `model_name`：字符串，可选，模型配置名称（不传则使用默认模型）
 - `config_overrides`：对象，可选，用于临时覆盖配置
-- `attachments`：数组，可选，附件列表（文件为 Markdown 文本，图片为 data URL）
+- `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
 - 约束：注册用户每日有请求额度，按每次模型调用消耗，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
 - 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`），SSE/WS 返回 `queued` 事件。
 - 忙时返回：当 `agent_queue.enabled=false` 且显式指定 `session_id` 正在运行/取消中时，会返回 429（`detail.code=USER_BUSY`）。
@@ -1910,6 +1910,7 @@
 - `GET /wunder/chat/sessions/{session_id}`：会话详情
   - Query：`limit`（消息条数，可选）
   - 返回：`data`（会话信息含 parent_session_id/parent_message_id/spawn_label/spawned_by + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
+  - `messages[].attachments`：可选，附件数组，包含 `name/content/content_type/public_path`（若文件已删除前端可忽略渲染）
 - `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
   - 返回：`data.id`、`data.rounds`（user_round/events；事件内包含 `user_round`/`model_round`）、`data.running`、`data.last_event_id`
 - `DELETE /wunder/chat/sessions/{session_id}`：删除会话
@@ -1917,6 +1918,7 @@
   - 返回：`data.id`
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
   - 入参（JSON）：`content`、`stream`（默认 true）、`attachments`（可选）、`tool_call_mode`（可选）、`approval_mode`（可选）
+  - `attachments` 项：`{ name?, content?, mime_type?, public_path? }`（图片/音频可用 data URL；服务端落盘后返回 `public_path`）
   - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
   - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
   - 注册用户每日请求额度超额时返回 429（`detail.code=USER_QUOTA_EXCEEDED`）

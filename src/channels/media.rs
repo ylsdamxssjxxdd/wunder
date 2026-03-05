@@ -52,6 +52,7 @@ impl MediaProcessor {
                             name: attachment.name.clone(),
                             content: Some(attachment.url.clone()),
                             content_type: attachment.mime.clone(),
+                            public_path: None,
                         });
                     } else if let Some(text) = self.ocr_image(attachment).await.ok().flatten() {
                         extra_lines.push(format!("Image {}: {}", display_name(attachment), text));

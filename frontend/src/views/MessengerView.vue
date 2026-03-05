@@ -153,42 +153,69 @@
         :class="{ 'messenger-middle-list--users': sessionHub.activeSection === 'users' && !userWorldPermissionDenied }"
       >
         <template v-if="showHelperAppsWorkspace">
-          <button
-            class="messenger-list-item"
-            :class="{ active: helperAppsPanelMode === 'offline' }"
-            type="button"
-            @click="openHelperAppsPanel('offline')"
-          >
-            <div class="messenger-list-avatar">
-              <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
+          <div class="messenger-helper-list">
+            <div class="messenger-helper-section">
+              <div class="messenger-helper-section-title">{{ t('userWorld.helperApps.offlineTitle') }}</div>
+              <button
+                v-for="item in helperAppsOfflineItems"
+                :key="item.key"
+                class="messenger-list-item messenger-helper-list-item"
+                :class="{ active: isHelperAppActive('offline', item.key) }"
+                type="button"
+                @click="selectHelperApp('offline', item.key)"
+              >
+                <div class="messenger-list-avatar">
+                  <i class="fa-solid" :class="item.icon" aria-hidden="true"></i>
+                </div>
+                <div class="messenger-list-main">
+                  <div class="messenger-list-row">
+                    <span class="messenger-list-name">{{ item.title }}</span>
+                  </div>
+                  <div class="messenger-list-row">
+                    <span class="messenger-list-preview">{{ item.description }}</span>
+                  </div>
+                </div>
+              </button>
             </div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('userWorld.helperApps.offlineTitle') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('userWorld.helperApps.offlineDesc') }}</span>
-              </div>
+
+            <div class="messenger-helper-section">
+              <div class="messenger-helper-section-title">{{ t('userWorld.helperApps.onlineTitle') }}</div>
+              <div v-if="helperAppsOnlineLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
+              <template v-else>
+                <button
+                  v-for="item in helperAppsOnlineItems"
+                  :key="item.linkId"
+                  class="messenger-list-item messenger-helper-list-item"
+                  :class="{ active: isHelperAppActive('online', item.linkId) }"
+                  type="button"
+                  @click="selectHelperApp('online', item.linkId)"
+                >
+                  <div class="messenger-list-avatar">
+                    <i
+                      class="fa-solid"
+                      :class="resolveExternalIcon(item.icon)"
+                      :style="resolveExternalIconStyle(item.icon)"
+                      aria-hidden="true"
+                    ></i>
+                  </div>
+                  <div class="messenger-list-main">
+                    <div class="messenger-list-row">
+                      <span class="messenger-list-name">{{ item.title }}</span>
+                      <span class="messenger-list-time">{{ resolveExternalHost(item.url) }}</span>
+                    </div>
+                    <div class="messenger-list-row">
+                      <span class="messenger-list-preview">
+                        {{ item.description || resolveExternalHost(item.url) }}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+                <div v-if="!helperAppsOnlineItems.length" class="messenger-list-empty">
+                  {{ t('userWorld.helperApps.onlineEmpty') }}
+                </div>
+              </template>
             </div>
-          </button>
-          <button
-            class="messenger-list-item"
-            :class="{ active: helperAppsPanelMode === 'online' }"
-            type="button"
-            @click="openHelperAppsPanel('online')"
-          >
-            <div class="messenger-list-avatar">
-              <i class="fa-solid fa-globe" aria-hidden="true"></i>
-            </div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('userWorld.helperApps.onlineTitle') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('userWorld.helperApps.onlineDesc') }}</span>
-              </div>
-            </div>
-          </button>
+          </div>
         </template>
 
         <template v-else-if="sessionHub.activeSection === 'messages'">
@@ -811,46 +838,39 @@
       >
         <template v-if="showHelperAppsWorkspace">
           <div class="messenger-helper-workspace">
-            <MessengerHelperAppsPlaza
-              v-if="helperAppsPanelMode === 'offline'"
-              ref="helperAppsPlazaRef"
-            />
-            <template v-else>
-              <div class="messenger-block-title">{{ t('userWorld.helperApps.onlineTitle') }}</div>
-              <div v-if="helperAppsOnlineLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
-              <template v-else>
-                <button
-                  v-for="item in helperAppsOnlineItems"
-                  :key="item.linkId"
-                  class="messenger-list-item"
-                  type="button"
-                  @click="openExternalHelperApp(item)"
-                >
-                  <div class="messenger-list-avatar">
-                    <i
-                      class="fa-solid"
-                      :class="resolveExternalIcon(item.icon)"
-                      :style="resolveExternalIconStyle(item.icon)"
-                      aria-hidden="true"
-                    ></i>
-                  </div>
-                  <div class="messenger-list-main">
-                    <div class="messenger-list-row">
-                      <span class="messenger-list-name">{{ item.title }}</span>
-                      <span class="messenger-list-time">{{ resolveExternalHost(item.url) }}</span>
-                    </div>
-                    <div class="messenger-list-row">
-                      <span class="messenger-list-preview">
-                        {{ item.description || resolveExternalHost(item.url) }}
-                      </span>
-                    </div>
-                  </div>
-                </button>
-                <div v-if="!helperAppsOnlineItems.length" class="messenger-list-empty">
-                  {{ t('userWorld.helperApps.onlineEmpty') }}
-                </div>
-              </template>
-            </template>
+            <div class="messenger-helper-body">
+              <MessengerLocalFileSearchPanel
+                v-if="helperAppsActiveKind === 'offline' && helperAppsActiveKey === 'local-file-search'"
+              />
+              <GlobeAppPanel
+                v-else-if="helperAppsActiveKind === 'offline' && helperAppsActiveKey === 'globe'"
+              />
+              <div
+                v-else-if="helperAppsActiveKind === 'online' && helperAppsActiveExternalItem"
+                class="messenger-helper-external-panel"
+              >
+                <iframe
+                  :src="helperAppsActiveExternalItem.url"
+                  class="messenger-helper-external-frame"
+                  referrerpolicy="no-referrer"
+                ></iframe>
+              </div>
+              <div
+                v-else-if="helperAppsActiveKind === 'online' && helperAppsOnlineLoading"
+                class="messenger-helper-empty"
+              >
+                {{ t('common.loading') }}
+              </div>
+              <div
+                v-else-if="helperAppsActiveKind === 'online' && !helperAppsOnlineItems.length"
+                class="messenger-helper-empty"
+              >
+                {{ t('userWorld.helperApps.onlineEmpty') }}
+              </div>
+              <div v-else class="messenger-helper-empty">
+                {{ t('userWorld.helperApps.selectHint') }}
+              </div>
+            </div>
           </div>
         </template>
 
@@ -1444,7 +1464,7 @@
                       type="button"
                       :title="imageItem.name"
                       :aria-label="imageItem.name"
-                      @click="openImagePreview(imageItem.src, imageItem.name)"
+                      @click="openImagePreview(imageItem.src, imageItem.name, imageItem.workspacePath)"
                     >
                       <img :src="imageItem.src" :alt="imageItem.name" class="message-user-image" />
                     </button>
@@ -1886,7 +1906,7 @@ import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSett
 import MessengerFileContainerMenu from '@/components/messenger/MessengerFileContainerMenu.vue';
 import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
 import MessengerGroupCreateDialog from '@/components/messenger/MessengerGroupCreateDialog.vue';
-import MessengerHelperAppsPlaza from '@/components/messenger/MessengerHelperAppsPlaza.vue';
+import MessengerLocalFileSearchPanel from '@/components/messenger/MessengerLocalFileSearchPanel.vue';
 import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePreviewDialog.vue';
 import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
@@ -1896,6 +1916,7 @@ import UserPromptSettingsPanel from '@/components/messenger/UserPromptSettingsPa
 import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
+import GlobeAppPanel from '@/components/globe/GlobeAppPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
@@ -2104,10 +2125,13 @@ const worldComposerHeight = ref(188);
 const worldQuickPanelMode = ref<'' | 'emoji'>('');
 const worldHistoryDialogVisible = ref(false);
 const helperAppsWorkspaceMode = ref(false);
-const helperAppsPanelMode = ref<'offline' | 'online'>('offline');
-type HelperAppsPlazaExpose = {
-  openLocalFileSearch: () => void;
-  openGlobeApp: () => void;
+const helperAppsActiveKind = ref<'offline' | 'online' | ''>('');
+const helperAppsActiveKey = ref('');
+type HelperAppOfflineItem = {
+  key: string;
+  title: string;
+  description: string;
+  icon: string;
 };
 type HelperAppExternalItem = {
   linkId: string;
@@ -2117,7 +2141,6 @@ type HelperAppExternalItem = {
   icon: string;
   sortOrder: number;
 };
-const helperAppsPlazaRef = ref<HelperAppsPlazaExpose | null>(null);
 const helperAppsOnlineLoading = ref(false);
 const helperAppsOnlineLoaded = ref(false);
 const helperAppsOnlineItems = ref<HelperAppExternalItem[]>([]);
@@ -2298,9 +2321,16 @@ type WorkspaceResourceCacheEntry = {
   filename?: string;
   promise?: Promise<WorkspaceResourceCachePayload>;
 };
+type AttachmentResourceState = {
+  objectUrl?: string;
+  filename?: string;
+  error?: boolean;
+  loading?: boolean;
+};
 const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const KEYWORD_INPUT_DEBOUNCE_MS = 120;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
+const userAttachmentResourceCache = ref(new Map<string, AttachmentResourceState>());
 let workspaceResourceHydrationFrame: number | null = null;
 let workspaceResourceHydrationPending = false;
 let pendingAssistantCenter = false;
@@ -3585,7 +3615,7 @@ const chatPanelTitle = computed(() => {
     return String(target?.name || settingsAgentId.value || t('messenger.section.agents'));
   }
   if (showHelperAppsWorkspace.value) {
-    return t('userWorld.helperApps.title');
+    return helperAppsActiveTitle.value || '';
   }
   if (sessionHub.activeSection === 'users') {
     return String(selectedContact.value?.username || selectedContact.value?.user_id || t('messenger.section.users'));
@@ -3617,7 +3647,7 @@ const chatPanelSubtitle = computed(() => {
     return t('messenger.agent.subtitle');
   }
   if (showHelperAppsWorkspace.value) {
-    return t('userWorld.helperApps.subtitle');
+    return helperAppsActiveDescription.value || '';
   }
   if (sessionHub.activeSection === 'users') {
     return selectedContact.value
@@ -4623,18 +4653,69 @@ const formatAgentRuntimeState = (state: AgentRuntimeState): string => {
 
 const hasMessageContent = (value: unknown): boolean => Boolean(String(value || '').trim());
 
+const AUDIO_ATTACHMENT_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'opus', 'aac', 'flac', 'm4a', 'webm']);
+
+const resolveAttachmentContentType = (item: Record<string, unknown>): string => {
+  const raw =
+    String(item?.content_type ?? item?.mime_type ?? item?.mimeType ?? '')
+      .trim()
+      .toLowerCase();
+  return raw;
+};
+
+const resolveAttachmentPublicPath = (item: Record<string, unknown>): string => {
+  const rawPublic = String(item?.public_path ?? item?.publicPath ?? '').trim();
+  if (rawPublic) {
+    return parseWorkspaceResourceUrl(rawPublic)?.publicPath || '';
+  }
+  const rawContent = String(item?.content ?? '').trim();
+  if (!rawContent || rawContent.startsWith('data:')) return '';
+  return parseWorkspaceResourceUrl(rawContent)?.publicPath || '';
+};
+
+const isAudioPath = (path: string): boolean => {
+  const value = String(path || '').trim();
+  if (!value) return false;
+  const suffix = value.split('?')[0].split('#')[0].split('.').pop();
+  if (!suffix) return false;
+  return AUDIO_ATTACHMENT_EXTENSIONS.has(suffix.toLowerCase());
+};
+
+const getUserAttachmentResourceState = (publicPath: string): AttachmentResourceState | null =>
+  userAttachmentResourceCache.value.get(publicPath) || null;
+
 const resolveUserImageAttachments = (message: Record<string, unknown>) => {
   const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
   return attachments
     .map((item, index) => {
-      const src = String((item as Record<string, unknown>)?.content || '').trim();
-      if (!src.startsWith('data:image/')) return null;
+      const record = (item || {}) as Record<string, unknown>;
+      const content = String(record?.content || '').trim();
+      const contentType = resolveAttachmentContentType(record);
+      const publicPath = resolveAttachmentPublicPath(record);
+      const isDataImage = content.startsWith('data:image/');
+      const isWorkspaceImage =
+        Boolean(publicPath) && (contentType.startsWith('image/') || isImagePath(publicPath));
+      if (!isDataImage && !isWorkspaceImage) return null;
       const fallbackName = `image-${index + 1}`;
-      const name = String((item as Record<string, unknown>)?.name || fallbackName).trim() || fallbackName;
+      const name = String(record?.name || fallbackName).trim() || fallbackName;
+      let src = '';
+      if (isDataImage) {
+        src = content;
+      }
+      if (!src && publicPath) {
+        const cached = getUserAttachmentResourceState(publicPath);
+        if (cached?.objectUrl) {
+          src = cached.objectUrl;
+        } else if (cached?.error) {
+          return null;
+        }
+      }
+      if (!src) return null;
       return {
         key: `${name}-${index}`,
         src,
-        name
+        name,
+        workspacePath: publicPath || ''
       };
     })
     .filter(Boolean);
@@ -4644,18 +4725,63 @@ const resolveUserAudioAttachments = (message: Record<string, unknown>) => {
   const attachments = Array.isArray(message?.attachments) ? message.attachments : [];
   return attachments
     .map((item, index) => {
-      const src = String((item as Record<string, unknown>)?.content || '').trim();
-      if (!src.startsWith('data:audio/')) return null;
+      const record = (item || {}) as Record<string, unknown>;
+      const content = String(record?.content || '').trim();
+      const contentType = resolveAttachmentContentType(record);
+      const publicPath = resolveAttachmentPublicPath(record);
+      const isDataAudio = content.startsWith('data:audio/');
+      const isWorkspaceAudio =
+        Boolean(publicPath) && (contentType.startsWith('audio/') || isAudioPath(publicPath));
+      if (!isDataAudio && !isWorkspaceAudio) return null;
       const fallbackName = `audio-${index + 1}`;
-      const name = String((item as Record<string, unknown>)?.name || fallbackName).trim() || fallbackName;
+      const name = String(record?.name || fallbackName).trim() || fallbackName;
+      let src = '';
+      if (isDataAudio) {
+        src = content;
+      }
+      if (!src && publicPath) {
+        const cached = getUserAttachmentResourceState(publicPath);
+        if (cached?.objectUrl) {
+          src = cached.objectUrl;
+        } else if (cached?.error) {
+          return null;
+        }
+      }
+      if (!src) return null;
       return {
         key: `${name}-${index}`,
         src,
-        name
+        name,
+        workspacePath: publicPath || ''
       };
     })
     .filter(Boolean);
 };
+
+const userAttachmentWorkspacePaths = computed(() => {
+  const _ = currentUserId.value;
+  const paths = new Set<string>();
+  chatStore.messages.forEach((message) => {
+    if (String((message as Record<string, unknown>)?.role || '') !== 'user') return;
+    const attachments = Array.isArray((message as Record<string, unknown>)?.attachments)
+      ? (message as Record<string, unknown>).attachments
+      : [];
+    attachments.forEach((item) => {
+      const record = (item || {}) as Record<string, unknown>;
+      const publicPath = resolveAttachmentPublicPath(record);
+      if (!publicPath) return;
+      const content = String(record?.content || '').trim();
+      if (content.startsWith('data:')) return;
+      const contentType = resolveAttachmentContentType(record);
+      const isImage = contentType.startsWith('image/') || isImagePath(publicPath);
+      const isAudio = contentType.startsWith('audio/') || isAudioPath(publicPath);
+      if (isImage || isAudio) {
+        paths.add(publicPath);
+      }
+    });
+  });
+  return Array.from(paths);
+});
 
 const hasUserImageAttachments = (message: Record<string, unknown>): boolean =>
   resolveUserImageAttachments(message).length > 0;
@@ -5353,6 +5479,35 @@ const fetchWorkspaceResource = async (resource: WorkspaceResolvedResource) => {
   return promise;
 };
 
+const setUserAttachmentResourceState = (publicPath: string, state: AttachmentResourceState) => {
+  const next = new Map(userAttachmentResourceCache.value);
+  next.set(publicPath, state);
+  userAttachmentResourceCache.value = next;
+};
+
+const ensureUserAttachmentResource = async (publicPath: string) => {
+  const normalized = String(publicPath || '').trim();
+  if (!normalized) return;
+  const existing = userAttachmentResourceCache.value.get(normalized);
+  if (existing) return;
+  const resource = resolveWorkspaceResource(normalized);
+  if (!resource) return;
+  if (!resource.allowed) {
+    setUserAttachmentResourceState(normalized, { error: true });
+    return;
+  }
+  setUserAttachmentResourceState(normalized, { loading: true });
+  try {
+    const entry = await fetchWorkspaceResource(resource);
+    setUserAttachmentResourceState(normalized, {
+      objectUrl: entry.objectUrl,
+      filename: entry.filename
+    });
+  } catch (error) {
+    setUserAttachmentResourceState(normalized, { error: true });
+  }
+};
+
 const isWorkspaceResourceMissing = (error: unknown): boolean => {
   const status = Number((error as { response?: { status?: unknown } })?.response?.status || 0);
   if (status === 404 || status === 410) return true;
@@ -5440,6 +5595,7 @@ const clearWorkspaceResourceCache = () => {
     }
   });
   workspaceResourceCache.clear();
+  userAttachmentResourceCache.value = new Map();
 };
 
 const downloadWorkspaceResource = async (publicPath: string) => {
@@ -5931,14 +6087,17 @@ const deleteMixedConversation = async (item: MixedConversation) => {
 
 const switchSection = (
   section: MessengerSection,
-  options: { preserveHelperWorkspace?: boolean; panelHint?: string } = {}
+  options: { preserveHelperWorkspace?: boolean; panelHint?: string; helperWorkspace?: boolean } = {}
 ) => {
   const preserveHelperWorkspace = options.preserveHelperWorkspace === true;
   const panelHint = String(options.panelHint || '').trim().toLowerCase();
+  const helperWorkspace = options.helperWorkspace === true;
   closeFileContainerMenu();
   openMiddlePaneOverlay();
   if (!preserveHelperWorkspace) {
     helperAppsWorkspaceMode.value = false;
+  } else if (helperWorkspace) {
+    helperAppsWorkspaceMode.value = true;
   }
   sessionHub.setSection(section);
   sessionHub.setKeyword('');
@@ -5974,6 +6133,11 @@ const switchSection = (
     nextQuery.panel = panelHint;
   } else {
     delete nextQuery.panel;
+  }
+  if (section === 'groups' && helperWorkspace) {
+    nextQuery.helper = '1';
+  } else {
+    delete nextQuery.helper;
   }
   if (section !== 'messages') {
     delete nextQuery.session_id;
@@ -7307,13 +7471,6 @@ const appendWorldAttachmentTokens = (paths: string[]) => {
   worldDraft.value = `${worldDraft.value}${prefix}${tokens.join(' ')}`;
 };
 
-const openHelperAppsPanel = (mode: 'offline' | 'online') => {
-  helperAppsPanelMode.value = mode;
-  if (mode === 'online') {
-    loadHelperExternalApps();
-  }
-};
-
 const normalizeHexColor = (value: unknown) => {
   const cleaned = String(value || '').trim();
   if (!cleaned) return '';
@@ -7381,6 +7538,73 @@ const resolveExternalHost = (url: unknown) => {
   }
 };
 
+const helperAppsOfflineItems = computed<HelperAppOfflineItem[]>(() => [
+  {
+    key: 'local-file-search',
+    title: t('userWorld.helperApps.localFileSearch.cardTitle'),
+    description: t('userWorld.helperApps.localFileSearch.cardDesc'),
+    icon: 'fa-folder-tree'
+  },
+  {
+    key: 'globe',
+    title: t('userWorld.helperApps.globe.cardTitle'),
+    description: t('userWorld.helperApps.globe.cardDesc'),
+    icon: 'fa-earth-asia'
+  }
+]);
+
+const helperAppsActiveOfflineItem = computed(() => {
+  if (helperAppsActiveKind.value !== 'offline') return null;
+  return helperAppsOfflineItems.value.find((item) => item.key === helperAppsActiveKey.value) || null;
+});
+
+const helperAppsActiveExternalItem = computed(() => {
+  if (helperAppsActiveKind.value !== 'online') return null;
+  return helperAppsOnlineItems.value.find((item) => item.linkId === helperAppsActiveKey.value) || null;
+});
+
+const helperAppsActiveTitle = computed(() => {
+  if (helperAppsActiveKind.value === 'offline') {
+    return helperAppsActiveOfflineItem.value?.title || '';
+  }
+  if (helperAppsActiveKind.value === 'online') {
+    return helperAppsActiveExternalItem.value?.title || '';
+  }
+  return '';
+});
+
+const helperAppsActiveDescription = computed(() => {
+  if (helperAppsActiveKind.value === 'offline') {
+    return helperAppsActiveOfflineItem.value?.description || '';
+  }
+  if (helperAppsActiveKind.value === 'online') {
+    const item = helperAppsActiveExternalItem.value;
+    if (!item) return '';
+    return item.description || resolveExternalHost(item.url);
+  }
+  return '';
+});
+
+const isHelperAppActive = (kind: 'offline' | 'online', key: string) =>
+  helperAppsActiveKind.value === kind && helperAppsActiveKey.value === key;
+
+const selectHelperApp = (kind: 'offline' | 'online', key: string) => {
+  helperAppsActiveKind.value = kind;
+  helperAppsActiveKey.value = key;
+  if (kind === 'online') {
+    loadHelperExternalApps();
+  }
+};
+
+const ensureHelperAppsSelection = () => {
+  if (helperAppsActiveKind.value && helperAppsActiveKey.value) return;
+  const fallback = helperAppsOfflineItems.value[0];
+  if (fallback) {
+    helperAppsActiveKind.value = 'offline';
+    helperAppsActiveKey.value = fallback.key;
+  }
+};
+
 const loadHelperExternalApps = async () => {
   if (helperAppsOnlineLoading.value || helperAppsOnlineLoaded.value) return;
   helperAppsOnlineLoading.value = true;
@@ -7391,6 +7615,14 @@ const loadHelperExternalApps = async () => {
       .map((item) => normalizeExternalLink(item as Record<string, unknown>))
       .filter((item) => item.linkId && item.title && item.url)
       .sort((left, right) => left.sortOrder - right.sortOrder);
+    if (helperAppsActiveKind.value === 'online') {
+      const activeKey = helperAppsActiveKey.value;
+      const hasActive =
+        Boolean(activeKey) && helperAppsOnlineItems.value.some((item) => item.linkId === activeKey);
+      if (!hasActive) {
+        helperAppsActiveKey.value = helperAppsOnlineItems.value[0]?.linkId || '';
+      }
+    }
   } catch {
     helperAppsOnlineItems.value = [];
   } finally {
@@ -7399,19 +7631,13 @@ const loadHelperExternalApps = async () => {
   }
 };
 
-const openExternalHelperApp = (item: HelperAppExternalItem) => {
-  if (!item.linkId) return;
-  const targetPath = `${basePrefix.value}/external/${encodeURIComponent(item.linkId)}`;
-  router.push({ path: targetPath }).catch(() => undefined);
-};
-
 const openHelperAppsDialog = () => {
   clearMiddlePaneOverlayHide();
   middlePaneOverlayVisible.value = true;
   helperAppsWorkspaceMode.value = true;
-  helperAppsPanelMode.value = 'offline';
+  ensureHelperAppsSelection();
   loadHelperExternalApps();
-  switchSection('groups', { preserveHelperWorkspace: true });
+  switchSection('groups', { preserveHelperWorkspace: true, helperWorkspace: true });
   selectedGroupId.value = '';
 };
 
@@ -8723,6 +8949,14 @@ watch(
       settingsPanelMode.value = 'general';
     }
     const sectionHint = String(route.query.section || '').trim().toLowerCase();
+    const helperHint = String(route.query.helper || '').trim().toLowerCase();
+    const helperWorkspaceEnabled =
+      sectionHint === 'groups' && (helperHint === '1' || helperHint === 'true' || helperHint === 'yes');
+    helperAppsWorkspaceMode.value = helperWorkspaceEnabled;
+    if (helperWorkspaceEnabled) {
+      ensureHelperAppsSelection();
+      loadHelperExternalApps();
+    }
     if (desktopMode.value && !desktopInitialSectionPinned.value) {
       desktopInitialSectionPinned.value = true;
       sessionHub.setSection('messages');
@@ -8748,6 +8982,16 @@ watch(
     ensureAgentUnreadState(true);
     refreshAgentMainUnreadFromSessions();
     scheduleWorkspaceResourceHydration();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => userAttachmentWorkspacePaths.value,
+  (paths) => {
+    paths.forEach((path) => {
+      void ensureUserAttachmentResource(path);
+    });
   },
   { immediate: true }
 );

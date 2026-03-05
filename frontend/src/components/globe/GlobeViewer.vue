@@ -1,5 +1,5 @@
 ﻿<template>
-  <div ref="containerRef" class="globe-viewer">
+  <div ref="containerRef" class="globe-viewer" :class="{ 'globe-viewer--fill': props.fill }">
     <div
       class="globe-tooltip"
       :class="{ 'is-visible': tooltipVisible }"
@@ -16,7 +16,7 @@
 </template>
 
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, withDefaults } from 'vue';
 import { useI18n } from '@/i18n';
 import {
   AmbientLight,
@@ -45,6 +45,15 @@ import countriesTopo50 from '@/assets/geo/countries-50m.json';
 import chinaProvincesGeo from '@/assets/geo/china-provinces.json';
 import chinaCityGeo from '@/assets/geo/china-citylevel.json';
 import countryNamesZh from '@/assets/geo/country-names-zh.json';
+
+const props = withDefaults(
+  defineProps<{
+    fill?: boolean;
+  }>(),
+  {
+    fill: false
+  }
+);
 
 const containerRef = ref<HTMLDivElement | null>(null);
 const errorMessage = ref('');
@@ -866,6 +875,12 @@ onBeforeUnmount(() => {
     var(--ui-accent-soft-2, #f6f7f9);
   overflow: hidden;
   position: relative;
+}
+
+.globe-viewer--fill {
+  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .globe-viewer :deep(canvas) {

@@ -7,8 +7,11 @@ use image::ImageEncoder;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use tokio::fs;
 use tokio::time::{sleep, Duration};
+use tracing::warn;
 use uuid::Uuid;
+use crate::storage::USER_PRIVATE_CONTAINER_ID;
 
 pub const TOOL_DESKTOP_CONTROLLER: &str = "桌面控制器";
 pub const TOOL_DESKTOP_MONITOR: &str = "桌面监视器";
@@ -255,6 +258,7 @@ pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) ->
     }
 
     let screenshot = capture_screenshot(&config).await?;
+    persist_screenshot_to_user_container(context, &screenshot).await;
     let elapsed_ms = started_at.elapsed().as_millis() as u64;
     let prompt = build_followup_prompt(
         crate::i18n::t("tool.desktop_controller.followup_prompt"),
@@ -287,6 +291,7 @@ pub async fn tool_desktop_monitor(context: &ToolContext<'_>, args: &Value) -> Re
         sleep(Duration::from_millis(wait_ms)).await;
     }
     let screenshot = capture_screenshot(&config).await?;
+    persist_screenshot_to_user_container(context, &screenshot).await;
     let prompt = build_followup_prompt(
         crate::i18n::t("tool.desktop_monitor.followup_prompt"),
         screenshot.norm_width,
@@ -524,6 +529,57 @@ async fn capture_screenshot(config: &DesktopControllerConfig) -> Result<DesktopS
     Ok(screenshot)
 }
 
+async fn persist_screenshot_to_user_container(
+    context: &ToolContext<'_>,
+    screenshot: &DesktopScreenshot,
+) {
+    let workspace_id = context
+        .workspace
+        .scoped_user_id_by_container(context.user_id, USER_PRIVATE_CONTAINER_ID);
+    if let Err(err) = context.workspace.ensure_user_root(&workspace_id) {
+        warn!(
+            "desktop screenshot persist skipped: ensure user root failed user_id={} error={err}",
+            context.user_id
+        );
+        return;
+    }
+    let safe_session = sanitize_session_id(context.session_id);
+    let filename = screenshot
+        .path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| format!("desktop_shot_{}.png", Uuid::new_v4().simple()));
+    let relative = format!("desktop_controller/{safe_session}/{filename}");
+    let dest = match context.workspace.resolve_path(&workspace_id, &relative) {
+        Ok(path) => path,
+        Err(err) => {
+            warn!(
+                "desktop screenshot persist skipped: resolve path failed user_id={} error={err}",
+                context.user_id
+            );
+            return;
+        }
+    };
+    if let Some(parent) = dest.parent() {
+        if let Err(err) = fs::create_dir_all(parent).await {
+            warn!(
+                "desktop screenshot persist skipped: create dir failed user_id={} error={err}",
+                context.user_id
+            );
+            return;
+        }
+    }
+    if let Err(err) = fs::copy(&screenshot.path, &dest).await {
+        warn!(
+            "desktop screenshot persist skipped: copy failed user_id={} error={err}",
+            context.user_id
+        );
+        return;
+    }
+}
+
 fn cleanup_old_frames(path: &Path, max_frames: usize) {
     let Some(dir) = path.parent() else {
         return;
@@ -601,6 +657,28 @@ fn resolve_temp_dir() -> Result<PathBuf> {
     }
     let root = std::env::current_dir().map_err(|err| anyhow!(err))?;
     Ok(root.join("temp_dir"))
+}
+
+fn sanitize_session_id(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "default".to_string();
+    }
+    let sanitized = trimmed
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.trim().is_empty() {
+        "default".to_string()
+    } else {
+        sanitized
+    }
 }
 
 fn resize_rgba(

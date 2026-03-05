@@ -204,6 +204,7 @@ export default {
   'userWorld.helperApps.onlineTitle': 'Online Helper Apps',
   'userWorld.helperApps.onlineDesc': 'External links and online services',
   'userWorld.helperApps.onlineEmpty': 'No online helper apps yet.',
+  'userWorld.helperApps.selectHint': 'Select a helper app from the middle list to get started.',
   'userWorld.helperApps.localFileSearch.cardTitle': 'Container Content Search',
   'userWorld.helperApps.localFileSearch.cardDesc':
     'Search entries across your private container and sandbox containers',

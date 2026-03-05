@@ -519,6 +519,7 @@ impl Orchestrator {
             session_id,
             "system",
             Some(&Value::String(summary_text.clone())),
+            None,
             Some(&meta_value),
             None,
             None,
@@ -551,6 +552,7 @@ impl Orchestrator {
                             None,
                             None,
                             None,
+                            None,
                         );
                     }
                 } else if !question_text.is_empty() {
@@ -560,6 +562,7 @@ impl Orchestrator {
                         session_id,
                         "user",
                         Some(&question_value),
+                        None,
                         None,
                         None,
                         None,
