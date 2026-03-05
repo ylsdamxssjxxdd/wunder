@@ -4,6 +4,8 @@ const WORKSPACE_SHORT_AGENT_MARKER = '__a__';
 const WORKSPACE_CONTAINER_MARKER = '__c__';
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 const ABSOLUTE_URI_SCHEME_RE = /^[a-zA-Z][a-zA-Z\d+.-]*:/;
+const FILE_URI_SCHEME_RE = /^file:/i;
+const WINDOWS_DRIVE_RE = /^[a-zA-Z]:[\\/]/;
 
 const getBaseOrigin = () => {
   if (typeof window !== 'undefined' && window.location?.origin) {
@@ -37,6 +39,88 @@ const splitPathWithSuffix = (value) => {
     path: value.slice(0, splitIndex),
     suffix: value.slice(splitIndex)
   };
+};
+
+const stripTrailingSlash = (value) => {
+  let output = String(value || '').trim();
+  while (output.length > 1 && output.endsWith('/')) {
+    output = output.slice(0, -1);
+  }
+  return output;
+};
+
+const normalizeLocalAbsolutePath = (raw) => {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (text.startsWith('//') && !FILE_URI_SCHEME_RE.test(text)) {
+    return '';
+  }
+  if (
+    ABSOLUTE_URI_SCHEME_RE.test(text) &&
+    !FILE_URI_SCHEME_RE.test(text) &&
+    !WINDOWS_DRIVE_RE.test(text)
+  ) {
+    return '';
+  }
+  let path = text;
+  if (FILE_URI_SCHEME_RE.test(path)) {
+    try {
+      path = new URL(path).pathname || '';
+    } catch (error) {
+      path = path.replace(/^file:\/*/i, '/');
+    }
+  }
+  const split = splitPathWithSuffix(path);
+  let normalized = decodePath(split.path).replace(/\\/g, '/').trim();
+  if (!normalized) return '';
+  if (/^\/[a-zA-Z]:\//.test(normalized)) {
+    normalized = normalized.slice(1);
+  }
+  return stripTrailingSlash(normalized);
+};
+
+const startsWithPath = (value, prefix) => {
+  if (!value || !prefix) return false;
+  return value === prefix || value.startsWith(`${prefix}/`);
+};
+
+export const resolveWorkspaceRelativePathFromLocal = (
+  rawPath,
+  workspaceId,
+  workspaceRoot = ''
+) => {
+  const workspaceToken = String(workspaceId || '').trim();
+  if (!workspaceToken) return '';
+  const normalizedPath = normalizeLocalAbsolutePath(rawPath);
+  if (!normalizedPath) return '';
+  const normalizedRoot = normalizeLocalAbsolutePath(workspaceRoot);
+  const rootWithId = normalizedRoot
+    ? stripTrailingSlash(`${normalizedRoot}/${workspaceToken}`)
+    : '';
+
+  if (rootWithId && startsWithPath(normalizedPath, rootWithId)) {
+    return normalizedPath
+      .slice(rootWithId.length)
+      .replace(/^\/+/, '');
+  }
+
+  if (normalizedRoot && startsWithPath(normalizedPath, normalizedRoot)) {
+    let relative = normalizedPath.slice(normalizedRoot.length).replace(/^\/+/, '');
+    if (relative.startsWith(`${workspaceToken}/`)) {
+      relative = relative.slice(workspaceToken.length + 1);
+    }
+    return relative;
+  }
+
+  const token = `/${workspaceToken}/`;
+  const tokenIndex = normalizedPath.indexOf(token);
+  if (tokenIndex >= 0) {
+    return normalizedPath.slice(tokenIndex + token.length);
+  }
+  if (normalizedPath.endsWith(`/${workspaceToken}`)) {
+    return '';
+  }
+  return '';
 };
 
 export const normalizeWorkspaceRelativeMarkdownPath = (raw) => {

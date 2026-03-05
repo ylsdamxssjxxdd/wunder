@@ -22,6 +22,7 @@ pub const DESKTOP_DEFAULT_USER_ID: &str = "desktop_user";
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
 const BUILTIN_SKILLS_MANIFEST_NAME: &str = ".wunder_builtin_skills_manifest.json";
+const BUILTIN_SKILLS_STAMP_NAME: &str = ".wunder_builtin_skills_stamp.json";
 
 #[derive(Clone)]
 pub struct DesktopRuntime {
@@ -215,7 +216,9 @@ impl DesktopRuntime {
             )
             .context("initialize desktop state failed")?,
         );
-        state.lsp_manager.sync_with_config(&config).await;
+        if config.lsp.enabled {
+            state.lsp_manager.sync_with_config(&config).await;
+        }
         ensure_desktop_identity(state.as_ref(), &user_id, &desktop_token)?;
 
         let remote_gateway = settings.remote_gateway.clone();
@@ -372,6 +375,9 @@ fn seed_user_tool_skills(repo_root: &Path, user_tools_root: &Path, user_id: &str
 }
 
 fn sync_builtin_skills(source: &Path, target: &Path) -> Result<()> {
+    if should_skip_builtin_skill_sync(source, target) {
+        return Ok(());
+    }
     fs::create_dir_all(target)
         .with_context(|| format!("create skills target dir failed: {}", target.display()))?;
     let previous = read_builtin_skill_manifest(target);
@@ -418,6 +424,7 @@ fn sync_builtin_skills(source: &Path, target: &Path) -> Result<()> {
         remove_path_if_exists(&target.join(stale))?;
     }
     write_builtin_skill_manifest(target, &current)?;
+    write_builtin_skill_stamp(target, source)?;
     Ok(())
 }
 
@@ -470,6 +477,64 @@ fn remove_path_if_exists(path: &Path) -> Result<()> {
     }
     fs::remove_file(path)
         .with_context(|| format!("remove stale skill file failed: {}", path.display()))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct BuiltinSkillsStamp {
+    source_root: String,
+    app_version: String,
+}
+
+fn should_skip_builtin_skill_sync(source: &Path, target: &Path) -> bool {
+    if std::env::var("WUNDER_FORCE_SKILL_SYNC")
+        .ok()
+        .map(|value| value.trim() == "1")
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let appimage = std::env::var("APPIMAGE")
+        .ok()
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false);
+    if !appimage {
+        return false;
+    }
+    if !target.is_dir() {
+        return false;
+    }
+    if !target.join(BUILTIN_SKILLS_MANIFEST_NAME).is_file() {
+        return false;
+    }
+    let Some(stamp) = read_builtin_skill_stamp(target) else {
+        return false;
+    };
+    let source_key = normalize_path_for_compare(source);
+    stamp.source_root == source_key && stamp.app_version == env!("CARGO_PKG_VERSION")
+}
+
+fn read_builtin_skill_stamp(target: &Path) -> Option<BuiltinSkillsStamp> {
+    let stamp_path = target.join(BUILTIN_SKILLS_STAMP_NAME);
+    let Ok(content) = fs::read_to_string(&stamp_path) else {
+        return None;
+    };
+    serde_json::from_str::<BuiltinSkillsStamp>(&content).ok()
+}
+
+fn write_builtin_skill_stamp(target: &Path, source: &Path) -> Result<()> {
+    let stamp_path = target.join(BUILTIN_SKILLS_STAMP_NAME);
+    let stamp = BuiltinSkillsStamp {
+        source_root: normalize_path_for_compare(source),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+    };
+    let text =
+        serde_json::to_string_pretty(&stamp).context("serialize builtin skills stamp failed")?;
+    fs::write(&stamp_path, text).with_context(|| {
+        format!(
+            "write builtin skills stamp failed: {}",
+            stamp_path.display()
+        )
+    })
 }
 
 fn read_builtin_skill_manifest(target: &Path) -> HashSet<String> {
@@ -825,6 +890,7 @@ fn apply_desktop_defaults(
         .to_string();
     config.workspace.root = workspace_root.to_string_lossy().to_string();
     config.workspace.container_roots = defaults.container_roots.clone();
+    config.lsp.enabled = false;
 
     if !defaults.language.trim().is_empty() {
         config.i18n.default_language = defaults.language.trim().to_string();

@@ -58,6 +58,7 @@ BUILD_ROOT=/app/target/arm64-20/.build/python \
 ```
 - 产物：`wunder补充包-<arch>.tar.*`
 - 解压后目录名为 `wunder补充包`（必须保持该名称，内部包含 `opt/python` 与 `opt/git`）。
+- 默认会从 `fonts/` 中拷贝常用中英文字体到 matplotlib 字体目录，并生成 `opt/python/etc/matplotlibrc`，用于自动解决中文缺字问题。
 
 ### 5.3 重打包 Sidecar AppImage（不内置 Python）
 ```

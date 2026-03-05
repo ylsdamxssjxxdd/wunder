@@ -14,26 +14,12 @@
           </span>
         </span>
       </button>
-      <button class="messenger-helper-plaza-card" type="button" @click="openGlobeApp">
-        <span class="messenger-helper-plaza-card-icon">
-          <i class="fa-solid fa-earth-asia" aria-hidden="true"></i>
-        </span>
-        <span class="messenger-helper-plaza-card-main">
-          <span class="messenger-helper-plaza-card-title">
-            {{ t('userWorld.helperApps.globe.cardTitle') }}
-          </span>
-          <span class="messenger-helper-plaza-card-desc">
-            {{ t('userWorld.helperApps.globe.cardDesc') }}
-          </span>
-        </span>
-      </button>
     </div>
   </div>
 
   <MessengerLocalFileSearchDialog
     v-model:visible="localFileSearchVisible"
   />
-  <GlobeAppDialog v-model:visible="globeVisible" />
 </template>
 
 <script setup lang="ts">
@@ -42,7 +28,6 @@ import { ref } from 'vue';
 import { useI18n } from '@/i18n';
 
 import MessengerLocalFileSearchDialog from './MessengerLocalFileSearchDialog.vue';
-import GlobeAppDialog from '@/components/globe/GlobeAppDialog.vue';
 
 defineProps<{
   compact?: boolean;
@@ -51,19 +36,13 @@ defineProps<{
 const { t } = useI18n();
 
 const localFileSearchVisible = ref(false);
-const globeVisible = ref(false);
 
 const openLocalFileSearch = () => {
   localFileSearchVisible.value = true;
 };
 
-const openGlobeApp = () => {
-  globeVisible.value = true;
-};
-
 defineExpose({
-  openLocalFileSearch,
-  openGlobeApp
+  openLocalFileSearch
 });
 </script>
 

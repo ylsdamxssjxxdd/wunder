@@ -245,9 +245,6 @@
               <MessengerLocalFileSearchPanel
                 v-if="helperAppsActiveKind === 'offline' && helperAppsActiveKey === 'local-file-search'"
               />
-              <GlobeAppPanel
-                v-else-if="helperAppsActiveKind === 'offline' && helperAppsActiveKey === 'globe'"
-              />
               <div
                 v-else-if="helperAppsActiveKind === 'online' && helperAppsActiveExternalItem"
                 class="messenger-helper-external-panel"
@@ -1247,7 +1244,6 @@ import MessengerWorldComposer from '@/components/messenger/MessengerWorldCompose
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
-import GlobeAppPanel from '@/components/globe/GlobeAppPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
@@ -7004,12 +7000,6 @@ const helperAppsOfflineItems = computed<HelperAppOfflineItem[]>(() => [
     title: t('userWorld.helperApps.localFileSearch.cardTitle'),
     description: t('userWorld.helperApps.localFileSearch.cardDesc'),
     icon: 'fa-folder-tree'
-  },
-  {
-    key: 'globe',
-    title: t('userWorld.helperApps.globe.cardTitle'),
-    description: t('userWorld.helperApps.globe.cardDesc'),
-    icon: 'fa-earth-asia'
   }
 ]);
 

@@ -55,6 +55,7 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 - 重打包生成 `*-sidecar.AppImage`（默认不内置 Python/Git，运行时自动识别同目录 `wunder补充包`）
 - 在 AppImage 内注入内置 `git`，自动设置 `GIT_EXEC_PATH`，并将 `opt/git/bin` 置于 `PATH` 最前，确保 `执行命令` 工具里的 `git` 默认命中内置版本
 - sidecar Python 依赖默认包含一组“优先、轻量、高价值”库（`orjson`、`tabulate`、`rapidfuzz`、`Unidecode`、`docxtpl`），用于文本匹配、结构化输出、JSON 处理与文档模板生成
+- 补充包会附带常用中英文字体并生成 matplotlibrc，自动解决 matplotlib 中文缺字问题
 
 > 提示：第 6 步 AppImage 重打包在 qemu 下可能持续 10~30 分钟，看起来像“卡住”但通常仍在运行。
 > 可用以下命令观察进度（文件大小持续增长即正常）：

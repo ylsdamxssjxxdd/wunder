@@ -1754,8 +1754,60 @@ const handleMainWindowClose = (window, event) => {
   void promptCloseBehavior(window)
 }
 
+const createLoadingHtml = () => `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="x-ua-compatible" content="ie=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wunder Desktop</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      background: #0b1220;
+      color: #e2e8f0;
+    }
+    .shell {
+      text-align: center;
+      max-width: 360px;
+    }
+    .title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 3px solid rgba(148, 163, 184, 0.3);
+      border-top-color: #38bdf8;
+      margin: 0 auto 12px;
+      animation: spin 0.8s linear infinite;
+    }
+    .hint {
+      font-size: 13px;
+      color: #94a3b8;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="title">Wunder Desktop</div>
+    <div class="spinner" aria-hidden="true"></div>
+    <div class="hint">Starting local services...</div>
+  </div>
+</body>
+</html>`
+
 const createWindow = async () => {
-  const port = await startBridge()
   mainWindow = new BrowserWindow({
     width: 1024,
     height: 700,
@@ -1803,8 +1855,25 @@ const createWindow = async () => {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
-  const target = bridgeWebBase ? `${bridgeWebBase}/` : `http://127.0.0.1:${port}/`
-  await mainWindow.loadURL(target)
+  const loadingHtml = createLoadingHtml()
+  await mainWindow
+    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHtml)}`)
+    .catch(() => {})
+
+  const startBridgeAndLoad = async () => {
+    try {
+      const port = await startBridge()
+      const target = bridgeWebBase ? `${bridgeWebBase}/` : `http://127.0.0.1:${port}/`
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return
+      }
+      await mainWindow.loadURL(target)
+    } catch (err) {
+      dialog.showErrorBox('Wunder Desktop', err?.message || String(err))
+      app.quit()
+    }
+  }
+  void startBridgeAndLoad()
 }
 
 const gotLock = app.requestSingleInstanceLock()

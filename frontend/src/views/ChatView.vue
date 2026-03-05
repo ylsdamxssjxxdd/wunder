@@ -669,7 +669,8 @@ import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';
 import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
-import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { getDesktopRuntime, isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
+import { getRuntimeConfig } from '@/config/runtime';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -683,7 +684,8 @@ import {
 import {
   isImagePath,
   normalizeWorkspaceRelativeMarkdownPath,
-  parseWorkspaceResourceUrl
+  parseWorkspaceResourceUrl,
+  resolveWorkspaceRelativePathFromLocal
 } from '@/utils/workspaceResources';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
@@ -1369,6 +1371,15 @@ const buildChatWorkspaceId = (): string => {
   return ownerId;
 };
 
+const resolveDesktopWorkspaceRoot = (): string => {
+  const runtime = getDesktopRuntime();
+  if (runtime?.workspace_root) {
+    return runtime.workspace_root;
+  }
+  const runtimeConfig = getRuntimeConfig();
+  return runtimeConfig.workspace_root || '';
+};
+
 const buildChatWorkspacePublicPath = (relativePath: string): string => {
   const workspaceId = buildChatWorkspaceId();
   const normalized = normalizeUploadPath(relativePath);
@@ -1378,8 +1389,17 @@ const buildChatWorkspacePublicPath = (relativePath: string): string => {
 
 const resolveChatMarkdownWorkspacePath = (rawPath: string): string => {
   const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
-  if (!normalized) return '';
-  return buildChatWorkspacePublicPath(normalized);
+  if (normalized) {
+    const directPath = buildChatWorkspacePublicPath(normalized);
+    if (directPath) return directPath;
+  }
+  if (!desktopLocalMode.value) return '';
+  const workspaceId = buildChatWorkspaceId();
+  if (!workspaceId) return '';
+  const workspaceRoot = resolveDesktopWorkspaceRoot();
+  const localRelative = resolveWorkspaceRelativePathFromLocal(rawPath, workspaceId, workspaceRoot);
+  if (!localRelative) return '';
+  return buildChatWorkspacePublicPath(localRelative);
 };
 
 const decodeAgentAtPathToken = (value: string): string => {
