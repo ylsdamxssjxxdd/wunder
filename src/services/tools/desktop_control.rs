@@ -576,7 +576,6 @@ async fn persist_screenshot_to_user_container(
             "desktop screenshot persist skipped: copy failed user_id={} error={err}",
             context.user_id
         );
-        return;
     }
 }
 
@@ -800,7 +799,7 @@ fn capture_screen_rgba() -> Result<(i32, i32, Vec<u8>)> {
                 biHeight: -height,
                 biPlanes: 1,
                 biBitCount: 32,
-                biCompression: BI_RGB as u32,
+                biCompression: BI_RGB,
                 biSizeImage: 0,
                 biXPelsPerMeter: 0,
                 biYPelsPerMeter: 0,
@@ -1070,7 +1069,7 @@ fn send_unicode_char(ch: char) -> Result<()> {
                 "tool.desktop_controller.capture_failed"
             )));
         }
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(windows))]
     {
@@ -1107,7 +1106,7 @@ fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
     if is_extended_key(vk) {
         flags |= KEYEVENTF_EXTENDEDKEY;
     }
-    let mut input = INPUT {
+    let input = INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
             ki: KEYBDINPUT {
@@ -1119,7 +1118,7 @@ fn send_key_event(key: VkCode, key_up: bool) -> Result<()> {
             },
         },
     };
-    let sent = unsafe { SendInput(1, &mut input, std::mem::size_of::<INPUT>() as i32) };
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
         return Err(anyhow!(crate::i18n::t(
             "tool.desktop_controller.capture_failed"
@@ -1218,7 +1217,7 @@ fn send_mouse_event(event: MouseEvent) -> Result<()> {
         MouseEvent::MiddleDown => MOUSEEVENTF_MIDDLEDOWN,
         MouseEvent::MiddleUp => MOUSEEVENTF_MIDDLEUP,
     };
-    let mut input = INPUT {
+    let input = INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
             mi: MOUSEINPUT {
@@ -1231,7 +1230,7 @@ fn send_mouse_event(event: MouseEvent) -> Result<()> {
             },
         },
     };
-    let sent = unsafe { SendInput(1, &mut input, std::mem::size_of::<INPUT>() as i32) };
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
         return Err(anyhow!(crate::i18n::t(
             "tool.desktop_controller.capture_failed"
@@ -1253,7 +1252,7 @@ fn send_mouse_wheel(steps: i32) -> Result<()> {
         SendInput, INPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_WHEEL,
     };
     let delta = steps * 120;
-    let mut input = INPUT {
+    let input = INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
             mi: MOUSEINPUT {
@@ -1266,7 +1265,7 @@ fn send_mouse_wheel(steps: i32) -> Result<()> {
             },
         },
     };
-    let sent = unsafe { SendInput(1, &mut input, std::mem::size_of::<INPUT>() as i32) };
+    let sent = unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
     if sent == 0 {
         return Err(anyhow!(crate::i18n::t(
             "tool.desktop_controller.capture_failed"

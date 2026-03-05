@@ -1,0 +1,1049 @@
+use crate::config::Config;
+use crate::core::json_schema::normalize_tool_input_schema;
+use crate::i18n;
+use crate::schemas::ToolSpec;
+use crate::skills::SkillRegistry;
+use crate::user_tools::UserToolBindings;
+use super::{browser_tool, desktop_control, read_image_tool, sleep_tool};
+use anyhow::Result;
+use serde_json::{json, Value};
+use serde_yaml::Value as YamlValue;
+use std::collections::{HashMap, HashSet};
+
+pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
+    let t = |key: &str| i18n::t_in_language(key, language);
+    vec![
+        ToolSpec {
+            name: "最终回复".to_string(),
+            description: t("tool.spec.final.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": t("tool.spec.final.args.content")}
+                },
+                "required": ["content"]
+            }),
+        },
+        ToolSpec {
+            name: "a2ui".to_string(),
+            description: t("tool.spec.a2ui.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "uid": {"type": "string", "description": t("tool.spec.a2ui.args.uid")},
+                    "a2ui": {"type": "array", "description": t("tool.spec.a2ui.args.messages"), "items": {"type": "object"}},
+                    "content": {"type": "string", "description": t("tool.spec.a2ui.args.content")}
+                },
+                "required": ["uid", "a2ui"]
+            }),
+        },
+        ToolSpec {
+            name: "计划面板".to_string(),
+            description: t("tool.spec.plan.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "explanation": {"type": "string", "description": t("tool.spec.plan.args.explanation")},
+                    "plan": {
+                        "type": "array",
+                        "description": t("tool.spec.plan.args.plan"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "step": {"type": "string", "description": t("tool.spec.plan.args.plan.step")},
+                                "status": {
+                                    "type": "string",
+                                    "description": t("tool.spec.plan.args.plan.status"),
+                                    "enum": ["pending", "in_progress", "completed"]
+                                }
+                            },
+                            "required": ["step", "status"]
+                        }
+                    }
+                },
+                "required": ["plan"]
+            }),
+        },
+        ToolSpec {
+            name: "问询面板".to_string(),
+            description: t("tool.spec.question_panel.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": t("tool.spec.question_panel.args.question")},
+                    "routes": {
+                        "type": "array",
+                        "description": t("tool.spec.question_panel.args.routes"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string", "description": t("tool.spec.question_panel.args.routes.label")},
+                                "description": {"type": "string", "description": t("tool.spec.question_panel.args.routes.description")},
+                                "recommended": {"type": "boolean", "description": t("tool.spec.question_panel.args.routes.recommended")}
+                            },
+                            "required": ["label"]
+                        }
+                    },
+                    "multiple": {"type": "boolean", "description": t("tool.spec.question_panel.args.multiple")}
+                },
+                "required": ["routes"]
+            }),
+        },
+        ToolSpec {
+            name: "定时任务".to_string(),
+            description: t("tool.spec.schedule_task.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.schedule_task.args.action"),
+                        "enum": ["add", "update", "remove", "enable", "disable", "get", "list", "run", "status"]
+                    },
+                    "job": {
+                        "type": "object",
+                        "description": t("tool.spec.schedule_task.args.job"),
+                        "properties": {
+                            "job_id": {"type": "string", "description": t("tool.spec.schedule_task.args.job.job_id")},
+                            "name": {"type": "string", "description": t("tool.spec.schedule_task.args.job.name")},
+                            "schedule": {
+                                "type": "object",
+                                "description": t("tool.spec.schedule_task.args.job.schedule"),
+                                "properties": {
+                                    "kind": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.kind"), "enum": ["at", "every", "cron"]},
+                                    "at": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.at")},
+                                    "every_ms": {"type": "integer", "description": t("tool.spec.schedule_task.args.job.schedule.every_ms"), "minimum": 1000},
+                                    "cron": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.cron")},
+                                    "tz": {"type": "string", "description": t("tool.spec.schedule_task.args.job.schedule.tz")}
+                                },
+                                "required": ["kind"]
+                            },
+                            "session": {"type": "string", "description": t("tool.spec.schedule_task.args.job.session"), "enum": ["main", "isolated"]},
+                            "payload": {
+                                "type": "object",
+                                "description": t("tool.spec.schedule_task.args.job.payload"),
+                                "properties": {
+                                    "message": {"type": "string", "description": t("tool.spec.schedule_task.args.job.payload.message")}
+                                }
+                            },
+                            "deliver": {"type": "object", "description": t("tool.spec.schedule_task.args.job.deliver")},
+                            "enabled": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.enabled")},
+                            "delete_after_run": {"type": "boolean", "description": t("tool.spec.schedule_task.args.job.delete_after_run")},
+                            "dedupe_key": {"type": "string", "description": t("tool.spec.schedule_task.args.job.dedupe_key")}
+                        }
+                    }
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolSpec {
+            name: sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+            description: t("tool.spec.sleep.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "seconds": {"type": "number", "description": t("tool.spec.sleep.args.seconds"), "minimum": 0.001},
+                    "reason": {"type": "string", "description": t("tool.spec.sleep.args.reason")}
+                },
+                "required": ["seconds"]
+            }),
+        },
+        ToolSpec {
+            name: "用户世界工具".to_string(),
+            description: t("tool.spec.user_world.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.user_world.args.action"),
+                        "enum": ["list_users", "send_message"]
+                    },
+                    "keyword": {"type": "string", "description": t("tool.spec.user_world.args.keyword")},
+                    "offset": {"type": "integer", "description": t("tool.spec.user_world.args.offset"), "minimum": 0},
+                    "limit": {"type": "integer", "description": t("tool.spec.user_world.args.limit"), "minimum": 0},
+                    "user_id": {"type": "string", "description": t("tool.spec.user_world.args.user_id")},
+                    "user_ids": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.user_world.args.user_ids")},
+                    "content": {"type": "string", "description": t("tool.spec.user_world.args.content")},
+                    "content_type": {"type": "string", "description": t("tool.spec.user_world.args.content_type")},
+                    "client_msg_id": {"type": "string", "description": t("tool.spec.user_world.args.client_msg_id")}
+                },
+                "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "send_message"}}},
+                        "then": {
+                            "required": ["content"],
+                            "anyOf": [
+                                {"required": ["user_id"]},
+                                {"required": ["user_ids"]}
+                            ]
+                        }
+                    }
+                ]
+            }),
+        },
+        ToolSpec {
+            name: "记忆管理".to_string(),
+            description: t("tool.spec.memory_manager.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.memory_manager.args.action"),
+                        "enum": ["list", "add", "update", "delete", "clear"]
+                    },
+                    "memory_id": {"type": "string", "description": t("tool.spec.memory_manager.args.memory_id")},
+                    "content": {"type": "string", "description": t("tool.spec.memory_manager.args.content")},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.memory_manager.args.limit")},
+                    "order": {
+                        "type": "string",
+                        "description": t("tool.spec.memory_manager.args.order"),
+                        "enum": ["desc", "asc"]
+                    }
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolSpec {
+            name: "a2a观察".to_string(),
+            description: t("tool.spec.a2a_observe.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "task_ids": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.a2a_observe.args.task_ids")},
+                    "tasks": {"type": "array", "items": {"type": "object"}, "description": t("tool.spec.a2a_observe.args.tasks")},
+                    "endpoint": {"type": "string", "description": t("tool.spec.a2a_observe.args.endpoint")},
+                    "service_name": {"type": "string", "description": t("tool.spec.a2a_observe.args.service_name")},
+                    "refresh": {"type": "boolean", "description": t("tool.spec.a2a_observe.args.refresh")},
+                    "timeout_s": {"type": "number", "description": t("tool.spec.a2a_observe.args.timeout")}
+                }
+            }),
+        },
+        ToolSpec {
+            name: "a2a等待".to_string(),
+            description: t("tool.spec.a2a_wait.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "wait_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.wait_s")},
+                    "poll_interval_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.poll_interval")},
+                    "task_ids": {"type": "array", "items": {"type": "string"}},
+                    "tasks": {"type": "array", "items": {"type": "object"}},
+                    "endpoint": {"type": "string", "description": t("tool.spec.a2a_wait.args.endpoint")},
+                    "service_name": {"type": "string", "description": t("tool.spec.a2a_wait.args.service_name")},
+                    "refresh": {"type": "boolean", "description": t("tool.spec.a2a_wait.args.refresh")},
+                    "timeout_s": {"type": "number", "description": t("tool.spec.a2a_wait.args.timeout")}
+                }
+            }),
+        },
+        ToolSpec {
+            name: "执行命令".to_string(),
+            description: t("tool.spec.exec.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "content": {"type": "string", "description": t("tool.spec.exec.args.content")},
+                    "workdir": {"type": "string", "description": t("tool.spec.exec.args.workdir")},
+                    "timeout_s": {"type": "integer", "description": t("tool.spec.exec.args.timeout")}
+                },
+                "required": ["content"]
+            }),
+        },
+        ToolSpec {
+            name: "ptc".to_string(),
+            description: t("tool.spec.ptc.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "filename": {"type": "string", "description": t("tool.spec.ptc.args.filename")},
+                    "workdir": {"type": "string", "description": t("tool.spec.ptc.args.workdir")},
+                    "content": {"type": "string", "description": t("tool.spec.ptc.args.content")}
+                },
+                "required": ["filename", "content"]
+            }),
+        },
+        ToolSpec {
+            name: "列出文件".to_string(),
+            description: t("tool.spec.list.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": t("tool.spec.list.args.path")},
+                    "max_depth": {"type": "integer", "minimum": 0}
+                }
+            }),
+        },
+        ToolSpec {
+            name: "搜索内容".to_string(),
+            description: t("tool.spec.search.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": t("tool.spec.search.args.query")},
+                    "path": {"type": "string", "description": t("tool.spec.search.args.path")},
+                    "file_pattern": {"type": "string", "description": t("tool.spec.search.args.file_pattern")},
+                    "max_depth": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_depth")},
+                    "max_files": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_files")}
+                },
+                "required": ["query"]
+            }),
+        },
+        ToolSpec {
+            name: "读取文件".to_string(),
+            description: t("tool.spec.read.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
+                                "start_line": {"type": "integer", "description": t("tool.spec.read.args.files.start_line")},
+                                "end_line": {"type": "integer", "description": t("tool.spec.read.args.files.end_line")},
+                                "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}}
+                            },
+                            "required": ["path"]
+                        }
+                    }
+                },
+                "required": ["files"]
+            }),
+        },
+        ToolSpec {
+            name: read_image_tool::TOOL_READ_IMAGE.to_string(),
+            description: t("tool.spec.read_image.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": t("tool.spec.read_image.args.path")},
+                    "prompt": {"type": "string", "description": t("tool.spec.read_image.args.prompt")}
+                },
+                "required": ["path"]
+            }),
+        },
+        ToolSpec {
+            name: "技能调用".to_string(),
+            description: t("tool.spec.skill_call.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": t("tool.spec.skill_call.args.name")}
+                },
+                "required": ["name"]
+            }),
+        },
+        ToolSpec {
+            name: "写入文件".to_string(),
+            description: t("tool.spec.write.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": t("tool.spec.write.args.path")},
+                    "content": {"type": "string", "description": t("tool.spec.write.args.content")}
+                },
+                "required": ["path", "content"]
+            }),
+        },
+        ToolSpec {
+            name: "应用补丁".to_string(),
+            description: t("tool.spec.apply_patch.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "input": {"type": "string", "description": t("tool.spec.apply_patch.args.input")}
+                },
+                "required": ["input"]
+            }),
+        },
+        ToolSpec {
+            name: "LSP查询".to_string(),
+            description: t("tool.spec.lsp.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "description": t("tool.spec.lsp.args.operation"),
+                        "enum": [
+                            "definition",
+                            "references",
+                            "hover",
+                            "documentSymbol",
+                            "workspaceSymbol",
+                            "implementation",
+                            "callHierarchy"
+                        ]
+                    },
+                    "path": {"type": "string", "description": t("tool.spec.lsp.args.path")},
+                    "line": {"type": "integer", "description": t("tool.spec.lsp.args.line"), "minimum": 1},
+                    "character": {"type": "integer", "description": t("tool.spec.lsp.args.character"), "minimum": 1},
+                    "query": {"type": "string", "description": t("tool.spec.lsp.args.query")},
+                    "call_hierarchy_direction": {
+                        "type": "string",
+                        "description": t("tool.spec.lsp.args.call_hierarchy_direction"),
+                        "enum": ["incoming", "outgoing"]
+                    }
+                },
+                "required": ["operation", "path"]
+            }),
+        },
+        ToolSpec {
+            name: "子智能体控制".to_string(),
+            description: t("tool.spec.subagent_control.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.subagent_control.args.action"),
+                        "enum": ["list", "history", "send", "spawn"]
+                    },
+                    "limit": {"type": "integer", "description": t("tool.spec.sessions_list.args.limit"), "minimum": 1},
+                    "activeMinutes": {"type": "number", "description": t("tool.spec.sessions_list.args.active_minutes"), "minimum": 0},
+                    "messageLimit": {"type": "integer", "description": t("tool.spec.sessions_list.args.message_limit"), "minimum": 0},
+                    "parentId": {"type": "string", "description": t("tool.spec.sessions_list.args.parent_id")},
+                    "session_id": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "includeTools": {"type": "boolean", "description": t("tool.spec.sessions_history.args.include_tools")},
+                    "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
+                    "timeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_send.args.timeout")},
+                    "task": {"type": "string", "description": t("tool.spec.sessions_spawn.args.task")},
+                    "label": {"type": "string", "description": t("tool.spec.sessions_spawn.args.label")},
+                    "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                    "model": {"type": "string", "description": t("tool.spec.sessions_spawn.args.model")},
+                    "runTimeoutSeconds": {"type": "number", "description": t("tool.spec.sessions_spawn.args.timeout")},
+                    "cleanup": {"type": "string", "description": t("tool.spec.sessions_spawn.args.cleanup"), "enum": ["keep", "delete"]}
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolSpec {
+            name: "智能体蜂群".to_string(),
+            description: t("tool.spec.agent_swarm.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.agent_swarm.args.action"),
+                        "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
+                    },
+                    "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                    "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                    "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
+                    "tasks": {
+                        "type": "array",
+                        "description": t("tool.spec.agent_swarm.args.tasks"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
+                                "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
+                                "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")}
+                            }
+                        }
+                    },
+                    "runIds": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}},
+                    "waitSeconds": {"type": "number", "description": t("tool.spec.agent_swarm.args.wait_seconds"), "default": 0}
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolSpec {
+            name: "节点调用".to_string(),
+            description: t("tool.spec.node_invoke.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.node_invoke.args.action"),
+                        "enum": ["list", "invoke"]
+                    },
+                    "node_id": {"type": "string", "description": t("tool.spec.node_invoke.args.node_id")},
+                    "command": {"type": "string", "description": t("tool.spec.node_invoke.args.command")},
+                    "args": {"type": "object", "description": t("tool.spec.node_invoke.args.args")},
+                    "timeout_s": {"type": "number", "description": t("tool.spec.node_invoke.args.timeout")},
+                    "metadata": {"type": "object", "description": t("tool.spec.node_invoke.args.metadata")}
+                },
+                "anyOf": [
+                    {"required": ["action"]},
+                    {"required": ["node_id", "command"]}
+                ],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "invoke"}}},
+                        "then": {"required": ["node_id", "command"]}
+                    }
+                ]
+            }),
+        },
+        ToolSpec {
+            name: browser_tool::TOOL_BROWSER.to_string(),
+            description: t("tool.spec.browser.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.browser.args.action"),
+                        "enum": ["navigate", "click", "type", "screenshot", "read_page", "close"]
+                    },
+                    "url": { "type": "string", "description": t("tool.spec.browser.args.url") },
+                    "selector": { "type": "string", "description": t("tool.spec.browser.args.selector") },
+                    "text": { "type": "string", "description": t("tool.spec.browser.args.text") }
+                },
+                "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "navigate"}}},
+                        "then": {"required": ["url"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "click"}}},
+                        "then": {"required": ["selector"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "type"}}},
+                        "then": {"required": ["selector", "text"]}
+                    }
+                ]
+            }),
+        },
+        ToolSpec {
+            name: desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+            description: t("tool.spec.desktop_controller.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "bbox": {
+                        "anyOf": [
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+                        ],
+                        "description": t("tool.spec.desktop_controller.args.bbox")
+                    },
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.desktop_controller.args.action"),
+                        "enum": [
+                            "left_click",
+                            "left_double_click",
+                            "right_click",
+                            "middle_click",
+                            "left_hold",
+                            "right_hold",
+                            "middle_hold",
+                            "left_release",
+                            "right_release",
+                            "middle_release",
+                            "scroll_down",
+                            "scroll_up",
+                            "press_key",
+                            "type_text",
+                            "delay",
+                            "move_mouse",
+                            "drag_drop"
+                        ]
+                    },
+                    "description": {"type": "string", "description": t("tool.spec.desktop_controller.args.description")},
+                    "key": {"type": "string", "description": t("tool.spec.desktop_controller.args.key")},
+                    "text": {"type": "string", "description": t("tool.spec.desktop_controller.args.text")},
+                    "delay_ms": {"type": "integer", "minimum": 0, "description": t("tool.spec.desktop_controller.args.delay_ms")},
+                    "duration_ms": {"type": "integer", "minimum": 0, "description": t("tool.spec.desktop_controller.args.duration_ms")},
+                    "scroll_steps": {"type": "integer", "minimum": 1, "description": t("tool.spec.desktop_controller.args.scroll_steps")},
+                    "to_bbox": {
+                        "anyOf": [
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
+                            {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+                        ],
+                        "description": t("tool.spec.desktop_controller.args.to_bbox")
+                    }
+                },
+                "required": ["bbox", "action", "description"],
+                "additionalProperties": false
+            }),
+        },
+        ToolSpec {
+            name: desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+            description: t("tool.spec.desktop_monitor.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "wait_ms": {"type": "integer", "minimum": 0, "maximum": 30000, "description": t("tool.spec.desktop_monitor.args.wait_ms")},
+                    "note": {"type": "string", "description": t("tool.spec.desktop_monitor.args.note")}
+                },
+                "required": ["wait_ms"],
+                "additionalProperties": false
+            }),
+        },
+    ]
+}
+
+pub fn builtin_tool_specs() -> Vec<ToolSpec> {
+    let language = i18n::get_language();
+    builtin_tool_specs_with_language(&language)
+}
+
+pub fn builtin_aliases() -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    map.insert("final_response".to_string(), "最终回复".to_string());
+    map.insert("update_plan".to_string(), "计划面板".to_string());
+    map.insert("question_panel".to_string(), "问询面板".to_string());
+    map.insert("ask_panel".to_string(), "问询面板".to_string());
+    map.insert("schedule_task".to_string(), "定时任务".to_string());
+    map.insert(
+        sleep_tool::TOOL_SLEEP_ALIAS.to_string(),
+        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+    );
+    map.insert(
+        sleep_tool::TOOL_SLEEP_WAIT_ALIAS.to_string(),
+        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+    );
+    map.insert(
+        sleep_tool::TOOL_SLEEP_PAUSE_ALIAS.to_string(),
+        sleep_tool::TOOL_SLEEP_WAIT.to_string(),
+    );
+    map.insert("user_world".to_string(), "用户世界工具".to_string());
+    map.insert("memory_manager".to_string(), "记忆管理".to_string());
+    map.insert("memory_manage".to_string(), "记忆管理".to_string());
+    map.insert("a2a_observe".to_string(), "a2a观察".to_string());
+    map.insert("a2a_wait".to_string(), "a2a等待".to_string());
+    map.insert("execute_command".to_string(), "执行命令".to_string());
+    map.insert("programmatic_tool_call".to_string(), "ptc".to_string());
+    map.insert("list_files".to_string(), "列出文件".to_string());
+    map.insert("search_content".to_string(), "搜索内容".to_string());
+    map.insert("read_file".to_string(), "读取文件".to_string());
+    map.insert(
+        read_image_tool::TOOL_READ_IMAGE_ALIAS.to_string(),
+        read_image_tool::TOOL_READ_IMAGE.to_string(),
+    );
+    map.insert(
+        read_image_tool::TOOL_VIEW_IMAGE_ALIAS.to_string(),
+        read_image_tool::TOOL_READ_IMAGE.to_string(),
+    );
+    map.insert("skill_call".to_string(), "技能调用".to_string());
+    map.insert("skill_get".to_string(), "技能调用".to_string());
+    map.insert("write_file".to_string(), "写入文件".to_string());
+    map.insert("apply_patch".to_string(), "应用补丁".to_string());
+    map.insert("lsp".to_string(), "LSP查询".to_string());
+    map.insert("subagent_control".to_string(), "子智能体控制".to_string());
+    map.insert(
+        "agent_swarm".to_string(),
+        "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}".to_string(),
+    );
+    map.insert(
+        "swarm_control".to_string(),
+        "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}".to_string(),
+    );
+    map.insert("node.invoke".to_string(), "节点调用".to_string());
+    map.insert("node_invoke".to_string(), "节点调用".to_string());
+    map.insert("browser".to_string(), browser_tool::TOOL_BROWSER.to_string());
+    map.insert(
+        "browser_tool".to_string(),
+        browser_tool::TOOL_BROWSER.to_string(),
+    );
+    map.insert(
+        desktop_control::TOOL_DESKTOP_CONTROLLER_ALIAS.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+    );
+    map.insert(
+        desktop_control::TOOL_DESKTOP_CONTROLLER_ALIAS_SHORT.to_string(),
+        desktop_control::TOOL_DESKTOP_CONTROLLER.to_string(),
+    );
+    map.insert(
+        desktop_control::TOOL_DESKTOP_MONITOR_ALIAS.to_string(),
+        desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+    );
+    map.insert(
+        desktop_control::TOOL_DESKTOP_MONITOR_ALIAS_SHORT.to_string(),
+        desktop_control::TOOL_DESKTOP_MONITOR.to_string(),
+    );
+    map.insert(
+        "browser_navigate".to_string(),
+        browser_tool::TOOL_BROWSER_NAVIGATE.to_string(),
+    );
+    map.insert(
+        "browser_click".to_string(),
+        browser_tool::TOOL_BROWSER_CLICK.to_string(),
+    );
+    map.insert(
+        "browser_type".to_string(),
+        browser_tool::TOOL_BROWSER_TYPE.to_string(),
+    );
+    map.insert(
+        "browser_screenshot".to_string(),
+        browser_tool::TOOL_BROWSER_SCREENSHOT.to_string(),
+    );
+    map.insert(
+        "browser_read_page".to_string(),
+        browser_tool::TOOL_BROWSER_READ_PAGE.to_string(),
+    );
+    map.insert(
+        "browser_close".to_string(),
+        browser_tool::TOOL_BROWSER_CLOSE.to_string(),
+    );
+    map
+}
+
+pub fn is_browser_tool_name(name: &str) -> bool {
+    browser_tool::is_browser_tool_name(name)
+}
+
+pub fn browser_tools_available(config: &Config) -> bool {
+    browser_tool::browser_tools_enabled(config)
+}
+
+pub fn desktop_tools_available(config: &Config) -> bool {
+    desktop_control::desktop_tools_enabled(config)
+}
+
+pub fn is_desktop_control_tool_name(name: &str) -> bool {
+    desktop_control::is_desktop_control_tool_name(name)
+}
+
+pub async fn build_desktop_followup_user_message(result: &Value) -> Result<Option<Value>> {
+    desktop_control::build_followup_user_message(result).await
+}
+
+pub fn is_read_image_tool_name(name: &str) -> bool {
+    read_image_tool::is_read_image_tool_name(name)
+}
+
+pub async fn build_read_image_followup_user_message(result: &Value) -> Result<Option<Value>> {
+    read_image_tool::build_followup_user_message(result).await
+}
+
+pub fn is_sleep_tool_name(name: &str) -> bool {
+    sleep_tool::is_sleep_tool_name(name)
+}
+
+pub fn extract_sleep_seconds(args: &Value) -> Option<f64> {
+    sleep_tool::extract_sleep_seconds(args)
+}
+
+pub fn filter_tool_names_by_model_capability(
+    allowed_tool_names: HashSet<String>,
+    support_vision: bool,
+) -> HashSet<String> {
+    if support_vision {
+        return allowed_tool_names;
+    }
+    allowed_tool_names
+        .into_iter()
+        .filter(|name| {
+            let canonical = resolve_tool_name(name);
+            !read_image_tool::is_read_image_tool_name(&canonical)
+                && !read_image_tool::is_read_image_tool_name(name)
+                && !desktop_control::is_desktop_control_tool_name(&canonical)
+                && !desktop_control::is_desktop_control_tool_name(name)
+        })
+        .collect()
+}
+
+pub fn resolve_tool_name(name: &str) -> String {
+    let alias_map = builtin_aliases();
+    alias_map
+        .get(name)
+        .cloned()
+        .unwrap_or_else(|| name.to_string())
+}
+
+fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
+    match canonical {
+        "问询面板" => Some("question_panel"),
+        "技能调用" => Some("skill_call"),
+        "智能体蜂群" => Some("agent_swarm"),
+        "节点调用" => Some("node_invoke"),
+        "用户世界工具" => Some("user_world"),
+        "记忆管理" => Some("memory_manager"),
+        browser_tool::TOOL_BROWSER => Some("browser"),
+        desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
+        desktop_control::TOOL_DESKTOP_MONITOR => Some("desktop_monitor"),
+        read_image_tool::TOOL_READ_IMAGE => Some(read_image_tool::TOOL_READ_IMAGE_ALIAS),
+        sleep_tool::TOOL_SLEEP_WAIT => Some(sleep_tool::TOOL_SLEEP_ALIAS),
+        _ => None,
+    }
+}
+
+fn select_english_tool_alias(
+    canonical: &str,
+    aliases: &[String],
+    allowed_names: &HashSet<String>,
+) -> Option<String> {
+    if aliases.is_empty() {
+        return None;
+    }
+    if let Some(preferred) = preferred_english_alias(canonical).filter(|value| {
+        aliases.iter().any(|alias| alias == *value) && allowed_names.contains(*value)
+    }) {
+        return Some(preferred.to_string());
+    }
+    aliases
+        .iter()
+        .find(|alias| allowed_names.contains(*alias))
+        .cloned()
+}
+
+/// 汇总系统当前可用的工具名称（包含内置别名、MCP、A2A、技能与用户工具）。
+pub fn collect_available_tool_names(
+    config: &Config,
+    skills: &SkillRegistry,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut enabled_builtin = HashSet::new();
+    for name in &config.tools.builtin.enabled {
+        let canonical = resolve_tool_name(name);
+        if canonical.is_empty() {
+            continue;
+        }
+        if browser_tool::is_browser_tool_name(&canonical)
+            && !browser_tool::browser_tools_enabled(config)
+        {
+            continue;
+        }
+        if desktop_control::is_desktop_control_tool_name(&canonical)
+            && !desktop_control::desktop_tools_enabled(config)
+        {
+            continue;
+        }
+        enabled_builtin.insert(canonical.clone());
+        names.insert(canonical);
+    }
+    for server in &config.mcp.servers {
+        if !server.enabled {
+            continue;
+        }
+        let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
+        for tool in &server.tool_specs {
+            if tool.name.is_empty() {
+                continue;
+            }
+            if !allow.is_empty() && !allow.contains(&tool.name) {
+                continue;
+            }
+            names.insert(format!("{}@{}", server.name, tool.name));
+        }
+    }
+    for service in &config.a2a.services {
+        if !service.enabled {
+            continue;
+        }
+        if service.name.is_empty() {
+            continue;
+        }
+        names.insert(format!("a2a@{}", service.name));
+    }
+    let skill_names: HashSet<String> = skills
+        .list_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect();
+    names.extend(skill_names.clone());
+    for base in &config.knowledge.bases {
+        if !base.enabled {
+            continue;
+        }
+        let name = base.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if skill_names.contains(name) {
+            continue;
+        }
+        names.insert(name.to_string());
+    }
+    if let Some(bindings) = user_tool_bindings {
+        names.extend(bindings.alias_map.keys().cloned());
+        names.extend(bindings.skill_specs.iter().map(|spec| spec.name.clone()));
+    }
+    let alias_map = builtin_aliases();
+    for (alias, canonical) in alias_map {
+        if enabled_builtin.contains(&canonical) && !names.contains(&alias) {
+            names.insert(alias);
+        }
+    }
+    names
+}
+
+/// 构建提示词使用的工具规格，避免向模型暴露未启用的工具。
+pub fn collect_prompt_tool_specs(
+    config: &Config,
+    skills: &SkillRegistry,
+    allowed_names: &HashSet<String>,
+    user_tool_bindings: Option<&UserToolBindings>,
+) -> Vec<ToolSpec> {
+    let language = i18n::get_language();
+    collect_prompt_tool_specs_with_language(
+        config,
+        skills,
+        allowed_names,
+        user_tool_bindings,
+        &language,
+    )
+}
+
+pub fn collect_prompt_tool_specs_with_language(
+    config: &Config,
+    skills: &SkillRegistry,
+    allowed_names: &HashSet<String>,
+    user_tool_bindings: Option<&UserToolBindings>,
+    language: &str,
+) -> Vec<ToolSpec> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    let language = language.trim();
+    let language_lower = language.to_lowercase();
+    let alias_map = builtin_aliases();
+    let mut canonical_aliases: HashMap<String, Vec<String>> = HashMap::new();
+    for (alias, canonical) in alias_map {
+        canonical_aliases.entry(canonical).or_default().push(alias);
+    }
+    for aliases in canonical_aliases.values_mut() {
+        aliases.sort();
+    }
+    for spec in builtin_tool_specs_with_language(language) {
+        let aliases: &[String] = canonical_aliases
+            .get(&spec.name)
+            .map(|value| value.as_slice())
+            .unwrap_or(&[]);
+        let enabled = allowed_names.contains(&spec.name)
+            || aliases.iter().any(|alias| allowed_names.contains(alias));
+        if !enabled {
+            continue;
+        }
+        let preferred_alias = if language_lower.starts_with("en") {
+            select_english_tool_alias(&spec.name, aliases, allowed_names)
+        } else {
+            None
+        };
+        let name = preferred_alias.unwrap_or_else(|| spec.name.clone());
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        output.push(ToolSpec {
+            name,
+            description: spec.description.clone(),
+            input_schema: spec.input_schema.clone(),
+        });
+    }
+    for server in &config.mcp.servers {
+        if !server.enabled {
+            continue;
+        }
+        let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
+        for tool in &server.tool_specs {
+            if tool.name.is_empty() {
+                continue;
+            }
+            if !allow.is_empty() && !allow.contains(&tool.name) {
+                continue;
+            }
+            let full_name = format!("{}@{}", server.name, tool.name);
+            if !allowed_names.contains(&full_name) || !seen.insert(full_name.clone()) {
+                continue;
+            }
+            output.push(ToolSpec {
+                name: full_name,
+                description: tool.description.clone(),
+                input_schema: yaml_to_json(&tool.input_schema),
+            });
+        }
+    }
+    for service in &config.a2a.services {
+        if !service.enabled {
+            continue;
+        }
+        if service.name.is_empty() {
+            continue;
+        }
+        let full_name = format!("a2a@{}", service.name);
+        if !allowed_names.contains(&full_name) || !seen.insert(full_name.clone()) {
+            continue;
+        }
+        output.push(ToolSpec {
+            name: full_name,
+            description: service.description.clone().unwrap_or_default(),
+            input_schema: a2a_service_schema_with_language(language),
+        });
+    }
+    let skill_names: HashSet<String> = skills
+        .list_specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect();
+    for base in &config.knowledge.bases {
+        if !base.enabled {
+            continue;
+        }
+        let name = base.name.trim();
+        if name.is_empty() || skill_names.contains(name) {
+            continue;
+        }
+        if !allowed_names.contains(name) || !seen.insert(name.to_string()) {
+            continue;
+        }
+        let description = if base.description.trim().is_empty() {
+            i18n::t_with_params_in_language(
+                "knowledge.tool.description",
+                &HashMap::from([("name".to_string(), name.to_string())]),
+                language,
+            )
+        } else {
+            base.description.clone()
+        };
+        output.push(ToolSpec {
+            name: name.to_string(),
+            description,
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": i18n::t_in_language("knowledge.tool.query.description", language)},
+                    "keywords": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": i18n::t_in_language("knowledge.tool.keywords.description", language)},
+                    "limit": {"type": "integer", "minimum": 1, "description": i18n::t_in_language("knowledge.tool.limit.description", language)}
+                },
+                "anyOf": [
+                    {"required": ["query"]},
+                    {"required": ["keywords"]}
+                ]
+            }),
+        });
+    }
+    if let Some(bindings) = user_tool_bindings {
+        for (name, spec) in &bindings.alias_specs {
+            if !allowed_names.contains(name) || !seen.insert(name.clone()) {
+                continue;
+            }
+            output.push(spec.clone());
+        }
+    }
+    output
+}
+
+/// 将 YAML 配置值转换为 JSON，便于统一处理输入 Schema 与鉴权字段。
+pub(crate) fn yaml_to_json(value: &YamlValue) -> Value {
+    let schema = serde_json::to_value(value).unwrap_or(Value::Null);
+    normalize_tool_input_schema(Some(&schema))
+}
+
+/// A2A 服务工具的通用入参 Schema。
+pub fn a2a_service_schema() -> Value {
+    let language = i18n::get_language();
+    a2a_service_schema_with_language(&language)
+}
+
+pub fn a2a_service_schema_with_language(language: &str) -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "content": {"type": "string", "description": i18n::t_in_language("tool.spec.a2a_service.args.content", language)},
+            "session_id": {"type": "string", "description": i18n::t_in_language("tool.spec.a2a_service.args.session_id", language)}
+        },
+        "required": ["content"]
+    })
+}

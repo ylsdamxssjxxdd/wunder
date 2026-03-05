@@ -96,652 +96,76 @@
         @mouseenter="cancelMiddlePaneOverlayHide"
         @mouseleave="scheduleMiddlePaneOverlayHide"
       >
-      <header class="messenger-middle-header">
-        <div class="messenger-middle-title">{{ activeSectionTitle }}</div>
-        <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
-      </header>
-
-      <div v-if="sessionHub.activeSection !== 'more' && !showHelperAppsWorkspace" class="messenger-search-row">
-        <label class="messenger-search">
-          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-          <input
-            v-model="keywordInput"
-            type="text"
-            :placeholder="searchPlaceholder"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
-        <button
-          v-if="
-            sessionHub.activeSection === 'agents' ||
-            (sessionHub.activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace)
-          "
-          class="messenger-plus-btn"
-          type="button"
-          :title="sessionHub.activeSection === 'groups' ? t('userWorld.group.create') : t('messenger.action.newAgent')"
-          :aria-label="
-            sessionHub.activeSection === 'groups' ? t('userWorld.group.create') : t('messenger.action.newAgent')
-          "
-          @click="handleSearchCreateAction"
-        >
-          <i class="fa-solid fa-plus" aria-hidden="true"></i>
-        </button>
-        <button
-          v-if="sessionHub.activeSection === 'agents'"
-          class="messenger-plus-btn"
-          :class="{ active: agentOverviewMode === 'grid' }"
-          type="button"
-          :title="
-            agentOverviewMode === 'grid'
-              ? t('messenger.agent.listView')
-              : t('messenger.agent.gridView')
-          "
-          :aria-label="
-            agentOverviewMode === 'grid'
-              ? t('messenger.agent.listView')
-              : t('messenger.agent.gridView')
-          "
-          @click="toggleAgentOverviewMode"
-        >
-          <i class="fa-solid fa-table-cells-large" aria-hidden="true"></i>
-        </button>
-      </div>
-
-      <div
-        class="messenger-middle-list"
-        :class="{ 'messenger-middle-list--users': sessionHub.activeSection === 'users' && !userWorldPermissionDenied }"
-      >
-        <template v-if="showHelperAppsWorkspace">
-          <div class="messenger-helper-list">
-            <div class="messenger-helper-section">
-              <div class="messenger-helper-section-title">{{ t('userWorld.helperApps.offlineTitle') }}</div>
-              <button
-                v-for="item in helperAppsOfflineItems"
-                :key="item.key"
-                class="messenger-list-item messenger-helper-list-item"
-                :class="{ active: isHelperAppActive('offline', item.key) }"
-                type="button"
-                @click="selectHelperApp('offline', item.key)"
-              >
-                <div class="messenger-list-avatar">
-                  <i class="fa-solid" :class="item.icon" aria-hidden="true"></i>
-                </div>
-                <div class="messenger-list-main">
-                  <div class="messenger-list-row">
-                    <span class="messenger-list-name">{{ item.title }}</span>
-                  </div>
-                  <div class="messenger-list-row">
-                    <span class="messenger-list-preview">{{ item.description }}</span>
-                  </div>
-                </div>
-              </button>
-            </div>
-
-            <div class="messenger-helper-section">
-              <div class="messenger-helper-section-title">{{ t('userWorld.helperApps.onlineTitle') }}</div>
-              <div v-if="helperAppsOnlineLoading" class="messenger-list-empty">{{ t('common.loading') }}</div>
-              <template v-else>
-                <button
-                  v-for="item in helperAppsOnlineItems"
-                  :key="item.linkId"
-                  class="messenger-list-item messenger-helper-list-item"
-                  :class="{ active: isHelperAppActive('online', item.linkId) }"
-                  type="button"
-                  @click="selectHelperApp('online', item.linkId)"
-                >
-                  <div class="messenger-list-avatar">
-                    <i
-                      class="fa-solid"
-                      :class="resolveExternalIcon(item.icon)"
-                      :style="resolveExternalIconStyle(item.icon)"
-                      aria-hidden="true"
-                    ></i>
-                  </div>
-                  <div class="messenger-list-main">
-                    <div class="messenger-list-row">
-                      <span class="messenger-list-name">{{ item.title }}</span>
-                      <span class="messenger-list-time">{{ resolveExternalHost(item.url) }}</span>
-                    </div>
-                    <div class="messenger-list-row">
-                      <span class="messenger-list-preview">
-                        {{ item.description || resolveExternalHost(item.url) }}
-                      </span>
-                    </div>
-                  </div>
-                </button>
-                <div v-if="!helperAppsOnlineItems.length" class="messenger-list-empty">
-                  {{ t('userWorld.helperApps.onlineEmpty') }}
-                </div>
-              </template>
-            </div>
-          </div>
-        </template>
-
-        <template v-else-if="sessionHub.activeSection === 'messages'">
-          <div
-            v-for="item in filteredMixedConversations"
-            :key="item.key"
-            class="messenger-list-item messenger-conversation-item"
-            :class="{ active: isMixedConversationActive(item) }"
-            role="button"
-            tabindex="0"
-            @click="openMixedConversation(item)"
-            @keydown.enter.prevent="openMixedConversation(item)"
-            @keydown.space.prevent="openMixedConversation(item)"
-          >
-            <AgentAvatar
-              v-if="item.kind === 'agent'"
-              size="md"
-              :state="resolveAgentRuntimeState(item.agentId)"
-              :title="item.title"
-            />
-            <div v-else class="messenger-list-avatar">{{ avatarLabel(item.title) }}</div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ item.title }}</span>
-                <span class="messenger-list-time">{{ formatTime(item.lastAt) }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ item.preview || t('messenger.preview.empty') }}</span>
-                <span v-if="item.unread > 0" class="messenger-list-unread">{{ item.unread }}</span>
-              </div>
-            </div>
-            <button
-              v-if="canDeleteMixedConversation(item)"
-              class="messenger-list-item-action"
-              type="button"
-              :title="t('chat.history.delete')"
-              :aria-label="t('chat.history.delete')"
-              @click.stop="deleteMixedConversation(item)"
-            >
-              <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-            </button>
-          </div>
-          <div v-if="!filteredMixedConversations.length" class="messenger-list-empty">
-            {{ t('messenger.empty.list') }}
-          </div>
-        </template>
-
-        <template v-else-if="sessionHub.activeSection === 'users'">
-          <div class="messenger-users-pane">
-            <div class="messenger-unit-structure">
-              <div class="messenger-unit-structure-head">
-                <span class="messenger-unit-structure-title">{{ t('messenger.users.unitTitle') }}</span>
-                <span class="messenger-unit-structure-hint">{{ t('messenger.users.unitHint') }}</span>
-              </div>
-              <div class="messenger-unit-structure-actions">
-                <button
-                  class="messenger-unit-all-btn"
-                  :class="{ active: !selectedContactUnitId }"
-                  type="button"
-                  @click="selectedContactUnitId = ''"
-                >
-                  <span class="messenger-unit-tree-name">{{ t('messenger.users.unitAll') }}</span>
-                  <span class="messenger-unit-tree-count">{{ contactTotalCount }}</span>
-                </button>
-              </div>
-              <div class="messenger-unit-tree">
-                <div
-                  v-for="row in contactUnitTreeRows"
-                  :key="`unit-tree-${row.id}`"
-                  class="messenger-unit-tree-row"
-                  :class="{
-                    active: selectedContactUnitId === row.id,
-                    'messenger-unit-tree-row--dir': row.hasChildren,
-                    'messenger-unit-tree-row--leaf': !row.hasChildren
-                  }"
-                  :style="resolveUnitTreeRowStyle(row)"
-                  role="button"
-                  tabindex="0"
-                  @click="selectedContactUnitId = row.id"
-                  @keydown.enter.prevent="selectedContactUnitId = row.id"
-                  @keydown.space.prevent="selectedContactUnitId = row.id"
-                >
-                  <button
-                    v-if="row.hasChildren"
-                    class="messenger-unit-tree-toggle"
-                    :class="{ expanded: row.expanded }"
-                    type="button"
-                    :title="row.expanded ? t('common.collapse') : t('common.expand')"
-                    @click.stop="toggleContactUnitExpanded(row.id)"
-                  >
-                    <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
-                  </button>
-                  <span v-else class="messenger-unit-tree-toggle messenger-unit-tree-toggle--placeholder"></span>
-                  <span class="messenger-unit-tree-icon" aria-hidden="true">
-                    <i
-                      class="fa-solid"
-                      :class="row.hasChildren ? (row.expanded ? 'fa-folder-open' : 'fa-folder') : 'fa-file-lines'"
-                    ></i>
-                  </span>
-                  <span class="messenger-unit-tree-name">{{ row.label }}</span>
-                  <span class="messenger-unit-tree-count">{{ row.count }}</span>
-                </div>
-              </div>
-            </div>
-            <div v-if="userWorldPermissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
-            <template v-else>
-              <div
-                v-if="filteredContacts.length"
-                ref="contactVirtualListRef"
-                class="messenger-contact-virtual-list"
-                @scroll.passive="handleContactVirtualScroll"
-              >
-                <div
-                  class="messenger-contact-virtual-spacer"
-                  :style="{ height: `${contactVirtualTopPadding}px` }"
-                  aria-hidden="true"
-                ></div>
-                <button
-                  v-for="contact in visibleFilteredContacts"
-                  :key="contact.user_id"
-                  class="messenger-list-item messenger-contact-item"
-                  :class="{ active: selectedContactUserId === String(contact.user_id || '') }"
-                  type="button"
-                  @click="selectContact(contact)"
-                  @dblclick="openContactConversationFromList(contact)"
-                >
-                  <div class="messenger-list-avatar">{{ avatarLabel(contact.username || contact.user_id) }}</div>
-                  <div class="messenger-list-main">
-                    <div class="messenger-list-row">
-                      <span class="messenger-list-name">{{ contact.username || contact.user_id }}</span>
-                      <span class="messenger-presence-tag" :class="{ online: isContactOnline(contact) }">
-                        {{ formatContactPresence(contact) }}
-                      </span>
-                      <span class="messenger-list-time">{{ formatTime(contact.last_message_at) }}</span>
-                    </div>
-                    <div class="messenger-list-row">
-                      <span class="messenger-list-preview">
-                        {{ contact.last_message_preview || t('messenger.preview.empty') }}
-                      </span>
-                      <span v-if="resolveUnread(contact.unread_count) > 0" class="messenger-list-unread">
-                        {{ resolveUnread(contact.unread_count) }}
-                      </span>
-                    </div>
-                  </div>
-                </button>
-                <div
-                  class="messenger-contact-virtual-spacer"
-                  :style="{ height: `${contactVirtualBottomPadding}px` }"
-                  aria-hidden="true"
-                ></div>
-              </div>
-              <div v-else class="messenger-list-empty">{{ t('messenger.empty.users') }}</div>
-            </template>
-          </div>
-        </template>
-
-        <template v-else-if="sessionHub.activeSection === 'groups'">
-          <div v-if="userWorldPermissionDenied" class="messenger-list-empty">{{ t('auth.login.noPermission') }}</div>
-          <template v-else>
-            <button
-              v-for="group in filteredGroups"
-              :key="group.group_id"
-              class="messenger-list-item"
-              :class="{ active: selectedGroupId === String(group.group_id || '') }"
-              type="button"
-              @click="selectGroup(group)"
-            >
-              <div class="messenger-list-avatar">{{ avatarLabel(group.group_name || group.group_id) }}</div>
-              <div class="messenger-list-main">
-                <div class="messenger-list-row">
-                  <span class="messenger-list-name">{{ group.group_name }}</span>
-                  <span class="messenger-list-time">{{ formatTime(group.last_message_at) }}</span>
-                </div>
-                <div class="messenger-list-row">
-                  <span class="messenger-list-preview">
-                    {{ group.last_message_preview || t('messenger.preview.empty') }}
-                  </span>
-                  <span v-if="resolveUnread(group.unread_count_cache) > 0" class="messenger-list-unread">
-                    {{ resolveUnread(group.unread_count_cache) }}
-                  </span>
-                </div>
-              </div>
-            </button>
-            <div v-if="!filteredGroups.length" class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
-          </template>
-        </template>
-
-        <template v-else-if="sessionHub.activeSection === 'agents'">
-          <div class="messenger-block-title">{{ t('messenger.agent.owned') }}</div>
-          <button
-            class="messenger-list-item messenger-agent-item"
-            :class="{ active: selectedAgentId === DEFAULT_AGENT_KEY }"
-            type="button"
-            @click="selectAgentForSettings(DEFAULT_AGENT_KEY)"
-            @dblclick="openAgentById(DEFAULT_AGENT_KEY)"
-          >
-            <AgentAvatar size="md" :state="resolveAgentRuntimeState(DEFAULT_AGENT_KEY)" />
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.defaultAgent') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.defaultAgentDesc') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            v-for="agent in filteredOwnedAgents"
-            :key="agent.id"
-            class="messenger-list-item messenger-agent-item"
-            :class="{ active: selectedAgentId === normalizeAgentId(agent.id) }"
-            type="button"
-            @click="selectAgentForSettings(agent.id)"
-            @dblclick="openAgentById(agent.id)"
-          >
-            <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ agent.description || t('messenger.preview.empty') }}</span>
-              </div>
-            </div>
-          </button>
-          <div v-if="!filteredOwnedAgents.length" class="messenger-list-empty">{{ t('messenger.empty.agents') }}</div>
-
-          <div v-if="filteredSharedAgents.length" class="messenger-block-title">
-            {{ t('messenger.agent.shared') }}
-          </div>
-          <button
-            v-for="agent in filteredSharedAgents"
-            :key="`shared-${agent.id}`"
-            class="messenger-list-item messenger-agent-item"
-            :class="{ active: selectedAgentId === normalizeAgentId(agent.id) }"
-            type="button"
-            @click="selectAgentForSettings(agent.id)"
-            @dblclick="openAgentById(agent.id)"
-          >
-            <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ agent.name || agent.id }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ agent.description || t('messenger.preview.empty') }}</span>
-              </div>
-            </div>
-          </button>
-        </template>
-        <template v-else-if="sessionHub.activeSection === 'tools'">
-          <div class="messenger-block-title">{{ t('messenger.tools.adminTitle') }}</div>
-          <button
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === 'category:admin' }"
-            type="button"
-            @click="selectToolCategory('admin')"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.tools.adminTitle') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.tools.adminDesc') }}</span>
-              </div>
-            </div>
-          </button>
-
-          <div class="messenger-block-title">{{ t('messenger.tools.customTitle') }}</div>
-          <button
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === 'category:mcp' }"
-            type="button"
-            @click="selectToolCategory('mcp')"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-plug" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('toolManager.system.mcp') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.tools.mcpDesc') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === 'category:skills' }"
-            type="button"
-            @click="selectToolCategory('skills')"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('toolManager.system.skills') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.tools.skillsDesc') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            class="messenger-list-item"
-            :class="{ active: selectedToolEntryKey === 'category:knowledge' }"
-            type="button"
-            @click="selectToolCategory('knowledge')"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-database" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('toolManager.system.knowledge') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.tools.knowledgeDesc') }}</span>
-              </div>
-            </div>
-          </button>
-
-          <template v-if="!desktopLocalMode">
-            <div class="messenger-block-title">{{ t('messenger.tools.sharedTitle') }}</div>
-            <button
-              class="messenger-list-item"
-              :class="{ active: selectedToolEntryKey === 'category:shared' }"
-              type="button"
-              @click="selectToolCategory('shared')"
-            >
-              <div class="messenger-list-avatar"><i class="fa-solid fa-share-nodes" aria-hidden="true"></i></div>
-              <div class="messenger-list-main">
-                <div class="messenger-list-row">
-                  <span class="messenger-list-name">{{ t('messenger.tools.sharedTitle') }}</span>
-                </div>
-                <div class="messenger-list-row">
-                  <span class="messenger-list-preview">{{ t('messenger.tools.sharedDesc') }}</span>
-                </div>
-              </div>
-            </button>
-          </template>
-        </template>
-
-        <template v-else-if="sessionHub.activeSection === 'files'">
-          <div class="messenger-block-title messenger-block-title--tight">{{ t('messenger.files.userContainer') }}</div>
-          <button
-            class="messenger-list-item"
-            :class="{ active: fileScope === 'user' }"
-            type="button"
-            @click="selectContainer('user')"
-            @contextmenu.prevent.stop="openFileContainerMenu($event, 'user', USER_CONTAINER_ID)"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.files.userContainer') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">
-                  {{ t('messenger.files.userContainerDesc', { id: USER_CONTAINER_ID }) }}
-                </span>
-              </div>
-            </div>
-          </button>
-          <div class="messenger-block-title messenger-block-title--tight">
-            {{ t('messenger.files.agentContainerGroup') }}
-          </div>
-          <div v-if="boundAgentFileContainers.length" class="messenger-block-title messenger-block-title--sub">
-            {{ t('messenger.files.boundGroup') }}
-          </div>
-          <button
-            v-for="container in boundAgentFileContainers"
-            :key="`container-${container.id}`"
-            class="messenger-list-item messenger-list-item--compact"
-            :class="{ active: fileScope === 'agent' && selectedFileContainerId === container.id }"
-            type="button"
-            @click="selectContainer(container.id)"
-            @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.files.agentContainer', { id: container.id }) }}</span>
-                <span v-if="container.agentNames.length" class="messenger-kind-tag">
-                  {{ t('messenger.files.agentCount', { count: container.agentNames.length }) }}
-                </span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ container.preview }}</span>
-              </div>
-            </div>
-          </button>
-          <div v-if="unboundAgentFileContainers.length" class="messenger-block-title messenger-block-title--sub">
-            {{ t('messenger.files.unboundGroup') }}
-          </div>
-          <button
-            v-for="container in unboundAgentFileContainers"
-            :key="`container-unbound-${container.id}`"
-            class="messenger-list-item messenger-list-item--compact"
-            :class="{ active: fileScope === 'agent' && selectedFileContainerId === container.id }"
-            type="button"
-            @click="selectContainer(container.id)"
-            @contextmenu.prevent.stop="openFileContainerMenu($event, 'agent', container.id)"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-box-archive" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.files.agentContainer', { id: container.id }) }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ container.preview }}</span>
-              </div>
-            </div>
-          </button>
-        </template>
-
-        <template v-else>
-          <button
-            class="messenger-list-item"
-            :class="{ active: settingsPanelMode === 'general' }"
-            type="button"
-            @click="settingsPanelMode = 'general'"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-sliders" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.section.settings') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.section.settings.desc') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            class="messenger-list-item"
-            :class="{ active: settingsPanelMode === 'profile' }"
-            type="button"
-            @click="settingsPanelMode = 'profile'"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-user" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('user.profile.enter') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ currentUsername }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            class="messenger-list-item"
-            :class="{ active: settingsPanelMode === 'prompts' }"
-            type="button"
-            @click="settingsPanelMode = 'prompts'"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-file-lines" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.prompt.title') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.prompt.desc') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            v-if="desktopMode"
-            class="messenger-list-item"
-            :class="{ active: settingsPanelMode === 'desktop-models' }"
-            type="button"
-            @click="settingsPanelMode = 'desktop-models'"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-desktop" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.settings.desktopModels') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.settings.desktopModelsHint') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            v-if="desktopMode"
-            class="messenger-list-item"
-            :class="{ active: settingsPanelMode === 'desktop-lan' }"
-            type="button"
-            @click="settingsPanelMode = 'desktop-lan'"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-network-wired" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.settings.desktopLan') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.settings.desktopLanHint') }}</span>
-              </div>
-            </div>
-          </button>
-          <button
-            v-if="desktopMode"
-            class="messenger-list-item"
-            :class="{ active: settingsPanelMode === 'desktop-remote' }"
-            type="button"
-            @click="settingsPanelMode = 'desktop-remote'"
-          >
-            <div class="messenger-list-avatar"><i class="fa-solid fa-server" aria-hidden="true"></i></div>
-            <div class="messenger-list-main">
-              <div class="messenger-list-row">
-                <span class="messenger-list-name">{{ t('messenger.settings.desktopRemote') }}</span>
-              </div>
-              <div class="messenger-list-row">
-                <span class="messenger-list-preview">{{ t('messenger.settings.desktopRemoteHint') }}</span>
-              </div>
-            </div>
-          </button>
-        </template>
-      </div>
-      <div v-if="sessionHub.activeSection === 'more'" class="messenger-middle-footer">
-        <button
-          class="messenger-middle-logout-btn"
-          type="button"
-          :disabled="settingsLogoutDisabled"
-          @click="handleSettingsLogout"
-        >
-          <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
-          <span>{{ t('nav.logout') }}</span>
-        </button>
-      </div>
+        <MessengerMiddlePane
+          v-model:keyword="keywordInput"
+          v-model:selected-contact-unit-id="selectedContactUnitId"
+          v-model:settings-panel-mode="settingsPanelMode"
+          :active-section="sessionHub.activeSection"
+          :active-section-title="activeSectionTitle"
+          :active-section-subtitle="activeSectionSubtitle"
+          :show-helper-apps-workspace="showHelperAppsWorkspace"
+          :search-placeholder="searchPlaceholder"
+          :agent-overview-mode="agentOverviewMode"
+          :user-world-permission-denied="userWorldPermissionDenied"
+          :handle-search-create-action="handleSearchCreateAction"
+          :toggle-agent-overview-mode="toggleAgentOverviewMode"
+          :helper-apps-offline-items="helperAppsOfflineItems"
+          :helper-apps-online-items="helperAppsOnlineItems"
+          :helper-apps-online-loading="helperAppsOnlineLoading"
+          :is-helper-app-active="isHelperAppActive"
+          :select-helper-app="selectHelperApp"
+          :resolve-external-icon="resolveExternalIcon"
+          :resolve-external-icon-style="resolveExternalIconStyle"
+          :resolve-external-host="resolveExternalHost"
+          :filtered-mixed-conversations="filteredMixedConversations"
+          :is-mixed-conversation-active="isMixedConversationActive"
+          :open-mixed-conversation="openMixedConversation"
+          :resolve-agent-runtime-state="resolveAgentRuntimeState"
+          :avatar-label="avatarLabel"
+          :format-time="formatTime"
+          :can-delete-mixed-conversation="canDeleteMixedConversation"
+          :delete-mixed-conversation="deleteMixedConversation"
+          :contact-total-count="contactTotalCount"
+          :contact-unit-tree-rows="contactUnitTreeRows"
+          :resolve-unit-tree-row-style="resolveUnitTreeRowStyle"
+          :toggle-contact-unit-expanded="toggleContactUnitExpanded"
+          :filtered-contacts="filteredContacts"
+          :set-contact-virtual-list-ref="setContactVirtualListRef"
+          :handle-contact-virtual-scroll="handleContactVirtualScroll"
+          :contact-virtual-top-padding="contactVirtualTopPadding"
+          :contact-virtual-bottom-padding="contactVirtualBottomPadding"
+          :visible-filtered-contacts="visibleFilteredContacts"
+          :selected-contact-user-id="selectedContactUserId"
+          :select-contact="selectContact"
+          :open-contact-conversation-from-list="openContactConversationFromList"
+          :is-contact-online="isContactOnline"
+          :format-contact-presence="formatContactPresence"
+          :resolve-unread="resolveUnread"
+          :filtered-groups="filteredGroups"
+          :selected-group-id="selectedGroupId"
+          :select-group="selectGroup"
+          :filtered-owned-agents="filteredOwnedAgents"
+          :filtered-shared-agents="filteredSharedAgents"
+          :selected-agent-id="selectedAgentId"
+          :default-agent-key="DEFAULT_AGENT_KEY"
+          :select-agent-for-settings="selectAgentForSettings"
+          :open-agent-by-id="openAgentById"
+          :normalize-agent-id="normalizeAgentId"
+          :selected-tool-entry-key="selectedToolEntryKey"
+          :select-tool-category="selectToolCategory"
+          :desktop-local-mode="desktopLocalMode"
+          :file-scope="fileScope"
+          :selected-file-container-id="selectedFileContainerId"
+          :user-container-id="USER_CONTAINER_ID"
+          :select-container="selectContainer"
+          :open-file-container-menu="openFileContainerMenu"
+          :bound-agent-file-containers="boundAgentFileContainers"
+          :unbound-agent-file-containers="unboundAgentFileContainers"
+          :desktop-mode="desktopMode"
+          :current-username="currentUsername"
+          :settings-logout-disabled="settingsLogoutDisabled"
+          :handle-settings-logout="handleSettingsLogout"
+        />
       </section>
     </Transition>
 
@@ -1765,122 +1189,43 @@
       @settings="handleFileContainerMenuSettings"
     />
 
-    <MessengerWorldHistoryDialog
-      v-model:visible="worldHistoryDialogVisible"
-      v-model:keyword="worldHistoryKeyword"
-      v-model:active-tab="worldHistoryActiveTab"
-      v-model:date-range="worldHistoryDateRange"
-      :tab-options="worldHistoryTabOptions"
-      :records="filteredWorldHistoryRecords"
+    <MessengerDialogsHost
+      v-model:world-history-dialog-visible="worldHistoryDialogVisible"
+      v-model:world-history-keyword="worldHistoryKeyword"
+      v-model:world-history-active-tab="worldHistoryActiveTab"
+      v-model:world-history-date-range="worldHistoryDateRange"
+      :world-history-tab-options="worldHistoryTabOptions"
+      :filtered-world-history-records="filteredWorldHistoryRecords"
       :format-time="formatTime"
-      @locate="locateWorldHistoryMessage"
-    />
-
-    <MessengerTimelineDetailDialog
-      v-model:visible="timelineDetailDialogVisible"
-      :session-id="timelineDetailSessionId"
-    />
-
-    <el-dialog
-      v-model="worldContainerPickerVisible"
-      class="messenger-dialog messenger-world-file-picker-dialog"
-      :title="t('userWorld.attachments.pickDialogTitle')"
-      width="520px"
-      destroy-on-close
-    >
-      <div class="messenger-world-file-picker">
-        <div class="messenger-world-file-picker-toolbar">
-          <button
-            class="messenger-inline-btn"
-            type="button"
-            :disabled="worldContainerPickerLoading || !worldContainerPickerPath"
-            :title="t('userWorld.attachments.pickParent')"
-            :aria-label="t('userWorld.attachments.pickParent')"
-            @click="openWorldContainerPickerParent"
-          >
-            <i class="fa-solid fa-arrow-up" aria-hidden="true"></i>
-          </button>
-          <button
-            class="messenger-inline-btn"
-            type="button"
-            :disabled="worldContainerPickerLoading"
-            :title="t('common.refresh')"
-            :aria-label="t('common.refresh')"
-            @click="refreshWorldContainerPicker"
-          >
-            <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
-          </button>
-          <div class="messenger-world-file-picker-path" :title="worldContainerPickerPathLabel">
-            {{ worldContainerPickerPathLabel }}
-          </div>
-        </div>
-        <label class="messenger-world-file-picker-search">
-          <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
-          <input
-            v-model.trim="worldContainerPickerKeyword"
-            type="text"
-            :placeholder="t('userWorld.attachments.pickSearchPlaceholder')"
-          />
-        </label>
-        <div v-if="worldContainerPickerLoading" class="messenger-world-file-picker-empty">
-          {{ t('common.loading') }}
-        </div>
-        <div
-          v-else-if="!worldContainerPickerDisplayEntries.length"
-          class="messenger-world-file-picker-empty"
-        >
-          {{ t('userWorld.attachments.pickEmpty') }}
-        </div>
-        <div v-else class="messenger-world-file-picker-list">
-          <button
-            v-for="entry in worldContainerPickerDisplayEntries"
-            :key="entry.path"
-            class="messenger-world-file-picker-item"
-            type="button"
-            @click="handleWorldContainerPickerEntry(entry)"
-          >
-            <i
-              class="messenger-world-file-picker-icon"
-              :class="entry.type === 'dir' ? 'fa-solid fa-folder' : 'fa-regular fa-file-lines'"
-              aria-hidden="true"
-            ></i>
-            <span class="messenger-world-file-picker-name" :title="entry.name">
-              {{ entry.name }}
-            </span>
-            <i
-              class="messenger-world-file-picker-action"
-              :class="entry.type === 'dir' ? 'fa-solid fa-chevron-right' : 'fa-solid fa-plus'"
-              aria-hidden="true"
-            ></i>
-          </button>
-        </div>
-      </div>
-    </el-dialog>
-
-    <MessengerPromptPreviewDialog
-      v-model:visible="agentPromptPreviewVisible"
-      :loading="agentPromptPreviewLoading"
-      :content="activeAgentPromptPreviewText"
-    />
-
-    <MessengerImagePreviewDialog
-      :visible="imagePreviewVisible"
-      :image-url="imagePreviewUrl"
-      :title="imagePreviewTitle"
-      :workspace-path="imagePreviewWorkspacePath"
-      @download="handleImagePreviewDownload"
-      @close="closeImagePreview"
-    />
-
-    <MessengerGroupCreateDialog
-      v-model:visible="groupCreateVisible"
-      v-model:group-name="groupCreateName"
-      v-model:keyword="groupCreateKeyword"
-      v-model:member-ids="groupCreateMemberIds"
-      :creating="groupCreating"
-      :contacts="filteredGroupCreateContacts"
+      :locate-world-history-message="locateWorldHistoryMessage"
+      v-model:timeline-detail-dialog-visible="timelineDetailDialogVisible"
+      :timeline-detail-session-id="timelineDetailSessionId"
+      v-model:world-container-picker-visible="worldContainerPickerVisible"
+      :world-container-picker-loading="worldContainerPickerLoading"
+      :world-container-picker-path="worldContainerPickerPath"
+      :world-container-picker-path-label="worldContainerPickerPathLabel"
+      v-model:world-container-picker-keyword="worldContainerPickerKeyword"
+      :world-container-picker-display-entries="worldContainerPickerDisplayEntries"
+      :open-world-container-picker-parent="openWorldContainerPickerParent"
+      :refresh-world-container-picker="refreshWorldContainerPicker"
+      :handle-world-container-picker-entry="handleWorldContainerPickerEntry"
+      v-model:agent-prompt-preview-visible="agentPromptPreviewVisible"
+      :agent-prompt-preview-loading="agentPromptPreviewLoading"
+      :active-agent-prompt-preview-text="activeAgentPromptPreviewText"
+      :image-preview-visible="imagePreviewVisible"
+      :image-preview-url="imagePreviewUrl"
+      :image-preview-title="imagePreviewTitle"
+      :image-preview-workspace-path="imagePreviewWorkspacePath"
+      :handle-image-preview-download="handleImagePreviewDownload"
+      :close-image-preview="closeImagePreview"
+      v-model:group-create-visible="groupCreateVisible"
+      v-model:group-create-name="groupCreateName"
+      v-model:group-create-keyword="groupCreateKeyword"
+      v-model:group-create-member-ids="groupCreateMemberIds"
+      :group-creating="groupCreating"
+      :filtered-group-create-contacts="filteredGroupCreateContacts"
       :resolve-unit-label="resolveUnitLabel"
-      @submit="submitGroupCreate"
+      :submit-group-create="submitGroupCreate"
     />
   </div>
 </template>
@@ -1912,17 +1257,14 @@ import DesktopContainerManagerPanel from '@/components/messenger/DesktopContaine
 import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSettingsPanel.vue';
 import MessengerFileContainerMenu from '@/components/messenger/MessengerFileContainerMenu.vue';
 import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
-import MessengerGroupCreateDialog from '@/components/messenger/MessengerGroupCreateDialog.vue';
 import MessengerLocalFileSearchPanel from '@/components/messenger/MessengerLocalFileSearchPanel.vue';
-import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePreviewDialog.vue';
-import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
 import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
 import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
-import MessengerTimelineDetailDialog from '@/components/messenger/MessengerTimelineDetailDialog.vue';
 import UserPromptSettingsPanel from '@/components/messenger/UserPromptSettingsPanel.vue';
-import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
+import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
+import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import GlobeAppPanel from '@/components/globe/GlobeAppPanel.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
@@ -2270,6 +1612,10 @@ const keywordInput = ref('');
 const contactVirtualListRef = ref<HTMLElement | null>(null);
 const contactVirtualScrollTop = ref(0);
 const contactVirtualViewportHeight = ref(0);
+
+const setContactVirtualListRef = (element: HTMLElement | null) => {
+  contactVirtualListRef.value = element;
+};
 
 let statusTimer: number | null = null;
 let lifecycleTimer: number | null = null;

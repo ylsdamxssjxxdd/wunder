@@ -214,7 +214,7 @@ const normalizeCountryName = (value: unknown, numericId?: unknown): string => {
   if (mapped) return mapped;
   const text = normalizeName(value);
   if (text.toLowerCase() === 'taiwan' || text.toLowerCase().includes('taiwan province')) {
-    return '中国台湾';
+    return '台湾省';
   }
   return text;
 };
@@ -222,7 +222,7 @@ const normalizeCountryName = (value: unknown, numericId?: unknown): string => {
 const normalizeProvinceName = (value: unknown): string => {
   const text = normalizeName(value);
   if (text.includes('台湾')) {
-    return '中国台湾';
+    return '台湾省';
   }
   return text;
 };

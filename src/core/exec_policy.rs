@@ -142,17 +142,17 @@ pub fn evaluate_tool_call(
         }
     }
 
-    if is_control_tool {
-        if matches!(
+    if is_control_tool
+        && matches!(
             approval_mode,
             ApprovalMode::Suggest | ApprovalMode::AutoEdit
-        ) && !approved
-        {
-            requires_approval = true;
-            allowed = false;
-            if reason.is_empty() {
-                reason = "control_requires_approval".to_string();
-            }
+        )
+        && !approved
+    {
+        requires_approval = true;
+        allowed = false;
+        if reason.is_empty() {
+            reason = "control_requires_approval".to_string();
         }
     }
 
