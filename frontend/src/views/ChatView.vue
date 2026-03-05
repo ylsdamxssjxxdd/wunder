@@ -683,6 +683,7 @@ import {
 } from '@/utils/workspaceImagePersistentCache';
 import {
   isImagePath,
+  normalizeWorkspaceBareRelativePath,
   normalizeWorkspaceRelativeMarkdownPath,
   parseWorkspaceResourceUrl,
   resolveWorkspaceRelativePathFromLocal
@@ -1393,9 +1394,14 @@ const resolveChatMarkdownWorkspacePath = (rawPath: string): string => {
     const directPath = buildChatWorkspacePublicPath(normalized);
     if (directPath) return directPath;
   }
-  if (!desktopLocalMode.value) return '';
   const workspaceId = buildChatWorkspaceId();
   if (!workspaceId) return '';
+  const bareRelative = normalizeWorkspaceBareRelativePath(rawPath);
+  if (bareRelative) {
+    const barePath = buildChatWorkspacePublicPath(bareRelative);
+    if (barePath) return barePath;
+  }
+  if (!desktopLocalMode.value) return '';
   const workspaceRoot = resolveDesktopWorkspaceRoot();
   const localRelative = resolveWorkspaceRelativePathFromLocal(rawPath, workspaceId, workspaceRoot);
   if (!localRelative) return '';
@@ -1693,6 +1699,14 @@ const hydrateWorkspaceResourceCard = async (card) => {
     card.classList.add('is-ready');
     if (status) status.textContent = '';
   } catch (error) {
+    const fallbackText = card.dataset?.workspaceFallback || '';
+    if (fallbackText && isWorkspaceResourceMissing(error)) {
+      const fallbackNode = document.createElement('span');
+      fallbackNode.className = 'ai-resource-fallback';
+      fallbackNode.textContent = fallbackText;
+      card.replaceWith(fallbackNode);
+      return;
+    }
     if (status) {
       status.textContent = isWorkspaceResourceMissing(error)
         ? t('chat.resourceMissing')

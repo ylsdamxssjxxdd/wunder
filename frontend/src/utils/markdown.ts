@@ -1,6 +1,10 @@
 import MarkdownIt from 'markdown-it';
 import { t } from '@/i18n';
-import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import {
+  isImagePath,
+  normalizeWorkspaceBareRelativePath,
+  parseWorkspaceResourceUrl
+} from '@/utils/workspaceResources';
 
 type WorkspacePathResolver = (rawPath: string) => string;
 type MarkdownRenderEnv = {
@@ -47,16 +51,25 @@ const parseMarkdownWorkspaceResource = (raw: string, env?: MarkdownRenderEnv) =>
   return parseWorkspaceResourceUrl(resolved);
 };
 
+const buildWorkspaceFallbackText = (text: string) =>
+  `<span class="ai-resource-fallback">${escapeHtml(text)}</span>`;
+
 markdown.renderer.rules.image = (tokens, idx, options, env, slf) => {
   const token = tokens[idx];
   const src = token.attrGet('src') || '';
+  const isBareRelative = Boolean(normalizeWorkspaceBareRelativePath(src));
   const resource = parseMarkdownWorkspaceResource(src, env as MarkdownRenderEnv);
   if (!resource) {
+    if (isBareRelative) {
+      const alt = token.content || token.attrGet('alt') || 'image';
+      return buildWorkspaceFallbackText(`![${alt}](${src})`);
+    }
     return defaultImageRenderer(tokens, idx, options, env, slf);
   }
   const alt = token.content || token.attrGet('alt') || resource.filename || 'image';
   const kind = isImagePath(resource.filename || resource.relativePath) ? 'image' : 'file';
-  return buildWorkspaceResourceCard(resource.publicPath, alt, resource.filename, kind);
+  const fallback = isBareRelative ? `![${alt}](${src})` : '';
+  return buildWorkspaceResourceCard(resource.publicPath, alt, resource.filename, kind, fallback);
 };
 
 markdown.renderer.rules.link_open = (tokens, idx, options, env, slf) => {
@@ -83,6 +96,7 @@ markdown.core.ruler.after('inline', 'workspace_resource_links', (state) => {
       if (token.type === 'link_open') {
         const href = token.attrGet('href') || '';
         const resource = parseMarkdownWorkspaceResource(href, state.env as MarkdownRenderEnv);
+        const isBareRelative = Boolean(normalizeWorkspaceBareRelativePath(href));
         if (resource && !isImagePath(resource.filename || resource.relativePath)) {
           let label = '';
           let j = i + 1;
@@ -94,12 +108,30 @@ markdown.core.ruler.after('inline', 'workspace_resource_links', (state) => {
           }
           const displayLabel = label.trim() || resource.filename || 'resource';
           const htmlToken = new state.Token('html_inline', '', 0);
+          const fallback = isBareRelative ? `[${displayLabel}](${href})` : '';
           htmlToken.content = buildWorkspaceResourceCard(
             resource.publicPath,
             displayLabel,
             resource.filename,
-            'file'
+            'file',
+            fallback
           );
+          nextChildren.push(htmlToken);
+          i = j;
+          continue;
+        }
+        if (!resource && isBareRelative) {
+          let label = '';
+          let j = i + 1;
+          for (; j < children.length; j += 1) {
+            if (children[j].type === 'link_close') break;
+            if (children[j].type === 'text' || children[j].type === 'code_inline') {
+              label += children[j].content;
+            }
+          }
+          const displayLabel = label.trim() || href;
+          const htmlToken = new state.Token('html_inline', '', 0);
+          htmlToken.content = buildWorkspaceFallbackText(`[${displayLabel}](${href})`);
           nextChildren.push(htmlToken);
           i = j;
           continue;
@@ -434,7 +466,7 @@ export function renderMarkdown(content = '', options: MarkdownRenderOptions = {}
   return markdown.render(String(content), env);
 }
 
-function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') {
+function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', fallbackText = '') {
   const title = decodeResourceLabel(label);
   const fallback = decodeResourceLabel(filename);
   const displayName = title || fallback || 'resource';
@@ -449,6 +481,8 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
   const fileIcon = resolveFileIconPath(fileExt);
   const fileBadge = fileExt ? fileExt.toUpperCase() : 'FILE';
   const imageLoadingLabel = escapeHtml(t('chat.resourceImageLoading'));
+  const safeFallbackText = fallbackText ? escapeHtml(fallbackText) : '';
+  const fallbackAttr = safeFallbackText ? ` data-workspace-fallback="${safeFallbackText}"` : '';
   const fileHeader = `
     <div class="ai-resource-file-header">
       <div class="ai-resource-file-title" title="${safeName}">${safeName}</div>
@@ -485,7 +519,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file') 
   `;
   const cardAction = safeKind === 'file' ? ' data-workspace-action="download"' : '';
   return `
-    <div class="ai-resource-card ai-resource-${safeKind}" data-workspace-kind="${safeKind}" data-workspace-path="${safePath}"${cardAction}>
+    <div class="ai-resource-card ai-resource-${safeKind}" data-workspace-kind="${safeKind}" data-workspace-path="${safePath}"${cardAction}${fallbackAttr}>
       ${safeKind === 'image' ? imageHeader : ''}
       ${safeKind === 'image' ? '' : fileHeader}
       ${safeKind === 'image' ? imageBody : fileBody}

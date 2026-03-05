@@ -619,6 +619,7 @@ export default {
   'desktop.system.apiKey': 'API Key',
   'desktop.system.modelName': '模型名称',
   'desktop.system.modelNameRequired': '请先填写模型名称',
+  'desktop.system.modelSetupHint': '未设置模型，点击设置',
   'desktop.system.temperature': 'temperature',
   'desktop.system.timeout': 'timeout_s',
   'desktop.system.retry': 'retry',

@@ -173,22 +173,22 @@
       <template v-if="worldStyle">
         <div class="messenger-world-footer chat-composer-world-footer">
           <button
-            v-if="composerModelName && modelJumpEnabled"
+            v-if="composerModelDisplayName && composerModelActionable"
             class="chat-composer-world-model chat-composer-world-model--action"
             type="button"
-            :title="composerModelName"
-            :aria-label="`${t('desktop.system.modelName')}: ${composerModelName}`"
+            :title="composerModelDisplayName"
+            :aria-label="composerModelAriaLabel"
             @click="emit('open-model-settings')"
           >
-            <span class="chat-composer-world-model-text">{{ composerModelName }}</span>
+            <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
           </button>
           <div
-            v-else-if="composerModelName"
+            v-else-if="composerModelDisplayName"
             class="chat-composer-world-model"
-            :title="composerModelName"
-            :aria-label="`${t('desktop.system.modelName')}: ${composerModelName}`"
+            :title="composerModelDisplayName"
+            :aria-label="composerModelAriaLabel"
           >
-            <span class="chat-composer-world-model-text">{{ composerModelName }}</span>
+            <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
           </div>
           <div
             v-if="showApprovalLabel && approvalLabelText"
@@ -518,6 +518,25 @@ const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
 const composerModelName = computed(() => String(props.modelName || '').trim());
+const composerModelMissing = computed(() => {
+  const name = composerModelName.value;
+  if (!name) return true;
+  return name === t('desktop.system.modelUnnamed');
+});
+const composerModelDisplayName = computed(() => {
+  if (composerModelMissing.value && props.modelJumpEnabled) {
+    return t('desktop.system.modelSetupHint');
+  }
+  return composerModelName.value;
+});
+const composerModelActionable = computed(
+  () => Boolean(props.modelJumpEnabled && composerModelDisplayName.value)
+);
+const composerModelAriaLabel = computed(() => {
+  const label = composerModelDisplayName.value || composerModelName.value;
+  if (!label) return '';
+  return `${t('desktop.system.modelName')}: ${label}`;
+});
 const getDesktopScreenshotBridge = (): DesktopScreenshotBridge | null => {
   if (typeof window === 'undefined') return null;
   const candidate = (window as Window & { wunderDesktop?: DesktopScreenshotBridge }).wunderDesktop;

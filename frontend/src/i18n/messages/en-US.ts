@@ -622,6 +622,7 @@ export default {
   'desktop.system.apiKey': 'API Key',
   'desktop.system.modelName': 'Model name',
   'desktop.system.modelNameRequired': 'Please enter model name first',
+  'desktop.system.modelSetupHint': 'Set a model (click to configure)',
   'desktop.system.temperature': 'Temperature',
   'desktop.system.timeout': 'Timeout (s)',
   'desktop.system.retry': 'Retry',

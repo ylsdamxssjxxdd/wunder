@@ -123,6 +123,50 @@ export const resolveWorkspaceRelativePathFromLocal = (
   return '';
 };
 
+export const normalizeWorkspaceBareRelativePath = (raw) => {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (
+    text.startsWith('/') ||
+    text.startsWith('./') ||
+    text.startsWith('../') ||
+    text.startsWith('?') ||
+    text.startsWith('#') ||
+    text.startsWith('//')
+  ) {
+    return '';
+  }
+  if (WINDOWS_DRIVE_RE.test(text)) {
+    return '';
+  }
+  if (FILE_URI_SCHEME_RE.test(text)) {
+    return '';
+  }
+  if (ABSOLUTE_URI_SCHEME_RE.test(text)) {
+    return '';
+  }
+  const normalized = text.replace(/\\/g, '/').trim();
+  const { path } = splitPathWithSuffix(normalized);
+  if (!path) return '';
+  if (!path.includes('/') && !path.includes('.')) {
+    return '';
+  }
+  const segments = [];
+  path.split('/').forEach((segment) => {
+    const token = segment.trim();
+    if (!token || token === '.') return;
+    if (token === '..') {
+      if (segments.length) {
+        segments.pop();
+      }
+      return;
+    }
+    segments.push(token);
+  });
+  if (!segments.length) return '';
+  return segments.join('/');
+};
+
 export const normalizeWorkspaceRelativeMarkdownPath = (raw) => {
   const text = String(raw || '').trim();
   if (!text) return '';
