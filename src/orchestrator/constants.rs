@@ -32,6 +32,7 @@ pub const DEFAULT_TOOL_TIMEOUT_S: f64 = 120.0;
 pub const MIN_TOOL_TIMEOUT_S: f64 = 1.0;
 
 pub const DEFAULT_TOOL_PARALLELISM: usize = 4;
+pub const MAX_USER_INPUT_TEXT_CHARS: usize = 1 << 20;
 pub const TOOL_RESULT_HEAD_CHARS: usize = 2000;
 pub const TOOL_RESULT_TAIL_CHARS: usize = 2000;
 pub const TOOL_RESULT_MAX_CHARS: usize = TOOL_RESULT_HEAD_CHARS + TOOL_RESULT_TAIL_CHARS;

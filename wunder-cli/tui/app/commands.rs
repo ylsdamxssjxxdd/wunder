@@ -1248,7 +1248,7 @@ impl TuiApp {
                         return Ok(());
                     }
                 };
-                self.queue_prepared_attachment(prepared);
+                self.queue_prepared_attachment(prepared, true);
             }
         }
         Ok(())

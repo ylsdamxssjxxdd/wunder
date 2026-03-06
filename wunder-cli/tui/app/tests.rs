@@ -410,3 +410,16 @@ fn detect_pasted_attachment_paths_leaves_plain_text_alone() {
         None
     );
 }
+
+#[test]
+fn format_compose_attachment_hint_handles_single_and_multiple_items() {
+    assert_eq!(format_compose_attachment_hint(&[], true), None);
+    assert_eq!(
+        format_compose_attachment_hint(&["diagram.png".to_string()], true),
+        Some("已附加: diagram.png".to_string())
+    );
+    assert_eq!(
+        format_compose_attachment_hint(&["diagram.png".to_string(), "notes.md".to_string()], false,),
+        Some("attached 2 · diagram.png +1".to_string())
+    );
+}

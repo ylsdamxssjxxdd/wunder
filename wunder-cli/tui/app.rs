@@ -583,6 +583,38 @@ impl TuiApp {
 
         String::new()
     }
+
+    pub fn composer_hint_line(&self) -> String {
+        if self.is_zh_language() {
+            "Enter 发送 · Shift+Enter 换行 · @ 文件 · Ctrl+V 图片".to_string()
+        } else {
+            "Enter sends · Shift+Enter newline · @ files · Ctrl+V image".to_string()
+        }
+    }
+
+    pub fn composer_attachment_hint(&self) -> Option<String> {
+        let names = self
+            .pending_attachments
+            .iter()
+            .map(|item| {
+                item.payload
+                    .name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(ToString::to_string)
+                    .or_else(|| {
+                        std::path::Path::new(item.source.as_str())
+                            .file_name()
+                            .and_then(|value| value.to_str())
+                            .map(ToString::to_string)
+                    })
+                    .unwrap_or_else(|| item.source.clone())
+            })
+            .collect::<Vec<_>>();
+        format_compose_attachment_hint(names.as_slice(), self.is_zh_language())
+    }
+
     pub fn shortcuts_visible(&self) -> bool {
         self.shortcuts_visible
     }
@@ -1456,7 +1488,7 @@ impl TuiApp {
                 "Esc / ?               关闭快捷键面板".to_string(),
                 "Enter                 发送消息".to_string(),
                 "Shift+Enter / Ctrl+J  插入换行".to_string(),
-                "Ctrl+V / Shift+Insert 粘贴剪贴板文本".to_string(),
+                "Ctrl+V / Shift+Insert 优先粘贴图片，回退文本".to_string(),
                 "拖入图片/文件         自动加入附件队列".to_string(),
                 "Right Click           粘贴剪贴板文本（自动/滚动模式）".to_string(),
                 "Left / Right          光标左移/右移".to_string(),
@@ -1483,7 +1515,7 @@ impl TuiApp {
             "Esc / ?               close shortcuts".to_string(),
             "Enter                 send message".to_string(),
             "Shift+Enter / Ctrl+J  insert newline".to_string(),
-            "Ctrl+V / Shift+Insert paste clipboard text".to_string(),
+            "Ctrl+V / Shift+Insert paste image first, then text".to_string(),
             "Drag images/files     queue as attachments".to_string(),
             "Right Click           paste clipboard text (auto/scroll mode)".to_string(),
             "Left / Right          move cursor left/right".to_string(),
@@ -2495,11 +2527,15 @@ impl TuiApp {
                     continue;
                 }
             };
-            self.queue_prepared_attachment(prepared);
+            self.queue_prepared_attachment(prepared, false);
         }
     }
 
-    fn queue_prepared_attachment(&mut self, prepared: crate::attachments::PreparedAttachment) {
+    fn queue_prepared_attachment(
+        &mut self,
+        prepared: crate::attachments::PreparedAttachment,
+        emit_feedback: bool,
+    ) {
         if let Some(existing) = self
             .pending_attachments
             .iter()
@@ -2508,18 +2544,20 @@ impl TuiApp {
             self.pending_attachments.remove(existing);
         }
         self.pending_attachments.push(prepared);
-        if let Some(last) = self.pending_attachments.last() {
-            let summary = crate::attachments::summarize_attachment(
-                last,
-                self.pending_attachments.len().saturating_sub(1),
-                self.display_language.as_str(),
-            );
-            let message = if self.is_zh_language() {
-                format!("附件已加入队列（下一轮自动发送）: {summary}")
-            } else {
-                format!("attachment queued (auto-send on next turn): {summary}")
-            };
-            self.push_log(LogKind::Info, message);
+        if emit_feedback {
+            if let Some(last) = self.pending_attachments.last() {
+                let summary = crate::attachments::summarize_attachment(
+                    last,
+                    self.pending_attachments.len().saturating_sub(1),
+                    self.display_language.as_str(),
+                );
+                let message = if self.is_zh_language() {
+                    format!("附件已加入队列（下一轮自动发送）: {summary}")
+                } else {
+                    format!("attachment queued (auto-send on next turn): {summary}")
+                };
+                self.push_log(LogKind::Info, message);
+            }
         }
     }
 
@@ -2527,7 +2565,8 @@ impl TuiApp {
         if text.is_empty() {
             return;
         }
-        if let Some(paths) = detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), &text)
+        if let Some(paths) =
+            detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), &text)
         {
             self.pending_attachment_paths.extend(paths);
             return;
@@ -2536,6 +2575,16 @@ impl TuiApp {
     }
 
     fn paste_from_system_clipboard(&mut self) {
+        let mut image_error = None;
+        match read_system_clipboard_image_path() {
+            Ok(Some(path)) => {
+                self.pending_attachment_paths.push_back(path);
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => image_error = Some(error),
+        }
+
         match read_system_clipboard_text() {
             Ok(Some(text)) => self.on_paste(text),
             Ok(None) => {}
@@ -2546,7 +2595,17 @@ impl TuiApp {
                     "failed to read text from system clipboard; ensure terminal paste is allowed and clipboard has text",
                 );
                 self.push_log(LogKind::Info, format!("{hint}: {error}"));
+                return;
             }
+        }
+
+        if let Some(error) = image_error {
+            let hint = crate::locale::tr(
+                self.display_language.as_str(),
+                "读取系统剪贴板图片失败，请确认剪贴板中包含图片且 PowerShell 可访问系统剪贴板",
+                "failed to read image from system clipboard; ensure the clipboard contains an image and PowerShell can access it",
+            );
+            self.push_log(LogKind::Info, format!("{hint}: {error}"));
         }
     }
 

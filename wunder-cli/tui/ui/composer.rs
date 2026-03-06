@@ -37,15 +37,16 @@ pub(crate) fn draw_input(
     let (input_text, cursor_x, cursor_y) = app.input_view(inner.width, inner.height);
     let active = app.input_focus_active();
     let title = if is_zh { " 输入 " } else { " Input " };
-    let hint = if is_zh {
-        "Enter 发送 · Shift+Enter 换行"
-    } else {
-        "Enter sends · Shift+Enter newline"
-    };
-    let title_line = Line::from(vec![
+    let hint = app.composer_hint_line();
+    let mut title_spans = vec![
         Span::styled(title, theme::block_title(active)),
         Span::styled(hint, theme::secondary_text()),
-    ]);
+    ];
+    if let Some(attachment_hint) = app.composer_attachment_hint() {
+        title_spans.push(Span::raw("  "));
+        title_spans.push(Span::styled(attachment_hint, theme::success_text()));
+    }
+    let title_line = Line::from(title_spans);
 
     let body = if app.input_is_empty() {
         let placeholder = if is_zh {

@@ -52,7 +52,11 @@ pub fn recover_tool_args_value_with_meta(args: &Value) -> ToolArgsRecovery {
                 }
                 return ToolArgsRecovery {
                     value: Value::Object(parsed),
-                    repair: Some(build_repair_meta("tool_args", "raw", "lossy_json_string_repair")),
+                    repair: Some(build_repair_meta(
+                        "tool_args",
+                        "raw",
+                        "lossy_json_string_repair",
+                    )),
                 };
             }
 
@@ -129,8 +133,7 @@ pub fn normalize_tool_arguments_json_with_meta(arguments: &str) -> (String, Opti
     if let Some(value) = parse_json_value_lossy(trimmed) {
         return match value {
             Value::Object(map) => (
-                serde_json::to_string(&Value::Object(map))
-                    .unwrap_or_else(|_| "{}".to_string()),
+                serde_json::to_string(&Value::Object(map)).unwrap_or_else(|_| "{}".to_string()),
                 Some(build_repair_meta(
                     "tool_arguments",
                     "arguments",
@@ -192,7 +195,8 @@ fn sanitize_tool_call_payload_inner(payload: &Value, repaired_count: &mut usize)
                 if key == "arguments" {
                     let normalized = match value {
                         Value::String(text) => {
-                            let (normalized, repair) = normalize_tool_arguments_json_with_meta(text);
+                            let (normalized, repair) =
+                                normalize_tool_arguments_json_with_meta(text);
                             if repair.is_some() {
                                 *repaired_count = repaired_count.saturating_add(1);
                             }
@@ -251,7 +255,10 @@ fn repair_json_string_syntax(raw: &str) -> String {
         if escaped {
             output.push(ch);
             if ch == '"'
-                && matches!(next_non_whitespace_char(&chars, index + 1), Some(',') | Some('}'))
+                && matches!(
+                    next_non_whitespace_char(&chars, index + 1),
+                    Some(',') | Some('}')
+                )
             {
                 output.push('"');
                 in_string = false;
@@ -295,8 +302,8 @@ fn next_non_whitespace_char(chars: &[char], start: usize) -> Option<char> {
 mod tests {
     use super::{
         normalize_tool_arguments_json_with_meta, normalize_tool_arguments_value,
-        recover_tool_args_value, recover_tool_args_value_with_meta,
-        sanitize_tool_call_payload, sanitize_tool_call_payload_with_meta,
+        recover_tool_args_value, recover_tool_args_value_with_meta, sanitize_tool_call_payload,
+        sanitize_tool_call_payload_with_meta,
     };
     use serde_json::json;
 

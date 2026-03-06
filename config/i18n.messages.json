@@ -287,6 +287,10 @@
     "en-US": "Question is required",
     "zh-CN": "问题不能为空"
   },
+  "error.user_input_too_long": {
+    "en-US": "Input exceeds the maximum length of {max_chars} characters ({actual_chars} provided).",
+    "zh-CN": "输入内容超过最大长度 {max_chars} 个字符（当前 {actual_chars} 个）。"
+  },
   "error.session_cancelled": {
     "en-US": "Session cancelled",
     "zh-CN": "会话已取消"

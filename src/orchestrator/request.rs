@@ -1,4 +1,5 @@
 use super::*;
+use crate::orchestrator_constants::MAX_USER_INPUT_TEXT_CHARS;
 
 impl Orchestrator {
     fn prepare_request(
@@ -30,6 +31,7 @@ impl Orchestrator {
                 "error.question_required",
             )));
         }
+        validate_request_text_input_size(&question, request.attachments.as_deref())?;
         let session_id = request
             .session_id
             .clone()
@@ -210,6 +212,125 @@ impl Orchestrator {
             .await;
         self.append_memory_prompt(user_id, agent_id, prompt, is_admin)
             .await
+    }
+}
+
+fn validate_request_text_input_size(
+    question: &str,
+    attachments: Option<&[AttachmentPayload]>,
+) -> Result<(), OrchestratorError> {
+    let actual_chars = measure_request_text_input_chars(question, attachments);
+    if actual_chars <= MAX_USER_INPUT_TEXT_CHARS {
+        return Ok(());
+    }
+    let message = i18n::t_with_params(
+        "error.user_input_too_long",
+        &std::collections::HashMap::from([
+            (
+                "max_chars".to_string(),
+                MAX_USER_INPUT_TEXT_CHARS.to_string(),
+            ),
+            ("actual_chars".to_string(), actual_chars.to_string()),
+        ]),
+    );
+    Err(OrchestratorError::invalid_request_with_detail(
+        message,
+        json!({
+            "field": "input_text",
+            "max_chars": MAX_USER_INPUT_TEXT_CHARS,
+            "actual_chars": actual_chars,
+        }),
+    ))
+}
+
+fn measure_request_text_input_chars(
+    question: &str,
+    attachments: Option<&[AttachmentPayload]>,
+) -> usize {
+    let mut total = question.chars().count();
+    for attachment in attachments.unwrap_or(&[]) {
+        let content = attachment.content.as_deref().unwrap_or("").trim();
+        if content.is_empty() || request_attachment_is_image(attachment, content) {
+            continue;
+        }
+        total = total.saturating_add(content.chars().count());
+    }
+    total
+}
+
+fn request_attachment_is_image(attachment: &AttachmentPayload, content: &str) -> bool {
+    let content_type = attachment
+        .content_type
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if content_type.starts_with("image") || content_type.contains("image") {
+        return true;
+    }
+    if content.starts_with("data:image/") {
+        return true;
+    }
+    let name = attachment
+        .name
+        .as_deref()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        std::path::Path::new(&name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or(""),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_request_text_input_size_accepts_limit_boundary() {
+        let question = "x".repeat(MAX_USER_INPUT_TEXT_CHARS);
+        assert!(validate_request_text_input_size(&question, None).is_ok());
+    }
+
+    #[test]
+    fn validate_request_text_input_size_rejects_oversized_question() {
+        let question = "x".repeat(MAX_USER_INPUT_TEXT_CHARS + 1);
+        let err = validate_request_text_input_size(&question, None).expect_err("oversized input");
+        assert_eq!(err.code(), "INVALID_REQUEST");
+        let payload = err.to_payload();
+        assert_eq!(payload["detail"]["field"], "input_text");
+        assert_eq!(
+            payload["detail"]["max_chars"],
+            json!(MAX_USER_INPUT_TEXT_CHARS)
+        );
+        assert_eq!(
+            payload["detail"]["actual_chars"],
+            json!(MAX_USER_INPUT_TEXT_CHARS + 1)
+        );
+    }
+
+    #[test]
+    fn measure_request_text_input_chars_ignores_image_attachments() {
+        let attachments = vec![
+            AttachmentPayload {
+                name: Some("image.png".to_string()),
+                content: Some("data:image/png;base64,AAAA".to_string()),
+                content_type: Some("image/png".to_string()),
+                public_path: None,
+            },
+            AttachmentPayload {
+                name: Some("note.txt".to_string()),
+                content: Some("hello".to_string()),
+                content_type: Some("text/plain".to_string()),
+                public_path: None,
+            },
+        ];
+        assert_eq!(
+            measure_request_text_input_chars("abc", Some(&attachments)),
+            8
+        );
     }
 }
 

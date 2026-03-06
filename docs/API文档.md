@@ -99,6 +99,7 @@
 - `config_overrides`：对象，可选，用于临时覆盖配置
 - `attachments`：数组，可选，附件列表（图片/音频支持 data URL；服务端会持久化到用户私有容器并补充 `public_path`）
 - 约束：注册用户每日有请求额度，按每次模型调用消耗，超额返回 429（`detail.code=USER_QUOTA_EXCEEDED`）。
+- 约束：`question` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）。
 - 忙时队列：当 `agent_queue.enabled=true` 时，非流式返回 202（`data.queue_id`/`data.thread_id`/`data.session_id`），SSE/WS 返回 `queued` 事件。
 - 忙时返回：当 `agent_queue.enabled=false` 且显式指定 `session_id` 正在运行/取消中时，会返回 429（`detail.code=USER_BUSY`）。
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
@@ -1928,6 +1929,7 @@
 - `POST /wunder/chat/sessions/{session_id}/messages`：发送消息（支持 SSE）
   - 入参（JSON）：`content`、`stream`（默认 true）、`attachments`（可选）、`tool_call_mode`（可选）、`approval_mode`（可选）
   - `attachments` 项：`{ name?, content?, mime_type?, public_path? }`（图片/音频可用 data URL；服务端落盘后返回 `public_path`）
+  - 约束：`content` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）
   - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
   - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
   - 注册用户每日请求额度超额时返回 429（`detail.code=USER_QUOTA_EXCEEDED`）
@@ -2816,6 +2818,7 @@
 - `WS /wunder/chat/ws` 的 `start` payload
   - 新增可选字段：`tool_call_mode`（`tool_call` / `function_call` / `freeform_call`）。
   - 新增可选字段：`approval_mode`（`suggest` / `auto_edit` / `full_auto`）。
+  - 约束：`content` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 `error.code=BAD_REQUEST`，错误信息会包含最大长度说明。
 - 当携带 `tool_call_mode` 时，服务端会在本次请求中生成 `config_overrides.llm.models.<default>.tool_call_mode`，仅影响当前轮请求。
 
 ### desktop 暴露路由范围（当前）

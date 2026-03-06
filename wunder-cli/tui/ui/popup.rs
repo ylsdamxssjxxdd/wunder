@@ -51,7 +51,12 @@ mod tests {
         buffer
             .content
             .chunks(width)
-            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<Vec<_>>().join(""))
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.symbol())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
             .collect()
     }
 

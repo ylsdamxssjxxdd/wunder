@@ -18,7 +18,10 @@ pub(crate) fn draw_shortcuts_modal(frame: &mut Frame, area: Rect, lines: Vec<Str
     let popup = centered_popup(area, lines.as_slice(), 26, 8);
     frame.render_widget(Clear, popup);
     let widget = Paragraph::new(to_modal_lines(lines))
-        .block(modal_block(if is_zh { " 快捷键 " } else { " Shortcuts " }, false))
+        .block(modal_block(
+            if is_zh { " 快捷键 " } else { " Shortcuts " },
+            false,
+        ))
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, popup);
 }
@@ -78,7 +81,10 @@ pub(crate) fn draw_approval_modal(
     let popup = anchored_popup(area, input_area, lines.as_slice(), 52, 10);
     frame.render_widget(Clear, popup);
     let widget = Paragraph::new(to_modal_lines(lines))
-        .block(modal_block(if is_zh { " 审批 " } else { " Approval " }, true))
+        .block(modal_block(
+            if is_zh { " 审批 " } else { " Approval " },
+            true,
+        ))
         .wrap(Wrap { trim: false });
     frame.render_widget(widget, popup);
 }

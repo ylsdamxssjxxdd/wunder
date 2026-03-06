@@ -20,6 +20,10 @@ impl OrchestratorError {
         Self::new("INVALID_REQUEST", message, None)
     }
 
+    pub(super) fn invalid_request_with_detail(message: String, detail: Value) -> Self {
+        Self::new("INVALID_REQUEST", message, Some(detail))
+    }
+
     pub(super) fn user_busy(message: String) -> Self {
         Self::new("USER_BUSY", message, None)
     }

@@ -467,6 +467,25 @@ pub(super) fn should_store_history_entry(value: &str) -> bool {
     !trimmed.is_empty() && !trimmed.trim_start().starts_with('/')
 }
 
+pub(super) fn format_compose_attachment_hint(names: &[String], is_zh: bool) -> Option<String> {
+    let first = names.first()?.trim();
+    if first.is_empty() {
+        return None;
+    }
+    let preview = backtrack_preview_line(first, 20);
+    Some(if names.len() == 1 {
+        if is_zh {
+            format!("已附加: {preview}")
+        } else {
+            format!("attached: {preview}")
+        }
+    } else if is_zh {
+        format!("已附加 {} 项 · {preview} +{}", names.len(), names.len() - 1)
+    } else {
+        format!("attached {} · {preview} +{}", names.len(), names.len() - 1)
+    })
+}
+
 pub(super) fn detect_pasted_attachment_paths(base_dir: &Path, text: &str) -> Option<Vec<String>> {
     let normalized = normalize_clipboard_text(text.to_string())?;
     let raw_has_path_syntax = normalized.contains('"')
@@ -511,10 +530,16 @@ pub(super) fn detect_pasted_attachment_paths(base_dir: &Path, text: &str) -> Opt
     if candidates.is_empty() {
         return None;
     }
-    if candidates.iter().any(|item| !raw_has_path_syntax && !looks_like_local_path(item)) {
+    if candidates
+        .iter()
+        .any(|item| !raw_has_path_syntax && !looks_like_local_path(item))
+    {
         return None;
     }
-    if candidates.iter().all(|item| attachment_path_exists(base_dir, item)) {
+    if candidates
+        .iter()
+        .all(|item| attachment_path_exists(base_dir, item))
+    {
         return Some(candidates);
     }
     None
@@ -532,7 +557,11 @@ fn normalize_pasted_attachment_path(raw: &str) -> Option<String> {
             }
         }
     }
-    Some(cleaned.trim_matches(|ch| matches!(ch, '"' | '\'')).to_string())
+    Some(
+        cleaned
+            .trim_matches(|ch| matches!(ch, '"' | '\''))
+            .to_string(),
+    )
 }
 
 fn looks_like_local_path(value: &str) -> bool {
@@ -552,6 +581,58 @@ fn attachment_path_exists(base_dir: &Path, value: &str) -> bool {
         return candidate.is_file();
     }
     base_dir.join(candidate).is_file()
+}
+
+pub(super) fn read_system_clipboard_image_path() -> Result<Option<String>> {
+    #[cfg(target_os = "windows")]
+    {
+        let script = concat!(
+            "$ErrorActionPreference='Stop'; ",
+            "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ",
+            "Add-Type -AssemblyName System.Drawing | Out-Null; ",
+            "$img = Get-Clipboard -Format Image; ",
+            "if ($null -eq $img) { exit 0 }; ",
+            "$path = Join-Path ([System.IO.Path]::GetTempPath()) ('wunder-clipboard-' + [Guid]::NewGuid().ToString('N') + '.png'); ",
+            "$img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); ",
+            "if ($img -is [System.IDisposable]) { $img.Dispose() }; ",
+            "[Console]::Out.Write($path);"
+        );
+
+        let output = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ])
+            .output()
+            .map_err(|error| {
+                anyhow!("failed to invoke powershell clipboard image reader: {error}")
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Ok(None);
+            }
+            return Err(anyhow!(
+                "powershell clipboard image reader failed: {stderr}"
+            ));
+        }
+
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if path.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(path))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(None)
+    }
 }
 
 pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {

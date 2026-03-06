@@ -2591,7 +2591,7 @@ mod tests {
         let tool_calls = extract_tool_calls(&message).expect("tool calls");
         assert_eq!(
             tool_calls,
-            json!([{ 
+            json!([{
                 "id": "call_1",
                 "type": "function",
                 "function": {

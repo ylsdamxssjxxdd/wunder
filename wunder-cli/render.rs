@@ -559,10 +559,18 @@ fn format_repair_summary(repair: &Value) -> Option<String> {
     let strategy = repair.get("strategy").and_then(Value::as_str).unwrap_or("");
     let count = repair.get("count").and_then(Value::as_u64).unwrap_or(0);
     match strategy {
-        "sanitize_before_request" if count > 0 => Some(format!("sanitized {count} malformed tool-call argument payload(s)")),
-        "lossy_json_string_repair" => Some("recovered malformed JSON arguments before execution".to_string()),
-        "raw_arguments_wrapped" => Some("wrapped non-JSON arguments before sending them upstream".to_string()),
-        "non_object_arguments_wrapped" => Some("wrapped non-object arguments into JSON before sending them upstream".to_string()),
+        "sanitize_before_request" if count > 0 => Some(format!(
+            "sanitized {count} malformed tool-call argument payload(s)"
+        )),
+        "lossy_json_string_repair" => {
+            Some("recovered malformed JSON arguments before execution".to_string())
+        }
+        "raw_arguments_wrapped" => {
+            Some("wrapped non-JSON arguments before sending them upstream".to_string())
+        }
+        "non_object_arguments_wrapped" => {
+            Some("wrapped non-object arguments into JSON before sending them upstream".to_string())
+        }
         _ => None,
     }
 }

@@ -44,7 +44,8 @@ fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRe
         .iter()
         .map(|message| {
             let tool_calls = message.tool_calls.as_ref().map(|payload| {
-                let sanitized = crate::core::tool_args::sanitize_tool_call_payload_with_meta(payload);
+                let sanitized =
+                    crate::core::tool_args::sanitize_tool_call_payload_with_meta(payload);
                 repaired_count = repaired_count.saturating_add(
                     sanitized
                         .repair
@@ -343,10 +344,14 @@ impl Orchestrator {
         if emit_events {
             let mut request_payload = if log_payload {
                 let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
-                let payload_chat =
-                    sanitize_chat_messages_for_request(&self.build_chat_messages(&payload_messages));
-                let payload =
-                    client.build_request_payload_with_tools(&payload_chat.messages, will_stream, tools);
+                let payload_chat = sanitize_chat_messages_for_request(
+                    &self.build_chat_messages(&payload_messages),
+                );
+                let payload = client.build_request_payload_with_tools(
+                    &payload_chat.messages,
+                    will_stream,
+                    tools,
+                );
                 json!({
                     "provider": effective_config.provider,
                     "model": effective_config.model,
