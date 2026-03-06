@@ -189,6 +189,7 @@ pub struct TuiApp {
     history_cursor: Option<usize>,
     history_draft: String,
     pending_attachments: Vec<crate::attachments::PreparedAttachment>,
+    pending_attachment_paths: VecDeque<String>,
     pending_paste: VecDeque<String>,
     workspace_files: Vec<IndexedFile>,
     active_assistant: Option<usize>,
@@ -288,6 +289,7 @@ impl TuiApp {
             history_cursor: None,
             history_draft: String::new(),
             pending_attachments: Vec::new(),
+            pending_attachment_paths: VecDeque::new(),
             pending_paste: VecDeque::new(),
             workspace_files: Vec::new(),
             active_assistant: None,
@@ -501,17 +503,17 @@ impl TuiApp {
             .is_some_and(|deadline| Instant::now() <= deadline)
         {
             return if is_zh {
-                "??? Ctrl+C ????????".to_string()
+                "再按一次 Ctrl+C 可退出当前终端会话".to_string()
             } else {
-                "Press Ctrl+C again to exit the current terminal session".to_string()
+                "Press Ctrl+C again to exit this terminal session".to_string()
             };
         }
 
         if self.resume_picker.is_some() {
             return if is_zh {
-                "????????? ? Enter ?? ? Esc ??".to_string()
+                "会话恢复面板已打开 · Enter 恢复 · Esc 取消".to_string()
             } else {
-                "Resume picker open ? Enter restores ? Esc cancels".to_string()
+                "Resume picker open · Enter resumes · Esc cancels".to_string()
             };
         }
 
@@ -519,27 +521,27 @@ impl TuiApp {
             let queued = self.approval_queue.len();
             return if is_zh {
                 if queued > 0 {
-                    format!("???? ? Enter ?? ? 1/2/3 ???? ? ???? {queued}")
+                    format!("审批待确认 · Enter 同意 · 1/2/3 快速选择 · 待处理 {queued}")
                 } else {
-                    "???? ? Enter ?? ? 1/2/3 ????".to_string()
+                    "审批待确认 · Enter 同意 · 1/2/3 快速选择".to_string()
                 }
             } else if queued > 0 {
-                format!("Approval pending ? Enter confirms ? 1/2/3 quick choose ? queued={queued}")
+                format!("Approval pending · Enter confirms · 1/2/3 quick choose · queued={queued}")
             } else {
-                "Approval pending ? Enter confirms ? 1/2/3 quick choose".to_string()
+                "Approval pending · Enter confirms · 1/2/3 quick choose".to_string()
             };
         }
 
         if self.active_inquiry_panel.is_some() {
             return if is_zh {
-                "??????? ? ???????????".to_string()
+                "路由面板已打开 · 可选择路由或直接回复".to_string()
             } else {
-                "Inquiry panel open ? choose a route or answer directly".to_string()
+                "Inquiry panel open · choose a route or answer directly".to_string()
             };
         }
 
         if self.busy {
-            let frames = ["?", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
+            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let tick = (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -548,35 +550,35 @@ impl TuiApp {
             let spinner = frames[tick % frames.len()];
             let mut pieces = Vec::new();
             pieces.push(if is_zh {
-                format!("{spinner} ????")
+                format!("{spinner} 处理中")
             } else {
                 format!("{spinner} Working")
             });
             pieces.push(if is_zh {
-                "Ctrl+C ??".to_string()
+                "Ctrl+C 中断".to_string()
             } else {
                 "Ctrl+C interrupts".to_string()
             });
             pieces.push(if is_zh {
-                format!("??={}", self.tool_call_mode)
+                format!("模式={}", self.tool_call_mode)
             } else {
                 format!("mode={}", self.tool_call_mode)
             });
             if self.stream_catchup_mode {
                 pieces.push(if is_zh {
-                    "???".to_string()
+                    "追帧".to_string()
                 } else {
                     "catch-up".to_string()
                 });
             }
             if !self.terminal_focused {
                 pieces.push(if is_zh {
-                    "????".to_string()
+                    "未聚焦".to_string()
                 } else {
                     "unfocused".to_string()
                 });
             }
-            return pieces.join(" ? ");
+            return pieces.join(" · ");
         }
 
         String::new()
@@ -830,7 +832,7 @@ impl TuiApp {
             .entries
             .into_iter()
             .map(|item| item.trim().to_string())
-            .filter(|item| !item.is_empty())
+            .filter(|item| should_store_history_entry(item))
             .collect();
         if self.history.len() > MAX_PERSISTED_HISTORY {
             let keep_from = self.history.len().saturating_sub(MAX_PERSISTED_HISTORY);
@@ -1455,6 +1457,7 @@ impl TuiApp {
                 "Enter                 发送消息".to_string(),
                 "Shift+Enter / Ctrl+J  插入换行".to_string(),
                 "Ctrl+V / Shift+Insert 粘贴剪贴板文本".to_string(),
+                "拖入图片/文件         自动加入附件队列".to_string(),
                 "Right Click           粘贴剪贴板文本（自动/滚动模式）".to_string(),
                 "Left / Right          光标左移/右移".to_string(),
                 "Ctrl+B / Ctrl+F       光标左移/右移".to_string(),
@@ -1464,11 +1467,12 @@ impl TuiApp {
                 "Alt+Delete            删除后一个单词".to_string(),
                 "Ctrl+U / Ctrl+K       删除到行首/行尾".to_string(),
                 "Ctrl+A / Ctrl+E       跳到行首/行尾".to_string(),
-                "Up / Down             历史记录（或多行导航）".to_string(),
+                "Up / Down             历史记录（不含 slash 命令）".to_string(),
                 "F3                    切换输入/输出焦点".to_string(),
                 "(输出焦点) arrows     选择消息条目".to_string(),
                 "(输出焦点) Enter      复用选中的用户消息".to_string(),
                 "Tab                   补全 slash/@/$/#".to_string(),
+                "@                     补全或引用文件路径".to_string(),
                 "PgUp/PgDn             滚动输出".to_string(),
                 "Mouse Wheel           滚动输出".to_string(),
                 "Shift+Drag            选择/复制（依赖终端）".to_string(),
@@ -1480,6 +1484,7 @@ impl TuiApp {
             "Enter                 send message".to_string(),
             "Shift+Enter / Ctrl+J  insert newline".to_string(),
             "Ctrl+V / Shift+Insert paste clipboard text".to_string(),
+            "Drag images/files     queue as attachments".to_string(),
             "Right Click           paste clipboard text (auto/scroll mode)".to_string(),
             "Left / Right          move cursor left/right".to_string(),
             "Ctrl+B / Ctrl+F       move cursor left/right".to_string(),
@@ -1489,11 +1494,12 @@ impl TuiApp {
             "Alt+Delete            delete next word".to_string(),
             "Ctrl+U / Ctrl+K       delete to line start/end".to_string(),
             "Ctrl+A / Ctrl+E       move to line start/end".to_string(),
-            "Up / Down             history (or multiline navigation)".to_string(),
+            "Up / Down             history (slash commands excluded)".to_string(),
             "F3                    toggle input/output focus".to_string(),
             "(output focus) arrows select transcript entries".to_string(),
             "(output focus) Enter  reuse selected user message".to_string(),
             "Tab                   complete slash/@/$/#".to_string(),
+            "@                     complete or reference file paths".to_string(),
             "PgUp/PgDn             scroll output".to_string(),
             "Mouse Wheel           scroll output".to_string(),
             "Shift+Drag            select/copy (terminal-dependent)".to_string(),
@@ -2352,6 +2358,7 @@ impl TuiApp {
 
     pub async fn drain_stream_events(&mut self) {
         self.flush_pending_paste();
+        self.drain_pending_attachment_paths().await;
         self.drain_approval_requests();
         let drain_budget = self.stream_drain_budget();
 
@@ -2474,8 +2481,55 @@ impl TuiApp {
         }
     }
 
+    async fn drain_pending_attachment_paths(&mut self) {
+        while let Some(raw_path) = self.pending_attachment_paths.pop_front() {
+            let prepared = match crate::attachments::prepare_attachment_from_path(
+                &self.runtime,
+                raw_path.as_str(),
+            )
+            .await
+            {
+                Ok(prepared) => prepared,
+                Err(err) => {
+                    self.push_log(LogKind::Error, err.to_string());
+                    continue;
+                }
+            };
+            self.queue_prepared_attachment(prepared);
+        }
+    }
+
+    fn queue_prepared_attachment(&mut self, prepared: crate::attachments::PreparedAttachment) {
+        if let Some(existing) = self
+            .pending_attachments
+            .iter()
+            .position(|item| item.source.eq_ignore_ascii_case(prepared.source.as_str()))
+        {
+            self.pending_attachments.remove(existing);
+        }
+        self.pending_attachments.push(prepared);
+        if let Some(last) = self.pending_attachments.last() {
+            let summary = crate::attachments::summarize_attachment(
+                last,
+                self.pending_attachments.len().saturating_sub(1),
+                self.display_language.as_str(),
+            );
+            let message = if self.is_zh_language() {
+                format!("附件已加入队列（下一轮自动发送）: {summary}")
+            } else {
+                format!("attachment queued (auto-send on next turn): {summary}")
+            };
+            self.push_log(LogKind::Info, message);
+        }
+    }
+
     pub fn on_paste(&mut self, text: String) {
         if text.is_empty() {
+            return;
+        }
+        if let Some(paths) = detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), &text)
+        {
+            self.pending_attachment_paths.extend(paths);
             return;
         }
         self.pending_paste.push_back(text);
@@ -3410,13 +3464,15 @@ impl TuiApp {
             self.inquiry_selected_index = 0;
         }
 
+        self.drain_pending_attachment_paths().await;
+
         self.scroll_transcript_to_bottom();
-        self.push_history(prompt.trim());
         self.track_popup_tokens_from_text(prompt.as_str());
 
         if prompt.trim_start().starts_with('/') {
             return self.handle_slash_command(prompt.trim().to_string()).await;
         }
+        self.push_history(prompt.trim());
 
         if self.busy {
             self.push_log(
@@ -3622,10 +3678,10 @@ impl TuiApp {
     }
 
     fn push_history(&mut self, value: &str) {
-        let cleaned = value.trim();
-        if cleaned.is_empty() {
+        if !should_store_history_entry(value) {
             return;
         }
+        let cleaned = value.trim();
         let cleaned = if cleaned.chars().count() > MAX_HISTORY_ENTRY_CHARS {
             let mut shortened = cleaned
                 .chars()

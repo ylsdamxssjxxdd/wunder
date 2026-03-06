@@ -1,4 +1,5 @@
 use super::*;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TranscriptWindowSpec {
@@ -459,6 +460,98 @@ pub(super) fn normalize_clipboard_text(text: String) -> Option<String> {
     }
 
     Some(normalized)
+}
+
+pub(super) fn should_store_history_entry(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty() && !trimmed.trim_start().starts_with('/')
+}
+
+pub(super) fn detect_pasted_attachment_paths(base_dir: &Path, text: &str) -> Option<Vec<String>> {
+    let normalized = normalize_clipboard_text(text.to_string())?;
+    let raw_has_path_syntax = normalized.contains('"')
+        || normalized.contains('\'')
+        || normalized.contains('\n')
+        || normalized.contains('\t')
+        || normalized.contains("file://");
+    let mut candidates = Vec::new();
+    let mut current = String::new();
+    let mut quoted_by = None;
+
+    let push_current = |buffer: &mut String, output: &mut Vec<String>| {
+        if buffer.trim().is_empty() {
+            buffer.clear();
+            return;
+        }
+        if let Some(value) = normalize_pasted_attachment_path(buffer.as_str()) {
+            output.push(value);
+        }
+        buffer.clear();
+    };
+
+    for ch in normalized.chars() {
+        if let Some(quote) = quoted_by {
+            if ch == quote {
+                quoted_by = None;
+            } else {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' if current.trim().is_empty() => quoted_by = Some(ch),
+            ' ' | '\n' | '\t' => push_current(&mut current, &mut candidates),
+            _ => current.push(ch),
+        }
+    }
+    push_current(&mut current, &mut candidates);
+
+    let candidates = dedupe_case_insensitive(candidates);
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.iter().any(|item| !raw_has_path_syntax && !looks_like_local_path(item)) {
+        return None;
+    }
+    if candidates.iter().all(|item| attachment_path_exists(base_dir, item)) {
+        return Some(candidates);
+    }
+    None
+}
+
+fn normalize_pasted_attachment_path(raw: &str) -> Option<String> {
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if let Ok(url) = url::Url::parse(cleaned) {
+        if url.scheme() == "file" {
+            if let Ok(path) = url.to_file_path() {
+                return Some(path.to_string_lossy().to_string());
+            }
+        }
+    }
+    Some(cleaned.trim_matches(|ch| matches!(ch, '"' | '\'')).to_string())
+}
+
+fn looks_like_local_path(value: &str) -> bool {
+    let path = Path::new(value);
+    path.is_absolute()
+        || value.contains('\\')
+        || value.contains('/')
+        || value.starts_with("./")
+        || value.starts_with("../")
+        || value.starts_with(".\\")
+        || value.starts_with("..\\")
+}
+
+fn attachment_path_exists(base_dir: &Path, value: &str) -> bool {
+    let candidate = PathBuf::from(value);
+    if candidate.is_absolute() {
+        return candidate.is_file();
+    }
+    base_dir.join(candidate).is_file()
 }
 
 pub(super) fn read_system_clipboard_text() -> Result<Option<String>> {

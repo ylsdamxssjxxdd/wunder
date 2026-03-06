@@ -1248,41 +1248,7 @@ impl TuiApp {
                         return Ok(());
                     }
                 };
-                if let Some(existing) = self
-                    .pending_attachments
-                    .iter()
-                    .position(|item| item.source.eq_ignore_ascii_case(prepared.source.as_str()))
-                {
-                    self.pending_attachments.remove(existing);
-                }
-                self.pending_attachments.push(prepared);
-                if let Some(last) = self.pending_attachments.last() {
-                    if self.is_zh_language() {
-                        self.push_log(
-                            LogKind::Info,
-                            format!(
-                                "附件已加入队列（下一轮自动发送）: {}",
-                                crate::attachments::summarize_attachment(
-                                    last,
-                                    self.pending_attachments.len().saturating_sub(1),
-                                    self.display_language.as_str()
-                                )
-                            ),
-                        );
-                    } else {
-                        self.push_log(
-                            LogKind::Info,
-                            format!(
-                                "attachment queued (auto-send on next turn): {}",
-                                crate::attachments::summarize_attachment(
-                                    last,
-                                    self.pending_attachments.len().saturating_sub(1),
-                                    self.display_language.as_str()
-                                )
-                            ),
-                        );
-                    }
-                }
+                self.queue_prepared_attachment(prepared);
             }
         }
         Ok(())

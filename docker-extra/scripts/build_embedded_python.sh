@@ -26,6 +26,9 @@ CARTOPY_DOWNLOAD="${CARTOPY_DOWNLOAD:-1}"
 ARM_PYART_BUILD="${ARM_PYART_BUILD:-auto}"
 ARM_PYART_VERSION="${ARM_PYART_VERSION:-2.2.0}"
 ARCH="${ARCH:-$(uname -m 2>/dev/null || true)}"
+SETUPTOOLS_SPEC="${SETUPTOOLS_SPEC:-setuptools<81}"
+BUILD_HELPER_REQUIREMENTS="${BUILD_HELPER_REQUIREMENTS:-setuptools_scm}"
+CINRAD_BUILD="${CINRAD_BUILD:-auto}"
 
 mkdir -p "${SRC_DIR}" "${STAGE_DIR}" "${WHEELHOUSE_DIR}" "${REPORTS_DIR}"
 
@@ -96,6 +99,39 @@ repair_missing_python_packages() {
   "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation "${packages[@]}"
 }
 
+build_cinrad_from_source() {
+  local cinrad_spec=${1:-cinrad}
+  local cinrad_work="${BUILD_ROOT}/cinrad"
+  rm -rf "${cinrad_work}"
+  mkdir -p "${cinrad_work}"
+  "${PYTHON_ROOT}/bin/python3" -m pip download --no-deps --no-binary=:all: --no-build-isolation "${cinrad_spec}" -d "${cinrad_work}"
+  local cinrad_tar
+  cinrad_tar="$(ls -1 "${cinrad_work}"/cinrad-*.tar.gz 2>/dev/null | head -n 1 || true)"
+  if [ -z "${cinrad_tar}" ]; then
+    echo "cinrad source tarball not found in ${cinrad_work}" >&2
+    exit 1
+  fi
+  tar -xzf "${cinrad_tar}" -C "${cinrad_work}"
+  local cinrad_src
+  cinrad_src="$(find "${cinrad_work}" -maxdepth 1 -type d -name 'cinrad-*' | head -n 1 || true)"
+  if [ -z "${cinrad_src}" ]; then
+    echo "cinrad source directory not found after extract." >&2
+    exit 1
+  fi
+  find "${cinrad_src}" -type f \( -name '_utils.c' -o -name '_unwrap_2d.c' \) -print0 | while IFS= read -r -d '' source_file; do
+    sed -i 's|"longintrepr.h"|"cpython/longintrepr.h"|g' "${source_file}"
+  done
+  "${PYTHON_ROOT}/bin/python3" -m pip wheel --no-deps --no-build-isolation -w "${WHEELHOUSE_DIR}" "${cinrad_src}"
+  local cinrad_wheel
+  cinrad_wheel="$(ls -1t "${WHEELHOUSE_DIR}"/cinrad-*.whl 2>/dev/null | head -n 1 || true)"
+  if [ -z "${cinrad_wheel}" ]; then
+    echo "cinrad wheel not found in ${WHEELHOUSE_DIR}" >&2
+    exit 1
+  fi
+  "${PYTHON_ROOT}/bin/python3" -m pip download -d "${WHEELHOUSE_DIR}" --find-links "${WHEELHOUSE_DIR}" --prefer-binary --no-build-isolation "${cinrad_spec}"
+  "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation "${cinrad_spec}"
+}
+
 write_python_reports() {
   "${PYTHON_ROOT}/bin/python3" -m pip freeze > "${REPORTS_DIR}/stage-pip-freeze.txt"
   "${PYTHON_ROOT}/bin/python3" -m pip list --format json > "${REPORTS_DIR}/stage-pip-list.json"
@@ -108,9 +144,25 @@ if [ "${ARM_PYART_BUILD}" = "auto" ]; then
     ARM_PYART_BUILD=0
   fi
 fi
+if [ "${CINRAD_BUILD}" = "auto" ]; then
+  if grep -q -E '^cinrad([<>=~]|$)' "${REQ_FILE}"; then
+    CINRAD_BUILD=1
+  else
+    CINRAD_BUILD=0
+  fi
+fi
 if [ "${ARM_PYART_BUILD}" = "1" ]; then
-  REQ_FILE_EFFECTIVE="${BUILD_ROOT}/requirements.no-arm-pyart.txt"
+  REQ_FILE_EFFECTIVE="${BUILD_ROOT}/requirements.filtered.txt"
   grep -v -E '^arm_pyart([<>=~]|$)' "${REQ_FILE}" > "${REQ_FILE_EFFECTIVE}"
+fi
+if [ "${CINRAD_BUILD}" = "1" ]; then
+  if [ "${REQ_FILE_EFFECTIVE}" = "${REQ_FILE}" ]; then
+    REQ_FILE_EFFECTIVE="${BUILD_ROOT}/requirements.filtered.txt"
+    grep -v -E '^cinrad([<>=~]|$)' "${REQ_FILE}" > "${REQ_FILE_EFFECTIVE}"
+  else
+    grep -v -E '^cinrad([<>=~]|$)' "${REQ_FILE_EFFECTIVE}" > "${REQ_FILE_EFFECTIVE}.tmp"
+    mv "${REQ_FILE_EFFECTIVE}.tmp" "${REQ_FILE_EFFECTIVE}"
+  fi
 fi
 
 if [ ! -x "${PYTHON_ROOT}/bin/python3" ]; then
@@ -136,8 +188,12 @@ fi
 export PYTHONHOME="${PYTHON_ROOT}"
 export LD_LIBRARY_PATH="${PYTHON_ROOT}/lib:${LD_LIBRARY_PATH:-}"
 
-"${PYTHON_ROOT}/bin/python3" -m pip install --upgrade pip setuptools wheel
-"${PYTHON_ROOT}/bin/python3" -m pip download setuptools wheel -d "${WHEELHOUSE_DIR}" --only-binary=:all:
+"${PYTHON_ROOT}/bin/python3" -m pip install --upgrade pip "${SETUPTOOLS_SPEC}" wheel
+"${PYTHON_ROOT}/bin/python3" -m pip download "${SETUPTOOLS_SPEC}" wheel -d "${WHEELHOUSE_DIR}" --only-binary=:all:
+if [ -n "${BUILD_HELPER_REQUIREMENTS}" ]; then
+  "${PYTHON_ROOT}/bin/python3" -m pip download ${BUILD_HELPER_REQUIREMENTS} -d "${WHEELHOUSE_DIR}" --only-binary=:all:
+  "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation ${BUILD_HELPER_REQUIREMENTS}
+fi
 "${PYTHON_ROOT}/bin/python3" -m pip download numpy -d "${WHEELHOUSE_DIR}" --only-binary=:all:
 "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation numpy
 "${PYTHON_ROOT}/bin/python3" -m pip download Cython -d "${WHEELHOUSE_DIR}" --only-binary=:all:
@@ -197,6 +253,7 @@ setup_path.write_text(text, encoding="utf-8")
 PY
   SETUPTOOLS_SCM_PRETEND_VERSION="${ARM_PYART_VERSION}" \
     "${PYTHON_ROOT}/bin/python3" -m pip wheel --no-deps --no-build-isolation -w "${WHEELHOUSE_DIR}" "${pyart_src}"
+  "${PYTHON_ROOT}/bin/python3" -m pip download -d "${WHEELHOUSE_DIR}" --find-links "${WHEELHOUSE_DIR}" --prefer-binary --no-build-isolation "arm_pyart==${ARM_PYART_VERSION}"
   "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" "arm_pyart==${ARM_PYART_VERSION}"
 fi
 

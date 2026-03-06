@@ -1,4 +1,7 @@
 use super::*;
+use std::fs;
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn wrapped_input_lines_wrap_by_viewport_width() {
@@ -359,4 +362,51 @@ fn backtrack_preview_line_truncates() {
     let preview = backtrack_preview_line("abcdefghij", 5);
     assert_eq!(preview, "abcde...");
     assert_eq!(backtrack_preview_line("abcd", 8), "abcd");
+}
+
+#[test]
+fn should_store_history_entry_skips_slash_commands() {
+    assert!(should_store_history_entry("hello world"));
+    assert!(should_store_history_entry("  你好"));
+    assert!(!should_store_history_entry("   /help"));
+    assert!(!should_store_history_entry("/attach image.png"));
+    assert!(!should_store_history_entry("   "));
+}
+
+#[test]
+fn detect_pasted_attachment_paths_recognizes_quoted_local_files() {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let base_dir = std::env::temp_dir().join(format!("wunder-cli-paste-{unique}"));
+    fs::create_dir_all(&base_dir).unwrap();
+
+    let first = base_dir.join("截图 one.png");
+    let second = base_dir.join("第二张图.jpg");
+    fs::write(&first, b"fake-image-a").unwrap();
+    fs::write(&second, b"fake-image-b").unwrap();
+
+    let pasted = format!("\"{}\" \"{}\"", first.display(), second.display());
+    let detected = detect_pasted_attachment_paths(base_dir.as_path(), pasted.as_str()).unwrap();
+
+    assert_eq!(
+        detected,
+        vec![
+            first.to_string_lossy().to_string(),
+            second.to_string_lossy().to_string(),
+        ]
+    );
+
+    fs::remove_file(first).unwrap();
+    fs::remove_file(second).unwrap();
+    fs::remove_dir_all(base_dir).unwrap();
+}
+
+#[test]
+fn detect_pasted_attachment_paths_leaves_plain_text_alone() {
+    assert_eq!(
+        detect_pasted_attachment_paths(Path::new("."), "hello codex-like world"),
+        None
+    );
 }

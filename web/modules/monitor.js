@@ -141,6 +141,34 @@ const MONITOR_DETAIL_TEXT_FALLBACKS = {
     zh: "追踪 {traceId}",
     en: "Trace {traceId}",
   },
+  "monitor.detail.repair.badge": {
+    zh: "已修复",
+    en: "Repaired",
+  },
+  "monitor.detail.repair.argsSummary": {
+    zh: "参数已修复",
+    en: "Args repaired",
+  },
+  "monitor.detail.repair.historySummary": {
+    zh: "已清洗 {count} 条历史参数",
+    en: "Sanitized {count} history args",
+  },
+  "monitor.detail.repair.lossyJson": {
+    zh: "已在执行前修复损坏的 JSON 参数",
+    en: "Repaired malformed JSON arguments before execution",
+  },
+  "monitor.detail.repair.rawWrapped": {
+    zh: "已在执行前包装原始参数，避免上游请求失败",
+    en: "Wrapped raw arguments before execution to avoid upstream failures",
+  },
+  "monitor.detail.repair.nonObjectWrapped": {
+    zh: "已在执行前将非对象参数包装为 JSON",
+    en: "Wrapped non-object arguments into JSON before execution",
+  },
+  "monitor.detail.repair.sanitizeBeforeRequest": {
+    zh: "已在请求前清洗 {count} 条工具调用参数",
+    en: "Sanitized {count} tool-call argument payloads before request",
+  },
 };
 
 const applyMonitorDetailTextParams = (template, params = {}) => {
@@ -2624,6 +2652,7 @@ const formatMonitorEventTimestamp = (value) => {
 const resolveMonitorEventTitle = (event) => {
   const eventType = String(event?.type || "").trim().toLowerCase();
   const data = unwrapMonitorEventData(event?.data);
+  const repairSummary = resolveMonitorRepairSummary(resolveMonitorEventRepair(event));
   if (data && typeof data === "object") {
     const userInputTitle =
       eventType === "user_input"
@@ -2644,19 +2673,25 @@ const resolveMonitorEventTitle = (event) => {
       data.model_name ||
       data.stage ||
       data.status;
-    const title = truncateMonitorEventTitle(summary);
+    const title = truncateMonitorEventTitle(
+      repairSummary && summary ? `${summary} · ${repairSummary}` : summary || repairSummary
+    );
     if (title) {
       return title;
     }
   }
   if (typeof data === "string") {
-    const title = truncateMonitorEventTitle(data);
+    const title = truncateMonitorEventTitle(
+      repairSummary ? `${data} · ${repairSummary}` : data
+    );
     if (title) {
       return title;
     }
   }
   const raw = stringifyMonitorEventData(data);
-  const title = truncateMonitorEventTitle(raw);
+  const title = truncateMonitorEventTitle(
+    repairSummary && raw ? `${raw} · ${repairSummary}` : raw || repairSummary
+  );
   return title || "-";
 };
 
@@ -2678,6 +2713,71 @@ const resolveMonitorEventToolName = (event) => {
   }
   const tool = data.tool ?? data.tool_name ?? data.toolName;
   return typeof tool === "string" ? tool.trim() : "";
+};
+
+const resolveMonitorEventRepair = (event) => {
+  const data = unwrapMonitorEventData(event?.data);
+  if (!data || typeof data !== "object") {
+    return null;
+  }
+  const candidates = [data.repair, data.meta?.repair];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const parseMonitorRepairCount = (value) => {
+  const count = Number.parseInt(String(value ?? 0), 10);
+  return Number.isFinite(count) && count > 0 ? count : 0;
+};
+
+const resolveMonitorRepairSummary = (repair) => {
+  if (!repair || typeof repair !== "object") {
+    return "";
+  }
+  const strategy = String(repair.strategy || "")
+    .trim()
+    .toLowerCase();
+  const count = parseMonitorRepairCount(repair.count);
+  switch (strategy) {
+    case "sanitize_before_request":
+      return count > 0
+        ? resolveMonitorDetailText("monitor.detail.repair.historySummary", { count })
+        : resolveMonitorDetailText("monitor.detail.repair.badge");
+    case "lossy_json_string_repair":
+    case "raw_arguments_wrapped":
+    case "non_object_arguments_wrapped":
+      return resolveMonitorDetailText("monitor.detail.repair.argsSummary");
+    default:
+      return resolveMonitorDetailText("monitor.detail.repair.badge");
+  }
+};
+
+const resolveMonitorRepairNote = (repair) => {
+  if (!repair || typeof repair !== "object") {
+    return "";
+  }
+  const strategy = String(repair.strategy || "")
+    .trim()
+    .toLowerCase();
+  const count = parseMonitorRepairCount(repair.count);
+  switch (strategy) {
+    case "sanitize_before_request":
+      return count > 0
+        ? resolveMonitorDetailText("monitor.detail.repair.sanitizeBeforeRequest", { count })
+        : resolveMonitorDetailText("monitor.detail.repair.badge");
+    case "lossy_json_string_repair":
+      return resolveMonitorDetailText("monitor.detail.repair.lossyJson");
+    case "raw_arguments_wrapped":
+      return resolveMonitorDetailText("monitor.detail.repair.rawWrapped");
+    case "non_object_arguments_wrapped":
+      return resolveMonitorDetailText("monitor.detail.repair.nonObjectWrapped");
+    default:
+      return resolveMonitorDetailText("monitor.detail.repair.badge");
+  }
 };
 
 const normalizeMonitorDetailEventType = (value) => String(value || "").trim();
@@ -2991,8 +3091,16 @@ const renderMonitorDetailEvents = (events, options = {}) => {
     const eventType = String(event?.type || "unknown");
     const eventTypeLower = eventType.toLowerCase();
     const round = resolveMonitorEventRound(event);
+    const repair = resolveMonitorEventRepair(event);
+    const repairBadgeText = repair
+      ? resolveMonitorDetailText("monitor.detail.repair.badge")
+      : "";
+    const repairNote = resolveMonitorRepairNote(repair);
     const item = document.createElement("details");
     item.className = "log-item monitor-event-item";
+    if (repair) {
+      item.classList.add("monitor-event-item--repaired");
+    }
     if (round > 0) {
       item.dataset.round = String(round);
       if (selectedRound > 0 && round === selectedRound) {
@@ -3015,6 +3123,12 @@ const renderMonitorDetailEvents = (events, options = {}) => {
     titleNode.className = "log-title";
     titleNode.textContent = resolveMonitorEventTitle(event);
     summary.appendChild(titleNode);
+    if (repairBadgeText) {
+      const badgeNode = document.createElement("span");
+      badgeNode.className = "monitor-event-badge monitor-event-badge--repair";
+      badgeNode.textContent = repairBadgeText;
+      summary.appendChild(badgeNode);
+    }
     if (round > 0) {
       const roundNode = document.createElement("span");
       roundNode.className = "monitor-event-round";
@@ -3022,6 +3136,12 @@ const renderMonitorDetailEvents = (events, options = {}) => {
       summary.appendChild(roundNode);
     }
     item.appendChild(summary);
+    if (repairNote) {
+      const noteNode = document.createElement("div");
+      noteNode.className = "monitor-event-note monitor-event-note--repair";
+      noteNode.textContent = repairNote;
+      item.appendChild(noteNode);
+    }
     const detailNode = document.createElement("div");
     detailNode.className = "log-detail";
     detailNode.innerHTML = highlightMonitorTimestamps(lineText);

@@ -40,7 +40,7 @@ pub(crate) fn draw_input(
     let hint = if is_zh {
         "Enter 发送 · Shift+Enter 换行"
     } else {
-        "Enter sends ? Shift+Enter newline"
+        "Enter sends · Shift+Enter newline"
     };
     let title_line = Line::from(vec![
         Span::styled(title, theme::block_title(active)),
@@ -49,9 +49,9 @@ pub(crate) fn draw_input(
 
     let body = if app.input_is_empty() {
         let placeholder = if is_zh {
-            "直接提问，或使用 / 命令、@ 文件、# 技能、$ 应用"
+            "直接提问，或使用 / 命令、@ 文件、# 技能、$ 应用；拖入图片/文件会自动作为附件"
         } else {
-            "Ask directly, or use / commands, @ files, # skills, and $ apps"
+            "Ask directly, or use / commands, @ files, # skills, and $ apps; drop images/files to attach"
         };
         Text::from(vec![Line::from(Span::styled(
             placeholder,
