@@ -512,14 +512,25 @@ function repairMarkdownTables(content = '') {
 }
 
 function looksLikeMarkdownTableRow(row = '') {
-  if (!row.includes('|')) return false;
+  const trimmed = row.trim();
+  if (!trimmed.includes('|')) return false;
+  const pipeCount = (trimmed.match(/\|/g) || []).length;
+  if (pipeCount < 2 && !(trimmed.startsWith('|') && trimmed.endsWith('|'))) return false;
   if (looksLikeDividerRow(row)) return false;
   return splitTableRow(row).length >= 2;
 }
 
 function looksLikeDividerRow(row = '') {
   const trimmed = row.trim();
-  if (!trimmed || !trimmed.includes('|') || !trimmed.includes('-')) return false;
+  const pipeCount = (trimmed.match(/\|/g) || []).length;
+  if (
+    !trimmed ||
+    !trimmed.includes('|') ||
+    !trimmed.includes('-') ||
+    (pipeCount < 2 && !(trimmed.startsWith('|') && trimmed.endsWith('|')))
+  ) {
+    return false;
+  }
   return BROKEN_TABLE_DIVIDER_REGEX.test(trimmed);
 }
 
