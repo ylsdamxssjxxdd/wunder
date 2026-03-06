@@ -8,6 +8,7 @@ import {
   fetchChatTransportProfile,
   getSession,
   getSessionEvents,
+  getSessionHistoryPage,
   listSessions,
   openChatSocket,
   resumeMessageStream,
@@ -1970,11 +1971,89 @@ const sessionListCache = new Map();
 const sessionListCacheInFlight = new Map();
 const sessionDetailPrefetchInFlight = new Map();
 const sessionDetailWarmState = new Map();
+const sessionHistoryState = new Map();
 
 const SESSION_LIST_CACHE_TTL_MS = 15 * 1000;
 const SESSION_DETAIL_WARM_TTL_MS = 20 * 1000;
 
 const resolveSessionKey = (sessionId) => String(sessionId || '').trim();
+
+const buildHistoryState = () => ({
+  beforeId: null,
+  hasMore: true,
+  loading: false,
+  windowLimit: MESSAGE_WINDOW_LIMIT
+});
+
+const getHistoryState = (sessionId, options: { reset?: boolean } = {}) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return buildHistoryState();
+  const reset = options.reset === true;
+  let state = sessionHistoryState.get(key);
+  if (!state || reset) {
+    state = buildHistoryState();
+    sessionHistoryState.set(key, state);
+  }
+  return state;
+};
+
+const updateHistoryState = (sessionId, patch) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key) return null;
+  const state = getHistoryState(key);
+  Object.assign(state, patch);
+  return state;
+};
+
+const findOldestHistoryId = (messages) => {
+  if (!Array.isArray(messages)) return null;
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    const id = Number.parseInt(String(message?.history_id ?? ''), 10);
+    if (Number.isFinite(id) && id > 0) {
+      return id;
+    }
+  }
+  return null;
+};
+
+const applyMessageWindow = (store, sessionId, messages, options: { force?: boolean } = {}) => {
+  if (!store || !isWindowingEnabled()) return;
+  const key = resolveSessionKey(sessionId);
+  if (!key || !Array.isArray(messages)) return;
+  const state = getHistoryState(key);
+  const limit = Number(state.windowLimit) || MESSAGE_WINDOW_LIMIT;
+  const threshold = Math.max(MESSAGE_WINDOW_THRESHOLD, limit);
+  if (!options.force && messages.length <= threshold) return;
+  if (messages.length <= limit) return;
+  const overflow = messages.length - limit;
+  if (overflow <= 0) return;
+  messages.splice(0, overflow);
+};
+
+const applyHistoryMeta = (sessionId, detail, messages) => {
+  const beforeId = Number.parseInt(
+    String(
+      detail?.history_before_id ??
+        detail?.history_beforeId ??
+        detail?.historyBeforeId ??
+        ''
+    ),
+    10
+  );
+  const hasMore =
+    detail?.history_has_more ??
+    detail?.historyHasMore ??
+    detail?.history_more ??
+    detail?.historyMore ??
+    null;
+  const resolvedBeforeId =
+    Number.isFinite(beforeId) && beforeId > 0 ? beforeId : findOldestHistoryId(messages);
+  updateHistoryState(sessionId, {
+    beforeId: resolvedBeforeId,
+    hasMore: hasMore === null ? Boolean(resolvedBeforeId) : Boolean(hasMore)
+  });
+};
 
 const cloneSerializable = (value, fallback) => {
   if (typeof structuredClone === 'function') {
@@ -2109,12 +2188,15 @@ const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
   session.updated_at = resolved || new Date().toISOString();
 };
 
-const notifySessionSnapshot = (store, sessionId, messages, immediate = false) => {
+const notifySessionSnapshot = (store, sessionId, messages, immediate = false, options: { skipWindowing?: boolean } = {}) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
   cacheSessionMessages(key, messages);
   const activeKey = resolveSessionKey(store?.activeSessionId);
   if (activeKey && activeKey === key) {
+    if (options.skipWindowing !== true) {
+      applyMessageWindow(store, key, messages);
+    }
     scheduleChatSnapshot(store, immediate);
   }
 };
@@ -2247,6 +2329,12 @@ const WATCHDOG_IDLE_MS = 20000;
 const WATCHDOG_INTERVAL_MS = 5000;
 const STREAM_FLUSH_BASE_MS = 40;
 const STREAM_FLUSH_MAX_MS = 160;
+const HISTORY_PAGE_LIMIT = 80;
+const HISTORY_PAGE_MAX = 200;
+const MESSAGE_WINDOW_LIMIT = 400;
+const MESSAGE_WINDOW_THRESHOLD = 600;
+const MESSAGE_WINDOW_MAX = 2000;
+const WINDOWING_ENABLED_KEY = 'wunder_chat_windowing';
 
 const resolveStreamFlushMs = (messageCount, override) => {
   if (Number.isFinite(override)) {
@@ -2261,6 +2349,22 @@ const resolveStreamFlushMs = (messageCount, override) => {
 
 const resolveStreamFlushMsForMessages = (messages) =>
   resolveStreamFlushMs(Array.isArray(messages) ? messages.length : 0, null);
+
+const normalizeHistoryPageLimit = (value) => {
+  const parsed = Number.parseInt(String(value ?? HISTORY_PAGE_LIMIT), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return HISTORY_PAGE_LIMIT;
+  return Math.min(parsed, HISTORY_PAGE_MAX);
+};
+
+const isWindowingEnabled = () => {
+  try {
+    const raw = localStorage.getItem(WINDOWING_ENABLED_KEY);
+    if (!raw) return true;
+    return raw !== '0' && raw.toLowerCase() !== 'false';
+  } catch (error) {
+    return true;
+  }
+};
 
 const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs) => {
   if (!Array.isArray(messages) || !content) return false;
@@ -3800,6 +3904,18 @@ export const useChatStore = defineStore('chat', {
       if (!key) return false;
       return Boolean(state.loadingBySession[key]);
     },
+    historyLoading: () => (sessionId) => {
+      const state = getHistoryState(sessionId);
+      return Boolean(state?.loading);
+    },
+    canLoadMoreHistory: () => (sessionId) => {
+      const state = getHistoryState(sessionId);
+      return Boolean(state?.hasMore) && !state?.loading;
+    },
+    historyBeforeId: () => (sessionId) => {
+      const state = getHistoryState(sessionId);
+      return state?.beforeId ?? null;
+    },
     activeApproval: (state) => (Array.isArray(state.pendingApprovals) ? state.pendingApprovals[0] : null)
   },
   actions: {
@@ -3980,6 +4096,8 @@ export const useChatStore = defineStore('chat', {
           createdAt: sessionDetail?.created_at,
           greeting: this.greetingOverride
         });
+        applyHistoryMeta(targetId, sessionDetail, greetingMessages);
+        applyMessageWindow(this, targetId, greetingMessages);
         cacheSessionMessages(targetId, greetingMessages);
         markSessionDetailWarm(targetId);
         return sessionDetail;
@@ -4109,6 +4227,7 @@ export const useChatStore = defineStore('chat', {
       cacheSessionMessages(session.id, this.messages);
       touchSessionUpdatedAt(this, session.id, session.updated_at || session.created_at);
       getSessionWorkflowState(session.id, { reset: true });
+      getHistoryState(session.id, { reset: true });
       persistActiveSession(session.id, session.agent_id);
       syncDemoChatCache({
         sessions: this.sessions,
@@ -4139,6 +4258,7 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(previousSessionId);
       clearSessionWatcher();
       this.activeSessionId = sessionId;
+      getHistoryState(sessionId, { reset: true });
       const cachedSessionMessages = getSessionMessages(sessionId);
       const snapshot = this.getSnapshotForSession(sessionId);
       if (cachedSessionMessages?.length) {
@@ -4195,6 +4315,8 @@ export const useChatStore = defineStore('chat', {
         createdAt: sessionCreatedAt,
         greeting: this.greetingOverride
       });
+      applyHistoryMeta(sessionId, sessionDetail, this.messages);
+      applyMessageWindow(this, sessionId, this.messages);
       cacheSessionMessages(sessionId, this.messages);
       markSessionDetailWarm(sessionId);
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
@@ -4207,6 +4329,91 @@ export const useChatStore = defineStore('chat', {
       this.scheduleSnapshot(true);
       startSessionWatcher(this, sessionId);
       return data.data;
+    },
+    async loadOlderHistory(sessionId, options: { limit?: number; beforeId?: number } = {}) {
+      const targetId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetId) return [];
+      const state = getHistoryState(targetId);
+      if (state.loading || state.hasMore === false) return [];
+      const perfEnabled = chatPerf.enabled();
+      const perfStart = perfEnabled ? performance.now() : 0;
+      const limit = normalizeHistoryPageLimit(options.limit ?? HISTORY_PAGE_LIMIT);
+      const beforeIdRaw = options.beforeId ?? state.beforeId;
+      const beforeId = Number.isFinite(Number(beforeIdRaw))
+        ? Number.parseInt(String(beforeIdRaw), 10)
+        : null;
+      state.loading = true;
+      try {
+        const { data } = await getSessionHistoryPage(targetId, {
+          before_id: beforeId,
+          limit
+        });
+        const payload = data?.data || {};
+        const incoming = Array.isArray(payload.messages) ? payload.messages : [];
+        const incomingHasMore =
+          payload.history_has_more ??
+          payload.historyHasMore ??
+          payload.history_more ??
+          payload.historyMore ??
+          false;
+        const incomingBeforeId =
+          payload.history_before_id ??
+          payload.historyBeforeId ??
+          payload.history_before ??
+          payload.historyBefore ??
+          null;
+        const existingIds = new Set(
+          (Array.isArray(this.messages) ? this.messages : [])
+            .map((message) => Number.parseInt(String(message?.history_id ?? ''), 10))
+            .filter((value) => Number.isFinite(value) && value > 0)
+        );
+        const deduped = incoming.filter((message) => {
+          const id = Number.parseInt(String(message?.history_id ?? ''), 10);
+          if (Number.isFinite(id) && id > 0) {
+            if (existingIds.has(id)) return false;
+            existingIds.add(id);
+          }
+          return true;
+        });
+        if (deduped.length > 0) {
+          const sessionMessagesRef = resolveSessionKey(this.activeSessionId) === targetId
+            ? this.messages
+            : getSessionMessages(targetId) || [];
+          const nextMessages = [...deduped, ...sessionMessagesRef];
+          const nextLimit = Math.min(
+            Number(state.windowLimit || MESSAGE_WINDOW_LIMIT) + deduped.length,
+            MESSAGE_WINDOW_MAX
+          );
+          state.windowLimit = nextLimit;
+          if (resolveSessionKey(this.activeSessionId) === targetId) {
+            this.messages = nextMessages;
+            notifySessionSnapshot(this, targetId, this.messages, true, { skipWindowing: true });
+          } else {
+            cacheSessionMessages(targetId, nextMessages);
+          }
+        }
+        const resolvedBeforeId = Number.parseInt(String(incomingBeforeId ?? ''), 10);
+        state.beforeId = Number.isFinite(resolvedBeforeId) && resolvedBeforeId > 0
+          ? resolvedBeforeId
+          : findOldestHistoryId(this.messages);
+        state.hasMore = Boolean(incomingHasMore) && Boolean(state.beforeId);
+        if (perfEnabled) {
+          chatPerf.recordDuration('chat_history_load', performance.now() - perfStart, {
+            sessionId: targetId,
+            incoming: incoming.length,
+            appended: deduped.length,
+            hasMore: state.hasMore
+          });
+        }
+        return deduped;
+      } catch (error) {
+        if (perfEnabled) {
+          chatPerf.count('chat_history_load_failed', 1, { sessionId: targetId });
+        }
+        return [];
+      } finally {
+        state.loading = false;
+      }
     },
     async deleteSession(sessionId) {
       const targetId = sessionId || this.activeSessionId;
@@ -4224,6 +4431,7 @@ export const useChatStore = defineStore('chat', {
       sessionMessages.delete(resolveSessionKey(targetId));
       sessionDetailWarmState.delete(resolveSessionKey(targetId));
       sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
+      sessionHistoryState.delete(resolveSessionKey(targetId));
       await deleteSessionApi(targetId);
       this.sessions = this.sessions.filter((item) => item.id !== targetId);
       if (targetSession?.is_main) {

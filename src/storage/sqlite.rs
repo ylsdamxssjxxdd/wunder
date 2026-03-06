@@ -1540,6 +1540,55 @@ impl StorageBackend for SqliteStorage {
         Ok(records)
     }
 
+    fn load_chat_history_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        if user_id.trim().is_empty() || session_id.trim().is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let before_id = before_id.filter(|value| *value > 0);
+        let conn = self.open()?;
+        let mut rows: Vec<(i64, String)> = if let Some(before_id) = before_id {
+            let mut stmt = conn.prepare(
+                "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
+            )?;
+            let rows = stmt
+                .query_map(
+                    params![user_id, session_id, before_id, limit],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )?
+                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
+            rows
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
+            )?;
+            let rows = stmt
+                .query_map(
+                    params![user_id, session_id, limit],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+                )?
+                .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
+            rows
+        };
+        rows.reverse();
+        let mut records = Vec::new();
+        for (history_id, payload) in rows {
+            if let Some(mut value) = Self::json_from_str(&payload) {
+                if let Value::Object(ref mut map) = value {
+                    map.insert("_history_id".to_string(), json!(history_id));
+                }
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
     fn load_artifact_logs(
         &self,
         user_id: &str,

@@ -21,6 +21,35 @@
   min-height: 0;
 }
 
+.chat-shell .message-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 2px;
+}
+
+.chat-shell .message-load-more-btn {
+  border: 1px solid var(--chat-border);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--chat-text);
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+}
+
+.chat-shell .message-load-more-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
+}
+
+.chat-shell .message-load-more-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .chat-shell .message-skeleton-list {
   display: flex;
   flex-direction: column;

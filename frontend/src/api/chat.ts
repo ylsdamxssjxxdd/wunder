@@ -106,6 +106,8 @@ export const fetchChatTransportProfile = () => api.get('/chat/transport');
 export const listSessions = (params: QueryParams) => api.get('/chat/sessions', { params });
 export const getSession = (id: string) => api.get(`/chat/sessions/${id}`);
 export const getSessionEvents = (id: string) => api.get(`/chat/sessions/${id}/events`);
+export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
+  api.get(`/chat/sessions/${id}/history`, { params });
 export const deleteSession = (id: string) => api.delete(`/chat/sessions/${id}`);
 export const sendMessage = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/messages`, payload);
 export const fetchSessionSystemPrompt = (id: string, payload: unknown) =>

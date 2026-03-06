@@ -53,6 +53,10 @@ pub fn router() -> Router<Arc<AppState>> {
             get(get_session_events),
         )
         .route(
+            "/wunder/chat/sessions/{session_id}/history",
+            get(get_session_history),
+        )
+        .route(
             "/wunder/chat/sessions/{session_id}/tools",
             post(update_session_tools),
         )
@@ -180,6 +184,14 @@ struct SessionDetailQuery {
 struct ResumeQuery {
     #[serde(default)]
     after_event_id: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HistoryPageQuery {
+    #[serde(default)]
+    before_id: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,19 +336,53 @@ async fn get_session(
         .limit
         .unwrap_or(if is_admin { 0 } else { DEFAULT_MESSAGE_LIMIT });
     let mut history_incomplete = false;
-    let history = match state
-        .workspace
-        .load_history(&resolved.user.user_id, &session_id, limit)
-    {
-        Ok(items) => items,
-        Err(err) => {
-            warn!(
-                "load history failed: user_id={}, session_id={}, error={err}",
-                resolved.user.user_id, session_id
-            );
-            history_incomplete = true;
-            Vec::new()
+    let (history, history_has_more, history_before_id) = if limit <= 0 {
+        let items = match state
+            .workspace
+            .load_history(&resolved.user.user_id, &session_id, limit)
+        {
+            Ok(items) => items,
+            Err(err) => {
+                warn!(
+                    "load history failed: user_id={}, session_id={}, error={err}",
+                    resolved.user.user_id, session_id
+                );
+                history_incomplete = true;
+                Vec::new()
+            }
+        };
+        (items, false, None)
+    } else {
+        let fetch_limit = limit.saturating_add(1);
+        let items = match state.workspace.load_history_page(
+            &resolved.user.user_id,
+            &session_id,
+            None,
+            fetch_limit,
+        ) {
+            Ok(items) => items,
+            Err(err) => {
+                warn!(
+                    "load history failed: user_id={}, session_id={}, error={err}",
+                    resolved.user.user_id, session_id
+                );
+                history_incomplete = true;
+                Vec::new()
+            }
+        };
+        let mut items = items;
+        let mut has_more = false;
+        if items.len() as i64 > limit {
+            has_more = true;
+            if !items.is_empty() {
+                items.remove(0);
+            }
         }
+        let before_id = items
+            .first()
+            .and_then(|item| item.get("_history_id"))
+            .and_then(Value::as_i64);
+        (items, has_more, before_id)
     };
     let session_status = state.monitor.get_record(&session_id).and_then(|record| {
         record
@@ -389,7 +435,9 @@ async fn get_session(
             "agent_id": record.agent_id,
             "tool_overrides": record.tool_overrides,
             "history_incomplete": history_incomplete,
-            "messages": messages
+            "messages": messages,
+            "history_has_more": history_has_more,
+            "history_before_id": history_before_id
         }
     })))
 }
@@ -446,6 +494,69 @@ async fn get_session_events(
             "rounds": rounds,
             "running": running,
             "last_event_id": last_event_id
+        }
+    })))
+}
+
+async fn get_session_history(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Query(query): Query<HistoryPageQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let _record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let limit = normalize_history_page_limit(query.limit);
+    let before_id = query.before_id.filter(|value| *value > 0);
+    let fetch_limit = limit.saturating_add(1);
+    let mut history = match state.workspace.load_history_page(
+        &resolved.user.user_id,
+        &session_id,
+        before_id,
+        fetch_limit,
+    ) {
+        Ok(history) => history,
+        Err(err) => {
+            warn!(
+                "load history page failed: user_id={}, session_id={}, error={err}",
+                resolved.user.user_id, session_id
+            );
+            return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()));
+        }
+    };
+    let mut has_more = false;
+    if history.len() as i64 > limit {
+        has_more = true;
+        if !history.is_empty() {
+            history.remove(0);
+        }
+    }
+    let before_id = history
+        .first()
+        .and_then(|item| item.get("_history_id"))
+        .and_then(Value::as_i64);
+    let filtered_history = filter_history_messages(history, false);
+    let messages = filtered_history
+        .into_iter()
+        .filter_map(map_history_message)
+        .collect::<Vec<_>>();
+    Ok(Json(json!({
+        "data": {
+            "id": session_id,
+            "messages": messages,
+            "history_has_more": has_more,
+            "history_before_id": before_id
         }
     })))
 }
@@ -780,6 +891,15 @@ fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
 fn normalize_optional_approval_mode(raw: Option<&str>) -> Option<String> {
     let cleaned = raw.map(str::trim).filter(|value| !value.is_empty())?;
     Some(normalize_agent_approval_mode(Some(cleaned)))
+}
+
+fn normalize_history_page_limit(raw: Option<i64>) -> i64 {
+    let value = raw.unwrap_or(80);
+    if value <= 0 {
+        80
+    } else {
+        value.min(200)
+    }
 }
 
 async fn resume_session(
@@ -1356,6 +1476,11 @@ fn map_history_message(item: Value) -> Option<Value> {
             if let Value::Object(ref mut map) = message {
                 map.insert("attachments".to_string(), attachments.clone());
             }
+        }
+    }
+    if let Some(history_id) = item.get("_history_id").and_then(Value::as_i64) {
+        if let Value::Object(ref mut map) = message {
+            map.insert("history_id".to_string(), json!(history_id));
         }
     }
     Some(message)

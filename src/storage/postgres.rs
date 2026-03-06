@@ -1779,6 +1779,49 @@ impl StorageBackend for PostgresStorage {
         Ok(records)
     }
 
+    fn load_chat_history_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        if user_id.trim().is_empty() || session_id.trim().is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let before_id = before_id.filter(|value| *value > 0);
+        let mut conn = self.conn()?;
+        let mut rows: Vec<(i64, String)> = if let Some(before_id) = before_id {
+            conn.query(
+                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 AND id < $3 ORDER BY id DESC LIMIT $4",
+                &[&user_id, &session_id, &before_id, &limit],
+            )?
+            .into_iter()
+            .map(|row| (row.get::<_, i64>(0), row.get::<_, String>(1)))
+            .collect()
+        } else {
+            conn.query(
+                "SELECT id, payload FROM chat_history WHERE user_id = $1 AND session_id = $2 ORDER BY id DESC LIMIT $3",
+                &[&user_id, &session_id, &limit],
+            )?
+            .into_iter()
+            .map(|row| (row.get::<_, i64>(0), row.get::<_, String>(1)))
+            .collect()
+        };
+        rows.reverse();
+        let mut records = Vec::new();
+        for (history_id, payload) in rows {
+            if let Some(mut value) = Self::json_from_str(&payload) {
+                if let Value::Object(ref mut map) = value {
+                    map.insert("_history_id".to_string(), json!(history_id));
+                }
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
     fn load_artifact_logs(
         &self,
         user_id: &str,

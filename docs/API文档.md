@@ -1911,10 +1911,15 @@
 - 返回：`data.total`、`data.items`（每项含 is_main 标记主线程）
 - `GET /wunder/chat/sessions/{session_id}`：会话详情
   - Query：`limit`（消息条数，可选）
-  - 返回：`data`（会话信息含 parent_session_id/parent_message_id/spawn_label/spawned_by + messages；进行中的会话会追加 stream_incomplete=true 的助手占位）
+  - 返回：`data`（会话信息含 parent_session_id/parent_message_id/spawn_label/spawned_by + messages + history_has_more/history_before_id；进行中的会话会追加 stream_incomplete=true 的助手占位）
   - `messages[].attachments`：可选，附件数组，包含 `name/content/content_type/public_path`（若文件已删除前端可忽略渲染）
+  - `messages[].history_id`：历史记录 id（用于历史分页）
 - `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
   - 返回：`data.id`、`data.rounds`（user_round/events；事件内包含 `user_round`/`model_round`）、`data.running`、`data.last_event_id`
+- `GET /wunder/chat/sessions/{session_id}/history`：分页加载会话历史
+  - Query：`before_id`（可选，取历史记录 id，小于该值）、`limit`（可选，1~200，默认 80）
+  - 返回：`data.id`、`data.messages`、`data.history_has_more`、`data.history_before_id`
+  - `messages[].history_id`：历史记录 id（用于继续分页）
 - `DELETE /wunder/chat/sessions/{session_id}`：删除会话
   - 会同时删除该会话关联的定时任务
   - 返回：`data.id`

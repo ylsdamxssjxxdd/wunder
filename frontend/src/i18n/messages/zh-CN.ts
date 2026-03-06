@@ -716,6 +716,8 @@ export default {
   'chat.currentAgent': '当前智能体',
   'chat.newSession': '新建线程',
   'chat.history': '时间线',
+  'chat.history.loadMore': '加载更早消息',
+  'chat.history.loadingMore': '正在加载历史',
   'chat.historyPanel': '时间线',
   'chat.history.delete': '删除会话',
   'chat.history.confirmDelete': '确认删除该会话记录吗？',

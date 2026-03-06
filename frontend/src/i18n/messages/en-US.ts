@@ -719,6 +719,8 @@ export default {
   'chat.currentAgent': 'Current Agent',
   'chat.newSession': 'New Thread',
   'chat.history': 'Timeline',
+  'chat.history.loadMore': 'Load earlier messages',
+  'chat.history.loadingMore': 'Loading history',
   'chat.historyPanel': 'Timeline',
   'chat.history.delete': 'Delete Session',
   'chat.history.confirmDelete': 'Delete this session?',

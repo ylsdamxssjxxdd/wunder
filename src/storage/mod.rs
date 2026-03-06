@@ -691,6 +691,13 @@ pub trait StorageBackend: Send + Sync {
         session_id: &str,
         limit: Option<i64>,
     ) -> Result<Vec<Value>>;
+    fn load_chat_history_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>>;
     fn load_artifact_logs(&self, user_id: &str, session_id: &str, limit: i64)
         -> Result<Vec<Value>>;
     fn get_session_system_prompt(

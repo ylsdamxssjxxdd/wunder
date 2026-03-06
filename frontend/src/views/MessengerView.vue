@@ -280,7 +280,6 @@
               <template v-if="showAgentGridOverview">
                 <div class="messenger-chat-settings-block messenger-agent-grid-panel">
                   <div class="messenger-agent-grid-header">
-                    <div class="messenger-agent-grid-subtitle">{{ t('messenger.agent.overviewDesc') }}</div>
                   </div>
                   <div v-if="!agentOverviewCards.length" class="messenger-list-empty">
                     {{ t('messenger.agent.overviewEmpty') }}

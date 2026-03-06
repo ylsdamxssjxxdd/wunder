@@ -932,6 +932,20 @@ impl WorkspaceManager {
         self.storage.load_chat_history(user_id, session_id, limit)
     }
 
+    pub fn load_history_page(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        before_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<Value>> {
+        if limit <= 0 {
+            return Ok(Vec::new());
+        }
+        self.storage
+            .load_chat_history_page(user_id, session_id, before_id, limit)
+    }
+
     pub fn load_artifact_logs(
         &self,
         user_id: &str,

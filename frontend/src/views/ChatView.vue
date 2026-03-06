@@ -218,9 +218,24 @@
         </aside>
 
         <section class="chat-panel">
-          <div ref="messagesContainerRef" class="messages-container" @click="handleMessageClick">
+          <div
+            ref="messagesContainerRef"
+            class="messages-container"
+            @click="handleMessageClick"
+            @scroll="handleMessageScroll"
+          >
             <div v-if="messageInitialLoading" class="message-skeleton-list" aria-hidden="true">
               <div v-for="index in 4" :key="`message-skeleton-${index}`" class="message-skeleton-item"></div>
+            </div>
+            <div v-else-if="canLoadMoreHistory" class="message-load-more">
+              <button
+                class="message-load-more-btn"
+                type="button"
+                :disabled="historyLoading"
+                @click="handleLoadOlderHistory"
+              >
+                {{ historyLoading ? t('chat.history.loadingMore') : t('chat.history.loadMore') }}
+              </button>
             </div>
             <div
               v-for="(message, index) in chatStore.messages"
@@ -695,6 +710,7 @@ import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary'
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 import { resolveUserBasePath } from '@/utils/basePath';
+import { chatPerf } from '@/utils/chatPerf';
 
 const router = useRouter();
 const route = useRoute();
@@ -963,9 +979,17 @@ const messageInitialLoading = computed(
     Boolean(chatStore.activeSessionId) &&
     chatStore.messages.length <= 1
 );
+const historyLoading = computed(() => chatStore.historyLoading(chatStore.activeSessionId));
+const canLoadMoreHistory = computed(() => chatStore.canLoadMoreHistory(chatStore.activeSessionId));
 let pendingAssistantCenter = false;
 let pendingAssistantCenterCount = 0;
 let pendingEnterBottomScroll = true;
+const MESSAGE_AUTOLOAD_TOP_PX = 32;
+const MESSAGE_AUTOLOAD_COOLDOWN_MS = 1200;
+const MESSAGE_AUTOLOAD_SCROLLABLE_PADDING = 8;
+let lastMessageScrollTop = 0;
+let lastMessageAutoLoadAt = 0;
+let messageAutoLoadPending = false;
 
 const resolveInitialSessionId = (agentId, sourceSessions = chatStore.sessions) => {
   const normalizedAgentId = String(agentId || '').trim();
@@ -1993,6 +2017,27 @@ const closeImagePreview = () => {
   imagePreviewTitle.value = '';
 };
 
+const handleLoadOlderHistory = async (auto = false) => {
+  const sessionId = chatStore.activeSessionId;
+  if (!sessionId || historyLoading.value || !canLoadMoreHistory.value) return;
+  if (chatPerf.enabled()) {
+    chatPerf.count('chat_history_load_trigger', 1, {
+      reason: auto ? 'auto' : 'manual',
+      sessionId
+    });
+  }
+  const container = messagesContainerRef.value as HTMLElement | null;
+  const previousHeight = container?.scrollHeight || 0;
+  const previousScrollTop = container?.scrollTop || 0;
+  await chatStore.loadOlderHistory(sessionId);
+  await nextTick();
+  if (container) {
+    const nextHeight = container.scrollHeight || 0;
+    const delta = nextHeight - previousHeight;
+    container.scrollTop = previousScrollTop + delta;
+  }
+};
+
 const handleCopyMessage = async (message) => {
   const content = String(message?.content || '').trim();
   if (!content) {
@@ -2083,6 +2128,37 @@ const handleLogout = () => {
   }
   authStore.logout();
   router.push('/login');
+};
+
+const handleMessageScroll = async (event) => {
+  const container = event?.target as HTMLElement | null;
+  if (!container) return;
+  const scrollTop = container.scrollTop || 0;
+  const previousTop = lastMessageScrollTop;
+  lastMessageScrollTop = scrollTop;
+  if (messageInitialLoading.value || historyLoading.value || !canLoadMoreHistory.value) {
+    return;
+  }
+  if (scrollTop > MESSAGE_AUTOLOAD_TOP_PX) {
+    return;
+  }
+  if (container.scrollHeight - container.clientHeight <= MESSAGE_AUTOLOAD_SCROLLABLE_PADDING) {
+    return;
+  }
+  const now = Date.now();
+  if (messageAutoLoadPending) {
+    return;
+  }
+  if (previousTop <= MESSAGE_AUTOLOAD_TOP_PX && now - lastMessageAutoLoadAt < MESSAGE_AUTOLOAD_COOLDOWN_MS) {
+    return;
+  }
+  messageAutoLoadPending = true;
+  lastMessageAutoLoadAt = now;
+  try {
+    await handleLoadOlderHistory(true);
+  } finally {
+    messageAutoLoadPending = false;
+  }
 };
 
 const handleHistoryScroll = (event) => {
