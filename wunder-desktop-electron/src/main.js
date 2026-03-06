@@ -29,6 +29,7 @@ let updaterReady = false
 let tray = null
 let closePromptInFlight = false
 let closeBehavior = 'ask'
+let linuxDesktopIntegrationScheduled = false
 const disableBackgroundThrottling = process.env.WUNDER_DISABLE_BACKGROUND_THROTTLING === '1'
 
 const SCREENSHOT_HIDE_DELAY_MS = 220
@@ -645,6 +646,20 @@ const ensureLinuxDesktopIntegration = () => {
   } catch {
     // ignore: not all distros provide update-desktop-database
   }
+}
+
+const scheduleLinuxDesktopIntegration = () => {
+  if (process.platform !== 'linux' || linuxDesktopIntegrationScheduled) {
+    return
+  }
+  linuxDesktopIntegrationScheduled = true
+  setTimeout(() => {
+    try {
+      ensureLinuxDesktopIntegration()
+    } catch (error) {
+      console.warn('Failed to update Linux desktop integration:', error)
+    }
+  }, 120)
 }
 
 const normalizeUpdateMessage = (error) => {
@@ -1412,7 +1427,7 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
           hostname: '127.0.0.1',
           port,
           path: '/config.json',
-          timeout: 2000
+          timeout: 1000
         },
         (res) => {
           res.resume()
@@ -1434,7 +1449,7 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
         reject(new Error('Bridge did not respond in time'))
         return
       }
-      setTimeout(attempt, 300)
+      setTimeout(attempt, 80)
     }
     attempt()
   })
@@ -1946,6 +1961,7 @@ const createWindow = async () => {
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
     scheduleWindowRepaint()
+    scheduleLinuxDesktopIntegration()
   })
   mainWindow.on('show', scheduleWindowRepaint)
   mainWindow.on('restore', scheduleWindowRepaint)
@@ -1987,7 +2003,6 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     try {
       configureUpdaterEvents()
-      ensureLinuxDesktopIntegration()
       closeBehavior = loadCloseBehavior()
       configureMediaPermissions()
       screen.on('display-added', updateOverlayBounds)

@@ -68,6 +68,11 @@ export const loadRuntimeConfig = async (): Promise<RuntimeConfig> => {
     return loadPromise;
   }
   loadPromise = (async () => {
+    const desktopRuntime = getDesktopRuntime();
+    if (desktopRuntime?.api_base || desktopRuntime?.token || desktopRuntime?.user_id) {
+      cachedConfig = mergeDesktopFallback(normalizeConfig(desktopRuntime));
+      return cachedConfig;
+    }
     try {
       const response = await fetch('/config.json', { cache: 'no-store' });
       if (!response.ok) {

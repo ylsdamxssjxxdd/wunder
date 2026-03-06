@@ -3,14 +3,14 @@ use crate::config_store::ConfigStore;
 use crate::i18n;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
+use crate::services::cron_schedule::{
+    normalize_every_ms, parse_schedule_text, validate_cron_expr, validate_message, validate_name,
+    validate_schedule_at, ParsedScheduleText, MIN_EVERY_MS,
+};
 use crate::skills::SkillRegistry;
 use crate::storage::{
     ChatSessionRecord, CronJobRecord, CronRunRecord, StorageBackend, UserAccountRecord,
     UserAgentRecord,
-};
-use crate::services::cron_schedule::{
-    normalize_every_ms, parse_schedule_text, validate_cron_expr, validate_message, validate_name,
-    validate_schedule_at, ParsedScheduleText, MIN_EVERY_MS,
 };
 use crate::user_access::{compute_allowed_tool_names, is_agent_allowed, UserToolContext};
 use crate::user_store::UserStore;
@@ -412,9 +412,13 @@ fn build_job_record(
     input: CronJobInput,
 ) -> Result<CronJobRecord> {
     let (schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz) =
-        normalize_schedule_input_with_text(input.schedule.as_ref(), input.schedule_text.as_deref())?;
+        normalize_schedule_input_with_text(
+            input.schedule.as_ref(),
+            input.schedule_text.as_deref(),
+        )?;
     let payload = input.payload.unwrap_or(Value::Null);
-    let message = extract_payload_message(Some(&payload)).ok_or_else(|| anyhow!("payload.message required"))?;
+    let message = extract_payload_message(Some(&payload))
+        .ok_or_else(|| anyhow!("payload.message required"))?;
     validate_message(&message)?;
     let enabled = input.enabled.unwrap_or(true);
     let delete_after_run = input.delete_after_run.unwrap_or(false);
@@ -693,10 +697,8 @@ fn validate_schedule_fields(
             let at = schedule_at
                 .and_then(parse_rfc3339)
                 .ok_or_else(|| anyhow!("invalid schedule.at"))?;
-            let now_dt =
-                DateTime::<Utc>::from_timestamp_millis((now * 1000.0) as i64).ok_or_else(
-                    || anyhow!("invalid current timestamp"),
-                )?;
+            let now_dt = DateTime::<Utc>::from_timestamp_millis((now * 1000.0) as i64)
+                .ok_or_else(|| anyhow!("invalid current timestamp"))?;
             validate_schedule_at(at, now_dt)?;
         }
         "every" => {

@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "wunder-server"
 version = "0.1.0"
 edition = "2021"
@@ -33,7 +33,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 chrono-tz = "0.10"
 cron = "0.12"
-crossterm = "0.28"
+crossterm = { version = "0.28", features = ["event-stream"] }
 dashmap = "5"
 futures = "0.3"
 mime = "0.3"
@@ -92,6 +92,7 @@ cbc = "0.1"
 prost = "0.13"
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 pulldown-cmark = "0.10"
+syntect = "5"
 textwrap = "0.16.2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
@@ -108,3 +109,4 @@ windows-sys = { version = "0.52", features = [
 ] }
 
 [dev-dependencies]
+

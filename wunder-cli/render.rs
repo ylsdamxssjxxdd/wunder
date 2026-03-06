@@ -71,7 +71,8 @@ impl StreamRenderer {
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
                 let args = payload.get("args").unwrap_or(&Value::Null);
-                println!("{}", format_tool_call_line(tool, args));
+                let repair = payload.get("repair");
+                println!("{}", format_tool_call_line(tool, args, repair));
             }
             "tool_result" => {
                 self.ensure_newline();
@@ -84,11 +85,9 @@ impl StreamRenderer {
                         println!("{line}");
                     }
                 } else {
-                    let result = payload
-                        .get("result")
-                        .map(compact_json)
-                        .unwrap_or_else(|| compact_json(payload));
-                    println!("[tool_result] {tool} {result}");
+                    for line in format_generic_tool_result_lines(tool, payload) {
+                        println!("{line}");
+                    }
                 }
                 let tool_key = tool.trim().to_ascii_lowercase();
                 let is_question_tool = tool_key == "question_panel"
@@ -157,7 +156,11 @@ impl StreamRenderer {
     }
 }
 
-fn format_tool_call_line(tool: &str, args: &Value) -> String {
+fn format_tool_call_line(tool: &str, args: &Value, repair: Option<&Value>) -> String {
+    let repair_suffix = repair
+        .and_then(format_repair_badge)
+        .map(|badge| format!(" {badge}"))
+        .unwrap_or_default();
     if tool == "执行命令" {
         if let Some(command) = args
             .get("content")
@@ -165,7 +168,7 @@ fn format_tool_call_line(tool: &str, args: &Value) -> String {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            return format!("[tool_call] {tool} `{command}`");
+            return format!("[tool_call] {tool} `{command}`{repair_suffix}");
         }
     }
 
@@ -176,17 +179,21 @@ fn format_tool_call_line(tool: &str, args: &Value) -> String {
         {
             let summary = summarize_patch_input(patch);
             if !summary.is_empty() {
-                return format!("[tool_call] {tool} ({summary})");
+                return format!("[tool_call] {tool} ({summary}){repair_suffix}");
             }
         }
-        return format!("[tool_call] {tool}");
+        return format!("[tool_call] {tool}{repair_suffix}");
     }
 
     if args.is_null() {
-        return format!("[tool_call] {tool} {{}}");
+        return format!("[tool_call] {tool} {{}}{repair_suffix}");
     }
 
-    format!("[tool_call] {tool} {}", compact_json(args))
+    format!("[tool_call] {tool} {}{repair_suffix}", compact_json(args))
+}
+
+fn format_repair_badge(repair: &Value) -> Option<&'static str> {
+    repair.is_object().then_some("(args repaired)")
 }
 
 fn extract_patch_input(args: &Value) -> Option<&str> {
@@ -507,6 +514,59 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     lines
 }
 
+fn format_generic_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> {
+    let result = extract_tool_result_object(payload);
+    let ok = result.get("ok").and_then(Value::as_bool);
+    let repair = result
+        .get("meta")
+        .and_then(|value| value.get("repair"))
+        .or_else(|| payload.get("repair"));
+    let mut header = format!("[tool_result] {tool}");
+    if let Some(ok) = ok {
+        header.push_str(if ok { " ok" } else { " failed" });
+    }
+    if let Some(badge) = repair.and_then(format_repair_badge) {
+        header.push(' ');
+        header.push_str(badge);
+    }
+
+    let mut lines = vec![header];
+    if let Some(error) = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        lines.push(format!("  error: {error}"));
+    }
+    if let Some(repair) = repair {
+        if let Some(summary) = format_repair_summary(repair) {
+            lines.push(format!("  note: {summary}"));
+        }
+    }
+    if lines.len() == 1 {
+        let summary = payload
+            .get("result")
+            .map(compact_json)
+            .unwrap_or_else(|| compact_json(payload));
+        lines[0].push(' ');
+        lines[0].push_str(&summary);
+    }
+    lines
+}
+
+fn format_repair_summary(repair: &Value) -> Option<String> {
+    let strategy = repair.get("strategy").and_then(Value::as_str).unwrap_or("");
+    let count = repair.get("count").and_then(Value::as_u64).unwrap_or(0);
+    match strategy {
+        "sanitize_before_request" if count > 0 => Some(format!("sanitized {count} malformed tool-call argument payload(s)")),
+        "lossy_json_string_repair" => Some("recovered malformed JSON arguments before execution".to_string()),
+        "raw_arguments_wrapped" => Some("wrapped non-JSON arguments before sending them upstream".to_string()),
+        "non_object_arguments_wrapped" => Some("wrapped non-object arguments into JSON before sending them upstream".to_string()),
+        _ => None,
+    }
+}
+
 fn compact_json(value: &Value) -> String {
     let mut text = serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string());
     if text.len() > MAX_INLINE_JSON_CHARS {
@@ -564,5 +624,37 @@ mod tests {
         assert!(lines
             .iter()
             .any(|line| line.contains("Read file and retry")));
+    }
+
+    #[test]
+    fn tool_call_line_marks_repaired_arguments() {
+        let line = format_tool_call_line(
+            "执行命令",
+            &serde_json::json!({ "content": "python3 demo.py" }),
+            Some(&serde_json::json!({ "strategy": "lossy_json_string_repair" })),
+        );
+        assert!(line.contains("python3 demo.py"));
+        assert!(line.contains("args repaired"));
+    }
+
+    #[test]
+    fn generic_tool_result_lines_include_repair_note() {
+        let lines = format_generic_tool_result_lines(
+            "执行命令",
+            &serde_json::json!({
+                "tool": "执行命令",
+                "ok": false,
+                "error": "命令执行失败。",
+                "meta": {
+                    "repair": {
+                        "strategy": "lossy_json_string_repair"
+                    }
+                }
+            }),
+        );
+        assert!(lines.iter().any(|line| line.contains("args repaired")));
+        assert!(lines
+            .iter()
+            .any(|line| line.contains("recovered malformed JSON arguments")));
     }
 }

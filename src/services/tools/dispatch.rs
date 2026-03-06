@@ -2,7 +2,7 @@ use super::catalog::resolve_tool_name;
 use super::context::ToolContext;
 use super::{
     a2a_observe, a2a_wait, agent_swarm, compact_cron_tool_result, execute_a2a_service,
-    execute_command, execute_knowledge_tool, execute_memory_manager_tool, execute_mcp_tool,
+    execute_command, execute_knowledge_tool, execute_mcp_tool, execute_memory_manager_tool,
     execute_node_invoke, execute_plan_tool, execute_ptc, execute_question_panel_tool,
     execute_skill_call, execute_user_tool, find_knowledge_base, is_a2a_service_tool,
     is_mcp_tool_name, list_files, lsp_query, read_files, search_content, subagent_control,

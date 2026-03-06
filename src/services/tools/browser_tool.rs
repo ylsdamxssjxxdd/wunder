@@ -202,7 +202,10 @@ impl BrowserManager {
             }
             let cartopy_dir = home.join("share/cartopy");
             if cartopy_dir.is_dir() {
-                cmd.env("CARTOPY_DATA_DIR", cartopy_dir.to_string_lossy().to_string());
+                cmd.env(
+                    "CARTOPY_DATA_DIR",
+                    cartopy_dir.to_string_lossy().to_string(),
+                );
             }
         }
         cmd.env("PYTHONNOUSERSITE", "1");
@@ -417,8 +420,7 @@ pub async fn tool_browser(
     args: &Value,
 ) -> Result<Value> {
     let action = if let Some(raw) = args.get("action").and_then(Value::as_str) {
-        BrowserAction::from_str(raw)
-            .ok_or_else(|| anyhow!("Unknown browser action: {raw}"))?
+        BrowserAction::from_str(raw).ok_or_else(|| anyhow!("Unknown browser action: {raw}"))?
     } else {
         action_from_tool_name(tool_name).ok_or_else(|| anyhow!("Missing 'action' parameter"))?
     };

@@ -196,7 +196,8 @@ impl UserToolStore {
         if !config_exists && payload.skills.enabled.is_empty() {
             let default_enabled = self.resolve_default_skill_enabled(user_id);
             if !default_enabled.is_empty() {
-                payload.skills = normalize_skill_config(default_enabled, payload.skills.shared.clone());
+                payload.skills =
+                    normalize_skill_config(default_enabled, payload.skills.shared.clone());
             }
         }
         payload.version = version;

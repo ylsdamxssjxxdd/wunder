@@ -672,8 +672,11 @@ fn parse_tool_calls_from_text_inner(content: &str, strict: bool) -> Vec<ToolCall
     }
 
     let stripped_content = if strict {
-        fenced_code_block_regex()
-            .and_then(|regex| regex.is_match(content).then(|| regex.replace_all(content, "").to_string()))
+        fenced_code_block_regex().and_then(|regex| {
+            regex
+                .is_match(content)
+                .then(|| regex.replace_all(content, "").to_string())
+        })
     } else {
         None
     };
@@ -1106,7 +1109,8 @@ mod tests {
         let content = "no tools here";
         let reasoning =
             r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
-        let calls = collect_tool_calls_from_output(content, reasoning, None, ToolCallMode::ToolCall);
+        let calls =
+            collect_tool_calls_from_output(content, reasoning, None, ToolCallMode::ToolCall);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
     }
@@ -1128,12 +1132,8 @@ mod tests {
                 "function": { "name": "read_file", "arguments": "{\"path\":\"a.txt\"}" }
             }]
         });
-        let calls = collect_tool_calls_from_output(
-            "",
-            "",
-            Some(&payload),
-            ToolCallMode::FunctionCall,
-        );
+        let calls =
+            collect_tool_calls_from_output("", "", Some(&payload), ToolCallMode::FunctionCall);
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].id.as_deref(), Some("call_1"));

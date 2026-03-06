@@ -6,6 +6,11 @@ struct OutputTiming {
     last_output_at: Option<Instant>,
 }
 
+struct ChatMessageRepairReport {
+    messages: Vec<ChatMessage>,
+    repair: Option<Value>,
+}
+
 impl OutputTiming {
     fn mark_output(&mut self, now: Instant) {
         if self.first_output_at.is_none() {
@@ -31,6 +36,43 @@ impl OutputTiming {
             .as_secs_f64();
         (Some(prefill), Some(decode))
     }
+}
+
+fn sanitize_chat_messages_for_request(messages: &[ChatMessage]) -> ChatMessageRepairReport {
+    let mut repaired_count = 0usize;
+    let messages = messages
+        .iter()
+        .map(|message| {
+            let tool_calls = message.tool_calls.as_ref().map(|payload| {
+                let sanitized = crate::core::tool_args::sanitize_tool_call_payload_with_meta(payload);
+                repaired_count = repaired_count.saturating_add(
+                    sanitized
+                        .repair
+                        .as_ref()
+                        .and_then(|value| value.get("count"))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0) as usize,
+                );
+                sanitized.value
+            });
+            ChatMessage {
+                role: message.role.clone(),
+                content: message.content.clone(),
+                reasoning_content: message.reasoning_content.clone(),
+                tool_calls,
+                tool_call_id: message.tool_call_id.clone(),
+            }
+        })
+        .collect();
+    let repair = (repaired_count > 0).then(|| {
+        json!({
+            "kind": "chat_messages",
+            "source": "tool_calls",
+            "strategy": "sanitize_before_request",
+            "count": repaired_count,
+        })
+    });
+    ChatMessageRepairReport { messages, repair }
 }
 
 impl Orchestrator {
@@ -295,15 +337,16 @@ impl Orchestrator {
         }
 
         let client = build_llm_client(&effective_config, self.http.clone());
-        let chat_messages = self.build_chat_messages(messages);
+        let chat_messages = sanitize_chat_messages_for_request(&self.build_chat_messages(messages));
         let will_stream = stream;
 
         if emit_events {
             let mut request_payload = if log_payload {
                 let payload_messages = self.sanitize_messages_for_log(messages.to_vec(), None);
-                let payload_chat = self.build_chat_messages(&payload_messages);
+                let payload_chat =
+                    sanitize_chat_messages_for_request(&self.build_chat_messages(&payload_messages));
                 let payload =
-                    client.build_request_payload_with_tools(&payload_chat, will_stream, tools);
+                    client.build_request_payload_with_tools(&payload_chat.messages, will_stream, tools);
                 json!({
                     "provider": effective_config.provider,
                     "model": effective_config.model,
@@ -321,6 +364,9 @@ impl Orchestrator {
                 })
             };
             if let Value::Object(ref mut map) = request_payload {
+                if let Some(repair) = chat_messages.repair.clone() {
+                    map.insert("repair".to_string(), repair);
+                }
                 round_info.insert_into(map);
             }
             emitter.emit("llm_request", request_payload).await;
@@ -371,20 +417,20 @@ impl Orchestrator {
                     if tools.is_some() {
                         client
                             .stream_complete_with_callback_with_tools(
-                                &chat_messages,
+                                &chat_messages.messages,
                                 tools,
                                 on_delta,
                             )
                             .await
                     } else {
                         client
-                            .stream_complete_with_callback(&chat_messages, on_delta)
+                            .stream_complete_with_callback(&chat_messages.messages, on_delta)
                             .await
                     }
                 };
                 self.await_with_cancel(session_id, timeout_s, fut).await?
             } else {
-                let fut = client.complete_with_tools(&chat_messages, tools);
+                let fut = client.complete_with_tools(&chat_messages.messages, tools);
                 self.await_with_cancel(session_id, timeout_s, fut).await?
             };
 

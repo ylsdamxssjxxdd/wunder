@@ -1699,10 +1699,38 @@ const findLastPendingIndex = (rows: RawEntry[]): number => {
 
 const normalizeWorkflowRef = (value: unknown): string => String(value || '').trim();
 
+const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
+  const output: WorkflowItem[] = [];
+  let lastKey = '';
+  items.forEach((item) => {
+    const kind = resolveToolEventKind(item);
+    if (!kind) {
+      output.push(item);
+      lastKey = '';
+      return;
+    }
+    const key = [
+      kind,
+      resolveToolName(item).trim().toLowerCase(),
+      normalizeWorkflowRef(item.toolCallId),
+      String(item.status || '').trim().toLowerCase(),
+      String(item.title || '').trim(),
+      String(item.detail || '').trim()
+    ].join('::');
+    if (key && key === lastKey) {
+      return;
+    }
+    output.push(item);
+    lastKey = key;
+  });
+  return output;
+};
+
 const buildEntries = (): ToolEntryView[] => {
   const rows: RawEntry[] = [];
   const pendingByTool = new Map<string, number[]>();
   const rowIndexByCallId = new Map<string, number>();
+  const normalizedItems = dedupeAdjacentToolItems(props.items);
 
   const enqueuePending = (toolKey: string, index: number) => {
     if (!pendingByTool.has(toolKey)) pendingByTool.set(toolKey, []);
@@ -1758,7 +1786,7 @@ const buildEntries = (): ToolEntryView[] => {
     return rowIndex;
   };
 
-  props.items.forEach((item, index) => {
+  normalizedItems.forEach((item, index) => {
     const kind = resolveToolEventKind(item);
     if (!kind) return;
 
@@ -1768,11 +1796,15 @@ const buildEntries = (): ToolEntryView[] => {
     const toolCallId = normalizeWorkflowRef(item.toolCallId);
 
     if (kind === 'call') {
-      const existingIndex = rowIndexByCallId.get(itemId);
+      const existingIndex =
+        (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? rowIndexByCallId.get(itemId);
       if (typeof existingIndex === 'number') {
         rows[existingIndex].callItem = item;
         if (!rows[existingIndex].toolName && toolName) rows[existingIndex].toolName = toolName;
         rowIndexByCallId.set(itemId, existingIndex);
+        if (toolCallId) {
+          rowIndexByCallId.set(toolCallId, existingIndex);
+        }
         if (!rows[existingIndex].resultItem) {
           enqueuePending(toolKey, existingIndex);
         }
@@ -1780,6 +1812,9 @@ const buildEntries = (): ToolEntryView[] => {
         rows.push({ key: itemId, toolName, callItem: item, outputItem: null, resultItem: null });
         const rowIndex = rows.length - 1;
         rowIndexByCallId.set(itemId, rowIndex);
+        if (toolCallId) {
+          rowIndexByCallId.set(toolCallId, rowIndex);
+        }
         enqueuePending(toolKey, rowIndex);
       }
       return;

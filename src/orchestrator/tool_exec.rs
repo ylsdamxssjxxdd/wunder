@@ -756,7 +756,11 @@ fn build_history_attachments(attachments: &[AttachmentPayload]) -> Option<Value>
                 .filter(|value| !value.starts_with("data:"))
                 .map(ToString::to_string)
         };
-        if name.is_none() && content_type.is_none() && public_path.is_none() && content_value.is_none() {
+        if name.is_none()
+            && content_type.is_none()
+            && public_path.is_none()
+            && content_value.is_none()
+        {
             continue;
         }
         let mut entry = Map::new();

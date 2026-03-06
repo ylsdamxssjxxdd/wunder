@@ -1,9 +1,10 @@
+use super::frame_scheduler::FrameRequester;
 use anyhow::{anyhow, Result};
 use chrono::TimeZone;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::StreamExt;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{json, Value};
@@ -172,6 +173,7 @@ struct IndexedFile {
 pub struct TuiApp {
     runtime: CliRuntime,
     global: GlobalArgs,
+    frame_requester: FrameRequester,
     display_language: String,
     session_id: String,
     input: String,
@@ -254,6 +256,7 @@ impl TuiApp {
         runtime: CliRuntime,
         global: GlobalArgs,
         session_override: Option<String>,
+        frame_requester: FrameRequester,
     ) -> Result<Self> {
         let session_id =
             session_override.unwrap_or_else(|| runtime.resolve_session(global.session.as_deref()));
@@ -269,6 +272,7 @@ impl TuiApp {
         let mut app = Self {
             runtime,
             global,
+            frame_requester,
             display_language,
             session_id,
             input: String::new(),
@@ -445,13 +449,138 @@ impl TuiApp {
         }
         if items.is_empty() {
             if self.is_zh_language() {
-                return "  状态栏：已配置空项，输入 /statusline reset 恢复默认".to_string();
+                return "  状态栏：当前没有启用条目，可输入 /statusline reset 恢复默认值"
+                    .to_string();
             }
             return "  status line: empty selection, run /statusline reset".to_string();
         }
         format!("  {}", items.join(" | "))
     }
 
+    pub fn request_redraw(&self) {
+        self.frame_requester.schedule_frame();
+    }
+
+    pub fn schedule_periodic_redraw_if_needed(&self) {
+        let ctrl_c_pending = self
+            .ctrl_c_hint_deadline
+            .is_some_and(|deadline| Instant::now() <= deadline);
+        if self.busy
+            || self.stream_rx.is_some()
+            || self.approval_rx.is_some()
+            || self.active_approval.is_some()
+            || ctrl_c_pending
+        {
+            self.frame_requester
+                .schedule_frame_in(Duration::from_millis(90));
+        }
+    }
+
+    pub fn input_focus_active(&self) -> bool {
+        self.focus_area == FocusArea::Input
+    }
+
+    pub fn input_is_empty(&self) -> bool {
+        self.input.is_empty()
+    }
+
+    pub fn activity_highlighted(&self) -> bool {
+        self.busy
+            || self.active_approval.is_some()
+            || self.active_inquiry_panel.is_some()
+            || self.resume_picker.is_some()
+            || self
+                .ctrl_c_hint_deadline
+                .is_some_and(|deadline| Instant::now() <= deadline)
+    }
+
+    pub fn activity_line(&self) -> String {
+        let is_zh = self.is_zh_language();
+        if self
+            .ctrl_c_hint_deadline
+            .is_some_and(|deadline| Instant::now() <= deadline)
+        {
+            return if is_zh {
+                "??? Ctrl+C ????????".to_string()
+            } else {
+                "Press Ctrl+C again to exit the current terminal session".to_string()
+            };
+        }
+
+        if self.resume_picker.is_some() {
+            return if is_zh {
+                "????????? ? Enter ?? ? Esc ??".to_string()
+            } else {
+                "Resume picker open ? Enter restores ? Esc cancels".to_string()
+            };
+        }
+
+        if self.active_approval.is_some() {
+            let queued = self.approval_queue.len();
+            return if is_zh {
+                if queued > 0 {
+                    format!("???? ? Enter ?? ? 1/2/3 ???? ? ???? {queued}")
+                } else {
+                    "???? ? Enter ?? ? 1/2/3 ????".to_string()
+                }
+            } else if queued > 0 {
+                format!("Approval pending ? Enter confirms ? 1/2/3 quick choose ? queued={queued}")
+            } else {
+                "Approval pending ? Enter confirms ? 1/2/3 quick choose".to_string()
+            };
+        }
+
+        if self.active_inquiry_panel.is_some() {
+            return if is_zh {
+                "??????? ? ???????????".to_string()
+            } else {
+                "Inquiry panel open ? choose a route or answer directly".to_string()
+            };
+        }
+
+        if self.busy {
+            let frames = ["?", "?", "?", "?", "?", "?", "?", "?", "?", "?"];
+            let tick = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                / 80) as usize;
+            let spinner = frames[tick % frames.len()];
+            let mut pieces = Vec::new();
+            pieces.push(if is_zh {
+                format!("{spinner} ????")
+            } else {
+                format!("{spinner} Working")
+            });
+            pieces.push(if is_zh {
+                "Ctrl+C ??".to_string()
+            } else {
+                "Ctrl+C interrupts".to_string()
+            });
+            pieces.push(if is_zh {
+                format!("??={}", self.tool_call_mode)
+            } else {
+                format!("mode={}", self.tool_call_mode)
+            });
+            if self.stream_catchup_mode {
+                pieces.push(if is_zh {
+                    "???".to_string()
+                } else {
+                    "catch-up".to_string()
+                });
+            }
+            if !self.terminal_focused {
+                pieces.push(if is_zh {
+                    "????".to_string()
+                } else {
+                    "unfocused".to_string()
+                });
+            }
+            return pieces.join(" ? ");
+        }
+
+        String::new()
+    }
     pub fn shortcuts_visible(&self) -> bool {
         self.shortcuts_visible
     }
@@ -481,14 +610,14 @@ impl TuiApp {
         } else {
             let used = self.session_stats.context_used_tokens.max(0);
             if is_zh {
-                format!("上下文占用={used}")
+                format!("上下文已用={used}")
             } else {
                 format!("context_used={used}")
             }
         };
         let running_hint = if self.resume_picker.is_some() {
             if is_zh {
-                "状态=会话恢复".to_string()
+                "状态=恢复会话".to_string()
             } else {
                 "state=resume_picker".to_string()
             }
@@ -512,20 +641,8 @@ impl TuiApp {
         let usage_hint = self
             .last_usage
             .as_deref()
-            .map(|value| {
-                if is_zh {
-                    format!("最近tokens={value}")
-                } else {
-                    format!("tokens={value}")
-                }
-            })
-            .unwrap_or_else(|| {
-                if is_zh {
-                    "最近tokens=-".to_string()
-                } else {
-                    "tokens=-".to_string()
-                }
-            });
+            .map(|value| format!("tokens={value}"))
+            .unwrap_or_else(|| "tokens=-".to_string());
         let scroll_hint = if self.transcript_offset_from_bottom > 0 {
             if is_zh {
                 format!("滚动=-{}", self.transcript_offset_from_bottom)
@@ -554,7 +671,7 @@ impl TuiApp {
             }
             MouseMode::Scroll => {
                 if is_zh {
-                    "鼠标=滚轮".to_string()
+                    "鼠标=滚动".to_string()
                 } else {
                     "mouse=scroll".to_string()
                 }
@@ -618,10 +735,7 @@ impl TuiApp {
         parts.insert(
             "agent",
             if is_zh {
-                format!(
-                    "智能体={}",
-                    self.agent_id_override.as_deref().unwrap_or("-")
-                )
+                format!("Agent={}", self.agent_id_override.as_deref().unwrap_or("-"))
             } else {
                 format!("agent={}", self.agent_id_override.as_deref().unwrap_or("-"))
             },
@@ -637,7 +751,7 @@ impl TuiApp {
         parts.insert(
             "mode",
             if is_zh {
-                format!("工具模式={}", self.tool_call_mode)
+                format!("模式={}", self.tool_call_mode)
             } else {
                 format!("mode={}", self.tool_call_mode)
             },
@@ -669,7 +783,7 @@ impl TuiApp {
         parts.insert(
             "tools",
             if is_zh {
-                format!("工具调用={tool_calls}")
+                format!("工具={tool_calls}")
             } else {
                 format!("tools={tool_calls}")
             },
@@ -932,26 +1046,26 @@ impl TuiApp {
         let args = summarize_modal_text(compact_json(&request.args).as_str(), 120);
         let mut lines = Vec::new();
         if is_zh {
-            lines.push("审批选项（上下键选择，Enter确认，或按 1/2/3）:".to_string());
+            lines.push("审批操作（上下选择，Enter 确认，也可按 1/2/3）：".to_string());
             lines.push(format!(
-                "{} 1) 仅本次批准",
+                "{} 1) 允许一次",
                 if selected == 0 { ">" } else { " " }
             ));
             lines.push(format!(
-                "{} 2) 本会话批准",
+                "{} 2) 当前会话始终允许",
                 if selected == 1 { ">" } else { " " }
             ));
             lines.push(format!("{} 3) 拒绝", if selected == 2 { ">" } else { " " }));
             lines.push(String::new());
-            lines.push(format!("工具: {}", request.tool));
-            lines.push(format!("摘要: {summary}"));
-            lines.push(format!("编号: {}", request.id));
-            lines.push(format!("类型: {:?}", request.kind));
+            lines.push(format!("工具：{}", request.tool));
+            lines.push(format!("摘要：{summary}"));
+            lines.push(format!("ID：{}", request.id));
+            lines.push(format!("类型：{:?}", request.kind));
             if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
-                lines.push(format!("详情: {detail}"));
+                lines.push(format!("详情：{detail}"));
             }
             if !args.trim().is_empty() && args != "{}" && args != "null" {
-                lines.push(format!("参数: {args}"));
+                lines.push(format!("参数：{args}"));
             }
         } else {
             lines.push(
@@ -981,33 +1095,6 @@ impl TuiApp {
         Some(lines)
     }
 
-    fn parse_inquiry_panel_from_tool_result(&self, payload: &Value) -> Option<InquiryPanelState> {
-        let tool = payload
-            .get("tool")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let tool_key = tool.trim().to_ascii_lowercase();
-        let is_question_tool =
-            tool_key == "question_panel" || tool_key == "ask_panel" || tool.contains("问询面板");
-        if !is_question_tool {
-            return None;
-        }
-        for value in [
-            payload.get("data"),
-            payload.get("result"),
-            payload.get("result").and_then(|value| value.get("data")),
-            payload.get("data").and_then(|value| value.get("result")),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if let Some(panel) = self.parse_inquiry_panel_state(value) {
-                return Some(panel);
-            }
-        }
-        None
-    }
-
     pub fn inquiry_modal_lines(&self) -> Option<Vec<String>> {
         let panel = self.active_inquiry_panel.as_ref()?;
         if panel.routes.is_empty() {
@@ -1018,13 +1105,13 @@ impl TuiApp {
             .min(panel.routes.len().saturating_sub(1));
         let mut lines = Vec::new();
         if self.is_zh_language() {
-            lines.push(format!("问题: {}", panel.question));
+            lines.push(format!("问题：{}", panel.question));
             lines.push(format!(
-                "模式: {}",
+                "模式：{}",
                 if panel.multiple { "多选" } else { "单选" }
             ));
             lines.push(String::new());
-            lines.push("可选路线（上下键选择，Enter 发送，或按数字键）:".to_string());
+            lines.push("候选路由（上下选择，Enter 发送，也可按数字）：".to_string());
         } else {
             lines.push(format!("question: {}", panel.question));
             lines.push(format!(
@@ -1052,7 +1139,7 @@ impl TuiApp {
         lines.push(String::new());
         lines.push(crate::locale::tr(
             self.display_language.as_str(),
-            "提示：也可直接输入文字继续；输入多个序号请用逗号分隔（如 1,3）",
+            "提示：也可以直接输入自由文本；多选请用逗号分隔，例如 1,3",
             "tip: you can also type free text; use comma for multi-select (e.g. 1,3)",
         ));
         Some(lines)
@@ -1147,7 +1234,7 @@ impl TuiApp {
         let question = if question.is_empty() {
             crate::locale::tr(
                 self.display_language.as_str(),
-                "请选择下一步方向",
+                "请选择继续方式",
                 "Choose a route to continue",
             )
         } else {
@@ -1166,9 +1253,28 @@ impl TuiApp {
         })
     }
 
+    fn parse_inquiry_panel_from_tool_result(&self, payload: &Value) -> Option<InquiryPanelState> {
+        self.parse_inquiry_panel_state(payload)
+            .or_else(|| {
+                payload
+                    .get("result")
+                    .and_then(|value| self.parse_inquiry_panel_state(value))
+            })
+            .or_else(|| {
+                payload
+                    .get("output")
+                    .and_then(|value| self.parse_inquiry_panel_state(value))
+            })
+            .or_else(|| {
+                payload
+                    .get("data")
+                    .and_then(|value| self.parse_inquiry_panel_state(value))
+            })
+    }
+
     fn show_inquiry_panel_prompt(&mut self, panel: &InquiryPanelState) {
         if self.is_zh_language() {
-            self.push_log(LogKind::Tool, format!("【问询面板】{}", panel.question));
+            self.push_log(LogKind::Tool, format!("[问询面板] {}", panel.question));
         } else {
             self.push_log(LogKind::Tool, format!("[Inquiry Panel] {}", panel.question));
         }
@@ -1184,7 +1290,7 @@ impl TuiApp {
             };
             let line = if let Some(description) = route.description.as_deref() {
                 if self.is_zh_language() {
-                    format!("  {}. {}{}：{}", index + 1, route.label, badge, description)
+                    format!("  {}. {}{}?{}", index + 1, route.label, badge, description)
                 } else {
                     format!("  {}. {}{}: {}", index + 1, route.label, badge, description)
                 }
@@ -1196,13 +1302,13 @@ impl TuiApp {
         let hint = if panel.multiple {
             crate::locale::tr(
                 self.display_language.as_str(),
-                "输入序号选择，可多选（如 1,3），然后回车发送；也可直接输入文字继续。",
-                "Type route numbers (multi-select, e.g. 1,3) then Enter; or send free text to continue.",
+                "输入多个路由编号并用逗号分隔（如 1,3）后回车；也可以直接输入自由文本继续。",
+                "Type route numbers for multi-select (e.g. 1,3) then Enter; or send free text to continue.",
             )
         } else {
             crate::locale::tr(
                 self.display_language.as_str(),
-                "输入序号选择（如 1），然后回车发送；也可直接输入文字继续。",
+                "输入路由编号（如 1）后回车；也可以直接输入自由文本继续。",
                 "Type a route number (e.g. 1) then Enter; or send free text to continue.",
             )
         };
@@ -1289,7 +1395,7 @@ impl TuiApp {
                 LogKind::Error,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "问询面板选择无效：序号超出范围。",
+                    "问询选择无效：编号超出范围。",
                     "invalid inquiry selection: index out of range.",
                 ),
             );
@@ -1300,7 +1406,7 @@ impl TuiApp {
                 LogKind::Error,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "该问询面板为单选，请只输入一个序号。",
+                    "当前问询仅支持单选，请只提供一个编号。",
                     "this inquiry panel is single-select; provide one index only.",
                 ),
             );
@@ -1308,7 +1414,7 @@ impl TuiApp {
         }
         let mut lines = Vec::new();
         if self.is_zh_language() {
-            lines.push("【问询面板选择】".to_string());
+            lines.push("[问询面板选择]".to_string());
             lines.push(format!("问题：{}", panel.question));
         } else {
             lines.push("[Inquiry Panel Selection]".to_string());
@@ -1318,7 +1424,7 @@ impl TuiApp {
             if let Some(route) = panel.routes.get(index) {
                 if let Some(description) = route.description.as_deref() {
                     if self.is_zh_language() {
-                        lines.push(format!("- {}：{}", route.label, description));
+                        lines.push(format!("- {}?{}", route.label, description));
                     } else {
                         lines.push(format!("- {}: {}", route.label, description));
                     }
@@ -1341,7 +1447,7 @@ impl TuiApp {
         if self.is_zh_language() {
             let mouse_mode = match self.mouse_mode {
                 MouseMode::Auto => "自动",
-                MouseMode::Scroll => "滚轮",
+                MouseMode::Scroll => "滚动",
                 MouseMode::Select => "选择/复制",
             };
             return vec![
@@ -1349,26 +1455,24 @@ impl TuiApp {
                 "Enter                 发送消息".to_string(),
                 "Shift+Enter / Ctrl+J  插入换行".to_string(),
                 "Ctrl+V / Shift+Insert 粘贴剪贴板文本".to_string(),
-                "Right Click           粘贴剪贴板文本（auto/scroll 模式）".to_string(),
-                "Left / Right          光标左右移动".to_string(),
-                "Ctrl+B / Ctrl+F       光标左右移动".to_string(),
-                "Alt+B / Alt+F         按词移动".to_string(),
-                "Alt+Left/Right        按词移动".to_string(),
-                "Ctrl+W / Alt+Backspace 删除上一个词".to_string(),
-                "Alt+Delete            删除下一个词".to_string(),
+                "Right Click           粘贴剪贴板文本（自动/滚动模式）".to_string(),
+                "Left / Right          光标左移/右移".to_string(),
+                "Ctrl+B / Ctrl+F       光标左移/右移".to_string(),
+                "Alt+B / Alt+F         按单词移动".to_string(),
+                "Alt+Left/Right        按单词移动".to_string(),
+                "Ctrl+W / Alt+Backspace 删除前一个单词".to_string(),
+                "Alt+Delete            删除后一个单词".to_string(),
                 "Ctrl+U / Ctrl+K       删除到行首/行尾".to_string(),
-                "Ctrl+A / Ctrl+E       移动到行首/行尾".to_string(),
-                "Up / Down             历史消息（多行时为上下移动）".to_string(),
-                "F3                   切换输入/输出焦点".to_string(),
-                "(输出焦点) arrows     选择会话日志条目".to_string(),
-                "(输出焦点) Enter      回填选中用户消息到输入区".to_string(),
+                "Ctrl+A / Ctrl+E       跳到行首/行尾".to_string(),
+                "Up / Down             历史记录（或多行导航）".to_string(),
+                "F3                    切换输入/输出焦点".to_string(),
+                "(输出焦点) arrows     选择消息条目".to_string(),
+                "(输出焦点) Enter      复用选中的用户消息".to_string(),
                 "Tab                   补全 slash/@/$/#".to_string(),
-                "PgUp/PgDn             滚动输出区".to_string(),
-                "Mouse Wheel           滚动输出区".to_string(),
-                "Shift+Drag            选择/复制（取决于终端）".to_string(),
-                format!("F2                   可选: 切换鼠标模式 ({mouse_mode})"),
-                "Ctrl+N / Ctrl+L       新会话 / 清空输出".to_string(),
-                "Ctrl+C                中断 / 双击退出".to_string(),
+                "PgUp/PgDn             滚动输出".to_string(),
+                "Mouse Wheel           滚动输出".to_string(),
+                "Shift+Drag            选择/复制（依赖终端）".to_string(),
+                format!("F2                    可选：切换鼠标模式 ({mouse_mode})"),
             ];
         }
         vec![
@@ -1377,45 +1481,24 @@ impl TuiApp {
             "Shift+Enter / Ctrl+J  insert newline".to_string(),
             "Ctrl+V / Shift+Insert paste clipboard text".to_string(),
             "Right Click           paste clipboard text (auto/scroll mode)".to_string(),
-            "Left / Right          move cursor".to_string(),
-            "Ctrl+B / Ctrl+F       move cursor".to_string(),
+            "Left / Right          move cursor left/right".to_string(),
+            "Ctrl+B / Ctrl+F       move cursor left/right".to_string(),
             "Alt+B / Alt+F         move by word".to_string(),
             "Alt+Left/Right        move by word".to_string(),
             "Ctrl+W / Alt+Backspace delete previous word".to_string(),
             "Alt+Delete            delete next word".to_string(),
             "Ctrl+U / Ctrl+K       delete to line start/end".to_string(),
             "Ctrl+A / Ctrl+E       move to line start/end".to_string(),
-            "Up / Down             history (or move line in multiline)".to_string(),
-            "F3                   toggle input/output focus".to_string(),
+            "Up / Down             history (or multiline navigation)".to_string(),
+            "F3                    toggle input/output focus".to_string(),
             "(output focus) arrows select transcript entries".to_string(),
-            "(output focus) Enter  load selected user message to input".to_string(),
+            "(output focus) Enter  reuse selected user message".to_string(),
             "Tab                   complete slash/@/$/#".to_string(),
-            "PgUp/PgDn             scroll transcript".to_string(),
-            "Mouse Wheel           scroll transcript".to_string(),
-            "Shift+Drag            select/copy (terminal bypass, if supported)".to_string(),
-            format!("F2                   optional: toggle mouse mode ({mouse_mode})"),
-            "Ctrl+N / Ctrl+L       new session / clear transcript".to_string(),
-            "Ctrl+C                interrupt / double-tap exit".to_string(),
+            "PgUp/PgDn             scroll output".to_string(),
+            "Mouse Wheel           scroll output".to_string(),
+            "Shift+Drag            select/copy (terminal-dependent)".to_string(),
+            format!("F2                    optional: switch mouse mode ({mouse_mode})"),
         ]
-    }
-
-    pub fn set_input_viewport(&mut self, viewport_width: u16) {
-        self.input_viewport_width = viewport_width.max(1);
-    }
-
-    pub fn set_transcript_viewport(&mut self, viewport_width: u16, viewport_height: u16) {
-        let next_width = viewport_width.max(1);
-        self.transcript_viewport_height = viewport_height.max(1);
-        if self.transcript_viewport_width != next_width {
-            self.transcript_viewport_width = next_width;
-            self.invalidate_transcript_metrics();
-            self.clear_markdown_caches();
-            self.clear_markdown_streams();
-        }
-    }
-
-    pub fn set_transcript_rendered_lines(&mut self, rendered_lines: usize) {
-        self.transcript_rendered_lines = rendered_lines;
     }
 
     pub fn set_mouse_regions(&mut self, transcript: Rect, input: Rect) {
@@ -1423,14 +1506,26 @@ impl TuiApp {
         self.input_mouse_region = input;
     }
 
-    fn invalidate_transcript_metrics(&mut self) {
-        self.transcript_rendered_lines = 0;
+    pub fn set_input_viewport(&mut self, width: u16) {
+        self.input_viewport_width = width.max(1);
     }
 
-    fn clear_markdown_caches(&mut self) {
-        for entry in &mut self.logs {
-            entry.markdown_cache = None;
+    pub fn set_transcript_viewport(&mut self, width: u16, height: u16) {
+        let width = width.max(1);
+        let height = height.max(1);
+        if self.transcript_viewport_width != width || self.transcript_viewport_height != height {
+            self.transcript_viewport_width = width;
+            self.transcript_viewport_height = height;
+            self.invalidate_transcript_metrics();
         }
+    }
+
+    pub fn set_transcript_rendered_lines(&mut self, lines: usize) {
+        self.transcript_rendered_lines = lines;
+    }
+
+    fn invalidate_transcript_metrics(&mut self) {
+        self.transcript_rendered_lines = 0;
     }
 
     fn clear_markdown_streams(&mut self) {
@@ -1969,7 +2064,7 @@ impl TuiApp {
         };
 
         if selected {
-            let selected_style = base_style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
+            let selected_style = super::theme::transcript_selection(base_style);
             for line in &mut lines {
                 line.style = selected_style.patch(line.style);
             }
@@ -2105,11 +2200,7 @@ impl TuiApp {
     pub fn popup_title(&self) -> &'static str {
         let trimmed = self.input.trim_start();
         if trimmed.starts_with('/') {
-            return if self.is_zh_language() {
-                " 命令 "
-            } else {
-                " Commands "
-            };
+            return " Commands ";
         }
         let cursor = self.input_cursor.min(self.input.len());
         let head = &self.input[..cursor];
@@ -2119,31 +2210,15 @@ impl TuiApp {
             .unwrap_or(0);
         let token = &head[token_start..];
         if token.starts_with('@') {
-            return if self.is_zh_language() {
-                " 文件 "
-            } else {
-                " Files "
-            };
+            return " Files ";
         }
         if token.starts_with('$') {
-            return if self.is_zh_language() {
-                " 应用 "
-            } else {
-                " Apps "
-            };
+            return " Apps ";
         }
         if token.starts_with('#') {
-            return if self.is_zh_language() {
-                " 技能 "
-            } else {
-                " Skills "
-            };
+            return " Skills ";
         }
-        if self.is_zh_language() {
-            " 命令 "
-        } else {
-            " Commands "
-        }
+        " Commands "
     }
 
     fn mention_popup_lines(&self, query: &str, limit: usize) -> Vec<String> {
@@ -2269,7 +2344,7 @@ impl TuiApp {
         }
         let skill_name = token.strip_prefix('#').unwrap_or(token).trim();
         if self.is_zh_language() {
-            format!("{token}  [未启用，可用 /skills enable {skill_name}]")
+            format!("{token}  [已禁用，运行 /skills enable {skill_name}]")
         } else {
             format!("{token}  [disabled, run /skills enable {skill_name}]")
         }
@@ -2413,7 +2488,7 @@ impl TuiApp {
             Err(error) => {
                 let hint = crate::locale::tr(
                     self.display_language.as_str(),
-                    "读取系统剪贴板失败，请确认终端允许粘贴且剪贴板存在文本",
+                    "读取系统剪贴板文本失败，请确认终端允许粘贴且剪贴板中包含文本",
                     "failed to read text from system clipboard; ensure terminal paste is allowed and clipboard has text",
                 );
                 self.push_log(LogKind::Info, format!("{hint}: {error}"));
@@ -2877,7 +2952,7 @@ impl TuiApp {
             ApprovalResponse::ApproveOnce => self.push_log(
                 LogKind::Info,
                 if self.is_zh_language() {
-                    format!("审批通过（仅本次）: {}", request.summary)
+                    format!("审批通过（仅本次）：{}", request.summary)
                 } else {
                     format!("approved once: {}", request.summary)
                 },
@@ -2885,7 +2960,7 @@ impl TuiApp {
             ApprovalResponse::ApproveSession => self.push_log(
                 LogKind::Info,
                 if self.is_zh_language() {
-                    format!("审批通过（本会话）: {}", request.summary)
+                    format!("审批通过（本会话）：{}", request.summary)
                 } else {
                     format!("approved for session: {}", request.summary)
                 },
@@ -2893,7 +2968,7 @@ impl TuiApp {
             ApprovalResponse::Deny => self.push_log(
                 LogKind::Info,
                 if self.is_zh_language() {
-                    format!("已拒绝: {}", request.summary)
+                    format!("已拒绝：{}", request.summary)
                 } else {
                     format!("denied: {}", request.summary)
                 },
@@ -3007,7 +3082,7 @@ impl TuiApp {
             LogKind::Info,
             crate::locale::tr(
                 self.display_language.as_str(),
-                "已回填选中用户消息，可继续编辑后发送",
+                "已将选中的用户消息填入输入框，可继续编辑后发送",
                 "selected user message loaded into input; edit and send",
             ),
         );
@@ -3040,7 +3115,7 @@ impl TuiApp {
                 LogKind::Info,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "最近用户消息（1 为最新）:",
+                    "最近的用户消息（1 为最新）：",
                     "recent user turns (1 is latest):",
                 ),
             );
@@ -3063,7 +3138,7 @@ impl TuiApp {
                 LogKind::Info,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "用法: /backtrack [list|index]",
+                    "用法：/backtrack [list|index]",
                     "usage: /backtrack [list|index]",
                 ),
             );
@@ -3095,7 +3170,7 @@ impl TuiApp {
         if self.is_zh_language() {
             self.push_log(
                 LogKind::Info,
-                format!("已回填用户消息 #{index} 到输入区，可继续编辑后发送"),
+                format!("已将用户消息 #{index} 填入输入框，可继续编辑后发送"),
             );
         } else {
             self.push_log(
@@ -3132,7 +3207,7 @@ impl TuiApp {
         }
         if cleaned == self.session_id {
             if self.is_zh_language() {
-                self.push_log(LogKind::Info, format!("当前已在会话: {cleaned}"));
+                self.push_log(LogKind::Info, format!("当前已处于会话: {cleaned}"));
             } else {
                 self.push_log(LogKind::Info, format!("already using session: {cleaned}"));
             }
@@ -3142,7 +3217,7 @@ impl TuiApp {
         if !crate::session_exists(&self.runtime, cleaned).await? {
             if self.is_zh_language() {
                 self.push_log(LogKind::Error, format!("会话不存在: {cleaned}"));
-                self.push_log(LogKind::Info, "提示: 用 /resume 列出可用会话".to_string());
+                self.push_log(LogKind::Info, "提示：使用 /resume 列出可用会话".to_string());
             } else {
                 self.push_log(LogKind::Error, format!("session not found: {cleaned}"));
                 self.push_log(
@@ -3198,10 +3273,7 @@ impl TuiApp {
         if self.is_zh_language() {
             self.push_log(
                 LogKind::Info,
-                format!(
-                    "已恢复会话: {}（已恢复 {restored} 条消息）",
-                    self.session_id
-                ),
+                format!("已恢复会话 {}（已恢复 {restored} 条消息）", self.session_id),
             );
         } else {
             self.push_log(
@@ -3374,7 +3446,7 @@ impl TuiApp {
                 LogKind::Info,
                 crate::locale::tr(
                     self.display_language.as_str(),
-                    "已消费待发送附件队列",
+                    "已消费待发送的附件队列",
                     "queued attachments consumed",
                 ),
             );
@@ -3407,6 +3479,7 @@ impl TuiApp {
         self.turn_final_answer.clear();
         self.turn_final_stop_reason = None;
         self.begin_turn_metrics();
+        self.request_redraw();
 
         let (approval_tx, approval_rx) = new_approval_channel();
         self.approval_rx = Some(approval_rx);
@@ -3425,6 +3498,7 @@ impl TuiApp {
         .await?;
         request.approval_tx = Some(approval_tx);
         let orchestrator = self.runtime.state.orchestrator.clone();
+        let frame_requester = self.frame_requester.clone();
         let (tx, rx) = mpsc::unbounded_channel::<StreamMessage>();
         self.stream_rx = Some(rx);
 
@@ -3436,18 +3510,20 @@ impl TuiApp {
                         if tx.send(StreamMessage::Event(event)).is_err() {
                             return;
                         }
+                        frame_requester.schedule_frame();
                     }
                 }
                 Err(err) => {
                     let _ = tx.send(StreamMessage::Error(err.to_string()));
+                    frame_requester.schedule_frame();
                 }
             }
             let _ = tx.send(StreamMessage::Done);
+            frame_requester.schedule_frame();
         });
 
         Ok(())
     }
-
     fn apply_first_suggestion(&mut self) {
         let trimmed = self.input.trim_start();
         if trimmed.starts_with('/') {
@@ -4550,17 +4626,7 @@ impl TuiApp {
 }
 
 fn log_base_style(kind: LogKind) -> Style {
-    let bright_blue = Color::Rgb(120, 205, 255);
-    match kind {
-        LogKind::Info => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::User => Style::default().fg(bright_blue),
-        LogKind::Assistant => Style::default().fg(Color::Green),
-        LogKind::Reasoning => Style::default().fg(Color::Gray).add_modifier(Modifier::DIM),
-        LogKind::Tool => Style::default().fg(bright_blue),
-        LogKind::Error => Style::default()
-            .fg(Color::Gray)
-            .add_modifier(Modifier::BOLD),
-    }
+    super::theme::log_style(kind)
 }
 
 fn render_plain_lines(kind: LogKind, text: &str, style: Style) -> Vec<Line<'static>> {

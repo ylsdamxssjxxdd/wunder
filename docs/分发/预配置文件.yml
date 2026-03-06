@@ -1,8 +1,12 @@
 ﻿# wunder desktop 预配置（覆盖配置）
 # 作用：为首次启动预置默认模型与可选运行参数
-# 用法：将本文件复制为 <WUNDER_TEMPD>/config/wunder.override.yaml
+# 用法1：将本文件复制为 <WUNDER_TEMPD>/config/wunder.override.yaml（推荐）
+# 用法2：放在 AppImage 同目录，文件名可为「预配置文件.yml / 预配置文件.yaml / wunder.override.yaml / wunder.override.yml」，
+#       首次启动时会自动写入 WUNDER_TEMPD/config/wunder.override.yaml
 #      AppImage 默认路径（Linux）：~/.config/Wunder Desktop/WUNDER_TEMPD/config/wunder.override.yaml
 # 注意：override 只写入需要覆盖的字段，未写字段会沿用 base 配置。
+# 注意：如果你已经在桌面“系统设置/模型配置”里保存过模型，desktop.settings.json 里的 llm 会继续优先生效；
+#      这时请直接修改 WUNDER_TEMPD/config/wunder.override.yaml，或清理对应的 desktop.settings.json 配置后重启。
 
 llm:
   # 默认聊天模型配置名称（必须在 models 中存在）

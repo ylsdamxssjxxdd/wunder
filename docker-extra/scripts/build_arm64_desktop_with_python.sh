@@ -11,7 +11,7 @@ TARGET_DIR="${ROOT_DIR}/target/arm64-20"
 DIST_DIR="${TARGET_DIR}/dist"
 BUILD_ROOT="${TARGET_DIR}/.build/python"
 
-echo "[1/7] Checking prerequisites..."
+echo "[1/8] Checking prerequisites..."
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is not installed or not in PATH." >&2
   exit 1
@@ -26,11 +26,6 @@ if [ ! -d "${ROOT_DIR}/frontend/dist" ]; then
   echo "Run frontend build first." >&2
   exit 1
 fi
-if [ ! -x "${BUILD_ROOT}/stage/opt/python/bin/python3" ]; then
-  echo "Missing prebuilt embedded Python: ${BUILD_ROOT}/stage/opt/python/bin/python3" >&2
-  echo "Please prepare target/arm64-20/.build/python first." >&2
-  exit 1
-fi
 if [ ! -x "${BUILD_ROOT}/stage/opt/git/bin/git" ]; then
   echo "Prebuilt embedded Git not found at ${BUILD_ROOT}/stage/opt/git/bin/git."
   echo "Will prepare it automatically during AppImage repack."
@@ -38,10 +33,10 @@ fi
 
 mkdir -p "${CARGO_HOME_DIR}" "${TARGET_DIR}" "${DIST_DIR}"
 
-echo "[2/7] Starting arm build container (no image rebuild)..."
+echo "[2/8] Starting arm build container (no image rebuild)..."
 docker compose -f "${COMPOSE_FILE}" --profile arm up -d --no-build
 
-echo "[3/7] Building arm64 bridge with arm64-20 cache/target..."
+echo "[3/8] Building arm64 bridge with arm64-20 cache/target..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   export PATH=/usr/local/cargo/bin:\$PATH
@@ -50,7 +45,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   cargo build --release --bin wunder-desktop-bridge
 "
 
-echo "[4/7] Packaging Electron arm64 AppImage..."
+echo "[4/8] Packaging Electron arm64 AppImage..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   cd /app/wunder-desktop-electron
@@ -59,14 +54,21 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
     npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 "
 
-echo "[5/7] Packaging extra sidecar (wunder补充包)..."
+echo "[5/8] Syncing embedded Python runtime..."
+docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
+  set -euo pipefail
+  BUILD_ROOT=/app/target/arm64-20/.build/python \
+    bash /app/docker-extra/scripts/build_embedded_python.sh
+"
+
+echo "[6/8] Packaging extra sidecar archive..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   BUILD_ROOT=/app/target/arm64-20/.build/python \
     bash /app/docker-extra/scripts/package_sidecar_python.sh
 "
 
-echo "[6/7] Repacking AppImage with sidecar Python + embedded Git (qemu may take 10-30 min)..."
+echo "[7/8] Repacking AppImage with sidecar Python + embedded Git (qemu may take 10-30 min)..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   set -euo pipefail
   output_dir=/app/target/arm64-20/dist
@@ -94,8 +96,13 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
     bash /app/docker-extra/scripts/package_appimage_with_python.sh
 '
 
-echo "[7/7] Done. Artifacts:"
+echo "[8/8] Done. Artifacts:"
 echo "  - ${TARGET_DIR}/release/wunder-desktop-bridge"
 echo "  - ${DIST_DIR}/wunder-desktop-arm64.AppImage"
 echo "  - ${DIST_DIR}/wunder-desktop-arm64-sidecar.AppImage (sidecar Python)"
-echo "  - ${DIST_DIR}/wunder补充包-arm64.tar.gz (sidecar extra package)"
+SIDECAR_ARCHIVE=$(find "${DIST_DIR}" -maxdepth 1 -type f -name '*.tar.gz' | head -n 1 || true)
+if [ -n "${SIDECAR_ARCHIVE}" ]; then
+  echo "  - ${SIDECAR_ARCHIVE} (sidecar extra package)"
+else
+  echo "  - ${DIST_DIR}/*.tar.gz (sidecar extra package)"
+fi

@@ -1558,10 +1558,9 @@ impl StorageBackend for SqliteStorage {
                 "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? AND id < ? ORDER BY id DESC LIMIT ?",
             )?;
             let rows = stmt
-                .query_map(
-                    params![user_id, session_id, before_id, limit],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-                )?
+                .query_map(params![user_id, session_id, before_id, limit], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
                 .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
             rows
         } else {
@@ -1569,10 +1568,9 @@ impl StorageBackend for SqliteStorage {
                 "SELECT id, payload FROM chat_history WHERE user_id = ? AND session_id = ? ORDER BY id DESC LIMIT ?",
             )?;
             let rows = stmt
-                .query_map(
-                    params![user_id, session_id, limit],
-                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
-                )?
+                .query_map(params![user_id, session_id, limit], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })?
                 .collect::<std::result::Result<Vec<(i64, String)>, _>>()?;
             rows
         };

@@ -101,7 +101,7 @@
           }"
           :title="voiceButtonTitle"
           :aria-label="voiceButtonTitle"
-          :disabled="attachmentBusy > 0 || loading || !voiceSupported"
+          :disabled="attachmentBusy > 0 || loading"
           @click="handleToggleVoiceRecord"
         >
           <i
@@ -649,9 +649,6 @@ const formatVoiceDurationLabel = (durationMs: unknown): string => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 };
 const voiceButtonTitle = computed(() => {
-  if (!props.voiceSupported) {
-    return t('messenger.world.voice.unsupported');
-  }
   return props.voiceRecording ? t('messenger.world.voice.stop') : t('messenger.world.voice.start');
 });
 const voiceRecordingLabel = computed(() =>

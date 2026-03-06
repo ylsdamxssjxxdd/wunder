@@ -687,6 +687,14 @@
     "en-US": "Tool call: {tool}",
     "zh-CN": "调用工具：{tool}"
   },
+  "monitor.summary.tool_call_repaired": {
+    "en-US": "Tool call (args repaired): {tool}",
+    "zh-CN": "调用工具（参数已修复）：{tool}"
+  },
+  "monitor.summary.model_call_repaired_history": {
+    "en-US": "Model call (sanitized tool history)",
+    "zh-CN": "模型调用（已清洗工具历史）"
+  },
   "monitor.summary.plan_update": {
     "en-US": "Plan updated",
     "zh-CN": "计划更新"

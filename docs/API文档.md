@@ -2835,7 +2835,9 @@
 - 默认落在 `WUNDER_TEMPD/`（程序同级）；Electron/AppImage 通过 `--temp-root` 指向 `userData/WUNDER_TEMPD`。
 - `WUNDER_TEMPD/wunder_desktop.sqlite3`
 - `WUNDER_TEMPD/config/wunder.override.yaml`
+  - 首次启动若不存在，会尝试从 `WUNDER_DESKTOP_PRECONFIG_PATH`、AppImage/程序同目录预配置文件、或打包内置模板自动播种。
 - `WUNDER_TEMPD/config/desktop.settings.json`
+  - 若其中已保存 `llm`，则会覆盖 `wunder.override.yaml` 中的桌面模型配置。
 - `WUNDER_TEMPD/user_tools/*`
 - `WUNDER_TEMPD/vector_knowledge/*`
 

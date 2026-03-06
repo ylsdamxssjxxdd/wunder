@@ -493,6 +493,10 @@ function repairMarkdownTables(content = '') {
     if (activeFence) continue;
     const headerRow = trimmed;
     if (!looksLikeMarkdownTableRow(headerRow)) continue;
+    const previousLine = String(lines[index - 1] || '').trim();
+    if (looksLikeDividerRow(previousLine) || looksLikeMarkdownTableRow(previousLine)) {
+      continue;
+    }
     const headerCells = splitTableRow(headerRow);
     if (headerCells.length < 2 || headerCells.every((cell) => !cell)) continue;
     const nextLine = lines[index + 1];

@@ -17,6 +17,7 @@ use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
 use crate::command_utils;
+use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
 use crate::core::python_runtime;
 use crate::i18n;
 
@@ -306,7 +307,12 @@ async fn handle_execute_tool(request: SandboxToolRequest) -> SandboxToolResponse
     }
 }
 
+fn recover_tool_args_value(args: &Value) -> Value {
+    recover_tool_args_value_lossy(args)
+}
+
 async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
+    let args = recover_tool_args_value(args);
     let content = args
         .get("content")
         .and_then(Value::as_str)
@@ -417,6 +423,7 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
 }
 
 async fn execute_ptc(context: &SandboxContext, args: &Value) -> ToolResult {
+    let args = recover_tool_args_value(args);
     let filename = args
         .get("filename")
         .and_then(Value::as_str)

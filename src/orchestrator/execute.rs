@@ -569,18 +569,35 @@ impl Orchestrator {
 
                 for planned in &exec_calls {
                     let args = &planned.call.arguments;
+                    let tool_call_id = planned
+                        .call
+                        .id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty());
                     let safe_args = if args.is_object() {
                         args.clone()
                     } else {
                         json!({ "raw": args })
                     };
+                    let recovered_args =
+                        crate::core::tool_args::recover_tool_args_value_with_meta(&safe_args);
                     let event_args = if allowed_tool_names.contains(&planned.name) {
-                        args.clone()
+                        recovered_args.value.clone()
                     } else {
                         safe_args
                     };
                     let mut tool_payload = json!({ "tool": planned.name, "args": event_args });
                     if let Value::Object(ref mut map) = tool_payload {
+                        if let Some(repair) = recovered_args.repair.clone() {
+                            map.insert("repair".to_string(), repair);
+                        }
+                        if let Some(tool_call_id) = tool_call_id {
+                            map.insert(
+                                "tool_call_id".to_string(),
+                                Value::String(tool_call_id.to_string()),
+                            );
+                        }
                         round_info.insert_into(map);
                     }
                     emitter.emit("tool_call", tool_payload).await;
@@ -710,6 +727,12 @@ impl Orchestrator {
 
                         let mut tool_result_payload = result.to_event_payload(&name);
                         if let Value::Object(ref mut map) = tool_result_payload {
+                            if let Some(tool_call_id) = tool_call_id.as_ref() {
+                                map.insert(
+                                    "tool_call_id".to_string(),
+                                    Value::String(tool_call_id.clone()),
+                                );
+                            }
                             round_info.insert_into(map);
                         }
                         emitter.emit("tool_result", tool_result_payload).await;
@@ -1008,6 +1031,19 @@ impl Orchestrator {
             }
             Err(err) => {
                 emitter.emit("error", err.to_payload()).await;
+                if !matches!(err.code(), "USER_BUSY" | "CANCELLED") {
+                    self.append_chat(
+                        &user_id,
+                        &session_id,
+                        "assistant",
+                        Some(&json!(err.message())),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                }
                 if err.code() == "CANCELLED" {
                     self.monitor.mark_cancelled(&session_id);
                 } else if err.code() != "USER_BUSY" {
@@ -1045,8 +1081,12 @@ impl Orchestrator {
             let approval_tx = approval_tx.clone();
             let emitter = emitter.clone();
             async move {
-                let PlannedToolCall { call, name } = planned;
+                let PlannedToolCall { mut call, name } = planned;
+                let recovered_args =
+                    crate::core::tool_args::recover_tool_args_value_with_meta(&call.arguments);
+                call.arguments = recovered_args.value.clone();
                 let args = call.arguments.clone();
+                let args_repair = recovered_args.repair.clone();
                 let workspace_version_before =
                     tool_context.workspace.get_tree_version(tool_context.workspace_id);
                 let policy_decision = crate::exec_policy::evaluate_tool_call(
@@ -1275,6 +1315,9 @@ impl Orchestrator {
                     result.insert_meta("workspace_version", json!(workspace_version_after));
                     result.insert_meta("workspace_changed", Value::Bool(true));
                 }
+                if let Some(repair) = args_repair {
+                    result.insert_meta("repair", repair);
+                }
                 result = orchestrator.finalize_tool_result(result, started_at, is_admin);
                 Ok(ToolExecutionOutcome { call, name, result })
             }
@@ -1453,7 +1496,10 @@ fn extract_control_summary(args: &Value) -> Option<String> {
         return Some(format!("action={action}"));
     }
     if let Some(wait_ms) = obj.get("wait_ms") {
-        if let Some(value) = wait_ms.as_i64().or_else(|| wait_ms.as_u64().map(|v| v as i64)) {
+        if let Some(value) = wait_ms
+            .as_i64()
+            .or_else(|| wait_ms.as_u64().map(|v| v as i64))
+        {
             return Some(format!("wait_ms={value}"));
         }
     }

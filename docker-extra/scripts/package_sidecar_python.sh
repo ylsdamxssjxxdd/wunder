@@ -13,6 +13,7 @@ OUT_NAME="${OUT_NAME:-${PACKAGE_DIR_NAME}-${ARCH}.tar.zst}"
 INCLUDE_GIT="${INCLUDE_GIT:-1}"
 FONTS_DIR="${FONTS_DIR:-${ROOT_DIR}/fonts}"
 FONT_LIST="${FONT_LIST:-}"
+VALIDATE_MODULES="${VALIDATE_MODULES:-matplotlib,cartopy,pyproj,shapely,netCDF4,cftime,h5py,cinrad}"
 
 if [ ! -d "${PYTHON_ROOT}" ]; then
   echo "Embedded Python root not found: ${PYTHON_ROOT}" >&2
@@ -45,6 +46,32 @@ if [ -f "${PYTHON_ROOT}/.wunder-python-version" ]; then
 fi
 if [ -z "${PY_VER}" ]; then
   PY_VER=$(ls -1d "${PYTHON_ROOT}/lib/python3"* 2>/dev/null | head -n 1 | xargs -I{} basename {} | sed 's/^python//')
+fi
+
+if [ -n "${VALIDATE_MODULES}" ]; then
+  if ! "${PYTHON_ROOT}/bin/python3" - "${VALIDATE_MODULES}" <<'PY'
+import importlib
+import sys
+
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+modules = [item.strip() for item in raw.split(",") if item.strip()]
+missing = []
+for name in modules:
+    try:
+        importlib.import_module(name)
+    except Exception as exc:
+        missing.append(f"{name} ({type(exc).__name__}: {exc})")
+if missing:
+    raise SystemExit(f"missing embedded python modules: {', '.join(missing)}")
+PY
+  then
+    echo "Embedded Python is missing required modules; rerun docker-extra/scripts/build_embedded_python.sh before packaging." >&2
+    exit 1
+  fi
+fi
+
+if [[ ",${VALIDATE_MODULES}," == *",cartopy," ]] && [ ! -d "${PYTHON_ROOT}/share/cartopy" ]; then
+  echo "cartopy module is present but offline data directory is missing: ${PYTHON_ROOT}/share/cartopy" >&2
 fi
 
 if [ -n "${PY_VER}" ]; then

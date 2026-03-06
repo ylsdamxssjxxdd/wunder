@@ -1,25 +1,30 @@
 mod app;
+mod frame_scheduler;
+mod highlight;
 mod line_utils;
 mod markdown;
 mod markdown_render;
 mod markdown_stream;
+mod theme;
 mod ui;
 mod wrapping;
 
 use anyhow::Result;
 use app::TuiApp;
 use crossterm::event::{
-    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyEventKind,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event,
+    EventStream, KeyEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use frame_scheduler::spawn_frame_scheduler;
+use frame_scheduler::FrameNotifications;
+use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 use std::io;
-use std::time::Duration;
 
 use crate::args::GlobalArgs;
 use crate::runtime::CliRuntime;
@@ -30,8 +35,15 @@ pub async fn run_main(
     first_prompt: Option<String>,
     session_override: Option<String>,
 ) -> Result<()> {
+    let (frame_requester, frame_notifications) = spawn_frame_scheduler();
     let mut terminal = setup_terminal()?;
-    let mut app = TuiApp::new(runtime.clone(), global.clone(), session_override).await?;
+    let mut app = TuiApp::new(
+        runtime.clone(),
+        global.clone(),
+        session_override,
+        frame_requester,
+    )
+    .await?;
 
     if let Some(prompt) = first_prompt
         .map(|value| value.trim().to_string())
@@ -40,7 +52,9 @@ pub async fn run_main(
         app.submit_line(prompt).await?;
     }
 
-    let run_result = run_loop(&mut terminal, &mut app).await;
+    app.request_redraw();
+
+    let run_result = run_loop(&mut terminal, &mut app, frame_notifications).await;
     let restore_result = restore_terminal(&mut terminal);
 
     run_result?;
@@ -51,10 +65,45 @@ pub async fn run_main(
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut TuiApp,
+    mut frame_notifications: FrameNotifications,
 ) -> Result<()> {
     let mut mouse_capture_enabled = false;
+    let mut events = EventStream::new();
 
     loop {
+        tokio::select! {
+            maybe_draw = frame_notifications.recv() => {
+                if maybe_draw.is_none() {
+                    break;
+                }
+            }
+            maybe_event = events.next() => {
+                let Some(event) = maybe_event else {
+                    break;
+                };
+                match event? {
+                    Event::Key(key) if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
+                        app.on_key(key).await?;
+                    }
+                    Event::Mouse(mouse) => {
+                        app.on_mouse(mouse);
+                    }
+                    Event::Paste(text) => {
+                        app.on_paste(text);
+                    }
+                    Event::FocusGained => {
+                        app.set_terminal_focus(true);
+                    }
+                    Event::FocusLost => {
+                        app.set_terminal_focus(false);
+                    }
+                    Event::Resize(_, _) => {}
+                    _ => {}
+                }
+                app.request_redraw();
+            }
+        }
+
         app.drain_stream_events().await;
 
         let desired_mouse_capture = app.mouse_capture_enabled();
@@ -73,28 +122,7 @@ async fn run_loop(
             break;
         }
 
-        if event::poll(Duration::from_millis(40))? {
-            match event::read()? {
-                Event::Key(key)
-                    if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
-                {
-                    app.on_key(key).await?;
-                }
-                Event::Mouse(mouse) => {
-                    app.on_mouse(mouse);
-                }
-                Event::Paste(text) => {
-                    app.on_paste(text);
-                }
-                Event::FocusGained => {
-                    app.set_terminal_focus(true);
-                }
-                Event::FocusLost => {
-                    app.set_terminal_focus(false);
-                }
-                _ => {}
-            }
-        }
+        app.schedule_periodic_redraw_if_needed();
     }
     Ok(())
 }

@@ -418,8 +418,7 @@ pub(crate) async fn resume_stream_events(
     let workspace = state.workspace.clone();
     let monitor = state.monitor.clone();
     let base_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
-    let heartbeat_interval =
-        std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
+    let heartbeat_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
     let mut idle_rounds: usize = 0;
     let mut poll_interval = base_interval;
     let mut last_event_id = after_event_id;

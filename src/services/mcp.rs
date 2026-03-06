@@ -943,9 +943,7 @@ pub(crate) fn normalize_transport(transport: Option<&str>) -> String {
     }
     let lowered = value.to_ascii_lowercase();
     match lowered.as_str() {
-        "streamable-http" | "streamable_http" | "streamablehttp" => {
-            "streamable-http".to_string()
-        }
+        "streamable-http" | "streamable_http" | "streamablehttp" => "streamable-http".to_string(),
         _ => lowered,
     }
 }

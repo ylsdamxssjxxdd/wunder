@@ -20,11 +20,13 @@
 
 二、应用预配置文件（默认模型）
 1) 先退出程序。
-2) 将 预配置文件.yml 复制为：
+2) 最稳妥的方式：将 预配置文件.yml 复制为：
    ~/.config/Wunder Desktop/WUNDER_TEMPD/config/wunder.override.yaml
 3) 重新启动 AppImage。
 
-提示：也可在首次启动前手动创建上述目录并放入 override 文件。
+提示：
+- 也可在首次启动前把 `预配置文件.yml`、`预配置文件.yaml`、`wunder.override.yaml` 或 `wunder.override.yml` 直接放到 AppImage 同目录；首次启动时会自动写入 `WUNDER_TEMPD/config/wunder.override.yaml`。
+- 如果你已经在桌面“系统设置/模型配置”里保存过模型，`desktop.settings.json` 中的 `llm` 会继续覆盖预配置；此时请直接修改 `WUNDER_TEMPD/config/wunder.override.yaml`，或清理该设置后重启。
 
 三、使用补充包（可选）
 用途：浏览器工具、脚本/数据处理能力（含 Python/Git），并内置常用中英文字体供 matplotlib 使用。
@@ -35,6 +37,7 @@
    WUNDER_PYTHON_BIN=~/wunder补充包/opt/python/bin/python3 ./wunder-desktop*.AppImage
 3) 补充包内置气象/地理绘图库（cinrad/PyCINRAD、arm_pyart、netCDF4、cartopy 等）与 cartopy 地图数据。
    AppRun 会自动设置 CARTOPY_DATA_DIR 指向补充包内的 share/cartopy，实现离线地图绘图。
+   若打包阶段实际未包含 `cartopy`，新版 sidecar 打包脚本会直接报错并阻止继续出包。
 4) 补充包也包含 Jupyter/OpenAI/爬虫/数据库连接等常用库，便于本地分析与数据采集。
 
 四、常见问题

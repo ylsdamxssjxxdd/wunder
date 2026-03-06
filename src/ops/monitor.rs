@@ -772,8 +772,13 @@ impl MonitorState {
                     } else if event_type == "tool_call" {
                         record.stage = "tool_call".to_string();
                         let tool = data.get("tool").and_then(Value::as_str).unwrap_or("");
+                        let summary_key = if data.get("repair").is_some() {
+                            "monitor.summary.tool_call_repaired"
+                        } else {
+                            "monitor.summary.tool_call"
+                        };
                         record.summary = i18n::t_with_params(
-                            "monitor.summary.tool_call",
+                            summary_key,
                             &HashMap::from([("tool".to_string(), tool.to_string())]),
                         );
                     } else if event_type == "plan_update" {
@@ -802,7 +807,11 @@ impl MonitorState {
                             .unwrap_or_else(|| i18n::t("monitor.summary.model_call"));
                     } else if event_type == "llm_request" {
                         record.stage = "llm_request".to_string();
-                        record.summary = i18n::t("monitor.summary.model_call");
+                        record.summary = if data.get("repair").is_some() {
+                            i18n::t("monitor.summary.model_call_repaired_history")
+                        } else {
+                            i18n::t("monitor.summary.model_call")
+                        };
                     } else if event_type == "final" {
                         record.stage = "final".to_string();
                         record.summary = i18n::t("monitor.summary.finished");

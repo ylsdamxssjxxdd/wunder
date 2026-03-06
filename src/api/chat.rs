@@ -313,7 +313,9 @@ async fn list_sessions(
                 .map(|session_id| session_id == &record.session_id)
                 .unwrap_or(false);
             let mut payload = session_payload_with_main(record, is_main);
-            if let (Some(model_name), Value::Object(ref mut map)) = (model_name.as_ref(), &mut payload) {
+            if let (Some(model_name), Value::Object(ref mut map)) =
+                (model_name.as_ref(), &mut payload)
+            {
                 map.insert("model_name".to_string(), json!(model_name));
             }
             payload
@@ -546,7 +548,10 @@ async fn get_session_history(
                 "load history page failed: user_id={}, session_id={}, error={err}",
                 resolved.user.user_id, session_id
             );
-            return Err(error_response(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()));
+            return Err(error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                err.to_string(),
+            ));
         }
     };
     let mut has_more = false;
@@ -1006,8 +1011,9 @@ async fn resume_session(
                             "ts": Utc::now().to_rfc3339(),
                             "running": running,
                         });
-                        let builder =
-                            Event::default().event("heartbeat").data(payload.to_string());
+                        let builder = Event::default()
+                            .event("heartbeat")
+                            .data(payload.to_string());
                         if event_tx.send(builder).await.is_err() {
                             return;
                         }
@@ -1077,7 +1083,9 @@ async fn resume_session(
                     "ts": Utc::now().to_rfc3339(),
                     "running": running,
                 });
-                let builder = Event::default().event("heartbeat").data(payload.to_string());
+                let builder = Event::default()
+                    .event("heartbeat")
+                    .data(payload.to_string());
                 if event_tx.send(builder).await.is_err() {
                     return;
                 }

@@ -38,6 +38,9 @@ arm 目标默认优先使用以下缓存与产物目录（推荐）：
 - `CARGO_TARGET_DIR=/app/target/arm64-20`
 - 嵌入式 Python 目录：`/app/target/arm64-20/.build/python`
 
+> 说明：`build_embedded_python.sh`、`package_sidecar_python.sh`、`package_appimage_with_python.sh` 现在都支持通用 `BUILD_ROOT`；
+> x86/x64 只需改为对应目录，例如 `/app/target/x86/.build/python`、`/app/target/x64/.build/python` 或你自己的 `x64-20` 缓存目录。
+
 ### 一键打包（推荐）
 
 在仓库根目录执行：
@@ -78,6 +81,9 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-
 
 完成后再执行 “一键打包” 或重跑 AppImage 重打包步骤即可。
 
+> 说明：重建 embedded Python 时会自动校验 `matplotlib/cartopy/pyproj/shapely/netCDF4/cftime/h5py` 等核心库；
+> 若缺失会尝试补装并把最终结果写到 `${BUILD_ROOT}/reports/stage-pip-freeze.txt`、`${BUILD_ROOT}/reports/stage-pip-list.json`、`${BUILD_ROOT}/reports/stage-import-validation.json`。
+
 > 说明：重打包 AppImage 时会自动将 Playwright 运行库（如 libnss3/libnspr4 等）收集进 AppImage 并设置 `LD_LIBRARY_PATH`，
 > 旧系统缺依赖时可直接使用。若需手动控制，可设置 `BUNDLE_PLAYWRIGHT_DEPS=0/1` 或 `PLAYWRIGHT_INSTALL_DEPS=0/1`。
 > 若希望浏览器也以 sidecar 分发，可将 `${PYTHON_ROOT}/playwright` 打包为 `wunder-playwright` 并与 AppImage 同目录放置。
@@ -92,6 +98,8 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-
   bash /app/docker-extra/scripts/package_sidecar_python.sh'
 ```
 
+`package_sidecar_python.sh` 现在会在打包前强校验核心地理/绘图库导入；缺少 `cartopy` 这类关键库时会直接失败，避免产出不完整 sidecar。
+
 然后用 sidecar 模式重打包 AppImage（默认输出 `*-sidecar.AppImage`）：
 
 ```bash
@@ -102,6 +110,8 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-
   EMBED_PYTHON=0 BUNDLE_PLAYWRIGHT_DEPS=0 PLAYWRIGHT_INSTALL_DEPS=0 \
   bash /app/docker-extra/scripts/package_appimage_with_python.sh'
 ```
+
+> 启动时延优化：脚本现在默认会优先选择更快的 SquashFS 压缩算法（优先 `zstd`，其次 `gzip`，最后回退 `xz`），以改善 AppImage 冷启动时间；如需更小体积可显式传入 `APPIMAGE_COMP=xz`。
 
 运行时将 `wunder补充包` 解压到 AppImage 同目录即可（AppRun 会自动识别并设置 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`）。
 

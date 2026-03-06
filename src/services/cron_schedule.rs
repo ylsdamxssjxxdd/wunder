@@ -264,11 +264,20 @@ fn parse_time_to_hour_min(value: &str) -> Result<(u32, u32)> {
     }
 
     let (hour, minute) = if let Some((h, m)) = s.split_once(':') {
-        let hour: u32 = h.trim().parse().map_err(|_| anyhow!("invalid time: {value}"))?;
-        let minute: u32 = m.trim().parse().map_err(|_| anyhow!("invalid time: {value}"))?;
+        let hour: u32 = h
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid time: {value}"))?;
+        let minute: u32 = m
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid time: {value}"))?;
         (hour, minute)
     } else {
-        let hour: u32 = s.trim().parse().map_err(|_| anyhow!("invalid time: {value}"))?;
+        let hour: u32 = s
+            .trim()
+            .parse()
+            .map_err(|_| anyhow!("invalid time: {value}"))?;
         (hour, 0)
     };
 

@@ -46,7 +46,8 @@ pub async fn persist_user_chat_attachments(
             attachment.public_path = Some(raw.to_string());
             continue;
         }
-        let Some((mime_type, bytes)) = parse_data_url(raw, attachment.content_type.as_deref()) else {
+        let Some((mime_type, bytes)) = parse_data_url(raw, attachment.content_type.as_deref())
+        else {
             continue;
         };
         if bytes.is_empty() {
@@ -160,7 +161,10 @@ fn build_attachment_filename(raw_name: Option<&str>, mime_type: &str) -> String 
         ext = Some("bin".to_string());
     }
     let suffix = Uuid::new_v4().simple().to_string();
-    format!("{stem}_{suffix}.{}", ext.unwrap_or_else(|| "bin".to_string()))
+    format!(
+        "{stem}_{suffix}.{}",
+        ext.unwrap_or_else(|| "bin".to_string())
+    )
 }
 
 fn split_filename(name: &str) -> (String, Option<String>) {
@@ -188,31 +192,35 @@ fn extension_from_mime(mime_type: &str) -> Option<String> {
     let main = mime.type_().as_str();
     let sub = mime.subtype().as_str();
     if main == "image" {
-        return Some(match sub {
-            "jpeg" => "jpg",
-            "png" => "png",
-            "gif" => "gif",
-            "webp" => "webp",
-            "bmp" => "bmp",
-            "svg+xml" => "svg",
-            "tiff" => "tiff",
-            other => other,
-        }
-        .to_string());
+        return Some(
+            match sub {
+                "jpeg" => "jpg",
+                "png" => "png",
+                "gif" => "gif",
+                "webp" => "webp",
+                "bmp" => "bmp",
+                "svg+xml" => "svg",
+                "tiff" => "tiff",
+                other => other,
+            }
+            .to_string(),
+        );
     }
     if main == "audio" {
-        return Some(match sub {
-            "mpeg" => "mp3",
-            "wav" | "x-wav" => "wav",
-            "ogg" => "ogg",
-            "opus" => "opus",
-            "aac" => "aac",
-            "flac" => "flac",
-            "webm" => "webm",
-            "mp4" => "m4a",
-            other => other,
-        }
-        .to_string());
+        return Some(
+            match sub {
+                "mpeg" => "mp3",
+                "wav" | "x-wav" => "wav",
+                "ogg" => "ogg",
+                "opus" => "opus",
+                "aac" => "aac",
+                "flac" => "flac",
+                "webm" => "webm",
+                "mp4" => "m4a",
+                other => other,
+            }
+            .to_string(),
+        );
     }
     None
 }

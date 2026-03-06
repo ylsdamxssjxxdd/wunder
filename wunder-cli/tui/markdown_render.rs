@@ -1,3 +1,4 @@
+use super::highlight::highlight_code_to_lines;
 use super::line_utils::line_to_static;
 use super::wrapping::word_wrap_line;
 use super::wrapping::RtOptions;
@@ -48,7 +49,7 @@ impl Default for MarkdownStyles {
             emphasis: Style::new().italic(),
             strong: Style::new().bold(),
             strikethrough: Style::new().crossed_out(),
-            ordered_list_marker: Style::new().light_blue(),
+            ordered_list_marker: Style::new().cyan(),
             unordered_list_marker: Style::new(),
             link: Style::new().cyan().underlined(),
             blockquote: Style::new().green(),
@@ -172,6 +173,8 @@ where
     pending_marker_line: bool,
     in_paragraph: bool,
     in_code_block: bool,
+    code_block_buffer: String,
+    code_block_lang: Option<String>,
     wrap_width: Option<usize>,
     current_line_content: Option<Line<'static>>,
     current_initial_indent: Vec<Span<'static>>,
@@ -199,6 +202,8 @@ where
             pending_marker_line: false,
             in_paragraph: false,
             in_code_block: false,
+            code_block_buffer: String::new(),
+            code_block_lang: None,
             wrap_width,
             current_line_content: None,
             current_initial_indent: Vec::new(),
@@ -391,26 +396,15 @@ where
             self.append_table_text(text.as_ref());
             return;
         }
+        if self.in_code_block {
+            self.code_block_buffer.push_str(text.as_ref());
+            self.needs_newline = false;
+            return;
+        }
         if self.pending_marker_line {
             self.push_line(Line::default());
         }
         self.pending_marker_line = false;
-        if self.in_code_block && !self.needs_newline {
-            let has_content = self
-                .current_line_content
-                .as_ref()
-                .map(|line| !line.spans.is_empty())
-                .unwrap_or_else(|| {
-                    self.text
-                        .lines
-                        .last()
-                        .map(|line| !line.spans.is_empty())
-                        .unwrap_or(false)
-                });
-            if has_content {
-                self.push_line(Line::default());
-            }
-        }
         for (i, line) in text.lines().enumerate() {
             if self.needs_newline {
                 self.push_line(Line::default());
@@ -467,12 +461,20 @@ where
             self.append_table_text(" ");
             return;
         }
+        if self.in_code_block {
+            self.code_block_buffer.push('\n');
+            return;
+        }
         self.push_line(Line::default());
     }
 
     fn soft_break(&mut self) {
         if self.is_table_cell_active() {
             self.append_table_text(" ");
+            return;
+        }
+        if self.in_code_block {
+            self.code_block_buffer.push('\n');
             return;
         }
         self.push_line(Line::default());
@@ -527,21 +529,38 @@ where
         self.needs_newline = false;
     }
 
-    fn start_codeblock(&mut self, _lang: Option<String>, indent: Option<Span<'static>>) {
+    fn start_codeblock(&mut self, lang: Option<String>, indent: Option<Span<'static>>) {
         self.flush_current_line();
         if !self.text.lines.is_empty() {
             self.push_blank_line();
         }
         self.in_code_block = true;
+        self.code_block_buffer.clear();
+        self.code_block_lang = lang
+            .as_deref()
+            .and_then(normalize_code_block_language)
+            .map(str::to_string);
         self.indent_stack.push(IndentContext::new(
             vec![indent.unwrap_or_default()],
             None,
             false,
         ));
-        self.needs_newline = true;
+        self.needs_newline = false;
     }
 
     fn end_codeblock(&mut self) {
+        let code = std::mem::take(&mut self.code_block_buffer);
+        let lang = self.code_block_lang.take();
+        if !code.is_empty() {
+            let lines = lang
+                .as_deref()
+                .and_then(|language| highlight_code_to_lines(code.as_str(), language))
+                .unwrap_or_else(|| plain_code_block_lines(code.as_str(), self.styles.code));
+            for line in lines {
+                self.push_line_no_wrap(line);
+            }
+            self.flush_current_line();
+        }
         self.needs_newline = true;
         self.in_code_block = false;
         self.indent_stack.pop();
@@ -808,6 +827,24 @@ where
             self.flush_current_line();
         }
     }
+}
+
+fn normalize_code_block_language(raw: &str) -> Option<&str> {
+    raw.split(|ch: char| ch.is_whitespace() || ch == ',' || ch == ';')
+        .find(|value| !value.trim().is_empty())
+        .map(str::trim)
+}
+
+fn plain_code_block_lines(code: &str, style: Style) -> Vec<Line<'static>> {
+    let mut lines = code
+        .split_inclusive('\n')
+        .map(|line| line.trim_end_matches(['\r', '\n']))
+        .map(|line| Line::from(Span::styled(line.to_string(), style)))
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(Line::default());
+    }
+    lines
 }
 
 fn normalize_table_cell(raw: &str) -> String {

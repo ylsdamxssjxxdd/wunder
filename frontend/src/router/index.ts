@@ -1,20 +1,21 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router';
 
-import UserLayout from '@/layouts/UserLayout.vue';
-import AdminLayout from '@/layouts/AdminLayout.vue';
-import LoginView from '@/views/LoginView.vue';
-import RegisterView from '@/views/RegisterView.vue';
-import MessengerView from '@/views/MessengerView.vue';
-import ExternalAppView from '@/views/ExternalAppView.vue';
-import AdminLoginView from '@/views/AdminLoginView.vue';
-import AdminUsersView from '@/views/AdminUsersView.vue';
-import AdminAgentsView from '@/views/AdminAgentsView.vue';
-import AdminSystemView from '@/views/AdminSystemView.vue';
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { resolveApiBase } from '@/config/runtime';
+
+const UserLayout = () => import('@/layouts/UserLayout.vue');
+const AdminLayout = () => import('@/layouts/AdminLayout.vue');
+const LoginView = () => import('@/views/LoginView.vue');
+const RegisterView = () => import('@/views/RegisterView.vue');
+const MessengerView = () => import('@/views/MessengerView.vue');
+const ExternalAppView = () => import('@/views/ExternalAppView.vue');
+const AdminLoginView = () => import('@/views/AdminLoginView.vue');
+const AdminUsersView = () => import('@/views/AdminUsersView.vue');
+const AdminAgentsView = () => import('@/views/AdminAgentsView.vue');
+const AdminSystemView = () => import('@/views/AdminSystemView.vue');
 
 const USER_LOGIN_PATH = '/login';
 const USER_BEEHIVE_PATH = '/app/home';

@@ -166,7 +166,11 @@ async fn list_running_agents(
         (now - candidate.updated_time).max(0.0) > WAITING_TTL_S
     }
 
-    fn should_replace(current: &AgentStatusCandidate, next: &AgentStatusCandidate, now: f64) -> bool {
+    fn should_replace(
+        current: &AgentStatusCandidate,
+        next: &AgentStatusCandidate,
+        now: f64,
+    ) -> bool {
         let current_waiting = is_waiting_state(current.state);
         let next_waiting = is_waiting_state(next.state);
         if next_waiting && is_waiting_stale(next, now) {
@@ -213,10 +217,11 @@ async fn list_running_agents(
         .user_store
         .list_shared_user_agents(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let shared_agents = filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents)
-        .into_iter()
-        .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
-        .collect::<Vec<_>>();
+    let shared_agents =
+        filter_user_agents_by_access(&resolved.user, access.as_ref(), shared_agents)
+            .into_iter()
+            .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
+            .collect::<Vec<_>>();
 
     let mut agent_order = Vec::new();
     agent_order.push("".to_string()); // default entry
@@ -468,9 +473,10 @@ async fn list_agent_user_rounds(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, None).await?;
     let user_id = resolved.user.user_id.clone();
-    let records = state
-        .monitor
-        .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
+    let records =
+        state
+            .monitor
+            .load_records_by_user(&user_id, None, None, MAX_RUNTIME_RECORD_LIMIT);
     let mut totals: HashMap<String, i64> = HashMap::new();
     for record in records {
         let raw_agent_id = record
@@ -482,9 +488,10 @@ async fn list_agent_user_rounds(
             continue;
         }
         let agent_id = normalize_agent_id(raw_agent_id);
-        let user_rounds = parse_i64_value(record.get("user_rounds").or_else(|| record.get("rounds")))
-            .unwrap_or(0)
-            .max(0);
+        let user_rounds =
+            parse_i64_value(record.get("user_rounds").or_else(|| record.get("rounds")))
+                .unwrap_or(0)
+                .max(0);
         if user_rounds <= 0 {
             continue;
         }
@@ -1740,8 +1747,7 @@ fn is_default_agent_alias_value(raw: &str) -> bool {
     if cleaned.is_empty() {
         return false;
     }
-    cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
-        || cleaned.eq_ignore_ascii_case("default")
+    cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS) || cleaned.eq_ignore_ascii_case("default")
 }
 
 fn default_agent_meta_key(user_id: &str) -> String {

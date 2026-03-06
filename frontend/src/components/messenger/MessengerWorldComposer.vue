@@ -92,7 +92,7 @@
           active: voiceRecording,
           'messenger-world-tool-btn--recording': voiceRecording
         }"
-        :disabled="uploading || !voiceSupported"
+        :disabled="uploading"
         :title="voiceButtonTitle"
         :aria-label="voiceButtonTitle"
         @click="emit('toggle-voice-record')"
@@ -291,9 +291,6 @@ const formatVoiceDurationLabel = (durationMs: unknown): string => {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 };
 const voiceButtonTitle = computed(() => {
-  if (!props.voiceSupported) {
-    return t('messenger.world.voice.unsupported');
-  }
   return props.voiceRecording ? t('messenger.world.voice.stop') : t('messenger.world.voice.start');
 });
 const voiceRecordingLabel = computed(() =>

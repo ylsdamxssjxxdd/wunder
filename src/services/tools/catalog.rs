@@ -1,10 +1,10 @@
+use super::{browser_tool, desktop_control, read_image_tool, sleep_tool};
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
 use crate::schemas::ToolSpec;
 use crate::skills::SkillRegistry;
 use crate::user_tools::UserToolBindings;
-use super::{browser_tool, desktop_control, read_image_tool, sleep_tool};
 use anyhow::Result;
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
@@ -647,7 +647,10 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     );
     map.insert("node.invoke".to_string(), "节点调用".to_string());
     map.insert("node_invoke".to_string(), "节点调用".to_string());
-    map.insert("browser".to_string(), browser_tool::TOOL_BROWSER.to_string());
+    map.insert(
+        "browser".to_string(),
+        browser_tool::TOOL_BROWSER.to_string(),
+    );
     map.insert(
         "browser_tool".to_string(),
         browser_tool::TOOL_BROWSER.to_string(),

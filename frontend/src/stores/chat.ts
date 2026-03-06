@@ -1862,10 +1862,22 @@ const normalizeWorkflowEvents = (events, message) => {
   return normalized;
 };
 
+const resolveWorkflowRoundTimestamp = (events) => {
+  if (!Array.isArray(events)) return undefined;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const timestamp = resolveTimestampIso(events[index]?.timestamp);
+    if (timestamp) return timestamp;
+  }
+  return undefined;
+};
+
 const attachWorkflowEvents = (messages, rounds) => {
   if (!Array.isArray(messages) || !Array.isArray(rounds) || rounds.length === 0) {
     return messages;
   }
+  const sourceMessages = messages.map((message) =>
+    message && typeof message === 'object' ? { ...message } : message
+  );
   const roundMap = new Map();
   rounds.forEach((round) => {
     const roundIndex = Number(round?.user_round ?? round?.round);
@@ -1876,10 +1888,32 @@ const attachWorkflowEvents = (messages, rounds) => {
     }
   });
   if (!roundMap.size) {
-    return messages;
+    return sourceMessages;
   }
   let currentRound = 0;
   let lastAssistantIndex = null;
+  const hydratedMessages = [];
+  const pushMessage = (message) => {
+    hydratedMessages.push(message);
+    return hydratedMessages.length - 1;
+  };
+  const ensureSyntheticAssistantForRound = () => {
+    if (!Number.isFinite(currentRound) || currentRound <= 0 || lastAssistantIndex !== null) {
+      return;
+    }
+    const events = roundMap.get(currentRound);
+    if (!events || events.length === 0) {
+      return;
+    }
+    const syntheticMessage = {
+      ...buildMessage('assistant', '', resolveWorkflowRoundTimestamp(events)),
+      workflowItems: [],
+      workflowStreaming: false,
+      stream_incomplete: false,
+      stream_round: currentRound
+    };
+    lastAssistantIndex = pushMessage(syntheticMessage);
+  };
   const assignRound = () => {
     if (!Number.isFinite(currentRound) || currentRound <= 0 || lastAssistantIndex === null) {
       return;
@@ -1888,22 +1922,26 @@ const attachWorkflowEvents = (messages, rounds) => {
     if (!events || events.length === 0) {
       return;
     }
-    const target = messages[lastAssistantIndex];
+    const target = hydratedMessages[lastAssistantIndex];
     target.workflow_events = normalizeWorkflowEvents(events, target);
   };
-  messages.forEach((message, index) => {
+  sourceMessages.forEach((message) => {
     if (message?.role === 'user') {
+      ensureSyntheticAssistantForRound();
       assignRound();
+      pushMessage(message);
       currentRound += 1;
       lastAssistantIndex = null;
       return;
     }
+    const index = pushMessage(message);
     if (message?.role === 'assistant') {
       lastAssistantIndex = index;
     }
   });
+  ensureSyntheticAssistantForRound();
   assignRound();
-  return messages;
+  return hydratedMessages;
 };
 
 const isFailedResult = (payload) => {
@@ -2844,6 +2882,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const streamFlushMs = resolveStreamFlushMs(null, options.streamFlushMs);
   const perfEnabled = chatPerf.enabled();
   const toolItemMap = new Map();
+  const toolCallItemMap = new Map();
   const approvalItemMap = new Map();
   const toolOutputItemMap = new Map();
   const toolOutputBufferMap = new Map();
@@ -3072,24 +3111,77 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
   };
 
-  const registerToolItem = (toolName, itemId) => {
-    if (!toolName || !itemId) return;
-    if (!toolItemMap.has(toolName)) {
-      toolItemMap.set(toolName, []);
-    }
-    toolItemMap.get(toolName).push(itemId);
+  const normalizeToolQueueKey = (toolName) => String(toolName || '').trim().toLowerCase();
+
+  const normalizeToolCallRef = (value) => {
+    const normalized = String(value || '').trim();
+    return normalized || null;
   };
 
-  const resolveToolItemId = (toolName) => {
-    if (!toolName) return null;
-    const queue = toolItemMap.get(toolName);
+  const extractToolCallRef = (payload, data) => {
+    for (const source of [data, payload]) {
+      if (!source || typeof source !== 'object') continue;
+      const ref = normalizeToolCallRef(
+        source.tool_call_id ?? source.toolCallId ?? source.call_id ?? source.callId
+      );
+      if (ref) return ref;
+    }
+    return null;
+  };
+
+  const removeQueuedToolItem = (toolKey, itemId) => {
+    if (!toolKey || !itemId) return;
+    const queue = toolItemMap.get(toolKey);
+    if (!queue?.length) return;
+    const nextQueue = queue.filter((candidate) => candidate !== itemId);
+    if (nextQueue.length > 0) {
+      toolItemMap.set(toolKey, nextQueue);
+    } else {
+      toolItemMap.delete(toolKey);
+    }
+  };
+
+  const registerToolItem = (toolName, itemId, toolCallId = null) => {
+    const toolKey = normalizeToolQueueKey(toolName);
+    if (!toolKey || !itemId) return;
+    if (!toolItemMap.has(toolKey)) {
+      toolItemMap.set(toolKey, []);
+    }
+    const queue = toolItemMap.get(toolKey);
+    if (!queue.includes(itemId)) {
+      queue.push(itemId);
+    }
+    const normalizedCallId = normalizeToolCallRef(toolCallId);
+    if (normalizedCallId) {
+      toolCallItemMap.set(normalizedCallId, itemId);
+    }
+  };
+
+  const resolveToolItemId = (toolName, toolCallId = null) => {
+    const normalizedCallId = normalizeToolCallRef(toolCallId);
+    if (normalizedCallId) {
+      const exact = toolCallItemMap.get(normalizedCallId);
+      if (exact) {
+        removeQueuedToolItem(normalizeToolQueueKey(toolName), exact);
+        return exact;
+      }
+    }
+    const toolKey = normalizeToolQueueKey(toolName);
+    if (!toolKey) return null;
+    const queue = toolItemMap.get(toolKey);
     if (!queue || queue.length === 0) return null;
     return queue.shift() || null;
   };
 
-  const peekToolItemId = (toolName) => {
-    if (!toolName) return null;
-    const queue = toolItemMap.get(toolName);
+  const peekToolItemId = (toolName, toolCallId = null) => {
+    const normalizedCallId = normalizeToolCallRef(toolCallId);
+    if (normalizedCallId) {
+      const exact = toolCallItemMap.get(normalizedCallId);
+      if (exact) return exact;
+    }
+    const toolKey = normalizeToolQueueKey(toolName);
+    if (!toolKey) return null;
+    const queue = toolItemMap.get(toolKey);
     if (!queue || queue.length === 0) return null;
     return queue[0] || null;
   };
@@ -3407,7 +3499,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     assistantMessage.workflowItems.forEach((item) => {
       const toolName = normalizeToolName(item?.title);
       if (toolName && item?.status === 'loading') {
-        registerToolItem(toolName, item.id);
+        registerToolItem(toolName, item.id, item?.toolCallId);
       }
     });
   }
@@ -3495,16 +3587,18 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'tool_call': {
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name ?? '未知工具';
+        const toolCallId = extractToolCallRef(payload, data);
         const detailSource = data && typeof data === 'object' ? data : payload ?? data;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
         const item = buildWorkflowItem(`调用工具：${toolName}`, buildDetail(detailSource), 'loading', {
           isTool: true,
           toolCategory,
           eventType: 'tool_call',
-          toolName: String(toolName || '')
+          toolName: String(toolName || ''),
+          toolCallId: toolCallId || undefined
         });
         assistantMessage.workflowItems.push(item);
-        registerToolItem(toolName, item.id);
+        registerToolItem(toolName, item.id, toolCallId);
         registerToolStats(toolName);
         if (lastRound !== null) {
           // 工具调用后不再接收该轮后续增量，但保留当前已展示的内容/思考。
@@ -3514,6 +3608,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'tool_output_delta': {
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name ?? '';
+        const toolCallId = extractToolCallRef(payload, data);
         const delta = data?.delta ?? payload?.delta ?? '';
         if (!delta) {
           break;
@@ -3524,8 +3619,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         const streamName = String(data?.stream ?? payload?.stream ?? 'stdout').toLowerCase();
         const command = typeof data?.command === 'string' ? data.command : payload?.command;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
-        const callId = toolName ? peekToolItemId(toolName) : null;
-        const outputKey = resolveToolOutputKey(toolName, callId);
+        const callId = peekToolItemId(toolName, toolCallId);
+        const outputKey = resolveToolOutputKey(toolName, toolCallId || callId);
         const buffer = getToolOutputBuffer(outputKey);
         if (command && !buffer.command) {
           buffer.command = String(command);
@@ -3535,7 +3630,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         } else {
           appendToolOutput(buffer, 'stdout', delta);
         }
-        const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory, callId);
+        const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory, toolCallId);
         if (itemId) {
           scheduleToolOutputFlush(outputKey, itemId);
         }
@@ -3543,12 +3638,13 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'tool_result': {
         const toolName = data?.tool ?? payload?.tool ?? data?.name ?? payload?.name;
+        const toolCallId = extractToolCallRef(payload, data);
         const result = data?.result ?? payload?.result ?? data?.output ?? payload?.output ?? data ?? payload;
         const failed = isFailedResult(payload);
-        const targetId = toolName ? resolveToolItemId(toolName) : null;
+        const targetId = resolveToolItemId(toolName, toolCallId);
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
         const sandboxed = data?.sandbox === true;
-        const outputKey = resolveToolOutputKey(toolName, targetId);
+        const outputKey = resolveToolOutputKey(toolName, toolCallId || targetId);
         const detailSource =
           data && typeof data === 'object'
             ? data
@@ -3576,7 +3672,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
               toolCategory,
               eventType: 'tool_result',
               toolName: String(toolName || ''),
-              toolCallId: targetId || undefined
+              toolCallId: toolCallId || undefined
             }
           )
         );

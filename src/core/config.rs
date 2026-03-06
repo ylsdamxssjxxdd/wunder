@@ -1257,10 +1257,11 @@ pub fn load_config() -> Config {
         env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "config/wunder.yaml".to_string());
     let override_path = env::var("WUNDER_CONFIG_OVERRIDE_PATH")
         .unwrap_or_else(|_| "data/config/wunder.override.yaml".to_string());
+    let override_path = resolve_yaml_variant_path(Path::new(&override_path));
 
     let mut merged = read_yaml(&base_path);
-    if Path::new(&override_path).exists() {
-        let override_value = read_yaml(&override_path);
+    if override_path.exists() {
+        let override_value = read_yaml_path(&override_path);
         // 只对非空字段做递归覆盖，避免误清空已有配置。
         merge_yaml(&mut merged, override_value);
     }
@@ -1296,17 +1297,33 @@ fn read_yaml(path: &str) -> Value {
     })
 }
 
+fn read_yaml_path(path: &Path) -> Value {
+    let path_display = path.display().to_string();
+    let content = match read_yaml_content_with_fallback(&path_display) {
+        Ok(text) => text,
+        Err(err) => {
+            warn!("读取配置失败: {path_display}, {err}");
+            return Value::Null;
+        }
+    };
+    serde_yaml::from_str(&content).unwrap_or_else(|err| {
+        warn!("解析 YAML 失败: {path_display}, {err}");
+        Value::Null
+    })
+}
+
 fn read_yaml_content_with_fallback(path: &str) -> Result<String, std::io::Error> {
-    match fs::read_to_string(path) {
+    let resolved_path = resolve_yaml_variant_path(Path::new(path));
+    match fs::read_to_string(&resolved_path) {
         Ok(text) => Ok(text),
         Err(err) if err.kind() == ErrorKind::NotFound => {
-            let Some(example_path) = resolve_example_config_path(path) else {
+            let Some(example_path) = resolve_example_config_path(&resolved_path) else {
                 return Err(err);
             };
             let text = fs::read_to_string(&example_path)?;
             warn!(
                 "配置文件不存在，回退使用示例配置: {} -> {}",
-                path,
+                resolved_path.display(),
                 example_path.display()
             );
             Ok(text)
@@ -1315,13 +1332,33 @@ fn read_yaml_content_with_fallback(path: &str) -> Result<String, std::io::Error>
     }
 }
 
-fn resolve_example_config_path(path: &str) -> Option<PathBuf> {
-    let path = Path::new(path);
+fn resolve_example_config_path(path: &Path) -> Option<PathBuf> {
     let file_name = path.file_name()?.to_str()?;
-    if file_name != "wunder.yaml" {
-        return None;
+    match file_name {
+        "wunder.yaml" | "wunder.yml" => Some(path.with_file_name("wunder-example.yaml")),
+        _ => None,
     }
-    Some(path.with_file_name("wunder-example.yaml"))
+}
+
+fn resolve_yaml_variant_path(path: &Path) -> PathBuf {
+    if path.exists() {
+        return path.to_path_buf();
+    }
+    let Some(swapped) = swap_yaml_extension(path) else {
+        return path.to_path_buf();
+    };
+    if swapped.exists() {
+        return swapped;
+    }
+    path.to_path_buf()
+}
+
+fn swap_yaml_extension(path: &Path) -> Option<PathBuf> {
+    match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
+        "yaml" => Some(path.with_extension("yml")),
+        "yml" => Some(path.with_extension("yaml")),
+        _ => None,
+    }
 }
 
 fn merge_yaml(base: &mut Value, override_value: Value) {
@@ -1407,6 +1444,7 @@ fn expand_env_placeholders(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn test_expand_env_placeholders() {
@@ -1517,5 +1555,23 @@ sandbox:
 
         config.security.external_auth_key = Some("external-key".to_string());
         assert_eq!(config.external_auth_key(), Some("external-key".to_string()));
+    }
+
+    #[test]
+    fn test_read_yaml_content_falls_back_to_yml_variant() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-config-yml-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).expect("create temp dir");
+        let yaml_path = root.join("wunder.override.yaml");
+        let yml_path = root.join("wunder.override.yml");
+        fs::write(&yml_path, "observability:\n  log_level: DEBUG\n").expect("write yml config");
+
+        let content = read_yaml_content_with_fallback(&yaml_path.display().to_string())
+            .expect("read yaml variant content");
+        assert!(content.contains("DEBUG"));
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

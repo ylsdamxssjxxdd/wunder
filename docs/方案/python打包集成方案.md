@@ -50,6 +50,7 @@ BUILD_ROOT=/app/target/arm64-20/.build/python \
 ```
 - Python 会安装到 `${BUILD_ROOT}/stage/opt/python`。
 - 依赖清单默认使用 `packaging/python/requirements-full.txt`。
+- 脚本会在安装后自动校验 `matplotlib/cartopy/pyproj/shapely/netCDF4/cftime/h5py` 等核心库；若缺失会尝试补装，并输出 `${BUILD_ROOT}/reports/stage-pip-freeze.txt`、`${BUILD_ROOT}/reports/stage-pip-list.json`、`${BUILD_ROOT}/reports/stage-import-validation.json` 供排查。
 
 ### 5.2 打包补充包 Sidecar
 ```
@@ -78,6 +79,7 @@ PLAYWRIGHT_INSTALL_DEPS=0 \
 ```
 - 输出：`wunder-desktop-*-sidecar.AppImage`
 - AppRun 会自动识别同目录 `wunder补充包` 并注入 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`。
+- 默认会优先选择启动更快的 SquashFS 压缩算法（优先 `zstd`，其次 `gzip`，最后回退 `xz`）；如需更小体积可显式设置 `APPIMAGE_COMP=xz`。
 
 ## 6. 可选：内置 Python（单文件 AppImage）
 若需要单文件交付，使用内置模式：
@@ -115,6 +117,7 @@ INCLUDE_PLAYWRIGHT=1 BUILD_ROOT=/app/target/arm64-20/.build/python \
 - `wunder补充包` 在同目录时，工具调用能命中 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`。
 - 断网环境下可用（pip 不访问网络）。
 - `ldd` 检查无 “not found”。
+- sidecar / embedded 打包前会强校验核心地理绘图库；若缺少 `cartopy`、`pyproj`、`shapely`、`netCDF4`、`h5py` 等，不允许继续出包。
 
 ## 10. 交付清单
 - `wunder-desktop-*-sidecar.AppImage`

@@ -154,7 +154,14 @@ pub fn t_with_params_in_language(
     let normalized = normalize_language(Some(language), true);
     let state = state().read();
     let template = find_template(&state.messages, key, &normalized, &state.default_language)
-        .or_else(|| find_template(embedded_messages(), key, &normalized, &state.default_language))
+        .or_else(|| {
+            find_template(
+                embedded_messages(),
+                key,
+                &normalized,
+                &state.default_language,
+            )
+        })
         .unwrap_or_else(|| key.to_string());
     if params.is_empty() {
         return template;

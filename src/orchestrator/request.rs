@@ -152,13 +152,10 @@ impl Orchestrator {
             let prepared = prepared.clone();
             let language = language.clone();
             tokio::spawn(async move {
-                let result = i18n::with_language(language, async {
+                let _ = i18n::with_language(language, async {
                     orchestrator.execute_request(prepared, emitter).await
                 })
                 .await;
-                if let Err(err) = result {
-                    warn!("流式请求执行失败: {}", err);
-                }
             })
         };
         self.spawn_stream_pump(

@@ -71,6 +71,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3-venv python3-pip \
       libffi-dev libbz2-dev liblzma-dev libsqlite3-dev \
       libreadline-dev libncursesw5-dev libgdbm-dev uuid-dev zlib1g-dev libexpat1-dev \
+      libproj-dev proj-bin proj-data libgeos-dev \
+      libhdf5-dev libnetcdf-dev \
     && rm -rf /var/lib/apt/lists/*
 
 

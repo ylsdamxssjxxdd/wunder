@@ -17,6 +17,17 @@ BUNDLE_PLAYWRIGHT_DEPS="${BUNDLE_PLAYWRIGHT_DEPS:-auto}"
 PLAYWRIGHT_INSTALL_DEPS="${PLAYWRIGHT_INSTALL_DEPS:-1}"
 EMBED_PYTHON="${EMBED_PYTHON:-1}"
 APPIMAGE_SUFFIX="${APPIMAGE_SUFFIX:-}"
+APPIMAGE_COMP="${APPIMAGE_COMP:-auto}"
+VALIDATE_MODULES="${VALIDATE_MODULES:-matplotlib,cartopy,pyproj,shapely,netCDF4,cftime,h5py,cinrad}"
+
+validate_embedded_python_root() {
+  local python_root=$1
+  local raw_modules=$2
+  if [ -z "${raw_modules}" ] || [ ! -x "${python_root}/bin/python3" ]; then
+    return 0
+  fi
+  "${python_root}/bin/python3" -c 'import importlib,sys; raw=sys.argv[1] if len(sys.argv) > 1 else ""; modules=[item.strip() for item in raw.split(",") if item.strip()]; ns={"importlib": importlib}; exec("def _check(name):\n    try:\n        importlib.import_module(name)\n        return None\n    except Exception as exc:\n        return f\"{name} ({type(exc).__name__}: {exc})\"\n", ns); missing=[item for item in (ns["_check"](name) for name in modules) if item]; missing and (_ for _ in ()).throw(SystemExit("missing embedded python modules: " + ", ".join(missing)))' "${raw_modules}"
+}
 
 patch_appimage_runtime_magic() {
   local target_file=$1
@@ -156,6 +167,41 @@ resolve_appimagetool_arch() {
   esac
 }
 
+supports_appimage_compression_flag() {
+  local tool=$1
+  if [[ "${tool}" == *.AppImage ]]; then
+    APPIMAGE_EXTRACT_AND_RUN=1 "${tool}" --help 2>&1 | grep -q -- '--comp'
+    return $?
+  fi
+  "${tool}" --help 2>&1 | grep -q -- '--comp'
+}
+
+resolve_supported_appimage_comp() {
+  local requested=${1:-auto}
+  local squashfs_help
+  squashfs_help=$(mksquashfs -help 2>&1 || true)
+
+  supports_comp() {
+    local name=$1
+    printf '%s\n' "${squashfs_help}" | grep -Eiq "(^|[^[:alpha:]])${name}([^[:alpha:]]|$)"
+  }
+
+  if [ "${requested}" != "auto" ]; then
+    echo "${requested}"
+    return 0
+  fi
+
+  if supports_comp zstd; then
+    echo "zstd"
+    return 0
+  fi
+  if supports_comp gzip; then
+    echo "gzip"
+    return 0
+  fi
+  echo "xz"
+}
+
 if [ -z "${APPIMAGE_PATH}" ]; then
   APPIMAGE_PATH=$(ls -1 "${APPIMAGE_DIR}"/*.AppImage 2>/dev/null | head -n 1 || true)
 fi
@@ -171,6 +217,7 @@ if [ "${EMBED_PYTHON}" = "1" ]; then
   else
     "${ROOT_DIR}/docker-extra/scripts/build_embedded_python.sh"
   fi
+  validate_embedded_python_root "${PREBUILT_PYTHON_ROOT}" "${VALIDATE_MODULES}"
 fi
 
 if [ "${PREFER_PREBUILT_GIT}" = "1" ] && [ -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
@@ -448,10 +495,17 @@ OUT_NAME=$(basename "${APPIMAGE_PATH}")
 OUT_NAME="${OUT_NAME%.AppImage}-${APPIMAGE_SUFFIX}.AppImage"
 OUT_PATH="${OUTPUT_DIR}/${OUT_NAME}"
 
+APPIMAGE_COMP=$(resolve_supported_appimage_comp "${APPIMAGE_COMP}")
+APPIMAGE_TOOL_ARGS=("${APPDIR}" "${OUT_PATH}")
+if supports_appimage_compression_flag "${APPIMAGETOOL_RUNNER}"; then
+  APPIMAGE_TOOL_ARGS=(--comp "${APPIMAGE_COMP}" "${APPDIR}" "${OUT_PATH}")
+  echo "Using AppImage squashfs compression: ${APPIMAGE_COMP}"
+fi
+
 if [[ "${APPIMAGETOOL_RUNNER}" == *.AppImage ]]; then
-  APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL_RUNNER}" "${APPDIR}" "${OUT_PATH}"
+  APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL_RUNNER}" "${APPIMAGE_TOOL_ARGS[@]}"
 else
-  "${APPIMAGETOOL_RUNNER}" "${APPDIR}" "${OUT_PATH}"
+  "${APPIMAGETOOL_RUNNER}" "${APPIMAGE_TOOL_ARGS[@]}"
 fi
 
 if [ "${EMBED_PYTHON}" = "1" ]; then

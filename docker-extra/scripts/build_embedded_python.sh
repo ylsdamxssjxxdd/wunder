@@ -11,8 +11,11 @@ PYTHON_ROOT="${STAGE_DIR}${PYTHON_PREFIX}"
 REQ_FILE="${REQ_FILE:-${ROOT_DIR}/packaging/python/requirements-full.txt}"
 REQ_FILE_EFFECTIVE="${REQ_FILE}"
 WHEELHOUSE_DIR="${WHEELHOUSE_DIR:-${BUILD_ROOT}/wheelhouse}"
+REPORTS_DIR="${REPORTS_DIR:-${BUILD_ROOT}/reports}"
 # Allow source fallback for a small set of pure-python packages without wheels on arm64.
-SOURCE_FALLBACK_PACKAGES="${SOURCE_FALLBACK_PACKAGES:-odfpy,cinrad}"
+SOURCE_FALLBACK_PACKAGES="${SOURCE_FALLBACK_PACKAGES:-odfpy,cinrad,cartopy}"
+REQUIRED_IMPORTS="${REQUIRED_IMPORTS:-matplotlib=matplotlib,cartopy=cartopy,pyproj=pyproj,shapely=shapely,netCDF4=netCDF4,cftime=cftime,h5py=h5py,cinrad=cinrad}"
+REPAIR_MISSING_IMPORTS="${REPAIR_MISSING_IMPORTS:-1}"
 EXTRA_REQUIREMENTS="${EXTRA_REQUIREMENTS:-}"
 INCLUDE_PLAYWRIGHT="${INCLUDE_PLAYWRIGHT:-0}"
 PLAYWRIGHT_BROWSERS_PATH="${PLAYWRIGHT_BROWSERS_PATH:-${PYTHON_ROOT}/playwright}"
@@ -24,7 +27,79 @@ ARM_PYART_BUILD="${ARM_PYART_BUILD:-auto}"
 ARM_PYART_VERSION="${ARM_PYART_VERSION:-2.2.0}"
 ARCH="${ARCH:-$(uname -m 2>/dev/null || true)}"
 
-mkdir -p "${SRC_DIR}" "${STAGE_DIR}" "${WHEELHOUSE_DIR}"
+mkdir -p "${SRC_DIR}" "${STAGE_DIR}" "${WHEELHOUSE_DIR}" "${REPORTS_DIR}"
+
+validate_python_imports() {
+  local import_map=$1
+  local report_path=${2:-}
+  IMPORT_VALIDATION_MAP="${import_map}" \
+  IMPORT_REPORT_PATH="${report_path}" \
+    "${PYTHON_ROOT}/bin/python3" - <<'PY'
+import importlib
+import json
+import os
+import sys
+
+mapping_raw = os.environ.get("IMPORT_VALIDATION_MAP", "")
+report_path = os.environ.get("IMPORT_REPORT_PATH", "")
+pairs = []
+for item in mapping_raw.split(","):
+    item = item.strip()
+    if not item:
+        continue
+    if "=" in item:
+        module_name, package_name = item.split("=", 1)
+    else:
+        module_name = item
+        package_name = item
+    module_name = module_name.strip()
+    package_name = package_name.strip()
+    if module_name and package_name:
+        pairs.append((module_name, package_name))
+
+results = []
+missing_packages = []
+for module_name, package_name in pairs:
+    try:
+        importlib.import_module(module_name)
+        results.append({"module": module_name, "package": package_name, "ok": True})
+    except Exception as exc:
+        results.append(
+            {
+                "module": module_name,
+                "package": package_name,
+                "ok": False,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+        missing_packages.append(package_name)
+
+if report_path:
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    with open(report_path, "w", encoding="utf-8") as fh:
+        json.dump(results, fh, ensure_ascii=False, indent=2)
+
+if missing_packages:
+    ordered = list(dict.fromkeys(missing_packages))
+    print("\n".join(ordered))
+    raise SystemExit(1)
+PY
+}
+
+repair_missing_python_packages() {
+  local packages=("$@")
+  if [ "${#packages[@]}" -eq 0 ]; then
+    return 0
+  fi
+  echo "Repairing missing embedded Python packages: ${packages[*]}"
+  "${PYTHON_ROOT}/bin/python3" -m pip download -d "${WHEELHOUSE_DIR}" --prefer-binary --no-build-isolation "${packages[@]}"
+  "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" --no-build-isolation "${packages[@]}"
+}
+
+write_python_reports() {
+  "${PYTHON_ROOT}/bin/python3" -m pip freeze > "${REPORTS_DIR}/stage-pip-freeze.txt"
+  "${PYTHON_ROOT}/bin/python3" -m pip list --format json > "${REPORTS_DIR}/stage-pip-list.json"
+}
 
 if [ "${ARM_PYART_BUILD}" = "auto" ]; then
   if [ "${ARCH}" = "aarch64" ] || [ "${ARCH}" = "arm64" ]; then
@@ -125,6 +200,27 @@ PY
   "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" "arm_pyart==${ARM_PYART_VERSION}"
 fi
 
+REQUIRED_IMPORTS_EFFECTIVE="${REQUIRED_IMPORTS}"
+if grep -q -E '^arm_pyart([<>=~]|$)' "${REQ_FILE}"; then
+  REQUIRED_IMPORTS_EFFECTIVE="${REQUIRED_IMPORTS_EFFECTIVE},pyart=arm_pyart"
+fi
+
+validation_output=""
+if ! validation_output=$(validate_python_imports \
+  "${REQUIRED_IMPORTS_EFFECTIVE}" \
+  "${REPORTS_DIR}/stage-import-validation.json"); then
+  mapfile -t missing_packages < <(printf '%s\n' "${validation_output}" | sed '/^[[:space:]]*$/d')
+  if [ "${REPAIR_MISSING_IMPORTS}" = "1" ] && [ "${#missing_packages[@]}" -gt 0 ]; then
+    repair_missing_python_packages "${missing_packages[@]}"
+    validate_python_imports \
+      "${REQUIRED_IMPORTS_EFFECTIVE}" \
+      "${REPORTS_DIR}/stage-import-validation.json" >/dev/null
+  else
+    echo "Embedded Python import validation failed." >&2
+    exit 1
+  fi
+fi
+
 if [ "${CARTOPY_DOWNLOAD}" = "1" ]; then
   export CARTOPY_DATA_DIR
   export CARTOPY_DATA_LEVELS
@@ -204,3 +300,4 @@ echo "${PY_VER}" > "${PYTHON_ROOT}/.wunder-python-version"
 
 find "${PYTHON_ROOT}" -type d -name '__pycache__' -prune -exec rm -rf {} +
 find "${PYTHON_ROOT}" -type f -name '*.pyc' -delete
+write_python_reports

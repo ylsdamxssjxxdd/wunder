@@ -1,5 +1,6 @@
 use super::ToolContext;
 use crate::config::{Config, DesktopControllerConfig};
+use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -11,7 +12,6 @@ use tokio::fs;
 use tokio::time::{sleep, Duration};
 use tracing::warn;
 use uuid::Uuid;
-use crate::storage::USER_PRIVATE_CONTAINER_ID;
 
 pub const TOOL_DESKTOP_CONTROLLER: &str = "桌面控制器";
 pub const TOOL_DESKTOP_MONITOR: &str = "桌面监视器";
@@ -257,11 +257,7 @@ pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) ->
             send_key_sequence(key)?;
         }
         DesktopAction::TypeText => {
-            let text = payload
-                .text
-                .as_deref()
-                .unwrap_or("")
-                .to_string();
+            let text = payload.text.as_deref().unwrap_or("").to_string();
             if text.trim().is_empty() {
                 return Err(anyhow!(crate::i18n::t(
                     "tool.desktop_controller.text_required"
@@ -279,9 +275,9 @@ pub async fn tool_desktop_controller(context: &ToolContext<'_>, args: &Value) ->
             smooth_move(cx, cy, payload.duration_ms).await?;
         }
         DesktopAction::DragDrop => {
-            let to_bbox = payload
-                .to_bbox
-                .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.to_bbox_required")))?;
+            let to_bbox = payload.to_bbox.ok_or_else(|| {
+                anyhow!(crate::i18n::t("tool.desktop_controller.to_bbox_required"))
+            })?;
             let (to_cx_norm_raw, to_cy_norm_raw) = to_bbox.center();
             let to_cx_norm = to_cx_norm_raw.clamp(0, norm_width);
             let to_cy_norm = to_cy_norm_raw.clamp(0, norm_height);
@@ -392,7 +388,9 @@ pub async fn build_followup_user_message(result_data: &Value) -> Result<Option<V
         .await
         .map_err(|_| anyhow!(crate::i18n::t("tool.desktop_controller.capture_failed")))?;
     if bytes.len() as u64 > MAX_SCREENSHOT_BYTES {
-        return Err(anyhow!(crate::i18n::t("tool.desktop_controller.capture_too_large")));
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.capture_too_large"
+        )));
     }
     let data_url = format!("data:image/png;base64,{}", STANDARD.encode(bytes));
     Ok(Some(json!({
@@ -451,9 +449,11 @@ fn parse_desktop_controller_args(args: &Value) -> Result<DesktopControllerArgs> 
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!(crate::i18n::t(
-            "tool.desktop_controller.description_required"
-        )))?
+        .ok_or_else(|| {
+            anyhow!(crate::i18n::t(
+                "tool.desktop_controller.description_required"
+            ))
+        })?
         .to_string();
     let action = DesktopAction::from_raw(action_raw)
         .ok_or_else(|| anyhow!(crate::i18n::t("tool.desktop_controller.unknown_action")))?;
@@ -466,8 +466,14 @@ fn parse_desktop_controller_args(args: &Value) -> Result<DesktopControllerArgs> 
         action,
         action_raw: action_raw.to_string(),
         description,
-        key: obj.get("key").and_then(Value::as_str).map(ToString::to_string),
-        text: obj.get("text").and_then(Value::as_str).map(ToString::to_string),
+        key: obj
+            .get("key")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        text: obj
+            .get("text")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
         delay_ms,
         duration_ms,
         scroll_steps,
@@ -578,9 +584,7 @@ fn ensure_desktop_enabled(config: &Config) -> Result<()> {
     if desktop_tools_enabled(config) {
         return Ok(());
     }
-    Err(anyhow!(crate::i18n::t(
-        "tool.desktop_controller.disabled"
-    )))
+    Err(anyhow!(crate::i18n::t("tool.desktop_controller.disabled")))
 }
 
 fn build_followup_prompt(base: String, norm_width: i32, norm_height: i32) -> String {
@@ -721,7 +725,8 @@ fn capture_screenshot_blocking(norm_width: i32, norm_height: i32) -> Result<Desk
         .map_err(|err| anyhow!(format!("create temp dir failed: {err}")))?;
     let filename = format!("desktop_shot_{}.png", Uuid::new_v4().simple());
     let path = dir.join(&filename);
-    std::fs::write(&path, &png).map_err(|err| anyhow!(format!("write screenshot failed: {err}")))?;
+    std::fs::write(&path, &png)
+        .map_err(|err| anyhow!(format!("write screenshot failed: {err}")))?;
     let download_url = format!("/wunder/temp_dir/download?filename=desktop_controller/{filename}");
     Ok(DesktopScreenshot {
         path,
@@ -1009,9 +1014,15 @@ async fn smooth_move(x: i32, y: i32, duration_ms: u64) -> Result<()> {
 }
 
 fn send_key_sequence(keys: &str) -> Result<()> {
-    let parts: Vec<&str> = keys.split('+').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let parts: Vec<&str> = keys
+        .split('+')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
     if parts.is_empty() {
-        return Err(anyhow!(crate::i18n::t("tool.desktop_controller.key_required")));
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.key_required"
+        )));
     }
     let mut modifiers = Vec::new();
     let mut main = None;
@@ -1033,7 +1044,9 @@ fn send_key_sequence(keys: &str) -> Result<()> {
         return Ok(());
     }
     if modifiers.is_empty() {
-        return Err(anyhow!(crate::i18n::t("tool.desktop_controller.key_required")));
+        return Err(anyhow!(crate::i18n::t(
+            "tool.desktop_controller.key_required"
+        )));
     }
     for modifier in modifiers {
         key_down(modifier)?;
@@ -1235,8 +1248,7 @@ fn send_key_event(key: VkCode, _key_up: bool) -> Result<()> {
 #[cfg(windows)]
 fn is_extended_key(vk: u16) -> bool {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        VK_DELETE, VK_DOWN, VK_END, VK_HOME, VK_INSERT, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RIGHT,
-        VK_UP,
+        VK_DELETE, VK_DOWN, VK_END, VK_HOME, VK_INSERT, VK_LEFT, VK_NEXT, VK_PRIOR, VK_RIGHT, VK_UP,
     };
     matches!(
         vk,
@@ -1300,8 +1312,9 @@ enum MouseEvent {
 #[cfg(windows)]
 fn send_mouse_event(event: MouseEvent) -> Result<()> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+        SendInput, INPUT, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
         MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+        MOUSEINPUT,
     };
     let flags = match event {
         MouseEvent::LeftDown => MOUSEEVENTF_LEFTDOWN,
@@ -1343,7 +1356,7 @@ fn send_mouse_event(_event: MouseEvent) -> Result<()> {
 #[cfg(windows)]
 fn send_mouse_wheel(steps: i32) -> Result<()> {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_MOUSE, MOUSEINPUT, MOUSEEVENTF_WHEEL,
+        SendInput, INPUT, INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT,
     };
     let delta = steps * 120;
     let input = INPUT {

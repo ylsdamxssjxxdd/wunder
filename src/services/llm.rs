@@ -2,6 +2,10 @@
 use crate::config::LlmModelConfig;
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::core::json_schema::normalize_tool_input_schema_for_openai;
+use crate::core::tool_args::{
+    normalize_tool_arguments_json as normalize_tool_arguments_json_lossy,
+    sanitize_tool_call_payload,
+};
 use crate::schemas::TokenUsage;
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
@@ -420,6 +424,7 @@ impl LlmClient {
         include_usage: bool,
         tools: Option<&[Value]>,
     ) -> Value {
+        let messages = sanitize_chat_messages(messages);
         let openai_top_level_schema_guard =
             should_strip_openai_tool_schema(self.config.provider.as_deref());
         let temperature = round_f32(self.config.temperature.unwrap_or(0.7));
@@ -756,6 +761,10 @@ fn extract_tool_calls_list(value: &Value) -> Vec<Value> {
     }
 }
 
+fn normalize_tool_arguments_json(arguments: &str) -> String {
+    normalize_tool_arguments_json_lossy(arguments)
+}
+
 fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Value> {
     let Value::Object(map) = call else {
         return None;
@@ -776,8 +785,8 @@ fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Va
         .and_then(|value| value.get("arguments"))
         .and_then(Value::as_str)
         .or_else(|| map.get("arguments").and_then(Value::as_str))
-        .unwrap_or("")
-        .to_string();
+        .map(normalize_tool_arguments_json)
+        .unwrap_or_else(|| "{}".to_string());
     let call_id = map
         .get("id")
         .or_else(|| map.get("call_id"))
@@ -1251,7 +1260,7 @@ fn response_tool_call_to_openai(item: &Value, fallback_index: usize) -> Option<V
                 .and_then(|value| value.get("arguments"))
                 .and_then(Value::as_str)
         })
-        .map(str::to_string)
+        .map(normalize_tool_arguments_json)
         .or_else(|| {
             map.get("input")
                 .and_then(Value::as_str)
@@ -1285,7 +1294,20 @@ fn extract_tool_calls(message: &Value) -> Option<Value> {
         .or_else(|| map.get("tool_call"))
         .or_else(|| map.get("function_call"))
         .or_else(|| map.get("functionCall"))
-        .cloned()
+        .map(sanitize_tool_call_payload)
+}
+
+fn sanitize_chat_messages(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    messages
+        .iter()
+        .map(|message| ChatMessage {
+            role: message.role.clone(),
+            content: message.content.clone(),
+            reasoning_content: message.reasoning_content.clone(),
+            tool_calls: message.tool_calls.as_ref().map(sanitize_tool_call_payload),
+            tool_call_id: message.tool_call_id.clone(),
+        })
+        .collect()
 }
 
 fn extract_stream_text(value: Option<&Value>) -> String {
@@ -1929,7 +1951,7 @@ fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
             "type": "function",
             "function": {
                 "name": call.name,
-                "arguments": call.arguments,
+                "arguments": normalize_tool_arguments_json(&call.arguments),
             }
         });
         if let Some(id) = call.id.as_ref().or(call.source_id.as_ref()) {
@@ -2451,7 +2473,10 @@ mod tests {
         merge_stream_text_field(&mut merged, "json\nfrom datetime import ");
         merge_stream_text_field(&mut merged, "datetime, timedelta");
 
-        assert_eq!(merged, "import json\nfrom datetime import datetime, timedelta");
+        assert_eq!(
+            merged,
+            "import json\nfrom datetime import datetime, timedelta"
+        );
     }
 
     #[test]
@@ -2513,6 +2538,68 @@ mod tests {
             }),
         );
         assert!(finalize_stream_tool_calls(&acc).is_none());
+    }
+
+    #[test]
+    fn normalize_tool_arguments_json_wraps_invalid_payload_as_raw_object() {
+        let normalized = normalize_tool_arguments_json("python3 -c \"print('hello')\"");
+        assert_eq!(
+            serde_json::from_str::<Value>(&normalized).expect("normalized json"),
+            json!({ "raw": "python3 -c \"print('hello')\"" })
+        );
+    }
+
+    #[test]
+    fn tool_call_to_responses_item_sanitizes_invalid_arguments_json() {
+        let item = tool_call_to_responses_item(
+            &json!({
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "arguments": "python3 -c \"print('hello')\""
+                }
+            }),
+            0,
+        )
+        .expect("tool call item");
+
+        assert_eq!(
+            item["arguments"],
+            Value::String("{\"raw\":\"python3 -c \\\"print('hello')\\\"\"}".to_string())
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(item["arguments"].as_str().unwrap_or(""))
+                .expect("sanitized args json"),
+            json!({ "raw": "python3 -c \"print('hello')\"" })
+        );
+    }
+
+    #[test]
+    fn extract_tool_calls_repairs_multiline_arguments_json() {
+        let message = json!({
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "arguments": "{\"content\": \"python3 -c \\\"\nprint('Map saved')\n\\\", \"workdir\": \".\"}"
+                }
+            }]
+        });
+
+        let tool_calls = extract_tool_calls(&message).expect("tool calls");
+        assert_eq!(
+            tool_calls,
+            json!([{ 
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                    "name": "execute_command",
+                    "arguments": "{\"content\":\"python3 -c \\\"\\nprint('Map saved')\\n\\\"\",\"workdir\":\".\"}"
+                }
+            }])
+        );
     }
 
     #[tokio::test]

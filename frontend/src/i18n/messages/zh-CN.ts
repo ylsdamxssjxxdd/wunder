@@ -1554,6 +1554,7 @@ export default {
   'messenger.world.voice.stop': '结束录音并发送',
   'messenger.world.voice.recording': '录音中 {duration}',
   'messenger.world.voice.unsupported': '当前环境不支持录音',
+  'messenger.world.voice.permissionDenied': '麦克风权限被拒绝，请检查系统或应用权限设置',
   'messenger.world.voice.title': '语音消息',
   'messenger.world.voice.play': '播放语音',
   'messenger.world.voice.pause': '暂停语音',

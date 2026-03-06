@@ -7,6 +7,7 @@ const outputRoot = path.resolve(__dirname, '..', 'resources')
 const bridgeName = process.platform === 'win32' ? 'wunder-desktop-bridge.exe' : 'wunder-desktop-bridge'
 const bridgeSource = process.env.WUNDER_BRIDGE_BIN || path.join(repoRoot, 'target', 'release', bridgeName)
 const frontendSource = path.join(repoRoot, 'frontend', 'dist')
+const desktopPreconfigSource = path.join(repoRoot, 'docs', '分发', '预配置文件.yml')
 const buildIconIcoSource = path.join(__dirname, '..', 'build', 'icon.ico')
 const fallbackIconIcoSource = path.join(__dirname, '..', 'assets', 'icon.ico')
 const iconIcoSource = fs.existsSync(buildIconIcoSource) ? buildIconIcoSource : fallbackIconIcoSource
@@ -81,6 +82,9 @@ if (fs.existsSync(iconPngSource)) {
   copyFile(iconPngSource, path.join(outputRoot, 'frontend-dist', 'desktop-icon.png'))
 }
 copyDirIfExists(path.join(repoRoot, 'config'), path.join(outputRoot, 'config'))
+if (fs.existsSync(desktopPreconfigSource)) {
+  copyFile(desktopPreconfigSource, path.join(outputRoot, 'config', 'wunder.desktop.preconfig.yaml'))
+}
 copyDirIfExists(path.join(repoRoot, 'prompts'), path.join(outputRoot, 'prompts'))
 copyDirIfExists(path.join(repoRoot, 'skills'), path.join(outputRoot, 'skills'))
 copyDirIfExists(path.join(repoRoot, 'scripts'), path.join(outputRoot, 'scripts'))

@@ -446,6 +446,10 @@ import {
 type ModelType = 'llm' | 'embedding';
 type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
 type HistoryCompactionReset = 'zero' | 'current' | 'keep';
+type SelectedModelPreference = {
+  key: string;
+  modelType: ModelType;
+};
 type ModelRow = {
   uid: string;
   key: string;
@@ -744,9 +748,38 @@ const parseModelRows = (models: Record<string, Record<string, unknown>>): ModelR
     raw: { ...raw }
   }));
 
-const ensureSelectedModel = () => {
+const buildSelectedModelPreference = (row: ModelRow | null): SelectedModelPreference | null => {
+  if (!row) return null;
+  const key = row.key.trim();
+  if (!key) return null;
+  return {
+    key,
+    modelType: normalizeModelType(row.model_type)
+  };
+};
+
+const resolveSelectedModelUid = (
+  rows: ModelRow[],
+  preference: SelectedModelPreference | null | undefined
+): string => {
+  const preferredKey = String(preference?.key || '').trim();
+  if (!preferredKey) return '';
+  const preferredType = normalizeModelType(preference?.modelType);
+  return (
+    rows.find(
+      (item) => item.key.trim() === preferredKey && normalizeModelType(item.model_type) === preferredType
+    )?.uid || rows.find((item) => item.key.trim() === preferredKey)?.uid || ''
+  );
+};
+
+const ensureSelectedModel = (preference?: SelectedModelPreference | null) => {
   if (!modelRows.value.length) {
     selectedModelUid.value = '';
+    return;
+  }
+  const matchedUid = resolveSelectedModelUid(modelRows.value, preference);
+  if (matchedUid) {
+    selectedModelUid.value = matchedUid;
     return;
   }
   if (!modelRows.value.some((item) => item.uid === selectedModelUid.value)) {
@@ -1012,7 +1045,10 @@ const applyLanSettings = (lanMesh: DesktopLanMeshSettings | Record<string, any> 
   lanSharedSecret.value = String(data.shared_secret || '');
 };
 
-const applySettingsData = (data: Record<string, any>) => {
+const applySettingsData = (
+  data: Record<string, any>,
+  preferredSelection: SelectedModelPreference | null = buildSelectedModelPreference(selectedModel.value)
+) => {
   const llm = data.llm || {};
   modelRows.value = parseModelRows((llm.models as Record<string, Record<string, unknown>>) || {});
   modelRows.value.forEach((row) => applyModelPresetContext(row, false));
@@ -1031,7 +1067,7 @@ const applySettingsData = (data: Record<string, any>) => {
     readDefaultEmbeddingModel()
   );
 
-  ensureSelectedModel();
+  ensureSelectedModel(preferredSelection);
   remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
   applyLanSettings(data.lan_mesh as DesktopLanMeshSettings | undefined);
   refreshRemoteConnected();
@@ -1054,9 +1090,10 @@ const refreshLanPeers = async () => {
 const loadSettings = async () => {
   loading.value = true;
   try {
+    const preferredSelection = buildSelectedModelPreference(selectedModel.value);
     const response = await fetchDesktopSettings();
     const data = (response?.data?.data || {}) as Record<string, any>;
-    applySettingsData(data);
+    applySettingsData(data, preferredSelection);
     await refreshLanPeers();
   } catch (error) {
     console.error(error);
@@ -1069,6 +1106,7 @@ const loadSettings = async () => {
 const saveLanSettings = async () => {
   savingLan.value = true;
   try {
+    const preferredSelection = buildSelectedModelPreference(selectedModel.value);
     const payload = {
       lan_mesh: {
         enabled: lanMeshEnabled.value,
@@ -1091,7 +1129,7 @@ const saveLanSettings = async () => {
     };
     const response = await updateDesktopSettings(payload);
     const data = (response?.data?.data || {}) as Record<string, any>;
-    applySettingsData(data);
+    applySettingsData(data, preferredSelection);
     await refreshLanPeers();
     ElMessage.success(t('desktop.common.saveSuccess'));
   } catch (error) {
@@ -1104,6 +1142,7 @@ const saveLanSettings = async () => {
 
 const saveModelSettings = async (): Promise<boolean> => {
   const models: Record<string, Record<string, unknown>> = {};
+  const preferredSelection = buildSelectedModelPreference(selectedModel.value);
 
   for (const row of modelRows.value) {
     const key = row.key.trim();
@@ -1164,7 +1203,7 @@ const saveModelSettings = async (): Promise<boolean> => {
     });
     const data = (response?.data?.data || {}) as Record<string, any>;
     writeDefaultEmbeddingModel(currentDefaultEmbedding);
-    applySettingsData(data);
+    applySettingsData(data, preferredSelection);
     ElMessage.success(t('desktop.common.saveSuccess'));
     return true;
   } catch (error) {

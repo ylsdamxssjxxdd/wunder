@@ -915,7 +915,7 @@
                     type="button"
                     :title="t('chat.message.copy')"
                     :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(item.message.content)"
+                    @click="copyMessageContent(item.message)"
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
@@ -1024,7 +1024,7 @@
                     type="button"
                     :title="t('chat.message.copy')"
                     :aria-label="t('chat.message.copy')"
-                    @click="copyMessageContent(item.message.content)"
+                    @click="copyMessageContent(item.message)"
                   >
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
@@ -1241,6 +1241,12 @@ import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPane
 import UserPromptSettingsPanel from '@/components/messenger/UserPromptSettingsPanel.vue';
 import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
 import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
+import {
+  scheduleMessengerBootstrapBackgroundTasks,
+  settleMessengerBootstrapTasks,
+  splitMessengerBootstrapTasks,
+  type MessengerBootstrapTask
+} from '@/views/messenger/bootstrap';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
@@ -1288,6 +1294,7 @@ import {
 } from '@/utils/workspaceImagePersistentCache';
 import {
   isImagePath,
+  resolveWorkspaceRelativePathFromLocal,
   normalizeWorkspaceRelativeMarkdownPath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
@@ -1782,12 +1789,28 @@ const refreshAudioRecordingSupport = () => {
   audioRecordingSupported.value = detectAudioRecordingSupport();
 };
 const worldVoiceSupported = computed(() => audioRecordingSupported.value);
-const agentVoiceSupported = computed(() => {
-  if (!audioRecordingSupported.value) return false;
-  if (!desktopMode.value) return true;
-  if (agentVoiceModelHearingSupported.value === null) return true;
-  return agentVoiceModelHearingSupported.value;
-});
+const agentVoiceSupported = computed(() => audioRecordingSupported.value);
+
+const resolveVoiceRecordingErrorText = (error: unknown): string => {
+  const text = String((error as { message?: unknown } | null)?.message || error || '')
+    .trim()
+    .toLowerCase();
+  if (!text) {
+    return '';
+  }
+  if (
+    text.includes('microphone permission denied') ||
+    text.includes('permission denied') ||
+    text.includes('notallowederror') ||
+    text.includes('denied permission')
+  ) {
+    return t('messenger.world.voice.permissionDenied');
+  }
+  if (text.includes('audio recording is not supported') || text.includes('not supported')) {
+    return t('messenger.world.voice.unsupported');
+  }
+  return '';
+};
 
 const keyword = computed(() => sessionHub.keyword);
 
@@ -4652,20 +4675,57 @@ const buildWorkspacePublicPath = (
   return `/workspaces/${safeOwner}/${encodeWorkspacePath(normalized)}`;
 };
 
+const buildWorkspaceScopeId = (ownerId: string, containerId?: number | null): string => {
+  const safeOwner = normalizeWorkspaceOwnerId(ownerId);
+  if (!safeOwner) return '';
+  if (containerId !== null && Number.isFinite(Number(containerId))) {
+    return `${safeOwner}__c__${Number(containerId)}`;
+  }
+  return safeOwner;
+};
+
+const resolveDesktopWorkspaceRoot = (): string => String(getRuntimeConfig().workspace_root || '').trim();
+
+const resolveDesktopContainerRoot = (containerId?: number | null): string => {
+  if (containerId !== null && Number.isFinite(Number(containerId))) {
+    const mapped = String(desktopContainerRootMap.value[Number(containerId)] || '').trim();
+    if (mapped) return mapped;
+  }
+  return resolveDesktopWorkspaceRoot();
+};
+
+const resolveLocalWorkspaceMarkdownPath = (
+  rawPath: string,
+  ownerId: string,
+  containerId?: number | null
+): string => {
+  if (!desktopLocalMode.value) return '';
+  const workspaceId = buildWorkspaceScopeId(ownerId, containerId);
+  if (!workspaceId) return '';
+  const workspaceRoot = resolveDesktopContainerRoot(containerId);
+  const localRelative = resolveWorkspaceRelativePathFromLocal(rawPath, workspaceId, workspaceRoot);
+  if (!localRelative) return '';
+  return buildWorkspacePublicPath(ownerId, localRelative, containerId);
+};
+
 const resolveAgentMarkdownWorkspacePath = (rawPath: string): string => {
-  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
-  if (!normalized) return '';
   const ownerId = normalizeWorkspaceOwnerId(authStore.user?.id);
   if (!ownerId) return '';
-  return buildWorkspacePublicPath(ownerId, normalized, currentContainerId.value);
+  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
+  if (normalized) {
+    return buildWorkspacePublicPath(ownerId, normalized, currentContainerId.value);
+  }
+  return resolveLocalWorkspaceMarkdownPath(rawPath, ownerId, currentContainerId.value);
 };
 
 const resolveWorldMarkdownWorkspacePath = (rawPath: string, senderUserId: string): string => {
-  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
-  if (!normalized) return '';
   const ownerId = normalizeWorkspaceOwnerId(senderUserId);
   if (!ownerId) return '';
-  return buildWorkspacePublicPath(ownerId, normalized, USER_CONTAINER_ID);
+  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
+  if (normalized) {
+    return buildWorkspacePublicPath(ownerId, normalized, USER_CONTAINER_ID);
+  }
+  return resolveLocalWorkspaceMarkdownPath(rawPath, ownerId, USER_CONTAINER_ID);
 };
 
 const WORLD_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
@@ -5241,8 +5301,9 @@ const resolveWorldVoiceDurationLabel = (message: Record<string, unknown>): strin
 const resolveWorldVoiceActionLabel = (message: Record<string, unknown>): string =>
   isWorldVoicePlaying(message) ? t('messenger.world.voice.pause') : t('messenger.world.voice.play');
 
-const copyMessageContent = async (content: unknown) => {
-  const text = String(content || '').trim();
+const copyMessageContent = async (payload: unknown) => {
+  const message = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+  const text = prepareMessageMarkdownContent(message?.content ?? payload, message).trim();
   if (!text) return;
   const copied = await copyText(text);
   if (copied) {
@@ -7293,15 +7354,6 @@ const cancelAgentVoiceRecording = async () => {
 const startAgentVoiceRecording = async () => {
   if (!isAgentConversationActive.value || agentSessionLoading.value) return;
   refreshAudioRecordingSupport();
-  if (!audioRecordingSupported.value) {
-    ElMessage.warning(t('messenger.world.voice.unsupported'));
-    return;
-  }
-  const modelHearingSupported = await readAgentVoiceModelSupport(true);
-  if (!modelHearingSupported) {
-    ElMessage.warning(t('messenger.agent.voice.modelUnsupported'));
-    return;
-  }
   if (agentVoiceRecordingRuntime) return;
   const draftIdentity = resolveAgentDraftIdentity();
   if (!draftIdentity) return;
@@ -7323,6 +7375,11 @@ const startAgentVoiceRecording = async () => {
     }
   } catch (error) {
     resetAgentVoiceRecordingState();
+    const message = resolveVoiceRecordingErrorText(error);
+    if (message) {
+      ElMessage.warning(message);
+      return;
+    }
     showApiError(error, t('messenger.world.voice.startFailed'));
   }
 };
@@ -7406,10 +7463,6 @@ const cancelWorldVoiceRecording = async () => {
 const startWorldVoiceRecording = async () => {
   if (!isWorldConversationActive.value || worldUploading.value || userWorldStore.sending) return;
   refreshAudioRecordingSupport();
-  if (!worldVoiceSupported.value) {
-    ElMessage.warning(t('messenger.world.voice.unsupported'));
-    return;
-  }
   if (worldVoiceRecordingRuntime) return;
   const conversationId = String(activeConversation.value?.id || '').trim();
   if (!conversationId) return;
@@ -7432,6 +7485,11 @@ const startWorldVoiceRecording = async () => {
     }
   } catch (error) {
     resetWorldVoiceRecordingState();
+    const message = resolveVoiceRecordingErrorText(error);
+    if (message) {
+      ElMessage.warning(message);
+      return;
+    }
     showApiError(error, t('messenger.world.voice.startFailed'));
   }
 };
@@ -8344,34 +8402,67 @@ const restoreConversationFromRoute = async () => {
 
 const bootstrap = async () => {
   bootLoading.value = true;
-  try {
-    await authStore.loadProfile();
-  } catch (error) {
-    const status = resolveHttpStatus(error);
-    if (isAuthDeniedStatus(status)) {
-      authStore.logout();
-      bootLoading.value = false;
-      router.replace('/login').catch(() => undefined);
-      return;
+  if (!authStore.user && authStore.token) {
+    try {
+      await authStore.loadProfile();
+    } catch (error) {
+      const status = resolveHttpStatus(error);
+      if (isAuthDeniedStatus(status)) {
+        authStore.logout();
+        bootLoading.value = false;
+        router.replace('/login').catch(() => undefined);
+        return;
+      }
     }
   }
-  const tasks: Promise<unknown>[] = [
-    agentStore.loadAgents(),
-    chatStore.loadSessions(),
-    userWorldStore.bootstrap(),
-    loadOrgUnits(),
-    loadRunningAgents(),
-    loadAgentUserRounds(),
-    loadToolsCatalog(),
-    loadChannelBoundAgentIds()
-  ];
-  if (!cronPermissionDenied.value) {
-    tasks.push(loadCronAgentIds());
-  }
-  await Promise.allSettled(tasks);
-  await restoreConversationFromRoute();
+  const initialSection = desktopMode.value
+    ? ('messages' as MessengerSection)
+    : resolveSectionFromRoute(route.path, route.query.section);
+  const { critical, background } = splitMessengerBootstrapTasks(initialSection, [
+    {
+      critical: true,
+      run: () => agentStore.loadAgents()
+    },
+    {
+      critical: true,
+      run: () => chatStore.loadSessions()
+    },
+    {
+      sections: ['messages', 'users', 'groups'],
+      run: () => userWorldStore.bootstrap()
+    },
+    {
+      sections: ['users', 'groups'],
+      run: () => loadOrgUnits()
+    },
+    {
+      run: () => loadRunningAgents()
+    },
+    {
+      run: () => loadAgentUserRounds()
+    },
+    {
+      sections: ['tools'],
+      run: () => loadToolsCatalog()
+    },
+    {
+      sections: ['tools'],
+      run: () => loadChannelBoundAgentIds()
+    },
+    ...(cronPermissionDenied.value
+      ? []
+      : [
+          {
+            sections: ['tools'],
+            run: () => loadCronAgentIds()
+          } satisfies MessengerBootstrapTask
+        ])
+  ]);
+  await settleMessengerBootstrapTasks(critical);
   ensureSectionSelection();
   bootLoading.value = false;
+  void restoreConversationFromRoute();
+  scheduleMessengerBootstrapBackgroundTasks(background);
 };
 
 watch(

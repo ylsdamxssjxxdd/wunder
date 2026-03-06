@@ -110,11 +110,49 @@ const repairMarkdownImageUrls = (content: string, knownImageUrls: string[]): str
   });
 };
 
+const safeJsonParse = (raw: string): unknown | null => {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const extractPayloadTextField = (payload: unknown): string => {
+  if (!payload || typeof payload !== 'object') return '';
+  const record = payload as Record<string, unknown>;
+  const data =
+    record.data && typeof record.data === 'object'
+      ? (record.data as Record<string, unknown>)
+      : null;
+  const candidate = data?.answer ?? data?.content ?? data?.message ?? record.answer ?? record.content ?? record.message;
+  return typeof candidate === 'string' ? candidate : '';
+};
+
+const unwrapMarkdownPayloadText = (content: string): string => {
+  let current = String(content || '');
+  if (!current) return '';
+  for (let depth = 0; depth < 3; depth += 1) {
+    const parsed = safeJsonParse(current);
+    if (typeof parsed === 'string') {
+      current = parsed;
+      continue;
+    }
+    const extracted = extractPayloadTextField(parsed);
+    if (!extracted || extracted === current) {
+      break;
+    }
+    current = extracted;
+  }
+  return current;
+};
+
 export const prepareMessageMarkdownContent = (
   content: unknown,
   message: MessageLike | null | undefined
 ): string => {
-  const source = String(content || '');
+  const source = unwrapMarkdownPayloadText(String(content || ''));
   if (!source) return '';
   return repairMarkdownImageUrls(source, collectKnownImageUrlsFromMessage(message));
 };

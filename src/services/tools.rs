@@ -5,26 +5,25 @@
 // Do not add new tool business logic directly in `tools.rs`.
 // Implement new capabilities in dedicated modules/files and only wire them here.
 mod apply_patch_tool;
+mod browser_tool;
 mod catalog;
 mod context;
-mod dispatch;
-mod browser_tool;
 mod desktop_control;
+mod dispatch;
 mod read_image_tool;
 mod sleep_tool;
 
-pub use catalog::{
-    a2a_service_schema, a2a_service_schema_with_language, browser_tools_available, builtin_aliases,
-    builtin_tool_specs, collect_available_tool_names, collect_prompt_tool_specs,
-    collect_prompt_tool_specs_with_language, desktop_tools_available,
-    extract_sleep_seconds, filter_tool_names_by_model_capability,
-    build_desktop_followup_user_message, build_read_image_followup_user_message,
-    is_browser_tool_name, is_desktop_control_tool_name, is_read_image_tool_name,
-    is_sleep_tool_name, resolve_tool_name,
-};
 #[cfg(test)]
 pub(crate) use catalog::builtin_tool_specs_with_language;
 pub(crate) use catalog::yaml_to_json;
+pub use catalog::{
+    a2a_service_schema, a2a_service_schema_with_language, browser_tools_available,
+    build_desktop_followup_user_message, build_read_image_followup_user_message, builtin_aliases,
+    builtin_tool_specs, collect_available_tool_names, collect_prompt_tool_specs,
+    collect_prompt_tool_specs_with_language, desktop_tools_available, extract_sleep_seconds,
+    filter_tool_names_by_model_capability, is_browser_tool_name, is_desktop_control_tool_name,
+    is_read_image_tool_name, is_sleep_tool_name, resolve_tool_name,
+};
 pub use context::{build_tool_roots, ToolContext, ToolEventEmitter, ToolRoots};
 pub(crate) use context::{
     collect_allow_roots, collect_read_roots, resolve_path_in_roots, resolve_tool_path,
@@ -38,6 +37,7 @@ use crate::config::{
     KnowledgeBaseConfig, KnowledgeBaseType,
 };
 use crate::core::python_runtime;
+use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
 use crate::gateway::GatewayNodeInvokeRequest;
 use crate::history::HistoryManager;
 use crate::i18n;
@@ -4420,6 +4420,7 @@ async fn run_ptc_python_script_streaming(
 }
 
 async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let args = recover_tool_args_value(args);
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
             context.config,
@@ -4428,7 +4429,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             context.workspace_id,
             context.session_id,
             "执行命令",
-            args,
+            &args,
             context.user_tool_bindings,
         )
         .await;
@@ -4598,7 +4599,12 @@ fn build_ptc_exec_error(detail: impl Into<String>) -> Value {
     })
 }
 
+fn recover_tool_args_value(args: &Value) -> Value {
+    recover_tool_args_value_lossy(args)
+}
+
 async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let args = recover_tool_args_value(args);
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
             context.config,
@@ -4607,7 +4613,7 @@ async fn execute_ptc(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             context.workspace_id,
             context.session_id,
             "ptc",
-            args,
+            &args,
             context.user_tool_bindings,
         )
         .await;
