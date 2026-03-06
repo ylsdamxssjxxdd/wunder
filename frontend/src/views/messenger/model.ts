@@ -29,6 +29,9 @@ export type DesktopBridge = {
   checkForUpdates?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   getUpdateState?: () => Promise<DesktopUpdateState> | DesktopUpdateState;
   installUpdate?: () => Promise<DesktopInstallResult | boolean> | DesktopInstallResult | boolean;
+  copyText?: (text: string) => Promise<boolean> | boolean;
+  getMediaAccessStatus?: (kind: 'microphone' | 'camera') => Promise<string> | string;
+  requestMediaAccess?: (kind: 'microphone' | 'camera') => Promise<boolean> | boolean;
   notify?: (payload: { title: string; body?: string; silent?: boolean }) => Promise<boolean> | boolean;
   captureScreenshot?: (
     options?: { hideWindow?: boolean; region?: boolean }

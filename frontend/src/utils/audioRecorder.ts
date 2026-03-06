@@ -19,6 +19,13 @@ type RecorderNavigator = Navigator & {
   msGetUserMedia?: LegacyGetUserMedia;
 };
 
+type DesktopMediaKind = 'microphone' | 'camera';
+
+type DesktopMediaBridge = {
+  getMediaAccessStatus?: (kind: DesktopMediaKind) => Promise<string> | string;
+  requestMediaAccess?: (kind: DesktopMediaKind) => Promise<boolean> | boolean;
+};
+
 export type AudioRecordingResult = {
   blob: Blob;
   durationMs: number;
@@ -58,6 +65,40 @@ const resolveMediaRecorderCtor = (): typeof MediaRecorder | null => {
   const host = window as RecorderWindow;
   if (typeof host.MediaRecorder === 'function') return host.MediaRecorder;
   return null;
+};
+
+const resolveDesktopMediaBridge = (): DesktopMediaBridge | null => {
+  if (typeof window === 'undefined') return null;
+  const candidate = (window as Window & { wunderDesktop?: DesktopMediaBridge }).wunderDesktop;
+  if (
+    candidate &&
+    (typeof candidate.requestMediaAccess === 'function' ||
+      typeof candidate.getMediaAccessStatus === 'function')
+  ) {
+    return candidate;
+  }
+  return null;
+};
+
+const ensureDesktopMicrophoneAccess = async (): Promise<void> => {
+  const bridge = resolveDesktopMediaBridge();
+  if (!bridge?.requestMediaAccess) return;
+  const granted = await bridge.requestMediaAccess('microphone');
+  if (granted === false) {
+    throw new Error('microphone permission denied');
+  }
+};
+
+const resolveGetUserMediaHandlers = () => {
+  const mediaDevices = typeof navigator === 'undefined' ? undefined : navigator.mediaDevices;
+  const modernGetUserMedia =
+    mediaDevices && typeof mediaDevices.getUserMedia === 'function'
+      ? mediaDevices.getUserMedia.bind(mediaDevices)
+      : null;
+  return {
+    modernGetUserMedia,
+    legacyGetUserMedia: resolveLegacyGetUserMedia()
+  };
 };
 
 const resolveMediaRecorderMimeType = (ctor: typeof MediaRecorder): string => {
@@ -151,22 +192,22 @@ const stopMediaTracks = (stream: MediaStream) => {
 
 export const isAudioRecordingSupported = (): boolean => {
   if (typeof navigator === 'undefined') return false;
-  const hasMediaDevices = Boolean(
-    navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === 'function'
-  );
-  const hasLegacyGetUserMedia = Boolean(resolveLegacyGetUserMedia());
-  if (!hasMediaDevices && !hasLegacyGetUserMedia) {
+  const { modernGetUserMedia, legacyGetUserMedia } = resolveGetUserMediaHandlers();
+  const hasRecordingEngine = Boolean(resolveAudioContextCtor() || resolveMediaRecorderCtor());
+  if (!hasRecordingEngine) {
     return false;
   }
-  return Boolean(resolveAudioContextCtor() || resolveMediaRecorderCtor());
+  if (modernGetUserMedia || legacyGetUserMedia) {
+    return true;
+  }
+  return Boolean(resolveDesktopMediaBridge());
 };
 
 export const startAudioRecording = async (): Promise<AudioRecordingSession> => {
-  const AudioContextCtor = resolveAudioContextCtor();
-  const MediaRecorderCtor = resolveMediaRecorderCtor();
-  const mediaDevices = navigator.mediaDevices;
-  const modernGetUserMedia = mediaDevices?.getUserMedia?.bind(mediaDevices);
-  const legacyGetUserMedia = resolveLegacyGetUserMedia();
+  await ensureDesktopMicrophoneAccess();
+  let AudioContextCtor = resolveAudioContextCtor();
+  let MediaRecorderCtor = resolveMediaRecorderCtor();
+  let { modernGetUserMedia, legacyGetUserMedia } = resolveGetUserMediaHandlers();
   if ((!AudioContextCtor && !MediaRecorderCtor) || (!modernGetUserMedia && !legacyGetUserMedia)) {
     throw new Error('audio recording is not supported');
   }

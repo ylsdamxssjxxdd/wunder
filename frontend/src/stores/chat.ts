@@ -23,6 +23,7 @@ import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
+import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
 
 type SnapshotAssistantMessage = {
   role: string;
@@ -2175,6 +2176,7 @@ const getSessionMessages = (sessionId) => {
 const cacheSessionMessages = (sessionId, messages) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
+  dedupeAssistantMessagesInPlace(messages);
   sessionMessages.set(key, messages);
 };
 
@@ -4150,6 +4152,7 @@ export const useChatStore = defineStore('chat', {
         const workflowState = buildSessionWorkflowState();
         const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
         let messages = rawMessages.map((message) => hydrateMessage(message, workflowState));
+        messages = dedupeAssistantMessages(messages);
         dismissStaleInquiryPanels(messages);
         const greetingMessages = ensureGreetingMessage(messages, {
           createdAt: sessionDetail?.created_at,
@@ -4318,16 +4321,18 @@ export const useChatStore = defineStore('chat', {
       clearSessionWatcher();
       this.activeSessionId = sessionId;
       getHistoryState(sessionId, { reset: true });
-      const cachedSessionMessages = getSessionMessages(sessionId);
+      const cachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(sessionId));
       const snapshot = this.getSnapshotForSession(sessionId);
       if (cachedSessionMessages?.length) {
         this.messages = ensureGreetingMessage(cachedSessionMessages, {
           greeting: this.greetingOverride
         });
       } else if (snapshot?.messages?.length) {
-        const cachedMessages = snapshot.messages
+        const cachedMessages = dedupeAssistantMessages(
+          snapshot.messages
           .map((item) => normalizeSnapshotMessage(item))
-          .filter(Boolean);
+          .filter(Boolean)
+        );
         this.messages = ensureGreetingMessage(cachedMessages, {
           greeting: this.greetingOverride
         });
@@ -4365,7 +4370,8 @@ export const useChatStore = defineStore('chat', {
         hydrateMessage(message, workflowState)
       );
       messages = mergeSnapshotIntoMessages(messages, snapshot);
-      const finalCachedMessages = getSessionMessages(sessionId);
+      messages = dedupeAssistantMessages(messages);
+      const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(sessionId));
       if (shouldPreferCachedMessages(finalCachedMessages, messages)) {
         messages = finalCachedMessages;
       }

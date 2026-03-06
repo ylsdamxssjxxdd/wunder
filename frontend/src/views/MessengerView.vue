@@ -1269,6 +1269,7 @@ import {
 } from '@/stores/sessionHub';
 import { useUserWorldStore } from '@/stores/userWorld';
 import { renderMarkdown } from '@/utils/markdown';
+import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
 import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
@@ -5118,10 +5119,10 @@ const handleMessageContentClick = async (event: MouseEvent) => {
     ElMessage.warning(t('chat.message.copyEmpty'));
     return;
   }
-  try {
-    await navigator.clipboard.writeText(codeText);
+  const copied = await copyText(codeText);
+  if (copied) {
     ElMessage.success(t('chat.message.copySuccess'));
-  } catch {
+  } else {
     ElMessage.warning(t('chat.message.copyFailed'));
   }
 };
@@ -5137,9 +5138,13 @@ const trimMarkdownCache = () => {
 const renderMessageMarkdown = (
   cacheKey: string,
   content: unknown,
-  options: { streaming?: boolean; resolveWorkspacePath?: (rawPath: string) => string } = {}
+  options: {
+    streaming?: boolean;
+    resolveWorkspacePath?: (rawPath: string) => string;
+    message?: Record<string, unknown>;
+  } = {}
 ): string => {
-  const source = String(content || '');
+  const source = prepareMessageMarkdownContent(content, options.message);
   const normalizedKey = String(cacheKey || '').trim();
   if (!source) {
     if (normalizedKey) {
@@ -5172,7 +5177,8 @@ const renderAgentMarkdown = (message: Record<string, unknown>, index: number): s
     Boolean(message?.reasoningStreaming);
   return renderMessageMarkdown(cacheKey, message?.content, {
     streaming,
-    resolveWorkspacePath: resolveAgentMarkdownWorkspacePath
+    resolveWorkspacePath: resolveAgentMarkdownWorkspacePath,
+    message
   });
 };
 
@@ -5182,6 +5188,7 @@ const renderWorldMarkdown = (message: Record<string, unknown>): string => {
   const senderUserId = String(message?.sender_user_id || '').trim();
   const patched = replaceWorldAtPathTokens(content, senderUserId);
   return renderMessageMarkdown(cacheKey, patched, {
+    message,
     resolveWorkspacePath: (rawPath: string) => resolveWorldMarkdownWorkspacePath(rawPath, senderUserId)
   });
 };
@@ -5237,10 +5244,10 @@ const resolveWorldVoiceActionLabel = (message: Record<string, unknown>): string 
 const copyMessageContent = async (content: unknown) => {
   const text = String(content || '').trim();
   if (!text) return;
-  try {
-    await navigator.clipboard.writeText(text);
+  const copied = await copyText(text);
+  if (copied) {
     ElMessage.success(t('chat.message.copySuccess'));
-  } catch {
+  } else {
     ElMessage.warning(t('chat.message.copyFailed'));
   }
 };

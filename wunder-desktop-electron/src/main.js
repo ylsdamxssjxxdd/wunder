@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  clipboard,
   dialog,
   Menu,
   Tray,
@@ -9,7 +10,8 @@ const {
   desktopCapturer,
   screen,
   Notification,
-  session
+  session,
+  systemPreferences
 } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
@@ -1548,6 +1550,50 @@ const configureMediaPermissions = () => {
   })
 }
 
+const normalizeMediaKind = (kind) => {
+  const normalized = String(kind || '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'microphone' || normalized === 'camera') {
+    return normalized
+  }
+  return ''
+}
+
+const getMediaAccessStatus = (kind) => {
+  const normalized = normalizeMediaKind(kind)
+  if (!normalized || typeof systemPreferences?.getMediaAccessStatus !== 'function') {
+    return 'unknown'
+  }
+  try {
+    return String(systemPreferences.getMediaAccessStatus(normalized) || 'unknown')
+  } catch {
+    return 'unknown'
+  }
+}
+
+const requestMediaAccess = async (kind) => {
+  const normalized = normalizeMediaKind(kind)
+  if (!normalized) {
+    return false
+  }
+  const status = getMediaAccessStatus(normalized)
+  if (status === 'granted') {
+    return true
+  }
+  if (status === 'denied' || status === 'restricted') {
+    return false
+  }
+  if (process.platform === 'darwin' && typeof systemPreferences?.askForMediaAccess === 'function') {
+    try {
+      return await systemPreferences.askForMediaAccess(normalized)
+    } catch {
+      return false
+    }
+  }
+  return true
+}
+
 const parseBridgePort = (line) => {
   const trimmed = line.trim()
   const match = trimmed.match(/- web_base:\s*(https?:\/\/\S+)/)
@@ -1986,6 +2032,23 @@ if (!gotLock) {
         return sanitizeCloseBehavior(closeBehavior)
       })
       ipcMain.handle('wunder:window-start-drag', () => false)
+      ipcMain.handle('wunder:clipboard-write-text', (_event, payload) => {
+        const text =
+          payload && typeof payload === 'object' ? String(payload.text || '') : String(payload || '')
+        if (!text.trim()) {
+          return false
+        }
+        clipboard.writeText(text)
+        return true
+      })
+      ipcMain.handle('wunder:media-access-status', (_event, payload) => {
+        const kind = payload && typeof payload === 'object' ? payload.kind : payload
+        return getMediaAccessStatus(kind)
+      })
+      ipcMain.handle('wunder:media-request-access', async (_event, payload) => {
+        const kind = payload && typeof payload === 'object' ? payload.kind : payload
+        return requestMediaAccess(kind)
+      })
       ipcMain.handle('wunder:notify', (_event, payload) => showDesktopNotification(payload))
       ipcMain.handle('wunder:update-check', () => checkAndDownloadUpdate())
       ipcMain.handle('wunder:update-status', () => getUpdateState())

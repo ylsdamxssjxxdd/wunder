@@ -1,3 +1,16 @@
+type DesktopClipboardBridge = {
+  copyText?: (text: string) => Promise<boolean> | boolean;
+};
+
+const resolveDesktopClipboardBridge = (): DesktopClipboardBridge | null => {
+  if (typeof window === 'undefined') return null;
+  const candidate = (window as Window & { wunderDesktop?: DesktopClipboardBridge }).wunderDesktop;
+  if (candidate && typeof candidate.copyText === 'function') {
+    return candidate;
+  }
+  return null;
+};
+
 const ensureFallbackTextarea = (): HTMLTextAreaElement | null => {
   if (typeof document === 'undefined') return null;
   const existing = document.getElementById('wunder-clipboard-helper');
@@ -18,6 +31,18 @@ const ensureFallbackTextarea = (): HTMLTextAreaElement | null => {
 export const copyText = async (rawText: unknown): Promise<boolean> => {
   const text = String(rawText ?? '');
   if (!text.trim()) return false;
+
+  const desktopBridge = resolveDesktopClipboardBridge();
+  if (desktopBridge?.copyText) {
+    try {
+      const copied = await desktopBridge.copyText(text);
+      if (copied !== false) {
+        return true;
+      }
+    } catch {
+      // Continue to browser clipboard fallbacks.
+    }
+  }
 
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
     try {

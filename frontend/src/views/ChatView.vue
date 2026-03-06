@@ -691,6 +691,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { copyText } from '@/utils/clipboard';
 import { renderMarkdown } from '@/utils/markdown';
+import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import {
   buildWorkspaceImagePersistentCacheKey,
   readWorkspaceImagePersistentCache,
@@ -1303,7 +1304,10 @@ const isAssistantStreaming = (message) => {
 
 // AI 回复使用 Markdown 渲染，主要用于表格等富文本展示
 const renderAssistantMarkdown = (message) => {
-  const content = normalizeChatMessageContentForMarkdown(message?.content);
+  const content = prepareMessageMarkdownContent(
+    normalizeChatMessageContentForMarkdown(message?.content),
+    message
+  );
   if (!content) return '';
   const cached = markdownCache.get(message);
   if (cached && cached.source === content) {

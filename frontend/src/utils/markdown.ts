@@ -14,6 +14,8 @@ type MarkdownRenderOptions = {
   resolveWorkspacePath?: WorkspacePathResolver;
 };
 
+const BROKEN_TABLE_DIVIDER_REGEX = /^[\s|:-]+$/;
+
 // 统一的 Markdown 渲染器：禁用原始 HTML，启用自动换行与链接识别
 const markdown = new MarkdownIt({
   html: false,
@@ -459,11 +461,80 @@ markdown.renderer.rules.fence = (tokens, idx, options, env, slf) => {
  */
 export function renderMarkdown(content = '', options: MarkdownRenderOptions = {}) {
   if (!content) return '';
+  const normalizedContent = normalizeMarkdownForRender(String(content));
   const env: MarkdownRenderEnv | undefined =
     typeof options.resolveWorkspacePath === 'function'
       ? { resolveWorkspacePath: options.resolveWorkspacePath }
       : undefined;
-  return markdown.render(String(content), env);
+  return markdown.render(normalizedContent, env);
+}
+
+function normalizeMarkdownForRender(content = '') {
+  if (!content) return '';
+  return repairMarkdownTables(content.replace(/\r\n/g, '\n'));
+}
+
+function repairMarkdownTables(content = '') {
+  if (!content.includes('|')) return content;
+  const lines = content.split('\n');
+  let activeFence = '';
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    const fenceMatch = trimmed.match(/^([`~]{3,})/);
+    if (fenceMatch) {
+      const marker = fenceMatch[1];
+      if (!activeFence) {
+        activeFence = marker;
+      } else if (marker[0] === activeFence[0] && marker.length >= activeFence.length) {
+        activeFence = '';
+      }
+      continue;
+    }
+    if (activeFence) continue;
+    const headerRow = trimmed;
+    if (!looksLikeMarkdownTableRow(headerRow)) continue;
+    const headerCells = splitTableRow(headerRow);
+    if (headerCells.length < 2 || headerCells.every((cell) => !cell)) continue;
+    const nextLine = lines[index + 1];
+    const dividerRow = String(nextLine || '').trim();
+    if (looksLikeDividerRow(dividerRow)) {
+      if (splitTableRow(dividerRow).length !== headerCells.length) {
+        lines[index + 1] = buildDividerRow(headerCells.length, dividerRow);
+      }
+      continue;
+    }
+    if (looksLikeMarkdownTableRow(dividerRow) && splitTableRow(dividerRow).length === headerCells.length) {
+      lines.splice(index + 1, 0, buildDividerRow(headerCells.length));
+      index += 1;
+    }
+  }
+  return lines.join('\n');
+}
+
+function looksLikeMarkdownTableRow(row = '') {
+  if (!row.includes('|')) return false;
+  if (looksLikeDividerRow(row)) return false;
+  return splitTableRow(row).length >= 2;
+}
+
+function looksLikeDividerRow(row = '') {
+  const trimmed = row.trim();
+  if (!trimmed || !trimmed.includes('|') || !trimmed.includes('-')) return false;
+  return BROKEN_TABLE_DIVIDER_REGEX.test(trimmed);
+}
+
+function buildDividerRow(columnCount = 0, source = '') {
+  const cells = splitTableRow(source);
+  const normalized = new Array(columnCount).fill('---').map((value, index) => {
+    const token = String(cells[index] || '').trim();
+    const leading = token.startsWith(':');
+    const trailing = token.endsWith(':');
+    if (leading && trailing) return ':---:';
+    if (leading) return ':---';
+    if (trailing) return '---:';
+    return value;
+  });
+  return `| ${normalized.join(' | ')} |`;
 }
 
 function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', fallbackText = '') {
