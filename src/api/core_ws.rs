@@ -677,9 +677,11 @@ async fn handle_ws(
                     }
                 }
             }
-            Message::Ping(payload) => {
-                let _ = out_tx.send(Message::Pong(payload)).await;
-            }
+            Message::Ping(payload) => match out_tx.try_send(Message::Pong(payload)) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_))
+                | Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => break,
+            },
             Message::Close(frame) => {
                 let (code, reason) = frame
                     .map(|value| (Some(value.code), Some(value.reason.to_string())))

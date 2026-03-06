@@ -257,6 +257,16 @@ PY
   "${PYTHON_ROOT}/bin/python3" -m pip install --no-index --find-links "${WHEELHOUSE_DIR}" "arm_pyart==${ARM_PYART_VERSION}"
 fi
 
+
+if [ "${CINRAD_BUILD}" = "1" ]; then
+  echo "Building cinrad from source for ${ARCH}..."
+  cinrad_requirement="$(grep -E '^cinrad([<>=~]|$)' "${REQ_FILE}" | head -n 1 || true)"
+  if [ -z "${cinrad_requirement}" ]; then
+    cinrad_requirement="cinrad"
+  fi
+  build_cinrad_from_source "${cinrad_requirement}"
+fi
+
 REQUIRED_IMPORTS_EFFECTIVE="${REQUIRED_IMPORTS}"
 if grep -q -E '^arm_pyart([<>=~]|$)' "${REQ_FILE}"; then
   REQUIRED_IMPORTS_EFFECTIVE="${REQUIRED_IMPORTS_EFFECTIVE},pyart=arm_pyart"
