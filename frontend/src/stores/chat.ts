@@ -2942,10 +2942,27 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const getToolOutputBuffer = (key) => {
     let buffer = toolOutputBufferMap.get(key);
     if (!buffer) {
-      buffer = { stdout: '', stderr: '', command: '' };
+      buffer = { stdout: '', stderr: '', command: '', stdoutDropped: 0, stderrDropped: 0 };
       toolOutputBufferMap.set(key, buffer);
     }
     return buffer;
+  };
+
+  const TOOL_OUTPUT_MAX_CHARS = 20000;
+
+  const appendToolOutput = (buffer, field, delta) => {
+    if (!buffer || !delta) return;
+    const current = String(buffer[field] || '');
+    const next = current + delta;
+    if (next.length <= TOOL_OUTPUT_MAX_CHARS) {
+      buffer[field] = next;
+      return;
+    }
+    const overflow = next.length - TOOL_OUTPUT_MAX_CHARS;
+    buffer[field] = next.slice(overflow);
+    const droppedKey = field === 'stderr' ? 'stderrDropped' : 'stdoutDropped';
+    const dropped = Number.isFinite(buffer[droppedKey]) ? buffer[droppedKey] : 0;
+    buffer[droppedKey] = dropped + overflow;
   };
 
   const buildToolOutputDetail = (buffer) => {
@@ -2955,14 +2972,17 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       parts.push(`[command]\n${buffer.command}`);
     }
     if (buffer.stdout) {
-      parts.push(`[stdout]\n${buffer.stdout}`);
+      const dropped = Number.isFinite(buffer.stdoutDropped) ? buffer.stdoutDropped : 0;
+      const prefix = dropped > 0 ? `... (truncated ${dropped} chars)\n` : '';
+      parts.push(`[stdout]\n${prefix}${buffer.stdout}`);
     }
     if (buffer.stderr) {
-      parts.push(`[stderr]\n${buffer.stderr}`);
+      const dropped = Number.isFinite(buffer.stderrDropped) ? buffer.stderrDropped : 0;
+      const prefix = dropped > 0 ? `... (truncated ${dropped} chars)\n` : '';
+      parts.push(`[stderr]\n${prefix}${buffer.stderr}`);
     }
     return parts.join('\n\n');
   };
-
   const TOOL_OUTPUT_FLUSH_MS = 120;
 
   const clearToolOutputFlush = (key) => {
@@ -3347,9 +3367,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           buffer.command = String(command);
         }
         if (streamName.includes('err')) {
-          buffer.stderr += delta;
+          appendToolOutput(buffer, 'stderr', delta);
         } else {
-          buffer.stdout += delta;
+          appendToolOutput(buffer, 'stdout', delta);
         }
         const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory);
         if (itemId) {

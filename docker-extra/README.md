@@ -57,6 +57,7 @@ bash docker-extra/scripts/build_arm64_desktop_with_python.sh
 - sidecar Python 依赖默认包含一组“优先、轻量、高价值”库（`orjson`、`tabulate`、`rapidfuzz`、`Unidecode`、`docxtpl`），用于文本匹配、结构化输出、JSON 处理与文档模板生成
 - 补充包会附带常用中英文字体并生成 matplotlibrc，自动解决 matplotlib 中文缺字问题
 - 补充包内置气象/地理绘图库（cinrad/PyCINRAD、arm_pyart、netCDF4、cartopy 等）并预下载 cartopy 地图数据（`opt/python/share/cartopy`，离线可用）
+- 补充包同时集成 Jupyter/OpenAI/爬虫/数据库连接等常用库，便于离线分析与采集
 
 > 提示：第 6 步 AppImage 重打包在 qemu 下可能持续 10~30 分钟，看起来像“卡住”但通常仍在运行。
 > 可用以下命令观察进度（文件大小持续增长即正常）：

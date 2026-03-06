@@ -172,6 +172,8 @@ const PATCH_RESULT_FILE_LIMIT = 10;
 const PATCH_PREVIEW_FILE_LIMIT = 4;
 const PATCH_PREVIEW_LINE_LIMIT = 12;
 const PATCH_PREVIEW_LINE_MAX_CHARS = 140;
+const DETAIL_PARSE_CACHE_LIMIT = 120;
+const PREVIEW_CACHE_LIMIT = 120;
 
 const PATH_HINT_KEYS = [
   'path',
@@ -208,6 +210,8 @@ const streamFollowState = new Map<string, boolean>();
 const workflowRef = ref<HTMLDetailsElement | null>(null);
 const workflowListRef = ref<HTMLElement | null>(null);
 const workflowFollow = ref(true);
+const detailParseCache = new Map<string, UnknownObject | false>();
+const previewCache = new Map<string, string>();
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
 
@@ -325,14 +329,62 @@ const statusLabel = (status: string): string => {
   return t('chat.toolWorkflow.statusSuccess');
 };
 
+const getCachedPreview = (key: string): string | null => {
+  if (!key) return null;
+  const cached = previewCache.get(key);
+  if (!cached) return null;
+  previewCache.delete(key);
+  previewCache.set(key, cached);
+  return cached;
+};
+
+const setCachedPreview = (key: string, value: string) => {
+  if (!key) return;
+  previewCache.set(key, value);
+  if (previewCache.size > PREVIEW_CACHE_LIMIT) {
+    const firstKey = previewCache.keys().next().value as string | undefined;
+    if (firstKey) {
+      previewCache.delete(firstKey);
+    }
+  }
+};
+
+const getCachedDetailObject = (detail: string): UnknownObject | false | undefined => {
+  if (!detail) return undefined;
+  if (!detailParseCache.has(detail)) return undefined;
+  const cached = detailParseCache.get(detail);
+  if (cached === undefined) return undefined;
+  detailParseCache.delete(detail);
+  detailParseCache.set(detail, cached);
+  return cached;
+};
+
+const setCachedDetailObject = (detail: string, parsed: UnknownObject | false) => {
+  if (!detail) return;
+  detailParseCache.set(detail, parsed);
+  if (detailParseCache.size > DETAIL_PARSE_CACHE_LIMIT) {
+    const firstKey = detailParseCache.keys().next().value as string | undefined;
+    if (firstKey) {
+      detailParseCache.delete(firstKey);
+    }
+  }
+};
+
 const parseDetailObject = (detail: unknown): UnknownObject | null => {
   if (typeof detail !== 'string') return null;
   const trimmed = detail.trim();
   if (!trimmed || (trimmed[0] !== '{' && trimmed[0] !== '[')) return null;
+  const cached = getCachedDetailObject(trimmed);
+  if (cached !== undefined) {
+    return cached === false ? null : cached;
+  }
   try {
     const parsed = JSON.parse(trimmed);
-    return asObject(parsed);
+    const normalized = asObject(parsed);
+    setCachedDetailObject(trimmed, normalized ?? false);
+    return normalized;
   } catch {
+    setCachedDetailObject(trimmed, false);
     return null;
   }
 };
@@ -1118,6 +1170,25 @@ const extractResultPayload = (
   return { resultObject, dataObject };
 };
 
+const buildPreviewBlockWithCache = (
+  detail: unknown,
+  dataObject: UnknownObject | null,
+  resultObject: UnknownObject | null
+): string => {
+  const detailKey = typeof detail === 'string' ? detail.trim() : '';
+  if (detailKey) {
+    const cached = getCachedPreview(detailKey);
+    if (cached !== null) {
+      return cached;
+    }
+  }
+  const previewBlock = buildToolResultPreview(dataObject, resultObject);
+  if (detailKey && previewBlock) {
+    setCachedPreview(detailKey, previewBlock);
+  }
+  return previewBlock;
+};
+
 const parseReadFileSections = (content: string): Array<{ path: string; body: string }> => {
   const normalized = String(content || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
   if (!normalized.trim()) return [];
@@ -1392,7 +1463,11 @@ const buildExecuteCommandView = (
   };
 };
 
-const buildGenericResultBlock = (resultObject: UnknownObject | null, dataObject: UnknownObject | null): string => {
+const buildGenericResultBlock = (
+  resultObject: UnknownObject | null,
+  dataObject: UnknownObject | null,
+  detail: unknown
+): string => {
   if (!resultObject && !dataObject) return '';
 
   const headerRows: string[] = [];
@@ -1404,7 +1479,7 @@ const buildGenericResultBlock = (resultObject: UnknownObject | null, dataObject:
   const summary = pickString(dataObject?.summary, resultObject?.summary, dataObject?.message, resultObject?.message);
   if (summary) headerRows.push(truncateSingleLine(summary, 180));
 
-  const previewBlock = buildToolResultPreview(dataObject, resultObject);
+  const previewBlock = buildPreviewBlockWithCache(detail, dataObject, resultObject);
   const blocks: string[] = [];
   if (headerRows.length > 0) blocks.push(headerRows.join('\n'));
   if (previewBlock) blocks.push(previewBlock);
@@ -1430,7 +1505,7 @@ const buildResultBlock = (entry: RawEntry): string => {
   if (isWriteFileTool(entry.toolName)) {
     return buildWriteFileResultBlock(resultObject, dataObject);
   }
-  return buildGenericResultBlock(resultObject, dataObject);
+  return buildGenericResultBlock(resultObject, dataObject, entry.resultItem?.detail);
 };
 
 const buildOutputBlock = (entry: RawEntry, command: string): string => {

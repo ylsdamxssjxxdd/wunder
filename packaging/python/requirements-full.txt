@@ -61,12 +61,44 @@ cartopy
 pyproj
 shapely
 
+# Jupyter / OpenAI
+jupyterlab
+jupyterlab_server
+jupyter_server
+notebook
+nbformat
+nbconvert
+jupyter_core
+jupyter_client
+ipykernel
+ipywidgets
+openai
+tiktoken
+
+# Web crawling / scraping
+trafilatura
+readability-lxml
+html2text
+parsel
+cssselect
+fake-useragent
+requests-cache
+
 # Databases / Queue
 psycopg[binary]
 pymysql
 pymongo
 redis
 celery
+asyncpg
+aiomysql
+aiosqlite
+motor
+oracledb
+clickhouse-connect
+influxdb-client
+elasticsearch
+opensearch-py
 
 # Office / Document utilities
 pdfplumber
