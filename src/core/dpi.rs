@@ -17,4 +17,5 @@ pub fn init_process_dpi_awareness() {
 }
 
 #[cfg(not(windows))]
+#[allow(dead_code)]
 pub fn init_process_dpi_awareness() {}
