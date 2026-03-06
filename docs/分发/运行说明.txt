@@ -33,6 +33,8 @@
 2) 启动时与 AppImage 同目录放置补充包目录（AppRun 会自动识别）。
    如需手动指定 Python，可设置：
    WUNDER_PYTHON_BIN=~/wunder补充包/opt/python/bin/python3 ./wunder-desktop*.AppImage
+3) 补充包内置气象/地理绘图库（cinrad/PyCINRAD、arm_pyart、netCDF4、cartopy 等）与 cartopy 地图数据。
+   AppRun 会自动设置 CARTOPY_DATA_DIR 指向补充包内的 share/cartopy，实现离线地图绘图。
 
 四、常见问题
 - 模型不可用：检查 预配置文件.yml 中的 api_key/base_url/model 是否正确。

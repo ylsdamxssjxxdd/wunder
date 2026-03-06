@@ -17,6 +17,7 @@ type ConsumeWsStreamOptions = {
 type MultiplexerOptions = {
   idleTimeoutMs?: number;
   connectTimeoutMs?: number;
+  pingIntervalMs?: number;
 };
 
 type WsRequestPayload = {
@@ -204,6 +205,7 @@ export const createWsMultiplexer = (
   const connectTimeoutMs = Number.isFinite(options.connectTimeoutMs)
     ? Number(options.connectTimeoutMs)
     : 10000;
+  const pingIntervalMs = Number.isFinite(options.pingIntervalMs) ? Number(options.pingIntervalMs) : 20000;
   const pending = new Map<string, PendingEntry>();
   let socket: WebSocket | null = null;
   let opened = false;
@@ -212,6 +214,7 @@ export const createWsMultiplexer = (
   let connectReject: ((error: unknown) => void) | null = null;
   let connectTimer: ReturnType<typeof setTimeout> | null = null;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let pingTimer: ReturnType<typeof setInterval> | null = null;
 
   const clearConnectTimer = (): void => {
     if (connectTimer) {
@@ -225,6 +228,32 @@ export const createWsMultiplexer = (
       clearTimeout(idleTimer);
       idleTimer = null;
     }
+  };
+
+  const clearPingTimer = (): void => {
+    if (pingTimer) {
+      clearInterval(pingTimer);
+      pingTimer = null;
+    }
+  };
+
+  const schedulePing = (): void => {
+    if (pingIntervalMs <= 0 || pingTimer) {
+      return;
+    }
+    pingTimer = setInterval(() => {
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      if (pending.size === 0) {
+        return;
+      }
+      try {
+        sendMessage({ type: 'ping' });
+      } catch {
+        // ignore ping failures
+      }
+    }, pingIntervalMs);
   };
 
   const scheduleIdleClose = (): void => {
@@ -245,6 +274,7 @@ export const createWsMultiplexer = (
   const cleanupSocket = (): void => {
     clearConnectTimer();
     clearIdleTimer();
+    clearPingTimer();
     socket = null;
     opened = false;
     connectPromise = null;
@@ -264,6 +294,9 @@ export const createWsMultiplexer = (
     pending.delete(requestId);
     cleanupRequest(entry);
     entry.resolve();
+    if (pending.size === 0) {
+      clearPingTimer();
+    }
     scheduleIdleClose();
   };
 
@@ -273,6 +306,9 @@ export const createWsMultiplexer = (
     pending.delete(requestId);
     cleanupRequest(entry);
     entry.reject(error);
+    if (pending.size === 0) {
+      clearPingTimer();
+    }
     scheduleIdleClose();
   };
 
@@ -355,6 +391,9 @@ export const createWsMultiplexer = (
       }
       connectResolve = null;
       connectReject = null;
+      if (pending.size > 0) {
+        schedulePing();
+      }
       scheduleIdleClose();
     };
     socket.onerror = () => {
@@ -427,6 +466,7 @@ export const createWsMultiplexer = (
       };
       pending.set(requestId, entry);
       clearIdleTimer();
+      schedulePing();
       const handleAbort = (): void => {
         if (!pending.has(requestId)) return;
         if (payload?.cancelOnAbort !== false) {

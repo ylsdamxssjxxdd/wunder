@@ -74,6 +74,7 @@ import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vu
 
 import { useI18n } from '@/i18n';
 import { buildToolResultPreview } from './toolWorkflowPreview';
+import { chatPerf } from '@/utils/chatPerf';
 
 type WorkflowItem = {
   id?: string | number;
@@ -1615,7 +1616,7 @@ const findLastPendingIndex = (rows: RawEntry[]): number => {
   return -1;
 };
 
-const entries = computed<ToolEntryView[]>(() => {
+const buildEntries = (): ToolEntryView[] => {
   const rows: RawEntry[] = [];
   const pendingByTool = new Map<string, number[]>();
 
@@ -1686,6 +1687,19 @@ const entries = computed<ToolEntryView[]>(() => {
   });
 
   return rows.map(buildEntryView);
+};
+
+const entries = computed<ToolEntryView[]>(() => {
+  if (!chatPerf.enabled()) {
+    return buildEntries();
+  }
+  return chatPerf.time(
+    'chat_workflow_entries_build',
+    () => buildEntries(),
+    {
+      itemCount: Array.isArray(props.items) ? props.items.length : 0
+    }
+  );
 });
 
 watch(

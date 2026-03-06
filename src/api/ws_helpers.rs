@@ -24,6 +24,7 @@ pub(crate) const WS_PROTOCOL_VERSION: i32 = 1;
 pub(crate) const WS_PROTOCOL_MIN_VERSION: i32 = 1;
 pub(crate) const WS_PROTOCOL_MAX_VERSION: i32 = 1;
 pub(crate) const WS_MAX_MESSAGE_BYTES: usize = 512 * 1024;
+const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct WsQuery {
@@ -417,9 +418,12 @@ pub(crate) async fn resume_stream_events(
     let workspace = state.workspace.clone();
     let monitor = state.monitor.clone();
     let base_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
+    let heartbeat_interval =
+        std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
     let mut idle_rounds: usize = 0;
     let mut poll_interval = base_interval;
     let mut last_event_id = after_event_id;
+    let mut last_heartbeat = std::time::Instant::now();
     loop {
         if cancel
             .as_ref()
@@ -491,6 +495,21 @@ pub(crate) async fn resume_stream_events(
             progressed = true;
         }
         if !progressed {
+            if running && last_heartbeat.elapsed() >= heartbeat_interval {
+                let heartbeat = StreamEvent {
+                    event: "heartbeat".to_string(),
+                    data: json!({
+                        "ts": Utc::now().to_rfc3339(),
+                        "running": running,
+                    }),
+                    id: None,
+                    timestamp: Some(Utc::now()),
+                };
+                if send_ws_event(&tx, request_id, heartbeat).await.is_err() {
+                    return;
+                }
+                last_heartbeat = std::time::Instant::now();
+            }
             if !running && !keep_alive {
                 break;
             }
@@ -510,6 +529,7 @@ pub(crate) async fn resume_stream_events(
                 tokio::time::sleep(poll_interval).await;
             }
         } else {
+            last_heartbeat = std::time::Instant::now();
             idle_rounds = 0;
             poll_interval = base_interval;
         }

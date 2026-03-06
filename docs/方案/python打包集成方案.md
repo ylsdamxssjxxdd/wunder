@@ -59,6 +59,7 @@ BUILD_ROOT=/app/target/arm64-20/.build/python \
 - 产物：`wunder补充包-<arch>.tar.*`
 - 解压后目录名为 `wunder补充包`（必须保持该名称，内部包含 `opt/python` 与 `opt/git`）。
 - 默认会从 `fonts/` 中拷贝常用中英文字体到 matplotlib 字体目录，并生成 `opt/python/etc/matplotlibrc`，用于自动解决中文缺字问题。
+- 内置气象/地理绘图库（cinrad/PyCINRAD、arm_pyart、netCDF4、cartopy 等），并预下载 cartopy 的地图数据到 `opt/python/share/cartopy` 以支持离线绘图。
 
 ### 5.3 重打包 Sidecar AppImage（不内置 Python）
 ```
@@ -106,6 +107,7 @@ INCLUDE_PLAYWRIGHT=1 BUILD_ROOT=/app/target/arm64-20/.build/python \
 - `WUNDER_PYTHON_BIN`：指向内置或 sidecar 的 `python3`。
 - `PYTHONHOME` / `PYTHONPATH`：由 AppRun 自动注入。
 - `PLAYWRIGHT_BROWSERS_PATH`：若存在 `wunder-playwright` 或 `${PYTHON_ROOT}/playwright` 则自动注入。
+- `CARTOPY_DATA_DIR`：若存在 `${PYTHON_ROOT}/share/cartopy` 则自动注入（离线地图数据）。
 
 ## 9. 验收清单
 - Ubuntu 20.04 无系统 Python 环境可启动 AppImage。

@@ -390,19 +390,12 @@ async fn handle_ws(
                                 });
                                 let queued_event = StreamEvent {
                                     event: "queued".to_string(),
-                                    data: payload.clone(),
+                                    data: payload,
                                     id: None,
                                     timestamp: Some(Utc::now()),
                                 };
                                 let _ =
                                     send_ws_event(&ws_tx, Some(&request_id), queued_event).await;
-                                let final_event = StreamEvent {
-                                    event: "final".to_string(),
-                                    data: payload,
-                                    id: None,
-                                    timestamp: Some(Utc::now()),
-                                };
-                                let _ = send_ws_event(&ws_tx, Some(&request_id), final_event).await;
                                 continue;
                             }
                             AgentSubmitOutcome::Run(request, lease) => {

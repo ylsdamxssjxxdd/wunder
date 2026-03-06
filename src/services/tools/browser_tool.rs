@@ -200,6 +200,10 @@ impl BrowserManager {
             if rc.is_file() {
                 cmd.env("MATPLOTLIBRC", rc.to_string_lossy().to_string());
             }
+            let cartopy_dir = home.join("share/cartopy");
+            if cartopy_dir.is_dir() {
+                cmd.env("CARTOPY_DATA_DIR", cartopy_dir.to_string_lossy().to_string());
+            }
         }
         cmd.env("PYTHONNOUSERSITE", "1");
         cmd.env("PIP_NO_INDEX", "1");

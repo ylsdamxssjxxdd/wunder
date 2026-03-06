@@ -14,6 +14,9 @@ const parseSseBlock = (block) => {
       dataLines.push(line.slice(5).trim());
     }
   });
+  if (dataLines.length === 0) {
+    return null;
+  }
   return {
     eventType,
     eventId,
@@ -35,7 +38,9 @@ export const consumeSseStream = async (response, onEvent) => {
     buffer = parts.pop() || '';
     parts.forEach((part) => {
       if (!part.trim()) return;
-      const { eventType, dataText, eventId } = parseSseBlock(part);
+      const parsed = parseSseBlock(part);
+      if (!parsed) return;
+      const { eventType, dataText, eventId } = parsed;
       onEvent(eventType, dataText, eventId);
     });
   };
@@ -48,7 +53,10 @@ export const consumeSseStream = async (response, onEvent) => {
   }
 
   if (buffer.trim()) {
-    const { eventType, dataText, eventId } = parseSseBlock(buffer);
-    onEvent(eventType, dataText, eventId);
+    const parsed = parseSseBlock(buffer);
+    if (parsed) {
+      const { eventType, dataText, eventId } = parsed;
+      onEvent(eventType, dataText, eventId);
+    }
   }
 };

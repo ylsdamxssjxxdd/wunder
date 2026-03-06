@@ -270,6 +270,9 @@ if [ -n "$PYTHON_ROOT" ]; then
   if [ -f "$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
     export SSL_CERT_FILE="$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
   fi
+  if [ -d "$PYTHON_ROOT/share/cartopy" ]; then
+    export CARTOPY_DATA_DIR="$PYTHON_ROOT/share/cartopy"
+  fi
 else
   export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"
 fi
@@ -360,6 +363,9 @@ if [ -n "$PYTHON_ROOT" ]; then
   export PIP_NO_INDEX=1
   if [ -f "$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
     export SSL_CERT_FILE="$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
+  fi
+  if [ -d "$PYTHON_ROOT/share/cartopy" ]; then
+    export CARTOPY_DATA_DIR="$PYTHON_ROOT/share/cartopy"
   fi
 else
   export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"

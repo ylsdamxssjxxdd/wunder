@@ -35,6 +35,7 @@ const DEFAULT_SESSION_TITLE: &str = "新会话";
 const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
+const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -809,7 +810,10 @@ async fn resume_session(
         tokio::spawn(async move {
             let poll_interval =
                 std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
+            let heartbeat_interval =
+                std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
             let mut last_event_id = after_event_id;
+            let mut last_heartbeat = std::time::Instant::now();
             loop {
                 let session_id_snapshot = session_id.clone();
                 let workspace_snapshot = workspace.clone();
@@ -863,7 +867,21 @@ async fn resume_session(
                     if !running {
                         break;
                     }
+                    if last_heartbeat.elapsed() >= heartbeat_interval {
+                        let payload = json!({
+                            "ts": Utc::now().to_rfc3339(),
+                            "running": running,
+                        });
+                        let builder =
+                            Event::default().event("heartbeat").data(payload.to_string());
+                        if event_tx.send(builder).await.is_err() {
+                            return;
+                        }
+                        last_heartbeat = std::time::Instant::now();
+                    }
                     tokio::time::sleep(poll_interval).await;
+                } else {
+                    last_heartbeat = std::time::Instant::now();
                 }
             }
         });
@@ -880,6 +898,9 @@ async fn resume_session(
         let mut last_len: usize = 0;
         let mut initialized = false;
         let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
+        let heartbeat_interval =
+            std::time::Duration::from_secs_f64(STREAM_EVENT_HEARTBEAT_INTERVAL_S);
+        let mut last_heartbeat = std::time::Instant::now();
         loop {
             let Some(record) = monitor.get_record(&session_id) else {
                 break;
@@ -916,6 +937,20 @@ async fn resume_session(
             }
             if !running && !has_new_events {
                 break;
+            }
+            if running && !has_new_events && last_heartbeat.elapsed() >= heartbeat_interval {
+                let payload = json!({
+                    "ts": Utc::now().to_rfc3339(),
+                    "running": running,
+                });
+                let builder = Event::default().event("heartbeat").data(payload.to_string());
+                if event_tx.send(builder).await.is_err() {
+                    return;
+                }
+                last_heartbeat = std::time::Instant::now();
+            }
+            if has_new_events {
+                last_heartbeat = std::time::Instant::now();
             }
             tokio::time::sleep(poll_interval).await;
         }

@@ -20,6 +20,7 @@ import { consumeSseStream } from '@/utils/sse';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { chatPerf } from '@/utils/chatPerf';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 
 type SnapshotAssistantMessage = {
@@ -64,6 +65,7 @@ type WorkflowEventRawPayload = {
 
 type WorkflowProcessorOptions = {
   finalizeWithNow?: boolean;
+  streamFlushMs?: number;
 };
 
 type UsageStatsOptions = {
@@ -558,7 +560,9 @@ const resolvePersistedSessionId = (agentId) => {
 };
 
 const CHAT_SNAPSHOT_KEY = 'wille-chat-snapshot';
-const SNAPSHOT_FLUSH_MS = 400;
+const SNAPSHOT_FLUSH_MS = 800;
+const SNAPSHOT_IDLE_TIMEOUT_MS = 2000;
+const SNAPSHOT_MESSAGE_LIMIT = 200;
 const MAX_SNAPSHOT_MESSAGES = 50;
 const SNAPSHOT_MATCH_WINDOW_MS = 2000;
 let snapshotTimer = null;
@@ -833,7 +837,12 @@ const buildSnapshotMessages = (messages = []) => {
 const buildChatSnapshot = (storeState) => {
   const sessionId = String(storeState.activeSessionId || '');
   if (!sessionId) return null;
-  const messages = buildSnapshotMessages(storeState.messages || []);
+  const sourceMessages = Array.isArray(storeState.messages) ? storeState.messages : [];
+  const trimmed =
+    sourceMessages.length > SNAPSHOT_MESSAGE_LIMIT
+      ? sourceMessages.slice(-SNAPSHOT_MESSAGE_LIMIT)
+      : sourceMessages;
+  const messages = buildSnapshotMessages(trimmed);
   if (!messages.length) return null;
   return {
     sessionId,
@@ -881,10 +890,21 @@ const clearChatSnapshot = (sessionId) => {
 
 const scheduleChatSnapshot = (storeState, immediate = false) => {
   const flush = () => {
+    if (!chatPerf.enabled()) {
+      const snapshot = buildChatSnapshot(storeState);
+      if (snapshot) {
+        writeChatSnapshot(snapshot);
+      }
+      return;
+    }
+    const start = performance.now();
     const snapshot = buildChatSnapshot(storeState);
     if (snapshot) {
       writeChatSnapshot(snapshot);
     }
+    chatPerf.recordDuration('chat_snapshot_flush', performance.now() - start, {
+      messageCount: Array.isArray(storeState?.messages) ? storeState.messages.length : 0
+    });
   };
   if (immediate) {
     flush();
@@ -893,6 +913,15 @@ const scheduleChatSnapshot = (storeState, immediate = false) => {
   if (snapshotTimer !== null) return;
   snapshotTimer = setTimeout(() => {
     snapshotTimer = null;
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(
+        () => {
+          flush();
+        },
+        { timeout: SNAPSHOT_IDLE_TIMEOUT_MS }
+      );
+      return;
+    }
     flush();
   }, SNAPSHOT_FLUSH_MS);
 };
@@ -2042,6 +2071,9 @@ const ensureRuntime = (sessionId) => {
       resumeRequestId: null,
       watchController: null,
       watchRequestId: null,
+      watchLastEventAt: 0,
+      watchdogTimer: null,
+      watchdogBusy: false,
       stopRequested: false,
       lastEventId: 0
     });
@@ -2122,6 +2154,16 @@ const setSessionLoading = (store, sessionId, value) => {
 
 let sessionWatchSessionId = '';
 
+const clearWatchdog = (runtime) => {
+  if (!runtime) return;
+  if (runtime.watchdogTimer) {
+    clearInterval(runtime.watchdogTimer);
+    runtime.watchdogTimer = null;
+  }
+  runtime.watchdogBusy = false;
+  runtime.watchLastEventAt = 0;
+};
+
 const abortWatchStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
@@ -2130,6 +2172,7 @@ const abortWatchStream = (sessionId) => {
     runtime.watchController = null;
   }
   runtime.watchRequestId = null;
+  clearWatchdog(runtime);
 };
 
 const clearSessionWatcher = () => {
@@ -2200,6 +2243,24 @@ const resolveLastAssistantTimestampMs = (messages) => {
 };
 
 const WATCH_USER_MESSAGE_DEDUP_MS = 2000;
+const WATCHDOG_IDLE_MS = 20000;
+const WATCHDOG_INTERVAL_MS = 5000;
+const STREAM_FLUSH_BASE_MS = 40;
+const STREAM_FLUSH_MAX_MS = 160;
+
+const resolveStreamFlushMs = (messageCount, override) => {
+  if (Number.isFinite(override)) {
+    return Math.max(0, Number(override));
+  }
+  const count = Number.isFinite(messageCount) ? Number(messageCount) : 0;
+  if (count > 1000) return STREAM_FLUSH_MAX_MS;
+  if (count > 500) return 120;
+  if (count > 200) return 80;
+  return STREAM_FLUSH_BASE_MS;
+};
+
+const resolveStreamFlushMsForMessages = (messages) =>
+  resolveStreamFlushMs(Array.isArray(messages) ? messages.length : 0, null);
 
 const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs) => {
   if (!Array.isArray(messages) || !content) return false;
@@ -2256,8 +2317,10 @@ const startSessionWatcher = (store, sessionId) => {
   sessionWatchSessionId = key;
   const runtime = ensureRuntime(key);
   if (!runtime || runtime.sendController || runtime.resumeController) return;
+  const perfEnabled = chatPerf.enabled();
   runtime.watchController = new AbortController();
   const controller = runtime.watchController;
+  runtime.watchLastEventAt = Date.now();
   const requestId = buildWsRequestId();
   runtime.watchRequestId = requestId;
   const sessionMessagesRef = getSessionMessages(key) || store.messages;
@@ -2295,7 +2358,8 @@ const startSessionWatcher = (store, sessionId) => {
         const processor = createWorkflowProcessor(
           candidate,
           workflowState,
-          () => notifySessionSnapshot(store, key, sessionMessagesRef)
+          () => notifySessionSnapshot(store, key, sessionMessagesRef),
+          { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
         );
         const state = { message: candidate, processor, userInserted: false };
         roundStates.set(roundNumber, state);
@@ -2318,7 +2382,8 @@ const startSessionWatcher = (store, sessionId) => {
     const processor = createWorkflowProcessor(
       assistantMessage,
       workflowState,
-      () => notifySessionSnapshot(store, key, sessionMessagesRef)
+      () => notifySessionSnapshot(store, key, sessionMessagesRef),
+      { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
     );
     const state = { message: assistantMessage, processor, userInserted: false };
     roundStates.set(roundNumber, state);
@@ -2342,12 +2407,74 @@ const startSessionWatcher = (store, sessionId) => {
     Array.from(roundStates.keys()).forEach((round) => finalizeRound(round, aborted));
   };
 
+  const markWatchdogEvent = () => {
+    runtime.watchLastEventAt = Date.now();
+  };
+
+  const startWatchdog = () => {
+    if (runtime.watchdogTimer) return;
+    runtime.watchdogTimer = setInterval(async () => {
+      if (controller.signal.aborted) return;
+      if (runtime.sendController || runtime.resumeController) return;
+      if (runtime.watchdogBusy) return;
+      const lastEventAt = Number(runtime.watchLastEventAt) || 0;
+      if (!lastEventAt || Date.now() - lastEventAt < WATCHDOG_IDLE_MS) {
+        return;
+      }
+      runtime.watchdogBusy = true;
+      try {
+        const response = await getSessionEvents(key).catch(() => null);
+        const payload = response?.data?.data;
+        const running = payload?.running;
+        const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
+        const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
+        if (
+          pendingMessage &&
+          Number.isFinite(remoteLastEventId) &&
+          remoteLastEventId > lastEventId
+        ) {
+          if (perfEnabled) {
+            chatPerf.count('chat_watchdog_resume', 1, { sessionId: key });
+          }
+          store.resumeStream(key, pendingMessage, {
+            force: true,
+            afterEventId: lastEventId
+          });
+          return;
+        }
+        if (running === false) {
+          if (pendingMessage) {
+            pendingMessage.stream_incomplete = false;
+            pendingMessage.workflowStreaming = false;
+            pendingMessage.reasoningStreaming = false;
+          }
+          setSessionLoading(store, key, false);
+          notifySessionSnapshot(store, key, sessionMessagesRef, true);
+          if (perfEnabled) {
+            chatPerf.count('chat_watchdog_idle_complete', 1, { sessionId: key });
+          }
+        } else if (perfEnabled) {
+          chatPerf.count('chat_watchdog_idle', 1, { sessionId: key });
+        }
+      } finally {
+        runtime.watchdogBusy = false;
+      }
+    }, WATCHDOG_INTERVAL_MS);
+  };
+
   const onEvent = (eventType, dataText, eventId) => {
     if (runtime.sendController || runtime.resumeController) {
       return;
     }
+    markWatchdogEvent();
     const payload = safeJsonParse(dataText);
     const data = payload?.data ?? payload;
+    if (perfEnabled) {
+      chatPerf.count('chat_watch_event', 1, { eventType, sessionId: key });
+    }
+    if (eventType === 'heartbeat' || eventType === 'ping') {
+      return;
+    }
     handleApprovalEvent(store, eventType, data, requestId, key);
     if (eventType === 'slow_client' && !data) {
       return;
@@ -2395,9 +2522,22 @@ const startSessionWatcher = (store, sessionId) => {
     state.message.workflowStreaming = true;
     state.message.stream_incomplete = true;
     assignStreamEventId(state.message, eventId);
-    state.processor.handleEvent(eventType, dataText);
+    if (perfEnabled) {
+      const start = performance.now();
+      state.processor.handleEvent(eventType, dataText);
+      chatPerf.recordDuration('chat_watch_event_handle', performance.now() - start, {
+        eventType,
+        sessionId: key
+      });
+    } else {
+      state.processor.handleEvent(eventType, dataText);
+    }
     if (eventType === 'final' || eventType === 'error') {
       finalizeRound(roundNumber, false);
+      setSessionLoading(store, key, false);
+      if (perfEnabled) {
+        chatPerf.count('chat_watch_terminal', 1, { eventType, sessionId: key });
+      }
     }
   };
 
@@ -2436,6 +2576,7 @@ const startSessionWatcher = (store, sessionId) => {
     });
   const preferredTransport = resolveStreamTransport();
   store.streamTransport = preferredTransport;
+  startWatchdog();
   const watchPromise =
     preferredTransport === 'ws'
       ? watchWithWs().catch((error) => {
@@ -2447,20 +2588,48 @@ const startSessionWatcher = (store, sessionId) => {
           throw error;
         })
       : watchWithSse();
-  watchPromise.catch((error) => {
-    store.clearPendingApprovals({ requestId, sessionId: key });
-    if (error?.name === 'AbortError' || error?.phase === 'aborted') {
-      finalizeAll(true);
-      return;
-    }
-    finalizeAll(false);
-  });
+  watchPromise
+    .catch((error) => {
+      store.clearPendingApprovals({ requestId, sessionId: key });
+      if (error?.name === 'AbortError' || error?.phase === 'aborted') {
+        finalizeAll(true);
+        return;
+      }
+      const transient =
+        error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError';
+      if (transient) {
+        if (perfEnabled) {
+          chatPerf.count('chat_watch_interrupted', 1, { sessionId: key });
+        }
+        return;
+      }
+      finalizeAll(false);
+    })
+    .finally(() => {
+      const runtimeSnapshot = getRuntime(key);
+      if (runtimeSnapshot && runtimeSnapshot.watchController === controller) {
+        runtimeSnapshot.watchController = null;
+        runtimeSnapshot.watchRequestId = null;
+        clearWatchdog(runtimeSnapshot);
+        if (sessionWatchSessionId === key) {
+          sessionWatchSessionId = '';
+        }
+      }
+      if (controller.signal.aborted) {
+        return;
+      }
+      const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
+      if (pendingMessage && store.activeSessionId === key) {
+        setTimeout(() => startSessionWatcher(store, key), 200);
+      }
+    });
 };
 
 const DEFAULT_STREAM_TRANSPORT = 'ws';
 const chatWsClient = createWsMultiplexer(() => openChatSocket(), {
   idleTimeoutMs: 30000,
-  connectTimeoutMs: 10000
+  connectTimeoutMs: 10000,
+  pingIntervalMs: 20000
 });
 let wsUnavailableUntil = 0;
 let wsRequestSeq = 0;
@@ -2511,10 +2680,13 @@ const abortSendStream = (sessionId) => {
 
 const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options: WorkflowProcessorOptions = {}) => {
   const roundState = normalizeSessionWorkflowState(workflowState);
+  const streamFlushMs = resolveStreamFlushMs(null, options.streamFlushMs);
+  const perfEnabled = chatPerf.enabled();
   const toolItemMap = new Map();
   const approvalItemMap = new Map();
   const toolOutputItemMap = new Map();
   const toolOutputBufferMap = new Map();
+  const toolOutputFlushTimerMap = new Map();
   const roundTimingMap = new Map<number, { prefill: number | null; decode: number | null }>();
   let outputItemId = null;
   const blockedRounds = new Set();
@@ -2791,6 +2963,54 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     return parts.join('\n\n');
   };
 
+  const TOOL_OUTPUT_FLUSH_MS = 120;
+
+  const clearToolOutputFlush = (key) => {
+    if (!key) return;
+    const timer = toolOutputFlushTimerMap.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      toolOutputFlushTimerMap.delete(key);
+    }
+  };
+
+  const flushToolOutputDetail = (key, itemId) => {
+    if (!key || !itemId) return;
+    const buffer = toolOutputBufferMap.get(key);
+    if (!buffer) return;
+    updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+      detail: buildToolOutputDetail(buffer),
+      status: 'loading'
+    });
+  };
+
+  const scheduleToolOutputFlush = (key, itemId) => {
+    if (!key || !itemId) return;
+    if (toolOutputFlushTimerMap.has(key)) return;
+    const timer = setTimeout(() => {
+      toolOutputFlushTimerMap.delete(key);
+      if (perfEnabled) {
+        const start = performance.now();
+        flushToolOutputDetail(key, itemId);
+        chatPerf.recordDuration('chat_tool_output_flush', performance.now() - start);
+      } else {
+        flushToolOutputDetail(key, itemId);
+      }
+    }, TOOL_OUTPUT_FLUSH_MS);
+    toolOutputFlushTimerMap.set(key, timer);
+  };
+
+  const flushAllToolOutputs = () => {
+    toolOutputFlushTimerMap.forEach((timer, key) => {
+      clearTimeout(timer);
+      toolOutputFlushTimerMap.delete(key);
+      const itemId = toolOutputItemMap.get(key);
+      if (itemId) {
+        flushToolOutputDetail(key, itemId);
+      }
+    });
+  };
+
   const ensureToolOutputItem = (toolName, key, toolCategory) => {
     if (!key) return null;
     const existing = toolOutputItemMap.get(key);
@@ -2810,6 +3030,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const itemId = toolOutputItemMap.get(key);
     if (!itemId) return;
     const buffer = toolOutputBufferMap.get(key);
+    clearToolOutputFlush(key);
     updateWorkflowItem(assistantMessage.workflowItems, itemId, {
       status: failed ? 'failed' : 'completed',
       detail: buffer ? buildToolOutputDetail(buffer) : ''
@@ -2897,11 +3118,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   let pendingReasoningFallback = '';
   const thinkStreamParser = createThinkTagStreamParser();
   let streamTimer = null;
-  const scheduleFrame =
-    typeof requestAnimationFrame === 'function'
-      ? requestAnimationFrame
-      : (callback) => setTimeout(callback, 16);
-  const cancelFrame = typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : clearTimeout;
+  const flushInterval = Math.max(0, Number(streamFlushMs) || 0);
+  const scheduleFrame = (callback) =>
+    setTimeout(callback, flushInterval || STREAM_FLUSH_BASE_MS);
+  const cancelFrame = (timer) => clearTimeout(timer);
 
   const flushStream = (force = false) => {
     if (streamTimer !== null) {
@@ -3041,6 +3261,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const data = payload?.data ?? payload;
     const eventType = resolveEventType(eventName, payload);
     applyInteractionTimestamp(payload?.timestamp ?? data?.timestamp);
+    if (eventType === 'heartbeat' || eventType === 'ping') {
+      return;
+    }
 
     // 基于事件类型生成工作流条目并更新回复内容
     switch (eventType) {
@@ -3111,6 +3334,9 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         if (!delta) {
           break;
         }
+        if (perfEnabled) {
+          chatPerf.count('chat_tool_output_delta', 1);
+        }
         const streamName = String(data?.stream ?? payload?.stream ?? 'stdout').toLowerCase();
         const command = typeof data?.command === 'string' ? data.command : payload?.command;
         const toolCategory = resolveToolCategory(toolName, data ?? payload);
@@ -3127,10 +3353,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory);
         if (itemId) {
-          updateWorkflowItem(assistantMessage.workflowItems, itemId, {
-            detail: buildToolOutputDetail(buffer),
-            status: 'loading'
-          });
+          scheduleToolOutputFlush(outputKey, itemId);
         }
         break;
       }
@@ -3486,6 +3709,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
 
   const finalize = () => {
     flushStream(true);
+    flushAllToolOutputs();
     outputState.streaming = false;
     outputState.reasoningStreaming = false;
     syncReasoningToMessage();
@@ -3528,7 +3752,7 @@ const hydrateMessage = (message, workflowState) => {
       hydrated,
       workflowState,
       null,
-      { finalizeWithNow: false }
+      { finalizeWithNow: false, streamFlushMs: STREAM_FLUSH_BASE_MS }
     );
     message.workflow_events.forEach((event) => {
       processor.handleEvent(event?.event || '', event?.raw || '');
@@ -4051,6 +4275,8 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(initialSessionId);
       abortSendStream(initialSessionId);
       abortWatchStream(initialSessionId);
+      const perfEnabled = chatPerf.enabled();
+      const perfStreamStart = perfEnabled ? performance.now() : 0;
       const initialRuntime = ensureRuntime(initialSessionId);
       if (initialRuntime) {
         initialRuntime.stopRequested = false;
@@ -4126,10 +4352,13 @@ export const useChatStore = defineStore('chat', {
       const processor = createWorkflowProcessor(
         assistantMessage,
         workflowState,
-        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef)
+        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
+        { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
       );
       let queued = false;
       let interruptedByStop = false;
+      let finalSeen = false;
+      let errorSeen = false;
 
       try {
         if (runtime) {
@@ -4154,6 +4383,12 @@ export const useChatStore = defineStore('chat', {
             runtime?.sendRequestId || '',
             sessionId
           );
+          if (perfEnabled) {
+            chatPerf.count('chat_stream_event', 1, { eventType, sessionId });
+          }
+          if (eventType === 'heartbeat' || eventType === 'ping') {
+            return;
+          }
           const queuedFlag =
             eventType === 'queued' || payload?.queued === true || payload?.data?.queued === true;
           if (queuedFlag) {
@@ -4170,6 +4405,11 @@ export const useChatStore = defineStore('chat', {
             assistantMessage.workflowStreaming = true;
             return;
           }
+          if (eventType === 'final') {
+            finalSeen = true;
+          } else if (eventType === 'error') {
+            errorSeen = true;
+          }
           const normalizedEventId = normalizeStreamEventId(eventId);
           if (normalizedEventId !== null) {
             const currentEventId = Math.max(
@@ -4182,7 +4422,16 @@ export const useChatStore = defineStore('chat', {
           }
           assignStreamEventId(assistantMessage, eventId);
           updateRuntimeLastEventId(runtime, eventId);
-          processor.handleEvent(eventType, dataText);
+          if (perfEnabled) {
+            const start = performance.now();
+            processor.handleEvent(eventType, dataText);
+            chatPerf.recordDuration('chat_stream_event_handle', performance.now() - start, {
+              eventType,
+              sessionId
+            });
+          } else {
+            processor.handleEvent(eventType, dataText);
+          }
         };
         const streamWithSse = async () => {
           const response = await sendMessageStream(sessionId, payload, {
@@ -4250,22 +4499,33 @@ export const useChatStore = defineStore('chat', {
             }
           }
         } else {
-          assistantMessage.workflowItems.push(
-            buildWorkflowItem(
-              t('chat.workflow.requestFailed'),
-              error?.message || t('chat.workflow.requestFailedDetail'),
-              'failed'
-            )
-          );
+          const transient =
+            !finalSeen &&
+            !errorSeen &&
+            (error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError');
+          if (!transient) {
+            errorSeen = true;
+            assistantMessage.workflowItems.push(
+              buildWorkflowItem(
+                t('chat.workflow.requestFailed'),
+                error?.message || t('chat.workflow.requestFailedDetail'),
+                'failed'
+              )
+            );
+          } else if (perfEnabled) {
+            chatPerf.count('chat_stream_interrupted', 1, { sessionId });
+          }
         }
         this.dismissPendingInquiryPanel();
       } finally {
         const stopped = interruptedByStop || Boolean(runtime?.stopRequested);
+        const terminalSeen = finalSeen || errorSeen;
+        const keepStreaming = !stopped && !terminalSeen;
         const finishedRequestId = runtime?.sendRequestId || '';
-        assistantMessage.workflowStreaming = false;
+        assistantMessage.workflowStreaming = keepStreaming;
         assistantMessage.reasoningStreaming = false;
-        assistantMessage.stream_incomplete = stopped ? false : queued ? true : false;
-        setSessionLoading(this, sessionId, false);
+        assistantMessage.stream_incomplete = keepStreaming;
+        setSessionLoading(this, sessionId, keepStreaming);
         processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
         this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
@@ -4280,7 +4540,15 @@ export const useChatStore = defineStore('chat', {
           messages: sessionMessagesRef
         });
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
-        if (this.activeSessionId === sessionId && !pageUnloading && !stopped) {
+        if (perfEnabled) {
+          chatPerf.recordDuration('chat_stream_total', performance.now() - perfStreamStart, {
+            sessionId,
+            terminalSeen,
+            stopped,
+            queued
+          });
+        }
+        if (this.activeSessionId === sessionId && !pageUnloading && keepStreaming) {
           startSessionWatcher(this, sessionId);
         }
       }
@@ -4331,6 +4599,8 @@ export const useChatStore = defineStore('chat', {
       if (!message || (!message.stream_incomplete && !force)) return;
       abortWatchStream(sessionId);
       setSessionLoading(this, sessionId, true);
+      const perfEnabled = chatPerf.enabled();
+      const perfStreamStart = perfEnabled ? performance.now() : 0;
       message.workflowStreaming = true;
       message.stream_incomplete = true;
       const sessionMessagesRef = getSessionMessages(sessionId) || this.messages;
@@ -4340,7 +4610,8 @@ export const useChatStore = defineStore('chat', {
       const processor = createWorkflowProcessor(
         message,
         workflowState,
-        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef)
+        () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
+        { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
       );
       abortResumeStream(sessionId);
       const runtime = ensureRuntime(sessionId);
@@ -4348,6 +4619,8 @@ export const useChatStore = defineStore('chat', {
         runtime.resumeController = new AbortController();
       }
       let aborted = false;
+      let finalSeen = false;
+      let errorSeen = false;
       const forcedEventId = options.afterEventId;
       const normalizedMessageEventId = normalizeStreamEventId(message.stream_event_id);
       const afterEventId = Number.isFinite(Number(forcedEventId))
@@ -4357,6 +4630,12 @@ export const useChatStore = defineStore('chat', {
       try {
         const onEvent = (eventType, dataText, eventId) => {
           const payload = safeJsonParse(dataText);
+          if (perfEnabled) {
+            chatPerf.count('chat_resume_event', 1, { eventType, sessionId });
+          }
+          if (eventType === 'heartbeat' || eventType === 'ping') {
+            return;
+          }
           handleApprovalEvent(
             this,
             eventType,
@@ -4366,7 +4645,21 @@ export const useChatStore = defineStore('chat', {
           );
           assignStreamEventId(message, eventId);
           updateRuntimeLastEventId(runtime, eventId);
-          processor.handleEvent(eventType, dataText);
+          if (eventType === 'final') {
+            finalSeen = true;
+          } else if (eventType === 'error') {
+            errorSeen = true;
+          }
+          if (perfEnabled) {
+            const start = performance.now();
+            processor.handleEvent(eventType, dataText);
+            chatPerf.recordDuration('chat_resume_event_handle', performance.now() - start, {
+              eventType,
+              sessionId
+            });
+          } else {
+            processor.handleEvent(eventType, dataText);
+          }
         };
         const streamWithSse = async () => {
           const response = await resumeMessageStream(sessionId, {
@@ -4427,24 +4720,35 @@ export const useChatStore = defineStore('chat', {
         if (error?.name === 'AbortError') {
           aborted = true;
         } else {
-          message.workflowItems.push(
-            buildWorkflowItem(
-              t('chat.workflow.resumeFailed'),
-              error?.message || t('chat.workflow.resumeFailedDetail'),
-              'failed'
-            )
-          );
-          if (!message.content) {
-            message.content = t('chat.error.resumeFailed');
+          const transient =
+            !finalSeen &&
+            !errorSeen &&
+            (error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError');
+          if (!transient) {
+            errorSeen = true;
+            message.workflowItems.push(
+              buildWorkflowItem(
+                t('chat.workflow.resumeFailed'),
+                error?.message || t('chat.workflow.resumeFailedDetail'),
+                'failed'
+              )
+            );
+            if (!message.content) {
+              message.content = t('chat.error.resumeFailed');
+            }
+          } else if (perfEnabled) {
+            chatPerf.count('chat_resume_interrupted', 1, { sessionId });
           }
         }
       } finally {
         const finishedRequestId = runtime?.resumeRequestId || '';
-        message.workflowStreaming = false;
+        const terminalSeen = finalSeen || errorSeen;
+        const keepStreaming = !aborted && !terminalSeen;
+        message.workflowStreaming = keepStreaming;
         if (!aborted) {
-          message.stream_incomplete = false;
+          message.stream_incomplete = keepStreaming;
         }
-        setSessionLoading(this, sessionId, false);
+        setSessionLoading(this, sessionId, keepStreaming);
         processor.finalize();
         touchSessionUpdatedAt(this, sessionId, Date.now());
         this.clearPendingApprovals({ requestId: finishedRequestId, sessionId });
@@ -4455,7 +4759,14 @@ export const useChatStore = defineStore('chat', {
           runtime.resumeRequestId = null;
         }
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
-        if (!aborted && this.activeSessionId === sessionId && !pageUnloading) {
+        if (perfEnabled) {
+          chatPerf.recordDuration('chat_resume_total', performance.now() - perfStreamStart, {
+            sessionId,
+            terminalSeen,
+            aborted
+          });
+        }
+        if (!aborted && this.activeSessionId === sessionId && !pageUnloading && keepStreaming) {
           startSessionWatcher(this, sessionId);
         }
       }
