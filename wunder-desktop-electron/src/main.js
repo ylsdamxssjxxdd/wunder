@@ -1451,19 +1451,73 @@ const isLoopbackHostname = (host) => {
   )
 }
 
-const isTrustedMediaOrigin = (originUrl) => {
+const normalizeOrigin = (originUrl) => {
   if (!originUrl) {
-    return false
+    return ''
   }
   try {
     const parsed = new URL(originUrl)
     if (!['http:', 'https:'].includes(parsed.protocol)) {
-      return false
+      return ''
     }
-    return isLoopbackHostname(parsed.hostname)
+    return parsed.origin
   } catch {
+    return ''
+  }
+}
+
+const resolveMainWindowOrigin = () => {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+    return ''
+  }
+  return normalizeOrigin(mainWindow.webContents.getURL())
+}
+
+const isSameOrigin = (left, right) => {
+  const leftOrigin = normalizeOrigin(left)
+  const rightOrigin = normalizeOrigin(right)
+  if (!leftOrigin || !rightOrigin) {
     return false
   }
+  return leftOrigin === rightOrigin
+}
+
+const resolveMediaPermissionOrigin = (webContents, requestingOrigin, details) => {
+  const candidates = [
+    details?.securityOrigin,
+    details?.requestingUrl,
+    requestingOrigin,
+    webContents?.getURL?.(),
+    resolveMainWindowOrigin(),
+    bridgeWebBase,
+    bridgePort ? `http://127.0.0.1:${bridgePort}` : ''
+  ]
+  for (const candidate of candidates) {
+    const origin = normalizeOrigin(candidate)
+    if (origin) {
+      return origin
+    }
+  }
+  return ''
+}
+
+const isTrustedMediaOrigin = (originUrl) => {
+  const origin = normalizeOrigin(originUrl)
+  if (!origin) {
+    return false
+  }
+  const parsed = new URL(origin)
+  if (isLoopbackHostname(parsed.hostname)) {
+    return true
+  }
+  if (bridgeWebBase && isSameOrigin(bridgeWebBase, origin)) {
+    return true
+  }
+  const mainOrigin = resolveMainWindowOrigin()
+  if (mainOrigin && isSameOrigin(mainOrigin, origin)) {
+    return true
+  }
+  return false
 }
 
 const configureMediaPermissions = () => {
@@ -1477,19 +1531,19 @@ const configureMediaPermissions = () => {
     'microphone',
     'camera'
   ])
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
     if (!mediaPermissions.has(permission)) {
       callback(false)
       return
     }
-    const origin = webContents?.getURL?.() || ''
+    const origin = resolveMediaPermissionOrigin(webContents, '', details)
     callback(isTrustedMediaOrigin(origin))
   })
-  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) => {
     if (!mediaPermissions.has(permission)) {
       return false
     }
-    const origin = webContents?.getURL?.() || ''
+    const origin = resolveMediaPermissionOrigin(webContents, requestingOrigin, details)
     return isTrustedMediaOrigin(origin)
   })
 }

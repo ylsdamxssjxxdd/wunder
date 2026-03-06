@@ -2284,6 +2284,25 @@ const findPendingAssistantMessage = (messages) =>
         .find((message) => message?.role === 'assistant' && normalizeFlag(message.stream_incomplete))
     : null;
 
+const findAssistantMessageByUserRound = (messages, userRound) => {
+  const normalizedRound = normalizeStreamRound(userRound);
+  if (!Array.isArray(messages) || normalizedRound === null || normalizedRound <= 0) return null;
+  let userCount = 0;
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (message?.role !== 'user') continue;
+    userCount += 1;
+    if (userCount !== normalizedRound) continue;
+    for (let j = i + 1; j < messages.length; j += 1) {
+      const candidate = messages[j];
+      if (candidate?.role === 'assistant') return candidate;
+      if (candidate?.role === 'user') return null;
+    }
+    return null;
+  }
+  return null;
+};
+
 const findAssistantMessageByRound = (messages, roundNumber) => {
   if (!Array.isArray(messages) || !Number.isFinite(roundNumber) || roundNumber <= 0) return null;
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -2439,20 +2458,48 @@ const startSessionWatcher = (store, sessionId) => {
   const minEventTimestampMs =
     lastEventId > 0 ? null : resolveLastAssistantTimestampMs(sessionMessagesRef);
 
-  const ensureRoundState = (roundNumber, eventTimestampMs) => {
-    if (!Number.isFinite(roundNumber) || roundNumber <= 0) return null;
-    if (completedRounds.has(roundNumber)) return null;
-    const existing = roundStates.get(roundNumber);
+  const ensureRoundState = (roundNumber, eventTimestampMs, userRoundNumber = null) => {
+    const normalizedRound = normalizeStreamRound(roundNumber);
+    if (normalizedRound === null || normalizedRound <= 0) return null;
+    if (completedRounds.has(normalizedRound)) return null;
+    const existing = roundStates.get(normalizedRound);
     if (existing) return existing;
+    const normalizedUserRound = normalizeStreamRound(userRoundNumber);
+    const candidateByUserRound = normalizedUserRound
+      ? findAssistantMessageByUserRound(sessionMessagesRef, normalizedUserRound)
+      : null;
     const candidate =
-      findAssistantMessageByRound(sessionMessagesRef, roundNumber) ||
-      findPendingAssistantMessage(sessionMessagesRef);
+      candidateByUserRound ||
+      findPendingAssistantMessage(sessionMessagesRef) ||
+      findAssistantMessageByRound(sessionMessagesRef, normalizedRound);
     if (candidate) {
       const assignedRound = normalizeStreamRound(candidate.stream_round);
-      const alreadyTracked = Array.from(roundStates.values()).some((entry) => entry.message === candidate);
-      if (!alreadyTracked && (assignedRound === null || assignedRound === roundNumber)) {
-        if (assignedRound === null) {
-          candidate.stream_round = roundNumber;
+      const alreadyTracked = Array.from(roundStates.values()).find((entry) => entry.message === candidate);
+      if (alreadyTracked) {
+        if (!roundStates.has(normalizedRound)) {
+          roundStates.set(normalizedRound, alreadyTracked);
+        }
+        if (assignedRound === null || assignedRound !== normalizedRound) {
+          candidate.stream_round = normalizedRound;
+        }
+        if (!candidate.created_at && Number.isFinite(eventTimestampMs)) {
+          candidate.created_at = new Date(eventTimestampMs).toISOString();
+        }
+        candidate.workflowStreaming = true;
+        candidate.stream_incomplete = true;
+        return alreadyTracked;
+      }
+      const candidatePending =
+        normalizeFlag(candidate.stream_incomplete) || normalizeFlag(candidate.workflowStreaming);
+      if (
+        candidatePending ||
+        assignedRound === null ||
+        assignedRound === normalizedRound ||
+        (normalizedUserRound !== null && assignedRound === normalizedUserRound) ||
+        Boolean(candidateByUserRound)
+      ) {
+        if (assignedRound === null || assignedRound !== normalizedRound) {
+          candidate.stream_round = normalizedRound;
         }
         if (!candidate.created_at && Number.isFinite(eventTimestampMs)) {
           candidate.created_at = new Date(eventTimestampMs).toISOString();
@@ -2466,7 +2513,7 @@ const startSessionWatcher = (store, sessionId) => {
           { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
         );
         const state = { message: candidate, processor, userInserted: false };
-        roundStates.set(roundNumber, state);
+        roundStates.set(normalizedRound, state);
         return state;
       }
     }
@@ -2479,7 +2526,7 @@ const startSessionWatcher = (store, sessionId) => {
       workflowStreaming: true,
       stream_incomplete: true,
       stream_event_id: lastEventId || 0,
-      stream_round: roundNumber
+      stream_round: normalizedRound
     };
     sessionMessagesRef.push(assistantMessage);
     notifySessionSnapshot(store, key, sessionMessagesRef, true);
@@ -2490,12 +2537,14 @@ const startSessionWatcher = (store, sessionId) => {
       { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
     );
     const state = { message: assistantMessage, processor, userInserted: false };
-    roundStates.set(roundNumber, state);
+    roundStates.set(normalizedRound, state);
     return state;
   };
 
   const finalizeRound = (roundNumber, aborted) => {
-    const state = roundStates.get(roundNumber);
+    const normalizedRound = normalizeStreamRound(roundNumber);
+    if (normalizedRound === null) return;
+    const state = roundStates.get(normalizedRound);
     if (!state) return;
     state.processor.finalize();
     if (!aborted) {
@@ -2503,8 +2552,13 @@ const startSessionWatcher = (store, sessionId) => {
       state.message.workflowStreaming = false;
     }
     notifySessionSnapshot(store, key, sessionMessagesRef, true);
-    roundStates.delete(roundNumber);
-    completedRounds.add(roundNumber);
+    const messageRef = state.message;
+    Array.from(roundStates.entries()).forEach(([roundKey, entry]) => {
+      if (entry.message === messageRef) {
+        roundStates.delete(roundKey);
+        completedRounds.add(roundKey);
+      }
+    });
   };
 
   const finalizeAll = (aborted) => {
@@ -2600,9 +2654,10 @@ const startSessionWatcher = (store, sessionId) => {
       return;
     }
     const roundNumber = resolveEventRoundNumber(payload, data);
+    const userRoundNumber = normalizeStreamRound(data?.user_round ?? payload?.user_round);
     const stage = data?.stage ?? payload?.stage;
     const isRoundStart = eventType === 'round_start' || (eventType === 'progress' && stage === 'start');
-    const state = ensureRoundState(roundNumber, eventTimestampMs);
+    const state = ensureRoundState(roundNumber, eventTimestampMs, userRoundNumber);
     if (isRoundStart && state) {
       const question =
         data?.question ??

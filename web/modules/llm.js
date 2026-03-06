@@ -222,7 +222,7 @@ const normalizeLlmConfig = (raw) => {
     typeof raw?.timeout_s === "number" && !Number.isNaN(raw.timeout_s) ? raw.timeout_s : 120,
   retry: typeof raw?.retry === "number" && !Number.isNaN(raw.retry) ? raw.retry : 1,
   max_rounds:
-    typeof raw?.max_rounds === "number" && !Number.isNaN(raw.max_rounds) ? raw.max_rounds : 10,
+    typeof raw?.max_rounds === "number" && !Number.isNaN(raw.max_rounds) ? raw.max_rounds : 1000,
   max_context:
     typeof raw?.max_context === "number" && !Number.isNaN(raw.max_context) ? raw.max_context : null,
   max_output:
@@ -294,7 +294,7 @@ const clearLlmForm = () => {
   elements.llmTemperature.value = formatFloatForInput(0.7, 0.7);
   elements.llmTimeout.value = 120;
   elements.llmRetry.value = 1;
-  elements.llmMaxRounds.value = 10;
+  elements.llmMaxRounds.value = 1000;
   elements.llmMaxContext.value = "";
   elements.llmMaxOutput.value = "";
   elements.llmVision.checked = false;
@@ -348,7 +348,7 @@ const applyLlmConfigToForm = (name, config) => {
   elements.llmTemperature.value = formatFloatForInput(llm.temperature, 0.7);
   elements.llmTimeout.value = llm.timeout_s;
   elements.llmRetry.value = llm.retry;
-  elements.llmMaxRounds.value = llm.max_rounds ?? 10;
+  elements.llmMaxRounds.value = llm.max_rounds ?? 1000;
   elements.llmMaxContext.value = llm.max_context ?? "";
   elements.llmMaxOutput.value = llm.max_output ?? "";
   elements.llmVision.checked = llm.support_vision;
@@ -528,7 +528,7 @@ const buildLlmConfigFromForm = (baseConfig) => {
     temperature: Number.isFinite(temperature) ? temperature : 0.7,
     timeout_s: timeoutValue,
     retry: retryValue,
-    max_rounds: Number.isFinite(maxRounds) && maxRounds > 0 ? maxRounds : base.max_rounds ?? 10,
+    max_rounds: Number.isFinite(maxRounds) && maxRounds > 0 ? maxRounds : base.max_rounds ?? 1000,
     max_context: Number.isFinite(maxContext) && maxContext > 0 ? maxContext : null,
     max_output: Number.isFinite(maxOutput) && maxOutput > 0 ? maxOutput : null,
     support_vision: elements.llmVision.checked,

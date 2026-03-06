@@ -731,6 +731,7 @@
   - 说明：`provider` 支持 OpenAI 兼容预置（`openai_compatible/openai/openrouter/siliconflow/deepseek/moonshot/qwen/groq/mistral/together/ollama/lmstudio`），除 `openai_compatible` 外其余可省略 `base_url` 自动补齐。
   - 说明：`model_type=embedding` 表示嵌入模型，向量知识库会使用其 `/v1/embeddings` 能力。
   - 说明：`api_mode` 可选 `chat_completions|responses`（默认 chat_completions；当 provider=openai 且模型为 GPT-5/O 系列时未配置会自动走 responses），`responses` 会改用 `/v1/responses` 协议与流式事件。
+  - 说明：`max_rounds` 缺省为 1000；非管理员会话在未配置或过低时会提升到至少 2（含工具调用），管理员与 desktop 模式不受该限制。
 - `POST` 入参：
   - `llm.default`：默认模型配置名称
   - `llm.models`：模型配置映射，用于保存与下发
@@ -1914,6 +1915,7 @@
   - 返回：`data`（会话信息含 parent_session_id/parent_message_id/spawn_label/spawned_by + messages + history_has_more/history_before_id；进行中的会话会追加 stream_incomplete=true 的助手占位）
   - `messages[].attachments`：可选，附件数组，包含 `name/content/content_type/public_path`（若文件已删除前端可忽略渲染）
   - `messages[].history_id`：历史记录 id（用于历史分页）
+  - `model_name`：当前默认模型名称（用于聊天页展示）
 - `GET /wunder/chat/sessions/{session_id}/events`：会话事件（工作流还原）
   - 返回：`data.id`、`data.rounds`（user_round/events；事件内包含 `user_round`/`model_round`）、`data.running`、`data.last_event_id`
 - `GET /wunder/chat/sessions/{session_id}/history`：分页加载会话历史

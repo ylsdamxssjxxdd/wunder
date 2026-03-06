@@ -10,6 +10,7 @@ use crate::orchestrator_constants::{
 };
 use crate::schemas::{AttachmentPayload, StreamEvent, WunderRequest};
 use crate::services::agent_runtime::AgentSubmitOutcome;
+use crate::services::llm::is_llm_model;
 use crate::state::AppState;
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names, is_agent_allowed};
 use crate::user_store::UserStore;
@@ -258,9 +259,13 @@ async fn create_session(
         )
         .await
         .is_ok();
-    Ok(Json(
-        json!({ "data": session_payload_with_main(&record, is_main) }),
-    ))
+    let config = state.config_store.get().await;
+    let model_name = resolve_default_model_name(&config);
+    let mut payload = session_payload_with_main(&record, is_main);
+    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
+        map.insert("model_name".to_string(), json!(model_name));
+    }
+    Ok(Json(json!({ "data": payload })))
 }
 
 async fn list_sessions(
@@ -296,6 +301,8 @@ async fn list_sessions(
             .map(|item| item.session_id);
         main_map.insert(agent_key, main);
     }
+    let config = state.config_store.get().await;
+    let model_name = resolve_default_model_name(&config);
     let items = sessions
         .iter()
         .map(|record| {
@@ -305,7 +312,11 @@ async fn list_sessions(
                 .and_then(|value| value.as_ref())
                 .map(|session_id| session_id == &record.session_id)
                 .unwrap_or(false);
-            session_payload_with_main(record, is_main)
+            let mut payload = session_payload_with_main(record, is_main);
+            if let (Some(model_name), Value::Object(ref mut map)) = (model_name.as_ref(), &mut payload) {
+                map.insert("model_name".to_string(), json!(model_name));
+            }
+            payload
         })
         .collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "total": total, "items": items } })))
@@ -425,6 +436,8 @@ async fn get_session(
         }
     }
 
+    let config = state.config_store.get().await;
+    let model_name = resolve_default_model_name(&config);
     Ok(Json(json!({
         "data": {
             "id": record.session_id,
@@ -436,6 +449,7 @@ async fn get_session(
             "tool_overrides": record.tool_overrides,
             "history_incomplete": history_incomplete,
             "messages": messages,
+            "model_name": model_name,
             "history_has_more": history_has_more,
             "history_before_id": history_before_id
         }
@@ -1741,6 +1755,41 @@ fn session_payload_with_main(record: &crate::storage::ChatSessionRecord, is_main
         map.insert("is_main".to_string(), json!(is_main));
     }
     payload
+}
+
+fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {
+    let default_key = config.llm.default.trim();
+    if !default_key.is_empty() {
+        if let Some(model) = config
+            .llm
+            .models
+            .get(default_key)
+            .and_then(|cfg| cfg.model.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(model.to_string());
+        }
+        return Some(default_key.to_string());
+    }
+    for (key, cfg) in config.llm.models.iter() {
+        if !is_llm_model(cfg) {
+            continue;
+        }
+        if let Some(model) = cfg
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            return Some(model.to_string());
+        }
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
 }
 
 fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {
