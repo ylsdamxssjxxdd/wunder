@@ -137,6 +137,12 @@ import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePr
 import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
 import MessengerTimelineDetailDialog from '@/components/messenger/MessengerTimelineDetailDialog.vue';
 import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
+import type { WorldHistoryCategory, WorldHistoryRecord } from '@/views/messenger/model';
+
+type MessengerWorldHistoryTabOption = {
+  key: WorldHistoryCategory;
+  label: string;
+};
 
 const { t } = useI18n();
 
@@ -180,12 +186,12 @@ const {
 } = defineProps<{
   worldHistoryDialogVisible: boolean;
   worldHistoryKeyword: string;
-  worldHistoryActiveTab: unknown;
+  worldHistoryActiveTab: WorldHistoryCategory;
   worldHistoryDateRange: [string, string] | [];
-  worldHistoryTabOptions: unknown[];
-  filteredWorldHistoryRecords: unknown[];
+  worldHistoryTabOptions: MessengerWorldHistoryTabOption[];
+  filteredWorldHistoryRecords: WorldHistoryRecord[];
   formatTime: (value: unknown) => string;
-  locateWorldHistoryMessage: (record: unknown) => void | Promise<void>;
+  locateWorldHistoryMessage: (record: WorldHistoryRecord) => void | Promise<void>;
   timelineDetailDialogVisible: boolean;
   timelineDetailSessionId: string;
   worldContainerPickerVisible: boolean;
@@ -219,7 +225,7 @@ const {
 const emit = defineEmits<{
   (event: 'update:worldHistoryDialogVisible', value: boolean): void;
   (event: 'update:worldHistoryKeyword', value: string): void;
-  (event: 'update:worldHistoryActiveTab', value: unknown): void;
+  (event: 'update:worldHistoryActiveTab', value: WorldHistoryCategory): void;
   (event: 'update:worldHistoryDateRange', value: [string, string] | []): void;
   (event: 'update:timelineDetailDialogVisible', value: boolean): void;
   (event: 'update:worldContainerPickerVisible', value: boolean): void;
@@ -239,7 +245,7 @@ const updateWorldHistoryKeyword = (value: string) => {
   emit('update:worldHistoryKeyword', value);
 };
 
-const updateWorldHistoryActiveTab = (value: unknown) => {
+const updateWorldHistoryActiveTab = (value: WorldHistoryCategory) => {
   emit('update:worldHistoryActiveTab', value);
 };
 

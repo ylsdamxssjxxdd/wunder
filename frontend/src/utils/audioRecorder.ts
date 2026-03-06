@@ -377,7 +377,8 @@ const createMediaRecorderSession = (
           settleResolve({ blob: new Blob([], { type: mimeType || 'audio/webm' }), durationMs: 0, sampleRate: 0 });
           return;
         }
-        const blob = new Blob(chunks, { type: mimeType || chunks[0]?.type || 'audio/webm' });
+        const firstChunkMimeType = chunks.find((chunk): chunk is Blob => chunk instanceof Blob)?.type || '';
+        const blob = new Blob(chunks, { type: mimeType || firstChunkMimeType || 'audio/webm' });
         if (!blob.size) {
           settleReject(new Error('recorded audio is empty'));
           return;

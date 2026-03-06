@@ -156,52 +156,52 @@ fn parse_every_expression(input: &str) -> Result<Option<i64>> {
     if rest == "day" || rest == "1 day" {
         return Ok(Some(86_400_000));
     }
-    if let Some(value) = parse_unit_suffix(rest, "s", 1_000)? {
-        return Ok(Some(value));
-    }
-    if let Some(value) = parse_unit_suffix(rest, "sec", 1_000)? {
-        return Ok(Some(value));
-    }
-    if let Some(value) = parse_unit_suffix(rest, "secs", 1_000)? {
+    if let Some(value) = parse_unit_suffix(rest, "seconds", 1_000)? {
         return Ok(Some(value));
     }
     if let Some(value) = parse_unit_suffix(rest, "second", 1_000)? {
         return Ok(Some(value));
     }
-    if let Some(value) = parse_unit_suffix(rest, "seconds", 1_000)? {
+    if let Some(value) = parse_unit_suffix(rest, "secs", 1_000)? {
         return Ok(Some(value));
     }
-    if let Some(value) = parse_unit_suffix(rest, "m", 60_000)? {
-        return Ok(Some(value));
-    }
-    if let Some(value) = parse_unit_suffix(rest, "min", 60_000)? {
-        return Ok(Some(value));
-    }
-    if let Some(value) = parse_unit_suffix(rest, "mins", 60_000)? {
-        return Ok(Some(value));
-    }
-    if let Some(value) = parse_unit_suffix(rest, "minute", 60_000)? {
+    if let Some(value) = parse_unit_suffix(rest, "sec", 1_000)? {
         return Ok(Some(value));
     }
     if let Some(value) = parse_unit_suffix(rest, "minutes", 60_000)? {
         return Ok(Some(value));
     }
-    if let Some(value) = parse_unit_suffix(rest, "h", 3_600_000)? {
+    if let Some(value) = parse_unit_suffix(rest, "minute", 60_000)? {
         return Ok(Some(value));
     }
-    if let Some(value) = parse_unit_suffix(rest, "hour", 3_600_000)? {
+    if let Some(value) = parse_unit_suffix(rest, "mins", 60_000)? {
+        return Ok(Some(value));
+    }
+    if let Some(value) = parse_unit_suffix(rest, "min", 60_000)? {
         return Ok(Some(value));
     }
     if let Some(value) = parse_unit_suffix(rest, "hours", 3_600_000)? {
         return Ok(Some(value));
     }
-    if let Some(value) = parse_unit_suffix(rest, "d", 86_400_000)? {
+    if let Some(value) = parse_unit_suffix(rest, "hour", 3_600_000)? {
+        return Ok(Some(value));
+    }
+    if let Some(value) = parse_unit_suffix(rest, "days", 86_400_000)? {
         return Ok(Some(value));
     }
     if let Some(value) = parse_unit_suffix(rest, "day", 86_400_000)? {
         return Ok(Some(value));
     }
-    if let Some(value) = parse_unit_suffix(rest, "days", 86_400_000)? {
+    if let Some(value) = parse_unit_suffix(rest, "s", 1_000)? {
+        return Ok(Some(value));
+    }
+    if let Some(value) = parse_unit_suffix(rest, "m", 60_000)? {
+        return Ok(Some(value));
+    }
+    if let Some(value) = parse_unit_suffix(rest, "h", 3_600_000)? {
+        return Ok(Some(value));
+    }
+    if let Some(value) = parse_unit_suffix(rest, "d", 86_400_000)? {
         return Ok(Some(value));
     }
     Ok(None)

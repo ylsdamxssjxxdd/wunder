@@ -84,6 +84,7 @@ type WorkflowItem = {
   isTool?: boolean;
   eventType?: string;
   toolName?: string;
+  toolCallId?: string | number;
 };
 
 type PatchEntry = {
@@ -178,6 +179,7 @@ const PREVIEW_CACHE_LIMIT = 120;
 const PATH_HINT_KEYS = [
   'path',
   'file',
+  'filename',
   'file_path',
   'filePath',
   'target',
@@ -190,6 +192,10 @@ const PATH_HINT_KEYS = [
   'toPath',
   'destination',
   'dest',
+  'workdir',
+  'cwd',
+  'dir',
+  'directory',
   'output_path',
   'outputPath',
   'input_path',
@@ -1691,13 +1697,30 @@ const findLastPendingIndex = (rows: RawEntry[]): number => {
   return -1;
 };
 
+const normalizeWorkflowRef = (value: unknown): string => String(value || '').trim();
+
 const buildEntries = (): ToolEntryView[] => {
   const rows: RawEntry[] = [];
   const pendingByTool = new Map<string, number[]>();
+  const rowIndexByCallId = new Map<string, number>();
 
   const enqueuePending = (toolKey: string, index: number) => {
     if (!pendingByTool.has(toolKey)) pendingByTool.set(toolKey, []);
-    pendingByTool.get(toolKey)?.push(index);
+    const queue = pendingByTool.get(toolKey);
+    if (!queue?.includes(index)) {
+      queue?.push(index);
+    }
+  };
+
+  const removePendingIndex = (toolKey: string, index: number) => {
+    const queue = pendingByTool.get(toolKey);
+    if (!queue?.length) return;
+    const nextQueue = queue.filter((item) => item !== index);
+    if (nextQueue.length > 0) {
+      pendingByTool.set(toolKey, nextQueue);
+    } else {
+      pendingByTool.delete(toolKey);
+    }
   };
 
   const pickPendingForOutput = (toolKey: string): number => {
@@ -1715,28 +1738,65 @@ const buildEntries = (): ToolEntryView[] => {
     return findLastPendingIndex(rows);
   };
 
+  const ensureRowForCallRef = (callRef: string, toolName: string, fallbackKey: string): number => {
+    const normalizedRef = normalizeWorkflowRef(callRef);
+    if (normalizedRef) {
+      const existing = rowIndexByCallId.get(normalizedRef);
+      if (typeof existing === 'number') return existing;
+    }
+    rows.push({
+      key: normalizedRef || fallbackKey,
+      toolName,
+      callItem: null,
+      outputItem: null,
+      resultItem: null
+    });
+    const rowIndex = rows.length - 1;
+    if (normalizedRef) {
+      rowIndexByCallId.set(normalizedRef, rowIndex);
+    }
+    return rowIndex;
+  };
+
   props.items.forEach((item, index) => {
     const kind = resolveToolEventKind(item);
     if (!kind) return;
 
     const toolName = resolveToolName(item);
     const toolKey = toolName.trim().toLowerCase() || '__unknown__';
+    const itemId = normalizeWorkflowRef(item.id) || `tool-entry-${index}`;
+    const toolCallId = normalizeWorkflowRef(item.toolCallId);
 
     if (kind === 'call') {
-      const key = String(item.id || `tool-entry-${index}`);
-      rows.push({ key, toolName, callItem: item, outputItem: null, resultItem: null });
-      enqueuePending(toolKey, rows.length - 1);
+      const existingIndex = rowIndexByCallId.get(itemId);
+      if (typeof existingIndex === 'number') {
+        rows[existingIndex].callItem = item;
+        if (!rows[existingIndex].toolName && toolName) rows[existingIndex].toolName = toolName;
+        rowIndexByCallId.set(itemId, existingIndex);
+        if (!rows[existingIndex].resultItem) {
+          enqueuePending(toolKey, existingIndex);
+        }
+      } else {
+        rows.push({ key: itemId, toolName, callItem: item, outputItem: null, resultItem: null });
+        const rowIndex = rows.length - 1;
+        rowIndexByCallId.set(itemId, rowIndex);
+        enqueuePending(toolKey, rowIndex);
+      }
       return;
     }
 
     if (kind === 'output') {
-      const targetIndex = pickPendingForOutput(toolKey);
+      let targetIndex =
+        (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? pickPendingForOutput(toolKey);
+      if (targetIndex < 0 && toolCallId) {
+        targetIndex = ensureRowForCallRef(toolCallId, toolName, itemId);
+      }
       if (targetIndex >= 0) {
         rows[targetIndex].outputItem = item;
         if (!rows[targetIndex].toolName && toolName) rows[targetIndex].toolName = toolName;
       } else {
         rows.push({
-          key: String(item.id || `tool-entry-${index}`),
+          key: itemId,
           toolName,
           callItem: null,
           outputItem: item,
@@ -1746,13 +1806,23 @@ const buildEntries = (): ToolEntryView[] => {
       return;
     }
 
-    const targetIndex = pickPendingForResult(toolKey);
+    let targetIndex =
+      (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? pickPendingForResult(toolKey);
+    if (typeof targetIndex === 'number' && targetIndex >= 0 && toolCallId) {
+      removePendingIndex(toolKey, targetIndex);
+    }
+    if (targetIndex < 0 && toolCallId) {
+      targetIndex = ensureRowForCallRef(toolCallId, toolName, itemId);
+    }
     if (targetIndex >= 0) {
       rows[targetIndex].resultItem = item;
       if (!rows[targetIndex].toolName && toolName) rows[targetIndex].toolName = toolName;
+      if (toolCallId) {
+        rowIndexByCallId.set(toolCallId, targetIndex);
+      }
     } else {
       rows.push({
-        key: String(item.id || `tool-entry-${index}`),
+        key: itemId,
         toolName,
         callItem: null,
         outputItem: null,

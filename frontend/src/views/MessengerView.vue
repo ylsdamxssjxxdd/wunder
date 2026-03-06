@@ -4209,7 +4209,7 @@ const userAttachmentWorkspacePaths = computed(() => {
   chatStore.messages.forEach((message) => {
     if (String((message as Record<string, unknown>)?.role || '') !== 'user') return;
     const attachments = Array.isArray((message as Record<string, unknown>)?.attachments)
-      ? (message as Record<string, unknown>).attachments
+      ? ((message as Record<string, unknown>).attachments as unknown[])
       : [];
     attachments.forEach((item) => {
       const record = (item || {}) as Record<string, unknown>;

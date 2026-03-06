@@ -2017,7 +2017,8 @@ const closeImagePreview = () => {
   imagePreviewTitle.value = '';
 };
 
-const handleLoadOlderHistory = async (auto = false) => {
+const handleLoadOlderHistory = async (autoOrEvent: boolean | Event = false) => {
+  const auto = typeof autoOrEvent === 'boolean' ? autoOrEvent : false;
   const sessionId = chatStore.activeSessionId;
   if (!sessionId || historyLoading.value || !canLoadMoreHistory.value) return;
   if (chatPerf.enabled()) {

@@ -3190,14 +3190,17 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     });
   };
 
-  const ensureToolOutputItem = (toolName, key, toolCategory) => {
+  const ensureToolOutputItem = (toolName, key, toolCategory, toolCallId = null) => {
     if (!key) return null;
     const existing = toolOutputItemMap.get(key);
     if (existing) return existing;
     const title = toolName ? `工具输出：${toolName}` : '工具输出';
     const item = buildWorkflowItem(title, '', 'loading', {
       isTool: true,
-      toolCategory
+      toolCategory,
+      eventType: 'tool_output_delta',
+      toolName: String(toolName || ''),
+      toolCallId: toolCallId || undefined
     });
     assistantMessage.workflowItems.push(item);
     toolOutputItemMap.set(key, item.id);
@@ -3530,7 +3533,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         } else {
           appendToolOutput(buffer, 'stdout', delta);
         }
-        const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory);
+        const itemId = ensureToolOutputItem(toolName, outputKey, toolCategory, callId);
         if (itemId) {
           scheduleToolOutputFlush(outputKey, itemId);
         }
@@ -3570,7 +3573,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
               isTool: true,
               toolCategory,
               eventType: 'tool_result',
-              toolName: String(toolName || '')
+              toolName: String(toolName || ''),
+              toolCallId: targetId || undefined
             }
           )
         );

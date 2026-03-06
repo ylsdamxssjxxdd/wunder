@@ -1459,6 +1459,7 @@ button.messenger-chat-header-model {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  min-width: 0;
 }
 
 .messenger-message-meta {
@@ -1479,6 +1480,8 @@ button.messenger-chat-header-model {
   color: #2f2f2f;
   font-size: calc(13px * var(--messenger-font-scale, 1));
   line-height: 1.6;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .messenger-message-bubble--greeting {
@@ -3932,6 +3935,23 @@ button.messenger-chat-header-model {
 .messenger-markdown .markdown-body {
   color: inherit;
   line-height: 1.65;
+  min-width: 0;
+}
+
+.messenger-markdown .markdown-body img {
+  display: block;
+  max-width: min(100%, 420px);
+  max-height: min(52vh, 320px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid #dce0e7;
+  background: #f8fafc;
+}
+
+.messenger-markdown .markdown-body a img {
+  max-width: min(100%, 420px);
 }
 
 .messenger-markdown .markdown-body p {

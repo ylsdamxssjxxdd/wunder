@@ -1882,27 +1882,41 @@ fn apply_function_delta(slot: &mut StreamToolCall, function: &Value) {
 }
 
 fn merge_stream_text_field(target: &mut String, fragment: &str) {
-    let cleaned = fragment.trim();
-    if cleaned.is_empty() {
+    if fragment.is_empty() {
         return;
     }
 
     if target.is_empty() {
-        target.push_str(cleaned);
+        target.push_str(fragment);
         return;
     }
 
-    if target.as_str() == cleaned || target.ends_with(cleaned) {
+    if target.as_str() == fragment || target.ends_with(fragment) {
         return;
     }
 
-    if cleaned.starts_with(target.as_str()) {
+    if fragment.starts_with(target.as_str()) {
         target.clear();
-        target.push_str(cleaned);
+        target.push_str(fragment);
         return;
     }
 
-    target.push_str(cleaned);
+    let overlap = stream_text_overlap_len(target, fragment);
+    target.push_str(&fragment[overlap..]);
+}
+
+fn stream_text_overlap_len(target: &str, fragment: &str) -> usize {
+    let max_len = target.len().min(fragment.len());
+    for len in (1..=max_len).rev() {
+        let target_start = target.len() - len;
+        if !target.is_char_boundary(target_start) || !fragment.is_char_boundary(len) {
+            continue;
+        }
+        if target[target_start..] == fragment[..len] {
+            return len;
+        }
+    }
+    0
 }
 
 fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
@@ -2427,6 +2441,62 @@ mod tests {
         assert_eq!(
             finalized[0]["function"]["arguments"],
             "{\"path\":\"demo.txt\"}"
+        );
+    }
+
+    #[test]
+    fn merge_stream_text_field_preserves_whitespace_between_fragments() {
+        let mut merged = String::new();
+        merge_stream_text_field(&mut merged, "import ");
+        merge_stream_text_field(&mut merged, "json\nfrom datetime import ");
+        merge_stream_text_field(&mut merged, "datetime, timedelta");
+
+        assert_eq!(merged, "import json\nfrom datetime import datetime, timedelta");
+    }
+
+    #[test]
+    fn update_stream_tool_calls_preserves_whitespace_in_arguments() {
+        let mut acc = Vec::new();
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "name": "ptc",
+                        "arguments": "{\"content\":\"import "
+                    }
+                }]
+            }),
+        );
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "arguments": "json\\nfrom datetime import "
+                    }
+                }]
+            }),
+        );
+        update_stream_tool_calls(
+            &mut acc,
+            &json!({
+                "tool_calls": [{
+                    "index": 0,
+                    "function": {
+                        "arguments": "datetime, timedelta\"}"
+                    }
+                }]
+            }),
+        );
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "ptc");
+        assert_eq!(
+            finalized[0]["function"]["arguments"],
+            "{\"content\":\"import json\\nfrom datetime import datetime, timedelta\"}"
         );
     }
 
