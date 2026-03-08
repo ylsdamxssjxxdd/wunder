@@ -58,10 +58,15 @@ use crate::path_utils::{
 };
 use crate::sandbox;
 use crate::schemas::WunderRequest;
+use crate::services::swarm::beeroom::{
+    agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
+    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom,
+    resolve_swarm_hive_id as resolve_swarm_hive_scope,
+};
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::storage::{
-    ChatSessionRecord, SessionRunRecord, StorageBackend, UserAgentAccessRecord, UserAgentRecord,
-    DEFAULT_HIVE_ID,
+    normalize_hive_id, ChatSessionRecord, SessionRunRecord, StorageBackend, TeamRunRecord,
+    TeamTaskRecord, UserAgentAccessRecord, UserAgentRecord,
 };
 use crate::user_store::UserStore;
 use crate::user_tools::{UserToolAlias, UserToolKind};
@@ -1456,6 +1461,7 @@ struct AgentSwarmRuntime {
 #[derive(Debug, Clone)]
 struct SwarmBatchDispatchTask {
     index: usize,
+    team_task_id: String,
     message: String,
     label: Option<String>,
     agent_id: String,
@@ -1532,11 +1538,87 @@ async fn dispatch_swarm_batch_task(
 
     Ok(json!({
         "status": "accepted",
+        "task_id": task.team_task_id,
         "run_id": run_id,
         "session_id": task.session_id,
         "agent_id": task.agent_id,
         "created_session": task.created_session,
     }))
+}
+
+fn claim_swarm_mother_for_context(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    hive_id: &str,
+) -> Result<Option<String>> {
+    let Some(agent_id) = current_agent_id(context) else {
+        return Ok(None);
+    };
+    let mother_agent_id =
+        claim_swarm_mother_agent(context.storage.as_ref(), user_id, hive_id, &agent_id)?;
+    Ok(Some(mother_agent_id))
+}
+
+fn create_swarm_team_run_record(
+    context: &ToolContext<'_>,
+    user_id: &str,
+    hive_id: &str,
+    mother_agent_id: Option<String>,
+    strategy: &str,
+    task_total: usize,
+) -> TeamRunRecord {
+    let now = now_ts();
+    TeamRunRecord {
+        team_run_id: format!("team_{}", Uuid::new_v4().simple()),
+        user_id: user_id.to_string(),
+        hive_id: hive_id.to_string(),
+        parent_session_id: context.session_id.to_string(),
+        parent_agent_id: current_agent_id(context),
+        mother_agent_id,
+        strategy: strategy.to_string(),
+        status: "queued".to_string(),
+        task_total: task_total as i64,
+        task_success: 0,
+        task_failed: 0,
+        context_tokens_total: 0,
+        context_tokens_peak: 0,
+        model_round_total: 0,
+        started_time: Some(now),
+        finished_time: None,
+        elapsed_s: None,
+        summary: None,
+        error: None,
+        updated_time: now,
+    }
+}
+
+fn create_swarm_team_task_record(
+    run: &TeamRunRecord,
+    agent_id: &str,
+    target_session_id: Option<String>,
+    spawned_session_id: Option<String>,
+    priority: i64,
+) -> TeamTaskRecord {
+    let now = now_ts();
+    TeamTaskRecord {
+        task_id: format!("task_{}", Uuid::new_v4().simple()),
+        team_run_id: run.team_run_id.clone(),
+        user_id: run.user_id.clone(),
+        hive_id: run.hive_id.clone(),
+        agent_id: agent_id.to_string(),
+        target_session_id,
+        spawned_session_id,
+        session_run_id: None,
+        status: "queued".to_string(),
+        retry_count: 0,
+        priority,
+        started_time: None,
+        finished_time: None,
+        elapsed_s: None,
+        result_summary: None,
+        error: None,
+        updated_time: now,
+    }
 }
 
 async fn agent_swarm(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
@@ -1579,7 +1661,7 @@ async fn agent_swarm_list(context: &ToolContext<'_>, args: &Value) -> Result<Val
     }
     let limit = clamp_limit(payload.limit, 50, MAX_SESSION_LIST_ITEMS);
     let include_current = payload.include_current.unwrap_or(false);
-    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let cutoff = payload
         .active_minutes
         .filter(|value| *value > 0.0)
@@ -1605,7 +1687,7 @@ async fn agent_swarm_list(context: &ToolContext<'_>, args: &Value) -> Result<Val
             latest.and_then(|record| monitor_session_status(context, &record.session_id));
         items.push(json!({
             "agent_id": agent.agent_id,
-            "hive_id": DEFAULT_HIVE_ID,
+            "hive_id": normalize_hive_id(&agent.hive_id),
             "name": agent.name,
             "description": agent.description,
             "status": agent.status,
@@ -1638,7 +1720,7 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
     let Some(agent_id) = normalize_optional_string(payload.agent_id) else {
         return agent_swarm_list(context, args).await;
     };
-    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let include_current = payload.include_current.unwrap_or(false);
     let current_agent_id = current_agent_id(context);
     if !include_current {
@@ -1674,7 +1756,7 @@ async fn agent_swarm_status(context: &ToolContext<'_>, args: &Value) -> Result<V
     Ok(json!({
         "agent": {
             "agent_id": agent.agent_id,
-            "hive_id": DEFAULT_HIVE_ID,
+            "hive_id": normalize_hive_id(&agent.hive_id),
             "name": agent.name,
             "description": agent.description,
             "status": agent.status,
@@ -1704,7 +1786,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
     }
     let current_agent_id = current_agent_id(context);
     let include_current = payload.include_current.unwrap_or(false);
-    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let requested_agent_id = normalize_optional_string(payload.agent_id);
     let (target_agent_id, target_session_id, created_session) =
         if let Some(session_key) = payload.session_key {
@@ -1785,9 +1867,39 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
             }
         };
 
+    let mother_agent_id = claim_swarm_mother_for_context(context, user_id, &swarm_hive_id)?;
+    let run_record = create_swarm_team_run_record(
+        context,
+        user_id,
+        &swarm_hive_id,
+        mother_agent_id,
+        "direct_send",
+        1,
+    );
+    context.storage.upsert_team_run(&run_record)?;
+    let mut task_record = create_swarm_team_task_record(
+        &run_record,
+        &target_agent_id,
+        Some(target_session_id.clone()),
+        Some(target_session_id.clone()),
+        0,
+    );
+    context.storage.upsert_team_task(&task_record)?;
+    let dispatch_message = build_swarm_dispatch_message(
+        context.storage.as_ref(),
+        context.monitor.as_deref(),
+        user_id,
+        &swarm_hive_id,
+        current_agent_id.as_deref(),
+        context.session_id,
+        Some(&run_record.team_run_id),
+        Some(&task_record.task_id),
+        &message,
+    )?;
+
     let mut send_args = json!({
         "session_id": target_session_id,
-        "message": message,
+        "message": dispatch_message,
     });
     if let Some(timeout_seconds) = payload.timeout_seconds {
         send_args["timeoutSeconds"] = json!(timeout_seconds);
@@ -1800,10 +1912,40 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         }
     }
     let mut result = sessions_send(context, &send_args).await?;
+    let status = result
+        .get("status")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("accepted")
+        .to_ascii_lowercase();
+    if let Some(run_id) = result.get("run_id").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) {
+        task_record.session_run_id = Some(run_id.to_string());
+    }
+    task_record.status = match status.as_str() {
+        "ok" => "success".to_string(),
+        "timeout" => "timeout".to_string(),
+        "error" => "error".to_string(),
+        "" => "queued".to_string(),
+        _ => "queued".to_string(),
+    };
+    if let Some(reply) = result.get("reply").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) {
+        task_record.result_summary = Some(reply.to_string());
+    }
+    if let Some(error) = result.get("error").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) {
+        task_record.error = Some(error.to_string());
+    }
+    task_record.updated_time = now_ts();
+    if matches!(task_record.status.as_str(), "success" | "timeout" | "error") {
+        task_record.finished_time = Some(task_record.updated_time);
+    }
+    context.storage.upsert_team_task(&task_record)?;
     if let Value::Object(ref mut map) = result {
         map.insert("agent_id".to_string(), json!(target_agent_id));
         map.insert("session_id".to_string(), json!(target_session_id));
         map.insert("created_session".to_string(), json!(created_session));
+        map.insert("team_run_id".to_string(), json!(run_record.team_run_id));
+        map.insert("task_id".to_string(), json!(task_record.task_id));
+        map.insert("hive_id".to_string(), json!(swarm_hive_id));
     }
     Ok(result)
 }
@@ -1839,7 +1981,17 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     let default_create_if_missing = payload.create_if_missing.unwrap_or(true);
     let default_include_current = payload.include_current.unwrap_or(false);
     let current_agent_id = current_agent_id(context);
-    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, None)?;
+    let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
+    let mother_agent_id = claim_swarm_mother_for_context(context, user_id, &swarm_hive_id)?;
+    let run_record = create_swarm_team_run_record(
+        context,
+        user_id,
+        &swarm_hive_id,
+        mother_agent_id,
+        "batch_send",
+        payload.tasks.len(),
+    );
+    context.storage.upsert_team_run(&run_record)?;
     let allowed_tools = collect_user_allowed_tools(context, user_id)?;
 
     let agent_access = context.storage.get_user_agent_access(user_id)?;
@@ -1876,6 +2028,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     }
 
     let mut dispatch_plan = Vec::with_capacity(payload.tasks.len());
+    let mut task_records_by_index = HashMap::new();
     for (index, task) in payload.tasks.into_iter().enumerate() {
         let message = normalize_optional_string(task.message)
             .or_else(|| shared_message.clone())
@@ -2004,10 +2157,31 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 Some(prompt.to_string())
             }
         };
+        let task_record = create_swarm_team_task_record(
+            &run_record,
+            &agent_record.agent_id,
+            Some(session_record.session_id.clone()),
+            Some(session_record.session_id.clone()),
+            0,
+        );
+        context.storage.upsert_team_task(&task_record)?;
+        let dispatch_message = build_swarm_dispatch_message(
+            context.storage.as_ref(),
+            context.monitor.as_deref(),
+            user_id,
+            &swarm_hive_id,
+            current_agent_id.as_deref(),
+            context.session_id,
+            Some(&run_record.team_run_id),
+            Some(&task_record.task_id),
+            &message,
+        )?;
+        task_records_by_index.insert(index, task_record.clone());
 
         dispatch_plan.push(SwarmBatchDispatchTask {
             index,
-            message,
+            team_task_id: task_record.task_id,
+            message: dispatch_message,
             label,
             agent_id: agent_record.agent_id,
             session_id: session_record.session_id,
@@ -2039,12 +2213,57 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 if !run_id.is_empty() {
                     run_ids.push(run_id.clone());
                 }
+                if let Some(task_record) = task_records_by_index.get_mut(&index) {
+                    if !run_id.is_empty() {
+                        task_record.session_run_id = Some(run_id.clone());
+                    }
+                    let status = result
+                        .get("status")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .unwrap_or("accepted")
+                        .to_ascii_lowercase();
+                    task_record.status = match status.as_str() {
+                        "ok" => "success".to_string(),
+                        "timeout" => "timeout".to_string(),
+                        "error" => "error".to_string(),
+                        _ => "queued".to_string(),
+                    };
+                    if let Some(reply) = result
+                        .get("reply")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        task_record.result_summary = Some(reply.to_string());
+                    }
+                    if let Some(error) = result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        task_record.error = Some(error.to_string());
+                    }
+                    task_record.updated_time = now_ts();
+                    if matches!(task_record.status.as_str(), "success" | "timeout" | "error") {
+                        task_record.finished_time = Some(task_record.updated_time);
+                    }
+                    context.storage.upsert_team_task(task_record)?;
+                }
+                let task_id = result.get("task_id").cloned().unwrap_or_else(|| {
+                    task_records_by_index
+                        .get(&index)
+                        .map(|item| json!(item.task_id))
+                        .unwrap_or(Value::Null)
+                });
                 let mut item = json!({
                     "index": index,
                     "status": result.get("status").cloned().unwrap_or_else(|| json!("accepted")),
                     "run_id": if run_id.is_empty() { Value::Null } else { json!(run_id) },
                     "agent_id": result.get("agent_id").cloned().unwrap_or(Value::Null),
                     "session_id": result.get("session_id").cloned().unwrap_or(Value::Null),
+                    "task_id": task_id,
                     "created_session": result
                         .get("created_session")
                         .and_then(Value::as_bool)
@@ -2058,11 +2277,22 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                 indexed_items.push((index, item));
             }
             Err(err) => {
+                if let Some(task_record) = task_records_by_index.get_mut(&index) {
+                    task_record.status = "error".to_string();
+                    task_record.error = Some(err.to_string());
+                    task_record.updated_time = now_ts();
+                    task_record.finished_time = Some(task_record.updated_time);
+                    context.storage.upsert_team_task(task_record)?;
+                }
                 indexed_items.push((
                     index,
                     json!({
                         "index": index,
                         "status": "error",
+                        "task_id": task_records_by_index
+                            .get(&index)
+                            .map(|item| json!(item.task_id))
+                            .unwrap_or(Value::Null),
                         "error": err.to_string(),
                     }),
                 ));
@@ -2096,6 +2326,8 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         "task_total": items.len(),
         "accepted_total": accepted_total,
         "failed_total": failed_total,
+        "team_run_id": run_record.team_run_id,
+        "hive_id": swarm_hive_id,
         "run_ids": run_ids,
         "items": items,
     });
@@ -2394,7 +2626,7 @@ fn collect_swarm_agents(
     context: &ToolContext<'_>,
     user_id: &str,
     include_current: bool,
-    _hive_id: &str,
+    hive_id: &str,
 ) -> Result<Vec<UserAgentRecord>> {
     let access = context.storage.get_user_agent_access(user_id)?;
     let current_agent_id = current_agent_id(context);
@@ -2410,6 +2642,9 @@ fn collect_swarm_agents(
             continue;
         }
         if !is_agent_allowed_by_access(user_id, access.as_ref(), &agent) {
+            continue;
+        }
+        if !agent_in_hive(&agent, hive_id) {
             continue;
         }
         if !include_current
@@ -2521,15 +2756,20 @@ fn swarm_hive_arg(args: &Value) -> Option<&str> {
 }
 
 fn resolve_swarm_hive_id(
-    _context: &ToolContext<'_>,
-    _user_id: &str,
-    _requested_hive_id: Option<&str>,
+    context: &ToolContext<'_>,
+    user_id: &str,
+    requested_hive_id: Option<&str>,
 ) -> Result<String> {
-    Ok(DEFAULT_HIVE_ID.to_string())
+    resolve_swarm_hive_scope(
+        context.storage.as_ref(),
+        user_id,
+        current_agent_id(context).as_deref(),
+        requested_hive_id,
+    )
 }
 
-fn ensure_swarm_agent_in_hive(_agent: &UserAgentRecord, _hive_id: &str) -> Result<()> {
-    Ok(())
+fn ensure_swarm_agent_in_hive(agent: &UserAgentRecord, hive_id: &str) -> Result<()> {
+    ensure_swarm_agent_in_beeroom(agent, hive_id)
 }
 
 async fn sessions_list(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

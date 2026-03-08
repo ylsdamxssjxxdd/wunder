@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 
-const PERFORMANCE_STORAGE_KEY = 'wille-performance-mode';
+const PERFORMANCE_STORAGE_KEY = 'beeroom-performance-mode';
+const LEGACY_PERFORMANCE_STORAGE_KEY = 'wille-performance-mode';
 const PERFORMANCE_MODES = ['low', 'high'];
 const DEFAULT_PERFORMANCE_MODE = 'high';
 
@@ -12,7 +13,8 @@ const normalizePerformanceMode = (value) => {
 };
 
 const readPerformanceFromStorage = () => {
-  const stored = localStorage.getItem(PERFORMANCE_STORAGE_KEY);
+  const stored =
+    localStorage.getItem(PERFORMANCE_STORAGE_KEY) ?? localStorage.getItem(LEGACY_PERFORMANCE_STORAGE_KEY);
   const normalized = normalizePerformanceMode(stored);
   if (normalized !== stored) {
     localStorage.setItem(PERFORMANCE_STORAGE_KEY, normalized);
@@ -38,6 +40,7 @@ export const usePerformanceStore = defineStore('performance', {
       const nextMode = normalizePerformanceMode(mode);
       this.mode = nextMode;
       localStorage.setItem(PERFORMANCE_STORAGE_KEY, nextMode);
+      localStorage.setItem(LEGACY_PERFORMANCE_STORAGE_KEY, nextMode);
       applyPerformanceToDocument(nextMode);
     },
     toggleMode() {

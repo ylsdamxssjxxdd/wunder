@@ -776,6 +776,22 @@ impl PostgresStorage {
         Ok(())
     }
 
+    fn ensure_team_run_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.execute(
+            "ALTER TABLE team_runs ADD COLUMN IF NOT EXISTS mother_agent_id TEXT",
+            &[],
+        )?;
+        Ok(())
+    }
+
+    fn ensure_team_task_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        conn.execute(
+            "ALTER TABLE team_tasks ADD COLUMN IF NOT EXISTS session_run_id TEXT",
+            &[],
+        )?;
+        Ok(())
+    }
+
     fn ensure_user_world_group_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.execute(
             "ALTER TABLE user_world_groups ADD COLUMN IF NOT EXISTS announcement TEXT",
@@ -1567,6 +1583,7 @@ impl StorageBackend for PostgresStorage {
                   hive_id TEXT NOT NULL,
                   parent_session_id TEXT NOT NULL,
                   parent_agent_id TEXT,
+                  mother_agent_id TEXT,
                   strategy TEXT NOT NULL,
                   status TEXT NOT NULL,
                   task_total BIGINT NOT NULL DEFAULT 0,
@@ -1596,6 +1613,7 @@ impl StorageBackend for PostgresStorage {
                   agent_id TEXT NOT NULL,
                   target_session_id TEXT,
                   spawned_session_id TEXT,
+                  session_run_id TEXT,
                   status TEXT NOT NULL,
                   retry_count BIGINT NOT NULL DEFAULT 0,
                   priority BIGINT NOT NULL DEFAULT 0,
@@ -1642,6 +1660,8 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_channel_columns(&mut conn)?;
                     self.ensure_session_lock_columns(&mut conn)?;
                     self.ensure_user_agent_columns(&mut conn)?;
+                    self.ensure_team_run_columns(&mut conn)?;
+                    self.ensure_team_task_columns(&mut conn)?;
                     self.ensure_user_world_group_columns(&mut conn)?;
                     self.ensure_cron_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
@@ -7027,13 +7047,14 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO team_runs (team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)              ON CONFLICT(team_run_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, parent_session_id = EXCLUDED.parent_session_id, parent_agent_id = EXCLUDED.parent_agent_id,              strategy = EXCLUDED.strategy, status = EXCLUDED.status, task_total = EXCLUDED.task_total, task_success = EXCLUDED.task_success, task_failed = EXCLUDED.task_failed,              context_tokens_total = EXCLUDED.context_tokens_total, context_tokens_peak = EXCLUDED.context_tokens_peak, model_round_total = EXCLUDED.model_round_total,              started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, elapsed_s = EXCLUDED.elapsed_s, summary = EXCLUDED.summary, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
+            "INSERT INTO team_runs (team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)              ON CONFLICT(team_run_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, parent_session_id = EXCLUDED.parent_session_id, parent_agent_id = EXCLUDED.parent_agent_id, mother_agent_id = EXCLUDED.mother_agent_id,              strategy = EXCLUDED.strategy, status = EXCLUDED.status, task_total = EXCLUDED.task_total, task_success = EXCLUDED.task_success, task_failed = EXCLUDED.task_failed,              context_tokens_total = EXCLUDED.context_tokens_total, context_tokens_peak = EXCLUDED.context_tokens_peak, model_round_total = EXCLUDED.model_round_total,              started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, elapsed_s = EXCLUDED.elapsed_s, summary = EXCLUDED.summary, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
             &[
                 &record.team_run_id,
                 &record.user_id,
                 &hive_id,
                 &record.parent_session_id,
                 &record.parent_agent_id,
+                &record.mother_agent_id,
                 &record.strategy,
                 &record.status,
                 &record.task_total,
@@ -7061,7 +7082,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time FROM team_runs WHERE team_run_id = $1",
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time FROM team_runs WHERE team_run_id = $1",
             &[&cleaned],
         )?;
         Ok(row.map(|row| TeamRunRecord {
@@ -7070,20 +7091,21 @@ impl StorageBackend for PostgresStorage {
             hive_id: normalize_hive_id(&row.get::<_, String>(2)),
             parent_session_id: row.get(3),
             parent_agent_id: row.get(4),
-            strategy: row.get(5),
-            status: row.get(6),
-            task_total: row.get(7),
-            task_success: row.get(8),
-            task_failed: row.get(9),
-            context_tokens_total: row.get(10),
-            context_tokens_peak: row.get(11),
-            model_round_total: row.get(12),
-            started_time: row.get(13),
-            finished_time: row.get(14),
-            elapsed_s: row.get(15),
-            summary: row.get(16),
-            error: row.get(17),
-            updated_time: row.get(18),
+            mother_agent_id: row.get(5),
+            strategy: row.get(6),
+            status: row.get(7),
+            task_total: row.get(8),
+            task_success: row.get(9),
+            task_failed: row.get(10),
+            context_tokens_total: row.get(11),
+            context_tokens_peak: row.get(12),
+            model_round_total: row.get(13),
+            started_time: row.get(14),
+            finished_time: row.get(15),
+            elapsed_s: row.get(16),
+            summary: row.get(17),
+            error: row.get(18),
+            updated_time: row.get(19),
         }))
     }
 
@@ -7116,7 +7138,7 @@ impl StorageBackend for PostgresStorage {
             )?
             .get(0);
         let rows = conn.query(
-            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE user_id = $1 AND ($2 = '' OR hive_id = $2) AND ($3 = '' OR parent_session_id = $3)              ORDER BY updated_time DESC LIMIT $4 OFFSET $5",
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE user_id = $1 AND ($2 = '' OR hive_id = $2) AND ($3 = '' OR parent_session_id = $3)              ORDER BY updated_time DESC LIMIT $4 OFFSET $5",
             &[&cleaned_user, &hive_filter, &parent_filter, &safe_limit, &safe_offset],
         )?;
         let mut output = Vec::new();
@@ -7127,20 +7149,21 @@ impl StorageBackend for PostgresStorage {
                 hive_id: normalize_hive_id(&row.get::<_, String>(2)),
                 parent_session_id: row.get(3),
                 parent_agent_id: row.get(4),
-                strategy: row.get(5),
-                status: row.get(6),
-                task_total: row.get(7),
-                task_success: row.get(8),
-                task_failed: row.get(9),
-                context_tokens_total: row.get(10),
-                context_tokens_peak: row.get(11),
-                model_round_total: row.get(12),
-                started_time: row.get(13),
-                finished_time: row.get(14),
-                elapsed_s: row.get(15),
-                summary: row.get(16),
-                error: row.get(17),
-                updated_time: row.get(18),
+                mother_agent_id: row.get(5),
+                strategy: row.get(6),
+                status: row.get(7),
+                task_total: row.get(8),
+                task_success: row.get(9),
+                task_failed: row.get(10),
+                context_tokens_total: row.get(11),
+                context_tokens_peak: row.get(12),
+                model_round_total: row.get(13),
+                started_time: row.get(14),
+                finished_time: row.get(15),
+                elapsed_s: row.get(16),
+                summary: row.get(17),
+                error: row.get(18),
+                updated_time: row.get(19),
             });
         }
         Ok((output, total))
@@ -7168,7 +7191,7 @@ impl StorageBackend for PostgresStorage {
         let safe_offset = offset.max(0);
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE status = ANY($1::text[]) ORDER BY updated_time ASC LIMIT $2 OFFSET $3",
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE status = ANY($1::text[]) ORDER BY updated_time ASC LIMIT $2 OFFSET $3",
             &[&cleaned_statuses, &safe_limit, &safe_offset],
         )?;
         let mut output = Vec::with_capacity(rows.len());
@@ -7179,20 +7202,21 @@ impl StorageBackend for PostgresStorage {
                 hive_id: normalize_hive_id(&row.get::<_, String>(2)),
                 parent_session_id: row.get(3),
                 parent_agent_id: row.get(4),
-                strategy: row.get(5),
-                status: row.get(6),
-                task_total: row.get(7),
-                task_success: row.get(8),
-                task_failed: row.get(9),
-                context_tokens_total: row.get(10),
-                context_tokens_peak: row.get(11),
-                model_round_total: row.get(12),
-                started_time: row.get(13),
-                finished_time: row.get(14),
-                elapsed_s: row.get(15),
-                summary: row.get(16),
-                error: row.get(17),
-                updated_time: row.get(18),
+                mother_agent_id: row.get(5),
+                strategy: row.get(6),
+                status: row.get(7),
+                task_total: row.get(8),
+                task_success: row.get(9),
+                task_failed: row.get(10),
+                context_tokens_total: row.get(11),
+                context_tokens_peak: row.get(12),
+                model_round_total: row.get(13),
+                started_time: row.get(14),
+                finished_time: row.get(15),
+                elapsed_s: row.get(16),
+                summary: row.get(17),
+                error: row.get(18),
+                updated_time: row.get(19),
             });
         }
         Ok(output)
@@ -7203,7 +7227,7 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO team_tasks (task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)              ON CONFLICT(task_id) DO UPDATE SET team_run_id = EXCLUDED.team_run_id, user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, agent_id = EXCLUDED.agent_id,              target_session_id = EXCLUDED.target_session_id, spawned_session_id = EXCLUDED.spawned_session_id, status = EXCLUDED.status, retry_count = EXCLUDED.retry_count,              priority = EXCLUDED.priority, started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, elapsed_s = EXCLUDED.elapsed_s,              result_summary = EXCLUDED.result_summary, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
+            "INSERT INTO team_tasks (task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, session_run_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time)              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)              ON CONFLICT(task_id) DO UPDATE SET team_run_id = EXCLUDED.team_run_id, user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, agent_id = EXCLUDED.agent_id,              target_session_id = EXCLUDED.target_session_id, spawned_session_id = EXCLUDED.spawned_session_id, session_run_id = EXCLUDED.session_run_id, status = EXCLUDED.status, retry_count = EXCLUDED.retry_count,              priority = EXCLUDED.priority, started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, elapsed_s = EXCLUDED.elapsed_s,              result_summary = EXCLUDED.result_summary, error = EXCLUDED.error, updated_time = EXCLUDED.updated_time",
             &[
                 &record.task_id,
                 &record.team_run_id,
@@ -7212,6 +7236,7 @@ impl StorageBackend for PostgresStorage {
                 &record.agent_id,
                 &record.target_session_id,
                 &record.spawned_session_id,
+                &record.session_run_id,
                 &record.status,
                 &record.retry_count,
                 &record.priority,
@@ -7234,7 +7259,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time              FROM team_tasks WHERE team_run_id = $1 ORDER BY updated_time DESC",
+            "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, session_run_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time              FROM team_tasks WHERE team_run_id = $1 ORDER BY updated_time DESC",
             &[&cleaned_run_id],
         )?;
         let mut output = Vec::new();
@@ -7247,15 +7272,16 @@ impl StorageBackend for PostgresStorage {
                 agent_id: row.get(4),
                 target_session_id: row.get(5),
                 spawned_session_id: row.get(6),
-                status: row.get(7),
-                retry_count: row.get(8),
-                priority: row.get(9),
-                started_time: row.get(10),
-                finished_time: row.get(11),
-                elapsed_s: row.get(12),
-                result_summary: row.get(13),
-                error: row.get(14),
-                updated_time: row.get(15),
+                session_run_id: row.get(7),
+                status: row.get(8),
+                retry_count: row.get(9),
+                priority: row.get(10),
+                started_time: row.get(11),
+                finished_time: row.get(12),
+                elapsed_s: row.get(13),
+                result_summary: row.get(14),
+                error: row.get(15),
+                updated_time: row.get(16),
             });
         }
         Ok(output)
@@ -7269,7 +7295,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time FROM team_tasks WHERE task_id = $1",
+            "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, session_run_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time FROM team_tasks WHERE task_id = $1",
             &[&cleaned],
         )?;
         Ok(row.map(|row| TeamTaskRecord {
@@ -7280,15 +7306,16 @@ impl StorageBackend for PostgresStorage {
             agent_id: row.get(4),
             target_session_id: row.get(5),
             spawned_session_id: row.get(6),
-            status: row.get(7),
-            retry_count: row.get(8),
-            priority: row.get(9),
-            started_time: row.get(10),
-            finished_time: row.get(11),
-            elapsed_s: row.get(12),
-            result_summary: row.get(13),
-            error: row.get(14),
-            updated_time: row.get(15),
+            session_run_id: row.get(7),
+            status: row.get(8),
+            retry_count: row.get(9),
+            priority: row.get(10),
+            started_time: row.get(11),
+            finished_time: row.get(12),
+            elapsed_s: row.get(13),
+            result_summary: row.get(14),
+            error: row.get(15),
+            updated_time: row.get(16),
         }))
     }
     fn upsert_vector_document(&self, record: &VectorDocumentRecord) -> Result<()> {

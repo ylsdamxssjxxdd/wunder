@@ -851,8 +851,6 @@ async fn create_agent(
         .user_store
         .ensure_default_hive(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let target_hive_id = DEFAULT_HIVE_ID.to_string();
-
     let copy_from_agent_id = payload
         .copy_from_agent_id
         .as_deref()
@@ -870,6 +868,11 @@ async fn create_agent(
     } else {
         None
     };
+    let target_hive_id = resolve_agent_request_hive_id(
+        state.as_ref(),
+        &user_id,
+        payload.hive_id.as_deref().or(copy_source.as_ref().map(|item| item.hive_id.as_str())),
+    )?;
 
     let mut tool_names = if let Some(source) = copy_source.as_ref() {
         source.tool_names.clone()
@@ -1036,7 +1039,9 @@ async fn update_agent(
     if let Some(sandbox_container_id) = payload.sandbox_container_id {
         record.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
     }
-    record.hive_id = DEFAULT_HIVE_ID.to_string();
+    if let Some(hive_id) = payload.hive_id.as_deref() {
+        record.hive_id = resolve_agent_request_hive_id(state.as_ref(), &user_id, Some(hive_id))?;
+    }
     record.updated_at = now_ts();
     state
         .user_store
@@ -1206,11 +1211,30 @@ fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
         "is_shared": record.is_shared,
         "status": record.status,
         "icon": record.icon,
-        "hive_id": DEFAULT_HIVE_ID,
+        "hive_id": normalize_hive_id(&record.hive_id),
         "sandbox_container_id": normalize_sandbox_container_id(record.sandbox_container_id),
         "created_at": format_ts(record.created_at),
         "updated_at": format_ts(record.updated_at),
     })
+}
+
+fn resolve_agent_request_hive_id(
+    state: &AppState,
+    user_id: &str,
+    hive_id: Option<&str>,
+) -> Result<String, Response> {
+    let normalized = normalize_hive_id(hive_id.unwrap_or(DEFAULT_HIVE_ID));
+    let exists = state
+        .user_store
+        .get_hive(user_id, &normalized)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if exists.is_none() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            format!("hive {normalized} not found"),
+        ));
+    }
+    Ok(normalized)
 }
 
 fn normalize_tool_list(values: Vec<String>) -> Vec<String> {
@@ -1926,6 +1950,13 @@ struct AgentCreateRequest {
     icon: Option<String>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
+    #[serde(
+        default,
+        alias = "hiveId",
+        alias = "beeroomGroupId",
+        alias = "beeroom_group_id"
+    )]
+    hive_id: Option<String>,
     #[serde(default, alias = "copyFromAgentId", alias = "copy_from_agent_id")]
     copy_from_agent_id: Option<String>,
 }
@@ -1969,6 +2000,13 @@ struct AgentUpdateRequest {
     icon: Option<String>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
+    #[serde(
+        default,
+        alias = "hiveId",
+        alias = "beeroomGroupId",
+        alias = "beeroom_group_id"
+    )]
+    hive_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

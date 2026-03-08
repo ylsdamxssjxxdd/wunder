@@ -99,6 +99,7 @@ export const WORLD_EMOJI_CATALOG = [
 
 export const sectionRouteMap: Record<MessengerSection, string> = {
   messages: 'chat',
+  swarms: 'beeroom',
   users: 'user-world',
   groups: 'user-world',
   agents: 'home',

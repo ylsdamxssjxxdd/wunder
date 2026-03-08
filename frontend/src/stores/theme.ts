@@ -9,11 +9,25 @@ import {
   type ThemePalette
 } from '@/utils/themeAppearance';
 
-const THEME_MODE_STORAGE_KEY = 'wille-user-theme';
-const THEME_PALETTE_STORAGE_KEY = 'wille-user-accent-theme';
+const THEME_MODE_STORAGE_KEY = 'beeroom-user-theme';
+const THEME_PALETTE_STORAGE_KEY = 'beeroom-user-accent-theme';
+const LEGACY_THEME_MODE_STORAGE_KEY = 'wille-user-theme';
+const LEGACY_THEME_PALETTE_STORAGE_KEY = 'wille-user-accent-theme';
+
+const readStorageWithLegacy = (primaryKey: string, legacyKey: string) => {
+  const primary = localStorage.getItem(primaryKey);
+  if (primary !== null) {
+    return primary;
+  }
+  const legacy = localStorage.getItem(legacyKey);
+  if (legacy !== null) {
+    localStorage.setItem(primaryKey, legacy);
+  }
+  return legacy;
+};
 
 const readThemeModeFromStorage = () => {
-  const raw = localStorage.getItem(THEME_MODE_STORAGE_KEY);
+  const raw = readStorageWithLegacy(THEME_MODE_STORAGE_KEY, LEGACY_THEME_MODE_STORAGE_KEY);
   const normalized = normalizeThemeMode(raw);
   if (raw !== normalized) {
     localStorage.setItem(THEME_MODE_STORAGE_KEY, normalized);
@@ -22,7 +36,7 @@ const readThemeModeFromStorage = () => {
 };
 
 const readThemePaletteFromStorage = () => {
-  const raw = localStorage.getItem(THEME_PALETTE_STORAGE_KEY);
+  const raw = readStorageWithLegacy(THEME_PALETTE_STORAGE_KEY, LEGACY_THEME_PALETTE_STORAGE_KEY);
   const normalized = normalizeThemePalette(raw);
   if (raw !== normalized) {
     localStorage.setItem(THEME_PALETTE_STORAGE_KEY, normalized);
@@ -55,6 +69,7 @@ export const useThemeStore = defineStore('theme', {
       const nextMode = normalizeThemeMode(mode);
       this.mode = nextMode;
       localStorage.setItem(THEME_MODE_STORAGE_KEY, nextMode);
+      localStorage.setItem(LEGACY_THEME_MODE_STORAGE_KEY, nextMode);
       applyThemeToDocument(nextMode, this.palette);
     },
     setPalette(palette: unknown) {
@@ -70,6 +85,8 @@ export const useThemeStore = defineStore('theme', {
       this.mode = nextMode;
       localStorage.setItem(THEME_PALETTE_STORAGE_KEY, nextPalette);
       localStorage.setItem(THEME_MODE_STORAGE_KEY, nextMode);
+      localStorage.setItem(LEGACY_THEME_PALETTE_STORAGE_KEY, nextPalette);
+      localStorage.setItem(LEGACY_THEME_MODE_STORAGE_KEY, nextMode);
       applyThemeToDocument(nextMode, nextPalette);
     },
     toggleMode() {

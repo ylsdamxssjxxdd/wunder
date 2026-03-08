@@ -1975,8 +1975,9 @@
   - 返回：`data.total`、`data.items`（agent_id/user_rounds）
   - `agent_id` 为空表示默认入口（通用聊天）
 - `POST /wunder/agents`：创建智能体
-  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）、`hive_id`（可选）
   - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
+  - `hive_id` 兼容别名：`hiveId`、`beeroomGroupId`、`beeroom_group_id`
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
@@ -1986,7 +1987,7 @@
   - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`，为该智能体累计汇总）、`data.daily[]`（最近 `days` 天按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
   - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）查看通用聊天入口的运行记录
 - `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`（可选）
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`/`hive_id`（可选）
   - 返回：`data`（同智能体详情）
   - 默认入口支持：`agent_id` 为 `__default__`（或 `default`）时更新默认入口配置
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
@@ -2004,6 +2005,51 @@
 - 默认入口（`agent_id` 为空或 `__default__/default`）未配置时按当前用户可用工具集兜底（desktop 本地模式默认额外启用 `计划面板`）。
   - `approval_mode` 默认 `auto_edit`，用于控制命令执行/PTC 工具的审批强度。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
+
+### 4.1.57 `/wunder/beeroom/groups`
+
+- `GET /wunder/beeroom/groups`：列出当前用户全部蜂巢分组。
+  - Query：`include_archived?`、`mission_limit?`
+  - 返回：`data.items[]` / `data.total`，其中每个分组包含 `group_id/hive_id/name/description/status/is_default/agent_total/active_agent_total/idle_agent_total/running_mission_total/mission_total/mother_agent_id/mother_agent_name/members/latest_mission`。
+- `POST /wunder/beeroom/groups`：创建蜂巢分组。
+  - 入参（JSON）：`name`（必填）、`description?`、`group_id?`（兼容 `groupId` / `hive_id` / `hiveId`）、`mother_agent_id?`（兼容 `motherAgentId`）。
+  - 返回：`data`（蜂巢分组详情摘要）。
+
+### 4.1.58 `/wunder/beeroom/groups/{group_id}`
+
+- `GET /wunder/beeroom/groups/{group_id}`：获取蜂巢详情。
+  - Query：`mission_limit?`
+  - 返回：`data.group`（蜂巢摘要）、`data.agents[]`（完整成员态势）、`data.missions[]`（最近任务快照）。
+
+### 4.1.59 `/wunder/beeroom/groups/{group_id}/move_agents`
+
+- `POST /wunder/beeroom/groups/{group_id}/move_agents`：把若干智能体迁入指定蜂巢。
+  - 入参（JSON）：`agent_ids`（兼容 `agentIds`）。
+  - 返回：`data.moved`、`data.group_id`。
+
+### 4.1.60 `/wunder/beeroom/groups/{group_id}/missions`
+
+- `GET /wunder/beeroom/groups/{group_id}/missions`：按蜂巢查询任务列表。
+  - Query：`offset?`、`limit?`
+  - 返回：`data.items[]` / `data.total`，每条任务包含 `team_run_id/mission_id/hive_id/parent_session_id/entry_agent_id/mother_agent_id/strategy/status/completion_status/task_total/task_success/task_failed/context_tokens_total/context_tokens_peak/model_round_total/started_time/finished_time/elapsed_s/summary/error/updated_time/all_tasks_terminal/all_agents_idle/active_agent_ids/idle_agent_ids/tasks[]`。
+
+### 4.1.61 `/wunder/beeroom/groups/{group_id}/missions/{mission_id}`
+
+- `GET /wunder/beeroom/groups/{group_id}/missions/{mission_id}`：获取单个蜂巢任务详情。
+  - 后端会校验任务所属用户和 `hive_id` 是否与目标蜂巢一致。
+
+### 4.1.62 蜂群工具与 TeamRun 补充说明
+
+- `agent_swarm send` / `agent_swarm batch_send` 现在会：
+  - 自动解析当前蜂巢 `hive_id`；
+  - 只允许发现和派发同蜂巢成员；
+  - 自动认领/沿用母蜂；
+  - 创建 `team_run/team_task` 并回写 `mother_agent_id`、`session_run_id`；
+  - 在实际派发消息中自动附带 `SWARM_CONTEXT`（蜂巢基本信息、母蜂、发送者、活跃成员快照、`team_run_id/task_id` 等）。
+- TeamRun / TeamTask 相关返回体新增关键字段：
+  - `team_run.mother_agent_id`
+  - `team_task.session_run_id`
+  - 任务快照 `completion_status`（`running/awaiting_idle/completed/failed/cancelled`）
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。
   - `sandbox_container_id` 取值范围 1~10，默认 1；同一用户下相同容器编号的智能体共享同一文件工作区。
 

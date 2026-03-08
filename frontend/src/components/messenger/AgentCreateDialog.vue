@@ -42,6 +42,23 @@
             />
           </el-select>
         </el-form-item>
+        <el-form-item :label="t('messenger.agentCreate.beeroomGroup')">
+          <el-select
+            v-model="form.hive_id"
+            clearable
+            filterable
+            class="messenger-form-full"
+            :placeholder="t('messenger.agentCreate.beeroomGroupPlaceholder')"
+          >
+            <el-option :label="t('messenger.agentCreate.beeroomGroupDefault')" value="" />
+            <el-option
+              v-for="group in beeroomGroups"
+              :key="group.group_id"
+              :label="group.name || group.group_id"
+              :value="group.group_id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.systemPrompt')">
           <el-input
             v-model="form.system_prompt"
@@ -142,6 +159,11 @@ type AgentLike = {
   name: string;
 };
 
+type BeeroomGroupOption = {
+  group_id: string;
+  name?: string;
+};
+
 const props = defineProps({
   modelValue: {
     type: Boolean,
@@ -150,6 +172,14 @@ const props = defineProps({
   copyFromAgents: {
     type: Array as () => AgentLike[],
     default: () => []
+  },
+  beeroomGroups: {
+    type: Array as () => BeeroomGroupOption[],
+    default: () => []
+  },
+  defaultBeeroomGroupId: {
+    type: String,
+    default: ''
   }
 });
 
@@ -179,6 +209,7 @@ const form = reactive({
   name: '',
   description: '',
   copy_from_agent_id: '',
+  hive_id: '',
   system_prompt: '',
   tool_names: [] as string[],
   is_shared: false,
@@ -268,6 +299,7 @@ const resetForm = () => {
   form.name = '';
   form.description = '';
   form.copy_from_agent_id = '';
+  form.hive_id = String(props.defaultBeeroomGroupId || '').trim();
   form.system_prompt = '';
   form.tool_names = [...allToolValues.value];
   form.is_shared = false;
@@ -332,6 +364,7 @@ const handleSave = async () => {
       name,
       description: String(form.description || '').trim(),
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
+      hive_id: String(form.hive_id || '').trim(),
       system_prompt: String(form.system_prompt || ''),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
@@ -340,6 +373,9 @@ const handleSave = async () => {
     };
     if (!payload.copy_from_agent_id) {
       delete (payload as Record<string, unknown>).copy_from_agent_id;
+    }
+    if (!payload.hive_id) {
+      delete (payload as Record<string, unknown>).hive_id;
     }
     emit('submit', payload);
   } finally {

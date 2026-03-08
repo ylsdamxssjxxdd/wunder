@@ -18,6 +18,8 @@ export type { ThemeMode, ThemePalette };
 
 export const USER_APPEARANCE_STORAGE_PREFIX = 'messenger_user_appearance_v1:';
 const LEGACY_USER_AVATAR_STORAGE_PREFIX = 'messenger_user_avatar_v1:';
+const THEME_MODE_STORAGE_KEY = 'beeroom-user-theme';
+const THEME_PALETTE_STORAGE_KEY = 'beeroom-user-accent-theme';
 const LEGACY_THEME_MODE_STORAGE_KEY = 'wille-user-theme';
 const LEGACY_THEME_PALETTE_STORAGE_KEY = 'wille-user-accent-theme';
 
@@ -128,6 +130,8 @@ export const writeUserAppearanceToStorage = (
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(resolveAppearanceStorageKey(userId), JSON.stringify(value));
+    window.localStorage.setItem(THEME_MODE_STORAGE_KEY, value.themeMode);
+    window.localStorage.setItem(THEME_PALETTE_STORAGE_KEY, value.themePalette);
     window.localStorage.setItem(LEGACY_THEME_MODE_STORAGE_KEY, value.themeMode);
     window.localStorage.setItem(LEGACY_THEME_PALETTE_STORAGE_KEY, value.themePalette);
     const legacyAvatarKey = `${LEGACY_USER_AVATAR_STORAGE_PREFIX}${String(userId || '').trim() || 'guest'}`;
@@ -151,9 +155,13 @@ const readLegacyUserAppearanceFromStorage = (
   if (typeof window === 'undefined') {
     return next;
   }
-  next.themePalette = normalizeThemePalette(window.localStorage.getItem(LEGACY_THEME_PALETTE_STORAGE_KEY));
+  next.themePalette = normalizeThemePalette(
+    window.localStorage.getItem(THEME_PALETTE_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_THEME_PALETTE_STORAGE_KEY)
+  );
   next.themeMode = resolveThemeModeForPalette(
-    window.localStorage.getItem(LEGACY_THEME_MODE_STORAGE_KEY),
+    window.localStorage.getItem(THEME_MODE_STORAGE_KEY) ??
+      window.localStorage.getItem(LEGACY_THEME_MODE_STORAGE_KEY),
     next.themePalette
   );
   const legacyAvatarKey = `${LEGACY_USER_AVATAR_STORAGE_PREFIX}${String(userId || '').trim() || 'guest'}`;

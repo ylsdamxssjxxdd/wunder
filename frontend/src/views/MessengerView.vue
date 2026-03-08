@@ -141,6 +141,9 @@
           :is-contact-online="isContactOnline"
           :format-contact-presence="formatContactPresence"
           :resolve-unread="resolveUnread"
+          :filtered-beeroom-groups="filteredBeeroomGroups"
+          :selected-beeroom-group-id="beeroomStore.activeGroupId"
+          :select-beeroom-group="selectBeeroomGroup"
           :filtered-groups="filteredGroups"
           :selected-group-id="selectedGroupId"
           :select-group="selectGroup"
@@ -416,6 +419,20 @@
                 </div>
 
               </template>
+            </template>
+
+            <template v-else-if="sessionHub.activeSection === 'swarms'">
+              <BeeroomWorkbench
+                :group="selectedBeeroomGroup"
+                :agents="beeroomStore.activeAgents"
+                :missions="beeroomStore.activeMissions"
+                :available-agents="beeroomCandidateAgents"
+                :loading="beeroomStore.detailLoading || beeroomStore.loading"
+                :refreshing="beeroomStore.refreshing"
+                :error="beeroomStore.error"
+                @refresh="refreshActiveBeeroom"
+                @move-agents="handleBeeroomMoveAgents"
+              />
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'users'">
@@ -1205,6 +1222,18 @@
       :resolve-unit-label="resolveUnitLabel"
       :submit-group-create="submitGroupCreate"
     />
+    <AgentCreateDialog
+      v-model="agentCreateVisible"
+      :copy-from-agents="agentCreateCopyFromAgents"
+      :beeroom-groups="beeroomGroupOptions"
+      :default-beeroom-group-id="defaultAgentCreateBeeroomGroupId"
+      @submit="submitAgentCreate"
+    />
+    <BeeroomCreateDialog
+      v-model="beeroomCreateVisible"
+      :candidate-agents="beeroomCandidateAgents"
+      @submit="submitBeeroomCreate"
+    />
   </div>
 </template>
 
@@ -1227,7 +1256,10 @@ import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
+import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
+import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
+import AgentCreateDialog from '@/components/messenger/AgentCreateDialog.vue';
 import {
   scheduleMessengerBootstrapBackgroundTasks,
   settleMessengerBootstrapTasks,
@@ -1271,6 +1303,7 @@ import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
+import { useBeeroomStore, type BeeroomGroup } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
 import { usePerformanceStore } from '@/stores/performance';
 import { useThemeStore } from '@/stores/theme';
@@ -1386,6 +1419,7 @@ const { t } = useI18n();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
+const beeroomStore = useBeeroomStore();
 const performanceStore = usePerformanceStore();
 const themeStore = useThemeStore();
 const userWorldStore = useUserWorldStore();
@@ -1441,6 +1475,8 @@ const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
 const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
+const agentCreateVisible = ref(false);
+const beeroomCreateVisible = ref(false);
 const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const worldDraft = ref('');
@@ -1733,6 +1769,7 @@ const sectionOptions = computed(() => {
   return [
     { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
     { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
+    { key: 'swarms' as MessengerSection, icon: 'fa-solid fa-hexagon-nodes', label: t('messenger.section.swarms') },
     { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
     { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
     { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
@@ -1752,7 +1789,9 @@ const leftRailMainSectionOptions = computed(() =>
 );
 
 const leftRailSocialSectionOptions = computed(() =>
-  sectionOptions.value.filter((item) => item.key === 'users' || item.key === 'groups')
+  sectionOptions.value.filter(
+    (item) => item.key === 'swarms' || item.key === 'users' || item.key === 'groups'
+  )
 );
 
 const isLeftNavSectionActive = (section: MessengerSection): boolean => {
@@ -2473,6 +2512,10 @@ const selectedGroup = computed(() =>
   ) || null
 );
 
+const selectedBeeroomGroup = computed<BeeroomGroup | null>(
+  () => beeroomStore.activeGroup || beeroomStore.activeGroupSummary || null
+);
+
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
 const showHelperAppsWorkspace = computed(
   () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
@@ -2766,6 +2809,65 @@ const filteredGroups = computed(() => {
     const groupId = String(item?.group_id || '').toLowerCase();
     return !text || name.includes(text) || groupId.includes(text);
   });
+});
+
+const filteredBeeroomGroups = computed(() => {
+  const text = keyword.value.toLowerCase();
+  return (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).filter((item) => {
+    const name = String(item?.name || '').toLowerCase();
+    const groupId = String(item?.group_id || item?.hive_id || '').toLowerCase();
+    const description = String(item?.description || '').toLowerCase();
+    return !text || name.includes(text) || groupId.includes(text) || description.includes(text);
+  });
+});
+
+const beeroomGroupOptions = computed(() =>
+  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((item) => ({
+    group_id: String(item?.group_id || item?.hive_id || '').trim(),
+    name: String(item?.name || item?.group_id || item?.hive_id || '').trim()
+  }))
+);
+
+const defaultAgentCreateBeeroomGroupId = computed(() => {
+  if (sessionHub.activeSection === 'swarms') {
+    return String(beeroomStore.activeGroupId || '').trim();
+  }
+  const defaultGroup = beeroomStore.groups.find((item) => item.is_default);
+  return String(defaultGroup?.group_id || defaultGroup?.hive_id || '').trim();
+});
+
+const beeroomCandidateAgents = computed(() => {
+  const currentGroupId = String(beeroomStore.activeGroupId || '').trim();
+  const memberIds = new Set(
+    beeroomStore.activeAgents.map((item) => String(item?.agent_id || '').trim()).filter(Boolean)
+  );
+  return ownedAgents.value
+    .filter((item) => normalizeAgentId(item?.id) !== DEFAULT_AGENT_KEY)
+    .filter((item) => {
+      if (!currentGroupId) return true;
+      const agentHiveId = String(item?.hive_id || item?.hiveId || '').trim();
+      const agentId = String(item?.id || '').trim();
+      return agentHiveId !== currentGroupId && !memberIds.has(agentId);
+    })
+    .map((item) => ({
+      id: String(item?.id || '').trim(),
+      name: String(item?.name || item?.id || '').trim()
+    }))
+    .filter((item) => item.id);
+});
+
+const agentCreateCopyFromAgents = computed(() => {
+  const seen = new Set<string>();
+  return [...ownedAgents.value, ...sharedAgents.value]
+    .map((item) => ({
+      id: String(item?.id || '').trim(),
+      name: String(item?.name || item?.id || '').trim()
+    }))
+    .filter((item) => {
+      if (!item.id || seen.has(item.id)) return false;
+      seen.add(item.id);
+      return true;
+    });
 });
 
 const filteredGroupCreateContacts = computed(() => {
@@ -5885,28 +5987,68 @@ const buildQuickAgentName = () => {
 };
 
 const createAgentQuickly = async () => {
-  if (quickCreatingAgent.value) {
-    return;
-  }
+  agentCreateVisible.value = true;
+};
+
+const submitAgentCreate = async (payload: Record<string, unknown>) => {
+  if (quickCreatingAgent.value) return;
   quickCreatingAgent.value = true;
   try {
-    const created = await agentStore.createAgent({
-      name: buildQuickAgentName(),
-      description: '',
-      system_prompt: '',
-      tool_names: []
-    });
+    const created = await agentStore.createAgent(payload);
+    agentCreateVisible.value = false;
     ElMessage.success(t('portal.agent.createSuccess'));
-    const tasks: Promise<unknown>[] = [loadRunningAgents()];
+    const tasks: Promise<unknown>[] = [loadRunningAgents(), beeroomStore.loadGroups()];
     if (!cronPermissionDenied.value) {
       tasks.push(loadCronAgentIds());
     }
     await Promise.all(tasks);
-    openCreatedAgentSettings(created?.id);
+    if (sessionHub.activeSection === 'swarms' || String(payload.hive_id || '').trim()) {
+      if (String(payload.hive_id || '').trim()) {
+        beeroomStore.setActiveGroup(payload.hive_id);
+      }
+      await beeroomStore.loadActiveGroup().catch(() => null);
+    }
+    if (created?.id) {
+      openCreatedAgentSettings(created.id);
+    }
   } catch (error) {
     showApiError(error, t('portal.agent.saveFailed'));
   } finally {
     quickCreatingAgent.value = false;
+  }
+};
+
+const refreshActiveBeeroom = async () => {
+  try {
+    await Promise.all([beeroomStore.loadGroups(), beeroomStore.loadActiveGroup({ silent: true })]);
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
+};
+
+const submitBeeroomCreate = async (payload: Record<string, unknown>) => {
+  try {
+    const group = await beeroomStore.createGroup(payload);
+    beeroomCreateVisible.value = false;
+    ElMessage.success(t('beeroom.message.hiveCreated'));
+    if (group?.group_id || group?.hive_id) {
+      beeroomStore.setActiveGroup(group.group_id || group.hive_id);
+      await beeroomStore.loadActiveGroup();
+    }
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
+};
+
+const handleBeeroomMoveAgents = async (agentIds: string[]) => {
+  const groupId = String(beeroomStore.activeGroupId || '').trim();
+  if (!groupId || !agentIds.length) return;
+  try {
+    await beeroomStore.moveAgents(groupId, agentIds);
+    await agentStore.loadAgents();
+    ElMessage.success(t('beeroom.message.agentMoved'));
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
   }
 };
 
@@ -5920,6 +6062,10 @@ const handleSearchCreateAction = async () => {
     groupCreateKeyword.value = '';
     groupCreateMemberIds.value = [];
     groupCreateVisible.value = true;
+    return;
+  }
+  if (sessionHub.activeSection === 'swarms') {
+    beeroomCreateVisible.value = true;
     return;
   }
   if (sessionHub.activeSection === 'agents') {
@@ -5945,6 +6091,13 @@ const selectContact = (contact: Record<string, unknown>) => {
 const selectGroup = (group: Record<string, unknown>) => {
   selectedGroupId.value = String(group?.group_id || '').trim();
   selectedContactUserId.value = '';
+};
+
+const selectBeeroomGroup = async (group: Record<string, unknown>) => {
+  const groupId = String(group?.group_id || group?.hive_id || '').trim();
+  if (!groupId) return;
+  beeroomStore.setActiveGroup(groupId);
+  await beeroomStore.loadActiveGroup().catch(() => null);
 };
 
 const openContactConversationFromList = async (contact: Record<string, unknown>) => {
@@ -6746,6 +6899,13 @@ const ensureSectionSelection = () => {
   if (sessionHub.activeSection === 'groups') {
     if (!selectedGroupId.value && filteredGroups.value.length > 0) {
       selectedGroupId.value = String(filteredGroups.value[0]?.group_id || '');
+    }
+    return;
+  }
+
+  if (sessionHub.activeSection === 'swarms') {
+    if (!beeroomStore.activeGroupId && filteredBeeroomGroups.value.length > 0) {
+      beeroomStore.setActiveGroup(filteredBeeroomGroups.value[0]?.group_id || '');
     }
     return;
   }
@@ -8164,6 +8324,7 @@ const loadChannelBoundAgentIds = async () => {
 const refreshAll = async () => {
   const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
+    beeroomStore.loadGroups(),
     chatStore.loadSessions(),
     userWorldStore.bootstrap(true),
     loadOrgUnits(),
@@ -8433,6 +8594,11 @@ const bootstrap = async () => {
     },
     {
       critical: true,
+      sections: ['swarms'],
+      run: () => beeroomStore.loadGroups()
+    },
+    {
+      critical: true,
       run: () => chatStore.loadSessions()
     },
     {
@@ -8551,6 +8717,7 @@ watch(
 watch(
   () => currentUserId.value,
   () => {
+    beeroomStore.resetState();
     void hydrateCurrentUserAppearance();
     cronPermissionDenied.value = false;
     cronAgentIds.value = new Set<string>();
@@ -8599,9 +8766,25 @@ watch(
       resetContactVirtualScroll();
       void nextTick(syncContactVirtualMetrics);
     }
+    if (section === 'swarms') {
+      if (!beeroomStore.groups.length) {
+        void beeroomStore.loadGroups().then(() => ensureSectionSelection());
+      }
+      if (beeroomStore.activeGroupId) {
+        void beeroomStore.loadActiveGroup().catch(() => null);
+      }
+    }
     ensureSectionSelection();
   },
   { immediate: true }
+);
+
+watch(
+  () => beeroomStore.activeGroupId,
+  (value) => {
+    if (sessionHub.activeSection !== 'swarms' || !String(value || '').trim()) return;
+    void beeroomStore.loadActiveGroup({ silent: true }).catch(() => null);
+  }
 );
 
 watch(

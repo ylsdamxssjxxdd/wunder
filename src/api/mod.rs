@@ -6,6 +6,7 @@ pub mod admin_sim_lab;
 pub mod admin_swarm;
 pub(crate) mod attachment_convert;
 pub mod auth;
+pub mod beeroom;
 pub mod channel;
 pub mod chat;
 pub mod chat_ws;
@@ -39,6 +40,7 @@ use std::sync::Arc;
 pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(auth::router())
+        .merge(beeroom::router())
         .merge(channel::router())
         .merge(chat::router())
         .merge(chat_ws::router())
@@ -75,6 +77,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
 pub fn build_desktop_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(auth::router())
+        .merge(beeroom::router())
         .merge(chat::router())
         .merge(chat_ws::router())
         .merge(core_ws::router())

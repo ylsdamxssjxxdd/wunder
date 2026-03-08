@@ -444,6 +444,7 @@ async fn create_and_enqueue_runs(
             hive_id: DEFAULT_HIVE_ID.to_string(),
             parent_session_id: parent_session_id.clone(),
             parent_agent_id: None,
+            mother_agent_id: None,
             strategy: "parallel_all".to_string(),
             // Avoid runner picking up this run before all tasks are persisted.
             status: "preparing".to_string(),
@@ -484,6 +485,7 @@ async fn create_and_enqueue_runs(
                 agent_id,
                 target_session_id: None,
                 spawned_session_id: None,
+                session_run_id: None,
                 status: "queued".to_string(),
                 retry_count: 0,
                 priority: (args.tasks_per_run - task_index) as i64,

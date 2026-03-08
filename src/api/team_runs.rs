@@ -1,10 +1,11 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
+use crate::services::swarm::beeroom::{claim_mother_agent, snapshot_team_run};
 use crate::services::swarm::events::{
     TEAM_FINISH, TEAM_START, TEAM_TASK_DISPATCH, TEAM_TASK_UPDATE,
 };
 use crate::state::AppState;
-use crate::storage::{TeamRunRecord, TeamTaskRecord, DEFAULT_HIVE_ID};
+use crate::storage::{normalize_hive_id, TeamRunRecord, TeamTaskRecord, DEFAULT_HIVE_ID};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -51,7 +52,19 @@ async fn create_team_run(
         ));
     }
 
-    let resolved_hive_id = DEFAULT_HIVE_ID.to_string();
+    let parent_agent_id = resolve_parent_agent_id(&state, &user_id, &parent_session_id);
+    let resolved_hive_id = resolve_team_run_hive_id(
+        state.as_ref(),
+        &user_id,
+        parent_agent_id.as_deref(),
+        payload.hive_id.as_deref(),
+        &payload.tasks,
+    )?;
+    let mother_agent_id = parent_agent_id
+        .as_deref()
+        .map(|agent_id| claim_mother_agent(state.storage.as_ref(), &user_id, &resolved_hive_id, agent_id))
+        .transpose()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
     let swarm_config = state.config_store.get().await.tools.swarm.clone();
     let max_parallel_tasks = swarm_config.max_parallel_tasks_per_team.max(1) as i64;
@@ -99,7 +112,7 @@ async fn create_team_run(
         if agent_id.is_empty() {
             continue;
         }
-        let _agent = state
+        let agent = state
             .user_store
             .get_user_agent(&user_id, &agent_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
@@ -110,6 +123,13 @@ async fn create_team_run(
                     format!("agent {agent_id} not found"),
                 )
             })?;
+        if normalize_hive_id(&agent.hive_id) != resolved_hive_id {
+            return Err(error_with_code(
+                StatusCode::BAD_REQUEST,
+                "SWARM_HIVE_DENIED",
+                format!("agent {agent_id} is outside hive {resolved_hive_id}"),
+            ));
+        }
         task_total += 1;
         tasks.push((
             agent_id,
@@ -152,7 +172,8 @@ async fn create_team_run(
         user_id: user_id.clone(),
         hive_id: resolved_hive_id.clone(),
         parent_session_id: parent_session_id.clone(),
-        parent_agent_id: resolve_parent_agent_id(&state, &user_id, &parent_session_id),
+        parent_agent_id,
+        mother_agent_id,
         strategy,
         status: "preparing".to_string(),
         task_total,
@@ -198,6 +219,7 @@ async fn create_team_run(
             agent_id,
             target_session_id,
             spawned_session_id: None,
+            session_run_id: None,
             status: "queued".to_string(),
             retry_count: 0,
             priority,
@@ -243,7 +265,7 @@ async fn create_team_run(
     Ok(Json(json!({
         "data": {
             "team_run_id": queued_record.team_run_id,
-            "hive_id": DEFAULT_HIVE_ID,
+            "hive_id": queued_record.hive_id,
             "task_total": queued_record.task_total,
             "status": queued_record.status,
         }
@@ -268,17 +290,21 @@ async fn get_team_run(
             "team run not found".to_string(),
         ));
     }
-    let tasks = state
-        .user_store
-        .list_team_tasks(&run.team_run_id)
+    let snapshot = snapshot_team_run(state.storage.as_ref(), Some(state.monitor.as_ref()), &run)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(Json(json!({
         "data": {
-            "run": team_run_payload(&run),
-            "tasks": tasks
+            "run": team_run_payload(&snapshot.run),
+            "tasks": snapshot
+                .tasks
                 .into_iter()
                 .map(|item| team_task_payload(&item))
                 .collect::<Vec<_>>(),
+            "completion_status": snapshot.completion_status,
+            "all_tasks_terminal": snapshot.all_tasks_terminal,
+            "all_agents_idle": snapshot.all_agents_idle,
+            "active_agent_ids": snapshot.active_agent_ids,
+            "idle_agent_ids": snapshot.idle_agent_ids,
         }
     })))
 }
@@ -441,9 +467,10 @@ fn team_run_payload(record: &TeamRunRecord) -> Value {
     json!({
         "team_run_id": record.team_run_id,
         "user_id": record.user_id,
-        "hive_id": DEFAULT_HIVE_ID,
+        "hive_id": record.hive_id,
         "parent_session_id": record.parent_session_id,
         "parent_agent_id": record.parent_agent_id,
+        "mother_agent_id": record.mother_agent_id,
         "strategy": record.strategy,
         "status": record.status,
         "task_total": record.task_total,
@@ -466,10 +493,11 @@ fn team_task_payload(record: &TeamTaskRecord) -> Value {
         "task_id": record.task_id,
         "team_run_id": record.team_run_id,
         "user_id": record.user_id,
-        "hive_id": DEFAULT_HIVE_ID,
+        "hive_id": record.hive_id,
         "agent_id": record.agent_id,
         "target_session_id": record.target_session_id,
         "spawned_session_id": record.spawned_session_id,
+        "session_run_id": record.session_run_id,
         "status": record.status,
         "retry_count": record.retry_count,
         "priority": record.priority,
@@ -494,9 +522,76 @@ fn error_with_code(status: StatusCode, code: &str, message: String) -> Response 
     crate::api::errors::error_response_with_detail(status, Some(code), message, None, None)
 }
 
+fn resolve_team_run_hive_id(
+    state: &AppState,
+    user_id: &str,
+    parent_agent_id: Option<&str>,
+    requested_hive_id: Option<&str>,
+    tasks: &[CreateTeamTaskRequest],
+) -> Result<String, Response> {
+    if let Some(agent_id) = parent_agent_id.map(str::trim).filter(|value| !value.is_empty()) {
+        let Some(agent) = state
+            .user_store
+            .get_user_agent(user_id, agent_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        else {
+            return Err(error_with_code(
+                StatusCode::BAD_REQUEST,
+                "SWARM_HIVE_DENIED",
+                format!("parent agent {agent_id} not found"),
+            ));
+        };
+        let hive_id = normalize_hive_id(&agent.hive_id);
+        if let Some(requested) = requested_hive_id.map(normalize_hive_id) {
+            if requested != hive_id {
+                return Err(error_with_code(
+                    StatusCode::BAD_REQUEST,
+                    "SWARM_HIVE_DENIED",
+                    "requested hive does not match parent agent hive".to_string(),
+                ));
+            }
+        }
+        return Ok(hive_id);
+    }
+
+    if let Some(requested) = requested_hive_id.map(normalize_hive_id) {
+        let hive = state
+            .user_store
+            .get_hive(user_id, &requested)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if hive.is_none() {
+            return Err(error_with_code(
+                StatusCode::BAD_REQUEST,
+                "SWARM_HIVE_DENIED",
+                format!("hive {requested} not found"),
+            ));
+        }
+        return Ok(requested);
+    }
+
+    for task in tasks {
+        let agent_id = task.agent_id.trim();
+        if agent_id.is_empty() {
+            continue;
+        }
+        let Some(agent) = state
+            .user_store
+            .get_user_agent(user_id, agent_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        else {
+            continue;
+        };
+        return Ok(normalize_hive_id(&agent.hive_id));
+    }
+
+    Ok(DEFAULT_HIVE_ID.to_string())
+}
+
 #[derive(Debug, Deserialize)]
 struct CreateTeamRunRequest {
     parent_session_id: String,
+    #[serde(default, alias = "hiveId", alias = "hive_id")]
+    hive_id: Option<String>,
     #[serde(default)]
     strategy: Option<String>,
     #[serde(default)]

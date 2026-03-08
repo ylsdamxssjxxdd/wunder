@@ -357,17 +357,28 @@ impl SqliteStorage {
         Ok(())
     }
 
+    fn ensure_team_run_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "team_runs")?;
+        if !columns.contains("mother_agent_id") {
+            conn.execute("ALTER TABLE team_runs ADD COLUMN mother_agent_id TEXT", [])?;
+        }
+        Ok(())
+    }
+
+    fn ensure_team_task_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "team_tasks")?;
+        if !columns.contains("session_run_id") {
+            conn.execute("ALTER TABLE team_tasks ADD COLUMN session_run_id TEXT", [])?;
+        }
+        Ok(())
+    }
+
     fn ensure_user_world_group_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
     fn ensure_cron_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(cron_jobs)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows.flatten() {
-            columns.insert(name);
-        }
+        let columns = load_table_columns(conn, "cron_jobs")?;
         if !columns.contains("consecutive_failures") {
             conn.execute(
                 "ALTER TABLE cron_jobs ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0",
@@ -394,6 +405,16 @@ impl SqliteStorage {
         }
         Ok(())
     }
+}
+
+fn load_table_columns(conn: &Connection, table: &str) -> Result<HashSet<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut columns = HashSet::new();
+    for name in rows.flatten() {
+        columns.insert(name);
+    }
+    Ok(columns)
 }
 
 fn append_tool_log_exclusions(filters: &mut Vec<String>, params_list: &mut Vec<SqlValue>) {
@@ -1058,6 +1079,7 @@ impl StorageBackend for SqliteStorage {
               hive_id TEXT NOT NULL,
               parent_session_id TEXT NOT NULL,
               parent_agent_id TEXT,
+              mother_agent_id TEXT,
               strategy TEXT NOT NULL,
               status TEXT NOT NULL,
               task_total INTEGER NOT NULL DEFAULT 0,
@@ -1087,6 +1109,7 @@ impl StorageBackend for SqliteStorage {
               agent_id TEXT NOT NULL,
               target_session_id TEXT,
               spawned_session_id TEXT,
+              session_run_id TEXT,
               status TEXT NOT NULL,
               retry_count INTEGER NOT NULL DEFAULT 0,
               priority INTEGER NOT NULL DEFAULT 0,
@@ -1131,6 +1154,8 @@ impl StorageBackend for SqliteStorage {
         self.ensure_channel_columns(&conn)?;
         self.ensure_session_lock_columns(&conn)?;
         self.ensure_user_agent_columns(&conn)?;
+        self.ensure_team_run_columns(&conn)?;
+        self.ensure_team_task_columns(&conn)?;
         self.ensure_user_world_group_columns(&conn)?;
         self.ensure_cron_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
@@ -6774,13 +6799,14 @@ impl StorageBackend for SqliteStorage {
         self.ensure_initialized()?;
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO team_runs (team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time)              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(team_run_id) DO UPDATE SET user_id = excluded.user_id, hive_id = excluded.hive_id, parent_session_id = excluded.parent_session_id, parent_agent_id = excluded.parent_agent_id,              strategy = excluded.strategy, status = excluded.status, task_total = excluded.task_total, task_success = excluded.task_success, task_failed = excluded.task_failed,              context_tokens_total = excluded.context_tokens_total, context_tokens_peak = excluded.context_tokens_peak, model_round_total = excluded.model_round_total,              started_time = excluded.started_time, finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s, summary = excluded.summary, error = excluded.error, updated_time = excluded.updated_time",
+            "INSERT INTO team_runs (team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time)              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(team_run_id) DO UPDATE SET user_id = excluded.user_id, hive_id = excluded.hive_id, parent_session_id = excluded.parent_session_id, parent_agent_id = excluded.parent_agent_id, mother_agent_id = excluded.mother_agent_id,              strategy = excluded.strategy, status = excluded.status, task_total = excluded.task_total, task_success = excluded.task_success, task_failed = excluded.task_failed,              context_tokens_total = excluded.context_tokens_total, context_tokens_peak = excluded.context_tokens_peak, model_round_total = excluded.model_round_total,              started_time = excluded.started_time, finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s, summary = excluded.summary, error = excluded.error, updated_time = excluded.updated_time",
             params![
                 record.team_run_id,
                 record.user_id,
                 normalize_hive_id(&record.hive_id),
                 record.parent_session_id,
                 record.parent_agent_id,
+                record.mother_agent_id,
                 record.strategy,
                 record.status,
                 record.task_total,
@@ -6809,7 +6835,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time FROM team_runs WHERE team_run_id = ?",
+                "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time FROM team_runs WHERE team_run_id = ?",
                 params![cleaned],
                 |row| {
                     Ok(TeamRunRecord {
@@ -6818,20 +6844,21 @@ impl StorageBackend for SqliteStorage {
                         hive_id: normalize_hive_id(&row.get::<_, String>(2)?),
                         parent_session_id: row.get(3)?,
                         parent_agent_id: row.get(4)?,
-                        strategy: row.get(5)?,
-                        status: row.get(6)?,
-                        task_total: row.get(7)?,
-                        task_success: row.get(8)?,
-                        task_failed: row.get(9)?,
-                        context_tokens_total: row.get(10)?,
-                        context_tokens_peak: row.get(11)?,
-                        model_round_total: row.get(12)?,
-                        started_time: row.get(13)?,
-                        finished_time: row.get(14)?,
-                        elapsed_s: row.get(15)?,
-                        summary: row.get(16)?,
-                        error: row.get(17)?,
-                        updated_time: row.get(18)?,
+                        mother_agent_id: row.get(5)?,
+                        strategy: row.get(6)?,
+                        status: row.get(7)?,
+                        task_total: row.get(8)?,
+                        task_success: row.get(9)?,
+                        task_failed: row.get(10)?,
+                        context_tokens_total: row.get(11)?,
+                        context_tokens_peak: row.get(12)?,
+                        model_round_total: row.get(13)?,
+                        started_time: row.get(14)?,
+                        finished_time: row.get(15)?,
+                        elapsed_s: row.get(16)?,
+                        summary: row.get(17)?,
+                        error: row.get(18)?,
+                        updated_time: row.get(19)?,
                     })
                 },
             )
@@ -6874,7 +6901,7 @@ impl StorageBackend for SqliteStorage {
         query_values.push(SqlValue::from(offset.max(0)));
         query_values.push(SqlValue::from(limit.max(1)));
         let query_sql = format!(
-            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE {where_clause} ORDER BY updated_time DESC LIMIT ? OFFSET ?"
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE {where_clause} ORDER BY updated_time DESC LIMIT ? OFFSET ?"
         );
         let mut stmt = conn.prepare(&query_sql)?;
         let rows = stmt
@@ -6885,20 +6912,21 @@ impl StorageBackend for SqliteStorage {
                     hive_id: normalize_hive_id(&row.get::<_, String>(2)?),
                     parent_session_id: row.get(3)?,
                     parent_agent_id: row.get(4)?,
-                    strategy: row.get(5)?,
-                    status: row.get(6)?,
-                    task_total: row.get(7)?,
-                    task_success: row.get(8)?,
-                    task_failed: row.get(9)?,
-                    context_tokens_total: row.get(10)?,
-                    context_tokens_peak: row.get(11)?,
-                    model_round_total: row.get(12)?,
-                    started_time: row.get(13)?,
-                    finished_time: row.get(14)?,
-                    elapsed_s: row.get(15)?,
-                    summary: row.get(16)?,
-                    error: row.get(17)?,
-                    updated_time: row.get(18)?,
+                    mother_agent_id: row.get(5)?,
+                    strategy: row.get(6)?,
+                    status: row.get(7)?,
+                    task_total: row.get(8)?,
+                    task_success: row.get(9)?,
+                    task_failed: row.get(10)?,
+                    context_tokens_total: row.get(11)?,
+                    context_tokens_peak: row.get(12)?,
+                    model_round_total: row.get(13)?,
+                    started_time: row.get(14)?,
+                    finished_time: row.get(15)?,
+                    elapsed_s: row.get(16)?,
+                    summary: row.get(17)?,
+                    error: row.get(18)?,
+                    updated_time: row.get(19)?,
                 })
             })?
             .collect::<std::result::Result<Vec<TeamRunRecord>, _>>()?;
@@ -6926,7 +6954,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let placeholders = vec!["?"; cleaned_statuses.len()].join(",");
         let query_sql = format!(
-            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE status IN ({placeholders}) ORDER BY updated_time ASC LIMIT ? OFFSET ?"
+            "SELECT team_run_id, user_id, hive_id, parent_session_id, parent_agent_id, mother_agent_id, strategy, status, task_total, task_success, task_failed, context_tokens_total, context_tokens_peak, model_round_total, started_time, finished_time, elapsed_s, summary, error, updated_time              FROM team_runs WHERE status IN ({placeholders}) ORDER BY updated_time ASC LIMIT ? OFFSET ?"
         );
         let mut values = cleaned_statuses
             .into_iter()
@@ -6944,20 +6972,21 @@ impl StorageBackend for SqliteStorage {
                     hive_id: normalize_hive_id(&row.get::<_, String>(2)?),
                     parent_session_id: row.get(3)?,
                     parent_agent_id: row.get(4)?,
-                    strategy: row.get(5)?,
-                    status: row.get(6)?,
-                    task_total: row.get(7)?,
-                    task_success: row.get(8)?,
-                    task_failed: row.get(9)?,
-                    context_tokens_total: row.get(10)?,
-                    context_tokens_peak: row.get(11)?,
-                    model_round_total: row.get(12)?,
-                    started_time: row.get(13)?,
-                    finished_time: row.get(14)?,
-                    elapsed_s: row.get(15)?,
-                    summary: row.get(16)?,
-                    error: row.get(17)?,
-                    updated_time: row.get(18)?,
+                    mother_agent_id: row.get(5)?,
+                    strategy: row.get(6)?,
+                    status: row.get(7)?,
+                    task_total: row.get(8)?,
+                    task_success: row.get(9)?,
+                    task_failed: row.get(10)?,
+                    context_tokens_total: row.get(11)?,
+                    context_tokens_peak: row.get(12)?,
+                    model_round_total: row.get(13)?,
+                    started_time: row.get(14)?,
+                    finished_time: row.get(15)?,
+                    elapsed_s: row.get(16)?,
+                    summary: row.get(17)?,
+                    error: row.get(18)?,
+                    updated_time: row.get(19)?,
                 })
             })?
             .collect::<std::result::Result<Vec<TeamRunRecord>, _>>()?;
@@ -6968,7 +6997,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_initialized()?;
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO team_tasks (task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time)              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(task_id) DO UPDATE SET team_run_id = excluded.team_run_id, user_id = excluded.user_id, hive_id = excluded.hive_id, agent_id = excluded.agent_id,              target_session_id = excluded.target_session_id, spawned_session_id = excluded.spawned_session_id, status = excluded.status, retry_count = excluded.retry_count,              priority = excluded.priority, started_time = excluded.started_time, finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s,              result_summary = excluded.result_summary, error = excluded.error, updated_time = excluded.updated_time",
+            "INSERT INTO team_tasks (task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, session_run_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time)              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)              ON CONFLICT(task_id) DO UPDATE SET team_run_id = excluded.team_run_id, user_id = excluded.user_id, hive_id = excluded.hive_id, agent_id = excluded.agent_id,              target_session_id = excluded.target_session_id, spawned_session_id = excluded.spawned_session_id, session_run_id = excluded.session_run_id, status = excluded.status, retry_count = excluded.retry_count,              priority = excluded.priority, started_time = excluded.started_time, finished_time = excluded.finished_time, elapsed_s = excluded.elapsed_s,              result_summary = excluded.result_summary, error = excluded.error, updated_time = excluded.updated_time",
             params![
                 record.task_id,
                 record.team_run_id,
@@ -6977,6 +7006,7 @@ impl StorageBackend for SqliteStorage {
                 record.agent_id,
                 record.target_session_id,
                 record.spawned_session_id,
+                record.session_run_id,
                 record.status,
                 record.retry_count,
                 record.priority,
@@ -6999,7 +7029,7 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time              FROM team_tasks WHERE team_run_id = ? ORDER BY updated_time DESC",
+            "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, session_run_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time              FROM team_tasks WHERE team_run_id = ? ORDER BY updated_time DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_run_id], |row| {
@@ -7011,15 +7041,16 @@ impl StorageBackend for SqliteStorage {
                     agent_id: row.get(4)?,
                     target_session_id: row.get(5)?,
                     spawned_session_id: row.get(6)?,
-                    status: row.get(7)?,
-                    retry_count: row.get(8)?,
-                    priority: row.get(9)?,
-                    started_time: row.get(10)?,
-                    finished_time: row.get(11)?,
-                    elapsed_s: row.get(12)?,
-                    result_summary: row.get(13)?,
-                    error: row.get(14)?,
-                    updated_time: row.get(15)?,
+                    session_run_id: row.get(7)?,
+                    status: row.get(8)?,
+                    retry_count: row.get(9)?,
+                    priority: row.get(10)?,
+                    started_time: row.get(11)?,
+                    finished_time: row.get(12)?,
+                    elapsed_s: row.get(13)?,
+                    result_summary: row.get(14)?,
+                    error: row.get(15)?,
+                    updated_time: row.get(16)?,
                 })
             })?
             .collect::<std::result::Result<Vec<TeamTaskRecord>, _>>()?;
@@ -7035,7 +7066,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time FROM team_tasks WHERE task_id = ?",
+                "SELECT task_id, team_run_id, user_id, hive_id, agent_id, target_session_id, spawned_session_id, session_run_id, status, retry_count, priority, started_time, finished_time, elapsed_s, result_summary, error, updated_time FROM team_tasks WHERE task_id = ?",
                 params![cleaned],
                 |row| {
                     Ok(TeamTaskRecord {
@@ -7046,15 +7077,16 @@ impl StorageBackend for SqliteStorage {
                         agent_id: row.get(4)?,
                         target_session_id: row.get(5)?,
                         spawned_session_id: row.get(6)?,
-                        status: row.get(7)?,
-                        retry_count: row.get(8)?,
-                        priority: row.get(9)?,
-                        started_time: row.get(10)?,
-                        finished_time: row.get(11)?,
-                        elapsed_s: row.get(12)?,
-                        result_summary: row.get(13)?,
-                        error: row.get(14)?,
-                        updated_time: row.get(15)?,
+                        session_run_id: row.get(7)?,
+                        status: row.get(8)?,
+                        retry_count: row.get(9)?,
+                        priority: row.get(10)?,
+                        started_time: row.get(11)?,
+                        finished_time: row.get(12)?,
+                        elapsed_s: row.get(13)?,
+                        result_summary: row.get(14)?,
+                        error: row.get(15)?,
+                        updated_time: row.get(16)?,
                     })
                 },
             )

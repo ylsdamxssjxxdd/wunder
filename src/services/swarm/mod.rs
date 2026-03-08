@@ -1,3 +1,4 @@
+pub mod beeroom;
 pub mod bridge;
 pub mod errors;
 pub mod events;

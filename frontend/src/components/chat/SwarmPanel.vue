@@ -2,7 +2,7 @@
   <div class="swarm-panel">
     <div class="swarm-panel-header">
       <div>
-        <div class="swarm-panel-title">{{ t('beehive.swarm.title') }}</div>
+        <div class="swarm-panel-title">{{ t('beeroom.missions.title') }}</div>
       </div>
       <button class="swarm-panel-refresh" type="button" :disabled="loading" @click="loadRuns">
         <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
@@ -24,13 +24,13 @@
           <span>{{ formatTime(run.updated_time) }}</span>
         </div>
         <div class="swarm-panel-item-bottom">
-          <span>{{ t('beehive.swarm.tasks', { total: run.task_total }) }}</span>
+          <span>{{ t('beeroom.missions.taskCount', { count: run.task_total }) }}</span>
           <span>{{ run.strategy || '-' }}</span>
         </div>
       </button>
     </div>
     <div v-if="tasks.length" class="swarm-panel-tasks">
-      <div class="swarm-panel-tasks-title">{{ t('beehive.swarm.taskLane') }}</div>
+      <div class="swarm-panel-tasks-title">{{ t('beeroom.missionDetail.title') }}</div>
       <div class="swarm-task-item" v-for="task in tasks" :key="task.task_id">
         <span>{{ task.agent_id }}</span>
         <span>{{ task.status }}</span>

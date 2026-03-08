@@ -19,13 +19,24 @@
     <button
       v-if="
         activeSection === 'agents' ||
+        activeSection === 'swarms' ||
         (activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace)
       "
       class="messenger-plus-btn"
       type="button"
-      :title="activeSection === 'groups' ? t('userWorld.group.create') : t('messenger.action.newAgent')"
+      :title="
+        activeSection === 'groups'
+          ? t('userWorld.group.create')
+          : activeSection === 'swarms'
+            ? t('beeroom.dialog.createTitle')
+            : t('messenger.action.newAgent')
+      "
       :aria-label="
-        activeSection === 'groups' ? t('userWorld.group.create') : t('messenger.action.newAgent')
+        activeSection === 'groups'
+          ? t('userWorld.group.create')
+          : activeSection === 'swarms'
+            ? t('beeroom.dialog.createTitle')
+            : t('messenger.action.newAgent')
       "
       @click="handleSearchCreateAction"
     >
@@ -305,6 +316,34 @@
         </button>
         <div v-if="!filteredGroups.length" class="messenger-list-empty">{{ t('messenger.empty.groups') }}</div>
       </template>
+    </template>
+
+    <template v-else-if="activeSection === 'swarms'">
+      <button
+        v-for="group in filteredBeeroomGroups"
+        :key="group.group_id"
+        class="messenger-list-item messenger-agent-item"
+        :class="{ active: selectedBeeroomGroupId === String(group.group_id || '') }"
+        type="button"
+        @click="selectBeeroomGroup(group)"
+      >
+        <div class="messenger-list-avatar">{{ avatarLabel(group.name || group.group_id) }}</div>
+        <div class="messenger-list-main">
+          <div class="messenger-list-row">
+            <span class="messenger-list-name">{{ group.name || group.group_id }}</span>
+            <span class="messenger-list-time">{{ group.running_mission_total || 0 }} {{ t('beeroom.summary.runningTeams') }}</span>
+          </div>
+          <div class="messenger-list-row">
+            <span class="messenger-list-preview">
+              {{ group.description || group.mother_agent_name || t('beeroom.empty.description') }}
+            </span>
+            <span class="messenger-list-unread">{{ group.active_agent_total || 0 }}</span>
+          </div>
+        </div>
+      </button>
+      <div v-if="!filteredBeeroomGroups.length" class="messenger-list-empty">
+        {{ t('messenger.empty.swarms') }}
+      </div>
     </template>
 
     <template v-else-if="activeSection === 'agents'">
@@ -706,6 +745,9 @@ const {
   isContactOnline,
   formatContactPresence,
   resolveUnread,
+  filteredBeeroomGroups,
+  selectedBeeroomGroupId,
+  selectBeeroomGroup,
   filteredGroups,
   selectedGroupId,
   selectGroup,
@@ -775,6 +817,9 @@ const {
   isContactOnline: (contact: Record<string, any>) => boolean;
   formatContactPresence: (contact: Record<string, any>) => string;
   resolveUnread: (value: unknown) => number;
+  filteredBeeroomGroups: Array<Record<string, any>>;
+  selectedBeeroomGroupId: string;
+  selectBeeroomGroup: (group: Record<string, any>) => void;
   filteredGroups: Array<Record<string, any>>;
   selectedGroupId: string;
   selectGroup: (group: Record<string, any>) => void;
