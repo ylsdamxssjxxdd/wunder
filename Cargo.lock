@@ -7252,6 +7252,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-updater",
+ "tempfile",
  "textwrap",
  "tokio",
  "tokio-postgres",

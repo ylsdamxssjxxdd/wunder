@@ -9,6 +9,7 @@ use crate::patch_diff::{
     build_patch_diff_preview, PatchDiffBlock, PatchDiffBlockKind, PatchDiffLine, PatchDiffLineKind,
     PatchDiffPreview,
 };
+use crate::tool_display::summarize_tool_result;
 use crate::tui::theme;
 
 #[derive(Debug, Clone)]
@@ -966,6 +967,7 @@ pub(super) fn build_completed_tool_log(tool_name: &str, payload: &Value) -> Spec
     let data = result.get("data").unwrap_or(result);
     let ok = result.get("ok").and_then(Value::as_bool);
     let tool_is_zh = looks_like_zh_text(tool_name);
+    let display = summarize_tool_result(tool_name, payload);
     let mut details = Vec::new();
     if let Some(error) = result
         .get("error")
@@ -996,7 +998,19 @@ pub(super) fn build_completed_tool_log(tool_name: &str, payload: &Value) -> Spec
         ));
     }
 
-    let summary = if !(data.is_null()
+    if let Some(display) = display.as_ref() {
+        for detail in &display.details {
+            details.push(PatchNote::new(
+                detail.label.clone(),
+                detail.text.clone(),
+                summary_style(),
+            ));
+        }
+    }
+
+    let summary = if let Some(display) = display {
+        display.summary.filter(|value| !value.is_empty())
+    } else if !(data.is_null()
         || data.is_object() && data.as_object().is_some_and(|map| map.is_empty()))
     {
         Some(compact_json(data))

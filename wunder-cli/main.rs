@@ -8,7 +8,9 @@ mod path_display;
 mod render;
 mod runtime;
 mod slash_command;
+mod tool_display;
 mod tui;
+mod workspace_context;
 
 use anyhow::{anyhow, Context, Result};
 use args::{
@@ -4617,6 +4619,7 @@ async fn run_tool_direct(
         skills: &skills_snapshot,
         gateway: Some(runtime.state.gateway.clone()),
         user_world: Some(runtime.state.user_world.clone()),
+        cron_wake_signal: Some(runtime.state.cron.wake_signal()),
         user_tool_manager: Some(runtime.state.user_tool_manager.clone()),
         user_tool_bindings: Some(&bindings),
         user_tool_store: Some(runtime.state.user_tool_manager.store()),
@@ -6638,7 +6641,8 @@ async fn run_prompt_once(
     }
 
     let mut stream = runtime.state.orchestrator.stream(request).await?;
-    let mut renderer = StreamRenderer::new(global.json);
+    let language = locale::resolve_cli_language(global);
+    let mut renderer = StreamRenderer::new(global.json, language.as_str());
     let mut final_event = FinalEvent::default();
     while let Some(item) = stream.next().await {
         let event = item.expect("infallible stream event");

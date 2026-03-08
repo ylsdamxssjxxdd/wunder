@@ -124,3 +124,48 @@
   - status line 帮助与命令入口
   - app 内与状态栏、目录、附件相关的中文提示
 - 本轮验证已重新通过：`cargo check --bin wunder-cli`、`cargo test --bin wunder-cli`、`cargo clippy --bin wunder-cli -- -D warnings`、`cargo build --release --bin wunder-cli`。
+
+## 7. 2026-03-08 project / branch 工作区上下文补齐
+
+- 新增共享模块 `wunder-cli/workspace_context.rs`：
+  - 读取 `repo_root` basename 作为 project 名称；
+  - 直接解析 `.git/HEAD` 与 worktree `.git` 指针文件，低开销获取当前分支；
+  - 对超长 branch 名做中间截断，避免底部区被长分支名挤爆。
+- TUI 底部右侧上下文继续向 codex 靠拢：当前会按 `目录 · 分支 · ctx/附件/滚动` 的顺序组织信息，其中分支名会做紧凑截断。
+- status line 现支持新增条目：`project`、`branch`；默认空配置方案升级为 `cwd | branch | elapsed | speed | tools | context`，更接近 codex 的“目录 + 分支 + 执行状态”阅读路径。
+- `/statusline set ...` 现支持 `project/repo/root/项目/项目根目录` 与 `branch/git/git_branch/分支/git分支` 等别名。
+- 工作区上下文会在启动时初始化，并在每轮流式任务结束、异常结束或流断开后自动刷新，确保命令或工具修改 git 状态后底部区能及时更新。
+- 本轮验证已重新通过：`cargo check --bin wunder-cli`、`cargo test --bin wunder-cli`、`cargo clippy --bin wunder-cli -- -D warnings`、`cargo build --release --bin wunder-cli`。
+## 8. 2026-03-08 真实 CLI 长任务实测与自动化回归补齐
+
+- 新增真实可用性回归脚本 `scripts/wunder_cli_e2e_smoke.py`，支持：独立 `temp_root`、复制现有模型配置、probe、长任务、产物复核、日志归档与 `summary.json` 输出。
+- 新增长任务提示词 `scripts/prompts/wunder_cli_long_task_diff_lens.txt`，默认要求模型在隔离工作区内构建并验证一个小型 Rust CLI，用于稳定复现多步工具链路。
+- 补充专项方案文档 `docs/方案/wunder-cli真实可用性与自动化测试方案.md`，沉淀本轮真实实测结果、已暴露问题与后续回归分层。
+- 2026-03-08 的实测观察表明：当前 CLI 已能稳定完成多步编码任务并产出可验证项目，但仍存在 `PowerShell &&`、`2>&1` 伪失败、generic tool JSON 直出和缺少最终收尾答复等体验缺口。
+
+## 9. 2026-03-08 第二轮 Codex 体验对齐
+
+- Windows `execute_command` 壳层继续向 codex 靠拢：对未加引号的 `&&`、`||` 与 `2>&1` 自动切到 `cmd.exe` 执行，避免 PowerShell 5 语法不兼容与 stderr 合流误判。
+- generic tool transcript 不再只回落到 `compact_json`：`list_files`、`search_content`、`read_files`、`write_file`、`read_image`、`skill_call`、`lsp_query`、`ptc` 现统一产出“标题 + 紧凑摘要 + 少量 preview”样式，普通 CLI 与 TUI 共用同一套摘要逻辑模块 `wunder-cli/tool_display.rs`。
+- TUI 与 line-chat 均补上“工具执行完毕但 final.answer 为空”的自然语言收尾兜底，避免 transcript 最后一条停在工具输出上。
+- 工具层默认加入 codex 风格噪音目录过滤：`list_files/search_content` 会跳过 `.git/target/node_modules/.next/.nuxt/.turbo/.cache`，减少模型二次检索污染。
+- 本轮本地验证已通过：`cargo check --bin wunder-cli`、`cargo test --bin wunder-cli`、`cargo clippy --bin wunder-cli -- -D warnings`、`cargo build --release --bin wunder-cli`。
+- 本轮线上 E2E 重试被上游模型账户 `Arrearage` 阻断，日志见 `temp_dir/cli-e2e/runs/20260308-201846/logs/probe.log`；账户恢复后可直接复跑 `python scripts/wunder_cli_e2e_smoke.py --model qwen3.5-122b`。
+
+## 10. 2026-03-08 鼠标滚动与原生选区复制对齐
+
+- 根因排查结果：`wunder-cli` 之前在 TUI 生命周期内始终开启 `EnableMouseCapture`，因此终端的鼠标拖选、原生复制与部分滚轮行为都会被应用截获；这与 codex 的处理策略不同。
+- 本地 `codex-main` 对照结果表明：
+  - codex 的事件流默认直接忽略 mouse events；
+  - codex 不依赖 mouse capture 做主交互；
+  - codex 在 alt-screen 下额外开启 `alternate scroll`（ANSI `?1007h`），让终端在不启用 mouse capture 时仍可把滚轮转换为滚动行为。
+- 据此，`wunder-cli` 本轮改为：
+  - `auto`：默认不捕获鼠标，优先交还终端原生选区/复制；
+  - `select`：显式保持原生选择复制模式；
+  - `scroll`：仅在用户明确切换后才启用 `EnableMouseCapture`，用于精确滚动 transcript；
+  - 在关闭 mouse capture 时启用 `alternate scroll`，尽量保留接近 codex 的滚轮体验。
+- 当前对齐后的心智模型：
+  - 想像 codex 一样直接拖选输出文本：保持 `auto` 或切到 `/mouse select`；
+  - 想让滚轮严格由 TUI 接管滚动输出区：切到 `/mouse scroll`；
+  - `F2` 继续作为鼠标模式快速切换键。
+- 当前限制也明确保留：在 `auto/select` 下，右键粘贴与基于鼠标坐标的局部交互不会再由应用接管，这是为了换取与 codex 更一致的“原生选区复制优先级”。

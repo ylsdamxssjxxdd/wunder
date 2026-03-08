@@ -590,6 +590,10 @@ pub struct CronJobRecord {
     pub dedupe_key: Option<String>,
     pub next_run_at: Option<f64>,
     pub running_at: Option<f64>,
+    pub runner_id: Option<String>,
+    pub run_token: Option<String>,
+    pub heartbeat_at: Option<f64>,
+    pub lease_expires_at: Option<f64>,
     pub last_run_at: Option<f64>,
     pub last_status: Option<String>,
     pub last_error: Option<String>,
@@ -1149,8 +1153,23 @@ pub trait StorageBackend: Send + Sync {
     fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64>;
     fn delete_cron_jobs_by_session(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn reset_cron_jobs_running(&self) -> Result<()>;
-    fn count_running_cron_jobs(&self) -> Result<i64>;
-    fn claim_due_cron_jobs(&self, now: f64, limit: i64) -> Result<Vec<CronJobRecord>>;
+    fn count_running_cron_jobs(&self, now: f64) -> Result<i64>;
+    fn claim_due_cron_jobs(
+        &self,
+        now: f64,
+        limit: i64,
+        runner_id: &str,
+        lease_expires_at: f64,
+    ) -> Result<Vec<CronJobRecord>>;
+    fn renew_cron_job_lease(
+        &self,
+        user_id: &str,
+        job_id: &str,
+        runner_id: &str,
+        run_token: &str,
+        heartbeat_at: f64,
+        lease_expires_at: f64,
+    ) -> Result<bool>;
     fn insert_cron_run(&self, record: &CronRunRecord) -> Result<()>;
     fn list_cron_runs(&self, user_id: &str, job_id: &str, limit: i64)
         -> Result<Vec<CronRunRecord>>;

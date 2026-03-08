@@ -1,4 +1,4 @@
-server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
+﻿server: # 示例配置：请复制为 config/wunder.yaml 后再按需调整。服务端基础配置
   host: ${WUNDER_HOST:-0.0.0.0} # 服务监听地址，0.0.0.0 表示监听所有网卡（可用 WUNDER_HOST 覆盖）
   port: ${WUNDER_PORT:-8000} # 服务监听端口（可用 WUNDER_PORT 覆盖）
   mode: ${WUNDER_SERVER_MODE:-api} # 服务模式：API=api，沙盒服务=sandbox
@@ -235,7 +235,12 @@ cron: # 定时任务配置
   enabled: true
   max_concurrent_runs: 1
   poll_interval_ms: 1000
+  max_idle_sleep_ms: 5000
+  lease_ttl_ms: 300000
+  lease_heartbeat_ms: 60000
   idle_retry_ms: 2000
+  max_busy_wait_ms: 120000
+  max_consecutive_failures: 5
 knowledge: # 字面知识库配置
   bases: # 知识库列表
     - name: 公司制度知识库 # 知识库名称（作为工具名）
@@ -284,3 +289,4 @@ sandbox: # 沙盒执行配置
     cpu: 8.0 # CPU 核心数限制
     memory_mb: 8096 # 内存上限（MB）
     pids: 256 # 进程数上限
+

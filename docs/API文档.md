@@ -1,4 +1,4 @@
-# wunder API 文档
+﻿# wunder API 文档
 
 ## 4. API 设计
 
@@ -577,7 +577,7 @@
 - `GET /wunder/cron/list`：列出当前用户的定时任务
   - 返回：`data.jobs`（包含 job_id/name/schedule/next_run_at/last_status/consecutive_failures/auto_disabled_reason 等）
 - `GET /wunder/cron/status`：查询调度器健康状态与当前用户任务概况
-  - 返回：`data.scheduler`（started/enabled/running_jobs/next_run_at/last_tick_at/last_error 等）+ `data.jobs_total/jobs_enabled/jobs_running`
+  - 返回：`data.scheduler`（started/enabled/running_jobs/next_run_at/last_tick_at/last_error、`poll_interval_ms`、`max_idle_sleep_ms`、`lease_ttl_ms`、`lease_heartbeat_ms`、`max_concurrent_runs`、`idle_retry_ms`、`max_busy_wait_ms`、`max_consecutive_failures` 等）+ `data.jobs_total/jobs_enabled/jobs_running`；任务项额外返回派生字段 `running/heartbeat_at/lease_expires_at` 用于前端与模型判断当前执行态。
 - `GET /wunder/cron/runs?job_id=...&limit=...`：查询任务运行记录
   - 返回：`data.runs`
 - `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行（`action=status` 与 `GET /wunder/cron/status` 等价）
@@ -588,6 +588,7 @@
     - `schedule.at` 必须是未来时间且不超过 1 年；`schedule.every_ms` 最大 24 小时；`schedule.cron` 需为 5-7 段字段。
     - 调度执行遇到 `USER_BUSY` 会按 `cron.idle_retry_ms` 重试，并受 `cron.max_busy_wait_ms` 上限保护，超时后写入 error 运行记录。
     - 连续失败达到 `cron.max_consecutive_failures` 会自动停用任务并写入 `auto_disabled_reason`。
+    - 周期任务失败后会按退避策略推迟下一次执行时间，取“自然下一次执行时间”和“错误退避时间”中的较大值，降低高错误率场景下的重试风暴。
   - 返回：`data` 中包含 action 结果与 job 信息
 
 ### 4.1.3 `/wunder/admin/mcp`
@@ -2340,3 +2341,4 @@
 - 审批回传：客户端可发送 `type=approval` 响应审批请求（`payload.approval_id`、`payload.decision=approve_once|approve_session|deny`，可选 `session_id`）
 - 审批事件：服务端会在流中发送 `event=approval_request` 与 `event=approval_result`
 - 详细协议与节点说明：见 `docs/方案/WebSocket-Transport.md`
+

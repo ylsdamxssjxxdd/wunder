@@ -4,7 +4,7 @@ use crate::a2a_store::A2aStore;
 use crate::channels::ChannelHub;
 use crate::config::Config;
 use crate::config_store::ConfigStore;
-use crate::cron::CronScheduler;
+use crate::cron::{CronScheduler, CronWakeSignal};
 use crate::evaluation_runner::EvaluationManager;
 use crate::gateway::GatewayHub;
 use crate::lsp::LspManager;
@@ -154,6 +154,7 @@ impl AppState {
         if options.spawn_gateway_maintenance && tokio::runtime::Handle::try_current().is_ok() {
             gateway.clone().spawn_maintenance();
         }
+        let cron_wake_signal = CronWakeSignal::new();
 
         let orchestrator = Arc::new(Orchestrator::new(
             config_store.clone(),
@@ -167,6 +168,7 @@ impl AppState {
             storage.clone(),
             gateway.clone(),
             user_world.clone(),
+            Some(cron_wake_signal.clone()),
         ));
         let swarm_service = Arc::new(SwarmService::new(storage.clone()));
         let team_run_runner = TeamRunRunner::new(
@@ -204,6 +206,7 @@ impl AppState {
             config_store.clone(),
             storage.clone(),
             orchestrator.clone(),
+            cron_wake_signal,
             user_store.clone(),
             user_tool_manager.clone(),
             skills.clone(),

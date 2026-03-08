@@ -91,7 +91,14 @@ pub fn build_direct_command_with_python_override(
 pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
     #[cfg(windows)]
     {
-        if prefer_powershell() {
+        if should_use_cmd_shell(command) {
+            let mut cmd = Command::new("cmd.exe");
+            cmd.arg("/D").arg("/S").arg("/C");
+            cmd.arg(format!("chcp 65001>nul & {command}"));
+            cmd.current_dir(cwd);
+            apply_platform_spawn_options(&mut cmd);
+            cmd
+        } else if prefer_powershell() {
             let mut cmd = Command::new("powershell.exe");
             cmd.arg("-NoLogo").arg("-NoProfile").arg("-Command");
             // Force UTF-8 output for better cross-terminal decoding.
@@ -115,6 +122,60 @@ pub fn build_shell_command(command: &str, cwd: &Path) -> Command {
         cmd.arg("-lc").arg(command).current_dir(cwd);
         cmd
     }
+}
+
+#[cfg(windows)]
+fn should_use_cmd_shell(command: &str) -> bool {
+    contains_unquoted_operator(command, "&&")
+        || contains_unquoted_operator(command, "||")
+        || contains_unquoted_operator(command, "2>&1")
+}
+
+#[cfg(windows)]
+fn contains_unquoted_operator(command: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+    let chars = command.chars().collect::<Vec<_>>();
+    let needle_chars = needle.chars().collect::<Vec<_>>();
+    let needle_len = needle_chars.len();
+
+    let mut index = 0usize;
+    while index < chars.len() {
+        let ch = chars[index];
+        if escaped {
+            escaped = false;
+            index = index.saturating_add(1);
+            continue;
+        }
+        match ch {
+            '`' => {
+                escaped = true;
+                index = index.saturating_add(1);
+                continue;
+            }
+            '\'' if !in_double => {
+                in_single = !in_single;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+            }
+            _ => {}
+        }
+        if !in_single
+            && !in_double
+            && index + needle_len <= chars.len()
+            && chars[index..index + needle_len] == needle_chars[..]
+        {
+            return true;
+        }
+        index = index.saturating_add(1);
+    }
+    false
 }
 
 #[cfg(windows)]
@@ -226,6 +287,30 @@ mod tests {
         } else {
             assert!(program.ends_with("cmd.exe"));
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn build_shell_command_uses_cmd_for_chained_commands() {
+        let command = build_shell_command("cargo --version && rustc --version", Path::new("."));
+        let program = command
+            .as_std()
+            .get_program()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        assert!(program.ends_with("cmd.exe"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn build_shell_command_uses_cmd_for_stderr_merge() {
+        let command = build_shell_command("cargo test 2>&1", Path::new("."));
+        let program = command
+            .as_std()
+            .get_program()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        assert!(program.ends_with("cmd.exe"));
     }
 
     #[cfg(not(windows))]

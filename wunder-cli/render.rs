@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use wunder_server::schemas::StreamEvent;
 
 use crate::patch_diff::{build_patch_diff_preview, format_patch_diff_preview_lines};
+use crate::tool_display::summarize_tool_result;
 
 const MAX_INLINE_JSON_CHARS: usize = 180;
 const MAX_PATCH_RESULT_FILES: usize = 24;
@@ -19,6 +20,9 @@ pub struct StreamRenderer {
     json: bool,
     line_open: bool,
     saw_delta: bool,
+    saw_tool_activity: bool,
+    last_visible_was_tool: bool,
+    is_zh: bool,
 }
 
 fn event_payload(data: &Value) -> &Value {
@@ -26,11 +30,14 @@ fn event_payload(data: &Value) -> &Value {
 }
 
 impl StreamRenderer {
-    pub fn new(json: bool) -> Self {
+    pub fn new(json: bool, language: &str) -> Self {
         Self {
             json,
             line_open: false,
             saw_delta: false,
+            saw_tool_activity: false,
+            last_visible_was_tool: false,
+            is_zh: crate::locale::is_zh_language(language),
         }
     }
 
@@ -49,6 +56,7 @@ impl StreamRenderer {
                         io::stdout().flush().ok();
                         self.line_open = true;
                         self.saw_delta = true;
+                        self.last_visible_was_tool = false;
                     }
                 }
             }
@@ -59,6 +67,7 @@ impl StreamRenderer {
                             print!("{content}");
                             io::stdout().flush().ok();
                             self.line_open = true;
+                            self.last_visible_was_tool = false;
                         }
                     }
                 }
@@ -68,6 +77,8 @@ impl StreamRenderer {
             }
             "tool_call" => {
                 self.ensure_newline();
+                self.saw_tool_activity = true;
+                self.last_visible_was_tool = true;
                 let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
@@ -78,6 +89,8 @@ impl StreamRenderer {
             }
             "tool_result" => {
                 self.ensure_newline();
+                self.saw_tool_activity = true;
+                self.last_visible_was_tool = true;
                 let tool = payload
                     .get("tool")
                     .and_then(Value::as_str)
@@ -112,20 +125,29 @@ impl StreamRenderer {
             }
             "question_panel" => {
                 self.ensure_newline();
+                self.last_visible_was_tool = true;
                 let _ = render_question_panel_lines(payload);
             }
             "error" => {
                 self.ensure_newline();
+                self.last_visible_was_tool = false;
                 let message = crate::error_display::format_error_message(payload)
                     .unwrap_or_else(|| compact_json(payload));
                 eprintln!("[error] {message}");
             }
             "final" => {
                 self.ensure_newline();
-                let final_event = parse_final(event).unwrap_or_default();
+                let mut final_event = parse_final(event).unwrap_or_default();
+                if final_event.answer.trim().is_empty()
+                    && self.saw_tool_activity
+                    && self.last_visible_was_tool
+                {
+                    final_event.answer = tool_only_completion_fallback(self.is_zh);
+                }
                 if !self.saw_delta && !final_event.answer.is_empty() {
                     println!("{}", final_event.answer);
                 }
+                self.last_visible_was_tool = false;
                 return Ok(Some(final_event));
             }
             _ => {}
@@ -855,11 +877,31 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> 
             push_tree_line(&mut lines, format!("note: {summary}"));
         }
     }
-    if lines.len() == 1 {
+    if let Some(display) = summarize_tool_result(tool, payload) {
+        if let Some(summary) = display.summary.filter(|value| !value.is_empty()) {
+            push_tree_line(&mut lines, summary);
+        }
+        for detail in display.details {
+            let text = if let Some(label) = detail.label.filter(|value| !value.is_empty()) {
+                format!("{label} {}", detail.text)
+            } else {
+                detail.text
+            };
+            push_tree_line(&mut lines, text);
+        }
+    } else if lines.len() == 1 {
         let data = extract_tool_result_data(result);
         push_tree_line(&mut lines, compact_json(data));
     }
     lines
+}
+
+fn tool_only_completion_fallback(is_zh: bool) -> String {
+    if is_zh {
+        "已完成本轮任务，结果见上方工具输出。".to_string()
+    } else {
+        "Done. Review the tool results above.".to_string()
+    }
 }
 
 fn format_repair_summary(repair: &Value) -> Option<String> {
@@ -988,5 +1030,31 @@ mod tests {
         assert!(lines
             .iter()
             .any(|line| line.contains("recovered malformed JSON arguments")));
+    }
+
+    #[test]
+    fn generic_tool_result_lines_render_list_preview_instead_of_raw_json() {
+        let lines = format_generic_tool_result_lines(
+            "list_files",
+            &serde_json::json!({
+                "tool": "list_files",
+                "items": ["src/", "src/main.rs", "Cargo.toml"]
+            }),
+        );
+        assert!(lines.iter().any(|line| line.contains("3 items")));
+        assert!(lines.iter().any(|line| line.contains("src/main.rs")));
+        assert!(!lines.iter().any(|line| line.contains("\"items\"")));
+    }
+
+    #[test]
+    fn tool_only_completion_fallback_is_human_readable() {
+        assert_eq!(
+            tool_only_completion_fallback(false),
+            "Done. Review the tool results above."
+        );
+        assert_eq!(
+            tool_only_completion_fallback(true),
+            "已完成本轮任务，结果见上方工具输出。"
+        );
     }
 }

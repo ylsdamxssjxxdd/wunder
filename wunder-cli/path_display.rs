@@ -126,7 +126,8 @@ fn center_truncate_text(text: &str, max_width: usize) -> String {
     let suffix_budget = max_width / 2;
     let prefix_budget = max_width.saturating_sub(suffix_budget + 1);
     let prefix = take_prefix_width(text, prefix_budget);
-    let remaining_suffix_budget = max_width.saturating_sub(UnicodeWidthStr::width(prefix.as_str()) + 1);
+    let remaining_suffix_budget =
+        max_width.saturating_sub(UnicodeWidthStr::width(prefix.as_str()) + 1);
     let suffix = take_suffix_width(text, remaining_suffix_budget);
 
     format!("{prefix}…{suffix}")
@@ -170,7 +171,8 @@ mod tests {
         let repo_root = PathBuf::from("workspace").join("wunder");
         let directory = repo_root.join("frontend").join("src").join("views");
 
-        let display = format_directory_display(directory.as_path(), Some(repo_root.as_path()), None);
+        let display =
+            format_directory_display(directory.as_path(), Some(repo_root.as_path()), None);
 
         assert_eq!(display, "wunder/frontend/src/views");
     }
@@ -180,7 +182,8 @@ mod tests {
         let repo_root = PathBuf::from("workspace").join("wunder");
         let directory = repo_root.join("frontend").join("src").join("views");
 
-        let display = format_directory_display(directory.as_path(), Some(repo_root.as_path()), Some(18));
+        let display =
+            format_directory_display(directory.as_path(), Some(repo_root.as_path()), Some(18));
 
         assert_eq!(display, "wunder/…/src/views");
     }

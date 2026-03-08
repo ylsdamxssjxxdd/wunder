@@ -1,5 +1,6 @@
 use crate::a2a_store::A2aStore;
 use crate::config::Config;
+use crate::cron::CronWakeSignal;
 use crate::gateway::GatewayHub;
 use crate::lsp::LspManager;
 use crate::monitor::MonitorState;
@@ -60,6 +61,7 @@ pub struct ToolContext<'a> {
     pub skills: &'a SkillRegistry,
     pub gateway: Option<Arc<GatewayHub>>,
     pub user_world: Option<Arc<UserWorldService>>,
+    pub cron_wake_signal: Option<CronWakeSignal>,
     pub user_tool_manager: Option<Arc<UserToolManager>>,
     pub user_tool_bindings: Option<&'a UserToolBindings>,
     pub user_tool_store: Option<&'a UserToolStore>,

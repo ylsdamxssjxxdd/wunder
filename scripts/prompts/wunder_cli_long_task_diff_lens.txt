@@ -1,0 +1,13 @@
+Build a small Rust CLI project named diff-lens in the current directory.
+Requirements:
+1. Read unified diff input from either stdin or --file <path>.
+2. Print per-file added/deleted line counts in a readable table.
+3. Support --json output.
+4. Include unit tests covering multiple files, rename-like headers, and empty diffs.
+5. Add a short README with usage examples.
+6. Run cargo test before finishing.
+Constraints:
+- Keep everything UTF-8.
+- Stay inside the current directory.
+- Prefer minimal, clean Rust code.
+At the end, print a concise summary of created files and validation commands.

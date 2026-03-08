@@ -372,9 +372,15 @@ pub struct CronConfig {
     #[serde(default, deserialize_with = "deserialize_u64_from_any")]
     pub poll_interval_ms: u64,
     #[serde(default, deserialize_with = "deserialize_u64_from_any")]
+    pub max_idle_sleep_ms: u64,
+    #[serde(default, deserialize_with = "deserialize_u64_from_any")]
     pub idle_retry_ms: u64,
     #[serde(default, deserialize_with = "deserialize_u64_from_any")]
     pub max_busy_wait_ms: u64,
+    #[serde(default, deserialize_with = "deserialize_u64_from_any")]
+    pub lease_ttl_ms: u64,
+    #[serde(default, deserialize_with = "deserialize_u64_from_any")]
+    pub lease_heartbeat_ms: u64,
     #[serde(default, deserialize_with = "deserialize_usize_from_any")]
     pub max_consecutive_failures: usize,
 }
@@ -385,8 +391,11 @@ impl Default for CronConfig {
             enabled: true,
             max_concurrent_runs: 1,
             poll_interval_ms: 1000,
+            max_idle_sleep_ms: 5000,
             idle_retry_ms: 2000,
             max_busy_wait_ms: 120_000,
+            lease_ttl_ms: 300_000,
+            lease_heartbeat_ms: 60_000,
             max_consecutive_failures: 5,
         }
     }

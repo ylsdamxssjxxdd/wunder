@@ -81,6 +81,48 @@ impl SqliteStorage {
         serde_json::from_str::<Value>(text).ok()
     }
 
+    fn cron_job_select_fields() -> &'static str {
+        "job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at"
+    }
+
+    fn map_cron_job_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CronJobRecord> {
+        let payload_text: Option<String> = row.get(6)?;
+        let deliver_text: Option<String> = row.get(7)?;
+        let enabled: Option<i64> = row.get(8)?;
+        let delete_after: Option<i64> = row.get(9)?;
+        Ok(CronJobRecord {
+            job_id: row.get(0)?,
+            user_id: row.get(1)?,
+            session_id: row.get(2)?,
+            agent_id: row.get(3)?,
+            name: row.get(4)?,
+            session_target: row.get(5)?,
+            payload: Self::json_value_or_null(payload_text),
+            deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
+            enabled: enabled.unwrap_or(0) != 0,
+            delete_after_run: delete_after.unwrap_or(0) != 0,
+            schedule_kind: row.get(10)?,
+            schedule_at: row.get(11)?,
+            schedule_every_ms: row.get(12)?,
+            schedule_cron: row.get(13)?,
+            schedule_tz: row.get(14)?,
+            dedupe_key: row.get(15)?,
+            next_run_at: row.get(16)?,
+            running_at: row.get(17)?,
+            runner_id: row.get(18)?,
+            run_token: row.get(19)?,
+            heartbeat_at: row.get(20)?,
+            lease_expires_at: row.get(21)?,
+            last_run_at: row.get(22)?,
+            last_status: row.get(23)?,
+            last_error: row.get(24)?,
+            consecutive_failures: row.get::<_, Option<i64>>(25)?.unwrap_or(0),
+            auto_disabled_reason: row.get(26)?,
+            created_at: row.get(27)?,
+            updated_at: row.get(28)?,
+        })
+    }
+
     fn parse_string(value: Option<&Value>) -> Option<String> {
         match value {
             Some(Value::String(text)) => Some(text.clone()),
@@ -124,8 +166,9 @@ impl SqliteStorage {
         }
         trimmed
             .split(',')
-            .map(|item| item.trim().to_string())
+            .map(str::trim)
             .filter(|item| !item.is_empty())
+            .map(|item| item.to_string())
             .collect()
     }
 
@@ -254,14 +297,16 @@ impl SqliteStorage {
     fn map_user_world_member_row(
         row: &rusqlite::Row<'_>,
     ) -> rusqlite::Result<UserWorldMemberRecord> {
+        let pinned: Option<i64> = row.get(5)?;
+        let muted: Option<i64> = row.get(6)?;
         Ok(UserWorldMemberRecord {
             conversation_id: row.get(0)?,
             user_id: row.get(1)?,
             peer_user_id: row.get(2)?,
             last_read_message_id: row.get(3)?,
             unread_count_cache: row.get(4)?,
-            pinned: row.get::<_, i64>(5)? != 0,
-            muted: row.get::<_, i64>(6)? != 0,
+            pinned: pinned.unwrap_or(0) != 0,
+            muted: muted.unwrap_or(0) != 0,
             updated_at: row.get(7)?,
         })
     }
@@ -280,306 +325,39 @@ impl SqliteStorage {
         })
     }
 
-    fn ensure_user_account_quota_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(user_accounts)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows.flatten() {
-            columns.insert(name);
-        }
-        let mut quota_added = false;
-        if !columns.contains("daily_quota") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN daily_quota INTEGER NOT NULL DEFAULT 10000",
-                [],
-            )?;
-            quota_added = true;
-        }
-        if !columns.contains("daily_quota_used") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN daily_quota_used INTEGER NOT NULL DEFAULT 0",
-                [],
-            )?;
-        }
-        if !columns.contains("daily_quota_date") {
-            conn.execute(
-                "ALTER TABLE user_accounts ADD COLUMN daily_quota_date TEXT",
-                [],
-            )?;
-        }
-        if quota_added {
-            conn.execute("UPDATE user_accounts SET daily_quota = 10000", [])?;
-        }
+    fn ensure_user_account_quota_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_user_account_unit_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(user_accounts)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows.flatten() {
-            columns.insert(name);
-        }
-        if !columns.contains("unit_id") {
-            conn.execute("ALTER TABLE user_accounts ADD COLUMN unit_id TEXT", [])?;
-        }
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_accounts_unit ON user_accounts (unit_id)",
-            [],
-        );
+    fn ensure_user_account_unit_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_user_account_list_indexes(&self, conn: &Connection) -> Result<()> {
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_accounts_created ON user_accounts (created_at)",
-            [],
-        );
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_accounts_unit_created ON user_accounts (unit_id, created_at)",
-            [],
-        );
+    fn ensure_user_account_list_indexes(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_user_tool_access_columns(&self, conn: &Connection) -> Result<()> {
-        let _ = conn;
+    fn ensure_user_tool_access_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_chat_session_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(chat_sessions)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows.flatten() {
-            columns.insert(name);
-        }
-        if !columns.contains("status") {
-            conn.execute("ALTER TABLE chat_sessions ADD COLUMN status TEXT", [])?;
-        }
-        if !columns.contains("agent_id") {
-            conn.execute("ALTER TABLE chat_sessions ADD COLUMN agent_id TEXT", [])?;
-        }
-        if !columns.contains("tool_overrides") {
-            conn.execute(
-                "ALTER TABLE chat_sessions ADD COLUMN tool_overrides TEXT",
-                [],
-            )?;
-        }
-        if !columns.contains("parent_session_id") {
-            conn.execute(
-                "ALTER TABLE chat_sessions ADD COLUMN parent_session_id TEXT",
-                [],
-            )?;
-        }
-        if !columns.contains("parent_message_id") {
-            conn.execute(
-                "ALTER TABLE chat_sessions ADD COLUMN parent_message_id TEXT",
-                [],
-            )?;
-        }
-        if !columns.contains("spawn_label") {
-            conn.execute("ALTER TABLE chat_sessions ADD COLUMN spawn_label TEXT", [])?;
-        }
-        if !columns.contains("spawned_by") {
-            conn.execute("ALTER TABLE chat_sessions ADD COLUMN spawned_by TEXT", [])?;
-        }
-        let _ = conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_chat_sessions_parent \
-             ON chat_sessions (user_id, parent_session_id, updated_at)",
-            [],
-        );
+    fn ensure_chat_session_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_channel_columns(&self, conn: &Connection) -> Result<()> {
-        fn existing_columns(conn: &Connection, table: &str) -> Result<HashSet<String>> {
-            let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-            let mut columns = HashSet::new();
-            for name in rows.flatten() {
-                columns.insert(name);
-            }
-            Ok(columns)
-        }
-
-        fn add_missing(conn: &Connection, table: &str, columns: &[(&str, &str)]) -> Result<()> {
-            let existing = existing_columns(conn, table)?;
-            for (name, ddl) in columns {
-                if !existing.contains(*name) {
-                    conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {ddl}"), [])?;
-                }
-            }
-            Ok(())
-        }
-
-        add_missing(
-            conn,
-            "channel_accounts",
-            &[
-                ("config", "config TEXT NOT NULL DEFAULT '{}'"),
-                ("status", "status TEXT NOT NULL DEFAULT 'active'"),
-                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
-                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
-            ],
-        )?;
-        add_missing(
-            conn,
-            "channel_bindings",
-            &[
-                ("channel", "channel TEXT"),
-                ("account_id", "account_id TEXT"),
-                ("peer_kind", "peer_kind TEXT"),
-                ("peer_id", "peer_id TEXT"),
-                ("agent_id", "agent_id TEXT"),
-                ("tool_overrides", "tool_overrides TEXT"),
-                ("priority", "priority INTEGER NOT NULL DEFAULT 0"),
-                ("enabled", "enabled INTEGER NOT NULL DEFAULT 1"),
-                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
-                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
-            ],
-        )?;
-        add_missing(
-            conn,
-            "channel_user_bindings",
-            &[
-                ("user_id", "user_id TEXT NOT NULL DEFAULT ''"),
-                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
-                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
-            ],
-        )?;
-        add_missing(
-            conn,
-            "channel_sessions",
-            &[
-                ("thread_id", "thread_id TEXT NOT NULL DEFAULT ''"),
-                ("session_id", "session_id TEXT NOT NULL DEFAULT ''"),
-                ("agent_id", "agent_id TEXT"),
-                ("user_id", "user_id TEXT NOT NULL DEFAULT ''"),
-                ("tts_enabled", "tts_enabled INTEGER"),
-                ("tts_voice", "tts_voice TEXT"),
-                ("metadata", "metadata TEXT"),
-                ("last_message_at", "last_message_at REAL NOT NULL DEFAULT 0"),
-                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
-                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
-            ],
-        )?;
-        let _ = conn.execute(
-            "UPDATE channel_sessions SET thread_id = '' WHERE thread_id IS NULL",
-            [],
-        );
-        add_missing(
-            conn,
-            "channel_messages",
-            &[
-                ("thread_id", "thread_id TEXT"),
-                ("session_id", "session_id TEXT"),
-                ("message_id", "message_id TEXT"),
-                ("sender_id", "sender_id TEXT"),
-                ("message_type", "message_type TEXT"),
-                ("payload", "payload TEXT NOT NULL DEFAULT '{}'"),
-                ("raw_payload", "raw_payload TEXT"),
-                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
-            ],
-        )?;
-        add_missing(
-            conn,
-            "channel_outbox",
-            &[
-                ("thread_id", "thread_id TEXT"),
-                ("payload", "payload TEXT NOT NULL DEFAULT '{}'"),
-                ("status", "status TEXT NOT NULL DEFAULT 'pending'"),
-                ("retry_count", "retry_count INTEGER NOT NULL DEFAULT 0"),
-                ("retry_at", "retry_at REAL NOT NULL DEFAULT 0"),
-                ("last_error", "last_error TEXT"),
-                ("created_at", "created_at REAL NOT NULL DEFAULT 0"),
-                ("updated_at", "updated_at REAL NOT NULL DEFAULT 0"),
-                ("delivered_at", "delivered_at REAL"),
-            ],
-        )?;
+    fn ensure_channel_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_session_lock_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(session_locks)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows.flatten() {
-            columns.insert(name);
-        }
-        if !columns.contains("agent_id") {
-            conn.execute(
-                "ALTER TABLE session_locks ADD COLUMN agent_id TEXT NOT NULL DEFAULT ''",
-                [],
-            )?;
-        }
-        conn.execute("DROP INDEX IF EXISTS idx_session_locks_user", [])?;
-        conn.execute("DROP INDEX IF EXISTS idx_session_locks_user_agent", [])?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_session_locks_user_agent \
-             ON session_locks (user_id, agent_id)",
-            [],
-        )?;
+    fn ensure_session_lock_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_user_agent_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(user_agents)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows.flatten() {
-            columns.insert(name);
-        }
-        if !columns.contains("is_shared") {
-            conn.execute(
-                "ALTER TABLE user_agents ADD COLUMN is_shared INTEGER NOT NULL DEFAULT 0",
-                [],
-            )?;
-        }
-        if !columns.contains("sandbox_container_id") {
-            conn.execute(
-                "ALTER TABLE user_agents ADD COLUMN sandbox_container_id INTEGER NOT NULL DEFAULT 1",
-                [],
-            )?;
-        }
-        if !columns.contains("hive_id") {
-            conn.execute(
-                "ALTER TABLE user_agents ADD COLUMN hive_id TEXT NOT NULL DEFAULT 'default'",
-                [],
-            )?;
-        }
-        if !columns.contains("approval_mode") {
-            conn.execute(
-                "ALTER TABLE user_agents ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'auto_edit'",
-                [],
-            )?;
-        }
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_user_agents_user_hive ON user_agents (user_id, hive_id, updated_at)",
-            [],
-        )?;
+    fn ensure_user_agent_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
-    fn ensure_user_world_group_columns(&self, conn: &Connection) -> Result<()> {
-        let mut stmt = conn.prepare("PRAGMA table_info(user_world_groups)")?;
-        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
-        let mut columns = HashSet::new();
-        for name in rows.flatten() {
-            columns.insert(name);
-        }
-        if !columns.contains("announcement") {
-            conn.execute(
-                "ALTER TABLE user_world_groups ADD COLUMN announcement TEXT",
-                [],
-            )?;
-        }
-        if !columns.contains("announcement_updated_at") {
-            conn.execute(
-                "ALTER TABLE user_world_groups ADD COLUMN announcement_updated_at REAL",
-                [],
-            )?;
-        }
+    fn ensure_user_world_group_columns(&self, _conn: &Connection) -> Result<()> {
         Ok(())
     }
 
@@ -601,6 +379,18 @@ impl SqliteStorage {
                 "ALTER TABLE cron_jobs ADD COLUMN auto_disabled_reason TEXT",
                 [],
             )?;
+        }
+        if !columns.contains("runner_id") {
+            conn.execute("ALTER TABLE cron_jobs ADD COLUMN runner_id TEXT", [])?;
+        }
+        if !columns.contains("run_token") {
+            conn.execute("ALTER TABLE cron_jobs ADD COLUMN run_token TEXT", [])?;
+        }
+        if !columns.contains("heartbeat_at") {
+            conn.execute("ALTER TABLE cron_jobs ADD COLUMN heartbeat_at REAL", [])?;
+        }
+        if !columns.contains("lease_expires_at") {
+            conn.execute("ALTER TABLE cron_jobs ADD COLUMN lease_expires_at REAL", [])?;
         }
         Ok(())
     }
@@ -1013,6 +803,10 @@ impl StorageBackend for SqliteStorage {
               dedupe_key TEXT,
               next_run_at REAL,
               running_at REAL,
+              runner_id TEXT,
+              run_token TEXT,
+              heartbeat_at REAL,
+              lease_expires_at REAL,
               last_run_at REAL,
               last_status TEXT,
               last_error TEXT,
@@ -6174,46 +5968,39 @@ impl StorageBackend for SqliteStorage {
         let payload = Self::json_to_string(&record.payload);
         let deliver = record.deliver.as_ref().map(Self::json_to_string);
         conn.execute(
-            "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, last_run_at, \
-             last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-             ON CONFLICT(job_id) DO UPDATE SET user_id = excluded.user_id, session_id = excluded.session_id, agent_id = excluded.agent_id, \
-             name = excluded.name, session_target = excluded.session_target, payload = excluded.payload, deliver = excluded.deliver, \
-             enabled = excluded.enabled, delete_after_run = excluded.delete_after_run, schedule_kind = excluded.schedule_kind, \
-             schedule_at = excluded.schedule_at, schedule_every_ms = excluded.schedule_every_ms, schedule_cron = excluded.schedule_cron, \
-             schedule_tz = excluded.schedule_tz, dedupe_key = excluded.dedupe_key, next_run_at = excluded.next_run_at, \
-             running_at = excluded.running_at, last_run_at = excluded.last_run_at, last_status = excluded.last_status, \
-             last_error = excluded.last_error, consecutive_failures = excluded.consecutive_failures, \
-             auto_disabled_reason = excluded.auto_disabled_reason, updated_at = excluded.updated_at",
-            params![
-                record.job_id,
-                record.user_id,
-                record.session_id,
-                record.agent_id,
-                record.name,
-                record.session_target,
-                payload,
-                deliver,
-                if record.enabled { 1 } else { 0 },
-                if record.delete_after_run { 1 } else { 0 },
-                record.schedule_kind,
-                record.schedule_at,
-                record.schedule_every_ms,
-                record.schedule_cron,
-                record.schedule_tz,
-                record.dedupe_key,
-                record.next_run_at,
-                record.running_at,
-                record.last_run_at,
-                record.last_status,
-                record.last_error,
-                record.consecutive_failures,
-                record.auto_disabled_reason,
-                record.created_at,
-                record.updated_at
-            ],
-        )?;
+        "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET user_id = excluded.user_id, session_id = excluded.session_id, agent_id = excluded.agent_id, name = excluded.name, session_target = excluded.session_target, payload = excluded.payload, deliver = excluded.deliver, enabled = excluded.enabled, delete_after_run = excluded.delete_after_run, schedule_kind = excluded.schedule_kind, schedule_at = excluded.schedule_at, schedule_every_ms = excluded.schedule_every_ms, schedule_cron = excluded.schedule_cron, schedule_tz = excluded.schedule_tz, dedupe_key = excluded.dedupe_key, next_run_at = excluded.next_run_at, running_at = excluded.running_at, runner_id = excluded.runner_id, run_token = excluded.run_token, heartbeat_at = excluded.heartbeat_at, lease_expires_at = excluded.lease_expires_at, last_run_at = excluded.last_run_at, last_status = excluded.last_status, last_error = excluded.last_error, consecutive_failures = excluded.consecutive_failures, auto_disabled_reason = excluded.auto_disabled_reason, updated_at = excluded.updated_at",
+        params![
+            record.job_id,
+            record.user_id,
+            record.session_id,
+            record.agent_id,
+            record.name,
+            record.session_target,
+            payload,
+            deliver,
+            if record.enabled { 1 } else { 0 },
+            if record.delete_after_run { 1 } else { 0 },
+            record.schedule_kind,
+            record.schedule_at,
+            record.schedule_every_ms,
+            record.schedule_cron,
+            record.schedule_tz,
+            record.dedupe_key,
+            record.next_run_at,
+            record.running_at,
+            record.runner_id,
+            record.run_token,
+            record.heartbeat_at,
+            record.lease_expires_at,
+            record.last_run_at,
+            record.last_status,
+            record.last_error,
+            record.consecutive_failures,
+            record.auto_disabled_reason,
+            record.created_at,
+            record.updated_at
+        ],
+    )?;
         Ok(())
     }
 
@@ -6225,49 +6012,15 @@ impl StorageBackend for SqliteStorage {
             return Ok(None);
         }
         let conn = self.open()?;
+        let sql = format!(
+            "SELECT {} FROM cron_jobs WHERE user_id = ? AND job_id = ?",
+            Self::cron_job_select_fields()
+        );
         let row = conn
             .query_row(
-                "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-                 schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-                 last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-                 FROM cron_jobs WHERE user_id = ? AND job_id = ?",
+                &sql,
                 params![cleaned_user, cleaned_job],
-                |row| {
-                    let payload_text: Option<String> = row.get(6)?;
-                    let deliver_text: Option<String> = row.get(7)?;
-                    let enabled: Option<i64> = row.get(8)?;
-                    let delete_after: Option<i64> = row.get(9)?;
-                    Ok(CronJobRecord {
-                        job_id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        session_id: row.get(2)?,
-                        agent_id: row.get(3)?,
-                        name: row.get(4)?,
-                        session_target: row.get(5)?,
-                        payload: Self::json_value_or_null(payload_text),
-                        deliver: match deliver_text {
-                            Some(text) => Self::json_from_str(&text),
-                            None => None,
-                        },
-                        enabled: enabled.unwrap_or(0) != 0,
-                        delete_after_run: delete_after.unwrap_or(0) != 0,
-                        schedule_kind: row.get(10)?,
-                        schedule_at: row.get(11)?,
-                        schedule_every_ms: row.get(12)?,
-                        schedule_cron: row.get(13)?,
-                        schedule_tz: row.get(14)?,
-                        dedupe_key: row.get(15)?,
-                        next_run_at: row.get(16)?,
-                        running_at: row.get(17)?,
-                        last_run_at: row.get(18)?,
-                        last_status: row.get(19)?,
-                        last_error: row.get(20)?,
-                        consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
-                        auto_disabled_reason: row.get(22)?,
-                        created_at: row.get(23)?,
-                        updated_at: row.get(24)?,
-                    })
-                },
+                Self::map_cron_job_row,
             )
             .optional()?;
         Ok(row)
@@ -6285,49 +6038,15 @@ impl StorageBackend for SqliteStorage {
             return Ok(None);
         }
         let conn = self.open()?;
+        let sql = format!(
+        "SELECT {} FROM cron_jobs WHERE user_id = ? AND dedupe_key = ? ORDER BY updated_at DESC LIMIT 1",
+        Self::cron_job_select_fields()
+    );
         let row = conn
             .query_row(
-                "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-                 schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-                 last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-                 FROM cron_jobs WHERE user_id = ? AND dedupe_key = ? LIMIT 1",
+                &sql,
                 params![cleaned_user, cleaned_key],
-                |row| {
-                    let payload_text: Option<String> = row.get(6)?;
-                    let deliver_text: Option<String> = row.get(7)?;
-                    let enabled: Option<i64> = row.get(8)?;
-                    let delete_after: Option<i64> = row.get(9)?;
-                    Ok(CronJobRecord {
-                        job_id: row.get(0)?,
-                        user_id: row.get(1)?,
-                        session_id: row.get(2)?,
-                        agent_id: row.get(3)?,
-                        name: row.get(4)?,
-                        session_target: row.get(5)?,
-                        payload: Self::json_value_or_null(payload_text),
-                        deliver: match deliver_text {
-                            Some(text) => Self::json_from_str(&text),
-                            None => None,
-                        },
-                        enabled: enabled.unwrap_or(0) != 0,
-                        delete_after_run: delete_after.unwrap_or(0) != 0,
-                        schedule_kind: row.get(10)?,
-                        schedule_at: row.get(11)?,
-                        schedule_every_ms: row.get(12)?,
-                        schedule_cron: row.get(13)?,
-                        schedule_tz: row.get(14)?,
-                        dedupe_key: row.get(15)?,
-                        next_run_at: row.get(16)?,
-                        running_at: row.get(17)?,
-                        last_run_at: row.get(18)?,
-                        last_status: row.get(19)?,
-                        last_error: row.get(20)?,
-                        consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
-                        auto_disabled_reason: row.get(22)?,
-                        created_at: row.get(23)?,
-                        updated_at: row.get(24)?,
-                    })
-                },
+                Self::map_cron_job_row,
             )
             .optional()?;
         Ok(row)
@@ -6340,53 +6059,16 @@ impl StorageBackend for SqliteStorage {
             return Ok(Vec::new());
         }
         let conn = self.open()?;
-        let mut sql = String::from(
-            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-             FROM cron_jobs WHERE user_id = ?",
+        let mut sql = format!(
+            "SELECT {} FROM cron_jobs WHERE user_id = ?",
+            Self::cron_job_select_fields()
         );
         if !include_disabled {
             sql.push_str(" AND enabled = 1");
         }
         sql.push_str(" ORDER BY updated_at DESC");
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt.query_map(params![cleaned_user], |row| {
-            let payload_text: Option<String> = row.get(6)?;
-            let deliver_text: Option<String> = row.get(7)?;
-            let enabled: Option<i64> = row.get(8)?;
-            let delete_after: Option<i64> = row.get(9)?;
-            Ok(CronJobRecord {
-                job_id: row.get(0)?,
-                user_id: row.get(1)?,
-                session_id: row.get(2)?,
-                agent_id: row.get(3)?,
-                name: row.get(4)?,
-                session_target: row.get(5)?,
-                payload: Self::json_value_or_null(payload_text),
-                deliver: match deliver_text {
-                    Some(text) => Self::json_from_str(&text),
-                    None => None,
-                },
-                enabled: enabled.unwrap_or(0) != 0,
-                delete_after_run: delete_after.unwrap_or(0) != 0,
-                schedule_kind: row.get(10)?,
-                schedule_at: row.get(11)?,
-                schedule_every_ms: row.get(12)?,
-                schedule_cron: row.get(13)?,
-                schedule_tz: row.get(14)?,
-                dedupe_key: row.get(15)?,
-                next_run_at: row.get(16)?,
-                running_at: row.get(17)?,
-                last_run_at: row.get(18)?,
-                last_status: row.get(19)?,
-                last_error: row.get(20)?,
-                consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
-                auto_disabled_reason: row.get(22)?,
-                created_at: row.get(23)?,
-                updated_at: row.get(24)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![cleaned_user], Self::map_cron_job_row)?;
         let mut output = Vec::new();
         for record in rows.flatten() {
             output.push(record);
@@ -6428,24 +6110,30 @@ impl StorageBackend for SqliteStorage {
         self.ensure_initialized()?;
         let conn = self.open()?;
         conn.execute(
-            "UPDATE cron_jobs SET running_at = NULL WHERE running_at IS NOT NULL",
-            [],
-        )?;
+        "UPDATE cron_jobs SET running_at = NULL, runner_id = NULL, run_token = NULL, heartbeat_at = NULL, lease_expires_at = NULL WHERE running_at IS NOT NULL OR runner_id IS NOT NULL OR run_token IS NOT NULL OR heartbeat_at IS NOT NULL OR lease_expires_at IS NOT NULL",
+        [],
+    )?;
         Ok(())
     }
 
-    fn count_running_cron_jobs(&self) -> Result<i64> {
+    fn count_running_cron_jobs(&self, now: f64) -> Result<i64> {
         self.ensure_initialized()?;
         let conn = self.open()?;
         let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM cron_jobs WHERE running_at IS NOT NULL",
-            [],
-            |row| row.get(0),
-        )?;
+        "SELECT COUNT(*) FROM cron_jobs WHERE running_at IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > ?",
+        params![now],
+        |row| row.get(0),
+    )?;
         Ok(total)
     }
 
-    fn claim_due_cron_jobs(&self, now: f64, limit: i64) -> Result<Vec<CronJobRecord>> {
+    fn claim_due_cron_jobs(
+        &self,
+        now: f64,
+        limit: i64,
+        runner_id: &str,
+        lease_expires_at: f64,
+    ) -> Result<Vec<CronJobRecord>> {
         self.ensure_initialized()?;
         let limit = limit.max(0);
         if limit == 0 {
@@ -6455,11 +6143,10 @@ impl StorageBackend for SqliteStorage {
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         let ids = {
             let mut stmt = tx.prepare(
-                "SELECT job_id FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? \
-                 AND (running_at IS NULL) ORDER BY next_run_at ASC LIMIT ?",
-            )?;
+            "SELECT job_id FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? AND (running_at IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= ?) ORDER BY next_run_at ASC LIMIT ?",
+        )?;
             let ids = stmt
-                .query_map(params![now, limit], |row| row.get::<_, String>(0))?
+                .query_map(params![now, now, limit], |row| row.get::<_, String>(0))?
                 .collect::<std::result::Result<Vec<String>, _>>()?;
             ids
         };
@@ -6468,63 +6155,54 @@ impl StorageBackend for SqliteStorage {
             return Ok(Vec::new());
         }
         for id in &ids {
+            let run_token = uuid::Uuid::new_v4().simple().to_string();
             tx.execute(
-                "UPDATE cron_jobs SET running_at = ?, updated_at = ? WHERE job_id = ?",
-                params![now, now, id],
-            )?;
+            "UPDATE cron_jobs SET running_at = ?, runner_id = ?, run_token = ?, heartbeat_at = ?, lease_expires_at = ?, updated_at = ? WHERE job_id = ?",
+            params![now, runner_id, run_token, now, lease_expires_at, now, id],
+        )?;
         }
         let placeholders = vec!["?"; ids.len()].join(", ");
         let sql = format!(
-            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-             FROM cron_jobs WHERE job_id IN ({placeholders})"
+            "SELECT {} FROM cron_jobs WHERE job_id IN ({placeholders})",
+            Self::cron_job_select_fields()
         );
         let mut output = Vec::new();
         {
             let mut stmt = tx.prepare(&sql)?;
-            let rows = stmt.query_map(params_from_iter(ids.iter()), |row| {
-                let payload_text: Option<String> = row.get(6)?;
-                let deliver_text: Option<String> = row.get(7)?;
-                let enabled: Option<i64> = row.get(8)?;
-                let delete_after: Option<i64> = row.get(9)?;
-                Ok(CronJobRecord {
-                    job_id: row.get(0)?,
-                    user_id: row.get(1)?,
-                    session_id: row.get(2)?,
-                    agent_id: row.get(3)?,
-                    name: row.get(4)?,
-                    session_target: row.get(5)?,
-                    payload: Self::json_value_or_null(payload_text),
-                    deliver: match deliver_text {
-                        Some(text) => Self::json_from_str(&text),
-                        None => None,
-                    },
-                    enabled: enabled.unwrap_or(0) != 0,
-                    delete_after_run: delete_after.unwrap_or(0) != 0,
-                    schedule_kind: row.get(10)?,
-                    schedule_at: row.get(11)?,
-                    schedule_every_ms: row.get(12)?,
-                    schedule_cron: row.get(13)?,
-                    schedule_tz: row.get(14)?,
-                    dedupe_key: row.get(15)?,
-                    next_run_at: row.get(16)?,
-                    running_at: row.get(17)?,
-                    last_run_at: row.get(18)?,
-                    last_status: row.get(19)?,
-                    last_error: row.get(20)?,
-                    consecutive_failures: row.get::<_, Option<i64>>(21)?.unwrap_or(0),
-                    auto_disabled_reason: row.get(22)?,
-                    created_at: row.get(23)?,
-                    updated_at: row.get(24)?,
-                })
-            })?;
+            let rows = stmt.query_map(params_from_iter(ids.iter()), Self::map_cron_job_row)?;
             for record in rows.flatten() {
                 output.push(record);
             }
         }
         tx.commit()?;
         Ok(output)
+    }
+
+    fn renew_cron_job_lease(
+        &self,
+        user_id: &str,
+        job_id: &str,
+        runner_id: &str,
+        run_token: &str,
+        heartbeat_at: f64,
+        lease_expires_at: f64,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+        "UPDATE cron_jobs SET heartbeat_at = ?, lease_expires_at = ?, updated_at = ? WHERE user_id = ? AND job_id = ? AND runner_id = ? AND run_token = ? AND running_at IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > ?",
+        params![
+            heartbeat_at,
+            lease_expires_at,
+            heartbeat_at,
+            user_id.trim(),
+            job_id.trim(),
+            runner_id,
+            run_token,
+            heartbeat_at,
+        ],
+    )?;
+        Ok(affected > 0)
     }
 
     fn insert_cron_run(&self, record: &CronRunRecord) -> Result<()> {

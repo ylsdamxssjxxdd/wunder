@@ -182,6 +182,7 @@ async fn handle_action(
         config,
         state.storage.clone(),
         Some(state.orchestrator.clone()),
+        Some(state.cron.wake_signal()),
         state.user_store.clone(),
         state.user_tool_manager.clone(),
         state.skills.clone(),

@@ -198,7 +198,7 @@ const SLASH_COMMAND_DOCS: [SlashCommandDoc; 36] = [
     SlashCommandDoc {
         command: SlashCommand::Mouse,
         usage: "/mouse [auto|scroll|select]",
-        description: "toggle mouse mode for wheel scroll or text selection",
+        description: "toggle native select/copy vs captured wheel scroll",
     },
     SlashCommandDoc {
         command: SlashCommand::Resume,

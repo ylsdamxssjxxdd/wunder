@@ -53,8 +53,8 @@ use helpers::*;
 use patch_log::*;
 
 const STATUSLINE_ITEM_KEYS: &[&str] = &[
-    "running", "usage", "scroll", "mouse", "focus", "context", "cwd", "session", "model",
-    "mode", "approval", "agent", "attach", "elapsed", "speed", "tools",
+    "running", "usage", "scroll", "mouse", "focus", "context", "cwd", "project", "branch",
+    "session", "model", "mode", "approval", "agent", "attach", "elapsed", "speed", "tools",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,6 +130,12 @@ enum MouseMode {
     Auto,
     Scroll,
     Select,
+}
+
+impl MouseMode {
+    fn captures_mouse(self) -> bool {
+        matches!(self, Self::Scroll)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,6 +242,8 @@ pub struct TuiApp {
     key_char_burst_len: usize,
     key_char_burst_last_at: Option<Instant>,
     statusline_items: Vec<String>,
+    workspace_project_name: Option<String>,
+    workspace_git_branch: Option<String>,
     mouse_passthrough_until: Option<Instant>,
     transcript_mouse_region: Rect,
     input_mouse_region: Rect,
@@ -336,6 +344,8 @@ impl TuiApp {
             key_char_burst_len: 0,
             key_char_burst_last_at: None,
             statusline_items: Vec::new(),
+            workspace_project_name: None,
+            workspace_git_branch: None,
             mouse_passthrough_until: None,
             transcript_mouse_region: Rect::default(),
             input_mouse_region: Rect::default(),
@@ -358,6 +368,7 @@ impl TuiApp {
         app.load_persisted_history();
         app.load_popup_recents();
         app.load_statusline_items();
+        app.refresh_workspace_context();
         if !app.global.attachments.is_empty() {
             for raw in app.global.attachments.clone() {
                 match crate::attachments::prepare_attachment_from_path(&app.runtime, raw.as_str())
@@ -430,7 +441,7 @@ impl TuiApp {
         let parts = self.status_line_parts();
         if self.statusline_items.is_empty() {
             let mut items = Vec::new();
-            for key in ["cwd", "elapsed", "speed", "tools", "context"] {
+            for key in ["cwd", "branch", "elapsed", "speed", "tools", "context"] {
                 if let Some(value) = parts.get(key) {
                     let value = value.trim();
                     if !value.is_empty() {
@@ -629,6 +640,17 @@ impl TuiApp {
             items.push(dir_display);
         }
 
+        if let Some(branch) = self.workspace_git_branch.as_deref() {
+            let branch_display = crate::workspace_context::format_branch_display(branch, 16);
+            if !branch_display.is_empty() {
+                items.push(if is_zh {
+                    format!("\u{5206}\u{652f} {branch_display}")
+                } else {
+                    format!("git {branch_display}")
+                });
+            }
+        }
+
         let context_text = if let Some(max_context) = self.model_max_context {
             let percent_left = crate::context_left_percent(
                 self.session_stats.context_used_tokens,
@@ -697,7 +719,14 @@ impl TuiApp {
     }
 
     pub fn mouse_capture_enabled(&self) -> bool {
-        true
+        self.mouse_mode.captures_mouse()
+    }
+
+    fn refresh_workspace_context(&mut self) {
+        self.workspace_project_name =
+            crate::workspace_context::project_root_name(self.runtime.repo_root.as_path());
+        self.workspace_git_branch =
+            crate::workspace_context::read_git_branch(self.runtime.repo_root.as_path());
     }
 
     fn status_line_parts(&self) -> std::collections::HashMap<&'static str, String> {
@@ -708,6 +737,11 @@ impl TuiApp {
             Some(self.runtime.repo_root.as_path()),
             Some(32),
         );
+        let project_display = self.workspace_project_name.as_deref();
+        let branch_display = self
+            .workspace_git_branch
+            .as_deref()
+            .map(|value| crate::workspace_context::format_branch_display(value, 18));
         let context_summary = if let Some(max_context) = self.model_max_context {
             let percent_left = crate::context_left_percent(
                 self.session_stats.context_used_tokens,
@@ -767,32 +801,25 @@ impl TuiApp {
             "scroll=0".to_string()
         };
         let mouse_hint = match self.mouse_mode {
-            MouseMode::Auto if self.mouse_passthrough_active() => {
-                if is_zh {
-                    "鼠标=自动(选择中)".to_string()
-                } else {
-                    "mouse=auto(selecting)".to_string()
-                }
-            }
             MouseMode::Auto => {
                 if is_zh {
-                    "鼠标=自动".to_string()
+                    "鼠标=自动(原生)".to_string()
                 } else {
-                    "mouse=auto".to_string()
+                    "mouse=auto(native)".to_string()
                 }
             }
             MouseMode::Scroll => {
                 if is_zh {
-                    "鼠标=滚动".to_string()
+                    "鼠标=滚动(接管)".to_string()
                 } else {
-                    "mouse=scroll".to_string()
+                    "mouse=scroll(captured)".to_string()
                 }
             }
             MouseMode::Select => {
                 if is_zh {
-                    "鼠标=选择".to_string()
+                    "鼠标=选择复制".to_string()
                 } else {
-                    "mouse=select".to_string()
+                    "mouse=select/copy".to_string()
                 }
             }
         };
@@ -836,6 +863,26 @@ impl TuiApp {
                 format!("cwd={cwd_display}")
             },
         );
+        if let Some(project_display) = project_display.filter(|value| !value.trim().is_empty()) {
+            parts.insert(
+                "project",
+                if is_zh {
+                    format!("\u{9879}\u{76ee}={project_display}")
+                } else {
+                    format!("project={project_display}")
+                },
+            );
+        }
+        if let Some(branch_display) = branch_display.filter(|value| !value.trim().is_empty()) {
+            parts.insert(
+                "branch",
+                if is_zh {
+                    format!("\u{5206}\u{652f}={branch_display}")
+                } else {
+                    format!("branch={branch_display}")
+                },
+            );
+        }
         parts.insert(
             "attach",
             if is_zh {
@@ -1632,7 +1679,7 @@ impl TuiApp {
                 "Shift+Enter / Ctrl+J  插入换行".to_string(),
                 "Ctrl+V / Shift+Insert 优先粘贴图片，回退文本".to_string(),
                 "拖入图片/文件         自动加入附件队列".to_string(),
-                "Right Click           粘贴剪贴板文本（自动/滚动模式）".to_string(),
+                "Right Click           粘贴剪贴板文本（滚动模式）".to_string(),
                 "Left / Right          光标左移/右移".to_string(),
                 "Ctrl+B / Ctrl+F       光标左移/右移".to_string(),
                 "Alt+B / Alt+F         按单词移动".to_string(),
@@ -1648,8 +1695,8 @@ impl TuiApp {
                 "Tab                   补全 slash/@/$/#".to_string(),
                 "@                     补全或引用文件路径".to_string(),
                 "PgUp/PgDn             滚动输出".to_string(),
-                "Mouse Wheel           滚动输出".to_string(),
-                "Shift+Drag            选择/复制（依赖终端）".to_string(),
+                "Mouse Wheel           终端原生滚动 / 或切到 /mouse scroll".to_string(),
+                "Drag                  终端原生选择/复制（auto/select）".to_string(),
                 format!("F2                    可选：切换鼠标模式 ({mouse_mode})"),
             ];
         }
@@ -1659,7 +1706,7 @@ impl TuiApp {
             "Shift+Enter / Ctrl+J  insert newline".to_string(),
             "Ctrl+V / Shift+Insert paste image first, then text".to_string(),
             "Drag images/files     queue as attachments".to_string(),
-            "Right Click           paste clipboard text (auto/scroll mode)".to_string(),
+            "Right Click           paste clipboard text (scroll mode)".to_string(),
             "Left / Right          move cursor left/right".to_string(),
             "Ctrl+B / Ctrl+F       move cursor left/right".to_string(),
             "Alt+B / Alt+F         move by word".to_string(),
@@ -1675,8 +1722,8 @@ impl TuiApp {
             "Tab                   complete slash/@/$/#".to_string(),
             "@                     complete or reference file paths".to_string(),
             "PgUp/PgDn             scroll output".to_string(),
-            "Mouse Wheel           scroll output".to_string(),
-            "Shift+Drag            select/copy (terminal-dependent)".to_string(),
+            "Mouse Wheel           terminal-native scroll or use /mouse scroll".to_string(),
+            "Drag                  native terminal select/copy (auto/select)".to_string(),
             format!("F2                    optional: switch mouse mode ({mouse_mode})"),
         ]
     }
@@ -1904,9 +1951,13 @@ impl TuiApp {
         self.mouse_passthrough_until = None;
         self.mouse_mode = mode;
         let notice = match mode {
-            MouseMode::Auto => "mouse mode: auto (wheel only affects output area)",
-            MouseMode::Scroll => "mouse mode: scroll (wheel enabled)",
-            MouseMode::Select => "mouse mode: select/copy (wheel disabled)",
+            MouseMode::Auto => {
+                "mouse mode: auto (native selection/copy; alt-scroll when terminal supports it)"
+            }
+            MouseMode::Scroll => "mouse mode: scroll (capture wheel events for transcript scrolling)",
+            MouseMode::Select => {
+                "mouse mode: select/copy (native terminal selection; mouse wheel handled by terminal)"
+            }
         };
         self.push_log(LogKind::Info, notice.to_string());
     }
@@ -2569,6 +2620,7 @@ impl TuiApp {
                     self.stream_received_content_delta = false;
                     self.stream_tool_markup_open = false;
                     self.session_stats_dirty = true;
+                    self.refresh_workspace_context();
                     self.reset_stream_catchup_state();
                     break;
                 }
@@ -4301,9 +4353,11 @@ impl TuiApp {
                 self.turn_final_stop_reason = None;
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
+                self.refresh_workspace_context();
             }
             StreamMessage::Done => {
                 self.finalize_all_markdown_streams();
+                self.maybe_emit_tool_only_final_summary();
                 if !self.stream_saw_output && !self.stream_saw_final {
                     self.push_log(
                         LogKind::Error,
@@ -4335,6 +4389,7 @@ impl TuiApp {
                 self.turn_final_stop_reason = None;
                 self.tool_phase_notice_emitted = false;
                 self.session_stats_dirty = true;
+                self.refresh_workspace_context();
             }
         }
     }
@@ -4355,6 +4410,29 @@ impl TuiApp {
             usage: None,
             stop_reason: self.turn_final_stop_reason.clone(),
         }
+    }
+
+    fn maybe_emit_tool_only_final_summary(&mut self) {
+        if !self.stream_saw_final
+            || !self.turn_final_answer.trim().is_empty()
+            || self.turn_tool_calls == 0
+            || !self
+                .logs
+                .last()
+                .is_some_and(|entry| matches!(entry.kind, LogKind::Tool))
+        {
+            return;
+        }
+
+        let message = if self.is_zh_language() {
+            "已完成本轮任务，结果见上方工具输出。"
+        } else {
+            "Done. Review the tool results above."
+        }
+        .to_string();
+        self.turn_final_answer = message.clone();
+        self.stream_saw_output = true;
+        self.push_log(LogKind::Assistant, message);
     }
 
     fn apply_stream_event(&mut self, event: StreamEvent) {

@@ -26,6 +26,10 @@ fn build_job(now: f64, job_id: &str) -> CronJobRecord {
         dedupe_key: None,
         next_run_at: Some(now + 1.0),
         running_at: Some(now),
+        runner_id: Some("runner_a".to_string()),
+        run_token: Some(format!("token_{job_id}")),
+        heartbeat_at: Some(now),
+        lease_expires_at: Some(now + 300.0),
         last_run_at: None,
         last_status: None,
         last_error: None,
@@ -68,7 +72,7 @@ fn cron_finish_does_not_resurrect_removed_job() {
     let runs = storage
         .list_cron_runs(&job.user_id, &job.job_id, 10)
         .unwrap();
-    assert_eq!(runs.len(), 1);
+    assert!(runs.is_empty());
 
     let _ = std::fs::remove_file(db_path);
 }
@@ -125,16 +129,28 @@ fn cron_finish_auto_disables_after_consecutive_errors() {
     storage.upsert_cron_job(&job).unwrap();
 
     for attempt in 0..5 {
+        let run_now = now + attempt as f64;
+        let mut claimed_job = storage
+            .get_cron_job(&job.user_id, &job.job_id)
+            .unwrap()
+            .expect("job should exist");
+        claimed_job.running_at = Some(run_now);
+        claimed_job.runner_id = Some(format!("runner_{attempt}"));
+        claimed_job.run_token = Some(format!("token_{attempt}"));
+        claimed_job.heartbeat_at = Some(run_now);
+        claimed_job.lease_expires_at = Some(run_now + 300.0);
+        storage.upsert_cron_job(&claimed_job).unwrap();
+
         persist_cron_run_and_update_job(
             &storage,
-            job.clone(),
+            claimed_job,
             "timer".to_string(),
             "error".to_string(),
             None,
             Some(format!("error attempt {}", attempt + 1)),
-            now + attempt as f64,
+            run_now,
             400,
-            now + attempt as f64,
+            run_now,
         )
         .unwrap();
     }
@@ -147,6 +163,89 @@ fn cron_finish_auto_disables_after_consecutive_errors() {
     assert!(fetched.next_run_at.is_none());
     assert_eq!(fetched.consecutive_failures, 5);
     assert!(fetched.auto_disabled_reason.is_some());
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn cron_finish_ignores_stale_lease_owner() {
+    let db_path = std::env::temp_dir().join(format!(
+        "wunder_cron_finish_stale_{}.db",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+    storage.ensure_initialized().unwrap();
+    let now = now_ts();
+    let stale_job = build_job(now, "job_stale");
+    let mut current_job = stale_job.clone();
+    current_job.runner_id = Some("runner_b".to_string());
+    current_job.run_token = Some("token_b".to_string());
+    current_job.heartbeat_at = Some(now);
+    current_job.lease_expires_at = Some(now + 300.0);
+    storage.upsert_cron_job(&current_job).unwrap();
+
+    persist_cron_run_and_update_job(
+        &storage,
+        stale_job,
+        "timer".to_string(),
+        "ok".to_string(),
+        Some("done".to_string()),
+        None,
+        now,
+        200,
+        now,
+    )
+    .unwrap();
+
+    let fetched = storage
+        .get_cron_job(&current_job.user_id, &current_job.job_id)
+        .unwrap()
+        .expect("job should remain");
+    assert_eq!(fetched.runner_id.as_deref(), Some("runner_b"));
+    assert_eq!(fetched.run_token.as_deref(), Some("token_b"));
+    assert_eq!(fetched.last_status, None);
+
+    let runs = storage
+        .list_cron_runs(&current_job.user_id, &current_job.job_id, 10)
+        .unwrap();
+    assert!(runs.is_empty());
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[test]
+fn cron_finish_applies_backoff_to_recurring_errors() {
+    let db_path = std::env::temp_dir().join(format!(
+        "wunder_cron_finish_backoff_{}.db",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+    storage.ensure_initialized().unwrap();
+    let now = now_ts();
+    let job = build_job(now, "job_backoff");
+    storage.upsert_cron_job(&job).unwrap();
+
+    persist_cron_run_and_update_job(
+        &storage,
+        job.clone(),
+        "timer".to_string(),
+        "error".to_string(),
+        None,
+        Some("temporary failure".to_string()),
+        now,
+        400,
+        now,
+    )
+    .unwrap();
+
+    let fetched = storage
+        .get_cron_job(&job.user_id, &job.job_id)
+        .unwrap()
+        .expect("job should remain");
+    assert!(fetched.enabled);
+    assert_eq!(fetched.consecutive_failures, 1);
+    assert!(fetched.next_run_at.is_some());
+    assert!(fetched.next_run_at.unwrap() >= now + 30.0);
 
     let _ = std::fs::remove_file(db_path);
 }

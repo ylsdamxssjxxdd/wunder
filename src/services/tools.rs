@@ -43,6 +43,7 @@ use crate::config::{
 };
 use crate::core::python_runtime;
 use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
+use crate::core::tool_fs_filter;
 use crate::gateway::GatewayNodeInvokeRequest;
 use crate::history::HistoryManager;
 use crate::i18n;
@@ -4791,6 +4792,7 @@ fn list_files_inner(
         .min_depth(1)
         .max_depth(max_depth.saturating_add(1))
         .into_iter()
+        .filter_entry(|entry| !tool_fs_filter::should_skip_walk_entry(entry))
         .filter_map(|item| item.ok())
     {
         let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
@@ -4880,7 +4882,11 @@ fn search_content_inner(
     if max_depth > 0 {
         walker = walker.max_depth(max_depth);
     }
-    'scan: for entry in walker.into_iter().filter_map(|item| item.ok()) {
+    'scan: for entry in walker
+        .into_iter()
+        .filter_entry(|entry| !tool_fs_filter::should_skip_walk_entry(entry))
+        .filter_map(|item| item.ok())
+    {
         if entry.file_type().is_dir() {
             continue;
         }

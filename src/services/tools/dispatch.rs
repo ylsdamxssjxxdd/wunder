@@ -110,6 +110,7 @@ pub async fn execute_builtin_tool(
                 context.config.clone(),
                 context.storage.clone(),
                 context.orchestrator.clone(),
+                context.cron_wake_signal.clone(),
                 user_store,
                 user_tool_manager,
                 skills,

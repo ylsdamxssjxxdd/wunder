@@ -157,6 +157,13 @@ fn paste_shortcut_rejects_plain_or_alt_modified_v() {
 }
 
 #[test]
+fn mouse_mode_capture_policy_matches_codex_like_behavior() {
+    assert!(!MouseMode::Auto.captures_mouse());
+    assert!(MouseMode::Scroll.captures_mouse());
+    assert!(!MouseMode::Select.captures_mouse());
+}
+
+#[test]
 fn sanitize_assistant_text_strips_tool_markup_blocks() {
     let raw = "before <tool_call>{\"name\":\"读取文件\"}</tool_call> after";
     assert_eq!(sanitize_assistant_text(raw), "before  after");
@@ -489,5 +496,24 @@ fn approval_option_labels_match_exec_request_kind() {
 fn normalize_statusline_item_supports_cwd_aliases() {
     assert_eq!(normalize_statusline_item("cwd").as_deref(), Some("cwd"));
     assert_eq!(normalize_statusline_item("dir").as_deref(), Some("cwd"));
-    assert_eq!(normalize_statusline_item("workspace").as_deref(), Some("cwd"));
+    assert_eq!(
+        normalize_statusline_item("workspace").as_deref(),
+        Some("cwd")
+    );
+}
+#[test]
+fn normalize_statusline_item_supports_project_and_branch_aliases() {
+    assert_eq!(
+        normalize_statusline_item("project").as_deref(),
+        Some("project")
+    );
+    assert_eq!(
+        normalize_statusline_item("repo").as_deref(),
+        Some("project")
+    );
+    assert_eq!(
+        normalize_statusline_item("branch").as_deref(),
+        Some("branch")
+    );
+    assert_eq!(normalize_statusline_item("git").as_deref(), Some("branch"));
 }

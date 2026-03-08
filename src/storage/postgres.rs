@@ -243,6 +243,48 @@ impl PostgresStorage {
             .collect()
     }
 
+    fn cron_job_select_fields() -> &'static str {
+        "job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at"
+    }
+
+    fn map_cron_job_row(row: &tokio_postgres::Row) -> CronJobRecord {
+        let payload_text: Option<String> = row.get(6);
+        let deliver_text: Option<String> = row.get(7);
+        let enabled: Option<i32> = row.get(8);
+        let delete_after: Option<i32> = row.get(9);
+        CronJobRecord {
+            job_id: row.get(0),
+            user_id: row.get(1),
+            session_id: row.get(2),
+            agent_id: row.get(3),
+            name: row.get(4),
+            session_target: row.get(5),
+            payload: Self::json_value_or_null(payload_text),
+            deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
+            enabled: enabled.unwrap_or(0) != 0,
+            delete_after_run: delete_after.unwrap_or(0) != 0,
+            schedule_kind: row.get(10),
+            schedule_at: row.get(11),
+            schedule_every_ms: row.get(12),
+            schedule_cron: row.get(13),
+            schedule_tz: row.get(14),
+            dedupe_key: row.get(15),
+            next_run_at: row.get(16),
+            running_at: row.get(17),
+            runner_id: row.get(18),
+            run_token: row.get(19),
+            heartbeat_at: row.get(20),
+            lease_expires_at: row.get(21),
+            last_run_at: row.get(22),
+            last_status: row.get(23),
+            last_error: row.get(24),
+            consecutive_failures: row.get::<_, Option<i64>>(25).unwrap_or(0),
+            auto_disabled_reason: row.get(26),
+            created_at: row.get(27),
+            updated_at: row.get(28),
+        }
+    }
+
     fn parse_i32_list(value: Option<String>) -> Vec<i32> {
         let Some(raw) = value else {
             return Vec::new();
@@ -755,9 +797,24 @@ impl PostgresStorage {
             "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS auto_disabled_reason TEXT",
             &[],
         )?;
+        conn.execute(
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS runner_id TEXT",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS run_token TEXT",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS heartbeat_at DOUBLE PRECISION",
+            &[],
+        )?;
+        conn.execute(
+            "ALTER TABLE cron_jobs ADD COLUMN IF NOT EXISTS lease_expires_at DOUBLE PRECISION",
+            &[],
+        )?;
         Ok(())
     }
-
     fn ensure_monitor_defaults(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.execute(
             "UPDATE monitor_sessions SET updated_time = 0 WHERE updated_time IS NULL",
@@ -1255,6 +1312,10 @@ impl StorageBackend for PostgresStorage {
                   dedupe_key TEXT,
                   next_run_at DOUBLE PRECISION,
                   running_at DOUBLE PRECISION,
+                  runner_id TEXT,
+                  run_token TEXT,
+                  heartbeat_at DOUBLE PRECISION,
+                  lease_expires_at DOUBLE PRECISION,
                   last_run_at DOUBLE PRECISION,
                   last_status TEXT,
                   last_error TEXT,
@@ -6250,18 +6311,7 @@ impl StorageBackend for PostgresStorage {
         let enabled = if record.enabled { 1 } else { 0 };
         let delete_after = if record.delete_after_run { 1 } else { 0 };
         conn.execute(
-            "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, last_run_at, \
-             last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) \
-             ON CONFLICT(job_id) DO UPDATE SET user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id, agent_id = EXCLUDED.agent_id, \
-             name = EXCLUDED.name, session_target = EXCLUDED.session_target, payload = EXCLUDED.payload, deliver = EXCLUDED.deliver, \
-             enabled = EXCLUDED.enabled, delete_after_run = EXCLUDED.delete_after_run, schedule_kind = EXCLUDED.schedule_kind, \
-             schedule_at = EXCLUDED.schedule_at, schedule_every_ms = EXCLUDED.schedule_every_ms, schedule_cron = EXCLUDED.schedule_cron, \
-             schedule_tz = EXCLUDED.schedule_tz, dedupe_key = EXCLUDED.dedupe_key, next_run_at = EXCLUDED.next_run_at, \
-             running_at = EXCLUDED.running_at, last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status, \
-             last_error = EXCLUDED.last_error, consecutive_failures = EXCLUDED.consecutive_failures, \
-             auto_disabled_reason = EXCLUDED.auto_disabled_reason, updated_at = EXCLUDED.updated_at",
+            "INSERT INTO cron_jobs (job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, runner_id, run_token, heartbeat_at, lease_expires_at, last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29) ON CONFLICT(job_id) DO UPDATE SET user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id, agent_id = EXCLUDED.agent_id, name = EXCLUDED.name, session_target = EXCLUDED.session_target, payload = EXCLUDED.payload, deliver = EXCLUDED.deliver, enabled = EXCLUDED.enabled, delete_after_run = EXCLUDED.delete_after_run, schedule_kind = EXCLUDED.schedule_kind, schedule_at = EXCLUDED.schedule_at, schedule_every_ms = EXCLUDED.schedule_every_ms, schedule_cron = EXCLUDED.schedule_cron, schedule_tz = EXCLUDED.schedule_tz, dedupe_key = EXCLUDED.dedupe_key, next_run_at = EXCLUDED.next_run_at, running_at = EXCLUDED.running_at, runner_id = EXCLUDED.runner_id, run_token = EXCLUDED.run_token, heartbeat_at = EXCLUDED.heartbeat_at, lease_expires_at = EXCLUDED.lease_expires_at, last_run_at = EXCLUDED.last_run_at, last_status = EXCLUDED.last_status, last_error = EXCLUDED.last_error, consecutive_failures = EXCLUDED.consecutive_failures, auto_disabled_reason = EXCLUDED.auto_disabled_reason, updated_at = EXCLUDED.updated_at",
             &[
                 &record.job_id,
                 &record.user_id,
@@ -6281,6 +6331,10 @@ impl StorageBackend for PostgresStorage {
                 &record.dedupe_key,
                 &record.next_run_at,
                 &record.running_at,
+                &record.runner_id,
+                &record.run_token,
+                &record.heartbeat_at,
+                &record.lease_expires_at,
                 &record.last_run_at,
                 &record.last_status,
                 &record.last_error,
@@ -6292,7 +6346,6 @@ impl StorageBackend for PostgresStorage {
         )?;
         Ok(())
     }
-
     fn get_cron_job(&self, user_id: &str, job_id: &str) -> Result<Option<CronJobRecord>> {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
@@ -6301,48 +6354,13 @@ impl StorageBackend for PostgresStorage {
             return Ok(None);
         }
         let mut conn = self.conn()?;
-        let row = conn.query_opt(
-            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-             FROM cron_jobs WHERE user_id = $1 AND job_id = $2",
-            &[&cleaned_user, &cleaned_job],
-        )?;
-        Ok(row.map(|row| {
-            let payload_text: Option<String> = row.get(6);
-            let deliver_text: Option<String> = row.get(7);
-            let enabled: Option<i32> = row.get(8);
-            let delete_after: Option<i32> = row.get(9);
-            CronJobRecord {
-                job_id: row.get(0),
-                user_id: row.get(1),
-                session_id: row.get(2),
-                agent_id: row.get(3),
-                name: row.get(4),
-                session_target: row.get(5),
-                payload: Self::json_value_or_null(payload_text),
-                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
-                enabled: enabled.unwrap_or(0) != 0,
-                delete_after_run: delete_after.unwrap_or(0) != 0,
-                schedule_kind: row.get(10),
-                schedule_at: row.get(11),
-                schedule_every_ms: row.get(12),
-                schedule_cron: row.get(13),
-                schedule_tz: row.get(14),
-                dedupe_key: row.get(15),
-                next_run_at: row.get(16),
-                running_at: row.get(17),
-                last_run_at: row.get(18),
-                last_status: row.get(19),
-                last_error: row.get(20),
-                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
-                auto_disabled_reason: row.get(22),
-                created_at: row.get(23),
-                updated_at: row.get(24),
-            }
-        }))
+        let sql = format!(
+            "SELECT {} FROM cron_jobs WHERE user_id = $1 AND job_id = $2",
+            Self::cron_job_select_fields()
+        );
+        let row = conn.query_opt(&sql, &[&cleaned_user, &cleaned_job])?;
+        Ok(row.map(|row| Self::map_cron_job_row(&row)))
     }
-
     fn get_cron_job_by_dedupe_key(
         &self,
         user_id: &str,
@@ -6355,48 +6373,13 @@ impl StorageBackend for PostgresStorage {
             return Ok(None);
         }
         let mut conn = self.conn()?;
-        let row = conn.query_opt(
-            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-             FROM cron_jobs WHERE user_id = $1 AND dedupe_key = $2 LIMIT 1",
-            &[&cleaned_user, &cleaned_key],
-        )?;
-        Ok(row.map(|row| {
-            let payload_text: Option<String> = row.get(6);
-            let deliver_text: Option<String> = row.get(7);
-            let enabled: Option<i32> = row.get(8);
-            let delete_after: Option<i32> = row.get(9);
-            CronJobRecord {
-                job_id: row.get(0),
-                user_id: row.get(1),
-                session_id: row.get(2),
-                agent_id: row.get(3),
-                name: row.get(4),
-                session_target: row.get(5),
-                payload: Self::json_value_or_null(payload_text),
-                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
-                enabled: enabled.unwrap_or(0) != 0,
-                delete_after_run: delete_after.unwrap_or(0) != 0,
-                schedule_kind: row.get(10),
-                schedule_at: row.get(11),
-                schedule_every_ms: row.get(12),
-                schedule_cron: row.get(13),
-                schedule_tz: row.get(14),
-                dedupe_key: row.get(15),
-                next_run_at: row.get(16),
-                running_at: row.get(17),
-                last_run_at: row.get(18),
-                last_status: row.get(19),
-                last_error: row.get(20),
-                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
-                auto_disabled_reason: row.get(22),
-                created_at: row.get(23),
-                updated_at: row.get(24),
-            }
-        }))
+        let sql = format!(
+            "SELECT {} FROM cron_jobs WHERE user_id = $1 AND dedupe_key = $2 ORDER BY updated_at DESC LIMIT 1",
+            Self::cron_job_select_fields()
+        );
+        let row = conn.query_opt(&sql, &[&cleaned_user, &cleaned_key])?;
+        Ok(row.map(|row| Self::map_cron_job_row(&row)))
     }
-
     fn list_cron_jobs(&self, user_id: &str, include_disabled: bool) -> Result<Vec<CronJobRecord>> {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
@@ -6404,11 +6387,9 @@ impl StorageBackend for PostgresStorage {
             return Ok(Vec::new());
         }
         let mut conn = self.conn()?;
-        let mut sql = String::from(
-            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-             FROM cron_jobs WHERE user_id = $1",
+        let mut sql = format!(
+            "SELECT {} FROM cron_jobs WHERE user_id = $1",
+            Self::cron_job_select_fields()
         );
         if !include_disabled {
             sql.push_str(" AND enabled = 1");
@@ -6417,41 +6398,10 @@ impl StorageBackend for PostgresStorage {
         let rows = conn.query(&sql, &[&cleaned_user])?;
         let mut output = Vec::new();
         for row in rows {
-            let payload_text: Option<String> = row.get(6);
-            let deliver_text: Option<String> = row.get(7);
-            let enabled: Option<i32> = row.get(8);
-            let delete_after: Option<i32> = row.get(9);
-            output.push(CronJobRecord {
-                job_id: row.get(0),
-                user_id: row.get(1),
-                session_id: row.get(2),
-                agent_id: row.get(3),
-                name: row.get(4),
-                session_target: row.get(5),
-                payload: Self::json_value_or_null(payload_text),
-                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
-                enabled: enabled.unwrap_or(0) != 0,
-                delete_after_run: delete_after.unwrap_or(0) != 0,
-                schedule_kind: row.get(10),
-                schedule_at: row.get(11),
-                schedule_every_ms: row.get(12),
-                schedule_cron: row.get(13),
-                schedule_tz: row.get(14),
-                dedupe_key: row.get(15),
-                next_run_at: row.get(16),
-                running_at: row.get(17),
-                last_run_at: row.get(18),
-                last_status: row.get(19),
-                last_error: row.get(20),
-                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
-                auto_disabled_reason: row.get(22),
-                created_at: row.get(23),
-                updated_at: row.get(24),
-            });
+            output.push(Self::map_cron_job_row(&row));
         }
         Ok(output)
     }
-
     fn delete_cron_job(&self, user_id: &str, job_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let cleaned_user = user_id.trim();
@@ -6486,25 +6436,31 @@ impl StorageBackend for PostgresStorage {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         conn.execute(
-            "UPDATE cron_jobs SET running_at = NULL WHERE running_at IS NOT NULL",
+            "UPDATE cron_jobs SET running_at = NULL, runner_id = NULL, run_token = NULL, heartbeat_at = NULL, lease_expires_at = NULL WHERE running_at IS NOT NULL OR runner_id IS NOT NULL OR run_token IS NOT NULL OR heartbeat_at IS NOT NULL OR lease_expires_at IS NOT NULL",
             &[],
         )?;
         Ok(())
     }
 
-    fn count_running_cron_jobs(&self) -> Result<i64> {
+    fn count_running_cron_jobs(&self, now: f64) -> Result<i64> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
         let total: i64 = conn
             .query_one(
-                "SELECT COUNT(*) FROM cron_jobs WHERE running_at IS NOT NULL",
-                &[],
+                "SELECT COUNT(*) FROM cron_jobs WHERE running_at IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > $1",
+                &[&now],
             )?
             .get(0);
         Ok(total)
     }
 
-    fn claim_due_cron_jobs(&self, now: f64, limit: i64) -> Result<Vec<CronJobRecord>> {
+    fn claim_due_cron_jobs(
+        &self,
+        now: f64,
+        limit: i64,
+        runner_id: &str,
+        lease_expires_at: f64,
+    ) -> Result<Vec<CronJobRecord>> {
         self.ensure_initialized()?;
         let limit = limit.max(0);
         if limit == 0 {
@@ -6513,9 +6469,8 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
         let rows = tx.query(
-            "SELECT job_id FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= $1 \
-             AND (running_at IS NULL) ORDER BY next_run_at ASC LIMIT $2 FOR UPDATE SKIP LOCKED",
-            &[&now, &limit],
+            "SELECT job_id FROM cron_jobs WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= $1 AND (running_at IS NULL OR lease_expires_at IS NULL OR lease_expires_at <= $2) ORDER BY next_run_at ASC LIMIT $3 FOR UPDATE SKIP LOCKED",
+            &[&now, &now, &limit],
         )?;
         let ids = rows
             .iter()
@@ -6526,56 +6481,42 @@ impl StorageBackend for PostgresStorage {
             return Ok(Vec::new());
         }
         for id in &ids {
+            let run_token = uuid::Uuid::new_v4().simple().to_string();
             tx.execute(
-                "UPDATE cron_jobs SET running_at = $1, updated_at = $2 WHERE job_id = $3",
-                &[&now, &now, id],
+                "UPDATE cron_jobs SET running_at = $1, runner_id = $2, run_token = $3, heartbeat_at = $4, lease_expires_at = $5, updated_at = $6 WHERE job_id = $7",
+                &[&now, &runner_id, &run_token, &now, &lease_expires_at, &now, id],
             )?;
         }
-        let rows = tx.query(
-            "SELECT job_id, user_id, session_id, agent_id, name, session_target, payload, deliver, enabled, delete_after_run, \
-             schedule_kind, schedule_at, schedule_every_ms, schedule_cron, schedule_tz, dedupe_key, next_run_at, running_at, \
-             last_run_at, last_status, last_error, consecutive_failures, auto_disabled_reason, created_at, updated_at \
-             FROM cron_jobs WHERE job_id = ANY($1)",
-            &[&ids],
-        )?;
+        let sql = format!(
+            "SELECT {} FROM cron_jobs WHERE job_id = ANY($1)",
+            Self::cron_job_select_fields()
+        );
+        let rows = tx.query(&sql, &[&ids])?;
         let mut output = Vec::new();
         for row in rows {
-            let payload_text: Option<String> = row.get(6);
-            let deliver_text: Option<String> = row.get(7);
-            let enabled: Option<i32> = row.get(8);
-            let delete_after: Option<i32> = row.get(9);
-            output.push(CronJobRecord {
-                job_id: row.get(0),
-                user_id: row.get(1),
-                session_id: row.get(2),
-                agent_id: row.get(3),
-                name: row.get(4),
-                session_target: row.get(5),
-                payload: Self::json_value_or_null(payload_text),
-                deliver: deliver_text.and_then(|value| Self::json_from_str(&value)),
-                enabled: enabled.unwrap_or(0) != 0,
-                delete_after_run: delete_after.unwrap_or(0) != 0,
-                schedule_kind: row.get(10),
-                schedule_at: row.get(11),
-                schedule_every_ms: row.get(12),
-                schedule_cron: row.get(13),
-                schedule_tz: row.get(14),
-                dedupe_key: row.get(15),
-                next_run_at: row.get(16),
-                running_at: row.get(17),
-                last_run_at: row.get(18),
-                last_status: row.get(19),
-                last_error: row.get(20),
-                consecutive_failures: row.get::<_, Option<i64>>(21).unwrap_or(0),
-                auto_disabled_reason: row.get(22),
-                created_at: row.get(23),
-                updated_at: row.get(24),
-            });
+            output.push(Self::map_cron_job_row(&row));
         }
         tx.commit()?;
         Ok(output)
     }
 
+    fn renew_cron_job_lease(
+        &self,
+        user_id: &str,
+        job_id: &str,
+        runner_id: &str,
+        run_token: &str,
+        heartbeat_at: f64,
+        lease_expires_at: f64,
+    ) -> Result<bool> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let affected = conn.execute(
+            "UPDATE cron_jobs SET heartbeat_at = $1, lease_expires_at = $2, updated_at = $3 WHERE user_id = $4 AND job_id = $5 AND runner_id = $6 AND run_token = $7 AND running_at IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_expires_at > $8",
+            &[&heartbeat_at, &lease_expires_at, &heartbeat_at, &user_id.trim(), &job_id.trim(), &runner_id, &run_token, &heartbeat_at],
+        )?;
+        Ok(affected > 0)
+    }
     fn insert_cron_run(&self, record: &CronRunRecord) -> Result<()> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;

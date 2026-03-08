@@ -1,5 +1,6 @@
 use super::*;
 use crate::patch_diff::{build_patch_diff_preview, format_patch_diff_preview_lines};
+use crate::tool_display::summarize_tool_result;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy)]
@@ -405,6 +406,12 @@ pub(super) fn normalize_statusline_item(raw: &str) -> Option<String> {
         "focus" | "焦点" => "focus",
         "context" | "ctx" | "上下文" => "context",
         "cwd" | "dir" | "directory" | "workspace" | "目录" | "工作目录" => "cwd",
+        "project"
+        | "repo"
+        | "root"
+        | "\u{9879}\u{76ee}"
+        | "\u{9879}\u{76ee}\u{6839}\u{76ee}\u{5f55}" => "project",
+        "branch" | "git" | "git_branch" | "\u{5206}\u{652f}" | "git\u{5206}\u{652f}" => "branch",
         "session" | "sid" | "会话" => "session",
         "agent" | "agent_id" | "智能体" => "agent",
         "model" | "模型" => "model",
@@ -1625,8 +1632,22 @@ pub(super) fn format_tool_result_lines(tool: &str, payload: &Value) -> Vec<Strin
         );
     }
 
-    let data = extract_tool_result_data(result);
-    push_tree_line(&mut lines, compact_json(data));
+    if let Some(display) = summarize_tool_result(tool, payload) {
+        if let Some(summary) = display.summary.filter(|value| !value.is_empty()) {
+            push_tree_line(&mut lines, summary);
+        }
+        for detail in display.details {
+            let text = if let Some(label) = detail.label.filter(|value| !value.is_empty()) {
+                format!("{label} {}", detail.text)
+            } else {
+                detail.text
+            };
+            push_tree_line(&mut lines, text);
+        }
+    } else {
+        let data = extract_tool_result_data(result);
+        push_tree_line(&mut lines, compact_json(data));
+    }
     lines
 }
 

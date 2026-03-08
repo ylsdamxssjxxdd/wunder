@@ -2,6 +2,7 @@
 use crate::a2a_store::A2aStore;
 use crate::config::{is_debug_log_level, Config, LlmModelConfig};
 use crate::config_store::ConfigStore;
+use crate::cron::CronWakeSignal;
 use crate::gateway::GatewayHub;
 use crate::history::HistoryManager;
 use crate::i18n;
@@ -102,6 +103,7 @@ pub struct Orchestrator {
     storage: Arc<dyn StorageBackend>,
     memory_store: Arc<MemoryStore>,
     user_world: Arc<UserWorldService>,
+    cron_wake_signal: Option<CronWakeSignal>,
     http: reqwest::Client,
 }
 
@@ -119,6 +121,7 @@ impl Orchestrator {
         storage: Arc<dyn StorageBackend>,
         gateway: Arc<GatewayHub>,
         user_world: Arc<UserWorldService>,
+        cron_wake_signal: Option<CronWakeSignal>,
     ) -> Self {
         let memory_store = Arc::new(MemoryStore::new(storage.clone()));
         Self {
@@ -134,6 +137,7 @@ impl Orchestrator {
             storage,
             memory_store,
             user_world,
+            cron_wake_signal,
             http: reqwest::Client::new(),
         }
     }

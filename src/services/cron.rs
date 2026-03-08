@@ -1,3 +1,5 @@
+mod policy;
+
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::i18n;
@@ -25,17 +27,22 @@ use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{oneshot, Notify, RwLock};
+use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tokio_stream::StreamExt;
 use tracing::error;
 use uuid::Uuid;
+
+use self::policy::{compute_error_backoff_ms, compute_scheduler_sleep_ms};
 
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const DEFAULT_SESSION_TITLE: &str = "新会话";
 const SUMMARY_MAX_CHARS: usize = 200;
 const DEFAULT_MAX_CONSECUTIVE_FAILURES: usize = 5;
 const AUTO_DISABLED_REASON_MAX_CHARS: usize = 240;
+const MIN_CRON_LEASE_TTL_MS: u64 = 5_000;
+const MIN_CRON_LEASE_HEARTBEAT_MS: u64 = 1_000;
 
 type NormalizedSchedule = (
     String,
@@ -44,6 +51,27 @@ type NormalizedSchedule = (
     Option<String>,
     Option<String>,
 );
+
+#[derive(Clone, Default)]
+pub struct CronWakeSignal {
+    notify: Arc<Notify>,
+}
+
+impl CronWakeSignal {
+    pub fn new() -> Self {
+        Self {
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    pub fn notify(&self) {
+        self.notify.notify_one();
+    }
+
+    async fn wait(&self) {
+        self.notify.notified().await;
+    }
+}
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct CronActionRequest {
@@ -57,6 +85,7 @@ pub async fn handle_cron_action(
     config: Config,
     storage: Arc<dyn StorageBackend>,
     orchestrator: Option<Arc<Orchestrator>>,
+    wake_signal: Option<CronWakeSignal>,
     user_store: Arc<UserStore>,
     user_tool_manager: Arc<UserToolManager>,
     skills: Arc<RwLock<SkillRegistry>>,
@@ -71,7 +100,7 @@ pub async fn handle_cron_action(
         "status" => {
             let global_running = {
                 let storage = storage.clone();
-                tokio::task::spawn_blocking(move || storage.count_running_cron_jobs())
+                tokio::task::spawn_blocking(move || storage.count_running_cron_jobs(now))
                     .await
                     .map_err(|err| anyhow!(err.to_string()))??
             };
@@ -92,7 +121,7 @@ pub async fn handle_cron_action(
             let user_enabled_jobs = user_jobs.iter().filter(|job| job.enabled).count();
             let user_running_jobs = user_jobs
                 .iter()
-                .filter(|job| job.running_at.is_some())
+                .filter(|job| cron_job_is_running(job, now))
                 .count();
             let user_next_run_at = user_jobs
                 .iter()
@@ -104,10 +133,13 @@ pub async fn handle_cron_action(
                 "scheduler": {
                     "enabled": config.cron.enabled,
                     "poll_interval_ms": config.cron.poll_interval_ms,
+                    "max_idle_sleep_ms": config.cron.max_idle_sleep_ms,
                     "max_concurrent_runs": config.cron.max_concurrent_runs,
                     "idle_retry_ms": config.cron.idle_retry_ms,
                     "max_busy_wait_ms": config.cron.max_busy_wait_ms,
                     "max_consecutive_failures": config.cron.max_consecutive_failures,
+                    "lease_ttl_ms": effective_cron_lease_ttl_ms(&config),
+                    "lease_heartbeat_ms": effective_cron_lease_heartbeat_ms(&config),
                     "running_jobs": global_running,
                     "next_run_at": global_next_run_at,
                     "next_run_at_text": format_ts(global_next_run_at),
@@ -194,6 +226,9 @@ pub async fn handle_cron_action(
                     tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
                         .await
                         .map_err(|err| anyhow!(err.to_string()))??;
+                    if let Some(signal) = wake_signal.clone() {
+                        signal.notify();
+                    }
                     return Ok(json!({
                         "action": "update",
                         "job": cron_job_to_value(&record),
@@ -207,6 +242,9 @@ pub async fn handle_cron_action(
             tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
                 .await
                 .map_err(|err| anyhow!(err.to_string()))??;
+            if let Some(signal) = wake_signal.clone() {
+                signal.notify();
+            }
             Ok(json!({ "action": "add", "job": cron_job_to_value(&record) }))
         }
         "update" => {
@@ -250,6 +288,9 @@ pub async fn handle_cron_action(
             tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
                 .await
                 .map_err(|err| anyhow!(err.to_string()))??;
+            if let Some(signal) = wake_signal.clone() {
+                signal.notify();
+            }
             Ok(json!({ "action": "update", "job": cron_job_to_value(&record) }))
         }
         "enable" | "disable" => {
@@ -288,7 +329,7 @@ pub async fn handle_cron_action(
                 );
             } else {
                 record.next_run_at = None;
-                record.running_at = None;
+                clear_cron_job_lease(&mut record);
             }
             record.updated_at = now;
             let storage = storage.clone();
@@ -296,6 +337,9 @@ pub async fn handle_cron_action(
             tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
                 .await
                 .map_err(|err| anyhow!(err.to_string()))??;
+            if let Some(signal) = wake_signal.clone() {
+                signal.notify();
+            }
             Ok(json!({ "action": action, "job": cron_job_to_value(&record) }))
         }
         "remove" => {
@@ -314,6 +358,11 @@ pub async fn handle_cron_action(
             })
             .await
             .map_err(|err| anyhow!(err.to_string()))??;
+            if removed > 0 {
+                if let Some(signal) = wake_signal.clone() {
+                    signal.notify();
+                }
+            }
             Ok(json!({ "action": "remove", "removed": removed > 0 }))
         }
         "run" => {
@@ -337,7 +386,8 @@ pub async fn handle_cron_action(
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
-            if record.running_at.is_some() {
+
+            if cron_job_is_running(&record, now) {
                 return Ok(json!({
                     "action": "run",
                     "queued": false,
@@ -345,7 +395,15 @@ pub async fn handle_cron_action(
                     "job": cron_job_to_value(&record)
                 }));
             }
-            record.running_at = Some(now);
+            let manual_runner_id = format!("manual_{}", Uuid::new_v4().simple());
+            let manual_run_token = Uuid::new_v4().simple().to_string();
+            assign_cron_job_lease(
+                &mut record,
+                manual_runner_id,
+                manual_run_token,
+                now,
+                cron_lease_expires_at(&config, now),
+            );
             record.updated_at = now;
             let record_for_upsert = record.clone();
             let record_for_response = record.clone();
@@ -355,6 +413,9 @@ pub async fn handle_cron_action(
             })
             .await
             .map_err(|err| anyhow!(err.to_string()))??;
+            if let Some(signal) = wake_signal.clone() {
+                signal.notify();
+            }
             let Some(orchestrator) = orchestrator else {
                 return Ok(json!({
                     "action": "run",
@@ -366,6 +427,7 @@ pub async fn handle_cron_action(
                 config,
                 storage.clone(),
                 orchestrator,
+                wake_signal.clone().unwrap_or_default(),
                 user_store,
                 user_tool_manager,
                 skills,
@@ -485,6 +547,10 @@ fn build_job_record(
         dedupe_key,
         next_run_at,
         running_at: None,
+        runner_id: None,
+        run_token: None,
+        heartbeat_at: None,
+        lease_expires_at: None,
         last_run_at: None,
         last_status: None,
         last_error: None,
@@ -598,7 +664,7 @@ fn apply_job_patch(
         );
     } else {
         record.next_run_at = None;
-        record.running_at = None;
+        clear_cron_job_lease(record);
     }
     Ok(())
 }
@@ -841,7 +907,75 @@ fn extract_payload_message(payload: Option<&Value>) -> Option<String> {
     }
 }
 
+fn effective_cron_lease_ttl_ms(config: &Config) -> u64 {
+    let configured_ttl = config.cron.lease_ttl_ms.max(MIN_CRON_LEASE_TTL_MS);
+    let configured_heartbeat = config
+        .cron
+        .lease_heartbeat_ms
+        .max(MIN_CRON_LEASE_HEARTBEAT_MS);
+    configured_ttl.max(configured_heartbeat.saturating_mul(2))
+}
+
+fn effective_cron_lease_heartbeat_ms(config: &Config) -> u64 {
+    let ttl_ms = effective_cron_lease_ttl_ms(config);
+    config
+        .cron
+        .lease_heartbeat_ms
+        .max(MIN_CRON_LEASE_HEARTBEAT_MS)
+        .min((ttl_ms / 2).max(MIN_CRON_LEASE_HEARTBEAT_MS))
+}
+
+fn cron_lease_expires_at(config: &Config, now: f64) -> f64 {
+    now + effective_cron_lease_ttl_ms(config) as f64 / 1000.0
+}
+
+fn cron_job_is_running(record: &CronJobRecord, now: f64) -> bool {
+    record.running_at.is_some()
+        && record
+            .lease_expires_at
+            .map(|lease_expires_at| lease_expires_at > now)
+            .unwrap_or(false)
+}
+
+fn clear_cron_job_lease(record: &mut CronJobRecord) {
+    record.running_at = None;
+    record.runner_id = None;
+    record.run_token = None;
+    record.heartbeat_at = None;
+    record.lease_expires_at = None;
+}
+
+fn assign_cron_job_lease(
+    record: &mut CronJobRecord,
+    runner_id: String,
+    run_token: String,
+    now: f64,
+    lease_expires_at: f64,
+) {
+    record.running_at = Some(now);
+    record.runner_id = Some(runner_id);
+    record.run_token = Some(run_token);
+    record.heartbeat_at = Some(now);
+    record.lease_expires_at = Some(lease_expires_at);
+}
+
+fn cron_job_matches_lease(
+    record: &CronJobRecord,
+    runner_id: Option<&str>,
+    run_token: Option<&str>,
+) -> bool {
+    match (runner_id, run_token) {
+        (Some(runner_id), Some(run_token)) => {
+            record.runner_id.as_deref() == Some(runner_id)
+                && record.run_token.as_deref() == Some(run_token)
+        }
+        (None, None) => true,
+        _ => false,
+    }
+}
+
 fn cron_job_to_value(record: &CronJobRecord) -> Value {
+    let now = now_ts();
     json!({
         "job_id": record.job_id,
         "user_id": record.user_id,
@@ -863,8 +997,13 @@ fn cron_job_to_value(record: &CronJobRecord) -> Value {
         },
         "next_run_at": record.next_run_at,
         "next_run_at_text": format_ts(record.next_run_at),
+        "running": cron_job_is_running(record, now),
         "running_at": record.running_at,
         "running_at_text": format_ts(record.running_at),
+        "heartbeat_at": record.heartbeat_at,
+        "heartbeat_at_text": format_ts(record.heartbeat_at),
+        "lease_expires_at": record.lease_expires_at,
+        "lease_expires_at_text": format_ts(record.lease_expires_at),
         "last_run_at": record.last_run_at,
         "last_run_at_text": format_ts(record.last_run_at),
         "last_status": record.last_status,
@@ -1048,9 +1187,24 @@ struct CronRuntime {
     config: Config,
     storage: Arc<dyn StorageBackend>,
     orchestrator: Arc<Orchestrator>,
+    wake_signal: CronWakeSignal,
     user_store: Arc<UserStore>,
     user_tool_manager: Arc<UserToolManager>,
     skills: Arc<RwLock<SkillRegistry>>,
+}
+
+struct CronLeaseHeartbeat {
+    stop_tx: Option<oneshot::Sender<()>>,
+    task: JoinHandle<()>,
+}
+
+impl CronLeaseHeartbeat {
+    async fn stop(mut self) {
+        if let Some(stop_tx) = self.stop_tx.take() {
+            let _ = stop_tx.send(());
+        }
+        let _ = self.task.await;
+    }
 }
 
 impl CronRuntime {
@@ -1060,6 +1214,7 @@ impl CronRuntime {
             config,
             storage: scheduler.storage.clone(),
             orchestrator: scheduler.orchestrator.clone(),
+            wake_signal: scheduler.wake_signal.clone(),
             user_store: scheduler.user_store.clone(),
             user_tool_manager: scheduler.user_tool_manager.clone(),
             skills: scheduler.skills.clone(),
@@ -1070,6 +1225,7 @@ impl CronRuntime {
         config: Config,
         storage: Arc<dyn StorageBackend>,
         orchestrator: Arc<Orchestrator>,
+        wake_signal: CronWakeSignal,
         user_store: Arc<UserStore>,
         user_tool_manager: Arc<UserToolManager>,
         skills: Arc<RwLock<SkillRegistry>>,
@@ -1078,10 +1234,65 @@ impl CronRuntime {
             config,
             storage,
             orchestrator,
+            wake_signal,
             user_store,
             user_tool_manager,
             skills,
         }
+    }
+
+    fn start_lease_heartbeat(&self, job: &CronJobRecord) -> Option<CronLeaseHeartbeat> {
+        let runner_id = job.runner_id.clone()?;
+        let run_token = job.run_token.clone()?;
+        let heartbeat_ms = effective_cron_lease_heartbeat_ms(&self.config);
+        let ttl_ms = effective_cron_lease_ttl_ms(&self.config);
+        let storage = self.storage.clone();
+        let user_id = job.user_id.clone();
+        let job_id = job.job_id.clone();
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut stop_rx => break,
+                    _ = sleep(Duration::from_millis(heartbeat_ms)) => {
+                        let heartbeat_at = now_ts();
+                        let next_lease_expires_at = heartbeat_at + ttl_ms as f64 / 1000.0;
+                        let storage = storage.clone();
+                        let user_id = user_id.clone();
+                        let job_id = job_id.clone();
+                        let runner_id = runner_id.clone();
+                        let run_token = run_token.clone();
+                        let renewed = tokio::task::spawn_blocking(move || {
+                            storage.renew_cron_job_lease(
+                                &user_id,
+                                &job_id,
+                                &runner_id,
+                                &run_token,
+                                heartbeat_at,
+                                next_lease_expires_at,
+                            )
+                        })
+                        .await;
+                        match renewed {
+                            Ok(Ok(true)) => {}
+                            Ok(Ok(false)) => break,
+                            Ok(Err(err)) => {
+                                error!("failed to renew cron job lease: {err}");
+                                break;
+                            }
+                            Err(err) => {
+                                error!("failed to renew cron job lease: {err}");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        Some(CronLeaseHeartbeat {
+            stop_tx: Some(stop_tx),
+            task,
+        })
     }
 
     async fn execute_job(&self, job: CronJobRecord, trigger: &str) {
@@ -1091,6 +1302,7 @@ impl CronRuntime {
         let mut summary = None;
         let mut error_msg = None;
         let mut run_session_id = job.session_id.clone();
+        let lease_heartbeat = self.start_lease_heartbeat(&job);
         let message = extract_payload_message(Some(&job.payload));
         let message = match message {
             Some(text) => text,
@@ -1098,7 +1310,14 @@ impl CronRuntime {
                 status = "skipped".to_string();
                 error_msg = Some("payload.message is empty".to_string());
                 self.finish_job(
-                    job, trigger, &status, &summary, &error_msg, start_ts, started,
+                    job,
+                    trigger,
+                    &status,
+                    &summary,
+                    &error_msg,
+                    start_ts,
+                    started,
+                    lease_heartbeat,
                 )
                 .await;
                 return;
@@ -1147,7 +1366,14 @@ impl CronRuntime {
         }
 
         self.finish_job(
-            job, trigger, &status, &summary, &error_msg, start_ts, started,
+            job,
+            trigger,
+            &status,
+            &summary,
+            &error_msg,
+            start_ts,
+            started,
+            lease_heartbeat,
         )
         .await;
     }
@@ -1377,7 +1603,11 @@ impl CronRuntime {
         error_msg: &Option<String>,
         start_ts: f64,
         started: Instant,
+        lease_heartbeat: Option<CronLeaseHeartbeat>,
     ) {
+        if let Some(lease_heartbeat) = lease_heartbeat {
+            lease_heartbeat.stop().await;
+        }
         let duration_ms = started.elapsed().as_millis() as i64;
         let now = now_ts();
         let storage = self.storage.clone();
@@ -1405,12 +1635,13 @@ impl CronRuntime {
         {
             Ok(Ok(())) => {}
             Ok(Err(err)) => {
-                error!("failed to write cron run: {}", err);
+                error!("failed to write cron run: {err}");
             }
             Err(err) => {
-                error!("failed to write cron run: {}", err);
+                error!("failed to write cron run: {err}");
             }
         }
+        self.wake_signal.notify();
     }
 }
 
@@ -1454,6 +1685,12 @@ fn persist_cron_run_and_update_job_with_limits(
     now: f64,
     max_consecutive_failures: usize,
 ) -> Result<()> {
+    let Some(mut record) = storage.get_cron_job(&job.user_id, &job.job_id)? else {
+        return Ok(());
+    };
+    if !cron_job_matches_lease(&record, job.runner_id.as_deref(), job.run_token.as_deref()) {
+        return Ok(());
+    }
     let run_record = CronRunRecord {
         run_id: Uuid::new_v4().simple().to_string(),
         job_id: job.job_id.clone(),
@@ -1472,12 +1709,9 @@ fn persist_cron_run_and_update_job_with_limits(
         let _ = storage.delete_cron_job(&job.user_id, &job.job_id);
         return Ok(());
     }
-    let Some(mut record) = storage.get_cron_job(&job.user_id, &job.job_id)? else {
-        return Ok(());
-    };
     let is_ok = status == "ok";
     let is_error = status == "error";
-    record.running_at = None;
+    clear_cron_job_lease(&mut record);
     record.last_run_at = Some(start_ts);
     record.last_status = Some(status);
     record.last_error = error_msg;
@@ -1529,6 +1763,15 @@ fn persist_cron_run_and_update_job_with_limits(
             AUTO_DISABLED_REASON_MAX_CHARS,
         );
         record.auto_disabled_reason = Some(reason);
+    } else if is_error && record.enabled {
+        let backoff_ms = compute_error_backoff_ms(record.consecutive_failures);
+        let backoff_next = now + backoff_ms as f64 / 1000.0;
+        record.next_run_at = Some(
+            record
+                .next_run_at
+                .map(|next_run_at| next_run_at.max(backoff_next))
+                .unwrap_or(backoff_next),
+        );
     }
     storage.upsert_cron_job(&record)?;
     Ok(())
@@ -1580,6 +1823,8 @@ pub struct CronScheduler {
     config_store: ConfigStore,
     storage: Arc<dyn StorageBackend>,
     orchestrator: Arc<Orchestrator>,
+    wake_signal: CronWakeSignal,
+    runner_id: String,
     user_store: Arc<UserStore>,
     user_tool_manager: Arc<UserToolManager>,
     skills: Arc<RwLock<SkillRegistry>>,
@@ -1590,6 +1835,7 @@ impl CronScheduler {
         config_store: ConfigStore,
         storage: Arc<dyn StorageBackend>,
         orchestrator: Arc<Orchestrator>,
+        wake_signal: CronWakeSignal,
         user_store: Arc<UserStore>,
         user_tool_manager: Arc<UserToolManager>,
         skills: Arc<RwLock<SkillRegistry>>,
@@ -1598,10 +1844,20 @@ impl CronScheduler {
             config_store,
             storage,
             orchestrator,
+            wake_signal,
+            runner_id: format!("scheduler_{}", Uuid::new_v4().simple()),
             user_store,
             user_tool_manager,
             skills,
         })
+    }
+
+    pub fn wake_signal(&self) -> CronWakeSignal {
+        self.wake_signal.clone()
+    }
+
+    pub fn wake(&self) {
+        self.wake_signal.notify();
     }
 
     pub fn start(self: &Arc<Self>) {
@@ -1612,20 +1868,26 @@ impl CronScheduler {
     }
 
     async fn run_loop(self: Arc<Self>) {
-        let _ = self.reset_running_jobs().await;
         loop {
             let config = self.config_store.get().await;
             let cron_cfg = config.cron.clone();
+            let wake_signal = self.wake_signal.clone();
             if !cron_cfg.enabled {
-                sleep(Duration::from_millis(cron_cfg.poll_interval_ms.max(500))).await;
+                tokio::select! {
+                    _ = sleep(Duration::from_millis(cron_cfg.max_idle_sleep_ms.max(500))) => {}
+                    _ = wake_signal.wait() => {}
+                }
                 continue;
             }
             let now = now_ts();
-            let running = self.count_running_jobs().await.unwrap_or(0);
+            let running = self.count_running_jobs(now).await.unwrap_or(0);
             let max_runs = cron_cfg.max_concurrent_runs.max(1) as i64;
             let capacity = (max_runs - running).max(0);
             if capacity > 0 {
-                let jobs = self.claim_due_jobs(now, capacity).await.unwrap_or_default();
+                let jobs = self
+                    .claim_due_jobs(now, capacity, cron_lease_expires_at(&config, now))
+                    .await
+                    .unwrap_or_default();
                 for job in jobs {
                     let scheduler = Arc::clone(&self);
                     tokio::spawn(async move {
@@ -1634,38 +1896,40 @@ impl CronScheduler {
                 }
             }
             let next = self.get_next_cron_run_at(now).await.unwrap_or(None);
-            let mut sleep_ms = cron_cfg.poll_interval_ms.max(200);
-            if let Some(next_at) = next {
-                let delta = ((next_at - now) * 1000.0).ceil() as i64;
-                if delta > 0 {
-                    sleep_ms = sleep_ms.min(delta as u64);
-                }
+            let sleep_ms = compute_scheduler_sleep_ms(
+                now,
+                next,
+                cron_cfg.poll_interval_ms,
+                cron_cfg.max_idle_sleep_ms,
+            );
+            tokio::select! {
+                _ = sleep(Duration::from_millis(sleep_ms)) => {}
+                _ = wake_signal.wait() => {}
             }
-            sleep(Duration::from_millis(sleep_ms)).await;
         }
     }
 
-    async fn reset_running_jobs(&self) -> Result<()> {
+    async fn count_running_jobs(&self, now: f64) -> Result<i64> {
         let storage = self.storage.clone();
-        tokio::task::spawn_blocking(move || storage.reset_cron_jobs_running())
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
-        Ok(())
-    }
-
-    async fn count_running_jobs(&self) -> Result<i64> {
-        let storage = self.storage.clone();
-        let count = tokio::task::spawn_blocking(move || storage.count_running_cron_jobs())
+        let count = tokio::task::spawn_blocking(move || storage.count_running_cron_jobs(now))
             .await
             .map_err(|err| anyhow!(err.to_string()))??;
         Ok(count)
     }
 
-    async fn claim_due_jobs(&self, now: f64, limit: i64) -> Result<Vec<CronJobRecord>> {
+    async fn claim_due_jobs(
+        &self,
+        now: f64,
+        limit: i64,
+        lease_expires_at: f64,
+    ) -> Result<Vec<CronJobRecord>> {
         let storage = self.storage.clone();
-        let jobs = tokio::task::spawn_blocking(move || storage.claim_due_cron_jobs(now, limit))
-            .await
-            .map_err(|err| anyhow!(err.to_string()))??;
+        let runner_id = self.runner_id.clone();
+        let jobs = tokio::task::spawn_blocking(move || {
+            storage.claim_due_cron_jobs(now, limit, &runner_id, lease_expires_at)
+        })
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??;
         Ok(jobs)
     }
 

@@ -460,6 +460,7 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
         skills: context.skills.as_ref(),
         gateway: None,
         user_world: Some(context.state.user_world.clone()),
+        cron_wake_signal: None,
         user_tool_manager: None,
         user_tool_bindings: Some(context.user_tool_bindings.as_ref()),
         user_tool_store: None,
