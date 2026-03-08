@@ -158,7 +158,7 @@ fn paste_shortcut_rejects_plain_or_alt_modified_v() {
 
 #[test]
 fn mouse_mode_capture_policy_matches_codex_like_behavior() {
-    assert!(!MouseMode::Auto.captures_mouse());
+    assert!(MouseMode::Auto.captures_mouse());
     assert!(MouseMode::Scroll.captures_mouse());
     assert!(!MouseMode::Select.captures_mouse());
 }

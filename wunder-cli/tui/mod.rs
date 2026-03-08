@@ -19,13 +19,11 @@ use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use crossterm::Command;
 use frame_scheduler::spawn_frame_scheduler;
 use frame_scheduler::FrameNotifications;
 use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-use std::fmt;
 use std::io;
 
 use crate::args::GlobalArgs;
@@ -64,57 +62,17 @@ pub async fn run_main(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EnableAlternateScroll;
-
-impl Command for EnableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        write!(f, "\x1b[?1007h")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Err(std::io::Error::other(
-            "tried to execute EnableAlternateScroll using WinAPI; use ANSI instead",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DisableAlternateScroll;
-
-impl Command for DisableAlternateScroll {
-    fn write_ansi(&self, f: &mut impl fmt::Write) -> fmt::Result {
-        write!(f, "\x1b[?1007l")
-    }
-
-    #[cfg(windows)]
-    fn execute_winapi(&self) -> std::io::Result<()> {
-        Err(std::io::Error::other(
-            "tried to execute DisableAlternateScroll using WinAPI; use ANSI instead",
-        ))
-    }
-
-    #[cfg(windows)]
-    fn is_ansi_code_supported(&self) -> bool {
-        true
-    }
-}
-
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut TuiApp,
     mut frame_notifications: FrameNotifications,
 ) -> Result<()> {
-    let mut mouse_capture_enabled = false;
+    let mut mouse_capture_enabled = None;
     let mut events = EventStream::new();
 
     loop {
+        sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
+
         tokio::select! {
             maybe_draw = frame_notifications.recv() => {
                 if maybe_draw.is_none() {
@@ -150,23 +108,7 @@ async fn run_loop(
 
         app.drain_stream_events().await;
 
-        let desired_mouse_capture = app.mouse_capture_enabled();
-        if desired_mouse_capture != mouse_capture_enabled {
-            if desired_mouse_capture {
-                execute!(
-                    terminal.backend_mut(),
-                    DisableAlternateScroll,
-                    EnableMouseCapture
-                )?;
-            } else {
-                execute!(
-                    terminal.backend_mut(),
-                    DisableMouseCapture,
-                    EnableAlternateScroll
-                )?;
-            }
-            mouse_capture_enabled = desired_mouse_capture;
-        }
+        sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
 
         terminal.draw(|frame| ui::draw(frame, app))?;
 
@@ -182,12 +124,7 @@ async fn run_loop(
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        EnableBracketedPaste,
-        EnableAlternateScroll
-    )?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
@@ -200,9 +137,26 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
         terminal.backend_mut(),
         LeaveAlternateScreen,
         DisableBracketedPaste,
-        DisableMouseCapture,
-        DisableAlternateScroll
+        DisableMouseCapture
     )?;
     terminal.show_cursor()?;
+    Ok(())
+}
+
+fn sync_mouse_mode(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &TuiApp,
+    mouse_capture_enabled: &mut Option<bool>,
+) -> Result<()> {
+    let desired_mouse_capture = app.mouse_capture_enabled();
+    if *mouse_capture_enabled == Some(desired_mouse_capture) {
+        return Ok(());
+    }
+    if desired_mouse_capture {
+        execute!(terminal.backend_mut(), EnableMouseCapture)?;
+    } else {
+        execute!(terminal.backend_mut(), DisableMouseCapture)?;
+    }
+    *mouse_capture_enabled = Some(desired_mouse_capture);
     Ok(())
 }

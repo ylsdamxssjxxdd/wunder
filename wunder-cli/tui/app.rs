@@ -134,7 +134,7 @@ enum MouseMode {
 
 impl MouseMode {
     fn captures_mouse(self) -> bool {
-        matches!(self, Self::Scroll)
+        matches!(self, Self::Auto | Self::Scroll)
     }
 }
 
@@ -600,91 +600,30 @@ impl TuiApp {
     }
 
     pub fn composer_hint_line(&self) -> String {
+        let elapsed_label = self
+            .status_elapsed_secs()
+            .map(|value| format!("{value:.2} s"))
+            .unwrap_or_else(|| "-".to_string());
+        let speed_label = self
+            .status_speed_tps()
+            .map(|value| format!("{value:.2} token/s"))
+            .unwrap_or_else(|| "-".to_string());
+        let tool_calls = self.status_tool_calls();
         if self.is_zh_language() {
-            "@ 文件 · Ctrl+V 粘贴 · Tab 补全 · ↑ 历史 · Shift+Enter 换行".to_string()
+            format!(
+                "\u{8017}\u{65f6}={elapsed_label} | \u{901f}\u{5ea6}={speed_label} | \u{5de5}\u{5177}={tool_calls}"
+            )
         } else {
-            "@ files · Ctrl+V paste · Tab complete · ↑ history · Shift+Enter newline".to_string()
+            format!("elapsed={elapsed_label} | speed={speed_label} | tools={tool_calls}")
         }
     }
 
     pub fn composer_footer_items(&self) -> Vec<(String, String)> {
-        if self.is_zh_language() {
-            vec![
-                ("@".to_string(), "文件".to_string()),
-                ("Ctrl+V".to_string(), "粘贴".to_string()),
-                ("Tab".to_string(), "补全".to_string()),
-                ("↑↓".to_string(), "历史".to_string()),
-                ("Shift+Enter".to_string(), "换行".to_string()),
-            ]
-        } else {
-            vec![
-                ("@".to_string(), "files".to_string()),
-                ("Ctrl+V".to_string(), "paste".to_string()),
-                ("Tab".to_string(), "complete".to_string()),
-                ("↑↓".to_string(), "history".to_string()),
-                ("Shift+Enter".to_string(), "newline".to_string()),
-            ]
-        }
+        Vec::new()
     }
 
     pub fn composer_footer_context(&self) -> Option<String> {
-        let is_zh = self.is_zh_language();
-        let mut items = Vec::new();
-
-        let dir_display = crate::path_display::format_directory_display(
-            self.runtime.launch_dir.as_path(),
-            Some(self.runtime.repo_root.as_path()),
-            Some(26),
-        );
-        if !dir_display.trim().is_empty() {
-            items.push(dir_display);
-        }
-
-        if let Some(branch) = self.workspace_git_branch.as_deref() {
-            let branch_display = crate::workspace_context::format_branch_display(branch, 16);
-            if !branch_display.is_empty() {
-                items.push(if is_zh {
-                    format!("\u{5206}\u{652f} {branch_display}")
-                } else {
-                    format!("git {branch_display}")
-                });
-            }
-        }
-
-        let context_text = if let Some(max_context) = self.model_max_context {
-            let percent_left = crate::context_left_percent(
-                self.session_stats.context_used_tokens,
-                Some(max_context),
-            )
-            .unwrap_or(0);
-            if is_zh {
-                format!("上下文 {percent_left}%")
-            } else {
-                format!("ctx {percent_left}%")
-            }
-        } else {
-            let used = self.session_stats.context_used_tokens.max(0);
-            if is_zh {
-                format!("上下文 {used}")
-            } else {
-                format!("ctx {used}")
-            }
-        };
-        items.push(context_text);
-
-        if !self.pending_attachments.is_empty() {
-            items.push(if is_zh {
-                format!("附件 {}", self.pending_attachments.len())
-            } else {
-                format!("att {}", self.pending_attachments.len())
-            });
-        }
-
-        if self.transcript_offset_from_bottom > 0 {
-            items.push(format!("↑{}", self.transcript_offset_from_bottom));
-        }
-
-        (!items.is_empty()).then(|| items.join(" · "))
+        None
     }
 
     pub fn composer_attachment_hint(&self) -> Option<String> {
@@ -803,9 +742,9 @@ impl TuiApp {
         let mouse_hint = match self.mouse_mode {
             MouseMode::Auto => {
                 if is_zh {
-                    "鼠标=自动(原生)".to_string()
+                    "鼠标=自动(输出优先)".to_string()
                 } else {
-                    "mouse=auto(native)".to_string()
+                    "mouse=auto(output-first)".to_string()
                 }
             }
             MouseMode::Scroll => {
@@ -1952,11 +1891,11 @@ impl TuiApp {
         self.mouse_mode = mode;
         let notice = match mode {
             MouseMode::Auto => {
-                "mouse mode: auto (native selection/copy; alt-scroll when terminal supports it)"
+                "mouse mode: auto (wheel scrolls output; switch to select/copy when you need native selection)"
             }
             MouseMode::Scroll => "mouse mode: scroll (capture wheel events for transcript scrolling)",
             MouseMode::Select => {
-                "mouse mode: select/copy (native terminal selection; mouse wheel handled by terminal)"
+                "mouse mode: select/copy (native terminal selection enabled)"
             }
         };
         self.push_log(LogKind::Info, notice.to_string());

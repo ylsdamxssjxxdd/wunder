@@ -169,3 +169,12 @@
   - 想让滚轮严格由 TUI 接管滚动输出区：切到 `/mouse scroll`；
   - `F2` 继续作为鼠标模式快速切换键。
 - 当前限制也明确保留：在 `auto/select` 下，右键粘贴与基于鼠标坐标的局部交互不会再由应用接管，这是为了换取与 codex 更一致的“原生选区复制优先级”。
+
+## 11. 2026-03-08 顶栏移除与滚轮优先修正
+
+- 顶部提示行已全部移除，不再渲染 ? shortcuts、/ commands 或其它顶栏状态文案，把纵向空间全部还给 transcript。
+- 输入区底部 footer 不再展示 @ 文件 / Ctrl+V / Tab / ↑↓ / Shift+Enter 等操作提示，避免持续占据注意力。
+- 底部状态改为只保留本轮核心统计：耗时 | 速度 | 工具，与 codex 的轻量收口方向保持一致。
+- 鼠标模式同步时机前移到事件循环开始前，默认 uto 会在等待输入前就开启鼠标捕获，因此滚轮优先滚动输出区，不再先落到输入框历史。
+- select 模式保留为原生拖选/复制入口；scroll 模式继续作为显式的输出区滚动模式；当前默认体验是 uto=输出优先。
+- 这一轮已重新通过 cargo check --bin wunder-cli、cargo test --bin wunder-cli、cargo clippy --bin wunder-cli -- -D warnings 与 cargo build --release --bin wunder-cli。

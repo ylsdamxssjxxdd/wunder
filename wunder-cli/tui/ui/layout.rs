@@ -4,7 +4,6 @@ use ratatui::layout::Layout;
 use ratatui::layout::Rect;
 
 pub(crate) struct MainLayout {
-    pub(crate) status: Rect,
     pub(crate) transcript: Rect,
     pub(crate) popup: Option<Rect>,
     pub(crate) activity: Rect,
@@ -17,18 +16,16 @@ pub(crate) fn build_layout(area: Rect, popup_len: usize, activity_visible: bool)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
                 Constraint::Min(8),
                 Constraint::Length(activity_height),
                 Constraint::Length(7),
             ])
             .split(area);
         return MainLayout {
-            status: chunks[0],
-            transcript: chunks[1],
+            transcript: chunks[0],
             popup: None,
-            activity: chunks[2],
-            input: chunks[3],
+            activity: chunks[1],
+            input: chunks[2],
         };
     }
 
@@ -36,7 +33,6 @@ pub(crate) fn build_layout(area: Rect, popup_len: usize, activity_visible: bool)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
             Constraint::Min(6),
             Constraint::Length(popup_height),
             Constraint::Length(activity_height),
@@ -44,11 +40,10 @@ pub(crate) fn build_layout(area: Rect, popup_len: usize, activity_visible: bool)
         ])
         .split(area);
     MainLayout {
-        status: chunks[0],
-        transcript: chunks[1],
-        popup: Some(chunks[2]),
-        activity: chunks[3],
-        input: chunks[4],
+        transcript: chunks[0],
+        popup: Some(chunks[1]),
+        activity: chunks[2],
+        input: chunks[3],
     }
 }
 
@@ -68,7 +63,6 @@ mod tests {
     #[test]
     fn build_layout_without_popup_uses_expected_sections() {
         let layout = build_layout(Rect::new(0, 0, 100, 30), 0, true);
-        assert_eq!(layout.status.height, 1);
         assert!(layout.popup.is_none());
         assert_eq!(layout.activity.height, 1);
         assert_eq!(layout.input.height, 7);

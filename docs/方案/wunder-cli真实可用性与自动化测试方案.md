@@ -151,14 +151,14 @@ python scripts/wunder_cli_e2e_smoke.py --model qwen3.5-122b --build-release --cl
 这类体验很难通过纯命令行 E2E 全覆盖，建议补一组人工专项回归：
 
 - `auto` 模式：
-  - 鼠标左键拖选 transcript 文本，确认可直接复制；
-  - 滚轮在当前终端中是否可自然滚动；若不可滚动，确认 `/mouse scroll` 可作为兜底；
+  - transcript 区域滚轮应优先由应用接管并滚动输出区；
+  - 滚轮不应再把输入框当作历史导航入口；
 - `select` 模式：
   - 鼠标拖选复制仍可用；
-  - 右键不应再由应用接管粘贴；
+  - 滚轮不应误触发输入历史；
 - `scroll` 模式：
   - transcript 区域滚轮滚动恢复由应用接管；
   - 原生拖选应被抑制，这是预期行为；
 - 模式切换：
   - `F2` 与 `/mouse [auto|scroll|select]` 需实时生效，无需重启会话；
-  - status line 中的 `mouse=...` 提示需要同步变化。
+  - 顶部不再保留提示/状态栏，底部仅显示 `耗时 | 速度 | 工具` 统计。

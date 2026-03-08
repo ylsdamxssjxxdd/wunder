@@ -2,7 +2,6 @@ mod composer;
 mod layout;
 mod modals;
 mod popup;
-mod status_line;
 mod transcript;
 
 use super::app::TuiApp;
@@ -13,8 +12,6 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let popup_view = app.popup_view();
     let activity_visible = app.activity_highlighted();
     let layout = layout::build_layout(frame.area(), popup_view.lines.len(), activity_visible);
-
-    status_line::draw(frame, layout.status, app);
 
     let transcript_viewport = layout::inner_rect(layout.transcript);
     transcript::draw(frame, layout.transcript, transcript_viewport, app, is_zh);
