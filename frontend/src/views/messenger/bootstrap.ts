@@ -6,6 +6,10 @@ export type MessengerBootstrapTask = {
   sections?: MessengerSection[];
 };
 
+const MESSENGER_BOOTSTRAP_BACKGROUND_BATCH_SIZE = 2;
+const MESSENGER_BOOTSTRAP_IDLE_TIMEOUT = 1200;
+const MESSENGER_BOOTSTRAP_FALLBACK_DELAY_MS = 16;
+
 const shouldRunAsCritical = (
   currentSection: MessengerSection,
   task: MessengerBootstrapTask
@@ -41,22 +45,36 @@ export const settleMessengerBootstrapTasks = async (
   await Promise.allSettled(tasks.map((task) => task.run()));
 };
 
+const scheduleMessengerBootstrapTaskRunner = (runner: () => void): void => {
+  if (typeof window === 'undefined') {
+    runner();
+    return;
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(runner, { timeout: MESSENGER_BOOTSTRAP_IDLE_TIMEOUT });
+    return;
+  }
+  window.setTimeout(runner, MESSENGER_BOOTSTRAP_FALLBACK_DELAY_MS);
+};
+
 export const scheduleMessengerBootstrapBackgroundTasks = (
   tasks: MessengerBootstrapTask[]
 ): void => {
   if (!tasks.length) {
     return;
   }
-  const runAll = () => {
-    void Promise.allSettled(tasks.map((task) => task.run()));
+  const pendingTasks = tasks.slice();
+  const runNextBatch = () => {
+    const batch = pendingTasks.splice(0, MESSENGER_BOOTSTRAP_BACKGROUND_BATCH_SIZE);
+    if (!batch.length) {
+      return;
+    }
+    void settleMessengerBootstrapTasks(batch).finally(() => {
+      if (!pendingTasks.length) {
+        return;
+      }
+      scheduleMessengerBootstrapTaskRunner(runNextBatch);
+    });
   };
-  if (typeof window === 'undefined') {
-    runAll();
-    return;
-  }
-  if (typeof window.requestIdleCallback === 'function') {
-    window.requestIdleCallback(runAll, { timeout: 1200 });
-    return;
-  }
-  window.setTimeout(runAll, 16);
+  scheduleMessengerBootstrapTaskRunner(runNextBatch);
 };

@@ -116,7 +116,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
-import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
+import { WorkspacePanel } from '@/components/messenger/lazyDockPanels';
 import { useI18n } from '@/i18n';
 import { copyText } from '@/utils/clipboard';
 

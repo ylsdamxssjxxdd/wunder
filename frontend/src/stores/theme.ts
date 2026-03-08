@@ -1,30 +1,16 @@
 import { defineStore } from 'pinia';
+import {
+  DEFAULT_THEME_MODE,
+  TECH_BLUE_THEME_PALETTE,
+  normalizeThemeMode,
+  normalizeThemePalette,
+  resolveThemeModeForPalette,
+  type ThemeMode,
+  type ThemePalette
+} from '@/utils/themeAppearance';
 
 const THEME_MODE_STORAGE_KEY = 'wille-user-theme';
 const THEME_PALETTE_STORAGE_KEY = 'wille-user-accent-theme';
-
-const DEFAULT_THEME_MODE = 'light';
-const DEFAULT_THEME_PALETTE = 'eva-orange';
-
-const THEME_MODES = ['dark', 'light'] as const;
-const THEME_PALETTES = ['hula-green', 'eva-orange', 'minimal'] as const;
-
-type ThemeMode = (typeof THEME_MODES)[number];
-type ThemePalette = (typeof THEME_PALETTES)[number];
-
-const normalizeThemeMode = (value: unknown) => {
-  if (typeof value === 'string' && (THEME_MODES as readonly string[]).includes(value)) {
-    return value as ThemeMode;
-  }
-  return DEFAULT_THEME_MODE as ThemeMode;
-};
-
-const normalizeThemePalette = (value: unknown) => {
-  if (typeof value === 'string' && (THEME_PALETTES as readonly string[]).includes(value)) {
-    return value as ThemePalette;
-  }
-  return DEFAULT_THEME_PALETTE as ThemePalette;
-};
 
 const readThemeModeFromStorage = () => {
   const raw = localStorage.getItem(THEME_MODE_STORAGE_KEY);
@@ -52,8 +38,12 @@ const applyThemeToDocument = (mode: ThemeMode, palette: ThemePalette) => {
 
 export const useThemeStore = defineStore('theme', {
   state: () => {
-    const mode = readThemeModeFromStorage();
     const palette = readThemePaletteFromStorage();
+    const storedMode = readThemeModeFromStorage();
+    const mode = resolveThemeModeForPalette(storedMode, palette);
+    if (mode !== storedMode) {
+      localStorage.setItem(THEME_MODE_STORAGE_KEY, mode);
+    }
     applyThemeToDocument(mode, palette);
     return {
       mode,
@@ -69,9 +59,18 @@ export const useThemeStore = defineStore('theme', {
     },
     setPalette(palette: unknown) {
       const nextPalette = normalizeThemePalette(palette);
+      const nextMode =
+        nextPalette === TECH_BLUE_THEME_PALETTE
+          ? 'dark'
+          : this.palette === TECH_BLUE_THEME_PALETTE && this.mode === 'dark'
+            ? DEFAULT_THEME_MODE
+            : this.mode;
+
       this.palette = nextPalette;
+      this.mode = nextMode;
       localStorage.setItem(THEME_PALETTE_STORAGE_KEY, nextPalette);
-      applyThemeToDocument(this.mode, nextPalette);
+      localStorage.setItem(THEME_MODE_STORAGE_KEY, nextMode);
+      applyThemeToDocument(nextMode, nextPalette);
     },
     toggleMode() {
       const nextMode = this.mode === 'dark' ? 'light' : 'dark';

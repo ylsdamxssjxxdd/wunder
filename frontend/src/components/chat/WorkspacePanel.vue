@@ -127,14 +127,11 @@
             >
               <i class="fa-solid fa-chevron-right workspace-caret-icon" aria-hidden="true"></i>
             </button>
-            <span
-              :class="['workspace-item-icon', getEntryIcon(item.entry).className]"
-              :title="getEntryIcon(item.entry).label"
-            >
+            <span :class="['workspace-item-icon', item.icon.className]" :title="item.icon.label">
               <img
                 class="workspace-item-icon-img"
-                :src="getEntryIcon(item.entry).icon"
-                :alt="getEntryIcon(item.entry).label"
+                :src="item.icon.icon"
+                :alt="item.icon.label"
               />
             </span>
             <div class="workspace-item-name">
@@ -273,7 +270,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue';
+import type { WorkspaceThemeIconResolver } from './workspaceIcons';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -289,7 +287,6 @@ import {
 } from '@/api/workspace';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
-import vscodeIconsTheme from '@/assets/vscode-icons-theme.json';
 import { showApiError } from '@/utils/apiError';
 import {
   buildWorkspaceTreeCacheKey,
@@ -372,205 +369,16 @@ const CODE_EXTENSIONS = new Set(['py', 'js', 'ts', 'css', 'html', 'htm', 'sh', '
 const ARCHIVE_EXTENSIONS = new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2']);
 const AUDIO_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a']);
 const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm']);
-const WORKSPACE_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}vscode-icons`;
 const WORKSPACE_DOC_ICON_BASE = `${(import.meta.env.BASE_URL || '/').replace(/\/+$/, '/')}doc-icons`;
 const WORKSPACE_FOLDER_ICON = `${WORKSPACE_DOC_ICON_BASE}/folder.png`;
-const WORKSPACE_ICON_PATH_RE = /^(\.\.\/|\.\/)+/;
-const ICON_DEFINITIONS = (vscodeIconsTheme?.iconDefinitions || {}) as Record<string, unknown>;
-const FILE_EXTENSION_ICON_MAP = new Map(
-  Object.entries(vscodeIconsTheme?.fileExtensions || {}).map(([key, value]) => [
-    String(key).toLowerCase(),
-    value
-  ])
-);
-const FALLBACK_EXTENSION_ICON_ENTRIES: Array<[string, string]> = [
-  ['7z', '_f_zip'],
-  ['aac', '_f_audio'],
-  ['adoc', '_f_asciidoc'],
-  ['astro', '_f_astro'],
-  ['avi', '_f_video'],
-  ['bash', '_f_shell'],
-  ['bat', '_f_bat'],
-  ['bmp', '_f_image'],
-  ['bz2', '_f_zip'],
-  ['c', '_f_c'],
-  ['cc', '_f_cpp'],
-  ['cfg', '_f_config'],
-  ['cjs', '_f_js'],
-  ['clj', '_f_clojure'],
-  ['cljc', '_f_clojure'],
-  ['cljs', '_f_clojure'],
-  ['cmd', '_f_bat'],
-  ['coffee', '_f_coffeescript'],
-  ['conf', '_f_config'],
-  ['cpp', '_f_cpp'],
-  ['cs', '_f_csharp'],
-  ['css', '_f_css'],
-  ['csv', '_f_text'],
-  ['cts', '_f_typescript'],
-  ['cxx', '_f_cpp'],
-  ['dart', '_f_dartlang'],
-  ['db', '_f_db'],
-  ['doc', '_f_word'],
-  ['docx', '_f_word'],
-  ['env', '_f_dotenv'],
-  ['erb', '_f_erb'],
-  ['erl', '_f_erlang'],
-  ['ex', '_f_elixir'],
-  ['exs', '_f_elixir'],
-  ['fish', '_f_shell'],
-  ['flac', '_f_audio'],
-  ['fs', '_f_fsharp'],
-  ['fsi', '_f_fsharp'],
-  ['fsx', '_f_fsharp'],
-  ['gif', '_f_image'],
-  ['go', '_f_go'],
-  ['gql', '_f_graphql'],
-  ['gradle', '_f_gradle'],
-  ['graphql', '_f_graphql'],
-  ['groovy', '_f_groovy'],
-  ['gz', '_f_zip'],
-  ['h', '_f_c'],
-  ['hpp', '_f_cpp'],
-  ['hrl', '_f_erlang'],
-  ['hs', '_f_haskell'],
-  ['htm', '_f_html'],
-  ['html', '_f_html'],
-  ['hxx', '_f_cpp'],
-  ['ico', '_f_image'],
-  ['ini', '_f_ini'],
-  ['ipynb', '_f_jupyter'],
-  ['java', '_f_java'],
-  ['jpeg', '_f_image'],
-  ['jpg', '_f_image'],
-  ['js', '_f_js'],
-  ['json', '_f_json'],
-  ['json5', '_f_json5'],
-  ['jsonc', '_f_json'],
-  ['jsonl', '_f_json'],
-  ['jsx', '_f_reactjs'],
-  ['kt', '_f_kotlin'],
-  ['kts', '_f_kotlin'],
-  ['less', '_f_less'],
-  ['lhs', '_f_haskell'],
-  ['log', '_f_log'],
-  ['lua', '_f_lua'],
-  ['m', '_f_objectivec'],
-  ['m4a', '_f_audio'],
-  ['markdown', '_f_markdown'],
-  ['md', '_f_markdown'],
-  ['mdx', '_f_mdx'],
-  ['mjs', '_f_js'],
-  ['mkv', '_f_video'],
-  ['ml', '_f_ocaml'],
-  ['mli', '_f_ocaml'],
-  ['mm', '_f_objectivec'],
-  ['mov', '_f_video'],
-  ['mp3', '_f_audio'],
-  ['mp4', '_f_video'],
-  ['mts', '_f_typescript'],
-  ['nim', '_f_nim'],
-  ['nimble', '_f_nimble'],
-  ['ogg', '_f_audio'],
-  ['pdf', '_f_pdf'],
-  ['php', '_f_php'],
-  ['phtml', '_f_php'],
-  ['pl', '_f_perl'],
-  ['pm', '_f_perl'],
-  ['png', '_f_image'],
-  ['postcss', '_f_postcss'],
-  ['ppt', '_f_powerpoint'],
-  ['pptx', '_f_powerpoint'],
-  ['proto', '_f_protobuf'],
-  ['ps1', '_f_powershell'],
-  ['py', '_f_python'],
-  ['pyi', '_f_python'],
-  ['pyw', '_f_python'],
-  ['r', '_f_r'],
-  ['rar', '_f_zip'],
-  ['rb', '_f_ruby'],
-  ['rmd', '_f_rmd'],
-  ['rs', '_f_rust'],
-  ['rst', '_f_markdown'],
-  ['sass', '_f_sass'],
-  ['sc', '_f_scala'],
-  ['scala', '_f_scala'],
-  ['scss', '_f_scss'],
-  ['sh', '_f_shell'],
-  ['sql', '_f_sql'],
-  ['sqlite', '_f_sqlite'],
-  ['styl', '_f_stylus'],
-  ['stylus', '_f_stylus'],
-  ['svelte', '_f_svelte'],
-  ['svg', '_f_svg'],
-  ['swift', '_f_swift'],
-  ['tar', '_f_zip'],
-  ['tex', '_f_tex'],
-  ['tgz', '_f_zip'],
-  ['toml', '_f_toml'],
-  ['ts', '_f_typescript'],
-  ['tsv', '_f_text'],
-  ['tsx', '_f_reactts'],
-  ['txt', '_f_text'],
-  ['vb', '_f_vb'],
-  ['vue', '_f_vue'],
-  ['wav', '_f_audio'],
-  ['webm', '_f_video'],
-  ['webp', '_f_image'],
-  ['xhtml', '_f_html'],
-  ['xls', '_f_excel'],
-  ['xlsx', '_f_excel'],
-  ['xml', '_f_xml'],
-  ['xsd', '_f_xml'],
-  ['xsl', '_f_xml'],
-  ['xslt', '_f_xml'],
-  ['xz', '_f_zip'],
-  ['yaml', '_f_yaml'],
-  ['yml', '_f_yaml'],
-  ['zip', '_f_zip'],
-  ['zsh', '_f_shell'],
-];
-const FALLBACK_EXTENSION_ICON_MAP = new Map<string, string>(
-  FALLBACK_EXTENSION_ICON_ENTRIES.filter(([, iconId]) => Boolean(ICON_DEFINITIONS[iconId]))
-);
-const FILE_NAME_ICON_MAP = new Map(
-  Object.entries(vscodeIconsTheme?.fileNames || {}).map(([key, value]) => [
-    String(key).toLowerCase(),
-    value
-  ])
-);
-const EXTRA_ALLOWED_ICON_IDS = [
-  '_f_babel',
-  '_f_bun',
-  '_f_cargo',
-  '_f_composer',
-  '_f_docker',
-  '_f_editorconfig',
-  '_f_eslint',
-  '_f_git',
-  '_f_go_package',
-  '_f_jsconfig',
-  '_f_maven',
-  '_f_npm',
-  '_f_pip',
-  '_f_pnpm',
-  '_f_poetry',
-  '_f_prettier',
-  '_f_pypi',
-  '_f_rollup',
-  '_f_stylelint',
-  '_f_tsconfig',
-  '_f_vite',
-  '_f_webpack',
-  '_f_yarn',
-].filter((iconId) => ICON_DEFINITIONS[iconId]);
-
-const DEFAULT_FILE_ICON_ID = vscodeIconsTheme?.file || '';
-const ALLOWED_ICON_IDS = new Set(
-  [DEFAULT_FILE_ICON_ID, ...FALLBACK_EXTENSION_ICON_MAP.values(), ...EXTRA_ALLOWED_ICON_IDS].filter(
-    Boolean
-  )
-);
+const WORKSPACE_DEFAULT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/other.png`;
+const WORKSPACE_TEXT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/txt.png`;
+const WORKSPACE_HTML_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/html.png`;
+const WORKSPACE_PDF_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/pdf.png`;
+const WORKSPACE_WORD_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/docx.png`;
+const WORKSPACE_EXCEL_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/xlsx.png`;
+const WORKSPACE_PPT_FILE_ICON = `${WORKSPACE_DOC_ICON_BASE}/pptx.png`;
+const WORKSPACE_ICON_IDLE_TIMEOUT = 1200;
 const MAX_TEXT_PREVIEW_SIZE = 512 * 1024;
 // 沙盒容器上传总大小上限（对齐 Wunder 配置）
 const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -760,9 +568,13 @@ const workspaceEndIndex = computed(() => {
   );
 });
 const workspaceEntries = computed(() =>
-  workspaceVirtual.value
+  (workspaceVirtual.value
     ? displayEntries.value.slice(workspaceStartIndex.value, workspaceEndIndex.value)
     : displayEntries.value
+  ).map((item) => ({
+    ...item,
+    icon: getEntryIcon(item.entry)
+  }))
 );
 const workspacePaddingTop = computed(() =>
   workspaceVirtual.value ? workspaceStartIndex.value * WORKSPACE_ROW_HEIGHT : 0
@@ -838,6 +650,10 @@ let searchTimer = null;
 let autoRefreshTimer = null;
 let autoRefreshPending = false;
 let stopWorkspaceRefreshListener = null;
+const workspaceThemeIconResolver = shallowRef<WorkspaceThemeIconResolver | null>(null);
+let workspaceThemeIconResolverPromise: Promise<WorkspaceThemeIconResolver | null> | null = null;
+let workspaceThemeIconWarmupHandle: number | null = null;
+let workspaceThemeIconWarmupUsesIdleCallback = false;
 
 const joinWorkspacePath = (basePath, name) =>
   normalizeWorkspacePath([basePath, name].filter(Boolean).join('/'));
@@ -879,39 +695,80 @@ const isWorkspaceTextEditable = (entry) => {
   return sizeValue <= MAX_TEXT_PREVIEW_SIZE;
 };
 
-const normalizeIconKey = (value) => String(value || '').trim().toLowerCase();
-
-const resolveThemeIconPath = (iconId, fallbackId = DEFAULT_FILE_ICON_ID) => {
-  const resolvedId = iconId && ALLOWED_ICON_IDS.has(iconId) ? iconId : '';
-  const definition = resolvedId
-    ? (ICON_DEFINITIONS[resolvedId] as { iconPath?: string } | undefined)
-    : null;
-  const rawPath = definition?.iconPath || '';
-  if (rawPath) {
-    const normalized = rawPath.replace(WORKSPACE_ICON_PATH_RE, '');
-    return `${WORKSPACE_ICON_BASE}/${normalized}`;
+const resolveWorkspaceFallbackFileIcon = (extension) => {
+  if (PDF_EXTENSIONS.has(extension)) {
+    return WORKSPACE_PDF_FILE_ICON;
   }
-  if (fallbackId && fallbackId !== iconId) {
-    return resolveThemeIconPath(fallbackId, '');
+  if (OFFICE_WORD_EXTENSIONS.has(extension)) {
+    return WORKSPACE_WORD_FILE_ICON;
   }
-  return '';
+  if (OFFICE_EXCEL_EXTENSIONS.has(extension)) {
+    return WORKSPACE_EXCEL_FILE_ICON;
+  }
+  if (OFFICE_PPT_EXTENSIONS.has(extension)) {
+    return WORKSPACE_PPT_FILE_ICON;
+  }
+  if (extension === 'html' || extension === 'htm' || extension === 'xhtml') {
+    return WORKSPACE_HTML_FILE_ICON;
+  }
+  if (TEXT_EXTENSIONS.has(extension) || CODE_EXTENSIONS.has(extension)) {
+    return WORKSPACE_TEXT_FILE_ICON;
+  }
+  return WORKSPACE_DEFAULT_FILE_ICON;
 };
 
-const resolveFileIconId = (entry) => {
-  const nameKey = normalizeIconKey(entry?.name);
-  if (nameKey && FILE_NAME_ICON_MAP.has(nameKey)) {
-    return FILE_NAME_ICON_MAP.get(nameKey);
+const loadWorkspaceThemeIconsInBackground = async () => {
+  if (workspaceThemeIconResolver.value) {
+    return workspaceThemeIconResolver.value;
   }
-  const extension = normalizeIconKey(getWorkspaceExtension(entry));
-  if (extension) {
-    if (FILE_EXTENSION_ICON_MAP.has(extension)) {
-      return FILE_EXTENSION_ICON_MAP.get(extension);
-    }
-    if (FALLBACK_EXTENSION_ICON_MAP.has(extension)) {
-      return FALLBACK_EXTENSION_ICON_MAP.get(extension);
-    }
+  workspaceThemeIconResolverPromise ??= import('./workspaceIcons')
+    .then((module) => module.loadWorkspaceThemeIconResolver())
+    .then((resolver) => {
+      workspaceThemeIconResolver.value = resolver;
+      return resolver;
+    })
+    .catch((error) => {
+      console.warn('[workspace] failed to warmup theme icons', error);
+      return null;
+    });
+  return workspaceThemeIconResolverPromise;
+};
+
+const cancelWorkspaceThemeIconWarmup = () => {
+  if (workspaceThemeIconWarmupHandle === null || typeof window === 'undefined') {
+    return;
   }
-  return DEFAULT_FILE_ICON_ID;
+  if (workspaceThemeIconWarmupUsesIdleCallback && typeof window.cancelIdleCallback === 'function') {
+    window.cancelIdleCallback(workspaceThemeIconWarmupHandle);
+  } else {
+    window.clearTimeout(workspaceThemeIconWarmupHandle);
+  }
+  workspaceThemeIconWarmupHandle = null;
+  workspaceThemeIconWarmupUsesIdleCallback = false;
+};
+
+const scheduleWorkspaceThemeIconWarmup = () => {
+  if (workspaceThemeIconResolver.value || workspaceThemeIconResolverPromise) {
+    return;
+  }
+  cancelWorkspaceThemeIconWarmup();
+  const runWarmup = () => {
+    workspaceThemeIconWarmupHandle = null;
+    workspaceThemeIconWarmupUsesIdleCallback = false;
+    void loadWorkspaceThemeIconsInBackground();
+  };
+  if (typeof window === 'undefined') {
+    runWarmup();
+    return;
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    workspaceThemeIconWarmupUsesIdleCallback = true;
+    workspaceThemeIconWarmupHandle = window.requestIdleCallback(runWarmup, {
+      timeout: WORKSPACE_ICON_IDLE_TIMEOUT
+    });
+    return;
+  }
+  workspaceThemeIconWarmupHandle = window.setTimeout(runWarmup, 16);
 };
 
 const getEntryIcon = (entry) => {
@@ -922,11 +779,10 @@ const getEntryIcon = (entry) => {
       label: t('workspace.icon.folder')
     };
   }
-  const iconId = resolveFileIconId(entry);
-  const icon =
-    resolveThemeIconPath(iconId, DEFAULT_FILE_ICON_ID) ||
-    resolveThemeIconPath(DEFAULT_FILE_ICON_ID, '');
   const ext = getWorkspaceExtension(entry);
+  const icon =
+    workspaceThemeIconResolver.value?.resolveFileIconPath(String(entry?.name || entry?.path || ''), ext) ||
+    resolveWorkspaceFallbackFileIcon(ext);
   if (IMAGE_EXTENSIONS.has(ext)) {
     return { icon, className: 'icon-vscode', label: t('workspace.icon.image') };
   }
@@ -2298,6 +2154,7 @@ const handleGlobalScroll = () => {
 };
 
 onMounted(async () => {
+  scheduleWorkspaceThemeIconWarmup();
   await loadWorkspace();
   stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
     const detail = event?.detail || {};
@@ -2335,6 +2192,7 @@ watch(
 
 onBeforeUnmount(() => {
   clearPreviewUrl();
+  cancelWorkspaceThemeIconWarmup();
   if (searchTimer) {
     clearTimeout(searchTimer);
   }

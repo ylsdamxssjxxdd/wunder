@@ -164,6 +164,7 @@
             <option value="hula-green">{{ t('messenger.settings.themeOptionHula') }}</option>
             <option value="eva-orange">{{ t('messenger.settings.themeOptionEva') }}</option>
             <option value="minimal">{{ t('messenger.settings.themeOptionMinimal') }}</option>
+            <option value="tech-blue">{{ t('messenger.settings.themeOptionTechBlue') }}</option>
           </select>
         </div>
         <div class="messenger-settings-row">
@@ -356,9 +357,9 @@ import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
+import { normalizeThemePalette, type ThemePalette } from '@/utils/themeAppearance';
 
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
-type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
 type PerformanceMode = 'high' | 'low';
 type WindowCloseBehavior = 'tray' | 'quit';
 type ProfileAvatarOption = {
@@ -469,13 +470,6 @@ const normalizeSendKey = (value: unknown): SendKeyMode =>
     if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
     return 'ctrl_enter';
   })();
-
-const normalizeThemePalette = (value: unknown): ThemePalette => {
-  const text = String(value || '').trim().toLowerCase();
-  if (text === 'hula-green') return 'hula-green';
-  if (text === 'minimal') return 'minimal';
-  return 'eva-orange';
-};
 
 const normalizePerformanceMode = (value: unknown): PerformanceMode =>
   String(value || '').trim().toLowerCase() === 'low' ? 'low' : 'high';

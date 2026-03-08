@@ -255,6 +255,10 @@
     "en-US": "Unable to produce a final answer within the maximum rounds.",
     "zh-CN": "未能在最大轮次内生成最终答复。"
   },
+  "error.max_rounds_user_guidance": {
+    "en-US": "This turn reached the model round limit ({max_rounds}). The task may be unfinished. You can continue the conversation from the current progress, or increase this model's max_rounds and retry. If intermediate files or tables were already generated, you can review them in the workspace first.",
+    "zh-CN": "本轮已达到模型轮次上限（{max_rounds}），任务可能尚未完成。你可以直接继续对话，让模型基于当前进度接着做；或者把该模型的 max_rounds 调大后重试。如果本轮已经生成了中间文件、表格或草稿，也可以先查看工作区结果。"
+  },
   "error.empty_no_final_answer": {
     "en-US": "The model did not return a displayable final answer. Please retry or check the model stream settings.",
     "zh-CN": "模型未返回可展示的最终答复，请重试或检查模型流式设置。"

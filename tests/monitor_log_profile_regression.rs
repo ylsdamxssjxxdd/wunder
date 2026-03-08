@@ -194,3 +194,69 @@ fn admin_without_debug_payload_uses_normal_profile() {
     let types = event_types(&detail);
     assert!(!types.iter().any(|value| value == "llm_output_delta"));
 }
+
+#[test]
+fn coalesces_consecutive_context_usage_events() {
+    let monitor = build_monitor(120);
+    let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
+    monitor.register(&session_id, "user_context", "", "hello", false, false);
+    monitor.record_event(
+        &session_id,
+        "context_usage",
+        &json!({ "context_tokens": 1200, "user_round": 1 }),
+    );
+    monitor.record_event(
+        &session_id,
+        "context_usage",
+        &json!({ "context_tokens": 1800, "user_round": 1 }),
+    );
+
+    let detail = monitor
+        .get_detail(&session_id)
+        .expect("detail should exist");
+    let context_events: Vec<&Value> = detail["events"]
+        .as_array()
+        .expect("events should be an array")
+        .iter()
+        .filter(|event| event["type"].as_str() == Some("context_usage"))
+        .collect();
+    assert_eq!(context_events.len(), 1);
+    assert_eq!(context_events[0]["data"]["context_tokens"], json!(1800));
+    assert_eq!(detail["session"]["context_tokens"], json!(1800));
+    assert_eq!(detail["session"]["context_tokens_peak"], json!(1800));
+}
+
+#[test]
+fn coalesces_progress_events_with_same_stage() {
+    let monitor = build_monitor(120);
+    let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
+    monitor.register(&session_id, "user_progress", "", "hello", false, false);
+    monitor.record_event(
+        &session_id,
+        "progress",
+        &json!({ "stage": "tool_call", "summary": "first", "user_round": 1 }),
+    );
+    monitor.record_event(
+        &session_id,
+        "progress",
+        &json!({ "stage": "tool_call", "summary": "second", "user_round": 1 }),
+    );
+    monitor.record_event(
+        &session_id,
+        "progress",
+        &json!({ "stage": "final", "summary": "done", "user_round": 1 }),
+    );
+
+    let detail = monitor
+        .get_detail(&session_id)
+        .expect("detail should exist");
+    let progress_events: Vec<&Value> = detail["events"]
+        .as_array()
+        .expect("events should be an array")
+        .iter()
+        .filter(|event| event["type"].as_str() == Some("progress"))
+        .collect();
+    assert_eq!(progress_events.len(), 2);
+    assert_eq!(progress_events[0]["data"]["summary"], json!("second"));
+    assert_eq!(progress_events[1]["data"]["summary"], json!("done"));
+}

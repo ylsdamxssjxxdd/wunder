@@ -3,6 +3,8 @@ use serde_json::Value;
 use std::io::{self, Write};
 use wunder_server::schemas::StreamEvent;
 
+use crate::patch_diff::{build_patch_diff_preview, format_patch_diff_preview_lines};
+
 const MAX_INLINE_JSON_CHARS: usize = 180;
 const MAX_PATCH_RESULT_FILES: usize = 24;
 
@@ -114,20 +116,7 @@ impl StreamRenderer {
             }
             "error" => {
                 self.ensure_newline();
-                let nested_message = payload
-                    .get("data")
-                    .and_then(Value::as_object)
-                    .and_then(|inner| inner.get("message"))
-                    .and_then(Value::as_str);
-                let message = payload
-                    .as_str()
-                    .or_else(|| payload.get("message").and_then(Value::as_str))
-                    .or_else(|| payload.get("detail").and_then(Value::as_str))
-                    .or_else(|| payload.get("error").and_then(Value::as_str))
-                    .or(nested_message)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string)
+                let message = crate::error_display::format_error_message(payload)
                     .unwrap_or_else(|| compact_json(payload));
                 eprintln!("[error] {message}");
             }
@@ -161,35 +150,62 @@ fn format_tool_call_line(tool: &str, args: &Value, repair: Option<&Value>) -> St
         .and_then(format_repair_badge)
         .map(|badge| format!(" {badge}"))
         .unwrap_or_default();
-    if tool == "执行命令" {
+    let tool_is_zh = looks_like_zh(tool);
+    let mut lines = Vec::new();
+    if is_execute_command_tool_name(tool) {
         if let Some(command) = args
             .get("content")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            return format!("[tool_call] {tool} `{command}`{repair_suffix}");
+            lines.push(if tool_is_zh {
+                format!("• 调用 {tool}{repair_suffix}")
+            } else {
+                format!("• Called {tool}{repair_suffix}")
+            });
+            lines.push(format!("  └ `{command}`"));
+            return lines.join("\n");
         }
     }
 
     if is_apply_patch_tool_name(tool) {
+        lines.push(if tool_is_zh {
+            format!("• 调用 {tool}{repair_suffix}")
+        } else {
+            format!("• Called {tool}{repair_suffix}")
+        });
         if let Some(patch) = extract_patch_input(args)
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
             let summary = summarize_patch_input(patch);
             if !summary.is_empty() {
-                return format!("[tool_call] {tool} ({summary}){repair_suffix}");
+                lines.push(format!("  └ {summary}"));
             }
+            append_patch_preview_lines(
+                &mut lines,
+                extract_patch_preview_lines(patch, 8, tool_is_zh),
+            );
         }
-        return format!("[tool_call] {tool}{repair_suffix}");
+        return lines.join("\n");
     }
 
     if args.is_null() {
-        return format!("[tool_call] {tool} {{}}{repair_suffix}");
+        return if tool_is_zh {
+            format!("• 调用 {tool}{repair_suffix}\n  └ {{}}")
+        } else {
+            format!("• Called {tool}{repair_suffix}\n  └ {{}}")
+        };
     }
 
-    format!("[tool_call] {tool} {}{repair_suffix}", compact_json(args))
+    lines.push(if tool_is_zh {
+        format!("• 调用 {tool}{repair_suffix}")
+    } else {
+        format!("• Called {tool}{repair_suffix}")
+    });
+    lines.push(format!("  └ {}", summarize_tool_args(args)));
+    lines.join("\n")
 }
 
 fn format_repair_badge(repair: &Value) -> Option<&'static str> {
@@ -218,9 +234,16 @@ fn extract_patch_input(args: &Value) -> Option<&str> {
 
 fn summarize_patch_input(patch: &str) -> String {
     let line_count = patch.lines().count();
-    let op_count = count_patch_ops(patch);
+    let (op_count, added_lines, removed_lines) = count_patch_metrics(patch);
     if op_count > 0 {
-        format!("files={op_count}, lines={line_count}")
+        let mut parts = vec![format!("files={op_count}")];
+        if added_lines > 0 || removed_lines > 0 {
+            parts.push(format!("+{added_lines}"));
+            parts.push(format!("-{removed_lines}"));
+        } else {
+            parts.push(format!("lines={line_count}"));
+        }
+        parts.join(", ")
     } else if line_count > 0 {
         format!("lines={line_count}")
     } else {
@@ -228,16 +251,74 @@ fn summarize_patch_input(patch: &str) -> String {
     }
 }
 
-fn count_patch_ops(patch: &str) -> usize {
-    patch
-        .lines()
-        .filter(|line| {
-            let trimmed = line.trim_start();
-            trimmed.starts_with("*** Add File")
-                || trimmed.starts_with("*** Update File")
-                || trimmed.starts_with("*** Delete File")
-        })
-        .count()
+fn count_patch_metrics(patch: &str) -> (usize, usize, usize) {
+    let mut files = 0usize;
+    let mut added = 0usize;
+    let mut removed = 0usize;
+    let mut in_file = false;
+
+    for raw_line in patch.lines() {
+        let line = raw_line.trim();
+        if line.starts_with("*** Add File:")
+            || line.starts_with("*** Update File:")
+            || line.starts_with("*** Delete File:")
+        {
+            files = files.saturating_add(1);
+            in_file = true;
+            continue;
+        }
+        if line.starts_with("*** ") {
+            in_file = false;
+            continue;
+        }
+        if !in_file {
+            continue;
+        }
+        if raw_line.starts_with('+') {
+            added = added.saturating_add(1);
+        } else if raw_line.starts_with('-') {
+            removed = removed.saturating_add(1);
+        }
+    }
+
+    (files, added, removed)
+}
+
+fn extract_patch_preview_lines(patch: &str, max_entries: usize, is_zh: bool) -> Vec<String> {
+    let preview = build_patch_diff_preview(patch, max_entries, 6, is_zh);
+    if preview.is_empty() {
+        Vec::new()
+    } else {
+        format_patch_diff_preview_lines(&preview)
+    }
+}
+
+fn summarize_tool_args(args: &Value) -> String {
+    if let Some(object) = args.as_object() {
+        for key in [
+            "path",
+            "file_path",
+            "filePath",
+            "query",
+            "q",
+            "url",
+            "location",
+            "ticker",
+            "command",
+            "content",
+            "text",
+            "prompt",
+            "name",
+        ] {
+            if let Some(value) = object.get(key).and_then(Value::as_str) {
+                let cleaned = value.trim();
+                if !cleaned.is_empty() {
+                    return format!("{key}={cleaned}");
+                }
+            }
+        }
+    }
+    compact_json(args)
 }
 
 fn render_question_panel_lines(payload: &Value) -> bool {
@@ -384,6 +465,11 @@ fn is_apply_patch_tool_name(tool: &str) -> bool {
     normalized == "apply_patch" || tool.contains("应用补丁")
 }
 
+fn is_execute_command_tool_name(tool: &str) -> bool {
+    let normalized = tool.trim().to_ascii_lowercase();
+    normalized == "execute_command" || tool.contains("执行命令")
+}
+
 fn extract_tool_result_object(payload: &Value) -> &Value {
     payload.get("result").unwrap_or(payload)
 }
@@ -434,7 +520,7 @@ fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
         _ => "M",
     };
     let text = if !path.is_empty() && !to_path.is_empty() && to_path != path {
-        format!("{path} -> {to_path}")
+        format!("{path} → {to_path}")
     } else if !path.is_empty() {
         path.to_string()
     } else {
@@ -443,29 +529,137 @@ fn extract_apply_patch_file_line(file: &Value) -> Option<String> {
     Some(format!("  {marker} {text}"))
 }
 
+fn push_tree_line(lines: &mut Vec<String>, content: String) {
+    let prefix = if lines.len() <= 1 { "  └ " } else { "    " };
+    lines.push(format!("{prefix}{content}"));
+}
+
+fn append_patch_preview_lines(lines: &mut Vec<String>, preview_lines: Vec<String>) {
+    for line in preview_lines {
+        let trimmed = line.trim_start();
+        let is_header = trimmed.starts_with("diff ") || trimmed.starts_with('…');
+        let prefix = if is_header { "    " } else { "      " };
+        lines.push(format!("{prefix}{trimmed}"));
+    }
+}
+
+fn append_text_preview(
+    lines: &mut Vec<String>,
+    label: &str,
+    text: &str,
+    max_lines: usize,
+    max_chars: usize,
+) -> bool {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let trimmed = normalized.trim_end_matches('\n').trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let (preview, chars_truncated) = truncate_by_chars(trimmed, max_chars);
+    let parts = preview.lines().collect::<Vec<_>>();
+    if parts.is_empty() {
+        return false;
+    }
+
+    lines.push(format!("  {label}: {}", parts[0]));
+    for line in parts.iter().skip(1).take(max_lines.saturating_sub(1)) {
+        lines.push(format!("    {line}"));
+    }
+
+    let hidden_lines = parts.len().saturating_sub(max_lines);
+    if hidden_lines > 0 || chars_truncated {
+        let mut suffix = String::new();
+        if hidden_lines > 0 {
+            suffix.push_str(&format!("{hidden_lines} more lines"));
+        }
+        if chars_truncated {
+            if !suffix.is_empty() {
+                suffix.push_str(", ");
+            }
+            suffix.push_str("truncated");
+        }
+        lines.push(format!("    ... ({suffix})"));
+    }
+
+    true
+}
+
+fn truncate_by_chars(text: &str, max_chars: usize) -> (String, bool) {
+    if max_chars == 0 {
+        return (String::new(), !text.is_empty());
+    }
+
+    if text.chars().count() <= max_chars {
+        return (text.to_string(), false);
+    }
+
+    let mut output = String::new();
+    for ch in text.chars().take(max_chars) {
+        output.push(ch);
+    }
+    (output, true)
+}
+
 fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
     let result = extract_tool_result_object(payload);
     let data = extract_tool_result_data(result);
     let ok = result.get("ok").and_then(Value::as_bool);
+    let tool_is_zh = looks_like_zh(tool);
     let changed_files =
         number_value(data.get("changed_files")).max(number_value(result.get("changed_files")));
+    let added = number_value(data.get("added"));
+    let updated = number_value(data.get("updated"));
+    let deleted = number_value(data.get("deleted"));
+    let moved = number_value(data.get("moved"));
     let hunks =
         number_value(data.get("hunks_applied")).max(number_value(result.get("hunks_applied")));
-    let mut header = format!("[tool_result] {tool}");
-    if let Some(ok) = ok {
-        header.push_str(if ok { " ok" } else { " failed" });
-    }
-    if changed_files > 0 || hunks > 0 {
-        header.push_str(&format!(" (files={changed_files}, hunks={hunks})"));
-    }
-
-    let mut lines = vec![header];
+    let mut lines = Vec::new();
     let files = data.get("files").and_then(Value::as_array);
-    let has_files = files.map(|value| !value.is_empty()).unwrap_or(false);
-    if ok == Some(true) && has_files {
-        lines.push("  Success. Updated the following files:".to_string());
-    } else if ok == Some(false) {
-        lines.push("  Failed to apply patch".to_string());
+    if ok == Some(false) {
+        lines.push(if tool_is_zh {
+            "✘ 补丁应用失败".to_string()
+        } else {
+            "✘ Failed to apply patch".to_string()
+        });
+    } else {
+        let noun = if changed_files == 1 {
+            if tool_is_zh {
+                "1 个文件".to_string()
+            } else {
+                "1 file".to_string()
+            }
+        } else if tool_is_zh {
+            format!("{changed_files} 个文件")
+        } else {
+            format!("{changed_files} files")
+        };
+        let mut metrics = Vec::new();
+        if added > 0 {
+            metrics.push(format!("+{added}"));
+        }
+        if updated > 0 {
+            metrics.push(format!("~{updated}"));
+        }
+        if deleted > 0 {
+            metrics.push(format!("-{deleted}"));
+        }
+        if moved > 0 {
+            metrics.push(format!("↦{moved}"));
+        }
+        if hunks > 0 {
+            metrics.push(format!("{hunks} hunks"));
+        }
+        let metric_suffix = if metrics.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", metrics.join(", "))
+        };
+        lines.push(if tool_is_zh {
+            format!("• 已修改 {noun}{metric_suffix}")
+        } else {
+            format!("• Edited {noun}{metric_suffix}")
+        });
     }
     if let Some(error) = result
         .get("error")
@@ -473,7 +667,14 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        lines.push(format!("  error: {error}"));
+        push_tree_line(
+            &mut lines,
+            if tool_is_zh {
+                format!("错误: {error}")
+            } else {
+                format!("Error: {error}")
+            },
+        );
     }
     if let Some(code) = data
         .get("error_code")
@@ -481,7 +682,7 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        lines.push(format!("  code: {code}"));
+        push_tree_line(&mut lines, format!("code: {code}"));
     }
     if let Some(hint) = data
         .get("hint")
@@ -489,27 +690,104 @@ fn format_apply_patch_result_lines(tool: &str, payload: &Value) -> Vec<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        lines.push(format!("  hint: {hint}"));
+        push_tree_line(
+            &mut lines,
+            if tool_is_zh {
+                format!("提示: {hint}")
+            } else {
+                format!("Hint: {hint}")
+            },
+        );
     }
 
     if let Some(files) = files {
         let mut appended = 0usize;
         for file in files.iter().take(MAX_PATCH_RESULT_FILES) {
             if let Some(line) = extract_apply_patch_file_line(file) {
-                lines.push(line);
+                push_tree_line(&mut lines, line.trim().to_string());
                 appended = appended.saturating_add(1);
             }
         }
         if files.len() > appended {
-            lines.push(format!(
-                "  ... ({} more)",
-                files.len().saturating_sub(appended)
-            ));
+            push_tree_line(
+                &mut lines,
+                format!("... ({} more)", files.len().saturating_sub(appended)),
+            );
         }
     }
 
     if lines.len() == 1 {
-        lines.push(format!("  data: {}", compact_json(data)));
+        push_tree_line(&mut lines, compact_json(data));
+    }
+    lines
+}
+
+fn format_execute_command_result_lines(tool: &str, result: &Value) -> Vec<String> {
+    let data = result.get("data").unwrap_or(result);
+    let Some(first) = data
+        .get("results")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+
+    let command = first
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    let returncode = number_value(first.get("returncode")).max(number_value(
+        result.get("meta").and_then(|meta| meta.get("exit_code")),
+    ));
+    let duration_ms = number_value(result.get("meta").and_then(|meta| meta.get("duration_ms")));
+    let tool_is_zh = looks_like_zh(tool);
+    let header = if returncode != 0 {
+        if tool_is_zh {
+            format!("✘ {tool} 失败")
+        } else {
+            format!("✘ {tool} failed")
+        }
+    } else if tool_is_zh {
+        format!("• 已完成 {tool}")
+    } else {
+        format!("• Completed {tool}")
+    };
+    let mut metrics = Vec::new();
+    metrics.push(format!("exit={returncode}"));
+    if duration_ms > 0 {
+        metrics.push(format!("{duration_ms}ms"));
+    }
+    let mut lines = vec![if metrics.is_empty() {
+        header
+    } else {
+        format!("{header} ({})", metrics.join(", "))
+    }];
+    if !command.is_empty() {
+        push_tree_line(&mut lines, format!("cmd: {command}"));
+    }
+
+    let stdout = first
+        .get("stdout")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let stderr = first
+        .get("stderr")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
+    let mut has_output = false;
+    if returncode == 0 {
+        has_output |= append_text_preview(&mut lines, "stdout", stdout, 6, 900);
+        has_output |= append_text_preview(&mut lines, "stderr", stderr, 4, 300);
+    } else {
+        has_output |= append_text_preview(&mut lines, "stderr", stderr, 6, 900);
+        has_output |= append_text_preview(&mut lines, "stdout", stdout, 4, 300);
+    }
+
+    if !has_output {
+        push_tree_line(&mut lines, "output: <empty>".to_string());
     }
     lines
 }
@@ -521,10 +799,36 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> 
         .get("meta")
         .and_then(|value| value.get("repair"))
         .or_else(|| payload.get("repair"));
-    let mut header = format!("[tool_result] {tool}");
-    if let Some(ok) = ok {
-        header.push_str(if ok { " ok" } else { " failed" });
+    if is_execute_command_tool_name(tool) {
+        let mut lines = format_execute_command_result_lines(tool, result);
+        if !lines.is_empty() {
+            if let Some(badge) = repair.and_then(format_repair_badge) {
+                if let Some(header) = lines.first_mut() {
+                    header.push(' ');
+                    header.push_str(badge);
+                }
+            }
+            if let Some(repair) = repair {
+                if let Some(summary) = format_repair_summary(repair) {
+                    push_tree_line(&mut lines, format!("note: {summary}"));
+                }
+            }
+            return lines;
+        }
     }
+
+    let tool_is_zh = looks_like_zh(tool);
+    let mut header = if ok == Some(false) {
+        if tool_is_zh {
+            format!("✘ {tool} 失败")
+        } else {
+            format!("✘ {tool} failed")
+        }
+    } else if tool_is_zh {
+        format!("• 已完成 {tool}")
+    } else {
+        format!("• Completed {tool}")
+    };
     if let Some(badge) = repair.and_then(format_repair_badge) {
         header.push(' ');
         header.push_str(badge);
@@ -537,20 +841,23 @@ fn format_generic_tool_result_lines(tool: &str, payload: &Value) -> Vec<String> 
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        lines.push(format!("  error: {error}"));
+        push_tree_line(
+            &mut lines,
+            if tool_is_zh {
+                format!("错误: {error}")
+            } else {
+                format!("Error: {error}")
+            },
+        );
     }
     if let Some(repair) = repair {
         if let Some(summary) = format_repair_summary(repair) {
-            lines.push(format!("  note: {summary}"));
+            push_tree_line(&mut lines, format!("note: {summary}"));
         }
     }
     if lines.len() == 1 {
-        let summary = payload
-            .get("result")
-            .map(compact_json)
-            .unwrap_or_else(|| compact_json(payload));
-        lines[0].push(' ');
-        lines[0].push_str(&summary);
+        let data = extract_tool_result_data(result);
+        push_tree_line(&mut lines, compact_json(data));
     }
     lines
 }
@@ -605,9 +912,7 @@ mod tests {
             }
         });
         let lines = format_apply_patch_result_lines("应用补丁", &payload);
-        assert!(lines
-            .iter()
-            .any(|line| line.contains("Success. Updated the following files")));
+        assert!(lines[0].contains("已修改 2 个文件"));
         assert!(lines.iter().any(|line| line.contains("A src/new.rs")));
         assert!(lines.iter().any(|line| line.contains("D src/old.rs")));
     }
@@ -641,8 +946,27 @@ mod tests {
             &serde_json::json!({ "content": "python3 demo.py" }),
             Some(&serde_json::json!({ "strategy": "lossy_json_string_repair" })),
         );
+        assert!(line.contains("调用"));
         assert!(line.contains("python3 demo.py"));
         assert!(line.contains("args repaired"));
+    }
+
+    #[test]
+    fn apply_patch_tool_call_line_uses_real_diff_preview() {
+        let line = format_tool_call_line(
+            "apply_patch",
+            &serde_json::json!({
+                "input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"
+            }),
+            None,
+        );
+        assert!(line.contains("files=1, +1, -1"));
+        assert!(line.contains("diff src/main.rs"));
+        assert!(line.contains("@@"));
+        assert!(line.contains("- old"));
+        assert!(line.contains("+ new"));
+        assert!(line.contains("    diff src/main.rs"));
+        assert!(line.contains("      @@"));
     }
 
     #[test]

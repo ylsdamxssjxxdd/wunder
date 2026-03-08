@@ -2,6 +2,7 @@ use super::*;
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+use wunder_server::approval::ApprovalRequestKind;
 
 #[test]
 fn wrapped_input_lines_wrap_by_viewport_width() {
@@ -259,10 +260,8 @@ fn format_tool_result_lines_formats_apply_patch_changes_with_markers() {
 
     let lines = format_tool_result_lines("应用补丁", &payload);
     assert!(!lines.is_empty());
-    assert!(lines[0].contains("files=3"));
-    assert!(lines
-        .iter()
-        .any(|line| line.contains("Success. Updated the following files")));
+    assert!(lines[0].contains("已修改 3 个文件"));
+    assert!(lines[0].contains("4 hunks"));
     assert!(lines.iter().any(|line| line.contains("A src/new_file.rs")));
     assert!(lines.iter().any(|line| line.contains("M src/existing.rs")));
     assert!(lines.iter().any(|line| line.contains("D src/old_file.rs")));
@@ -310,6 +309,7 @@ fn backtrack_user_text_returns_trimmed_user_content() {
     let entry = LogEntry {
         kind: LogKind::User,
         text: "  hello world  ".to_string(),
+        special: None,
         markdown_cache: None,
     };
     assert_eq!(backtrack_user_text(&entry), Some("hello world".to_string()));
@@ -320,6 +320,7 @@ fn backtrack_user_text_ignores_non_user_or_empty() {
     let assistant_entry = LogEntry {
         kind: LogKind::Assistant,
         text: "hello".to_string(),
+        special: None,
         markdown_cache: None,
     };
     assert_eq!(backtrack_user_text(&assistant_entry), None);
@@ -327,6 +328,7 @@ fn backtrack_user_text_ignores_non_user_or_empty() {
     let empty_user_entry = LogEntry {
         kind: LogKind::User,
         text: "   ".to_string(),
+        special: None,
         markdown_cache: None,
     };
     assert_eq!(backtrack_user_text(&empty_user_entry), None);
@@ -338,16 +340,19 @@ fn collect_recent_user_logs_returns_latest_first() {
         LogEntry {
             kind: LogKind::User,
             text: "first".to_string(),
+            special: None,
             markdown_cache: None,
         },
         LogEntry {
             kind: LogKind::Assistant,
             text: "reply".to_string(),
+            special: None,
             markdown_cache: None,
         },
         LogEntry {
             kind: LogKind::User,
             text: "second".to_string(),
+            special: None,
             markdown_cache: None,
         },
     ];
@@ -422,4 +427,67 @@ fn format_compose_attachment_hint_handles_single_and_multiple_items() {
         format_compose_attachment_hint(&["diagram.png".to_string(), "notes.md".to_string()], false,),
         Some("attached 2 · diagram.png +1".to_string())
     );
+}
+
+#[test]
+fn format_apply_patch_approval_lines_show_real_diff_preview() {
+    let args = serde_json::json!({
+        "input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"
+    });
+    let lines = format_apply_patch_approval_lines(&args, false).expect("approval lines");
+    assert_eq!(lines[0], "Patch preview: files=1, +1, -1");
+    assert!(lines.iter().any(|line| line.trim() == "diff src/main.rs"));
+    assert!(lines.iter().any(|line| line.trim() == "@@"));
+    assert!(lines.iter().any(|line| line.trim() == "- old"));
+    assert!(lines.iter().any(|line| line.trim() == "+ new"));
+}
+
+#[test]
+fn approval_prompt_text_matches_request_kind() {
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ApprovalRequest {
+        id: "req-1".to_string(),
+        kind: ApprovalRequestKind::Patch,
+        tool: "apply_patch".to_string(),
+        args: serde_json::json!({}),
+        summary: "edit files".to_string(),
+        detail: serde_json::json!({}),
+        respond_to: tx,
+    };
+    assert_eq!(
+        approval_prompt_text(&request, false),
+        "Would you like to make the following edits?"
+    );
+    assert_eq!(
+        approval_prompt_text(&request, true),
+        "是否允许应用以下修改？"
+    );
+}
+
+#[test]
+fn approval_option_labels_match_exec_request_kind() {
+    let (tx, _rx) = tokio::sync::oneshot::channel();
+    let request = ApprovalRequest {
+        id: "req-2".to_string(),
+        kind: ApprovalRequestKind::Exec,
+        tool: "execute_command".to_string(),
+        args: serde_json::json!({}),
+        summary: "run command".to_string(),
+        detail: serde_json::json!({}),
+        respond_to: tx,
+    };
+    assert_eq!(
+        approval_option_labels(&request, false),
+        [
+            "Yes, run it once".to_string(),
+            "Yes, allow it for this session".to_string(),
+            "No, and tell Wunder what to do differently".to_string(),
+        ]
+    );
+}
+#[test]
+fn normalize_statusline_item_supports_cwd_aliases() {
+    assert_eq!(normalize_statusline_item("cwd").as_deref(), Some("cwd"));
+    assert_eq!(normalize_statusline_item("dir").as_deref(), Some("cwd"));
+    assert_eq!(normalize_statusline_item("workspace").as_deref(), Some("cwd"));
 }

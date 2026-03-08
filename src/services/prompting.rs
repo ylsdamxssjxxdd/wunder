@@ -6,7 +6,8 @@ use crate::schemas::ToolSpec;
 use crate::services::user_prompt_templates;
 use crate::skills::{SkillRegistry, SkillSpec};
 use crate::tools::{
-    builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs, resolve_tool_name,
+    builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs,
+    render_prompt_tool_spec, resolve_tool_name,
 };
 use crate::user_tools::UserToolBindings;
 use crate::workspace::WorkspaceManager;
@@ -528,7 +529,7 @@ fn build_system_prompt_skeleton(
         let tools_text = if !tools.is_empty() {
             tools
                 .iter()
-                .map(render_tool_spec)
+                .map(|spec| render_tool_spec(spec, tool_call_mode == ToolCallMode::FreeformCall))
                 .collect::<Vec<_>>()
                 .join("\n")
         } else {
@@ -716,13 +717,21 @@ fn build_prompt_key(prompt: Option<&str>) -> String {
     format!("{:x}", hasher.finish())
 }
 
-fn render_tool_spec(spec: &ToolSpec) -> String {
+fn render_tool_spec(spec: &ToolSpec, freeform_mode: bool) -> String {
     // serde_json 默认会按 key 排序输出，这里手动控制字段顺序，确保 name 在最前面便于模型检索。
     let name = serde_json::to_string(&spec.name).unwrap_or_else(|_| "\"\"".to_string());
     let description =
         serde_json::to_string(&spec.description).unwrap_or_else(|_| "\"\"".to_string());
-    let arguments =
-        serde_json::to_string(&spec.input_schema).unwrap_or_else(|_| "null".to_string());
+    let rendered = render_prompt_tool_spec(spec, freeform_mode);
+    if let Some(format_value) = rendered.get("format") {
+        let format_value =
+            serde_json::to_string(format_value).unwrap_or_else(|_| "null".to_string());
+        return format!(
+            "{{\"name\":{name},\"description\":{description},\"format\":{format_value}}}"
+        );
+    }
+    let arguments = rendered.get("arguments").unwrap_or(&spec.input_schema);
+    let arguments = serde_json::to_string(arguments).unwrap_or_else(|_| "null".to_string());
     format!("{{\"name\":{name},\"description\":{description},\"arguments\":{arguments}}}")
 }
 

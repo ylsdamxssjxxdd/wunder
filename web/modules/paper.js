@@ -1,5 +1,10 @@
 import { elements } from "./elements.js?v=20260215-01";
 import { t } from "./i18n.js?v=20260215-01";
+import {
+  enhanceRenderedMarkdown,
+  normalizeMarkdownForWebPreview,
+  normalizePreviewExternalUrl,
+} from "./markdown-preview.js";
 
 const MAX_TOC_LEVEL = 3;
 let rendered = false;
@@ -153,9 +158,10 @@ const renderMarkdown = (markdown, sourceUrl = "") => {
   if (!elements.paperContent) {
     return;
   }
+  const normalizedMarkdown = normalizeMarkdownForWebPreview(markdown);
   const renderer = globalThis.marked?.Renderer ? new globalThis.marked.Renderer() : null;
   if (!renderer || !globalThis.marked?.parse) {
-    elements.paperContent.textContent = markdown;
+    elements.paperContent.textContent = normalizedMarkdown;
     return;
   }
   const baseUrl = resolvePaperBaseUrl(sourceUrl);
@@ -171,13 +177,13 @@ const renderMarkdown = (markdown, sourceUrl = "") => {
   };
   renderer.image = function (href, title, text) {
     const token = href && typeof href === "object" ? href : { href, title, text };
-    const src = resolveAssetUrl(token.href, baseUrl);
+    const src = normalizePreviewExternalUrl(resolveAssetUrl(token.href, baseUrl));
     const alt = token.text ? escapeHtml(token.text) : "";
     const titleAttr = token.title ? ` title="${escapeHtml(token.title)}"` : "";
     const resolved = escapeHtml(src);
     return `<img src="${resolved}" alt="${alt}"${titleAttr} loading="lazy" />`;
   };
-  const html = globalThis.marked.parse(markdown, {
+  const html = globalThis.marked.parse(normalizedMarkdown, {
     renderer,
     gfm: true,
     breaks: true,
@@ -185,6 +191,7 @@ const renderMarkdown = (markdown, sourceUrl = "") => {
     headerIds: false,
   });
   elements.paperContent.innerHTML = html;
+  enhanceRenderedMarkdown(elements.paperContent);
   buildToc(tocItems);
 };
 

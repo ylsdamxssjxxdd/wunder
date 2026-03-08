@@ -3823,6 +3823,95 @@
   height: auto;
 }
 
+.model-output-preview-markdown a {
+  color: #2563eb;
+}
+
+.model-output-preview-markdown a:hover {
+  color: #1d4ed8;
+}
+
+.model-output-preview-markdown .markdown-preview-table,
+.paper-content .markdown-preview-table {
+  margin: 0 0 12px;
+  overflow-x: auto;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.model-output-preview-markdown .markdown-preview-table table,
+.paper-content .markdown-preview-table table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+}
+
+.model-output-preview-markdown .markdown-preview-table th,
+.model-output-preview-markdown .markdown-preview-table td,
+.paper-content .markdown-preview-table th,
+.paper-content .markdown-preview-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.model-output-preview-markdown .markdown-preview-table th,
+.paper-content .markdown-preview-table th {
+  background: #f8fafc;
+  font-weight: 600;
+}
+
+.model-output-preview-markdown .markdown-preview-table tbody tr:nth-child(2n) td,
+.paper-content .markdown-preview-table tbody tr:nth-child(2n) td {
+  background: #f8fafc;
+}
+
+.model-output-preview-markdown .markdown-preview-image-error,
+.paper-content .markdown-preview-image-error {
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.model-output-preview-markdown .markdown-preview-image-error-title,
+.paper-content .markdown-preview-image-error-title {
+  margin-bottom: 4px;
+  color: #b91c1c;
+  font-weight: 600;
+}
+
+.model-output-preview-markdown .markdown-preview-image-error-alt,
+.paper-content .markdown-preview-image-error-alt {
+  margin-bottom: 4px;
+  color: #0f172a;
+}
+
+.model-output-preview-markdown .markdown-preview-image-error-hint,
+.paper-content .markdown-preview-image-error-hint {
+  margin-bottom: 8px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.model-output-preview-markdown .markdown-preview-image-error-link,
+.paper-content .markdown-preview-image-error-link {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.model-output-preview-markdown .markdown-preview-image-error-meta,
+.paper-content .markdown-preview-image-error-meta {
+  color: #64748b;
+  font-size: 12px;
+  word-break: break-all;
+}
+
 .model-output-preview-markdown.is-empty {
   color: #64748b;
 }

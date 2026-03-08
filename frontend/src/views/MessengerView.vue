@@ -1227,20 +1227,7 @@ import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
-import UserChannelSettingsPanel from '@/components/channels/UserChannelSettingsPanel.vue';
-import AgentCronPanel from '@/components/messenger/AgentCronPanel.vue';
-import AgentRuntimeRecordsPanel from '@/components/messenger/AgentRuntimeRecordsPanel.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
-import DesktopContainerManagerPanel from '@/components/messenger/DesktopContainerManagerPanel.vue';
-import DesktopSystemSettingsPanel from '@/components/messenger/DesktopSystemSettingsPanel.vue';
-import MessengerFileContainerMenu from '@/components/messenger/MessengerFileContainerMenu.vue';
-import MessengerGroupDock from '@/components/messenger/MessengerGroupDock.vue';
-import MessengerLocalFileSearchPanel from '@/components/messenger/MessengerLocalFileSearchPanel.vue';
-import MessengerRightDock from '@/components/messenger/MessengerRightDock.vue';
-import MessengerSettingsPanel from '@/components/messenger/MessengerSettingsPanel.vue';
-import UserPromptSettingsPanel from '@/components/messenger/UserPromptSettingsPanel.vue';
-import MessengerWorldComposer from '@/components/messenger/MessengerWorldComposer.vue';
-import AgentSettingsPanel from '@/components/messenger/AgentSettingsPanel.vue';
 import {
   scheduleMessengerBootstrapBackgroundTasks,
   settleMessengerBootstrapTasks,
@@ -1250,16 +1237,35 @@ import {
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
-import InquiryPanel from '@/components/chat/InquiryPanel.vue';
-import MessageThinking from '@/components/chat/MessageThinking.vue';
-import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
-import PlanPanel from '@/components/chat/PlanPanel.vue';
-import ToolApprovalComposer from '@/components/chat/ToolApprovalComposer.vue';
-import WorkspacePanel from '@/components/chat/WorkspacePanel.vue';
-import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
-import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
-import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
-import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
+import {
+  InquiryPanel,
+  MessageThinking,
+  MessageToolWorkflow,
+  PlanPanel,
+  ToolApprovalComposer,
+  WorkspacePanel
+} from '@/views/messenger/lazyMessageBlocks';
+import {
+  MessengerFileContainerMenu,
+  MessengerGroupDock,
+  MessengerRightDock
+} from '@/views/messenger/lazyShell';
+import {
+  AgentCronPanel,
+  AgentRuntimeRecordsPanel,
+  AgentSettingsPanel,
+  DesktopContainerManagerPanel,
+  DesktopSystemSettingsPanel,
+  MessengerLocalFileSearchPanel,
+  MessengerSettingsPanel,
+  MessengerWorldComposer,
+  UserChannelSettingsPanel,
+  UserKnowledgePane,
+  UserMcpPane,
+  UserPromptSettingsPanel,
+  UserSharedToolsPanel,
+  UserSkillPane
+} from '@/views/messenger/lazyPanels';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
@@ -1274,7 +1280,7 @@ import {
   type MessengerSection
 } from '@/stores/sessionHub';
 import { useUserWorldStore } from '@/stores/userWorld';
-import { renderMarkdown } from '@/utils/markdown';
+import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
 import { copyText } from '@/utils/clipboard';
@@ -1304,6 +1310,7 @@ import {
   normalizeAvatarIcon,
   normalizeThemeMode,
   normalizeThemePalette,
+  type ThemePalette,
   type UserAppearancePreferences
 } from '@/utils/userPreferences';
 import {
@@ -5074,6 +5081,7 @@ const hydrateWorkspaceResources = () => {
   cards.forEach((card) => {
     void hydrateWorkspaceResourceCard(card as HTMLElement);
   });
+  hydrateExternalMarkdownImages(container);
 };
 
 const scheduleWorkspaceResourceHydration = () => {
@@ -7687,9 +7695,9 @@ const startNewDraftSession = async () => {
   await scrollMessagesToBottom(true);
 };
 
-const toggleLanguage = () => {
+const toggleLanguage = async () => {
   const next = getCurrentLanguage() === 'zh-CN' ? 'en-US' : 'zh-CN';
-  setLanguage(next);
+  await setLanguage(next);
   ElMessage.success(t('messenger.more.languageChanged'));
 };
 
@@ -7917,7 +7925,7 @@ const handleSessionApprovalDecision = async (
   }
 };
 
-const updateThemePalette = (value: 'hula-green' | 'eva-orange' | 'minimal') => {
+const updateThemePalette = (value: ThemePalette) => {
   themeStore.setPalette(normalizeThemePalette(value));
 };
 

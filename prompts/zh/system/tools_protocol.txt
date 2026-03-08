@@ -1,39 +1,42 @@
 [工具协议]
 
 [[TOOL_CALL_MODE_TOOL_CALL]]
-工具签名在 <tools> </tools> XML 标签内提供：
+工具签名会通过 <tools> </tools> XML 标签提供：
 <tools>
 {available_tools_describe}
 </tools>
 每次工具调用都必须遵循以下要求：
 1. 将调用内容放在 <tool_call>...</tool_call> 块中返回。
-2. 在块内输出有效 JSON，且仅包含两个键："name"(字符串) 和 "arguments"(对象)。示例：
+2. 在块内输出合法 JSON，且仅包含两个键："name"（字符串）和 "arguments"（对象）。示例：
 <tool_call>
-{"name":"最终回复","arguments":{"content":"任务已完成，还有什么我可以帮忙的吗？"}}
+{"name":"final_response","arguments":{"content":"任务已完成，还有什么我可以帮你的吗？"}}
 </tool_call>
 
-工具执行结果会作为以 "tool_response: " 前缀的 user 消息返回。
+工具执行结果会作为带有 "tool_response: " 前缀的 user 消息返回。
 [[/TOOL_CALL_MODE_TOOL_CALL]]
 
 [[TOOL_CALL_MODE_FREEFORM_CALL]]
-工具签名在<tools> </tools> XML 标签内提供：
+工具签名会通过 <tools> </tools> XML 标签提供：
 <tools>
 {available_tools_describe}
 </tools>
 
-该模式使用“结构化 + 自由语法”混合调用：
-1. 普通 JSON 工具优先使用结构化参数；
-2. 语法类工具（如 apply_patch）使用 freeform 原文输入；
-3. freeform 输入必须是语法本体，不要再包一层 JSON。
+在该模式下，若 API 已提供原生工具调用能力，优先使用原生工具调用。
+下面的 XML 协议仅作为原生工具调用不可用时的兜底方案。
 
-apply_patch 专用规则（对齐 codex）：
-- 严禁把补丁放进 JSON 字符串或 Markdown 代码块；
-- 输入必须以 *** Begin Patch 开始、以 *** End Patch 结束；
+原生 freeform 调用策略：
+1. 普通 JSON 工具优先使用原生结构化工具调用；
+2. 语法类工具（如 apply_patch）优先使用原生 custom/freeform 工具调用；
+3. freeform 输入必须直接提供语法正文，不要再包一层 JSON。
+
+apply_patch 专用规则（对齐 Codex）：
+- 严禁把补丁正文放进 JSON 字符串或 Markdown 代码块；
+- 输入必须以 *** Begin Patch 开始，并以 *** End Patch 结束；
 - 按需使用 *** Add File: / *** Update File: / *** Delete File: / *** Move to:；
-- 修改要最小且精确：只改必要行，不做无关重排；
-- 失败时优先根据 error_code、hint、retryable 做最小修复并重试。
+- 修改必须最小且精确，避免无关重排或格式化；
+- 如果失败，优先根据 error_code、hint、retryable 做最小修复后重试。
 
-简单示例：
+XML 兜底示例（仅在原生工具调用不可用时使用）：
 <tool_call>
 <name>apply_patch</name>
 <input>
@@ -45,57 +48,33 @@ apply_patch 专用规则（对齐 codex）：
 *** End Patch
 </input>
 </tool_call>
-工具执行结果会作为以 "tool_response: " 前缀的 user 消息返回。
+工具执行结果会作为带有 "tool_response: " 前缀的 user 消息返回。
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 
 [[HAS_PLAN_TOOL]]
 [计划面板]
-当可用工具包含“计划面板”时，请优先在开始任务前用它给出简洁计划（2-6 步）。执行过程中保持计划同步更新：只保留一个 in_progress，完成的步骤及时标记为 completed，说明字段保持简短。
+当计划面板工具（"计划面板" / update_plan）可用时，请先用它发布一个简洁计划（2-6 步）。执行过程中持续同步计划：任一时刻只保留一个 in_progress，已完成步骤及时标记为 completed，说明保持简短。
 [[/HAS_PLAN_TOOL]]
 
 [[HAS_A2UI_TOOL]]
 [A2UI 界面生成指南]
 
-当你需要输出 A2UI 界面时，只能调用 a2ui 工具完成最终回复，不要再调用“最终回复”工具。
+当你需要输出 A2UI 界面时，只能调用 a2ui 工具完成最终回复，不要再调用最终回复工具。
 
-调用要求：
-1. 使用 <tool_call> 包裹工具调用 JSON。
-2. arguments 里必须包含：
-   - uid：用于 UI Surface 标识，后续所有消息会以该 uid 对应的 surfaceId 展示。
-   - a2ui：A2UI JSON 消息数组，每条消息仅包含一种类型（beginRendering/surfaceUpdate/dataModelUpdate/deleteSurface）。
-3. 如果消息里缺少 surfaceId，系统会自动使用 uid 补齐。
-4. 若需要额外文本说明，可在 arguments.content 中提供简短说明（可选）。
-5. 禁止输出 Markdown 代码块；仅在 a2ui 中返回 JSON 消息数组。
+要求：
+1. 使用 <tool_call> ... </tool_call> 包裹工具调用 JSON。
+2. arguments 必须包含：
+   - uid：UI surface 标识；后续消息会渲染到由该 uid 推导出的 surfaceId。
+   - a2ui：A2UI JSON 消息数组；每条消息只能包含一个动作（beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface）。
+3. 如果 surfaceId 缺失，系统会自动使用 uid 补齐。
+4. 可选：在 arguments.content 中补充一段简短说明。
+5. 不要输出 Markdown 代码块；a2ui 中只返回 JSON 消息数组。
 
-生成规则：
-- a2ui 是消息数组，每条消息只能包含一种操作：beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface。
-- 常见顺序：beginRendering -> surfaceUpdate -> dataModelUpdate；仅在需要清理时用 deleteSurface。
-- 组件采用“邻接表”：所有组件平铺在 surfaceUpdate.components，root 指向根组件 id。
-- dataModelUpdate.contents 由 key + value* 组成（valueString/valueNumber/valueBoolean/valueMap），valueMap 支持嵌套对象。
-- 列表模板使用 List.children.template：dataBinding 指向列表数据；模板内部用相对 path（如 "name"）读取 dataContext。
-- 主动作按钮请加 "primary": true。
-- 图标建议使用标准名称：mail / call / locationOn / calendarToday / check / close 等。
-
-组件清单：
-- Text: text{literalString|path}, usageHint(h1~h5/caption/body)
-- Row/Column/List: children{explicitList|template}, alignment/distribution, List.direction
-- Card: child
-- Button: child, primary, action{name, context[]}
-- Image: url, fit, usageHint
-- Icon: name, size, color
-- Divider: axis
-- Tabs: tabItems[{title, child}]
-- Modal: entryPointChild, contentChild
-- CheckBox: label, value
-- TextField: label, text, textFieldType(shortText/longText/number/date/obscured)
-- DateTimeInput: value, enableDate, enableTime
-- MultipleChoice: selections, options[{label,value}], maxAllowedSelections
-- Slider: value, minValue, maxValue
-- Video: url
-- AudioPlayer: url, description
-
-模板规则：
-- 列表：Column + List(template) + Card；dataModelUpdate 中提供 items。
-- 详情：Card 包裹 Column；标题用 h2/h3；主按钮 primary:true。
-- 操作反馈：可用 Card 或 Modal 展示确认信息。
+通用规则：
+- a2ui 是消息数组；每条消息只能包含一种动作：beginRendering / surfaceUpdate / dataModelUpdate / deleteSurface。
+- 常见顺序：beginRendering -> surfaceUpdate -> dataModelUpdate；仅在清理时使用 deleteSurface。
+- 组件采用邻接表结构：所有组件平铺在 surfaceUpdate.components 中，root 指向根组件 id。
+- dataModelUpdate.contents 是 key + 类型化值列表（valueString / valueNumber / valueBoolean / valueMap）；valueMap 支持嵌套对象。
+- 列表模板使用 List.children.template：dataBinding 指向列表数据，template 中通过相对路径（如 "name"）读取 dataContext。
+- 主操作按钮应包含 "primary": true。
 [[/HAS_A2UI_TOOL]]

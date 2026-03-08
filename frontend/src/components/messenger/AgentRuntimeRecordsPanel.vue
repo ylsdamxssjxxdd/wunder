@@ -80,11 +80,16 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import * as echarts from 'echarts';
+import { LineChart } from 'echarts/charts';
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components';
+import { type ECharts, init, use } from 'echarts/core';
+import { CanvasRenderer } from 'echarts/renderers';
 
 import { getAgentRuntimeRecords } from '@/api/agents';
 import { useI18n } from '@/i18n';
 import { useThemeStore } from '@/stores/theme';
+
+use([CanvasRenderer, GridComponent, LegendComponent, LineChart, TooltipComponent]);
 
 type RuntimeDailyRecord = {
   date: string;
@@ -206,7 +211,7 @@ const selectedDate = ref(resolveTodayDate());
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const heatmapRows = ref(3);
 
-let trendChart: echarts.ECharts | null = null;
+let trendChart: ECharts | null = null;
 let requestSerial = 0;
 let heatmapResizeObserver: ResizeObserver | null = null;
 
@@ -586,7 +591,7 @@ function renderTrendChart() {
     return;
   }
   if (!trendChart) {
-    trendChart = echarts.init(container);
+    trendChart = init(container);
     trendChart.on('click', handleTrendChartClick);
   }
   const palette = resolveChartPalette();

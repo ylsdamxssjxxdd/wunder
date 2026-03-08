@@ -168,6 +168,7 @@ pub(super) struct EventEmitter {
     closed: Arc<AtomicBool>,
     next_event_id: Arc<AtomicI64>,
     last_cleanup_ts: Arc<AtomicU64>,
+    overflow_version: Arc<AtomicU64>,
     delta_buffer: Option<Arc<ParkingMutex<StreamDeltaBuffer>>>,
 }
 
@@ -195,12 +196,21 @@ impl EventEmitter {
             closed: Arc::new(AtomicBool::new(false)),
             next_event_id: Arc::new(AtomicI64::new(start_event_id.saturating_add(1))),
             last_cleanup_ts: Arc::new(AtomicU64::new(0)),
+            overflow_version: Arc::new(AtomicU64::new(0)),
             delta_buffer,
         }
     }
 
     fn close(&self) {
         self.closed.store(true, AtomicOrdering::SeqCst);
+    }
+
+    fn note_overflow(&self) {
+        self.overflow_version.fetch_add(1, AtomicOrdering::SeqCst);
+    }
+
+    fn overflow_version(&self) -> u64 {
+        self.overflow_version.load(AtomicOrdering::SeqCst)
     }
 
     pub(super) async fn finish(&self) {
@@ -272,39 +282,15 @@ impl EventEmitter {
         let storage = storage.clone();
         let cleanup_cutoff = self.cleanup_cutoff();
         let event_type = event_type.to_string();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            let event_type = event_type.clone();
-            handle.spawn_blocking(move || {
-                if let Err(err) =
-                    storage.append_stream_event(&session_id, &user_id, event_id, &payload)
-                {
-                    warn!(
-                        "failed to persist stream event {event_type} for session {session_id}: {err}"
-                    );
-                }
-                if let Some(cutoff) = cleanup_cutoff {
-                    if let Err(err) = storage.delete_stream_events_before(cutoff) {
-                        warn!(
-                            "failed to cleanup stream events before {cutoff} for session {session_id}: {err}"
-                        );
-                    }
-                }
-            });
-        } else {
-            if let Err(err) = storage.append_stream_event(&session_id, &user_id, event_id, &payload)
-            {
-                warn!(
-                    "failed to persist stream event {event_type} for session {session_id}: {err}"
-                );
-            }
-            if let Some(cutoff) = cleanup_cutoff {
-                if let Err(err) = storage.delete_stream_events_before(cutoff) {
-                    warn!(
-                        "failed to cleanup stream events before {cutoff} for session {session_id}: {err}"
-                    );
-                }
-            }
-        }
+        super::stream_persist::enqueue_stream_event_persist(
+            storage,
+            session_id,
+            user_id,
+            event_id,
+            payload,
+            event_type,
+            cleanup_cutoff,
+        );
     }
 
     fn persist_event_on_emit(
@@ -382,6 +368,7 @@ impl EventEmitter {
         if !should_persist_stream_event(&event.event) {
             return;
         }
+        self.note_overflow();
         let raw_data = event
             .data
             .get("data")
@@ -411,6 +398,32 @@ impl EventEmitter {
     }
 }
 
+fn reset_stream_poll_state(
+    poll_interval: &mut Duration,
+    idle_rounds: &mut usize,
+    base_interval: Duration,
+) {
+    *idle_rounds = 0;
+    *poll_interval = base_interval;
+}
+
+fn backoff_stream_poll_interval(
+    poll_interval: &mut Duration,
+    idle_rounds: &mut usize,
+    base_interval: Duration,
+) {
+    *idle_rounds = idle_rounds.saturating_add(1);
+    if *idle_rounds <= STREAM_EVENT_RESUME_POLL_BACKOFF_AFTER {
+        *poll_interval = base_interval;
+        return;
+    }
+    let next = poll_interval.as_secs_f64() * STREAM_EVENT_RESUME_POLL_BACKOFF_FACTOR;
+    *poll_interval = Duration::from_secs_f64(
+        next.max(base_interval.as_secs_f64())
+            .min(STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S),
+    );
+}
+
 impl Orchestrator {
     pub(super) fn spawn_stream_pump(
         &self,
@@ -425,7 +438,11 @@ impl Orchestrator {
         tokio::spawn(async move {
             let mut last_event_id: i64 = start_event_id.max(0);
             let mut closed = false;
-            let poll_interval = std::time::Duration::from_secs_f64(STREAM_EVENT_POLL_INTERVAL_S);
+            let base_interval = Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
+            let mut poll_interval = base_interval;
+            let mut idle_rounds: usize = 0;
+            let mut overflow_probe_pending = false;
+            let mut seen_overflow_version: u64 = 0;
 
             async fn drain_until(
                 storage: Arc<dyn StorageBackend>,
@@ -477,81 +494,106 @@ impl Orchestrator {
             }
 
             loop {
-                let mut signal: Option<StreamSignal> = None;
+                let current_overflow_version = emitter.overflow_version();
+                if current_overflow_version > seen_overflow_version {
+                    seen_overflow_version = current_overflow_version;
+                    overflow_probe_pending = true;
+                }
+
                 if !closed {
                     match tokio::time::timeout(poll_interval, queue_rx.recv()).await {
-                        Ok(value) => signal = value,
-                        Err(_) => signal = None,
-                    }
-                }
-
-                match signal {
-                    Some(StreamSignal::Done) => {
-                        closed = true;
-                        continue;
-                    }
-                    Some(StreamSignal::Event(event)) => {
-                        let event_id = parse_stream_event_id(&event);
-                        if let Some(event_id) = event_id {
-                            if event_id > last_event_id + 1
-                                && !drain_until(
-                                    storage.clone(),
-                                    &session_id,
-                                    &mut last_event_id,
-                                    event_id - 1,
-                                    &event_tx,
-                                    &emitter,
-                                )
-                                .await
-                            {
-                                return;
-                            }
-                            if event_id <= last_event_id {
-                                continue;
-                            }
-                        }
-                        if event_tx.send(event).await.is_err() {
-                            emitter.close();
-                            return;
-                        }
-                        if let Some(event_id) = event_id {
-                            last_event_id = event_id;
-                        }
-                        continue;
-                    }
-                    None => {
-                        let overflow = load_overflow_events(
-                            storage.clone(),
-                            session_id.clone(),
-                            last_event_id,
-                            STREAM_EVENT_FETCH_LIMIT,
-                        )
-                        .await;
-                        if !overflow.is_empty() {
-                            for event in overflow {
-                                let event_id = parse_stream_event_id(&event);
-                                if event_tx.send(event).await.is_err() {
-                                    emitter.close();
-                                    return;
-                                }
-                                if let Some(event_id) = event_id {
-                                    last_event_id = event_id;
-                                }
-                            }
+                        Ok(Some(StreamSignal::Done)) => {
+                            closed = true;
                             continue;
                         }
+                        Ok(Some(StreamSignal::Event(event))) => {
+                            let event_id = parse_stream_event_id(&event);
+                            if let Some(event_id) = event_id {
+                                if event_id > last_event_id + 1
+                                    && !drain_until(
+                                        storage.clone(),
+                                        &session_id,
+                                        &mut last_event_id,
+                                        event_id - 1,
+                                        &event_tx,
+                                        &emitter,
+                                    )
+                                    .await
+                                {
+                                    return;
+                                }
+                                if event_id <= last_event_id {
+                                    reset_stream_poll_state(
+                                        &mut poll_interval,
+                                        &mut idle_rounds,
+                                        base_interval,
+                                    );
+                                    continue;
+                                }
+                            }
+                            if event_tx.send(event).await.is_err() {
+                                emitter.close();
+                                return;
+                            }
+                            if let Some(event_id) = event_id {
+                                last_event_id = event_id;
+                            }
+                            reset_stream_poll_state(
+                                &mut poll_interval,
+                                &mut idle_rounds,
+                                base_interval,
+                            );
+                            continue;
+                        }
+                        Ok(None) => {
+                            closed = true;
+                        }
+                        Err(_) => {}
                     }
                 }
 
-                if closed && runner.is_finished() {
+                if overflow_probe_pending {
+                    let overflow = load_overflow_events(
+                        storage.clone(),
+                        session_id.clone(),
+                        last_event_id,
+                        STREAM_EVENT_FETCH_LIMIT,
+                    )
+                    .await;
+                    if !overflow.is_empty() {
+                        let fetched = overflow.len();
+                        for event in overflow {
+                            let event_id = parse_stream_event_id(&event);
+                            if event_tx.send(event).await.is_err() {
+                                emitter.close();
+                                return;
+                            }
+                            if let Some(event_id) = event_id {
+                                last_event_id = event_id;
+                            }
+                        }
+                        overflow_probe_pending = fetched as i64 >= STREAM_EVENT_FETCH_LIMIT;
+                        reset_stream_poll_state(
+                            &mut poll_interval,
+                            &mut idle_rounds,
+                            base_interval,
+                        );
+                        continue;
+                    }
+                    overflow_probe_pending = false;
+                }
+
+                if closed && runner.is_finished() && !overflow_probe_pending {
                     break;
                 }
-                if closed && queue_rx.is_closed() {
+                if closed && queue_rx.is_closed() && !overflow_probe_pending {
                     break;
                 }
-                if runner.is_finished() && queue_rx.is_empty() {
+                if runner.is_finished() && queue_rx.is_empty() && !overflow_probe_pending {
                     break;
                 }
+
+                backoff_stream_poll_interval(&mut poll_interval, &mut idle_rounds, base_interval);
             }
             emitter.close();
         });
@@ -774,5 +816,31 @@ mod tests {
             }
         });
         assert!(filter_delta_segments(&payload, 2).is_none());
+    }
+
+    #[test]
+    fn test_backoff_stream_poll_interval_starts_from_base_interval() {
+        let base_interval = Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
+        let mut poll_interval = base_interval;
+        let mut idle_rounds = 0_usize;
+
+        backoff_stream_poll_interval(&mut poll_interval, &mut idle_rounds, base_interval);
+
+        assert_eq!(idle_rounds, 1);
+        assert_eq!(poll_interval, base_interval);
+    }
+
+    #[test]
+    fn test_backoff_stream_poll_interval_caps_at_max_interval() {
+        let base_interval = Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
+        let mut poll_interval = base_interval;
+        let mut idle_rounds = 0_usize;
+
+        for _ in 0..12 {
+            backoff_stream_poll_interval(&mut poll_interval, &mut idle_rounds, base_interval);
+        }
+
+        assert!(poll_interval.as_secs_f64() <= STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S);
+        assert!(poll_interval.as_secs_f64() >= base_interval.as_secs_f64());
     }
 }

@@ -132,11 +132,13 @@
 
 <script setup lang="ts">
 import { useI18n } from '@/i18n';
-import MessengerGroupCreateDialog from '@/components/messenger/MessengerGroupCreateDialog.vue';
-import MessengerImagePreviewDialog from '@/components/messenger/MessengerImagePreviewDialog.vue';
-import MessengerPromptPreviewDialog from '@/components/messenger/MessengerPromptPreviewDialog.vue';
-import MessengerTimelineDetailDialog from '@/components/messenger/MessengerTimelineDetailDialog.vue';
-import MessengerWorldHistoryDialog from '@/components/messenger/MessengerWorldHistoryDialog.vue';
+import {
+  MessengerGroupCreateDialog,
+  MessengerImagePreviewDialog,
+  MessengerPromptPreviewDialog,
+  MessengerTimelineDetailDialog,
+  MessengerWorldHistoryDialog
+} from './asyncDialogs';
 import type { WorldHistoryCategory, WorldHistoryRecord } from '@/views/messenger/model';
 
 type MessengerWorldHistoryTabOption = {

@@ -14,9 +14,51 @@ const makeProxyRule = () => ({
   secure: false
 });
 
+const normalizePath = (id: string) => id.replace(/\\/g, '/');
+
+const resolveManualChunk = (rawId: string) => {
+  const id = normalizePath(rawId);
+  if (!id.includes('/node_modules/')) {
+    return undefined;
+  }
+  if (
+    id.includes('/node_modules/vue/') ||
+    id.includes('/node_modules/@vue/') ||
+    id.includes('/node_modules/vue-router/') ||
+    id.includes('/node_modules/pinia/')
+  ) {
+    return 'vendor-vue';
+  }
+  if (id.includes('/node_modules/element-plus/')) {
+    return 'vendor-element-plus';
+  }
+  if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) {
+    return 'vendor-echarts';
+  }
+  if (id.includes('/node_modules/three/') || id.includes('/node_modules/topojson-client/')) {
+    return 'vendor-3d';
+  }
+  if (id.includes('/node_modules/markdown-it/')) {
+    return 'vendor-markdown';
+  }
+  if (id.includes('/node_modules/axios/')) {
+    return 'vendor-http';
+  }
+  return 'vendor-misc';
+};
+
 export default defineConfig({
   envDir: path.resolve(__dirname, '..'),
   plugins: [vue()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          return resolveManualChunk(id);
+        }
+      }
+    }
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url))

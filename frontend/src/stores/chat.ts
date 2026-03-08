@@ -18,6 +18,7 @@ import {
 import { t } from '@/i18n';
 import { setDefaultSession } from '@/api/agents';
 import { consumeSseStream } from '@/utils/sse';
+import { formatStructuredErrorText } from '@/utils/streamError';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -293,38 +294,11 @@ const normalizeMessageStats = (stats) => {
   };
 };
 
-const extractErrorMessage = (payload) => {
-  if (!payload || typeof payload !== 'object') {
-    return '';
-  }
-  const detail = payload.detail;
-  if (detail) {
-    if (typeof detail === 'string') {
-      return detail;
-    }
-    if (detail.message) {
-      return detail.message;
-    }
-    if (detail.error) {
-      return detail.error;
-    }
-    if (detail.detail?.message) {
-      return detail.detail.message;
-    }
-  }
-  return payload.message || payload.error || '';
-};
-
 const parseErrorText = (text) => {
   if (!text) {
     return '';
   }
-  try {
-    const payload = JSON.parse(text);
-    return extractErrorMessage(payload) || text;
-  } catch (error) {
-    return text;
-  }
+  return formatStructuredErrorText(text, text);
 };
 
 const readResponseError = async (response) => {
@@ -2192,6 +2166,8 @@ const ensureRuntime = (sessionId) => {
       watchLastEventAt: 0,
       watchdogTimer: null,
       watchdogBusy: false,
+      slowClientResumeTimer: null,
+      slowClientResumeAfterEventId: 0,
       stopRequested: false,
       lastEventId: 0
     });
@@ -2284,6 +2260,15 @@ const clearWatchdog = (runtime) => {
   }
   runtime.watchdogBusy = false;
   runtime.watchLastEventAt = 0;
+};
+
+const clearSlowClientResume = (runtime) => {
+  if (!runtime) return;
+  if (runtime.slowClientResumeTimer) {
+    clearTimeout(runtime.slowClientResumeTimer);
+    runtime.slowClientResumeTimer = null;
+  }
+  runtime.slowClientResumeAfterEventId = 0;
 };
 
 const abortWatchStream = (sessionId) => {
@@ -2386,6 +2371,7 @@ const resolveLastAssistantTimestampMs = (messages) => {
 const WATCH_USER_MESSAGE_DEDUP_MS = 2000;
 const WATCHDOG_IDLE_MS = 20000;
 const WATCHDOG_INTERVAL_MS = 5000;
+const SLOW_CLIENT_RESUME_DELAY_MS = 260;
 const STREAM_FLUSH_BASE_MS = 40;
 const STREAM_FLUSH_MAX_MS = 160;
 const HISTORY_PAGE_LIMIT = 80;
@@ -2794,8 +2780,9 @@ const startSessionWatcher = (store, sessionId) => {
         finalizeAll(true);
         return;
       }
+      const resumeRequired = error?.phase === 'slow_client' || error?.resumeRequired === true;
       const transient =
-        error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError';
+        resumeRequired || error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError';
       if (transient) {
         if (perfEnabled) {
           chatPerf.count('chat_watch_interrupted', 1, { sessionId: key });
@@ -2818,7 +2805,7 @@ const startSessionWatcher = (store, sessionId) => {
         return;
       }
       const pendingMessage = findPendingAssistantMessage(sessionMessagesRef);
-      if (pendingMessage && store.activeSessionId === key) {
+      if (store.activeSessionId === key && (pendingMessage || !controller.signal.aborted)) {
         setTimeout(() => startSessionWatcher(store, key), 200);
       }
     });
@@ -2860,6 +2847,7 @@ const resolveStreamTransport = () => {
 const abortResumeStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
+  clearSlowClientResume(runtime);
   if (runtime.resumeController) {
     runtime.resumeController.abort();
     runtime.resumeController = null;
@@ -2870,11 +2858,50 @@ const abortResumeStream = (sessionId) => {
 const abortSendStream = (sessionId) => {
   const runtime = getRuntime(sessionId);
   if (!runtime) return;
+  clearSlowClientResume(runtime);
   if (runtime.sendController) {
     runtime.sendController.abort();
     runtime.sendController = null;
   }
   runtime.sendRequestId = null;
+};
+
+const scheduleSlowClientResume = (store, sessionId, message, afterEventId) => {
+  const key = resolveSessionKey(sessionId);
+  if (!key || !message) return;
+  const runtime = ensureRuntime(key);
+  if (!runtime || runtime.stopRequested) return;
+  const normalizedAfterEventId = Math.max(
+    normalizeStreamEventId(afterEventId) || 0,
+    normalizeStreamEventId(message.stream_event_id) || 0,
+    getRuntimeLastEventId(runtime)
+  );
+  if (normalizedAfterEventId <= 0) return;
+  clearSlowClientResume(runtime);
+  runtime.slowClientResumeAfterEventId = normalizedAfterEventId;
+  runtime.slowClientResumeTimer = setTimeout(() => {
+    runtime.slowClientResumeTimer = null;
+    const resumeAfterEventId = Math.max(
+      normalizeStreamEventId(runtime.slowClientResumeAfterEventId) || 0,
+      normalizedAfterEventId
+    );
+    runtime.slowClientResumeAfterEventId = 0;
+    if (runtime.stopRequested || runtime.sendController || runtime.resumeController) {
+      return;
+    }
+    const currentMessages = getSessionMessages(key) || store.messages;
+    const targetMessage =
+      Array.isArray(currentMessages) && currentMessages.includes(message)
+        ? message
+        : findPendingAssistantMessage(currentMessages);
+    if (!targetMessage || !normalizeFlag(targetMessage.stream_incomplete)) {
+      return;
+    }
+    if (chatPerf.enabled()) {
+      chatPerf.count('chat_slow_client_auto_resume', 1, { sessionId: key });
+    }
+    store.resumeStream(key, targetMessage, { force: true, afterEventId: resumeAfterEventId });
+  }, SLOW_CLIENT_RESUME_DELAY_MS);
 };
 
 const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, options: WorkflowProcessorOptions = {}) => {
@@ -4748,9 +4775,11 @@ export const useChatStore = defineStore('chat', {
       let interruptedByStop = false;
       let finalSeen = false;
       let errorSeen = false;
+      let slowClientResumeAfterEventId = 0;
 
       try {
         if (runtime) {
+          clearSlowClientResume(runtime);
           runtime.sendController = new AbortController();
         }
         const desktopToolCallMode = getDesktopToolCallModeForRequest();
@@ -4798,6 +4827,15 @@ export const useChatStore = defineStore('chat', {
             finalSeen = true;
           } else if (eventType === 'error') {
             errorSeen = true;
+          } else if (
+            eventType === 'slow_client' &&
+            String(payload?.reason ?? payload?.data?.reason ?? '').trim() === 'queue_full_resume_required'
+          ) {
+            slowClientResumeAfterEventId = Math.max(
+              slowClientResumeAfterEventId,
+              getRuntimeLastEventId(runtime),
+              normalizeStreamEventId(assistantMessage.stream_event_id) || 0
+            );
           }
           const normalizedEventId = normalizeStreamEventId(eventId);
           if (normalizedEventId !== null) {
@@ -4891,7 +4929,10 @@ export const useChatStore = defineStore('chat', {
           const transient =
             !finalSeen &&
             !errorSeen &&
-            (error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError');
+            (error?.phase === 'connect' ||
+              error?.phase === 'stream' ||
+              error?.phase === 'slow_client' ||
+              error?.name === 'TypeError');
           if (!transient) {
             errorSeen = true;
             assistantMessage.workflowItems.push(
@@ -4922,6 +4963,9 @@ export const useChatStore = defineStore('chat', {
           runtime.sendController = null;
           runtime.stopRequested = false;
           runtime.sendRequestId = null;
+          if (!keepStreaming) {
+            clearSlowClientResume(runtime);
+          }
         }
         syncDemoChatCache({
           sessions: this.sessions,
@@ -4938,6 +4982,9 @@ export const useChatStore = defineStore('chat', {
           });
         }
         if (this.activeSessionId === sessionId && !pageUnloading && keepStreaming) {
+          if (slowClientResumeAfterEventId > 0) {
+            scheduleSlowClientResume(this, sessionId, assistantMessage, slowClientResumeAfterEventId);
+          }
           startSessionWatcher(this, sessionId);
         }
       }
@@ -5005,11 +5052,13 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(sessionId);
       const runtime = ensureRuntime(sessionId);
       if (runtime) {
+        clearSlowClientResume(runtime);
         runtime.resumeController = new AbortController();
       }
       let aborted = false;
       let finalSeen = false;
       let errorSeen = false;
+      let slowClientResumeAfterEventId = 0;
       const forcedEventId = options.afterEventId;
       const normalizedMessageEventId = normalizeStreamEventId(message.stream_event_id);
       const afterEventId = Number.isFinite(Number(forcedEventId))
@@ -5038,6 +5087,15 @@ export const useChatStore = defineStore('chat', {
             finalSeen = true;
           } else if (eventType === 'error') {
             errorSeen = true;
+          } else if (
+            eventType === 'slow_client' &&
+            String(payload?.reason ?? payload?.data?.reason ?? '').trim() === 'queue_full_resume_required'
+          ) {
+            slowClientResumeAfterEventId = Math.max(
+              slowClientResumeAfterEventId,
+              getRuntimeLastEventId(runtime),
+              normalizeStreamEventId(message.stream_event_id) || 0
+            );
           }
           if (perfEnabled) {
             const start = performance.now();
@@ -5112,7 +5170,10 @@ export const useChatStore = defineStore('chat', {
           const transient =
             !finalSeen &&
             !errorSeen &&
-            (error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError');
+            (error?.phase === 'connect' ||
+              error?.phase === 'stream' ||
+              error?.phase === 'slow_client' ||
+              error?.name === 'TypeError');
           if (!transient) {
             errorSeen = true;
             message.workflowItems.push(
@@ -5146,6 +5207,9 @@ export const useChatStore = defineStore('chat', {
         }
         if (runtime) {
           runtime.resumeRequestId = null;
+          if (!keepStreaming) {
+            clearSlowClientResume(runtime);
+          }
         }
         notifySessionSnapshot(this, sessionId, sessionMessagesRef, true);
         if (perfEnabled) {
@@ -5156,6 +5220,9 @@ export const useChatStore = defineStore('chat', {
           });
         }
         if (!aborted && this.activeSessionId === sessionId && !pageUnloading && keepStreaming) {
+          if (slowClientResumeAfterEventId > 0) {
+            scheduleSlowClientResume(this, sessionId, message, slowClientResumeAfterEventId);
+          }
           startSessionWatcher(this, sessionId);
         }
       }

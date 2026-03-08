@@ -5,6 +5,34 @@
 
 ## 1. 本次已落地内容
 
+- 继续收口输入区与底栏布局：输入框标题行不再堆叠大段操作提示，仅保留 `输入/Input` 与附件摘要；底部新增独立 footer 快捷提示行，按可用宽度依次展示 `@ 文件路径 / Ctrl+V 图片 / Tab 补全 / ↑ 历史 / Shift+Enter 换行`，更接近 codex 的 composer + footer 分层结构。
+- 将输入区高度从 6 行提升到 7 行，为 footer 单独预留 1 行，避免提示信息挤占输入正文区域，同时保持光标、自动换行与附件标题渲染稳定。
+- 将 `tool_call` / `tool_result` 的文本样式继续向 codex 对齐：普通工具改为 `• Called/调用` + 树形 `└`/缩进行，执行命令单独展示命令本体，减少 `[tool_call]` / `[tool_result]` 这类调试味较重的标签。
+- 将 `apply_patch` 的调用预览和结果摘要升级为近似 codex patch cell 的块状结构：调用阶段展示 `files=N, lines=M` 与 `A/M/D/R path` 文件级预览；结果阶段展示 `• 已修改 N 个文件 / • Edited N files`、`+/~/-/↦` 统计、错误码、hint 与受影响文件列表。
+- 进一步将 TUI 中的 `apply_patch` 从“两条普通工具日志”升级成“单个可更新 patch block”：收到 `tool_call` 时先插入待应用补丁块，收到 `tool_result` 后原地更新为成功/失败块，而不是再追加一条结果日志，使补丁编辑历史更接近 codex 的独立 patch cell 心智。
+- 继续将 `执行命令 / execute_command` 升级成独立 command block：收到 `tool_call` 时展示 `Running/正在运行` 命令块，收到结果后原地更新为 `Ran/已运行` 块，并带 `exit=...`、耗时、stdout/stderr 摘要与空输出占位，减少普通文本日志的割裂感，向 codex 的 exec cell 进一步靠拢。
+- 将 command block 进一步细化为更接近 codex exec cell 的布局：标题行内联命令首行，续行与 metrics 统一走 `│` gutter，stdout/stderr 预览采用“头尾保留 + 中间折叠”的方式，长输出不会把 transcript 拉得过长。
+- 将其余普通工具也纳入统一的单块 tool cell：默认工具不再以“调用一条 + 结果若干条”追加到 transcript，而是先插入 `Calling/调用` 块，结果到达后原地更新为 `Called/已完成` 或失败块，并保留参数摘要、错误信息与紧凑结果 JSON，整体交互更接近 codex 的 MCP tool cell。
+- 将 patch / command / generic tool 三类特殊块接入**宽度感知渲染**：长命令、长参数、长错误文本、长文件路径在窄终端中换行时，会继续保留 `└` / `│` / 缩进 gutter，而不是交给段落组件做生硬折行，显著改善 transcript 的视觉秩序。
+- 继续向 codex 的 tool cell 收口 header 行为：普通工具与补丁块现在会优先尝试把参数摘要 / patch summary 内联到标题行中；只有在终端宽度不足时才自动下沉为 `└` 子行，使宽终端下的信息密度更接近 codex。
+- 继续补齐 patch block 的大补丁场景：当预览文件数超过摘要上限时，不再静默截断，而是明确追加 `… +N more files / 还有 N 个文件` 提示，降低用户误判补丁范围的概率。
+- 将 pending patch 的摘要和文件行进一步向 codex diff summary 靠拢：摘要优先显示 `files=N, +A, -B`，文件行优先显示 `(+/-)`，后端返回结果时则补充 `hunks` 信息，让补丁范围判断更直接。
+- 将 patch block 的头部进一步做成 codex 的单/多文件差异化：单文件补丁会直接在 header 中内联路径（如 `Applying patch src/main.rs` / `Edited src/main.rs`），多文件补丁才保留 `Edited N files` 形式，减少冗余文件行。
+- 继续对齐 patch 细节文案：补丁预览与结果中的重命名路径统一改为 `→`，视觉上更贴近 codex；同时 approval / inquiry 浮层新增底部确认提示（`Enter ... · Esc ...`），让选择动作更接近 codex 的 overlay 心智。
+- 将非 TUI 的 `wunder-cli/render.rs` 与 TUI 侧 helper 统一到同一套工具渲染语义，避免普通 CLI 输出与 TUI 输出在 patch / command / generic tool 上出现体验漂移。
+- 为审批弹窗补齐 `apply_patch` 专项预览：当工具为应用补丁时，不再直接把整段 patch JSON 挤进 modal，而是展示补丁摘要与文件级 `A/M/D/R` 预览，降低审批判断成本，更接近 codex 的补丁审批心智。
+- 继续精简审批弹窗信息层级：补丁审批时优先展示 `工具 + 摘要 + patch preview`，再展示操作项，去掉无助于决策的冗余元信息，减少弹窗噪声并提升与 codex 审批浮层的一致性。
+- 将 approval / inquiry modal 的文本行改为分层着色：标签、操作项、分节标题、补丁预览标记（`A/M/D/R`）分别使用不同样式，避免弹窗内所有内容都是同一种纯文本灰度，提升信息扫描效率。
+- 进一步强化 inquiry modal 的可读性：候选项中的 `（推荐） / (recommended)` 标签会单独高亮，审批预览中的补丁摘要与 transcript 中的 patch block 保持同一套 `+/-/hunks` 信息结构，减少不同区域之间的认知切换。
+- 将 composer footer 的提示进一步做成宽度感知折叠：宽度足够时显示 `快捷键 + 标签`，宽度不足时优先保留快捷键本身并缩短标签文案，使窄终端下仍能保留更多操作提示，整体更接近 codex footer 的保真策略。
+- 将 approval / inquiry 弹窗的结构进一步向 codex 靠拢：顶部保留上下文信息，中段只展示简洁的选项标题与列表，底部专门给出 `Enter / Esc / 数字快捷键` 提示，减少把交互说明塞进标题行导致的噪声。
+- 继续对齐 codex 的 transcript 层级节奏：`patch` / generic tool 的子项改为使用 `├ / │ / └` 连接符渲染，补丁多文件场景下能清晰看出文件块的起止关系，不再出现“第一行有树枝、后续文件平铺断开”的割裂感。
+- 继续细化 `apply_patch` 的文件级心智：单文件成功补丁现在会区分 `Added / Deleted / Renamed / Edited` 头部文案，重命名路径在 TUI 与普通 CLI 中统一使用 `→`，让补丁审批、transcript 结果块和纯文本输出保持一致。
+- 继续优化底部与浮层的细节回退：footer 在窄宽度下会优先尝试截断标签再退化为仅显示快捷键；approval / inquiry modal 的选中项保留数字、推荐标记与高亮层级，避免选中后退化成整行纯反白文本。
+- 继续向 codex 的底部区收口：composer footer 现在支持左侧快捷提示 + 右侧上下文摘要（context 剩余、附件数、滚动偏移）的分布式布局，窄终端下会优先压缩左侧标签，再在必要时回退到仅显示快捷键。
+- 将状态/审批提示做得更接近 codex 的 overlay 语言：审批浮层顶部改为自然语言问题句，选项改为 `Yes, ... / No, ...` 风格；底部提示同步强调 `Y/A/N` 与 `Enter`，活动行也统一改成同一套快捷键心智。
+- 顶栏状态行改为“左侧帮助、右侧状态”布局，避免帮助项与状态串在一侧造成拥挤，让整体信息层级更接近 codex 的分区式终端体验。
+
 - 将 TUI 主循环改为**事件驱动重绘**，新增 `wunder-cli/tui/frame_scheduler.rs`，由输入事件、流式事件和状态变化主动请求 redraw，替代固定频率空转刷新。
 - 将原先集中在单文件内的 UI 渲染逻辑拆成模块化结构：
   - `wunder-cli/tui/ui/layout.rs`
@@ -61,6 +89,7 @@
 - `cargo check --bin wunder-cli`
 - `cargo clippy --bin wunder-cli -- -D warnings`
 - `cargo test --bin wunder-cli`
+- `cargo build --release --bin wunder-cli`
 
 以上命令均已通过。
 
@@ -69,3 +98,29 @@
 - 增加 TUI 快照测试，覆盖 transcript、modal、popup、markdown block 四类核心视图。
 - 继续压缩 `wunder-cli/tui/app.rs`，把问询面板、审批流程、会话恢复等状态机继续拆入 `wunder-cli/tui/app/` 子模块。
 - 参考 codex 的 `custom_terminal` 思路，为 OSC 链接、宽字符宽度和 diff 背景色做更深的终端兼容优化。
+
+## 5. 2026-03-08 真 diff 补齐
+
+- `apply_patch` 的 transcript patch block 已改为真实 diff 预览，不再只展示文件级摘要；当前会直接渲染 `diff` 文件头、`@@` hunk、`+/-` 变更行、context 行以及截断提示。
+- patch 完成态会继承调用态的 diff 预览，因此工具返回结果后仍能保留完整补丁上下文，体验更接近 codex 的单块 patch cell。
+- 审批弹窗中的 `Patch preview` 已改为真实 diff 预览，确认前即可直接查看实际修改内容，而不是只看 `A/M/D/R` 文件列表。
+- modal 预览样式已补齐 `diff / @@ / + / - / …` 的高亮规则，与 transcript 中的补丁视觉语义保持一致。
+- patch diff 解析已抽成 `wunder-cli/patch_diff.rs` 共享模块，TUI transcript、审批弹窗和普通 CLI/line-chat 输出现在复用同一套 diff 预览逻辑，避免后续继续分叉。
+- 普通 CLI/line-chat 的 `apply_patch` 工具调用现在也会显示真实 diff 预览，并统一使用 `files=...`, `+...`, `-...` 的摘要格式，整体心智与 TUI 更一致。
+- TUI 中的 `+/-/@@` diff 行已增加更接近 codex 的整行色带效果：新增行使用低饱和绿色底，删除行使用低饱和红色底，hunk 行使用冷色底，补丁块的层次感更清晰。
+- 普通 CLI/line-chat 的 patch 预览缩进也进一步调整为“diff 头 + 内层 hunk/变更行”两级结构，阅读路径更接近 codex 的 patch 展示习惯。
+## 6. 2026-03-08 目录上下文与底部区继续对齐
+
+- footer 右侧上下文新增工作目录感知：优先显示 `repo_root` 相对路径，并在长度受限时按 `首段/…/尾段` 方式压缩，整体更接近 codex 对 workspace/cwd 的轻量提示风格。
+- status line 默认项从 `session` 调整为 `cwd`，空白态优先展示 `cwd | elapsed | speed | tools | context`，减少内部会话 id 对主阅读路径的干扰。
+- 新增共享目录显示模块 `wunder-cli/path_display.rs`，统一处理：
+  - repo root 相对显示
+  - home 目录 `~` 缩写
+  - 中间省略的路径截断
+- `/statusline set ...` 现支持 `cwd/dir/workspace/目录/工作目录` 等别名，便于和 codex / 常见 shell 心智保持一致。
+- 输入区与底部区可见中文文案已统一修复为 UTF-8 正常文本，重点覆盖：
+  - composer 标题与空态提示
+  - composer footer 快捷键标签
+  - status line 帮助与命令入口
+  - app 内与状态栏、目录、附件相关的中文提示
+- 本轮验证已重新通过：`cargo check --bin wunder-cli`、`cargo test --bin wunder-cli`、`cargo clippy --bin wunder-cli -- -D warnings`、`cargo build --release --bin wunder-cli`。

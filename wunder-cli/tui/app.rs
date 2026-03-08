@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{self, error::TryRecvError, UnboundedReceiver};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use wunder_server::approval::{
-    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
+    new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestKind, ApprovalRequestRx,
+    ApprovalResponse,
 };
 use wunder_server::schemas::StreamEvent;
 use wunder_server::user_tools::UserMcpServer;
@@ -46,12 +47,14 @@ const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 16;
 mod commands;
 
 pub(super) mod helpers;
+mod patch_log;
 
 use helpers::*;
+use patch_log::*;
 
 const STATUSLINE_ITEM_KEYS: &[&str] = &[
-    "running", "usage", "scroll", "mouse", "focus", "context", "session", "model", "mode",
-    "approval", "agent", "attach", "elapsed", "speed", "tools",
+    "running", "usage", "scroll", "mouse", "focus", "context", "cwd", "session", "model",
+    "mode", "approval", "agent", "attach", "elapsed", "speed", "tools",
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +71,7 @@ pub enum LogKind {
 pub struct LogEntry {
     pub kind: LogKind,
     pub text: String,
+    special: Option<SpecialLogEntry>,
     markdown_cache: Option<MarkdownCache>,
 }
 
@@ -426,7 +430,7 @@ impl TuiApp {
         let parts = self.status_line_parts();
         if self.statusline_items.is_empty() {
             let mut items = Vec::new();
-            for key in ["session", "elapsed", "speed", "tools", "context"] {
+            for key in ["cwd", "elapsed", "speed", "tools", "context"] {
                 if let Some(value) = parts.get(key) {
                     let value = value.trim();
                     if !value.is_empty() {
@@ -521,22 +525,22 @@ impl TuiApp {
             let queued = self.approval_queue.len();
             return if is_zh {
                 if queued > 0 {
-                    format!("审批待确认 · Enter 同意 · 1/2/3 快速选择 · 待处理 {queued}")
+                    format!("审批待确认 · Enter 确认 · Y/A/N 快速选择 · 待处理 {queued}")
                 } else {
-                    "审批待确认 · Enter 同意 · 1/2/3 快速选择".to_string()
+                    "审批待确认 · Enter 确认 · Y/A/N 快速选择".to_string()
                 }
             } else if queued > 0 {
-                format!("Approval pending · Enter confirms · 1/2/3 quick choose · queued={queued}")
+                format!("Approval pending · Enter confirms · Y/A/N quick choose · queued={queued}")
             } else {
-                "Approval pending · Enter confirms · 1/2/3 quick choose".to_string()
+                "Approval pending · Enter confirms · Y/A/N quick choose".to_string()
             };
         }
 
         if self.active_inquiry_panel.is_some() {
             return if is_zh {
-                "路由面板已打开 · 可选择路由或直接回复".to_string()
+                "路由面板已打开 · ↑↓ 选择 · Enter 发送 · Esc 关闭".to_string()
             } else {
-                "Inquiry panel open · choose a route or answer directly".to_string()
+                "Inquiry panel open · Up/Down select · Enter send · Esc close".to_string()
             };
         }
 
@@ -586,10 +590,79 @@ impl TuiApp {
 
     pub fn composer_hint_line(&self) -> String {
         if self.is_zh_language() {
-            "Enter 发送 · Shift+Enter 换行 · @ 文件 · Ctrl+V 图片".to_string()
+            "@ 文件 · Ctrl+V 粘贴 · Tab 补全 · ↑ 历史 · Shift+Enter 换行".to_string()
         } else {
-            "Enter sends · Shift+Enter newline · @ files · Ctrl+V image".to_string()
+            "@ files · Ctrl+V paste · Tab complete · ↑ history · Shift+Enter newline".to_string()
         }
+    }
+
+    pub fn composer_footer_items(&self) -> Vec<(String, String)> {
+        if self.is_zh_language() {
+            vec![
+                ("@".to_string(), "文件".to_string()),
+                ("Ctrl+V".to_string(), "粘贴".to_string()),
+                ("Tab".to_string(), "补全".to_string()),
+                ("↑↓".to_string(), "历史".to_string()),
+                ("Shift+Enter".to_string(), "换行".to_string()),
+            ]
+        } else {
+            vec![
+                ("@".to_string(), "files".to_string()),
+                ("Ctrl+V".to_string(), "paste".to_string()),
+                ("Tab".to_string(), "complete".to_string()),
+                ("↑↓".to_string(), "history".to_string()),
+                ("Shift+Enter".to_string(), "newline".to_string()),
+            ]
+        }
+    }
+
+    pub fn composer_footer_context(&self) -> Option<String> {
+        let is_zh = self.is_zh_language();
+        let mut items = Vec::new();
+
+        let dir_display = crate::path_display::format_directory_display(
+            self.runtime.launch_dir.as_path(),
+            Some(self.runtime.repo_root.as_path()),
+            Some(26),
+        );
+        if !dir_display.trim().is_empty() {
+            items.push(dir_display);
+        }
+
+        let context_text = if let Some(max_context) = self.model_max_context {
+            let percent_left = crate::context_left_percent(
+                self.session_stats.context_used_tokens,
+                Some(max_context),
+            )
+            .unwrap_or(0);
+            if is_zh {
+                format!("上下文 {percent_left}%")
+            } else {
+                format!("ctx {percent_left}%")
+            }
+        } else {
+            let used = self.session_stats.context_used_tokens.max(0);
+            if is_zh {
+                format!("上下文 {used}")
+            } else {
+                format!("ctx {used}")
+            }
+        };
+        items.push(context_text);
+
+        if !self.pending_attachments.is_empty() {
+            items.push(if is_zh {
+                format!("附件 {}", self.pending_attachments.len())
+            } else {
+                format!("att {}", self.pending_attachments.len())
+            });
+        }
+
+        if self.transcript_offset_from_bottom > 0 {
+            items.push(format!("↑{}", self.transcript_offset_from_bottom));
+        }
+
+        (!items.is_empty()).then(|| items.join(" · "))
     }
 
     pub fn composer_attachment_hint(&self) -> Option<String> {
@@ -630,6 +703,11 @@ impl TuiApp {
     fn status_line_parts(&self) -> std::collections::HashMap<&'static str, String> {
         let mut parts = std::collections::HashMap::new();
         let is_zh = self.is_zh_language();
+        let cwd_display = crate::path_display::format_directory_display(
+            self.runtime.launch_dir.as_path(),
+            Some(self.runtime.repo_root.as_path()),
+            Some(32),
+        );
         let context_summary = if let Some(max_context) = self.model_max_context {
             let percent_left = crate::context_left_percent(
                 self.session_stats.context_used_tokens,
@@ -637,14 +715,14 @@ impl TuiApp {
             )
             .unwrap_or(0);
             if is_zh {
-                format!("上下文剩余={percent_left}%")
+                format!("上下文余量={percent_left}%")
             } else {
                 format!("context_left={percent_left}%")
             }
         } else {
             let used = self.session_stats.context_used_tokens.max(0);
             if is_zh {
-                format!("上下文已用={used}")
+                format!("上下文占用={used}")
             } else {
                 format!("context_used={used}")
             }
@@ -750,6 +828,14 @@ impl TuiApp {
         parts.insert("mouse", mouse_hint);
         parts.insert("focus", focus_hint);
         parts.insert("context", context_summary);
+        parts.insert(
+            "cwd",
+            if is_zh {
+                format!("目录={cwd_display}")
+            } else {
+                format!("cwd={cwd_display}")
+            },
+        );
         parts.insert(
             "attach",
             if is_zh {
@@ -1078,53 +1164,104 @@ impl TuiApp {
         let summary = summarize_modal_text(request.summary.as_str(), 110);
         let detail = summarize_modal_text(compact_json(&request.detail).as_str(), 120);
         let args = summarize_modal_text(compact_json(&request.args).as_str(), 120);
-        let mut lines = Vec::new();
-        if is_zh {
-            lines.push("审批操作（上下选择，Enter 确认，也可按 1/2/3）：".to_string());
-            lines.push(format!(
-                "{} 1) 允许一次",
-                if selected == 0 { ">" } else { " " }
-            ));
-            lines.push(format!(
-                "{} 2) 当前会话始终允许",
-                if selected == 1 { ">" } else { " " }
-            ));
-            lines.push(format!("{} 3) 拒绝", if selected == 2 { ">" } else { " " }));
-            lines.push(String::new());
-            lines.push(format!("工具：{}", request.tool));
-            lines.push(format!("摘要：{summary}"));
-            lines.push(format!("ID：{}", request.id));
-            lines.push(format!("类型：{:?}", request.kind));
-            if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
-                lines.push(format!("详情：{detail}"));
-            }
-            if !args.trim().is_empty() && args != "{}" && args != "null" {
-                lines.push(format!("参数：{args}"));
-            }
+        let prompt = approval_prompt_text(request, is_zh);
+        let option_labels = approval_option_labels(request, is_zh);
+        let patch_preview = if is_apply_patch_tool_name(request.tool.as_str()) {
+            format_apply_patch_approval_lines(&request.args, is_zh)
         } else {
-            lines.push(
-                "Approval actions (Up/Down select, Enter confirm; or press 1/2/3):".to_string(),
-            );
+            None
+        };
+        let has_patch_preview = patch_preview.is_some();
+        let mut lines = Vec::new();
+        lines.push(prompt);
+        if !summary.trim().is_empty() {
+            lines.push(if is_zh {
+                format!("摘要：{summary}")
+            } else {
+                format!("summary: {summary}")
+            });
+        }
+        if !self.approval_queue.is_empty() {
+            lines.push(if is_zh {
+                format!("队列：还有 {} 个待处理请求", self.approval_queue.len())
+            } else {
+                format!(
+                    "queue: {} more pending request(s)",
+                    self.approval_queue.len()
+                )
+            });
+        }
+        lines.push(String::new());
+        if is_zh {
+            if has_patch_preview {
+                lines.push(format!("工具：{}", request.tool));
+                if let Some(preview) = patch_preview {
+                    lines.extend(preview);
+                }
+                lines.push(String::new());
+            } else {
+                lines.push(format!("工具：{}", request.tool));
+                if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
+                    lines.push(format!("详情：{detail}"));
+                }
+                if !args.trim().is_empty() && args != "{}" && args != "null" {
+                    lines.push(format!("参数：{args}"));
+                }
+                lines.push(String::new());
+            }
+            lines.push("选项：".to_string());
             lines.push(format!(
-                "{} 1) approve once",
-                if selected == 0 { ">" } else { " " }
+                "{} 1. {}",
+                if selected == 0 { ">" } else { " " },
+                option_labels[0]
             ));
             lines.push(format!(
-                "{} 2) approve for session",
-                if selected == 1 { ">" } else { " " }
+                "{} 2. {}",
+                if selected == 1 { ">" } else { " " },
+                option_labels[1]
             ));
-            lines.push(format!("{} 3) deny", if selected == 2 { ">" } else { " " }));
+            lines.push(format!(
+                "{} 3. {}",
+                if selected == 2 { ">" } else { " " },
+                option_labels[2]
+            ));
             lines.push(String::new());
-            lines.push(format!("tool: {}", request.tool));
-            lines.push(format!("summary: {summary}"));
-            lines.push(format!("id: {}", request.id));
-            lines.push(format!("kind: {:?}", request.kind));
-            if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
-                lines.push(format!("detail: {detail}"));
+            lines.push("Enter 确认 · Y/A/N 或 1/2/3 · Esc 返回".to_string());
+        } else {
+            if has_patch_preview {
+                lines.push(format!("tool: {}", request.tool));
+                if let Some(preview) = patch_preview {
+                    lines.extend(preview);
+                }
+                lines.push(String::new());
+            } else {
+                lines.push(format!("tool: {}", request.tool));
+                if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
+                    lines.push(format!("detail: {detail}"));
+                }
+                if !args.trim().is_empty() && args != "{}" && args != "null" {
+                    lines.push(format!("args: {args}"));
+                }
+                lines.push(String::new());
             }
-            if !args.trim().is_empty() && args != "{}" && args != "null" {
-                lines.push(format!("args: {args}"));
-            }
+            lines.push("Options:".to_string());
+            lines.push(format!(
+                "{} 1. {}",
+                if selected == 0 { ">" } else { " " },
+                option_labels[0]
+            ));
+            lines.push(format!(
+                "{} 2. {}",
+                if selected == 1 { ">" } else { " " },
+                option_labels[1]
+            ));
+            lines.push(format!(
+                "{} 3. {}",
+                if selected == 2 { ">" } else { " " },
+                option_labels[2]
+            ));
+            lines.push(String::new());
+            lines.push("Enter confirm · Y/A/N or 1/2/3 · Esc back".to_string());
         }
         Some(lines)
     }
@@ -1145,7 +1282,7 @@ impl TuiApp {
                 if panel.multiple { "多选" } else { "单选" }
             ));
             lines.push(String::new());
-            lines.push("候选路由（上下选择，Enter 发送，也可按数字）：".to_string());
+            lines.push("候选路由：".to_string());
         } else {
             lines.push(format!("question: {}", panel.question));
             lines.push(format!(
@@ -1153,7 +1290,7 @@ impl TuiApp {
                 if panel.multiple { "multiple" } else { "single" }
             ));
             lines.push(String::new());
-            lines.push("routes (Up/Down select, Enter send, or press number):".to_string());
+            lines.push("Routes:".to_string());
         }
         for (index, route) in panel.routes.iter().enumerate() {
             let marker = if index == selected { ">" } else { " " };
@@ -1173,8 +1310,13 @@ impl TuiApp {
         lines.push(String::new());
         lines.push(crate::locale::tr(
             self.display_language.as_str(),
-            "提示：也可以直接输入自由文本；多选请用逗号分隔，例如 1,3",
-            "tip: you can also type free text; use comma for multi-select (e.g. 1,3)",
+            "Enter 发送 · 数字快速选择 · Esc 关闭",
+            "Enter send · number quick select · Esc close",
+        ));
+        lines.push(crate::locale::tr(
+            self.display_language.as_str(),
+            "也可以直接输入自由文本；多选请用逗号分隔，例如 1,3",
+            "you can also type free text; use comma for multi-select (e.g. 1,3)",
         ));
         Some(lines)
     }
@@ -2041,6 +2183,9 @@ impl TuiApp {
         let Some(entry) = self.logs.get_mut(index) else {
             return 1;
         };
+        if let Some(special) = entry.special.as_ref() {
+            return special.line_count(width.min(u16::MAX as usize) as u16);
+        }
         if matches!(kind, LogKind::Assistant | LogKind::Reasoning) {
             if streaming {
                 return entry
@@ -2075,6 +2220,16 @@ impl TuiApp {
             return Vec::new();
         };
         let base_style = log_base_style(entry.kind);
+        if let Some(special) = entry.special.as_ref() {
+            let mut lines = special.render_lines_for_width(width);
+            if selected {
+                let selected_style = super::theme::transcript_selection(base_style);
+                for line in &mut lines {
+                    line.style = selected_style.patch(line.style);
+                }
+            }
+            return lines;
+        }
         let mut lines = if matches!(entry.kind, LogKind::Assistant | LogKind::Reasoning) {
             if streaming {
                 entry
@@ -3552,6 +3707,14 @@ impl TuiApp {
         self.tool_phase_notice_emitted = false;
         let request_attachments =
             crate::attachments::to_request_attachments(&self.pending_attachments);
+        if let Err(err) = crate::input_guard::validate_request_text_input_size(
+            self.display_language.as_str(),
+            prompt.as_str(),
+            request_attachments.as_deref(),
+        ) {
+            self.push_log(LogKind::Error, err.to_string());
+            return Ok(());
+        }
         let user_echo = prompt.clone();
         self.start_stream_request(prompt, user_echo, request_attachments)
             .await?;
@@ -4321,7 +4484,17 @@ impl TuiApp {
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
                 let args = payload.get("args").unwrap_or(&Value::Null);
-                self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
+                if is_apply_patch_tool_name(tool) {
+                    if !self.push_patch_call_log(args) {
+                        self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
+                    }
+                } else if is_execute_command_tool_name(tool) {
+                    if !self.push_command_call_log(args) {
+                        self.push_log(LogKind::Tool, format_tool_call_line(tool, args));
+                    }
+                } else {
+                    self.push_generic_tool_call_log(tool, args);
+                }
             }
             "tool_result" => {
                 self.session_stats.tool_results = self.session_stats.tool_results.saturating_add(1);
@@ -4329,8 +4502,16 @@ impl TuiApp {
                     .get("tool")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
-                for line in format_tool_result_lines(tool, payload) {
-                    self.push_log(LogKind::Tool, line);
+                if is_apply_patch_tool_name(tool) {
+                    self.complete_patch_log(payload);
+                } else if is_execute_command_tool_name(tool) {
+                    if !self.complete_command_log(payload) {
+                        for line in format_tool_result_lines(tool, payload) {
+                            self.push_log(LogKind::Tool, line);
+                        }
+                    }
+                } else {
+                    self.complete_generic_tool_log(tool, payload);
                 }
                 if let Some(panel) = self.parse_inquiry_panel_from_tool_result(payload) {
                     self.activate_inquiry_panel(panel, true);
@@ -4717,6 +4898,7 @@ impl TuiApp {
         self.logs.push(LogEntry {
             kind,
             text,
+            special: None,
             markdown_cache: None,
         });
         self.invalidate_transcript_metrics();
@@ -4737,6 +4919,127 @@ impl TuiApp {
         }
 
         self.logs.len().saturating_sub(1)
+    }
+
+    fn push_special_log(&mut self, kind: LogKind, text: String, special: SpecialLogEntry) -> usize {
+        self.logs.push(LogEntry {
+            kind,
+            text,
+            special: Some(special),
+            markdown_cache: None,
+        });
+        self.invalidate_transcript_metrics();
+        while self.logs.len() > MAX_LOG_ENTRIES {
+            self.pop_oldest_log_entry();
+        }
+        while self.logs.len() > 1 && self.total_log_chars() > MAX_LOG_TOTAL_CHARS {
+            self.pop_oldest_log_entry();
+        }
+
+        if self.logs.is_empty() {
+            self.transcript_selected = None;
+            0
+        } else {
+            if self.focus_area == FocusArea::Transcript {
+                self.transcript_selected = Some(self.logs.len().saturating_sub(1));
+            } else if let Some(index) = self.transcript_selected {
+                let max_index = self.logs.len().saturating_sub(1);
+                self.transcript_selected = Some(index.min(max_index));
+            }
+            self.logs.len().saturating_sub(1)
+        }
+    }
+
+    fn push_patch_call_log(&mut self, args: &Value) -> bool {
+        let Some(special) = build_pending_patch_log(args, self.is_zh_language()) else {
+            return false;
+        };
+        let text = special.summary_text();
+        self.push_special_log(LogKind::Tool, text, special);
+        true
+    }
+
+    fn push_command_call_log(&mut self, args: &Value) -> bool {
+        let Some(special) = build_pending_command_log(args, self.is_zh_language()) else {
+            return false;
+        };
+        let text = special.summary_text();
+        self.push_special_log(LogKind::Tool, text, special);
+        true
+    }
+
+    fn push_generic_tool_call_log(&mut self, tool: &str, args: &Value) {
+        let special = build_pending_tool_log(tool, args);
+        let text = special.summary_text();
+        self.push_special_log(LogKind::Tool, text, special);
+    }
+
+    fn complete_patch_log(&mut self, payload: &Value) {
+        let mut special = build_completed_patch_log(payload, self.is_zh_language());
+        if let Some(index) = self.logs.iter().rposition(|entry| {
+            entry
+                .special
+                .as_ref()
+                .is_some_and(SpecialLogEntry::is_pending_patch)
+        }) {
+            let previous_special = self.logs.get(index).and_then(|entry| entry.special.clone());
+            if let Some(previous_special) = previous_special.as_ref() {
+                special.inherit_patch_preview_from(previous_special);
+            }
+            let text = special.summary_text();
+            if let Some(entry) = self.logs.get_mut(index) {
+                entry.text = text;
+                entry.special = Some(special);
+                entry.markdown_cache = None;
+            }
+            self.invalidate_transcript_metrics();
+            return;
+        }
+        let text = special.summary_text();
+        self.push_special_log(LogKind::Tool, text, special);
+    }
+
+    fn complete_command_log(&mut self, payload: &Value) -> bool {
+        let Some(special) = build_completed_command_log(payload, self.is_zh_language()) else {
+            return false;
+        };
+        let text = special.summary_text();
+        if let Some(index) = self.logs.iter().rposition(|entry| {
+            entry
+                .special
+                .as_ref()
+                .is_some_and(SpecialLogEntry::is_pending_command)
+        }) {
+            if let Some(entry) = self.logs.get_mut(index) {
+                entry.text = text;
+                entry.special = Some(special);
+                entry.markdown_cache = None;
+            }
+            self.invalidate_transcript_metrics();
+            return true;
+        }
+        self.push_special_log(LogKind::Tool, text, special);
+        true
+    }
+
+    fn complete_generic_tool_log(&mut self, tool: &str, payload: &Value) {
+        let special = build_completed_tool_log(tool, payload);
+        let text = special.summary_text();
+        if let Some(index) = self.logs.iter().rposition(|entry| {
+            entry
+                .special
+                .as_ref()
+                .is_some_and(|special| special.is_pending_tool_named(tool))
+        }) {
+            if let Some(entry) = self.logs.get_mut(index) {
+                entry.text = text;
+                entry.special = Some(special);
+                entry.markdown_cache = None;
+            }
+            self.invalidate_transcript_metrics();
+            return;
+        }
+        self.push_special_log(LogKind::Tool, text, special);
     }
 }
 
@@ -4836,6 +5139,108 @@ fn summarize_modal_text(text: &str, max_chars: usize) -> String {
         output.push_str("...");
     }
     output
+}
+
+fn approval_prompt_text(request: &ApprovalRequest, is_zh: bool) -> String {
+    match request.kind {
+        ApprovalRequestKind::Patch => {
+            if is_zh {
+                "是否允许应用以下修改？".to_string()
+            } else {
+                "Would you like to make the following edits?".to_string()
+            }
+        }
+        ApprovalRequestKind::Exec => {
+            if is_zh {
+                "是否允许执行这个命令？".to_string()
+            } else {
+                "Would you like to run this command?".to_string()
+            }
+        }
+        ApprovalRequestKind::Control => {
+            if is_apply_patch_tool_name(request.tool.as_str()) {
+                if is_zh {
+                    "是否允许应用以下修改？".to_string()
+                } else {
+                    "Would you like to make the following edits?".to_string()
+                }
+            } else if is_execute_command_tool_name(request.tool.as_str()) {
+                if is_zh {
+                    "是否允许执行这个命令？".to_string()
+                } else {
+                    "Would you like to run this command?".to_string()
+                }
+            } else if is_zh {
+                "是否允许继续此次工具调用？".to_string()
+            } else {
+                "Would you like to continue with this tool call?".to_string()
+            }
+        }
+    }
+}
+
+fn approval_option_labels(request: &ApprovalRequest, is_zh: bool) -> [String; 3] {
+    match request.kind {
+        ApprovalRequestKind::Patch => {
+            if is_zh {
+                [
+                    "是，应用这些修改".to_string(),
+                    "是，本会话内不再询问".to_string(),
+                    "否，并告诉 Wunder 如何调整".to_string(),
+                ]
+            } else {
+                [
+                    "Yes, make the edits".to_string(),
+                    "Yes, and don't ask again this session".to_string(),
+                    "No, and tell Wunder what to do differently".to_string(),
+                ]
+            }
+        }
+        ApprovalRequestKind::Exec => {
+            if is_zh {
+                [
+                    "是，仅执行这一次".to_string(),
+                    "是，本会话内允许执行".to_string(),
+                    "否，并告诉 Wunder 如何调整".to_string(),
+                ]
+            } else {
+                [
+                    "Yes, run it once".to_string(),
+                    "Yes, allow it for this session".to_string(),
+                    "No, and tell Wunder what to do differently".to_string(),
+                ]
+            }
+        }
+        ApprovalRequestKind::Control => {
+            if is_execute_command_tool_name(request.tool.as_str()) {
+                if is_zh {
+                    [
+                        "是，仅执行这一次".to_string(),
+                        "是，本会话内允许执行".to_string(),
+                        "否，并告诉 Wunder 如何调整".to_string(),
+                    ]
+                } else {
+                    [
+                        "Yes, run it once".to_string(),
+                        "Yes, allow it for this session".to_string(),
+                        "No, and tell Wunder what to do differently".to_string(),
+                    ]
+                }
+            } else if is_zh {
+                [
+                    "是，继续".to_string(),
+                    "是，本会话内持续允许".to_string(),
+                    "否，并告诉 Wunder 如何调整".to_string(),
+                ]
+            } else {
+                [
+                    "Yes, continue".to_string(),
+                    "Yes, allow it for this session".to_string(),
+                    "No, and tell Wunder what to do differently".to_string(),
+                ]
+            }
+        }
+    }
 }
 
 #[cfg(test)]

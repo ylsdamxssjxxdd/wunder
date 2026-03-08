@@ -26,6 +26,51 @@ pub(crate) fn danger_text() -> Style {
     Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
 }
 
+pub(crate) fn diff_hunk_prefix() -> Style {
+    Style::default()
+        .bg(Color::Rgb(22, 30, 50))
+        .add_modifier(Modifier::DIM)
+}
+
+pub(crate) fn diff_hunk_text() -> Style {
+    Style::default()
+        .fg(Color::Cyan)
+        .bg(Color::Rgb(22, 30, 50))
+        .add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn diff_added_prefix() -> Style {
+    Style::default()
+        .bg(Color::Rgb(18, 48, 31))
+        .add_modifier(Modifier::DIM)
+}
+
+pub(crate) fn diff_added_text() -> Style {
+    Style::default()
+        .fg(Color::Rgb(157, 230, 188))
+        .bg(Color::Rgb(18, 48, 31))
+}
+
+pub(crate) fn diff_added_marker() -> Style {
+    diff_added_text().add_modifier(Modifier::BOLD)
+}
+
+pub(crate) fn diff_deleted_prefix() -> Style {
+    Style::default()
+        .bg(Color::Rgb(58, 24, 24))
+        .add_modifier(Modifier::DIM)
+}
+
+pub(crate) fn diff_deleted_text() -> Style {
+    Style::default()
+        .fg(Color::Rgb(255, 182, 182))
+        .bg(Color::Rgb(58, 24, 24))
+}
+
+pub(crate) fn diff_deleted_marker() -> Style {
+    diff_deleted_text().add_modifier(Modifier::BOLD)
+}
+
 pub(crate) fn block_border(active: bool) -> Style {
     if active {
         accent_text()

@@ -56,17 +56,26 @@ const parseMarkdownWorkspaceResource = (raw: string, env?: MarkdownRenderEnv) =>
 const buildWorkspaceFallbackText = (text: string) =>
   `<span class="ai-resource-fallback">${escapeHtml(text)}</span>`;
 
+const buildExternalMarkdownImage = (src: string, alt: string) => {
+  const fallbackText = `![${alt}](${src})`;
+  return `
+    <span class="ai-external-image" data-markdown-fallback="${escapeHtml(fallbackText)}">
+      <img class="ai-external-image-preview" src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" />
+    </span>
+  `;
+};
+
 markdown.renderer.rules.image = (tokens, idx, options, env, slf) => {
   const token = tokens[idx];
   const src = token.attrGet('src') || '';
   const isBareRelative = Boolean(normalizeWorkspaceBareRelativePath(src));
   const resource = parseMarkdownWorkspaceResource(src, env as MarkdownRenderEnv);
   if (!resource) {
+    const alt = token.content || token.attrGet('alt') || 'image';
     if (isBareRelative) {
-      const alt = token.content || token.attrGet('alt') || 'image';
       return buildWorkspaceFallbackText(`![${alt}](${src})`);
     }
-    return defaultImageRenderer(tokens, idx, options, env, slf);
+    return buildExternalMarkdownImage(src, alt);
   }
   const alt = token.content || token.attrGet('alt') || resource.filename || 'image';
   const kind = isImagePath(resource.filename || resource.relativePath) ? 'image' : 'file';
@@ -469,12 +478,35 @@ export function renderMarkdown(content = '', options: MarkdownRenderOptions = {}
   return markdown.render(normalizedContent, env);
 }
 
-function normalizeMarkdownForRender(content = '') {
-  if (!content) return '';
-  return repairMarkdownTables(content.replace(/\r\n/g, '\n'));
+export function hydrateExternalMarkdownImages(container: ParentNode | null | undefined) {
+  if (!container || typeof (container as ParentNode).querySelectorAll !== 'function') return;
+  container.querySelectorAll('.ai-external-image[data-markdown-fallback]').forEach((node) => {
+    const host = node as HTMLElement;
+    if (host.dataset.externalImageBound === 'true') return;
+    host.dataset.externalImageBound = 'true';
+    const image = host.querySelector('.ai-external-image-preview') as HTMLImageElement | null;
+    if (!image) return;
+    const replaceWithFallback = () => {
+      if (!host.isConnected) return;
+      const fallbackText = String(host.dataset.markdownFallback || '').trim();
+      const fallbackNode = document.createElement('span');
+      fallbackNode.className = 'ai-resource-fallback';
+      fallbackNode.textContent = fallbackText || String(image.getAttribute('alt') || '').trim();
+      host.replaceWith(fallbackNode);
+    };
+    image.addEventListener('error', replaceWithFallback, { once: true });
+    if (image.complete && image.naturalWidth === 0) {
+      replaceWithFallback();
+    }
+  });
 }
 
-function repairMarkdownTables(content = '') {
+function normalizeMarkdownForRender(content = '') {
+  if (!content) return '';
+  return preserveMalformedMarkdownTables(content.replace(/\r\n/g, '\n'));
+}
+
+function preserveMalformedMarkdownTables(content = '') {
   if (!content.includes('|')) return content;
   const lines = content.split('\n');
   let activeFence = '';
@@ -490,29 +522,34 @@ function repairMarkdownTables(content = '') {
       }
       continue;
     }
-    if (activeFence) continue;
-    const headerRow = trimmed;
-    if (!looksLikeMarkdownTableRow(headerRow)) continue;
-    const previousLine = String(lines[index - 1] || '').trim();
-    if (looksLikeDividerRow(previousLine) || looksLikeMarkdownTableRow(previousLine)) {
-      continue;
+    if (activeFence || !isMalformedMarkdownTableStart(lines, index)) continue;
+    let end = index + 1;
+    while (end + 1 < lines.length && looksLikeMarkdownTableContinuation(lines[end + 1])) {
+      end += 1;
     }
-    const headerCells = splitTableRow(headerRow);
-    if (headerCells.length < 2 || headerCells.every((cell) => !cell)) continue;
-    const nextLine = lines[index + 1];
-    const dividerRow = String(nextLine || '').trim();
-    if (looksLikeDividerRow(dividerRow)) {
-      if (splitTableRow(dividerRow).length !== headerCells.length) {
-        lines[index + 1] = buildDividerRow(headerCells.length, dividerRow);
-      }
-      continue;
+    for (let row = index; row <= end; row += 1) {
+      lines[row] = escapeMarkdownLiteralLine(lines[row]);
     }
-    if (looksLikeMarkdownTableRow(dividerRow) && splitTableRow(dividerRow).length === headerCells.length) {
-      lines.splice(index + 1, 0, buildDividerRow(headerCells.length));
-      index += 1;
-    }
+    index = end;
   }
   return lines.join('\n');
+}
+
+function isMalformedMarkdownTableStart(lines: string[], index: number) {
+  const headerRow = String(lines[index] || '').trim();
+  if (!looksLikeMarkdownTableRow(headerRow)) return false;
+  const previousLine = String(lines[index - 1] || '').trim();
+  if (looksLikeDividerRow(previousLine) || looksLikeMarkdownTableRow(previousLine)) {
+    return false;
+  }
+  const headerCells = splitTableRow(headerRow);
+  if (headerCells.length < 2 || headerCells.every((cell) => !cell)) return false;
+  const nextLine = String(lines[index + 1] || '').trim();
+  if (!nextLine) return false;
+  if (looksLikeDividerRow(nextLine)) {
+    return splitTableRow(nextLine).length !== headerCells.length;
+  }
+  return looksLikeMarkdownTableRow(nextLine);
 }
 
 function looksLikeMarkdownTableRow(row = '') {
@@ -538,18 +575,19 @@ function looksLikeDividerRow(row = '') {
   return BROKEN_TABLE_DIVIDER_REGEX.test(trimmed);
 }
 
-function buildDividerRow(columnCount = 0, source = '') {
-  const cells = splitTableRow(source);
-  const normalized = new Array(columnCount).fill('---').map((value, index) => {
-    const token = String(cells[index] || '').trim();
-    const leading = token.startsWith(':');
-    const trailing = token.endsWith(':');
-    if (leading && trailing) return ':---:';
-    if (leading) return ':---';
-    if (trailing) return '---:';
-    return value;
-  });
-  return `| ${normalized.join(' | ')} |`;
+function looksLikeMarkdownTableContinuation(row = '') {
+  const trimmed = row.trim();
+  if (!trimmed) return false;
+  return looksLikeDividerRow(trimmed) || looksLikeMarkdownTableRow(trimmed);
+}
+
+function escapeMarkdownLiteralLine(line = '') {
+  return String(line || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\\/g, '\\\\')
+    .replace(/([`*_{}\[\]()#+.!|~-])/g, '\\$1');
 }
 
 function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', fallbackText = '') {

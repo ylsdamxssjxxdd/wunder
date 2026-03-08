@@ -60,6 +60,18 @@ fn tool_close_tag_regex() -> Option<&'static Regex> {
         .as_ref()
 }
 
+fn think_block_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"(?is)<think\b[^>]*>.*?</think\s*>", "think_block"))
+        .as_ref()
+}
+
+fn think_tag_regex() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| compile_regex(r"(?is)</?think\b[^>]*>", "think_tag"))
+        .as_ref()
+}
+
 fn find_json_end(text: &str, start: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut stack: Vec<u8> = Vec::new();
@@ -268,7 +280,7 @@ fn is_tool_name_token(cleaned: &str) -> bool {
     if cleaned.is_empty() || cleaned.len() > 64 {
         return false;
     }
-    if !cleaned.chars().any(|ch| ch.is_alphabetic()) {
+    if !cleaned.chars().any(is_tool_name_letter) {
         return false;
     }
     if cleaned.contains('{')
@@ -301,6 +313,16 @@ fn is_tool_name_token(cleaned: &str) -> bool {
     }
 
     true
+}
+
+fn is_tool_name_letter(ch: char) -> bool {
+    ch.is_alphabetic()
+        || matches!(
+            ch,
+            '\u{3400}'..='\u{4DBF}'
+                | '\u{4E00}'..='\u{9FFF}'
+                | '\u{F900}'..='\u{FAFF}'
+        )
 }
 
 fn clean_tool_call_name(raw: &str) -> String {
@@ -344,8 +366,16 @@ fn clean_tool_call_name(raw: &str) -> String {
         return String::new();
     }
 
-    if !cleaned.is_ascii() || cleaned.contains('?') {
+    if cleaned.contains('?') {
         if let Some(tail) = extract_ascii_tool_tail(cleaned.as_str()) {
+            cleaned = tail;
+        } else {
+            return String::new();
+        }
+    } else if !cleaned.is_ascii() {
+        if let Some(tail) =
+            extract_ascii_tool_tail(cleaned.as_str()).filter(|tail| tail.len() < cleaned.len())
+        {
             cleaned = tail;
         }
     }
@@ -896,7 +926,13 @@ pub(super) fn collect_tool_calls_from_output(
     tool_call_mode: ToolCallMode,
 ) -> Vec<ToolCall> {
     let mut calls = match tool_call_mode {
-        ToolCallMode::FunctionCall => Vec::new(),
+        ToolCallMode::FunctionCall => {
+            let mut calls = parse_tool_calls_from_text_strict(content);
+            if !reasoning.trim().is_empty() {
+                calls.extend(parse_tool_calls_from_text_strict(reasoning));
+            }
+            calls
+        }
         ToolCallMode::ToolCall => {
             let mut calls = parse_tool_calls_from_text_strict(content);
             if !reasoning.trim().is_empty() {
@@ -959,6 +995,12 @@ pub(super) fn strip_tool_calls(content: &str) -> String {
     }
     if let Some(regex) = tool_close_tag_regex() {
         stripped = regex.replace_all(&stripped, "").to_string();
+    }
+    if let Some(regex) = think_block_regex() {
+        stripped = regex.replace_all(&stripped, "\n").to_string();
+    }
+    if let Some(regex) = think_tag_regex() {
+        stripped = regex.replace_all(&stripped, " ").to_string();
     }
     stripped.trim().to_string()
 }
@@ -1105,6 +1147,17 @@ mod tests {
     }
 
     #[test]
+    fn test_strip_tool_calls_removes_think_block() {
+        let content = "<think>internal reasoning</think>\n\nfinal answer";
+        assert_eq!(strip_tool_calls(content), "final answer");
+    }
+
+    #[test]
+    fn test_strip_tool_calls_removes_stray_think_tags() {
+        let content = "<think>internal reasoning</think> OK <think>";
+        assert_eq!(strip_tool_calls(content), "OK");
+    }
+    #[test]
     fn test_collect_tool_calls_from_reasoning() {
         let content = "no tools here";
         let reasoning =
@@ -1137,6 +1190,39 @@ mod tests {
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "read_file");
         assert_eq!(calls[0].id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn test_collect_tool_calls_function_call_mode_falls_back_to_tagged_text() {
+        let content = r#"<tool_call>{"name":"read_file","arguments":{"path":"a.txt"}}</tool_call>"#;
+        let calls = collect_tool_calls_from_output(content, "", None, ToolCallMode::FunctionCall);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "read_file");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("a.txt")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_preserves_unicode_builtin_name() {
+        let content = r#"<tool_call>{"name":"写入文件","arguments":{"path":"a.txt","content":"x"}}</tool_call>"#;
+        let calls = parse_tool_calls_from_text_strict(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "写入文件");
+        assert_eq!(
+            calls[0].arguments.get("path").and_then(Value::as_str),
+            Some("a.txt")
+        );
+    }
+
+    #[test]
+    fn test_parse_tool_call_extracts_ascii_alias_from_unicode_prefix() {
+        let content =
+            r#"<tool_call>{"name":"写入文件 write_file","arguments":{"path":"a.txt"}}</tool_call>"#;
+        let calls = parse_tool_calls_from_text_strict(content);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].name, "write_file");
     }
 
     #[test]

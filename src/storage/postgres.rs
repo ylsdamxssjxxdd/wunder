@@ -1,5 +1,6 @@
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
+use crate::services::output_quality;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
@@ -22,17 +23,31 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::NoTls;
 
 const DEFAULT_POOL_SIZE: usize = 64;
 
+fn postgres_fallback_runtime() -> Result<&'static tokio::runtime::Runtime> {
+    static RUNTIME: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
+    match RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_name("postgres-storage-fallback")
+            .build()
+            .map_err(|err| format!("create tokio runtime for postgres: {err}"))
+    }) {
+        Ok(runtime) => Ok(runtime),
+        Err(err) => Err(anyhow!(err.clone())),
+    }
+}
+
 pub struct PostgresStorage {
     pool: Pool,
     initialized: AtomicBool,
     init_guard: Mutex<()>,
-    fallback_runtime: tokio::runtime::Runtime,
 }
 
 struct PgConn<'a> {
@@ -148,13 +163,10 @@ impl PostgresStorage {
         };
         let manager = Manager::from_config(config, NoTls, manager_config);
         let pool = Pool::builder(manager).max_size(pool_size).build()?;
-        let fallback_runtime = tokio::runtime::Runtime::new()
-            .map_err(|err| anyhow!("create tokio runtime for postgres: {err}"))?;
         Ok(Self {
             pool,
             initialized: AtomicBool::new(false),
             init_guard: Mutex::new(()),
-            fallback_runtime,
         })
     }
 
@@ -164,7 +176,7 @@ impl PostgresStorage {
     {
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => Ok(tokio::task::block_in_place(|| handle.block_on(fut))),
-            Err(_) => Ok(self.fallback_runtime.block_on(fut)),
+            Err(_) => Ok(postgres_fallback_runtime()?.block_on(fut)),
         }
     }
 
@@ -1636,12 +1648,13 @@ impl StorageBackend for PostgresStorage {
         if role.is_empty() {
             return Ok(());
         }
+        let payload = output_quality::annotate_chat_payload(payload);
         let content = Self::parse_string(payload.get("content"));
         let timestamp = Self::parse_string(payload.get("timestamp"));
         let meta = payload
             .get("meta")
             .and_then(|value| serde_json::to_string(value).ok());
-        let payload_text = Self::json_to_string(payload);
+        let payload_text = Self::json_to_string(payload.as_ref());
         let now = Self::now_ts();
         let mut conn = self.conn()?;
         conn.execute(
@@ -7509,5 +7522,18 @@ impl StorageBackend for PostgresStorage {
             date: today.to_string(),
             allowed,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn postgres_fallback_runtime_reuses_static_instance() {
+        let first = postgres_fallback_runtime().expect("fallback runtime should initialize");
+        let second = postgres_fallback_runtime().expect("fallback runtime should be reusable");
+        assert!(std::ptr::eq(first, second));
+        assert_eq!(first.block_on(async { 7 }), 7);
     }
 }

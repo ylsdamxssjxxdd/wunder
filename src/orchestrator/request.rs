@@ -1,5 +1,6 @@
 use super::*;
 use crate::orchestrator_constants::MAX_USER_INPUT_TEXT_CHARS;
+use crate::request_limits::measure_request_text_input_chars;
 
 impl Orchestrator {
     fn prepare_request(
@@ -243,45 +244,11 @@ fn validate_request_text_input_size(
     ))
 }
 
-fn measure_request_text_input_chars(
-    question: &str,
-    attachments: Option<&[AttachmentPayload]>,
-) -> usize {
-    let mut total = question.chars().count();
-    for attachment in attachments.unwrap_or(&[]) {
-        let content = attachment.content.as_deref().unwrap_or("").trim();
-        if content.is_empty() || request_attachment_is_image(attachment, content) {
-            continue;
-        }
-        total = total.saturating_add(content.chars().count());
-    }
-    total
-}
-
-fn request_attachment_is_image(attachment: &AttachmentPayload, content: &str) -> bool {
-    let content_type = attachment
-        .content_type
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if content_type.starts_with("image") || content_type.contains("image") {
-        return true;
-    }
-    if content.starts_with("data:image/") {
-        return true;
-    }
-    let name = attachment
-        .name
-        .as_deref()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(
-        std::path::Path::new(&name)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or(""),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"
-    )
+fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
+    let Some(cleaned) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
 }
 
 #[cfg(test)]
@@ -332,11 +299,4 @@ mod tests {
             8
         );
     }
-}
-
-fn is_default_agent_alias(agent_id: Option<&str>) -> bool {
-    let Some(cleaned) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
 }

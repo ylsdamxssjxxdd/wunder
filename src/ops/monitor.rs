@@ -1881,6 +1881,13 @@ impl MonitorState {
                 .or_insert_with(|| Value::String(record.log_profile.as_str().to_string()));
         }
         let sanitized = self.sanitize_event_data(event_type, &payload, record.log_profile);
+        if let Some(previous) = record.events.back_mut() {
+            if should_merge_monitor_event(previous, event_type, &sanitized) {
+                previous.timestamp = timestamp;
+                previous.data = sanitized;
+                return;
+            }
+        }
         let event_id = record.next_event_id.max(1);
         record.next_event_id = event_id.saturating_add(1);
         record.events.push_back(MonitorEvent {
@@ -2345,6 +2352,21 @@ fn should_skip_event_for_profile(log_profile: MonitorLogProfile, event_type: &st
         return false;
     }
     matches!(event_type, "llm_output_delta" | "tool_output_delta")
+}
+
+fn should_merge_monitor_event(previous: &MonitorEvent, event_type: &str, data: &Value) -> bool {
+    if previous.event_type != event_type {
+        return false;
+    }
+    match event_type {
+        "context_usage" => true,
+        "progress" => {
+            previous.data.get("stage") == data.get("stage")
+                && previous.data.get("user_round") == data.get("user_round")
+                && previous.data.get("model_round") == data.get("model_round")
+        }
+        _ => false,
+    }
 }
 
 fn trim_text(text: &str, limit: Option<usize>) -> String {

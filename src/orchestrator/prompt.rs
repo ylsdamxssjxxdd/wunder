@@ -1,4 +1,5 @@
 use super::*;
+use crate::tools::build_responses_freeform_tool;
 
 const MAX_FUNCTION_NAME_LEN: usize = 64;
 
@@ -59,6 +60,7 @@ impl Orchestrator {
         skills: &SkillRegistry,
         allowed_tool_names: &HashSet<String>,
         user_tool_bindings: Option<&UserToolBindings>,
+        tool_call_mode: ToolCallMode,
     ) -> Option<FunctionTooling> {
         if allowed_tool_names.is_empty() {
             return None;
@@ -89,9 +91,17 @@ impl Orchestrator {
             let sanitized = sanitize_function_name(&preferred);
             let function_name =
                 ensure_unique_function_name(&sanitized, &spec.name, &mut used_names);
+            name_map.insert(function_name.clone(), spec.name.clone());
+            if tool_call_mode == ToolCallMode::FreeformCall {
+                if let Some(tool) =
+                    build_responses_freeform_tool(&spec.name, &spec.description, &function_name)
+                {
+                    tools.push(tool);
+                    continue;
+                }
+            }
             let parameters =
                 crate::core::json_schema::normalize_tool_input_schema(Some(&spec.input_schema));
-            name_map.insert(function_name.clone(), spec.name.clone());
             tools.push(json!({
                 "type": "function",
                 "function": {

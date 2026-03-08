@@ -1,4 +1,4 @@
-﻿# wunder API 文档
+# wunder API 文档
 
 ## 4. API 设计
 
@@ -17,6 +17,7 @@
 - docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；`/wunder/temp_dir/*` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`，可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、`frontend/node_modules/`）保持写入仓库目录便于管理。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
+- 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
 - 配置分层：基础配置优先读取 `config/wunder.yaml`（`WUNDER_CONFIG_PATH` 可覆盖）；若不存在则自动回退 `config/wunder-example.yaml`；管理端修改会写入 `data/config/wunder.override.yaml`（`WUNDER_CONFIG_OVERRIDE_PATH` 可覆盖）。
 - 环境变量：`.env` 为可选项；docker compose 通过 `${VAR:-default}` 提供默认值，未提供 `.env` 也可直接启动。
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
@@ -2244,6 +2245,7 @@
 - 当前 Rust 版会输出 `progress`, `llm_output_delta`, `llm_output`, `context_usage`, `quota_usage`, `tool_call`, `tool_result`, `plan_update`, `question_panel`, `final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
 - `event: llm_request`：模型 API 请求体（调试用；默认仅返回基础元信息并标记 `payload_omitted`，开启 `debug_payload` 或日志级别为 debug/trace 时包含完整 payload；若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
+  - 说明：`freeform_call + OpenAI Responses` 场景下，`payload.tools` 会同时出现 `type=function` 与 `type=custom`；`apply_patch` 会以原生 grammar tool 暴露，而不是退化成仅靠提示词约束的 XML 调用。
 - `event: knowledge_request`：知识库检索模型请求体（调试用，包含 `query` 或 `keywords`、`limit`、`embedding_model` 等）
 - `event: llm_output_delta`：模型流式增量片段（调试用，`data.delta` 为正文增量，`data.reasoning_delta` 为思考增量，需按顺序拼接）
   - 说明：断线续传回放时可能携带 event_id_start/event_id_end 用于标记合并范围。
@@ -2272,6 +2274,8 @@
   - 关键字段：`hard_guard_triggered/context_guard_applied/context_guard_tokens_before/context_guard_tokens_after/context_guard_current_user_trimmed/context_guard_summary_trimmed/context_guard_summary_removed`，用于说明压缩触发来源及压缩后为适配上下文窗口执行的二次裁剪动作。
 - `event: final`：最终回复（`data.answer`/`data.usage`/`data.stop_reason`）
   - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`question_panel`（等待问询面板选择）、`tool_failure_guard`（检测到连续工具失败并主动止损）、`max_rounds`（达到最大轮次兜底）、`empty_response`（模型未返回可展示最终答复）、`unknown`（兜底）
+  - 当 `stop_reason=max_rounds` 时，`data.answer` 会优先返回面向用户的恢复提示，引导用户直接继续当前会话，或调大该模型的 `max_rounds` 后重试；若本轮已生成中间文件/表格，用户也可先查看工作区结果。
+  - 常规 `data.answer` 输出也会在展示前移除工具调用片段与 `<think>...</think>` 推理标签，避免把模型中间思考直接暴露给用户。
 - `event: error`：错误信息（包含错误码与建议）
 - SSE 会附带 `id` 行，代表事件序号，可用于客户端排序或去重。
 - 当 SSE 队列满时事件会写入 `stream_events`，流式通道会回放补齐。
@@ -2330,7 +2334,7 @@
 - 慢客户端告警：当客户端消费过慢导致队列压力时，服务端会发送 `event=slow_client`，前端可提示用户触发 `resume`
 - Queue-full protection: when the current WS outbound queue is full, the server stops live push for that request; clients should use `resume` + `after_event_id` to replay pending events
 - 多路复用：同一连接可并发多个请求，需设置 `request_id`；服务端 `event/error` 会回传对应 `request_id`
-- `type=error` 统一错误载荷字段：`code`/`message`/`status`/`hint`/`trace_id`/`timestamp`。
+- `type=error` 统一错误载荷字段：`code`/`message`/`status`/`hint`/`trace_id`/`timestamp`；若为结构化请求错误，额外带 `detail`（例如 `field`/`max_chars`/`actual_chars`）。
 - 断线续传：客户端发送 `resume` + `after_event_id`，服务端从 `stream_events` 回放并继续推送
 - 实时订阅：客户端发送 `watch` + `after_event_id`，服务端持续推送会话流事件（直到取消或断线）
 - 审批回传：客户端可发送 `type=approval` 响应审批请求（`payload.approval_id`、`payload.decision=approve_once|approve_session|deny`，可选 `session_id`）

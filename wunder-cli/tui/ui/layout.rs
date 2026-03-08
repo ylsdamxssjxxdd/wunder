@@ -20,7 +20,7 @@ pub(crate) fn build_layout(area: Rect, popup_len: usize, activity_visible: bool)
                 Constraint::Length(1),
                 Constraint::Min(8),
                 Constraint::Length(activity_height),
-                Constraint::Length(6),
+                Constraint::Length(7),
             ])
             .split(area);
         return MainLayout {
@@ -40,7 +40,7 @@ pub(crate) fn build_layout(area: Rect, popup_len: usize, activity_visible: bool)
             Constraint::Min(6),
             Constraint::Length(popup_height),
             Constraint::Length(activity_height),
-            Constraint::Length(6),
+            Constraint::Length(7),
         ])
         .split(area);
     MainLayout {
@@ -71,21 +71,21 @@ mod tests {
         assert_eq!(layout.status.height, 1);
         assert!(layout.popup.is_none());
         assert_eq!(layout.activity.height, 1);
-        assert_eq!(layout.input.height, 6);
+        assert_eq!(layout.input.height, 7);
     }
 
     #[test]
     fn build_layout_with_popup_clamps_popup_height() {
         let layout = build_layout(Rect::new(0, 0, 100, 30), 20, true);
         assert_eq!(layout.popup.expect("popup").height, 9);
-        assert_eq!(layout.input.height, 6);
+        assert_eq!(layout.input.height, 7);
     }
 
     #[test]
     fn build_layout_hides_activity_row_when_not_needed() {
         let layout = build_layout(Rect::new(0, 0, 100, 30), 0, false);
         assert_eq!(layout.activity.height, 0);
-        assert_eq!(layout.input.height, 6);
+        assert_eq!(layout.input.height, 7);
     }
 
     #[test]

@@ -690,7 +690,7 @@ import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
 import { copyText } from '@/utils/clipboard';
-import { renderMarkdown } from '@/utils/markdown';
+import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import {
   buildWorkspaceImagePersistentCacheKey,
@@ -1754,6 +1754,7 @@ const hydrateWorkspaceResources = () => {
   cards.forEach((card) => {
     hydrateWorkspaceResourceCard(card);
   });
+  hydrateExternalMarkdownImages(container);
 };
 
 const resetWorkspaceResourceCards = () => {

@@ -1,6 +1,5 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import ElementPlus from 'element-plus';
 import 'element-plus/dist/index.css';
 import '@/vendor/fontawesome/css/fontawesome.min.css';
 import '@/vendor/fontawesome/css/solid.min.css';
@@ -14,13 +13,14 @@ import { useThemeStore } from '@/stores/theme';
 import { initI18n } from '@/i18n';
 import { loadRuntimeConfig } from '@/config/runtime';
 import { initDesktopRuntime } from '@/config/desktop';
+import { installElementPlus } from '@/plugins/elementPlus';
 
 const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
 usePerformanceStore(pinia);
 useThemeStore(pinia);
-app.use(ElementPlus);
+installElementPlus(app);
 app.use(router);
 
 const bootstrap = async () => {

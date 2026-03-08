@@ -1016,7 +1016,7 @@ export default {
   'chat.workflow.queued': 'Queued',
   'chat.workflow.queuedDetail': 'This session is busy. Your request is queued and will run when idle.',
   'chat.workflow.slowClientDetail':
-    'Connection is slow. Some incremental output may be dropped. Click “Resume” to fetch again. Queue remaining: {capacity}',
+    'Connection is slow. Some incremental output may be dropped. The app will try to resume automatically, and you can still click “Resume” if needed. Queue remaining: {capacity}',
   'chat.workflow.stage': 'Stage: {stage}',
   'chat.workflow.title': 'Event Stream',
   'chat.workflow.toolCall': 'Tool call: {tool}',
@@ -1686,6 +1686,7 @@ export default {
   'messenger.settings.themeOptionHula': 'Hula Green',
   'messenger.settings.themeOptionEva': 'EVA Orange',
   'messenger.settings.themeOptionMinimal': 'Minimal',
+  'messenger.settings.themeOptionTechBlue': 'Tech Blue',
   'messenger.settings.motion': 'Visual effects',
   'messenger.settings.motionHint': 'Use power-save mode on older devices to reduce animations and shadows',
   'messenger.settings.motionOptionHigh': 'Smooth',

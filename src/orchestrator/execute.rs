@@ -185,17 +185,16 @@ impl Orchestrator {
                 ),
                 llm_config.support_vision.unwrap_or(false),
             );
-                let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
-            let function_tooling = if matches!(
-                tool_call_mode,
-                ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
-            ) && !prepared.skip_tool_calls
+            let tool_call_mode = crate::llm::resolve_tool_call_mode(&llm_config);
+            let function_tooling = if uses_native_tool_api(tool_call_mode, &llm_config)
+                && !prepared.skip_tool_calls
             {
                 self.build_function_tooling(
                     &config,
                     &skills_snapshot,
                     &allowed_tool_names,
                     Some(&user_tool_bindings),
+                    tool_call_mode,
                 )
             } else {
                 None
@@ -654,10 +653,7 @@ impl Orchestrator {
                         } else {
                             None
                         };
-                        let tool_call_id = if matches!(
-                            tool_call_mode,
-                            ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
-                        ) {
+                        let tool_call_id = if uses_native_tool_api(tool_call_mode, &llm_config) {
                             id.as_deref()
                                 .map(str::trim)
                                 .filter(|value| !value.is_empty())
@@ -665,10 +661,7 @@ impl Orchestrator {
                         } else {
                             None
                         };
-                        if matches!(
-                            tool_call_mode,
-                            ToolCallMode::FunctionCall | ToolCallMode::FreeformCall
-                        ) {
+                        if uses_native_tool_api(tool_call_mode, &llm_config) {
                             if let Some(tool_call_id) = tool_call_id.as_ref() {
                                 messages.push(json!({
                                     "role": "tool",
@@ -957,9 +950,15 @@ impl Orchestrator {
                     }
                 }
             }
+            if reached_max_rounds {
+                answer = build_max_rounds_user_guidance(max_rounds);
+                if stop_reason.is_none() {
+                    stop_reason = Some("max_rounds".to_string());
+                }
+            }
             if answer.is_empty() {
                 let (fallback_answer, fallback_reason) =
-                    resolve_empty_answer_fallback(reached_max_rounds);
+                    resolve_empty_answer_fallback();
                 answer = fallback_answer;
                 if stop_reason.is_none() {
                     stop_reason = Some(fallback_reason.to_string());
@@ -1359,6 +1358,17 @@ fn build_planned_tool_calls(
         .collect()
 }
 
+fn uses_native_tool_api(tool_call_mode: ToolCallMode, llm_config: &LlmModelConfig) -> bool {
+    match tool_call_mode {
+        ToolCallMode::FunctionCall => true,
+        ToolCallMode::FreeformCall => matches!(
+            crate::llm::resolve_openai_api_mode(llm_config),
+            crate::llm::OpenAiApiMode::Responses
+        ),
+        ToolCallMode::ToolCall => false,
+    }
+}
+
 fn resolve_tool_parallelism(total: usize) -> usize {
     let desired = DEFAULT_TOOL_PARALLELISM.max(1);
     total.max(1).min(desired)
@@ -1396,10 +1406,16 @@ fn resolve_user_content_for_persist(
     fallback_user_message.get("content").cloned()
 }
 
-fn resolve_empty_answer_fallback(reached_max_rounds: bool) -> (String, &'static str) {
-    if reached_max_rounds {
-        return (i18n::t("error.max_rounds_no_final_answer"), "max_rounds");
-    }
+fn build_max_rounds_user_guidance(max_rounds: Option<i64>) -> String {
+    let mut params = HashMap::new();
+    params.insert(
+        "max_rounds".to_string(),
+        max_rounds.unwrap_or_default().max(0).to_string(),
+    );
+    i18n::t_with_params("error.max_rounds_user_guidance", &params)
+}
+
+fn resolve_empty_answer_fallback() -> (String, &'static str) {
     (i18n::t("error.empty_no_final_answer"), "empty_response")
 }
 
@@ -1533,15 +1549,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn resolve_empty_answer_fallback_uses_max_rounds_reason() {
-        let (answer, stop_reason) = resolve_empty_answer_fallback(true);
+    fn build_max_rounds_user_guidance_encourages_continue_or_raise_limit() {
+        let answer = build_max_rounds_user_guidance(Some(10));
         assert!(!answer.trim().is_empty());
-        assert_eq!(stop_reason, "max_rounds");
+        assert!(answer.contains("10"));
+        assert!(answer.contains("继续") || answer.to_ascii_lowercase().contains("continue"));
     }
 
     #[test]
     fn resolve_empty_answer_fallback_uses_empty_response_reason() {
-        let (answer, stop_reason) = resolve_empty_answer_fallback(false);
+        let (answer, stop_reason) = resolve_empty_answer_fallback();
         assert!(!answer.trim().is_empty());
         assert_eq!(stop_reason, "empty_response");
     }
@@ -1649,5 +1666,62 @@ mod tests {
         let planned = build_planned_tool_calls(calls, &allowed);
         assert_eq!(planned.len(), 1);
         assert_eq!(planned[0].name, resolve_tool_name("final_response"));
+    }
+
+    #[test]
+    fn uses_native_tool_api_supports_freeform_only_on_responses_api() {
+        let base_config = || LlmModelConfig {
+            enable: None,
+            provider: None,
+            api_mode: None,
+            base_url: None,
+            api_key: None,
+            model: None,
+            temperature: None,
+            timeout_s: None,
+            retry: None,
+            max_rounds: None,
+            max_context: None,
+            max_output: None,
+            support_vision: None,
+            support_hearing: None,
+            stream: None,
+            stream_include_usage: None,
+            history_compaction_ratio: None,
+            history_compaction_reset: None,
+            tool_call_mode: None,
+            model_type: None,
+            stop: None,
+            mock_if_unconfigured: None,
+        };
+        let mut function_call_config = base_config();
+        function_call_config.tool_call_mode = Some("function_call".to_string());
+
+        let mut freeform_responses_config = base_config();
+        freeform_responses_config.provider = Some("openai".to_string());
+        freeform_responses_config.model = Some("gpt-5.2".to_string());
+        freeform_responses_config.tool_call_mode = Some("freeform_call".to_string());
+
+        let mut freeform_chat_config = base_config();
+        freeform_chat_config.provider = Some("openai_compatible".to_string());
+        freeform_chat_config.model = Some("gpt-5.2".to_string());
+        freeform_chat_config.tool_call_mode = Some("freeform_call".to_string());
+
+        assert!(uses_native_tool_api(
+            ToolCallMode::FunctionCall,
+            &function_call_config,
+        ));
+        assert!(!uses_native_tool_api(
+            ToolCallMode::ToolCall,
+            &function_call_config
+        ));
+        assert!(uses_native_tool_api(
+            ToolCallMode::FreeformCall,
+            &freeform_responses_config,
+        ));
+        assert!(!uses_native_tool_api(
+            ToolCallMode::FreeformCall,
+            &freeform_chat_config,
+        ));
     }
 }

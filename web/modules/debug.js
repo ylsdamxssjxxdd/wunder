@@ -11,6 +11,7 @@ import { formatTimestamp } from "./utils.js?v=20251229-02";
 import { ensureLlmConfigLoaded } from "./llm.js";
 import { getCurrentLanguage, t } from "./i18n.js?v=20260215-01";
 import { resolveApiErrorMessage } from "./api-error.js";
+import { enhanceRenderedMarkdown, normalizeMarkdownForWebPreview } from "./markdown-preview.js";
 
 const DEBUG_STATE_KEY = "wunder_debug_state";
 const DEBUG_ACTIVE_STATUSES = new Set(["running", "cancelling"]);
@@ -2313,7 +2314,7 @@ const renderPreviewText = (entry) => {
   if (!elements.modelOutputPreviewText) {
     return;
   }
-  const text = resolvePreviewEntryText(entry);
+  const text = normalizeMarkdownForWebPreview(resolvePreviewEntryText(entry));
   const trimmed = text.trim();
   const container = elements.modelOutputPreviewText;
   container.classList.toggle("is-empty", !trimmed);
@@ -2326,6 +2327,7 @@ const renderPreviewText = (entry) => {
     ensureMarkedReady();
     try {
       container.innerHTML = renderer.parse(text);
+      enhanceRenderedMarkdown(container);
     } catch (error) {
       container.textContent = text;
     }

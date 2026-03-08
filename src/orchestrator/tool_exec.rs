@@ -494,26 +494,17 @@ impl Orchestrator {
     }
 
     pub(super) fn resolve_final_answer(&self, content: &str) -> String {
+        if let Some(inner) = extract_tagged_block(content, "final_response") {
+            let answer = normalize_final_response_payload(inner.as_str());
+            if !answer.is_empty() {
+                return answer;
+            }
+        }
         strip_tool_calls(content).trim().to_string()
     }
 
     pub(super) fn resolve_final_answer_from_tool(&self, args: &Value) -> String {
-        if let Some(obj) = args.as_object() {
-            let value = obj
-                .get("content")
-                .or_else(|| obj.get("answer"))
-                .cloned()
-                .unwrap_or(Value::Null);
-            match value {
-                Value::String(text) => text.trim().to_string(),
-                Value::Null => String::new(),
-                other => serde_json::to_string(&other).unwrap_or_else(|_| other.to_string()),
-            }
-        } else if let Some(text) = args.as_str() {
-            text.trim().to_string()
-        } else {
-            String::new()
-        }
+        resolve_final_answer_value(args)
     }
 
     pub(super) fn resolve_a2ui_tool_payload(
@@ -848,6 +839,55 @@ fn resolve_absolute_path(raw: &str) -> Option<PathBuf> {
     }
 }
 
+fn extract_tagged_block(content: &str, tag: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = lower.find(open.as_str())? + open.len();
+    let end = lower[start..].find(close.as_str())? + start;
+    trimmed
+        .get(start..end)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn resolve_final_answer_value(value: &Value) -> String {
+    if let Some(obj) = value.as_object() {
+        let answer = obj
+            .get("content")
+            .or_else(|| obj.get("answer"))
+            .unwrap_or(&Value::Null);
+        return match answer {
+            Value::String(text) => strip_tool_calls(text).trim().to_string(),
+            Value::Null => String::new(),
+            other => strip_tool_calls(
+                &serde_json::to_string(other).unwrap_or_else(|_| other.to_string()),
+            )
+            .trim()
+            .to_string(),
+        };
+    }
+    if let Some(text) = value.as_str() {
+        return strip_tool_calls(text).trim().to_string();
+    }
+    String::new()
+}
+
+fn normalize_final_response_payload(payload: &str) -> String {
+    if let Some(content) = extract_tagged_block(payload, "content") {
+        return strip_tool_calls(&content).trim().to_string();
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(payload.trim()) {
+        return resolve_final_answer_value(&value);
+    }
+    strip_tool_calls(payload).trim().to_string()
+}
+
 fn extract_command_lines(args: &Value) -> Vec<String> {
     let content = args
         .get("content")
@@ -1150,5 +1190,33 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or("");
         assert!(!preview.is_empty());
+    }
+
+    #[test]
+    fn test_normalize_final_response_payload_from_json_object() {
+        let answer = normalize_final_response_payload(r#"{"content":"0"}"#);
+        assert_eq!(answer, "0");
+    }
+
+    #[test]
+    fn test_normalize_final_response_payload_from_content_tag() {
+        let answer = normalize_final_response_payload("<content>done</content>");
+        assert_eq!(answer, "done");
+    }
+
+    #[test]
+    fn test_normalize_final_response_payload_strips_think_block() {
+        let answer = normalize_final_response_payload(
+            r#"{"content":"<think>internal reasoning</think>\n\ndone"}"#,
+        );
+        assert_eq!(answer, "done");
+    }
+    #[test]
+    fn test_extract_tagged_block_supports_final_response() {
+        let answer = extract_tagged_block(
+            "<final_response>{\"content\":\"ok\"}</final_response>",
+            "final_response",
+        );
+        assert_eq!(answer.as_deref(), Some("{\"content\":\"ok\"}"));
     }
 }

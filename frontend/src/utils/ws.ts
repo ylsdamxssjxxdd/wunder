@@ -1,8 +1,14 @@
 import { t } from '@/i18n';
+import { parseStructuredErrorPayload } from '@/utils/streamError';
 
 type WsError = Error & {
   phase?: string;
   code?: unknown;
+  status?: number | null;
+  hint?: string;
+  traceId?: string;
+  detail?: unknown;
+  resumeRequired?: boolean;
 };
 
 type StreamEventHandler = (eventType: string, data: string, eventId: string) => void;
@@ -69,6 +75,36 @@ const buildEventText = (data: unknown): string =>
 
 const asPayloadRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+
+const buildWsPayloadError = (payload: unknown, phase?: string): WsError => {
+  const meta = parseStructuredErrorPayload(payload);
+  const err = normalizeError(meta.message || t('chat.error.requestFailed'), phase);
+  err.code = meta.code;
+  err.status = meta.status;
+  err.hint = meta.hint;
+  err.traceId = meta.traceId;
+  err.detail = meta.detail;
+  return err;
+};
+
+const isResumeRequiredSlowClientEvent = (eventPayload: Record<string, unknown>): boolean => {
+  const eventType = String(eventPayload.event || '').trim().toLowerCase();
+  if (eventType !== 'slow_client') {
+    return false;
+  }
+  const data = asPayloadRecord(eventPayload.data);
+  return String(data.reason || '').trim() === 'queue_full_resume_required';
+};
+
+const buildSlowClientError = (eventPayload: Record<string, unknown>): WsError => {
+  const data = asPayloadRecord(eventPayload.data);
+  const capacity = String(data.queue_capacity ?? '-');
+  const err = normalizeError(t('chat.workflow.slowClientDetail', { capacity }), 'slow_client');
+  err.code = 'SLOW_CLIENT';
+  err.detail = data;
+  err.resumeRequired = data.resume_recommended !== false;
+  return err;
+};
 
 export const consumeWsStream = (
   socket: WebSocket,
@@ -170,9 +206,7 @@ export const consumeWsStream = (
       }
       if (type === 'error') {
         const errorPayload = asPayloadRecord(payload?.payload);
-        const message = String(errorPayload.message || t('chat.error.requestFailed'));
-        const err = normalizeError(message, opened ? 'stream' : 'connect');
-        err.code = errorPayload.code;
+        const err = buildWsPayloadError(errorPayload, opened ? 'stream' : 'connect');
         try {
           socket.close(1000, 'error');
         } catch {
@@ -358,6 +392,10 @@ export const createWsMultiplexer = (
       const eventId = String(eventPayload.id || '');
       const dataText = buildEventText(eventPayload.data);
       entry.onEvent(eventType, dataText, eventId);
+      if (isResumeRequiredSlowClientEvent(eventPayload)) {
+        rejectRequest(requestId, buildSlowClientError(eventPayload));
+        return;
+      }
       if (entry.closeOnFinal && (eventType === 'final' || eventType === 'error')) {
         resolveRequest(requestId);
       }
@@ -365,9 +403,7 @@ export const createWsMultiplexer = (
     }
     if (type === 'error') {
       const errorPayload = asPayloadRecord(payload?.payload);
-      const message = String(errorPayload.message || t('chat.error.requestFailed'));
-      const err = normalizeError(message, opened ? 'stream' : 'connect');
-      err.code = errorPayload.code;
+      const err = buildWsPayloadError(errorPayload, opened ? 'stream' : 'connect');
       const requestId = normalizeRequestId(payload?.request_id || payload?.requestId);
       if (requestId && pending.has(requestId)) {
         rejectRequest(requestId, err);

@@ -1,6 +1,10 @@
 mod args;
 mod attachments;
+mod error_display;
+mod input_guard;
 mod locale;
+mod patch_diff;
+mod path_display;
 mod render;
 mod runtime;
 mod slash_command;
@@ -6439,12 +6443,19 @@ pub(crate) async fn build_wunder_request(
 ) -> Result<WunderRequest> {
     let config = runtime.state.config_store.get().await;
     let model_name = runtime.resolve_model_name(global.model.as_deref()).await;
+    let language = locale::resolve_cli_language(global);
     let request_overrides = build_request_overrides(
         &config,
         model_name.as_deref(),
         global.tool_call_mode,
         global.approval_mode,
     );
+
+    input_guard::validate_request_text_input_size(
+        language.as_str(),
+        prompt,
+        attachments.as_deref(),
+    )?;
 
     ensure_cli_session_record(runtime, session_id, Some(prompt)).await?;
 

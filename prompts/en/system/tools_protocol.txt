@@ -21,9 +21,12 @@ Tool signatures are provided inside the <tools> </tools> XML tag:
 {available_tools_describe}
 </tools>
 
-In this mode, use a hybrid strategy:
-1. Prefer structured function-style calls for normal JSON tools.
-2. Use freeform raw input for grammar tools such as apply_patch.
+In this mode, prefer the model's native tool-calling channel whenever the API exposes it.
+The XML protocol below is only a fallback when native tool calling is unavailable.
+
+Native freeform strategy:
+1. Use native structured tool calls for normal JSON tools.
+2. Use native custom/freeform tool calls for grammar tools such as apply_patch.
 3. Freeform input must be the grammar body itself, not wrapped JSON.
 
 apply_patch rules (Codex-aligned):
@@ -33,7 +36,7 @@ apply_patch rules (Codex-aligned):
 - Keep edits minimal and surgical; avoid unrelated reformat/reordering.
 - On errors, use error_code/hint/retryable to make the smallest possible retry.
 
-Simple example:
+Fallback XML example (only when native tool calling is unavailable):
 <tool_call>
 <name>apply_patch</name>
 <input>

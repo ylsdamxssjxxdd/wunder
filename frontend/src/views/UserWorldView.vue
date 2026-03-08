@@ -486,7 +486,7 @@ import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUserWorldStore } from '@/stores/userWorld';
-import { renderMarkdown } from '@/utils/markdown';
+import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import {
   buildWorkspaceImagePersistentCacheKey,
   readWorkspaceImagePersistentCache,
@@ -1906,6 +1906,7 @@ const hydrateUserWorldResources = () => {
   cards.forEach((card) => {
     hydrateUserWorldResourceCard(card as HTMLElement);
   });
+  hydrateExternalMarkdownImages(container);
 };
 
 const resetUserWorldResourceCards = () => {

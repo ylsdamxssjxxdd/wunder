@@ -1,15 +1,28 @@
+import {
+  DEFAULT_THEME_MODE,
+  DEFAULT_THEME_PALETTE,
+  normalizeThemePalette,
+  resolveThemeModeForPalette,
+  type ThemeMode,
+  type ThemePalette
+} from '@/utils/themeAppearance';
+
+export {
+  DEFAULT_THEME_MODE,
+  DEFAULT_THEME_PALETTE,
+  normalizeThemeMode,
+  normalizeThemePalette
+} from '@/utils/themeAppearance';
+
+export type { ThemeMode, ThemePalette };
+
 export const USER_APPEARANCE_STORAGE_PREFIX = 'messenger_user_appearance_v1:';
 const LEGACY_USER_AVATAR_STORAGE_PREFIX = 'messenger_user_avatar_v1:';
 const LEGACY_THEME_MODE_STORAGE_KEY = 'wille-user-theme';
 const LEGACY_THEME_PALETTE_STORAGE_KEY = 'wille-user-accent-theme';
 
-export const DEFAULT_THEME_MODE = 'light';
-export const DEFAULT_THEME_PALETTE = 'eva-orange';
 export const DEFAULT_AVATAR_ICON = 'initial';
 export const DEFAULT_AVATAR_COLOR = '#3b82f6';
-
-export type ThemeMode = 'dark' | 'light';
-export type ThemePalette = 'hula-green' | 'eva-orange' | 'minimal';
 
 export type UserAppearancePreferences = {
   themeMode: ThemeMode;
@@ -37,23 +50,6 @@ const LEGACY_AVATAR_ALIAS_MAP: Record<string, string> = {
   'fa-pen': 'initial',
   'fa-briefcase': 'initial',
   'fa-shield-halved': 'initial'
-};
-
-export const normalizeThemeMode = (value: unknown): ThemeMode => {
-  const text = String(value || '')
-    .trim()
-    .toLowerCase();
-  return text === 'dark' ? 'dark' : DEFAULT_THEME_MODE;
-};
-
-export const normalizeThemePalette = (value: unknown): ThemePalette => {
-  const text = String(value || '')
-    .trim()
-    .toLowerCase();
-  if (text === 'hula-green' || text === 'minimal') {
-    return text as ThemePalette;
-  }
-  return DEFAULT_THEME_PALETTE;
 };
 
 export const normalizeAvatarIcon = (value: unknown, allowedKeys?: Set<string>): string => {
@@ -98,8 +94,8 @@ export const normalizeUserAppearance = (
 ): UserAppearancePreferences => {
   const source = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
   const next = defaultUserAppearance();
-  next.themeMode = normalizeThemeMode(source.theme_mode ?? source.themeMode);
   next.themePalette = normalizeThemePalette(source.theme_palette ?? source.themePalette);
+  next.themeMode = resolveThemeModeForPalette(source.theme_mode ?? source.themeMode, next.themePalette);
   next.avatarIcon = normalizeAvatarIcon(source.avatar_icon ?? source.avatarIcon, allowedAvatarKeys);
   next.avatarColor = normalizeAvatarColor(source.avatar_color ?? source.avatarColor);
   const updatedAt = Number(source.updated_at ?? source.updatedAt ?? 0);
@@ -155,8 +151,11 @@ const readLegacyUserAppearanceFromStorage = (
   if (typeof window === 'undefined') {
     return next;
   }
-  next.themeMode = normalizeThemeMode(window.localStorage.getItem(LEGACY_THEME_MODE_STORAGE_KEY));
   next.themePalette = normalizeThemePalette(window.localStorage.getItem(LEGACY_THEME_PALETTE_STORAGE_KEY));
+  next.themeMode = resolveThemeModeForPalette(
+    window.localStorage.getItem(LEGACY_THEME_MODE_STORAGE_KEY),
+    next.themePalette
+  );
   const legacyAvatarKey = `${LEGACY_USER_AVATAR_STORAGE_PREFIX}${String(userId || '').trim() || 'guest'}`;
   try {
     const raw = window.localStorage.getItem(legacyAvatarKey);

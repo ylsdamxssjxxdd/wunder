@@ -8,6 +8,7 @@ mod gateway;
 mod lsp;
 mod ops;
 mod orchestrator;
+mod request_limits;
 mod sandbox;
 mod services;
 mod storage;

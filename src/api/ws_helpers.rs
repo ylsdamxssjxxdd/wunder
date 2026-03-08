@@ -8,10 +8,11 @@ use crate::orchestrator_constants::{
 };
 use crate::schemas::StreamEvent;
 use crate::state::AppState;
+use anyhow::Error;
 use axum::extract::ws::Message;
 use axum::http::header::AUTHORIZATION;
 use axum::http::header::SEC_WEBSOCKET_PROTOCOL;
-use axum::http::{HeaderMap, HeaderValue};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -424,15 +425,65 @@ pub(crate) async fn send_ws_error(
     code: &str,
     message: String,
 ) -> Result<(), ()> {
-    let status = crate::api::errors::status_for_error_code(code);
-    let payload = crate::api::errors::build_error_meta(
-        status,
-        Some(code),
-        message,
-        crate::api::errors::hint_for_error_code(code),
-    )
-    .to_value();
+    let payload = json!({
+        "code": code,
+        "message": message,
+    });
+    send_ws_error_payload(tx, request_id, payload).await
+}
+
+pub(crate) async fn send_ws_error_payload(
+    tx: &WsSender,
+    request_id: Option<&str>,
+    payload: Value,
+) -> Result<(), ()> {
+    let payload = finalize_ws_error_payload(payload);
     send_ws_message(tx, "error", request_id, Some(payload)).await
+}
+
+pub(crate) fn ws_error_payload_from_anyhow(err: &Error) -> Value {
+    if let Some(orchestrator_err) = err.downcast_ref::<crate::orchestrator::OrchestratorError>() {
+        return orchestrator_err.to_payload();
+    }
+    json!({
+        "status": StatusCode::BAD_REQUEST.as_u16(),
+        "code": "INTERNAL_ERROR",
+        "message": err.to_string(),
+    })
+}
+
+fn finalize_ws_error_payload(payload: Value) -> Value {
+    let status = payload
+        .get("status")
+        .and_then(Value::as_u64)
+        .and_then(|raw| u16::try_from(raw).ok())
+        .and_then(|raw| StatusCode::from_u16(raw).ok())
+        .or_else(|| {
+            payload
+                .get("code")
+                .and_then(Value::as_str)
+                .map(crate::api::errors::status_for_error_code)
+        })
+        .unwrap_or(StatusCode::BAD_REQUEST);
+    let code = payload.get("code").and_then(Value::as_str);
+    let message = payload
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| status.to_string());
+    let hint = payload
+        .get("hint")
+        .and_then(Value::as_str)
+        .or_else(|| code.and_then(crate::api::errors::hint_for_error_code));
+    let mut merged = crate::api::errors::build_error_meta(status, code, message, hint).to_value();
+    if let Some(detail) = payload.get("detail") {
+        if let Value::Object(map) = &mut merged {
+            map.insert("detail".to_string(), detail.clone());
+        }
+    }
+    merged
 }
 
 pub(crate) async fn send_ws_message(
@@ -660,5 +711,37 @@ mod tests {
         let first = rx.recv().await.expect("queued message");
         assert!(matches!(first, Message::Text(_)));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn structured_error_payload_preserves_detail_fields() {
+        let (tx, mut rx) = mpsc::channel::<Message>(4);
+        let sender = WsSender::new(tx);
+        send_ws_error_payload(
+            &sender,
+            Some("req-structured"),
+            json!({
+                "code": "INVALID_REQUEST",
+                "message": "input too long",
+                "detail": {
+                    "field": "input_text",
+                    "max_chars": 10,
+                    "actual_chars": 12
+                }
+            }),
+        )
+        .await
+        .expect("send error payload");
+
+        let Some(Message::Text(raw)) = rx.recv().await else {
+            panic!("expected ws text message");
+        };
+        let payload: Value = serde_json::from_str(raw.as_str()).expect("parse ws envelope");
+        assert_eq!(payload["type"], json!("error"));
+        assert_eq!(payload["request_id"], json!("req-structured"));
+        assert_eq!(payload["payload"]["code"], json!("INVALID_REQUEST"));
+        assert_eq!(payload["payload"]["status"], json!(400));
+        assert_eq!(payload["payload"]["detail"]["field"], json!("input_text"));
+        assert_eq!(payload["payload"]["detail"]["actual_chars"], json!(12));
     }
 }

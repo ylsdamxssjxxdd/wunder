@@ -1,6 +1,7 @@
 // SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
+use crate::services::output_quality;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
@@ -1395,12 +1396,13 @@ impl StorageBackend for SqliteStorage {
         if role.is_empty() {
             return Ok(());
         }
+        let payload = output_quality::annotate_chat_payload(payload);
         let content = Self::parse_string(payload.get("content"));
         let timestamp = Self::parse_string(payload.get("timestamp"));
         let meta = payload
             .get("meta")
             .and_then(|value| serde_json::to_string(value).ok());
-        let payload_text = Self::json_to_string(payload);
+        let payload_text = Self::json_to_string(payload.as_ref());
         let now = Self::now_ts();
         let conn = self.open()?;
         conn.execute(

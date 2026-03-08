@@ -10,6 +10,7 @@ mod catalog;
 mod context;
 mod desktop_control;
 mod dispatch;
+mod freeform;
 mod read_image_tool;
 mod sleep_tool;
 
@@ -29,6 +30,10 @@ pub(crate) use context::{
     collect_allow_roots, collect_read_roots, resolve_path_in_roots, resolve_tool_path,
 };
 pub use dispatch::{execute_builtin_tool, execute_tool};
+pub(crate) use freeform::{
+    build_responses_freeform_tool, extract_freeform_tool_input, is_freeform_tool_name,
+    render_prompt_tool_spec,
+};
 
 use crate::a2a_store::A2aTask;
 use crate::command_utils;

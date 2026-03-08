@@ -1,6 +1,5 @@
 import { ref } from 'vue';
 
-import enUS from './messages/en-US';
 import zhCN from './messages/zh-CN';
 import { resolveApiBase } from '@/config/runtime';
 
@@ -23,9 +22,14 @@ type I18nConfigPayload = {
 };
 
 const LOCALES: Record<string, LocaleMessages> = {
-  'zh-CN': zhCN,
-  'en-US': enUS
+  'zh-CN': zhCN
 };
+
+const LOCALE_LOADERS: Record<string, () => Promise<LocaleMessages>> = {
+  'en-US': () => import('./messages/en-US').then((module) => module.default)
+};
+
+const localeLoadTasks = new Map<string, Promise<LocaleMessages>>();
 
 const DEFAULT_LANGUAGE_ALIASES: LanguageAliases = {
   zh: 'zh-CN',
@@ -58,6 +62,33 @@ const resolveLocale = (language: string): LocaleMessages => {
   }
   const fallbackKey = Object.keys(LOCALES)[0];
   return fallbackKey ? LOCALES[fallbackKey] : {};
+};
+
+
+const ensureLocaleLoaded = async (language: string): Promise<void> => {
+  const target = String(language || '').trim();
+  if (!target || LOCALES[target]) {
+    return;
+  }
+  const loader = LOCALE_LOADERS[target];
+  if (!loader) {
+    return;
+  }
+  let task = localeLoadTasks.get(target);
+  if (!task) {
+    task = loader()
+      .then((messages) => {
+        LOCALES[target] = messages || {};
+        localeLoadTasks.delete(target);
+        return LOCALES[target];
+      })
+      .catch((error) => {
+        localeLoadTasks.delete(target);
+        throw error;
+      });
+    localeLoadTasks.set(target, task);
+  }
+  await task;
 };
 
 const resolveLanguageCode = (raw: unknown): string => {
@@ -122,11 +153,12 @@ export const getLanguageLabel = (language: string): string => {
   return locale[key] || languageLabels[code] || code;
 };
 
-export const setLanguage = (language: unknown, options: SetLanguageOptions = {}): string => {
+export const setLanguage = async (language: unknown, options: SetLanguageOptions = {}): Promise<string> => {
   const next = resolveLanguageCode(language) || defaultLanguage;
   if (next === currentLanguage.value && !options.force) {
     return currentLanguage.value;
   }
+  await ensureLocaleLoaded(next);
   currentLanguage.value = next;
   if (document?.documentElement) {
     document.documentElement.lang = currentLanguage.value;
@@ -218,7 +250,9 @@ export const initI18n = async (): Promise<void> => {
   } catch {
     // keep local defaults when remote i18n config is unavailable
   }
-  setLanguage(resolveInitialLanguage(), { force: true, persist: false, emit: false });
+  const initialLanguage = resolveInitialLanguage();
+  await Promise.all([ensureLocaleLoaded(defaultLanguage), ensureLocaleLoaded(initialLanguage)]);
+  await setLanguage(initialLanguage, { force: true, persist: false, emit: false });
 };
 
 export const useI18n = () => ({

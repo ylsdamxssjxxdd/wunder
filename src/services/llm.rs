@@ -7,12 +7,14 @@ use crate::core::tool_args::{
     sanitize_tool_call_payload,
 };
 use crate::schemas::TokenUsage;
+use crate::tools::{extract_freeform_tool_input, is_freeform_tool_name};
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
 use reqwest::header::HeaderMap;
 use reqwest::Client;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::future::Future;
 use std::time::Duration;
 use tracing::warn;
@@ -573,6 +575,32 @@ fn normalize_responses_tool_definition(tool: &Value, openai_top_level_schema_gua
             normalize_tool_input_schema(schema)
         }
     };
+    let tool_type = tool
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if tool_type.eq_ignore_ascii_case("custom") {
+        let name = tool
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        if name.is_empty() {
+            return tool.clone();
+        }
+        let description = tool
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let format = tool.get("format").cloned().unwrap_or(Value::Null);
+        return json!({
+            "type": "custom",
+            "name": name,
+            "description": description,
+            "format": format,
+        });
+    }
     if let Some(function) = tool.get("function").and_then(Value::as_object) {
         let name = function
             .get("name")
@@ -618,6 +646,7 @@ fn normalize_responses_tool_definition(tool: &Value, openai_top_level_schema_gua
 
 fn build_responses_input(messages: &[ChatMessage]) -> Value {
     let mut input: Vec<Value> = Vec::new();
+    let mut custom_tool_call_ids = HashSet::new();
     for message in messages {
         let role = message.role.trim();
         if role.eq_ignore_ascii_case("tool") {
@@ -628,8 +657,13 @@ fn build_responses_input(messages: &[ChatMessage]) -> Value {
                 .filter(|value| !value.is_empty())
             {
                 let output = extract_content_text(&message.content);
+                let output_type = if custom_tool_call_ids.contains(call_id) {
+                    "custom_tool_call_output"
+                } else {
+                    "function_call_output"
+                };
                 input.push(json!({
-                    "type": "function_call_output",
+                    "type": output_type,
                     "call_id": call_id,
                     "output": output,
                 }));
@@ -648,6 +682,11 @@ fn build_responses_input(messages: &[ChatMessage]) -> Value {
             let calls = extract_tool_calls_list(tool_calls);
             for (idx, call) in calls.iter().enumerate() {
                 if let Some(item) = tool_call_to_responses_item(call, idx) {
+                    if item["type"] == "custom_tool_call" {
+                        if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
+                            custom_tool_call_ids.insert(call_id.to_string());
+                        }
+                    }
                     input.push(item);
                 }
             }
@@ -796,6 +835,15 @@ fn tool_call_to_responses_item(call: &Value, fallback_index: usize) -> Option<Va
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("call_{}", fallback_index + 1));
+    if is_freeform_tool_name(&name) {
+        let input = extract_freeform_tool_input(&arguments).unwrap_or(arguments);
+        return Some(json!({
+            "type": "custom_tool_call",
+            "call_id": call_id,
+            "name": name,
+            "input": input,
+        }));
+    }
     Some(json!({
         "type": "function_call",
         "call_id": call_id,
@@ -979,7 +1027,7 @@ fn resolve_base_url(config: &LlmModelConfig) -> Option<String> {
     provider_default_base_url(&provider).map(|value| value.to_string())
 }
 
-fn resolve_openai_api_mode(config: &LlmModelConfig) -> OpenAiApiMode {
+pub fn resolve_openai_api_mode(config: &LlmModelConfig) -> OpenAiApiMode {
     if let Some(value) = config.api_mode.as_deref() {
         return normalize_openai_api_mode(Some(value));
     }
@@ -1707,17 +1755,13 @@ fn update_responses_tool_call_from_item(acc: &mut Vec<StreamToolCall>, item: &Va
             .and_then(|value| value.get("arguments"))
             .and_then(Value::as_str)
     });
-    let custom_arguments = map
-        .get("input")
-        .and_then(Value::as_str)
-        .and_then(|input| serde_json::to_string(&json!({ "input": input })).ok());
-    upsert_response_tool_call(
-        acc,
-        item_id,
-        call_id,
-        name,
-        arguments.or(custom_arguments.as_deref()),
-    );
+    let custom_input = map.get("input").and_then(Value::as_str);
+    let arguments = if item_type == "custom_tool_call" {
+        custom_input.or(arguments)
+    } else {
+        arguments
+    };
+    upsert_response_tool_call(acc, item_id, call_id, name, arguments);
 }
 
 fn update_responses_tool_call_arguments(acc: &mut Vec<StreamToolCall>, payload: &Value) {
@@ -1923,8 +1967,23 @@ fn merge_stream_text_field(target: &mut String, fragment: &str) {
         return;
     }
 
+    if should_replace_stream_json_payload(target, fragment) {
+        target.clear();
+        target.push_str(fragment);
+        return;
+    }
+
     let overlap = stream_text_overlap_len(target, fragment);
     target.push_str(&fragment[overlap..]);
+}
+
+fn should_replace_stream_json_payload(current: &str, next: &str) -> bool {
+    let current = current.trim();
+    let next = next.trim();
+    if current.is_empty() || next.is_empty() {
+        return false;
+    }
+    serde_json::from_str::<Value>(current).is_ok() && serde_json::from_str::<Value>(next).is_ok()
 }
 
 fn stream_text_overlap_len(target: &str, fragment: &str) -> usize {
@@ -1947,11 +2006,18 @@ fn finalize_stream_tool_calls(acc: &[StreamToolCall]) -> Option<Value> {
         if call.name.trim().is_empty() {
             continue;
         }
+        let arguments = if is_freeform_tool_name(&call.name) {
+            let input = extract_freeform_tool_input(&call.arguments)
+                .unwrap_or_else(|| call.arguments.clone());
+            serde_json::to_string(&json!({ "input": input })).unwrap_or_else(|_| "{}".to_string())
+        } else {
+            normalize_tool_arguments_json(&call.arguments)
+        };
         let mut payload = json!({
             "type": "function",
             "function": {
                 "name": call.name,
-                "arguments": normalize_tool_arguments_json(&call.arguments),
+                "arguments": arguments,
             }
         });
         if let Some(id) = call.id.as_ref().or(call.source_id.as_ref()) {
@@ -2576,6 +2642,105 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_to_responses_item_converts_freeform_tool_to_custom_call() {
+        let item = tool_call_to_responses_item(
+            &json!({
+                "id": "call_patch",
+                "type": "function",
+                "function": {
+                    "name": "apply_patch",
+                    "arguments": "{\"input\":\"*** Begin Patch\\n*** End Patch\"}"
+                }
+            }),
+            0,
+        )
+        .expect("tool call item");
+
+        assert_eq!(item["type"], "custom_tool_call");
+        assert_eq!(item["call_id"], "call_patch");
+        assert_eq!(item["name"], "apply_patch");
+        assert_eq!(item["input"], "*** Begin Patch\n*** End Patch");
+    }
+
+    #[test]
+    fn build_responses_input_roundtrips_custom_tool_outputs() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: json!(""),
+                reasoning_content: None,
+                tool_calls: Some(json!([{
+                    "id": "call_patch",
+                    "type": "function",
+                    "function": {
+                        "name": "apply_patch",
+                        "arguments": "{\"input\":\"*** Begin Patch\\n*** End Patch\"}"
+                    }
+                }])),
+                tool_call_id: None,
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: json!("applied"),
+                reasoning_content: None,
+                tool_calls: None,
+                tool_call_id: Some("call_patch".to_string()),
+            },
+        ];
+
+        let input = build_responses_input(&messages);
+        let items = input.as_array().expect("responses input array");
+
+        assert_eq!(items[1]["type"], "custom_tool_call");
+        assert_eq!(items[2]["type"], "custom_tool_call_output");
+        assert_eq!(items[2]["call_id"], "call_patch");
+    }
+
+    #[test]
+    fn finalize_stream_tool_calls_repairs_custom_tool_input_stream() {
+        let mut acc = Vec::new();
+        update_responses_tool_call_from_item(
+            &mut acc,
+            &json!({
+                "type": "custom_tool_call",
+                "id": "item_patch",
+                "call_id": "call_patch",
+                "name": "apply_patch",
+                "input": ""
+            }),
+        );
+        update_responses_tool_call_from_item(
+            &mut acc,
+            &json!({
+                "type": "custom_tool_call",
+                "id": "item_patch",
+                "call_id": "call_patch",
+                "name": "apply_patch",
+                "input": "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
+            }),
+        );
+
+        let finalized = finalize_stream_tool_calls(&acc).expect("tool calls should exist");
+        assert_eq!(finalized[0]["function"]["name"], "apply_patch");
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                finalized[0]["function"]["arguments"].as_str().unwrap_or(""),
+            )
+            .expect("custom tool arguments json"),
+            json!({
+                "input": "*** Begin Patch\n*** Add File: hello.txt\n+hello world\n*** End Patch"
+            })
+        );
+    }
+
+    #[test]
+    fn merge_stream_text_field_replaces_later_complete_json_payload() {
+        let mut merged = "{\"content\":\"hello\"}".to_string();
+        merge_stream_text_field(&mut merged, "{\"content\":\"hello world\"}");
+        assert_eq!(merged, "{\"content\":\"hello world\"}");
+    }
+
+    #[test]
     fn extract_tool_calls_repairs_multiline_arguments_json() {
         let message = json!({
             "tool_calls": [{
@@ -2831,6 +2996,25 @@ mod tests {
             normalized["parameters"]["properties"]["input"]["type"],
             "string"
         );
+    }
+
+    #[test]
+    fn normalize_responses_tool_definition_preserves_custom_tool_format() {
+        let tool = json!({
+            "type": "custom",
+            "name": "apply_patch",
+            "description": "Apply patch",
+            "format": {
+                "type": "grammar",
+                "syntax": "lark",
+                "definition": "start: \"ok\""
+            }
+        });
+
+        let normalized = normalize_responses_tool_definition(&tool, true);
+        assert_eq!(normalized["type"], "custom");
+        assert_eq!(normalized["name"], "apply_patch");
+        assert_eq!(normalized["format"]["syntax"], "lark");
     }
 
     #[test]
