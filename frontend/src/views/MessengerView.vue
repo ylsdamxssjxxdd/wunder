@@ -181,6 +181,24 @@
           <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
         </div>
         <div class="messenger-chat-header-actions">
+          <div v-if="sessionHub.activeSection === 'swarms'" class="messenger-inline-actions messenger-chat-header-toggle">
+            <button
+              class="messenger-inline-btn"
+              :class="{ active: beeroomWorkbenchMode === 'text' }"
+              type="button"
+              @click="beeroomWorkbenchMode = 'text'"
+            >
+              {{ t('beeroom.view.text') }}
+            </button>
+            <button
+              class="messenger-inline-btn"
+              :class="{ active: beeroomWorkbenchMode === 'canvas' }"
+              type="button"
+              @click="beeroomWorkbenchMode = 'canvas'"
+            >
+              {{ t('beeroom.view.canvas') }}
+            </button>
+          </div>
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview"
             class="messenger-header-action-text"
@@ -236,6 +254,7 @@
           'is-settings': showChatSettingsView && !showHelperAppsWorkspace,
           'is-messages': !showChatSettingsView && !showHelperAppsWorkspace,
           'is-helper-workspace': showHelperAppsWorkspace,
+          'is-beeroom': sessionHub.activeSection === 'swarms',
           'is-agent': isAgentConversationActive,
           'is-world': isWorldConversationActive
         }"
@@ -278,7 +297,10 @@
         </template>
 
         <template v-else-if="showChatSettingsView">
-          <div class="messenger-chat-settings">
+          <div
+            class="messenger-chat-settings"
+            :class="{ 'messenger-chat-settings--beeroom': sessionHub.activeSection === 'swarms' }"
+          >
             <template v-if="showAgentSettingsPanel">
               <template v-if="showAgentGridOverview">
                 <div class="messenger-chat-settings-block messenger-agent-grid-panel">
@@ -430,6 +452,7 @@
                 :loading="beeroomStore.detailLoading || beeroomStore.loading"
                 :refreshing="beeroomStore.refreshing"
                 :error="beeroomStore.error"
+                :view-mode="beeroomWorkbenchMode"
                 @refresh="refreshActiveBeeroom"
                 @move-agents="handleBeeroomMoveAgents"
                 @open-agent="openAgentById"
@@ -1778,15 +1801,14 @@ const leftRailMainSectionOptions = computed(() =>
     (item) =>
       item.key === 'messages' ||
       item.key === 'agents' ||
+      item.key === 'swarms' ||
       item.key === 'tools' ||
       item.key === 'files'
   )
 );
 
 const leftRailSocialSectionOptions = computed(() =>
-  sectionOptions.value.filter(
-    (item) => item.key === 'swarms' || item.key === 'users' || item.key === 'groups'
-  )
+  sectionOptions.value.filter((item) => item.key === 'users' || item.key === 'groups')
 );
 
 const isLeftNavSectionActive = (section: MessengerSection): boolean => {
@@ -2510,6 +2532,8 @@ const selectedGroup = computed(() =>
 const selectedBeeroomGroup = computed<BeeroomGroup | null>(
   () => beeroomStore.activeGroup || beeroomStore.activeGroupSummary || null
 );
+
+const beeroomWorkbenchMode = ref<'text' | 'canvas'>('text');
 
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
 const showHelperAppsWorkspace = computed(
@@ -8760,6 +8784,9 @@ watch(
   () => sessionHub.activeSection,
   (section) => {
     closeFileContainerMenu();
+    if (section !== 'swarms') {
+      beeroomWorkbenchMode.value = 'text';
+    }
     if (
       section === 'tools' &&
       !builtinTools.value.length &&
@@ -8776,7 +8803,10 @@ watch(
     }
     if (section === 'swarms') {
       if (!beeroomStore.groups.length) {
-        void beeroomStore.loadGroups().then(() => ensureSectionSelection());
+        void beeroomStore
+          .loadGroups()
+          .then(() => ensureSectionSelection())
+          .catch(() => null);
       }
       if (beeroomStore.activeGroupId) {
         void beeroomStore.loadActiveGroup().catch(() => null);
@@ -9234,4 +9264,3 @@ onBeforeUnmount(() => {
   userWorldStore.stopAllWatchers();
 });
 </script>
-

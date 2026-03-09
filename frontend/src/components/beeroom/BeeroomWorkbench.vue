@@ -53,8 +53,8 @@
         </article>
       </div>
 
-      <div class="beeroom-content-grid">
-        <section class="beeroom-panel beeroom-panel--members">
+      <div class="beeroom-content-grid" :class="{ 'beeroom-content-grid--canvas': isCanvasView }">
+        <section v-if="isTextView" class="beeroom-panel beeroom-panel--members">
           <div class="beeroom-panel-head">
             <div>
               <div class="beeroom-panel-title">{{ t('beeroom.members.title') }}</div>
@@ -72,10 +72,14 @@
               @dblclick="$emit('open-agent', member.agent_id)"
             >
               <div class="beeroom-member-head">
-                <div class="beeroom-member-avatar">{{ avatarLabel(member.name || member.agent_id) }}</div>
+                <div class="beeroom-member-avatar">
+                  {{ avatarLabel(resolveDisplayAgentName(member.agent_id, member.name)) }}
+                </div>
                 <div class="beeroom-member-main">
                   <div class="beeroom-member-name-row">
-                    <span class="beeroom-member-name">{{ member.name || member.agent_id }}</span>
+                    <span class="beeroom-member-name">
+                      {{ resolveDisplayAgentName(member.agent_id, member.name) }}
+                    </span>
                     <span class="beeroom-member-state" :class="member.idle === false ? 'active' : 'idle'">
                       {{ member.idle === false ? t('beeroom.members.active') : t('beeroom.members.idle') }}
                     </span>
@@ -138,13 +142,14 @@
       </div>
 
       <BeeroomMissionCanvas
+        v-if="isCanvasView"
         :group="group"
         :mission="selectedMission"
         :agents="agents"
         @open-agent="emit('open-agent', $event)"
       />
 
-      <section class="beeroom-panel beeroom-panel--detail">
+      <section v-if="isTextView" class="beeroom-panel beeroom-panel--detail">
         <div class="beeroom-panel-head">
           <div>
             <div class="beeroom-panel-title">{{ t('beeroom.missionDetail.title') }}</div>
@@ -266,6 +271,7 @@ const props = defineProps<{
   loading: boolean;
   refreshing: boolean;
   error: string;
+  viewMode?: 'text' | 'canvas';
 }>();
 
 const emit = defineEmits<{
@@ -275,6 +281,9 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+const isCanvasView = computed(() => props.viewMode === 'canvas');
+const isTextView = computed(() => !isCanvasView.value);
 
 const selectedMissionId = ref('');
 const moveDialogVisible = ref(false);
@@ -297,6 +306,18 @@ const shortMissionId = (value: unknown) => {
   const text = String(value || '').trim();
   if (!text) return '-';
   return text.length > 10 ? text.slice(-10) : text;
+};
+
+const isDefaultAgentId = (value: unknown) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  return normalized === '__default__' || normalized === 'default';
+};
+
+const resolveDisplayAgentName = (agentId: unknown, fallbackName?: unknown) => {
+  if (isDefaultAgentId(agentId)) {
+    return t('messenger.defaultAgent');
+  }
+  return String(fallbackName || agentId || '-').trim() || '-';
 };
 
 const avatarLabel = (value: unknown) => String(value || '?').trim().slice(0, 1).toUpperCase() || '?';
@@ -414,7 +435,8 @@ const selectedMission = computed(() => {
 const resolveAgentName = (agentId: unknown) => {
   const normalized = String(agentId || '').trim();
   if (!normalized) return '-';
-  return props.agents.find((item) => item.agent_id === normalized)?.name || normalized;
+  const member = props.agents.find((item) => item.agent_id === normalized);
+  return resolveDisplayAgentName(normalized, member?.name);
 };
 
 const submitMoveAgents = () => {
@@ -609,6 +631,10 @@ watch(
 
 .beeroom-content-grid {
   grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.1fr);
+}
+
+.beeroom-content-grid--canvas {
+  grid-template-columns: 1fr;
 }
 
 .beeroom-panel {

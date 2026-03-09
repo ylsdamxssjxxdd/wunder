@@ -11,7 +11,7 @@ use argon2::password_hash::{
     rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
 };
 use argon2::Argon2;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::warn;
 use uuid::Uuid;
@@ -23,6 +23,38 @@ const DEFAULT_DAILY_QUOTA_L1: i64 = 10_000;
 const DEFAULT_DAILY_QUOTA_L2: i64 = 5_000;
 const DEFAULT_DAILY_QUOTA_L3: i64 = 1_000;
 const DEFAULT_DAILY_QUOTA_L4: i64 = 100;
+const DEFAULT_HIVE_NAME: &str = "默认蜂群";
+const DEFAULT_HIVE_DESCRIPTION: &str = "系统默认蜂群，用于承载初始智能体应用。";
+const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
+const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
+const DEFAULT_AGENT_NAME: &str = "Default Agent";
+const DEFAULT_AGENT_STATUS: &str = "active";
+const DEFAULT_AGENT_APPROVAL_MODE: &str = "auto_edit";
+const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+
+#[derive(Debug, Clone, Deserialize, Default)]
+struct DefaultAgentConfigSnapshot {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    system_prompt: String,
+    #[serde(default)]
+    tool_names: Vec<String>,
+    #[serde(default)]
+    approval_mode: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    sandbox_container_id: i32,
+    #[serde(default)]
+    created_at: f64,
+    #[serde(default)]
+    updated_at: f64,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserUnitProfile {
@@ -606,16 +638,37 @@ impl UserStore {
         if cleaned_user.is_empty() {
             return Err(anyhow!("user_id is empty"));
         }
-        let hives = self.storage.list_hives(cleaned_user, false)?;
-        if let Some(existing) = hives.into_iter().next() {
+        if let Some(mut existing) = self.storage.get_hive(cleaned_user, DEFAULT_HIVE_ID)? {
+            let mut changed = false;
+            if !existing.is_default {
+                existing.is_default = true;
+                changed = true;
+            }
+            if existing.status.trim().eq_ignore_ascii_case("archived") {
+                existing.status = "active".to_string();
+                changed = true;
+            }
+            if existing.name.trim().is_empty() {
+                existing.name = DEFAULT_HIVE_NAME.to_string();
+                changed = true;
+            }
+            if existing.description.trim().is_empty() {
+                existing.description = DEFAULT_HIVE_DESCRIPTION.to_string();
+                changed = true;
+            }
+            if changed {
+                existing.updated_time = now_ts();
+                self.storage.upsert_hive(&existing)?;
+            }
             return Ok(existing);
         }
+
         let now = now_ts();
         let default = HiveRecord {
             hive_id: DEFAULT_HIVE_ID.to_string(),
             user_id: cleaned_user.to_string(),
-            name: "默认蜂巢".to_string(),
-            description: "系统默认蜂巢，用于承载初始智能体应用。".to_string(),
+            name: DEFAULT_HIVE_NAME.to_string(),
+            description: DEFAULT_HIVE_DESCRIPTION.to_string(),
             is_default: true,
             status: "active".to_string(),
             created_time: now,
@@ -657,6 +710,14 @@ impl UserStore {
         hive_id: &str,
     ) -> Result<Vec<UserAgentRecord>> {
         self.storage.list_user_agents_by_hive(user_id, hive_id)
+    }
+
+    pub fn list_user_agents_by_hive_with_default(
+        &self,
+        user_id: &str,
+        hive_id: &str,
+    ) -> Result<Vec<UserAgentRecord>> {
+        list_user_agents_by_hive_with_default(self.storage.as_ref(), user_id, hive_id)
     }
 
     pub fn list_shared_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
@@ -782,9 +843,101 @@ fn normalize_demo_seed(value: Option<&str>) -> String {
     cleaned.chars().take(24).collect()
 }
 
+fn default_agent_meta_key(user_id: &str) -> String {
+    format!("{DEFAULT_AGENT_META_PREFIX}{}", user_id.trim())
+}
+
+pub(crate) fn list_user_agents_by_hive_with_default(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    hive_id: &str,
+) -> Result<Vec<UserAgentRecord>> {
+    let mut items = storage.list_user_agents_by_hive(user_id, hive_id)?;
+    if normalize_hive_id(hive_id) != DEFAULT_HIVE_ID {
+        return Ok(items);
+    }
+
+    if items
+        .iter()
+        .any(|agent| agent.agent_id.trim().eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS))
+    {
+        return Ok(items);
+    }
+
+    items.insert(0, build_default_agent_record_from_storage(storage, user_id)?);
+    Ok(items)
+}
+
+pub(crate) fn build_default_agent_record_from_storage(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+) -> Result<UserAgentRecord> {
+    if let Some(mut existing) = storage.get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)? {
+        existing.hive_id = DEFAULT_HIVE_ID.to_string();
+        existing.access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
+        if existing.approval_mode.trim().is_empty() {
+            existing.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
+        }
+        if existing.status.trim().is_empty() {
+            existing.status = DEFAULT_AGENT_STATUS.to_string();
+        }
+        existing.is_shared = false;
+        return Ok(existing);
+    }
+
+    let key = default_agent_meta_key(user_id);
+    let mut snapshot = storage
+        .get_meta(&key)?
+        .and_then(|raw| serde_json::from_str::<DefaultAgentConfigSnapshot>(&raw).ok())
+        .unwrap_or_default();
+    normalize_default_agent_snapshot(&mut snapshot);
+
+    Ok(UserAgentRecord {
+        agent_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
+        user_id: user_id.trim().to_string(),
+        hive_id: DEFAULT_HIVE_ID.to_string(),
+        name: snapshot.name,
+        description: snapshot.description,
+        system_prompt: snapshot.system_prompt,
+        tool_names: snapshot.tool_names,
+        access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
+        approval_mode: snapshot.approval_mode,
+        is_shared: false,
+        status: snapshot.status,
+        icon: snapshot.icon,
+        sandbox_container_id: snapshot.sandbox_container_id,
+        created_at: snapshot.created_at,
+        updated_at: snapshot.updated_at,
+    })
+}
+
+fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
+    if config.name.trim().is_empty() {
+        config.name = DEFAULT_AGENT_NAME.to_string();
+    }
+    if config.status.trim().is_empty() {
+        config.status = DEFAULT_AGENT_STATUS.to_string();
+    }
+    if config.approval_mode.trim().is_empty() {
+        config.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
+    }
+    config.sandbox_container_id = normalize_sandbox_container_id(config.sandbox_container_id);
+    let now = now_ts();
+    if config.created_at <= 0.0 {
+        config.created_at = now;
+    }
+    if config.updated_at <= 0.0 {
+        config.updated_at = config.created_at;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::UserStore;
+    use crate::storage::{HiveRecord, SqliteStorage, StorageBackend, DEFAULT_HIVE_ID};
+    use serde_json::json;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     #[test]
     fn verify_password_invalid_hash_returns_false() {
@@ -796,5 +949,98 @@ mod tests {
         let hash = UserStore::hash_password("secret").expect("hash password");
         assert!(UserStore::verify_password(&hash, "secret"));
         assert!(!UserStore::verify_password(&hash, "wrong"));
+    }
+
+    #[test]
+    fn ensure_default_hive_creates_default_even_when_other_groups_exist() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-default-hive.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage.clone());
+
+        let user = store
+            .create_user(
+                "alice",
+                None,
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+
+        let now = 1_710_000_000_f64;
+        let other_hive = HiveRecord {
+            hive_id: "intel".to_string(),
+            user_id: user.user_id.clone(),
+            name: "情报蜂群".to_string(),
+            description: "已有蜂群".to_string(),
+            is_default: false,
+            status: "active".to_string(),
+            created_time: now,
+            updated_time: now,
+        };
+        storage.upsert_hive(&other_hive).expect("upsert other hive");
+
+        let default_hive = store
+            .ensure_default_hive(&user.user_id)
+            .expect("ensure default hive");
+        let hives = store.list_hives(&user.user_id, false).expect("list hives");
+
+        assert_eq!(default_hive.hive_id, DEFAULT_HIVE_ID);
+        assert_eq!(default_hive.name, "默认蜂群");
+        assert_eq!(hives.len(), 2);
+        assert_eq!(hives[0].hive_id, DEFAULT_HIVE_ID);
+        assert!(hives.iter().any(|item| item.hive_id == "intel"));
+    }
+
+    #[test]
+    fn list_user_agents_by_hive_with_default_injects_default_agent_snapshot() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-default-agent.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage.clone());
+
+        let user = store
+            .create_user(
+                "bob",
+                None,
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+
+        store
+            .ensure_default_hive(&user.user_id)
+            .expect("ensure default hive");
+
+        storage
+            .set_meta(
+                &format!("default_agent:{}", user.user_id),
+                &json!({
+                    "name": "默认智能体",
+                    "description": "系统级默认成员",
+                    "approval_mode": "auto_edit",
+                    "status": "active"
+                })
+                .to_string(),
+            )
+            .expect("set default agent meta");
+
+        let agents = store
+            .list_user_agents_by_hive_with_default(&user.user_id, DEFAULT_HIVE_ID)
+            .expect("list hive agents");
+
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0].agent_id, "__default__");
+        assert_eq!(agents[0].hive_id, DEFAULT_HIVE_ID);
+        assert_eq!(agents[0].name, "默认智能体");
+        assert_eq!(agents[0].description, "系统级默认成员");
     }
 }

@@ -150,7 +150,7 @@ async fn get_beeroom_group(
     let missions = load_group_missions(state.as_ref(), &user_id, &group.hive_id, mission_limit)?;
     let agents = state
         .user_store
-        .list_user_agents_by_hive(&user_id, &group.hive_id)
+        .list_user_agents_by_hive_with_default(&user_id, &group.hive_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let activity = collect_agent_activity(
         state.storage.as_ref(),
@@ -276,7 +276,7 @@ fn load_group_missions(
 fn group_payload(state: &AppState, group: &HiveRecord, mission_limit: i64) -> Result<Value, Response> {
     let agents = state
         .user_store
-        .list_user_agents_by_hive(&group.user_id, &group.hive_id)
+        .list_user_agents_by_hive_with_default(&group.user_id, &group.hive_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let activity = collect_agent_activity(
         state.storage.as_ref(),

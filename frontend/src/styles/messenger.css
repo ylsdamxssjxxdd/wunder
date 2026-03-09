@@ -1034,6 +1034,11 @@
   z-index: 1;
 }
 
+.messenger-chat-header-toggle {
+  margin-right: 4px;
+  padding-top: 0;
+}
+
 .messenger-chat-header-model {
   position: absolute;
   left: 50%;
@@ -1170,6 +1175,11 @@ button.messenger-chat-header-model {
   overflow: hidden;
 }
 
+.messenger-chat-body.is-settings.is-beeroom {
+  align-items: stretch;
+  overflow-y: auto;
+}
+
 .messenger-chat-body.is-helper-workspace {
   overflow: auto;
 }
@@ -1248,6 +1258,12 @@ button.messenger-chat-header-model {
   height: 100%;
   gap: 12px;
   overflow: hidden;
+}
+
+.messenger-chat-settings--beeroom {
+  height: auto;
+  min-height: 100%;
+  overflow: visible;
 }
 
 .messenger-chat-settings-block {

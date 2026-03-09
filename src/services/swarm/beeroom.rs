@@ -1,4 +1,5 @@
 use crate::monitor::MonitorState;
+use crate::services::user_store::list_user_agents_by_hive_with_default;
 use crate::storage::{
     normalize_hive_id, SessionRunRecord, StorageBackend, TeamRunRecord, TeamTaskRecord,
     UserAgentRecord, DEFAULT_HIVE_ID,
@@ -222,7 +223,7 @@ pub fn build_swarm_dispatch_message(
     original_message: &str,
 ) -> Result<String> {
     let hive = storage.get_hive(user_id, hive_id)?;
-    let members = storage.list_user_agents_by_hive(user_id, hive_id)?;
+    let members = list_user_agents_by_hive_with_default(storage, user_id, hive_id)?;
     let activity = collect_agent_activity(storage, monitor, user_id, hive_id, &members)?;
     let mother_agent_id = get_mother_agent_id(storage, user_id, hive_id)?;
     let active_members = members
@@ -280,7 +281,7 @@ pub fn snapshot_team_run(
     run: &TeamRunRecord,
 ) -> Result<TeamRunSnapshot> {
     let mut tasks = storage.list_team_tasks(&run.team_run_id)?;
-    let agents = storage.list_user_agents_by_hive(&run.user_id, &run.hive_id)?;
+    let agents = list_user_agents_by_hive_with_default(storage, &run.user_id, &run.hive_id)?;
     let activity = collect_agent_activity(storage, monitor, &run.user_id, &run.hive_id, &agents)?;
 
     let mut success_total = 0i64;

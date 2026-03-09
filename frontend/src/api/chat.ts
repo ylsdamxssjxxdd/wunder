@@ -1,6 +1,6 @@
 import api from './http';
 
-import { getDemoToken, isDemoMode } from '@/utils/demo';
+import { resolveAccessToken } from '@/api/requestAuth';
 import { resolveApiBase } from '@/config/runtime';
 import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
 
@@ -126,7 +126,7 @@ export const sendMessageStream = (
   options: StreamRequestOptions = {}
 ) => {
   // 浏览器端流式需要使用 fetch 才能读取 SSE 数据
-  const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
+  const token = resolveAccessToken();
   return fetch(buildUrl(`/chat/sessions/${id}/messages`), {
     method: 'POST',
     headers: {
@@ -141,7 +141,7 @@ export const sendMessageStream = (
 };
 
 export const resumeMessageStream = (id: string, options: ResumeRequestOptions = {}) => {
-  const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
+  const token = resolveAccessToken();
   const params = new URLSearchParams();
   if (Number.isFinite(options.afterEventId) && Number(options.afterEventId) >= 0) {
     params.set('after_event_id', String(options.afterEventId));
@@ -166,7 +166,7 @@ export const compactSession = (id: string, payload: unknown = {}) =>
   api.post(`/chat/sessions/${id}/compaction`, payload);
 
 export const openChatSocket = (options: OpenChatSocketOptions = {}): WebSocket => {
-  const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
+  const token = resolveAccessToken();
   const params = new URLSearchParams();
   const allowQueryToken = options.allowQueryToken === true;
   if (allowQueryToken && token) {

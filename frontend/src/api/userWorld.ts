@@ -1,6 +1,6 @@
 import api from './http';
 
-import { getDemoToken, isDemoMode } from '@/utils/demo';
+import { resolveAccessToken } from '@/api/requestAuth';
 import { resolveApiBase } from '@/config/runtime';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -175,7 +175,7 @@ export const streamUserWorldEvents = (
   conversationId: string,
   options: StreamOptions = {}
 ) => {
-  const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
+  const token = resolveAccessToken();
   const params = new URLSearchParams();
   if (Number.isFinite(options.afterEventId) && Number(options.afterEventId) >= 0) {
     params.set('after_event_id', String(options.afterEventId));
@@ -200,7 +200,7 @@ export const downloadUserWorldFile = (params: QueryParams = {}) =>
   api.get('/user_world/files/download', { params, responseType: 'blob' });
 
 export const openUserWorldSocket = (options: OpenSocketOptions = {}): WebSocket => {
-  const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
+  const token = resolveAccessToken();
   const params = new URLSearchParams();
   if (options.allowQueryToken && token) {
     params.set('access_token', token);

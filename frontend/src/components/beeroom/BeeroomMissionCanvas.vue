@@ -32,6 +32,23 @@
 
       <aside class="beeroom-canvas-sidebar">
         <section class="beeroom-canvas-card">
+          <div class="beeroom-canvas-card-title">{{ t('beeroom.canvas.overview') }}</div>
+          <template v-if="missionOverview.length">
+            <div class="beeroom-canvas-overview-grid">
+              <div
+                v-for="item in missionOverview"
+                :key="item.key"
+                class="beeroom-canvas-overview-item"
+              >
+                <div class="beeroom-canvas-overview-label">{{ item.label }}</div>
+                <div class="beeroom-canvas-overview-value">{{ item.value }}</div>
+              </div>
+            </div>
+          </template>
+          <div v-else class="beeroom-canvas-node-empty">{{ t('beeroom.canvas.empty') }}</div>
+        </section>
+
+        <section class="beeroom-canvas-card">
           <div class="beeroom-canvas-card-title">{{ t('beeroom.canvas.nodeDetail') }}</div>
           <template v-if="activeNodeMeta">
             <div class="beeroom-canvas-node-name-row">
@@ -260,7 +277,7 @@ const projection = computed(() => {
         entry_agent: agentId === entryAgentId
       };
       nodeMetaMap.set(nodeId, meta);
-      const badge = isMother ? '母蜂' : '工蜂';
+      const badge = isMother ? t('beeroom.canvas.legendMother') : t('beeroom.canvas.legendWorker');
       return {
         id: nodeId,
         data: meta,
@@ -382,6 +399,86 @@ const projection = computed(() => {
 const activeNodeMeta = computed(() => projection.value.nodeMetaMap.get(activeNodeId.value) || null);
 const timeline = computed(() => projection.value.timeline.slice(0, 12));
 
+const missionOverview = computed(() => {
+  const mission = props.mission;
+  if (!mission) return [] as Array<{ key: string; label: string; value: string }>;
+
+  const contextTotal = Number(mission.context_tokens_total || 0);
+  const contextPeak = Number(mission.context_tokens_peak || 0);
+  const success = Number(mission.task_success || 0);
+  const total = Number(mission.task_total || mission.tasks?.length || 0);
+
+  return [
+    {
+      key: 'status',
+      label: t('beeroom.canvas.missionStatus'),
+      value: resolveStatusLabel(mission.completion_status || mission.status)
+    },
+    {
+      key: 'closure',
+      label: t('beeroom.canvas.closureState'),
+      value: mission.all_agents_idle
+        ? t('beeroom.canvas.closureClosed')
+        : t('beeroom.canvas.closureOpen')
+    },
+    {
+      key: 'task-progress',
+      label: t('beeroom.canvas.taskProgress'),
+      value: `${success}/${total || 0}`
+    },
+    {
+      key: 'tokens',
+      label: t('beeroom.canvas.contextTokens'),
+      value: contextPeak > 0 ? `${contextTotal} / ${contextPeak}` : String(contextTotal)
+    },
+    {
+      key: 'rounds',
+      label: t('beeroom.canvas.modelRounds'),
+      value: String(Number(mission.model_round_total || 0))
+    },
+    {
+      key: 'updated',
+      label: t('beeroom.canvas.lastUpdate'),
+      value: formatDateTime(mission.updated_time || mission.finished_time || mission.started_time)
+    }
+  ];
+});
+
+const renderSignature = computed(() => {
+  const mission = props.mission;
+  if (!mission) return '';
+  const tasksSignature = (Array.isArray(mission.tasks) ? mission.tasks : [])
+    .map(
+      (task) =>
+        `${task.task_id}:${task.agent_id}:${task.status || ''}:${task.updated_time || 0}:${task.finished_time || 0}`
+    )
+    .join('|');
+  const agentsSignature = (Array.isArray(props.agents) ? props.agents : [])
+    .map(
+      (agent) =>
+        `${agent.agent_id}:${agent.idle === false ? 'busy' : 'idle'}:${agent.active_session_total || 0}`
+    )
+    .join('|');
+  return [
+    mission.mission_id || mission.team_run_id || '',
+    mission.status || '',
+    mission.completion_status || '',
+    mission.updated_time || 0,
+    mission.finished_time || 0,
+    tasksSignature,
+    agentsSignature
+  ].join('||');
+});
+
+const layoutSignature = computed(() => {
+  const mission = props.mission;
+  if (!mission) return '';
+  return `${mission.mission_id || mission.team_run_id || ''}:${projection.value.nodes.length}:${projection.value.edges.length}`;
+});
+
+let lastLayoutSignature = '';
+let lastMissionIdentity = '';
+
 const ensureGraph = async () => {
   if (!canvasRef.value || graph) return;
   graph = new Graph({
@@ -435,8 +532,19 @@ const ensureGraph = async () => {
   resizeObserver.observe(canvasRef.value);
 };
 
-const renderGraph = async () => {
-  if (!props.mission) return;
+const clearGraph = async () => {
+  if (!graph) return;
+  graph.setData({ nodes: [], edges: [] });
+  await graph.render();
+};
+
+const renderGraph = async (forceFit = false) => {
+  if (!props.mission) {
+    activeNodeId.value = '';
+    await clearGraph();
+    lastLayoutSignature = '';
+    return;
+  }
   await nextTick();
   await ensureGraph();
   if (!graph) return;
@@ -445,7 +553,10 @@ const renderGraph = async () => {
     edges: projection.value.edges
   });
   await graph.render();
-  await graph.fitView();
+  if (forceFit || lastLayoutSignature !== layoutSignature.value) {
+    await graph.fitView();
+    lastLayoutSignature = layoutSignature.value;
+  }
 };
 
 const fitCanvas = async () => {
@@ -460,10 +571,17 @@ const focusMother = async () => {
 };
 
 watch(
-  () => props.mission?.mission_id || props.mission?.team_run_id || '',
+  renderSignature,
   async () => {
-    activeNodeId.value = projection.value.motherNodeId;
-    await renderGraph();
+    const missionIdentity = String(props.mission?.mission_id || props.mission?.team_run_id || '').trim();
+    const missionChanged = missionIdentity !== lastMissionIdentity;
+    lastMissionIdentity = missionIdentity;
+
+    if (!activeNodeId.value || !projection.value.nodeMetaMap.has(activeNodeId.value) || missionChanged) {
+      activeNodeId.value = projection.value.motherNodeId;
+    }
+
+    await renderGraph(missionChanged);
   },
   { immediate: true }
 );
@@ -575,6 +693,31 @@ onBeforeUnmount(() => {
   padding: 14px;
 }
 
+.beeroom-canvas-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.beeroom-canvas-overview-item {
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--hula-soft-bg);
+}
+
+.beeroom-canvas-overview-label {
+  color: var(--hula-muted);
+  font-size: 12px;
+}
+
+.beeroom-canvas-overview-value {
+  margin-top: 6px;
+  color: var(--hula-text-color);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .beeroom-canvas-card-title {
   margin-bottom: 10px;
   font-size: 14px;
@@ -665,6 +808,10 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 860px) {
+  .beeroom-canvas-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
   .beeroom-canvas-sidebar {
     grid-template-columns: 1fr;
   }

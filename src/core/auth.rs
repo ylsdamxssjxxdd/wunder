@@ -51,6 +51,9 @@ pub fn is_admin_path(path: &str) -> bool {
     if path.starts_with("/wunder/agents") {
         return false;
     }
+    if path.starts_with("/wunder/beeroom") {
+        return false;
+    }
     if path.starts_with("/wunder/external_links") {
         return false;
     }
@@ -127,6 +130,8 @@ mod tests {
         assert!(!is_admin_path("/wunder/prompt_templates"));
         assert!(!is_admin_path("/wunder/prompt_templates/file"));
         assert!(!is_admin_path("/wunder/agents"));
+        assert!(!is_admin_path("/wunder/beeroom/groups"));
+        assert!(!is_admin_path("/wunder/beeroom/groups/default"));
         assert!(!is_admin_path("/wunder/external_links"));
         assert!(is_admin_path("/wunder"));
         assert!(is_admin_path("/wunder/mcp"));

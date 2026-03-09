@@ -98,6 +98,19 @@ const normalizeGroupId = (value: unknown): string =>
 const normalizeMissionId = (value: unknown): string =>
   String(value || '').trim();
 
+const buildParamsKey = (params: QueryParams = {}): string =>
+  Object.entries(params)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${String(value ?? '')}`)
+    .join('|');
+
+let groupsRequestSerial = 0;
+let groupsInFlight: Promise<BeeroomGroup[]> | null = null;
+let groupsInFlightKey = '';
+let detailRequestSerial = 0;
+let detailInFlight: Promise<BeeroomGroup | null> | null = null;
+let detailInFlightKey = '';
+
 export const useBeeroomStore = defineStore('beeroom', {
   state: () => ({
     groups: [] as BeeroomGroup[],
@@ -124,6 +137,12 @@ export const useBeeroomStore = defineStore('beeroom', {
   actions: {
     resetState() {
       this.$reset();
+    },
+
+    clearActiveData() {
+      this.activeGroup = null;
+      this.activeAgents = [];
+      this.activeMissions = [];
     },
 
     setActiveGroup(groupId: unknown) {
@@ -167,72 +186,134 @@ export const useBeeroomStore = defineStore('beeroom', {
     },
 
     async loadGroups(params: QueryParams = {}) {
+      const requestKey = buildParamsKey(params);
+      if (groupsInFlight && groupsInFlightKey === requestKey) {
+        return groupsInFlight;
+      }
+
       this.loading = true;
       this.error = '';
-      try {
-        const { data } = await listBeeroomGroups(params);
-        const items = asArray<BeeroomGroup>(data?.data?.items).map((item) => ({
-          ...item,
-          group_id: normalizeGroupId(item.group_id || item.hive_id),
-          hive_id: String(item.hive_id || item.group_id || '').trim()
-        }));
-        this.groups = items;
-        if (this.activeGroupId) {
-          const exists = items.some(
-            (item) => normalizeGroupId(item.group_id || item.hive_id) === this.activeGroupId
-          );
-          if (!exists) {
-            this.activeGroupId = normalizeGroupId(items[0]?.group_id || items[0]?.hive_id);
+      const requestId = ++groupsRequestSerial;
+      const request = (async () => {
+        try {
+          const { data } = await listBeeroomGroups(params);
+          const items = asArray<BeeroomGroup>(data?.data?.items).map((item) => ({
+            ...item,
+            group_id: normalizeGroupId(item.group_id || item.hive_id),
+            hive_id: String(item.hive_id || item.group_id || '').trim()
+          }));
+
+          // Ignore stale responses when multiple panels trigger refresh together.
+          if (requestId !== groupsRequestSerial) {
+            return items;
           }
-        } else {
-          this.activeGroupId = normalizeGroupId(items[0]?.group_id || items[0]?.hive_id);
+
+          this.groups = items;
+          const nextActiveGroupId = this.activeGroupId
+            ? items.find((item) => normalizeGroupId(item.group_id || item.hive_id) === this.activeGroupId)
+              ? this.activeGroupId
+              : normalizeGroupId(items[0]?.group_id || items[0]?.hive_id)
+            : normalizeGroupId(items[0]?.group_id || items[0]?.hive_id);
+          this.activeGroupId = nextActiveGroupId;
+
+          if (!items.length) {
+            this.clearActiveData();
+          } else if (!nextActiveGroupId) {
+            this.clearActiveData();
+          }
+
+          return items;
+        } catch (error: any) {
+          if (requestId === groupsRequestSerial) {
+            this.error = String(
+              error?.response?.data?.detail || error?.message || 'load beeroom failed'
+            );
+            if (Number(error?.response?.status || 0) === 401) {
+              this.groups = [];
+              this.activeGroupId = '';
+              this.clearActiveData();
+            }
+          }
+          throw error;
+        } finally {
+          if (groupsInFlight === request) {
+            groupsInFlight = null;
+            groupsInFlightKey = '';
+          }
+          if (requestId === groupsRequestSerial) {
+            this.loading = false;
+          }
         }
-        return items;
-      } catch (error: any) {
-        this.error = String(error?.response?.data?.detail || error?.message || 'load beeroom failed');
-        throw error;
-      } finally {
-        this.loading = false;
-      }
+      })();
+
+      groupsInFlight = request;
+      groupsInFlightKey = requestKey;
+      return request;
     },
 
     async loadActiveGroup(params: QueryParams & { silent?: boolean } = {}) {
       const groupId = normalizeGroupId(this.activeGroupId);
       if (!groupId) {
-        this.activeGroup = null;
-        this.activeAgents = [];
-        this.activeMissions = [];
+        this.clearActiveData();
         return null;
       }
-      const silent = params.silent === true;
+      const requestParams = { ...params };
+      const silent = requestParams.silent === true;
+      delete (requestParams as Record<string, unknown>).silent;
+      const requestKey = `${groupId}::${buildParamsKey(requestParams)}`;
+      if (detailInFlight && detailInFlightKey === requestKey) {
+        return detailInFlight;
+      }
+
       if (silent) {
         this.refreshing = true;
       } else {
         this.detailLoading = true;
       }
       this.error = '';
-      try {
-        const requestParams = { ...params };
-        delete (requestParams as Record<string, unknown>).silent;
-        const { data } = await getBeeroomGroup(groupId, requestParams);
-        this.hydrateActivePayload(data?.data);
-        return this.activeGroup;
-      } catch (error: any) {
-        this.error = String(error?.response?.data?.detail || error?.message || 'load beeroom detail failed');
-        throw error;
-      } finally {
-        this.detailLoading = false;
-        this.refreshing = false;
-      }
+      const requestId = ++detailRequestSerial;
+      const request = (async () => {
+        try {
+          const { data } = await getBeeroomGroup(groupId, requestParams);
+          if (requestId !== detailRequestSerial || groupId !== normalizeGroupId(this.activeGroupId)) {
+            return this.activeGroup;
+          }
+          this.hydrateActivePayload(data?.data);
+          return this.activeGroup;
+        } catch (error: any) {
+          if (requestId === detailRequestSerial) {
+            this.error = String(
+              error?.response?.data?.detail || error?.message || 'load beeroom detail failed'
+            );
+            const status = Number(error?.response?.status || 0);
+            if (status === 401 || status === 404) {
+              this.activeGroupId = '';
+              this.clearActiveData();
+            }
+          }
+          throw error;
+        } finally {
+          if (detailInFlight === request) {
+            detailInFlight = null;
+            detailInFlightKey = '';
+          }
+          if (requestId === detailRequestSerial) {
+            this.detailLoading = false;
+            this.refreshing = false;
+          }
+        }
+      })();
+
+      detailInFlight = request;
+      detailInFlightKey = requestKey;
+      return request;
     },
 
     async selectGroup(groupId: unknown, params: QueryParams & { silent?: boolean } = {}) {
       const normalized = normalizeGroupId(groupId);
       this.activeGroupId = normalized;
       if (!normalized) {
-        this.activeGroup = null;
-        this.activeAgents = [];
-        this.activeMissions = [];
+        this.clearActiveData();
         return null;
       }
       return this.loadActiveGroup(params);

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import type { AxiosError } from 'axios';
 
-import { getDemoToken, isDemoMode } from '@/utils/demo';
+import { resolveAccessToken } from '@/api/requestAuth';
 import { getCurrentLanguage } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
 import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
@@ -24,7 +24,7 @@ api.interceptors.request.use((config) => {
   if (apiBase) {
     config.baseURL = apiBase;
   }
-  const token = isDemoMode() ? getDemoToken() : localStorage.getItem('access_token');
+  const token = resolveAccessToken();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
