@@ -1920,7 +1920,12 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         .map(str::trim)
         .unwrap_or("accepted")
         .to_ascii_lowercase();
-    if let Some(run_id) = result.get("run_id").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(run_id) = result
+        .get("run_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         task_record.session_run_id = Some(run_id.to_string());
     }
     task_record.status = match status.as_str() {
@@ -1930,10 +1935,20 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         "" => "queued".to_string(),
         _ => "queued".to_string(),
     };
-    if let Some(reply) = result.get("reply").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(reply) = result
+        .get("reply")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         task_record.result_summary = Some(reply.to_string());
     }
-    if let Some(error) = result.get("error").and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(error) = result
+        .get("error")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         task_record.error = Some(error.to_string());
     }
     task_record.updated_time = now_ts();

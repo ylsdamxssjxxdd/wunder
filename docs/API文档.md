@@ -2025,7 +2025,7 @@
 
 - `GET /wunder/beeroom/groups/{group_id}`：获取蜂群详情。
   - Query：`mission_limit?`
-  - 返回：`data.group`（蜂群摘要）、`data.agents[]`（完整成员态势）、`data.missions[]`（最近任务快照，包含 `tasks[]`，可直接驱动任务画布）。
+  - 返回：`data.group`（蜂群摘要）、`data.agents[]`（完整成员态势，包含 `tool_names[]` 便于画布 hover 提示与协作对话栏汇总工具摘要）、`data.missions[]`（最近任务快照，包含 `tasks[]`，可直接驱动画布节点、协作链路边与右侧协作对话栏）。
 
 ### 4.1.59 `/wunder/beeroom/groups/{group_id}/move_agents`
 
@@ -2058,6 +2058,49 @@
   - 任务快照 `completion_status`（`running/awaiting_idle/completed/failed/cancelled`）
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。
   - `sandbox_container_id` 取值范围 1~10，默认 1；同一用户下相同容器编号的智能体共享同一文件工作区。
+
+### 4.1.63 `/wunder/beeroom/packs/*`（已实现，Phase 1）
+
+- 说明：用于“蜂群包（HivePack）/工蜂包（WorkerPack）”资产导入导出；协议细节见 `docs/蜂巢协议设计.md`。
+- 任务状态机：
+  - `uploaded` → `validating` → `planning` → `installing` → `creating_agents` → `activating` → `completed|failed`
+  - 返回体统一包含：`job_id/job_type/status/phase/progress/summary/detail?/report?/artifact?`
+
+- `POST /wunder/beeroom/packs/import`
+  - 形态：`multipart/form-data`
+  - 字段：
+    - `file`：必填，`.hivepack` 或 `.zip`
+    - `options`：可选 JSON（支持 `group_id`、`create_hive_if_missing`）
+    - `group_id/groupId/hive_id/hiveId`：可选，目标蜂群 ID（与 `options.group_id` 二选一）
+  - 行为：
+    - 校验包结构与路径安全；
+    - 解析 `hive.yaml/worker.yaml`；
+    - 安装技能包到用户 `custom skills`；
+    - 自动创建工蜂智能体并归属蜂群；
+    - 工蜂工具挂载默认包含：系统内置 + MCP + 知识库 + 本次导入技能；
+    - 失败时执行回滚（删除已创建智能体、移除本次技能、还原技能启用集；新建蜂群会归档）。
+  - 返回：`data`（任务快照）。
+
+- `GET /wunder/beeroom/packs/import/{job_id}`
+  - 返回：导入任务快照（仅当前用户可见）。
+
+- `POST /wunder/beeroom/packs/export`
+  - 入参（JSON）：
+    - `group_id/groupId/hive_id/hiveId`：必填，蜂群 ID
+    - `mode`：可选，`full|reference_only`（默认 `full`）
+  - 行为：
+    - 按蜂群成员生成标准目录；
+    - `full` 导出技能完整内容，`reference_only` 导出占位技能说明；
+    - 自动生成 `hive.yaml/worker.yaml/skill.yaml/checksums.sha256`；
+    - 产出 `.hivepack` 文件并回写任务产物信息。
+  - 返回：`data`（任务快照）。
+
+- `GET /wunder/beeroom/packs/export/{job_id}`
+  - 返回：导出任务快照（仅当前用户可见）。
+
+- `GET /wunder/beeroom/packs/export/{job_id}/download`
+  - 说明：仅当导出任务 `status=completed` 可下载。
+  - 返回：`.hivepack` 文件流（`Content-Type: application/vnd.wunder.hivepack+zip`）。
 
 ### 4.1.57 `/wunder/prompt_templates`（用户侧）
 

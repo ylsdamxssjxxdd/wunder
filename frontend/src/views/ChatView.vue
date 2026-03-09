@@ -693,16 +693,19 @@ import { copyText } from '@/utils/clipboard';
 import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import {
+  buildAgentWorkspaceScopeId,
+  buildWorkspacePublicPathFromScope,
+  normalizeWorkspaceOwnerId,
+  resolveMarkdownWorkspacePath
+} from '@/utils/messageWorkspacePath';
+import {
   buildWorkspaceImagePersistentCacheKey,
   readWorkspaceImagePersistentCache,
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
 import {
   isImagePath,
-  normalizeWorkspaceBareRelativePath,
-  normalizeWorkspaceRelativeMarkdownPath,
-  parseWorkspaceResourceUrl,
-  resolveWorkspaceRelativePathFromLocal
+  parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
@@ -1369,29 +1372,18 @@ let stopWorkspaceRefreshListener = null;
 const isAdminUser = (user) =>
   Array.isArray(user?.roles) && user.roles.some((role) => role === 'admin' || role === 'super_admin');
 
-const normalizeWorkspaceOwnerId = (value) =>
-  String(value || '')
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, '_');
-
 const normalizeUploadPath = (value: unknown): string =>
   String(value || '')
     .replace(/\\/g, '/')
     .replace(/^\/+/, '')
     .trim();
 
-const encodeWorkspacePath = (value: string): string =>
-  String(value || '')
-    .split('/')
-    .map((part) => encodeURIComponent(part))
-    .join('/');
-
 const buildChatWorkspaceId = (): string => {
   const ownerId = normalizeWorkspaceOwnerId(authStore.user?.id);
   if (!ownerId) return '';
-  const agentId = normalizeWorkspaceOwnerId(activeAgentId.value);
-  if (agentId) {
-    return `${ownerId}__a__${agentId}`;
+  const agentScopeId = buildAgentWorkspaceScopeId(ownerId, activeAgentId.value);
+  if (agentScopeId && agentScopeId !== ownerId) {
+    return agentScopeId;
   }
   const containerId = Number(activeSandboxContainerId.value);
   if (Number.isFinite(containerId) && containerId > 0) {
@@ -1411,29 +1403,19 @@ const resolveDesktopWorkspaceRoot = (): string => {
 
 const buildChatWorkspacePublicPath = (relativePath: string): string => {
   const workspaceId = buildChatWorkspaceId();
-  const normalized = normalizeUploadPath(relativePath);
-  if (!workspaceId || !normalized) return '';
-  return `/workspaces/${workspaceId}/${encodeWorkspacePath(normalized)}`;
+  return buildWorkspacePublicPathFromScope(workspaceId, relativePath);
 };
 
 const resolveChatMarkdownWorkspacePath = (rawPath: string): string => {
-  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
-  if (normalized) {
-    const directPath = buildChatWorkspacePublicPath(normalized);
-    if (directPath) return directPath;
-  }
   const workspaceId = buildChatWorkspaceId();
   if (!workspaceId) return '';
-  const bareRelative = normalizeWorkspaceBareRelativePath(rawPath);
-  if (bareRelative) {
-    const barePath = buildChatWorkspacePublicPath(bareRelative);
-    if (barePath) return barePath;
-  }
-  if (!desktopLocalMode.value) return '';
-  const workspaceRoot = resolveDesktopWorkspaceRoot();
-  const localRelative = resolveWorkspaceRelativePathFromLocal(rawPath, workspaceId, workspaceRoot);
-  if (!localRelative) return '';
-  return buildChatWorkspacePublicPath(localRelative);
+  return resolveMarkdownWorkspacePath({
+    rawPath,
+    ownerId: authStore.user?.id,
+    workspaceScopeId: workspaceId,
+    desktopLocalMode: desktopLocalMode.value,
+    workspaceRoot: resolveDesktopWorkspaceRoot()
+  });
 };
 
 const decodeAgentAtPathToken = (value: string): string => {
@@ -2531,7 +2513,7 @@ const formatSpeed = (value) => {
 };
 
 const MIN_SPEED_DURATION_S = 0.2;
-const MAX_REASONABLE_SPEED = 2000;
+const MAX_REASONABLE_SPEED = 10000;
 
 const normalizeSpeed = (speed, durationSeconds) => {
   if (!Number.isFinite(speed) || speed <= 0) return null;
@@ -2562,6 +2544,26 @@ const resolveDurationSeconds = (stats) => {
 };
 
 const resolveTokenSpeed = (stats, durationSeconds) => {
+  const averageSpeed = Number(
+    stats?.avg_model_round_speed_tps ??
+      stats?.avgModelRoundSpeedTps ??
+      stats?.average_speed_tps ??
+      stats?.averageSpeedTps
+  );
+  const averageRounds = Number(
+    stats?.avg_model_round_speed_rounds ??
+      stats?.avgModelRoundSpeedRounds ??
+      stats?.average_speed_rounds ??
+      stats?.averageSpeedRounds
+  );
+  if (
+    Number.isFinite(averageSpeed) &&
+    averageSpeed > 0 &&
+    (!Number.isFinite(averageRounds) || averageRounds > 0)
+  ) {
+    const speed = normalizeSpeed(averageSpeed, null);
+    if (speed !== null) return speed;
+  }
   const outputTokens = Number(stats?.usage?.output);
   const decode = normalizeDurationSeconds(
     stats?.decode_duration_total_s ??
@@ -2592,9 +2594,10 @@ const buildMessageStatsEntries = (message) => {
   const speed = resolveTokenSpeed(stats, durationSeconds);
   const hasUsage = Number.isFinite(Number(stats?.usage?.total)) && Number(stats.usage.total) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
+  const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
   const hasQuota = Number.isFinite(Number(stats?.quotaConsumed)) && Number(stats.quotaConsumed) > 0;
-  if (!hasUsage && !hasDuration && !hasToolCalls && !hasQuota) {
+  if (!hasUsage && !hasDuration && !hasToolCalls && !hasQuota && !hasSpeed) {
     return [];
   }
   const entries = [

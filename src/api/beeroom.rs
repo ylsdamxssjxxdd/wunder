@@ -55,7 +55,9 @@ async fn list_beeroom_groups(
     for group in groups {
         items.push(group_payload(state.as_ref(), &group, limit)?);
     }
-    Ok(Json(json!({ "data": { "items": items, "total": items.len() } })))
+    Ok(Json(
+        json!({ "data": { "items": items, "total": items.len() } }),
+    ))
 }
 
 async fn create_beeroom_group(
@@ -129,12 +131,19 @@ async fn create_beeroom_group(
                 .user_store
                 .move_agents_to_hive(&user_id, &record.hive_id, &[mother_agent_id.to_string()])
                 .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-            claim_mother_agent(state.storage.as_ref(), &user_id, &record.hive_id, mother_agent_id)
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            claim_mother_agent(
+                state.storage.as_ref(),
+                &user_id,
+                &record.hive_id,
+                mother_agent_id,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         }
     }
 
-    Ok(Json(json!({ "data": group_payload(state.as_ref(), &record, 10)? })))
+    Ok(Json(
+        json!({ "data": group_payload(state.as_ref(), &record, 10)? }),
+    ))
 }
 
 async fn get_beeroom_group(
@@ -197,7 +206,9 @@ async fn move_agents_to_group(
         .user_store
         .move_agents_to_hive(&user_id, &group.hive_id, &agent_ids)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": { "moved": moved, "group_id": group.hive_id } })))
+    Ok(Json(
+        json!({ "data": { "moved": moved, "group_id": group.hive_id } }),
+    ))
 }
 
 async fn list_beeroom_missions(
@@ -217,8 +228,9 @@ async fn list_beeroom_missions(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut items = Vec::with_capacity(runs.len());
     for run in runs {
-        let snapshot = snapshot_team_run(state.storage.as_ref(), Some(state.monitor.as_ref()), &run)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let snapshot =
+            snapshot_team_run(state.storage.as_ref(), Some(state.monitor.as_ref()), &run)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         items.push(mission_payload(&snapshot));
     }
     Ok(Json(json!({ "data": { "items": items, "total": total } })))
@@ -237,8 +249,13 @@ async fn get_beeroom_mission(
         .get_team_run(mission_id.trim())
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, "mission not found".to_string()))?;
-    if run.user_id != user_id || normalize_hive_id(&run.hive_id) != normalize_hive_id(&group.hive_id) {
-        return Err(error_response(StatusCode::NOT_FOUND, "mission not found".to_string()));
+    if run.user_id != user_id
+        || normalize_hive_id(&run.hive_id) != normalize_hive_id(&group.hive_id)
+    {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "mission not found".to_string(),
+        ));
     }
     let snapshot = snapshot_team_run(state.storage.as_ref(), Some(state.monitor.as_ref()), &run)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
@@ -266,14 +283,19 @@ fn load_group_missions(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mut items = Vec::with_capacity(runs.len());
     for run in runs {
-        let snapshot = snapshot_team_run(state.storage.as_ref(), Some(state.monitor.as_ref()), &run)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let snapshot =
+            snapshot_team_run(state.storage.as_ref(), Some(state.monitor.as_ref()), &run)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         items.push(mission_payload(&snapshot));
     }
     Ok(items)
 }
 
-fn group_payload(state: &AppState, group: &HiveRecord, mission_limit: i64) -> Result<Value, Response> {
+fn group_payload(
+    state: &AppState,
+    group: &HiveRecord,
+    mission_limit: i64,
+) -> Result<Value, Response> {
     let agents = state
         .user_store
         .list_user_agents_by_hive_with_default(&group.user_id, &group.hive_id)
@@ -287,14 +309,19 @@ fn group_payload(state: &AppState, group: &HiveRecord, mission_limit: i64) -> Re
     )
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let missions = load_group_missions(state, &group.user_id, &group.hive_id, mission_limit)?;
-    let mother_agent_id = get_mother_agent_id(state.storage.as_ref(), &group.user_id, &group.hive_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mother_agent_id =
+        get_mother_agent_id(state.storage.as_ref(), &group.user_id, &group.hive_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mother_agent = mother_agent_id
         .as_deref()
         .and_then(|agent_id| agents.iter().find(|agent| agent.agent_id == agent_id));
     let active_agent_total = agents
         .iter()
-        .filter(|agent| activity.get(&agent.agent_id).is_some_and(|item| !item.is_idle()))
+        .filter(|agent| {
+            activity
+                .get(&agent.agent_id)
+                .is_some_and(|item| !item.is_idle())
+        })
         .count();
     let running_mission_total = missions
         .iter()
@@ -400,6 +427,7 @@ fn agent_payload(
         "icon": agent.icon,
         "is_shared": agent.is_shared,
         "approval_mode": agent.approval_mode,
+        "tool_names": agent.tool_names,
         "sandbox_container_id": agent.sandbox_container_id,
         "active_session_total": active_session_ids.len(),
         "active_session_ids": active_session_ids,

@@ -487,16 +487,18 @@ import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useUserWorldStore } from '@/stores/userWorld';
 import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
+import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
+import {
+  buildWorkspacePublicPath,
+  normalizeWorkspaceOwnerId,
+  resolveMarkdownWorkspacePath
+} from '@/utils/messageWorkspacePath';
 import {
   buildWorkspaceImagePersistentCacheKey,
   readWorkspaceImagePersistentCache,
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
-import {
-  isImagePath,
-  normalizeWorkspaceRelativeMarkdownPath,
-  parseWorkspaceResourceUrl
-} from '@/utils/workspaceResources';
+import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 
@@ -1473,32 +1475,14 @@ const formatTime = (value: unknown): string => {
 
 const markdownCache = new WeakMap();
 
-const normalizeWorkspaceOwnerId = (value: unknown): string =>
-  String(value || '')
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, '_');
-
-const encodeWorkspacePath = (value: string): string =>
-  String(value || '')
-    .split('/')
-    .map((part) => encodeURIComponent(part))
-    .join('/');
-
-const buildWorkspacePublicPath = (ownerId: string, relativePath: string): string => {
-  const safeOwner = normalizeWorkspaceOwnerId(ownerId);
-  const normalized = normalizeWorkspacePath(relativePath);
-  if (!safeOwner || !normalized) return '';
-  return `/workspaces/${safeOwner}/${encodeWorkspacePath(normalized)}`;
-};
-
 const resolveUserWorldMarkdownWorkspacePath = (
   rawPath: string,
   senderUserId: string
-): string => {
-  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
-  if (!normalized) return '';
-  return buildWorkspacePublicPath(senderUserId, normalized);
-};
+): string =>
+  resolveMarkdownWorkspacePath({
+    rawPath,
+    ownerId: senderUserId
+  });
 
 const AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
 const AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】]+)?$/;
@@ -1549,7 +1533,7 @@ const replaceAtPathTokens = (content: string, senderUserId: string): string => {
 };
 
 const renderUserWorldMessage = (message: MessageItem): string => {
-  const content = String(message?.content || '');
+  const content = prepareMessageMarkdownContent(message?.content, message as unknown as Record<string, unknown>);
   if (!content) return '';
   const patched = replaceAtPathTokens(content, message.sender_user_id);
   const cached = markdownCache.get(message);

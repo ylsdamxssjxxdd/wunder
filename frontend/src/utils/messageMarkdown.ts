@@ -9,6 +9,7 @@ type MessageLike = {
 const EXTERNAL_IMAGE_URL_REGEX = /https?:\/\/[^\s<>"'`]+/gi;
 const MARKDOWN_IMAGE_REGEX = /!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g;
 const IMAGE_URL_SUFFIX_REGEX = /\.(?:png|jpe?g|gif|webp|svg)(?:$|[?#])/i;
+const MALFORMED_MARKDOWN_RESOURCE_CLOSER_REGEX = /(!?\[[^\]\n]*\]\()(https?:\/\/[^\s)\\\n]+)(\\+)\)/g;
 
 const stringifyValue = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -148,11 +149,43 @@ const unwrapMarkdownPayloadText = (content: string): string => {
   return current;
 };
 
+const repairMalformedMarkdownResourceClosings = (content: string): string => {
+  if (!content || !content.includes('\\') || !content.includes('](')) return content;
+  const lines = content.split('\n');
+  let activeFence = '';
+
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+      const fenceMatch = trimmed.match(/^([`~]{3,})/);
+      if (fenceMatch) {
+        const marker = fenceMatch[1];
+        if (!activeFence) {
+          activeFence = marker;
+        } else if (marker[0] === activeFence[0] && marker.length >= activeFence.length) {
+          activeFence = '';
+        }
+        return line;
+      }
+      if (activeFence) return line;
+
+      // Repair malformed Markdown resources like ![img](https://...\\\)
+      // so the Markdown parser can still recognize them as links/images.
+      return line.replace(
+        MALFORMED_MARKDOWN_RESOURCE_CLOSER_REGEX,
+        (_match, prefix: string, url: string) => `${prefix}${url})`
+      );
+    })
+    .join('\n');
+};
+
 export const prepareMessageMarkdownContent = (
   content: unknown,
   message: MessageLike | null | undefined
 ): string => {
-  const source = unwrapMarkdownPayloadText(String(content || ''));
+  const source = repairMalformedMarkdownResourceClosings(
+    unwrapMarkdownPayloadText(String(content || ''))
+  );
   if (!source) return '';
   return repairMarkdownImageUrls(source, collectKnownImageUrlsFromMessage(message));
 };

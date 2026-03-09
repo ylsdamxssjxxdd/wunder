@@ -30,7 +30,7 @@ const formatSpeed = (value: unknown): string => {
 };
 
 const MIN_SPEED_DURATION_S = 0.2;
-const MAX_REASONABLE_SPEED = 2000;
+const MAX_REASONABLE_SPEED = 10000;
 
 const normalizeSpeed = (speed: number, durationSeconds: number | null): number | null => {
   if (!Number.isFinite(speed) || speed <= 0) return null;
@@ -61,6 +61,26 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
 };
 
 const resolveTokenSpeed = (stats: Record<string, any>, durationSeconds: number | null): number | null => {
+  const averageSpeed = Number(
+    stats?.avg_model_round_speed_tps ??
+      stats?.avgModelRoundSpeedTps ??
+      stats?.average_speed_tps ??
+      stats?.averageSpeedTps
+  );
+  const averageRounds = Number(
+    stats?.avg_model_round_speed_rounds ??
+      stats?.avgModelRoundSpeedRounds ??
+      stats?.average_speed_rounds ??
+      stats?.averageSpeedRounds
+  );
+  if (
+    Number.isFinite(averageSpeed) &&
+    averageSpeed > 0 &&
+    (!Number.isFinite(averageRounds) || averageRounds > 0)
+  ) {
+    const speed = normalizeSpeed(averageSpeed, null);
+    if (speed !== null) return speed;
+  }
   const outputTokens = Number(stats?.usage?.output);
   const decode = normalizeDurationSeconds(
     stats?.decode_duration_total_s ??
@@ -99,8 +119,9 @@ export const buildAssistantMessageStatsEntries = (
   const contextTokens = stats?.contextTokens ?? stats?.usage?.total ?? null;
   const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
+  const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
-  if (!hasUsage && !hasDuration && !hasToolCalls) {
+  if (!hasUsage && !hasDuration && !hasToolCalls && !hasSpeed) {
     return [];
   }
   return [

@@ -75,6 +75,13 @@ type UsageStatsOptions = {
   updateUsage?: boolean;
   round?: number | null;
   accumulateDurations?: boolean;
+  includeInRoundAverage?: boolean;
+};
+
+type NormalizedUsagePayload = {
+  input: number;
+  output: number;
+  total: number;
 };
 
 type QuestionPanelApplyOptions = {
@@ -150,6 +157,8 @@ const buildMessageStats = () => ({
   usage: null,
   prefill_duration_s: null,
   decode_duration_s: null,
+  avg_model_round_speed_tps: null,
+  avg_model_round_speed_rounds: 0,
   quotaConsumed: 0,
   quotaSnapshot: null,
   contextTokens: null,
@@ -206,6 +215,12 @@ const normalizeDurationValue = (value) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
+const normalizeSpeedValue = (value) => {
+  if (value === null || value === undefined) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
 const resolveInteractionDuration = (startMs, endMs) => {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) {
     return null;
@@ -242,7 +257,7 @@ const normalizeUsagePayload = (payload) => {
     input: hasInput ? input : 0,
     output: hasOutput ? output : 0,
     total: total ?? 0
-  };
+  } satisfies NormalizedUsagePayload;
 };
 
 const normalizeMessageStats = (stats) => {
@@ -282,6 +297,18 @@ const normalizeMessageStats = (stats) => {
     ),
     decode_duration_s: normalizeDurationValue(
       stats.decode_duration_s ?? stats.decodeDurationS ?? stats.decodeDuration
+    ),
+    avg_model_round_speed_tps: normalizeSpeedValue(
+      stats.avg_model_round_speed_tps ??
+        stats.avgModelRoundSpeedTps ??
+        stats.average_speed_tps ??
+        stats.averageSpeedTps
+    ),
+    avg_model_round_speed_rounds: normalizeStatsCount(
+      stats.avg_model_round_speed_rounds ??
+        stats.avgModelRoundSpeedRounds ??
+        stats.average_speed_rounds ??
+        stats.averageSpeedRounds
     ),
     quotaConsumed: normalizeQuotaConsumed(
       stats.quotaConsumed ?? stats.quota_consumed ?? stats.quota
@@ -354,6 +381,9 @@ const mergeMessageStats = (base, incoming) => {
     right.contextTokens === null || right.contextTokens === undefined
       ? left.contextTokens
       : right.contextTokens;
+  const leftAverageSpeedRounds = normalizeStatsCount(left.avg_model_round_speed_rounds);
+  const rightAverageSpeedRounds = normalizeStatsCount(right.avg_model_round_speed_rounds);
+  const preferRightAverage = rightAverageSpeedRounds >= leftAverageSpeedRounds;
   return {
     toolCalls: Math.max(left.toolCalls, right.toolCalls),
     usage: right.usage || left.usage,
@@ -365,6 +395,14 @@ const mergeMessageStats = (base, incoming) => {
       right.decode_duration_s === null || right.decode_duration_s === undefined
         ? left.decode_duration_s
         : right.decode_duration_s,
+    avg_model_round_speed_tps:
+      preferRightAverage && right.avg_model_round_speed_tps !== null
+        ? right.avg_model_round_speed_tps
+        : left.avg_model_round_speed_tps,
+    avg_model_round_speed_rounds: Math.max(
+      leftAverageSpeedRounds,
+      rightAverageSpeedRounds
+    ),
     quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed),
     quotaSnapshot,
     contextTokens,
@@ -869,6 +907,15 @@ const clearChatSnapshot = (sessionId) => {
   try {
     const current = readChatSnapshot();
     if (!current || current.sessionId !== String(sessionId || '')) return;
+    localStorage.removeItem(CHAT_SNAPSHOT_KEY);
+    localStorage.removeItem(LEGACY_CHAT_SNAPSHOT_KEY);
+  } catch (error) {
+    // ignore storage errors
+  }
+};
+
+const clearAllChatSnapshots = () => {
+  try {
     localStorage.removeItem(CHAT_SNAPSHOT_KEY);
     localStorage.removeItem(LEGACY_CHAT_SNAPSHOT_KEY);
   } catch (error) {
@@ -2143,6 +2190,72 @@ const writeSessionListCache = (agentId, sessions) => {
   });
 };
 
+const resolveChatHttpStatus = (error) => {
+  const status = Number(error?.response?.status ?? error?.status ?? 0);
+  return Number.isFinite(status) ? status : 0;
+};
+
+const isSessionUnavailableStatus = (status) => [401, 403, 404].includes(Number(status || 0));
+
+const hasKnownSessionInStore = (store, sessionId) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return false;
+  const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
+  if (!sessions.length) return true;
+  return sessions.some((item) => resolveSessionKey(item?.id) === targetId);
+};
+
+const purgeUnavailableSession = (store, sessionId) => {
+  const targetId = resolveSessionKey(sessionId);
+  if (!targetId) return '';
+  const sessions = Array.isArray(store?.sessions) ? store.sessions : [];
+  const targetSession = sessions.find((item) => resolveSessionKey(item?.id) === targetId) || null;
+  const targetAgentId = String(targetSession?.agent_id || '').trim();
+  abortResumeStream(targetId);
+  abortSendStream(targetId);
+  abortWatchStream(targetId);
+  if (resolveSessionKey(store?.activeSessionId) === targetId) {
+    clearSessionWatcher();
+  }
+  setSessionLoading(store, targetId, false);
+  if (typeof store?.clearPendingApprovals === 'function') {
+    store.clearPendingApprovals({ sessionId: targetId });
+  }
+  sessionRuntime.delete(targetId);
+  sessionMessages.delete(targetId);
+  sessionDetailWarmState.delete(targetId);
+  sessionDetailPrefetchInFlight.delete(targetId);
+  sessionHistoryState.delete(targetId);
+  sessionWorkflowState.delete(targetId);
+  removeDemoChatSession(targetId);
+  clearChatSnapshot(targetId);
+
+  const nextSessions = sessions.filter((item) => resolveSessionKey(item?.id) !== targetId);
+  if (Array.isArray(store?.sessions)) {
+    store.sessions = nextSessions;
+  }
+  if (resolvePersistedSessionId(targetAgentId) === targetId) {
+    persistAgentSession(targetAgentId, '');
+  }
+  writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, nextSessions));
+
+  if (resolveSessionKey(store?.activeSessionId) === targetId) {
+    store.activeSessionId = null;
+    store.draftAgentId = targetAgentId;
+    store.draftToolOverrides = null;
+    store.messages = ensureGreetingMessage([], {
+      greeting: store?.greetingOverride
+    });
+    persistDraftSession();
+  }
+  syncDemoChatCache({
+    sessions: Array.isArray(store?.sessions) ? store.sessions : nextSessions,
+    sessionId: store?.activeSessionId || null,
+    messages: Array.isArray(store?.messages) ? store.messages : []
+  });
+  return targetAgentId;
+};
+
 const markSessionDetailWarm = (sessionId) => {
   const sessionKey = resolveSessionKey(sessionId);
   if (!sessionKey) return;
@@ -2475,6 +2588,10 @@ const startSessionWatcher = (store, sessionId) => {
   clearSessionWatcher();
   const key = resolveSessionKey(sessionId);
   if (!key) return;
+  if (!hasKnownSessionInStore(store, key)) {
+    purgeUnavailableSession(store, key);
+    return;
+  }
   sessionWatchSessionId = key;
   const runtime = ensureRuntime(key);
   if (!runtime || runtime.sendController || runtime.resumeController) return;
@@ -2619,7 +2736,19 @@ const startSessionWatcher = (store, sessionId) => {
       }
       runtime.watchdogBusy = true;
       try {
-        const response = await getSessionEvents(key).catch(() => null);
+        if (!hasKnownSessionInStore(store, key)) {
+          purgeUnavailableSession(store, key);
+          return;
+        }
+        let response = null;
+        try {
+          response = await getSessionEvents(key);
+        } catch (error) {
+          if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+            purgeUnavailableSession(store, key);
+            return;
+          }
+        }
         const payload = response?.data?.data;
         const running = payload?.running;
         const remoteLastEventId = Number(payload?.last_event_id ?? payload?.lastEventId);
@@ -2792,6 +2921,11 @@ const startSessionWatcher = (store, sessionId) => {
         finalizeAll(true);
         return;
       }
+      if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+        purgeUnavailableSession(store, key);
+        finalizeAll(false);
+        return;
+      }
       const resumeRequired = error?.phase === 'slow_client' || error?.resumeRequired === true;
       const transient =
         resumeRequired || error?.phase === 'connect' || error?.phase === 'stream' || error?.name === 'TypeError';
@@ -2878,6 +3012,28 @@ const abortSendStream = (sessionId) => {
   runtime.sendRequestId = null;
 };
 
+const resetChatRuntimeState = () => {
+  Array.from(sessionRuntime.keys()).forEach((sessionId) => {
+    abortResumeStream(sessionId);
+    abortSendStream(sessionId);
+    abortWatchStream(sessionId);
+  });
+  clearSessionWatcher();
+  sessionRuntime.clear();
+  sessionMessages.clear();
+  sessionListCache.clear();
+  sessionListCacheInFlight.clear();
+  sessionDetailPrefetchInFlight.clear();
+  sessionDetailWarmState.clear();
+  sessionHistoryState.clear();
+  sessionWorkflowState.clear();
+  if (snapshotTimer) {
+    clearTimeout(snapshotTimer);
+    snapshotTimer = null;
+  }
+  clearAllChatSnapshots();
+};
+
 const scheduleSlowClientResume = (store, sessionId, message, afterEventId) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !message) return;
@@ -2926,7 +3082,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const toolOutputItemMap = new Map();
   const toolOutputBufferMap = new Map();
   const toolOutputFlushTimerMap = new Map();
-  const roundTimingMap = new Map<number, { prefill: number | null; decode: number | null }>();
+  const roundMetricsMap = new Map<
+    number,
+    { prefill: number | null; decode: number | null; usage: NormalizedUsagePayload | null }
+  >();
   let outputItemId = null;
   const blockedRounds = new Set();
   const consumedQuotaRoundSet = new Set<number>();
@@ -2960,10 +3119,16 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const seededRound = initialRound ?? 1;
     const seededPrefill = normalizeDurationValue(stats.prefill_duration_s);
     const seededDecode = normalizeDurationValue(stats.decode_duration_s);
-    if ((seededPrefill !== null || seededDecode !== null) && Number.isFinite(seededRound) && seededRound > 0) {
-      roundTimingMap.set(seededRound, {
+    const seededUsage = normalizeUsagePayload(stats.usage);
+    if (
+      (seededPrefill !== null || seededDecode !== null || seededUsage) &&
+      Number.isFinite(seededRound) &&
+      seededRound > 0
+    ) {
+      roundMetricsMap.set(seededRound, {
         prefill: seededPrefill,
-        decode: seededDecode
+        decode: seededDecode,
+        usage: seededUsage
       });
     }
   }
@@ -3106,13 +3271,16 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     stats.toolCalls = normalizeStatsCount(stats.toolCalls) + 1;
   };
 
-  const recomputeTimingTotals = () => {
+  const recomputeRoundAggregates = () => {
     if (!stats) return;
     let prefillTotal = 0;
     let decodeTotal = 0;
     let hasPrefill = false;
     let hasDecode = false;
-    roundTimingMap.forEach((item) => {
+    let speedSum = 0;
+    let speedCount = 0;
+    // Keep model-round speed separate from whole-turn usage totals.
+    roundMetricsMap.forEach((item) => {
       if (item.prefill !== null) {
         prefillTotal += item.prefill;
         hasPrefill = true;
@@ -3121,13 +3289,15 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         decodeTotal += item.decode;
         hasDecode = true;
       }
+      if (item.usage && item.usage.output > 0 && item.decode !== null && item.decode > 0) {
+        speedSum += item.usage.output / item.decode;
+        speedCount += 1;
+      }
     });
-    if (hasPrefill) {
-      stats.prefill_duration_s = prefillTotal;
-    }
-    if (hasDecode) {
-      stats.decode_duration_s = decodeTotal;
-    }
+    stats.prefill_duration_s = hasPrefill ? prefillTotal : null;
+    stats.decode_duration_s = hasDecode ? decodeTotal : null;
+    stats.avg_model_round_speed_tps = speedCount > 0 ? speedSum / speedCount : null;
+    stats.avg_model_round_speed_rounds = speedCount;
   };
 
   const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options: UsageStatsOptions = {}) => {
@@ -3139,16 +3309,23 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     const prefill = normalizeDurationValue(prefillDuration);
     const decode = normalizeDurationValue(decodeDuration);
     const roundNumber = normalizeStreamRound(options.round);
-    if (options.accumulateDurations && roundNumber !== null) {
-      const current = roundTimingMap.get(roundNumber) ?? { prefill: null, decode: null };
+    if (roundNumber !== null && (options.accumulateDurations || options.includeInRoundAverage)) {
+      const current = roundMetricsMap.get(roundNumber) ?? {
+        prefill: null,
+        decode: null,
+        usage: null
+      };
       if (prefill !== null) {
         current.prefill = prefill;
       }
       if (decode !== null) {
         current.decode = decode;
       }
-      roundTimingMap.set(roundNumber, current);
-      recomputeTimingTotals();
+      if (normalizedUsage && options.includeInRoundAverage) {
+        current.usage = normalizedUsage;
+      }
+      roundMetricsMap.set(roundNumber, current);
+      recomputeRoundAggregates();
       return;
     }
     if (prefill !== null) {
@@ -3917,7 +4094,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           data?.usage ?? payload?.usage ?? data,
           data?.prefill_duration_s ?? payload?.prefill_duration_s,
           data?.decode_duration_s ?? payload?.decode_duration_s,
-          { round, accumulateDurations: true }
+          { round, accumulateDurations: true, includeInRoundAverage: true }
         );
         if (round !== null) {
           lastRound = round;
@@ -3997,7 +4174,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           data?.usage ?? payload?.usage ?? data,
           null,
           null,
-          { round, updateUsage: true }
+          { round, updateUsage: true, includeInRoundAverage: true }
         );
         break;
       }
@@ -4197,6 +4374,11 @@ export const useChatStore = defineStore('chat', {
       pageUnloading = true;
       clearSessionWatcher();
     },
+    resetState() {
+      pageUnloading = false;
+      resetChatRuntimeState();
+      this.$reset();
+    },
     setStreamTransport(transport) {
       const next = transport === 'sse' ? 'sse' : 'ws';
       localStorage.setItem('chat_stream_transport', next);
@@ -4347,6 +4529,10 @@ export const useChatStore = defineStore('chat', {
     async preloadSessionDetail(sessionId) {
       const targetId = resolveSessionKey(sessionId);
       if (!targetId) return null;
+      if (!hasKnownSessionInStore(this, targetId)) {
+        purgeUnavailableSession(this, targetId);
+        return null;
+      }
       if (isSessionDetailWarm(targetId) && getSessionMessages(targetId)?.length) {
         return this.sessions.find((session) => session.id === targetId) || null;
       }
@@ -4355,10 +4541,25 @@ export const useChatStore = defineStore('chat', {
         return inFlight;
       }
       const request = (async () => {
-        const [sessionRes, eventsRes] = await Promise.all([
-          getSession(targetId),
-          getSessionEvents(targetId).catch(() => null)
-        ]);
+        let sessionRes = null;
+        let eventsRes = null;
+        try {
+          [sessionRes, eventsRes] = await Promise.all([
+            getSession(targetId),
+            getSessionEvents(targetId).catch((error) => {
+              if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+                throw error;
+              }
+              return null;
+            })
+          ]);
+        } catch (error) {
+          if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+            purgeUnavailableSession(this, targetId);
+            return null;
+          }
+          throw error;
+        }
         const payload = sessionRes?.data;
         const sessionDetail = payload?.data || null;
         const rounds = eventsRes?.data?.data?.rounds || [];
@@ -4553,10 +4754,29 @@ export const useChatStore = defineStore('chat', {
       if (cachedSessionMessages?.length || snapshot?.messages?.length) {
         cacheSessionMessages(sessionId, this.messages);
       }
-      const [sessionRes, eventsRes] = await Promise.all([
-        getSession(sessionId),
-        getSessionEvents(sessionId).catch(() => null)
-      ]);
+      if (!hasKnownSessionInStore(this, sessionId)) {
+        purgeUnavailableSession(this, sessionId);
+        return null;
+      }
+      let sessionRes = null;
+      let eventsRes = null;
+      try {
+        [sessionRes, eventsRes] = await Promise.all([
+          getSession(sessionId),
+          getSessionEvents(sessionId).catch((error) => {
+            if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+              throw error;
+            }
+            return null;
+          })
+        ]);
+      } catch (error) {
+        if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
+          purgeUnavailableSession(this, sessionId);
+          return null;
+        }
+        throw error;
+      }
       const data = sessionRes?.data;
       const sessionDetail = data?.data || null;
       const sessionCreatedAt = sessionDetail?.created_at;

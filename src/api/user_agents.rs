@@ -871,7 +871,10 @@ async fn create_agent(
     let target_hive_id = resolve_agent_request_hive_id(
         state.as_ref(),
         &user_id,
-        payload.hive_id.as_deref().or(copy_source.as_ref().map(|item| item.hive_id.as_str())),
+        payload
+            .hive_id
+            .as_deref()
+            .or(copy_source.as_ref().map(|item| item.hive_id.as_str())),
         payload.hive_name.as_deref(),
         payload.hive_description.as_deref(),
     )?;

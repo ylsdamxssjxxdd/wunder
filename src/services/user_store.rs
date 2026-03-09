@@ -857,14 +857,19 @@ pub(crate) fn list_user_agents_by_hive_with_default(
         return Ok(items);
     }
 
-    if items
-        .iter()
-        .any(|agent| agent.agent_id.trim().eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS))
-    {
+    if items.iter().any(|agent| {
+        agent
+            .agent_id
+            .trim()
+            .eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
+    }) {
         return Ok(items);
     }
 
-    items.insert(0, build_default_agent_record_from_storage(storage, user_id)?);
+    items.insert(
+        0,
+        build_default_agent_record_from_storage(storage, user_id)?,
+    );
     Ok(items)
 }
 

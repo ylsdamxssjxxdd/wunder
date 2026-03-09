@@ -62,7 +62,14 @@ async fn create_team_run(
     )?;
     let mother_agent_id = parent_agent_id
         .as_deref()
-        .map(|agent_id| claim_mother_agent(state.storage.as_ref(), &user_id, &resolved_hive_id, agent_id))
+        .map(|agent_id| {
+            claim_mother_agent(
+                state.storage.as_ref(),
+                &user_id,
+                &resolved_hive_id,
+                agent_id,
+            )
+        })
         .transpose()
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
@@ -529,7 +536,10 @@ fn resolve_team_run_hive_id(
     requested_hive_id: Option<&str>,
     tasks: &[CreateTeamTaskRequest],
 ) -> Result<String, Response> {
-    if let Some(agent_id) = parent_agent_id.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(agent_id) = parent_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         let Some(agent) = state
             .user_store
             .get_user_agent(user_id, agent_id)

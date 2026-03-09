@@ -99,6 +99,7 @@
         <MessengerMiddlePane
           v-model:keyword="keywordInput"
           v-model:selected-contact-unit-id="selectedContactUnitId"
+          v-model:selected-agent-hive-group-id="selectedAgentHiveGroupId"
           v-model:settings-panel-mode="settingsPanelMode"
           :active-section="sessionHub.activeSection"
           :active-section-title="activeSectionTitle"
@@ -147,8 +148,11 @@
           :filtered-groups="filteredGroups"
           :selected-group-id="selectedGroupId"
           :select-group="selectGroup"
+          :agent-hive-total-count="agentHiveTotalCount"
+          :agent-hive-tree-rows="agentHiveTreeRows"
           :filtered-owned-agents="filteredOwnedAgents"
           :filtered-shared-agents="filteredSharedAgents"
+          :show-default-agent-entry="showDefaultAgentEntry"
           :selected-agent-id="selectedAgentId"
           :default-agent-key="DEFAULT_AGENT_KEY"
           :select-agent-for-settings="selectAgentForSettings"
@@ -173,7 +177,7 @@
     </Transition>
 
     <section class="messenger-chat chat-shell">
-      <header class="messenger-chat-header">
+      <header v-if="sessionHub.activeSection !== 'swarms'" class="messenger-chat-header">
         <div class="messenger-chat-heading">
           <div class="messenger-chat-title-row">
             <div class="messenger-chat-title">{{ chatPanelTitle }}</div>
@@ -181,24 +185,6 @@
           <div class="messenger-chat-subtitle">{{ chatPanelSubtitle }}</div>
         </div>
         <div class="messenger-chat-header-actions">
-          <div v-if="sessionHub.activeSection === 'swarms'" class="messenger-inline-actions messenger-chat-header-toggle">
-            <button
-              class="messenger-inline-btn"
-              :class="{ active: beeroomWorkbenchMode === 'text' }"
-              type="button"
-              @click="beeroomWorkbenchMode = 'text'"
-            >
-              {{ t('beeroom.view.text') }}
-            </button>
-            <button
-              class="messenger-inline-btn"
-              :class="{ active: beeroomWorkbenchMode === 'canvas' }"
-              type="button"
-              @click="beeroomWorkbenchMode = 'canvas'"
-            >
-              {{ t('beeroom.view.canvas') }}
-            </button>
-          </div>
           <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview"
             class="messenger-header-action-text"
@@ -255,6 +241,7 @@
           'is-messages': !showChatSettingsView && !showHelperAppsWorkspace,
           'is-helper-workspace': showHelperAppsWorkspace,
           'is-beeroom': sessionHub.activeSection === 'swarms',
+          'is-beeroom-canvas': sessionHub.activeSection === 'swarms' && beeroomWorkbenchMode === 'canvas',
           'is-agent': isAgentConversationActive,
           'is-world': isWorldConversationActive
         }"
@@ -299,7 +286,11 @@
         <template v-else-if="showChatSettingsView">
           <div
             class="messenger-chat-settings"
-            :class="{ 'messenger-chat-settings--beeroom': sessionHub.activeSection === 'swarms' }"
+            :class="{
+              'messenger-chat-settings--beeroom': sessionHub.activeSection === 'swarms',
+              'messenger-chat-settings--beeroom-canvas':
+                sessionHub.activeSection === 'swarms' && beeroomWorkbenchMode === 'canvas'
+            }"
           >
             <template v-if="showAgentSettingsPanel">
               <template v-if="showAgentGridOverview">
@@ -1351,9 +1342,12 @@ import {
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
 import {
+  buildWorkspacePublicPath,
+  normalizeWorkspaceOwnerId,
+  resolveMarkdownWorkspacePath
+} from '@/utils/messageWorkspacePath';
+import {
   isImagePath,
-  resolveWorkspaceRelativePathFromLocal,
-  normalizeWorkspaceRelativeMarkdownPath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -1491,6 +1485,7 @@ const PROFILE_AVATAR_COLORS = [
 
 const bootLoading = ref(true);
 const selectedAgentId = ref<string>(DEFAULT_AGENT_KEY);
+const selectedAgentHiveGroupId = ref('');
 const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
@@ -1885,6 +1880,7 @@ const currentUserId = computed(() => {
   const user = authStore.user as Record<string, unknown> | null;
   return String(user?.id || '');
 });
+let currentUserContextInitialized = false;
 const profileAvatarOptions = computed(() =>
   [
     {
@@ -1932,10 +1928,128 @@ const showMiddlePane = computed(
 );
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
+const DEFAULT_BEEROOM_GROUP_ID = 'default';
+
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
 const sharedAgents = computed(() =>
   desktopLocalMode.value ? [] : (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : [])
 );
+
+const normalizeAgentHiveGroupId = (value: unknown): string => {
+  const normalized = String(value || '').trim();
+  return normalized || DEFAULT_BEEROOM_GROUP_ID;
+};
+
+const defaultBeeroomGroupId = computed(() => {
+  const defaultGroup = beeroomStore.groups.find((item) => item.is_default);
+  const normalized = String(defaultGroup?.group_id || defaultGroup?.hive_id || '').trim();
+  return normalized || DEFAULT_BEEROOM_GROUP_ID;
+});
+
+const resolveAgentHiveGroupId = (agent: unknown): string => {
+  if (!agent || typeof agent !== 'object') {
+    return defaultBeeroomGroupId.value;
+  }
+  const source = agent as Record<string, unknown>;
+  return normalizeAgentHiveGroupId(source.hive_id || source.hiveId || defaultBeeroomGroupId.value);
+};
+
+const agentHiveLabelMap = computed(() => {
+  const map = new Map<string, string>();
+  map.set(defaultBeeroomGroupId.value, t('messenger.agentGroup.defaultOption'));
+  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).forEach((item) => {
+    const hiveId = String(item?.group_id || item?.hive_id || '').trim();
+    if (!hiveId) return;
+    const label = String(
+      item?.name || (item?.is_default ? t('messenger.agentGroup.defaultOption') : hiveId)
+    ).trim();
+    if (label) {
+      map.set(hiveId, label);
+    }
+  });
+  [...ownedAgents.value, ...sharedAgents.value].forEach((agent) => {
+    const hiveId = resolveAgentHiveGroupId(agent);
+    if (map.has(hiveId)) return;
+    const source = agent as Record<string, unknown>;
+    const label = String(
+      source.hive_name ||
+        source.hiveName ||
+        source.hive_id ||
+        source.hiveId ||
+        (hiveId === defaultBeeroomGroupId.value ? t('messenger.agentGroup.defaultOption') : hiveId)
+    ).trim();
+    if (label) {
+      map.set(hiveId, label);
+    }
+  });
+  return map;
+});
+
+const agentHiveEntries = computed(() => {
+  const entries: Array<{ agentId: string; hiveId: string }> = [
+    {
+      agentId: DEFAULT_AGENT_KEY,
+      hiveId: defaultBeeroomGroupId.value
+    }
+  ];
+  const seenAgentIds = new Set<string>([DEFAULT_AGENT_KEY]);
+  [...ownedAgents.value, ...sharedAgents.value].forEach((agent) => {
+    const agentId = normalizeAgentId(agent?.id);
+    if (!agentId || seenAgentIds.has(agentId)) return;
+    seenAgentIds.add(agentId);
+    entries.push({
+      agentId,
+      hiveId: resolveAgentHiveGroupId(agent)
+    });
+  });
+  return entries;
+});
+
+const agentHiveTotalCount = computed(() => agentHiveEntries.value.length);
+
+const agentHiveTreeRows = computed(() => {
+  const countMap = new Map<string, number>();
+  agentHiveEntries.value.forEach((entry) => {
+    countMap.set(entry.hiveId, (countMap.get(entry.hiveId) || 0) + 1);
+  });
+  return Array.from(countMap.entries())
+    .filter(([, count]) => count > 0)
+    .map(([id, count]) => ({
+      id,
+      label: agentHiveLabelMap.value.get(id) || id,
+      count,
+      depth: 0,
+      expanded: false,
+      hasChildren: false
+    }))
+    .sort((left, right) => {
+      if (left.id === defaultBeeroomGroupId.value) return -1;
+      if (right.id === defaultBeeroomGroupId.value) return 1;
+      return String(left.label || left.id).localeCompare(String(right.label || right.id), 'zh-Hans-CN');
+    });
+});
+
+const showDefaultAgentEntry = computed(
+  () =>
+    !selectedAgentHiveGroupId.value ||
+    normalizeAgentHiveGroupId(selectedAgentHiveGroupId.value) === defaultBeeroomGroupId.value
+);
+
+const matchesAgentKeyword = (agent: unknown, text: string) => {
+  const source = agent && typeof agent === 'object' ? (agent as Record<string, unknown>) : {};
+  const name = String(source.name || '').toLowerCase();
+  const desc = String(source.description || '').toLowerCase();
+  const hiveLabel = String(
+    agentHiveLabelMap.value.get(resolveAgentHiveGroupId(source)) || resolveAgentHiveGroupId(source)
+  ).toLowerCase();
+  return !text || name.includes(text) || desc.includes(text) || hiveLabel.includes(text);
+};
+
+const matchesAgentHiveSelection = (agent: unknown) => {
+  const selectedHiveId = String(selectedAgentHiveGroupId.value || '').trim();
+  if (!selectedHiveId) return true;
+  return resolveAgentHiveGroupId(agent) === normalizeAgentHiveGroupId(selectedHiveId);
+};
 
 const defaultAgentApprovalMode = computed(() => 'full_auto');
 const agentMap = computed(() => {
@@ -2533,7 +2647,7 @@ const selectedBeeroomGroup = computed<BeeroomGroup | null>(
   () => beeroomStore.activeGroup || beeroomStore.activeGroupSummary || null
 );
 
-const beeroomWorkbenchMode = ref<'text' | 'canvas'>('text');
+const beeroomWorkbenchMode = ref<'text' | 'canvas'>('canvas');
 
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
 const showHelperAppsWorkspace = computed(
@@ -2549,20 +2663,36 @@ const showChatComposerFooter = computed(() => {
 
 const filteredOwnedAgents = computed(() => {
   const text = keyword.value.toLowerCase();
-  return ownedAgents.value.filter((agent) => {
-    const name = String(agent?.name || '').toLowerCase();
-    const desc = String(agent?.description || '').toLowerCase();
-    return !text || name.includes(text) || desc.includes(text);
-  });
+  return ownedAgents.value.filter(
+    (agent) => matchesAgentHiveSelection(agent) && matchesAgentKeyword(agent, text)
+  );
 });
 
 const filteredSharedAgents = computed(() => {
   const text = keyword.value.toLowerCase();
-  return sharedAgents.value.filter((agent) => {
-    const name = String(agent?.name || '').toLowerCase();
-    const desc = String(agent?.description || '').toLowerCase();
-    return !text || name.includes(text) || desc.includes(text);
+  return sharedAgents.value.filter(
+    (agent) => matchesAgentHiveSelection(agent) && matchesAgentKeyword(agent, text)
+  );
+});
+
+const visibleAgentIdsForSelection = computed(() => {
+  const ids: string[] = [];
+  if (showDefaultAgentEntry.value) {
+    ids.push(DEFAULT_AGENT_KEY);
+  }
+  filteredOwnedAgents.value.forEach((agent) => {
+    const agentId = normalizeAgentId(agent?.id);
+    if (agentId && !ids.includes(agentId)) {
+      ids.push(agentId);
+    }
   });
+  filteredSharedAgents.value.forEach((agent) => {
+    const agentId = normalizeAgentId(agent?.id);
+    if (agentId && !ids.includes(agentId)) {
+      ids.push(agentId);
+    }
+  });
+  return ids;
 });
 
 const showAgentGridOverview = computed(
@@ -2591,15 +2721,17 @@ const agentOverviewCards = computed<AgentOverviewCard[]>(() => {
     });
   };
 
-  pushCard(
-    {
-      id: DEFAULT_AGENT_KEY,
-      name: t('messenger.defaultAgent'),
-      description: t('messenger.defaultAgentDesc'),
-      sandbox_container_id: 1
-    },
-    { isDefault: true }
-  );
+  if (showDefaultAgentEntry.value) {
+    pushCard(
+      {
+        id: DEFAULT_AGENT_KEY,
+        name: t('messenger.defaultAgent'),
+        description: t('messenger.defaultAgentDesc'),
+        sandbox_container_id: 1
+      },
+      { isDefault: true }
+    );
+  }
   filteredOwnedAgents.value.forEach((item) => pushCard(item as Record<string, unknown>));
   filteredSharedAgents.value.forEach((item) => pushCard(item as Record<string, unknown>, { shared: true }));
   return cards;
@@ -4793,40 +4925,6 @@ const isAdminUser = (user: Record<string, unknown> | null): boolean =>
   Array.isArray(user?.roles) &&
   user.roles.some((role) => role === 'admin' || role === 'super_admin');
 
-const normalizeWorkspaceOwnerId = (value: unknown): string =>
-  String(value || '')
-    .trim()
-    .replace(/[^a-zA-Z0-9_-]/g, '_');
-
-const encodeWorkspacePath = (value: string): string =>
-  String(value || '')
-    .split('/')
-    .map((part) => encodeURIComponent(part))
-    .join('/');
-
-const buildWorkspacePublicPath = (
-  ownerId: string,
-  relativePath: string,
-  containerId?: number | null
-): string => {
-  const safeOwner = normalizeWorkspaceOwnerId(ownerId);
-  const normalized = normalizeUploadPath(relativePath);
-  if (!safeOwner || !normalized) return '';
-  if (containerId !== null && Number.isFinite(Number(containerId))) {
-    return `/workspaces/${safeOwner}__c__${Number(containerId)}/${encodeWorkspacePath(normalized)}`;
-  }
-  return `/workspaces/${safeOwner}/${encodeWorkspacePath(normalized)}`;
-};
-
-const buildWorkspaceScopeId = (ownerId: string, containerId?: number | null): string => {
-  const safeOwner = normalizeWorkspaceOwnerId(ownerId);
-  if (!safeOwner) return '';
-  if (containerId !== null && Number.isFinite(Number(containerId))) {
-    return `${safeOwner}__c__${Number(containerId)}`;
-  }
-  return safeOwner;
-};
-
 const resolveDesktopWorkspaceRoot = (): string => String(getRuntimeConfig().workspace_root || '').trim();
 
 const resolveDesktopContainerRoot = (containerId?: number | null): string => {
@@ -4837,38 +4935,28 @@ const resolveDesktopContainerRoot = (containerId?: number | null): string => {
   return resolveDesktopWorkspaceRoot();
 };
 
-const resolveLocalWorkspaceMarkdownPath = (
-  rawPath: string,
-  ownerId: string,
-  containerId?: number | null
-): string => {
-  if (!desktopLocalMode.value) return '';
-  const workspaceId = buildWorkspaceScopeId(ownerId, containerId);
-  if (!workspaceId) return '';
-  const workspaceRoot = resolveDesktopContainerRoot(containerId);
-  const localRelative = resolveWorkspaceRelativePathFromLocal(rawPath, workspaceId, workspaceRoot);
-  if (!localRelative) return '';
-  return buildWorkspacePublicPath(ownerId, localRelative, containerId);
-};
-
 const resolveAgentMarkdownWorkspacePath = (rawPath: string): string => {
   const ownerId = normalizeWorkspaceOwnerId(authStore.user?.id);
   if (!ownerId) return '';
-  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
-  if (normalized) {
-    return buildWorkspacePublicPath(ownerId, normalized, currentContainerId.value);
-  }
-  return resolveLocalWorkspaceMarkdownPath(rawPath, ownerId, currentContainerId.value);
+  return resolveMarkdownWorkspacePath({
+    rawPath,
+    ownerId,
+    containerId: currentContainerId.value,
+    desktopLocalMode: desktopLocalMode.value,
+    workspaceRoot: resolveDesktopContainerRoot(currentContainerId.value)
+  });
 };
 
 const resolveWorldMarkdownWorkspacePath = (rawPath: string, senderUserId: string): string => {
   const ownerId = normalizeWorkspaceOwnerId(senderUserId);
   if (!ownerId) return '';
-  const normalized = normalizeWorkspaceRelativeMarkdownPath(rawPath);
-  if (normalized) {
-    return buildWorkspacePublicPath(ownerId, normalized, USER_CONTAINER_ID);
-  }
-  return resolveLocalWorkspaceMarkdownPath(rawPath, ownerId, USER_CONTAINER_ID);
+  return resolveMarkdownWorkspacePath({
+    rawPath,
+    ownerId,
+    containerId: USER_CONTAINER_ID,
+    desktopLocalMode: desktopLocalMode.value,
+    workspaceRoot: resolveDesktopContainerRoot(USER_CONTAINER_ID)
+  });
 };
 
 const WORLD_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
@@ -6493,8 +6581,13 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
   markMessengerPerfTrace(perfTrace, 'uiReady');
   try {
     markMessengerPerfTrace(perfTrace, 'beforeLoadSessionDetail');
-    await chatStore.loadSessionDetail(sessionId);
+    const sessionDetail = await chatStore.loadSessionDetail(sessionId);
     markMessengerPerfTrace(perfTrace, 'afterLoadSessionDetail');
+    if (!sessionDetail) {
+      await openAgentById(fallbackAgentId || DEFAULT_AGENT_KEY);
+      finishMessengerPerfTrace(perfTrace, 'ok', { recovered: true });
+      return;
+    }
     const session = chatStore.sessions.find((item) => String(item?.id || '') === sessionId);
     const targetAgentId = normalizeAgentId(session?.agent_id ?? fallbackAgentId);
     selectedAgentId.value = targetAgentId || DEFAULT_AGENT_KEY;
@@ -6898,8 +6991,13 @@ const clearMessagePanelWhenConversationEmpty = () => {
 
 const ensureSectionSelection = () => {
   if (sessionHub.activeSection === 'agents') {
-    if (!selectedAgentId.value) {
+    const visibleAgentIds = visibleAgentIdsForSelection.value;
+    if (!visibleAgentIds.length) {
       selectedAgentId.value = DEFAULT_AGENT_KEY;
+      return;
+    }
+    if (!visibleAgentIds.includes(normalizeAgentId(selectedAgentId.value))) {
+      selectedAgentId.value = visibleAgentIds[0] || DEFAULT_AGENT_KEY;
     }
     return;
   }
@@ -8748,8 +8846,23 @@ watch(
 
 watch(
   () => currentUserId.value,
-  () => {
+  (value, previousValue) => {
+    const changed = String(value || '') !== String(previousValue || '');
+    const shouldClearConversationState = changed && currentUserContextInitialized && !bootLoading.value;
+    currentUserContextInitialized = true;
+    if (changed) {
+      chatStore.resetState();
+    }
+    if (shouldClearConversationState) {
+      sessionHub.clearActiveConversation();
+      userWorldStore.activeConversationId = '';
+      const nextQuery = { ...route.query } as Record<string, any>;
+      delete nextQuery.session_id;
+      delete nextQuery.conversation_id;
+      router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
+    }
     beeroomStore.resetState();
+    selectedAgentHiveGroupId.value = '';
     void hydrateCurrentUserAppearance();
     cronPermissionDenied.value = false;
     cronAgentIds.value = new Set<string>();
@@ -8851,6 +8964,19 @@ watch(
   }
 );
 
+watch(agentHiveTreeRows, (rows) => {
+  if (!selectedAgentHiveGroupId.value) return;
+  const exists = rows.some((row) => row.id === selectedAgentHiveGroupId.value);
+  if (!exists) {
+    selectedAgentHiveGroupId.value = '';
+  }
+});
+
+watch(visibleAgentIdsForSelection, () => {
+  if (sessionHub.activeSection !== 'agents') return;
+  ensureSectionSelection();
+});
+
 watch(
   () => [
     sessionHub.activeSection,
@@ -8894,7 +9020,13 @@ watch(
 );
 
 watch(
-  () => [filteredContacts.value.length, filteredGroups.value.length, filteredOwnedAgents.value.length, filteredSharedAgents.value.length],
+  () => [
+    filteredContacts.value.length,
+    filteredGroups.value.length,
+    filteredOwnedAgents.value.length,
+    filteredSharedAgents.value.length,
+    showDefaultAgentEntry.value ? 1 : 0
+  ],
   () => {
     ensureSectionSelection();
   }

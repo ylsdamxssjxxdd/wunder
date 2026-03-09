@@ -1180,6 +1180,11 @@ button.messenger-chat-header-model {
   overflow-y: auto;
 }
 
+.messenger-chat-body.is-settings.is-beeroom.is-beeroom-canvas {
+  overflow: hidden;
+  padding: 12px;
+}
+
 .messenger-chat-body.is-helper-workspace {
   overflow: auto;
 }
@@ -1264,6 +1269,12 @@ button.messenger-chat-header-model {
   height: auto;
   min-height: 100%;
   overflow: visible;
+}
+
+.messenger-chat-settings--beeroom-canvas {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .messenger-chat-settings-block {

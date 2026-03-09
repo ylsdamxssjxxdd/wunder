@@ -19,6 +19,7 @@ export type BeeroomMember = {
   icon?: string;
   is_shared?: boolean;
   approval_mode?: string;
+  tool_names?: string[];
   sandbox_container_id?: number;
   active_session_total?: number;
   active_session_ids?: string[];

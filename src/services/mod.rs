@@ -8,6 +8,7 @@ pub mod desktop_lan;
 pub mod doc2md;
 pub mod external_auth;
 pub mod history;
+pub mod hive_pack;
 pub mod knowledge;
 pub mod llm;
 pub mod mcp;

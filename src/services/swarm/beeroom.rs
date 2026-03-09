@@ -56,7 +56,10 @@ pub fn resolve_swarm_hive_id(
         .map(normalize_hive_id)
         .filter(|value| !value.trim().is_empty());
 
-    if let Some(agent_id) = current_agent_id.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(agent_id) = current_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         let agent = storage
             .get_user_agent(cleaned_user, agent_id)?
             .or_else(|| storage.get_user_agent_by_id(agent_id).ok().flatten())
@@ -182,7 +185,10 @@ pub fn collect_agent_activity(
 
     if let Some(monitor) = monitor {
         for session in monitor.list_sessions(true) {
-            let session_user_id = session.get("user_id").and_then(serde_json::Value::as_str).unwrap_or("");
+            let session_user_id = session
+                .get("user_id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("");
             if session_user_id.trim() != user_id.trim() {
                 continue;
             }
@@ -242,7 +248,11 @@ pub fn build_swarm_dispatch_message(
         .collect::<Vec<_>>();
     let idle_member_ids = members
         .iter()
-        .filter(|agent| activity.get(&agent.agent_id).is_none_or(AgentActivitySnapshot::is_idle))
+        .filter(|agent| {
+            activity
+                .get(&agent.agent_id)
+                .is_none_or(AgentActivitySnapshot::is_idle)
+        })
         .map(|agent| agent.agent_id.clone())
         .collect::<Vec<_>>();
 
@@ -308,10 +318,18 @@ pub fn snapshot_team_run(
             started_time = task.started_time;
         }
         if let Some(task_started) = task.started_time {
-            started_time = Some(started_time.map(|value| value.min(task_started)).unwrap_or(task_started));
+            started_time = Some(
+                started_time
+                    .map(|value| value.min(task_started))
+                    .unwrap_or(task_started),
+            );
         }
         if let Some(task_finished) = task.finished_time {
-            finished_time = Some(finished_time.map(|value| value.max(task_finished)).unwrap_or(task_finished));
+            finished_time = Some(
+                finished_time
+                    .map(|value| value.max(task_finished))
+                    .unwrap_or(task_finished),
+            );
         }
         updated_time = updated_time.max(task.updated_time);
         match normalize_status(&task.status).as_str() {
@@ -330,7 +348,11 @@ pub fn snapshot_team_run(
     active_agent_ids.sort();
     let mut idle_agent_ids = involved_agents
         .iter()
-        .filter(|agent_id| activity.get(*agent_id).is_none_or(AgentActivitySnapshot::is_idle))
+        .filter(|agent_id| {
+            activity
+                .get(*agent_id)
+                .is_none_or(AgentActivitySnapshot::is_idle)
+        })
         .cloned()
         .collect::<Vec<_>>();
     idle_agent_ids.sort();
@@ -356,7 +378,11 @@ pub fn snapshot_team_run(
     result_run.task_success = success_total;
     result_run.task_failed = failed_total;
     result_run.started_time = started_time;
-    result_run.finished_time = if all_tasks_terminal { finished_time } else { None };
+    result_run.finished_time = if all_tasks_terminal {
+        finished_time
+    } else {
+        None
+    };
     result_run.elapsed_s = match (result_run.started_time, result_run.finished_time) {
         (Some(started), Some(finished)) => Some((finished - started).max(0.0)),
         _ => result_run.elapsed_s,
@@ -386,10 +412,20 @@ fn apply_session_run_to_task(task: &mut TeamTaskRecord, session_run: &SessionRun
     if session_run.elapsed_s > 0.0 {
         task.elapsed_s = Some(session_run.elapsed_s);
     }
-    if let Some(result) = session_run.result.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(result) = session_run
+        .result
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         task.result_summary = Some(result.to_string());
     }
-    if let Some(error) = session_run.error.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(error) = session_run
+        .error
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         task.error = Some(error.to_string());
     }
     task.updated_time = task.updated_time.max(session_run.updated_time);

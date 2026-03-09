@@ -1,12 +1,12 @@
 ﻿<template>
-  <section class="beeroom-workbench">
+  <section class="beeroom-workbench" :class="{ 'beeroom-workbench--canvas': isCanvasView }">
     <div v-if="loading" class="beeroom-state beeroom-state--loading">{{ t('common.loading') }}</div>
     <div v-else-if="!group" class="beeroom-state">
       <i class="fa-solid fa-hexagon-nodes" aria-hidden="true"></i>
       <span>{{ t('beeroom.empty.selectGroup') }}</span>
     </div>
     <template v-else>
-      <header class="beeroom-hero">
+      <header v-if="isTextView" class="beeroom-hero">
         <div class="beeroom-hero-main">
           <div class="beeroom-eyebrow">
             <span class="beeroom-eyebrow-badge">{{ t('messenger.section.swarms') }}</span>
@@ -45,7 +45,7 @@
         </div>
       </header>
 
-      <div class="beeroom-summary-grid">
+      <div v-if="isTextView" class="beeroom-summary-grid">
         <article v-for="card in summaryCards" :key="card.key" class="beeroom-summary-card">
           <div class="beeroom-summary-label">{{ card.label }}</div>
           <div class="beeroom-summary-value">{{ card.value }}</div>
@@ -53,7 +53,7 @@
         </article>
       </div>
 
-      <div class="beeroom-content-grid" :class="{ 'beeroom-content-grid--canvas': isCanvasView }">
+      <div v-if="isTextView" class="beeroom-content-grid">
         <section v-if="isTextView" class="beeroom-panel beeroom-panel--members">
           <div class="beeroom-panel-head">
             <div>
@@ -141,13 +141,33 @@
         </section>
       </div>
 
-      <BeeroomMissionCanvas
-        v-if="isCanvasView"
-        :group="group"
-        :mission="selectedMission"
-        :agents="agents"
-        @open-agent="emit('open-agent', $event)"
-      />
+      <div v-if="isCanvasView" class="beeroom-workbench-stage">
+        <div v-if="missions.length" class="beeroom-workbench-missions">
+          <button
+            v-for="mission in missions"
+            :key="mission.mission_id || mission.team_run_id"
+            class="beeroom-workbench-mission-chip"
+            :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
+            type="button"
+            @click="selectedMissionId = mission.mission_id || mission.team_run_id"
+          >
+            <span class="beeroom-workbench-mission-chip-title">#{{ shortMissionId(mission.mission_id || mission.team_run_id) }}</span>
+            <span class="beeroom-workbench-mission-chip-meta">
+              {{ resolveMissionStatus(mission.completion_status || mission.status) }}
+            </span>
+          </button>
+        </div>
+
+        <BeeroomMissionCanvas
+          class="beeroom-workbench-canvas"
+          :group="group"
+          :mission="selectedMission"
+          :agents="agents"
+          :refreshing="refreshing"
+          @refresh="emit('refresh')"
+          @open-agent="emit('open-agent', $event)"
+        />
+      </div>
 
       <section v-if="isTextView" class="beeroom-panel beeroom-panel--detail">
         <div class="beeroom-panel-head">
@@ -282,8 +302,8 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const isCanvasView = computed(() => props.viewMode === 'canvas');
-const isTextView = computed(() => !isCanvasView.value);
+const isCanvasView = computed(() => true);
+const isTextView = computed(() => false);
 
 const selectedMissionId = ref('');
 const moveDialogVisible = ref(false);
@@ -464,6 +484,124 @@ watch(
   min-height: 100%;
 }
 
+.beeroom-workbench--canvas {
+  flex: 1;
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.beeroom-workbench-canvas {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.beeroom-workbench-stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.beeroom-workbench-overlay {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  pointer-events: none;
+}
+
+.beeroom-workbench-overlay-main {
+  display: flex;
+  max-width: min(680px, calc(100% - 220px));
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.16);
+  background: rgba(8, 15, 32, 0.84);
+  box-shadow: 0 14px 32px rgba(2, 6, 23, 0.24);
+  pointer-events: auto;
+}
+
+.beeroom-workbench-missions {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 14px;
+  z-index: 4;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 8px 10px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.12);
+  background: linear-gradient(180deg, rgba(8, 15, 32, 0.74), rgba(8, 15, 32, 0.46));
+  box-shadow:
+    inset 0 1px 0 rgba(186, 230, 253, 0.03),
+    0 12px 30px rgba(2, 6, 23, 0.18);
+}
+
+.beeroom-workbench-mission-chip {
+  display: inline-flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(56, 189, 248, 0.16);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.88), rgba(8, 15, 32, 0.82));
+  color: #e2e8f0;
+  cursor: pointer;
+  box-shadow:
+    inset 0 1px 0 rgba(186, 230, 253, 0.03),
+    0 10px 22px rgba(2, 6, 23, 0.18);
+}
+
+.beeroom-workbench-mission-chip.active {
+  border-color: rgba(34, 211, 238, 0.42);
+  background: linear-gradient(180deg, rgba(8, 47, 73, 0.96), rgba(10, 30, 62, 0.88));
+  box-shadow:
+    inset 0 0 0 1px rgba(103, 232, 249, 0.08),
+    0 12px 26px rgba(8, 47, 73, 0.24);
+}
+
+.beeroom-workbench-mission-chip-title {
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.beeroom-workbench-mission-chip-meta {
+  color: rgba(191, 219, 254, 0.74);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1180px) {
+  .beeroom-workbench-overlay {
+    gap: 10px;
+  }
+
+  .beeroom-workbench-overlay-main {
+    max-width: min(560px, calc(100% - 180px));
+  }
+
+  .beeroom-workbench-missions {
+    top: 14px;
+  }
+}
+
 .beeroom-state {
   display: flex;
   min-height: 320px;
@@ -575,6 +713,13 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+.beeroom-hero-actions--inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  pointer-events: auto;
 }
 
 .beeroom-action-btn {

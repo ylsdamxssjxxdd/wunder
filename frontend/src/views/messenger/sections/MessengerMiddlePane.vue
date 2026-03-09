@@ -342,8 +342,48 @@
     </template>
 
     <template v-else-if="activeSection === 'agents'">
+      <div class="messenger-unit-structure messenger-unit-structure--agents">
+        <div class="messenger-unit-structure-head">
+          <span class="messenger-unit-structure-title">{{ t('messenger.agents.hiveTitle') }}</span>
+          <span class="messenger-unit-structure-hint">{{ t('messenger.agents.hiveHint') }}</span>
+        </div>
+        <div class="messenger-unit-structure-actions">
+          <button
+            class="messenger-unit-all-btn"
+            :class="{ active: !selectedAgentHiveGroupId }"
+            type="button"
+            @click="updateSelectedAgentHiveGroupId('')"
+          >
+            <span class="messenger-unit-tree-name">{{ t('messenger.agents.hiveAll') }}</span>
+            <span class="messenger-unit-tree-count">{{ agentHiveTotalCount }}</span>
+          </button>
+        </div>
+        <div v-if="agentHiveTreeRows.length" class="messenger-unit-tree">
+          <div
+            v-for="row in agentHiveTreeRows"
+            :key="`agent-hive-tree-${row.id}`"
+            class="messenger-unit-tree-row messenger-unit-tree-row--leaf"
+            :class="{ active: selectedAgentHiveGroupId === row.id }"
+            :style="resolveUnitTreeRowStyle(row)"
+            role="button"
+            tabindex="0"
+            @click="updateSelectedAgentHiveGroupId(row.id)"
+            @keydown.enter.prevent="updateSelectedAgentHiveGroupId(row.id)"
+            @keydown.space.prevent="updateSelectedAgentHiveGroupId(row.id)"
+          >
+            <span class="messenger-unit-tree-toggle messenger-unit-tree-toggle--placeholder"></span>
+            <span class="messenger-unit-tree-icon" aria-hidden="true">
+              <i class="fa-solid fa-hexagon-nodes"></i>
+            </span>
+            <span class="messenger-unit-tree-name">{{ row.label }}</span>
+            <span class="messenger-unit-tree-count">{{ row.count }}</span>
+          </div>
+        </div>
+      </div>
+
       <div class="messenger-block-title">{{ t('messenger.agent.owned') }}</div>
       <button
+        v-if="showDefaultAgentEntry"
         class="messenger-list-item messenger-agent-item"
         :class="{ active: selectedAgentId === defaultAgentKey }"
         type="button"
@@ -379,7 +419,6 @@
           </div>
         </div>
       </button>
-      <div v-if="!filteredOwnedAgents.length" class="messenger-list-empty">{{ t('messenger.empty.agents') }}</div>
 
       <div v-if="filteredSharedAgents.length" class="messenger-block-title">
         {{ t('messenger.agent.shared') }}
@@ -403,6 +442,12 @@
           </div>
         </div>
       </button>
+      <div
+        v-if="!showDefaultAgentEntry && !filteredOwnedAgents.length && !filteredSharedAgents.length"
+        class="messenger-list-empty"
+      >
+        {{ t('messenger.empty.agents') }}
+      </div>
     </template>
 
     <template v-else-if="activeSection === 'tools'">
@@ -746,8 +791,12 @@ const {
   filteredGroups,
   selectedGroupId,
   selectGroup,
+  selectedAgentHiveGroupId,
+  agentHiveTotalCount,
+  agentHiveTreeRows,
   filteredOwnedAgents,
   filteredSharedAgents,
+  showDefaultAgentEntry,
   selectedAgentId,
   defaultAgentKey,
   selectAgentForSettings,
@@ -818,8 +867,12 @@ const {
   filteredGroups: Array<Record<string, any>>;
   selectedGroupId: string;
   selectGroup: (group: Record<string, any>) => void;
+  selectedAgentHiveGroupId: string;
+  agentHiveTotalCount: number;
+  agentHiveTreeRows: Array<Record<string, any>>;
   filteredOwnedAgents: Array<Record<string, any>>;
   filteredSharedAgents: Array<Record<string, any>>;
+  showDefaultAgentEntry: boolean;
   selectedAgentId: string;
   defaultAgentKey: string;
   selectAgentForSettings: (agentId: any) => void;
@@ -845,6 +898,7 @@ const {
 const emit = defineEmits<{
   (event: 'update:keyword', value: string): void;
   (event: 'update:selectedContactUnitId', value: string): void;
+  (event: 'update:selectedAgentHiveGroupId', value: string): void;
   (event: 'update:settingsPanelMode', value: string): void;
 }>();
 
@@ -854,6 +908,10 @@ const updateKeyword = (value: string) => {
 
 const updateSelectedContactUnitId = (value: string) => {
   emit('update:selectedContactUnitId', value);
+};
+
+const updateSelectedAgentHiveGroupId = (value: string) => {
+  emit('update:selectedAgentHiveGroupId', value);
 };
 
 const updateSettingsPanelMode = (value: string) => {
