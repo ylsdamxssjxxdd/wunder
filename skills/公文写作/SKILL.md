@@ -11,7 +11,7 @@
 1. 明确公文要素：标题、主送、正文、附件、落款、日期、抄送、印发等。
 2. 输出 Markdown 文本（结构见下）。
 3. 保存为 `.md` 文件。
-4. 运行 `scripts/convert_markdown_to_docx.py` 生成 DOCX。
+4. 运行 `{{SKILL_ROOT}}/scripts/convert_markdown_to_docx.py` 生成 DOCX。
 
 ## Markdown 结构约束
 - 这里的“一级/二级/三级/四级”指公文层级，不是 Markdown 的 `#` 层级。
@@ -93,24 +93,24 @@ XX单位
 ```
 
 ## 转换脚本
-脚本位置：`scripts/convert_markdown_to_docx.py`
+脚本位置：`{{SKILL_ROOT}}/scripts/convert_markdown_to_docx.py`
 
 基础用法：
 ```
-python3 scripts/convert_markdown_to_docx.py draft.md --output draft.docx
+python3 {{SKILL_ROOT}}/scripts/convert_markdown_to_docx.py draft.md --output draft.docx
 ```
 
 ## 一键生成含图 DOCX（推荐）
 将 Markdown 与图片放好后，直接执行一次脚本即可生成“嵌图 + 版式修正”的 DOCX：
 ```
-python3 scripts/convert_markdown_to_docx.py draft.md --output draft.docx --use-pandoc
+python3 {{SKILL_ROOT}}/scripts/convert_markdown_to_docx.py draft.md --output draft.docx --use-pandoc
 ```
 
 说明：
 - 需要安装 `pypandoc`，并确保 `pandoc` 可用（Windows/Linux 均可，PATH 或 `--pandoc` 均可）。
 - Markdown 中的 SVG 会自动高分辨率转 PNG 并嵌入（默认 300 DPI）。
 - 脚本会自动执行图片段落修正，避免固定行距导致的遮挡。
-- 其他参数可运行 `python scripts/convert_markdown_to_docx.py --help` 查看。
+- 其他参数可运行 `python {{SKILL_ROOT}}/scripts/convert_markdown_to_docx.py --help` 查看。
 
 ## 常用参数（内置转换脚本）
 以下参数用于 `convert_markdown_to_docx.py`：

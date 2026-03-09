@@ -25,7 +25,7 @@ const DEFAULT_NON_ADMIN_MAX_ROUNDS: u32 = 1000;
 const MIN_NON_ADMIN_MAX_ROUNDS: u32 = 2;
 const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = MIN_NON_ADMIN_MAX_ROUNDS;
 const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 4;
-const MAX_REPEATED_TOOL_FAILURES: u32 = 3;
+const DEFAULT_REPEATED_TOOL_FAILURE_THRESHOLD: u32 = 5;
 const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
 
 fn should_enable_local_full_event_logs(server_mode: &str) -> bool {
@@ -257,6 +257,7 @@ impl Orchestrator {
             };
             let mut answer = String::new();
             let mut stop_reason: Option<String> = None;
+            let mut stop_meta: Option<Value> = None;
             let mut a2ui_uid: Option<String> = None;
             let mut a2ui_messages: Option<Value> = None;
             let mut last_response: Option<(String, String)> = None;
@@ -265,6 +266,8 @@ impl Orchestrator {
             let mut model_round = 0_i64;
             let mut repeated_tool_failure_signature = String::new();
             let mut repeated_tool_failure_count = 0_u32;
+            let repeated_tool_failure_threshold =
+                resolve_tool_failure_guard_threshold(&request_config);
             loop {
                 if let Some(max_rounds) = max_rounds {
                     if model_round >= max_rounds {
@@ -804,15 +807,32 @@ impl Orchestrator {
                                 repeated_tool_failure_signature = signature;
                                 repeated_tool_failure_count = 1;
                             }
-                            if repeated_tool_failure_count >= MAX_REPEATED_TOOL_FAILURES {
-                                answer = build_tool_failure_guard_answer(&name, &result);
+                            if repeated_tool_failure_count >= repeated_tool_failure_threshold {
+                                answer = build_tool_failure_guard_answer(
+                                    &name,
+                                    &result,
+                                    repeated_tool_failure_count,
+                                    repeated_tool_failure_threshold,
+                                );
                                 stop_reason = Some("tool_failure_guard".to_string());
+                                let guard_meta = json!({
+                                    "type": "tool_failure_guard",
+                                    "tool": name.clone(),
+                                    "repeat_count": repeated_tool_failure_count,
+                                    "threshold": repeated_tool_failure_threshold,
+                                    "tool_error": if result.error.trim().is_empty() {
+                                        Value::Null
+                                    } else {
+                                        Value::String(result.error.clone())
+                                    },
+                                });
+                                stop_meta = Some(guard_meta.clone());
                                 let mut guard_payload = json!({
                                     "stage": "tool_failure_guard",
                                     "summary": "Repeated tool failures detected; stopped retries to keep session alive.",
                                     "tool": name.clone(),
                                     "repeat_count": repeated_tool_failure_count,
-                                    "threshold": MAX_REPEATED_TOOL_FAILURES,
+                                    "threshold": repeated_tool_failure_threshold,
                                     "tool_error": if result.error.trim().is_empty() {
                                         Value::Null
                                     } else {
@@ -829,11 +849,7 @@ impl Orchestrator {
                                     "assistant",
                                     Some(&json!(answer.clone())),
                                     None,
-                                    Some(&json!({
-                                        "type": "tool_failure_guard",
-                                        "tool": name.clone(),
-                                        "repeat_count": repeated_tool_failure_count,
-                                    })),
+                                    Some(&guard_meta),
                                     None,
                                     None,
                                     None,
@@ -1006,6 +1022,9 @@ impl Orchestrator {
                 "stop_reason": stop_reason
             });
             if let Value::Object(ref mut map) = final_payload {
+                if let Some(meta) = stop_meta.clone() {
+                    map.insert("stop_meta".to_string(), meta);
+                }
                 last_round_info.insert_into(map);
             }
             emitter.emit("final", final_payload).await;
@@ -1416,6 +1435,12 @@ fn build_max_rounds_user_guidance(max_rounds: Option<i64>) -> String {
     i18n::t_with_params("error.max_rounds_user_guidance", &params)
 }
 
+fn resolve_tool_failure_guard_threshold(config: &Config) -> u32 {
+    let threshold = u32::try_from(config.server.tool_failure_guard_threshold)
+        .unwrap_or(DEFAULT_REPEATED_TOOL_FAILURE_THRESHOLD);
+    threshold.max(1)
+}
+
 fn resolve_empty_answer_fallback() -> (String, &'static str) {
     (i18n::t("error.empty_no_final_answer"), "empty_response")
 }
@@ -1439,20 +1464,26 @@ fn build_tool_failure_signature(tool_name: &str, result: &ToolResultPayload) -> 
     format!("{tool_name}|{clipped}")
 }
 
-fn build_tool_failure_guard_answer(tool_name: &str, result: &ToolResultPayload) -> String {
+fn build_tool_failure_guard_answer(
+    tool_name: &str,
+    result: &ToolResultPayload,
+    repeat_count: u32,
+    threshold: u32,
+) -> String {
+    let mut params = HashMap::new();
+    params.insert("tool_name".to_string(), tool_name.to_string());
+    params.insert("repeat_count".to_string(), repeat_count.to_string());
+    params.insert("threshold".to_string(), threshold.to_string());
     let detail = result.error.trim();
     if detail.is_empty() {
-        return format!(
-            "Tool `{tool_name}` keeps failing repeatedly. I stopped retrying to keep this thread alive. Please adjust the request or tool args and retry."
-        );
+        return i18n::t_with_params("error.tool_failure_guard_user_guidance", &params);
     }
     let clipped = detail
         .chars()
         .take(TOOL_FAILURE_SIGNATURE_MAX_CHARS)
         .collect::<String>();
-    format!(
-        "Tool `{tool_name}` failed repeatedly ({clipped}). I stopped retrying to keep this thread alive. Please adjust the request or tool args and retry."
-    )
+    params.insert("detail".to_string(), clipped);
+    i18n::t_with_params("error.tool_failure_guard_user_guidance_with_error", &params)
 }
 
 fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
@@ -1631,9 +1662,9 @@ mod tests {
             timestamp: Utc::now(),
             meta: None,
         };
-        let answer = build_tool_failure_guard_answer("读取文件", &result);
-        assert!(answer.contains("读取文件"));
-        assert!(answer.contains("stopped retrying"));
+        let answer = build_tool_failure_guard_answer("read_file", &result, 3, 5);
+        assert!(answer.contains("read_file"));
+        assert!(answer.contains("5"));
     }
 
     #[test]

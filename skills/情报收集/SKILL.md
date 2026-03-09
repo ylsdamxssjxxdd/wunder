@@ -41,13 +41,13 @@
 
 | 调查类型 | 工作流 | 上下文 |
 |-------------------|----------|---------|
-| 人员查询 | `Workflows/PeopleLookup.md` | `SOURCES.JSON` |
-| 公司查询 | `Workflows/CompanyLookup.md` | `SOURCES.JSON` |
-| 投资尽调 | `Workflows/CompanyDueDiligence.md` | `SOURCES.JSON` |
-| 实体/威胁情报 | `Workflows/EntityLookup.md` | `SOURCES.JSON` |
-| 域名/子域调查 | `Workflows/DomainLookup.md` | `SOURCES.JSON` |
-| 组织/NGO/政府研究 | `Workflows/OrganizationLookup.md` | `SOURCES.JSON` |
-| 发现新 OSINT 资源 | `Workflows/DiscoverOSINTSources.md` | `SOURCES.JSON` |
+| 人员查询 | `{{SKILL_ROOT}}/Workflows/PeopleLookup.md` | `{{SKILL_ROOT}}/SOURCES.JSON` |
+| 公司查询 | `{{SKILL_ROOT}}/Workflows/CompanyLookup.md` | `{{SKILL_ROOT}}/SOURCES.JSON` |
+| 投资尽调 | `{{SKILL_ROOT}}/Workflows/CompanyDueDiligence.md` | `{{SKILL_ROOT}}/SOURCES.JSON` |
+| 实体/威胁情报 | `{{SKILL_ROOT}}/Workflows/EntityLookup.md` | `{{SKILL_ROOT}}/SOURCES.JSON` |
+| 域名/子域调查 | `{{SKILL_ROOT}}/Workflows/DomainLookup.md` | `{{SKILL_ROOT}}/SOURCES.JSON` |
+| 组织/NGO/政府研究 | `{{SKILL_ROOT}}/Workflows/OrganizationLookup.md` | `{{SKILL_ROOT}}/SOURCES.JSON` |
+| 发现新 OSINT 资源 | `{{SKILL_ROOT}}/Workflows/DiscoverOSINTSources.md` | `{{SKILL_ROOT}}/SOURCES.JSON` |
 
 ---
 
@@ -56,34 +56,34 @@
 **人员 OSINT：**
 - “对[人]做 OSINT”“调查[人]”“[人]背景调查”
 - “[人]是谁”“查[人]信息”“调查此人”
--> 路由到 `Workflows/PeopleLookup.md`
+-> 路由到 `{{SKILL_ROOT}}/Workflows/PeopleLookup.md`
 
 **公司 OSINT：**
 - “对[公司]做 OSINT”“调查[公司]”“公司情报”
 - “能查到[公司]什么”“调查[公司]”
--> 路由到 `Workflows/CompanyLookup.md`
+-> 路由到 `{{SKILL_ROOT}}/Workflows/CompanyLookup.md`
 
 **投资尽调：**
 - “对[公司]尽调”“评估[公司]是否靠谱”“[公司]是否合法”
 - “评估[公司]”“要不要和[公司]合作”
--> 路由到 `Workflows/CompanyDueDiligence.md`
+-> 路由到 `{{SKILL_ROOT}}/Workflows/CompanyDueDiligence.md`
 
 **实体/威胁情报：**
 - “调查[实体]”“[实体]威胁情报”“这个是否恶意”
 - “研究这个威胁组织”“分析[实体]”“检查这个 IP”
--> 路由到 `Workflows/EntityLookup.md`
+-> 路由到 `{{SKILL_ROOT}}/Workflows/EntityLookup.md`
 
 **域名/子域调查：**
 - “调查域名”“检查域名”“子域枚举”
 - “对[域名]做域名侦察”“[域名]有哪些子域”
 - “DNS 调查”“[域名]证书透明度”
--> 路由到 `Workflows/DomainLookup.md`
+-> 路由到 `{{SKILL_ROOT}}/Workflows/DomainLookup.md`
 
 **组织/NGO/政府：**
 - “研究组织”“调查 NGO”“研究机构”
 - “[组织]是谁”“调查[非营利]”“研究[政府机构]”
 - “关于[协会]我们知道什么”“[机构]背景”
--> 路由到 `Workflows/OrganizationLookup.md`
+-> 路由到 `{{SKILL_ROOT}}/Workflows/OrganizationLookup.md`
 
 ---
 
@@ -95,7 +95,7 @@
 - [ ] 已确认合规与法律要求
 - [ ] 文档齐备
 
-**若任何项未勾选，立即停止。**详见 `EthicalFramework.md`。
+**若任何项未勾选，立即停止。**详见 `{{SKILL_ROOT}}/EthicalFramework.md`。
 
 ---
 
@@ -103,13 +103,13 @@
 
 | 文件 | 作用 |
 |------|---------|
-| `SOURCES.JSON` | 279 条 OSINT 资源主目录（英文，便于一致引用） |
-| `SOURCES.md` | 可阅读的资源说明清单（英文，含描述与访问信息） |
-| `EthicalFramework.md` | 授权、法律与伦理边界 |
-| `Methodology.md` | 采集方法、验证与报告规范 |
-| `PeopleTools.md` | 人员搜索/社媒/公共记录（遗留清单，优先用 SOURCES.JSON） |
-| `CompanyTools.md` | 企业数据库/DNS/技术画像（遗留清单，优先用 SOURCES.JSON） |
-| `EntityTools.md` | 威胁情报/扫描/恶意软件分析（遗留清单，优先用 SOURCES.JSON） |
+| `{{SKILL_ROOT}}/SOURCES.JSON` | 279 条 OSINT 资源主目录（英文，便于一致引用） |
+| `{{SKILL_ROOT}}/SOURCES.md` | 可阅读的资源说明清单（英文，含描述与访问信息） |
+| `{{SKILL_ROOT}}/EthicalFramework.md` | 授权、法律与伦理边界 |
+| `{{SKILL_ROOT}}/Methodology.md` | 采集方法、验证与报告规范 |
+| `{{SKILL_ROOT}}/PeopleTools.md` | 人员搜索/社媒/公共记录（遗留清单，优先用 SOURCES.JSON） |
+| `{{SKILL_ROOT}}/CompanyTools.md` | 企业数据库/DNS/技术画像（遗留清单，优先用 SOURCES.JSON） |
+| `{{SKILL_ROOT}}/EntityTools.md` | 威胁情报/扫描/恶意软件分析（遗留清单，优先用 SOURCES.JSON） |
 
 ---
 
@@ -154,7 +154,7 @@
 
 **禁止：**私有数据、未授权访问、社工、购买泄露数据、违反平台 ToS
 
-完整要求见 `EthicalFramework.md`。
+完整要求见 `{{SKILL_ROOT}}/EthicalFramework.md`。
 
 ---
 

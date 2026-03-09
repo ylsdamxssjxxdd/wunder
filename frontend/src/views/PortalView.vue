@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="portal-shell">
     <UserTopbar :title="t('portal.title')" :subtitle="t('portal.subtitle')" :hide-chat="true" />
     <main class="portal-content">
@@ -280,6 +280,9 @@
           >
             <el-input v-model="form.description" :placeholder="t('portal.agent.form.placeholder.description')" />
           </el-form-item>
+          <el-form-item class="agent-form-item agent-form-item--group" :label="t('messenger.agentGroup.label')">
+            <BeeroomGroupField v-model="form.group" :groups="beeroomGroupOptions" />
+          </el-form-item>
           <el-form-item class="agent-form-item agent-form-item--prompt" :label="t('portal.agent.form.prompt')">
             <el-input
               v-model="form.system_prompt"
@@ -378,13 +381,21 @@ import { fetchExternalLinks } from '@/api/externalLinks';
 import { fetchCronJobs } from '@/api/cron';
 import { listChannelAccounts, listChannelBindings } from '@/api/channels';
 import { fetchUserToolsCatalog } from '@/api/userTools';
+import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
+import { useBeeroomStore } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
+import {
+  buildBeeroomGroupPayload,
+  createBeeroomGroupDraft,
+  normalizeBeeroomGroupDraft,
+  resolveBeeroomGroupDraftForAgent
+} from '@/utils/beeroomGroupDraft';
 import { resolveUserBasePath } from '@/utils/basePath';
 import { prefetchWorkspaceTree } from '@/utils/workspaceTreeCache';
 
@@ -392,6 +403,7 @@ const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const agentStore = useAgentStore();
+const beeroomStore = useBeeroomStore();
 const chatStore = useChatStore();
 const { t } = useI18n();
 const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
@@ -676,11 +688,20 @@ const form = reactive({
   copy_from_agent_id: '',
   tool_names: [],
   system_prompt: '',
+  group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode()
 });
 
 const basePath = computed(() => resolveUserBasePath(route.path));
+const beeroomGroupOptions = computed(() =>
+  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((group) => ({
+    group_id: String(group?.group_id || group?.hive_id || '').trim(),
+    name: String(group?.name || group?.group_id || group?.hive_id || '').trim(),
+    description: String(group?.description || '').trim(),
+    is_default: Boolean(group?.is_default)
+  }))
+);
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase());
 
 const matchesQuery = (agent, query) => {
@@ -1053,6 +1074,7 @@ const resetForm = () => {
   form.is_shared = false;
   form.copy_from_agent_id = '';
   form.system_prompt = '';
+  form.group = createBeeroomGroupDraft();
   form.sandbox_container_id = 1;
   form.approval_mode = resolveDefaultApprovalMode();
   applyDefaultTools();
@@ -1346,6 +1368,9 @@ const loadRunningAgents = async () => {
 
 
 const openCreateDialog = async () => {
+  if (!beeroomStore.groups.length) {
+    await beeroomStore.loadGroups().catch(() => null);
+  }
   if (!toolCatalog.value) {
     await loadCatalog();
   }
@@ -1360,14 +1385,20 @@ const saveAgent = async () => {
     ElMessage.warning(t('portal.agent.nameRequired'));
     return;
   }
+  const groupDraft = normalizeBeeroomGroupDraft(form.group);
+  if (groupDraft.mode === 'new' && !groupDraft.hive_name) {
+    ElMessage.warning(t('beeroom.dialog.nameRequired'));
+    return;
+  }
   saving.value = true;
   try {
-    const payload = {
+    const payload: Record<string, unknown> = {
       name,
       description: form.description || '',
       is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      ...buildBeeroomGroupPayload(form.group),
       system_prompt: form.system_prompt || '',
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
@@ -1375,12 +1406,23 @@ const saveAgent = async () => {
     if (!payload.copy_from_agent_id) {
       delete payload.copy_from_agent_id;
     }
+    if (!payload.hive_id) {
+      delete payload.hive_id;
+    }
+    if (!payload.hive_name) {
+      delete payload.hive_name;
+    }
+    if (!payload.hive_description) {
+      delete payload.hive_description;
+    }
     if (editingId.value) {
       delete payload.copy_from_agent_id;
       await agentStore.updateAgent(editingId.value, payload);
+      await beeroomStore.loadGroups().catch(() => null);
       ElMessage.success(t('portal.agent.updateSuccess'));
     } else {
       await agentStore.createAgent(payload);
+      await beeroomStore.loadGroups().catch(() => null);
       ElMessage.success(t('portal.agent.createSuccess'));
     }
     await loadAgentCopyOptions();
@@ -1438,3 +1480,7 @@ const formatTime = (value) => {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
 };
 </script>
+
+
+
+

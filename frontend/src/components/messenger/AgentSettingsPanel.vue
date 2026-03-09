@@ -22,6 +22,13 @@
             :disabled="isReadonlyMode"
           />
         </el-form-item>
+        <el-form-item :label="t('messenger.agentGroup.label')" class="messenger-agent-form-item">
+          <BeeroomGroupField
+            v-model="form.group"
+            :groups="beeroomGroupOptions"
+            :disabled="isReadonlyMode"
+          />
+        </el-form-item>
         <el-form-item :label="t('portal.agent.form.prompt')" class="messenger-agent-form-item">
           <el-input
             v-model="form.system_prompt"
@@ -147,9 +154,17 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
+import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
+import { useBeeroomStore } from '@/stores/beeroom';
+import {
+  buildBeeroomGroupPayload,
+  createBeeroomGroupDraft,
+  normalizeBeeroomGroupDraft,
+  resolveBeeroomGroupDraftForAgent
+} from '@/utils/beeroomGroupDraft';
 import { showApiError } from '@/utils/apiError';
 
 type ToolOption = {
@@ -181,6 +196,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const agentStore = useAgentStore();
+const beeroomStore = useBeeroomStore();
 const desktopLocalMode = computed(
   () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
 );
@@ -217,11 +233,20 @@ const form = reactive({
   is_shared: false,
   system_prompt: '',
   tool_names: [] as string[],
+  group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode()
 });
 
 const saving = ref(false);
+const beeroomGroupOptions = computed(() =>
+  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((group) => ({
+    group_id: String(group?.group_id || group?.hive_id || '').trim(),
+    name: String(group?.name || group?.group_id || group?.hive_id || '').trim(),
+    description: String(group?.description || '').trim(),
+    is_default: Boolean(group?.is_default)
+  }))
+);
 const toolSummary = ref<Record<string, unknown> | null>(null);
 const toolLoading = ref(false);
 const toolError = ref('');
@@ -336,6 +361,9 @@ const loadToolSummary = async () => {
 const loadAgent = async () => {
   if (!canView.value) return;
   try {
+    if (!beeroomStore.groups.length) {
+      await beeroomStore.loadGroups().catch(() => null);
+    }
     const agent = await agentStore.getAgent(normalizedAgentId.value, { force: true });
     if (!agent) {
       ElMessage.error(t('portal.agent.loadingFailed'));
@@ -346,6 +374,7 @@ const loadAgent = async () => {
     form.is_shared = showShareSetting.value ? Boolean(agent.is_shared) : false;
     form.system_prompt = String(agent.system_prompt || '');
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
+    form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
   } catch (error) {
@@ -364,17 +393,28 @@ const saveAgent = async () => {
     ElMessage.warning(t('portal.agent.nameRequired'));
     return;
   }
+  const groupDraft = normalizeBeeroomGroupDraft(form.group);
+  if (groupDraft.mode === 'new' && !groupDraft.hive_name) {
+    ElMessage.warning(t('beeroom.dialog.nameRequired'));
+    return;
+  }
   saving.value = true;
   try {
-    await agentStore.updateAgent(normalizedAgentId.value, {
+    const payload: Record<string, unknown> = {
       name,
       description: String(form.description || '').trim(),
       is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      ...buildBeeroomGroupPayload(form.group),
       system_prompt: String(form.system_prompt || ''),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
-    });
+    };
+    if (!payload.hive_id) delete payload.hive_id;
+    if (!payload.hive_name) delete payload.hive_name;
+    if (!payload.hive_description) delete payload.hive_description;
+    await agentStore.updateAgent(normalizedAgentId.value, payload);
+    await beeroomStore.loadGroups().catch(() => null);
     ElMessage.success(t('portal.agent.updateSuccess'));
     emit('saved', normalizedAgentId.value);
   } catch (error) {
@@ -414,3 +454,4 @@ watch(
   { immediate: true }
 );
 </script>
+

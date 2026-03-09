@@ -432,6 +432,7 @@
                 :error="beeroomStore.error"
                 @refresh="refreshActiveBeeroom"
                 @move-agents="handleBeeroomMoveAgents"
+                @open-agent="openAgentById"
               />
             </template>
 
@@ -772,6 +773,7 @@
                           (Array.isArray(item.message.workflowItems) && item.message.workflowItems.length > 0)
                       )
                     "
+                    @layout-change="handleMessageWorkflowLayoutChange"
                   />
                 </div>
                 <div
@@ -1229,11 +1231,6 @@
       :default-beeroom-group-id="defaultAgentCreateBeeroomGroupId"
       @submit="submitAgentCreate"
     />
-    <BeeroomCreateDialog
-      v-model="beeroomCreateVisible"
-      :candidate-agents="beeroomCandidateAgents"
-      @submit="submitBeeroomCreate"
-    />
   </div>
 </template>
 
@@ -1256,7 +1253,6 @@ import { fetchExternalLinks } from '@/api/externalLinks';
 import { downloadUserWorldFile } from '@/api/userWorld';
 import { fetchUserToolsCatalog, fetchUserToolsSummary } from '@/api/userTools';
 import { downloadWunderWorkspaceFile, fetchWunderWorkspaceContent, uploadWunderWorkspace } from '@/api/workspace';
-import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
 import BeeroomWorkbench from '@/components/beeroom/BeeroomWorkbench.vue';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import AgentCreateDialog from '@/components/messenger/AgentCreateDialog.vue';
@@ -1476,7 +1472,6 @@ const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
 const agentCreateVisible = ref(false);
-const beeroomCreateVisible = ref(false);
 const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
 const worldDraft = ref('');
@@ -2828,12 +2823,27 @@ const beeroomGroupOptions = computed(() =>
   }))
 );
 
+const preferredBeeroomGroupId = computed(() => {
+  const activeHiveId = String(
+    (activeAgent.value as Record<string, unknown> | null)?.hive_id ||
+      (activeAgent.value as Record<string, unknown> | null)?.hiveId ||
+      ''
+  ).trim();
+  if (activeHiveId) return activeHiveId;
+  const selectedAgent = ownedAgents.value.find(
+    (item) => normalizeAgentId(item?.id) === normalizeAgentId(selectedAgentId.value)
+  );
+  const selectedHiveId = String(selectedAgent?.hive_id || selectedAgent?.hiveId || '').trim();
+  if (selectedHiveId) return selectedHiveId;
+  const defaultGroup = beeroomStore.groups.find((item) => item.is_default);
+  return String(defaultGroup?.group_id || defaultGroup?.hive_id || '').trim();
+});
+
 const defaultAgentCreateBeeroomGroupId = computed(() => {
   if (sessionHub.activeSection === 'swarms') {
     return String(beeroomStore.activeGroupId || '').trim();
   }
-  const defaultGroup = beeroomStore.groups.find((item) => item.is_default);
-  return String(defaultGroup?.group_id || defaultGroup?.hive_id || '').trim();
+  return preferredBeeroomGroupId.value;
 });
 
 const beeroomCandidateAgents = computed(() => {
@@ -5132,7 +5142,7 @@ const isWorkspaceResourceMissing = (error: unknown): boolean => {
     (error as { message?: string })?.message ||
     '';
   const message = typeof raw === 'string' ? raw : String(raw || '');
-  return /not found|no such|不存在|找不到|已删除|已移除|removed/i.test(message);
+  return /not found|no such|涓嶅瓨鍦▅鎵句笉鍒皘宸插垹闄宸茬Щ闄removed/i.test(message);
 };
 
 const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
@@ -6002,9 +6012,10 @@ const submitAgentCreate = async (payload: Record<string, unknown>) => {
       tasks.push(loadCronAgentIds());
     }
     await Promise.all(tasks);
-    if (sessionHub.activeSection === 'swarms' || String(payload.hive_id || '').trim()) {
-      if (String(payload.hive_id || '').trim()) {
-        beeroomStore.setActiveGroup(payload.hive_id);
+    const createdHiveId = String(created?.hive_id || payload.hive_id || '').trim();
+    if (sessionHub.activeSection === 'swarms' || createdHiveId || String(payload.hive_name || '').trim()) {
+      if (createdHiveId) {
+        beeroomStore.setActiveGroup(createdHiveId);
       }
       await beeroomStore.loadActiveGroup().catch(() => null);
     }
@@ -6026,19 +6037,6 @@ const refreshActiveBeeroom = async () => {
   }
 };
 
-const submitBeeroomCreate = async (payload: Record<string, unknown>) => {
-  try {
-    const group = await beeroomStore.createGroup(payload);
-    beeroomCreateVisible.value = false;
-    ElMessage.success(t('beeroom.message.hiveCreated'));
-    if (group?.group_id || group?.hive_id) {
-      beeroomStore.setActiveGroup(group.group_id || group.hive_id);
-      await beeroomStore.loadActiveGroup();
-    }
-  } catch (error) {
-    showApiError(error, t('common.requestFailed'));
-  }
-};
 
 const handleBeeroomMoveAgents = async (agentIds: string[]) => {
   const groupId = String(beeroomStore.activeGroupId || '').trim();
@@ -6065,7 +6063,6 @@ const handleSearchCreateAction = async () => {
     return;
   }
   if (sessionHub.activeSection === 'swarms') {
-    beeroomCreateVisible.value = true;
     return;
   }
   if (sessionHub.activeSection === 'agents') {
@@ -6905,7 +6902,13 @@ const ensureSectionSelection = () => {
 
   if (sessionHub.activeSection === 'swarms') {
     if (!beeroomStore.activeGroupId && filteredBeeroomGroups.value.length > 0) {
-      beeroomStore.setActiveGroup(filteredBeeroomGroups.value[0]?.group_id || '');
+      const preferredGroup = preferredBeeroomGroupId.value;
+      const matchedGroup = preferredGroup
+        ? filteredBeeroomGroups.value.find(
+            (item) => String(item?.group_id || item?.hive_id || '').trim() === preferredGroup
+          )
+        : null;
+      beeroomStore.setActiveGroup(matchedGroup?.group_id || filteredBeeroomGroups.value[0]?.group_id || '');
     }
     return;
   }
@@ -8402,6 +8405,11 @@ const scheduleMessageVirtualMeasure = () => {
   });
 };
 
+const handleMessageWorkflowLayoutChange = () => {
+  syncMessageVirtualMetrics();
+  scheduleMessageVirtualMeasure();
+};
+
 const updateMessageScrollState = () => {
   syncMessageVirtualMetrics();
   const container = messageListRef.value;
@@ -9226,3 +9234,4 @@ onBeforeUnmount(() => {
   userWorldStore.stopAllWatchers();
 });
 </script>
+

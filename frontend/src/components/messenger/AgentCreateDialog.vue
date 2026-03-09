@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <el-dialog
     v-model="visible"
     class="messenger-dialog"
@@ -42,22 +42,12 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item :label="t('messenger.agentCreate.beeroomGroup')">
-          <el-select
-            v-model="form.hive_id"
-            clearable
-            filterable
-            class="messenger-form-full"
-            :placeholder="t('messenger.agentCreate.beeroomGroupPlaceholder')"
-          >
-            <el-option :label="t('messenger.agentCreate.beeroomGroupDefault')" value="" />
-            <el-option
-              v-for="group in beeroomGroups"
-              :key="group.group_id"
-              :label="group.name || group.group_id"
-              :value="group.group_id"
-            />
-          </el-select>
+        <el-form-item :label="t('messenger.agentGroup.label')">
+          <BeeroomGroupField
+            v-model="form.group"
+            :groups="beeroomGroups"
+            :default-group-id="defaultBeeroomGroupId"
+          />
         </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.systemPrompt')">
           <el-input
@@ -140,8 +130,16 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
+import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
+import {
+  buildBeeroomGroupPayload,
+  createBeeroomGroupDraft,
+  normalizeBeeroomGroupDraft,
+  type BeeroomGroupDraft,
+  type BeeroomGroupOption
+} from '@/utils/beeroomGroupDraft';
 
 type ToolOption = {
   label: string;
@@ -159,10 +157,6 @@ type AgentLike = {
   name: string;
 };
 
-type BeeroomGroupOption = {
-  group_id: string;
-  name?: string;
-};
 
 const props = defineProps({
   modelValue: {
@@ -209,7 +203,7 @@ const form = reactive({
   name: '',
   description: '',
   copy_from_agent_id: '',
-  hive_id: '',
+  group: createBeeroomGroupDraft(),
   system_prompt: '',
   tool_names: [] as string[],
   is_shared: false,
@@ -299,7 +293,7 @@ const resetForm = () => {
   form.name = '';
   form.description = '';
   form.copy_from_agent_id = '';
-  form.hive_id = String(props.defaultBeeroomGroupId || '').trim();
+  form.group = createBeeroomGroupDraft(String(props.defaultBeeroomGroupId || '').trim()) as BeeroomGroupDraft;
   form.system_prompt = '';
   form.tool_names = [...allToolValues.value];
   form.is_shared = false;
@@ -358,13 +352,18 @@ const handleSave = async () => {
     ElMessage.warning(t('portal.agent.nameRequired'));
     return;
   }
+  const groupDraft = normalizeBeeroomGroupDraft(form.group, String(props.defaultBeeroomGroupId || '').trim());
+  if (groupDraft.mode === 'new' && !groupDraft.hive_name) {
+    ElMessage.warning(t('beeroom.dialog.nameRequired'));
+    return;
+  }
   saving.value = true;
   try {
-    const payload = {
+    const payload: Record<string, unknown> = {
       name,
       description: String(form.description || '').trim(),
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
-      hive_id: String(form.hive_id || '').trim(),
+      ...buildBeeroomGroupPayload(form.group),
       system_prompt: String(form.system_prompt || ''),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
@@ -372,10 +371,16 @@ const handleSave = async () => {
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
     if (!payload.copy_from_agent_id) {
-      delete (payload as Record<string, unknown>).copy_from_agent_id;
+      delete payload.copy_from_agent_id;
     }
     if (!payload.hive_id) {
-      delete (payload as Record<string, unknown>).hive_id;
+      delete payload.hive_id;
+    }
+    if (!payload.hive_name) {
+      delete payload.hive_name;
+    }
+    if (!payload.hive_description) {
+      delete payload.hive_description;
     }
     emit('submit', payload);
   } finally {
@@ -402,3 +407,7 @@ watch(
   }
 );
 </script>
+
+
+
+

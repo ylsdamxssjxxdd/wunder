@@ -70,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch, type ComponentPublicInstance } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 
 import { useI18n } from '@/i18n';
 import { buildToolResultPreview } from './toolWorkflowPreview';
@@ -208,6 +208,9 @@ const props = withDefaults(defineProps<Props>(), {
   visible: false,
   terminalAutoStick: 'smart'
 });
+const emit = defineEmits<{
+  (event: 'layout-change'): void;
+}>();
 
 const { t } = useI18n();
 const expandedKeys = ref<Set<string>>(new Set());
@@ -218,6 +221,7 @@ const workflowListRef = ref<HTMLElement | null>(null);
 const workflowFollow = ref(true);
 const detailParseCache = new Map<string, UnknownObject | false>();
 const previewCache = new Map<string, string>();
+let workflowLayoutFrame: number | null = null;
 
 const streamKey = (entryKey: string, stream: CommandStreamName): string => `${entryKey}::${stream}`;
 
@@ -251,6 +255,18 @@ const scrollWorkflowToBottom = () => {
   const element = workflowListRef.value;
   if (!element) return;
   element.scrollTop = element.scrollHeight;
+};
+
+const scheduleWorkflowLayoutChange = () => {
+  if (typeof window === 'undefined') {
+    emit('layout-change');
+    return;
+  }
+  if (workflowLayoutFrame !== null) return;
+  workflowLayoutFrame = window.requestAnimationFrame(() => {
+    workflowLayoutFrame = null;
+    emit('layout-change');
+  });
 };
 
 const bindStreamBodyRef = (
@@ -296,6 +312,7 @@ const handleWorkflowToggle = (event: Event) => {
       }
     });
   }
+  scheduleWorkflowLayoutChange();
 };
 
 const syncStreamAutoStick = () => {
@@ -1910,6 +1927,7 @@ watch(
       if (shouldAutoScrollWorkflow()) {
         scrollWorkflowToBottom();
       }
+      scheduleWorkflowLayoutChange();
     });
   },
   { immediate: true }
@@ -1922,10 +1940,23 @@ const handleEntryToggle = (key: string, event: Event) => {
   if (target.open) next.add(key);
   else next.delete(key);
   expandedKeys.value = next;
+  void nextTick(() => {
+    if (shouldAutoScrollWorkflow()) {
+      scrollWorkflowToBottom();
+    }
+    scheduleWorkflowLayoutChange();
+  });
 };
 
 const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
 const shouldRender = computed(() => props.visible && (props.loading || entries.value.length > 0));
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined' && workflowLayoutFrame !== null) {
+    window.cancelAnimationFrame(workflowLayoutFrame);
+    workflowLayoutFrame = null;
+  }
+});
 </script>
 
 <style scoped>
@@ -2008,7 +2039,6 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
   background: var(--workflow-term-bg);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
   scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
-  clip-path: inset(0 round 12px);
 }
 
 .tool-workflow-list::-webkit-scrollbar {
@@ -2144,7 +2174,6 @@ const shouldRender = computed(() => props.visible && (props.loading || entries.v
   max-height: 320px;
   overflow: auto;
   scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
-  clip-path: inset(0 round 10px);
 }
 
 .tool-workflow-main::-webkit-scrollbar,

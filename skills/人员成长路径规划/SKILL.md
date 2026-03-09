@@ -97,10 +97,10 @@ description: "通过收集个人信息、经历与能力评估，结合可检索
 
 ## 脚本用法
 ```bash
-python scripts/growth_path_planner.py \
-  --input examples/growth_path_input.json \
-  --output-md examples/growth_path_report.md \
-  --output-svg examples/growth_path_chart.svg
+python {{SKILL_ROOT}}/scripts/growth_path_planner.py \
+  --input {{SKILL_ROOT}}/examples/growth_path_input.json \
+  --output-md {{SKILL_ROOT}}/examples/growth_path_report.md \
+  --output-svg {{SKILL_ROOT}}/examples/growth_path_chart.svg
 ```
 
 ## 输出说明

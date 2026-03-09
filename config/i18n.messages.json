@@ -259,6 +259,14 @@
     "en-US": "This turn reached the model round limit ({max_rounds}). The task may be unfinished. You can continue the conversation from the current progress, or increase this model's max_rounds and retry. If intermediate files or tables were already generated, you can review them in the workspace first.",
     "zh-CN": "本轮已达到模型轮次上限（{max_rounds}），任务可能尚未完成。你可以直接继续对话，让模型基于当前进度接着做；或者把该模型的 max_rounds 调大后重试。如果本轮已经生成了中间文件、表格或草稿，也可以先查看工作区结果。"
   },
+  "error.tool_failure_guard_user_guidance": {
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}). Retries were stopped to keep this session alive. Please adjust the request or tool arguments and try again.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）。系统已停止自动重试以保证会话可继续使用，请调整请求或工具参数后重试。"
+  },
+  "error.tool_failure_guard_user_guidance_with_error": {
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}): {detail}. Retries were stopped to keep this session alive. Please adjust the request or tool arguments and try again.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。系统已停止自动重试以保证会话可继续使用，请调整请求或工具参数后重试。"
+  },
   "error.empty_no_final_answer": {
     "en-US": "The model did not return a displayable final answer. Please retry or check the model stream settings.",
     "zh-CN": "模型未返回可展示的最终答复，请重试或检查模型流式设置。"

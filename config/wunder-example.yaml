@@ -5,6 +5,7 @@
   stream_chunk_size: 1024 # 流式输出每个分块的字节大小（影响 SSE 刷新频率）
   max_active_sessions: 300 # 全局最大并发会话数，超过后请求排队
   chat_stream_channel: ws # default chat stream channel (ws/sse)
+  tool_failure_guard_threshold: 5 # 同一轮中同类工具连续失败阈值；达到后停止重试并返回可恢复提示
 
 i18n: # 多语言配置
   default_language: zh-CN # 默认语言

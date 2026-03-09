@@ -20,12 +20,12 @@
         @click="loadRunDetail(run.team_run_id)"
       >
         <div class="swarm-panel-item-top">
-          <span>{{ run.status }}</span>
+          <span>{{ resolveStatusLabel(run.completion_status || run.status) }}</span>
           <span>{{ formatTime(run.updated_time) }}</span>
         </div>
         <div class="swarm-panel-item-bottom">
           <span>{{ t('beeroom.missions.taskCount', { count: run.task_total }) }}</span>
-          <span>{{ run.strategy || '-' }}</span>
+          <span>{{ run.hive_id ? t('beehive.swarm.hive', { hive: run.hive_id }) : run.strategy || '-' }}</span>
         </div>
       </button>
     </div>
@@ -33,7 +33,7 @@
       <div class="swarm-panel-tasks-title">{{ t('beeroom.missionDetail.title') }}</div>
       <div class="swarm-task-item" v-for="task in tasks" :key="task.task_id">
         <span>{{ task.agent_id }}</span>
-        <span>{{ task.status }}</span>
+        <span>{{ resolveStatusLabel(task.status) }}</span>
       </div>
     </div>
   </div>
@@ -67,6 +67,22 @@ const formatTime = (value) => {
   if (Number.isNaN(date.getTime())) return '-';
   const pad = (part) => String(part).padStart(2, '0');
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
+const resolveStatusLabel = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  const keyMap = {
+    queued: 'beeroom.status.queued',
+    running: 'beeroom.status.running',
+    awaiting_idle: 'beeroom.status.awaitingIdle',
+    completed: 'beeroom.status.completed',
+    success: 'beeroom.status.completed',
+    failed: 'beeroom.status.failed',
+    error: 'beeroom.status.failed',
+    timeout: 'beeroom.status.timeout',
+    cancelled: 'beeroom.status.cancelled'
+  };
+  return t(keyMap[normalized] || 'beeroom.status.unknown');
 };
 
 const loadRunDetail = async (teamRunId) => {

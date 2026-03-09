@@ -12,6 +12,7 @@ mod desktop_control;
 mod dispatch;
 mod freeform;
 mod read_image_tool;
+mod skill_call;
 mod sleep_tool;
 
 #[cfg(test)]
@@ -81,6 +82,7 @@ use regex::Regex;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::Deserialize;
 use serde_json::{json, Value};
+use skill_call::render_skill_markdown_for_model;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
@@ -5566,6 +5568,7 @@ async fn execute_skill_call(context: &ToolContext<'_>, args: &Value) -> Result<V
     let tree = build_skill_tree(&spec.root);
     let path = absolute_path_string_from_text(&spec.path);
     let root = absolute_path_string(&spec.root);
+    let content = render_skill_markdown_for_model(&content, &root);
     Ok(json!({
         "name": spec.name,
         "description": spec.description,

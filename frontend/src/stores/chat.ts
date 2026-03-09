@@ -2930,6 +2930,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   let outputItemId = null;
   const blockedRounds = new Set();
   const consumedQuotaRoundSet = new Set<number>();
+  let toolFailureGuardNotified = false;
   let lastRound = null;
   const initialRound = normalizeStreamRound(assistantMessage.stream_round);
   let visibleRound = initialRound;
@@ -3038,6 +3039,66 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       return title.replace('调用工具：', '').trim();
     }
     return '';
+  };
+
+  const normalizeStopReason = (value) => String(value || '').trim().toLowerCase();
+
+  const isToolFailureGuardStopReason = (value) => {
+    const normalized = normalizeStopReason(value);
+    return normalized === 'tool_failure_guard' || normalized === 'tool-failure-guard';
+  };
+
+  const parseOptionalPositiveCount = (value) => {
+    const parsed = parseOptionalCount(value);
+    if (parsed === null || parsed <= 0) return null;
+    return parsed;
+  };
+
+  const buildToolFailureGuardNotice = (source, fallbackThreshold = null) => {
+    const detailSource = source && typeof source === 'object' ? source : {};
+    const tool = String(detailSource.tool ?? detailSource.tool_name ?? '').trim();
+    const repeatCount = parseOptionalPositiveCount(
+      detailSource.repeat_count ?? detailSource.repeatCount
+    );
+    const threshold = parseOptionalPositiveCount(
+      detailSource.threshold ?? detailSource.max_repeat ?? fallbackThreshold
+    );
+    if (!repeatCount || !threshold) {
+      return null;
+    }
+    if (tool) {
+      return t('chat.workflow.toolFailureGuardDetail', {
+        tool,
+        repeatCount,
+        threshold
+      });
+    }
+    return t('chat.workflow.toolFailureGuardDetailNoTool', {
+      repeatCount,
+      threshold
+    });
+  };
+
+  const appendToolFailureGuardWorkflowItem = (source, fallbackThreshold = null) => {
+    const detailSource = source && typeof source === 'object' ? source : {};
+    const toolName = String(detailSource.tool ?? detailSource.tool_name ?? '').trim();
+    const notice = buildToolFailureGuardNotice(detailSource, fallbackThreshold);
+    const rawError = detailSource.tool_error ?? detailSource.error ?? '';
+    const toolError = typeof rawError === 'string' ? rawError.trim() : '';
+    const detail = toolError ? `${notice || ''}${notice ? '\n\n' : ''}${toolError}` : notice || '';
+    assistantMessage.workflowItems.push(
+      buildWorkflowItem(
+        t('chat.workflow.toolFailureGuardTriggered'),
+        detail,
+        'failed',
+        {
+          isTool: true,
+          eventType: 'tool_result',
+          toolName: toolName || t('chat.workflow.toolUnknown')
+        }
+      )
+    );
+    toolFailureGuardNotified = true;
   };
 
   const registerToolStats = (toolName) => {
@@ -3604,6 +3665,10 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             detailSource = { stage, summary: data?.summary ?? payload?.summary ?? '调用模型', round: roundNumber };
           }
         }
+        if (stage === 'tool_failure_guard') {
+          appendToolFailureGuardWorkflowItem(data ?? payload);
+          break;
+        }
         const showStage = stage && !['received', 'llm_call'].includes(stage);
         const title = summary ? pickText(summary) : showStage ? `阶段：${stage}` : '进度更新';
         assistantMessage.workflowItems.push(
@@ -3975,6 +4040,19 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
             outputReasoningFallback = normalizedAnswer.inlineReasoning;
           }
           visibleRound = lastRound ?? visibleRound;
+        }
+        const stopReasonRaw = data?.stop_reason ?? payload?.stop_reason;
+        const stopReason = normalizeStopReason(stopReasonRaw);
+        if (stopReason) {
+          assistantMessage.stop_reason = stopReason;
+        }
+        if (isToolFailureGuardStopReason(stopReason) && !toolFailureGuardNotified) {
+          const stopMeta =
+            (data?.stop_meta && typeof data.stop_meta === 'object' ? data.stop_meta : null) ??
+            (payload?.stop_meta && typeof payload.stop_meta === 'object'
+              ? payload.stop_meta
+              : null);
+          appendToolFailureGuardWorkflowItem(stopMeta ?? {}, 0);
         }
         if (lastRound !== null) {
           assistantMessage.stream_round = lastRound;

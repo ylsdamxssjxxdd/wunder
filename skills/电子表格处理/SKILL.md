@@ -11,7 +11,7 @@ description: "分析与可视化优先的电子表格处理技能：面向 .xlsx
 # 推荐先用脚本做体检（强烈建议）
 先运行：
 ```bash
-python skills/电子表格处理/scripts/spreadsheet_inspector.py <文件路径> --output-json temp_dir/spreadsheet_meta.json
+python {{SKILL_ROOT}}/scripts/spreadsheet_inspector.py <文件路径> --output-json temp_dir/spreadsheet_meta.json
 ```
 脚本会自动：
 - 检测文件是否可读、是否疑似加密/损坏/格式不匹配；
@@ -21,7 +21,7 @@ python skills/电子表格处理/scripts/spreadsheet_inspector.py <文件路径>
 # 一键分析出图脚本（推荐）
 在体检后直接运行：
 ```bash
-python skills/电子表格处理/scripts/analysis_chart_runner.py <文件路径> --meta-json temp_dir/spreadsheet_meta.json --out-dir temp_dir
+python {{SKILL_ROOT}}/scripts/analysis_chart_runner.py <文件路径> --meta-json temp_dir/spreadsheet_meta.json --out-dir temp_dir
 ```
 默认产物：
 - `*_analysis.png`：主看板 PNG

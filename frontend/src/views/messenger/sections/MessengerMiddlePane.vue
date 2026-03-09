@@ -19,7 +19,6 @@
     <button
       v-if="
         activeSection === 'agents' ||
-        activeSection === 'swarms' ||
         (activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace)
       "
       class="messenger-plus-btn"
@@ -27,16 +26,12 @@
       :title="
         activeSection === 'groups'
           ? t('userWorld.group.create')
-          : activeSection === 'swarms'
-            ? t('beeroom.dialog.createTitle')
-            : t('messenger.action.newAgent')
+          : t('messenger.action.newAgent')
       "
       :aria-label="
         activeSection === 'groups'
           ? t('userWorld.group.create')
-          : activeSection === 'swarms'
-            ? t('beeroom.dialog.createTitle')
-            : t('messenger.action.newAgent')
+          : t('messenger.action.newAgent')
       "
       @click="handleSearchCreateAction"
     >
@@ -865,3 +860,5 @@ const updateSettingsPanelMode = (value: string) => {
   emit('update:settingsPanelMode', value);
 };
 </script>
+
+

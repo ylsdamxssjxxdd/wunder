@@ -1,11 +1,11 @@
-// 用户智能体 API：创建/管理用户自定义智能体。
+// 用户智能体 API：创建、管理用户自定义智能体。
 use crate::api::user_context::resolve_user;
 use crate::config::UserAgentPresetConfig;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::state::AppState;
 use crate::storage::{
-    normalize_hive_id, normalize_sandbox_container_id, DEFAULT_HIVE_ID,
+    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, DEFAULT_HIVE_ID,
     DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use crate::user_access::{
@@ -872,6 +872,8 @@ async fn create_agent(
         state.as_ref(),
         &user_id,
         payload.hive_id.as_deref().or(copy_source.as_ref().map(|item| item.hive_id.as_str())),
+        payload.hive_name.as_deref(),
+        payload.hive_description.as_deref(),
     )?;
 
     let mut tool_names = if let Some(source) = copy_source.as_ref() {
@@ -1039,8 +1041,14 @@ async fn update_agent(
     if let Some(sandbox_container_id) = payload.sandbox_container_id {
         record.sandbox_container_id = normalize_sandbox_container_id(sandbox_container_id);
     }
-    if let Some(hive_id) = payload.hive_id.as_deref() {
-        record.hive_id = resolve_agent_request_hive_id(state.as_ref(), &user_id, Some(hive_id))?;
+    if payload.hive_id.is_some() || payload.hive_name.is_some() {
+        record.hive_id = resolve_agent_request_hive_id(
+            state.as_ref(),
+            &user_id,
+            payload.hive_id.as_deref(),
+            payload.hive_name.as_deref(),
+            payload.hive_description.as_deref(),
+        )?;
     }
     record.updated_at = now_ts();
     state
@@ -1222,7 +1230,42 @@ fn resolve_agent_request_hive_id(
     state: &AppState,
     user_id: &str,
     hive_id: Option<&str>,
+    hive_name: Option<&str>,
+    hive_description: Option<&str>,
 ) -> Result<String, Response> {
+    let requested_hive_name = hive_name.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(name) = requested_hive_name {
+        let mut normalized = hive_id
+            .map(normalize_hive_id)
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| normalize_hive_id(name));
+        if normalized == DEFAULT_HIVE_ID {
+            normalized = format!("beeroom-{}", Uuid::new_v4().simple());
+        }
+        let exists = state
+            .user_store
+            .get_hive(user_id, &normalized)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if exists.is_none() {
+            let now = now_ts();
+            let record = HiveRecord {
+                hive_id: normalized.clone(),
+                user_id: user_id.to_string(),
+                name: name.to_string(),
+                description: hive_description.unwrap_or_default().trim().to_string(),
+                is_default: false,
+                status: "active".to_string(),
+                created_time: now,
+                updated_time: now,
+            };
+            state
+                .user_store
+                .upsert_hive(&record)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+        return Ok(normalized);
+    }
+
     let normalized = normalize_hive_id(hive_id.unwrap_or(DEFAULT_HIVE_ID));
     let exists = state
         .user_store
@@ -1957,6 +2000,20 @@ struct AgentCreateRequest {
         alias = "beeroom_group_id"
     )]
     hive_id: Option<String>,
+    #[serde(
+        default,
+        alias = "hiveName",
+        alias = "beeroomGroupName",
+        alias = "beeroom_group_name"
+    )]
+    hive_name: Option<String>,
+    #[serde(
+        default,
+        alias = "hiveDescription",
+        alias = "beeroomGroupDescription",
+        alias = "beeroom_group_description"
+    )]
+    hive_description: Option<String>,
     #[serde(default, alias = "copyFromAgentId", alias = "copy_from_agent_id")]
     copy_from_agent_id: Option<String>,
 }
@@ -2007,6 +2064,20 @@ struct AgentUpdateRequest {
         alias = "beeroom_group_id"
     )]
     hive_id: Option<String>,
+    #[serde(
+        default,
+        alias = "hiveName",
+        alias = "beeroomGroupName",
+        alias = "beeroom_group_name"
+    )]
+    hive_name: Option<String>,
+    #[serde(
+        default,
+        alias = "hiveDescription",
+        alias = "beeroomGroupDescription",
+        alias = "beeroom_group_description"
+    )]
+    hive_description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -106,6 +106,7 @@
 - 说明：未传 `session_id` 且主会话正忙时，会自动分叉独立会话继续处理，并返回新的 `session_id`（不覆盖主会话）。
 - 说明：问询面板进入 `waiting` 后，用户选择路线会被当作正常请求立即继续处理，不会被判定为“会话繁忙”进入队列。
 - 约束：全局并发上限由 `server.max_active_sessions` 控制，超过上限的请求会排队等待。
+- 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试。
 - 说明：管理员会话跳过上述限制（会话锁/额度/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
 - 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
@@ -144,6 +145,8 @@
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
+  - 技能文档内建议使用占位符 `{{SKILL_ROOT}}` 引用技能资源（脚本/示例/工作流文件等）。
+  - `skill_call` 返回时会将 `skill_md` 中的 `{{SKILL_ROOT}}` 自动替换为本次可见的技能根目录绝对路径（同返回字段 `root`）。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
 - `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话，必要时可通过 `createIfMissing=true` 自动创建新会话，再发送指令。
@@ -1975,9 +1978,12 @@
   - 返回：`data.total`、`data.items`（agent_id/user_rounds）
   - `agent_id` 为空表示默认入口（通用聊天）
 - `POST /wunder/agents`：创建智能体
-  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）、`hive_id`（可选）
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）、`hive_id`（可选）、`hive_name`（可选）、`hive_description`（可选）
   - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
   - `hive_id` 兼容别名：`hiveId`、`beeroomGroupId`、`beeroom_group_id`
+  - `hive_name` 兼容别名：`hiveName`、`beeroomGroupName`、`beeroom_group_name`
+  - `hive_description` 兼容别名：`hiveDescription`、`beeroomGroupDescription`、`beeroom_group_description`
+  - 当 `hive_name` 有值时，后端会优先按名称自动创建或复用目标蜂群，再把智能体归入该蜂群。
   - 返回：`data`（同智能体详情）
 - `GET /wunder/agents/{agent_id}`：智能体详情
   - 返回：`data`（同智能体详情）
@@ -1987,7 +1993,7 @@
   - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`，为该智能体累计汇总）、`data.daily[]`（最近 `days` 天按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
   - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）查看通用聊天入口的运行记录
 - `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`/`hive_id`（可选）
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`/`hive_id`/`hive_name`/`hive_description`（均可选）
   - 返回：`data`（同智能体详情）
   - 默认入口支持：`agent_id` 为 `__default__`（或 `default`）时更新默认入口配置
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
@@ -2008,35 +2014,35 @@
 
 ### 4.1.57 `/wunder/beeroom/groups`
 
-- `GET /wunder/beeroom/groups`：列出当前用户全部蜂巢分组。
+- `GET /wunder/beeroom/groups`：列出当前用户全部蜂群分组（接口路径仍沿用 `beeroom` 命名）。
   - Query：`include_archived?`、`mission_limit?`
   - 返回：`data.items[]` / `data.total`，其中每个分组包含 `group_id/hive_id/name/description/status/is_default/agent_total/active_agent_total/idle_agent_total/running_mission_total/mission_total/mother_agent_id/mother_agent_name/members/latest_mission`。
-- `POST /wunder/beeroom/groups`：创建蜂巢分组。
+- `POST /wunder/beeroom/groups`：创建蜂群分组。
   - 入参（JSON）：`name`（必填）、`description?`、`group_id?`（兼容 `groupId` / `hive_id` / `hiveId`）、`mother_agent_id?`（兼容 `motherAgentId`）。
-  - 返回：`data`（蜂巢分组详情摘要）。
+  - 返回：`data`（蜂群分组详情摘要）。
 
 ### 4.1.58 `/wunder/beeroom/groups/{group_id}`
 
-- `GET /wunder/beeroom/groups/{group_id}`：获取蜂巢详情。
+- `GET /wunder/beeroom/groups/{group_id}`：获取蜂群详情。
   - Query：`mission_limit?`
-  - 返回：`data.group`（蜂巢摘要）、`data.agents[]`（完整成员态势）、`data.missions[]`（最近任务快照）。
+  - 返回：`data.group`（蜂群摘要）、`data.agents[]`（完整成员态势）、`data.missions[]`（最近任务快照，包含 `tasks[]`，可直接驱动任务画布）。
 
 ### 4.1.59 `/wunder/beeroom/groups/{group_id}/move_agents`
 
-- `POST /wunder/beeroom/groups/{group_id}/move_agents`：把若干智能体迁入指定蜂巢。
+- `POST /wunder/beeroom/groups/{group_id}/move_agents`：把若干智能体迁入指定蜂群。
   - 入参（JSON）：`agent_ids`（兼容 `agentIds`）。
   - 返回：`data.moved`、`data.group_id`。
 
 ### 4.1.60 `/wunder/beeroom/groups/{group_id}/missions`
 
-- `GET /wunder/beeroom/groups/{group_id}/missions`：按蜂巢查询任务列表。
+- `GET /wunder/beeroom/groups/{group_id}/missions`：按蜂群查询任务列表。
   - Query：`offset?`、`limit?`
   - 返回：`data.items[]` / `data.total`，每条任务包含 `team_run_id/mission_id/hive_id/parent_session_id/entry_agent_id/mother_agent_id/strategy/status/completion_status/task_total/task_success/task_failed/context_tokens_total/context_tokens_peak/model_round_total/started_time/finished_time/elapsed_s/summary/error/updated_time/all_tasks_terminal/all_agents_idle/active_agent_ids/idle_agent_ids/tasks[]`。
 
 ### 4.1.61 `/wunder/beeroom/groups/{group_id}/missions/{mission_id}`
 
-- `GET /wunder/beeroom/groups/{group_id}/missions/{mission_id}`：获取单个蜂巢任务详情。
-  - 后端会校验任务所属用户和 `hive_id` 是否与目标蜂巢一致。
+- `GET /wunder/beeroom/groups/{group_id}/missions/{mission_id}`：获取单个蜂群任务详情。
+  - 后端会校验任务所属用户和 `hive_id` 是否与目标蜂群一致。
 
 ### 4.1.62 蜂群工具与 TeamRun 补充说明
 
@@ -2291,6 +2297,7 @@
 - 轮次字段说明：`data.user_round` 为用户轮次，`data.model_round` 为模型轮次。
 - 当前 Rust 版会输出 `progress`, `llm_output_delta`, `llm_output`, `context_usage`, `quota_usage`, `tool_call`, `tool_result`, `plan_update`, `question_panel`, `final` 等事件，其余事件待补齐。
 - `event: progress`：阶段性过程信息（摘要）
+  - 当 `data.stage=tool_failure_guard` 时，会附带 `tool/repeat_count/threshold/tool_error`，表示同类工具连续失败触发止损。
 - `event: llm_request`：模型 API 请求体（调试用；默认仅返回基础元信息并标记 `payload_omitted`，开启 `debug_payload` 或日志级别为 debug/trace 时包含完整 payload；若上一轮包含思考过程，将在 messages 中附带 `reasoning_content`；当上一轮为工具调用时，messages 会包含该轮 assistant 原始输出与 reasoning）
   - 说明：`freeform_call + OpenAI Responses` 场景下，`payload.tools` 会同时出现 `type=function` 与 `type=custom`；`apply_patch` 会以原生 grammar tool 暴露，而不是退化成仅靠提示词约束的 XML 调用。
 - `event: knowledge_request`：知识库检索模型请求体（调试用，包含 `query` 或 `keywords`、`limit`、`embedding_model` 等）
@@ -2321,6 +2328,7 @@
   - 关键字段：`hard_guard_triggered/context_guard_applied/context_guard_tokens_before/context_guard_tokens_after/context_guard_current_user_trimmed/context_guard_summary_trimmed/context_guard_summary_removed`，用于说明压缩触发来源及压缩后为适配上下文窗口执行的二次裁剪动作。
 - `event: final`：最终回复（`data.answer`/`data.usage`/`data.stop_reason`）
   - `stop_reason` 取值：`model_response`（模型直接回复）、`final_tool`（最终回复工具）、`a2ui`（A2UI 工具）、`question_panel`（等待问询面板选择）、`tool_failure_guard`（检测到连续工具失败并主动止损）、`max_rounds`（达到最大轮次兜底）、`empty_response`（模型未返回可展示最终答复）、`unknown`（兜底）
+  - 当 `stop_reason=tool_failure_guard` 时，`data.stop_meta` 会包含 `type/tool/repeat_count/threshold/tool_error`，便于前端明确提示“已达到失败保护阈值并停止自动重试”。
   - 当 `stop_reason=max_rounds` 时，`data.answer` 会优先返回面向用户的恢复提示，引导用户直接继续当前会话，或调大该模型的 `max_rounds` 后重试；若本轮已生成中间文件/表格，用户也可先查看工作区结果。
   - 常规 `data.answer` 输出也会在展示前移除工具调用片段与 `<think>...</think>` 推理标签，避免把模型中间思考直接暴露给用户。
 - `event: error`：错误信息（包含错误码与建议）

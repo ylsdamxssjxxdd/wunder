@@ -11,13 +11,13 @@ description: "使用 PptxGenJS 脚本化生成中文 PPTX（避免 HTML/Playwrig
 - 适合脚本化、可复现、可批量产出
 
 ## 模板清单与包含版式
-- `scripts/pptxgenjs-starter.js`（general）
+- `{{SKILL_ROOT}}/scripts/pptxgenjs-starter.js`（general）
   - Intro / Agenda / Features / Metrics / Quote&Closing
-- `scripts/pptxgenjs-starter-modern.js`（modern）
+- `{{SKILL_ROOT}}/scripts/pptxgenjs-starter-modern.js`（modern）
   - Intro / Problem / Solution / Market Size / Traction / Closing
-- `scripts/pptxgenjs-starter-standard.js`（standard）
+- `{{SKILL_ROOT}}/scripts/pptxgenjs-starter-standard.js`（standard）
   - Intro / Outline / Bullet+Image / Metrics / Closing
-- `scripts/pptxgenjs-starter-swift.js`（swift）
+- `{{SKILL_ROOT}}/scripts/pptxgenjs-starter-swift.js`（swift）
   - Intro / Contents / Feature Cards / Timeline / Metrics
 
 ## 推荐流程（更明确版）

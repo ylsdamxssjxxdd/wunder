@@ -83,9 +83,9 @@ skill-name/
 │   ├── YAML frontmatter (name, description required)
 │   └── Markdown instructions
 └── Bundled Resources (optional)
-    ├── scripts/    - Executable code for deterministic/repetitive tasks
-    ├── references/ - Docs loaded into context as needed
-    └── assets/     - Files used in output (templates, icons, fonts)
+    ├── {{SKILL_ROOT}}/scripts/    - Executable code for deterministic/repetitive tasks
+    ├── {{SKILL_ROOT}}/references/ - Docs loaded into context as needed
+    └── {{SKILL_ROOT}}/assets/     - Files used in output (templates, icons, fonts)
 ```
 
 ### 渐进式加载（Progressive Disclosure）
@@ -306,7 +306,7 @@ kill $VIEWER_PID 2>/dev/null
 1. **抽象反馈，避免过拟合**：不要只对某个示例做死修正，思考更通用的改法。
 2. **保持精简**：删掉不必要的内容，避免指令冗余。
 3. **解释“为什么”**：与其写 MUST，不如让模型理解为什么重要。
-4. **识别重复劳动**：若多个测试都生成类似脚本，应收敛成 `scripts/` 并在技能里引用。
+4. **识别重复劳动**：若多个测试都生成类似脚本，应收敛成 `{{SKILL_ROOT}}/scripts/` 并在技能里引用。
 
 ### 迭代流程
 

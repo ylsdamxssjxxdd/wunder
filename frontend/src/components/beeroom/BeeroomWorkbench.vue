@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <section class="beeroom-workbench">
     <div v-if="loading" class="beeroom-state beeroom-state--loading">{{ t('common.loading') }}</div>
     <div v-else-if="!group" class="beeroom-state">
@@ -65,7 +65,12 @@
 
           <div v-if="!agents.length" class="beeroom-panel-empty">{{ t('beeroom.members.empty') }}</div>
           <div v-else class="beeroom-member-list">
-            <article v-for="member in agents" :key="member.agent_id" class="beeroom-member-card">
+            <article
+              v-for="member in agents"
+              :key="member.agent_id"
+              class="beeroom-member-card"
+              @dblclick="$emit('open-agent', member.agent_id)"
+            >
               <div class="beeroom-member-head">
                 <div class="beeroom-member-avatar">{{ avatarLabel(member.name || member.agent_id) }}</div>
                 <div class="beeroom-member-main">
@@ -83,6 +88,9 @@
               <div class="beeroom-member-foot">
                 <span>{{ t('beeroom.members.sessions', { count: member.active_session_total || 0 }) }}</span>
                 <span>{{ member.approval_mode || '-' }}</span>
+                <button class="beeroom-inline-link" type="button" @click="$emit('open-agent', member.agent_id)">
+                  {{ t('beeroom.canvas.openChat') }}
+                </button>
               </div>
             </article>
           </div>
@@ -129,6 +137,13 @@
         </section>
       </div>
 
+      <BeeroomMissionCanvas
+        :group="group"
+        :mission="selectedMission"
+        :agents="agents"
+        @open-agent="emit('open-agent', $event)"
+      />
+
       <section class="beeroom-panel beeroom-panel--detail">
         <div class="beeroom-panel-head">
           <div>
@@ -161,7 +176,12 @@
           </div>
 
           <div class="beeroom-task-grid">
-            <article v-for="task in selectedMission.tasks || []" :key="task.task_id" class="beeroom-task-card">
+            <article
+              v-for="task in selectedMission.tasks || []"
+              :key="task.task_id"
+              class="beeroom-task-card"
+              @dblclick="$emit('open-agent', task.agent_id)"
+            >
               <div class="beeroom-task-head">
                 <span class="beeroom-task-name">{{ resolveAgentName(task.agent_id) }}</span>
                 <span class="beeroom-status-chip" :class="resolveMissionTone(task.status)">
@@ -171,6 +191,9 @@
               <div class="beeroom-task-meta">
                 <span>{{ t('beeroom.task.priority') }} {{ task.priority ?? 0 }}</span>
                 <span>{{ t('beeroom.task.runId') }} {{ shortMissionId(task.session_run_id || '-') }}</span>
+                <button class="beeroom-inline-link" type="button" @click="$emit('open-agent', task.agent_id)">
+                  {{ t('beeroom.canvas.openChat') }}
+                </button>
               </div>
               <div class="beeroom-task-body">
                 {{ task.result_summary || task.error || t('beeroom.task.pending') }}
@@ -227,6 +250,7 @@
 import { computed, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
+import BeeroomMissionCanvas from '@/components/beeroom/BeeroomMissionCanvas.vue';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
 
 type AgentOption = {
@@ -247,6 +271,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'refresh'): void;
   (event: 'move-agents', value: string[]): void;
+  (event: 'open-agent', agentId: string): void;
 }>();
 
 const { t } = useI18n();
@@ -516,6 +541,14 @@ watch(
   color: var(--hula-danger);
 }
 
+.beeroom-inline-link {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--hula-accent);
+  cursor: pointer;
+}
+
 .beeroom-hero-actions {
   display: flex;
   flex-direction: column;
@@ -764,3 +797,4 @@ watch(
   }
 }
 </style>
+
