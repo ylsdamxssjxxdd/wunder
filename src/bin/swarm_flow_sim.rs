@@ -801,6 +801,7 @@ fn create_mother_session(state: &AppState, user_id: &str, mother_agent_id: &str)
         session_id: session_id.clone(),
         user_id: user_id.to_string(),
         title: "SwarmFlowMotherSession".to_string(),
+        status: "active".to_string(),
         created_at: now,
         updated_at: now,
         last_message_at: now,

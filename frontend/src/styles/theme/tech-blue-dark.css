@@ -252,8 +252,9 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-avatar-icon-btn,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-inline-btn,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-main-btn,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-rename-btn,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-btn,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-delete-btn,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-archive-btn,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-cron-field textarea,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-cron-field input,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-cron-repeat-row input,
@@ -303,7 +304,9 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-btn:hover:not(:disabled),
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-inline-btn:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-main-btn:hover:not(:disabled),
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-rename-btn:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-detail-btn:hover,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-archive-btn:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-avatar-icon-btn:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-avatar-icon-btn.active,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .input-icon-btn:hover,
@@ -432,7 +435,7 @@
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-action.danger,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-btn.danger,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-delete-btn:hover {
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-archived-thread-delete-btn:hover {
   border-color: rgba(248, 113, 113, 0.42);
   background: rgba(127, 29, 29, 0.32);
   color: #fca5a5;
@@ -1394,7 +1397,7 @@
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog .user-tools-btn.danger.btn-with-icon.icon-only,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog .user-skill-delete,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-delete-btn {
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-archived-thread-delete-btn {
   border-color: rgba(248, 113, 113, 0.34);
   background:
     radial-gradient(circle at 24% 22%, rgba(248, 113, 113, 0.18), transparent 48%),
@@ -1407,7 +1410,7 @@
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog .user-tools-btn.danger.btn-with-icon.icon-only:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog .user-skill-delete:hover,
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-timeline-delete-btn:hover {
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-archived-thread-delete-btn:hover {
   border-color: rgba(248, 113, 113, 0.52);
   background:
     radial-gradient(circle at 24% 22%, rgba(248, 113, 113, 0.24), transparent 52%),

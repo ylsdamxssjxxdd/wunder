@@ -231,6 +231,7 @@ pub fn resolve_or_create_agent_main_session(
         } else {
             title
         },
+        status: "active".to_string(),
         created_at: now,
         updated_at: now,
         last_message_at: now,
@@ -594,6 +595,7 @@ mod tests {
             session_id: "sess_existing".to_string(),
             user_id: "alice".to_string(),
             title: "Intel".to_string(),
+            status: "active".to_string(),
             created_at: 10.0,
             updated_at: 12.0,
             last_message_at: 12.0,

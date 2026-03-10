@@ -10,6 +10,9 @@ export const AgentCronPanel = lazy(() => import('@/components/messenger/AgentCro
 export const AgentRuntimeRecordsPanel = lazy(
   () => import('@/components/messenger/AgentRuntimeRecordsPanel.vue')
 );
+export const ArchivedThreadManager = lazy(
+  () => import('@/components/messenger/ArchivedThreadManager.vue')
+);
 export const AgentSettingsPanel = lazy(
   () => import('@/components/messenger/AgentSettingsPanel.vue')
 );

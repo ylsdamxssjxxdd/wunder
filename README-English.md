@@ -15,6 +15,15 @@ It is not just chat. You state the goal, it breaks down the work, calls tools, a
 | Long-session continuity | Context compaction plus long-term memory | Ongoing projects, iterative refinement |
 | Unified access and channels | Server provides unified entry, WS first + SSE fallback | Consistent multi-endpoint access |
 
+## Hive Protocol (HPP) and Multi-Agent Asset Packaging
+- `Hive`: a collaboration unit that groups multiple agent roles around one business objective.
+- `WorkerPack`: role-level package describing responsibilities, constraints, and attached skills.
+- `HivePack`: distributable package containing hive manifest + multiple worker packs + skill resource declarations.
+- After import, the system auto-creates and assigns agents, auto-enables skills, and mounts built-in/MCP/knowledge tools by default for fast adaptation.
+- Conflict handling supports two policies:
+  - `auto_rename_only` (default): rename conflicting items and preserve existing local assets.
+  - `update_replace`: replace same-name items with package content for upgrade-style rollout.
+
 ## What You Can Do
 - Write docs, proposals, summaries, tables, and slides
 - Search and synthesize information, extract key points

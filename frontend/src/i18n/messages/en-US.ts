@@ -1,4 +1,4 @@
-export default {
+﻿export default {
   'language.zh-CN': '简体中文',
   'language.en-US': 'English',
   'common.loading': 'Loading...',
@@ -910,6 +910,23 @@ export default {
   'chat.history.setMainFailed': 'Failed to set main thread',
   'chat.history.confirmTitle': 'Confirm',
   'chat.history.empty': 'No timeline records',
+  'chat.history.archive': 'Archive Thread',
+  'chat.history.confirmArchive': 'Archive this thread?',
+  'chat.history.archiveSuccess': 'Thread archived',
+  'chat.history.archiveFailed': 'Failed to archive thread',
+  'chat.history.rename': 'Rename Thread',
+  'chat.history.renamePrompt': 'Enter a thread name',
+  'chat.history.renamePlaceholder': 'Enter a new thread name',
+  'chat.history.renameRequired': 'Thread name cannot be empty',
+  'chat.history.renameSuccess': 'Thread renamed',
+  'chat.history.renameFailed': 'Failed to rename thread',
+  'chat.history.archivedButton': 'Archived Threads',
+  'chat.history.archivedDialogTitle': 'Archived Threads',
+  'chat.history.archivedEmpty': 'No archived threads',
+  'chat.history.restore': 'Restore Thread',
+  'chat.history.restoreSuccess': 'Thread restored',
+  'chat.history.restoreFailed': 'Failed to restore thread',
+  
   'chat.toBottom': 'Scroll to bottom',
   'chat.message.user': 'You',
   'chat.message.assistant': 'Agent',
@@ -930,7 +947,7 @@ export default {
   'chat.sessionTools.cancel': 'Cancel',
   'chat.sessionTools.apply': 'Apply',
   'chat.ability.title': 'Agent Capabilities',
-  'chat.ability.subtitle': 'Tools · Skills',
+  'chat.ability.subtitle': 'Tools 路 Skills',
   'chat.ability.loading': 'Loading capabilities...',
   'chat.ability.empty': 'No available tools/skills',
   'chat.ability.tools': 'Tools',
@@ -983,7 +1000,7 @@ export default {
   'chat.sessions.loadFailed': 'Failed to load sessions',
   'chat.sessions.openFailed': 'Failed to open session',
   'admin.title': 'Admin Console',
-  'admin.subtitle': 'Admin · wunder',
+  'admin.subtitle': 'Admin 路 wunder',
   'admin.nav.users': 'User Management',
   'admin.nav.agents': 'Wunder Settings',
   'admin.nav.system': 'System Status',
@@ -1196,7 +1213,7 @@ export default {
   'chat.workflow.queued': 'Queued',
   'chat.workflow.queuedDetail': 'This session is busy. Your request is queued and will run when idle.',
   'chat.workflow.slowClientDetail':
-    'Connection is slow. Some incremental output may be dropped. The app will try to resume automatically, and you can still click “Resume” if needed. Queue remaining: {capacity}',
+    'Connection is slow. Some incremental output may be dropped. The app will try to resume automatically, and you can still click 鈥淩esume鈥?if needed. Queue remaining: {capacity}',
   'chat.workflow.stage': 'Stage: {stage}',
   'chat.workflow.toolFailureGuardTriggered': 'Tool failure guard triggered',
   'chat.workflow.toolFailureGuardDetail':
@@ -1687,7 +1704,7 @@ export default {
   'messenger.right.settings': 'Settings',
   'messenger.timeline.detail.open': 'Thread Details',
   'messenger.timeline.detail.title': 'Thread Details',
-  'messenger.timeline.detail.titleWithId': 'Thread Details · {id}',
+  'messenger.timeline.detail.titleWithId': 'Thread Details 路 {id}',
   'messenger.timeline.detail.export': 'Export Logs',
   'messenger.timeline.detail.exported': 'Thread logs exported',
   'messenger.timeline.detail.exportFailed': 'Failed to export thread logs: {message}',
@@ -1885,6 +1902,7 @@ export default {
   'messenger.settings.themeHint': 'Choose the accent style for system settings',
   'messenger.settings.themeOptionHula': 'Hula Green',
   'messenger.settings.themeOptionEva': 'EVA Orange',
+  'messenger.settings.themeOptionClaw': 'Claw Orange',
   'messenger.settings.themeOptionMinimal': 'Minimal',
   'messenger.settings.themeOptionTechBlue': 'Tech Blue',
   'messenger.settings.motion': 'Visual effects',
@@ -2003,3 +2021,5 @@ export default {
   'system.maintenance.desc': 'The service is temporarily unavailable. Please try again later.',
   'system.maintenance.status': 'Status code: {status}'
 };
+
+

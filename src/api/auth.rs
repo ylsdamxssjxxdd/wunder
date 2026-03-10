@@ -641,7 +641,7 @@ fn normalize_theme_palette(value: &str) -> String {
     let normalized = value.trim().to_lowercase();
     if matches!(
         normalized.as_str(),
-        "hula-green" | "eva-orange" | "minimal" | "tech-blue"
+        "hula-green" | "eva-orange" | "claw-orange" | "minimal" | "tech-blue"
     ) {
         normalized
     } else {
@@ -922,6 +922,7 @@ mod tests {
     #[test]
     fn normalize_theme_palette_keeps_supported_palettes() {
         assert_eq!(normalize_theme_palette("eva-orange"), "eva-orange");
+        assert_eq!(normalize_theme_palette("claw-orange"), "claw-orange");
         assert_eq!(normalize_theme_palette("hula-green"), "hula-green");
         assert_eq!(normalize_theme_palette("minimal"), "minimal");
         assert_eq!(normalize_theme_palette("tech-blue"), "tech-blue");

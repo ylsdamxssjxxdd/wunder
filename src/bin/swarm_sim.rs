@@ -422,6 +422,7 @@ async fn create_and_enqueue_runs(
             session_id: parent_session_id.clone(),
             user_id: user_id.to_string(),
             title: format!("SwarmBenchParent{}", run_index + 1),
+            status: "active".to_string(),
             created_at: now,
             updated_at: now,
             last_message_at: now,

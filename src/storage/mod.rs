@@ -250,6 +250,7 @@ pub struct ChatSessionRecord {
     pub session_id: String,
     pub user_id: String,
     pub title: String,
+    pub status: String,
     pub created_at: f64,
     pub updated_at: f64,
     pub last_message_at: f64,
@@ -971,6 +972,15 @@ pub trait StorageBackend: Send + Sync {
         user_id: &str,
         agent_id: Option<&str>,
         parent_session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)>;
+    fn list_chat_sessions_by_status(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        status: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)>;

@@ -1175,6 +1175,10 @@
     "en-US": "Search query is required.",
     "zh-CN": "搜索关键字不能为空。"
   },
+  "tool.search.invalid_regex": {
+    "en-US": "Invalid regex pattern: {detail}.",
+    "zh-CN": "正则表达式无效：{detail}。"
+  },
   "tool.search.path_not_found": {
     "en-US": "Path not found.",
     "zh-CN": "路径不存在。"
@@ -1884,12 +1888,32 @@
     "zh-CN": "可选，限制搜索范围的目录，相对工程师工作目录。"
   },
   "tool.spec.search.args.query": {
-    "en-US": "Search text (case-insensitive literal).",
-    "zh-CN": "要搜索的文本（不区分大小写的字面量）。"
+    "en-US": "Search text or regex pattern, depending on query_mode.",
+    "zh-CN": "搜索文本或正则模式（由 query_mode 决定）。"
+  },
+  "tool.spec.search.args.query_mode": {
+    "en-US": "Optional. Query mode: literal (default) or regex.",
+    "zh-CN": "可选。查询模式：literal（默认）或 regex。"
+  },
+  "tool.spec.search.args.regex": {
+    "en-US": "Optional alias. true means query_mode=regex.",
+    "zh-CN": "可选别名。true 等价于 query_mode=regex。"
+  },
+  "tool.spec.search.args.case_sensitive": {
+    "en-US": "Optional. Whether matching is case-sensitive (default false).",
+    "zh-CN": "可选。是否区分大小写（默认 false）。"
+  },
+  "tool.spec.search.args.context_before": {
+    "en-US": "Optional. Number of context lines before each hit (0-20).",
+    "zh-CN": "可选。每条命中前返回的上下文行数（0-20）。"
+  },
+  "tool.spec.search.args.context_after": {
+    "en-US": "Optional. Number of context lines after each hit (0-20).",
+    "zh-CN": "可选。每条命中后返回的上下文行数（0-20）。"
   },
   "tool.spec.search.description": {
-    "en-US": "Search all text files under the workspace for the query string (case-insensitive). Returns <path>:<line>:<content>.",
-    "zh-CN": "在工程师工作目录下搜索所有文本文件中的查询字符串（不区分大小写）。返回格式为 <path>:<line>:<content>。"
+    "en-US": "Search text files under the workspace with literal/regex modes. Returns legacy matches plus structured hits with context and highlight segments.",
+    "zh-CN": "在工作区文本文件中按字面量/正则模式搜索。返回兼容的 matches 字段，以及包含上下文与高亮分段的结构化 hits。"
   },
   "tool.spec.write.args.content": {
     "en-US": "File content.",

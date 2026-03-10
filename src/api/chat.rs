@@ -37,6 +37,8 @@ const DEFAULT_MESSAGE_LIMIT: i64 = 500;
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
 const MAX_ATTACHMENT_UPLOAD_BYTES: usize = 10 * 1024 * 1024;
 const STREAM_EVENT_HEARTBEAT_INTERVAL_S: f64 = 15.0;
+const CHAT_SESSION_STATUS_ACTIVE: &str = "active";
+const CHAT_SESSION_STATUS_ARCHIVED: &str = "archived";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -48,6 +50,18 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/chat/sessions/{session_id}",
             get(get_session).delete(delete_session),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/archive",
+            post(archive_session),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/restore",
+            post(restore_session),
+        )
+        .route(
+            "/wunder/chat/sessions/{session_id}/title",
+            post(update_session_title),
         )
         .route(
             "/wunder/chat/sessions/{session_id}/events",
@@ -107,6 +121,8 @@ struct SessionListQuery {
         alias = "parentSessionId"
     )]
     parent_session_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,6 +218,11 @@ struct SessionToolsUpdateRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct SessionTitleUpdateRequest {
+    title: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct SessionCompactionRequest {
     #[serde(default)]
     model_name: Option<String>,
@@ -235,6 +256,7 @@ async fn create_session(
         } else {
             title
         },
+        status: CHAT_SESSION_STATUS_ACTIVE.to_string(),
         created_at: now,
         updated_at: now,
         last_message_at: now,
@@ -277,12 +299,20 @@ async fn list_sessions(
     let (offset, limit) = resolve_pagination(&query);
     let agent_id = query.agent_id.as_deref().map(|value| value.trim());
     let parent_session_id = query.parent_session_id.as_deref().map(|value| value.trim());
+    let status_filter = match query.status.as_deref().map(str::trim) {
+        Some(value) if value.eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED) => {
+            Some(CHAT_SESSION_STATUS_ARCHIVED)
+        }
+        Some(value) if value.eq_ignore_ascii_case("all") => None,
+        _ => Some(CHAT_SESSION_STATUS_ACTIVE),
+    };
     let (sessions, total) = state
         .user_store
-        .list_chat_sessions(
+        .list_chat_sessions_by_status(
             &resolved.user.user_id,
             agent_id,
             parent_session_id,
+            status_filter,
             offset,
             limit,
         )
@@ -614,6 +644,218 @@ async fn delete_session(
     Ok(Json(json!({ "data": { "id": session_id } })))
 }
 
+async fn update_session_title(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+    Json(payload): Json<SessionTitleUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let title = payload.title.trim();
+    if title.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let mut record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let now = now_ts();
+    record.title = title.to_string();
+    record.updated_at = now;
+    if !record
+        .status
+        .trim()
+        .eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED)
+    {
+        record.status = CHAT_SESSION_STATUS_ACTIVE.to_string();
+    }
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let is_main = resolve_session_main_flag(
+        &state,
+        &resolved.user.user_id,
+        record.agent_id.as_deref(),
+        &session_id,
+    );
+    let config = state.config_store.get().await;
+    let model_name = resolve_default_model_name(&config);
+    let mut payload = session_payload_with_main(&record, is_main);
+    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
+        map.insert("model_name".to_string(), json!(model_name));
+    }
+    Ok(Json(json!({ "data": payload })))
+}
+
+async fn archive_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let mut record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let now = now_ts();
+    record.status = CHAT_SESSION_STATUS_ARCHIVED.to_string();
+    record.updated_at = now;
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let agent_key = record.agent_id.as_deref().unwrap_or("").trim().to_string();
+    let is_current_main = resolve_session_main_flag(
+        &state,
+        &resolved.user.user_id,
+        Some(&agent_key),
+        &session_id,
+    );
+    if is_current_main {
+        let (fallback_sessions, _) = state
+            .user_store
+            .list_chat_sessions_by_status(
+                &resolved.user.user_id,
+                Some(agent_key.as_str()),
+                None,
+                Some(CHAT_SESSION_STATUS_ACTIVE),
+                0,
+                32,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if let Some(fallback) = fallback_sessions
+            .into_iter()
+            .find(|item| item.session_id != session_id)
+        {
+            let _ = state
+                .agent_runtime
+                .set_main_session(
+                    &resolved.user.user_id,
+                    agent_key.as_str(),
+                    &fallback.session_id,
+                    "archive",
+                )
+                .await;
+        }
+    }
+    let is_main = resolve_session_main_flag(
+        &state,
+        &resolved.user.user_id,
+        record.agent_id.as_deref(),
+        &session_id,
+    );
+    let config = state.config_store.get().await;
+    let model_name = resolve_default_model_name(&config);
+    let mut payload = session_payload_with_main(&record, is_main);
+    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
+        map.insert("model_name".to_string(), json!(model_name));
+    }
+    Ok(Json(json!({ "data": payload })))
+}
+
+async fn restore_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let session_id = session_id.trim().to_string();
+    if session_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let mut record = state
+        .user_store
+        .get_chat_session(&resolved.user.user_id, &session_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.session_not_found")))?;
+    let now = now_ts();
+    record.status = CHAT_SESSION_STATUS_ACTIVE.to_string();
+    record.updated_at = now;
+    state
+        .user_store
+        .upsert_chat_session(&record)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let agent_key = record.agent_id.as_deref().unwrap_or("").trim().to_string();
+    let main_thread = state
+        .user_store
+        .get_agent_thread(&resolved.user.user_id, agent_key.as_str())
+        .ok()
+        .flatten();
+    let should_rebind_main = match main_thread {
+        None => true,
+        Some(thread) => {
+            let thread_session_id = thread.session_id.trim().to_string();
+            if thread_session_id.is_empty() {
+                true
+            } else {
+                let thread_is_active = state
+                    .user_store
+                    .get_chat_session(&resolved.user.user_id, thread_session_id.as_str())
+                    .ok()
+                    .flatten()
+                    .map(|item| {
+                        !item
+                            .status
+                            .trim()
+                            .eq_ignore_ascii_case(CHAT_SESSION_STATUS_ARCHIVED)
+                    })
+                    .unwrap_or(false);
+                !thread_is_active
+            }
+        }
+    };
+    if should_rebind_main {
+        let _ = state
+            .agent_runtime
+            .set_main_session(
+                &resolved.user.user_id,
+                agent_key.as_str(),
+                &record.session_id,
+                "restore",
+            )
+            .await;
+    }
+
+    let is_main = resolve_session_main_flag(
+        &state,
+        &resolved.user.user_id,
+        record.agent_id.as_deref(),
+        &session_id,
+    );
+    let config = state.config_store.get().await;
+    let model_name = resolve_default_model_name(&config);
+    let mut payload = session_payload_with_main(&record, is_main);
+    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
+        map.insert("model_name".to_string(), json!(model_name));
+    }
+    Ok(Json(json!({ "data": payload })))
+}
+
 async fn send_message(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -755,6 +997,7 @@ pub(crate) async fn build_chat_request(
         session_id: session_id.clone(),
         user_id: user.user_id.clone(),
         title: DEFAULT_SESSION_TITLE.to_string(),
+        status: CHAT_SESSION_STATUS_ACTIVE.to_string(),
         created_at: now,
         updated_at: now,
         last_message_at: now,
@@ -1741,10 +1984,27 @@ fn map_stream_event(record: Value) -> Option<StreamEvent> {
     })
 }
 
+fn resolve_session_main_flag(
+    state: &Arc<AppState>,
+    user_id: &str,
+    agent_id: Option<&str>,
+    session_id: &str,
+) -> bool {
+    let agent_key = agent_id.unwrap_or("").trim();
+    state
+        .user_store
+        .get_agent_thread(user_id, agent_key)
+        .ok()
+        .flatten()
+        .map(|thread| thread.session_id == session_id)
+        .unwrap_or(false)
+}
+
 fn session_payload(record: &crate::storage::ChatSessionRecord) -> Value {
     json!({
         "id": record.session_id,
         "title": record.title,
+        "status": record.status,
         "created_at": format_ts(record.created_at),
         "updated_at": format_ts(record.updated_at),
         "last_message_at": format_ts(record.last_message_at),

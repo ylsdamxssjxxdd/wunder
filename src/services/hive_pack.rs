@@ -77,12 +77,13 @@ struct HiveManifest {
     protocol: Option<String>,
     #[serde(default)]
     kind: Option<String>,
+    #[serde(default)]
     pack: HivePackMeta,
     #[serde(default)]
     workers: Vec<HiveWorkerRef>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct HivePackMeta {
     #[serde(default)]
     id: Option<String>,
@@ -96,11 +97,12 @@ struct HivePackMeta {
 
 #[derive(Debug, Clone, Deserialize)]
 struct HiveWorkerRef {
-    worker_id: String,
+    #[serde(default)]
+    worker_id: Option<String>,
     path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct WorkerManifest {
     #[serde(default)]
     protocol: Option<String>,
@@ -259,6 +261,12 @@ struct WorkerImportSnapshot {
     role_prompt: String,
     installed_skills: Vec<String>,
     skill_installs: Vec<SkillInstallSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+struct ImportWorkerRef {
+    worker_id: String,
+    path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -438,6 +446,7 @@ async fn run_import_job_inner(
     let hive_manifest: HiveManifest = serde_yaml::from_str(&hive_manifest_text)
         .with_context(|| format!("parse {} failed", hive_manifest_path.display()))?;
     validate_hive_manifest(&hive_manifest)?;
+    let worker_refs = resolve_import_workers(&hive_manifest, &package_root)?;
 
     update_job(job, "planning", 20, "planning hive import tasks");
     persist_job(state, job)?;
@@ -467,7 +476,7 @@ async fn run_import_job_inner(
     if import_conflict_mode.allows_direct_replace() {
         std::fs::create_dir_all(&replace_backup_root)?;
     }
-    for worker_ref in &hive_manifest.workers {
+    for worker_ref in &worker_refs {
         let worker_snapshot = install_worker_snapshot(
             worker_ref,
             &package_root,
@@ -863,27 +872,21 @@ async fn run_export_job_inner(
 }
 
 fn install_worker_snapshot(
-    worker_ref: &HiveWorkerRef,
+    worker_ref: &ImportWorkerRef,
     package_root: &Path,
     skill_root: &Path,
     conflict_mode: ImportConflictMode,
     replace_backup_root: &Path,
     runtime: &mut ImportRuntime,
 ) -> Result<WorkerImportSnapshot> {
-    let worker_path = validate_relative_path(&worker_ref.path)?;
-    let worker_root = package_root.join(&worker_path);
+    let worker_root = package_root.join(&worker_ref.path);
     if !worker_root.exists() || !worker_root.is_dir() {
         return Err(anyhow!(
             "worker path missing: {}",
             worker_root.to_string_lossy()
         ));
     }
-    let worker_manifest_path = worker_root.join("worker.yaml");
-    let worker_manifest_text = std::fs::read_to_string(&worker_manifest_path)
-        .with_context(|| format!("read {} failed", worker_manifest_path.display()))?;
-    let worker_manifest: WorkerManifest = serde_yaml::from_str(&worker_manifest_text)
-        .with_context(|| format!("parse {} failed", worker_manifest_path.display()))?;
-    validate_worker_manifest(&worker_manifest)?;
+    let worker_manifest = load_worker_manifest(&worker_root, worker_ref)?;
 
     let role_prompt_path = worker_root.join("WORKER_ROLE.md");
     let role_prompt = std::fs::read_to_string(&role_prompt_path)
@@ -916,9 +919,12 @@ fn install_worker_snapshot(
         .as_ref()
         .and_then(|profile| profile.icon.clone());
 
+    // Keep manual packaging ergonomic: when worker.yaml omits skills (or is absent),
+    // discover skills from skills/*/SKILL.md automatically.
+    let skill_refs = resolve_worker_skill_refs(&worker_root, &worker_manifest)?;
     let mut installed_skills = Vec::new();
     let mut skill_installs = Vec::new();
-    for skill_ref in &worker_manifest.skills {
+    for skill_ref in &skill_refs {
         let skill_path = validate_relative_path(&skill_ref.path)?;
         let skill_source = worker_root.join(&skill_path);
         if !skill_source.exists() || !skill_source.is_dir() {
@@ -956,11 +962,8 @@ fn install_worker_snapshot(
         );
         let skill_target = skill_root.join(&final_name);
         if conflict_mode.allows_direct_replace() && skill_target.exists() {
-            let backup_dir = replace_backup_root.join(format!(
-                "{}-{}",
-                final_name,
-                Uuid::new_v4().simple()
-            ));
+            let backup_dir =
+                replace_backup_root.join(format!("{}-{}", final_name, Uuid::new_v4().simple()));
             copy_dir_recursive(&skill_target, &backup_dir)?;
             runtime.replaced_skill_backups.push(ReplacedSkillBackup {
                 skill_name: final_name.clone(),
@@ -982,7 +985,7 @@ fn install_worker_snapshot(
     }
 
     Ok(WorkerImportSnapshot {
-        worker_id: normalize_name(&worker_ref.worker_id, "worker"),
+        worker_id: worker_ref.worker_id.clone(),
         display_name,
         description,
         duty,
@@ -992,6 +995,138 @@ fn install_worker_snapshot(
         installed_skills,
         skill_installs,
     })
+}
+
+fn resolve_import_workers(
+    hive_manifest: &HiveManifest,
+    package_root: &Path,
+) -> Result<Vec<ImportWorkerRef>> {
+    let mut workers = Vec::new();
+    if !hive_manifest.workers.is_empty() {
+        for (index, worker_ref) in hive_manifest.workers.iter().enumerate() {
+            let worker_path = validate_relative_path(&worker_ref.path)?;
+            workers.push(ImportWorkerRef {
+                worker_id: resolve_worker_id(
+                    worker_ref.worker_id.as_deref(),
+                    worker_path.file_name().and_then(|name| name.to_str()),
+                    index + 1,
+                ),
+                path: worker_path,
+            });
+        }
+    } else {
+        let workers_root = package_root.join("workers");
+        if workers_root.is_dir() {
+            let mut entries = std::fs::read_dir(&workers_root)?
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().is_dir())
+                .collect::<Vec<_>>();
+            entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_string());
+            for (index, entry) in entries.into_iter().enumerate() {
+                let worker_dir_name = entry.file_name().to_string_lossy().to_string();
+                let worker_path = validate_relative_path(&format!("workers/{worker_dir_name}"))?;
+                workers.push(ImportWorkerRef {
+                    worker_id: resolve_worker_id(
+                        Some(&worker_dir_name),
+                        Some(&worker_dir_name),
+                        index + 1,
+                    ),
+                    path: worker_path,
+                });
+            }
+        }
+    }
+    if workers.is_empty() {
+        return Err(anyhow!(
+            "no workers found: provide hive.yaml workers[] or create workers/<id>/ directories"
+        ));
+    }
+
+    // Ensure worker IDs are deterministic and unique for report and conflict handling.
+    let mut occupied = HashSet::new();
+    for worker in &mut workers {
+        worker.worker_id = unique_slug_with_reserved(&worker.worker_id, &occupied, "worker");
+        occupied.insert(worker.worker_id.clone());
+    }
+    Ok(workers)
+}
+
+fn load_worker_manifest(
+    worker_root: &Path,
+    worker_ref: &ImportWorkerRef,
+) -> Result<WorkerManifest> {
+    let worker_manifest_path = worker_root.join("worker.yaml");
+    if worker_manifest_path.is_file() {
+        let worker_manifest_text = std::fs::read_to_string(&worker_manifest_path)
+            .with_context(|| format!("read {} failed", worker_manifest_path.display()))?;
+        let worker_manifest: WorkerManifest = serde_yaml::from_str(&worker_manifest_text)
+            .with_context(|| format!("parse {} failed", worker_manifest_path.display()))?;
+        validate_worker_manifest(&worker_manifest)?;
+        return Ok(worker_manifest);
+    }
+
+    Ok(WorkerManifest {
+        protocol: None,
+        kind: None,
+        worker: WorkerMeta {
+            id: Some(worker_ref.worker_id.clone()),
+            display_name: Some(worker_ref.worker_id.clone()),
+            description: None,
+            duty: None,
+        },
+        agent_profile: None,
+        skills: Vec::new(),
+    })
+}
+
+fn resolve_worker_skill_refs(
+    worker_root: &Path,
+    worker_manifest: &WorkerManifest,
+) -> Result<Vec<WorkerSkillRef>> {
+    if !worker_manifest.skills.is_empty() {
+        return Ok(worker_manifest.skills.clone());
+    }
+
+    let skills_root = worker_root.join("skills");
+    if !skills_root.is_dir() {
+        return Err(anyhow!(
+            "worker skills missing: provide worker.yaml skills[] or create skills/<id>/SKILL.md"
+        ));
+    }
+
+    let mut refs = std::fs::read_dir(&skills_root)?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().is_dir())
+        .filter_map(|entry| {
+            let skill_dir = entry.path();
+            if !skill_dir.join("SKILL.md").is_file() {
+                return None;
+            }
+            let dir_name = entry.file_name().to_string_lossy().to_string();
+            Some(WorkerSkillRef {
+                skill_id: Some(dir_name.clone()),
+                path: format!("skills/{dir_name}"),
+            })
+        })
+        .collect::<Vec<_>>();
+    refs.sort_by_key(|item| item.path.clone());
+    if refs.is_empty() {
+        return Err(anyhow!(
+            "worker skills missing: no SKILL.md found under {}",
+            skills_root.display()
+        ));
+    }
+    Ok(refs)
+}
+
+fn resolve_worker_id(preferred: Option<&str>, from_path: Option<&str>, index: usize) -> String {
+    let base = preferred
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| from_path.map(str::trim).filter(|value| !value.is_empty()))
+        .unwrap_or("worker");
+    let fallback = format!("worker-{index}");
+    normalize_name(base, &fallback)
 }
 
 fn collect_non_skill_tools(
@@ -1144,7 +1279,9 @@ fn resolve_or_create_target_hive(
 
         if let Some(existing) = existing_hives
             .iter()
-            .find(|item| normalize_conflict_key(&item.name) == normalize_conflict_key(preferred_hive_name))
+            .find(|item| {
+                normalize_conflict_key(&item.name) == normalize_conflict_key(preferred_hive_name)
+            })
             .cloned()
         {
             let updated = update_hive_metadata(
@@ -1167,12 +1304,16 @@ fn resolve_or_create_target_hive(
         } else {
             preferred_hive_id.clone()
         };
-        let final_hive_name = if occupied_hive_name_keys.contains(&normalize_conflict_key(preferred_hive_name))
-        {
-            unique_label_with_reserved(preferred_hive_name, &occupied_hive_name_keys, "Imported Hive")
-        } else {
-            preferred_hive_name.to_string()
-        };
+        let final_hive_name =
+            if occupied_hive_name_keys.contains(&normalize_conflict_key(preferred_hive_name)) {
+                unique_label_with_reserved(
+                    preferred_hive_name,
+                    &occupied_hive_name_keys,
+                    "Imported Hive",
+                )
+            } else {
+                preferred_hive_name.to_string()
+            };
         let created = create_hive(
             state,
             user_id,
@@ -1197,8 +1338,11 @@ fn resolve_or_create_target_hive(
 
     let final_hive_id =
         unique_slug_with_reserved(&preferred_hive_id, &occupied_hive_ids, "hivepack");
-    let final_hive_name =
-        unique_label_with_reserved(preferred_hive_name, &occupied_hive_name_keys, "Imported Hive");
+    let final_hive_name = unique_label_with_reserved(
+        preferred_hive_name,
+        &occupied_hive_name_keys,
+        "Imported Hive",
+    );
 
     let created = create_hive(
         state,
@@ -1332,7 +1476,10 @@ fn rollback_import(state: &AppState, user_id: &str, runtime: &ImportRuntime) -> 
             continue;
         }
         if let Err(err) = state.user_store.upsert_user_agent(agent) {
-            errors.push(format!("restore replaced agent {} failed: {err}", agent.agent_id));
+            errors.push(format!(
+                "restore replaced agent {} failed: {err}",
+                agent.agent_id
+            ));
         }
     }
     if runtime.captured_previous_skills {
@@ -1377,8 +1524,14 @@ fn normalize_export_mode(raw: Option<&str>) -> String {
 }
 
 fn normalize_import_conflict_mode(raw: Option<&str>) -> ImportConflictMode {
-    let cleaned = raw.unwrap_or("auto_rename_only").trim().to_ascii_lowercase();
-    if matches!(cleaned.as_str(), "update_replace" | "replace" | "update-replace") {
+    let cleaned = raw
+        .unwrap_or("auto_rename_only")
+        .trim()
+        .to_ascii_lowercase();
+    if matches!(
+        cleaned.as_str(),
+        "update_replace" | "replace" | "update-replace"
+    ) {
         ImportConflictMode::UpdateReplace
     } else {
         ImportConflictMode::AutoRenameOnly
@@ -1584,9 +1737,6 @@ fn validate_relative_path(raw: &str) -> Result<PathBuf> {
 }
 
 fn validate_hive_manifest(manifest: &HiveManifest) -> Result<()> {
-    if manifest.workers.is_empty() {
-        return Err(anyhow!("hive manifest workers is empty"));
-    }
     if manifest
         .protocol
         .as_deref()
@@ -1605,9 +1755,6 @@ fn validate_hive_manifest(manifest: &HiveManifest) -> Result<()> {
 }
 
 fn validate_worker_manifest(manifest: &WorkerManifest) -> Result<()> {
-    if manifest.skills.is_empty() {
-        return Err(anyhow!("worker manifest skills is empty"));
-    }
     if manifest
         .protocol
         .as_deref()
@@ -1815,9 +1962,10 @@ fn now_ts() -> f64 {
 mod tests {
     use super::{
         normalize_approval_mode, normalize_conflict_key, normalize_import_conflict_mode,
-        normalize_name, resolve_import_skill_name, unique_label_with_reserved,
-        unique_slug_with_reserved, validate_archive_entry_path, validate_relative_path,
-        ImportConflictMode,
+        normalize_name, resolve_import_skill_name, resolve_import_workers,
+        resolve_worker_skill_refs, unique_label_with_reserved, unique_slug_with_reserved,
+        validate_archive_entry_path, validate_hive_manifest, validate_relative_path, HiveManifest,
+        HivePackMeta, ImportConflictMode, WorkerManifest,
     };
     use std::collections::HashSet;
     use tempfile::tempdir;
@@ -1907,7 +2055,9 @@ mod tests {
         let root = tempdir().expect("tempdir");
         let skill_root = root.path();
         std::fs::create_dir_all(skill_root.join("planner-skill-2")).expect("seed suffix skill");
-        let reserved = ["planner-skill".to_string()].into_iter().collect::<HashSet<_>>();
+        let reserved = ["planner-skill".to_string()]
+            .into_iter()
+            .collect::<HashSet<_>>();
         assert_eq!(
             resolve_import_skill_name(
                 skill_root,
@@ -1917,5 +2067,68 @@ mod tests {
             ),
             "planner-skill-3"
         );
+    }
+
+    #[test]
+    fn validate_hive_manifest_allows_empty_workers_for_auto_discovery() {
+        let manifest = HiveManifest {
+            protocol: Some("hpp/1.0".to_string()),
+            kind: Some("hive_pack".to_string()),
+            pack: HivePackMeta {
+                id: Some("demo_hive".to_string()),
+                name: Some("Demo".to_string()),
+                version: Some("1.0.0".to_string()),
+                description: None,
+            },
+            workers: Vec::new(),
+        };
+        assert!(validate_hive_manifest(&manifest).is_ok());
+    }
+
+    #[test]
+    fn resolve_import_workers_discovers_workers_when_manifest_empty() {
+        let root = tempdir().expect("tempdir");
+        let workers_root = root.path().join("workers");
+        std::fs::create_dir_all(workers_root.join("planner")).expect("planner dir");
+        std::fs::create_dir_all(workers_root.join("executor")).expect("executor dir");
+        let manifest = HiveManifest {
+            protocol: Some("hpp/1.0".to_string()),
+            kind: Some("hive_pack".to_string()),
+            pack: HivePackMeta {
+                id: Some("demo_hive".to_string()),
+                name: Some("Demo".to_string()),
+                version: Some("1.0.0".to_string()),
+                description: None,
+            },
+            workers: Vec::new(),
+        };
+        let workers = resolve_import_workers(&manifest, root.path()).expect("resolve workers");
+        let ids = workers
+            .iter()
+            .map(|item| item.worker_id.clone())
+            .collect::<HashSet<_>>();
+        let paths = workers
+            .iter()
+            .map(|item| item.path.to_string_lossy().to_string())
+            .collect::<HashSet<_>>();
+        assert!(ids.contains("planner"));
+        assert!(ids.contains("executor"));
+        assert!(paths.contains("workers/planner"));
+        assert!(paths.contains("workers/executor"));
+    }
+
+    #[test]
+    fn resolve_worker_skill_refs_auto_discovers_skill_dirs() {
+        let root = tempdir().expect("tempdir");
+        let worker_root = root.path().join("workers").join("planner");
+        let skill_root = worker_root.join("skills").join("requirement_analyzer");
+        std::fs::create_dir_all(&skill_root).expect("skill dir");
+        std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
+
+        let worker_manifest = WorkerManifest::default();
+        let skill_refs = resolve_worker_skill_refs(worker_root.as_path(), &worker_manifest)
+            .expect("resolve worker skills");
+        assert_eq!(skill_refs.len(), 1);
+        assert_eq!(skill_refs[0].path, "skills/requirement_analyzer");
     }
 }

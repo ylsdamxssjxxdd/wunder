@@ -109,6 +109,10 @@ export const getSessionEvents = (id: string) => api.get(`/chat/sessions/${id}/ev
 export const getSessionHistoryPage = (id: string, params: QueryParams = {}) =>
   api.get(`/chat/sessions/${id}/history`, { params });
 export const deleteSession = (id: string) => api.delete(`/chat/sessions/${id}`);
+export const archiveSession = (id: string) => api.post(`/chat/sessions/${id}/archive`);
+export const restoreSession = (id: string) => api.post(`/chat/sessions/${id}/restore`);
+export const renameSession = (id: string, payload: unknown) =>
+  api.post(`/chat/sessions/${id}/title`, payload);
 export const sendMessage = (id: string, payload: unknown) => api.post(`/chat/sessions/${id}/messages`, payload);
 export const fetchSessionSystemPrompt = (id: string, payload: unknown) =>
   api.post(`/chat/sessions/${id}/system-prompt`, payload);

@@ -1578,11 +1578,7 @@ fn collect_workspace_paths_from_object(
     }
 }
 
-fn collect_workspace_paths_from_value(
-    value: &Value,
-    workspace_id: &str,
-    output: &mut Vec<String>,
-) {
+fn collect_workspace_paths_from_value(value: &Value, workspace_id: &str, output: &mut Vec<String>) {
     if output.len() >= WORKSPACE_UPDATE_MAX_CHANGED_PATHS {
         return;
     }
@@ -1882,8 +1878,7 @@ mod tests {
             "destination": "docs/archive",
             "paths": ["docs/e.md"]
         });
-        let paths =
-            extract_workspace_changed_paths(Some(&meta), &data, &args, "alice__c__2");
+        let paths = extract_workspace_changed_paths(Some(&meta), &data, &args, "alice__c__2");
         let expected = HashSet::from([
             "docs/a.md".to_string(),
             "docs/b.md".to_string(),

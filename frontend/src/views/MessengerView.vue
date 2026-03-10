@@ -418,6 +418,14 @@
                   >
                     {{ t('chat.features.runtimeRecords') }}
                   </button>
+                  <button
+                    class="messenger-inline-btn"
+                    :class="{ active: agentSettingMode === 'archived' }"
+                    type="button"
+                    @click="agentSettingMode = 'archived'"
+                  >
+                    {{ t('chat.history.archivedButton') }}
+                  </button>
                 </div>
 
                 <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
@@ -445,6 +453,13 @@
                 </div>
                 <div v-else-if="agentSettingMode === 'runtime'" class="messenger-chat-settings-block">
                   <AgentRuntimeRecordsPanel :agent-id="settingsRuntimeAgentIdForApi" />
+                </div>
+                <div v-else-if="agentSettingMode === 'archived'" class="messenger-chat-settings-block">
+                  <ArchivedThreadManager
+                    :agent-id="settingsAgentIdForApi"
+                    @open-session-detail="openTimelineSessionDetail"
+                    @session-deleted="handleArchivedSessionRemoved"
+                  />
                 </div>
 
               </template>
@@ -1179,7 +1194,8 @@
       @restore-session="restoreTimelineSession"
       @set-main="setTimelineSessionMain"
       @open-session-detail="openTimelineSessionDetail"
-      @delete-session="deleteTimelineSession"
+      @archive-session="archiveTimelineSession"
+      @rename-session="renameTimelineSession"
       @open-container="openContainerFromRightDock"
       @open-container-settings="openContainerSettingsFromRightDock"
     />
@@ -1251,7 +1267,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { ElLoading, ElMessage } from 'element-plus';
+import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 
 import { listAgentUserRounds, listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
@@ -1297,6 +1313,7 @@ import {
   AgentCronPanel,
   AgentRuntimeRecordsPanel,
   AgentSettingsPanel,
+  ArchivedThreadManager,
   DesktopContainerManagerPanel,
   DesktopSystemSettingsPanel,
   MessengerLocalFileSearchPanel,
@@ -1583,7 +1600,7 @@ const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expire
 const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
-const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime'>('agent');
+const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime' | 'archived'>('agent');
 const settingsPanelMode = ref<
   'general' | 'profile' | 'prompts' | 'desktop-models' | 'desktop-remote' | 'desktop-lan'
 >('general');
@@ -1788,7 +1805,7 @@ const sectionOptions = computed(() => {
   return [
     { key: 'messages' as MessengerSection, icon: 'fa-solid fa-comment-dots', label: t('messenger.section.messages') },
     { key: 'agents' as MessengerSection, icon: 'fa-solid fa-robot', label: t('messenger.section.agents') },
-    { key: 'swarms' as MessengerSection, icon: 'fa-solid fa-hexagon-nodes', label: t('messenger.section.swarms') },
+    { key: 'swarms' as MessengerSection, icon: 'fa-solid fa-bee', label: t('messenger.section.swarms') },
     { key: 'users' as MessengerSection, icon: 'fa-solid fa-user-group', label: t('messenger.section.users') },
     { key: 'groups' as MessengerSection, icon: 'fa-solid fa-comments', label: t('messenger.section.groups') },
     { key: 'tools' as MessengerSection, icon: 'fa-solid fa-wrench', label: t('messenger.section.tools') },
@@ -6714,11 +6731,43 @@ const setTimelineSessionMain = async (sessionId: string) => {
   }
 };
 
-const deleteTimelineSession = async (sessionId: string) => {
+const renameTimelineSession = async (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return;
+  const session = chatStore.sessions.find((item) => String(item?.id || '').trim() === targetId);
+  const currentTitle = String(session?.title || t('chat.newSession')).trim() || t('chat.newSession');
+  try {
+    const { value } = await ElMessageBox.prompt(
+      t('chat.history.renamePrompt'),
+      t('chat.history.rename'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        inputValue: currentTitle,
+        inputPlaceholder: t('chat.history.renamePlaceholder'),
+        inputValidator: (inputValue: string) =>
+          String(inputValue || '').trim() ? true : t('chat.history.renameRequired')
+      }
+    );
+    const nextTitle = String(value || '').trim();
+    if (!nextTitle || nextTitle === currentTitle) {
+      return;
+    }
+    await chatStore.renameSession(targetId, nextTitle);
+    ElMessage.success(t('chat.history.renameSuccess'));
+  } catch (error) {
+    if (error === 'cancel' || error === 'close') {
+      return;
+    }
+    showApiError(error, t('chat.history.renameFailed'));
+  }
+};
+
+const archiveTimelineSession = async (sessionId: string) => {
   const targetId = String(sessionId || '').trim();
   if (!targetId) return;
   const confirmed = await confirmWithFallback(
-    t('chat.history.confirmDelete'),
+    t('chat.history.confirmArchive'),
     t('chat.history.confirmTitle'),
     {
       type: 'warning',
@@ -6730,11 +6779,20 @@ const deleteTimelineSession = async (sessionId: string) => {
     return;
   }
   try {
-    await chatStore.deleteSession(targetId);
+    await chatStore.archiveSession(targetId);
     timelinePreviewMap.value.delete(targetId);
-    ElMessage.success(t('chat.history.delete'));
+    ElMessage.success(t('chat.history.archiveSuccess'));
   } catch (error) {
-    showApiError(error, t('chat.sessions.deleteFailed'));
+    showApiError(error, t('chat.history.archiveFailed'));
+  }
+};
+
+const handleArchivedSessionRemoved = (sessionId: string) => {
+  const targetId = String(sessionId || '').trim();
+  if (!targetId) return;
+  timelinePreviewMap.value.delete(targetId);
+  if (timelineDetailSessionId.value === targetId) {
+    timelineDetailDialogVisible.value = false;
   }
 };
 

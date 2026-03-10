@@ -62,6 +62,15 @@
                   <i class="fa-solid fa-thumbtack" aria-hidden="true"></i>
                 </button>
                 <button
+                  class="messenger-timeline-rename-btn"
+                  type="button"
+                  :title="t('chat.history.rename')"
+                  :aria-label="t('chat.history.rename')"
+                  @click.stop="$emit('rename-session', item.id)"
+                >
+                  <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+                </button>
+                <button
                   class="messenger-timeline-detail-btn"
                   type="button"
                   :title="t('messenger.timeline.detail.open')"
@@ -71,13 +80,14 @@
                   <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
                 </button>
                 <button
-                  class="messenger-timeline-delete-btn"
+                  v-if="!item.isMain"
+                  class="messenger-timeline-archive-btn"
                   type="button"
-                  :title="t('chat.history.delete')"
-                  :aria-label="t('chat.history.delete')"
-                  @click.stop="$emit('delete-session', item.id)"
+                  :title="t('chat.history.archive')"
+                  :aria-label="t('chat.history.archive')"
+                  @click.stop="$emit('archive-session', item.id)"
                 >
-                  <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+                  <i class="fa-solid fa-box-archive" aria-hidden="true"></i>
                 </button>
               </div>
             </div>
@@ -142,7 +152,8 @@ const emit = defineEmits<{
   (event: 'restore-session', sessionId: string): void;
   (event: 'set-main', sessionId: string): void;
   (event: 'open-session-detail', sessionId: string): void;
-  (event: 'delete-session', sessionId: string): void;
+  (event: 'archive-session', sessionId: string): void;
+  (event: 'rename-session', sessionId: string): void;
   (event: 'open-container', containerId: number): void;
   (event: 'open-container-settings', containerId: number): void;
 }>();

@@ -9,6 +9,20 @@
       <div class="beeroom-canvas-board" :class="{ 'chat-collapsed': chatCollapsed }">
         <div ref="boardRef" class="beeroom-canvas-graph-shell">
           <div ref="canvasRef" class="beeroom-canvas-surface"></div>
+          <div class="beeroom-canvas-legend">
+            <span class="beeroom-canvas-legend-item is-running">
+              <i aria-hidden="true"></i>
+              <span>{{ t('beeroom.status.running') }} {{ canvasStatusSummary.running }}</span>
+            </span>
+            <span class="beeroom-canvas-legend-item is-danger">
+              <i aria-hidden="true"></i>
+              <span>{{ t('beeroom.status.failed') }} {{ canvasStatusSummary.failed }}</span>
+            </span>
+            <span class="beeroom-canvas-legend-item is-idle">
+              <i aria-hidden="true"></i>
+              <span>{{ t('beeroom.members.idle') }} {{ canvasStatusSummary.idle }}</span>
+            </span>
+          </div>
           <div class="beeroom-canvas-minimap-shell">
             <div class="beeroom-canvas-minimap-label">{{ t('beeroom.canvas.minimap') }}</div>
             <div ref="minimapRef" class="beeroom-canvas-minimap"></div>
@@ -188,6 +202,7 @@ import {
 } from '@/api/beeroom';
 import { createSession, listSessions, sendMessageStream } from '@/api/chat';
 import { useI18n } from '@/i18n';
+import { useChatStore } from '@/stores/chat';
 import { consumeSseStream } from '@/utils/sse';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
@@ -231,6 +246,11 @@ type ComposerTargetOption = {
   role: 'mother' | 'worker';
 };
 
+type DispatchSessionTarget = {
+  sessionId: string;
+  sessionSummary: Record<string, unknown> | null;
+};
+
 type CanvasPositionOverride = {
   x: number;
   y: number;
@@ -249,15 +269,16 @@ const HEX_DIRECTIONS: HoneycombSlot[] = [
   { q: -1, r: 1 },
   { q: 0, r: 1 }
 ];
-const HONEYCOMB_RADIUS = 158;
+const HONEYCOMB_RADIUS = 178;
 const HONEYCOMB_VERTICAL_RATIO = 1.18;
-const NODE_WIDTH = 248;
-const MOTHER_NODE_WIDTH = 296;
-const NODE_HEIGHT = 96;
-const MOTHER_NODE_HEIGHT = 112;
+const NODE_WIDTH = 286;
+const MOTHER_NODE_WIDTH = 320;
+const NODE_HEIGHT = 106;
+const MOTHER_NODE_HEIGHT = 120;
 const GRID_PLUGIN_KEY = 'beeroom-grid-line';
 const MANUAL_CHAT_HISTORY_LIMIT = 120;
 const CHAT_POLL_INTERVAL_MS = 8000;
+const CARD_ACCENT_PALETTE = ['#3b82f6', '#8b5cf6', '#22c55e', '#06b6d4', '#eab308', '#f97316', '#ef4444'];
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -272,6 +293,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const chatStore = useChatStore();
 const boardRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLDivElement | null>(null);
 const minimapRef = ref<HTMLDivElement | null>(null);
@@ -348,6 +370,27 @@ const shortIdentity = (value: unknown, head = 8, tail = 6) => {
   return `${text.slice(0, head)}...${text.slice(-tail)}`;
 };
 
+const trimNodeTitle = (value: unknown, max = 12) => {
+  const text = String(value || '').trim();
+  if (!text) return '-';
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
+};
+
+const hashText = (value: string) => {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(index);
+    hash |= 0;
+  }
+  return Math.abs(hash);
+};
+
+const resolveNodeAccent = (agentId: string, isMother: boolean) => {
+  if (isMother) return '#f59e0b';
+  return CARD_ACCENT_PALETTE[hashText(agentId) % CARD_ACCENT_PALETTE.length] || '#3b82f6';
+};
+
 const avatarLabel = (value: unknown) => String(value || '?').trim().slice(0, 1).toUpperCase() || '?';
 
 const resolveStatusLabel = (value: unknown) => {
@@ -374,6 +417,64 @@ const resolveToneClass = (value: unknown) => {
   if (normalized === 'failed' || normalized === 'error' || normalized === 'timeout') return 'tone-danger';
   if (normalized === 'awaiting_idle') return 'tone-warn';
   return 'tone-muted';
+};
+
+const escapeHtml = (value: unknown) =>
+  String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const resolveCanvasNodeStatusClass = (value: unknown) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'running' || normalized === 'queued') return 'is-running';
+  if (normalized === 'completed' || normalized === 'success') return 'is-success';
+  if (normalized === 'failed' || normalized === 'error' || normalized === 'timeout' || normalized === 'cancelled') return 'is-danger';
+  if (normalized === 'awaiting_idle') return 'is-warn';
+  return 'is-muted';
+};
+
+const buildCanvasNodeCardHtml = (options: {
+  isMother: boolean;
+  accentColor: string;
+  avatar: string;
+  fullName: string;
+  displayName: string;
+  roleLabel: string;
+  status: string;
+  statusLabel: string;
+  taskTotal: number;
+  sessionTotal: number;
+}) => {
+  const statusClass = resolveCanvasNodeStatusClass(options.status);
+  const title = escapeHtml(options.displayName);
+  const fullName = escapeHtml(options.fullName);
+  const roleLabel = escapeHtml(trimNodeTitle(options.roleLabel, 10));
+  const statusLabel = escapeHtml(trimNodeTitle(options.statusLabel, 8));
+  const avatar = escapeHtml(options.avatar);
+  const tools = escapeHtml(formatCount(options.taskTotal));
+  const reports = escapeHtml(formatCount(options.sessionTotal));
+  const accentColor = String(options.accentColor || '#64748b').replace(/[^#a-zA-Z0-9(),.\s-]/g, '');
+
+  // Render a compact, fully-clipped card to avoid overflow under any zoom level.
+  return `
+    <div class="beeroom-node-card ${statusClass} ${options.isMother ? 'is-mother' : ''}" style="--node-accent:${accentColor};">
+      <div class="beeroom-node-card-head">
+        <span class="beeroom-node-avatar">${avatar}</span>
+        <div class="beeroom-node-title-group">
+          <div class="beeroom-node-title" title="${fullName}">${title}</div>
+          <div class="beeroom-node-subtitle">${roleLabel}</div>
+        </div>
+        <span class="beeroom-node-status">${statusLabel}</span>
+      </div>
+      <div class="beeroom-node-metrics">
+        <span class="beeroom-node-metric"><b>T</b>${tools}</span>
+        <span class="beeroom-node-metric"><b>R</b>${reports}</span>
+      </div>
+    </div>
+  `;
 };
 
 const resolveNodeStatus = (
@@ -515,35 +616,35 @@ const projection = computed(() => {
     const agentTasks = tasksByAgent.get(agentId) || [];
     const isMother = agentId === motherAgentId || (!motherAgentId && index === 0);
     const status = resolveNodeStatus(agentTasks, member, missionStatus);
+    const statusLabel = resolveStatusLabel(status);
     const nodeId = `agent:${agentId}`;
-    const badge = isMother ? t('beeroom.canvas.legendMother') : t('beeroom.canvas.legendWorker');
-    const name = String(member?.name || (isMother ? props.group?.mother_agent_name : '') || agentId);
+    const roleLabel = isMother ? t('beeroom.canvas.legendMother') : t('beeroom.canvas.legendWorker');
+    const name = String(member?.name || (isMother ? props.group?.mother_agent_name : '') || agentId).trim();
+    const displayName = trimNodeTitle(name, isMother ? 14 : 12);
+    const accentColor = resolveNodeAccent(agentId, isMother);
     const summary = String(
       agentTasks
         .map((task) => task.result_summary || task.error || '')
         .find((item) => String(item || '').trim()) || member?.description || ''
     ).trim();
-    const detailLabel = agentTasks.length > 0
-      ? `${t('beeroom.canvas.currentTaskTotal', { count: agentTasks.length })} / ${t('beeroom.members.sessions', {
-          count: Number(member?.active_session_total || 0)
-        })}`
-      : `${t('beeroom.members.idle')} / ${t('beeroom.members.sessions', {
-          count: Number(member?.active_session_total || 0)
-        })}`;
-    const tone =
-      status === 'completed'
-        ? { fill: 'rgba(6, 95, 70, 0.22)', stroke: 'rgba(52, 211, 153, 0.82)', glow: 'rgba(16, 185, 129, 0.18)' }
-        : status === 'failed' || status === 'cancelled'
-          ? { fill: 'rgba(127, 29, 29, 0.22)', stroke: 'rgba(248, 113, 113, 0.84)', glow: 'rgba(239, 68, 68, 0.18)' }
-          : status === 'awaiting_idle'
-            ? { fill: 'rgba(120, 53, 15, 0.2)', stroke: 'rgba(251, 191, 36, 0.86)', glow: 'rgba(245, 158, 11, 0.16)' }
-            : status === 'running'
-              ? { fill: 'rgba(8, 47, 73, 0.24)', stroke: 'rgba(56, 189, 248, 0.92)', glow: 'rgba(56, 189, 248, 0.22)' }
-              : { fill: 'rgba(9, 16, 31, 0.82)', stroke: 'rgba(125, 211, 252, 0.38)', glow: 'rgba(56, 189, 248, 0.12)' };
+    const sessionTotal = Number(member?.active_session_total || 0);
+    const avatar = avatarLabel(name);
     const slot = slots[index] || { q: 0, r: 0 };
     const position = nodePositionOverrides.value[nodeId] || resolveHoneycombPosition(slot);
     const width = isMother ? MOTHER_NODE_WIDTH : NODE_WIDTH;
     const height = isMother ? MOTHER_NODE_HEIGHT : NODE_HEIGHT;
+    const innerHTML = buildCanvasNodeCardHtml({
+      isMother,
+      accentColor,
+      avatar,
+      fullName: name,
+      displayName,
+      roleLabel,
+      status,
+      statusLabel,
+      taskTotal: agentTasks.length,
+      sessionTotal
+    });
 
     minX = Math.min(minX, position.x - width / 2);
     maxX = Math.max(maxX, position.x + width / 2);
@@ -555,10 +656,10 @@ const projection = computed(() => {
       agent_id: agentId,
       agent_name: name,
       role: isMother ? 'mother' : 'worker',
-      role_label: badge,
+      role_label: roleLabel,
       status,
       task_total: agentTasks.length,
-      active_session_total: Number(member?.active_session_total || 0),
+      active_session_total: sessionTotal,
       updated_time: Math.max(
         ...agentTasks.map((task) => Number(task.updated_time || task.finished_time || task.started_time || 0)),
         Number(mission?.updated_time || 0)
@@ -574,23 +675,14 @@ const projection = computed(() => {
       style: {
         x: position.x,
         y: position.y,
-        size: isMother ? [MOTHER_NODE_WIDTH, MOTHER_NODE_HEIGHT] : [NODE_WIDTH, NODE_HEIGHT],
-        radius: 20,
-        fill: tone.fill,
-        stroke: isMother ? 'rgba(34, 211, 238, 0.96)' : tone.stroke,
-        lineWidth: isMother ? 1.8 : 1.15,
-        shadowColor: isMother ? 'rgba(34, 211, 238, 0.22)' : tone.glow,
-        shadowBlur: isMother ? 24 : 16,
-        shadowOffsetY: 2,
-        labelText: `${name}
-${badge} / ${resolveStatusLabel(status)}
-${detailLabel}`,
-        labelFill: isMother ? '#f8fafc' : '#e2e8f0',
-        labelFontWeight: isMother ? 700 : 500,
-        labelFontSize: isMother ? 13 : 12,
-        labelLineHeight: isMother ? 19 : 18,
-        labelWordWrap: true,
-        labelMaxWidth: isMother ? '82%' : '80%'
+        size: [width, height],
+        dx: -Math.round(width / 2),
+        dy: -Math.round(height / 2),
+        innerHTML,
+        cursor: 'pointer',
+        label: false,
+        badge: false,
+        port: false
       }
     };
   });
@@ -607,14 +699,10 @@ ${detailLabel}`,
         source: `agent:${motherAgentId}`,
         target: `agent:${agentId}`,
         style: {
-          stroke: 'rgba(59, 130, 246, 0.74)',
-          lineWidth: 1.15,
-          lineDash: [8, 6],
-          radius: 16,
-          endArrow: true,
-          labelText: `${t('beeroom.canvas.legendDispatch')} / ${agentTasks.length}`,
-          labelFill: 'rgba(125, 211, 252, 0.82)',
-          labelFontSize: 10
+          stroke: 'rgba(148, 163, 184, 0.34)',
+          lineWidth: 0.85,
+          radius: 14,
+          endArrow: false
         },
         data: {
           kind: 'dispatch',
@@ -631,14 +719,10 @@ ${detailLabel}`,
           source: `agent:${agentId}`,
           target: `agent:${motherAgentId}`,
           style: {
-            stroke: 'rgba(45, 212, 191, 0.78)',
-            lineDash: [4, 8],
-            lineWidth: 1.05,
-            radius: 16,
-            endArrow: true,
-            labelText: t('beeroom.canvas.legendReport'),
-            labelFill: 'rgba(153, 246, 228, 0.88)',
-            labelFontSize: 10
+            stroke: 'rgba(71, 85, 105, 0.24)',
+            lineWidth: 0.75,
+            radius: 14,
+            endArrow: false
           },
           data: {
             kind: 'report'
@@ -835,6 +919,23 @@ const activeNodeToolSummaryText = computed(() => {
     return t('beeroom.canvas.toolSummaryEmpty');
   }
   return t('beeroom.canvas.toolSummaryFallback', { count: toolNames.length });
+});
+
+const canvasStatusSummary = computed(() => {
+  const summary = { running: 0, failed: 0, idle: 0 };
+  projection.value.nodeMetaMap.forEach((meta) => {
+    const status = String(meta.status || '').trim().toLowerCase();
+    if (status === 'running' || status === 'queued' || status === 'awaiting_idle') {
+      summary.running += 1;
+      return;
+    }
+    if (status === 'failed' || status === 'error' || status === 'timeout' || status === 'cancelled') {
+      summary.failed += 1;
+      return;
+    }
+    summary.idle += 1;
+  });
+  return summary;
 });
 
 const hoveredNodeMeta = computed(() => projection.value.nodeMetaMap.get(hoveredNodeId.value) || null);
@@ -1078,7 +1179,89 @@ const resolveDispatchTarget = (rawContent: string) => {
   };
 };
 
-const ensureDispatchSessionId = async (agentId: string) => {
+const normalizeDispatchAgentId = (agentId: string): string =>
+  agentId === DEFAULT_AGENT_KEY ? '' : String(agentId || '').trim();
+
+const toSessionTimestampMs = (value: unknown): number => {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return 0;
+    return value < 1_000_000_000_000 ? value * 1000 : value;
+  }
+  const text = String(value).trim();
+  if (!text) return 0;
+  if (/^-?\d+(\.\d+)?$/.test(text)) {
+    const numeric = Number(text);
+    if (!Number.isFinite(numeric)) return 0;
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const parsed = new Date(text).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const sortChatSessionsByActivity = (sessions: Record<string, unknown>[]): Record<string, unknown>[] =>
+  [...sessions]
+    .map((session, index) => ({ session, index }))
+    .sort((left, right) => {
+      const leftAt = toSessionTimestampMs(
+        left.session.updated_at ?? left.session.last_message_at ?? left.session.created_at
+      );
+      const rightAt = toSessionTimestampMs(
+        right.session.updated_at ?? right.session.last_message_at ?? right.session.created_at
+      );
+      if (leftAt !== rightAt) {
+        return rightAt - leftAt;
+      }
+      return left.index - right.index;
+    })
+    .map((item) => item.session);
+
+const syncDispatchSessionToChatStore = (payload: {
+  sessionId: string;
+  agentId: string;
+  sessionSummary: Record<string, unknown> | null;
+  userPreview: string;
+}) => {
+  const targetSessionId = String(payload.sessionId || '').trim();
+  if (!targetSessionId) return;
+  const nowIso = new Date().toISOString();
+  const preview = clipMessageBody(payload.userPreview, 120);
+  const fallbackAgentId = normalizeDispatchAgentId(payload.agentId);
+  const summary = payload.sessionSummary || null;
+  const summaryAgentId = String(summary?.agent_id || '').trim();
+  const nextSession: Record<string, unknown> = {
+    ...(summary || {}),
+    id: targetSessionId,
+    agent_id: summaryAgentId || fallbackAgentId,
+    updated_at: nowIso,
+    last_message_at: nowIso
+  };
+  if (preview) {
+    nextSession.last_message_preview = preview;
+    nextSession.last_user_message_preview = preview;
+  }
+  if (!String(nextSession.title || '').trim()) {
+    nextSession.title = preview || t('chat.newSession');
+  }
+  const currentSessions = Array.isArray(chatStore.sessions)
+    ? (chatStore.sessions as Record<string, unknown>[])
+    : [];
+  const targetIndex = currentSessions.findIndex(
+    (item) => String(item?.id || '').trim() === targetSessionId
+  );
+  const mergedSessions = [...currentSessions];
+  if (targetIndex >= 0) {
+    mergedSessions[targetIndex] = {
+      ...mergedSessions[targetIndex],
+      ...nextSession
+    };
+  } else {
+    mergedSessions.unshift(nextSession);
+  }
+  chatStore.sessions = sortChatSessionsByActivity(mergedSessions);
+};
+
+const ensureDispatchSession = async (agentId: string): Promise<DispatchSessionTarget> => {
   const apiAgentId = agentId === DEFAULT_AGENT_KEY ? '' : agentId;
   const { data } = await listSessions({ agent_id: apiAgentId });
   const source = Array.isArray(data?.data?.items) ? data.data.items : [];
@@ -1088,16 +1271,30 @@ const ensureDispatchSessionId = async (agentId: string) => {
       return sessionAgentId === agentId;
     })
     .sort((left, right) => {
-      const leftTime = Number(left?.updated_at || left?.last_message_at || left?.created_at || 0);
-      const rightTime = Number(right?.updated_at || right?.last_message_at || right?.created_at || 0);
+      const leftTime = toSessionTimestampMs(
+        left?.updated_at ?? left?.last_message_at ?? left?.created_at
+      );
+      const rightTime = toSessionTimestampMs(
+        right?.updated_at ?? right?.last_message_at ?? right?.created_at
+      );
       return rightTime - leftTime;
     });
   const primary = matched.find((item) => item?.is_main === true) || matched[0];
   if (primary?.id) {
-    return String(primary.id);
+    return {
+      sessionId: String(primary.id),
+      sessionSummary: primary && typeof primary === 'object' ? (primary as Record<string, unknown>) : null
+    };
   }
   const created = await createSession(agentId === DEFAULT_AGENT_KEY ? {} : { agent_id: agentId });
-  return String(created?.data?.data?.id || '');
+  const createdSummary = created?.data?.data;
+  return {
+    sessionId: String(createdSummary?.id || ''),
+    sessionSummary:
+      createdSummary && typeof createdSummary === 'object'
+        ? (createdSummary as Record<string, unknown>)
+        : null
+  };
 };
 
 const scrollChatToBottom = async () => {
@@ -1128,37 +1325,45 @@ const handleComposerSend = async () => {
   composerSending.value = true;
   composerError.value = '';
   composerText.value = '';
-
-  await persistManualChatMessage({
-    senderKind: 'user',
-    senderName: t('chat.message.user'),
-    mention: targetName,
-    mentionAgentId: target.agentId,
-    body: visibleBody,
-    meta: props.group?.name || props.group?.group_id || '',
-    tone: 'user',
-    createdAt: now,
-    clientMsgId: nextManualMessageKey('user')
-  });
-  await persistManualChatMessage({
-    senderKind: 'system',
-    senderName: t('messenger.section.swarms'),
-    mention: targetName,
-    mentionAgentId: target.agentId,
-    body: t('beeroom.canvas.chatDispatchPending'),
-    meta: props.group?.group_id || '',
-    tone: 'system',
-    createdAt: now,
-    clientMsgId: nextManualMessageKey('dispatch')
-  });
-  await scrollChatToBottom();
-
+  let dispatchSessionId = '';
   try {
+    await persistManualChatMessage({
+      senderKind: 'user',
+      senderName: t('chat.message.user'),
+      mention: targetName,
+      mentionAgentId: target.agentId,
+      body: visibleBody,
+      meta: props.group?.name || props.group?.group_id || '',
+      tone: 'user',
+      createdAt: now,
+      clientMsgId: nextManualMessageKey('user')
+    });
+    await persistManualChatMessage({
+      senderKind: 'system',
+      senderName: t('messenger.section.swarms'),
+      mention: targetName,
+      mentionAgentId: target.agentId,
+      body: t('beeroom.canvas.chatDispatchPending'),
+      meta: props.group?.group_id || '',
+      tone: 'system',
+      createdAt: now,
+      clientMsgId: nextManualMessageKey('dispatch')
+    });
+    await scrollChatToBottom();
+
     // Send the message in background so the user can stay on the swarm canvas.
-    const sessionId = await ensureDispatchSessionId(target.agentId);
+    const dispatchSession = await ensureDispatchSession(target.agentId);
+    const sessionId = String(dispatchSession.sessionId || '').trim();
     if (!sessionId) {
       throw new Error(t('common.requestFailed'));
     }
+    dispatchSessionId = sessionId;
+    syncDispatchSessionToChatStore({
+      sessionId,
+      agentId: target.agentId,
+      sessionSummary: dispatchSession.sessionSummary,
+      userPreview: visibleBody
+    });
     const response = await sendMessageStream(sessionId, { content: visibleBody, stream: true });
     if (!response.ok) {
       const errorText = String(await response.text()).trim();
@@ -1214,6 +1419,9 @@ const handleComposerSend = async () => {
     await scrollChatToBottom();
     ElMessage.error(message);
   } finally {
+    if (dispatchSessionId) {
+      void chatStore.preloadSessionDetail(dispatchSessionId).catch(() => undefined);
+    }
     composerSending.value = false;
   }
 };
@@ -1480,7 +1688,7 @@ const ensureGraph = async () => {
       type: 'grid-line',
       size: 32,
       lineWidth: 1,
-      stroke: 'rgba(56, 189, 248, 0.18)',
+      stroke: 'rgba(148, 163, 184, 0.12)',
       border: false,
       follow: true
     }
@@ -1490,14 +1698,14 @@ const ensureGraph = async () => {
       key: 'beeroom-minimap',
       type: 'minimap',
       container: minimapRef.value,
-      size: [184, 112],
+      size: [132, 80],
       padding: 10,
       delay: 64,
       shape: 'key',
       maskStyle: {
-        border: '1px solid rgba(56, 189, 248, 0.72)',
-        background: 'rgba(56, 189, 248, 0.14)',
-        borderRadius: '10px'
+        border: '1px solid rgba(148, 163, 184, 0.56)',
+        background: 'rgba(148, 163, 184, 0.12)',
+        borderRadius: '8px'
       }
     } as any);
   }
@@ -1509,9 +1717,11 @@ const ensureGraph = async () => {
     data: { nodes: [], edges: [] },
     plugins,
     node: {
-      type: 'rect',
+      type: 'html',
       style: {
-        labelPlacement: 'center'
+        pointerEvents: 'auto',
+        label: false,
+        badge: false
       }
     },
     edge: {
@@ -1596,7 +1806,7 @@ const ensureGraph = async () => {
     resizeFrame = requestAnimationFrame(async () => {
       const viewport = await waitForCanvasViewport(3);
       graph?.resize(viewport.width, viewport.height);
-      void graph?.fitView({ when: 'always', direction: 'both' });
+      // Keep current pan/zoom when chat panel width changes.
       resizeFrame = 0;
     });
   });
@@ -1680,16 +1890,17 @@ onBeforeUnmount(() => {
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid rgba(56, 189, 248, 0.2);
+  border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 20px;
+  color: #e5e7eb;
   background:
-    radial-gradient(circle at top left, rgba(56, 189, 248, 0.16), transparent 28%),
-    radial-gradient(circle at bottom right, rgba(45, 212, 191, 0.14), transparent 32%),
-    linear-gradient(180deg, rgba(3, 7, 18, 0.985), rgba(5, 16, 37, 0.975));
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.08), transparent 42%),
+    radial-gradient(circle at bottom right, rgba(56, 189, 248, 0.06), transparent 48%),
+    linear-gradient(180deg, rgba(6, 8, 12, 0.995), rgba(7, 9, 14, 0.992));
   box-shadow:
-    0 18px 48px rgba(2, 6, 23, 0.32),
-    inset 0 0 0 1px rgba(125, 211, 252, 0.06),
-    inset 0 1px 0 rgba(186, 230, 253, 0.04);
+    0 22px 54px rgba(0, 0, 0, 0.36),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .beeroom-canvas-screen::before {
@@ -1697,13 +1908,13 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   background-image:
-    linear-gradient(rgba(56, 189, 248, 0.16) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(56, 189, 248, 0.16) 1px, transparent 1px),
-    linear-gradient(rgba(14, 165, 233, 0.2) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(14, 165, 233, 0.2) 1px, transparent 1px);
-  background-size: 28px 28px, 28px 28px, 140px 140px, 140px 140px;
+    linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(148, 163, 184, 0.13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.13) 1px, transparent 1px);
+  background-size: 40px 40px, 40px 40px, 200px 200px, 200px 200px;
   background-position: 0 0, 0 0, -1px -1px, -1px -1px;
-  opacity: 0.58;
+  opacity: 0.36;
   pointer-events: none;
 }
 
@@ -1712,10 +1923,10 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  border: 1px solid rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.04);
   box-shadow:
-    inset 0 0 0 1px rgba(56, 189, 248, 0.05),
-    inset 0 0 48px rgba(14, 165, 233, 0.05);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    inset 0 0 36px rgba(15, 23, 42, 0.34);
   pointer-events: none;
 }
 
@@ -1744,13 +1955,11 @@ onBeforeUnmount(() => {
   min-height: 0;
   border-radius: inherit;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(4, 10, 24, 0.84), rgba(2, 8, 20, 0.68)),
-    linear-gradient(90deg, rgba(8, 47, 73, 0.12), transparent 32%, transparent 68%, rgba(8, 47, 73, 0.1));
+  background: linear-gradient(180deg, rgba(8, 11, 17, 0.98), rgba(7, 9, 14, 0.975));
   box-shadow:
-    inset 0 0 0 1px rgba(56, 189, 248, 0.08),
-    inset 0 1px 0 rgba(186, 230, 253, 0.04),
-    0 16px 34px rgba(2, 6, 23, 0.24);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 20px 38px rgba(0, 0, 0, 0.26);
   transition: grid-template-columns 0.22s ease;
 }
 
@@ -1758,9 +1967,7 @@ onBeforeUnmount(() => {
   content: '';
   position: absolute;
   inset: 0;
-  background:
-    linear-gradient(180deg, rgba(56, 189, 248, 0.08), transparent 64px),
-    radial-gradient(circle at right center, rgba(34, 211, 238, 0.1), transparent 22%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 70px);
   pointer-events: none;
 }
 
@@ -1771,7 +1978,7 @@ onBeforeUnmount(() => {
   bottom: 0;
   right: var(--beeroom-chat-width);
   width: 1px;
-  background: linear-gradient(180deg, transparent, rgba(56, 189, 248, 0.22), transparent);
+  background: linear-gradient(180deg, transparent, rgba(148, 163, 184, 0.32), transparent);
   pointer-events: none;
   transition: right 0.22s ease;
 }
@@ -1797,8 +2004,8 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   border-radius: 0;
-  border: 1px solid rgba(56, 189, 248, 0.08);
-  box-shadow: inset 0 0 24px rgba(8, 47, 73, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 24px rgba(15, 23, 42, 0.2);
   pointer-events: none;
 }
 
@@ -1807,10 +2014,213 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(180deg, rgba(56, 189, 248, 0.06), transparent 92px),
-    linear-gradient(135deg, transparent 0%, rgba(56, 189, 248, 0.035) 48%, transparent 100%);
-  opacity: 0.5;
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 96px),
+    linear-gradient(135deg, transparent 0%, rgba(239, 68, 68, 0.02) 48%, transparent 100%);
+  opacity: 0.56;
   pointer-events: none;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card) {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  padding: 9px 10px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: linear-gradient(180deg, rgba(23, 26, 35, 0.96), rgba(14, 16, 22, 0.95));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 6px 16px rgba(0, 0, 0, 0.28);
+  color: #e5e7eb;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card::before) {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--node-accent, #64748b);
+  opacity: 0.9;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card-head) {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-avatar) {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04)),
+    var(--node-accent, #64748b);
+  flex-shrink: 0;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-title-group) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-title) {
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-subtitle) {
+  color: rgba(148, 163, 184, 0.9);
+  font-size: 9px;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-status) {
+  max-width: 80px;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(51, 65, 85, 0.35);
+  color: #cbd5e1;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-metrics) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-metric) {
+  min-width: 0;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(30, 41, 59, 0.42);
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 10px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-metric b) {
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(248, 250, 252, 0.94);
+  margin-right: 4px;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-mother) {
+  border-color: rgba(245, 158, 11, 0.42);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-running .beeroom-node-status) {
+  border-color: rgba(34, 197, 94, 0.44);
+  background: rgba(34, 197, 94, 0.16);
+  color: rgba(134, 239, 172, 0.97);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-success .beeroom-node-status) {
+  border-color: rgba(59, 130, 246, 0.44);
+  background: rgba(59, 130, 246, 0.16);
+  color: rgba(191, 219, 254, 0.98);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-danger .beeroom-node-status) {
+  border-color: rgba(239, 68, 68, 0.44);
+  background: rgba(239, 68, 68, 0.18);
+  color: rgba(252, 165, 165, 0.98);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-warn .beeroom-node-status) {
+  border-color: rgba(245, 158, 11, 0.44);
+  background: rgba(245, 158, 11, 0.16);
+  color: rgba(253, 230, 138, 0.98);
+}
+
+.beeroom-canvas-legend {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(12, 13, 18, 0.88);
+  color: rgba(229, 231, 235, 0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 12px 24px rgba(0, 0, 0, 0.2);
+}
+
+.beeroom-canvas-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.beeroom-canvas-legend-item i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.9);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
+}
+
+.beeroom-canvas-legend-item.is-running i {
+  background: rgba(239, 68, 68, 0.95);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.18);
+}
+
+.beeroom-canvas-legend-item.is-danger i {
+  background: rgba(248, 113, 113, 0.95);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2);
+}
+
+.beeroom-canvas-legend-item.is-idle i {
+  background: rgba(148, 163, 184, 0.9);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.16);
 }
 
 .beeroom-canvas-tooltip {
@@ -1821,9 +2231,9 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 12px;
   border-radius: 14px;
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  background: rgba(8, 15, 32, 0.94);
-  box-shadow: 0 14px 36px rgba(2, 6, 23, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(12, 13, 18, 0.94);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.42);
   pointer-events: none;
 }
 
@@ -1836,7 +2246,7 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-tooltip-title {
-  color: #f8fafc;
+  color: #f3f4f6;
   font-size: 14px;
   font-weight: 700;
 }
@@ -1852,19 +2262,19 @@ onBeforeUnmount(() => {
   gap: 4px;
   padding: 8px 10px;
   border-radius: 10px;
-  background: rgba(15, 23, 42, 0.78);
+  background: rgba(22, 24, 31, 0.82);
   border: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .beeroom-canvas-tooltip-item span,
 .beeroom-canvas-tooltip-desc {
-  color: rgba(191, 219, 254, 0.76);
+  color: rgba(156, 163, 175, 0.92);
   font-size: 11px;
   line-height: 1.55;
 }
 
 .beeroom-canvas-tooltip-item strong {
-  color: #f8fafc;
+  color: #f3f4f6;
   font-size: 13px;
 }
 
@@ -1877,14 +2287,14 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 12px;
   padding: 14px 14px 14px 18px;
-  border-left: 1px solid rgba(56, 189, 248, 0.12);
+  border-left: 1px solid rgba(148, 163, 184, 0.2);
   background:
-    linear-gradient(180deg, rgba(8, 15, 32, 0.92), rgba(4, 10, 24, 0.96)),
-    linear-gradient(180deg, rgba(14, 165, 233, 0.06), rgba(45, 212, 191, 0.04));
-  color: #e2e8f0;
+    linear-gradient(180deg, rgba(13, 14, 20, 0.95), rgba(9, 10, 15, 0.97)),
+    linear-gradient(180deg, rgba(239, 68, 68, 0.03), rgba(148, 163, 184, 0.02));
+  color: #e5e7eb;
   box-shadow:
-    inset 1px 0 0 rgba(148, 163, 184, 0.04),
-    inset 0 1px 0 rgba(186, 230, 253, 0.03);
+    inset 1px 0 0 rgba(255, 255, 255, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.02);
   overflow: hidden;
   transition: width 0.2s ease, padding 0.2s ease, background 0.2s ease, opacity 0.2s ease;
 }
@@ -1894,7 +2304,7 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0 0 auto 0;
   height: 56px;
-  background: linear-gradient(180deg, rgba(56, 189, 248, 0.08), transparent);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
   pointer-events: none;
 }
 
@@ -1910,15 +2320,15 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-chat-handle {
   position: absolute;
-  left: -10px;
+  left: -12px;
   top: 50%;
   transform: translateY(-50%);
-  width: 18px;
-  height: 74px;
-  border: 0;
+  width: 22px;
+  height: 78px;
+  border: 1px solid rgba(148, 163, 184, 0.36);
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(69, 203, 255, 0.34), rgba(56, 189, 248, 0.68), rgba(37, 99, 235, 0.58));
-  color: #d8ecff;
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.95), rgba(15, 23, 42, 0.94));
+  color: #cbd5e1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1926,10 +2336,8 @@ onBeforeUnmount(() => {
   z-index: 2;
   opacity: 0;
   pointer-events: none;
-  box-shadow:
-    0 8px 22px rgba(2, 8, 20, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
-  transition: opacity 0.16s ease, transform 0.16s ease, filter 0.16s ease;
+  box-shadow: none;
+  transition: opacity 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 }
 
 .beeroom-canvas-board:hover .beeroom-canvas-chat-handle,
@@ -1939,8 +2347,8 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-chat.collapsed .beeroom-canvas-chat-handle {
-  left: -18px;
-  opacity: 0.18;
+  left: -14px;
+  opacity: 0.72;
   pointer-events: auto;
 }
 
@@ -1952,8 +2360,9 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-chat-handle:hover,
 .beeroom-canvas-chat-handle:focus-visible {
-  transform: translateY(-50%) scale(1.02);
-  filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.32));
+  background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
+  border-color: rgba(148, 163, 184, 0.56);
+  transform: translateY(-50%);
 }
 
 .beeroom-canvas-chat-head {
@@ -1962,7 +2371,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 10px;
   padding-bottom: 4px;
-  border-bottom: 1px solid rgba(56, 189, 248, 0.08);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
 }
 
 .beeroom-canvas-chat-head-actions {
@@ -1975,9 +2384,9 @@ onBeforeUnmount(() => {
   width: 28px;
   height: 28px;
   border-radius: 10px;
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  background: rgba(15, 23, 42, 0.7);
-  color: #bae6fd;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(19, 21, 29, 0.84);
+  color: #d1d5db;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1990,7 +2399,7 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-chat-title {
-  color: #f8fafc;
+  color: #f3f4f6;
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.02em;
@@ -2000,7 +2409,7 @@ onBeforeUnmount(() => {
 .beeroom-canvas-chat-time,
 .beeroom-canvas-chat-extra,
 .beeroom-canvas-chat-overview-label {
-  color: rgba(191, 219, 254, 0.72);
+  color: rgba(156, 163, 175, 0.92);
   font-size: 11px;
 }
 
@@ -2012,9 +2421,9 @@ onBeforeUnmount(() => {
   height: 24px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(14, 116, 144, 0.14);
-  border: 1px solid rgba(56, 189, 248, 0.16);
-  color: #67e8f9;
+  background: rgba(127, 29, 29, 0.22);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  color: rgba(248, 113, 113, 0.98);
   font-size: 11px;
 }
 
@@ -2037,10 +2446,10 @@ onBeforeUnmount(() => {
 .beeroom-canvas-chat-avatar {
   width: 34px;
   height: 34px;
-  border: 1px solid rgba(56, 189, 248, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 12px;
-  background: rgba(14, 116, 144, 0.16);
-  color: #bae6fd;
+  background: rgba(23, 25, 34, 0.9);
+  color: #e5e7eb;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2052,8 +2461,8 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-chat-avatar.is-system {
   cursor: default;
-  background: rgba(30, 41, 59, 0.78);
-  color: #94a3b8;
+  background: rgba(23, 25, 34, 0.76);
+  color: #9ca3af;
 }
 
 .beeroom-canvas-chat-main {
@@ -2074,14 +2483,14 @@ onBeforeUnmount(() => {
   padding: 0;
   border: none;
   background: transparent;
-  color: #f8fafc;
+  color: #f3f4f6;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .beeroom-canvas-chat-sender.is-system {
-  color: #cbd5e1;
+  color: #9ca3af;
   cursor: default;
 }
 
@@ -2092,54 +2501,54 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid rgba(148, 163, 184, 0.12);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.8), rgba(8, 15, 32, 0.74));
-  color: #e2e8f0;
+  background: linear-gradient(180deg, rgba(24, 26, 34, 0.86), rgba(16, 18, 24, 0.82));
+  color: #e5e7eb;
   font-size: 12.5px;
   line-height: 1.65;
-  box-shadow: inset 0 1px 0 rgba(186, 230, 253, 0.03);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .beeroom-canvas-chat-message.is-mother .beeroom-canvas-chat-bubble {
-  border-color: rgba(56, 189, 248, 0.18);
-  background: rgba(8, 47, 73, 0.36);
+  border-color: rgba(239, 68, 68, 0.24);
+  background: rgba(69, 10, 10, 0.24);
 }
 
 .beeroom-canvas-chat-message.is-worker .beeroom-canvas-chat-bubble {
-  border-color: rgba(45, 212, 191, 0.18);
-  background: rgba(6, 78, 59, 0.24);
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(31, 41, 55, 0.32);
 }
 
 .beeroom-canvas-chat-message.is-system .beeroom-canvas-chat-bubble {
   border-style: dashed;
-  background: rgba(30, 41, 59, 0.52);
+  background: rgba(17, 24, 39, 0.56);
 }
 
 .beeroom-canvas-chat-message.is-user .beeroom-canvas-chat-bubble {
-  border-color: rgba(125, 211, 252, 0.28);
-  background: rgba(8, 47, 73, 0.52);
+  border-color: rgba(239, 68, 68, 0.32);
+  background: rgba(127, 29, 29, 0.3);
 }
 
 .beeroom-canvas-chat-mention {
-  color: #67e8f9;
+  color: #fca5a5;
   font-weight: 700;
 }
 
 .beeroom-canvas-chat-avatar.is-user {
   cursor: default;
-  background: rgba(8, 47, 73, 0.82);
-  color: #e0f2fe;
+  background: rgba(127, 29, 29, 0.52);
+  color: #fee2e2;
 }
 
 .beeroom-canvas-chat-sender.is-user {
-  color: #e0f2fe;
+  color: #fee2e2;
 }
 
 .beeroom-canvas-chat-composer {
   display: grid;
   gap: 8px;
   padding-top: 12px;
-  border-top: 1px solid rgba(56, 189, 248, 0.12);
-  background: linear-gradient(180deg, rgba(8, 15, 32, 0), rgba(8, 15, 32, 0.42));
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  background: linear-gradient(180deg, rgba(9, 10, 15, 0), rgba(9, 10, 15, 0.52));
 }
 
 .beeroom-canvas-chat-compose-foot {
@@ -2150,22 +2559,22 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-chat-compose-status {
-  color: rgba(191, 219, 254, 0.72);
+  color: rgba(156, 163, 175, 0.9);
   font-size: 11px;
 }
 
 .beeroom-canvas-chat-compose-status.is-error {
-  color: #fca5a5;
+  color: #f87171;
 }
 
 .beeroom-canvas-chat-textarea {
   width: 100%;
   border-radius: 12px;
-  border: 1px solid rgba(56, 189, 248, 0.16);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(8, 15, 32, 0.86));
-  color: #f8fafc;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.92), rgba(15, 17, 23, 0.88));
+  color: #f3f4f6;
   outline: none;
-  box-shadow: inset 0 1px 0 rgba(186, 230, 253, 0.03);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .beeroom-canvas-chat-select {
@@ -2177,26 +2586,26 @@ onBeforeUnmount(() => {
   min-height: 38px;
   padding: 0 10px;
   border-radius: 12px;
-  border: 1px solid rgba(56, 189, 248, 0.16);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(8, 15, 32, 0.86));
-  box-shadow: inset 0 1px 0 rgba(186, 230, 253, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.92), rgba(15, 17, 23, 0.88));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .beeroom-canvas-chat-select :deep(.el-select__selected-item),
 .beeroom-canvas-chat-select :deep(.el-select__placeholder),
 .beeroom-canvas-chat-select :deep(.el-select__input) {
-  color: #f8fafc;
+  color: #f3f4f6;
 }
 
 .beeroom-canvas-chat-select :deep(.el-select__caret) {
-  color: rgba(191, 219, 254, 0.84);
+  color: rgba(209, 213, 219, 0.78);
 }
 
 .beeroom-canvas-chat-select :deep(.is-focused .el-select__wrapper),
 .beeroom-canvas-chat-select :deep(.el-select__wrapper.is-focused) {
   box-shadow:
-    0 0 0 1px rgba(56, 189, 248, 0.2),
-    inset 0 1px 0 rgba(186, 230, 253, 0.04);
+    0 0 0 1px rgba(239, 68, 68, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .beeroom-canvas-chat-textarea {
@@ -2207,28 +2616,28 @@ onBeforeUnmount(() => {
 }
 
 :deep(.beeroom-canvas-chat-select-popper.el-popper) {
-  border: 1px solid rgba(56, 189, 248, 0.18);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(8, 15, 32, 0.98));
-  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.42);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.98), rgba(14, 16, 22, 0.98));
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.42);
 }
 
 :deep(.beeroom-canvas-chat-select-popper.el-popper .el-popper__arrow::before) {
-  border-color: rgba(56, 189, 248, 0.18);
-  background: rgba(11, 18, 32, 0.98);
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(14, 16, 22, 0.98);
 }
 
 :deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item) {
-  color: #e2e8f0;
+  color: #e5e7eb;
 }
 
 :deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item.is-hovering),
 :deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item:hover) {
-  background: rgba(8, 47, 73, 0.72);
+  background: rgba(31, 41, 55, 0.78);
 }
 
 :deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item.is-selected) {
-  color: #67e8f9;
-  background: rgba(8, 47, 73, 0.9);
+  color: #fca5a5;
+  background: rgba(127, 29, 29, 0.6);
 }
 
 .beeroom-canvas-chat-send {
@@ -2236,11 +2645,11 @@ onBeforeUnmount(() => {
   min-height: 34px;
   padding: 0 12px;
   border-radius: 12px;
-  border: 1px solid rgba(34, 211, 238, 0.26);
-  background: linear-gradient(135deg, rgba(8, 145, 178, 0.9), rgba(37, 99, 235, 0.9));
-  color: #eff6ff;
+  border: 1px solid rgba(239, 68, 68, 0.34);
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.92), rgba(185, 28, 28, 0.92));
+  color: #fee2e2;
   cursor: pointer;
-  box-shadow: 0 10px 24px rgba(14, 116, 144, 0.2);
+  box-shadow: 0 10px 24px rgba(127, 29, 29, 0.24);
 }
 
 .beeroom-canvas-chat-send:disabled {
@@ -2259,8 +2668,8 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-minimap-shell {
   position: absolute;
-  left: 14px;
-  bottom: 14px;
+  left: 12px;
+  bottom: 12px;
   z-index: 4;
   display: flex;
   flex-direction: column;
@@ -2270,25 +2679,25 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-minimap-label {
   align-self: flex-start;
-  padding: 3px 8px;
+  padding: 2px 6px;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(8, 15, 32, 0.86));
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  color: rgba(186, 230, 253, 0.9);
-  font-size: 11px;
+  background: linear-gradient(180deg, rgba(22, 24, 31, 0.94), rgba(15, 17, 23, 0.9));
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  color: rgba(209, 213, 219, 0.86);
+  font-size: 9px;
   letter-spacing: 0.04em;
 }
 
 .beeroom-canvas-minimap {
-  width: 184px;
-  height: 112px;
+  width: 132px;
+  height: 80px;
   overflow: hidden;
-  border-radius: 14px;
-  border: 1px solid rgba(56, 189, 248, 0.22);
-  background: linear-gradient(180deg, rgba(7, 14, 29, 0.92), rgba(2, 8, 20, 0.88));
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: linear-gradient(180deg, rgba(15, 17, 23, 0.94), rgba(10, 11, 16, 0.9));
   box-shadow:
-    inset 0 1px 0 rgba(186, 230, 253, 0.03),
-    0 10px 26px rgba(2, 6, 23, 0.28);
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 10px 26px rgba(0, 0, 0, 0.28);
   pointer-events: auto;
 }
 
@@ -2356,9 +2765,9 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-role-chip,
 .beeroom-canvas-entry-flag {
-  border: 1px solid rgba(56, 189, 248, 0.2);
-  background: rgba(14, 116, 144, 0.14);
-  color: #67e8f9;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(31, 41, 55, 0.7);
+  color: #d1d5db;
 }
 
 .beeroom-canvas-status-chip.tone-muted {
@@ -2367,8 +2776,8 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-status-chip.tone-running {
-  background: rgba(59, 130, 246, 0.16);
-  color: #7dd3fc;
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
 }
 
 .beeroom-canvas-status-chip.tone-success {

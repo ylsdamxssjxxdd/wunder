@@ -924,6 +924,7 @@ impl ChannelHub {
             session_id: session_id.clone(),
             user_id: user_id.clone(),
             title,
+            status: "active".to_string(),
             created_at,
             updated_at: now,
             last_message_at: now,

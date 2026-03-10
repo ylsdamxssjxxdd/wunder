@@ -4191,6 +4191,14 @@ impl StorageBackend for PostgresStorage {
         } else {
             Some(Self::string_list_to_json(&record.tool_overrides))
         };
+        let status = {
+            let cleaned = record.status.trim().to_lowercase();
+            if cleaned.is_empty() {
+                "active".to_string()
+            } else {
+                cleaned
+            }
+        };
         conn.execute(
             "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
              parent_session_id, parent_message_id, spawn_label, spawned_by) \
@@ -4203,7 +4211,7 @@ impl StorageBackend for PostgresStorage {
                 &record.session_id,
                 &record.user_id,
                 &record.title,
-                &"active",
+                &status,
                 &record.created_at,
                 &record.updated_at,
                 &record.last_message_at,
@@ -4231,7 +4239,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+            "SELECT session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
              parent_session_id, parent_message_id, spawn_label, spawned_by \
              FROM chat_sessions WHERE user_id = $1 AND session_id = $2",
             &[&cleaned_user, &cleaned_session],
@@ -4240,15 +4248,24 @@ impl StorageBackend for PostgresStorage {
             session_id: row.get(0),
             user_id: row.get(1),
             title: row.get(2),
-            created_at: row.get(3),
-            updated_at: row.get(4),
-            last_message_at: row.get(5),
-            agent_id: row.get(6),
-            tool_overrides: Self::parse_string_list(row.get(7)),
-            parent_session_id: row.get(8),
-            parent_message_id: row.get(9),
-            spawn_label: row.get(10),
-            spawned_by: row.get(11),
+            status: {
+                let status: Option<String> = row.get(3);
+                let normalized = status.unwrap_or_else(|| "active".to_string());
+                if normalized.trim().is_empty() {
+                    "active".to_string()
+                } else {
+                    normalized
+                }
+            },
+            created_at: row.get(4),
+            updated_at: row.get(5),
+            last_message_at: row.get(6),
+            agent_id: row.get(7),
+            tool_overrides: Self::parse_string_list(row.get(8)),
+            parent_session_id: row.get(9),
+            parent_message_id: row.get(10),
+            spawn_label: row.get(11),
+            spawned_by: row.get(12),
         }))
     }
 
@@ -4257,6 +4274,25 @@ impl StorageBackend for PostgresStorage {
         user_id: &str,
         agent_id: Option<&str>,
         parent_session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.list_chat_sessions_by_status(
+            user_id,
+            agent_id,
+            parent_session_id,
+            Some("active"),
+            offset,
+            limit,
+        )
+    }
+
+    fn list_chat_sessions_by_status(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        status: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
@@ -4295,6 +4331,23 @@ impl StorageBackend for PostgresStorage {
             }
         }
 
+        let normalized_status = status
+            .map(str::trim)
+            .map(str::to_lowercase)
+            .unwrap_or_default();
+        if !(normalized_status.is_empty() || normalized_status == "all") {
+            if normalized_status == "archived" {
+                params.push(Box::new("archived".to_string()));
+                conditions.push(format!("status = ${}", params.len()));
+            } else {
+                params.push(Box::new("active".to_string()));
+                conditions.push(format!(
+                    "(status IS NULL OR status = '' OR status = ${})",
+                    params.len()
+                ));
+            }
+        }
+
         let where_clause = if conditions.is_empty() {
             String::new()
         } else {
@@ -4306,7 +4359,7 @@ impl StorageBackend for PostgresStorage {
         let total: i64 = conn.query_one(&count_sql, &params_ref)?.get(0);
 
         let mut sql = format!(
-            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+            "SELECT session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
              parent_session_id, parent_message_id, spawn_label, spawned_by FROM chat_sessions{where_clause} \
              ORDER BY updated_at DESC"
         );
@@ -4329,15 +4382,24 @@ impl StorageBackend for PostgresStorage {
                 session_id: row.get(0),
                 user_id: row.get(1),
                 title: row.get(2),
-                created_at: row.get(3),
-                updated_at: row.get(4),
-                last_message_at: row.get(5),
-                agent_id: row.get(6),
-                tool_overrides: Self::parse_string_list(row.get(7)),
-                parent_session_id: row.get(8),
-                parent_message_id: row.get(9),
-                spawn_label: row.get(10),
-                spawned_by: row.get(11),
+                status: {
+                    let status: Option<String> = row.get(3);
+                    let normalized = status.unwrap_or_else(|| "active".to_string());
+                    if normalized.trim().is_empty() {
+                        "active".to_string()
+                    } else {
+                        normalized
+                    }
+                },
+                created_at: row.get(4),
+                updated_at: row.get(5),
+                last_message_at: row.get(6),
+                agent_id: row.get(7),
+                tool_overrides: Self::parse_string_list(row.get(8)),
+                parent_session_id: row.get(9),
+                parent_message_id: row.get(10),
+                spawn_label: row.get(11),
+                spawned_by: row.get(12),
             });
         }
         Ok((output, total))
@@ -4351,7 +4413,8 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT DISTINCT agent_id FROM chat_sessions WHERE user_id = $1",
+            "SELECT DISTINCT agent_id FROM chat_sessions \
+             WHERE user_id = $1 AND (status IS NULL OR status = '' OR status = 'active')",
             &[&cleaned_user],
         )?;
         let mut agent_ids = Vec::new();

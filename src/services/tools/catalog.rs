@@ -285,8 +285,13 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "query": {"type": "string", "description": t("tool.spec.search.args.query")},
                     "path": {"type": "string", "description": t("tool.spec.search.args.path")},
                     "file_pattern": {"type": "string", "description": t("tool.spec.search.args.file_pattern")},
+                    "query_mode": {"type": "string", "enum": ["literal", "regex"], "description": t("tool.spec.search.args.query_mode")},
+                    "regex": {"type": "boolean", "description": t("tool.spec.search.args.regex")},
+                    "case_sensitive": {"type": "boolean", "description": t("tool.spec.search.args.case_sensitive")},
                     "max_depth": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_depth")},
-                    "max_files": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_files")}
+                    "max_files": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_files")},
+                    "context_before": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_before")},
+                    "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")}
                 },
                 "required": ["query"]
             }),

@@ -1,5 +1,5 @@
 export const THEME_MODES = ['dark', 'light'] as const;
-export const THEME_PALETTES = ['hula-green', 'eva-orange', 'minimal', 'tech-blue'] as const;
+export const THEME_PALETTES = ['hula-green', 'eva-orange', 'claw-orange', 'minimal', 'tech-blue'] as const;
 
 export type ThemeMode = (typeof THEME_MODES)[number];
 export type ThemePalette = (typeof THEME_PALETTES)[number];
@@ -30,4 +30,3 @@ export const isAutoDarkThemePalette = (value: unknown): boolean =>
 
 export const resolveThemeModeForPalette = (mode: unknown, palette: unknown): ThemeMode =>
   isAutoDarkThemePalette(palette) ? 'dark' : normalizeThemeMode(mode);
-

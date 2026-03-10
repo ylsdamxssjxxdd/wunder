@@ -41,6 +41,24 @@
   --ui-accent-link-hover: #cd8552;
 }
 
+:root[data-user-accent='claw-orange'] {
+  --ui-accent: #ff5c00;
+  --ui-accent-rgb: 255, 92, 0;
+  --ui-accent-secondary: #ff7a2e;
+  --ui-accent-secondary-rgb: 255, 122, 46;
+  --ui-accent-deep: #e05200;
+  --ui-accent-soft: #fff3e6;
+  --ui-accent-soft-2: #fff0e0;
+  --ui-accent-soft-3: #fff7f1;
+  --ui-accent-soft-4: #ffe9d6;
+  --ui-accent-soft-5: #ffe3cc;
+  --ui-accent-gradient-start: #ff9a5f;
+  --ui-accent-gradient-mid: #ff5c00;
+  --ui-accent-hover: #e05200;
+  --ui-accent-disabled: #ffc7a1;
+  --ui-accent-link-hover: #cc4a00;
+}
+
 :root[data-user-accent='hula-green'] {
   --ui-accent: #13987f;
   --ui-accent-rgb: 19, 152, 127;

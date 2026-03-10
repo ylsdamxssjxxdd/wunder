@@ -1512,6 +1512,7 @@ impl CronRuntime {
                 session_id: cleaned_session.to_string(),
                 user_id: user.user_id.clone(),
                 title: DEFAULT_SESSION_TITLE.to_string(),
+                status: "active".to_string(),
                 created_at: now,
                 updated_at: now,
                 last_message_at: now,

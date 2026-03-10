@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 
 import {
+  archiveSession as archiveSessionApi,
   cancelMessageStream,
   compactSession as compactSessionApi,
   createSession,
@@ -11,6 +12,8 @@ import {
   getSessionHistoryPage,
   listSessions,
   openChatSocket,
+  renameSession as renameSessionApi,
+  restoreSession as restoreSessionApi,
   resumeMessageStream,
   sendMessageStream,
   updateSessionTools as updateSessionToolsApi
@@ -114,6 +117,11 @@ type LoadSessionsOptions = {
   skipTransportRefresh?: boolean;
   refresh_transport?: boolean;
   agent_id?: string | number | boolean | null | undefined;
+};
+
+type ListSessionsByStatusOptions = {
+  agent_id?: string | number | boolean | null | undefined;
+  status?: 'active' | 'archived' | 'all' | string;
 };
 
 type OpenDraftSessionOptions = {
@@ -4664,6 +4672,18 @@ export const useChatStore = defineStore('chat', {
       sessionListCacheInFlight.set(cacheKey, request);
       return request;
     },
+    async listSessionsByStatus(options: ListSessionsByStatusOptions = {}) {
+      const params: { agent_id?: string; status?: string } = {};
+      if (Object.prototype.hasOwnProperty.call(options, 'agent_id')) {
+        params.agent_id = String(options.agent_id ?? '');
+      }
+      const status = String(options.status || '').trim().toLowerCase();
+      if (status === 'active' || status === 'archived' || status === 'all') {
+        params.status = status;
+      }
+      const { data } = await listSessions(Object.keys(params).length ? params : undefined);
+      return sortSessionsByActivity(data?.data?.items || []);
+    },
     async preloadSessionDetail(sessionId) {
       const targetId = resolveSessionKey(sessionId);
       if (!targetId) return null;
@@ -5050,6 +5070,115 @@ export const useChatStore = defineStore('chat', {
       } finally {
         state.loading = false;
       }
+    },
+    async renameSession(sessionId, title) {
+      const targetId = resolveSessionKey(sessionId || this.activeSessionId);
+      const nextTitle = String(title || '').trim();
+      if (!targetId || !nextTitle) return null;
+      const { data } = await renameSessionApi(targetId, { title: nextTitle });
+      const updated = data?.data || null;
+      const index = this.sessions.findIndex((item) => resolveSessionKey(item?.id) === targetId);
+      if (index >= 0) {
+        const previous = this.sessions[index] || {};
+        this.sessions[index] = {
+          ...previous,
+          ...(updated && typeof updated === 'object' ? updated : {}),
+          id: targetId,
+          title: String((updated && updated.title) || nextTitle).trim() || nextTitle
+        };
+        this.sessions = sortSessionsByActivity(this.sessions);
+        const targetAgentId = String(this.sessions[index]?.agent_id || '').trim();
+        writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, this.sessions));
+        syncDemoChatCache({ sessions: this.sessions });
+      }
+      return updated;
+    },
+    async archiveSession(sessionId) {
+      const targetId = resolveSessionKey(sessionId || this.activeSessionId);
+      if (!targetId) return null;
+      if (resolveSessionKey(targetId) === resolveSessionKey(this.activeSessionId)) {
+        clearSessionWatcher();
+      }
+      const targetSession = this.sessions.find((item) => resolveSessionKey(item?.id) === targetId) || null;
+      const targetAgentId = String(targetSession?.agent_id || this.draftAgentId || '').trim();
+      abortResumeStream(targetId);
+      abortSendStream(targetId);
+      setSessionLoading(this, targetId, false);
+      this.clearPendingApprovals({ sessionId: targetId });
+      sessionRuntime.delete(resolveSessionKey(targetId));
+      sessionMessages.delete(resolveSessionKey(targetId));
+      sessionDetailWarmState.delete(resolveSessionKey(targetId));
+      sessionDetailPrefetchInFlight.delete(resolveSessionKey(targetId));
+      sessionHistoryState.delete(resolveSessionKey(targetId));
+      const { data } = await archiveSessionApi(targetId);
+      const archived = data?.data || null;
+      this.sessions = this.sessions.filter((item) => resolveSessionKey(item?.id) !== targetId);
+      if (targetSession?.is_main) {
+        const fallback = this.sessions.find((item) => {
+          const agentId = String(item.agent_id || '').trim();
+          return targetAgentId ? agentId === targetAgentId : !agentId;
+        });
+        const apiAgentId = targetAgentId || DEFAULT_AGENT_KEY;
+        if (fallback) {
+          await setDefaultSession(apiAgentId, { session_id: fallback.id });
+          this.sessions = applyMainSession(this.sessions, targetAgentId, fallback.id);
+          persistAgentSession(targetAgentId, fallback.id);
+        } else {
+          this.sessions = applyMainSession(this.sessions, targetAgentId, '');
+          persistAgentSession(targetAgentId, '');
+        }
+      }
+      sessionWorkflowState.delete(String(targetId));
+      removeDemoChatSession(targetId);
+      clearChatSnapshot(targetId);
+      if (resolvePersistedSessionId(targetAgentId) === targetId) {
+        const fallback = this.sessions.find((item) => {
+          const agentId = String(item.agent_id || '').trim();
+          return targetAgentId ? agentId === targetAgentId : !agentId;
+        });
+        persistAgentSession(targetAgentId, fallback?.id || '');
+      }
+      writeSessionListCache(targetAgentId, filterSessionsByAgent(targetAgentId, this.sessions));
+      if (this.activeSessionId === targetId) {
+        const nextSession = this.sessions.find((item) => {
+          const agentId = String(item.agent_id || '').trim();
+          return targetAgentId ? agentId === targetAgentId : !agentId;
+        });
+        if (nextSession) {
+          await this.loadSessionDetail(nextSession.id);
+        } else {
+          this.openDraftSession({ agent_id: targetAgentId });
+        }
+      }
+      return archived;
+    },
+    async restoreSession(sessionId) {
+      const targetId = resolveSessionKey(sessionId);
+      if (!targetId) return null;
+      const { data } = await restoreSessionApi(targetId);
+      const restored = data?.data || null;
+      if (!restored || typeof restored !== 'object') {
+        return restored;
+      }
+      const resolvedId = resolveSessionKey(restored.id || targetId);
+      if (!resolvedId) {
+        return restored;
+      }
+      const index = this.sessions.findIndex((item) => resolveSessionKey(item?.id) === resolvedId);
+      if (index >= 0) {
+        this.sessions[index] = { ...this.sessions[index], ...restored, id: resolvedId };
+      } else {
+        this.sessions.unshift({ ...restored, id: resolvedId });
+      }
+      const restoredAgentId = String(restored.agent_id || '').trim();
+      if (restored?.is_main) {
+        this.sessions = applyMainSession(this.sessions, restoredAgentId, resolvedId);
+        persistAgentSession(restoredAgentId, resolvedId);
+      }
+      this.sessions = sortSessionsByActivity(this.sessions);
+      writeSessionListCache(restoredAgentId, filterSessionsByAgent(restoredAgentId, this.sessions));
+      syncDemoChatCache({ sessions: this.sessions });
+      return restored;
     },
     async deleteSession(sessionId) {
       const targetId = sessionId || this.activeSessionId;

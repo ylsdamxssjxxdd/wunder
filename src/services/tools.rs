@@ -12,6 +12,7 @@ mod desktop_control;
 mod dispatch;
 mod freeform;
 mod read_image_tool;
+mod search_content_tool;
 mod skill_call;
 mod sleep_tool;
 
@@ -3017,6 +3018,7 @@ async fn sessions_spawn(context: &ToolContext<'_>, args: &Value) -> Result<Value
         title: label
             .clone()
             .unwrap_or_else(|| DEFAULT_SESSION_TITLE.to_string()),
+        status: "active".to_string(),
         created_at: now,
         updated_at: now,
         last_message_at: now,
@@ -5030,115 +5032,6 @@ fn list_files_inner(
     Ok(json!({ "items": items }))
 }
 
-async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let query = args
-        .get("query")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if query.is_empty() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.search.empty")
-        }));
-    }
-    let path = args
-        .get("path")
-        .and_then(Value::as_str)
-        .unwrap_or(".")
-        .to_string();
-    let file_pattern = args
-        .get("file_pattern")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    let max_depth = args.get("max_depth").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let max_files = args.get("max_files").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let workspace = context.workspace.clone();
-    let user_id = context.workspace_id.to_string();
-    let extra_roots = collect_read_roots(context);
-    tokio::task::spawn_blocking(move || {
-        search_content_inner(
-            workspace.as_ref(),
-            &user_id,
-            &query,
-            &path,
-            &file_pattern,
-            &extra_roots,
-            max_depth,
-            max_files,
-        )
-    })
-    .await
-    .map_err(|err| anyhow!(err.to_string()))?
-}
-
-#[allow(clippy::too_many_arguments)]
-fn search_content_inner(
-    workspace: &WorkspaceManager,
-    user_id: &str,
-    query: &str,
-    path: &str,
-    file_pattern: &str,
-    extra_roots: &[PathBuf],
-    max_depth: usize,
-    max_files: usize,
-) -> Result<Value> {
-    let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
-    if !root.exists() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.search.path_not_found")
-        }));
-    }
-
-    let matcher = build_glob_matcher(file_pattern);
-    let lower_query = query.to_lowercase();
-    let mut matches = Vec::new();
-    let mut scanned_files = 0usize;
-    let mut walker = WalkDir::new(&root);
-    if max_depth > 0 {
-        walker = walker.max_depth(max_depth);
-    }
-    'scan: for entry in walker
-        .into_iter()
-        .filter_entry(|entry| !tool_fs_filter::should_skip_walk_entry(entry))
-        .filter_map(|item| item.ok())
-    {
-        if entry.file_type().is_dir() {
-            continue;
-        }
-        if max_files > 0 && scanned_files >= max_files {
-            break;
-        }
-        scanned_files = scanned_files.saturating_add(1);
-        let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
-        let rel_display = rel.to_string_lossy().replace('\\', "/");
-        if let Some(regex) = matcher.as_ref() {
-            if !regex.is_match(&rel_display) {
-                continue;
-            }
-        }
-        if entry.metadata().map(|meta| meta.len()).unwrap_or(0) > MAX_READ_BYTES as u64 {
-            continue;
-        }
-        let content = read_text_with_limit(entry.path(), MAX_READ_BYTES)?;
-        for (idx, line) in content.lines().enumerate() {
-            if line.to_lowercase().contains(&lower_query) {
-                matches.push(format!("{}:{}:{}", rel_display, idx + 1, line.trim()));
-                if matches.len() >= MAX_SEARCH_MATCHES {
-                    break 'scan;
-                }
-            }
-        }
-    }
-    Ok(json!({ "matches": matches }))
-}
-
 #[derive(Clone)]
 struct ReadFileSpec {
     path: String,
@@ -5321,27 +5214,6 @@ fn read_text_with_limit(path: &Path, max_bytes: usize) -> Result<String> {
     let mut buffer = Vec::new();
     file.take(max_bytes as u64).read_to_end(&mut buffer)?;
     Ok(String::from_utf8_lossy(&buffer).to_string())
-}
-
-fn build_glob_matcher(pattern: &str) -> Option<Regex> {
-    let trimmed = pattern.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let mut regex = String::from("^");
-    for ch in trimmed.chars() {
-        match ch {
-            '*' => regex.push_str(".*"),
-            '?' => regex.push('.'),
-            '.' | '(' | ')' | '[' | ']' | '{' | '}' | '+' | '|' | '^' | '$' | '\\' => {
-                regex.push('\\');
-                regex.push(ch);
-            }
-            _ => regex.push(ch),
-        }
-    }
-    regex.push('$');
-    Regex::new(&regex).ok()
 }
 
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {

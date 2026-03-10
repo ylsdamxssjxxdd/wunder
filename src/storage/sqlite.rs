@@ -361,7 +361,11 @@ impl SqliteStorage {
         Ok(())
     }
 
-    fn ensure_chat_session_columns(&self, _conn: &Connection) -> Result<()> {
+    fn ensure_chat_session_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "chat_sessions")?;
+        if !columns.contains("status") {
+            conn.execute("ALTER TABLE chat_sessions ADD COLUMN status TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -3776,6 +3780,14 @@ impl StorageBackend for SqliteStorage {
         } else {
             Some(Self::string_list_to_json(&record.tool_overrides))
         };
+        let status = {
+            let cleaned = record.status.trim().to_lowercase();
+            if cleaned.is_empty() {
+                "active".to_string()
+            } else {
+                cleaned
+            }
+        };
         conn.execute(
             "INSERT INTO chat_sessions (session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
              parent_session_id, parent_message_id, spawn_label, spawned_by) \
@@ -3790,7 +3802,7 @@ impl StorageBackend for SqliteStorage {
                 record.session_id,
                 record.user_id,
                 record.title,
-                "active",
+                status,
                 record.created_at,
                 record.updated_at,
                 record.last_message_at,
@@ -3819,25 +3831,33 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+                "SELECT session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
                  parent_session_id, parent_message_id, spawn_label, spawned_by \
                  FROM chat_sessions WHERE user_id = ? AND session_id = ?",
                 params![cleaned_user, cleaned_session],
                 |row| {
-                    let tool_overrides: Option<String> = row.get(7)?;
+                    let tool_overrides: Option<String> = row.get(8)?;
+                    let status = row
+                        .get::<_, Option<String>>(3)?
+                        .unwrap_or_else(|| "active".to_string());
                     Ok(ChatSessionRecord {
                         session_id: row.get(0)?,
                         user_id: row.get(1)?,
                         title: row.get(2)?,
-                        created_at: row.get(3)?,
-                        updated_at: row.get(4)?,
-                        last_message_at: row.get(5)?,
-                        agent_id: row.get(6)?,
+                        status: if status.trim().is_empty() {
+                            "active".to_string()
+                        } else {
+                            status
+                        },
+                        created_at: row.get(4)?,
+                        updated_at: row.get(5)?,
+                        last_message_at: row.get(6)?,
+                        agent_id: row.get(7)?,
                         tool_overrides: Self::parse_string_list(tool_overrides),
-                        parent_session_id: row.get(8)?,
-                        parent_message_id: row.get(9)?,
-                        spawn_label: row.get(10)?,
-                        spawned_by: row.get(11)?,
+                        parent_session_id: row.get(9)?,
+                        parent_message_id: row.get(10)?,
+                        spawn_label: row.get(11)?,
+                        spawned_by: row.get(12)?,
                     })
                 },
             )
@@ -3850,6 +3870,25 @@ impl StorageBackend for SqliteStorage {
         user_id: &str,
         agent_id: Option<&str>,
         parent_session_id: Option<&str>,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<ChatSessionRecord>, i64)> {
+        self.list_chat_sessions_by_status(
+            user_id,
+            agent_id,
+            parent_session_id,
+            Some("active"),
+            offset,
+            limit,
+        )
+    }
+
+    fn list_chat_sessions_by_status(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        parent_session_id: Option<&str>,
+        status: Option<&str>,
         offset: i64,
         limit: i64,
     ) -> Result<(Vec<ChatSessionRecord>, i64)> {
@@ -3882,25 +3921,46 @@ impl StorageBackend for SqliteStorage {
                 vec![SqlValue::from(value.trim().to_string())],
             ),
         };
+        let normalized_status = status
+            .map(str::trim)
+            .map(str::to_lowercase)
+            .unwrap_or_default();
+        let (status_clause, status_params) =
+            if normalized_status.is_empty() || normalized_status == "all" {
+                ("".to_string(), Vec::new())
+            } else if normalized_status == "archived" {
+                (
+                    " AND status = ?".to_string(),
+                    vec![SqlValue::from("archived".to_string())],
+                )
+            } else {
+                (
+                    " AND (status IS NULL OR status = '' OR status = ?)".to_string(),
+                    vec![SqlValue::from("active".to_string())],
+                )
+            };
         let total_sql = format!(
-            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause}"
+            "SELECT COUNT(*) FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause}{status_clause}"
         );
-        let mut total_params = Vec::with_capacity(1 + agent_params.len() + parent_params.len());
+        let mut total_params =
+            Vec::with_capacity(1 + agent_params.len() + parent_params.len() + status_params.len());
         total_params.push(SqlValue::from(cleaned_user.to_string()));
         total_params.extend(agent_params.iter().cloned());
         total_params.extend(parent_params.iter().cloned());
+        total_params.extend(status_params.iter().cloned());
         let total: i64 =
             conn.query_row(&total_sql, params_from_iter(total_params.iter()), |row| {
                 row.get(0)
             })?;
         let mut sql = format!(
-            "SELECT session_id, user_id, title, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
+            "SELECT session_id, user_id, title, status, created_at, updated_at, last_message_at, agent_id, tool_overrides, \
              parent_session_id, parent_message_id, spawn_label, spawned_by \
-             FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause} ORDER BY updated_at DESC"
+             FROM chat_sessions WHERE user_id = ?{agent_clause}{parent_clause}{status_clause} ORDER BY updated_at DESC"
         );
         let mut params_list: Vec<SqlValue> = vec![SqlValue::from(cleaned_user.to_string())];
         params_list.extend(agent_params);
         params_list.extend(parent_params);
+        params_list.extend(status_params);
         if limit > 0 {
             sql.push_str(" LIMIT ? OFFSET ?");
             params_list.push(SqlValue::from(limit));
@@ -3909,20 +3969,28 @@ impl StorageBackend for SqliteStorage {
         let mut stmt = conn.prepare(&sql)?;
         let rows = stmt
             .query_map(params_from_iter(params_list.iter()), |row| {
-                let tool_overrides: Option<String> = row.get(7)?;
+                let tool_overrides: Option<String> = row.get(8)?;
+                let status = row
+                    .get::<_, Option<String>>(3)?
+                    .unwrap_or_else(|| "active".to_string());
                 Ok(ChatSessionRecord {
                     session_id: row.get(0)?,
                     user_id: row.get(1)?,
                     title: row.get(2)?,
-                    created_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                    last_message_at: row.get(5)?,
-                    agent_id: row.get(6)?,
+                    status: if status.trim().is_empty() {
+                        "active".to_string()
+                    } else {
+                        status
+                    },
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                    last_message_at: row.get(6)?,
+                    agent_id: row.get(7)?,
                     tool_overrides: Self::parse_string_list(tool_overrides),
-                    parent_session_id: row.get(8)?,
-                    parent_message_id: row.get(9)?,
-                    spawn_label: row.get(10)?,
-                    spawned_by: row.get(11)?,
+                    parent_session_id: row.get(9)?,
+                    parent_message_id: row.get(10)?,
+                    spawn_label: row.get(11)?,
+                    spawned_by: row.get(12)?,
                 })
             })?
             .collect::<std::result::Result<Vec<ChatSessionRecord>, _>>()?;
@@ -3936,8 +4004,10 @@ impl StorageBackend for SqliteStorage {
             return Ok(Vec::new());
         }
         let conn = self.open()?;
-        let mut stmt =
-            conn.prepare("SELECT DISTINCT agent_id FROM chat_sessions WHERE user_id = ?")?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT agent_id FROM chat_sessions \
+                 WHERE user_id = ? AND (status IS NULL OR status = '' OR status = 'active')",
+        )?;
         let rows = stmt.query_map([cleaned_user], |row| row.get::<_, Option<String>>(0))?;
         let mut agent_ids = Vec::new();
         for row in rows {

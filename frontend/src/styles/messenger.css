@@ -358,6 +358,27 @@
   background: rgba(var(--ui-accent-rgb), 0.1);
 }
 
+.messenger-left-nav-btn i.fa-bee {
+  position: relative;
+  width: 1em;
+  height: 1em;
+  transform: scale(2.18);
+  transform-origin: center;
+}
+
+.messenger-left-nav-btn i.fa-bee::before {
+  content: "";
+}
+
+.messenger-left-nav-btn i.fa-bee::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-color: currentColor;
+  -webkit-mask: url("../assets/fa-bee.svg") center / contain no-repeat;
+  mask: url("../assets/fa-bee.svg") center / contain no-repeat;
+}
+
 .messenger-middle-pane {
   background: var(--hula-center-bg);
   border-right: 1px solid var(--hula-border);
@@ -2506,8 +2527,9 @@ button.messenger-chat-header-model {
 }
 
 .messenger-timeline-main-btn,
+.messenger-timeline-rename-btn,
 .messenger-timeline-detail-btn,
-.messenger-timeline-delete-btn {
+.messenger-timeline-archive-btn {
   width: 22px;
   height: 22px;
   border: 1px solid #e2e2e2;
@@ -2546,12 +2568,12 @@ button.messenger-chat-header-model {
   pointer-events: auto;
 }
 
-.messenger-timeline-item.is-main .messenger-timeline-delete-btn {
+.messenger-timeline-item.is-main .messenger-timeline-archive-btn {
   display: none;
 }
 
-.messenger-timeline-item.is-main:hover .messenger-timeline-delete-btn,
-.messenger-timeline-item.is-main:focus-within .messenger-timeline-delete-btn {
+.messenger-timeline-item.is-main:hover .messenger-timeline-archive-btn,
+.messenger-timeline-item.is-main:focus-within .messenger-timeline-archive-btn {
   display: inline-flex;
 }
 
@@ -2561,16 +2583,17 @@ button.messenger-chat-header-model {
   background: var(--ui-accent-soft-2);
 }
 
+.messenger-timeline-rename-btn:hover,
 .messenger-timeline-detail-btn:hover {
   border-color: rgba(var(--ui-accent-rgb), 0.42);
   color: var(--ui-accent-deep);
   background: var(--ui-accent-soft-2);
 }
 
-.messenger-timeline-delete-btn:hover {
-  border-color: #f0c2cb;
-  color: #c14053;
-  background: #fbf0f2;
+.messenger-timeline-archive-btn:hover {
+  border-color: #d8d9aa;
+  color: #5f6700;
+  background: #f7f7de;
 }
 
 .messenger-timeline-item.is-main .messenger-timeline-detail-btn {

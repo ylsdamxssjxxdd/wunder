@@ -142,6 +142,7 @@
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
   - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
+- `搜索内容`（`search_content`）新增 `query_mode=literal|regex`、`case_sensitive`、`context_before/context_after` 入参；返回保留兼容字段 `matches`，并新增结构化 `hits`（命中行 + 前后文 + 高亮分段）以便前端直接渲染。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
@@ -2112,6 +2113,10 @@
   - 行为：
     - 校验包结构与路径安全；
     - 解析 `hive.yaml/worker.yaml`；
+    - 支持极简手工包：`hive.yaml + workers/*/WORKER_ROLE.md + workers/*/skills/*/SKILL.md`；
+    - 当 `hive.yaml.workers[]` 为空时，自动扫描 `workers/*` 目录作为工蜂；
+    - 当 `worker.yaml` 缺失或 `skills[]` 为空时，自动扫描 `skills/*/SKILL.md`；
+    - `skill.yaml/checksums.sha256/signatures/package.sig` 为可选增强，缺失不阻塞导入；
     - 安装技能包到用户 `custom skills`；
     - 自动创建工蜂智能体并归属蜂群；
     - `conflict_mode=auto_rename_only`（默认）：蜂群/智能体/技能冲突时自动追加后缀并新建，不复用；
@@ -2139,7 +2144,7 @@
   - 行为：
     - 按蜂群成员生成标准目录；
     - `full` 导出技能完整内容，`reference_only` 导出占位技能说明；
-    - 自动生成 `hive.yaml/worker.yaml/skill.yaml/checksums.sha256`；
+    - 自动生成 `hive.yaml/worker.yaml`，并附加可选增强元数据 `skill.yaml/checksums.sha256`；
     - 产出 `.hivepack` 文件并回写任务产物信息。
   - 返回：`data`（任务快照）。
 
