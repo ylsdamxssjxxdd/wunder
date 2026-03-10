@@ -27,6 +27,27 @@ const MIN_NON_ADMIN_MAX_ROUNDS_WITH_TOOLS: u32 = MIN_NON_ADMIN_MAX_ROUNDS;
 const MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS: u32 = 4;
 const DEFAULT_REPEATED_TOOL_FAILURE_THRESHOLD: u32 = 5;
 const TOOL_FAILURE_SIGNATURE_MAX_CHARS: usize = 240;
+const WORKSPACE_UPDATE_MAX_CHANGED_PATHS: usize = 24;
+const WORKSPACE_PATH_HINT_KEYS: [&str; 16] = [
+    "path",
+    "paths",
+    "changed_paths",
+    "changedPaths",
+    "target_path",
+    "targetPath",
+    "source_path",
+    "sourcePath",
+    "destination",
+    "destination_path",
+    "destinationPath",
+    "relative_path",
+    "relativePath",
+    "file",
+    "files",
+    "to_path",
+];
+const WORKSPACE_EVENT_NESTED_OBJECT_KEYS: [&str; 5] =
+    ["data", "meta", "result", "output", "payload"];
 
 fn should_enable_local_full_event_logs(server_mode: &str) -> bool {
     matches!(
@@ -751,14 +772,36 @@ impl Orchestrator {
                                 .unwrap_or_default()
                                 .trim()
                                 .to_string();
+                            let changed_paths = extract_workspace_changed_paths(
+                                result.meta.as_ref(),
+                                &result.data,
+                                &args,
+                                &prepared.workspace_id,
+                            );
                             let mut workspace_payload = json!({
                                 "workspace_id": prepared.workspace_id.clone(),
                                 "agent_id": if agent_id.is_empty() { Value::Null } else { Value::String(agent_id) },
+                                "container_id": extract_container_id_from_workspace_id(&prepared.workspace_id),
                                 "tree_version": tree_version,
                                 "tool": name,
                                 "reason": "tool_result",
                             });
                             if let Value::Object(ref mut map) = workspace_payload {
+                                if let Some(first_path) = changed_paths.first() {
+                                    map.insert("path".to_string(), Value::String(first_path.clone()));
+                                }
+                                if !changed_paths.is_empty() {
+                                    map.insert(
+                                        "changed_paths".to_string(),
+                                        Value::Array(
+                                            changed_paths
+                                                .iter()
+                                                .cloned()
+                                                .map(Value::String)
+                                                .collect(),
+                                        ),
+                                    );
+                                }
                                 round_info.insert_into(map);
                             }
                             emitter.emit("workspace_update", workspace_payload).await;
@@ -1493,6 +1536,144 @@ fn accumulate_usage(target: &mut TokenUsage, usage: &TokenUsage) {
     target.total = target.total.saturating_add(total);
 }
 
+fn extract_workspace_changed_paths(
+    meta: Option<&Value>,
+    data: &Value,
+    args: &Value,
+    workspace_id: &str,
+) -> Vec<String> {
+    let mut output = Vec::new();
+    if let Some(meta_obj) = meta.and_then(Value::as_object) {
+        collect_workspace_paths_from_object(meta_obj, workspace_id, &mut output);
+    }
+    if let Some(data_obj) = data.as_object() {
+        collect_workspace_paths_from_object(data_obj, workspace_id, &mut output);
+    }
+    if let Some(args_obj) = args.as_object() {
+        collect_workspace_paths_from_object(args_obj, workspace_id, &mut output);
+    }
+    output
+}
+
+fn collect_workspace_paths_from_object(
+    source: &Map<String, Value>,
+    workspace_id: &str,
+    output: &mut Vec<String>,
+) {
+    for key in WORKSPACE_PATH_HINT_KEYS {
+        if output.len() >= WORKSPACE_UPDATE_MAX_CHANGED_PATHS {
+            return;
+        }
+        if let Some(value) = source.get(key) {
+            collect_workspace_paths_from_value(value, workspace_id, output);
+        }
+    }
+    for key in WORKSPACE_EVENT_NESTED_OBJECT_KEYS {
+        if output.len() >= WORKSPACE_UPDATE_MAX_CHANGED_PATHS {
+            return;
+        }
+        if let Some(value) = source.get(key) {
+            collect_workspace_paths_from_value(value, workspace_id, output);
+        }
+    }
+}
+
+fn collect_workspace_paths_from_value(
+    value: &Value,
+    workspace_id: &str,
+    output: &mut Vec<String>,
+) {
+    if output.len() >= WORKSPACE_UPDATE_MAX_CHANGED_PATHS {
+        return;
+    }
+    match value {
+        Value::String(text) => push_workspace_changed_path(text, workspace_id, output),
+        Value::Array(items) => {
+            for item in items {
+                if output.len() >= WORKSPACE_UPDATE_MAX_CHANGED_PATHS {
+                    break;
+                }
+                collect_workspace_paths_from_value(item, workspace_id, output);
+            }
+        }
+        Value::Object(map) => collect_workspace_paths_from_object(map, workspace_id, output),
+        _ => {}
+    }
+}
+
+fn push_workspace_changed_path(raw: &str, workspace_id: &str, output: &mut Vec<String>) {
+    let Some(normalized) = normalize_workspace_changed_path(raw, workspace_id) else {
+        return;
+    };
+    if output.iter().any(|existing| existing == &normalized) {
+        return;
+    }
+    output.push(normalized);
+}
+
+fn normalize_workspace_changed_path(raw: &str, workspace_id: &str) -> Option<String> {
+    let mut value = raw.trim().replace('\\', "/");
+    if value.is_empty() {
+        return None;
+    }
+    if let Some(stripped) = value.strip_prefix("file://") {
+        value = stripped.to_string();
+    }
+    if let Some(index) = value.find(|ch| ch == '?' || ch == '#') {
+        value.truncate(index);
+    }
+    if value == "/" || value == "." {
+        return Some(String::new());
+    }
+    if value.len() >= 2 && value.as_bytes()[1] == b':' {
+        // Ignore absolute Windows drive paths because they are not stable client hints.
+        return None;
+    }
+    if let Some(stripped) = value.strip_prefix("/workspaces/") {
+        value = stripped.to_string();
+    }
+    if let Some(stripped) = value.strip_prefix("workspaces/") {
+        value = stripped.to_string();
+        let mut parts = value.splitn(2, '/');
+        let owner = parts.next().unwrap_or_default().trim();
+        let rest = parts.next().unwrap_or_default();
+        if owner == workspace_id {
+            value = rest.to_string();
+        } else if !owner.is_empty() {
+            return None;
+        }
+    } else if let Some(stripped) = value.strip_prefix("/workspace/") {
+        value = stripped.to_string();
+    } else if let Some(stripped) = value.strip_prefix("workspace/") {
+        value = stripped.to_string();
+    }
+    if let Some(stripped) = value.strip_prefix('/') {
+        value = stripped.to_string();
+    }
+    if let Some(stripped) = value.strip_prefix("./") {
+        value = stripped.to_string();
+    }
+    if let Some(stripped) = value.strip_prefix(&format!("{workspace_id}/")) {
+        value = stripped.to_string();
+    }
+    if value == workspace_id || value == "." || value == "/" {
+        return Some(String::new());
+    }
+    Some(value.trim_matches('/').to_string())
+}
+
+fn extract_container_id_from_workspace_id(workspace_id: &str) -> i32 {
+    if let Some((_, suffix)) = workspace_id.rsplit_once("__c__") {
+        if let Ok(parsed) = suffix.parse::<i32>() {
+            return crate::storage::normalize_workspace_container_id(parsed);
+        }
+    }
+    if workspace_id.contains("__a__") || workspace_id.contains("__agent__") {
+        return crate::storage::DEFAULT_SANDBOX_CONTAINER_ID;
+    }
+    crate::storage::USER_PRIVATE_CONTAINER_ID
+}
+
 fn approval_kind_for_tool(tool_name: &str) -> ApprovalRequestKind {
     let exec_tool = resolve_tool_name("execute_command");
     let ptc_tool = resolve_tool_name("ptc");
@@ -1665,6 +1846,71 @@ mod tests {
         let answer = build_tool_failure_guard_answer("read_file", &result, 3, 5);
         assert!(answer.contains("read_file"));
         assert!(answer.contains("5"));
+    }
+
+    #[test]
+    fn normalize_workspace_changed_path_strips_workspace_public_prefix() {
+        let path = normalize_workspace_changed_path(
+            "/workspaces/alice__c__2/docs/readme.md",
+            "alice__c__2",
+        )
+        .expect("path");
+        assert_eq!(path, "docs/readme.md");
+    }
+
+    #[test]
+    fn normalize_workspace_changed_path_ignores_windows_absolute_path() {
+        let path = normalize_workspace_changed_path("C:/repo/demo.txt", "alice__c__2");
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn extract_workspace_changed_paths_merges_meta_data_and_args() {
+        let meta = json!({
+            "changed_paths": [
+                "/workspaces/alice__c__2/docs/a.md",
+                "docs/b.md"
+            ]
+        });
+        let data = json!({
+            "files": [
+                { "path": "docs/c.md" },
+                { "to_path": "docs/d.md" }
+            ]
+        });
+        let args = json!({
+            "destination": "docs/archive",
+            "paths": ["docs/e.md"]
+        });
+        let paths =
+            extract_workspace_changed_paths(Some(&meta), &data, &args, "alice__c__2");
+        let expected = HashSet::from([
+            "docs/a.md".to_string(),
+            "docs/b.md".to_string(),
+            "docs/c.md".to_string(),
+            "docs/d.md".to_string(),
+            "docs/e.md".to_string(),
+            "docs/archive".to_string(),
+        ]);
+        assert_eq!(paths.len(), expected.len());
+        let actual = paths.into_iter().collect::<HashSet<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn extract_container_id_from_workspace_id_recovers_suffix() {
+        assert_eq!(
+            extract_container_id_from_workspace_id("alice__c__7"),
+            crate::storage::normalize_workspace_container_id(7)
+        );
+        assert_eq!(
+            extract_container_id_from_workspace_id("alice__agent__demo"),
+            crate::storage::DEFAULT_SANDBOX_CONTAINER_ID
+        );
+        assert_eq!(
+            extract_container_id_from_workspace_id("alice"),
+            crate::storage::USER_PRIVATE_CONTAINER_ID
+        );
     }
 
     #[test]

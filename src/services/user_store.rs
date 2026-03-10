@@ -1,10 +1,10 @@
 use crate::org_units;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
-    ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord, SessionRunRecord,
-    StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserTokenRecord, UserToolAccessRecord, DEFAULT_HIVE_ID,
-    DEFAULT_SANDBOX_CONTAINER_ID,
+    BeeroomChatMessageRecord, ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord,
+    SessionRunRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
+    UserAccountRecord, UserAgentAccessRecord, UserAgentRecord, UserTokenRecord,
+    UserToolAccessRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Result};
 use argon2::password_hash::{
@@ -97,6 +97,10 @@ pub struct UserStore {
 impl UserStore {
     pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
         Self { storage }
+    }
+
+    pub fn storage_backend(&self) -> Arc<dyn StorageBackend> {
+        self.storage.clone()
     }
 
     pub fn is_default_admin(user_id: &str) -> bool {
@@ -593,6 +597,53 @@ impl UserStore {
         self.storage.delete_chat_session(user_id, session_id)
     }
 
+    pub fn list_beeroom_chat_messages(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        before_message_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<BeeroomChatMessageRecord>> {
+        self.storage
+            .list_beeroom_chat_messages(user_id, group_id, before_message_id, limit)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn append_beeroom_chat_message(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        sender_kind: &str,
+        sender_name: &str,
+        sender_agent_id: Option<&str>,
+        mention_name: Option<&str>,
+        mention_agent_id: Option<&str>,
+        body: &str,
+        meta: Option<&str>,
+        tone: &str,
+        client_msg_id: Option<&str>,
+        created_at: f64,
+    ) -> Result<BeeroomChatMessageRecord> {
+        self.storage.append_beeroom_chat_message(
+            user_id,
+            group_id,
+            sender_kind,
+            sender_name,
+            sender_agent_id,
+            mention_name,
+            mention_agent_id,
+            body,
+            meta,
+            tone,
+            client_msg_id,
+            created_at,
+        )
+    }
+
+    pub fn delete_beeroom_chat_messages(&self, user_id: &str, group_id: &str) -> Result<i64> {
+        self.storage.delete_beeroom_chat_messages(user_id, group_id)
+    }
+
     pub fn upsert_session_run(&self, record: &SessionRunRecord) -> Result<()> {
         self.storage.upsert_session_run(record)
     }
@@ -1047,5 +1098,89 @@ mod tests {
         assert_eq!(agents[0].hive_id, DEFAULT_HIVE_ID);
         assert_eq!(agents[0].name, "默认智能体");
         assert_eq!(agents[0].description, "系统级默认成员");
+    }
+
+    #[test]
+    fn beeroom_chat_messages_can_append_and_list() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-beeroom-chat.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage.clone());
+
+        store
+            .append_beeroom_chat_message(
+                "alice",
+                DEFAULT_HIVE_ID,
+                "user",
+                "User",
+                None,
+                Some("Ops"),
+                Some("agent-ops"),
+                "请开始任务",
+                Some("default"),
+                "user",
+                Some("msg-1"),
+                100.0,
+            )
+            .expect("append first beeroom chat message");
+        store
+            .append_beeroom_chat_message(
+                "alice",
+                DEFAULT_HIVE_ID,
+                "agent",
+                "Ops",
+                Some("agent-ops"),
+                None,
+                None,
+                "收到，开始执行",
+                Some("result"),
+                "worker",
+                Some("msg-2"),
+                101.0,
+            )
+            .expect("append second beeroom chat message");
+
+        let messages = store
+            .list_beeroom_chat_messages("alice", DEFAULT_HIVE_ID, None, 20)
+            .expect("list beeroom chat messages");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].body, "请开始任务");
+        assert_eq!(messages[1].sender_agent_id.as_deref(), Some("agent-ops"));
+    }
+
+    #[test]
+    fn beeroom_chat_messages_can_clear_by_group() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-beeroom-chat-clear.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage.clone());
+
+        store
+            .append_beeroom_chat_message(
+                "alice",
+                DEFAULT_HIVE_ID,
+                "system",
+                "蜂群",
+                None,
+                None,
+                None,
+                "待命",
+                None,
+                "system",
+                Some("msg-clear"),
+                100.0,
+            )
+            .expect("append beeroom chat message");
+
+        let deleted = store
+            .delete_beeroom_chat_messages("alice", DEFAULT_HIVE_ID)
+            .expect("clear beeroom chat messages");
+        let remaining = store
+            .list_beeroom_chat_messages("alice", DEFAULT_HIVE_ID, None, 20)
+            .expect("list remaining beeroom chat messages");
+
+        assert_eq!(deleted, 1);
+        assert!(remaining.is_empty());
     }
 }

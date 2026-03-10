@@ -7,8 +7,9 @@ use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
 use crate::channels::registry::{build_default_channel_adapter_registry, ChannelAdapterRegistry};
 use crate::channels::types::{
-    ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig,
+    ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig, XmppConfig,
 };
+use crate::channels::xmpp;
 use crate::config::{ChannelRateLimitConfig, Config};
 use crate::core::approval::{
     new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
@@ -46,6 +47,9 @@ const SESSION_STRATEGY_HYBRID: &str = "hybrid";
 const FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
 const FEISHU_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const FEISHU_LONG_CONN_RETRY_MAX_S: u64 = 30;
+const XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
+const XMPP_LONG_CONN_RETRY_BASE_S: u64 = 3;
+const XMPP_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
 const CHANNEL_APPROVAL_PROMPT: &str =
     "请回复数字：1 同意一次，2 同意本会话，3 拒绝（也可发送 /stop 取消当前任务）。";
@@ -84,7 +88,21 @@ struct FeishuLongConnTarget {
     config: FeishuConfig,
 }
 
+#[derive(Debug, Clone)]
+struct XmppLongConnTarget {
+    account_id: String,
+    updated_at: f64,
+    inbound_token: Option<String>,
+    config: XmppConfig,
+}
+
 impl FeishuLongConnTarget {
+    fn task_key(&self) -> String {
+        format!("{}:{:.3}", self.account_id, self.updated_at)
+    }
+}
+
+impl XmppLongConnTarget {
     fn task_key(&self) -> String {
         format!("{}:{:.3}", self.account_id, self.updated_at)
     }
@@ -202,6 +220,10 @@ impl ChannelHub {
         let feishu_worker = hub.clone();
         tokio::spawn(async move {
             feishu_worker.feishu_long_connection_supervisor_loop().await;
+        });
+        let xmpp_worker = hub.clone();
+        tokio::spawn(async move {
+            xmpp_worker.xmpp_long_connection_supervisor_loop().await;
         });
         hub
     }
@@ -1752,6 +1774,153 @@ impl ChannelHub {
         if result.accepted == 0 {
             return Err(anyhow!(
                 "feishu long connection inbound ignored: no message accepted"
+            ));
+        }
+        Ok(())
+    }
+
+    async fn xmpp_long_connection_supervisor_loop(&self) {
+        let mut workers: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+        loop {
+            workers.retain(|_, handle| !handle.is_finished());
+            let config = self.config_store.get().await;
+            if !channels_runtime_enabled(&config) {
+                for (_, handle) in workers.drain() {
+                    handle.abort();
+                }
+                sleep(Duration::from_secs(XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+                continue;
+            }
+
+            match self.list_xmpp_long_connection_targets().await {
+                Ok(targets) => {
+                    let mut desired_keys = HashSet::new();
+                    for target in targets {
+                        let task_key = target.task_key();
+                        desired_keys.insert(task_key.clone());
+                        if workers.contains_key(&task_key) {
+                            continue;
+                        }
+                        let worker = self.clone();
+                        workers.insert(
+                            task_key,
+                            tokio::spawn(async move {
+                                worker.xmpp_long_connection_worker_loop(target).await;
+                            }),
+                        );
+                    }
+
+                    let stale_keys = workers
+                        .keys()
+                        .filter(|key| !desired_keys.contains(*key))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    for task_key in stale_keys {
+                        if let Some(handle) = workers.remove(&task_key) {
+                            handle.abort();
+                        }
+                    }
+                }
+                Err(err) => {
+                    warn!("load xmpp long connection targets failed: {err}");
+                }
+            }
+
+            sleep(Duration::from_secs(XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+        }
+    }
+
+    async fn list_xmpp_long_connection_targets(&self) -> Result<Vec<XmppLongConnTarget>> {
+        let storage = self.storage.clone();
+        let accounts = tokio::task::spawn_blocking(move || {
+            storage.list_channel_accounts(Some(xmpp::XMPP_CHANNEL), Some("active"))
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+
+        let mut targets = Vec::new();
+        for record in accounts {
+            let account_cfg = ChannelAccountConfig::from_value(&record.config);
+            let Some(xmpp_cfg) = account_cfg.xmpp else {
+                continue;
+            };
+            if !xmpp::long_connection_enabled(&xmpp_cfg) {
+                continue;
+            }
+            if !xmpp::has_long_connection_credentials(&xmpp_cfg) {
+                warn!(
+                    "skip xmpp long connection target without credentials: account_id={}",
+                    record.account_id
+                );
+                continue;
+            }
+            targets.push(XmppLongConnTarget {
+                account_id: record.account_id,
+                updated_at: record.updated_at,
+                inbound_token: account_cfg.inbound_token,
+                config: xmpp_cfg,
+            });
+        }
+        Ok(targets)
+    }
+
+    async fn xmpp_long_connection_worker_loop(&self, target: XmppLongConnTarget) {
+        let mut retry_delay_s = XMPP_LONG_CONN_RETRY_BASE_S;
+        loop {
+            let result = xmpp::run_long_connection_session(&target.account_id, &target.config, {
+                let worker = self.clone();
+                let event_target = target.clone();
+                move |message| {
+                    let worker = worker.clone();
+                    let event_target = event_target.clone();
+                    async move {
+                        worker
+                            .handle_xmpp_long_connection_message(&event_target, message)
+                            .await
+                    }
+                }
+            })
+            .await;
+
+            match result {
+                Ok(()) => {
+                    retry_delay_s = XMPP_LONG_CONN_RETRY_BASE_S;
+                    warn!(
+                        "xmpp long connection closed: account_id={}, retry_in={}s",
+                        target.account_id, retry_delay_s
+                    );
+                }
+                Err(err) => {
+                    warn!(
+                        "xmpp long connection failed: account_id={}, retry_in={}s, error={err}",
+                        target.account_id, retry_delay_s
+                    );
+                    retry_delay_s = (retry_delay_s * 2).min(XMPP_LONG_CONN_RETRY_MAX_S);
+                }
+            }
+
+            sleep(Duration::from_secs(retry_delay_s)).await;
+        }
+    }
+
+    async fn handle_xmpp_long_connection_message(
+        &self,
+        target: &XmppLongConnTarget,
+        message: ChannelMessage,
+    ) -> Result<()> {
+        let headers = build_internal_channel_headers(target.inbound_token.as_deref())?;
+        let result = self
+            .handle_inbound(xmpp::XMPP_CHANNEL, &headers, vec![message], None)
+            .await?;
+        if !result.errors.is_empty() {
+            return Err(anyhow!(
+                "xmpp long connection inbound rejected: {}",
+                result.errors.join(" | ")
+            ));
+        }
+        if result.accepted == 0 {
+            return Err(anyhow!(
+                "xmpp long connection inbound ignored: no message accepted"
             ));
         }
         Ok(())

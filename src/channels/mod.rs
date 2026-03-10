@@ -13,6 +13,7 @@ pub mod types;
 pub mod wechat;
 pub mod wechat_mp;
 pub mod whatsapp_cloud;
+pub mod xmpp;
 
 pub use service::ChannelHub;
 pub use types::ChannelMessage;

@@ -22,6 +22,7 @@ const USER_CHANNEL_QQBOT: &str = "qqbot";
 const USER_CHANNEL_WHATSAPP: &str = "whatsapp";
 const USER_CHANNEL_WECHAT: &str = "wechat";
 const USER_CHANNEL_WECHAT_MP: &str = "wechat_mp";
+const USER_CHANNEL_XMPP: &str = "xmpp";
 const DEFAULT_GROUP_PEER_KIND: &str = "group";
 const WILDCARD_PEER_ID: &str = "*";
 
@@ -1594,6 +1595,48 @@ fn build_user_account_item(
                 "domain": domain,
             }
         });
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
+        let xmpp = account_cfg.xmpp.unwrap_or_default();
+        let jid = xmpp
+            .jid
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let password_set = xmpp
+            .password
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let domain = xmpp
+            .domain
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let host = xmpp
+            .host
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        long_connection_enabled = xmpp.long_connection_enabled.unwrap_or(true);
+        configured = !jid.is_empty() && password_set;
+        config_preview = json!({
+            "xmpp": {
+                "jid": jid,
+                "password_set": password_set,
+                "domain": domain,
+                "host": host,
+                "port": xmpp.port,
+                "direct_tls": xmpp.direct_tls,
+                "muc_rooms": xmpp.muc_rooms.len(),
+                "heartbeat_enabled": xmpp.heartbeat_enabled,
+                "heartbeat_interval_s": xmpp.heartbeat_interval_s,
+                "heartbeat_timeout_s": xmpp.heartbeat_timeout_s,
+                "respond_ping": xmpp.respond_ping,
+            }
+        });
     } else {
         configured = config
             .as_object()
@@ -1620,6 +1663,13 @@ fn build_user_account_item(
                 "receive_id_type".to_string(),
                 Value::String(receive_id_type),
             );
+            meta_map.insert(
+                "long_connection_enabled".to_string(),
+                Value::Bool(long_connection_enabled),
+            );
+        }
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
+        if let Some(meta_map) = meta.as_object_mut() {
             meta_map.insert(
                 "long_connection_enabled".to_string(),
                 Value::Bool(long_connection_enabled),
@@ -1718,6 +1768,9 @@ fn default_peer_kind_for_channel(channel: &str, receive_group_chat: Option<bool>
         return "user".to_string();
     }
     if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP) {
+        return "user".to_string();
+    }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
         return "user".to_string();
     }
     if receive_group_chat == Some(false) {
@@ -1835,7 +1888,8 @@ fn normalize_user_peer_kind(channel: &str, peer_kind: &str) -> String {
     let normalized = peer_kind.trim().to_ascii_lowercase();
     if (channel.trim().eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
         || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT)
-        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP))
+        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP)
+        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_XMPP))
         && matches!(normalized.as_str(), "dm" | "direct" | "single")
     {
         return "user".to_string();

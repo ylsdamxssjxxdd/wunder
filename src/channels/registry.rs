@@ -4,6 +4,7 @@ use crate::channels::qqbot::QqBotAdapter;
 use crate::channels::wechat::WechatAdapter;
 use crate::channels::wechat_mp::WechatMpAdapter;
 use crate::channels::whatsapp_cloud::WhatsappCloudAdapter;
+use crate::channels::xmpp::XmppAdapter;
 use anyhow::{anyhow, Result};
 use parking_lot::RwLock;
 use std::collections::HashMap;
@@ -65,6 +66,7 @@ pub fn build_default_channel_adapter_registry() -> ChannelAdapterRegistry {
     registry.register_replace(Arc::new(QqBotAdapter));
     registry.register_replace(Arc::new(WechatAdapter));
     registry.register_replace(Arc::new(WechatMpAdapter));
+    registry.register_replace(Arc::new(XmppAdapter));
     registry
 }
 

@@ -1904,6 +1904,31 @@
   - `peer.kind=group` -> `/v2/groups/{group_openid}/messages`
   - `peer.kind=channel` -> `/channels/{channel_id}/messages`
 
+### 4.1.54.7 `/wunder/channel/xmpp/webhook`（XMPP 标准客户端）
+
+- 方法：`POST`
+- 说明：该接口与通用 webhook 一致，主要用于兼容手工调试/回放；XMPP 生产入站默认由内置长连接 worker 接收并投递到 ChannelHub。
+- 账号配置（`ChannelAccount.config.xmpp`）：
+  - `jid`、`password`：登录凭证（必填）
+  - `domain`：SRV 域名或手动连接域名（可选）
+  - `host`、`port`：手动连接地址（可选）
+  - `direct_tls`：是否使用 5223 默认端口（可选，默认 `false`）
+  - `resource`：登录资源（可选）
+  - `muc_nick`：群聊昵称（可选，用于过滤自身群消息）
+  - `muc_rooms`：自动加入房间列表（可选，数组或逗号分隔字符串）
+  - `long_connection_enabled`：是否启用长连接（可选，默认 `true`）
+  - `send_initial_presence`：连接后是否发送初始 presence（可选，默认 `true`）
+  - `status_text`：presence 状态文案（可选）
+  - `heartbeat_enabled`：是否启用主动心跳（可选，默认 `true`）
+  - `heartbeat_interval_s`：主动心跳间隔秒数（可选，默认 `60`）
+  - `heartbeat_timeout_s`：主动心跳超时秒数（可选，默认 `20`）
+  - `respond_ping`：是否自动应答对端 IQ ping（可选，默认 `true`）
+- 运行机制：
+  - 当账号 `status=active` 且 `xmpp.long_connection_enabled=true` 且凭证完整时，后台 worker 会自动建立 XMPP 长连接。
+  - 长连接接收文本消息后会标准化为 `ChannelMessage`，并进入 `handle_inbound` 主链路。
+  - 出站优先复用长连接会话发包；会话不可用时自动降级为短连接发送。
+  - 心跳兼容：支持被动应答 IQ ping；启用主动心跳时会周期发送 ping，超时触发重连。
+
 ### 4.1.55 `/wunder/chat/*`
 
 - `GET /wunder/chat/transport`：获取当前聊天流式通道策略
@@ -2044,12 +2069,24 @@
 - `GET /wunder/beeroom/groups/{group_id}/missions/{mission_id}`：获取单个蜂群任务详情。
   - 后端会校验任务所属用户和 `hive_id` 是否与目标蜂群一致。
 
-### 4.1.62 蜂群工具与 TeamRun 补充说明
+### 4.1.62 `/wunder/beeroom/groups/{group_id}/chat/messages`
+
+- `GET /wunder/beeroom/groups/{group_id}/chat/messages`：读取蜂群画布右侧协作对话历史。
+  - Query：`before_message_id?`、`limit?`（默认 120，最大 200）
+  - 返回：`data.items[]`，每条消息包含 `message_id/group_id/sender_kind/sender_name/sender_agent_id/mention_name/mention_agent_id/body/meta/tone/client_msg_id/created_at`。
+- `POST /wunder/beeroom/groups/{group_id}/chat/messages`：追加一条蜂群协作消息。
+  - 入参（JSON）：`body`（必填）、`sender_kind?`（兼容 `senderKind`）、`sender_name?`（兼容 `senderName`）、`sender_agent_id?`（兼容 `senderAgentId`）、`mention_name?`（兼容 `mentionName/mention`）、`mention_agent_id?`（兼容 `mentionAgentId`）、`meta?`、`tone?`、`client_msg_id?`（兼容 `clientMsgId`）、`created_at?`（兼容 `createdAt`）。
+  - 说明：服务端会按 `user_id + group_id + client_msg_id` 做幂等去重，适合前端乐观追加与重试。
+- `DELETE /wunder/beeroom/groups/{group_id}/chat/messages`：清空当前蜂群协作对话历史。
+  - 返回：`data.deleted`、`data.group_id`。
+
+### 4.1.63 蜂群工具与 TeamRun 补充说明
 
 - `agent_swarm send` / `agent_swarm batch_send` 现在会：
   - 自动解析当前蜂巢 `hive_id`；
   - 只允许发现和派发同蜂巢成员；
   - 自动认领/沿用母蜂；
+  - 未显式指定目标会话时优先复用目标智能体主线程，仅在该智能体尚无主线程/会话时才新建；
   - 创建 `team_run/team_task` 并回写 `mother_agent_id`、`session_run_id`；
   - 在实际派发消息中自动附带 `SWARM_CONTEXT`（蜂巢基本信息、母蜂、发送者、活跃成员快照、`team_run_id/task_id` 等）。
 - TeamRun / TeamTask 相关返回体新增关键字段：
@@ -2059,7 +2096,7 @@
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。
   - `sandbox_container_id` 取值范围 1~10，默认 1；同一用户下相同容器编号的智能体共享同一文件工作区。
 
-### 4.1.63 `/wunder/beeroom/packs/*`（已实现，Phase 1）
+### 4.1.64 `/wunder/beeroom/packs/*`（已实现，Phase 1）
 
 - 说明：用于“蜂群包（HivePack）/工蜂包（WorkerPack）”资产导入导出；协议细节见 `docs/蜂巢协议设计.md`。
 - 任务状态机：
@@ -2070,16 +2107,27 @@
   - 形态：`multipart/form-data`
   - 字段：
     - `file`：必填，`.hivepack` 或 `.zip`
-    - `options`：可选 JSON（支持 `group_id`、`create_hive_if_missing`）
+    - `options`：可选 JSON（支持 `group_id`、`create_hive_if_missing`、`conflict_mode`）
     - `group_id/groupId/hive_id/hiveId`：可选，目标蜂群 ID（与 `options.group_id` 二选一）
   - 行为：
     - 校验包结构与路径安全；
     - 解析 `hive.yaml/worker.yaml`；
     - 安装技能包到用户 `custom skills`；
     - 自动创建工蜂智能体并归属蜂群；
+    - `conflict_mode=auto_rename_only`（默认）：蜂群/智能体/技能冲突时自动追加后缀并新建，不复用；
+    - `conflict_mode=update_replace`：定位目标蜂群后原位替换（保留目标蜂群标识，替换原成员；技能同名按原名覆盖）；
     - 工蜂工具挂载默认包含：系统内置 + MCP + 知识库 + 本次导入技能；
     - 失败时执行回滚（删除已创建智能体、移除本次技能、还原技能启用集；新建蜂群会归档）。
   - 返回：`data`（任务快照）。
+  - `report.conflicts`（`status=completed` 时）：
+    - `policy`：冲突策略（`auto_rename_only|update_replace`）；
+    - `renamed_total`：自动改名总数；
+    - `hive.from/to`：蜂群名称与 ID 的改名前后；
+    - `agents.renamed_total/renames[]`：工蜂改名统计与明细；
+    - `skills.renamed_total/renames[]`：技能改名统计与明细。
+  - `report.replace`（`status=completed` 时）：
+    - `enabled`：是否启用原位替换；
+    - `replaced_agent_total`：被替换移除的原工蜂数量。
 
 - `GET /wunder/beeroom/packs/import/{job_id}`
   - 返回：导入任务快照（仅当前用户可见）。
@@ -2101,6 +2149,12 @@
 - `GET /wunder/beeroom/packs/export/{job_id}/download`
   - 说明：仅当导出任务 `status=completed` 可下载。
   - 返回：`.hivepack` 文件流（`Content-Type: application/vnd.wunder.hivepack+zip`）。
+- 用户侧 UI（Messenger/蜂群）已接入：
+  - 中栏 `+` 直接选择 `.hivepack` 并发起导入；
+  - 蜂群列表条目 hover 浮出导出按钮并触发 `full` 导出；
+  - 当前中栏导入入口默认走 `auto_rename_only`；`update_replace` 通过导入 options/API 使用；
+  - 导入成功时若有改名冲突，会提示“自动改名 N 项”，并弹窗展示改名前后明细（首批）；
+  - 导出完成后自动下载产物；`reference_only` 当前通过 API 使用（前端入口待补齐）。
 
 ### 4.1.57 `/wunder/prompt_templates`（用户侧）
 
@@ -2233,6 +2287,7 @@
   - Query：`channel`、`status`
   - 返回：`data.items`（channel/account_id/config/status/created_at/updated_at/runtime）
   - `runtime.feishu_long_connection`：飞书账号运行态（`running/missing_credentials/disabled/account_inactive/not_configured`）与 `binding_count`
+  - `runtime.xmpp_long_connection`：XMPP 账号运行态（`running/missing_credentials/disabled/account_inactive/not_configured`）与 `binding_count`
 
 - `GET /wunder/admin/channels/bindings`
   - Query：`channel`
@@ -2262,6 +2317,7 @@
 - `tts_voice`：TTS voice 覆盖（可选）
 - `tool_overrides`：默认工具覆盖（可选）
 - `agent_id`：默认路由 agent_id（可选）
+- `xmpp.*`：XMPP 客户端配置（`jid/password/domain/host/port/direct_tls/resource/muc_nick/muc_rooms/long_connection_enabled/send_initial_presence/status_text/heartbeat_enabled/heartbeat_interval_s/heartbeat_timeout_s/respond_ping`）
 
 ### 4.1.60 `/wunder/channels/*`
 
@@ -2278,11 +2334,12 @@
       - `description`：渠道说明
       - `webhook_mode`：接入模式（如 `specialized+generic` / `generic`）
       - `docs_hint`：推荐 webhook 路径提示
-    - 当前默认支持：`feishu`、`wechat`、`wechat_mp`、`qqbot`、`whatsapp`、`telegram`、`discord`、`slack`、`line`、`dingtalk`
+    - 当前默认支持：`feishu`、`wechat`、`wechat_mp`、`qqbot`、`whatsapp`、`telegram`、`discord`、`slack`、`line`、`dingtalk`、`xmpp`
   - `meta` 关键字段：
     - `configured`：是否已完成可用配置
     - `peer_kind`：默认会话类型（如 `group` / `user`）
     - `receive_group_chat`：是否接收群聊（飞书）
+    - `long_connection_enabled`：是否启用长连接（飞书/XMPP）
 
 - `POST /wunder/channels/accounts`
   - 用途：新增或更新当前用户的渠道账号。
@@ -2309,11 +2366,20 @@
     - `wechat_mp.original_id`（用于 ToUserName 账号匹配，可选）
     - `domain` 或 `wechat_mp.domain`（可选，默认 `api.weixin.qq.com`）
     - `peer_kind` 固定 `user`
+  - XMPP 快捷入参：
+    - `xmpp.jid`、`xmpp.password`（必填或沿用已有值）
+    - `xmpp.domain`（可选，SRV 域名或手动服务器域名）
+    - `xmpp.host`、`xmpp.port`、`xmpp.direct_tls`（可选，手动连接地址）
+    - `xmpp.resource`（可选，登录资源）
+    - `xmpp.muc_nick`、`xmpp.muc_rooms`（可选，群聊昵称与自动入群房间）
+    - `xmpp.long_connection_enabled`、`xmpp.send_initial_presence`、`xmpp.status_text`（可选，长连接与 presence 策略）
+    - `xmpp.heartbeat_enabled`、`xmpp.heartbeat_interval_s`、`xmpp.heartbeat_timeout_s`、`xmpp.respond_ping`（可选，心跳兼容策略）
+    - `peer_kind` 默认 `user`
   - 行为说明：
     - 首次创建会自动写入 `inbound_token`。
     - 会自动维护默认绑定（`peer_id="*"`），并按 `peer_kind` / `receive_group_chat` 更新。
     - 传入 `agent_id` 时，默认绑定会同时写入该 `agent_id` 以隔离到指定智能体。
-    - 飞书账号保存成功后会以 `long_connection_enabled=true` 参与长连接调度。
+    - 飞书/XMPP 账号保存成功后会以 `long_connection_enabled=true` 参与长连接调度（可手动关闭）。
 
 - `DELETE /wunder/channels/accounts/{channel}/{account_id}`
   - 删除指定渠道账号，并清理该账号下当前用户的默认绑定与用户绑定映射。
@@ -2355,7 +2421,7 @@
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。
 - `event: tool_result`：工具执行结果（data.meta.duration_ms/truncated/output_chars/exit_code/policy）
-- `event: workspace_update`：工作区变更事件（data.workspace_id/agent_id/tree_version/tool/reason）
+- `event: workspace_update`：工作区变更事件（data.workspace_id/agent_id/container_id/tree_version/tool/reason/path/changed_paths）
 - `event: plan_update`：计划看板更新（`data.explanation` 可选，`data.plan` 为步骤数组，包含 `step`/`status`）
 - `event: question_panel`：问询面板更新（`data.question` 可选，`data.routes` 为路线数组，包含 `label`/`description`/`recommended`/`selected`）
   - 说明：当 `stop_reason=question_panel` 时会话进入 `waiting`，但后续用户选择仍会立即继续处理（不会触发忙时队列）。

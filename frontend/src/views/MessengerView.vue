@@ -88,15 +88,14 @@
       </button>
     </aside>
 
-    <Transition :name="middlePaneTransitionName">
-      <section
-        v-show="showMiddlePane"
-        ref="middlePaneRef"
-        class="messenger-middle-pane messenger-middle-pane--overlay"
-        @mouseenter="cancelMiddlePaneOverlayHide"
-        @mouseleave="scheduleMiddlePaneOverlayHide"
-      >
-        <MessengerMiddlePane
+    <section
+      v-if="showMiddlePane"
+      ref="middlePaneRef"
+      class="messenger-middle-pane messenger-middle-pane--overlay"
+      @mouseenter="cancelMiddlePaneOverlayHide"
+      @mouseleave="scheduleMiddlePaneOverlayHide"
+    >
+      <MessengerMiddlePane
           v-model:keyword="keywordInput"
           v-model:selected-contact-unit-id="selectedContactUnitId"
           v-model:selected-agent-hive-group-id="selectedAgentHiveGroupId"
@@ -172,9 +171,8 @@
           :current-username="currentUsername"
           :settings-logout-disabled="settingsLogoutDisabled"
           :handle-settings-logout="handleSettingsLogout"
-        />
-      </section>
-    </Transition>
+      />
+    </section>
 
     <section class="messenger-chat chat-shell">
       <header v-if="sessionHub.activeSection !== 'swarms'" class="messenger-chat-header">
@@ -234,6 +232,7 @@
       </header>
 
       <div
+        :key="chatBodyRenderKey"
         ref="messageListRef"
         class="messenger-chat-body"
         :class="{
@@ -283,14 +282,31 @@
           </div>
         </template>
 
+        <template v-else-if="sessionHub.activeSection === 'swarms'">
+          <div
+            :key="`beeroom-panel:${String(beeroomStore.activeGroupId || '')}`"
+            class="messenger-chat-settings messenger-chat-settings--beeroom messenger-chat-settings--beeroom-canvas"
+          >
+            <BeeroomWorkbench
+              :group="selectedBeeroomGroup"
+              :agents="beeroomStore.activeAgents"
+              :missions="beeroomStore.activeMissions"
+              :available-agents="beeroomCandidateAgents"
+              :loading="beeroomStore.detailLoading || beeroomStore.loading"
+              :refreshing="beeroomStore.refreshing"
+              :error="beeroomStore.error"
+              :view-mode="beeroomWorkbenchMode"
+              @refresh="refreshActiveBeeroom"
+              @move-agents="handleBeeroomMoveAgents"
+              @open-agent="openAgentById"
+            />
+          </div>
+        </template>
+
         <template v-else-if="showChatSettingsView">
           <div
+            :key="settingsPanelRenderKey"
             class="messenger-chat-settings"
-            :class="{
-              'messenger-chat-settings--beeroom': sessionHub.activeSection === 'swarms',
-              'messenger-chat-settings--beeroom-canvas':
-                sessionHub.activeSection === 'swarms' && beeroomWorkbenchMode === 'canvas'
-            }"
           >
             <template v-if="showAgentSettingsPanel">
               <template v-if="showAgentGridOverview">
@@ -432,22 +448,6 @@
                 </div>
 
               </template>
-            </template>
-
-            <template v-else-if="sessionHub.activeSection === 'swarms'">
-              <BeeroomWorkbench
-                :group="selectedBeeroomGroup"
-                :agents="beeroomStore.activeAgents"
-                :missions="beeroomStore.activeMissions"
-                :available-agents="beeroomCandidateAgents"
-                :loading="beeroomStore.detailLoading || beeroomStore.loading"
-                :refreshing="beeroomStore.refreshing"
-                :error="beeroomStore.error"
-                :view-mode="beeroomWorkbenchMode"
-                @refresh="refreshActiveBeeroom"
-                @move-agents="handleBeeroomMoveAgents"
-                @open-agent="openAgentById"
-              />
             </template>
 
             <template v-else-if="sessionHub.activeSection === 'users'">
@@ -1276,6 +1276,7 @@ import {
   splitMessengerBootstrapTasks,
   type MessengerBootstrapTask
 } from '@/views/messenger/bootstrap';
+import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
@@ -1658,7 +1659,6 @@ const setContactVirtualListRef = (element: HTMLElement | null) => {
   contactVirtualListRef.value = element;
 };
 
-let statusTimer: number | null = null;
 let lifecycleTimer: number | null = null;
 let worldQuickPanelCloseTimer: number | null = null;
 let timelinePrefetchTimer: number | null = null;
@@ -1670,6 +1670,9 @@ let contactVirtualFrame: number | null = null;
 let viewportResizeHandler: (() => void) | null = null;
 let audioRecordingSupportHandler: (() => void) | null = null;
 let audioRecordingSupportRetryTimer: number | null = null;
+let startRealtimePulse: (() => void) | null = null;
+let stopRealtimePulse: (() => void) | null = null;
+let triggerRealtimePulseRefresh: ((reason?: string) => void) | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 type WorldVoiceRecordingRuntime = {
   session: AudioRecordingSession;
@@ -1692,8 +1695,11 @@ type WorldVoicePlaybackRuntime = {
 let worldVoiceRecordingRuntime: WorldVoiceRecordingRuntime | null = null;
 let agentVoiceRecordingRuntime: AgentVoiceRecordingRuntime | null = null;
 let worldVoicePlaybackRuntime: WorldVoicePlaybackRuntime | null = null;
+let runningAgentsLoadVersion = 0;
+let agentUserRoundsLoadVersion = 0;
 let cronAgentIdsLoadVersion = 0;
 let channelBoundAgentIdsLoadVersion = 0;
+let toolsCatalogLoadVersion = 0;
 let desktopDefaultModelMetaFetchPromise: Promise<{
   hearingSupported: boolean;
   modelDisplayName: string;
@@ -2315,12 +2321,7 @@ const activeSessionApproval = computed(() => {
   );
 });
 
-const pendingApprovalAgentIdSet = computed(() => {
-  const approvals = Array.isArray(chatStore.pendingApprovals) ? chatStore.pendingApprovals : [];
-  const result = new Set<string>();
-  if (!approvals.length) {
-    return result;
-  }
+const buildSessionAgentMap = (): Map<string, string> => {
   const sessionAgentMap = new Map<string, string>();
   (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).forEach((sessionRaw) => {
     const session = (sessionRaw || {}) as Record<string, unknown>;
@@ -2332,6 +2333,16 @@ const pendingApprovalAgentIdSet = computed(() => {
       ) || DEFAULT_AGENT_KEY;
     sessionAgentMap.set(sessionId, resolvedAgentId);
   });
+  return sessionAgentMap;
+};
+
+const pendingApprovalAgentIdSet = computed(() => {
+  const approvals = Array.isArray(chatStore.pendingApprovals) ? chatStore.pendingApprovals : [];
+  const result = new Set<string>();
+  if (!approvals.length) {
+    return result;
+  }
+  const sessionAgentMap = buildSessionAgentMap();
   approvals.forEach((item) => {
     const sessionId = String((item as Record<string, unknown>)?.session_id || '').trim();
     if (!sessionId) return;
@@ -2344,6 +2355,30 @@ const pendingApprovalAgentIdSet = computed(() => {
       result.add(
         normalizeAgentId(activeAgentId.value || selectedAgentId.value || DEFAULT_AGENT_KEY)
       );
+    }
+  });
+  return result;
+});
+
+const streamingAgentIdSet = computed(() => {
+  const loadingBySession =
+    (chatStore.loadingBySession && typeof chatStore.loadingBySession === 'object'
+      ? chatStore.loadingBySession
+      : {}) as Record<string, unknown>;
+  const sessionAgentMap = buildSessionAgentMap();
+  const result = new Set<string>();
+  Object.entries(loadingBySession).forEach(([sessionId, loading]) => {
+    if (!loading) return;
+    const mappedAgentId = sessionAgentMap.get(String(sessionId || '').trim());
+    if (mappedAgentId) {
+      result.add(mappedAgentId);
+      return;
+    }
+    if (sessionId === String(chatStore.activeSessionId || '').trim()) {
+      const fallbackAgentId =
+        normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId) ||
+        DEFAULT_AGENT_KEY;
+      result.add(fallbackAgentId);
     }
   });
   return result;
@@ -2652,6 +2687,17 @@ const beeroomWorkbenchMode = ref<'text' | 'canvas'>('canvas');
 const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messages');
 const showHelperAppsWorkspace = computed(
   () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
+);
+const chatBodyRenderKey = computed(() =>
+  [
+    'chat-body',
+    sessionHub.activeSection,
+    showHelperAppsWorkspace.value ? 'helper' : 'main',
+    showChatSettingsView.value ? 'settings' : 'messages'
+  ].join(':')
+);
+const settingsPanelRenderKey = computed(() =>
+  ['settings', sessionHub.activeSection, beeroomWorkbenchMode.value].join(':')
 );
 const showChatComposerFooter = computed(() => {
   const routeSection = resolveSectionFromRoute(route.path, route.query.section);
@@ -4243,12 +4289,14 @@ const setRuntimeStateOverride = (agentId: unknown, state: AgentRuntimeState, ttl
   const key = normalizeAgentId(agentId);
   if (ttlMs <= 0) {
     runtimeStateOverrides.value.delete(key);
+    triggerRealtimePulseRefresh?.('runtime-override-clear');
     return;
   }
   runtimeStateOverrides.value.set(key, {
     state,
     expiresAt: Date.now() + ttlMs
   });
+  triggerRealtimePulseRefresh?.('runtime-override');
 };
 
 const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
@@ -4262,6 +4310,9 @@ const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
   if (inquiryAgentId && inquiryAgentId === key) {
     return 'pending';
   }
+  if (streamingAgentIdSet.value.has(key)) {
+    return 'running';
+  }
   const now = Date.now();
   const override = runtimeStateOverrides.value.get(key);
   if (override && override.expiresAt > now) {
@@ -4272,6 +4323,27 @@ const resolveAgentRuntimeState = (agentId: unknown): AgentRuntimeState => {
   }
   return agentRuntimeStateMap.value.get(key) || 'idle';
 };
+
+const hasHotRuntimeState = computed(() => {
+  if (pendingApprovalAgentIdSet.value.size > 0 || streamingAgentIdSet.value.size > 0) {
+    return true;
+  }
+  const now = Date.now();
+  for (const state of agentRuntimeStateMap.value.values()) {
+    if (state === 'running' || state === 'pending') {
+      return true;
+    }
+  }
+  for (const override of runtimeStateOverrides.value.values()) {
+    if (override.expiresAt <= now) {
+      continue;
+    }
+    if (override.state === 'running' || override.state === 'pending') {
+      return true;
+    }
+  }
+  return false;
+});
 
 const normalizeAgentUserRoundsKey = (value: unknown): string => {
   const raw = String(value || '').trim();
@@ -6833,9 +6905,13 @@ const normalizeToolEntry = (item: unknown): ToolEntry | null => {
 };
 
 const loadToolsCatalog = async () => {
+  const loadVersion = ++toolsCatalogLoadVersion;
   toolsCatalogLoading.value = true;
   try {
     const { data } = await fetchUserToolsCatalog();
+    if (loadVersion !== toolsCatalogLoadVersion) {
+      return;
+    }
     const payload = (data?.data || {}) as Record<string, unknown>;
     builtinTools.value = (Array.isArray(payload.builtin_tools) ? payload.builtin_tools : [])
       .map((item) => normalizeToolEntry(item))
@@ -6852,13 +6928,15 @@ const loadToolsCatalog = async () => {
     knowledgeTools.value = (Array.isArray(payload.knowledge_tools) ? payload.knowledge_tools : [])
       .map((item) => normalizeToolEntry(item))
       .filter(Boolean) as ToolEntry[];
-    if (!selectedToolCategory.value) {
-      selectedToolCategory.value = 'admin';
-    }
   } catch (error) {
+    if (loadVersion !== toolsCatalogLoadVersion) {
+      return;
+    }
     showApiError(error, t('toolManager.loadFailed'));
   } finally {
-    toolsCatalogLoading.value = false;
+    if (loadVersion === toolsCatalogLoadVersion) {
+      toolsCatalogLoading.value = false;
+    }
   }
 };
 
@@ -8243,8 +8321,13 @@ const openDebugTools = async () => {
 };
 
 const loadRunningAgents = async () => {
+  // Ignore stale responses when multiple refreshes race (manual refresh + pulse tick).
+  const loadVersion = ++runningAgentsLoadVersion;
   try {
     const response = await listRunningAgents();
+    if (loadVersion !== runningAgentsLoadVersion) {
+      return;
+    }
     const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
     const stateMap = new Map<string, AgentRuntimeState>();
     items.forEach((item: Record<string, unknown>) => {
@@ -8256,16 +8339,26 @@ const loadRunningAgents = async () => {
       stateMap.set(key, state);
     });
     handleAgentRuntimeStateUpdate(stateMap);
-  } catch {
-    agentRuntimeStateMap.value = new Map<string, AgentRuntimeState>();
-    agentRuntimeStateSnapshot = new Map<string, AgentRuntimeState>();
-    agentRuntimeStateHydrated = false;
+  } catch (error) {
+    if (loadVersion !== runningAgentsLoadVersion) {
+      return;
+    }
+    const status = resolveHttpStatus(error);
+    if (isAuthDeniedStatus(status)) {
+      agentRuntimeStateMap.value = new Map<string, AgentRuntimeState>();
+      agentRuntimeStateSnapshot = new Map<string, AgentRuntimeState>();
+      agentRuntimeStateHydrated = false;
+    }
   }
 };
 
 const loadAgentUserRounds = async () => {
+  const loadVersion = ++agentUserRoundsLoadVersion;
   try {
     const response = await listAgentUserRounds();
+    if (loadVersion !== agentUserRoundsLoadVersion) {
+      return;
+    }
     const items = Array.isArray(response?.data?.data?.items) ? response.data.data.items : [];
     const roundsMap = new Map<string, number>();
     items.forEach((item: Record<string, unknown>) => {
@@ -8275,8 +8368,14 @@ const loadAgentUserRounds = async () => {
       roundsMap.set(key, value);
     });
     agentUserRoundsMap.value = roundsMap;
-  } catch {
-    agentUserRoundsMap.value = new Map<string, number>();
+  } catch (error) {
+    if (loadVersion !== agentUserRoundsLoadVersion) {
+      return;
+    }
+    const status = resolveHttpStatus(error);
+    if (isAuthDeniedStatus(status)) {
+      agentUserRoundsMap.value = new Map<string, number>();
+    }
   }
 };
 
@@ -8897,6 +8996,11 @@ watch(
   () => sessionHub.activeSection,
   (section) => {
     closeFileContainerMenu();
+    if (section === 'swarms') {
+      stopRealtimePulse?.();
+    } else {
+      startRealtimePulse?.();
+    }
     if (section !== 'swarms') {
       beeroomWorkbenchMode.value = 'text';
     }
@@ -8943,6 +9047,15 @@ watch(
   (visible) => {
     if (visible) {
       loadAgentUserRounds();
+    }
+  }
+);
+
+watch(
+  () => hasHotRuntimeState.value,
+  (hot) => {
+    if (hot) {
+      triggerRealtimePulseRefresh?.('hot-runtime');
     }
   }
 );
@@ -9324,16 +9437,25 @@ onMounted(async () => {
   lifecycleTimer = window.setInterval(() => {
     fileLifecycleNowTick.value = Date.now();
   }, 60_000);
-  statusTimer = window.setInterval(() => {
-    loadRunningAgents();
-    if (!cronPermissionDenied.value) {
-      loadCronAgentIds();
-    }
-    loadChannelBoundAgentIds();
-    if (!userWorldPermissionDenied.value) {
-      userWorldStore.refreshContacts().catch(() => {});
-    }
-  }, 12000);
+  const realtimePulse = createMessengerRealtimePulse({
+    refreshRunningAgents: loadRunningAgents,
+    refreshCronAgentIds: loadCronAgentIds,
+    refreshChannelBoundAgentIds: loadChannelBoundAgentIds,
+    refreshContacts: () =>
+      userWorldStore.refreshContacts('', {
+        shouldApply: () =>
+          sessionHub.activeSection === 'users' || sessionHub.activeSection === 'messages'
+      }),
+    isHotState: () => hasHotRuntimeState.value,
+    shouldRefreshCron: () => !cronPermissionDenied.value,
+    shouldRefreshContacts: () =>
+      !userWorldPermissionDenied.value &&
+      (sessionHub.activeSection === 'users' || sessionHub.activeSection === 'messages')
+  });
+  startRealtimePulse = () => realtimePulse.start();
+  stopRealtimePulse = () => realtimePulse.stop();
+  triggerRealtimePulseRefresh = (reason = '') => realtimePulse.trigger(reason);
+  realtimePulse.start();
 });
 
 onBeforeUnmount(() => {
@@ -9376,10 +9498,10 @@ onBeforeUnmount(() => {
     window.cancelAnimationFrame(contactVirtualFrame);
     contactVirtualFrame = null;
   }
-  if (statusTimer) {
-    window.clearInterval(statusTimer);
-    statusTimer = null;
-  }
+  stopRealtimePulse?.();
+  startRealtimePulse = null;
+  stopRealtimePulse = null;
+  triggerRealtimePulseRefresh = null;
   if (lifecycleTimer) {
     window.clearInterval(lifecycleTimer);
     lifecycleTimer = null;

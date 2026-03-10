@@ -3,6 +3,7 @@ const path = require('path')
 const { Resvg } = require('@resvg/resvg-js')
 const { parseICO } = require('icojs')
 const pngToIco = require('png-to-ico')
+const { PNG } = require('pngjs')
 
 const repoRoot = path.resolve(__dirname, '..', '..')
 const sourceIco = process.env.WUNDER_ICON_ICO
@@ -12,6 +13,7 @@ const sourceSvg = process.env.WUNDER_ICON_SVG
   ? path.resolve(process.env.WUNDER_ICON_SVG)
   : path.join(repoRoot, 'images', 'eva01-head.svg')
 const minPngSize = 512
+const defaultIcoPaddingRatio = 0.06
 
 const pngTargets = [path.join(repoRoot, 'wunder-desktop-electron', 'build', 'icon.png')]
 const icoTargets = [
@@ -19,6 +21,16 @@ const icoTargets = [
   path.join(repoRoot, 'wunder-desktop-electron', 'assets', 'icon.ico'),
   path.join(repoRoot, 'wunder-desktop', 'icons', 'icon.ico')
 ]
+
+const normalizePaddingRatio = (rawValue) => {
+  const parsed = Number(rawValue)
+  if (!Number.isFinite(parsed)) {
+    return defaultIcoPaddingRatio
+  }
+  return Math.min(Math.max(parsed, 0), 0.3)
+}
+
+const icoPaddingRatio = normalizePaddingRatio(process.env.WUNDER_ICON_PADDING_RATIO)
 
 const ensureDir = (targetPath) => {
   fs.mkdirSync(path.dirname(targetPath), { recursive: true })
@@ -33,6 +45,24 @@ const renderPng = (svgBuffer, size) =>
   })
     .render()
     .asPng()
+
+const addTransparentPadding = (svgBuffer, size) => {
+  const basePng = renderPng(svgBuffer, size)
+  if (size <= 2 || icoPaddingRatio <= 0) {
+    return basePng
+  }
+  const padding = Math.max(1, Math.round(size * icoPaddingRatio))
+  const innerSize = Math.max(1, size - padding * 2)
+  if (innerSize >= size) {
+    return basePng
+  }
+  const innerPng = PNG.sync.read(renderPng(svgBuffer, innerSize))
+  const canvas = new PNG({ width: size, height: size })
+  PNG.bitblt(innerPng, canvas, 0, 0, innerPng.width, innerPng.height, padding, padding)
+  return PNG.sync.write(canvas)
+}
+
+const uniquePaths = (paths) => [...new Set(paths.map((item) => path.resolve(item)))]
 
 const writeFromIco = async () => {
   if (!fs.existsSync(sourceIco)) {
@@ -88,25 +118,26 @@ const writeFromSvg = async () => {
   }
 
   const icoSizes = [16, 24, 32, 48, 64, 128, 256]
-  const icoPngBuffers = icoSizes.map((size) => renderPng(svgBuffer, size))
+  const icoPngBuffers = icoSizes.map((size) => addTransparentPadding(svgBuffer, size))
   const icoBuffer = await pngToIco(icoPngBuffers)
 
-  for (const target of icoTargets) {
+  const allIcoTargets = uniquePaths([sourceIco, ...icoTargets])
+  for (const target of allIcoTargets) {
     ensureDir(target)
     fs.writeFileSync(target, icoBuffer)
   }
 
   console.log(
-    `[sync-icons] synced from ${sourceSvg} -> ${pngTargets.length} png target(s), ${icoTargets.length} ico target(s)`
+    `[sync-icons] generated ico from ${sourceSvg} (padding=${icoPaddingRatio}) -> ${pngTargets.length} png target(s), ${allIcoTargets.length} ico target(s)`
   )
   return true
 }
 
 async function main() {
-  if (await writeFromIco()) {
+  if (await writeFromSvg()) {
     return
   }
-  if (await writeFromSvg()) {
+  if (await writeFromIco()) {
     return
   }
   throw new Error(`[sync-icons] icon source not found: ${sourceIco} or ${sourceSvg}`)

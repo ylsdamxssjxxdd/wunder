@@ -256,6 +256,11 @@ impl PromptComposer {
             } else {
                 Vec::new()
             };
+            let tool_specs = if is_local_runtime_mode(&config.server.mode) {
+                localize_tool_specs_for_local_runtime(tool_specs, workspace, workspace_id)
+            } else {
+                tool_specs
+            };
             let workdir_display = if is_local_runtime_mode(&config.server.mode) {
                 absolute_path_str(workdir)
             } else {
@@ -743,6 +748,67 @@ fn render_template(template: &str, mapping: &HashMap<String, String>) -> String 
     rendered
 }
 
+fn localize_tool_specs_for_local_runtime(
+    specs: Vec<ToolSpec>,
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+) -> Vec<ToolSpec> {
+    if specs.is_empty() {
+        return specs;
+    }
+    let public_root = workspace
+        .public_root(workspace_id)
+        .to_string_lossy()
+        .replace('\\', "/");
+    let local_root = absolute_path_str(&workspace.workspace_root(workspace_id)).replace('\\', "/");
+    specs
+        .into_iter()
+        .map(|mut spec| {
+            spec.description = rewrite_workspace_paths_for_local_text(
+                &spec.description,
+                &public_root,
+                &local_root,
+            );
+            rewrite_workspace_paths_in_json(&mut spec.input_schema, &public_root, &local_root);
+            spec
+        })
+        .collect()
+}
+
+fn rewrite_workspace_paths_in_json(value: &mut Value, public_root: &str, local_root: &str) {
+    match value {
+        Value::String(text) => {
+            *text = rewrite_workspace_paths_for_local_text(text, public_root, local_root);
+        }
+        Value::Array(items) => {
+            for item in items {
+                rewrite_workspace_paths_in_json(item, public_root, local_root);
+            }
+        }
+        Value::Object(map) => {
+            for item in map.values_mut() {
+                rewrite_workspace_paths_in_json(item, public_root, local_root);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
+}
+
+fn rewrite_workspace_paths_for_local_text(
+    text: &str,
+    public_root: &str,
+    local_root: &str,
+) -> String {
+    if text.trim().is_empty() {
+        return text.to_string();
+    }
+    let replaced_placeholder = text.replace("/workspaces/{user_id}", public_root);
+    if public_root.is_empty() || local_root.is_empty() || public_root == local_root {
+        return replaced_placeholder;
+    }
+    replaced_placeholder.replace(public_root, local_root)
+}
+
 fn resolve_prompt_path(path: &Path) -> PathBuf {
     let mut resolved = if path.is_absolute() {
         path.to_path_buf()
@@ -950,4 +1016,63 @@ fn now_ts() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rewrite_workspace_paths_for_local_text_handles_placeholder() {
+        let output = rewrite_workspace_paths_for_local_text(
+            "![Report](/workspaces/{user_id}/temp_dir/report.md)",
+            "/workspaces",
+            "C:/Users/test/Desktop/workspace",
+        );
+        assert_eq!(
+            output,
+            "![Report](C:/Users/test/Desktop/workspace/temp_dir/report.md)"
+        );
+    }
+
+    #[test]
+    fn rewrite_workspace_paths_for_local_text_handles_scoped_public_root() {
+        let output = rewrite_workspace_paths_for_local_text(
+            "Open /workspaces/demo-user/temp_dir/report.md",
+            "/workspaces/demo-user",
+            "C:/Users/test/Desktop/workspace",
+        );
+        assert_eq!(
+            output,
+            "Open C:/Users/test/Desktop/workspace/temp_dir/report.md"
+        );
+    }
+
+    #[test]
+    fn rewrite_workspace_paths_in_json_rewrites_nested_strings() {
+        let mut schema = json!({
+            "type": "object",
+            "description": "Use /workspaces/{user_id}/temp_dir/report.md",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "![x](/workspaces/{user_id}/a.png)"
+                }
+            }
+        });
+        rewrite_workspace_paths_in_json(
+            &mut schema,
+            "/workspaces",
+            "C:/Users/test/Desktop/workspace",
+        );
+        assert_eq!(
+            schema["description"].as_str(),
+            Some("Use C:/Users/test/Desktop/workspace/temp_dir/report.md")
+        );
+        assert_eq!(
+            schema["properties"]["content"]["description"].as_str(),
+            Some("![x](C:/Users/test/Desktop/workspace/a.png)")
+        );
+    }
 }

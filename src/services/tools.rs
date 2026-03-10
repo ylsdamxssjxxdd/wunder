@@ -61,8 +61,8 @@ use crate::sandbox;
 use crate::schemas::WunderRequest;
 use crate::services::swarm::beeroom::{
     agent_in_hive, build_swarm_dispatch_message, claim_mother_agent as claim_swarm_mother_agent,
-    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom,
-    resolve_swarm_hive_id as resolve_swarm_hive_scope,
+    ensure_swarm_agent_in_hive as ensure_swarm_agent_in_beeroom, resolve_agent_main_session,
+    resolve_or_create_agent_main_session, resolve_swarm_hive_id as resolve_swarm_hive_scope,
 };
 use crate::skills::{execute_skill, SkillRegistry, SkillSpec};
 use crate::storage::{
@@ -1826,42 +1826,17 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
                 load_agent_record(context.storage.as_ref(), user_id, Some(&agent_id), false)?
                     .ok_or_else(|| anyhow!(i18n::t("error.agent_not_found")))?;
             ensure_swarm_agent_in_hive(&target_agent, &swarm_hive_id)?;
-            if let Some(record) = context
-                .storage
-                .list_chat_sessions(user_id, Some(&agent_id), None, 0, 1)?
-                .0
-                .into_iter()
-                .next()
+            if payload.create_if_missing.unwrap_or(true) {
+                let (record, created) = resolve_or_create_agent_main_session(
+                    context.storage.as_ref(),
+                    user_id,
+                    &target_agent,
+                )?;
+                (agent_id, record.session_id, created)
+            } else if let Some(record) =
+                resolve_agent_main_session(context.storage.as_ref(), user_id, &agent_id)?
             {
                 (agent_id, record.session_id, false)
-            } else if payload.create_if_missing.unwrap_or(true) {
-                let now = now_ts();
-                let session_id = format!("sess_{}", Uuid::new_v4().simple());
-                let label = normalize_optional_string(payload.label.clone());
-                let title = label
-                    .clone()
-                    .unwrap_or_else(|| format!("swarm-{}", target_agent.name));
-                let parent_session_id = if context.session_id.trim().is_empty() {
-                    None
-                } else {
-                    Some(context.session_id.to_string())
-                };
-                let record = ChatSessionRecord {
-                    session_id: session_id.clone(),
-                    user_id: user_id.to_string(),
-                    title,
-                    created_at: now,
-                    updated_at: now,
-                    last_message_at: now,
-                    agent_id: Some(agent_id.clone()),
-                    tool_overrides: Vec::new(),
-                    parent_session_id,
-                    parent_message_id: None,
-                    spawn_label: label,
-                    spawned_by: Some("swarm".to_string()),
-                };
-                context.storage.upsert_chat_session(&record)?;
-                (agent_id, session_id, true)
             } else {
                 return Err(anyhow!(
                     "target agent session not found and createIfMissing is false"
@@ -2031,6 +2006,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         .list_chat_sessions(user_id, None, None, 0, 4096)?;
     let mut sessions_by_id = HashMap::with_capacity(sessions.len());
     let mut latest_session_by_agent = HashMap::new();
+    let mut main_session_by_agent = HashMap::new();
     for session in sessions {
         sessions_by_id.insert(session.session_id.clone(), session.clone());
         if let Some(agent_id) = normalize_optional_string(session.agent_id.clone()) {
@@ -2105,6 +2081,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             if should_replace {
                 latest_session_by_agent.insert(resolved_agent_id, session_record.clone());
             }
+            main_session_by_agent.insert(agent_record.agent_id.clone(), session_record.clone());
 
             (agent_record, session_record, false)
         } else {
@@ -2121,37 +2098,25 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             };
             ensure_swarm_agent_in_hive(&agent_record, &swarm_hive_id)?;
 
-            if let Some(existing) = latest_session_by_agent.get(&agent_id).cloned() {
+            if let Some(existing) = main_session_by_agent.get(&agent_id).cloned() {
                 (agent_record, existing, false)
             } else if create_if_missing {
-                let now = now_ts();
-                let session_id = format!("sess_{}", Uuid::new_v4().simple());
-                let title = label
-                    .clone()
-                    .unwrap_or_else(|| format!("swarm-{}", agent_record.name));
-                let parent_session_id = if context.session_id.trim().is_empty() {
-                    None
-                } else {
-                    Some(context.session_id.to_string())
-                };
-                let record = ChatSessionRecord {
-                    session_id: session_id.clone(),
-                    user_id: user_id.to_string(),
-                    title,
-                    created_at: now,
-                    updated_at: now,
-                    last_message_at: now,
-                    agent_id: Some(agent_id.clone()),
-                    tool_overrides: Vec::new(),
-                    parent_session_id,
-                    parent_message_id: None,
-                    spawn_label: label.clone(),
-                    spawned_by: Some("swarm".to_string()),
-                };
-                context.storage.upsert_chat_session(&record)?;
-                sessions_by_id.insert(session_id, record.clone());
-                latest_session_by_agent.insert(agent_id, record.clone());
-                (agent_record, record, true)
+                let (record, created) = resolve_or_create_agent_main_session(
+                    context.storage.as_ref(),
+                    user_id,
+                    &agent_record,
+                )?;
+                sessions_by_id.insert(record.session_id.clone(), record.clone());
+                latest_session_by_agent.insert(agent_id.clone(), record.clone());
+                main_session_by_agent.insert(agent_id, record.clone());
+                (agent_record, record, created)
+            } else if let Some(record) =
+                resolve_agent_main_session(context.storage.as_ref(), user_id, &agent_id)?
+            {
+                sessions_by_id.insert(record.session_id.clone(), record.clone());
+                latest_session_by_agent.insert(agent_id.clone(), record.clone());
+                main_session_by_agent.insert(agent_id, record.clone());
+                (agent_record, record, false)
             } else {
                 return Err(anyhow!(
                     "target agent session not found and createIfMissing is false"

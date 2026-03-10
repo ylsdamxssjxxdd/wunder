@@ -47,9 +47,10 @@
 
         <aside class="beeroom-canvas-chat" :class="{ collapsed: chatCollapsed }">
         <button
-          class="beeroom-canvas-chat-toggle"
+          class="beeroom-canvas-chat-handle"
           type="button"
           :title="chatCollapsed ? t('common.expand') : t('common.collapse')"
+          :aria-label="chatCollapsed ? t('common.expand') : t('common.collapse')"
           @click="chatCollapsed = !chatCollapsed"
         >
           <i class="fa-solid" :class="chatCollapsed ? 'fa-chevron-left' : 'fa-chevron-right'" aria-hidden="true"></i>
@@ -64,6 +65,14 @@
               <button
                 class="beeroom-canvas-icon-btn"
                 type="button"
+                :title="t('common.clear')"
+                @click="clearManualChatHistory"
+              >
+                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+              </button>
+              <button
+                class="beeroom-canvas-icon-btn"
+                type="button"
                 :title="refreshing ? t('common.loading') : t('common.refresh')"
                 :disabled="refreshing"
                 @click="emit('refresh')"
@@ -73,13 +82,6 @@
               <span class="beeroom-canvas-chat-count">{{ displayChatMessages.length }}</span>
             </div>
           </div>
-
-          <section class="beeroom-canvas-chat-overview">
-            <article v-for="item in missionOverviewStats" :key="item.key" class="beeroom-canvas-chat-overview-card">
-              <span class="beeroom-canvas-chat-overview-label">{{ item.label }}</span>
-              <strong class="beeroom-canvas-chat-overview-value">{{ item.value }}</strong>
-            </article>
-          </section>
 
           <section ref="chatStreamRef" class="beeroom-canvas-chat-stream">
             <article
@@ -132,16 +134,6 @@
           </section>
 
           <section class="beeroom-canvas-chat-composer">
-            <div class="beeroom-canvas-chat-compose-head">
-              <label class="beeroom-canvas-chat-compose-label" for="beeroom-chat-target">
-                {{ t('beeroom.canvas.chatTarget') }}
-              </label>
-              <select id="beeroom-chat-target" v-model="composerTargetAgentId" class="beeroom-canvas-chat-select">
-                <option v-for="option in composerTargetOptions" :key="option.agentId" :value="option.agentId">
-                  {{ option.label }}
-                </option>
-              </select>
-            </div>
             <textarea
               v-model="composerText"
               class="beeroom-canvas-chat-textarea"
@@ -151,7 +143,21 @@
               @keydown.enter.exact.prevent="handleComposerSend"
             ></textarea>
             <div class="beeroom-canvas-chat-compose-foot">
-              <span class="beeroom-canvas-chat-compose-hint">{{ composerHint }}</span>
+              <el-select
+                id="beeroom-chat-target"
+                v-model="composerTargetAgentId"
+                class="beeroom-canvas-chat-select"
+                popper-class="beeroom-canvas-chat-select-popper"
+                :placeholder="t('beeroom.canvas.chatTarget')"
+                :disabled="composerSending"
+              >
+                <el-option
+                  v-for="option in composerTargetOptions"
+                  :key="option.agentId"
+                  :label="option.label"
+                  :value="option.agentId"
+                />
+              </el-select>
               <button
                 class="beeroom-canvas-chat-send"
                 type="button"
@@ -175,6 +181,11 @@ import { Graph } from '@antv/g6';
 import { ElMessage } from 'element-plus';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
+import {
+  appendBeeroomChatMessage,
+  clearBeeroomChatMessages,
+  listBeeroomChatMessages
+} from '@/api/beeroom';
 import { createSession, listSessions, sendMessageStream } from '@/api/chat';
 import { useI18n } from '@/i18n';
 import { consumeSseStream } from '@/utils/sse';
@@ -220,6 +231,11 @@ type ComposerTargetOption = {
   role: 'mother' | 'worker';
 };
 
+type CanvasPositionOverride = {
+  x: number;
+  y: number;
+};
+
 type HoneycombSlot = {
   q: number;
   r: number;
@@ -240,6 +256,8 @@ const MOTHER_NODE_WIDTH = 296;
 const NODE_HEIGHT = 96;
 const MOTHER_NODE_HEIGHT = 112;
 const GRID_PLUGIN_KEY = 'beeroom-grid-line';
+const MANUAL_CHAT_HISTORY_LIMIT = 120;
+const CHAT_POLL_INTERVAL_MS = 8000;
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -267,12 +285,14 @@ const composerText = ref('');
 const composerTargetAgentId = ref('');
 const composerSending = ref(false);
 const composerError = ref('');
+const nodePositionOverrides = ref<Record<string, CanvasPositionOverride>>({});
 
 let manualMessageSerial = 0;
 
 let graph: Graph | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeFrame = 0;
+let chatPollTimer: number | null = null;
 
 const formatDateTime = (value: unknown) => {
   const numeric = Number(value || 0);
@@ -289,6 +309,36 @@ const formatCount = (value: unknown) => {
   const numeric = Number(value || 0);
   if (!Number.isFinite(numeric) || numeric < 0) return '-';
   return new Intl.NumberFormat().format(Math.round(numeric));
+};
+
+const normalizeManualChatTone = (value: unknown): MissionChatMessage['tone'] => {
+  const tone = String(value || '').trim().toLowerCase();
+  if (tone === 'mother' || tone === 'worker' || tone === 'system' || tone === 'user') {
+    return tone;
+  }
+  return 'system';
+};
+
+const mapApiChatMessage = (value: unknown): MissionChatMessage | null => {
+  if (!value || typeof value !== 'object') return null;
+  const payload = value as Record<string, unknown>;
+  const messageId = Number(payload.message_id || 0);
+  const time = Number(payload.created_at || payload.time || 0);
+  if (!Number.isFinite(time) || time <= 0) return null;
+  const body = String(payload.body || '').trim();
+  if (!body) return null;
+  const key = String(payload.key || '').trim() || `history:${messageId || time}`;
+  return {
+    key,
+    senderName: String(payload.sender_name || payload.senderName || '').trim() || t('messenger.section.swarms'),
+    senderAgentId: String(payload.sender_agent_id || payload.senderAgentId || '').trim(),
+    mention: String(payload.mention_name || payload.mention || payload.mentionName || '').trim(),
+    body,
+    meta: String(payload.meta || '').trim(),
+    time,
+    timeLabel: formatDateTime(time),
+    tone: normalizeManualChatTone(payload.tone)
+  };
 };
 
 const shortIdentity = (value: unknown, head = 8, tail = 6) => {
@@ -482,16 +532,16 @@ const projection = computed(() => {
         })}`;
     const tone =
       status === 'completed'
-        ? { fill: 'rgba(6, 95, 70, 0.42)', stroke: '#34d399' }
+        ? { fill: 'rgba(6, 95, 70, 0.22)', stroke: 'rgba(52, 211, 153, 0.82)', glow: 'rgba(16, 185, 129, 0.18)' }
         : status === 'failed' || status === 'cancelled'
-          ? { fill: 'rgba(127, 29, 29, 0.44)', stroke: '#f87171' }
+          ? { fill: 'rgba(127, 29, 29, 0.22)', stroke: 'rgba(248, 113, 113, 0.84)', glow: 'rgba(239, 68, 68, 0.18)' }
           : status === 'awaiting_idle'
-            ? { fill: 'rgba(120, 53, 15, 0.42)', stroke: '#fbbf24' }
+            ? { fill: 'rgba(120, 53, 15, 0.2)', stroke: 'rgba(251, 191, 36, 0.86)', glow: 'rgba(245, 158, 11, 0.16)' }
             : status === 'running'
-              ? { fill: 'rgba(8, 47, 73, 0.46)', stroke: '#38bdf8' }
-              : { fill: 'rgba(15, 23, 42, 0.82)', stroke: '#64748b' };
+              ? { fill: 'rgba(8, 47, 73, 0.24)', stroke: 'rgba(56, 189, 248, 0.92)', glow: 'rgba(56, 189, 248, 0.22)' }
+              : { fill: 'rgba(9, 16, 31, 0.82)', stroke: 'rgba(125, 211, 252, 0.38)', glow: 'rgba(56, 189, 248, 0.12)' };
     const slot = slots[index] || { q: 0, r: 0 };
-    const position = resolveHoneycombPosition(slot);
+    const position = nodePositionOverrides.value[nodeId] || resolveHoneycombPosition(slot);
     const width = isMother ? MOTHER_NODE_WIDTH : NODE_WIDTH;
     const height = isMother ? MOTHER_NODE_HEIGHT : NODE_HEIGHT;
 
@@ -525,18 +575,18 @@ const projection = computed(() => {
         x: position.x,
         y: position.y,
         size: isMother ? [MOTHER_NODE_WIDTH, MOTHER_NODE_HEIGHT] : [NODE_WIDTH, NODE_HEIGHT],
-        radius: 16,
+        radius: 20,
         fill: tone.fill,
-        stroke: isMother ? '#22d3ee' : tone.stroke,
-        lineWidth: isMother ? 3.2 : 2,
-        shadowColor: 'rgba(34, 211, 238, 0.18)',
-        shadowBlur: isMother ? 22 : 18,
-        shadowOffsetY: 6,
+        stroke: isMother ? 'rgba(34, 211, 238, 0.96)' : tone.stroke,
+        lineWidth: isMother ? 1.8 : 1.15,
+        shadowColor: isMother ? 'rgba(34, 211, 238, 0.22)' : tone.glow,
+        shadowBlur: isMother ? 24 : 16,
+        shadowOffsetY: 2,
         labelText: `${name}
 ${badge} / ${resolveStatusLabel(status)}
 ${detailLabel}`,
         labelFill: isMother ? '#f8fafc' : '#e2e8f0',
-        labelFontWeight: isMother ? 700 : 600,
+        labelFontWeight: isMother ? 700 : 500,
         labelFontSize: isMother ? 13 : 12,
         labelLineHeight: isMother ? 19 : 18,
         labelWordWrap: true,
@@ -557,12 +607,14 @@ ${detailLabel}`,
         source: `agent:${motherAgentId}`,
         target: `agent:${agentId}`,
         style: {
-          stroke: '#2563eb',
-          lineWidth: 2,
+          stroke: 'rgba(59, 130, 246, 0.74)',
+          lineWidth: 1.15,
+          lineDash: [8, 6],
           radius: 16,
           endArrow: true,
           labelText: `${t('beeroom.canvas.legendDispatch')} / ${agentTasks.length}`,
-          labelFill: '#60a5fa'
+          labelFill: 'rgba(125, 211, 252, 0.82)',
+          labelFontSize: 10
         },
         data: {
           kind: 'dispatch',
@@ -579,13 +631,14 @@ ${detailLabel}`,
           source: `agent:${agentId}`,
           target: `agent:${motherAgentId}`,
           style: {
-            stroke: '#2dd4bf',
-            lineDash: [6, 6],
-            lineWidth: 1.8,
+            stroke: 'rgba(45, 212, 191, 0.78)',
+            lineDash: [4, 8],
+            lineWidth: 1.05,
             radius: 16,
             endArrow: true,
             labelText: t('beeroom.canvas.legendReport'),
-            labelFill: '#5eead4'
+            labelFill: 'rgba(153, 246, 228, 0.88)',
+            labelFontSize: 10
           },
           data: {
             kind: 'report'
@@ -874,10 +927,7 @@ const composerCanSend = computed(
   () => String(composerText.value || '').trim().length > 0 && !!composerTargetOptions.value.length
 );
 
-const composerHint = computed(() => {
-  const targetName = resolveAgentNameById(composerTargetAgentId.value || motherAgentId.value);
-  return t('beeroom.canvas.chatComposeHint', { agent: targetName || t('common.none') });
-});
+const activeGroupId = computed(() => String(props.group?.group_id || '').trim());
 
 const nextManualMessageKey = (prefix: string) => {
   manualMessageSerial += 1;
@@ -885,9 +935,83 @@ const nextManualMessageKey = (prefix: string) => {
 };
 
 const appendManualChatMessage = (message: MissionChatMessage) => {
-  manualChatMessages.value = [...manualChatMessages.value, message].sort(
-    (left, right) => left.time - right.time || left.key.localeCompare(right.key)
-  );
+  manualChatMessages.value = [...manualChatMessages.value, message]
+    .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+    .slice(-MANUAL_CHAT_HISTORY_LIMIT);
+};
+
+const replaceManualChatMessages = (messages: MissionChatMessage[]) => {
+  manualChatMessages.value = [...messages]
+    .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+    .slice(-MANUAL_CHAT_HISTORY_LIMIT);
+};
+
+const loadManualChatHistory = async () => {
+  const groupId = activeGroupId.value;
+  if (!groupId) {
+    manualChatMessages.value = [];
+    return;
+  }
+  try {
+    const response = await listBeeroomChatMessages(groupId, { limit: MANUAL_CHAT_HISTORY_LIMIT });
+    const items = Array.isArray(response?.data?.data?.items)
+      ? response.data.data.items
+          .map((item: unknown) => mapApiChatMessage(item))
+          .filter((item: MissionChatMessage | null): item is MissionChatMessage => !!item)
+      : [];
+    replaceManualChatMessages(items);
+  } catch {
+    manualChatMessages.value = [];
+  }
+};
+
+const persistManualChatMessage = async (payload: {
+  senderKind: string;
+  senderName: string;
+  senderAgentId?: string;
+  mention?: string;
+  mentionAgentId?: string;
+  body: string;
+  meta?: string;
+  tone: MissionChatMessage['tone'];
+  createdAt?: number;
+  clientMsgId?: string;
+}) => {
+  const groupId = activeGroupId.value;
+  if (!groupId) {
+    throw new Error(t('common.requestFailed'));
+  }
+  const response = await appendBeeroomChatMessage(groupId, {
+    senderKind: payload.senderKind,
+    senderName: payload.senderName,
+    senderAgentId: payload.senderAgentId,
+    mentionName: payload.mention,
+    mentionAgentId: payload.mentionAgentId,
+    body: payload.body,
+    meta: payload.meta,
+    tone: payload.tone,
+    createdAt: payload.createdAt,
+    clientMsgId: payload.clientMsgId
+  });
+  const message = mapApiChatMessage(response?.data?.data);
+  if (!message) {
+    throw new Error(t('common.requestFailed'));
+  }
+  appendManualChatMessage(message);
+  return message;
+};
+
+const clearManualChatHistory = async () => {
+  composerError.value = '';
+  try {
+    const groupId = activeGroupId.value;
+    if (groupId) {
+      await clearBeeroomChatMessages(groupId);
+    }
+    manualChatMessages.value = [];
+  } catch {
+    ElMessage.error(t('common.requestFailed'));
+  }
 };
 
 const clipMessageBody = (value: unknown, limit = 240) => {
@@ -1005,27 +1129,27 @@ const handleComposerSend = async () => {
   composerError.value = '';
   composerText.value = '';
 
-  appendManualChatMessage({
-    key: nextManualMessageKey('user'),
+  await persistManualChatMessage({
+    senderKind: 'user',
     senderName: t('chat.message.user'),
-    senderAgentId: '',
     mention: targetName,
+    mentionAgentId: target.agentId,
     body: visibleBody,
     meta: props.group?.name || props.group?.group_id || '',
-    time: now,
-    timeLabel: formatDateTime(now),
-    tone: 'user'
+    tone: 'user',
+    createdAt: now,
+    clientMsgId: nextManualMessageKey('user')
   });
-  appendManualChatMessage({
-    key: nextManualMessageKey('dispatch'),
+  await persistManualChatMessage({
+    senderKind: 'system',
     senderName: t('messenger.section.swarms'),
-    senderAgentId: '',
     mention: targetName,
+    mentionAgentId: target.agentId,
     body: t('beeroom.canvas.chatDispatchPending'),
     meta: props.group?.group_id || '',
-    time: now,
-    timeLabel: formatDateTime(now),
-    tone: 'system'
+    tone: 'system',
+    createdAt: now,
+    clientMsgId: nextManualMessageKey('dispatch')
   });
   await scrollChatToBottom();
 
@@ -1057,69 +1181,42 @@ const handleComposerSend = async () => {
     }
 
     const replyText = extractReplyText(finalPayload);
-    appendManualChatMessage({
-      key: nextManualMessageKey('reply'),
+    await persistManualChatMessage({
+      senderKind: 'agent',
       senderName: targetName,
       senderAgentId: target.agentId,
-      mention: '',
       body: replyText || t('beeroom.canvas.chatDispatchAccepted'),
       meta: t('beeroom.canvas.chatResultMeta'),
-      time: Math.floor(Date.now() / 1000),
-      timeLabel: formatDateTime(Math.floor(Date.now() / 1000)),
-      tone: targetTone
+      tone: targetTone,
+      createdAt: Math.floor(Date.now() / 1000),
+      clientMsgId: nextManualMessageKey('reply')
     });
     await scrollChatToBottom();
     emit('refresh');
   } catch (error: any) {
     const message = String(error?.message || '').trim() || t('common.requestFailed');
     composerError.value = message;
-    appendManualChatMessage({
-      key: nextManualMessageKey('error'),
-      senderName: t('messenger.section.swarms'),
-      senderAgentId: '',
-      mention: targetName,
-      body: t('beeroom.canvas.chatDispatchFailed'),
-      meta: message,
-      time: Math.floor(Date.now() / 1000),
-      timeLabel: formatDateTime(Math.floor(Date.now() / 1000)),
-      tone: 'system'
-    });
+    try {
+      await persistManualChatMessage({
+        senderKind: 'system',
+        senderName: t('messenger.section.swarms'),
+        mention: targetName,
+        mentionAgentId: target.agentId,
+        body: t('beeroom.canvas.chatDispatchFailed'),
+        meta: message,
+        tone: 'system',
+        createdAt: Math.floor(Date.now() / 1000),
+        clientMsgId: nextManualMessageKey('error')
+      });
+    } catch {
+      // Keep the original dispatch error visible even if chat persistence fails.
+    }
     await scrollChatToBottom();
     ElMessage.error(message);
   } finally {
     composerSending.value = false;
   }
 };
-
-const missionOverviewStats = computed(() => {
-  const mission = props.mission;
-  return [
-    {
-      key: 'context',
-      label: t('beeroom.canvas.contextTokens'),
-      value: mission ? formatCount(mission.context_tokens_total) : '-'
-    },
-    {
-      key: 'peak',
-      label: t('beeroom.canvas.contextPeak'),
-      value: mission ? formatCount(mission.context_tokens_peak) : '-'
-    },
-    {
-      key: 'rounds',
-      label: t('beeroom.canvas.modelRounds'),
-      value: mission ? formatCount(mission.model_round_total) : '-'
-    },
-    {
-      key: 'closure',
-      label: t('beeroom.canvas.closureState'),
-      value: mission
-        ? mission.all_tasks_terminal && mission.all_agents_idle
-          ? t('beeroom.canvas.closureClosed')
-          : t('beeroom.canvas.closureOpen')
-        : t('beeroom.members.idle')
-    }
-  ];
-});
 
 const chatPanelSubtitle = computed(() => {
   const mission = props.mission;
@@ -1246,12 +1343,14 @@ watch(
 );
 
 watch(
-  () => props.group?.group_id || '',
+  activeGroupId,
   () => {
-    manualChatMessages.value = [];
     composerText.value = '';
     composerError.value = '';
-  }
+    void loadManualChatHistory();
+    restartChatPolling();
+  },
+  { immediate: true }
 );
 
 watch(
@@ -1292,6 +1391,10 @@ const renderSignature = computed(() => {
   ].join('||');
 });
 
+const nodePositionScopeKey = computed(() =>
+  String(props.mission?.mission_id || props.mission?.team_run_id || props.group?.group_id || 'standby').trim()
+);
+
 const layoutSignature = computed(() => {
   const identity = props.mission?.mission_id || props.mission?.team_run_id || props.group?.group_id || 'standby';
   return [identity, projection.value.nodes.length, projection.value.edges.length, projection.value.extent.width, projection.value.extent.height].join(':');
@@ -1299,6 +1402,29 @@ const layoutSignature = computed(() => {
 
 let lastLayoutSignature = '';
 let lastMissionIdentity = '';
+
+const persistDraggedNodePositions = (nodeIds?: string[]) => {
+  if (!graph) return;
+  const ids = (nodeIds || [])
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  if (!ids.length) return;
+
+  const nextOverrides = { ...nodePositionOverrides.value };
+  ids.forEach((nodeId) => {
+    try {
+      const position = graph?.getElementPosition(nodeId) as { x?: number; y?: number } | undefined;
+      const x = Number(position?.x);
+      const y = Number(position?.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        nextOverrides[nodeId] = { x, y };
+      }
+    } catch {
+      return;
+    }
+  });
+  nodePositionOverrides.value = nextOverrides;
+};
 
 const getCanvasViewport = () => {
   const rect = canvasRef.value?.getBoundingClientRect();
@@ -1317,6 +1443,21 @@ const waitForCanvasFrame = () =>
   new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
+
+function stopChatPolling() {
+  if (chatPollTimer !== null) {
+    window.clearInterval(chatPollTimer);
+    chatPollTimer = null;
+  }
+}
+
+function restartChatPolling() {
+  stopChatPolling();
+  if (typeof window === 'undefined' || !activeGroupId.value) return;
+  chatPollTimer = window.setInterval(() => {
+    void loadManualChatHistory();
+  }, CHAT_POLL_INTERVAL_MS);
+}
 
 const waitForCanvasViewport = async (attempts = 10) => {
   let viewport = getCanvasViewport();
@@ -1376,7 +1517,20 @@ const ensureGraph = async () => {
     edge: {
       type: 'polyline'
     },
-    behaviors: ['drag-canvas', 'zoom-canvas', 'hover-activate'],
+    behaviors: [
+      {
+        type: 'drag-element',
+        key: 'drag-node',
+        dropEffect: 'none',
+        hideEdge: 'none',
+        shadow: false,
+        enable: (event: any) => event?.targetType === 'node',
+        onFinish: (ids: string[]) => persistDraggedNodePositions(ids)
+      },
+      'drag-canvas',
+      'zoom-canvas',
+      'hover-activate'
+    ],
     transforms: ['process-parallel-edges'],
     animation: false,
     theme: 'light'
@@ -1408,6 +1562,16 @@ const ensureGraph = async () => {
 
   graph.on('node:pointerleave', () => {
     hoveredNodeId.value = '';
+  });
+
+  graph.on('node:dragstart', () => {
+    hoveredNodeId.value = '';
+  });
+
+  graph.on('node:dragend', (event: any) => {
+    const nodeId = String(event?.target?.id || '').trim();
+    if (!nodeId) return;
+    persistDraggedNodePositions([nodeId]);
   });
 
   graph.on('canvas:pointerleave', () => {
@@ -1467,6 +1631,15 @@ const renderGraph = async (forceFit = false) => {
 };
 
 watch(
+  nodePositionScopeKey,
+  () => {
+    // Keep manual dragging local to the current mission/group scope.
+    nodePositionOverrides.value = {};
+  },
+  { immediate: true }
+);
+
+watch(
   renderSignature,
   async () => {
     const missionIdentity = String(props.mission?.mission_id || props.mission?.team_run_id || '').trim();
@@ -1481,10 +1654,12 @@ watch(
 );
 
 onMounted(async () => {
+  restartChatPolling();
   await renderGraph();
 });
 
 onBeforeUnmount(() => {
+  stopChatPolling();
   if (resizeFrame) {
     cancelAnimationFrame(resizeFrame);
     resizeFrame = 0;
@@ -1535,8 +1710,8 @@ onBeforeUnmount(() => {
 .beeroom-canvas-screen::after {
   content: '';
   position: absolute;
-  inset: 14px;
-  border-radius: 16px;
+  inset: 0;
+  border-radius: inherit;
   border: 1px solid rgba(148, 163, 184, 0.08);
   box-shadow:
     inset 0 0 0 1px rgba(56, 189, 248, 0.05),
@@ -1554,19 +1729,20 @@ onBeforeUnmount(() => {
   display: flex;
   flex: 1;
   min-height: 0;
-  padding: 12px;
+  padding: 0;
 }
 
 .beeroom-canvas-board {
+  --beeroom-chat-width: 344px;
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 356px;
+  grid-template-columns: minmax(0, 1fr) var(--beeroom-chat-width);
   flex: 1;
   width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  border-radius: 18px;
+  border-radius: inherit;
   overflow: hidden;
   background:
     linear-gradient(180deg, rgba(4, 10, 24, 0.84), rgba(2, 8, 20, 0.68)),
@@ -1593,7 +1769,7 @@ onBeforeUnmount(() => {
   position: absolute;
   top: 0;
   bottom: 0;
-  right: 356px;
+  right: var(--beeroom-chat-width);
   width: 1px;
   background: linear-gradient(180deg, transparent, rgba(56, 189, 248, 0.22), transparent);
   pointer-events: none;
@@ -1601,11 +1777,12 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-board.chat-collapsed {
-  grid-template-columns: minmax(0, 1fr) 46px;
+  grid-template-columns: minmax(0, 1fr) 0px;
 }
 
 .beeroom-canvas-board.chat-collapsed::after {
-  right: 46px;
+  right: 0;
+  opacity: 0;
 }
 
 .beeroom-canvas-graph-shell {
@@ -1618,8 +1795,8 @@ onBeforeUnmount(() => {
 .beeroom-canvas-graph-shell::before {
   content: '';
   position: absolute;
-  inset: 12px 12px 12px 12px;
-  border-radius: 16px;
+  inset: 0;
+  border-radius: 0;
   border: 1px solid rgba(56, 189, 248, 0.08);
   box-shadow: inset 0 0 24px rgba(8, 47, 73, 0.12);
   pointer-events: none;
@@ -1630,12 +1807,9 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   background:
-    radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.12), transparent 18%),
-    radial-gradient(circle at 50% 50%, rgba(45, 212, 191, 0.08), transparent 30%),
-    radial-gradient(circle at 50% 50%, transparent 0 120px, rgba(56, 189, 248, 0.1) 121px 122px, transparent 123px),
-    radial-gradient(circle at 50% 50%, transparent 0 240px, rgba(56, 189, 248, 0.08) 241px 242px, transparent 243px),
-    linear-gradient(180deg, rgba(56, 189, 248, 0.05), transparent 96px);
-  opacity: 0.72;
+    linear-gradient(180deg, rgba(56, 189, 248, 0.06), transparent 92px),
+    linear-gradient(135deg, transparent 0%, rgba(56, 189, 248, 0.035) 48%, transparent 100%);
+  opacity: 0.5;
   pointer-events: none;
 }
 
@@ -1698,6 +1872,7 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 1;
   display: flex;
+  width: var(--beeroom-chat-width);
   min-width: 0;
   flex-direction: column;
   gap: 12px;
@@ -1711,7 +1886,7 @@ onBeforeUnmount(() => {
     inset 1px 0 0 rgba(148, 163, 184, 0.04),
     inset 0 1px 0 rgba(186, 230, 253, 0.03);
   overflow: hidden;
-  transition: padding 0.2s ease, background 0.2s ease;
+  transition: width 0.2s ease, padding 0.2s ease, background 0.2s ease, opacity 0.2s ease;
 }
 
 .beeroom-canvas-chat::before {
@@ -1724,26 +1899,61 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-chat.collapsed {
-  padding: 10px 8px;
+  width: 0;
+  padding: 0;
+  border-left: 0;
+  box-shadow: none;
+  background: transparent;
   gap: 0;
+  overflow: visible;
 }
 
-.beeroom-canvas-chat-toggle {
+.beeroom-canvas-chat-handle {
   position: absolute;
-  left: 0;
-  top: 18px;
-  transform: translateX(-50%);
-  width: 28px;
-  height: 28px;
-  border: 1px solid rgba(56, 189, 248, 0.24);
+  left: -10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 74px;
+  border: 0;
   border-radius: 999px;
-  background: rgba(8, 15, 32, 0.98);
-  color: #bae6fd;
+  background: linear-gradient(180deg, rgba(69, 203, 255, 0.34), rgba(56, 189, 248, 0.68), rgba(37, 99, 235, 0.58));
+  color: #d8ecff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow:
+    0 8px 22px rgba(2, 8, 20, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  transition: opacity 0.16s ease, transform 0.16s ease, filter 0.16s ease;
+}
+
+.beeroom-canvas-board:hover .beeroom-canvas-chat-handle,
+.beeroom-canvas-board:focus-within .beeroom-canvas-chat-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.beeroom-canvas-chat.collapsed .beeroom-canvas-chat-handle {
+  left: -18px;
+  opacity: 0.18;
+  pointer-events: auto;
+}
+
+.beeroom-canvas-chat.collapsed .beeroom-canvas-chat-handle:hover,
+.beeroom-canvas-chat.collapsed .beeroom-canvas-chat-handle:focus-visible,
+.beeroom-canvas-board:hover .beeroom-canvas-chat.collapsed .beeroom-canvas-chat-handle {
+  opacity: 1;
+}
+
+.beeroom-canvas-chat-handle:hover,
+.beeroom-canvas-chat-handle:focus-visible {
+  transform: translateY(-50%) scale(1.02);
+  filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.32));
 }
 
 .beeroom-canvas-chat-head {
@@ -1806,27 +2016,6 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(56, 189, 248, 0.16);
   color: #67e8f9;
   font-size: 11px;
-}
-
-.beeroom-canvas-chat-overview {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.beeroom-canvas-chat-overview-card {
-  display: grid;
-  gap: 6px;
-  padding: 10px;
-  border-radius: 12px;
-  border: 1px solid rgba(148, 163, 184, 0.12);
-  background: linear-gradient(180deg, rgba(15, 23, 42, 0.84), rgba(9, 16, 31, 0.74));
-  box-shadow: inset 0 1px 0 rgba(186, 230, 253, 0.03);
-}
-
-.beeroom-canvas-chat-overview-value {
-  color: #f8fafc;
-  font-size: 13px;
 }
 
 .beeroom-canvas-chat-stream {
@@ -1947,13 +2136,12 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-chat-composer {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   padding-top: 12px;
   border-top: 1px solid rgba(56, 189, 248, 0.12);
   background: linear-gradient(180deg, rgba(8, 15, 32, 0), rgba(8, 15, 32, 0.42));
 }
 
-.beeroom-canvas-chat-compose-head,
 .beeroom-canvas-chat-compose-foot {
   display: flex;
   align-items: center;
@@ -1961,8 +2149,6 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.beeroom-canvas-chat-compose-label,
-.beeroom-canvas-chat-compose-hint,
 .beeroom-canvas-chat-compose-status {
   color: rgba(191, 219, 254, 0.72);
   font-size: 11px;
@@ -1972,7 +2158,6 @@ onBeforeUnmount(() => {
   color: #fca5a5;
 }
 
-.beeroom-canvas-chat-select,
 .beeroom-canvas-chat-textarea {
   width: 100%;
   border-radius: 12px;
@@ -1984,9 +2169,34 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-chat-select {
-  max-width: 204px;
-  min-height: 34px;
+  flex: 1;
+  min-width: 0;
+}
+
+.beeroom-canvas-chat-select :deep(.el-select__wrapper) {
+  min-height: 38px;
   padding: 0 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.16);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(8, 15, 32, 0.86));
+  box-shadow: inset 0 1px 0 rgba(186, 230, 253, 0.03);
+}
+
+.beeroom-canvas-chat-select :deep(.el-select__selected-item),
+.beeroom-canvas-chat-select :deep(.el-select__placeholder),
+.beeroom-canvas-chat-select :deep(.el-select__input) {
+  color: #f8fafc;
+}
+
+.beeroom-canvas-chat-select :deep(.el-select__caret) {
+  color: rgba(191, 219, 254, 0.84);
+}
+
+.beeroom-canvas-chat-select :deep(.is-focused .el-select__wrapper),
+.beeroom-canvas-chat-select :deep(.el-select__wrapper.is-focused) {
+  box-shadow:
+    0 0 0 1px rgba(56, 189, 248, 0.2),
+    inset 0 1px 0 rgba(186, 230, 253, 0.04);
 }
 
 .beeroom-canvas-chat-textarea {
@@ -1994,6 +2204,31 @@ onBeforeUnmount(() => {
   min-height: 84px;
   padding: 10px 12px;
   line-height: 1.6;
+}
+
+:deep(.beeroom-canvas-chat-select-popper.el-popper) {
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.98), rgba(8, 15, 32, 0.98));
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.42);
+}
+
+:deep(.beeroom-canvas-chat-select-popper.el-popper .el-popper__arrow::before) {
+  border-color: rgba(56, 189, 248, 0.18);
+  background: rgba(11, 18, 32, 0.98);
+}
+
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item) {
+  color: #e2e8f0;
+}
+
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item.is-hovering),
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item:hover) {
+  background: rgba(8, 47, 73, 0.72);
+}
+
+:deep(.beeroom-canvas-chat-select-popper .el-select-dropdown__item.is-selected) {
+  color: #67e8f9;
+  background: rgba(8, 47, 73, 0.9);
 }
 
 .beeroom-canvas-chat-send {
@@ -2344,11 +2579,12 @@ onBeforeUnmount(() => {
 
 @media (max-width: 1240px) {
   .beeroom-canvas-board {
-    grid-template-columns: minmax(0, 1fr) 304px;
+    --beeroom-chat-width: 304px;
+    grid-template-columns: minmax(0, 1fr) var(--beeroom-chat-width);
   }
 
   .beeroom-canvas-board.chat-collapsed {
-    grid-template-columns: minmax(0, 1fr) 46px;
+    grid-template-columns: minmax(0, 1fr) 0px;
   }
 }
 </style>

@@ -5,8 +5,7 @@ use crate::orchestrator::Orchestrator;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::WunderRequest;
 use crate::storage::{
-    ChatSessionRecord, SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord,
-    DEFAULT_HIVE_ID,
+    SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord, DEFAULT_HIVE_ID,
 };
 use crate::user_store::UserStore;
 use crate::workspace::WorkspaceManager;
@@ -24,6 +23,7 @@ use tokio::time::{sleep, timeout, Duration};
 use tracing::warn;
 use uuid::Uuid;
 
+use super::beeroom::resolve_or_create_agent_main_session;
 use super::events::{
     TEAM_ERROR, TEAM_FINISH, TEAM_MERGE, TEAM_START, TEAM_TASK_RESULT, TEAM_TASK_UPDATE,
 };
@@ -31,7 +31,6 @@ use super::events::{
 const RUNNER_CHANNEL_CAPACITY: usize = 128;
 const RUNNER_POLL_INTERVAL_MS: u64 = 600;
 const RUNNER_SCAN_BATCH: i64 = 256;
-const TEAM_TASK_SESSION_TITLE: &str = "蜂群任务";
 const TEAM_TASK_RESULT_MAX_CHARS: usize = 1500;
 const TEAM_RUN_SUMMARY_MAX_CHARS: usize = 3000;
 const TEAM_QUESTION_MAX_CHARS: usize = 4000;
@@ -701,7 +700,6 @@ impl TeamRunRunner {
         task: &TeamTaskRecord,
         agent: &UserAgentRecord,
     ) -> Result<(String, bool)> {
-        let now = now_ts();
         if let Some(target) = task
             .target_session_id
             .as_deref()
@@ -723,24 +721,10 @@ impl TeamRunRunner {
             return Ok((record.session_id, false));
         }
 
-        let session_id = format!("sess_{}", Uuid::new_v4().simple());
-        let title = format!("{TEAM_TASK_SESSION_TITLE}-{}", agent.name.trim());
-        let record = ChatSessionRecord {
-            session_id: session_id.clone(),
-            user_id: run.user_id.clone(),
-            title,
-            created_at: now,
-            updated_at: now,
-            last_message_at: now,
-            agent_id: Some(task.agent_id.clone()),
-            tool_overrides: Vec::new(),
-            parent_session_id: Some(run.parent_session_id.clone()),
-            parent_message_id: None,
-            spawn_label: Some(format!("team:{}", run.team_run_id)),
-            spawned_by: Some("team_runner".to_string()),
-        };
-        self.user_store.upsert_chat_session(&record)?;
-        Ok((session_id, true))
+        let storage = self.user_store.storage_backend();
+        let (record, created) =
+            resolve_or_create_agent_main_session(storage.as_ref(), &run.user_id, agent)?;
+        Ok((record.session_id, created))
     }
 
     fn mark_task_cancelled(&self, run: &TeamRunRecord, task: &mut TeamTaskRecord) -> Result<()> {

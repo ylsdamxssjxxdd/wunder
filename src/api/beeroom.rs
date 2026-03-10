@@ -3,7 +3,9 @@ use crate::services::swarm::beeroom::{
     claim_mother_agent, collect_agent_activity, get_mother_agent_id, snapshot_team_run,
 };
 use crate::state::AppState;
-use crate::storage::{normalize_hive_id, HiveRecord, UserAgentRecord, DEFAULT_HIVE_ID};
+use crate::storage::{
+    normalize_hive_id, BeeroomChatMessageRecord, HiveRecord, UserAgentRecord, DEFAULT_HIVE_ID,
+};
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -31,6 +33,12 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/beeroom/groups/{group_id}/missions/{mission_id}",
             get(get_beeroom_mission),
+        )
+        .route(
+            "/wunder/beeroom/groups/{group_id}/chat/messages",
+            get(list_beeroom_chat_messages)
+                .post(append_beeroom_chat_message)
+                .delete(clear_beeroom_chat_messages),
         )
 }
 
@@ -262,6 +270,90 @@ async fn get_beeroom_mission(
     Ok(Json(json!({ "data": mission_payload(&snapshot) })))
 }
 
+async fn list_beeroom_chat_messages(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+    Query(query): Query<ListBeeroomChatMessagesQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    state
+        .user_store
+        .ensure_default_hive(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let group = load_group(state.as_ref(), &user_id, &group_id)?;
+    let limit = query.limit.unwrap_or(120).clamp(1, 200);
+    let items = state
+        .user_store
+        .list_beeroom_chat_messages(&user_id, &group.hive_id, query.before_message_id, limit)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .into_iter()
+        .map(beeroom_chat_message_payload)
+        .collect::<Vec<_>>();
+    Ok(Json(
+        json!({ "data": { "items": items, "group_id": group.hive_id } }),
+    ))
+}
+
+async fn append_beeroom_chat_message(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+    Json(payload): Json<AppendBeeroomChatMessageRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    state
+        .user_store
+        .ensure_default_hive(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let group = load_group(state.as_ref(), &user_id, &group_id)?;
+    let sender_kind = payload.sender_kind.unwrap_or_else(|| "system".to_string());
+    let sender_name = payload.sender_name.unwrap_or_else(|| "System".to_string());
+    let record = state
+        .user_store
+        .append_beeroom_chat_message(
+            &user_id,
+            &group.hive_id,
+            &sender_kind,
+            &sender_name,
+            payload.sender_agent_id.as_deref(),
+            payload.mention_name.as_deref(),
+            payload.mention_agent_id.as_deref(),
+            &payload.body,
+            payload.meta.as_deref(),
+            payload.tone.as_deref().unwrap_or("system"),
+            payload.client_msg_id.as_deref(),
+            payload.created_at.unwrap_or(0.0),
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({ "data": beeroom_chat_message_payload(record) }),
+    ))
+}
+
+async fn clear_beeroom_chat_messages(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    state
+        .user_store
+        .ensure_default_hive(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let group = load_group(state.as_ref(), &user_id, &group_id)?;
+    let deleted = state
+        .user_store
+        .delete_beeroom_chat_messages(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(
+        json!({ "data": { "deleted": deleted, "group_id": group.hive_id } }),
+    ))
+}
+
 fn load_group(state: &AppState, user_id: &str, group_id: &str) -> Result<HiveRecord, Response> {
     let normalized = normalize_hive_id(group_id);
     state
@@ -358,6 +450,24 @@ fn group_payload(
             .collect::<Vec<_>>(),
         "latest_mission": missions.first().cloned(),
     }))
+}
+
+fn beeroom_chat_message_payload(record: BeeroomChatMessageRecord) -> Value {
+    json!({
+        "message_id": record.message_id,
+        "user_id": record.user_id,
+        "group_id": record.group_id,
+        "sender_kind": record.sender_kind,
+        "sender_name": record.sender_name,
+        "sender_agent_id": record.sender_agent_id,
+        "mention_name": record.mention_name,
+        "mention_agent_id": record.mention_agent_id,
+        "body": record.body,
+        "meta": record.meta,
+        "tone": record.tone,
+        "client_msg_id": record.client_msg_id,
+        "created_at": record.created_at,
+    })
 }
 
 fn mission_payload(snapshot: &crate::services::swarm::beeroom::TeamRunSnapshot) -> Value {
@@ -474,4 +584,35 @@ struct ListMissionsQuery {
     offset: Option<i64>,
     #[serde(default)]
     limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListBeeroomChatMessagesQuery {
+    #[serde(default)]
+    before_message_id: Option<i64>,
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AppendBeeroomChatMessageRequest {
+    body: String,
+    #[serde(default, alias = "senderKind")]
+    sender_kind: Option<String>,
+    #[serde(default, alias = "senderName")]
+    sender_name: Option<String>,
+    #[serde(default, alias = "senderAgentId")]
+    sender_agent_id: Option<String>,
+    #[serde(default, alias = "mentionName", alias = "mention")]
+    mention_name: Option<String>,
+    #[serde(default, alias = "mentionAgentId")]
+    mention_agent_id: Option<String>,
+    #[serde(default)]
+    meta: Option<String>,
+    #[serde(default)]
+    tone: Option<String>,
+    #[serde(default, alias = "clientMsgId")]
+    client_msg_id: Option<String>,
+    #[serde(default, alias = "createdAt")]
+    created_at: Option<f64>,
 }

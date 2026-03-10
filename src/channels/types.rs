@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +117,147 @@ pub struct WechatMpConfig {
     pub domain: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct XmppConfig {
+    #[serde(default)]
+    pub jid: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_option_u16_from_any")]
+    pub port: Option<u16>,
+    #[serde(default, alias = "directTls")]
+    pub direct_tls: Option<bool>,
+    #[serde(default)]
+    pub resource: Option<String>,
+    #[serde(default, alias = "mucNick")]
+    pub muc_nick: Option<String>,
+    #[serde(
+        default,
+        alias = "mucRooms",
+        deserialize_with = "deserialize_string_vec_from_any"
+    )]
+    pub muc_rooms: Vec<String>,
+    #[serde(default, alias = "longConnectionEnabled")]
+    pub long_connection_enabled: Option<bool>,
+    #[serde(default, alias = "sendInitialPresence")]
+    pub send_initial_presence: Option<bool>,
+    #[serde(default, alias = "statusText")]
+    pub status_text: Option<String>,
+    #[serde(default, alias = "heartbeatEnabled")]
+    pub heartbeat_enabled: Option<bool>,
+    #[serde(
+        default,
+        alias = "heartbeatIntervalS",
+        deserialize_with = "deserialize_option_u64_from_any"
+    )]
+    pub heartbeat_interval_s: Option<u64>,
+    #[serde(
+        default,
+        alias = "heartbeatTimeoutS",
+        deserialize_with = "deserialize_option_u64_from_any"
+    )]
+    pub heartbeat_timeout_s: Option<u64>,
+    #[serde(default, alias = "respondPing")]
+    pub respond_ping: Option<bool>,
+}
+
+fn deserialize_option_u16_from_any<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value {
+        Value::Number(number) => number
+            .as_u64()
+            .and_then(|raw| u16::try_from(raw).ok())
+            .ok_or_else(|| de::Error::custom("invalid u16 value"))
+            .map(Some),
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<u16>()
+                .map(Some)
+                .map_err(|_| de::Error::custom("invalid u16 value"))
+        }
+        other => Err(de::Error::custom(format!(
+            "invalid u16 value type: {}",
+            other
+        ))),
+    }
+}
+
+fn deserialize_option_u64_from_any<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value {
+        Value::Number(number) => number
+            .as_u64()
+            .ok_or_else(|| de::Error::custom("invalid u64 value"))
+            .map(Some),
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            trimmed
+                .parse::<u64>()
+                .map(Some)
+                .map_err(|_| de::Error::custom("invalid u64 value"))
+        }
+        other => Err(de::Error::custom(format!(
+            "invalid u64 value type: {}",
+            other
+        ))),
+    }
+}
+
+fn deserialize_string_vec_from_any<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    match value {
+        Value::Array(items) => Ok(items
+            .into_iter()
+            .filter_map(|item| {
+                item.as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .collect()),
+        Value::String(raw) => Ok(raw
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .collect()),
+        Value::Null => Ok(Vec::new()),
+        other => Err(de::Error::custom(format!(
+            "invalid string list type: {}",
+            other
+        ))),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChannelMessage {
     pub channel: String,
@@ -195,6 +336,8 @@ pub struct ChannelAccountConfig {
     pub wechat: Option<WechatConfig>,
     #[serde(default)]
     pub wechat_mp: Option<WechatMpConfig>,
+    #[serde(default)]
+    pub xmpp: Option<XmppConfig>,
 }
 
 impl ChannelAccountConfig {

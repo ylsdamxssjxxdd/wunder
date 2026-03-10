@@ -43,6 +43,64 @@ const DEFAULT_OVERLAY_DONE_MS = 2000
 const DEFAULT_OVERLAY_MIN_HIDE_MS = 400
 const OVERLAY_BOX_SIZE = 80
 
+const startupTimingEnabled = process.env.WUNDER_STARTUP_TIMING !== '0'
+const startupBootNs = process.hrtime.bigint()
+
+const elapsedMsSince = (startedNs) => Number(process.hrtime.bigint() - startedNs) / 1_000_000
+
+const normalizeStartupField = (value) => {
+  if (value === null || value === undefined) {
+    return ''
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      return ''
+    }
+    return String(Math.round(value * 10) / 10)
+  }
+  return String(value).trim().replace(/\s+/g, '_')
+}
+
+const startupFieldsToText = (fields) =>
+  Object.entries(fields || {})
+    .map(([key, value]) => {
+      const normalized = normalizeStartupField(value)
+      if (!normalized) {
+        return ''
+      }
+      return `${key}=${normalized}`
+    })
+    .filter((item) => item)
+    .join(' ')
+
+const logStartupSegment = (scope, segment, startedNs, fields = {}) => {
+  if (!startupTimingEnabled) {
+    return
+  }
+  const elapsedMs = elapsedMsSince(startedNs)
+  const totalMs = elapsedMsSince(startupBootNs)
+  const extras = startupFieldsToText(fields)
+  console.info(
+    `[startup][${scope}] segment=${segment} elapsed_ms=${elapsedMs.toFixed(1)} total_ms=${totalMs.toFixed(1)}${extras ? ` ${extras}` : ''}`
+  )
+}
+
+const logStartupPoint = (scope, point, fields = {}) => {
+  if (!startupTimingEnabled) {
+    return
+  }
+  const totalMs = elapsedMsSince(startupBootNs)
+  const extras = startupFieldsToText(fields)
+  console.info(
+    `[startup][${scope}] point=${point} total_ms=${totalMs.toFixed(1)}${extras ? ` ${extras}` : ''}`
+  )
+}
+
+logStartupPoint('electron', 'main_process_loaded', {
+  pid: process.pid,
+  packaged: app.isPackaged ? 1 : 0
+})
+
 const createUpdateSnapshot = () => ({
   phase: 'idle',
   currentVersion: app.getVersion(),
@@ -1416,7 +1474,9 @@ const captureDesktopScreenshot = async (options = {}) => {
 const waitForBridge = (resolvePort, timeoutMs = 15000) =>
   new Promise((resolve, reject) => {
     const startedAt = Date.now()
+    let attempts = 0
     const attempt = () => {
+      attempts += 1
       const port = resolvePort()
       if (!port) {
         retry()
@@ -1432,7 +1492,7 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
         (res) => {
           res.resume()
           if (res.statusCode === 200) {
-            resolve()
+            resolve({ attempts })
             return
           }
           retry()
@@ -1446,7 +1506,7 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
     }
     const retry = () => {
       if (Date.now() - startedAt > timeoutMs) {
-        reject(new Error('Bridge did not respond in time'))
+        reject(new Error(`Bridge did not respond in time (attempts=${attempts})`))
         return
       }
       setTimeout(attempt, 80)
@@ -1629,15 +1689,21 @@ const parseBridgePort = (line) => {
 }
 
 const startBridge = async () => {
+  const startBridgeNs = process.hrtime.bigint()
   const bridgePath = resolveBridgePath()
   if (!fs.existsSync(bridgePath)) {
     throw new Error(`Bridge binary not found: ${bridgePath}`)
   }
 
   const frontendRoot = resolveFrontendRoot()
+  const hasFrontendRoot = Boolean(frontendRoot && fs.existsSync(frontendRoot))
   const tempRoot = path.join(app.getPath('userData'), 'WUNDER_TEMPD')
   const workspaceRoot = path.join(app.getPath('userData'), 'WUNDER_WORK')
   bridgePort = await getFreePort()
+  logStartupSegment('electron', 'bridge_prepare_paths', startBridgeNs, {
+    has_frontend_root: hasFrontendRoot ? 1 : 0,
+    port: bridgePort
+  })
 
   const args = [
     '--host',
@@ -1650,13 +1716,18 @@ const startBridge = async () => {
     workspaceRoot
   ]
 
-  if (frontendRoot && fs.existsSync(frontendRoot)) {
+  if (hasFrontendRoot && frontendRoot) {
     args.push('--frontend-root', frontendRoot)
   }
 
+  const bridgeSpawnNs = process.hrtime.bigint()
   bridgeProcess = spawn(bridgePath, args, {
     env: { ...process.env },
     stdio: ['ignore', 'pipe', 'pipe']
+  })
+  logStartupSegment('electron', 'bridge_spawn_process', bridgeSpawnNs, {
+    pid: bridgeProcess?.pid || 0,
+    port: bridgePort
   })
 
   bridgeProcess.stdout.on('data', (data) => {
@@ -1692,7 +1763,15 @@ const startBridge = async () => {
     app.quit()
   })
 
-  await waitForBridge(() => bridgePort)
+  const bridgeWaitReadyNs = process.hrtime.bigint()
+  const bridgeWaitResult = await waitForBridge(() => bridgePort)
+  logStartupSegment('electron', 'bridge_wait_ready', bridgeWaitReadyNs, {
+    attempts: bridgeWaitResult?.attempts || 0,
+    port: bridgePort
+  })
+  logStartupSegment('electron', 'bridge_start_total', startBridgeNs, {
+    port: bridgePort
+  })
   return bridgePort
 }
 
@@ -1923,6 +2002,9 @@ const createLoadingHtml = () => `<!doctype html>
 </html>`
 
 const createWindow = async () => {
+  const createWindowNs = process.hrtime.bigint()
+  logStartupPoint('electron', 'create_window_begin')
+  const constructWindowNs = process.hrtime.bigint()
   mainWindow = new BrowserWindow({
     width: 1024,
     height: 700,
@@ -1945,6 +2027,10 @@ const createWindow = async () => {
       backgroundThrottling: !disableBackgroundThrottling
     }
   })
+  logStartupSegment('electron', 'window_construct', constructWindowNs, {
+    min_width: 900,
+    min_height: 620
+  })
   const scheduleWindowRepaint = () => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
       return
@@ -1959,6 +2045,7 @@ const createWindow = async () => {
   }
   mainWindow.setMenuBarVisibility(false)
   mainWindow.once('ready-to-show', () => {
+    logStartupPoint('electron', 'window_ready_to_show')
     mainWindow.show()
     scheduleWindowRepaint()
     scheduleLinuxDesktopIntegration()
@@ -1971,43 +2058,77 @@ const createWindow = async () => {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
+  let mainUiLoadedLogged = false
+  mainWindow.webContents.on('did-finish-load', () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+      return
+    }
+    const currentUrl = mainWindow.webContents.getURL()
+    if (!mainUiLoadedLogged && !currentUrl.startsWith('data:text/html')) {
+      mainUiLoadedLogged = true
+      logStartupPoint('electron', 'main_ui_loaded', {
+        url: currentUrl
+      })
+    }
+  })
   const loadingHtml = createLoadingHtml()
+  const loadShellNs = process.hrtime.bigint()
   await mainWindow
     .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHtml)}`)
     .catch(() => {})
+  logStartupSegment('electron', 'window_loading_shell_loaded', loadShellNs)
 
   const startBridgeAndLoad = async () => {
+    const startBridgeAndLoadNs = process.hrtime.bigint()
     try {
+      const bridgeReadyForWindowNs = process.hrtime.bigint()
       const port = await startBridge()
+      logStartupSegment('electron', 'bridge_ready_for_window', bridgeReadyForWindowNs, {
+        port
+      })
       const target = bridgeWebBase ? `${bridgeWebBase}/` : `http://127.0.0.1:${port}/`
       if (!mainWindow || mainWindow.isDestroyed()) {
         return
       }
+      const loadTargetNs = process.hrtime.bigint()
       await mainWindow.loadURL(target)
+      logStartupSegment('electron', 'window_target_loaded', loadTargetNs, {
+        target
+      })
+      logStartupSegment('electron', 'start_bridge_and_load_total', startBridgeAndLoadNs)
     } catch (err) {
+      logStartupPoint('electron', 'start_bridge_and_load_failed', {
+        message: err?.message || String(err)
+      })
       dialog.showErrorBox('Wunder Desktop', err?.message || String(err))
       app.quit()
     }
   }
   void startBridgeAndLoad()
+  logStartupSegment('electron', 'create_window_bootstrap_scheduled', createWindowNs)
 }
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
+  const appWhenReadyWaitNs = process.hrtime.bigint()
   app.on('second-instance', () => {
     showMainWindow()
   })
 
   app.whenReady().then(async () => {
+    logStartupSegment('electron', 'app_when_ready', appWhenReadyWaitNs)
     try {
+      const appCorePreinitNs = process.hrtime.bigint()
       configureUpdaterEvents()
       closeBehavior = loadCloseBehavior()
       configureMediaPermissions()
+      logStartupSegment('electron', 'app_core_preinit', appCorePreinitNs)
       screen.on('display-added', updateOverlayBounds)
       screen.on('display-removed', updateOverlayBounds)
       screen.on('display-metrics-changed', updateOverlayBounds)
+      const registerIpcNs = process.hrtime.bigint()
       ipcMain.handle('wunder:toggle-devtools', () => toggleMainDevTools())
       ipcMain.handle('wunder:window-minimize', () =>
         withMainWindow((window) => {
@@ -2114,9 +2235,16 @@ if (!gotLock) {
         hideOverlayNow()
         return true
       })
+      logStartupSegment('electron', 'app_ipc_handlers_registered', registerIpcNs)
       Menu.setApplicationMenu(null)
+      const createWindowCallNs = process.hrtime.bigint()
       await createWindow()
+      logStartupSegment('electron', 'app_create_window_returned', createWindowCallNs)
+      logStartupPoint('electron', 'bootstrap_pipeline_done')
     } catch (err) {
+      logStartupPoint('electron', 'bootstrap_pipeline_failed', {
+        message: err?.message || String(err)
+      })
       dialog.showErrorBox('Wunder Desktop', err?.message || String(err))
       app.quit()
     }

@@ -2,8 +2,13 @@ import { defineStore } from 'pinia';
 
 import {
   createBeeroomGroup,
+  downloadBeeroomHivePack,
+  exportBeeroomHivePack,
   getBeeroomGroup,
+  getBeeroomHivePackExportJob,
+  getBeeroomHivePackImportJob,
   getBeeroomMission,
+  importBeeroomHivePack,
   listBeeroomGroups,
   listBeeroomMissions,
   moveBeeroomAgents
@@ -91,6 +96,34 @@ export type BeeroomGroup = {
   latest_mission?: BeeroomMission | null;
 };
 
+export type BeeroomPackArtifact = {
+  filename?: string;
+  path?: string;
+  size_bytes?: number;
+};
+
+export type BeeroomPackJob = {
+  job_id: string;
+  job_type?: string;
+  status?: string;
+  phase?: string;
+  progress?: number;
+  summary?: string;
+  detail?: Record<string, unknown> | null;
+  report?: Record<string, unknown> | null;
+  artifact?: BeeroomPackArtifact | null;
+  created_at?: number;
+  updated_at?: number;
+};
+
+export type BeeroomPackImportOptions = {
+  group_id?: string;
+  create_hive_if_missing?: boolean;
+  conflict_mode?: 'auto_rename_only' | 'update_replace';
+};
+
+export type BeeroomPackExportMode = 'full' | 'reference_only';
+
 const asArray = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 
 const normalizeGroupId = (value: unknown): string =>
@@ -104,6 +137,86 @@ const buildParamsKey = (params: QueryParams = {}): string =>
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}:${String(value ?? '')}`)
     .join('|');
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const normalizePackStatus = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const isTerminalPackStatus = (value: unknown): boolean => {
+  const normalized = normalizePackStatus(value);
+  return (
+    normalized === 'completed' ||
+    normalized === 'failed' ||
+    normalized === 'error' ||
+    normalized === 'cancelled' ||
+    normalized === 'canceled'
+  );
+};
+
+const isTerminalPackJob = (job: BeeroomPackJob | null | undefined): boolean =>
+  Boolean(job && isTerminalPackStatus(job.status));
+
+const resolveRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+};
+
+// Normalize backend payload into a stable front-end shape.
+const normalizePackJob = (value: unknown): BeeroomPackJob | null => {
+  const source = resolveRecord(value);
+  if (!source) return null;
+  const jobId = String(source.job_id || '').trim();
+  if (!jobId) return null;
+  return {
+    job_id: jobId,
+    job_type: String(source.job_type || '').trim() || undefined,
+    status: String(source.status || '').trim() || undefined,
+    phase: String(source.phase || '').trim() || undefined,
+    progress: Number(source.progress ?? 0),
+    summary: String(source.summary || '').trim() || undefined,
+    detail: resolveRecord(source.detail),
+    report: resolveRecord(source.report),
+    artifact: resolveRecord(source.artifact) as BeeroomPackArtifact | null,
+    created_at: Number(source.created_at || 0),
+    updated_at: Number(source.updated_at || 0)
+  };
+};
+
+const normalizePackMode = (value: unknown): BeeroomPackExportMode =>
+  String(value || '').trim().toLowerCase() === 'reference_only' ? 'reference_only' : 'full';
+
+const decodeMaybeUriComponent = (value: string): string => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
+
+const resolveHeaderValue = (headers: unknown, key: string): string => {
+  const source = headers as any;
+  if (!source) return '';
+  if (typeof source.get === 'function') {
+    return String(source.get(key) || source.get(key.toLowerCase()) || '').trim();
+  }
+  return String(source[key] || source[key.toLowerCase()] || '').trim();
+};
+
+const resolveFilenameFromDisposition = (headers: unknown, fallback: string): string => {
+  const disposition = resolveHeaderValue(headers, 'content-disposition');
+  if (!disposition) return fallback;
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    const decoded = decodeMaybeUriComponent(utf8Match[1].replace(/['"]/g, '').trim());
+    if (decoded) return decoded;
+  }
+  const basicMatch = disposition.match(/filename=\"?([^\";]+)\"?/i);
+  const basic = String(basicMatch?.[1] || '').trim();
+  return basic || fallback;
+};
 
 let groupsRequestSerial = 0;
 let groupsInFlight: Promise<BeeroomGroup[]> | null = null;
@@ -122,7 +235,12 @@ export const useBeeroomStore = defineStore('beeroom', {
     loading: false,
     detailLoading: false,
     refreshing: false,
-    error: ''
+    error: '',
+    packImportJob: null as BeeroomPackJob | null,
+    packExportJob: null as BeeroomPackJob | null,
+    packImportLoading: false,
+    packExportLoading: false,
+    packError: ''
   }),
   getters: {
     activeGroupSummary(state): BeeroomGroup | null {
@@ -366,6 +484,186 @@ export const useBeeroomStore = defineStore('beeroom', {
       }
       const { data } = await getBeeroomMission(normalizedGroupId, normalizedMissionId);
       return (data?.data || null) as BeeroomMission | null;
+    },
+
+    clearPackJobs() {
+      this.packImportJob = null;
+      this.packExportJob = null;
+    },
+
+    clearPackError() {
+      this.packError = '';
+    },
+
+    async pollImportJob(
+      jobId: unknown,
+      options: { intervalMs?: number; timeoutMs?: number } = {}
+    ) {
+      const normalizedJobId = String(jobId || '').trim();
+      if (!normalizedJobId) {
+        return null;
+      }
+      const timeoutMs = Math.max(1500, Number(options.timeoutMs || 120000));
+      const intervalMs = Math.max(500, Number(options.intervalMs || 1200));
+      const startedAt = Date.now();
+      let latestJob = this.packImportJob;
+
+      // Poll until terminal status or timeout.
+      while (Date.now() - startedAt <= timeoutMs) {
+        const { data } = await getBeeroomHivePackImportJob(normalizedJobId);
+        latestJob = normalizePackJob(data?.data);
+        if (latestJob) {
+          this.packImportJob = latestJob;
+        }
+        if (isTerminalPackJob(latestJob)) {
+          return latestJob;
+        }
+        await sleep(intervalMs);
+      }
+      return latestJob;
+    },
+
+    async importHivePack(file: Blob | File, options: BeeroomPackImportOptions = {}) {
+      if (!(file instanceof Blob) || !file.size) {
+        throw new Error('hivepack file is required');
+      }
+      this.packImportLoading = true;
+      this.packError = '';
+      try {
+        const normalizedGroupId = normalizeGroupId(options.group_id);
+        const normalizedOptions: Record<string, unknown> = {};
+        if (normalizedGroupId) {
+          normalizedOptions.group_id = normalizedGroupId;
+        }
+        if (typeof options.create_hive_if_missing === 'boolean') {
+          normalizedOptions.create_hive_if_missing = options.create_hive_if_missing;
+        }
+        if (typeof options.conflict_mode === 'string' && options.conflict_mode.trim()) {
+          normalizedOptions.conflict_mode = options.conflict_mode.trim().toLowerCase();
+        }
+
+        const { data } = await importBeeroomHivePack({
+          file,
+          options: Object.keys(normalizedOptions).length ? normalizedOptions : undefined,
+          groupId: normalizedGroupId || undefined
+        });
+        const firstJob = normalizePackJob(data?.data);
+        if (!firstJob) {
+          throw new Error('invalid hivepack import job response');
+        }
+        this.packImportJob = firstJob;
+        const finalJob = isTerminalPackJob(firstJob)
+          ? firstJob
+          : await this.pollImportJob(firstJob.job_id);
+        const resolvedJob = finalJob || firstJob;
+
+        // Keep beeroom list/detail in sync when import has finished.
+        if (normalizePackStatus(resolvedJob.status) === 'completed') {
+          const targetHiveId = normalizeGroupId(
+            resolvedJob.report?.hive_id || normalizedGroupId || this.activeGroupId
+          );
+          await this.loadGroups().catch(() => null);
+          if (targetHiveId) {
+            await this.selectGroup(targetHiveId, { silent: true }).catch(() => null);
+          } else if (this.activeGroupId) {
+            await this.loadActiveGroup({ silent: true }).catch(() => null);
+          }
+        }
+
+        return resolvedJob;
+      } catch (error: any) {
+        this.packError = String(
+          error?.response?.data?.detail || error?.message || 'import hivepack failed'
+        );
+        throw error;
+      } finally {
+        this.packImportLoading = false;
+      }
+    },
+
+    async pollExportJob(
+      jobId: unknown,
+      options: { intervalMs?: number; timeoutMs?: number } = {}
+    ) {
+      const normalizedJobId = String(jobId || '').trim();
+      if (!normalizedJobId) {
+        return null;
+      }
+      const timeoutMs = Math.max(1500, Number(options.timeoutMs || 120000));
+      const intervalMs = Math.max(500, Number(options.intervalMs || 1200));
+      const startedAt = Date.now();
+      let latestJob = this.packExportJob;
+
+      // Poll until terminal status or timeout.
+      while (Date.now() - startedAt <= timeoutMs) {
+        const { data } = await getBeeroomHivePackExportJob(normalizedJobId);
+        latestJob = normalizePackJob(data?.data);
+        if (latestJob) {
+          this.packExportJob = latestJob;
+        }
+        if (isTerminalPackJob(latestJob)) {
+          return latestJob;
+        }
+        await sleep(intervalMs);
+      }
+      return latestJob;
+    },
+
+    async exportHivePack(groupId: unknown, mode: BeeroomPackExportMode = 'full') {
+      const normalizedGroupId = normalizeGroupId(groupId || this.activeGroupId);
+      if (!normalizedGroupId) {
+        throw new Error('group_id is required');
+      }
+      this.packExportLoading = true;
+      this.packError = '';
+      try {
+        const { data } = await exportBeeroomHivePack({
+          group_id: normalizedGroupId,
+          mode: normalizePackMode(mode)
+        });
+        const firstJob = normalizePackJob(data?.data);
+        if (!firstJob) {
+          throw new Error('invalid hivepack export job response');
+        }
+        this.packExportJob = firstJob;
+        const finalJob = isTerminalPackJob(firstJob)
+          ? firstJob
+          : await this.pollExportJob(firstJob.job_id);
+        return finalJob || firstJob;
+      } catch (error: any) {
+        this.packError = String(
+          error?.response?.data?.detail || error?.message || 'export hivepack failed'
+        );
+        throw error;
+      } finally {
+        this.packExportLoading = false;
+      }
+    },
+
+    async downloadExportPack(jobId: unknown = '') {
+      const normalizedJobId = String(jobId || this.packExportJob?.job_id || '').trim();
+      if (!normalizedJobId) {
+        throw new Error('job_id is required');
+      }
+      const response = await downloadBeeroomHivePack(normalizedJobId);
+      const blob = response?.data instanceof Blob ? response.data : new Blob([response?.data]);
+      const fallbackFilename =
+        String(this.packExportJob?.artifact?.filename || '').trim() ||
+        `hivepack-${normalizedJobId}.hivepack`;
+      const filename = resolveFilenameFromDisposition(response?.headers, fallbackFilename);
+
+      if (typeof window !== 'undefined') {
+        const url = window.URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+        window.URL.revokeObjectURL(url);
+      }
+
+      return { filename, size_bytes: blob.size };
     }
   }
 });

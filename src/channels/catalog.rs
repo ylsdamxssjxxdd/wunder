@@ -50,6 +50,14 @@ pub const CHANNEL_CATALOG: &[ChannelCatalogItem] = &[
         docs_hint: "/wunder/channel/wechat_mp/webhook",
     },
     ChannelCatalogItem {
+        channel: "xmpp",
+        display_name: "XMPP",
+        description: "XMPP standard client channel with long connection runtime",
+        user_supported: true,
+        webhook_mode: "runtime+generic",
+        docs_hint: "/wunder/channel/xmpp/webhook",
+    },
+    ChannelCatalogItem {
         channel: "telegram",
         display_name: "Telegram",
         description: "User-managed Telegram webhook/callback channel",

@@ -142,22 +142,6 @@
       </div>
 
       <div v-if="isCanvasView" class="beeroom-workbench-stage">
-        <div v-if="missions.length" class="beeroom-workbench-missions">
-          <button
-            v-for="mission in missions"
-            :key="mission.mission_id || mission.team_run_id"
-            class="beeroom-workbench-mission-chip"
-            :class="{ active: selectedMissionId === (mission.mission_id || mission.team_run_id) }"
-            type="button"
-            @click="selectedMissionId = mission.mission_id || mission.team_run_id"
-          >
-            <span class="beeroom-workbench-mission-chip-title">#{{ shortMissionId(mission.mission_id || mission.team_run_id) }}</span>
-            <span class="beeroom-workbench-mission-chip-meta">
-              {{ resolveMissionStatus(mission.completion_status || mission.status) }}
-            </span>
-          </button>
-        </div>
-
         <BeeroomMissionCanvas
           class="beeroom-workbench-canvas"
           :group="group"
@@ -276,7 +260,11 @@ import { computed, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
 import BeeroomMissionCanvas from '@/components/beeroom/BeeroomMissionCanvas.vue';
-import type { BeeroomGroup, BeeroomMember, BeeroomMission } from '@/stores/beeroom';
+import {
+  type BeeroomGroup,
+  type BeeroomMember,
+  type BeeroomMission
+} from '@/stores/beeroom';
 
 type AgentOption = {
   id: string;
@@ -493,6 +481,7 @@ watch(
 }
 
 .beeroom-workbench-canvas {
+  display: flex;
   flex: 1;
   width: 100%;
   height: 100%;
@@ -503,34 +492,9 @@ watch(
   position: relative;
   display: flex;
   flex: 1;
+  width: 100%;
+  height: 100%;
   min-height: 0;
-}
-
-.beeroom-workbench-overlay {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  right: 14px;
-  z-index: 4;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-  pointer-events: none;
-}
-
-.beeroom-workbench-overlay-main {
-  display: flex;
-  max-width: min(680px, calc(100% - 220px));
-  min-width: 0;
-  flex-direction: column;
-  gap: 6px;
-  padding: 14px 16px;
-  border-radius: 16px;
-  border: 1px solid rgba(56, 189, 248, 0.16);
-  background: rgba(8, 15, 32, 0.84);
-  box-shadow: 0 14px 32px rgba(2, 6, 23, 0.24);
-  pointer-events: auto;
 }
 
 .beeroom-workbench-missions {
@@ -586,20 +550,6 @@ watch(
   color: rgba(191, 219, 254, 0.74);
   font-size: 11px;
   white-space: nowrap;
-}
-
-@media (max-width: 1180px) {
-  .beeroom-workbench-overlay {
-    gap: 10px;
-  }
-
-  .beeroom-workbench-overlay-main {
-    max-width: min(560px, calc(100% - 180px));
-  }
-
-  .beeroom-workbench-missions {
-    top: 14px;
-  }
 }
 
 .beeroom-state {
@@ -713,13 +663,6 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.beeroom-hero-actions--inline {
-  flex-direction: row;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  pointer-events: auto;
 }
 
 .beeroom-action-btn {

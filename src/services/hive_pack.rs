@@ -54,6 +54,13 @@ pub struct HivePackImportOptions {
     pub group_id: Option<String>,
     #[serde(default)]
     pub create_hive_if_missing: Option<bool>,
+    #[serde(
+        default,
+        alias = "conflictMode",
+        alias = "importMode",
+        alias = "import_mode"
+    )]
+    pub conflict_mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -233,8 +240,12 @@ struct ImportRuntime {
     created_hive: Option<HiveRecord>,
     created_hive_new: bool,
     created_agents: Vec<String>,
+    replaced_agents: Vec<UserAgentRecord>,
+    replaced_agent_deleted_ids: Vec<String>,
     installed_skill_dirs: Vec<PathBuf>,
     installed_skill_names: Vec<String>,
+    replaced_skill_backups: Vec<ReplacedSkillBackup>,
+    import_skill_name_keys: HashSet<String>,
 }
 
 #[derive(Debug)]
@@ -247,6 +258,47 @@ struct WorkerImportSnapshot {
     icon: Option<String>,
     role_prompt: String,
     installed_skills: Vec<String>,
+    skill_installs: Vec<SkillInstallSnapshot>,
+}
+
+#[derive(Debug)]
+struct SkillInstallSnapshot {
+    source_skill_id: String,
+    preferred_name: String,
+    final_name: String,
+}
+
+#[derive(Debug)]
+struct ReplacedSkillBackup {
+    skill_name: String,
+    target_dir: PathBuf,
+    backup_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct TargetHiveSelection {
+    hive: HiveRecord,
+    preferred_hive_id: String,
+    preferred_hive_name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportConflictMode {
+    AutoRenameOnly,
+    UpdateReplace,
+}
+
+impl ImportConflictMode {
+    fn as_policy(self) -> &'static str {
+        match self {
+            Self::AutoRenameOnly => "auto_rename_only",
+            Self::UpdateReplace => "update_replace",
+        }
+    }
+
+    fn allows_direct_replace(self) -> bool {
+        matches!(self, Self::UpdateReplace)
+    }
 }
 
 pub fn job_payload(job: &HivePackJobRecord) -> Value {
@@ -394,9 +446,16 @@ async fn run_import_job_inner(
     runtime.captured_previous_skills = true;
     runtime.previous_enabled = current_tools.skills.enabled.clone();
     runtime.previous_shared = current_tools.skills.shared.clone();
+    let import_conflict_mode = normalize_import_conflict_mode(options.conflict_mode.as_deref());
 
-    let target_hive =
-        resolve_or_create_target_hive(state, &user.user_id, &hive_manifest, &options, runtime)?;
+    let target_hive = resolve_or_create_target_hive(
+        state,
+        &user.user_id,
+        &hive_manifest,
+        &options,
+        import_conflict_mode,
+        runtime,
+    )?;
 
     update_job(job, "installing", 35, "installing worker skill packs");
     persist_job(state, job)?;
@@ -404,9 +463,19 @@ async fn run_import_job_inner(
     let mut worker_snapshots = Vec::new();
     let skill_root = state.user_tool_store.get_skill_root(&user.user_id);
     std::fs::create_dir_all(&skill_root)?;
+    let replace_backup_root = import_root.join("replace_backup").join("skills");
+    if import_conflict_mode.allows_direct_replace() {
+        std::fs::create_dir_all(&replace_backup_root)?;
+    }
     for worker_ref in &hive_manifest.workers {
-        let worker_snapshot =
-            install_worker_snapshot(worker_ref, &package_root, &skill_root, runtime)?;
+        let worker_snapshot = install_worker_snapshot(
+            worker_ref,
+            &package_root,
+            &skill_root,
+            import_conflict_mode,
+            &replace_backup_root,
+            runtime,
+        )?;
         worker_snapshots.push(worker_snapshot);
     }
 
@@ -433,8 +502,47 @@ async fn run_import_job_inner(
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed = compute_allowed_tool_names(user, &context);
     let base_tool_names = collect_non_skill_tools(&allowed, &context.bindings.alias_map);
+    let existing_agents = state
+        .user_store
+        .list_user_agents_by_hive(&user.user_id, &target_hive.hive.hive_id)?;
+    runtime.replaced_agents = if import_conflict_mode.allows_direct_replace() {
+        existing_agents.clone()
+    } else {
+        Vec::new()
+    };
+    let mut occupied_agent_name_keys = if import_conflict_mode.allows_direct_replace() {
+        HashSet::new()
+    } else {
+        existing_agents
+            .iter()
+            .map(|item| normalize_conflict_key(&item.name))
+            .filter(|value| !value.is_empty())
+            .collect::<HashSet<_>>()
+    };
 
+    // Collect deterministic rename entries so UI can explain conflict outcomes.
+    let skill_renames = worker_snapshots
+        .iter()
+        .flat_map(|snapshot| {
+            snapshot
+                .skill_installs
+                .iter()
+                .filter_map(|skill_install| {
+                    if skill_install.preferred_name == skill_install.final_name {
+                        return None;
+                    }
+                    Some(json!({
+                        "worker_id": snapshot.worker_id,
+                        "source_skill_id": skill_install.source_skill_id,
+                        "from": skill_install.preferred_name,
+                        "to": skill_install.final_name,
+                    }))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
     let mut created_agents = Vec::new();
+    let mut agent_renames = Vec::new();
     let now = now_ts();
     for snapshot in &worker_snapshots {
         let mut tool_names = base_tool_names.clone();
@@ -448,12 +556,30 @@ async fn run_import_job_inner(
         }
         tool_names.sort();
         tool_names.dedup();
+        let preferred_agent_name = if snapshot.display_name.trim().is_empty() {
+            "Imported Worker".to_string()
+        } else {
+            snapshot.display_name.trim().to_string()
+        };
+        let final_agent_name = unique_label_with_reserved(
+            &snapshot.display_name,
+            &occupied_agent_name_keys,
+            "Imported Worker",
+        );
+        if final_agent_name != preferred_agent_name {
+            agent_renames.push(json!({
+                "worker_id": snapshot.worker_id,
+                "from": preferred_agent_name,
+                "to": final_agent_name,
+            }));
+        }
+        occupied_agent_name_keys.insert(normalize_conflict_key(&final_agent_name));
 
         let record = UserAgentRecord {
             agent_id: format!("agent_{}", Uuid::new_v4().simple()),
             user_id: user.user_id.clone(),
-            hive_id: target_hive.hive_id.clone(),
-            name: snapshot.display_name.clone(),
+            hive_id: target_hive.hive.hive_id.clone(),
+            name: final_agent_name.clone(),
             description: snapshot.description.clone(),
             system_prompt: snapshot.role_prompt.clone(),
             tool_names,
@@ -477,20 +603,63 @@ async fn run_import_job_inner(
         }));
     }
 
+    let mut replaced_agent_total = 0usize;
+    if import_conflict_mode.allows_direct_replace() && !runtime.replaced_agents.is_empty() {
+        let replaced_agents = runtime.replaced_agents.clone();
+        replaced_agent_total =
+            replace_existing_hive_agents(state, &user.user_id, &replaced_agents, runtime)?;
+    }
+
     update_job(job, "activating", 90, "activating hivepack");
     persist_job(state, job)?;
+
+    // Keep an aggregate conflict summary for fast front-end feedback.
+    let hive_renamed = target_hive.preferred_hive_id != target_hive.hive.hive_id
+        || normalize_conflict_key(&target_hive.preferred_hive_name)
+            != normalize_conflict_key(&target_hive.hive.name);
+    let mut renamed_total = skill_renames.len() + agent_renames.len();
+    if hive_renamed {
+        renamed_total += 1;
+    }
 
     job.status = "completed".to_string();
     job.phase = "completed".to_string();
     job.progress = 100;
     job.summary = "hivepack import completed".to_string();
     job.report = Some(json!({
-        "hive_id": target_hive.hive_id,
-        "hive_name": target_hive.name,
+        "hive_id": target_hive.hive.hive_id,
+        "hive_name": target_hive.hive.name,
         "created_hive": runtime.created_hive_new,
         "worker_total": worker_snapshots.len(),
         "agents": created_agents,
         "skills_installed": runtime.installed_skill_names,
+        "conflicts": {
+            "policy": import_conflict_mode.as_policy(),
+            "renamed_total": renamed_total,
+            "hive": {
+                "renamed": hive_renamed,
+                "from": {
+                    "hive_id": target_hive.preferred_hive_id,
+                    "name": target_hive.preferred_hive_name,
+                },
+                "to": {
+                    "hive_id": target_hive.hive.hive_id,
+                    "name": target_hive.hive.name,
+                }
+            },
+            "agents": {
+                "renamed_total": agent_renames.len(),
+                "renames": agent_renames,
+            },
+            "skills": {
+                "renamed_total": skill_renames.len(),
+                "renames": skill_renames,
+            },
+        },
+        "replace": {
+            "enabled": import_conflict_mode.allows_direct_replace(),
+            "replaced_agent_total": replaced_agent_total,
+        },
         "package": {
             "id": hive_manifest.pack.id,
             "name": hive_manifest.pack.name,
@@ -697,6 +866,8 @@ fn install_worker_snapshot(
     worker_ref: &HiveWorkerRef,
     package_root: &Path,
     skill_root: &Path,
+    conflict_mode: ImportConflictMode,
+    replace_backup_root: &Path,
     runtime: &mut ImportRuntime,
 ) -> Result<WorkerImportSnapshot> {
     let worker_path = validate_relative_path(&worker_ref.path)?;
@@ -746,6 +917,7 @@ fn install_worker_snapshot(
         .and_then(|profile| profile.icon.clone());
 
     let mut installed_skills = Vec::new();
+    let mut skill_installs = Vec::new();
     for skill_ref in &worker_manifest.skills {
         let skill_path = validate_relative_path(&skill_ref.path)?;
         let skill_source = worker_root.join(&skill_path);
@@ -769,11 +941,43 @@ fn install_worker_snapshot(
                 .unwrap_or("skill"),
             "skill",
         );
-        let final_name = unique_skill_name(skill_root, &preferred);
+        let source_skill_id = skill_ref
+            .skill_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| preferred.clone());
+        let final_name = resolve_import_skill_name(
+            skill_root,
+            &preferred,
+            conflict_mode,
+            &runtime.import_skill_name_keys,
+        );
         let skill_target = skill_root.join(&final_name);
+        if conflict_mode.allows_direct_replace() && skill_target.exists() {
+            let backup_dir = replace_backup_root.join(format!(
+                "{}-{}",
+                final_name,
+                Uuid::new_v4().simple()
+            ));
+            copy_dir_recursive(&skill_target, &backup_dir)?;
+            runtime.replaced_skill_backups.push(ReplacedSkillBackup {
+                skill_name: final_name.clone(),
+                target_dir: skill_target.clone(),
+                backup_dir,
+            });
+            std::fs::remove_dir_all(&skill_target)?;
+        }
         copy_dir_recursive(&skill_source, &skill_target)?;
         runtime.installed_skill_dirs.push(skill_target);
         runtime.installed_skill_names.push(final_name.clone());
+        runtime.import_skill_name_keys.insert(final_name.clone());
+        skill_installs.push(SkillInstallSnapshot {
+            source_skill_id,
+            preferred_name: preferred,
+            final_name: final_name.clone(),
+        });
         installed_skills.push(final_name);
     }
 
@@ -786,6 +990,7 @@ fn install_worker_snapshot(
         icon,
         role_prompt,
         installed_skills,
+        skill_installs,
     })
 }
 
@@ -837,8 +1042,9 @@ fn resolve_or_create_target_hive(
     user_id: &str,
     hive_manifest: &HiveManifest,
     options: &HivePackImportOptions,
+    conflict_mode: ImportConflictMode,
     runtime: &mut ImportRuntime,
-) -> Result<HiveRecord> {
+) -> Result<TargetHiveSelection> {
     state.user_store.ensure_default_hive(user_id)?;
     let requested_hive = options
         .group_id
@@ -847,7 +1053,7 @@ fn resolve_or_create_target_hive(
         .filter(|value| !value.is_empty());
     let create_hive_if_missing = options.create_hive_if_missing.unwrap_or(true);
 
-    let fallback_name = hive_manifest
+    let preferred_hive_name = hive_manifest
         .pack
         .name
         .as_deref()
@@ -856,50 +1062,158 @@ fn resolve_or_create_target_hive(
         .unwrap_or("Imported Hive");
     let fallback_description = hive_manifest.pack.description.clone().unwrap_or_default();
 
-    if let Some(hive_id) = requested_hive {
-        if let Some(existing) = state.user_store.get_hive(user_id, &hive_id)? {
-            runtime.created_hive = Some(existing.clone());
-            return Ok(existing);
+    let existing_hives = state.user_store.list_hives(user_id, true)?;
+    let occupied_hive_ids = existing_hives
+        .iter()
+        .map(|item| normalize_hive_id(&item.hive_id))
+        .filter(|value| !value.is_empty())
+        .collect::<HashSet<_>>();
+    let occupied_hive_name_keys = existing_hives
+        .iter()
+        .map(|item| normalize_conflict_key(&item.name))
+        .filter(|value| !value.is_empty())
+        .collect::<HashSet<_>>();
+
+    let preferred_hive_id = requested_hive.clone().unwrap_or_else(|| {
+        hive_manifest
+            .pack
+            .id
+            .as_deref()
+            .map(normalize_hive_id)
+            .filter(|value| !value.is_empty() && value != DEFAULT_HIVE_ID)
+            .unwrap_or_else(|| normalize_hive_id(preferred_hive_name))
+    });
+    let preferred_hive_id = if preferred_hive_id == DEFAULT_HIVE_ID {
+        format!("hivepack-{}", Uuid::new_v4().simple())
+    } else {
+        preferred_hive_id
+    };
+    let preferred_hive_name_string = preferred_hive_name.to_string();
+
+    if conflict_mode.allows_direct_replace() {
+        if let Some(hive_id) = requested_hive.as_deref() {
+            if let Some(existing) = state.user_store.get_hive(user_id, hive_id)? {
+                let updated = update_hive_metadata(
+                    state,
+                    &existing,
+                    Some(preferred_hive_name),
+                    Some(&fallback_description),
+                )?;
+                runtime.created_hive = Some(updated.clone());
+                runtime.created_hive_new = false;
+                return Ok(TargetHiveSelection {
+                    hive: updated,
+                    preferred_hive_id,
+                    preferred_hive_name: preferred_hive_name_string,
+                });
+            }
+            if !create_hive_if_missing {
+                return Err(anyhow!("target hive {hive_id} not found"));
+            }
+            let created = create_hive(
+                state,
+                user_id,
+                hive_id,
+                preferred_hive_name,
+                &fallback_description,
+            )?;
+            runtime.created_hive = Some(created.clone());
+            runtime.created_hive_new = true;
+            return Ok(TargetHiveSelection {
+                hive: created,
+                preferred_hive_id,
+                preferred_hive_name: preferred_hive_name_string,
+            });
         }
-        if !create_hive_if_missing {
-            return Err(anyhow!("target hive {hive_id} not found"));
+
+        if let Some(existing) = state.user_store.get_hive(user_id, &preferred_hive_id)? {
+            let updated = update_hive_metadata(
+                state,
+                &existing,
+                Some(preferred_hive_name),
+                Some(&fallback_description),
+            )?;
+            runtime.created_hive = Some(updated.clone());
+            runtime.created_hive_new = false;
+            return Ok(TargetHiveSelection {
+                hive: updated,
+                preferred_hive_id,
+                preferred_hive_name: preferred_hive_name_string,
+            });
         }
+
+        if let Some(existing) = existing_hives
+            .iter()
+            .find(|item| normalize_conflict_key(&item.name) == normalize_conflict_key(preferred_hive_name))
+            .cloned()
+        {
+            let updated = update_hive_metadata(
+                state,
+                &existing,
+                Some(preferred_hive_name),
+                Some(&fallback_description),
+            )?;
+            runtime.created_hive = Some(updated.clone());
+            runtime.created_hive_new = false;
+            return Ok(TargetHiveSelection {
+                hive: updated,
+                preferred_hive_id,
+                preferred_hive_name: preferred_hive_name_string,
+            });
+        }
+
+        let final_hive_id = if occupied_hive_ids.contains(&preferred_hive_id) {
+            unique_slug_with_reserved(&preferred_hive_id, &occupied_hive_ids, "hivepack")
+        } else {
+            preferred_hive_id.clone()
+        };
+        let final_hive_name = if occupied_hive_name_keys.contains(&normalize_conflict_key(preferred_hive_name))
+        {
+            unique_label_with_reserved(preferred_hive_name, &occupied_hive_name_keys, "Imported Hive")
+        } else {
+            preferred_hive_name.to_string()
+        };
         let created = create_hive(
             state,
             user_id,
-            &hive_id,
-            fallback_name,
+            &final_hive_id,
+            &final_hive_name,
             &fallback_description,
         )?;
         runtime.created_hive = Some(created.clone());
         runtime.created_hive_new = true;
-        return Ok(created);
+        return Ok(TargetHiveSelection {
+            hive: created,
+            preferred_hive_id,
+            preferred_hive_name: preferred_hive_name_string,
+        });
     }
 
-    let mut candidate_hive_id = hive_manifest
-        .pack
-        .id
-        .as_deref()
-        .map(normalize_hive_id)
-        .filter(|value| !value.is_empty() && value != DEFAULT_HIVE_ID)
-        .unwrap_or_else(|| normalize_hive_id(fallback_name));
-    if candidate_hive_id == DEFAULT_HIVE_ID {
-        candidate_hive_id = format!("hivepack-{}", Uuid::new_v4().simple());
+    if let Some(hive_id) = requested_hive.as_deref() {
+        if state.user_store.get_hive(user_id, hive_id)?.is_none() && !create_hive_if_missing {
+            return Err(anyhow!("target hive {hive_id} not found"));
+        }
     }
-    if let Some(existing) = state.user_store.get_hive(user_id, &candidate_hive_id)? {
-        runtime.created_hive = Some(existing.clone());
-        return Ok(existing);
-    }
+
+    let final_hive_id =
+        unique_slug_with_reserved(&preferred_hive_id, &occupied_hive_ids, "hivepack");
+    let final_hive_name =
+        unique_label_with_reserved(preferred_hive_name, &occupied_hive_name_keys, "Imported Hive");
+
     let created = create_hive(
         state,
         user_id,
-        &candidate_hive_id,
-        fallback_name,
+        &final_hive_id,
+        &final_hive_name,
         &fallback_description,
     )?;
     runtime.created_hive = Some(created.clone());
     runtime.created_hive_new = true;
-    Ok(created)
+    Ok(TargetHiveSelection {
+        hive: created,
+        preferred_hive_id,
+        preferred_hive_name: preferred_hive_name_string,
+    })
 }
 
 fn create_hive(
@@ -924,6 +1238,56 @@ fn create_hive(
     Ok(record)
 }
 
+fn update_hive_metadata(
+    state: &AppState,
+    existing: &HiveRecord,
+    next_name: Option<&str>,
+    next_description: Option<&str>,
+) -> Result<HiveRecord> {
+    let mut updated = existing.clone();
+    if let Some(name) = next_name {
+        let cleaned = name.trim();
+        if !cleaned.is_empty() {
+            updated.name = cleaned.to_string();
+        }
+    }
+    if let Some(description) = next_description {
+        updated.description = description.to_string();
+    }
+    updated.updated_time = now_ts();
+    state.user_store.upsert_hive(&updated)?;
+    Ok(updated)
+}
+
+fn replace_existing_hive_agents(
+    state: &AppState,
+    user_id: &str,
+    replaced_agents: &[UserAgentRecord],
+    runtime: &mut ImportRuntime,
+) -> Result<usize> {
+    if replaced_agents.is_empty() {
+        return Ok(0);
+    }
+    let mut deleted_ids = Vec::new();
+    for agent in replaced_agents {
+        if let Err(err) = state.user_store.delete_user_agent(user_id, &agent.agent_id) {
+            for restored in replaced_agents {
+                if !deleted_ids.contains(&restored.agent_id) {
+                    continue;
+                }
+                state.user_store.upsert_user_agent(restored).ok();
+            }
+            return Err(anyhow!(
+                "replace existing hive agents failed on {}: {err}",
+                agent.agent_id
+            ));
+        }
+        deleted_ids.push(agent.agent_id.clone());
+    }
+    runtime.replaced_agent_deleted_ids = deleted_ids;
+    Ok(replaced_agents.len())
+}
+
 fn rollback_import(state: &AppState, user_id: &str, runtime: &ImportRuntime) -> Value {
     // Best-effort rollback: keep the system in a consistent state even if partial failures happen.
     let mut errors = Vec::new();
@@ -938,6 +1302,37 @@ fn rollback_import(state: &AppState, user_id: &str, runtime: &ImportRuntime) -> 
                 "remove skill dir {} failed: {err}",
                 skill_dir.display()
             ));
+        }
+    }
+    for backup in &runtime.replaced_skill_backups {
+        if backup.target_dir.exists() {
+            if let Err(err) = std::fs::remove_dir_all(&backup.target_dir) {
+                errors.push(format!(
+                    "remove replaced skill dir {} failed: {err}",
+                    backup.target_dir.display()
+                ));
+                continue;
+            }
+        }
+        if let Err(err) = copy_dir_recursive(&backup.backup_dir, &backup.target_dir) {
+            errors.push(format!(
+                "restore replaced skill {} from {} failed: {err}",
+                backup.skill_name,
+                backup.backup_dir.display()
+            ));
+        }
+    }
+    let replaced_deleted_ids = runtime
+        .replaced_agent_deleted_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    for agent in &runtime.replaced_agents {
+        if !replaced_deleted_ids.contains(&agent.agent_id) {
+            continue;
+        }
+        if let Err(err) = state.user_store.upsert_user_agent(agent) {
+            errors.push(format!("restore replaced agent {} failed: {err}", agent.agent_id));
         }
     }
     if runtime.captured_previous_skills {
@@ -963,6 +1358,12 @@ fn rollback_import(state: &AppState, user_id: &str, runtime: &ImportRuntime) -> 
         "errors": errors,
         "created_agents": runtime.created_agents,
         "installed_skills": runtime.installed_skill_names,
+        "replaced_agents_restored": runtime.replaced_agent_deleted_ids,
+        "replaced_skills_restored": runtime
+            .replaced_skill_backups
+            .iter()
+            .map(|item| item.skill_name.clone())
+            .collect::<Vec<_>>(),
     })
 }
 
@@ -972,6 +1373,15 @@ fn normalize_export_mode(raw: Option<&str>) -> String {
         "reference_only".to_string()
     } else {
         "full".to_string()
+    }
+}
+
+fn normalize_import_conflict_mode(raw: Option<&str>) -> ImportConflictMode {
+    let cleaned = raw.unwrap_or("auto_rename_only").trim().to_ascii_lowercase();
+    if matches!(cleaned.as_str(), "update_replace" | "replace" | "update-replace") {
+        ImportConflictMode::UpdateReplace
+    } else {
+        ImportConflictMode::AutoRenameOnly
     }
 }
 
@@ -1231,6 +1641,86 @@ fn unique_skill_name(skill_root: &Path, preferred: &str) -> String {
     final_name
 }
 
+fn unique_skill_name_for_replace(
+    skill_root: &Path,
+    preferred: &str,
+    reserved: &HashSet<String>,
+) -> String {
+    let base = normalize_name(preferred, "skill");
+    if !reserved.contains(&base) {
+        return base;
+    }
+    let mut index = 2usize;
+    loop {
+        let next = format!("{base}-{index}");
+        if !reserved.contains(&next) && !skill_root.join(&next).exists() {
+            return next;
+        }
+        index += 1;
+    }
+}
+
+fn resolve_import_skill_name(
+    skill_root: &Path,
+    preferred: &str,
+    conflict_mode: ImportConflictMode,
+    reserved: &HashSet<String>,
+) -> String {
+    if conflict_mode.allows_direct_replace() {
+        unique_skill_name_for_replace(skill_root, preferred, reserved)
+    } else {
+        unique_skill_name(skill_root, preferred)
+    }
+}
+
+fn unique_slug_with_reserved(
+    preferred: &str,
+    reserved: &HashSet<String>,
+    fallback: &str,
+) -> String {
+    let candidate = normalize_name(preferred, fallback);
+    if !reserved.contains(&candidate) {
+        return candidate;
+    }
+    let mut index = 2usize;
+    loop {
+        let next = format!("{candidate}-{index}");
+        if !reserved.contains(&next) {
+            return next;
+        }
+        index += 1;
+    }
+}
+
+fn normalize_conflict_key(raw: &str) -> String {
+    raw.trim().to_lowercase()
+}
+
+fn unique_label_with_reserved(
+    preferred: &str,
+    reserved: &HashSet<String>,
+    fallback: &str,
+) -> String {
+    let base = preferred.trim();
+    let candidate = if base.is_empty() {
+        fallback.trim()
+    } else {
+        base
+    };
+    let base_key = normalize_conflict_key(candidate);
+    if base_key.is_empty() || !reserved.contains(&base_key) {
+        return candidate.to_string();
+    }
+    let mut index = 2usize;
+    loop {
+        let next = format!("{candidate}-{index}");
+        if !reserved.contains(&normalize_conflict_key(&next)) {
+            return next;
+        }
+        index += 1;
+    }
+}
+
 fn normalize_name(raw: &str, fallback: &str) -> String {
     let cleaned = raw.trim();
     if cleaned.is_empty() {
@@ -1324,9 +1814,13 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_approval_mode, normalize_name, validate_archive_entry_path,
-        validate_relative_path,
+        normalize_approval_mode, normalize_conflict_key, normalize_import_conflict_mode,
+        normalize_name, resolve_import_skill_name, unique_label_with_reserved,
+        unique_slug_with_reserved, validate_archive_entry_path, validate_relative_path,
+        ImportConflictMode,
     };
+    use std::collections::HashSet;
+    use tempfile::tempdir;
 
     #[test]
     fn normalize_name_keeps_safe_ascii_chars() {
@@ -1350,5 +1844,78 @@ mod tests {
     fn validate_relative_path_rejects_absolute_path() {
         assert!(validate_relative_path("/tmp/file").is_err());
         assert!(validate_relative_path("../tmp/file").is_err());
+    }
+
+    #[test]
+    fn unique_slug_with_reserved_appends_numeric_suffix() {
+        let reserved = ["hr-hive".to_string(), "hr-hive-2".to_string()]
+            .into_iter()
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            unique_slug_with_reserved("hr hive", &reserved, "hive"),
+            "hr-hive-3"
+        );
+    }
+
+    #[test]
+    fn unique_label_with_reserved_appends_numeric_suffix() {
+        let reserved = ["招聘专员".to_string(), "招聘专员-2".to_string()]
+            .into_iter()
+            .map(|item| normalize_conflict_key(&item))
+            .collect::<HashSet<_>>();
+        assert_eq!(
+            unique_label_with_reserved("招聘专员", &reserved, "Imported Worker"),
+            "招聘专员-3"
+        );
+    }
+
+    #[test]
+    fn normalize_import_conflict_mode_supports_update_replace_alias() {
+        assert_eq!(
+            normalize_import_conflict_mode(Some("update_replace")),
+            ImportConflictMode::UpdateReplace
+        );
+        assert_eq!(
+            normalize_import_conflict_mode(Some("replace")),
+            ImportConflictMode::UpdateReplace
+        );
+        assert_eq!(
+            normalize_import_conflict_mode(Some("auto_rename_only")),
+            ImportConflictMode::AutoRenameOnly
+        );
+    }
+
+    #[test]
+    fn resolve_import_skill_name_update_replace_prefers_base_name() {
+        let root = tempdir().expect("tempdir");
+        let skill_root = root.path();
+        std::fs::create_dir_all(skill_root.join("planner-skill")).expect("seed base skill");
+        let reserved = HashSet::new();
+        assert_eq!(
+            resolve_import_skill_name(
+                skill_root,
+                "planner skill",
+                ImportConflictMode::UpdateReplace,
+                &reserved
+            ),
+            "planner-skill"
+        );
+    }
+
+    #[test]
+    fn resolve_import_skill_name_update_replace_avoids_reserved_and_existing_suffix() {
+        let root = tempdir().expect("tempdir");
+        let skill_root = root.path();
+        std::fs::create_dir_all(skill_root.join("planner-skill-2")).expect("seed suffix skill");
+        let reserved = ["planner-skill".to_string()].into_iter().collect::<HashSet<_>>();
+        assert_eq!(
+            resolve_import_skill_name(
+                skill_root,
+                "planner skill",
+                ImportConflictMode::UpdateReplace,
+                &reserved
+            ),
+            "planner-skill-3"
+        );
     }
 }

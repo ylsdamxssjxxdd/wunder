@@ -1,10 +1,20 @@
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 
 import vue from '@vitejs/plugin-vue';
 import { defineConfig } from 'vite';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoEnvDirCandidate = path.resolve(__dirname, '..');
+const filesystemRoot = path.parse(repoEnvDirCandidate).root;
+const envDir =
+  process.env.VITE_ENV_DIR ||
+  (repoEnvDirCandidate !== filesystemRoot &&
+  (existsSync(path.join(repoEnvDirCandidate, '.env')) ||
+    existsSync(path.join(repoEnvDirCandidate, '.env.example')))
+    ? repoEnvDirCandidate
+    : __dirname);
 const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
 
 const makeProxyRule = () => ({
@@ -48,7 +58,7 @@ const resolveManualChunk = (rawId: string) => {
 };
 
 export default defineConfig({
-  envDir: path.resolve(__dirname, '..'),
+  envDir,
   plugins: [vue()],
   build: {
     rollupOptions: {

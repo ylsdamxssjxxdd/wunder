@@ -19,21 +19,14 @@
     <button
       v-if="
         activeSection === 'agents' ||
+        activeSection === 'swarms' ||
         (activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace)
       "
       class="messenger-plus-btn"
       type="button"
-      :title="
-        activeSection === 'groups'
-          ? t('userWorld.group.create')
-          : t('messenger.action.newAgent')
-      "
-      :aria-label="
-        activeSection === 'groups'
-          ? t('userWorld.group.create')
-          : t('messenger.action.newAgent')
-      "
-      @click="handleSearchCreateAction"
+      :title="resolvePlusActionLabel()"
+      :aria-label="resolvePlusActionLabel()"
+      @click="handlePlusAction"
     >
       <i class="fa-solid fa-plus" aria-hidden="true"></i>
     </button>
@@ -314,13 +307,16 @@
     </template>
 
     <template v-else-if="activeSection === 'swarms'">
-      <button
+      <div
         v-for="group in filteredBeeroomGroups"
         :key="group.group_id"
-        class="messenger-list-item messenger-agent-item"
+        class="messenger-list-item messenger-agent-item messenger-swarm-item"
         :class="{ active: selectedBeeroomGroupId === String(group.group_id || '') }"
-        type="button"
+        role="button"
+        tabindex="0"
         @click="selectBeeroomGroup(group)"
+        @keydown.enter.prevent="selectBeeroomGroup(group)"
+        @keydown.space.prevent="selectBeeroomGroup(group)"
       >
         <div class="messenger-list-avatar">{{ avatarLabel(group.name || group.group_id) }}</div>
         <div class="messenger-list-main">
@@ -335,7 +331,17 @@
             <span class="messenger-list-unread">{{ group.active_agent_total || 0 }}</span>
           </div>
         </div>
-      </button>
+        <button
+          class="messenger-list-item-action"
+          type="button"
+          :title="t('beeroom.pack.action.exportFull')"
+          :aria-label="t('beeroom.pack.action.exportFull')"
+          :disabled="beeroomStore.packImportLoading || beeroomStore.packExportLoading"
+          @click.stop="handleSwarmExport(group)"
+        >
+          <i class="fa-solid fa-download" aria-hidden="true"></i>
+        </button>
+      </div>
       <div v-if="!filteredBeeroomGroups.length" class="messenger-list-empty">
         {{ t('messenger.empty.swarms') }}
       </div>
@@ -727,13 +733,27 @@
       <span>{{ t('nav.logout') }}</span>
     </button>
   </div>
+
+  <input
+    ref="swarmPackInputRef"
+    type="file"
+    accept=".hivepack,.zip,application/zip,application/vnd.wunder.hivepack+zip"
+    style="display: none"
+    @change="handleSwarmPackFileChange"
+  />
 </template>
 
 <script setup lang="ts">
+import { h, ref } from 'vue';
+import { ElMessage, ElMessageBox } from 'element-plus';
+
 import { useI18n } from '@/i18n';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
+import { useBeeroomStore } from '@/stores/beeroom';
 
 const { t } = useI18n();
+const beeroomStore = useBeeroomStore();
+const swarmPackInputRef = ref<HTMLInputElement | null>(null);
 
 type ContainerEntry = {
   id: number;
@@ -916,6 +936,210 @@ const updateSelectedAgentHiveGroupId = (value: string) => {
 
 const updateSettingsPanelMode = (value: string) => {
   emit('update:settingsPanelMode', value);
+};
+
+const resolvePlusActionLabel = () => {
+  if (activeSection === 'groups') {
+    return t('userWorld.group.create');
+  }
+  if (activeSection === 'swarms') {
+    return t('beeroom.pack.action.import');
+  }
+  return t('messenger.action.newAgent');
+};
+
+const triggerSearchCreateAction = () => {
+  Promise.resolve(handleSearchCreateAction()).catch(() => undefined);
+};
+
+const resolvePackReportRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+};
+
+const resolvePositiveInt = (value: unknown): number => {
+  const normalized = Math.floor(Number(value));
+  return Number.isFinite(normalized) && normalized > 0 ? normalized : 0;
+};
+
+const resolvePackReportArray = (value: unknown): Record<string, unknown>[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is Record<string, unknown> => {
+    return Boolean(item && typeof item === 'object' && !Array.isArray(item));
+  });
+};
+
+const resolveImportRenameTotal = (report: unknown): number => {
+  const reportRecord = resolvePackReportRecord(report);
+  const conflicts = resolvePackReportRecord(reportRecord?.conflicts);
+  if (!conflicts) return 0;
+  // Prefer backend aggregate field, then fallback to per-section counters.
+  const directTotal = resolvePositiveInt(conflicts.renamed_total);
+  if (directTotal > 0) return directTotal;
+
+  const hive = resolvePackReportRecord(conflicts.hive);
+  const agents = resolvePackReportRecord(conflicts.agents);
+  const skills = resolvePackReportRecord(conflicts.skills);
+  const hiveRenamed = hive?.renamed === true ? 1 : 0;
+  return (
+    hiveRenamed +
+    resolvePositiveInt(agents?.renamed_total) +
+    resolvePositiveInt(skills?.renamed_total)
+  );
+};
+
+const resolvePackRenameLabel = (value: unknown, fallback = ''): string => {
+  const text = String(value || '').trim();
+  return text || fallback;
+};
+
+const showImportRenameDetails = async (report: unknown) => {
+  const reportRecord = resolvePackReportRecord(report);
+  const conflicts = resolvePackReportRecord(reportRecord?.conflicts);
+  if (!conflicts) return;
+
+  const lines: string[] = [];
+  const hive = resolvePackReportRecord(conflicts.hive);
+  if (hive?.renamed === true) {
+    const fromRecord = resolvePackReportRecord(hive.from);
+    const toRecord = resolvePackReportRecord(hive.to);
+    const fromName = resolvePackRenameLabel(fromRecord?.name, t('beeroom.pack.rename.unknown'));
+    const toName = resolvePackRenameLabel(toRecord?.name, t('beeroom.pack.rename.unknown'));
+    const fromHiveId = resolvePackRenameLabel(fromRecord?.hive_id);
+    const toHiveId = resolvePackRenameLabel(toRecord?.hive_id);
+    lines.push(
+      `${t('beeroom.pack.rename.kind.hive')}: ${fromName} [${fromHiveId || '-'}] → ${toName} [${toHiveId || '-'}]`
+    );
+  }
+
+  const agentRenames = resolvePackReportArray(resolvePackReportRecord(conflicts.agents)?.renames);
+  for (const item of agentRenames) {
+    const from = resolvePackRenameLabel(item.from, t('beeroom.pack.rename.unknown'));
+    const to = resolvePackRenameLabel(item.to, t('beeroom.pack.rename.unknown'));
+    lines.push(`${t('beeroom.pack.rename.kind.agent')}: ${from} → ${to}`);
+  }
+
+  const skillRenames = resolvePackReportArray(resolvePackReportRecord(conflicts.skills)?.renames);
+  for (const item of skillRenames) {
+    const from = resolvePackRenameLabel(item.from, t('beeroom.pack.rename.unknown'));
+    const to = resolvePackRenameLabel(item.to, t('beeroom.pack.rename.unknown'));
+    lines.push(`${t('beeroom.pack.rename.kind.skill')}: ${from} → ${to}`);
+  }
+
+  if (!lines.length) {
+    return;
+  }
+
+  const maxVisible = 12;
+  const visibleLines = lines.slice(0, maxVisible);
+  const hidden = lines.length - visibleLines.length;
+  const messageChildren = [
+    h('p', t('beeroom.pack.rename.dialogIntro')),
+    h(
+      'ul',
+      { class: 'messenger-pack-rename-list' },
+      visibleLines.map((line) => h('li', line))
+    )
+  ];
+  if (hidden > 0) {
+    messageChildren.push(h('p', t('beeroom.pack.rename.dialogMore', { count: hidden })));
+  }
+
+  await ElMessageBox.alert(
+    h('div', { class: 'messenger-pack-rename-dialog-body' }, messageChildren),
+    t('beeroom.pack.rename.dialogTitle'),
+    {
+      confirmButtonText: t('common.confirm')
+    }
+  );
+};
+
+const resetSwarmPackInput = () => {
+  if (swarmPackInputRef.value) {
+    swarmPackInputRef.value.value = '';
+  }
+};
+
+const handlePlusAction = () => {
+  if (activeSection !== 'swarms') {
+    triggerSearchCreateAction();
+    return;
+  }
+  if (beeroomStore.packImportLoading || beeroomStore.packExportLoading) {
+    ElMessage.warning(t('beeroom.pack.message.busy'));
+    return;
+  }
+  swarmPackInputRef.value?.click();
+};
+
+const handleSwarmPackFileChange = async (event: Event) => {
+  const source = event.target as HTMLInputElement | null;
+  const file = source?.files?.[0];
+  if (!file) {
+    resetSwarmPackInput();
+    return;
+  }
+  try {
+    const job = await beeroomStore.importHivePack(file);
+    const status = String(job?.status || '').trim().toLowerCase();
+    const importedName = String(job?.report?.hive_name || '').trim() || file.name;
+    const renamedTotal = resolveImportRenameTotal(job?.report);
+    if (status === 'completed') {
+      if (renamedTotal > 0) {
+        ElMessage.success(
+          t('beeroom.pack.message.importSuccessRenamed', {
+            name: importedName,
+            count: renamedTotal
+          })
+        );
+        await showImportRenameDetails(job?.report);
+        return;
+      }
+      ElMessage.success(t('beeroom.pack.message.importSuccess', { name: importedName }));
+      return;
+    }
+    ElMessage.warning(t('beeroom.pack.message.importPending'));
+  } catch (error: any) {
+    const detail = String(error?.response?.data?.detail || '').trim();
+    const message = detail || beeroomStore.packError || t('beeroom.pack.message.importFailed');
+    ElMessage.error(message);
+  } finally {
+    resetSwarmPackInput();
+  }
+};
+
+const handleSwarmExport = async (group: Record<string, any>) => {
+  const groupId = String(group?.group_id || group?.hive_id || '').trim();
+  if (!groupId) {
+    return;
+  }
+  if (beeroomStore.packImportLoading || beeroomStore.packExportLoading) {
+    ElMessage.warning(t('beeroom.pack.message.busy'));
+    return;
+  }
+  try {
+    const job = await beeroomStore.exportHivePack(groupId, 'full');
+    const status = String(job?.status || '').trim().toLowerCase();
+    if (status === 'completed') {
+      await beeroomStore.downloadExportPack(job?.job_id || '');
+      const filename = String(job?.artifact?.filename || '').trim() || `${groupId}.hivepack`;
+      ElMessage.success(t('beeroom.pack.message.exportSuccess', { name: filename }));
+      return;
+    }
+    if (status === 'failed' || status === 'error') {
+      ElMessage.error(beeroomStore.packError || t('beeroom.pack.message.exportFailed'));
+      return;
+    }
+    ElMessage.warning(t('beeroom.pack.message.exportPending'));
+  } catch (error: any) {
+    const detail = String(error?.response?.data?.detail || '').trim();
+    const message = detail || beeroomStore.packError || t('beeroom.pack.message.exportFailed');
+    ElMessage.error(message);
+  }
 };
 </script>
 

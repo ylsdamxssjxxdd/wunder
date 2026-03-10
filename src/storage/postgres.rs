@@ -3,9 +3,9 @@ use crate::i18n;
 use crate::services::output_quality;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
-    ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
-    ChannelSessionRecord, ChannelUserBindingRecord, ChatSessionRecord, CronJobRecord,
-    CronRunRecord, ExternalLinkRecord, GatewayClientRecord, GatewayNodeRecord,
+    BeeroomChatMessageRecord, ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord,
+    ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord, ChatSessionRecord,
+    CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord, GatewayNodeRecord,
     GatewayNodeTokenRecord, HiveRecord, ListChannelUserBindingsQuery, MediaAssetRecord,
     OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
     StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
@@ -427,6 +427,24 @@ impl PostgresStorage {
             content_type: row.get(4),
             client_msg_id: row.get(5),
             created_at: row.get(6),
+        }
+    }
+
+    fn map_beeroom_chat_message_row(row: &tokio_postgres::Row) -> BeeroomChatMessageRecord {
+        BeeroomChatMessageRecord {
+            message_id: row.get(0),
+            user_id: row.get(1),
+            group_id: row.get(2),
+            sender_kind: row.get(3),
+            sender_name: row.get(4),
+            sender_agent_id: row.get(5),
+            mention_name: row.get(6),
+            mention_agent_id: row.get(7),
+            body: row.get(8),
+            meta: row.get(9),
+            tone: row.get(10),
+            client_msg_id: row.get(11),
+            created_at: row.get(12),
         }
     }
 
@@ -1287,6 +1305,25 @@ impl StorageBackend for PostgresStorage {
                   ON user_world_events (created_time);
                 CREATE INDEX IF NOT EXISTS idx_user_world_events_conversation
                   ON user_world_events (conversation_id, event_id);
+                CREATE TABLE IF NOT EXISTS beeroom_chat_messages (
+                  message_id BIGSERIAL PRIMARY KEY,
+                  user_id TEXT NOT NULL,
+                  group_id TEXT NOT NULL,
+                  sender_kind TEXT NOT NULL,
+                  sender_name TEXT NOT NULL,
+                  sender_agent_id TEXT,
+                  mention_name TEXT,
+                  mention_agent_id TEXT,
+                  body TEXT NOT NULL,
+                  meta TEXT,
+                  tone TEXT NOT NULL,
+                  client_msg_id TEXT,
+                  created_at DOUBLE PRECISION NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_beeroom_chat_messages_client
+                  ON beeroom_chat_messages (user_id, group_id, client_msg_id);
+                CREATE INDEX IF NOT EXISTS idx_beeroom_chat_messages_group
+                  ON beeroom_chat_messages (user_id, group_id, message_id DESC);
                 CREATE TABLE IF NOT EXISTS session_runs (
                   run_id TEXT PRIMARY KEY,
                   session_id TEXT NOT NULL,
@@ -5102,6 +5139,158 @@ impl StorageBackend for PostgresStorage {
             output.push(user_id);
         }
         Ok(output)
+    }
+
+    fn list_beeroom_chat_messages(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        before_message_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<BeeroomChatMessageRecord>> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_group = group_id.trim();
+        if cleaned_user.is_empty() || cleaned_group.is_empty() {
+            return Ok(Vec::new());
+        }
+        let safe_limit = limit.clamp(1, 200);
+        let mut conn = self.conn()?;
+        let rows = if let Some(before_id) = before_message_id.filter(|value| *value > 0) {
+            conn.query(
+                "SELECT message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, \
+                 mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at \
+                 FROM beeroom_chat_messages WHERE user_id = $1 AND group_id = $2 AND message_id < $3 \
+                 ORDER BY message_id DESC LIMIT $4",
+                &[&cleaned_user, &cleaned_group, &before_id, &safe_limit],
+            )?
+        } else {
+            conn.query(
+                "SELECT message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, \
+                 mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at \
+                 FROM beeroom_chat_messages WHERE user_id = $1 AND group_id = $2 \
+                 ORDER BY message_id DESC LIMIT $3",
+                &[&cleaned_user, &cleaned_group, &safe_limit],
+            )?
+        };
+        let mut output = rows
+            .into_iter()
+            .map(|row| Self::map_beeroom_chat_message_row(&row))
+            .collect::<Vec<_>>();
+        output.reverse();
+        Ok(output)
+    }
+
+    fn append_beeroom_chat_message(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        sender_kind: &str,
+        sender_name: &str,
+        sender_agent_id: Option<&str>,
+        mention_name: Option<&str>,
+        mention_agent_id: Option<&str>,
+        body: &str,
+        meta: Option<&str>,
+        tone: &str,
+        client_msg_id: Option<&str>,
+        created_at: f64,
+    ) -> Result<BeeroomChatMessageRecord> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_group = group_id.trim();
+        let cleaned_sender_kind = sender_kind.trim();
+        let cleaned_sender_name = sender_name.trim();
+        let cleaned_body = body.trim();
+        if cleaned_user.is_empty()
+            || cleaned_group.is_empty()
+            || cleaned_sender_kind.is_empty()
+            || cleaned_sender_name.is_empty()
+            || cleaned_body.is_empty()
+        {
+            return Err(anyhow!("invalid beeroom chat message payload"));
+        }
+        let normalized_sender_agent_id = sender_agent_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let normalized_mention_name = mention_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let normalized_mention_agent_id = mention_agent_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let normalized_meta = meta
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let normalized_tone = if tone.trim().is_empty() {
+            "system".to_string()
+        } else {
+            tone.trim().to_string()
+        };
+        let normalized_client_msg_id = client_msg_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let safe_created_at = if created_at.is_finite() && created_at > 0.0 {
+            created_at
+        } else {
+            Self::now_ts()
+        };
+
+        let mut conn = self.conn()?;
+        let mut tx = conn.transaction()?;
+        if let Some(existing_client_msg_id) = normalized_client_msg_id.as_deref() {
+            if let Some(existing) = tx.query_opt(
+                "SELECT message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, \
+                 mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at \
+                 FROM beeroom_chat_messages WHERE user_id = $1 AND group_id = $2 AND client_msg_id = $3",
+                &[&cleaned_user, &cleaned_group, &existing_client_msg_id],
+            )? {
+                tx.commit()?;
+                return Ok(Self::map_beeroom_chat_message_row(&existing));
+            }
+        }
+        let inserted = tx.query_one(
+            "INSERT INTO beeroom_chat_messages \
+             (user_id, group_id, sender_kind, sender_name, sender_agent_id, mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+             RETURNING message_id, user_id, group_id, sender_kind, sender_name, sender_agent_id, mention_name, mention_agent_id, body, meta, tone, client_msg_id, created_at",
+            &[
+                &cleaned_user,
+                &cleaned_group,
+                &cleaned_sender_kind,
+                &cleaned_sender_name,
+                &normalized_sender_agent_id,
+                &normalized_mention_name,
+                &normalized_mention_agent_id,
+                &cleaned_body,
+                &normalized_meta,
+                &normalized_tone,
+                &normalized_client_msg_id,
+                &safe_created_at,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Self::map_beeroom_chat_message_row(&inserted))
+    }
+
+    fn delete_beeroom_chat_messages(&self, user_id: &str, group_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_group = group_id.trim();
+        if cleaned_user.is_empty() || cleaned_group.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn()?;
+        let deleted = conn.execute(
+            "DELETE FROM beeroom_chat_messages WHERE user_id = $1 AND group_id = $2",
+            &[&cleaned_user, &cleaned_group],
+        )?;
+        Ok(deleted as i64)
     }
 
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()> {

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{info, warn};
 use url::Url;
 use wunder_server::config::{Config, LlmConfig};
@@ -87,15 +87,50 @@ impl Default for DesktopSettings {
 
 impl DesktopRuntime {
     pub async fn init(args: &DesktopArgs) -> Result<Self> {
+        let startup_enabled = startup_timing_enabled();
+        let startup_boot = Instant::now();
+        log_startup_point(
+            startup_enabled,
+            "bridge-runtime",
+            "runtime_init_begin",
+            startup_boot,
+        );
+
+        let mut step_start = Instant::now();
         let app_dir = resolve_app_dir()?;
         let repo_root = resolve_repo_root(&app_dir);
         let temp_root = resolve_temp_root(args.temp_root.as_deref(), &app_dir);
         let user_id = normalize_user_id(args.user.as_deref());
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "resolve_paths_and_user",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
         ensure_runtime_dirs(&temp_root)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "ensure_runtime_dirs",
+            step_start,
+            startup_boot,
+        );
 
         let settings_path = temp_root.join("config/desktop.settings.json");
+        step_start = Instant::now();
         let mut settings = load_desktop_settings(&settings_path)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "load_desktop_settings",
+            step_start,
+            startup_boot,
+        );
 
+        step_start = Instant::now();
         let workspace_root = resolve_workspace_root(
             args.workspace.as_deref(),
             &settings.workspace_root,
@@ -114,7 +149,15 @@ impl DesktopRuntime {
                 workspace_root.join("skills").display()
             );
         }
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "prepare_workspace_and_seed_skills",
+            step_start,
+            startup_boot,
+        );
 
+        step_start = Instant::now();
         if settings.desktop_token.trim().is_empty() {
             settings.desktop_token = uuid::Uuid::new_v4().simple().to_string();
         }
@@ -149,7 +192,15 @@ impl DesktopRuntime {
             .await;
         settings.updated_at = now_ts();
         save_desktop_settings(&settings_path, &settings)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "normalize_settings_and_save",
+            step_start,
+            startup_boot,
+        );
 
+        step_start = Instant::now();
         let base_config = prepare_base_config_path(&repo_root, &temp_root)?;
         let override_path = temp_root.join("config/wunder.override.yaml");
         ensure_desktop_override_seeded(&override_path, &app_dir, &repo_root)?;
@@ -165,7 +216,15 @@ impl DesktopRuntime {
             );
         }
         let vector_root = temp_root.join("vector_knowledge");
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "prepare_config_paths_and_seed_user_tools",
+            step_start,
+            startup_boot,
+        );
 
+        step_start = Instant::now();
         set_env_path("WUNDER_CONFIG_PATH", &base_config);
         set_env_path("WUNDER_CONFIG_OVERRIDE_PATH", &override_path);
         set_env_path_if_exists("WUNDER_I18N_MESSAGES_PATH", &i18n_path);
@@ -180,9 +239,17 @@ impl DesktopRuntime {
         set_env_path(BUILTIN_SKILLS_ROOT_ENV, &repo_root.join("skills"));
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
         std::env::set_var("WUNDER_WORKSPACE_SINGLE_ROOT", "1");
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "apply_environment",
+            step_start,
+            startup_boot,
+        );
 
         let desktop_token = settings.desktop_token.clone();
 
+        step_start = Instant::now();
         let config_store = ConfigStore::new(override_path);
         let workspace_for_update = workspace_root.clone();
         let temp_root_for_update = temp_root.clone();
@@ -208,7 +275,15 @@ impl DesktopRuntime {
             })
             .await
             .context("apply desktop runtime config failed")?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "config_store_update",
+            step_start,
+            startup_boot,
+        );
 
+        step_start = Instant::now();
         let state = Arc::new(
             AppState::new_with_options(
                 config_store.clone(),
@@ -217,11 +292,36 @@ impl DesktopRuntime {
             )
             .context("initialize desktop state failed")?,
         );
-        if config.lsp.enabled {
-            state.lsp_manager.sync_with_config(&config).await;
-        }
-        ensure_desktop_identity(state.as_ref(), &user_id, &desktop_token)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "app_state_init",
+            step_start,
+            startup_boot,
+        );
 
+        if config.lsp.enabled {
+            step_start = Instant::now();
+            state.lsp_manager.sync_with_config(&config).await;
+            log_startup_segment(
+                startup_enabled,
+                "bridge-runtime",
+                "lsp_sync_with_config",
+                step_start,
+                startup_boot,
+            );
+        }
+        step_start = Instant::now();
+        ensure_desktop_identity(state.as_ref(), &user_id, &desktop_token)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "ensure_desktop_identity",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
         let remote_gateway = settings.remote_gateway.clone();
         let lan_mesh = settings.lan_mesh.clone();
         let (remote_api_base, remote_ws_base, remote_error) =
@@ -229,6 +329,20 @@ impl DesktopRuntime {
 
         let frontend_root =
             resolve_frontend_root(args.frontend_root.as_deref(), &repo_root, &app_dir);
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "resolve_remote_and_frontend",
+            step_start,
+            startup_boot,
+        );
+
+        log_startup_point(
+            startup_enabled,
+            "bridge-runtime",
+            "runtime_init_done",
+            startup_boot,
+        );
 
         Ok(Self {
             state,
@@ -510,7 +624,7 @@ fn should_skip_builtin_skill_sync(source: &Path, target: &Path) -> bool {
     let Some(stamp) = read_builtin_skill_stamp(target) else {
         return false;
     };
-    let source_key = normalize_path_for_compare(source);
+    let source_key = build_builtin_skills_source_key(source);
     stamp.source_root == source_key && stamp.app_version == env!("CARGO_PKG_VERSION")
 }
 
@@ -525,7 +639,7 @@ fn read_builtin_skill_stamp(target: &Path) -> Option<BuiltinSkillsStamp> {
 fn write_builtin_skill_stamp(target: &Path, source: &Path) -> Result<()> {
     let stamp_path = target.join(BUILTIN_SKILLS_STAMP_NAME);
     let stamp = BuiltinSkillsStamp {
-        source_root: normalize_path_for_compare(source),
+        source_root: build_builtin_skills_source_key(source),
         app_version: env!("CARGO_PKG_VERSION").to_string(),
     };
     let text =
@@ -728,6 +842,38 @@ fn normalize_path_for_compare(path: &Path) -> String {
         normalized.make_ascii_lowercase();
     }
     normalized
+}
+
+fn build_builtin_skills_source_key(source: &Path) -> String {
+    let appimage = std::env::var("APPIMAGE").ok();
+    build_builtin_skills_source_key_with_appimage(source, appimage.as_deref())
+}
+
+fn build_builtin_skills_source_key_with_appimage(source: &Path, appimage: Option<&str>) -> String {
+    let Some(raw_appimage) = appimage else {
+        return normalize_path_for_compare(source);
+    };
+    let trimmed = raw_appimage.trim();
+    if trimmed.is_empty() {
+        return normalize_path_for_compare(source);
+    }
+
+    // AppImage mounts to a randomized /tmp/.mount_* path on each run.
+    // Keying by APPIMAGE file identity avoids full skill resync on every launch.
+    let appimage_path = PathBuf::from(trimmed);
+    let normalized_path = normalize_path_for_compare(&appimage_path);
+    match fs::metadata(&appimage_path) {
+        Ok(metadata) => {
+            let modified_s = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            format!("appimage:{normalized_path}:{}:{modified_s}", metadata.len())
+        }
+        Err(_) => format!("appimage:{normalized_path}"),
+    }
 }
 
 fn resolve_remote_endpoints(
@@ -1198,6 +1344,47 @@ fn dedupe_strings(values: Vec<String>) -> Vec<String> {
     output
 }
 
+fn startup_timing_enabled() -> bool {
+    !matches!(
+        std::env::var("WUNDER_STARTUP_TIMING")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
+}
+
+fn startup_elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn log_startup_segment(
+    enabled: bool,
+    scope: &str,
+    segment: &str,
+    started: Instant,
+    startup_boot: Instant,
+) {
+    if !enabled {
+        return;
+    }
+    info!(
+        "[startup][{scope}] segment={segment} elapsed_ms={:.1} total_ms={:.1}",
+        startup_elapsed_ms(started),
+        startup_elapsed_ms(startup_boot),
+    );
+}
+
+fn log_startup_point(enabled: bool, scope: &str, point: &str, startup_boot: Instant) {
+    if !enabled {
+        return;
+    }
+    info!(
+        "[startup][{scope}] point={point} total_ms={:.1}",
+        startup_elapsed_ms(startup_boot),
+    );
+}
+
 fn now_ts() -> f64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1357,6 +1544,52 @@ mod tests {
         let content = fs::read_to_string(&override_path).expect("read override");
         assert!(content.contains("existing_model"));
         assert!(!content.contains("seeded_model"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn builtin_skills_source_key_is_stable_across_appimage_mount_paths() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-source-key-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let appimage_path = root.join("wunder-desktop.AppImage");
+        let mount_a = root.join("mount-a/resources/skills");
+        let mount_b = root.join("mount-b/resources/skills");
+
+        fs::create_dir_all(&mount_a).expect("create mount a");
+        fs::create_dir_all(&mount_b).expect("create mount b");
+        fs::write(&appimage_path, b"appimage-content").expect("write appimage");
+
+        let appimage = appimage_path.to_string_lossy().to_string();
+        let key_a = build_builtin_skills_source_key_with_appimage(&mount_a, Some(&appimage));
+        let key_b = build_builtin_skills_source_key_with_appimage(&mount_b, Some(&appimage));
+
+        assert_eq!(key_a, key_b);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn builtin_skills_source_key_changes_when_appimage_file_changes() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-desktop-source-key-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let appimage_path = root.join("wunder-desktop.AppImage");
+        let source = root.join("mount/resources/skills");
+
+        fs::create_dir_all(&source).expect("create source");
+        fs::write(&appimage_path, b"v1").expect("write appimage v1");
+
+        let appimage = appimage_path.to_string_lossy().to_string();
+        let key_v1 = build_builtin_skills_source_key_with_appimage(&source, Some(&appimage));
+
+        fs::write(&appimage_path, b"v2-with-different-size").expect("write appimage v2");
+        let key_v2 = build_builtin_skills_source_key_with_appimage(&source, Some(&appimage));
+
+        assert_ne!(key_v1, key_v2);
 
         let _ = fs::remove_dir_all(&root);
     }

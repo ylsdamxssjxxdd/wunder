@@ -499,6 +499,12 @@ import {
   writeWorkspaceImagePersistentCache
 } from '@/utils/workspaceImagePersistentCache';
 import { isImagePath, parseWorkspaceResourceUrl } from '@/utils/workspaceResources';
+import {
+  extractWorkspaceRefreshPaths,
+  isWorkspacePathAffected,
+  normalizeWorkspaceRefreshContainerId,
+  normalizeWorkspaceRefreshTreeVersion
+} from '@/utils/workspaceRefresh';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { normalizeWorkspacePath } from '@/utils/workspaceTreeCache';
 
@@ -1056,7 +1062,7 @@ const normalizeSearchEntry = (entry: unknown, containerId: number): WorkspaceSea
 
 let mentionSearchTimer: number | null = null;
 let mentionSearchToken = 0;
-let contactPresenceTimer: number | null = null;
+let presenceSyncHandler: (() => void) | null = null;
 
 const clearMentionSuggestions = () => {
   mentionSuggestions.value = [];
@@ -1374,10 +1380,16 @@ const handleUploadInput = async (event: Event) => {
       formData.append('files', file as Blob);
     });
     const { data } = await uploadWunderWorkspace(formData);
-    const uploaded = Array.isArray(data?.files) ? data.files : [];
+    const uploaded = (Array.isArray(data?.files) ? data.files : [])
+      .map((item) => normalizeWorkspacePath(String(item || '').trim()))
+      .filter(Boolean);
     if (uploaded.length) {
       appendAttachmentTokens(uploaded);
-      emitWorkspaceRefresh({ reason: 'user-world-upload' });
+      emitWorkspaceRefresh({
+        reason: 'user-world-upload',
+        paths: uploaded,
+        path: uploaded[0]
+      });
     }
     ElMessage.success(
       t('userWorld.attachments.uploadSuccess', { count: uploaded.length || files.length })
@@ -1558,6 +1570,12 @@ type UserWorldResourceCacheEntry = {
 const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const userWorldResourceCache = new Map<string, UserWorldResourceCacheEntry>();
 let userWorldResourceHydrationFrame: number | null = null;
+let userWorldResourceHydrationPending = false;
+let userWorldResourceHydrationForceFull = false;
+let userWorldResourceHydrationContainerId: number | null = null;
+let userWorldResourceHydrationTargetPaths = new Set<string>();
+const userWorldRefreshVersionByScope = new Map<string, number>();
+const MAX_USER_WORLD_REFRESH_SCOPE_CACHE = 96;
 let stopUserWorldWorkspaceRefresh: (() => void) | null = null;
 
 const getFilenameFromHeaders = (headers: Record<string, string>, fallback: string) => {
@@ -1883,11 +1901,35 @@ const hydrateUserWorldResourceCard = async (card: HTMLElement) => {
   }
 };
 
-const hydrateUserWorldResources = () => {
+const shouldHydrateUserWorldCard = (
+  publicPath: string,
+  changedPaths: string[] = [],
+  eventContainerId: number | null = null
+) => {
+  if (!publicPath) return false;
+  if (!changedPaths.length && !Number.isFinite(eventContainerId)) {
+    return true;
+  }
+  const { relativePath, containerId } = resolveUserWorldResourceMeta(publicPath);
+  if (Number.isFinite(eventContainerId) && Number.isFinite(containerId) && containerId !== eventContainerId) {
+    return false;
+  }
+  return isWorkspacePathAffected(relativePath, changedPaths);
+};
+
+const hydrateUserWorldResources = (
+  options: { changedPaths?: string[]; eventContainerId?: number | null } = {}
+) => {
   const container = messageContainerRef.value;
   if (!container) return;
+  const changedPaths = Array.isArray(options.changedPaths) ? options.changedPaths : [];
+  const eventContainerId = normalizeWorkspaceRefreshContainerId(options.eventContainerId);
   const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
   cards.forEach((card) => {
+    const publicPath = card.getAttribute('data-workspace-path') || '';
+    if (!shouldHydrateUserWorldCard(publicPath, changedPaths, eventContainerId)) {
+      return;
+    }
     hydrateUserWorldResourceCard(card as HTMLElement);
   });
   hydrateExternalMarkdownImages(container);
@@ -1913,17 +1955,188 @@ const resetUserWorldResourceCards = () => {
   });
 };
 
-const handleWorkspaceRefresh = () => {
-  clearUserWorldResourceCache();
-  resetUserWorldResourceCards();
-  scheduleUserWorldResourceHydration();
+const resolveUserWorldCachePublicPath = (cacheKey: string): string => {
+  const conversationId = String(activeConversationId.value || '').trim();
+  if (!conversationId) return '';
+  const prefix = `${conversationId}:`;
+  if (!cacheKey.startsWith(prefix)) return '';
+  const suffix = cacheKey.slice(prefix.length);
+  return suffix.endsWith(':check') ? suffix.slice(0, -6) : suffix;
 };
 
-const scheduleUserWorldResourceHydration = () => {
-  if (userWorldResourceHydrationFrame) return;
-  userWorldResourceHydrationFrame = requestAnimationFrame(() => {
-    userWorldResourceHydrationFrame = null;
-    hydrateUserWorldResources();
+const resolveUserWorldResourceMeta = (publicPath: string) => {
+  const parsed = parseWorkspaceResourceUrl(publicPath);
+  if (!parsed) {
+    return {
+      relativePath: '',
+      containerId: null
+    };
+  }
+  return {
+    relativePath: normalizeWorkspacePath(String(parsed.relativePath || '').trim()),
+    containerId:
+      typeof parsed.containerId === 'number' && Number.isFinite(parsed.containerId)
+        ? parsed.containerId
+        : null
+  };
+};
+
+const clearUserWorldResourceCacheByPaths = (changedPaths: string[], eventContainerId: number | null) => {
+  Array.from(userWorldResourceCache.entries()).forEach(([cacheKey, entry]) => {
+    const publicPath = resolveUserWorldCachePublicPath(cacheKey);
+    if (!publicPath) return;
+    const { relativePath, containerId } = resolveUserWorldResourceMeta(publicPath);
+    if (Number.isFinite(eventContainerId) && Number.isFinite(containerId) && containerId !== eventContainerId) {
+      return;
+    }
+    if (!isWorkspacePathAffected(relativePath, changedPaths)) {
+      return;
+    }
+    if (entry?.objectUrl) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+    userWorldResourceCache.delete(cacheKey);
+  });
+};
+
+const resetUserWorldResourceCardsByPaths = (changedPaths: string[], eventContainerId: number | null) => {
+  const container = messageContainerRef.value;
+  if (!container) return;
+  const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
+  cards.forEach((card) => {
+    const publicPath = card.getAttribute('data-workspace-path') || '';
+    const kind = card.getAttribute('data-workspace-kind') || 'image';
+    const { relativePath, containerId } = resolveUserWorldResourceMeta(publicPath);
+    if (Number.isFinite(eventContainerId) && Number.isFinite(containerId) && containerId !== eventContainerId) {
+      return;
+    }
+    if (!isWorkspacePathAffected(relativePath, changedPaths)) {
+      return;
+    }
+    card.setAttribute('data-workspace-state', '');
+    card.classList.remove('is-error');
+    card.classList.remove('is-ready');
+    if (kind === 'image') {
+      const preview = card.querySelector('.ai-resource-preview');
+      if (preview && preview instanceof HTMLImageElement) {
+        preview.removeAttribute('src');
+      }
+      const status = card.querySelector('.ai-resource-status');
+      if (status) {
+        status.textContent = '';
+      }
+    } else {
+      clearFileCardStatus(card as HTMLElement);
+    }
+  });
+};
+
+const pruneUserWorldRefreshVersionCache = () => {
+  const overflow = userWorldRefreshVersionByScope.size - MAX_USER_WORLD_REFRESH_SCOPE_CACHE;
+  if (overflow <= 0) return;
+  let remaining = overflow;
+  for (const key of userWorldRefreshVersionByScope.keys()) {
+    userWorldRefreshVersionByScope.delete(key);
+    remaining -= 1;
+    if (remaining <= 0) break;
+  }
+};
+
+const resolveUserWorldRefreshScopeKey = (
+  detail: Record<string, unknown>,
+  currentConversationId: string,
+  eventContainerId: number | null
+) => {
+  const workspaceId = String(detail.workspaceId ?? detail.workspace_id ?? '').trim();
+  if (workspaceId) return workspaceId;
+  const containerScope = Number.isFinite(eventContainerId) ? eventContainerId : 0;
+  return `${currentConversationId || '__default__'}|${containerScope}`;
+};
+
+const shouldSkipUserWorldRefreshByVersion = (
+  detail: Record<string, unknown>,
+  scopeKey: string
+) => {
+  const nextVersion = normalizeWorkspaceRefreshTreeVersion(
+    detail.treeVersion ?? detail.tree_version ?? detail.version
+  );
+  if (nextVersion === null) return false;
+  const previous = userWorldRefreshVersionByScope.get(scopeKey);
+  if (Number.isFinite(previous) && nextVersion <= (previous as number)) {
+    return true;
+  }
+  userWorldRefreshVersionByScope.set(scopeKey, nextVersion);
+  pruneUserWorldRefreshVersionCache();
+  return false;
+};
+
+const handleWorkspaceRefresh = (event?: Event) => {
+  const detail =
+    (event as CustomEvent<Record<string, unknown>> | undefined)?.detail &&
+    typeof (event as CustomEvent<Record<string, unknown>>).detail === 'object'
+      ? ((event as CustomEvent<Record<string, unknown>>).detail as Record<string, unknown>)
+      : {};
+  const eventAgentId = String(detail.agentId ?? detail.agent_id ?? '').trim();
+  if (eventAgentId) return;
+  const eventContainerId = normalizeWorkspaceRefreshContainerId(
+    detail.containerId ?? detail.container_id
+  );
+  const currentConversationId = String(activeConversationId.value || '').trim();
+  const scopeKey = resolveUserWorldRefreshScopeKey(detail, currentConversationId, eventContainerId);
+  if (shouldSkipUserWorldRefreshByVersion(detail, scopeKey)) {
+    return;
+  }
+  const changedPaths = extractWorkspaceRefreshPaths(detail);
+  if (!changedPaths.length) {
+    clearUserWorldResourceCache();
+    resetUserWorldResourceCards();
+    scheduleUserWorldResourceHydration();
+    return;
+  }
+  clearUserWorldResourceCacheByPaths(changedPaths, eventContainerId);
+  resetUserWorldResourceCardsByPaths(changedPaths, eventContainerId);
+  scheduleUserWorldResourceHydration({
+    changedPaths,
+    eventContainerId
+  });
+};
+
+const scheduleUserWorldResourceHydration = (
+  options: { changedPaths?: string[]; eventContainerId?: number | null } = {}
+) => {
+  const changedPaths = Array.isArray(options.changedPaths)
+    ? options.changedPaths.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    : [];
+  const eventContainerId = normalizeWorkspaceRefreshContainerId(options.eventContainerId);
+  if (!changedPaths.length) {
+    userWorldResourceHydrationForceFull = true;
+    userWorldResourceHydrationTargetPaths = new Set<string>();
+    userWorldResourceHydrationContainerId = null;
+  } else if (!userWorldResourceHydrationForceFull) {
+    changedPaths.forEach((path) => userWorldResourceHydrationTargetPaths.add(path));
+    if (Number.isFinite(eventContainerId)) {
+      userWorldResourceHydrationContainerId = eventContainerId;
+    }
+  }
+  if (userWorldResourceHydrationFrame || userWorldResourceHydrationPending) return;
+  userWorldResourceHydrationPending = true;
+  void nextTick(() => {
+    userWorldResourceHydrationPending = false;
+    if (userWorldResourceHydrationFrame) return;
+    userWorldResourceHydrationFrame = requestAnimationFrame(() => {
+      userWorldResourceHydrationFrame = null;
+      const useFullHydration =
+        userWorldResourceHydrationForceFull || userWorldResourceHydrationTargetPaths.size === 0;
+      const pendingPaths = useFullHydration ? [] : Array.from(userWorldResourceHydrationTargetPaths);
+      const pendingContainerId = useFullHydration ? null : userWorldResourceHydrationContainerId;
+      userWorldResourceHydrationForceFull = false;
+      userWorldResourceHydrationTargetPaths = new Set<string>();
+      userWorldResourceHydrationContainerId = null;
+      hydrateUserWorldResources({
+        changedPaths: pendingPaths,
+        eventContainerId: pendingContainerId
+      });
+    });
   });
 };
 
@@ -1932,6 +2145,11 @@ const clearUserWorldResourceCache = () => {
     cancelAnimationFrame(userWorldResourceHydrationFrame);
     userWorldResourceHydrationFrame = null;
   }
+  userWorldResourceHydrationPending = false;
+  userWorldResourceHydrationForceFull = false;
+  userWorldResourceHydrationTargetPaths = new Set<string>();
+  userWorldResourceHydrationContainerId = null;
+  userWorldRefreshVersionByScope.clear();
   userWorldResourceCache.forEach((entry) => {
     if (entry?.objectUrl) {
       URL.revokeObjectURL(entry.objectUrl);
@@ -2055,9 +2273,18 @@ const loadOrgUnits = async () => {
 onMounted(async () => {
   try {
     await Promise.all([loadOrgUnits(), userWorldStore.bootstrap()]);
-    contactPresenceTimer = window.setInterval(() => {
-      userWorldStore.refreshContacts().catch(() => {});
-    }, 12000);
+    if (typeof window !== 'undefined') {
+      presenceSyncHandler = () => {
+        void userWorldStore.syncConversationWatchers().catch(() => undefined);
+        if (document.visibilityState === 'hidden') return;
+        userWorldStore.triggerContactRealtimeSync();
+      };
+      window.addEventListener('focus', presenceSyncHandler);
+      window.addEventListener('pageshow', presenceSyncHandler);
+      window.addEventListener('online', presenceSyncHandler);
+      document.addEventListener('visibilitychange', presenceSyncHandler);
+      presenceSyncHandler();
+    }
     await scrollToBottom();
     scheduleUserWorldResourceHydration();
     stopUserWorldWorkspaceRefresh = onWorkspaceRefresh(handleWorkspaceRefresh);
@@ -2080,9 +2307,12 @@ onBeforeUnmount(() => {
     window.clearTimeout(mentionSearchTimer);
     mentionSearchTimer = null;
   }
-  if (contactPresenceTimer) {
-    window.clearInterval(contactPresenceTimer);
-    contactPresenceTimer = null;
+  if (presenceSyncHandler && typeof window !== 'undefined') {
+    window.removeEventListener('focus', presenceSyncHandler);
+    window.removeEventListener('pageshow', presenceSyncHandler);
+    window.removeEventListener('online', presenceSyncHandler);
+    document.removeEventListener('visibilitychange', presenceSyncHandler);
+    presenceSyncHandler = null;
   }
 });
 

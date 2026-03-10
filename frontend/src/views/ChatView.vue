@@ -707,6 +707,12 @@ import {
   isImagePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
+import {
+  extractWorkspaceRefreshPaths,
+  isWorkspacePathAffected,
+  normalizeWorkspaceRefreshContainerId,
+  normalizeWorkspaceRefreshTreeVersion
+} from '@/utils/workspaceRefresh';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
@@ -1367,6 +1373,11 @@ const WORKSPACE_RESOURCE_LOADING_LABEL_DELAY_MS = 160;
 const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 let workspaceResourceHydrationFrame = null;
 let workspaceResourceHydrationPending = false;
+let workspaceResourceHydrationForceFull = false;
+let workspaceResourceHydrationContainerId: number | null = null;
+let workspaceResourceHydrationTargetPaths = new Set<string>();
+const workspaceRefreshVersionByScope = new Map<string, number>();
+const MAX_WORKSPACE_REFRESH_SCOPE_CACHE = 64;
 let stopWorkspaceRefreshListener = null;
 
 const isAdminUser = (user) =>
@@ -1729,11 +1740,27 @@ const hydrateWorkspaceResourceCard = async (card) => {
   }
 };
 
-const hydrateWorkspaceResources = () => {
+const shouldHydrateWorkspaceCard = (publicPath, changedPaths = [], eventContainerId = null) => {
+  if (!publicPath) return false;
+  if (!changedPaths.length && !Number.isFinite(eventContainerId)) {
+    return true;
+  }
+  const { relativePath, containerId } = resolveWorkspaceCardMeta(publicPath);
+  if (Number.isFinite(eventContainerId) && Number.isFinite(containerId) && containerId !== eventContainerId) {
+    return false;
+  }
+  return isWorkspacePathAffected(relativePath, changedPaths);
+};
+
+const hydrateWorkspaceResources = (options: { changedPaths?: string[]; eventContainerId?: number | null } = {}) => {
   const container = messagesContainerRef.value;
   if (!container || !authStore.user) return;
+  const changedPaths = Array.isArray(options.changedPaths) ? options.changedPaths : [];
+  const eventContainerId = normalizeWorkspaceRefreshContainerId(options.eventContainerId);
   const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
   cards.forEach((card) => {
+    const publicPath = card.getAttribute('data-workspace-path') || '';
+    if (!shouldHydrateWorkspaceCard(publicPath, changedPaths, eventContainerId)) return;
     hydrateWorkspaceResourceCard(card);
   });
   hydrateExternalMarkdownImages(container);
@@ -1758,12 +1785,183 @@ const resetWorkspaceResourceCards = () => {
   });
 };
 
-const handleWorkspaceRefresh = () => {
-  resetWorkspaceResourceCards();
-  scheduleWorkspaceResourceHydration();
+const resolveWorkspaceCardMeta = (publicPath) => {
+  const parsed = parseWorkspaceResourceUrl(publicPath);
+  if (!parsed) {
+    return {
+      relativePath: '',
+      containerId: null
+    };
+  }
+  return {
+    relativePath: normalizeUploadPath(parsed.relativePath || ''),
+    containerId:
+      typeof parsed.containerId === 'number' && Number.isFinite(parsed.containerId)
+        ? parsed.containerId
+        : null
+  };
 };
 
-const scheduleWorkspaceResourceHydration = () => {
+const shouldApplyWorkspaceContainerFilter = (containerId, currentContainerId) => {
+  if (!Number.isFinite(containerId)) return false;
+  return containerId !== currentContainerId;
+};
+
+const clearWorkspaceResourceCacheByPaths = (changedPaths = [], eventContainerId = null) => {
+  const currentContainerId = normalizeWorkspaceRefreshContainerId(activeSandboxContainerId.value) ?? 0;
+  Array.from(workspaceResourceCache.entries()).forEach(([publicPath, entry]) => {
+    const { relativePath, containerId } = resolveWorkspaceCardMeta(publicPath);
+    const resourceContainerId = Number.isFinite(containerId) ? containerId : 0;
+    if (shouldApplyWorkspaceContainerFilter(eventContainerId, currentContainerId)) {
+      if (resourceContainerId !== eventContainerId) {
+        return;
+      }
+    }
+    if (!isWorkspacePathAffected(relativePath, changedPaths)) {
+      return;
+    }
+    if (entry?.objectUrl) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+    workspaceResourceCache.delete(publicPath);
+  });
+};
+
+const resetWorkspaceResourceCardsByPaths = (changedPaths = [], eventContainerId = null) => {
+  const container = messagesContainerRef.value;
+  if (!container) return;
+  const currentContainerId = normalizeWorkspaceRefreshContainerId(activeSandboxContainerId.value) ?? 0;
+  const cards = container.querySelectorAll('.ai-resource-card[data-workspace-path]');
+  cards.forEach((card) => {
+    const publicPath = card.getAttribute('data-workspace-path') || '';
+    const kind = card.getAttribute('data-workspace-kind') || 'image';
+    const { relativePath, containerId } = resolveWorkspaceCardMeta(publicPath);
+    const resourceContainerId = Number.isFinite(containerId) ? containerId : 0;
+    if (shouldApplyWorkspaceContainerFilter(eventContainerId, currentContainerId)) {
+      if (resourceContainerId !== eventContainerId) {
+        return;
+      }
+    }
+    if (!isWorkspacePathAffected(relativePath, changedPaths)) {
+      return;
+    }
+    card.setAttribute('data-workspace-state', '');
+    card.classList.remove('is-error');
+    card.classList.remove('is-ready');
+    if (kind === 'image') {
+      const preview = card.querySelector('.ai-resource-preview');
+      if (preview && preview instanceof HTMLImageElement) {
+        preview.removeAttribute('src');
+      }
+      const status = card.querySelector('.ai-resource-status');
+      if (status) {
+        status.textContent = '';
+      }
+    }
+  });
+};
+
+const pruneWorkspaceRefreshVersionCache = () => {
+  const overflow = workspaceRefreshVersionByScope.size - MAX_WORKSPACE_REFRESH_SCOPE_CACHE;
+  if (overflow <= 0) return;
+  let remaining = overflow;
+  for (const key of workspaceRefreshVersionByScope.keys()) {
+    workspaceRefreshVersionByScope.delete(key);
+    remaining -= 1;
+    if (remaining <= 0) break;
+  }
+};
+
+const resolveWorkspaceRefreshScopeKey = (
+  detail: Record<string, unknown>,
+  currentAgentId: string,
+  currentContainerId: number
+) => {
+  const workspaceId = String(detail.workspaceId ?? detail.workspace_id ?? '').trim();
+  if (workspaceId) return workspaceId;
+  return `${currentAgentId || '__default__'}|${currentContainerId}`;
+};
+
+const shouldSkipWorkspaceRefreshByVersion = (
+  detail: Record<string, unknown>,
+  scopeKey: string
+) => {
+  const nextVersion = normalizeWorkspaceRefreshTreeVersion(
+    detail.treeVersion ?? detail.tree_version ?? detail.version
+  );
+  if (nextVersion === null) return false;
+  const previous = workspaceRefreshVersionByScope.get(scopeKey);
+  if (Number.isFinite(previous) && nextVersion <= (previous as number)) {
+    return true;
+  }
+  workspaceRefreshVersionByScope.set(scopeKey, nextVersion);
+  pruneWorkspaceRefreshVersionCache();
+  return false;
+};
+
+const handleWorkspaceRefresh = (event?: Event) => {
+  const detail =
+    (event as CustomEvent<Record<string, unknown>> | undefined)?.detail &&
+    typeof (event as CustomEvent<Record<string, unknown>>).detail === 'object'
+      ? ((event as CustomEvent<Record<string, unknown>>).detail as Record<string, unknown>)
+      : {};
+  const eventAgentId = String(detail.agentId ?? detail.agent_id ?? '').trim();
+  const currentAgentId = String(activeAgentId.value || '').trim();
+  if (eventAgentId && eventAgentId !== currentAgentId) return;
+  const eventContainerId = normalizeWorkspaceRefreshContainerId(
+    detail.containerId ?? detail.container_id
+  );
+  const currentContainerId = normalizeWorkspaceRefreshContainerId(activeSandboxContainerId.value) ?? 0;
+  if (Number.isFinite(eventContainerId) && eventContainerId !== currentContainerId) return;
+  const scopeKey = resolveWorkspaceRefreshScopeKey(detail, currentAgentId, currentContainerId);
+  if (shouldSkipWorkspaceRefreshByVersion(detail, scopeKey)) {
+    chatPerf.count('workspace.resource.refresh', 1, {
+      scope: 'chat',
+      mode: 'skip-version'
+    });
+    return;
+  }
+  const changedPaths = extractWorkspaceRefreshPaths(detail);
+  if (!changedPaths.length) {
+    clearWorkspaceResourceCache();
+    resetWorkspaceResourceCards();
+    chatPerf.count('workspace.resource.refresh', 1, {
+      scope: 'chat',
+      mode: 'full'
+    });
+    scheduleWorkspaceResourceHydration();
+    return;
+  }
+  clearWorkspaceResourceCacheByPaths(changedPaths, eventContainerId);
+  resetWorkspaceResourceCardsByPaths(changedPaths, eventContainerId);
+  chatPerf.count('workspace.resource.refresh', 1, {
+    scope: 'chat',
+    mode: 'incremental',
+    pathCount: changedPaths.length
+  });
+  scheduleWorkspaceResourceHydration({
+    changedPaths,
+    eventContainerId
+  });
+};
+
+const scheduleWorkspaceResourceHydration = (
+  options: { changedPaths?: string[]; eventContainerId?: number | null } = {}
+) => {
+  const changedPaths = Array.isArray(options.changedPaths)
+    ? options.changedPaths.filter((item): item is string => typeof item === 'string' && item.length > 0)
+    : [];
+  const eventContainerId = normalizeWorkspaceRefreshContainerId(options.eventContainerId);
+  if (!changedPaths.length) {
+    workspaceResourceHydrationForceFull = true;
+    workspaceResourceHydrationTargetPaths = new Set<string>();
+    workspaceResourceHydrationContainerId = null;
+  } else if (!workspaceResourceHydrationForceFull) {
+    changedPaths.forEach((path) => workspaceResourceHydrationTargetPaths.add(path));
+    if (Number.isFinite(eventContainerId)) {
+      workspaceResourceHydrationContainerId = eventContainerId;
+    }
+  }
   if (workspaceResourceHydrationFrame || workspaceResourceHydrationPending) return;
   workspaceResourceHydrationPending = true;
   void nextTick(() => {
@@ -1771,7 +1969,19 @@ const scheduleWorkspaceResourceHydration = () => {
     if (workspaceResourceHydrationFrame) return;
     workspaceResourceHydrationFrame = requestAnimationFrame(() => {
       workspaceResourceHydrationFrame = null;
-      hydrateWorkspaceResources();
+      const useFullHydration =
+        workspaceResourceHydrationForceFull || workspaceResourceHydrationTargetPaths.size === 0;
+      const pendingPaths = useFullHydration
+        ? []
+        : Array.from(workspaceResourceHydrationTargetPaths);
+      const pendingContainerId = useFullHydration ? null : workspaceResourceHydrationContainerId;
+      workspaceResourceHydrationForceFull = false;
+      workspaceResourceHydrationTargetPaths = new Set<string>();
+      workspaceResourceHydrationContainerId = null;
+      hydrateWorkspaceResources({
+        changedPaths: pendingPaths,
+        eventContainerId: pendingContainerId
+      });
     });
   });
 };
@@ -1782,6 +1992,10 @@ const clearWorkspaceResourceCache = () => {
     workspaceResourceHydrationFrame = null;
   }
   workspaceResourceHydrationPending = false;
+  workspaceResourceHydrationForceFull = false;
+  workspaceResourceHydrationTargetPaths = new Set<string>();
+  workspaceResourceHydrationContainerId = null;
+  workspaceRefreshVersionByScope.clear();
   workspaceResourceCache.forEach((entry) => {
     if (entry?.objectUrl) {
       URL.revokeObjectURL(entry.objectUrl);

@@ -357,6 +357,23 @@ pub struct UserWorldReadResult {
 }
 
 #[derive(Debug, Clone)]
+pub struct BeeroomChatMessageRecord {
+    pub message_id: i64,
+    pub user_id: String,
+    pub group_id: String,
+    pub sender_kind: String,
+    pub sender_name: String,
+    pub sender_agent_id: Option<String>,
+    pub mention_name: Option<String>,
+    pub mention_agent_id: Option<String>,
+    pub body: String,
+    pub meta: Option<String>,
+    pub tone: String,
+    pub client_msg_id: Option<String>,
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentThreadRecord {
     pub thread_id: String,
     pub user_id: String,
@@ -1045,6 +1062,31 @@ pub trait StorageBackend: Send + Sync {
         updated_at: f64,
     ) -> Result<Option<UserWorldGroupRecord>>;
     fn list_user_world_member_user_ids(&self, conversation_id: &str) -> Result<Vec<String>>;
+
+    fn list_beeroom_chat_messages(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        before_message_id: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<BeeroomChatMessageRecord>>;
+    #[allow(clippy::too_many_arguments)]
+    fn append_beeroom_chat_message(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        sender_kind: &str,
+        sender_name: &str,
+        sender_agent_id: Option<&str>,
+        mention_name: Option<&str>,
+        mention_agent_id: Option<&str>,
+        body: &str,
+        meta: Option<&str>,
+        tone: &str,
+        client_msg_id: Option<&str>,
+        created_at: f64,
+    ) -> Result<BeeroomChatMessageRecord>;
+    fn delete_beeroom_chat_messages(&self, user_id: &str, group_id: &str) -> Result<i64>;
 
     fn upsert_channel_account(&self, record: &ChannelAccountRecord) -> Result<()>;
     fn get_channel_account(

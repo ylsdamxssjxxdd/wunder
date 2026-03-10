@@ -295,6 +295,7 @@ import {
   readWorkspaceTreeCache,
   writeWorkspaceTreeCache
 } from '@/utils/workspaceTreeCache';
+import { chatPerf } from '@/utils/chatPerf';
 
 const props = defineProps({
   agentId: {
@@ -385,6 +386,8 @@ const MAX_WORKSPACE_UPLOAD_BYTES = 200 * 1024 * 1024;
 const WORKSPACE_DRAG_KEY = 'application/x-wunder-workspace-entry';
 const WORKSPACE_SEARCH_DEBOUNCE_MS = 300;
 const WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS = 400;
+const WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS = 6;
+const WORKSPACE_INCREMENTAL_REFRESH_MAX_BATCH = 3;
 
 type UploadProgressOptions = {
   percent?: number;
@@ -649,7 +652,11 @@ const previewMeta = computed(() => {
 let searchTimer = null;
 let autoRefreshTimer = null;
 let autoRefreshPending = false;
+let autoRefreshForceFullReload = false;
+let autoRefreshTargetPaths = new Set<string>();
+let latestWorkspaceTreeVersion = 0;
 let stopWorkspaceRefreshListener = null;
+const workspacePanelRefreshSourceId = `workspace-panel-${Math.random().toString(36).slice(2, 10)}`;
 const workspaceThemeIconResolver = shallowRef<WorkspaceThemeIconResolver | null>(null);
 let workspaceThemeIconResolverPromise: Promise<WorkspaceThemeIconResolver | null> | null = null;
 let workspaceThemeIconWarmupHandle: number | null = null;
@@ -673,6 +680,82 @@ const getWorkspaceParentPath = (path) => {
   parts.pop();
   return parts.join('/');
 };
+
+const normalizeWorkspaceEventPathValue = (value) => {
+  const text = String(value || '').trim();
+  if (!text || text === '/' || text === '.') return '';
+  const normalized = normalizeWorkspacePath(text);
+  return normalized === '.' ? '' : normalized;
+};
+
+const normalizeWorkspaceTreeVersion = (value) => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+};
+
+const normalizeWorkspaceEventPaths = (detail) => {
+  if (!detail || typeof detail !== 'object') return [];
+  const source = detail as Record<string, unknown>;
+  const pathKeys = [
+    'path',
+    'paths',
+    'changed_paths',
+    'changedPaths',
+    'target_path',
+    'targetPath',
+    'source_path',
+    'sourcePath',
+    'destination',
+    'destination_path',
+    'destinationPath',
+    'file',
+    'files'
+  ];
+  const result = new Set<string>();
+
+  const appendPathLike = (value: unknown) => {
+    if (value === null || value === undefined) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => appendPathLike(item));
+      return;
+    }
+    if (typeof value === 'string') {
+      const normalized = normalizeWorkspaceEventPathValue(value);
+      if (normalized || value.trim() === '/' || value.trim() === '.') {
+        result.add(normalized);
+      }
+      return;
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      appendPathLike(
+        record.path ??
+        record.relative_path ??
+        record.relativePath ??
+        record.target_path ??
+        record.targetPath ??
+        record.source_path ??
+        record.sourcePath ??
+        record.destination ??
+        record.destination_path ??
+        record.destinationPath
+      );
+    }
+  };
+
+  pathKeys.forEach((key) => appendPathLike(source[key]));
+  if (source.data && typeof source.data === 'object') {
+    const nested = source.data as Record<string, unknown>;
+    pathKeys.forEach((key) => appendPathLike(nested[key]));
+  }
+
+  return Array.from(result);
+};
+
+const nowPerf = () =>
+  typeof performance !== 'undefined' && typeof performance.now === 'function'
+    ? performance.now()
+    : Date.now();
 
 const isValidWorkspaceName = (value) => {
   const trimmed = String(value || '').trim();
@@ -964,6 +1047,28 @@ const toggleWorkspaceSelection = (path) => {
 
 const getWorkspaceSelectionPaths = () => Array.from(state.selectedPaths);
 
+const reconcileWorkspaceSelection = () => {
+  if (!state.selectedPaths.size) {
+    state.selected = null;
+    return;
+  }
+  const nextSelectedPaths = new Set<string>();
+  state.selectedPaths.forEach((path: string) => {
+    if (findWorkspaceEntry(state.entries, path)) {
+      nextSelectedPaths.add(path);
+    }
+  });
+  state.selectedPaths = nextSelectedPaths;
+  const preferredPath =
+    state.lastSelectedPath && nextSelectedPaths.has(state.lastSelectedPath)
+      ? state.lastSelectedPath
+      : Array.from(nextSelectedPaths)[0] || '';
+  state.selected = preferredPath ? findWorkspaceEntry(state.entries, preferredPath) : null;
+  if (!preferredPath) {
+    state.lastSelectedPath = '';
+  }
+};
+
 const confirmAction = async (message, title = t('common.notice')) => {
   try {
     await ElMessageBox.confirm(message, title, {
@@ -1108,10 +1213,133 @@ const reloadWorkspaceView = async () => {
   return loadWorkspace({ resetSearch: true });
 };
 
+const fetchWorkspaceDirectorySnapshot = async (path) => {
+  const targetPath = normalizeWorkspacePath(path);
+  const { data } = await fetchWunderWorkspaceContent(withAgentParams({
+    path: targetPath,
+    include_content: true,
+    depth: 1,
+    sort_by: state.sortBy,
+    order: state.sortOrder
+  }));
+  const payload = data || {};
+  const resolvedPath = normalizeWorkspacePath(payload.path ?? targetPath);
+  const entryType = String(payload.type ?? payload.entry_type ?? '').trim().toLowerCase();
+  if (entryType && entryType !== 'dir') {
+    return null;
+  }
+  return {
+    path: resolvedPath,
+    entries: Array.isArray(payload.entries) ? payload.entries : []
+  };
+};
+
+const reloadWorkspaceDirectoryPath = async (path) => {
+  const snapshot = await fetchWorkspaceDirectorySnapshot(path);
+  if (!snapshot) return false;
+  const targetPath = normalizeWorkspacePath(snapshot.path);
+  // Patch current view directly when the changed directory is the visible root.
+  if (targetPath === state.path) {
+    state.path = targetPath;
+    state.parent = getWorkspaceParentPath(targetPath) || null;
+    state.entries = snapshot.entries;
+    emitWorkspaceStats(state.entries);
+    writeWorkspaceTreeCache(
+      buildWorkspaceTreeCacheKey(
+        normalizedAgentId.value,
+        targetPath,
+        state.sortBy,
+        state.sortOrder
+      ),
+      {
+        path: targetPath,
+        parent: state.parent,
+        entries: state.entries
+      }
+    );
+    reconcileWorkspaceSelection();
+    await hydrateExpandedEntries();
+    return true;
+  }
+  const sourcePath = normalizeWorkspacePath(path);
+  const attached =
+    attachWorkspaceChildren(state.entries, targetPath, snapshot.entries) ||
+    (sourcePath !== targetPath && attachWorkspaceChildren(state.entries, sourcePath, snapshot.entries));
+  if (!attached) return false;
+  emitWorkspaceStats(state.entries);
+  reconcileWorkspaceSelection();
+  return true;
+};
+
+const refreshWorkspacePathWithFallback = async (path) => {
+  try {
+    const patched = await reloadWorkspaceDirectoryPath(path);
+    if (patched) return true;
+  } catch (error) {
+    // Fallback to full reload when path patching is not possible.
+  }
+  return reloadWorkspaceView();
+};
+
+// Convert raw workspace event paths to the minimal set of directory targets we can patch.
+const collectWorkspaceRefreshTargets = (paths = []) => {
+  const currentPath = normalizeWorkspacePath(state.path);
+  const targets = new Set<string>();
+
+  paths.forEach((item) => {
+    const normalized = normalizeWorkspaceEventPathValue(item);
+    if (!normalized) {
+      targets.add(currentPath);
+      return;
+    }
+    if (currentPath && (currentPath === normalized || currentPath.startsWith(`${normalized}/`))) {
+      targets.add(currentPath);
+      return;
+    }
+    if (
+      currentPath &&
+      normalized !== currentPath &&
+      !normalized.startsWith(`${currentPath}/`)
+    ) {
+      return;
+    }
+    const entry = findWorkspaceEntry(state.entries, normalized);
+    if (entry?.type === 'dir') {
+      targets.add(entry.path);
+      return;
+    }
+    const parentPath = getWorkspaceParentPath(normalized);
+    if (currentPath) {
+      targets.add(parentPath || currentPath);
+    } else {
+      targets.add(parentPath);
+    }
+  });
+
+  const deduped = Array.from(new Set(Array.from(targets).map((value) => normalizeWorkspacePath(value))));
+  if (deduped.length > WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS) {
+    return { targets: [], forceFullReload: true };
+  }
+  return { targets: deduped, forceFullReload: false };
+};
+
+const enqueueWorkspaceAutoRefreshTargets = (targets = []) => {
+  if (autoRefreshForceFullReload) return;
+  for (const target of targets) {
+    autoRefreshTargetPaths.add(normalizeWorkspacePath(target));
+    if (autoRefreshTargetPaths.size > WORKSPACE_INCREMENTAL_REFRESH_MAX_TARGETS) {
+      autoRefreshForceFullReload = true;
+      autoRefreshTargetPaths = new Set<string>();
+      return;
+    }
+  }
+};
+
 const scheduleWorkspaceAutoRefresh = () => {
   autoRefreshPending = true;
   if (autoRefreshTimer) return;
   autoRefreshTimer = setTimeout(async () => {
+    const refreshStartAt = nowPerf();
     autoRefreshTimer = null;
     if (!autoRefreshPending) return;
     if (state.loading) {
@@ -1119,8 +1347,88 @@ const scheduleWorkspaceAutoRefresh = () => {
       return;
     }
     autoRefreshPending = false;
+    const shouldFullReload =
+      autoRefreshForceFullReload || state.searchMode || autoRefreshTargetPaths.size === 0;
+    const incrementalTargets = shouldFullReload
+      ? []
+      : Array.from(autoRefreshTargetPaths).slice(0, WORKSPACE_INCREMENTAL_REFRESH_MAX_BATCH);
+    autoRefreshForceFullReload = false;
+    autoRefreshTargetPaths = new Set<string>();
+    if (incrementalTargets.length) {
+      let patched = true;
+      for (const target of incrementalTargets) {
+        try {
+          const ok = await reloadWorkspaceDirectoryPath(target);
+          if (!ok) {
+            patched = false;
+            break;
+          }
+        } catch (error) {
+          patched = false;
+          break;
+        }
+      }
+      if (patched) {
+        chatPerf.count('workspace.panel.refresh', 1, {
+          mode: 'incremental',
+          targets: incrementalTargets.length
+        });
+        chatPerf.recordDuration('workspace.panel.refresh.incremental.ms', nowPerf() - refreshStartAt, {
+          targets: incrementalTargets.length
+        });
+        return;
+      }
+      chatPerf.count('workspace.panel.refresh', 1, {
+        mode: 'fallback',
+        targets: incrementalTargets.length
+      });
+    }
     await reloadWorkspaceView();
+    chatPerf.count('workspace.panel.refresh', 1, {
+      mode: shouldFullReload ? 'full' : 'fallback-full',
+      targets: incrementalTargets.length
+    });
+    chatPerf.recordDuration('workspace.panel.refresh.full.ms', nowPerf() - refreshStartAt, {
+      mode: shouldFullReload ? 'full' : 'fallback-full',
+      targets: incrementalTargets.length
+    });
   }, WORKSPACE_AUTO_REFRESH_DEBOUNCE_MS);
+};
+
+// Prefer path-based patching for realtime updates, fallback to full reload when signals are weak.
+const scheduleWorkspaceAutoRefreshByDetail = (detail: Record<string, unknown> = {}) => {
+  const nextTreeVersion = normalizeWorkspaceTreeVersion(
+    detail?.treeVersion ?? detail?.tree_version ?? detail?.version
+  );
+  if (nextTreeVersion !== null) {
+    if (nextTreeVersion <= latestWorkspaceTreeVersion) {
+      return;
+    }
+    latestWorkspaceTreeVersion = nextTreeVersion;
+  }
+  const changedPaths = normalizeWorkspaceEventPaths(detail);
+  chatPerf.count('workspace.panel.refresh.event', 1, {
+    hasPaths: changedPaths.length > 0,
+    pathCount: changedPaths.length
+  });
+  if (!changedPaths.length) {
+    autoRefreshForceFullReload = true;
+    autoRefreshTargetPaths = new Set<string>();
+    scheduleWorkspaceAutoRefresh();
+    return;
+  }
+  const { targets, forceFullReload } = collectWorkspaceRefreshTargets(changedPaths);
+  if (forceFullReload) {
+    autoRefreshForceFullReload = true;
+    autoRefreshTargetPaths = new Set<string>();
+    scheduleWorkspaceAutoRefresh();
+    return;
+  }
+  if (!targets.length) {
+    return;
+  }
+  enqueueWorkspaceAutoRefreshTargets(targets);
+  scheduleWorkspaceAutoRefresh();
 };
 
 const hydrateExpandedEntries = async () => {
@@ -1218,7 +1526,14 @@ const clearWorkspaceCurrent = async () => {
     }));
     notifyBatchResult(response.data, t('workspace.action.clear'));
     await reloadWorkspaceView();
-    emitWorkspaceRefresh({ reason: 'workspace-clear' });
+    emitWorkspaceRefresh({
+      reason: 'workspace-clear',
+      sourceId: workspacePanelRefreshSourceId,
+      agentId: normalizedAgentId.value,
+      containerId: normalizedContainerId.value,
+      path: state.path,
+      paths: [state.path]
+    });
   } catch (error) {
     showApiError(error, t('workspace.clear.failed'));
   }
@@ -1299,7 +1614,7 @@ const uploadWorkspaceFiles = async (
     endUploadProgress();
   }
   if (refreshTree) {
-    await reloadWorkspaceView();
+    await refreshWorkspacePathWithFallback(targetPath);
   }
 };
 
@@ -1465,7 +1780,7 @@ const finishWorkspaceRename = async (entry, nextName) => {
   const destination = joinWorkspacePath(parentPath, trimmed);
   try {
     await moveWunderWorkspaceEntry(withAgentParams({ source: entry.path, destination }));
-      await reloadWorkspaceView();
+      await refreshWorkspacePathWithFallback(parentPath);
       ElMessage.success(t('workspace.rename.success'));
     } catch (error) {
       showApiError(error, t('workspace.rename.failed'));
@@ -1508,7 +1823,13 @@ const deleteWorkspaceSelection = async () => {
     );
     notifyBatchResult(response.data, t('common.delete'));
     await reloadWorkspaceView();
-    emitWorkspaceRefresh({ reason: 'workspace-delete' });
+    emitWorkspaceRefresh({
+      reason: 'workspace-delete',
+      sourceId: workspacePanelRefreshSourceId,
+      agentId: normalizedAgentId.value,
+      containerId: normalizedContainerId.value,
+      paths: selectedPaths
+    });
   } catch (error) {
     showApiError(error, t('workspace.delete.failed'));
   }
@@ -1619,7 +1940,7 @@ const createWorkspaceFile = async () => {
     await saveWunderWorkspaceFile(
       withAgentParams({ path: targetPath, content: '', create_if_missing: true })
     );
-    await reloadWorkspaceView();
+    await refreshWorkspacePathWithFallback(getWorkspaceParentPath(targetPath));
     ElMessage.success(t('workspace.createFile.success', { name: trimmed }));
   } catch (error) {
     showApiError(error, t('workspace.createFile.failed'));
@@ -1639,7 +1960,7 @@ const createWorkspaceFolder = async () => {
   const targetPath = joinWorkspacePath(state.path, trimmed);
   try {
     await createWunderWorkspaceDir(withAgentParams({ path: targetPath }));
-    await reloadWorkspaceView();
+    await refreshWorkspacePathWithFallback(getWorkspaceParentPath(targetPath));
     ElMessage.success(t('workspace.createFolder.success'));
   } catch (error) {
     showApiError(error, t('workspace.createFolder.failed'));
@@ -1772,7 +2093,7 @@ const uploadWorkspaceGroups = async (items, basePath) => {
   const files = items.map((item) => item.file).filter(Boolean);
   const relativePaths = items.map((item) => normalizeWorkspacePath(item.relativePath || item.file?.name || ''));
   await uploadWorkspaceFiles(files, basePath, { refreshTree: false, relativePaths });
-  await reloadWorkspaceView();
+  await refreshWorkspacePathWithFallback(basePath);
 };
 
 const hasWorkspaceDrag = (dataTransfer) =>
@@ -2128,6 +2449,7 @@ const closeEditor = () => {
 
 const saveEditor = async () => {
   if (!state.editor.entry) return;
+  const parentPath = getWorkspaceParentPath(state.editor.entry.path);
   try {
     await saveWunderWorkspaceFile(
       withAgentParams({
@@ -2137,7 +2459,7 @@ const saveEditor = async () => {
     );
     ElMessage.success(t('common.saved'));
     closeEditor();
-    await reloadWorkspaceView();
+    await refreshWorkspacePathWithFallback(parentPath);
   } catch (error) {
     showApiError(error, t('workspace.editor.saveFailed'));
   }
@@ -2157,11 +2479,18 @@ onMounted(async () => {
   scheduleWorkspaceThemeIconWarmup();
   await loadWorkspace();
   stopWorkspaceRefreshListener = onWorkspaceRefresh((event) => {
-    const detail = event?.detail || {};
+    const detail =
+      event?.detail && typeof event.detail === 'object'
+        ? (event.detail as Record<string, unknown>)
+        : {};
+    if (String(detail.sourceId || '').trim() === workspacePanelRefreshSourceId) return;
     const eventAgentId = String(detail.agentId ?? detail.agent_id ?? '').trim();
+    const eventContainerRaw = detail.containerId ?? detail.container_id;
+    const eventContainerId = Number.parseInt(String(eventContainerRaw ?? ''), 10);
     const currentAgentId = normalizedAgentId.value;
     if (eventAgentId && eventAgentId !== currentAgentId) return;
-    scheduleWorkspaceAutoRefresh();
+    if (Number.isFinite(eventContainerId) && eventContainerId !== normalizedContainerId.value) return;
+    scheduleWorkspaceAutoRefreshByDetail(detail);
   });
   document.addEventListener('click', handleGlobalClick);
   document.addEventListener('scroll', handleGlobalScroll, true);

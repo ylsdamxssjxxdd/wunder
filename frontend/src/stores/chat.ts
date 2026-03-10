@@ -179,6 +179,82 @@ const parseOptionalCount = (value) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 };
 
+const WORKSPACE_PATH_HINT_KEYS = [
+  'path',
+  'paths',
+  'changed_paths',
+  'changedPaths',
+  'target_path',
+  'targetPath',
+  'source_path',
+  'sourcePath',
+  'destination',
+  'destination_path',
+  'destinationPath',
+  'file',
+  'files',
+  'relative_path',
+  'relativePath'
+];
+
+const normalizeWorkspaceEventPath = (value) => {
+  const text = String(value || '').trim();
+  if (!text || text === '/' || text === '.') return '';
+  const normalized = text.replace(/\\/g, '/').replace(/^\/+/, '');
+  return normalized === '.' ? '' : normalized;
+};
+
+// Extract path hints from heterogeneous tool/workspace payloads for incremental UI refresh.
+const collectWorkspacePathHints = (...sources) => {
+  const result = new Set<string>();
+  const appendPathLike = (value) => {
+    if (value === null || value === undefined) return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => appendPathLike(item));
+      return;
+    }
+    if (typeof value === 'string') {
+      const normalized = normalizeWorkspaceEventPath(value);
+      if (normalized || value.trim() === '/' || value.trim() === '.') {
+        result.add(normalized);
+      }
+      return;
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      appendPathLike(
+        record.path ??
+        record.relative_path ??
+        record.relativePath ??
+        record.target_path ??
+        record.targetPath ??
+        record.source_path ??
+        record.sourcePath ??
+        record.destination ??
+        record.destination_path ??
+        record.destinationPath
+      );
+    }
+  };
+
+  const appendFromObject = (source) => {
+    if (!source || typeof source !== 'object') return;
+    const record = source as Record<string, unknown>;
+    WORKSPACE_PATH_HINT_KEYS.forEach((key) => appendPathLike(record[key]));
+  };
+
+  sources.forEach((source) => {
+    appendFromObject(source);
+    if (source && typeof source === 'object') {
+      const record = source as Record<string, unknown>;
+      appendFromObject(record.data);
+      appendFromObject(record.meta);
+    }
+  });
+
+  return Array.from(result);
+};
+
 const normalizeQuotaConsumed = (value) => {
   if (value && typeof value === 'object' && !Array.isArray(value)) {
     return normalizeStatsCount(value.consumed ?? value.used ?? value.count ?? 0);
@@ -2380,7 +2456,7 @@ let sessionWatchSessionId = '';
 const clearWatchdog = (runtime) => {
   if (!runtime) return;
   if (runtime.watchdogTimer) {
-    clearInterval(runtime.watchdogTimer);
+    clearTimeout(runtime.watchdogTimer);
     runtime.watchdogTimer = null;
   }
   runtime.watchdogBusy = false;
@@ -2494,8 +2570,12 @@ const resolveLastAssistantTimestampMs = (messages) => {
 };
 
 const WATCH_USER_MESSAGE_DEDUP_MS = 2000;
-const WATCHDOG_IDLE_MS = 20000;
-const WATCHDOG_INTERVAL_MS = 5000;
+const WATCHDOG_IDLE_MS_ACTIVE = 8000;
+const WATCHDOG_IDLE_MS_BACKGROUND = 14000;
+const WATCHDOG_IDLE_MS_HIDDEN = 26000;
+const WATCHDOG_INTERVAL_MS_ACTIVE = 2000;
+const WATCHDOG_INTERVAL_MS_BACKGROUND = 3500;
+const WATCHDOG_INTERVAL_MS_HIDDEN = 7000;
 const SLOW_CLIENT_RESUME_DELAY_MS = 260;
 const STREAM_FLUSH_BASE_MS = 40;
 const STREAM_FLUSH_MAX_MS = 160;
@@ -2552,6 +2632,30 @@ const shouldInsertWatchUserMessage = (messages, content, eventTimestampMs) => {
     return Math.abs(eventTimestampMs - lastTimestamp) > WATCH_USER_MESSAGE_DEDUP_MS;
   }
   return true;
+};
+
+const isDocumentHidden = () =>
+  typeof document !== 'undefined' && document.visibilityState === 'hidden';
+
+const resolveWatchdogProfile = (store, sessionId) => {
+  if (isDocumentHidden()) {
+    return {
+      idleMs: WATCHDOG_IDLE_MS_HIDDEN,
+      intervalMs: WATCHDOG_INTERVAL_MS_HIDDEN
+    };
+  }
+  const activeSessionId = resolveSessionKey(store?.activeSessionId);
+  const isForeground = Boolean(activeSessionId && activeSessionId === sessionId);
+  if (isForeground) {
+    return {
+      idleMs: WATCHDOG_IDLE_MS_ACTIVE,
+      intervalMs: WATCHDOG_INTERVAL_MS_ACTIVE
+    };
+  }
+  return {
+    idleMs: WATCHDOG_IDLE_MS_BACKGROUND,
+    intervalMs: WATCHDOG_INTERVAL_MS_BACKGROUND
+  };
 };
 
 const hasAnchoredWatchUserMessage = (messages, anchor, content) => {
@@ -2726,12 +2830,23 @@ const startSessionWatcher = (store, sessionId) => {
 
   const startWatchdog = () => {
     if (runtime.watchdogTimer) return;
-    runtime.watchdogTimer = setInterval(async () => {
+    const scheduleNext = (delayMs) => {
       if (controller.signal.aborted) return;
-      if (runtime.sendController || runtime.resumeController) return;
-      if (runtime.watchdogBusy) return;
+      runtime.watchdogTimer = setTimeout(() => {
+        runtime.watchdogTimer = null;
+        void runWatchdogTick();
+      }, Math.max(0, Number(delayMs) || 0));
+    };
+    const runWatchdogTick = async () => {
+      if (controller.signal.aborted) return;
+      const profile = resolveWatchdogProfile(store, key);
+      if (runtime.sendController || runtime.resumeController || runtime.watchdogBusy) {
+        scheduleNext(profile.intervalMs);
+        return;
+      }
       const lastEventAt = Number(runtime.watchLastEventAt) || 0;
-      if (!lastEventAt || Date.now() - lastEventAt < WATCHDOG_IDLE_MS) {
+      if (!lastEventAt || Date.now() - lastEventAt < profile.idleMs) {
+        scheduleNext(profile.intervalMs);
         return;
       }
       runtime.watchdogBusy = true;
@@ -2783,8 +2898,14 @@ const startSessionWatcher = (store, sessionId) => {
         }
       } finally {
         runtime.watchdogBusy = false;
+        if (!controller.signal.aborted && runtime.watchController === controller) {
+          const nextProfile = resolveWatchdogProfile(store, key);
+          scheduleNext(nextProfile.intervalMs);
+        }
       }
-    }, WATCHDOG_INTERVAL_MS);
+    };
+    const initialProfile = resolveWatchdogProfile(store, key);
+    scheduleNext(initialProfile.intervalMs);
   };
 
   const onEvent = (eventType, dataText, eventId) => {
@@ -3994,13 +4115,30 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'workspace_update': {
         const sessionId = payload?.session_id ?? payload?.sessionId ?? null;
-        const agentId = data?.agent_id ?? data?.agentId ?? '';
-        const treeVersion = data?.tree_version ?? data?.treeVersion ?? null;
+        const workspaceId =
+          data?.workspace_id ??
+          data?.workspaceId ??
+          payload?.workspace_id ??
+          payload?.workspaceId ??
+          null;
+        const agentId = data?.agent_id ?? data?.agentId ?? payload?.agent_id ?? payload?.agentId ?? '';
+        const containerId =
+          data?.container_id ??
+          data?.containerId ??
+          payload?.container_id ??
+          payload?.containerId ??
+          null;
+        const treeVersion =
+          data?.tree_version ?? data?.treeVersion ?? payload?.tree_version ?? payload?.treeVersion ?? null;
+        const changedPaths = collectWorkspacePathHints(data, payload);
         emitWorkspaceRefresh({
           sessionId,
+          workspaceId,
           agentId,
+          containerId,
           treeVersion,
-          reason: data?.reason || 'workspace_update'
+          reason: data?.reason || payload?.reason || 'workspace_update',
+          ...(changedPaths.length ? { path: changedPaths[0], paths: changedPaths } : {})
         });
         break;
       }

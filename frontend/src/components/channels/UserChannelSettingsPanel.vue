@@ -615,6 +615,78 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         required: true
       }
     ]
+  },
+  xmpp: {
+    mode: 'config',
+    configRoot: 'xmpp',
+    fields: [
+      {
+        key: 'jid',
+        labelKey: 'channels.form.xmpp.jid',
+        placeholderKey: 'channels.form.xmpp.jidPlaceholder',
+        required: true
+      },
+      {
+        key: 'password',
+        labelKey: 'channels.form.xmpp.password',
+        placeholderKey: 'channels.form.xmpp.passwordPlaceholder',
+        type: 'password',
+        required: true
+      },
+      {
+        key: 'domain',
+        labelKey: 'channels.form.xmpp.domain',
+        placeholderKey: 'channels.form.xmpp.domainPlaceholder'
+      },
+      {
+        key: 'host',
+        labelKey: 'channels.form.xmpp.host',
+        placeholderKey: 'channels.form.xmpp.hostPlaceholder'
+      },
+      {
+        key: 'port',
+        labelKey: 'channels.form.xmpp.port',
+        placeholderKey: 'channels.form.xmpp.portPlaceholder'
+      },
+      {
+        key: 'direct_tls',
+        labelKey: 'channels.form.xmpp.directTls',
+        type: 'checkbox',
+        defaultValue: false
+      },
+      {
+        key: 'muc_nick',
+        labelKey: 'channels.form.xmpp.mucNick',
+        placeholderKey: 'channels.form.xmpp.mucNickPlaceholder'
+      },
+      {
+        key: 'muc_rooms',
+        labelKey: 'channels.form.xmpp.mucRooms',
+        placeholderKey: 'channels.form.xmpp.mucRoomsPlaceholder'
+      },
+      {
+        key: 'heartbeat_enabled',
+        labelKey: 'channels.form.xmpp.heartbeatEnabled',
+        type: 'checkbox',
+        defaultValue: true
+      },
+      {
+        key: 'heartbeat_interval_s',
+        labelKey: 'channels.form.xmpp.heartbeatIntervalS',
+        placeholderKey: 'channels.form.xmpp.heartbeatIntervalSPlaceholder'
+      },
+      {
+        key: 'heartbeat_timeout_s',
+        labelKey: 'channels.form.xmpp.heartbeatTimeoutS',
+        placeholderKey: 'channels.form.xmpp.heartbeatTimeoutSPlaceholder'
+      },
+      {
+        key: 'respond_ping',
+        labelKey: 'channels.form.xmpp.respondPing',
+        type: 'checkbox',
+        defaultValue: true
+      }
+    ]
   }
 };
 
@@ -628,7 +700,8 @@ const FALLBACK_CHANNELS = [
   'discord',
   'slack',
   'line',
-  'dingtalk'
+  'dingtalk',
+  'xmpp'
 ];
 const USER_ONLY_CHANNELS = ['wechat', 'wechat_mp'];
 const resolvedAgentId = computed(() => {
@@ -998,6 +1071,30 @@ const buildStructuredConfigPatch = (
       continue;
     }
     const value = trimmedText(values[field.key]);
+    if (configRoot === 'xmpp' && field.key === 'port') {
+      const parsedPort = Number.parseInt(value, 10);
+      if (Number.isFinite(parsedPort) && parsedPort > 0 && parsedPort <= 65535) {
+        baseNode[field.key] = parsedPort;
+      }
+      continue;
+    }
+    if (configRoot === 'xmpp' && field.key === 'muc_rooms') {
+      const rooms = value
+        .split(/[,\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (rooms.length) {
+        baseNode[field.key] = rooms;
+      }
+      continue;
+    }
+    if (configRoot === 'xmpp' && (field.key === 'heartbeat_interval_s' || field.key === 'heartbeat_timeout_s')) {
+      const parsedValue = Number.parseInt(value, 10);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        baseNode[field.key] = parsedValue;
+      }
+      continue;
+    }
     if (value) {
       baseNode[field.key] = value;
     }

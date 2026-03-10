@@ -3,6 +3,7 @@ use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_
 use crate::auth;
 use crate::channels::feishu;
 use crate::channels::types::ChannelAccountConfig;
+use crate::channels::xmpp;
 use crate::config::{
     normalize_chat_stream_channel, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType, LspConfig, McpServerConfig,
@@ -6371,7 +6372,7 @@ struct ChannelSessionQuery {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum FeishuLongConnectionRuntimeStatus {
+enum LongConnectionRuntimeStatus {
     Running,
     MissingCredentials,
     Disabled,
@@ -6379,7 +6380,7 @@ enum FeishuLongConnectionRuntimeStatus {
     NotConfigured,
 }
 
-impl FeishuLongConnectionRuntimeStatus {
+impl LongConnectionRuntimeStatus {
     fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -6391,7 +6392,7 @@ impl FeishuLongConnectionRuntimeStatus {
     }
 }
 
-fn resolve_feishu_binding_count(
+fn resolve_channel_binding_count(
     storage: &dyn StorageBackend,
     channel: &str,
     account_id: &str,
@@ -6412,50 +6413,92 @@ fn build_channel_account_runtime(
     storage: &dyn StorageBackend,
     record: &ChannelAccountRecord,
 ) -> Value {
-    if !record
+    let account_cfg = ChannelAccountConfig::from_value(&record.config);
+    if record
         .channel
         .trim()
         .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
     {
-        return json!({});
-    }
+        let Some(feishu_cfg) = account_cfg.feishu else {
+            return json!({
+                "feishu_long_connection": {
+                    "status": LongConnectionRuntimeStatus::NotConfigured.as_str(),
+                    "binding_count": 0,
+                    "long_connection_enabled": false,
+                    "has_credentials": false,
+                }
+            });
+        };
 
-    let account_cfg = ChannelAccountConfig::from_value(&record.config);
-    let Some(feishu_cfg) = account_cfg.feishu else {
+        let long_connection_enabled = feishu::long_connection_enabled(&feishu_cfg);
+        let has_credentials = feishu::has_long_connection_credentials(&feishu_cfg);
+        let account_active = record.status.trim().eq_ignore_ascii_case("active");
+        let binding_count =
+            resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok();
+
+        let status = if !account_active {
+            LongConnectionRuntimeStatus::AccountInactive
+        } else if !long_connection_enabled {
+            LongConnectionRuntimeStatus::Disabled
+        } else if !has_credentials {
+            LongConnectionRuntimeStatus::MissingCredentials
+        } else {
+            LongConnectionRuntimeStatus::Running
+        };
+
         return json!({
             "feishu_long_connection": {
-                "status": FeishuLongConnectionRuntimeStatus::NotConfigured.as_str(),
-                "binding_count": 0,
-                "long_connection_enabled": false,
-                "has_credentials": false,
+                "status": status.as_str(),
+                "binding_count": binding_count,
+                "long_connection_enabled": long_connection_enabled,
+                "has_credentials": has_credentials,
             }
         });
-    };
+    }
 
-    let long_connection_enabled = feishu::long_connection_enabled(&feishu_cfg);
-    let has_credentials = feishu::has_long_connection_credentials(&feishu_cfg);
-    let account_active = record.status.trim().eq_ignore_ascii_case("active");
-    let binding_count =
-        resolve_feishu_binding_count(storage, &record.channel, &record.account_id).ok();
+    if record
+        .channel
+        .trim()
+        .eq_ignore_ascii_case(xmpp::XMPP_CHANNEL)
+    {
+        let Some(xmpp_cfg) = account_cfg.xmpp else {
+            return json!({
+                "xmpp_long_connection": {
+                    "status": LongConnectionRuntimeStatus::NotConfigured.as_str(),
+                    "binding_count": 0,
+                    "long_connection_enabled": false,
+                    "has_credentials": false,
+                }
+            });
+        };
 
-    let status = if !account_active {
-        FeishuLongConnectionRuntimeStatus::AccountInactive
-    } else if !long_connection_enabled {
-        FeishuLongConnectionRuntimeStatus::Disabled
-    } else if !has_credentials {
-        FeishuLongConnectionRuntimeStatus::MissingCredentials
-    } else {
-        FeishuLongConnectionRuntimeStatus::Running
-    };
+        let long_connection_enabled = xmpp::long_connection_enabled(&xmpp_cfg);
+        let has_credentials = xmpp::has_long_connection_credentials(&xmpp_cfg);
+        let account_active = record.status.trim().eq_ignore_ascii_case("active");
+        let binding_count =
+            resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok();
 
-    json!({
-        "feishu_long_connection": {
-            "status": status.as_str(),
-            "binding_count": binding_count,
-            "long_connection_enabled": long_connection_enabled,
-            "has_credentials": has_credentials,
-        }
-    })
+        let status = if !account_active {
+            LongConnectionRuntimeStatus::AccountInactive
+        } else if !long_connection_enabled {
+            LongConnectionRuntimeStatus::Disabled
+        } else if !has_credentials {
+            LongConnectionRuntimeStatus::MissingCredentials
+        } else {
+            LongConnectionRuntimeStatus::Running
+        };
+
+        return json!({
+            "xmpp_long_connection": {
+                "status": status.as_str(),
+                "binding_count": binding_count,
+                "long_connection_enabled": long_connection_enabled,
+                "has_credentials": has_credentials,
+            }
+        });
+    }
+
+    json!({})
 }
 
 async fn admin_channel_accounts(

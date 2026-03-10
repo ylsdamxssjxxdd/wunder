@@ -13,6 +13,7 @@ use serde_json::json;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::oneshot;
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
@@ -67,7 +68,21 @@ const DEFAULT_DESKTOP_BIND_PORT: u16 = 18123;
 
 impl DesktopBridge {
     pub async fn launch(args: &DesktopArgs) -> Result<Self> {
+        let startup_enabled = startup_timing_enabled();
+        let startup_boot = Instant::now();
+        log_startup_point(startup_enabled, "bridge", "launch_begin", startup_boot);
+
+        let mut step_start = Instant::now();
         let runtime = DesktopRuntime::init(args).await?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge",
+            "runtime_init",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
         let (target_host, target_port) = resolve_bind_target(args, &runtime);
         let bind_host = sanitize_host(&target_host)?;
         let listener = bind_desktop_listener(&bind_host, target_port).await?;
@@ -78,7 +93,15 @@ impl DesktopBridge {
             .set_bound_port(local_addr.port())
             .await;
         let public_addr = resolve_public_addr(local_addr);
+        log_startup_segment(
+            startup_enabled,
+            "bridge",
+            "bind_listener_and_publish_port",
+            step_start,
+            startup_boot,
+        );
 
+        step_start = Instant::now();
         let web_base = format!("http://{public_addr}");
         let api_base = format!("{web_base}/wunder");
         let ws_base = format!("ws://{public_addr}/wunder/chat/ws");
@@ -120,6 +143,14 @@ impl DesktopBridge {
                 error!("desktop bridge exited with error: {err}");
             }
         });
+        log_startup_segment(
+            startup_enabled,
+            "bridge",
+            "build_routes_and_spawn_server",
+            step_start,
+            startup_boot,
+        );
+        log_startup_point(startup_enabled, "bridge", "launch_done", startup_boot);
 
         info!("wunder-desktop bridge ready: {api_base}");
         Ok(Self {
@@ -378,6 +409,47 @@ fn mask_token(token: &str) -> String {
     let head = &token[..6];
     let tail = &token[token.len().saturating_sub(4)..];
     format!("{head}****{tail}")
+}
+
+fn startup_timing_enabled() -> bool {
+    !matches!(
+        std::env::var("WUNDER_STARTUP_TIMING")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref(),
+        Some("0" | "false" | "off" | "no")
+    )
+}
+
+fn startup_elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn log_startup_segment(
+    enabled: bool,
+    scope: &str,
+    segment: &str,
+    started: Instant,
+    startup_boot: Instant,
+) {
+    if !enabled {
+        return;
+    }
+    info!(
+        "[startup][{scope}] segment={segment} elapsed_ms={:.1} total_ms={:.1}",
+        startup_elapsed_ms(started),
+        startup_elapsed_ms(startup_boot),
+    );
+}
+
+fn log_startup_point(enabled: bool, scope: &str, point: &str, startup_boot: Instant) {
+    if !enabled {
+        return;
+    }
+    info!(
+        "[startup][{scope}] point={point} total_ms={:.1}",
+        startup_elapsed_ms(startup_boot),
+    );
 }
 
 async fn runtime_config_handler(

@@ -84,6 +84,9 @@ type SendToActiveConversationOptions = {
 
 const DEFAULT_TRANSPORT: 'ws' | 'sse' = 'ws';
 const WATCH_RETRY_DELAY_MS = 1000;
+const WATCH_CONVERSATION_LIMIT_VISIBLE = 4;
+const WATCH_CONVERSATION_LIMIT_HIDDEN = 1;
+const CONTACT_REALTIME_REFRESH_MIN_MS = 6000;
 const DISMISSED_STORAGE_PREFIX = 'user_world_dismissed_conversations';
 const WORLD_VOICE_PREVIEW_TEXT = '[Voice]';
 
@@ -229,6 +232,15 @@ const resolveTransport = (): 'ws' | 'sse' => {
   return DEFAULT_TRANSPORT;
 };
 
+const resolveWatchConversationLimit = (): number => {
+  if (typeof document === 'undefined') {
+    return WATCH_CONVERSATION_LIMIT_VISIBLE;
+  }
+  return document.visibilityState === 'hidden'
+    ? WATCH_CONVERSATION_LIMIT_HIDDEN
+    : WATCH_CONVERSATION_LIMIT_VISIBLE;
+};
+
 export const useUserWorldStore = defineStore('user-world', {
   state: () => ({
     contacts: [] as UserWorldContact[],
@@ -245,7 +257,8 @@ export const useUserWorldStore = defineStore('user-world', {
     error: '' as string,
     streamTransport: DEFAULT_TRANSPORT as 'ws' | 'sse',
     dismissedConversationIds: [] as string[],
-    dismissedStorageKey: '' as string
+    dismissedStorageKey: '' as string,
+    lastContactRealtimeRefreshAt: 0
   }),
   getters: {
     activeConversation(state): UserWorldConversation | null {
@@ -258,6 +271,17 @@ export const useUserWorldStore = defineStore('user-world', {
     }
   },
   actions: {
+    triggerContactRealtimeSync() {
+      if (this.permissionDenied) return;
+      const now = Date.now();
+      const lastAt = Number(this.lastContactRealtimeRefreshAt || 0);
+      if (now - lastAt < CONTACT_REALTIME_REFRESH_MIN_MS) {
+        return;
+      }
+      this.lastContactRealtimeRefreshAt = now;
+      void this.refreshContacts().catch(() => undefined);
+    },
+
     ensureDismissedConversationState(force = false) {
       const authStore = useAuthStore();
       const storageKey = resolveDismissedStorageKey(authStore.user?.id);
@@ -371,7 +395,10 @@ export const useUserWorldStore = defineStore('user-world', {
       }
     },
 
-    async refreshContacts(keyword = '') {
+    async refreshContacts(
+      keyword = '',
+      options: { shouldApply?: () => boolean } = {}
+    ) {
       if (this.permissionDenied) {
         this.contacts = [];
         return;
@@ -388,6 +415,9 @@ export const useUserWorldStore = defineStore('user-world', {
         const response = await listUserWorldContacts(params);
         const data = asRecord(response.data?.data);
         const items = Array.isArray(data.items) ? (data.items as UserWorldContact[]) : [];
+        if (typeof options.shouldApply === 'function' && !options.shouldApply()) {
+          return;
+        }
         this.contacts = items.map((item) => {
           const conversationId = normalizeConversationId(item.conversation_id);
           const normalized = {
@@ -408,6 +438,7 @@ export const useUserWorldStore = defineStore('user-world', {
           }
           return normalized;
         });
+        this.lastContactRealtimeRefreshAt = Date.now();
         this.permissionDenied = false;
         this.permissionDeniedKey = '';
       } catch (error) {
@@ -843,11 +874,17 @@ export const useUserWorldStore = defineStore('user-world', {
       const activeId = String(this.activeConversationId || '').trim();
       if (activeId) {
         targetIds.add(activeId);
-      } else {
-        const firstId = String(this.conversations[0]?.conversation_id || '').trim();
-        if (firstId) {
-          targetIds.add(firstId);
-        }
+      }
+      const watchLimit = Math.max(1, resolveWatchConversationLimit());
+      const orderedConversationIds = (Array.isArray(this.conversations) ? this.conversations : [])
+        .map((item) => String(item?.conversation_id || '').trim())
+        .filter(Boolean);
+      for (const conversationId of orderedConversationIds) {
+        if (targetIds.size >= watchLimit) break;
+        targetIds.add(conversationId);
+      }
+      if (!targetIds.size && orderedConversationIds.length > 0) {
+        targetIds.add(orderedConversationIds[0]);
       }
       Array.from(watchRuntime.keys()).forEach((conversationId) => {
         if (!targetIds.has(conversationId)) {
@@ -969,14 +1006,15 @@ export const useUserWorldStore = defineStore('user-world', {
 
     applyRealtimeEvent(conversationId: string, eventType: string, dataText: string) {
       const payload = parseEventPayload(dataText);
-      if (eventType === 'uw.message') {
+      const normalizedEventType = String(eventType || '').trim().toLowerCase();
+      if (normalizedEventType === 'uw.message') {
         const message = asRecord(payload.message) as unknown as UserWorldMessage;
         if (message?.message_id) {
           this.upsertMessage(conversationId, message);
         }
         return;
       }
-      if (eventType === 'uw.read') {
+      if (normalizedEventType === 'uw.read') {
         const targetConversationId = String(payload.conversation_id || conversationId).trim();
         const userId = String(payload.user_id || '').trim();
         const unread = toNumber(payload.unread_count);
@@ -996,6 +1034,116 @@ export const useUserWorldStore = defineStore('user-world', {
             }
           }
         }
+        return;
+      }
+      if (
+        normalizedEventType === 'uw.conversation' ||
+        normalizedEventType === 'uw.conversation_upsert' ||
+        normalizedEventType === 'uw.group' ||
+        normalizedEventType === 'uw.group_upsert'
+      ) {
+        const conversationPayload = asRecord(
+          payload.conversation || asRecord(payload.data).conversation || payload.data || payload
+        );
+        const normalizedConversationId = String(
+          conversationPayload.conversation_id ?? conversationPayload.conversationId ?? ''
+        ).trim();
+        if (!normalizedConversationId) {
+          this.triggerContactRealtimeSync();
+          return;
+        }
+        const normalizedConversation: UserWorldConversation = {
+          ...conversationPayload,
+          conversation_id: normalizedConversationId,
+          conversation_type: String(
+            conversationPayload.conversation_type ?? conversationPayload.conversationType ?? ''
+          ).trim(),
+          peer_user_id: String(
+            conversationPayload.peer_user_id ?? conversationPayload.peerUserId ?? ''
+          ).trim(),
+          unread_count_cache: toNumber(
+            conversationPayload.unread_count_cache ??
+              conversationPayload.unreadCount ??
+              conversationPayload.unread ??
+              0
+          )
+        };
+        this.upsertConversation(normalizedConversation);
+        return;
+      }
+      if (
+        normalizedEventType === 'uw.presence' ||
+        normalizedEventType === 'uw.contact' ||
+        normalizedEventType === 'uw.contact_upsert' ||
+        normalizedEventType === 'uw.contact_update'
+      ) {
+        const source = asRecord(payload.contact || payload.user || payload.data || payload);
+        const userId = String(
+          source.user_id ?? source.userId ?? source.peer_user_id ?? source.peerUserId ?? ''
+        ).trim();
+        const targetConversationId = String(
+          source.conversation_id ??
+            source.conversationId ??
+            payload.conversation_id ??
+            payload.conversationId ??
+            conversationId
+        ).trim();
+        const contact = this.contacts.find((item) => {
+          const itemUserId = String(item?.user_id || '').trim();
+          const itemConversationId = String(item?.conversation_id || '').trim();
+          if (userId && itemUserId === userId) return true;
+          return Boolean(targetConversationId) && itemConversationId === targetConversationId;
+        });
+        if (!contact) {
+          this.triggerContactRealtimeSync();
+          return;
+        }
+        let changed = false;
+        const hasOnlineField =
+          Object.prototype.hasOwnProperty.call(source, 'online') ||
+          Object.prototype.hasOwnProperty.call(source, 'is_online') ||
+          Object.prototype.hasOwnProperty.call(source, 'isOnline') ||
+          Object.prototype.hasOwnProperty.call(source, 'presence');
+        if (hasOnlineField) {
+          const nextOnline = toBoolean(
+            source.online ?? source.is_online ?? source.isOnline ?? source.presence
+          );
+          if (Boolean(contact.online) !== nextOnline) {
+            contact.online = nextOnline;
+            changed = true;
+          }
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(source, 'status') ||
+          Object.prototype.hasOwnProperty.call(source, 'state')
+        ) {
+          const nextStatus = String(source.status ?? source.state ?? '').trim();
+          if (String(contact.status || '') !== nextStatus) {
+            contact.status = nextStatus;
+            changed = true;
+          }
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(source, 'last_seen_at') ||
+          Object.prototype.hasOwnProperty.call(source, 'lastSeenAt') ||
+          Object.prototype.hasOwnProperty.call(source, 'seen_at')
+        ) {
+          const rawLastSeen = source.last_seen_at ?? source.lastSeenAt ?? source.seen_at;
+          const nextLastSeen =
+            rawLastSeen === null || rawLastSeen === undefined ? null : toNumber(rawLastSeen);
+          if (toNumber(contact.last_seen_at) !== toNumber(nextLastSeen)) {
+            contact.last_seen_at = nextLastSeen;
+            changed = true;
+          }
+        }
+        if (targetConversationId && String(contact.conversation_id || '').trim() !== targetConversationId) {
+          contact.conversation_id = targetConversationId;
+          changed = true;
+        }
+        if (changed) {
+          this.sortContacts();
+        }
+        return;
       }
     },
 
@@ -1116,6 +1264,10 @@ export const useUserWorldStore = defineStore('user-world', {
         contact.last_message_at = normalized.created_at;
         contact.last_message_preview = preview;
         contact.unread_count = toNumber(this.unreadByConversation[cleaned]);
+        if (isIncoming) {
+          contact.online = true;
+          contact.last_seen_at = toNumber(normalized.created_at) || contact.last_seen_at || null;
+        }
       }
       const group = this.groups.find((item) => item.conversation_id === cleaned);
       if (group) {
