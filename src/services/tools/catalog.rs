@@ -429,34 +429,81 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
         },
         ToolSpec {
             name: "智能体蜂群".to_string(),
-            description: t("tool.spec.agent_swarm.description"),
+            description: "智能体蜂群协作工具。推荐路径：list -> send/batch_send -> wait -> history/status。单目标用 send，多目标用 batch_send。".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "description": t("tool.spec.agent_swarm.args.action"),
+                        "description": "操作类型：list(列成员)/status(看状态)/send(发单目标)/history(看会话)/spawn(派生执行)/batch_send(并发派发)/wait(等待结果)。",
                         "enum": ["list", "status", "send", "history", "spawn", "batch_send", "wait"]
                     },
-                    "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
-                    "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
-                    "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")},
+                    "agentId": {"type": "string", "description": "目标智能体 ID。"},
+                    "sessionKey": {"type": "string", "description": "目标会话 ID（session_id/sessionKey）。"},
+                    "message": {"type": "string", "description": "消息内容。", "minLength": 1},
+                    "task": {"type": "string", "description": "spawn 的任务描述。", "minLength": 1},
                     "tasks": {
                         "type": "array",
-                        "description": t("tool.spec.agent_swarm.args.tasks"),
+                        "description": "batch_send 任务列表（每项必须包含 message 与 agentId/sessionKey）。",
+                        "minItems": 1,
                         "items": {
                             "type": "object",
                             "properties": {
-                                "agentId": {"type": "string", "description": t("tool.spec.sessions_spawn.args.agent_id")},
-                                "sessionKey": {"type": "string", "description": t("tool.spec.sessions_history.args.session_id")},
-                                "message": {"type": "string", "description": t("tool.spec.sessions_send.args.message")}
-                            }
+                                "agentId": {"type": "string", "description": "目标智能体 ID。"},
+                                "sessionKey": {"type": "string", "description": "目标会话 ID（session_id/sessionKey）。"},
+                                "message": {"type": "string", "description": "任务消息。", "minLength": 1}
+                            },
+                            "required": ["message"],
+                            "anyOf": [
+                                {"required": ["agentId"]},
+                                {"required": ["sessionKey"]}
+                            ]
                         }
                     },
-                    "runIds": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}},
-                    "waitSeconds": {"type": "number", "description": t("tool.spec.agent_swarm.args.wait_seconds"), "default": 0}
+                    "runIds": {"type": "array", "description": t("tool.spec.agent_swarm.args.run_ids"), "items": {"type": "string"}, "minItems": 1}
                 },
-                "required": ["action"]
+                "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "send"}}},
+                        "then": {
+                            "required": ["message"],
+                            "anyOf": [
+                                {"required": ["agentId"]},
+                                {"required": ["sessionKey"]}
+                            ]
+                        }
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "history"}}},
+                        "then": {"required": ["sessionKey"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "spawn"}}},
+                        "then": {"required": ["agentId", "task"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "batch_send"}}},
+                        "then": {"required": ["tasks"]}
+                    },
+                    {
+                        "if": {"properties": {"action": {"const": "wait"}}},
+                        "then": {"required": ["runIds"]}
+                    }
+                ],
+                "examples": [
+                    {"action": "list"},
+                    {"action": "send", "agentId": "agent_research", "message": "请输出 5 条风险要点。"},
+                    {"action": "spawn", "agentId": "agent_writer", "task": "给出一页执行计划。"},
+                    {
+                        "action": "batch_send",
+                        "tasks": [
+                            {"agentId": "agent_legal", "message": "评估法律约束。"},
+                            {"agentId": "agent_finance", "message": "评估预算影响。"}
+                        ]
+                    },
+                    {"action": "wait", "runIds": ["run_a", "run_b"]}
+                ]
             }),
         },
         ToolSpec {

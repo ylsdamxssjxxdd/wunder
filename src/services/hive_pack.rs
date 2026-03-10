@@ -744,7 +744,7 @@ async fn run_export_job_inner(
         worker_skill_names.dedup();
         let mut attached_skill_names = Vec::new();
         for skill_name in &worker_skill_names {
-            let source = skill_root.join(&skill_name);
+            let source = skill_root.join(skill_name);
             if !source.exists() || !source.is_dir() || !source.join("SKILL.md").is_file() {
                 continue;
             }
@@ -1226,7 +1226,7 @@ fn parse_worker_skill_name_value(value: &serde_yaml::Value) -> Option<String> {
             }
         }
         serde_yaml::Value::Mapping(map) => map
-            .get(&serde_yaml::Value::String("name".to_string()))
+            .get(serde_yaml::Value::String("name".to_string()))
             .and_then(parse_worker_skill_name_value),
         _ => None,
     }

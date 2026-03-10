@@ -83,6 +83,14 @@
             </label>
           </template>
 
+          <div v-if="showCreateXmppAdvancedToggle" class="channel-advanced-toggle">
+            <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
+              <input v-model="createXmppAdvancedEnabled" type="checkbox" />
+              <span>{{ t('channels.form.xmpp.advancedToggle') }}</span>
+            </label>
+            <div class="channel-detail-hint">{{ t('channels.form.xmpp.advancedHint') }}</div>
+          </div>
+
           <div v-if="showCreateAdvancedConfigToggle" class="channel-advanced-toggle">
             <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
               <input v-model="createAdvancedEnabled" type="checkbox" />
@@ -231,6 +239,14 @@
               </label>
             </template>
 
+            <div v-if="showEditXmppAdvancedToggle" class="channel-advanced-toggle">
+              <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
+                <input v-model="editXmppAdvancedEnabled" type="checkbox" />
+                <span>{{ t('channels.form.xmpp.advancedToggle') }}</span>
+              </label>
+              <div class="channel-detail-hint">{{ t('channels.form.xmpp.advancedHint') }}</div>
+            </div>
+
             <div v-if="showEditAdvancedConfigToggle" class="channel-advanced-toggle">
               <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
                 <input v-model="editAdvancedEnabled" type="checkbox" />
@@ -304,6 +320,7 @@ type ChannelFieldDef = {
   type?: DynamicFieldType;
   required?: boolean;
   defaultValue?: string | boolean;
+  advanced?: boolean;
 };
 
 type ChannelSchema = {
@@ -636,7 +653,8 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
       {
         key: 'domain',
         labelKey: 'channels.form.xmpp.domain',
-        placeholderKey: 'channels.form.xmpp.domainPlaceholder'
+        placeholderKey: 'channels.form.xmpp.domainPlaceholder',
+        advanced: true
       },
       {
         key: 'host',
@@ -652,39 +670,46 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         key: 'direct_tls',
         labelKey: 'channels.form.xmpp.directTls',
         type: 'checkbox',
-        defaultValue: false
+        defaultValue: false,
+        advanced: true
       },
       {
         key: 'muc_nick',
         labelKey: 'channels.form.xmpp.mucNick',
-        placeholderKey: 'channels.form.xmpp.mucNickPlaceholder'
+        placeholderKey: 'channels.form.xmpp.mucNickPlaceholder',
+        advanced: true
       },
       {
         key: 'muc_rooms',
         labelKey: 'channels.form.xmpp.mucRooms',
-        placeholderKey: 'channels.form.xmpp.mucRoomsPlaceholder'
+        placeholderKey: 'channels.form.xmpp.mucRoomsPlaceholder',
+        advanced: true
       },
       {
         key: 'heartbeat_enabled',
         labelKey: 'channels.form.xmpp.heartbeatEnabled',
         type: 'checkbox',
-        defaultValue: true
+        defaultValue: true,
+        advanced: true
       },
       {
         key: 'heartbeat_interval_s',
         labelKey: 'channels.form.xmpp.heartbeatIntervalS',
-        placeholderKey: 'channels.form.xmpp.heartbeatIntervalSPlaceholder'
+        placeholderKey: 'channels.form.xmpp.heartbeatIntervalSPlaceholder',
+        advanced: true
       },
       {
         key: 'heartbeat_timeout_s',
         labelKey: 'channels.form.xmpp.heartbeatTimeoutS',
-        placeholderKey: 'channels.form.xmpp.heartbeatTimeoutSPlaceholder'
+        placeholderKey: 'channels.form.xmpp.heartbeatTimeoutSPlaceholder',
+        advanced: true
       },
       {
         key: 'respond_ping',
         labelKey: 'channels.form.xmpp.respondPing',
         type: 'checkbox',
-        defaultValue: true
+        defaultValue: true,
+        advanced: true
       }
     ]
   }
@@ -719,6 +744,8 @@ const supportedChannels = ref<{ channel: string }[]>([]);
 const selectedKey = ref('');
 const createAdvancedEnabled = ref(false);
 const editAdvancedEnabled = ref(false);
+const createXmppAdvancedEnabled = ref(false);
+const editXmppAdvancedEnabled = ref(false);
 const createDynamicFields = reactive<Record<string, string | boolean>>({});
 const editDynamicFields = reactive<Record<string, string | boolean>>({});
 const editSecretSaved = reactive<Record<string, boolean>>({});
@@ -774,9 +801,41 @@ const createChannelSchema = computed(() => schemaForChannel(createForm.channel))
 const editChannelSchema = computed(() =>
   selectedAccount.value ? schemaForChannel(selectedAccount.value.channel) : null
 );
-const createChannelFields = computed(() => CHANNEL_SCHEMAS[createForm.channel]?.fields || []);
-const editChannelFields = computed(() =>
+const createSchemaFields = computed(() => CHANNEL_SCHEMAS[createForm.channel]?.fields || []);
+const editSchemaFields = computed(() =>
   selectedAccount.value ? CHANNEL_SCHEMAS[selectedAccount.value.channel]?.fields || [] : []
+);
+const filterVisibleChannelFields = (
+  channel: string,
+  fields: ChannelFieldDef[],
+  xmppAdvancedEnabled: boolean
+) => {
+  if (channel !== 'xmpp' || xmppAdvancedEnabled) {
+    return fields;
+  }
+  return fields.filter((field) => !field.advanced);
+};
+const createChannelFields = computed(() =>
+  filterVisibleChannelFields(createForm.channel, createSchemaFields.value, createXmppAdvancedEnabled.value)
+);
+const editChannelFields = computed(() =>
+  filterVisibleChannelFields(
+    selectedAccount.value?.channel || '',
+    editSchemaFields.value,
+    editXmppAdvancedEnabled.value
+  )
+);
+const showCreateXmppAdvancedToggle = computed(
+  () =>
+    createForm.channel === 'xmpp' &&
+    createSchemaFields.value.some((field) => field.advanced) &&
+    createChannelSchema.value?.mode === 'config'
+);
+const showEditXmppAdvancedToggle = computed(
+  () =>
+    selectedAccount.value?.channel === 'xmpp' &&
+    editSchemaFields.value.some((field) => field.advanced) &&
+    editChannelSchema.value?.mode === 'config'
 );
 const showCreateAdvancedConfigToggle = computed(
   () => createChannelSchema.value?.mode === 'config' && createChannelFields.value.length > 0
@@ -977,6 +1036,7 @@ const resetCreateForm = () => {
   createForm.peer_kind = USER_ONLY_CHANNELS.includes(createForm.channel) ? 'user' : 'group';
   createForm.config_text = '{}';
   createAdvancedEnabled.value = false;
+  createXmppAdvancedEnabled.value = false;
   initDynamicFields(createDynamicFields, createForm.channel, {}, true);
 };
 
@@ -990,6 +1050,7 @@ const resetEditForm = () => {
     editForm.peer_kind = 'group';
     editForm.config_text = '{}';
     editAdvancedEnabled.value = false;
+    editXmppAdvancedEnabled.value = false;
     clearDynamicFields(editDynamicFields);
     return;
   }
@@ -1003,6 +1064,7 @@ const resetEditForm = () => {
     editForm.config_text = '{}';
   }
   editAdvancedEnabled.value = false;
+  editXmppAdvancedEnabled.value = false;
   const schema = schemaForChannel(account.channel);
   initDynamicFields(
     editDynamicFields,
@@ -1208,6 +1270,7 @@ const onCreateChannelChange = () => {
   createForm.peer_kind = USER_ONLY_CHANNELS.includes(createForm.channel) ? 'user' : 'group';
   createForm.config_text = '{}';
   createAdvancedEnabled.value = false;
+  createXmppAdvancedEnabled.value = false;
   initDynamicFields(createDynamicFields, createForm.channel, {}, true);
 };
 

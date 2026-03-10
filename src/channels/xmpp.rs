@@ -384,9 +384,7 @@ fn build_client(settings: &XmppRuntimeSettings) -> AsyncClient<starttls::ServerC
 
 fn build_runtime_settings(config: &XmppConfig) -> Result<XmppRuntimeSettings> {
     let jid_raw = required_jid(config).ok_or_else(|| anyhow!("xmpp jid missing"))?;
-    let password = required_password(config)
-        .ok_or_else(|| anyhow!("xmpp password missing"))?
-        .to_string();
+    let password = required_password(config).ok_or_else(|| anyhow!("xmpp password missing"))?;
 
     let mut jid = Jid::from_str(jid_raw).map_err(|err| anyhow!("invalid xmpp jid: {err}"))?;
 
@@ -883,8 +881,16 @@ fn required_jid(config: &XmppConfig) -> Option<&str> {
     optional_trimmed(config.jid.as_deref())
 }
 
-fn required_password(config: &XmppConfig) -> Option<&str> {
-    optional_trimmed(config.password.as_deref())
+fn required_password(config: &XmppConfig) -> Option<String> {
+    if let Some(password) = optional_trimmed(config.password.as_deref()) {
+        return Some(password.to_string());
+    }
+
+    // OpenFang-compatible fallback: allow storing only env var name.
+    let env_name = optional_trimmed(config.password_env.as_deref())?;
+    std::env::var(env_name)
+        .ok()
+        .and_then(normalize_owned_string)
 }
 
 fn normalize_rooms(raw: &[String]) -> Vec<String> {
@@ -909,6 +915,9 @@ fn optional_trimmed(value: Option<&str>) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static XMPP_ENV_TEST_SEQ: AtomicU64 = AtomicU64::new(1);
 
     #[test]
     fn long_connection_enabled_defaults_true() {
@@ -939,6 +948,24 @@ mod tests {
             ..XmppConfig::default()
         };
         assert!(has_long_connection_credentials(&full));
+    }
+
+    #[test]
+    fn credentials_check_supports_password_env_fallback() {
+        let env_key = format!(
+            "WUNDER_XMPP_TEST_PASSWORD_{}",
+            XMPP_ENV_TEST_SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        let config = XmppConfig {
+            jid: Some("bot@example.com".to_string()),
+            password_env: Some(env_key.clone()),
+            ..XmppConfig::default()
+        };
+        assert!(!has_long_connection_credentials(&config));
+
+        std::env::set_var(&env_key, "secret");
+        assert!(has_long_connection_credentials(&config));
+        std::env::remove_var(&env_key);
     }
 
     #[test]
@@ -1034,5 +1061,24 @@ mod tests {
             XMPP_HEARTBEAT_DEFAULT_TIMEOUT_S
         );
         assert!(settings.respond_ping);
+    }
+
+    #[test]
+    fn build_runtime_settings_uses_password_env_when_password_missing() {
+        let env_key = format!(
+            "WUNDER_XMPP_TEST_PASSWORD_{}",
+            XMPP_ENV_TEST_SEQ.fetch_add(1, Ordering::Relaxed)
+        );
+        std::env::set_var(&env_key, "secret-from-env");
+
+        let config = XmppConfig {
+            jid: Some("bot@example.com".to_string()),
+            password_env: Some(env_key.clone()),
+            ..XmppConfig::default()
+        };
+        let settings = build_runtime_settings(&config).unwrap();
+        assert_eq!(settings.password, "secret-from-env");
+
+        std::env::remove_var(&env_key);
     }
 }

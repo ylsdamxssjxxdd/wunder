@@ -1606,8 +1606,14 @@ fn build_user_account_item(
         let password_set = xmpp
             .password
             .as_deref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
+            .is_some_and(|value| !value.trim().is_empty());
+        let password_env = xmpp
+            .password_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let password_env_set = is_non_empty_env_var(password_env.as_deref());
         let domain = xmpp
             .domain
             .as_deref()
@@ -1621,11 +1627,13 @@ fn build_user_account_item(
             .unwrap_or_default()
             .to_string();
         long_connection_enabled = xmpp.long_connection_enabled.unwrap_or(true);
-        configured = !jid.is_empty() && password_set;
+        configured = !jid.is_empty() && (password_set || password_env_set);
         config_preview = json!({
             "xmpp": {
                 "jid": jid,
                 "password_set": password_set,
+                "password_env": password_env,
+                "password_env_set": password_env_set,
                 "domain": domain,
                 "host": host,
                 "port": xmpp.port,
@@ -1959,6 +1967,16 @@ fn peer_key(channel: &str, account_id: &str, peer_kind: &str, peer_id: &str) -> 
 
 fn is_wildcard_peer_id(value: &str) -> bool {
     value.trim() == WILDCARD_PEER_ID
+}
+
+fn is_non_empty_env_var(env_name: Option<&str>) -> bool {
+    let Some(name) = env_name.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+
+    std::env::var(name)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

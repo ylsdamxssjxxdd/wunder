@@ -16,10 +16,37 @@
         @input="updateKeyword(($event.target as HTMLInputElement).value)"
       />
     </label>
+    <el-dropdown
+      v-if="activeSection === 'swarms'"
+      trigger="click"
+      placement="bottom-end"
+      @command="handleSwarmPlusCommand"
+    >
+      <button
+        class="messenger-plus-btn"
+        type="button"
+        :title="resolveSwarmPlusActionLabel()"
+        :aria-label="resolveSwarmPlusActionLabel()"
+      >
+        <i class="fa-solid fa-plus" aria-hidden="true"></i>
+      </button>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item
+            command="import"
+            :disabled="beeroomStore.packImportLoading || beeroomStore.packExportLoading"
+          >
+            {{ t('beeroom.pack.action.import') }}
+          </el-dropdown-item>
+          <el-dropdown-item command="create">
+            {{ t('beeroom.dialog.createTitle') }}
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
     <button
-      v-if="
+      v-else-if="
         activeSection === 'agents' ||
-        activeSection === 'swarms' ||
         (activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace)
       "
       class="messenger-plus-btn"
@@ -734,6 +761,12 @@
     </button>
   </div>
 
+  <BeeroomCreateDialog
+    v-model="swarmCreateVisible"
+    :candidate-agents="swarmCreateCandidateAgents"
+    @submit="handleSwarmCreateSubmit"
+  />
+
   <input
     ref="swarmPackInputRef"
     type="file"
@@ -744,16 +777,19 @@
 </template>
 
 <script setup lang="ts">
-import { h, ref } from 'vue';
+import { computed, h, ref } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { useI18n } from '@/i18n';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
+import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
 import { useBeeroomStore } from '@/stores/beeroom';
 
 const { t } = useI18n();
 const beeroomStore = useBeeroomStore();
 const swarmPackInputRef = ref<HTMLInputElement | null>(null);
+const swarmCreateVisible = ref(false);
+const swarmCreateSaving = ref(false);
 
 type ContainerEntry = {
   id: number;
@@ -942,15 +978,30 @@ const resolvePlusActionLabel = () => {
   if (activeSection === 'groups') {
     return t('userWorld.group.create');
   }
-  if (activeSection === 'swarms') {
-    return t('beeroom.pack.action.import');
-  }
   return t('messenger.action.newAgent');
 };
+
+const resolveSwarmPlusActionLabel = () =>
+  `${t('beeroom.pack.action.import')} / ${t('beeroom.dialog.createTitle')}`;
 
 const triggerSearchCreateAction = () => {
   Promise.resolve(handleSearchCreateAction()).catch(() => undefined);
 };
+
+const swarmCreateCandidateAgents = computed(() => {
+  const list = [
+    ...(Array.isArray(filteredOwnedAgents) ? filteredOwnedAgents : []),
+    ...(Array.isArray(filteredSharedAgents) ? filteredSharedAgents : [])
+  ];
+  const unique = new Map<string, { id: string; name: string }>();
+  list.forEach((item) => {
+    const id = String(item?.id || '').trim();
+    if (!id || unique.has(id)) return;
+    const name = String(item?.name || id).trim() || id;
+    unique.set(id, { id, name });
+  });
+  return Array.from(unique.values());
+});
 
 const resolvePackReportRecord = (value: unknown): Record<string, unknown> | null => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -1065,15 +1116,45 @@ const resetSwarmPackInput = () => {
 };
 
 const handlePlusAction = () => {
-  if (activeSection !== 'swarms') {
-    triggerSearchCreateAction();
-    return;
-  }
+  triggerSearchCreateAction();
+};
+
+const openSwarmPackImportPicker = () => {
   if (beeroomStore.packImportLoading || beeroomStore.packExportLoading) {
     ElMessage.warning(t('beeroom.pack.message.busy'));
     return;
   }
   swarmPackInputRef.value?.click();
+};
+
+const openSwarmCreateDialog = () => {
+  swarmCreateVisible.value = true;
+};
+
+const handleSwarmPlusCommand = (command: string | number | Record<string, unknown>) => {
+  const normalized = String(command || '').trim().toLowerCase();
+  if (normalized === 'import') {
+    openSwarmPackImportPicker();
+    return;
+  }
+  if (normalized === 'create') {
+    openSwarmCreateDialog();
+  }
+};
+
+const handleSwarmCreateSubmit = async (payload: Record<string, unknown>) => {
+  if (swarmCreateSaving.value) return;
+  swarmCreateSaving.value = true;
+  try {
+    await beeroomStore.createGroup(payload);
+    swarmCreateVisible.value = false;
+    ElMessage.success(t('beeroom.message.hiveCreated'));
+  } catch (error: any) {
+    const detail = String(error?.response?.data?.detail || error?.message || '').trim();
+    ElMessage.error(detail || t('common.requestFailed'));
+  } finally {
+    swarmCreateSaving.value = false;
+  }
 };
 
 const handleSwarmPackFileChange = async (event: Event) => {

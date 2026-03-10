@@ -320,6 +320,11 @@ import { consumeSseStream } from '@/utils/sse';
 import { createWsMultiplexer } from '@/utils/ws';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
+import {
+  getBeeroomMissionCanvasState,
+  setBeeroomMissionCanvasState,
+  type BeeroomCanvasViewportState
+} from '@/components/beeroom/beeroomMissionCanvasStateCache';
 
 type CanvasNodeMeta = {
   id: string;
@@ -392,6 +397,11 @@ type HoneycombSlot = {
   r: number;
 };
 
+type PendingCanvasViewportRestore = {
+  scopeKey: string;
+  viewport: BeeroomCanvasViewportState;
+};
+
 const HEX_DIRECTIONS: HoneycombSlot[] = [
   { q: 1, r: 0 },
   { q: 1, r: -1 },
@@ -400,12 +410,12 @@ const HEX_DIRECTIONS: HoneycombSlot[] = [
   { q: -1, r: 1 },
   { q: 0, r: 1 }
 ];
-const HONEYCOMB_RADIUS = 178;
+const HONEYCOMB_RADIUS = 164;
 const HONEYCOMB_VERTICAL_RATIO = 1.18;
-const NODE_WIDTH = 286;
-const MOTHER_NODE_WIDTH = 320;
-const NODE_HEIGHT = 106;
-const MOTHER_NODE_HEIGHT = 120;
+const NODE_WIDTH = 248;
+const MOTHER_NODE_WIDTH = NODE_WIDTH;
+const NODE_HEIGHT = 94;
+const MOTHER_NODE_HEIGHT = NODE_HEIGHT;
 const GRID_PLUGIN_KEY = 'beeroom-grid-line';
 const MANUAL_CHAT_HISTORY_LIMIT = 120;
 const CHAT_POLL_INTERVAL_MS = 2000;
@@ -473,6 +483,12 @@ let graph: G6Graph | null = null;
 let graphCtor: GraphCtor | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeFrame = 0;
+let graphInitPromise: Promise<void> | null = null;
+let canvasDisposed = false;
+let renderSequence = 0;
+let renderTask: Promise<void> | null = null;
+let renderRequested = false;
+let renderRequestedForceFit = false;
 let chatPollTimer: number | null = null;
 let chatWatchController: AbortController | null = null;
 let chatWatchRequestId = '';
@@ -484,6 +500,7 @@ let dispatchStreamController: AbortController | null = null;
 let dispatchStopRequested = false;
 let dispatchFlowTimer: number | null = null;
 let dispatchFlowOffset = 0;
+let canvasWheelSaveTimer: number | null = null;
 const activeDispatchEdgeIds = ref<string[]>([]);
 
 const loadGraphCtor = async (): Promise<GraphCtor> => {
@@ -833,7 +850,7 @@ const projection = computed(() => {
     const selected = nodeId === selectedNodeId;
     const roleLabel = isMother ? t('beeroom.canvas.legendMother') : t('beeroom.canvas.legendWorker');
     const name = String(member?.name || (isMother ? props.group?.mother_agent_name : '') || agentId).trim();
-    const displayName = trimNodeTitle(name, isMother ? 14 : 12);
+    const displayName = trimNodeTitle(name, 12);
     const accentColor = resolveNodeAccent(agentId, isMother);
     const summary = String(
       agentTasks
@@ -2119,8 +2136,29 @@ const renderSignature = computed(() => {
   ].join('||');
 });
 
+const stableMissionScopeKey = ref('');
+
+watch(
+  () => props.group?.group_id,
+  () => {
+    stableMissionScopeKey.value = '';
+  },
+  { immediate: true }
+);
+
+watch(
+  () => [props.mission?.mission_id, props.mission?.team_run_id] as const,
+  ([missionId, teamRunId]) => {
+    const key = String(missionId || teamRunId || '').trim();
+    if (key) {
+      stableMissionScopeKey.value = key;
+    }
+  },
+  { immediate: true }
+);
+
 const nodePositionScopeKey = computed(() =>
-  String(props.mission?.mission_id || props.mission?.team_run_id || props.group?.group_id || 'standby').trim()
+  String(props.mission?.mission_id || props.mission?.team_run_id || stableMissionScopeKey.value || props.group?.group_id || 'standby').trim()
 );
 
 const layoutSignature = computed(() => {
@@ -2130,6 +2168,175 @@ const layoutSignature = computed(() => {
 
 let lastLayoutSignature = '';
 let lastMissionIdentity = '';
+let currentCanvasScopeKey = '';
+let pendingCanvasViewportRestore: PendingCanvasViewportRestore | null = null;
+
+const resolveCanvasScopeKey = (value?: unknown) => {
+  const base = value ?? nodePositionScopeKey.value;
+  const key = String(base || '').trim();
+  return key || 'standby';
+};
+
+const clonePositionOverrides = (source: Record<string, CanvasPositionOverride>) => {
+  const cloned: Record<string, CanvasPositionOverride> = {};
+  Object.entries(source || {}).forEach(([nodeId, override]) => {
+    const id = String(nodeId || '').trim();
+    if (!id) return;
+    const x = Number(override?.x);
+    const y = Number(override?.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    cloned[id] = { x, y };
+  });
+  return cloned;
+};
+
+const hasPositionOverrides = (source?: Record<string, CanvasPositionOverride> | null) =>
+  !!source && Object.keys(source).length > 0;
+
+const normalizeGraphPosition = (value: unknown): [number, number] | null => {
+  if (!value || typeof value !== 'object') return null;
+  const array = Array.from(value as ArrayLike<number>);
+  const x = Number(array[0]);
+  const y = Number(array[1]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return [x, y];
+};
+
+const clearCanvasContainers = () => {
+  if (canvasRef.value) {
+    canvasRef.value.innerHTML = '';
+  }
+  if (minimapRef.value) {
+    minimapRef.value.innerHTML = '';
+  }
+};
+
+const getCanvasViewport = () => {
+  const rect = canvasRef.value?.getBoundingClientRect();
+  return {
+    width: Math.floor(rect?.width || canvasRef.value?.clientWidth || 0),
+    height: Math.floor(rect?.height || canvasRef.value?.clientHeight || 0)
+  };
+};
+
+const getCanvasViewportCenter = (): [number, number] => {
+  const viewport = getCanvasViewport();
+  return [Math.max(1, viewport.width / 2), Math.max(1, viewport.height / 2)];
+};
+
+const clampCanvasZoom = (zoom: number) => Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, zoom));
+
+const clearCanvasWheelSaveTimer = () => {
+  if (canvasWheelSaveTimer !== null) {
+    window.clearTimeout(canvasWheelSaveTimer);
+    canvasWheelSaveTimer = null;
+  }
+};
+
+const scheduleCanvasStateSave = (delayMs = 120) => {
+  if (typeof window === 'undefined') {
+    saveCanvasState();
+    return;
+  }
+  clearCanvasWheelSaveTimer();
+  canvasWheelSaveTimer = window.setTimeout(() => {
+    canvasWheelSaveTimer = null;
+    saveCanvasState();
+  }, delayMs);
+};
+
+const readGraphViewportState = (): BeeroomCanvasViewportState | null => {
+  if (!graph) return null;
+  try {
+    const zoom = clampCanvasZoom(Number(graph.getZoom()));
+    const position = normalizeGraphPosition(graph.getPosition());
+    if (!position || !Number.isFinite(zoom)) return null;
+    const center = getCanvasViewportCenter();
+    // Persist pan as "offset from viewport center" so remounting with a different
+    // container size can still restore to the same visual focus.
+    return {
+      zoom,
+      position,
+      centerOffset: [position[0] - center[0], position[1] - center[1]]
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveCanvasState = (scopeKey?: unknown) => {
+  const key = resolveCanvasScopeKey(scopeKey);
+  const cached = getBeeroomMissionCanvasState(key);
+  const overrides = clonePositionOverrides(nodePositionOverrides.value);
+  const hasProjection = projection.value.nodes.length > 0;
+  const viewport = readGraphViewportState() || cached?.viewport || null;
+  setBeeroomMissionCanvasState(key, {
+    nodePositionOverrides: hasProjection ? overrides : (cached?.nodePositionOverrides ?? overrides),
+    activeNodeId: hasProjection
+      ? String(activeNodeId.value || '').trim()
+      : String(activeNodeId.value || cached?.activeNodeId || '').trim(),
+    chatCollapsed: chatCollapsed.value,
+    viewport
+  });
+};
+
+const hydrateCanvasState = (scopeKey?: unknown) => {
+  const key = resolveCanvasScopeKey(scopeKey);
+  const cached = getBeeroomMissionCanvasState(key);
+  if (!cached) {
+    nodePositionOverrides.value = {};
+    pendingCanvasViewportRestore = null;
+    return false;
+  }
+  nodePositionOverrides.value = clonePositionOverrides(cached.nodePositionOverrides);
+  chatCollapsed.value = !!cached.chatCollapsed;
+  activeNodeId.value = String(cached.activeNodeId || '').trim();
+  pendingCanvasViewportRestore = cached.viewport
+    ? {
+        scopeKey: key,
+        viewport: {
+          zoom: cached.viewport.zoom,
+          position: [...cached.viewport.position] as [number, number],
+          centerOffset: [
+            Number(cached.viewport.centerOffset?.[0] || 0),
+            Number(cached.viewport.centerOffset?.[1] || 0)
+          ] as [number, number]
+        }
+      }
+    : null;
+  return true;
+};
+
+const restoreGraphViewportState = async (viewport: BeeroomCanvasViewportState | null) => {
+  if (!graph || !viewport) return false;
+  const targetZoom = clampCanvasZoom(Number(viewport.zoom));
+  const savedX = Number(viewport.position?.[0]);
+  const savedY = Number(viewport.position?.[1]);
+  const offsetX = Number(viewport.centerOffset?.[0]);
+  const offsetY = Number(viewport.centerOffset?.[1]);
+  const center = getCanvasViewportCenter();
+  const targetX = Number.isFinite(offsetX) ? center[0] + offsetX : savedX;
+  const targetY = Number.isFinite(offsetY) ? center[1] + offsetY : savedY;
+  if (!Number.isFinite(targetZoom) || !Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+    return false;
+  }
+  await graph.zoomTo(targetZoom, false, getCanvasViewportCenter());
+  const targetPosition: [number, number] = [targetX, targetY];
+  const currentPosition = normalizeGraphPosition(graph.getPosition());
+  if (!currentPosition) return false;
+  await graph.translateBy([targetPosition[0] - currentPosition[0], targetPosition[1] - currentPosition[1]], false);
+  const appliedPosition = normalizeGraphPosition(graph.getPosition());
+  if (!appliedPosition) return false;
+  const drift = Math.hypot(appliedPosition[0] - targetPosition[0], appliedPosition[1] - targetPosition[1]);
+  if (drift > 1.5) {
+    await graph.translateBy([targetPosition[0] - appliedPosition[0], targetPosition[1] - appliedPosition[1]], false);
+  }
+  const finalPosition = normalizeGraphPosition(graph.getPosition());
+  if (!finalPosition) return false;
+  return Math.hypot(finalPosition[0] - targetPosition[0], finalPosition[1] - targetPosition[1]) <= 2.5;
+};
 
 const persistDraggedNodePositions = (nodeIds?: string[]) => {
   if (!graph) return;
@@ -2152,26 +2359,13 @@ const persistDraggedNodePositions = (nodeIds?: string[]) => {
     }
   });
   nodePositionOverrides.value = nextOverrides;
+  saveCanvasState();
 };
-
-const getCanvasViewport = () => {
-  const rect = canvasRef.value?.getBoundingClientRect();
-  return {
-    width: Math.floor(rect?.width || canvasRef.value?.clientWidth || 0),
-    height: Math.floor(rect?.height || canvasRef.value?.clientHeight || 0)
-  };
-};
-
-const getCanvasViewportCenter = (): [number, number] => {
-  const viewport = getCanvasViewport();
-  return [Math.max(1, viewport.width / 2), Math.max(1, viewport.height / 2)];
-};
-
-const clampCanvasZoom = (zoom: number) => Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, zoom));
 
 const zoomCanvasTo = async (zoom: number) => {
   if (!graph) return;
   await graph.zoomTo(clampCanvasZoom(zoom), false, getCanvasViewportCenter());
+  saveCanvasState();
 };
 
 const zoomCanvasIn = async () => {
@@ -2191,13 +2385,14 @@ const resetCanvasZoom = async () => {
 const fitCanvasView = async () => {
   if (!graph) return;
   await graph.fitView({ when: 'always', direction: 'both' });
+  saveCanvasState();
 };
 
 const autoArrangeCanvas = async () => {
   nodePositionOverrides.value = {};
   hoveredNodeId.value = '';
   lastLayoutSignature = '';
-  await renderGraph(true);
+  await enqueueRenderGraph(true);
 };
 
 const refreshCanvasFullscreen = () => {
@@ -2532,175 +2727,230 @@ const waitForCanvasViewport = async (attempts = 10) => {
 };
 
 const ensureGraph = async () => {
-  if (!canvasRef.value || graph) return;
-  const Graph = await loadGraphCtor();
-  const viewport = await waitForCanvasViewport();
-  const plugins: any[] = [
-    {
-      key: GRID_PLUGIN_KEY,
-      type: 'grid-line',
-      size: 32,
-      lineWidth: 1,
-      stroke: 'rgba(148, 163, 184, 0.12)',
-      border: false,
-      follow: true
-    }
-  ];
-  if (minimapRef.value) {
-    plugins.push({
-      key: 'beeroom-minimap',
-      type: 'minimap',
-      container: minimapRef.value,
-      size: [132, 80],
-      padding: 10,
-      delay: 64,
-      shape: (id: string, elementType: string, element: any) => {
-        const keyShape = element?.getShape?.('key');
-        if (elementType === 'node') {
-          const keyContainer = element?.getShape?.('key-container') || keyShape;
-          const cloned = keyContainer?.cloneNode?.();
-          if (cloned) {
-            const status = projection.value.nodeMetaMap.get(String(id || '').trim())?.status || '';
+  if (!canvasRef.value || graph || canvasDisposed) return;
+  if (graphInitPromise) {
+    await graphInitPromise;
+    return;
+  }
+  graphInitPromise = (async () => {
+    if (!canvasRef.value || graph || canvasDisposed) return;
+    clearCanvasContainers();
+    const Graph = await loadGraphCtor();
+    if (!canvasRef.value || graph || canvasDisposed) return;
+    const viewport = await waitForCanvasViewport();
+    if (!canvasRef.value || graph || canvasDisposed) return;
+    const plugins: any[] = [
+      {
+        key: GRID_PLUGIN_KEY,
+        type: 'grid-line',
+        size: 32,
+        lineWidth: 1,
+        stroke: 'rgba(148, 163, 184, 0.12)',
+        border: false,
+        follow: true
+      }
+    ];
+    if (minimapRef.value) {
+      plugins.push({
+        key: 'beeroom-minimap',
+        type: 'minimap',
+        container: minimapRef.value,
+        size: [132, 80],
+        padding: 10,
+        delay: 64,
+        shape: (id: string, elementType: string, element: any) => {
+          const keyShape = element?.getShape?.('key');
+          if (elementType === 'node') {
+            const keyContainer = element?.getShape?.('key-container') || keyShape;
+            const cloned = keyContainer?.cloneNode?.();
+            if (cloned) {
+              const status = projection.value.nodeMetaMap.get(String(id || '').trim())?.status || '';
+              Object.assign(cloned.style, {
+                fill: resolveMinimapNodeFill(status),
+                stroke: 'rgba(148, 163, 184, 0.48)',
+                lineWidth: 0.8,
+                opacity: 0.96,
+                radius: 3
+              });
+              return cloned;
+            }
+          }
+          if (elementType === 'edge' && keyShape?.cloneNode) {
+            const cloned = keyShape.cloneNode();
             Object.assign(cloned.style, {
-              fill: resolveMinimapNodeFill(status),
-              stroke: 'rgba(148, 163, 184, 0.48)',
+              stroke: 'rgba(148, 163, 184, 0.42)',
               lineWidth: 0.8,
-              opacity: 0.96,
-              radius: 3
+              opacity: 0.9
             });
             return cloned;
           }
+          return keyShape?.cloneNode?.() || element;
+        },
+        maskStyle: {
+          border: '1px solid rgba(148, 163, 184, 0.56)',
+          background: 'rgba(148, 163, 184, 0.12)',
+          borderRadius: '8px'
         }
-        if (elementType === 'edge' && keyShape?.cloneNode) {
-          const cloned = keyShape.cloneNode();
-          Object.assign(cloned.style, {
-            stroke: 'rgba(148, 163, 184, 0.42)',
-            lineWidth: 0.8,
-            opacity: 0.9
-          });
-          return cloned;
+      } as any);
+    }
+    const nextGraph = new Graph({
+      container: canvasRef.value,
+      width: viewport.width,
+      height: viewport.height,
+      devicePixelRatio: Math.max(2, globalThis.devicePixelRatio || 1),
+      zoomRange: [CANVAS_ZOOM_MIN, CANVAS_ZOOM_MAX],
+      data: { nodes: [], edges: [] },
+      plugins,
+      node: {
+        type: 'html',
+        style: {
+          pointerEvents: 'auto',
+          label: false,
+          badge: false
         }
-        return keyShape?.cloneNode?.() || element;
       },
-      maskStyle: {
-        border: '1px solid rgba(148, 163, 184, 0.56)',
-        background: 'rgba(148, 163, 184, 0.12)',
-        borderRadius: '8px'
-      }
-    } as any);
-  }
-  graph = new Graph({
-    container: canvasRef.value,
-    width: viewport.width,
-    height: viewport.height,
-    devicePixelRatio: Math.max(2, globalThis.devicePixelRatio || 1),
-    zoomRange: [CANVAS_ZOOM_MIN, CANVAS_ZOOM_MAX],
-    data: { nodes: [], edges: [] },
-    plugins,
-    node: {
-      type: 'html',
-      style: {
-        pointerEvents: 'auto',
-        label: false,
-        badge: false
-      }
-    },
-    edge: {
-      type: 'polyline'
-    },
-    behaviors: [
-      {
-        type: 'drag-element',
-        key: 'drag-node',
-        dropEffect: 'none',
-        hideEdge: 'none',
-        shadow: false,
-        enable: (event: any) => event?.targetType === 'node',
-        onFinish: (ids: string[]) => persistDraggedNodePositions(ids)
+      edge: {
+        type: 'polyline'
       },
-      'drag-canvas',
-      'zoom-canvas',
-      'hover-activate'
-    ],
-    transforms: ['process-parallel-edges'],
-    animation: false,
-    theme: 'light'
-  });
+      behaviors: [
+        {
+          type: 'drag-element',
+          key: 'drag-node',
+          dropEffect: 'none',
+          hideEdge: 'none',
+          shadow: false,
+          enable: (event: any) => event?.targetType === 'node',
+          onFinish: (ids: string[]) => persistDraggedNodePositions(ids)
+        },
+        'drag-canvas',
+        'zoom-canvas',
+        'hover-activate'
+      ],
+      transforms: ['process-parallel-edges'],
+      animation: false,
+      theme: 'light'
+    });
+    if (canvasDisposed) {
+      nextGraph.destroy();
+      return;
+    }
+    graph = nextGraph;
 
-  graph.on('node:pointerenter', (event: any) => {
-    if (!showNodeTooltip) return;
-    const nodeId = String(event?.target?.id || '').trim();
-    const boardRect = boardRef.value?.getBoundingClientRect();
-    if (!nodeId) return;
-    hoveredNodeId.value = nodeId;
-    if (boardRect) {
+    graph.on('node:pointerenter', (event: any) => {
+      if (!showNodeTooltip) return;
+      const nodeId = String(event?.target?.id || '').trim();
+      const boardRect = boardRef.value?.getBoundingClientRect();
+      if (!nodeId) return;
+      hoveredNodeId.value = nodeId;
+      if (boardRect) {
+        hoveredTooltipPosition.value = {
+          x: Number(event?.client?.x || 0) - boardRect.left,
+          y: Number(event?.client?.y || 0) - boardRect.top
+        };
+      }
+    });
+
+    graph.on('node:pointermove', (event: any) => {
+      if (!showNodeTooltip) return;
+      const nodeId = String(event?.target?.id || '').trim();
+      const boardRect = boardRef.value?.getBoundingClientRect();
+      if (!nodeId || !boardRect) return;
+      hoveredNodeId.value = nodeId;
       hoveredTooltipPosition.value = {
         x: Number(event?.client?.x || 0) - boardRect.left,
         y: Number(event?.client?.y || 0) - boardRect.top
       };
-    }
-  });
-
-  graph.on('node:pointermove', (event: any) => {
-    if (!showNodeTooltip) return;
-    const nodeId = String(event?.target?.id || '').trim();
-    const boardRect = boardRef.value?.getBoundingClientRect();
-    if (!nodeId || !boardRect) return;
-    hoveredNodeId.value = nodeId;
-    hoveredTooltipPosition.value = {
-      x: Number(event?.client?.x || 0) - boardRect.left,
-      y: Number(event?.client?.y || 0) - boardRect.top
-    };
-  });
-
-  graph.on('node:pointerleave', () => {
-    hoveredNodeId.value = '';
-  });
-
-  graph.on('node:dragstart', () => {
-    hoveredNodeId.value = '';
-  });
-
-  graph.on('node:dragend', (event: any) => {
-    const nodeId = String(event?.target?.id || '').trim();
-    if (!nodeId) return;
-    persistDraggedNodePositions([nodeId]);
-  });
-
-  graph.on('canvas:pointerleave', () => {
-    hoveredNodeId.value = '';
-  });
-
-  graph.on('node:click', (event: any) => {
-    if (event?.targetType !== 'node') return;
-    const nodeId = String(event?.target?.id || '').trim();
-    if (!nodeId) return;
-    activeNodeId.value = nodeId;
-  });
-
-  graph.on('node:dblclick', (event: any) => {
-    if (event?.targetType !== 'node') return;
-    const nodeId = String(event?.target?.id || '').trim();
-    if (!nodeId) return;
-    const meta = projection.value.nodeMetaMap.get(nodeId);
-    if (meta?.agent_id) {
-      emit('open-agent', meta.agent_id);
-    }
-  });
-
-  resizeObserver = new ResizeObserver(() => {
-    if (!graph || !canvasRef.value) return;
-    if (resizeFrame) {
-      cancelAnimationFrame(resizeFrame);
-    }
-    resizeFrame = requestAnimationFrame(async () => {
-      const viewport = await waitForCanvasViewport(3);
-      graph?.resize(viewport.width, viewport.height);
-      // Keep current pan/zoom when chat panel width changes.
-      resizeFrame = 0;
     });
-  });
-  resizeObserver.observe(canvasRef.value);
+
+    graph.on('node:pointerleave', () => {
+      hoveredNodeId.value = '';
+    });
+
+    graph.on('node:dragstart', () => {
+      hoveredNodeId.value = '';
+    });
+
+    graph.on('node:dragend', (event: any) => {
+      const nodeId = String(event?.target?.id || '').trim();
+      if (!nodeId) return;
+      persistDraggedNodePositions([nodeId]);
+    });
+
+    graph.on('canvas:dragend', () => {
+      saveCanvasState();
+    });
+
+    graph.on('wheel', () => {
+      scheduleCanvasStateSave(120);
+    });
+
+    graph.on('canvas:pointerleave', () => {
+      hoveredNodeId.value = '';
+    });
+
+    graph.on('node:click', (event: any) => {
+      if (event?.targetType !== 'node') return;
+      const nodeId = String(event?.target?.id || '').trim();
+      if (!nodeId) return;
+      activeNodeId.value = nodeId;
+    });
+
+    graph.on('node:dblclick', (event: any) => {
+      if (event?.targetType !== 'node') return;
+      const nodeId = String(event?.target?.id || '').trim();
+      if (!nodeId) return;
+      const meta = projection.value.nodeMetaMap.get(nodeId);
+      if (meta?.agent_id) {
+        emit('open-agent', meta.agent_id);
+      }
+    });
+
+    resizeObserver = new ResizeObserver(() => {
+      if (!graph || !canvasRef.value) return;
+      if (resizeFrame) {
+        cancelAnimationFrame(resizeFrame);
+      }
+      resizeFrame = requestAnimationFrame(async () => {
+        const viewport = await waitForCanvasViewport(3);
+        const currentGraph = graph;
+        if (!currentGraph) {
+          resizeFrame = 0;
+          return;
+        }
+        const size = currentGraph.getSize?.() || [viewport.width, viewport.height];
+        const previousCenter: [number, number] = [
+          Math.max(1, Number(size?.[0] || 0) / 2),
+          Math.max(1, Number(size?.[1] || 0) / 2)
+        ];
+        const previousPosition = normalizeGraphPosition(currentGraph.getPosition());
+        currentGraph.resize(viewport.width, viewport.height);
+        if (previousPosition) {
+          // Keep the same pan offset relative to viewport center after resize.
+          const nextCenter: [number, number] = [Math.max(1, viewport.width / 2), Math.max(1, viewport.height / 2)];
+          const targetPosition: [number, number] = [
+            nextCenter[0] + (previousPosition[0] - previousCenter[0]),
+            nextCenter[1] + (previousPosition[1] - previousCenter[1])
+          ];
+          const resizedPosition = normalizeGraphPosition(currentGraph.getPosition());
+          if (resizedPosition) {
+            await currentGraph.translateBy(
+              [targetPosition[0] - resizedPosition[0], targetPosition[1] - resizedPosition[1]],
+              false
+            );
+          }
+        }
+        scheduleCanvasStateSave(80);
+        // Keep current pan/zoom when chat panel width changes.
+        resizeFrame = 0;
+      });
+    });
+    resizeObserver.observe(canvasRef.value);
+  })();
+  try {
+    await graphInitPromise;
+  } finally {
+    graphInitPromise = null;
+  }
 };
 
 const clearGraph = async () => {
@@ -2712,6 +2962,7 @@ const clearGraph = async () => {
 };
 
 const renderGraph = async (forceFit = false) => {
+  const sequence = ++renderSequence;
   if (!projection.value.nodes.length) {
     activeNodeId.value = '';
     hoveredNodeId.value = '';
@@ -2722,24 +2973,86 @@ const renderGraph = async (forceFit = false) => {
     return;
   }
   await nextTick();
+  if (sequence !== renderSequence || canvasDisposed) return;
   const viewport = await waitForCanvasViewport();
+  if (sequence !== renderSequence || canvasDisposed) return;
   await ensureGraph();
-  if (!graph) return;
-  graph.resize(viewport.width, viewport.height);
-  graph.setData({ nodes: projection.value.nodes, edges: projection.value.edges });
-  await graph.render();
-  if (forceFit || lastLayoutSignature !== layoutSignature.value) {
-    await graph.fitView({ when: 'always', direction: 'both' });
-    lastLayoutSignature = layoutSignature.value;
+  if (sequence !== renderSequence || canvasDisposed) return;
+  const currentGraph = graph;
+  if (!currentGraph) return;
+  currentGraph.resize(viewport.width, viewport.height);
+  currentGraph.setData({ nodes: projection.value.nodes, edges: projection.value.edges });
+  await currentGraph.render();
+  if (sequence !== renderSequence || canvasDisposed || currentGraph !== graph) return;
+  const scopeKey = resolveCanvasScopeKey();
+  const cachedScopeState = getBeeroomMissionCanvasState(scopeKey);
+  const hasManualLayoutOverrides =
+    hasPositionOverrides(nodePositionOverrides.value) || hasPositionOverrides(cachedScopeState?.nodePositionOverrides);
+  const viewportToRestore =
+    pendingCanvasViewportRestore && pendingCanvasViewportRestore.scopeKey === scopeKey
+      ? pendingCanvasViewportRestore.viewport
+      : (cachedScopeState?.viewport ?? null);
+  let restoredViewport = false;
+  if (viewportToRestore) {
+    restoredViewport = await restoreGraphViewportState(viewportToRestore);
+    if (!restoredViewport) {
+      // One more attempt on next frame after viewport settles.
+      await waitForCanvasFrame();
+      restoredViewport = await restoreGraphViewportState(viewportToRestore);
+    }
   }
+  if (pendingCanvasViewportRestore && pendingCanvasViewportRestore.scopeKey === scopeKey) {
+    pendingCanvasViewportRestore = null;
+  }
+  if (sequence !== renderSequence || canvasDisposed || currentGraph !== graph) return;
+  if (
+    !restoredViewport &&
+    !viewportToRestore &&
+    !hasManualLayoutOverrides &&
+    (forceFit || lastLayoutSignature !== layoutSignature.value)
+  ) {
+    await currentGraph.fitView({ when: 'always', direction: 'both' });
+    if (sequence !== renderSequence || canvasDisposed || currentGraph !== graph) return;
+  }
+  lastLayoutSignature = layoutSignature.value;
   syncDispatchEdgeFlow();
+  saveCanvasState(scopeKey);
+};
+
+const enqueueRenderGraph = async (forceFit = false) => {
+  renderRequested = true;
+  renderRequestedForceFit = renderRequestedForceFit || forceFit;
+  if (renderTask) {
+    await renderTask;
+    return;
+  }
+  renderTask = (async () => {
+    while (renderRequested) {
+      const nextForceFit = renderRequestedForceFit;
+      renderRequested = false;
+      renderRequestedForceFit = false;
+      await renderGraph(nextForceFit);
+    }
+  })();
+  try {
+    await renderTask;
+  } finally {
+    renderTask = null;
+  }
 };
 
 watch(
   nodePositionScopeKey,
-  () => {
-    // Keep manual dragging local to the current mission/group scope.
-    nodePositionOverrides.value = {};
+  (current, previous) => {
+    const previousScopeKey = String(previous || '').trim() || 'standby';
+    const currentScopeKey = resolveCanvasScopeKey(current);
+    if (previousScopeKey && previousScopeKey !== currentScopeKey) {
+      saveCanvasState(previousScopeKey);
+    }
+    currentCanvasScopeKey = currentScopeKey;
+    hydrateCanvasState(currentScopeKey);
+    // New scope should re-evaluate layout/viewport once.
+    lastLayoutSignature = '';
   },
   { immediate: true }
 );
@@ -2748,9 +3061,14 @@ watch(
   activeNodeId,
   async (current, previous) => {
     if (current === previous || !graph || !projection.value.nodes.length) return;
-    await renderGraph(false);
+    await enqueueRenderGraph(false);
+    saveCanvasState();
   }
 );
+
+watch(chatCollapsed, () => {
+  saveCanvasState();
+});
 
 watch(
   renderSignature,
@@ -2758,24 +3076,38 @@ watch(
     const missionIdentity = String(props.mission?.mission_id || props.mission?.team_run_id || '').trim();
     const missionChanged = missionIdentity !== lastMissionIdentity;
     lastMissionIdentity = missionIdentity;
-    if (!activeNodeId.value || !projection.value.nodeMetaMap.has(activeNodeId.value) || missionChanged) {
+    if (!activeNodeId.value || !projection.value.nodeMetaMap.has(activeNodeId.value)) {
       activeNodeId.value = projection.value.motherNodeId || projection.value.nodes[0]?.id || '';
     }
-    await renderGraph(missionChanged);
+    const scopeKey = resolveCanvasScopeKey();
+    const cachedScopeState = getBeeroomMissionCanvasState(scopeKey);
+    const hasManualLayoutOverrides =
+      hasPositionOverrides(nodePositionOverrides.value) || hasPositionOverrides(cachedScopeState?.nodePositionOverrides);
+    const shouldForceFit =
+      missionChanged && !(pendingCanvasViewportRestore?.scopeKey === scopeKey) && !hasManualLayoutOverrides;
+    await enqueueRenderGraph(shouldForceFit);
   },
   { immediate: true }
 );
 
 onMounted(async () => {
+  canvasDisposed = false;
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
     refreshCanvasFullscreen();
   }
   restartChatPolling();
-  await renderGraph();
 });
 
 onBeforeUnmount(() => {
+  canvasDisposed = true;
+  renderSequence += 1;
+  renderRequested = false;
+  renderRequestedForceFit = false;
+  renderTask = null;
+  graphInitPromise = null;
+  saveCanvasState(currentCanvasScopeKey || resolveCanvasScopeKey());
+  clearCanvasWheelSaveTimer();
   resetDispatchRuntime();
   stopChatPolling();
   stopDispatchEdgeFlow();
@@ -2792,6 +3124,7 @@ onBeforeUnmount(() => {
   }
   graph?.destroy();
   graph = null;
+  clearCanvasContainers();
 });
 </script>
 
@@ -2951,8 +3284,8 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  padding: 10px 10px 9px;
-  border-radius: 12px;
+  padding: 8px 8px 7px;
+  border-radius: 11px;
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: linear-gradient(180deg, rgba(23, 26, 35, 0.96), rgba(14, 16, 22, 0.95));
   box-shadow:
@@ -2995,19 +3328,19 @@ onBeforeUnmount(() => {
 .beeroom-canvas-surface :deep(.beeroom-node-card-head) {
   min-width: 0;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) max-content;
-  gap: 7px;
+  grid-template-columns: 22px minmax(0, 1fr) max-content;
+  gap: 6px;
   align-items: center;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-avatar) {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
   color: #f8fafc;
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -3020,13 +3353,13 @@ onBeforeUnmount(() => {
 .beeroom-canvas-surface :deep(.beeroom-node-title-group) {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-title) {
   color: #f8fafc;
-  font-size: 12px;
-  font-weight: 650;
+  font-size: 11px;
+  font-weight: 640;
   line-height: 1.18;
   white-space: nowrap;
   overflow: hidden;
@@ -3035,15 +3368,15 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-surface :deep(.beeroom-node-role-chip) {
   justify-self: flex-start;
-  max-width: 96px;
-  min-height: 15px;
-  padding: 0 6px;
+  max-width: 88px;
+  min-height: 14px;
+  padding: 0 5px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   background: rgba(30, 41, 59, 0.38);
   color: rgba(203, 213, 225, 0.92);
-  font-size: 9px;
-  line-height: 13px;
+  font-size: 8px;
+  line-height: 12px;
   letter-spacing: 0.03em;
   white-space: nowrap;
   overflow: hidden;
@@ -3051,19 +3384,19 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-status) {
-  max-width: 84px;
-  height: 20px;
-  padding: 0 6px;
+  max-width: 74px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.3);
   background: rgba(51, 65, 85, 0.35);
   color: #cbd5e1;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 600;
-  line-height: 18px;
+  line-height: 16px;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3072,8 +3405,8 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-status-dot) {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.96);
   flex-shrink: 0;
@@ -3082,7 +3415,7 @@ onBeforeUnmount(() => {
 .beeroom-canvas-surface :deep(.beeroom-node-metrics) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric) {
@@ -3091,27 +3424,27 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 5px;
   min-width: 0;
-  height: 20px;
-  padding: 0 6px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.2);
   background: rgba(30, 41, 59, 0.42);
   color: rgba(226, 232, 240, 0.9);
-  font-size: 10px;
-  line-height: 18px;
+  font-size: 9px;
+  line-height: 16px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric i) {
-  font-size: 9px;
+  font-size: 8px;
   opacity: 0.9;
   flex-shrink: 0;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric b) {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   color: rgba(248, 250, 252, 0.94);
   line-height: 1;

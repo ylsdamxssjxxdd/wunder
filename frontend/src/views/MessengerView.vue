@@ -1292,6 +1292,7 @@ import {
   splitMessengerBootstrapTasks,
   type MessengerBootstrapTask
 } from '@/views/messenger/bootstrap';
+import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
@@ -1690,6 +1691,9 @@ let audioRecordingSupportRetryTimer: number | null = null;
 let startRealtimePulse: (() => void) | null = null;
 let stopRealtimePulse: (() => void) | null = null;
 let triggerRealtimePulseRefresh: ((reason?: string) => void) | null = null;
+let startBeeroomRealtimeSync: (() => void) | null = null;
+let stopBeeroomRealtimeSync: (() => void) | null = null;
+let triggerBeeroomRealtimeSyncRefresh: ((reason?: string) => void) | null = null;
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 type WorldVoiceRecordingRuntime = {
   session: AudioRecordingSession;
@@ -1722,6 +1726,7 @@ let desktopDefaultModelMetaFetchPromise: Promise<{
   modelDisplayName: string;
 }> | null = null;
 let agentVoiceModelSupportCheckedAt = 0;
+let beeroomGroupsLastRefreshAt = 0;
 const agentUnreadRefreshInFlight = new Set<string>();
 const MARKDOWN_CACHE_LIMIT = 280;
 const MARKDOWN_STREAM_THROTTLE_MS = 80;
@@ -1732,6 +1737,8 @@ const MESSAGE_VIRTUAL_OVERSCAN = 8;
 const MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = 118;
 const MESSAGE_VIRTUAL_GAP = 12;
 const AGENT_VOICE_MODEL_SUPPORT_CACHE_MS = 30_000;
+const BEEROOM_GROUPS_REFRESH_MIN_MS_HOT = 2800;
+const BEEROOM_GROUPS_REFRESH_MIN_MS_IDLE = 7000;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
 type WorkspaceResourceCachePayload = { objectUrl: string; filename: string };
 type WorkspaceResourceCacheEntry = {
@@ -4362,6 +4369,34 @@ const hasHotRuntimeState = computed(() => {
   return false;
 });
 
+const isHotBeeroomMissionStatus = (value: unknown): boolean => {
+  const status = String(value || '').trim().toLowerCase();
+  return (
+    status === 'queued' ||
+    status === 'running' ||
+    status === 'awaiting_idle' ||
+    status === 'pending' ||
+    status === 'resuming' ||
+    status === 'merging'
+  );
+};
+
+const hasHotBeeroomRuntimeState = computed(() => {
+  const activeMissions = Array.isArray(beeroomStore.activeMissions) ? beeroomStore.activeMissions : [];
+  if (
+    activeMissions.some((mission) =>
+      isHotBeeroomMissionStatus(mission?.completion_status || mission?.status)
+    )
+  ) {
+    return true;
+  }
+  if (Number(beeroomStore.activeGroup?.running_mission_total || 0) > 0) {
+    return true;
+  }
+  const groups = Array.isArray(beeroomStore.groups) ? beeroomStore.groups : [];
+  return groups.some((group) => Number(group?.running_mission_total || 0) > 0);
+});
+
 const normalizeAgentUserRoundsKey = (value: unknown): string => {
   const raw = String(value || '').trim();
   if (!raw) return DEFAULT_AGENT_KEY;
@@ -4673,7 +4708,8 @@ const worldRenderableMessages = computed<WorldRenderableMessage[]>(() =>
   (Array.isArray(userWorldStore.activeMessages) ? userWorldStore.activeMessages : []).map((rawMessage, sourceIndex) => {
     const message = (rawMessage || {}) as Record<string, unknown>;
     return {
-      key: resolveWorldMessageKey(message),
+      // Keep vnode keys strictly unique in a render pass to avoid component patch corruption.
+      key: resolveWorldRenderKey(message, sourceIndex),
       sourceIndex,
       domId: resolveWorldMessageDomId(message),
       message
@@ -5660,6 +5696,11 @@ const resolveWorldMessageKey = (message: Record<string, unknown>): string =>
       `${message?.sender_user_id || 'peer'}-${message?.created_at || ''}`
   );
 
+const resolveWorldRenderKey = (message: Record<string, unknown>, index: number): string => {
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
+  return `${resolveWorldMessageKey(message)}:${safeIndex}`;
+};
+
 const resolveWorldMessageDomId = (message: Record<string, unknown>): string => {
   const messageId = Number.parseInt(String(message?.message_id || ''), 10);
   if (Number.isFinite(messageId) && messageId > 0) {
@@ -5849,8 +5890,11 @@ const toggleWorldVoicePlayback = async (message: Record<string, unknown>) => {
   }
 };
 
-const resolveAgentMessageKey = (message: Record<string, unknown>, index: number): string =>
-  String(message?.id || message?.message_id || `${message?.role || 'm'}-${index}`);
+const resolveAgentMessageKey = (message: Record<string, unknown>, index: number): string => {
+  const base = String(message?.id || message?.message_id || message?.request_id || message?.role || 'm');
+  const safeIndex = Number.isFinite(index) ? Math.max(0, Math.trunc(index)) : 0;
+  return `${base}:${safeIndex}`;
+};
 
 const isMixedConversationActive = (item: MixedConversation): boolean => {
   const identity = activeConversation.value;
@@ -6243,6 +6287,27 @@ const refreshActiveBeeroom = async () => {
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }
+};
+
+const refreshBeeroomRealtimeGroups = async () => {
+  const now = Date.now();
+  const minInterval = hasHotBeeroomRuntimeState.value
+    ? BEEROOM_GROUPS_REFRESH_MIN_MS_HOT
+    : BEEROOM_GROUPS_REFRESH_MIN_MS_IDLE;
+  const shouldRefreshGroups = now - beeroomGroupsLastRefreshAt >= minInterval;
+  if (shouldRefreshGroups) {
+    await beeroomStore.loadGroups();
+    beeroomGroupsLastRefreshAt = Date.now();
+  }
+  await loadRunningAgents();
+};
+
+const refreshBeeroomRealtimeActiveGroup = async () => {
+  const activeGroupId = String(beeroomStore.activeGroupId || '').trim();
+  if (!activeGroupId) {
+    return;
+  }
+  await beeroomStore.loadActiveGroup({ silent: true });
 };
 
 
@@ -9026,6 +9091,7 @@ watch(
       router.replace({ path: route.path, query: nextQuery }).catch(() => undefined);
     }
     beeroomStore.resetState();
+    beeroomGroupsLastRefreshAt = 0;
     selectedAgentHiveGroupId.value = '';
     void hydrateCurrentUserAppearance();
     cronPermissionDenied.value = false;
@@ -9063,8 +9129,13 @@ watch(
     closeFileContainerMenu();
     if (section === 'swarms') {
       stopRealtimePulse?.();
+      beeroomGroupsLastRefreshAt = 0;
+      startBeeroomRealtimeSync?.();
+      triggerBeeroomRealtimeSyncRefresh?.('enter-swarms');
     } else {
+      stopBeeroomRealtimeSync?.();
       startRealtimePulse?.();
+      triggerRealtimePulseRefresh?.(`enter-${section}`);
     }
     if (section !== 'swarms') {
       beeroomWorkbenchMode.value = 'text';
@@ -9119,9 +9190,20 @@ watch(
 watch(
   () => hasHotRuntimeState.value,
   (hot) => {
-    if (hot) {
-      triggerRealtimePulseRefresh?.('hot-runtime');
+    if (!hot) return;
+    if (sessionHub.activeSection === 'swarms') {
+      triggerBeeroomRealtimeSyncRefresh?.('hot-runtime');
+      return;
     }
+    triggerRealtimePulseRefresh?.('hot-runtime');
+  }
+);
+
+watch(
+  () => hasHotBeeroomRuntimeState.value,
+  (hot) => {
+    if (!hot || sessionHub.activeSection !== 'swarms') return;
+    triggerBeeroomRealtimeSyncRefresh?.('hot-beeroom');
   }
 );
 
@@ -9517,10 +9599,24 @@ onMounted(async () => {
       !userWorldPermissionDenied.value &&
       (sessionHub.activeSection === 'users' || sessionHub.activeSection === 'messages')
   });
+  const beeroomRealtimeSync = createBeeroomRealtimeSync({
+    refreshBeeroomGroups: refreshBeeroomRealtimeGroups,
+    refreshBeeroomActiveGroup: refreshBeeroomRealtimeActiveGroup,
+    isHotState: () => hasHotBeeroomRuntimeState.value,
+    shouldSync: () => sessionHub.activeSection === 'swarms',
+    refreshRunningAgents: loadRunningAgents
+  });
   startRealtimePulse = () => realtimePulse.start();
   stopRealtimePulse = () => realtimePulse.stop();
   triggerRealtimePulseRefresh = (reason = '') => realtimePulse.trigger(reason);
-  realtimePulse.start();
+  startBeeroomRealtimeSync = () => beeroomRealtimeSync.start();
+  stopBeeroomRealtimeSync = () => beeroomRealtimeSync.stop();
+  triggerBeeroomRealtimeSyncRefresh = (reason = '') => beeroomRealtimeSync.trigger(reason);
+  if (sessionHub.activeSection === 'swarms') {
+    beeroomRealtimeSync.start();
+  } else {
+    realtimePulse.start();
+  }
 });
 
 onBeforeUnmount(() => {
@@ -9564,9 +9660,13 @@ onBeforeUnmount(() => {
     contactVirtualFrame = null;
   }
   stopRealtimePulse?.();
+  stopBeeroomRealtimeSync?.();
   startRealtimePulse = null;
   stopRealtimePulse = null;
   triggerRealtimePulseRefresh = null;
+  startBeeroomRealtimeSync = null;
+  stopBeeroomRealtimeSync = null;
+  triggerBeeroomRealtimeSyncRefresh = null;
   if (lifecycleTimer) {
     window.clearInterval(lifecycleTimer);
     lifecycleTimer = null;

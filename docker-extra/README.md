@@ -111,7 +111,7 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-
   bash /app/docker-extra/scripts/package_appimage_with_python.sh'
 ```
 
-> 启动时延优化：脚本现在默认会优先选择更快的 SquashFS 压缩算法（优先 `zstd`，其次 `gzip`，最后回退 `xz`），以改善 AppImage 冷启动时间；如需更小体积可显式传入 `APPIMAGE_COMP=xz`。
+> 兼容性优化：脚本默认优先使用 `gzip` 压缩（对旧版 FUSE/squashfs 环境更友好），可通过 `APPIMAGE_COMP=zstd` 获取更快冷启动，或使用 `APPIMAGE_COMP=xz` 追求更小体积。
 
 运行时将 `wunder补充包` 解压到 AppImage 同目录即可（AppRun 会自动识别并设置 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`）。
 

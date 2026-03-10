@@ -1615,7 +1615,7 @@ fn normalize_workspace_changed_path(raw: &str, workspace_id: &str) -> Option<Str
     if let Some(stripped) = value.strip_prefix("file://") {
         value = stripped.to_string();
     }
-    if let Some(index) = value.find(|ch| ch == '?' || ch == '#') {
+    if let Some(index) = value.find(['?', '#']) {
         value.truncate(index);
     }
     if value == "/" || value == "." {

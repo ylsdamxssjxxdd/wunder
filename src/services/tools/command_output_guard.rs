@@ -229,7 +229,7 @@ mod tests {
         collector.push_chunk(b"def");
         let capture = collector.finish();
 
-        assert_eq!(capture.meta.truncated, false);
+        assert!(!capture.meta.truncated);
         assert_eq!(capture.meta.total_bytes, 6);
         assert_eq!(capture.meta.kept_bytes, 6);
         assert_eq!(capture.meta.omitted_bytes, 0);
@@ -247,7 +247,7 @@ mod tests {
         collector.push_chunk(b"ABCDEFGHIJ");
         let capture = collector.finish();
 
-        assert_eq!(capture.meta.truncated, true);
+        assert!(capture.meta.truncated);
         assert_eq!(capture.meta.total_bytes, 20);
         assert_eq!(capture.meta.kept_bytes, 10);
         assert_eq!(capture.meta.omitted_bytes, 10);

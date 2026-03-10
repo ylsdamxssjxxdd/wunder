@@ -644,6 +644,9 @@
   'channels.form.xmpp.heartbeatTimeoutS': 'Heartbeat Timeout (s)',
   'channels.form.xmpp.heartbeatTimeoutSPlaceholder': 'Default 20',
   'channels.form.xmpp.respondPing': 'Respond to Remote Ping',
+  'channels.form.xmpp.advancedToggle': 'Show advanced XMPP options',
+  'channels.form.xmpp.advancedHint':
+    'Use only when SRV discovery, group rooms, or heartbeat behavior needs customization.',
   'auth.login.title': 'Sign In',
   'auth.login.username': 'Username',
   'auth.login.password': 'Password',

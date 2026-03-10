@@ -47,6 +47,7 @@
             v-model="form.group"
             :groups="beeroomGroups"
             :default-group-id="defaultBeeroomGroupId"
+            :allow-create="false"
           />
         </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.systemPrompt')">
@@ -136,7 +137,6 @@ import { useI18n } from '@/i18n';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
-  normalizeBeeroomGroupDraft,
   type BeeroomGroupDraft,
   type BeeroomGroupOption
 } from '@/utils/beeroomGroupDraft';
@@ -350,11 +350,6 @@ const handleSave = async () => {
   const name = String(form.name || '').trim();
   if (!name) {
     ElMessage.warning(t('portal.agent.nameRequired'));
-    return;
-  }
-  const groupDraft = normalizeBeeroomGroupDraft(form.group, String(props.defaultBeeroomGroupId || '').trim());
-  if (groupDraft.mode === 'new' && !groupDraft.hive_name) {
-    ElMessage.warning(t('beeroom.dialog.nameRequired'));
     return;
   }
   saving.value = true;

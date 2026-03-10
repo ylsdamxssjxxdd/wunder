@@ -1,6 +1,6 @@
 ﻿<template>
   <div class="beeroom-group-field">
-    <div class="beeroom-group-field__mode-row">
+    <div v-if="allowCreate" class="beeroom-group-field__mode-row">
       <button
         class="beeroom-group-field__mode-btn"
         :class="{ active: localDraft.mode === 'existing' }"
@@ -21,7 +21,7 @@
       </button>
     </div>
 
-    <template v-if="localDraft.mode === 'existing'">
+    <template v-if="localDraft.mode === 'existing' || !allowCreate">
       <el-select
         v-model="localDraft.hive_id"
         clearable
@@ -31,7 +31,6 @@
         :placeholder="t('messenger.agentGroup.placeholder')"
         @change="emitChange"
       >
-        <el-option :label="t('messenger.agentGroup.defaultOption')" value="" />
         <el-option
           v-for="group in normalizedGroups"
           :key="group.group_id"
@@ -80,12 +79,14 @@ const props = withDefaults(
     modelValue?: Partial<BeeroomGroupDraft> | null;
     groups?: BeeroomGroupOption[];
     defaultGroupId?: string;
+    allowCreate?: boolean;
     disabled?: boolean;
   }>(),
   {
     modelValue: null,
     groups: () => [],
     defaultGroupId: '',
+    allowCreate: true,
     disabled: false
   }
 );
@@ -111,18 +112,28 @@ const localDraft = reactive<BeeroomGroupDraft>(createBeeroomGroupDraft(props.def
 
 const syncLocalDraft = (value: Partial<BeeroomGroupDraft> | null | undefined) => {
   const next = normalizeBeeroomGroupDraft(value, props.defaultGroupId);
-  localDraft.mode = next.mode;
+  localDraft.mode = props.allowCreate ? next.mode : 'existing';
   localDraft.hive_id = next.hive_id;
-  localDraft.hive_name = next.hive_name;
-  localDraft.hive_description = next.hive_description;
+  localDraft.hive_name = props.allowCreate ? next.hive_name : '';
+  localDraft.hive_description = props.allowCreate ? next.hive_description : '';
 };
 
 const emitChange = () => {
-  emit('update:modelValue', normalizeBeeroomGroupDraft(localDraft, props.defaultGroupId));
+  const next = normalizeBeeroomGroupDraft(localDraft, props.defaultGroupId);
+  if (!props.allowCreate) {
+    emit('update:modelValue', {
+      mode: 'existing',
+      hive_id: next.hive_id,
+      hive_name: '',
+      hive_description: ''
+    });
+    return;
+  }
+  emit('update:modelValue', next);
 };
 
 const setMode = (mode: 'existing' | 'new') => {
-  if (props.disabled) return;
+  if (props.disabled || !props.allowCreate) return;
   localDraft.mode = mode;
   if (mode === 'existing') {
     if (!localDraft.hive_id) {
@@ -151,6 +162,17 @@ watch(
       localDraft.hive_id = String(value || '').trim();
       emitChange();
     }
+  }
+);
+
+watch(
+  () => props.allowCreate,
+  (allowCreate) => {
+    if (allowCreate || localDraft.mode === 'existing') return;
+    localDraft.mode = 'existing';
+    localDraft.hive_name = '';
+    localDraft.hive_description = '';
+    emitChange();
   }
 );
 </script>

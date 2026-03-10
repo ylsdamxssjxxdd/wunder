@@ -22,6 +22,12 @@ pub struct BeeroomRealtimeService {
     sequence: AtomicI64,
 }
 
+impl Default for BeeroomRealtimeService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BeeroomRealtimeService {
     pub fn new() -> Self {
         Self {

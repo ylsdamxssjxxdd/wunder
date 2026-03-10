@@ -176,10 +176,39 @@ supports_appimage_compression_flag() {
   "${tool}" --help 2>&1 | grep -q -- '--comp'
 }
 
+prepare_appimagetool_runner() {
+  local runner=$1
+  local work_root=$2
+  if [[ "${runner}" != *.AppImage ]]; then
+    echo "${runner}"
+    return 0
+  fi
+
+  local tool_work="${work_root}/tool-extract"
+  extract_appimage "${runner}" "${tool_work}"
+  local extracted_root="${tool_work}/squashfs-root"
+  local extracted_runner="${extracted_root}/AppRun"
+  if [ ! -x "${extracted_runner}" ]; then
+    echo "Extracted appimagetool runner missing at ${extracted_runner}." >&2
+    exit 1
+  fi
+
+  local system_mksquashfs
+  system_mksquashfs=$(command -v mksquashfs || true)
+  if [ -n "${system_mksquashfs}" ] && [ -x "${system_mksquashfs}" ]; then
+    mkdir -p "${extracted_root}/usr/bin"
+    cp "${system_mksquashfs}" "${extracted_root}/usr/bin/mksquashfs"
+    chmod +x "${extracted_root}/usr/bin/mksquashfs"
+  fi
+
+  echo "${extracted_runner}"
+}
+
 resolve_supported_appimage_comp() {
   local requested=${1:-auto}
+  local mksquashfs_bin=${2:-mksquashfs}
   local squashfs_help
-  squashfs_help=$(mksquashfs -help 2>&1 || true)
+  squashfs_help=$("${mksquashfs_bin}" -help 2>&1 || true)
 
   supports_comp() {
     local name=$1
@@ -187,16 +216,24 @@ resolve_supported_appimage_comp() {
   }
 
   if [ "${requested}" != "auto" ]; then
+    if ! supports_comp "${requested}"; then
+      echo "Requested AppImage compression '${requested}' is unsupported by ${mksquashfs_bin}, falling back to auto." >&2
+      requested="auto"
+    fi
+  fi
+
+  if [ "${requested}" != "auto" ]; then
     echo "${requested}"
     return 0
   fi
 
-  if supports_comp zstd; then
-    echo "zstd"
-    return 0
-  fi
+  # Default to gzip for better compatibility with older FUSE/squashfs stacks.
   if supports_comp gzip; then
     echo "gzip"
+    return 0
+  fi
+  if supports_comp zstd; then
+    echo "zstd"
     return 0
   fi
   echo "xz"
@@ -274,8 +311,8 @@ if [ -n "${WUNDER_EXTRA_DIR:-}" ] && [ -d "${WUNDER_EXTRA_DIR}" ]; then
   EXTRA_ROOT="${WUNDER_EXTRA_DIR}"
 fi
 if [ -z "$EXTRA_ROOT" ] && [ -n "$APPIMAGE_DIR" ]; then
-  for candidate in "$APPIMAGE_DIR/wunder补充包" "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python"; do
-    if [ -d "$candidate" ]; then
+  for candidate in "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python" "$APPIMAGE_DIR"/wunder*; do
+    if [ -d "$candidate" ] && { [ -d "$candidate/opt/python" ] || [ -d "$candidate/python" ] || [ -d "$candidate/opt/git" ] || [ -d "$candidate/git" ]; }; then
       EXTRA_ROOT="$candidate"
       break
     fi
@@ -301,7 +338,6 @@ PY_VER="3.11"
 if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
   PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
 fi
-PYTHON_LD=""
 PATH_PREFIX=""
 if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/bin" ]; then
   PATH_PREFIX="$GIT_ROOT/bin"
@@ -311,7 +347,6 @@ if [ -n "$PYTHON_ROOT" ]; then
   export PYTHONPATH="$PYTHON_ROOT/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
   export WUNDER_PYTHON_BIN="$PYTHON_ROOT/bin/python3"
   export PATH="${PATH_PREFIX:+$PATH_PREFIX:}$PYTHON_ROOT/bin:${PATH:-}"
-  PYTHON_LD="$PYTHON_ROOT/lib:"
   export PYTHONNOUSERSITE=1
   export PIP_NO_INDEX=1
   if [ -f "$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
@@ -323,11 +358,8 @@ if [ -n "$PYTHON_ROOT" ]; then
 else
   export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"
 fi
-GIT_LD=""
-if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/lib" ]; then
-  GIT_LD="$GIT_ROOT/lib:"
-fi
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:${GIT_LD}${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+# Keep Electron on AppImage/system libs; avoid sidecar git/python libs polluting main process.
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
 PLAYWRIGHT_DIR=""
 if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
   PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
@@ -350,7 +382,18 @@ if [ -n "$GIT_ROOT" ]; then
     export WUNDER_GIT_BIN="$GIT_ROOT/bin/git"
   fi
 fi
-exec "$APPDIR/AppRun.orig" "$@"
+MAIN_BIN=""
+for candidate in "$APPDIR/usr/bin/wunder-desktop" "$APPDIR/wunder-desktop"; do
+  if [ -x "$candidate" ]; then
+    MAIN_BIN="$candidate"
+    break
+  fi
+done
+if [ -z "$MAIN_BIN" ]; then
+  echo "wunder-desktop binary not found under $APPDIR" >&2
+  exit 127
+fi
+exec "$MAIN_BIN" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
 else
@@ -368,8 +411,8 @@ if [ -n "${WUNDER_EXTRA_DIR:-}" ] && [ -d "${WUNDER_EXTRA_DIR}" ]; then
   EXTRA_ROOT="${WUNDER_EXTRA_DIR}"
 fi
 if [ -z "$EXTRA_ROOT" ] && [ -n "$APPIMAGE_DIR" ]; then
-  for candidate in "$APPIMAGE_DIR/wunder补充包" "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python"; do
-    if [ -d "$candidate" ]; then
+  for candidate in "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python" "$APPIMAGE_DIR"/wunder*; do
+    if [ -d "$candidate" ] && { [ -d "$candidate/opt/python" ] || [ -d "$candidate/python" ] || [ -d "$candidate/opt/git" ] || [ -d "$candidate/git" ]; }; then
       EXTRA_ROOT="$candidate"
       break
     fi
@@ -395,7 +438,6 @@ PY_VER="3.11"
 if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
   PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
 fi
-PYTHON_LD=""
 PATH_PREFIX=""
 if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/bin" ]; then
   PATH_PREFIX="$GIT_ROOT/bin"
@@ -405,7 +447,6 @@ if [ -n "$PYTHON_ROOT" ]; then
   export PYTHONPATH="$PYTHON_ROOT/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
   export WUNDER_PYTHON_BIN="$PYTHON_ROOT/bin/python3"
   export PATH="${PATH_PREFIX:+$PATH_PREFIX:}$PYTHON_ROOT/bin:${PATH:-}"
-  PYTHON_LD="$PYTHON_ROOT/lib:"
   export PYTHONNOUSERSITE=1
   export PIP_NO_INDEX=1
   if [ -f "$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
@@ -417,11 +458,8 @@ if [ -n "$PYTHON_ROOT" ]; then
 else
   export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"
 fi
-GIT_LD=""
-if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/lib" ]; then
-  GIT_LD="$GIT_ROOT/lib:"
-fi
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:${GIT_LD}${PYTHON_LD}$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+# Keep Electron on AppImage/system libs; avoid sidecar git/python libs polluting main process.
+export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
 PLAYWRIGHT_DIR=""
 if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
   PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
@@ -444,7 +482,18 @@ if [ -n "$GIT_ROOT" ]; then
     export WUNDER_GIT_BIN="$GIT_ROOT/bin/git"
   fi
 fi
-exec "$APPDIR/usr/bin/wunder-desktop" "$@"
+MAIN_BIN=""
+for candidate in "$APPDIR/usr/bin/wunder-desktop" "$APPDIR/wunder-desktop"; do
+  if [ -x "$candidate" ]; then
+    MAIN_BIN="$candidate"
+    break
+  fi
+done
+if [ -z "$MAIN_BIN" ]; then
+  echo "wunder-desktop binary not found under $APPDIR" >&2
+  exit 127
+fi
+exec "$MAIN_BIN" "$@"
 EOF
   chmod +x "${APPDIR}/AppRun"
 fi
@@ -490,12 +539,18 @@ else
   chmod +x "${APPIMAGETOOL_RUNNER}"
 fi
 
+APPIMAGETOOL_RUNNER=$(prepare_appimagetool_runner "${APPIMAGETOOL_RUNNER}" "${APPIMAGE_WORK}")
+
 mkdir -p "${OUTPUT_DIR}"
 OUT_NAME=$(basename "${APPIMAGE_PATH}")
 OUT_NAME="${OUT_NAME%.AppImage}-${APPIMAGE_SUFFIX}.AppImage"
 OUT_PATH="${OUTPUT_DIR}/${OUT_NAME}"
 
-APPIMAGE_COMP=$(resolve_supported_appimage_comp "${APPIMAGE_COMP}")
+APPIMAGE_MKSQUASHFS_BIN="mksquashfs"
+if [ -x "$(dirname "${APPIMAGETOOL_RUNNER}")/usr/bin/mksquashfs" ]; then
+  APPIMAGE_MKSQUASHFS_BIN="$(dirname "${APPIMAGETOOL_RUNNER}")/usr/bin/mksquashfs"
+fi
+APPIMAGE_COMP=$(resolve_supported_appimage_comp "${APPIMAGE_COMP}" "${APPIMAGE_MKSQUASHFS_BIN}")
 APPIMAGE_TOOL_ARGS=("${APPDIR}" "${OUT_PATH}")
 if supports_appimage_compression_flag "${APPIMAGETOOL_RUNNER}"; then
   APPIMAGE_TOOL_ARGS=(--comp "${APPIMAGE_COMP}" "${APPDIR}" "${OUT_PATH}")

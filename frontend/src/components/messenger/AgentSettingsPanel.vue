@@ -26,6 +26,7 @@
           <BeeroomGroupField
             v-model="form.group"
             :groups="beeroomGroupOptions"
+            :allow-create="false"
             :disabled="isReadonlyMode"
           />
         </el-form-item>
@@ -162,7 +163,6 @@ import { useBeeroomStore } from '@/stores/beeroom';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
-  normalizeBeeroomGroupDraft,
   resolveBeeroomGroupDraftForAgent
 } from '@/utils/beeroomGroupDraft';
 import { showApiError } from '@/utils/apiError';
@@ -391,11 +391,6 @@ const saveAgent = async () => {
   const name = String(form.name || '').trim();
   if (!name) {
     ElMessage.warning(t('portal.agent.nameRequired'));
-    return;
-  }
-  const groupDraft = normalizeBeeroomGroupDraft(form.group);
-  if (groupDraft.mode === 'new' && !groupDraft.hive_name) {
-    ElMessage.warning(t('beeroom.dialog.nameRequired'));
     return;
   }
   saving.value = true;

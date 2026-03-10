@@ -266,6 +266,7 @@ import {
 } from '@/stores/beeroom';
 
 const BeeroomMissionCanvas = defineAsyncComponent(() => import('@/components/beeroom/BeeroomMissionCanvas.vue'));
+const selectedMissionCacheByGroup = new Map<string, string>();
 
 type AgentOption = {
   id: string;
@@ -297,6 +298,7 @@ const isTextView = computed(() => false);
 const selectedMissionId = ref('');
 const moveDialogVisible = ref(false);
 const moveAgentIds = ref<string[]>([]);
+const resolveGroupScopeKey = (value: unknown) => String(value || '').trim();
 
 const formatDateTime = (value: unknown) => {
   const numeric = Number(value || 0);
@@ -457,12 +459,36 @@ const submitMoveAgents = () => {
 watch(
   () => [props.group?.group_id, props.missions.map((item) => item.mission_id || item.team_run_id).join(',')],
   () => {
-    selectedMissionId.value = String(props.missions[0]?.mission_id || props.missions[0]?.team_run_id || '');
+    const groupId = resolveGroupScopeKey(props.group?.group_id);
+    const missionIds = props.missions
+      .map((item) => String(item.mission_id || item.team_run_id || '').trim())
+      .filter(Boolean);
+    const cachedMissionId = groupId ? String(selectedMissionCacheByGroup.get(groupId) || '').trim() : '';
+    const currentSelected = String(selectedMissionId.value || '').trim();
+    const preferredMissionId = currentSelected || cachedMissionId;
+    if (!missionIds.length) {
+      selectedMissionId.value = preferredMissionId;
+      moveAgentIds.value = [];
+      moveDialogVisible.value = false;
+      return;
+    }
+    selectedMissionId.value = missionIds.includes(preferredMissionId) ? preferredMissionId : (missionIds[0] || '');
+    if (groupId && selectedMissionId.value) {
+      selectedMissionCacheByGroup.set(groupId, selectedMissionId.value);
+    }
     moveAgentIds.value = [];
     moveDialogVisible.value = false;
   },
   { immediate: true }
 );
+
+watch(selectedMissionId, (value) => {
+  const groupId = resolveGroupScopeKey(props.group?.group_id);
+  const missionId = String(value || '').trim();
+  if (!groupId) return;
+  if (!missionId) return;
+  selectedMissionCacheByGroup.set(groupId, missionId);
+});
 </script>
 
 <style scoped>

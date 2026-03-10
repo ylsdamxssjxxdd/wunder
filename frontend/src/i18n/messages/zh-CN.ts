@@ -635,6 +635,8 @@ export default {
   'channels.form.xmpp.heartbeatTimeoutS': '心跳超时（秒）',
   'channels.form.xmpp.heartbeatTimeoutSPlaceholder': '默认 20',
   'channels.form.xmpp.respondPing': '应答对端 Ping',
+  'channels.form.xmpp.advancedToggle': '显示 XMPP 高级选项',
+  'channels.form.xmpp.advancedHint': '仅在需要自定义 SRV、群聊房间或心跳策略时再开启。',
   'auth.login.title': '登录',
   'auth.login.username': '用户名',
   'auth.login.password': '密码',

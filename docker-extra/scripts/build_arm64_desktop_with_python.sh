@@ -10,7 +10,7 @@ CARGO_HOME_DIR="${ROOT_DIR}/.cargo/arm64-20"
 TARGET_DIR="${ROOT_DIR}/target/arm64-20"
 DIST_DIR="${TARGET_DIR}/dist"
 BUILD_ROOT="${TARGET_DIR}/.build/python"
-APPIMAGE_COMP="${APPIMAGE_COMP:-zstd}"
+APPIMAGE_COMP="${APPIMAGE_COMP:-auto}"
 
 echo "[1/8] Checking prerequisites..."
 if ! command -v docker >/dev/null 2>&1; then
@@ -77,6 +77,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   base_appimage="${output_dir}/wunder-desktop-arm64.AppImage"
   src_appimage="$(ls -1t "${output_dir}"/*.AppImage 2>/dev/null \
     | grep -v "python" \
+    | grep -v "sidecar" \
     | grep -v "/wunder-desktop-arm64.AppImage$" \
     | head -n 1 || true)"
   if [ -n "${src_appimage}" ]; then

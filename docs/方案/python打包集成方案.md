@@ -79,7 +79,7 @@ PLAYWRIGHT_INSTALL_DEPS=0 \
 ```
 - 输出：`wunder-desktop-*-sidecar.AppImage`
 - AppRun 会自动识别同目录 `wunder补充包` 并注入 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`。
-- 默认会优先选择启动更快的 SquashFS 压缩算法（优先 `zstd`，其次 `gzip`，最后回退 `xz`）；如需更小体积可显式设置 `APPIMAGE_COMP=xz`。
+- 默认优先使用 `gzip` 压缩（兼容旧版 FUSE/squashfs 环境）；可显式设置 `APPIMAGE_COMP=zstd` 获取更快冷启动，或 `APPIMAGE_COMP=xz` 追求更小体积。
 
 ## 6. 可选：内置 Python（单文件 AppImage）
 若需要单文件交付，使用内置模式：

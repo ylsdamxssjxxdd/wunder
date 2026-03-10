@@ -123,9 +123,11 @@ pub struct XmppConfig {
     pub jid: Option<String>,
     #[serde(default)]
     pub password: Option<String>,
+    #[serde(default, alias = "passwordEnv")]
+    pub password_env: Option<String>,
     #[serde(default)]
     pub domain: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "server")]
     pub host: Option<String>,
     #[serde(default, deserialize_with = "deserialize_option_u16_from_any")]
     pub port: Option<u16>,
@@ -137,6 +139,7 @@ pub struct XmppConfig {
     pub muc_nick: Option<String>,
     #[serde(
         default,
+        alias = "rooms",
         alias = "mucRooms",
         deserialize_with = "deserialize_string_vec_from_any"
     )]
@@ -343,5 +346,57 @@ pub struct ChannelAccountConfig {
 impl ChannelAccountConfig {
     pub fn from_value(value: &Value) -> Self {
         serde_json::from_value::<ChannelAccountConfig>(value.clone()).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn xmpp_openfang_compatibility_aliases_are_supported() {
+        let config = ChannelAccountConfig::from_value(&json!({
+            "xmpp": {
+                "jid": "bot@jabber.org",
+                "password_env": "XMPP_PASSWORD",
+                "server": "xmpp.jabber.org",
+                "port": 5222,
+                "rooms": [
+                    "room-a@conference.jabber.org",
+                    "room-b@conference.jabber.org"
+                ]
+            }
+        }));
+        let xmpp = config.xmpp.expect("xmpp config should exist");
+
+        assert_eq!(xmpp.jid.as_deref(), Some("bot@jabber.org"));
+        assert_eq!(xmpp.password_env.as_deref(), Some("XMPP_PASSWORD"));
+        assert_eq!(xmpp.host.as_deref(), Some("xmpp.jabber.org"));
+        assert_eq!(xmpp.port, Some(5222));
+        assert_eq!(
+            xmpp.muc_rooms,
+            vec![
+                "room-a@conference.jabber.org".to_string(),
+                "room-b@conference.jabber.org".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn xmpp_rooms_alias_supports_csv_string() {
+        let config = ChannelAccountConfig::from_value(&json!({
+            "xmpp": {
+                "rooms": "room1@conference.example.com, room2@conference.example.com"
+            }
+        }));
+        let xmpp = config.xmpp.expect("xmpp config should exist");
+        assert_eq!(
+            xmpp.muc_rooms,
+            vec![
+                "room1@conference.example.com".to_string(),
+                "room2@conference.example.com".to_string()
+            ]
+        );
     }
 }

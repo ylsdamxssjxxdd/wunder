@@ -24,7 +24,7 @@
           <el-input v-model="form.description" :placeholder="t('portal.agent.form.placeholder.description')" />
         </el-form-item>
         <el-form-item class="agent-form-item agent-form-item--group" :label="t('messenger.agentGroup.label')">
-          <BeeroomGroupField v-model="form.group" :groups="beeroomGroupOptions" />
+          <BeeroomGroupField v-model="form.group" :groups="beeroomGroupOptions" :allow-create="false" />
         </el-form-item>
         <el-form-item class="agent-form-item agent-form-item--prompt" :label="t('portal.agent.form.prompt')">
           <el-input
@@ -121,7 +121,6 @@ import { useBeeroomStore } from '@/stores/beeroom';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
-  normalizeBeeroomGroupDraft,
   resolveBeeroomGroupDraftForAgent
 } from '@/utils/beeroomGroupDraft';
 import { showApiError } from '@/utils/apiError';
@@ -313,11 +312,6 @@ const saveAgent = async () => {
   const name = String(form.name || '').trim();
   if (!name) {
     ElMessage.warning(t('portal.agent.nameRequired'));
-    return;
-  }
-  const groupDraft = normalizeBeeroomGroupDraft(form.group);
-  if (groupDraft.mode === 'new' && !groupDraft.hive_name) {
-    ElMessage.warning(t('beeroom.dialog.nameRequired'));
     return;
   }
   saving.value = true;

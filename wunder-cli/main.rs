@@ -56,6 +56,7 @@ const CLI_MIN_MAX_ROUNDS: u32 = 8;
 const CLI_CONTEXT_PROBE_TIMEOUT_S: u64 = 15;
 const CONFIG_SLASH_USAGE: &str = "/config [<base_url> <api_key> <model> [max_context|auto]]";
 const CLI_DEFAULT_SESSION_TITLE: &str = "\u{65B0}\u{4F1A}\u{8BDD}";
+const CLI_DEFAULT_SESSION_STATUS: &str = "active";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -860,6 +861,7 @@ async fn ensure_cli_session_record(
                 title: title_hint
                     .clone()
                     .unwrap_or_else(|| CLI_DEFAULT_SESSION_TITLE.to_string()),
+                status: CLI_DEFAULT_SESSION_STATUS.to_string(),
                 created_at: now,
                 updated_at: now,
                 last_message_at: now,
@@ -2569,6 +2571,7 @@ pub(crate) async fn fork_session_with_history(
             session_id: new_session_for_record.clone(),
             user_id: user_id.clone(),
             title,
+            status: CLI_DEFAULT_SESSION_STATUS.to_string(),
             created_at: now,
             updated_at: now,
             last_message_at: now,
@@ -2730,6 +2733,7 @@ pub(crate) async fn compact_session_into_branch(
             session_id: new_session_for_record.clone(),
             user_id: user_id.clone(),
             title,
+            status: CLI_DEFAULT_SESSION_STATUS.to_string(),
             created_at: now,
             updated_at: now,
             last_message_at: now,

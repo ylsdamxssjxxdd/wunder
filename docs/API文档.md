@@ -150,9 +150,11 @@
   - `skill_call` 返回时会将 `skill_md` 中的 `{{SKILL_ROOT}}` 自动替换为本次可见的技能根目录绝对路径（同返回字段 `root`）。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
-- `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话，必要时可通过 `createIfMissing=true` 自动创建新会话，再发送指令。
+- `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话；无主会话时会自动创建后再发送指令。
 - `智能体蜂群` 新增 `wait` 动作：可直接等待 `run_ids` 结果并返回聚合状态，避免母蜂反复轮询 `status`。
 - 多工蜂协作推荐：先 `batch_send` 一次并发派发，再 `wait` 统一收敛。
+- `智能体蜂群` 入参语义增强（便于模型主动调用）：`spawn` 需 `agentId+task`，`send` 需 `message` 且 `agentId/sessionKey` 二选一，`history` 需 `sessionKey`，`wait` 需 `runIds`，`batch_send` 需 `tasks[]`（每项需 `message` 且 `agentId/sessionKey` 二选一）。
+- 推荐最短调用路径：`list -> batch_send -> wait -> history/status`（单目标用 `send` 替代 `batch_send`）。
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
@@ -1910,13 +1912,17 @@
 - 方法：`POST`
 - 说明：该接口与通用 webhook 一致，主要用于兼容手工调试/回放；XMPP 生产入站默认由内置长连接 worker 接收并投递到 ChannelHub。
 - 账号配置（`ChannelAccount.config.xmpp`）：
-  - `jid`、`password`：登录凭证（必填）
+  - `jid`：登录 JID（必填）
+  - `password`：登录密码（可选；与 `password_env` 二选一）
+  - `password_env`：登录密码环境变量名（可选；兼容 openfang `channels.xmpp.password_env`）
   - `domain`：SRV 域名或手动连接域名（可选）
   - `host`、`port`：手动连接地址（可选）
+  - `server`：`host` 的兼容别名（可选；兼容 openfang `channels.xmpp.server`）
   - `direct_tls`：是否使用 5223 默认端口（可选，默认 `false`）
   - `resource`：登录资源（可选）
   - `muc_nick`：群聊昵称（可选，用于过滤自身群消息）
   - `muc_rooms`：自动加入房间列表（可选，数组或逗号分隔字符串）
+  - `rooms`：`muc_rooms` 的兼容别名（可选；兼容 openfang `channels.xmpp.rooms`）
   - `long_connection_enabled`：是否启用长连接（可选，默认 `true`）
   - `send_initial_presence`：连接后是否发送初始 presence（可选，默认 `true`）
   - `status_text`：presence 状态文案（可选）
@@ -2352,7 +2358,7 @@
 - `tts_voice`：TTS voice 覆盖（可选）
 - `tool_overrides`：默认工具覆盖（可选）
 - `agent_id`：默认路由 agent_id（可选）
-- `xmpp.*`：XMPP 客户端配置（`jid/password/domain/host/port/direct_tls/resource/muc_nick/muc_rooms/long_connection_enabled/send_initial_presence/status_text/heartbeat_enabled/heartbeat_interval_s/heartbeat_timeout_s/respond_ping`）
+- `xmpp.*`：XMPP 客户端配置（`jid/password/password_env/domain/host/server/port/direct_tls/resource/muc_nick/muc_rooms/rooms/long_connection_enabled/send_initial_presence/status_text/heartbeat_enabled/heartbeat_interval_s/heartbeat_timeout_s/respond_ping`）
 
 ### 4.1.60 `/wunder/channels/*`
 
@@ -2401,12 +2407,13 @@
     - `wechat_mp.original_id`（用于 ToUserName 账号匹配，可选）
     - `domain` 或 `wechat_mp.domain`（可选，默认 `api.weixin.qq.com`）
     - `peer_kind` 固定 `user`
-  - XMPP 快捷入参：
-    - `xmpp.jid`、`xmpp.password`（必填或沿用已有值）
+- XMPP 快捷入参：
+    - `xmpp.jid`（必填或沿用已有值）
+    - `xmpp.password` 或 `xmpp.password_env`（二选一，缺失时沿用已有值）
     - `xmpp.domain`（可选，SRV 域名或手动服务器域名）
-    - `xmpp.host`、`xmpp.port`、`xmpp.direct_tls`（可选，手动连接地址）
+    - `xmpp.host`（兼容别名：`xmpp.server`）、`xmpp.port`、`xmpp.direct_tls`（可选，手动连接地址）
     - `xmpp.resource`（可选，登录资源）
-    - `xmpp.muc_nick`、`xmpp.muc_rooms`（可选，群聊昵称与自动入群房间）
+    - `xmpp.muc_nick`、`xmpp.muc_rooms`（兼容别名：`xmpp.rooms`，可选，群聊昵称与自动入群房间）
     - `xmpp.long_connection_enabled`、`xmpp.send_initial_presence`、`xmpp.status_text`（可选，长连接与 presence 策略）
     - `xmpp.heartbeat_enabled`、`xmpp.heartbeat_interval_s`、`xmpp.heartbeat_timeout_s`、`xmpp.respond_ping`（可选，心跳兼容策略）
     - `peer_kind` 默认 `user`

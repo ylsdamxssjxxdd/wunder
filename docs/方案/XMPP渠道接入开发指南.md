@@ -42,7 +42,7 @@ flowchart LR
 - supervisor 定期扫描 `channel_accounts` 中 `channel=xmpp` 且 `status=active` 的账号。
 - 对每个满足条件的账号创建 worker：
   - 条件1：`xmpp.long_connection_enabled=true`（默认 true）
-  - 条件2：`xmpp.jid` 与 `xmpp.password` 非空
+  - 条件2：`xmpp.jid` 非空，且 `xmpp.password` 或 `xmpp.password_env` 至少一个可用
 - worker 进入连接循环：断开后按指数退避重连。
 
 ## 3. 代码地图（改造入口）
@@ -63,14 +63,17 @@ flowchart LR
 `ChannelAccount.config.xmpp`：
 
 - `jid`: 登录 JID，必填。
-- `password`: 登录密码，必填。
+- `password`: 登录密码，可选（与 `password_env` 二选一）。
+- `password_env`: 密码环境变量名，可选（兼容 openfang `channels.xmpp.password_env`）。
 - `domain`: 可选。用于手动服务器域名/替代 SRV 域。
 - `host`: 可选。手动指定服务器地址。
+- `server`: `host` 兼容别名（兼容 openfang `channels.xmpp.server`）。
 - `port`: 可选。支持 number 或字符串；有效范围 1~65535。
 - `direct_tls`: 可选。只影响默认端口选择（5223），未改动底层 StartTLS 连接器行为。
 - `resource`: 可选。登录资源，写入后会覆盖 JID 原资源。
 - `muc_nick`: 可选。群昵称，用于 MUC 自消息过滤。
 - `muc_rooms`: 可选。自动入房列表，支持数组或逗号分隔字符串。
+- `rooms`: `muc_rooms` 兼容别名（兼容 openfang `channels.xmpp.rooms`）。
 - `long_connection_enabled`: 可选，默认 `true`。
 - `send_initial_presence`: 可选，默认 `true`。
 - `status_text`: 可选。初始 presence 的状态文本。
@@ -188,7 +191,7 @@ flowchart LR
 ### 9.2 常见问题
 
 1. 状态为 `missing_credentials`
-- 检查 `xmpp.jid`、`xmpp.password`。
+- 检查 `xmpp.jid`，以及 `xmpp.password` 或 `xmpp.password_env` 是否可用（`password_env` 对应环境变量必须存在且非空）。
 
 2. 状态为 `disabled`
 - 检查 `xmpp.long_connection_enabled` 是否被设为 `false`。
