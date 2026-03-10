@@ -11,6 +11,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/target/${ARCH}/dist}"
 PACKAGE_DIR_NAME="${PACKAGE_DIR_NAME:-wunder补充包}"
 OUT_NAME="${OUT_NAME:-${PACKAGE_DIR_NAME}-${ARCH}.tar.zst}"
 INCLUDE_GIT="${INCLUDE_GIT:-1}"
+DEREFERENCE_SYMLINKS="${DEREFERENCE_SYMLINKS:-1}"
 FONTS_DIR="${FONTS_DIR:-${ROOT_DIR}/fonts}"
 FONT_LIST="${FONT_LIST:-}"
 VALIDATE_MODULES="${VALIDATE_MODULES:-matplotlib,cartopy,pyproj,shapely,netCDF4,cftime,h5py,cinrad}"
@@ -117,13 +118,22 @@ axes.unicode_minus : False
 EOF
 fi
 
+TAR_LINK_ARGS=()
+if [ "${DEREFERENCE_SYMLINKS}" = "1" ]; then
+  TAR_LINK_ARGS=(--dereference)
+fi
+
 if command -v zstd >/dev/null 2>&1; then
-  tar -C "${STAGE_DIR}" --transform "s,^opt,${PACKAGE_DIR_NAME}/opt," \
+  tar "${TAR_LINK_ARGS[@]}" -C "${STAGE_DIR}" --transform "s,^opt,${PACKAGE_DIR_NAME}/opt," \
     -I 'zstd -19 -T0' -cf "${OUTPUT_DIR}/${OUT_NAME}" "${ITEMS[@]}"
 else
   OUT_NAME="${OUT_NAME%.tar.zst}.tar.gz"
-  tar -C "${STAGE_DIR}" --transform "s,^opt,${PACKAGE_DIR_NAME}/opt," \
+  tar "${TAR_LINK_ARGS[@]}" -C "${STAGE_DIR}" --transform "s,^opt,${PACKAGE_DIR_NAME}/opt," \
     -czf "${OUTPUT_DIR}/${OUT_NAME}" "${ITEMS[@]}"
+fi
+
+if [[ "${OUT_NAME}" == *.tar.gz ]] && command -v gzip >/dev/null 2>&1; then
+  gzip -t "${OUTPUT_DIR}/${OUT_NAME}"
 fi
 
 echo "Sidecar extra package: ${OUTPUT_DIR}/${OUT_NAME}"

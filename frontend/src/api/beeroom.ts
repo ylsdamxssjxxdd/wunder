@@ -1,6 +1,79 @@
 import api from './http';
 
 import type { ApiId, ApiPayload, QueryParams } from './types';
+import { resolveAccessToken } from '@/api/requestAuth';
+import { resolveApiBase } from '@/config/runtime';
+
+type OpenSocketOptions = {
+  protocols?: string[] | string;
+  allowQueryToken?: boolean;
+  params?: QueryParams;
+};
+
+type OpenStreamOptions = {
+  allowQueryToken?: boolean;
+  params?: QueryParams;
+};
+
+const resolveWsBase = (): string => {
+  const base = resolveApiBase() || api.defaults.baseURL || '';
+  const trimmed = base.replace(/\/$/, '');
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/^http/i, 'ws');
+  }
+  if (trimmed.startsWith('/')) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${window.location.host}${trimmed}`;
+  }
+  return trimmed;
+};
+
+const resolveHttpBase = (): string => {
+  const base = resolveApiBase() || api.defaults.baseURL || '';
+  const trimmed = base.replace(/\/$/, '');
+  if (!trimmed) return '';
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/')) {
+    return `${window.location.origin}${trimmed}`;
+  }
+  return trimmed;
+};
+
+const buildWsProtocols = (token: string | null, options: OpenSocketOptions = {}): string[] => {
+  const protocols: string[] = [];
+  const append = (value: unknown) => {
+    const cleaned = String(value || '').trim();
+    if (!cleaned || /\s/.test(cleaned)) return;
+    if (!protocols.includes(cleaned)) {
+      protocols.push(cleaned);
+    }
+  };
+  if (Array.isArray(options.protocols)) {
+    options.protocols.forEach(append);
+  } else if (typeof options.protocols === 'string') {
+    append(options.protocols);
+  }
+  append('wunder');
+  if (token && !options.allowQueryToken) {
+    append(`wunder-auth.${token}`);
+  }
+  return protocols;
+};
+
+const buildWsUrl = (path: string, params: URLSearchParams): string => {
+  const base = resolveWsBase();
+  const suffix = params.toString();
+  return suffix ? `${base}${path}?${suffix}` : `${base}${path}`;
+};
+
+const buildHttpUrl = (path: string, params: URLSearchParams): string => {
+  const base = resolveHttpBase();
+  const suffix = params.toString();
+  return suffix ? `${base}${path}?${suffix}` : `${base}${path}`;
+};
 
 export const listBeeroomGroups = (params: QueryParams = {}) =>
   api.get('/beeroom/groups', { params, timeout: 60000 });
@@ -32,6 +105,40 @@ export const appendBeeroomChatMessage = (groupId: ApiId, payload: ApiPayload) =>
 
 export const clearBeeroomChatMessages = (groupId: ApiId) =>
   api.delete(`/beeroom/groups/${encodeURIComponent(groupId)}/chat/messages`, { timeout: 60000 });
+
+export const openBeeroomSocket = (options: OpenSocketOptions = {}): WebSocket => {
+  const token = resolveAccessToken();
+  const params = new URLSearchParams();
+  if (options.allowQueryToken && token) {
+    params.set('access_token', token);
+  }
+  if (options.params) {
+    Object.entries(options.params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      params.set(key, String(value));
+    });
+  }
+  const protocols = buildWsProtocols(token, options);
+  const url = buildWsUrl('/beeroom/ws', params);
+  return protocols.length ? new WebSocket(url, protocols) : new WebSocket(url);
+};
+
+export const openBeeroomChatStream = (groupId: ApiId, options: OpenStreamOptions = {}): EventSource => {
+  const normalizedGroupId = encodeURIComponent(String(groupId || '').trim());
+  const token = resolveAccessToken();
+  const params = new URLSearchParams();
+  if (options.allowQueryToken && token) {
+    params.set('access_token', token);
+  }
+  if (options.params) {
+    Object.entries(options.params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      params.set(key, String(value));
+    });
+  }
+  const url = buildHttpUrl(`/beeroom/groups/${normalizedGroupId}/chat/stream`, params);
+  return new EventSource(url);
+};
 
 export type HivePackImportRequest = {
   file: Blob | File;

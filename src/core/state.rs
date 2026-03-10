@@ -13,6 +13,7 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::org_units;
 use crate::services::agent_runtime::AgentRuntime;
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::swarm::{SwarmService, TeamRunRunner};
 use crate::services::user_presence::UserPresenceService;
@@ -96,6 +97,7 @@ pub struct AppState {
     pub user_store: Arc<UserStore>,
     pub user_presence: Arc<UserPresenceService>,
     pub user_world: Arc<UserWorldService>,
+    pub beeroom_realtime: Arc<BeeroomRealtimeService>,
     pub external_auth_codes: Arc<ExternalAuthCodeStore>,
     pub throughput: ThroughputManager,
     pub evaluation: EvaluationManager,
@@ -138,6 +140,7 @@ impl AppState {
         let user_store = Arc::new(UserStore::new(storage.clone()));
         let user_presence = Arc::new(UserPresenceService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
+        let beeroom_realtime = Arc::new(BeeroomRealtimeService::new());
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
 
         if options.seed_org_units {
@@ -241,6 +244,7 @@ impl AppState {
             user_store,
             user_presence,
             user_world,
+            beeroom_realtime,
             external_auth_codes,
             throughput,
             evaluation,

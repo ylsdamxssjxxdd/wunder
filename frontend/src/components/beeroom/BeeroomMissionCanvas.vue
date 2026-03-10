@@ -1,5 +1,5 @@
 <template>
-  <section class="beeroom-canvas-screen" :class="{ 'is-empty': !projection.nodes.length }">
+  <section ref="screenRef" class="beeroom-canvas-screen" :class="{ 'is-empty': !projection.nodes.length }">
     <div v-if="!projection.nodes.length" class="beeroom-canvas-empty">
       <i class="fa-solid fa-diagram-project" aria-hidden="true"></i>
       <span>{{ t('beeroom.canvas.empty') }}</span>
@@ -23,13 +23,47 @@
               <span>{{ t('beeroom.members.idle') }} {{ canvasStatusSummary.idle }}</span>
             </span>
           </div>
+          <div class="beeroom-canvas-tools" role="toolbar" aria-label="画布控制区">
+            <button class="beeroom-canvas-tool-btn" type="button" title="放大画布" aria-label="放大画布" @click="zoomCanvasIn">
+              <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
+              <span class="beeroom-visually-hidden">放大画布</span>
+            </button>
+            <button class="beeroom-canvas-tool-btn" type="button" title="缩小画布" aria-label="缩小画布" @click="zoomCanvasOut">
+              <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
+              <span class="beeroom-visually-hidden">缩小画布</span>
+            </button>
+            <button class="beeroom-canvas-tool-btn" type="button" title="重置缩放 100%" aria-label="重置缩放 100%" @click="resetCanvasZoom">
+              <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
+              <span class="beeroom-visually-hidden">重置缩放 100%</span>
+            </button>
+            <button class="beeroom-canvas-tool-btn" type="button" title="适配视图" aria-label="适配视图" @click="fitCanvasView">
+              <i class="fa-solid fa-expand" aria-hidden="true"></i>
+              <span class="beeroom-visually-hidden">适配视图</span>
+            </button>
+            <button class="beeroom-canvas-tool-btn" type="button" title="自动整理" aria-label="自动整理" @click="autoArrangeCanvas">
+              <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
+              <span class="beeroom-visually-hidden">自动整理</span>
+            </button>
+            <button
+              class="beeroom-canvas-tool-btn"
+              :class="{ 'is-active': canvasFullscreen }"
+              type="button"
+              :title="canvasFullscreen ? '退出全屏' : '全屏'"
+              :aria-label="canvasFullscreen ? '退出全屏' : '全屏'"
+              :aria-pressed="canvasFullscreen"
+              @click="toggleCanvasFullscreen"
+            >
+              <i class="fa-solid" :class="canvasFullscreen ? 'fa-minimize' : 'fa-maximize'" aria-hidden="true"></i>
+              <span class="beeroom-visually-hidden">{{ canvasFullscreen ? '退出全屏' : '全屏' }}</span>
+            </button>
+          </div>
           <div class="beeroom-canvas-minimap-shell">
             <div class="beeroom-canvas-minimap-label">{{ t('beeroom.canvas.minimap') }}</div>
             <div ref="minimapRef" class="beeroom-canvas-minimap"></div>
           </div>
 
           <div
-            v-if="hoveredNodeMeta"
+            v-if="showNodeTooltip && hoveredNodeMeta"
             class="beeroom-canvas-tooltip"
             :style="hoveredTooltipStyle"
           >
@@ -74,6 +108,14 @@
             <div>
               <div class="beeroom-canvas-chat-title">{{ t('beeroom.canvas.chatTitle') }}</div>
               <div class="beeroom-canvas-chat-subtitle">{{ chatPanelSubtitle }}</div>
+              <div class="beeroom-canvas-chat-runtime">
+                <span class="beeroom-canvas-runtime-chip" :class="`is-${dispatchRuntimeTone}`">
+                  {{ dispatchRuntimeLabel }}
+                </span>
+                <span v-if="dispatchSessionId" class="beeroom-canvas-runtime-session">
+                  #{{ shortIdentity(dispatchSessionId, 6, 4) }}
+                </span>
+              </div>
             </div>
             <div class="beeroom-canvas-chat-head-actions">
               <button
@@ -92,6 +134,24 @@
                 @click="emit('refresh')"
               >
                 <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+              </button>
+              <button
+                class="beeroom-canvas-icon-btn"
+                type="button"
+                :title="t('common.stop')"
+                :disabled="!dispatchCanStop"
+                @click="handleDispatchStop"
+              >
+                <i class="fa-solid fa-stop" aria-hidden="true"></i>
+              </button>
+              <button
+                class="beeroom-canvas-icon-btn"
+                type="button"
+                :title="t('chat.message.resume')"
+                :disabled="!dispatchCanResume"
+                @click="handleDispatchResume"
+              >
+                <i class="fa-solid fa-play" aria-hidden="true"></i>
               </button>
               <span class="beeroom-canvas-chat-count">{{ displayChatMessages.length }}</span>
             </div>
@@ -147,6 +207,51 @@
             </article>
           </section>
 
+          <section v-if="dispatchApprovals.length" class="beeroom-canvas-chat-approvals">
+            <div class="beeroom-canvas-chat-approvals-head">
+              <span>{{ t('chat.approval.title') }}</span>
+              <span class="beeroom-canvas-chat-approvals-count">{{ dispatchApprovals.length }}</span>
+            </div>
+            <article
+              v-for="approval in dispatchApprovals"
+              :key="approval.approval_id"
+              class="beeroom-canvas-chat-approval-item"
+            >
+              <div class="beeroom-canvas-chat-approval-summary">
+                {{ approval.summary || approval.tool || approval.approval_id }}
+              </div>
+              <div class="beeroom-canvas-chat-approval-meta">
+                {{ t('chat.approval.tool') }}: {{ approval.tool || '-' }}
+              </div>
+              <div class="beeroom-canvas-chat-approval-actions">
+                <button
+                  class="beeroom-canvas-chat-approval-btn"
+                  type="button"
+                  :disabled="dispatchApprovalBusy"
+                  @click="handleDispatchApproval('approve_once', approval.approval_id)"
+                >
+                  {{ t('chat.approval.once') }}
+                </button>
+                <button
+                  class="beeroom-canvas-chat-approval-btn"
+                  type="button"
+                  :disabled="dispatchApprovalBusy"
+                  @click="handleDispatchApproval('approve_session', approval.approval_id)"
+                >
+                  {{ t('chat.approval.session') }}
+                </button>
+                <button
+                  class="beeroom-canvas-chat-approval-btn is-danger"
+                  type="button"
+                  :disabled="dispatchApprovalBusy"
+                  @click="handleDispatchApproval('deny', approval.approval_id)"
+                >
+                  {{ t('chat.approval.deny') }}
+                </button>
+              </div>
+            </article>
+          </section>
+
           <section class="beeroom-canvas-chat-composer">
             <textarea
               v-model="composerText"
@@ -198,12 +303,21 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   appendBeeroomChatMessage,
   clearBeeroomChatMessages,
-  listBeeroomChatMessages
+  listBeeroomChatMessages,
+  openBeeroomChatStream,
+  openBeeroomSocket
 } from '@/api/beeroom';
-import { createSession, listSessions, sendMessageStream } from '@/api/chat';
+import {
+  cancelMessageStream,
+  createSession,
+  listSessions,
+  resumeMessageStream,
+  sendMessageStream
+} from '@/api/chat';
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import { consumeSseStream } from '@/utils/sse';
+import { createWsMultiplexer } from '@/utils/ws';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
 import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 
@@ -251,6 +365,23 @@ type DispatchSessionTarget = {
   sessionSummary: Record<string, unknown> | null;
 };
 
+type DispatchRuntimeStatus =
+  | 'idle'
+  | 'queued'
+  | 'running'
+  | 'awaiting_approval'
+  | 'resuming'
+  | 'stopped'
+  | 'completed'
+  | 'failed';
+
+type DispatchApprovalItem = {
+  approval_id: string;
+  session_id: string;
+  tool: string;
+  summary: string;
+};
+
 type CanvasPositionOverride = {
   x: number;
   y: number;
@@ -277,8 +408,21 @@ const NODE_HEIGHT = 106;
 const MOTHER_NODE_HEIGHT = 120;
 const GRID_PLUGIN_KEY = 'beeroom-grid-line';
 const MANUAL_CHAT_HISTORY_LIMIT = 120;
-const CHAT_POLL_INTERVAL_MS = 8000;
+const CHAT_POLL_INTERVAL_MS = 2000;
+const CHAT_WS_RETRY_DELAY_MS = 1400;
+const CHAT_SSE_RETRY_DELAY_MS = 2200;
 const CARD_ACCENT_PALETTE = ['#3b82f6', '#8b5cf6', '#22c55e', '#06b6d4', '#eab308', '#f97316', '#ef4444'];
+
+const beeroomWsClient = createWsMultiplexer(() => openBeeroomSocket({ allowQueryToken: true }), {
+  idleTimeoutMs: 20000,
+  connectTimeoutMs: 10000,
+  pingIntervalMs: 20000
+});
+const CANVAS_ZOOM_MIN = 0.5;
+const CANVAS_ZOOM_MAX = 1.8;
+const CANVAS_ZOOM_STEP = 0.12;
+const showNodeTooltip = false;
+const ACTIVE_DISPATCH_STATUSES = new Set(['queued', 'running', 'awaiting_idle']);
 
 const props = defineProps<{
   group: BeeroomGroup | null;
@@ -294,6 +438,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const chatStore = useChatStore();
+const screenRef = ref<HTMLElement | null>(null);
 const boardRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLDivElement | null>(null);
 const minimapRef = ref<HTMLDivElement | null>(null);
@@ -307,7 +452,17 @@ const composerText = ref('');
 const composerTargetAgentId = ref('');
 const composerSending = ref(false);
 const composerError = ref('');
+const dispatchSessionId = ref('');
+const dispatchRequestId = ref('');
+const dispatchLastEventId = ref(0);
+const dispatchRuntimeStatus = ref<DispatchRuntimeStatus>('idle');
+const dispatchTargetAgentId = ref('');
+const dispatchTargetName = ref('');
+const dispatchTargetTone = ref<MissionChatMessage['tone']>('worker');
+const dispatchRespondingApprovalId = ref('');
+const chatRealtimeTransport = ref<'none' | 'ws' | 'sse'>('none');
 const nodePositionOverrides = ref<Record<string, CanvasPositionOverride>>({});
+const canvasFullscreen = ref(false);
 
 let manualMessageSerial = 0;
 
@@ -315,6 +470,17 @@ let graph: Graph | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeFrame = 0;
 let chatPollTimer: number | null = null;
+let chatWatchController: AbortController | null = null;
+let chatWatchRequestId = '';
+let chatWatchRetryTimer: number | null = null;
+let chatSseRetryTimer: number | null = null;
+let chatSseSource: EventSource | null = null;
+let chatSseGroupId = '';
+let dispatchStreamController: AbortController | null = null;
+let dispatchStopRequested = false;
+let dispatchFlowTimer: number | null = null;
+let dispatchFlowOffset = 0;
+const activeDispatchEdgeIds = ref<string[]>([]);
 
 const formatDateTime = (value: unknown) => {
   const numeric = Number(value || 0);
@@ -377,6 +543,13 @@ const trimNodeTitle = (value: unknown, max = 12) => {
   return `${text.slice(0, max)}...`;
 };
 
+const trimEdgeTaskLabel = (value: unknown, max = 26) => {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}...`;
+};
+
 const hashText = (value: string) => {
   let hash = 0;
   for (let index = 0; index < value.length; index += 1) {
@@ -419,6 +592,28 @@ const resolveToneClass = (value: unknown) => {
   return 'tone-muted';
 };
 
+const resolveDispatchTaskLabel = (mission: BeeroomMission | null, task: BeeroomMissionTask | null) => {
+  const missionText = trimEdgeTaskLabel(mission?.summary || mission?.strategy || '');
+  if (missionText) return missionText;
+  const taskText = trimEdgeTaskLabel(task?.result_summary || task?.error || '');
+  if (taskText) return taskText;
+  const taskId = String(task?.task_id || '').trim();
+  return taskId ? `#${taskId.slice(0, 8)}` : '';
+};
+
+const projectionMemberBusy = (member: BeeroomMember | undefined) => member?.idle === false;
+
+const resolveMinimapNodeFill = (status: unknown) => {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (normalized === 'running' || normalized === 'queued') return 'rgba(34, 197, 94, 0.9)';
+  if (normalized === 'completed' || normalized === 'success') return 'rgba(59, 130, 246, 0.9)';
+  if (normalized === 'failed' || normalized === 'error' || normalized === 'timeout' || normalized === 'cancelled') {
+    return 'rgba(239, 68, 68, 0.9)';
+  }
+  if (normalized === 'awaiting_idle') return 'rgba(245, 158, 11, 0.9)';
+  return 'rgba(148, 163, 184, 0.88)';
+};
+
 const escapeHtml = (value: unknown) =>
   String(value || '')
     .replace(/&/g, '&amp;')
@@ -438,6 +633,7 @@ const resolveCanvasNodeStatusClass = (value: unknown) => {
 
 const buildCanvasNodeCardHtml = (options: {
   isMother: boolean;
+  selected: boolean;
   accentColor: string;
   avatar: string;
   fullName: string;
@@ -451,27 +647,28 @@ const buildCanvasNodeCardHtml = (options: {
   const statusClass = resolveCanvasNodeStatusClass(options.status);
   const title = escapeHtml(options.displayName);
   const fullName = escapeHtml(options.fullName);
-  const roleLabel = escapeHtml(trimNodeTitle(options.roleLabel, 10));
-  const statusLabel = escapeHtml(trimNodeTitle(options.statusLabel, 8));
+  const roleLabel = escapeHtml(trimNodeTitle(options.roleLabel, 6));
+  const statusLabel = escapeHtml(trimNodeTitle(options.statusLabel, 7));
   const avatar = escapeHtml(options.avatar);
   const tools = escapeHtml(formatCount(options.taskTotal));
   const reports = escapeHtml(formatCount(options.sessionTotal));
+  const ariaLabel = escapeHtml(`${options.fullName} ${options.roleLabel} ${options.statusLabel}`);
   const accentColor = String(options.accentColor || '#64748b').replace(/[^#a-zA-Z0-9(),.\s-]/g, '');
 
   // Render a compact, fully-clipped card to avoid overflow under any zoom level.
   return `
-    <div class="beeroom-node-card ${statusClass} ${options.isMother ? 'is-mother' : ''}" style="--node-accent:${accentColor};">
+    <div class="beeroom-node-card ${statusClass} ${options.isMother ? 'is-mother' : ''} ${options.selected ? 'is-selected' : ''}" role="group" aria-label="${ariaLabel}" style="--node-accent:${accentColor};">
       <div class="beeroom-node-card-head">
         <span class="beeroom-node-avatar">${avatar}</span>
         <div class="beeroom-node-title-group">
           <div class="beeroom-node-title" title="${fullName}">${title}</div>
-          <div class="beeroom-node-subtitle">${roleLabel}</div>
+          <div class="beeroom-node-role-chip">${roleLabel}</div>
         </div>
-        <span class="beeroom-node-status">${statusLabel}</span>
+        <span class="beeroom-node-status"><i class="beeroom-node-status-dot"></i><span>${statusLabel}</span></span>
       </div>
       <div class="beeroom-node-metrics">
-        <span class="beeroom-node-metric"><b>T</b>${tools}</span>
-        <span class="beeroom-node-metric"><b>R</b>${reports}</span>
+        <span class="beeroom-node-metric" title="任务总数"><i class="fa-solid fa-list-check" aria-hidden="true"></i><b>${tools}</b></span>
+        <span class="beeroom-node-metric" title="会话总数"><i class="fa-solid fa-comments" aria-hidden="true"></i><b>${reports}</b></span>
       </div>
     </div>
   `;
@@ -611,6 +808,7 @@ const projection = computed(() => {
   let minY = 0;
   let maxY = 0;
 
+  const selectedNodeId = String(activeNodeId.value || '').trim();
   const nodes = orderedAgentIds.map((agentId, index) => {
     const member = memberMap.get(agentId);
     const agentTasks = tasksByAgent.get(agentId) || [];
@@ -618,6 +816,7 @@ const projection = computed(() => {
     const status = resolveNodeStatus(agentTasks, member, missionStatus);
     const statusLabel = resolveStatusLabel(status);
     const nodeId = `agent:${agentId}`;
+    const selected = nodeId === selectedNodeId;
     const roleLabel = isMother ? t('beeroom.canvas.legendMother') : t('beeroom.canvas.legendWorker');
     const name = String(member?.name || (isMother ? props.group?.mother_agent_name : '') || agentId).trim();
     const displayName = trimNodeTitle(name, isMother ? 14 : 12);
@@ -635,6 +834,7 @@ const projection = computed(() => {
     const height = isMother ? MOTHER_NODE_HEIGHT : NODE_HEIGHT;
     const innerHTML = buildCanvasNodeCardHtml({
       isMother,
+      selected,
       accentColor,
       avatar,
       fullName: name,
@@ -688,47 +888,59 @@ const projection = computed(() => {
   });
 
   const edges: any[] = [];
-  if (mission) {
-    Array.from(tasksByAgent.entries()).forEach(([agentId, agentTasks]) => {
-      if (!motherAgentId || !agentId || agentId === motherAgentId) return;
-      const dispatchTask = [...agentTasks].sort(
-        (left, right) => Number(left.started_time || left.updated_time || 0) - Number(right.started_time || right.updated_time || 0)
-      )[0];
+  const effectiveMotherAgentId = motherAgentId || orderedAgentIds[0] || '';
+  const motherNodeId = effectiveMotherAgentId ? `agent:${effectiveMotherAgentId}` : '';
+  if (effectiveMotherAgentId) {
+    orderedAgentIds.forEach((agentId) => {
+      if (!agentId || agentId === effectiveMotherAgentId) return;
+      const agentTasks = tasksByAgent.get(agentId) || [];
+      const latestTask = [...agentTasks].sort(
+        (left, right) => Number(right.started_time || right.updated_time || 0) - Number(left.started_time || left.updated_time || 0)
+      )[0] || null;
+      const latestStatus = String(latestTask?.status || '').trim().toLowerCase();
+      const memberBusy = projectionMemberBusy(memberMap.get(agentId));
+      const dispatchActive = ACTIVE_DISPATCH_STATUSES.has(latestStatus) || (memberBusy && agentTasks.length > 0);
+      const dispatchTaskText = dispatchActive ? resolveDispatchTaskLabel(mission, latestTask) : '';
+      const targetNodeId = `agent:${agentId}`;
+      const edgeSelected = Boolean(selectedNodeId) && (selectedNodeId === motherNodeId || selectedNodeId === targetNodeId);
+      const activeStroke = 'rgba(59, 130, 246, 0.92)';
+      const idleStroke = 'rgba(148, 163, 184, 0.42)';
       edges.push({
-        id: `dispatch:${motherAgentId}:${agentId}`,
-        source: `agent:${motherAgentId}`,
-        target: `agent:${agentId}`,
+        id: `dispatch:${effectiveMotherAgentId}:${agentId}`,
+        source: motherNodeId,
+        target: targetNodeId,
         style: {
-          stroke: 'rgba(148, 163, 184, 0.34)',
-          lineWidth: 0.85,
+          stroke: dispatchActive ? activeStroke : edgeSelected ? 'rgba(96, 165, 250, 0.72)' : idleStroke,
+          lineWidth: dispatchActive ? 1.32 : edgeSelected ? 1.14 : 0.9,
+          lineDash: dispatchActive ? [10, 8] : [5, 9],
+          lineDashOffset: 0,
           radius: 14,
-          endArrow: false
+          opacity: dispatchActive ? 0.95 : edgeSelected ? 0.92 : 0.78,
+          shadowColor: dispatchActive ? 'rgba(59, 130, 246, 0.28)' : 'rgba(0, 0, 0, 0)',
+          shadowBlur: dispatchActive ? 6 : 0,
+          endArrow: false,
+          label: Boolean(dispatchTaskText),
+          labelText: dispatchTaskText,
+          labelPlacement: 0.54,
+          labelOffsetY: -7,
+          labelAutoRotate: true,
+          labelFill: dispatchActive ? 'rgba(219, 234, 254, 0.96)' : 'rgba(203, 213, 225, 0.92)',
+          labelFontSize: 10,
+          labelFontWeight: 560,
+          labelBackground: Boolean(dispatchTaskText),
+          labelBackgroundFill: dispatchActive ? 'rgba(30, 64, 175, 0.62)' : 'rgba(30, 41, 59, 0.58)',
+          labelBackgroundStroke: dispatchActive ? 'rgba(96, 165, 250, 0.38)' : 'rgba(148, 163, 184, 0.3)',
+          labelBackgroundLineWidth: 1,
+          labelBackgroundRadius: 999,
+          labelPadding: [2, 8]
         },
         data: {
           kind: 'dispatch',
-          task_id: dispatchTask?.task_id || null
+          task_id: latestTask?.task_id || null,
+          active: dispatchActive,
+          selected: edgeSelected
         }
       });
-      const hasReport = agentTasks.some((task) => {
-        const status = String(task.status || '').trim().toLowerCase();
-        return ['success', 'completed', 'failed', 'error', 'timeout', 'cancelled'].includes(status);
-      });
-      if (hasReport) {
-        edges.push({
-          id: `report:${agentId}:${motherAgentId}`,
-          source: `agent:${agentId}`,
-          target: `agent:${motherAgentId}`,
-          style: {
-            stroke: 'rgba(71, 85, 105, 0.24)',
-            lineWidth: 0.75,
-            radius: 14,
-            endArrow: false
-          },
-          data: {
-            kind: 'report'
-          }
-        });
-      }
     });
   }
 
@@ -738,7 +950,7 @@ const projection = computed(() => {
     nodeMetaMap,
     memberMap,
     tasksByAgent,
-    motherNodeId: motherAgentId ? `agent:${motherAgentId}` : nodes[0]?.id || '',
+    motherNodeId: motherNodeId || nodes[0]?.id || '',
     extent: {
       width: Math.max(0, maxX - minX),
       height: Math.max(0, maxY - minY)
@@ -1029,6 +1241,70 @@ const composerCanSend = computed(
 );
 
 const activeGroupId = computed(() => String(props.group?.group_id || '').trim());
+const dispatchApprovals = computed<DispatchApprovalItem[]>(() => {
+  const sessionId = String(dispatchSessionId.value || '').trim();
+  if (!sessionId) return [];
+  const source = Array.isArray(chatStore.pendingApprovals)
+    ? (chatStore.pendingApprovals as Record<string, unknown>[])
+    : [];
+  return source
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const currentSessionId = String(item.session_id || '').trim();
+      const approvalId = String(item.approval_id || '').trim();
+      if (!approvalId || currentSessionId !== sessionId) return null;
+      return {
+        approval_id: approvalId,
+        session_id: currentSessionId,
+        tool: String(item.tool || '').trim(),
+        summary: String(item.summary || '').trim()
+      } satisfies DispatchApprovalItem;
+    })
+    .filter((item: DispatchApprovalItem | null): item is DispatchApprovalItem => Boolean(item));
+});
+const dispatchApprovalBusy = computed(() => dispatchRespondingApprovalId.value !== '');
+const dispatchCanStop = computed(() => Boolean(dispatchSessionId.value) && composerSending.value);
+const dispatchCanResume = computed(
+  () =>
+    Boolean(dispatchSessionId.value) &&
+    !composerSending.value &&
+    dispatchLastEventId.value > 0 &&
+    (dispatchRuntimeStatus.value === 'stopped' || dispatchRuntimeStatus.value === 'failed')
+);
+const dispatchRuntimeLabel = computed(() => {
+  const keyMap: Record<DispatchRuntimeStatus, string> = {
+    idle: 'beeroom.canvas.chatStandby',
+    queued: 'beeroom.status.queued',
+    running: 'beeroom.status.running',
+    awaiting_approval: 'chat.approval.title',
+    resuming: 'chat.message.resume',
+    stopped: 'chat.workflow.aborted',
+    completed: 'beeroom.status.completed',
+    failed: 'beeroom.status.failed'
+  };
+  return t(keyMap[dispatchRuntimeStatus.value] || 'beeroom.status.unknown');
+});
+const dispatchRuntimeTone = computed(() => {
+  if (dispatchRuntimeStatus.value === 'failed') return 'danger';
+  if (dispatchRuntimeStatus.value === 'completed') return 'success';
+  if (dispatchRuntimeStatus.value === 'awaiting_approval') return 'warn';
+  if (dispatchRuntimeStatus.value === 'queued' || dispatchRuntimeStatus.value === 'running' || dispatchRuntimeStatus.value === 'resuming') {
+    return 'running';
+  }
+  return 'idle';
+});
+
+const normalizeStreamEventId = (value: unknown): number => {
+  const parsed = Number.parseInt(String(value || '').trim(), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+};
+
+const updateDispatchLastEventId = (value: unknown) => {
+  const normalized = normalizeStreamEventId(value);
+  if (normalized > dispatchLastEventId.value) {
+    dispatchLastEventId.value = normalized;
+  }
+};
 
 const nextManualMessageKey = (prefix: string) => {
   manualMessageSerial += 1;
@@ -1036,7 +1312,13 @@ const nextManualMessageKey = (prefix: string) => {
 };
 
 const appendManualChatMessage = (message: MissionChatMessage) => {
-  manualChatMessages.value = [...manualChatMessages.value, message]
+  const current = Array.isArray(manualChatMessages.value) ? manualChatMessages.value : [];
+  const existingIndex = current.findIndex((item) => item.key === message.key);
+  const merged =
+    existingIndex >= 0
+      ? current.map((item, index) => (index === existingIndex ? message : item))
+      : [...current, message];
+  manualChatMessages.value = merged
     .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
     .slice(-MANUAL_CHAT_HISTORY_LIMIT);
 };
@@ -1045,6 +1327,28 @@ const replaceManualChatMessages = (messages: MissionChatMessage[]) => {
   manualChatMessages.value = [...messages]
     .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
     .slice(-MANUAL_CHAT_HISTORY_LIMIT);
+};
+
+const sameManualChatMessages = (left: MissionChatMessage[], right: MissionChatMessage[]) => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const leftItem = left[index];
+    const rightItem = right[index];
+    if (!leftItem || !rightItem) return false;
+    if (
+      leftItem.key !== rightItem.key ||
+      leftItem.time !== rightItem.time ||
+      leftItem.tone !== rightItem.tone ||
+      leftItem.senderName !== rightItem.senderName ||
+      leftItem.senderAgentId !== rightItem.senderAgentId ||
+      leftItem.mention !== rightItem.mention ||
+      leftItem.body !== rightItem.body ||
+      leftItem.meta !== rightItem.meta
+    ) {
+      return false;
+    }
+  }
+  return true;
 };
 
 const loadManualChatHistory = async () => {
@@ -1060,9 +1364,14 @@ const loadManualChatHistory = async () => {
           .map((item: unknown) => mapApiChatMessage(item))
           .filter((item: MissionChatMessage | null): item is MissionChatMessage => !!item)
       : [];
-    replaceManualChatMessages(items);
+    const next = [...items]
+      .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+      .slice(-MANUAL_CHAT_HISTORY_LIMIT);
+    if (!sameManualChatMessages(manualChatMessages.value, next)) {
+      replaceManualChatMessages(next);
+    }
   } catch {
-    manualChatMessages.value = [];
+    // Keep the last successful snapshot to avoid empty flashes on transient network errors.
   }
 };
 
@@ -1304,6 +1613,138 @@ const scrollChatToBottom = async () => {
   element.scrollTop = element.scrollHeight;
 };
 
+const resetDispatchRuntime = (options: { keepSession?: boolean } = {}) => {
+  if (dispatchStreamController) {
+    dispatchStreamController.abort();
+    dispatchStreamController = null;
+  }
+  composerSending.value = false;
+  dispatchStopRequested = false;
+  dispatchRespondingApprovalId.value = '';
+  dispatchRequestId.value = '';
+  dispatchRuntimeStatus.value = 'idle';
+  if (!options.keepSession) {
+    dispatchSessionId.value = '';
+    dispatchLastEventId.value = 0;
+    dispatchTargetAgentId.value = '';
+    dispatchTargetName.value = '';
+    dispatchTargetTone.value = 'worker';
+  }
+};
+
+const consumeDispatchStream = async (response: Response) => {
+  let finalPayload: Record<string, any> | null = null;
+  let streamError = '';
+  await consumeSseStream(response, (eventType, dataText, eventId) => {
+    updateDispatchLastEventId(eventId);
+    const payload = safeJsonParse(dataText);
+    const data = payload?.data ?? payload;
+    updateDispatchLastEventId(data?.event_id ?? data?.eventId ?? payload?.event_id ?? payload?.eventId);
+    const eventRequestId = String(
+      payload?.request_id ??
+      payload?.requestId ??
+      data?.request_id ??
+      data?.requestId ??
+      ''
+    ).trim();
+    if (eventRequestId) {
+      dispatchRequestId.value = eventRequestId;
+    }
+
+    if (eventType === 'heartbeat' || eventType === 'ping') {
+      return;
+    }
+    if (eventType === 'approval_request') {
+      chatStore.enqueueApprovalRequest(dispatchRequestId.value, dispatchSessionId.value, data);
+      dispatchRuntimeStatus.value = 'awaiting_approval';
+      return;
+    }
+    if (eventType === 'approval_result') {
+      chatStore.resolveApprovalResult(data);
+      const status = String(data?.status || payload?.status || '').trim().toLowerCase();
+      dispatchRuntimeStatus.value = status === 'approved' ? 'running' : 'failed';
+      return;
+    }
+    if (eventType === 'queued') {
+      dispatchRuntimeStatus.value = 'queued';
+      return;
+    }
+    if (eventType === 'slow_client') {
+      dispatchRuntimeStatus.value = 'stopped';
+      return;
+    }
+    if (eventType === 'error') {
+      streamError = extractErrorText(payload) || t('common.requestFailed');
+      dispatchRuntimeStatus.value = 'failed';
+      return;
+    }
+    if (eventType === 'final') {
+      finalPayload = payload;
+      dispatchRuntimeStatus.value = 'completed';
+      return;
+    }
+    dispatchRuntimeStatus.value = 'running';
+  });
+
+  if (streamError) {
+    throw new Error(streamError);
+  }
+  return finalPayload;
+};
+
+const startDispatchStream = async (
+  mode: 'send' | 'resume',
+  sessionId: string,
+  payload: { content?: string; afterEventId?: number } = {}
+) => {
+  if (dispatchStreamController) {
+    dispatchStreamController.abort();
+  }
+  dispatchStopRequested = false;
+  composerSending.value = true;
+  dispatchRuntimeStatus.value = mode === 'resume' ? 'resuming' : 'running';
+  const controller = new AbortController();
+  dispatchStreamController = controller;
+
+  const response =
+    mode === 'resume'
+      ? await resumeMessageStream(sessionId, {
+          signal: controller.signal,
+          afterEventId:
+            Number.isFinite(payload.afterEventId) && Number(payload.afterEventId) > 0
+              ? Number(payload.afterEventId)
+              : undefined
+        })
+      : await sendMessageStream(
+          sessionId,
+          { content: String(payload.content || ''), stream: true },
+          { signal: controller.signal }
+        );
+
+  if (!response.ok) {
+    const errorText = String(await response.text()).trim();
+    throw new Error(
+      errorText || (mode === 'resume' ? t('chat.error.resumeFailed') : t('common.requestFailed'))
+    );
+  }
+
+  return consumeDispatchStream(response);
+};
+
+const persistDispatchReply = async (finalPayload: Record<string, any> | null) => {
+  await persistManualChatMessage({
+    senderKind: 'agent',
+    senderName: dispatchTargetName.value || t('messenger.section.swarms'),
+    senderAgentId: dispatchTargetAgentId.value,
+    body: extractReplyText(finalPayload) || t('beeroom.canvas.chatDispatchAccepted'),
+    meta: t('beeroom.canvas.chatResultMeta'),
+    tone: dispatchTargetTone.value,
+    createdAt: Math.floor(Date.now() / 1000),
+    clientMsgId: nextManualMessageKey('reply')
+  });
+  await scrollChatToBottom();
+};
+
 const handleComposerSend = async () => {
   if (composerSending.value) return;
   const content = String(composerText.value || '').trim();
@@ -1322,10 +1763,11 @@ const handleComposerSend = async () => {
   const visibleBody = String(body || content).trim();
   const targetTone = target.role === 'mother' ? 'mother' : 'worker';
 
-  composerSending.value = true;
   composerError.value = '';
   composerText.value = '';
-  let dispatchSessionId = '';
+  dispatchTargetAgentId.value = target.agentId;
+  dispatchTargetName.value = targetName;
+  dispatchTargetTone.value = targetTone;
   try {
     await persistManualChatMessage({
       senderKind: 'user',
@@ -1351,55 +1793,30 @@ const handleComposerSend = async () => {
     });
     await scrollChatToBottom();
 
-    // Send the message in background so the user can stay on the swarm canvas.
     const dispatchSession = await ensureDispatchSession(target.agentId);
     const sessionId = String(dispatchSession.sessionId || '').trim();
     if (!sessionId) {
       throw new Error(t('common.requestFailed'));
     }
-    dispatchSessionId = sessionId;
+    dispatchSessionId.value = sessionId;
+    dispatchRequestId.value = nextManualMessageKey('dispatch-request');
+    dispatchLastEventId.value = 0;
+    dispatchRuntimeStatus.value = 'queued';
     syncDispatchSessionToChatStore({
       sessionId,
       agentId: target.agentId,
       sessionSummary: dispatchSession.sessionSummary,
       userPreview: visibleBody
     });
-    const response = await sendMessageStream(sessionId, { content: visibleBody, stream: true });
-    if (!response.ok) {
-      const errorText = String(await response.text()).trim();
-      throw new Error(errorText || t('common.requestFailed'));
-    }
-
-    let finalPayload: Record<string, any> | null = null;
-    let streamError = '';
-    await consumeSseStream(response, (eventType, dataText) => {
-      const payload = safeJsonParse(dataText);
-      if (eventType === 'error') {
-        streamError = extractErrorText(payload) || t('common.requestFailed');
-      } else if (eventType === 'final') {
-        finalPayload = payload;
-      }
-    });
-
-    if (streamError) {
-      throw new Error(streamError);
-    }
-
-    const replyText = extractReplyText(finalPayload);
-    await persistManualChatMessage({
-      senderKind: 'agent',
-      senderName: targetName,
-      senderAgentId: target.agentId,
-      body: replyText || t('beeroom.canvas.chatDispatchAccepted'),
-      meta: t('beeroom.canvas.chatResultMeta'),
-      tone: targetTone,
-      createdAt: Math.floor(Date.now() / 1000),
-      clientMsgId: nextManualMessageKey('reply')
-    });
-    await scrollChatToBottom();
-    emit('refresh');
+    const finalPayload = await startDispatchStream('send', sessionId, { content: visibleBody });
+    await persistDispatchReply(finalPayload);
   } catch (error: any) {
+    if (error?.name === 'AbortError' || dispatchStopRequested) {
+      dispatchRuntimeStatus.value = 'stopped';
+      return;
+    }
     const message = String(error?.message || '').trim() || t('common.requestFailed');
+    dispatchRuntimeStatus.value = 'failed';
     composerError.value = message;
     try {
       await persistManualChatMessage({
@@ -1419,10 +1836,94 @@ const handleComposerSend = async () => {
     await scrollChatToBottom();
     ElMessage.error(message);
   } finally {
-    if (dispatchSessionId) {
-      void chatStore.preloadSessionDetail(dispatchSessionId).catch(() => undefined);
+    if (dispatchSessionId.value) {
+      void chatStore.preloadSessionDetail(dispatchSessionId.value).catch(() => undefined);
     }
+    dispatchStreamController = null;
     composerSending.value = false;
+  }
+};
+
+const handleDispatchStop = async () => {
+  if (!dispatchCanStop.value) return;
+  const sessionId = String(dispatchSessionId.value || '').trim();
+  if (!sessionId) return;
+  dispatchStopRequested = true;
+  dispatchRuntimeStatus.value = 'stopped';
+  if (dispatchStreamController) {
+    dispatchStreamController.abort();
+    dispatchStreamController = null;
+  }
+  try {
+    await cancelMessageStream(sessionId);
+  } catch {
+    // Keep local interrupt behavior even if cancel API fails.
+  } finally {
+    composerSending.value = false;
+  }
+  try {
+    await persistManualChatMessage({
+      senderKind: 'system',
+      senderName: t('messenger.section.swarms'),
+      mention: dispatchTargetName.value,
+      mentionAgentId: dispatchTargetAgentId.value,
+      body: t('chat.workflow.aborted'),
+      meta: t('chat.workflow.abortedDetail'),
+      tone: 'system',
+      createdAt: Math.floor(Date.now() / 1000),
+      clientMsgId: nextManualMessageKey('abort')
+    });
+    await scrollChatToBottom();
+  } catch {
+    // Ignore local command-log persistence failures.
+  }
+};
+
+const handleDispatchResume = async () => {
+  if (!dispatchCanResume.value) return;
+  const sessionId = String(dispatchSessionId.value || '').trim();
+  if (!sessionId) return;
+  composerError.value = '';
+  try {
+    const finalPayload = await startDispatchStream('resume', sessionId, {
+      afterEventId: dispatchLastEventId.value
+    });
+    await persistDispatchReply(finalPayload);
+  } catch (error: any) {
+    if (error?.name === 'AbortError' || dispatchStopRequested) {
+      dispatchRuntimeStatus.value = 'stopped';
+      return;
+    }
+    const message = String(error?.message || '').trim() || t('chat.error.resumeFailed');
+    dispatchRuntimeStatus.value = 'failed';
+    composerError.value = message;
+    ElMessage.error(message);
+  } finally {
+    if (dispatchSessionId.value) {
+      void chatStore.preloadSessionDetail(dispatchSessionId.value).catch(() => undefined);
+    }
+    dispatchStreamController = null;
+    composerSending.value = false;
+  }
+};
+
+const handleDispatchApproval = async (
+  decision: 'approve_once' | 'approve_session' | 'deny',
+  approvalId: string
+) => {
+  const normalizedApprovalId = String(approvalId || '').trim();
+  if (!normalizedApprovalId || dispatchRespondingApprovalId.value) return;
+  dispatchRespondingApprovalId.value = normalizedApprovalId;
+  try {
+    await chatStore.respondApproval(decision, normalizedApprovalId);
+    if (decision !== 'deny') {
+      ElMessage.success(t('chat.approval.sent'));
+      dispatchRuntimeStatus.value = 'running';
+    }
+  } catch {
+    ElMessage.error(t('chat.approval.sendFailed'));
+  } finally {
+    dispatchRespondingApprovalId.value = '';
   }
 };
 
@@ -1552,10 +2053,15 @@ watch(
 
 watch(
   activeGroupId,
-  () => {
+  (groupId) => {
+    resetDispatchRuntime();
     composerText.value = '';
     composerError.value = '';
     void loadManualChatHistory();
+    stopChatRealtimeWatch();
+    if (String(groupId || '').trim()) {
+      startChatRealtimeWatch(String(groupId || '').trim());
+    }
     restartChatPolling();
   },
   { immediate: true }
@@ -1642,6 +2148,70 @@ const getCanvasViewport = () => {
   };
 };
 
+const getCanvasViewportCenter = (): [number, number] => {
+  const viewport = getCanvasViewport();
+  return [Math.max(1, viewport.width / 2), Math.max(1, viewport.height / 2)];
+};
+
+const clampCanvasZoom = (zoom: number) => Math.min(CANVAS_ZOOM_MAX, Math.max(CANVAS_ZOOM_MIN, zoom));
+
+const zoomCanvasTo = async (zoom: number) => {
+  if (!graph) return;
+  await graph.zoomTo(clampCanvasZoom(zoom), false, getCanvasViewportCenter());
+};
+
+const zoomCanvasIn = async () => {
+  if (!graph) return;
+  await zoomCanvasTo(graph.getZoom() + CANVAS_ZOOM_STEP);
+};
+
+const zoomCanvasOut = async () => {
+  if (!graph) return;
+  await zoomCanvasTo(graph.getZoom() - CANVAS_ZOOM_STEP);
+};
+
+const resetCanvasZoom = async () => {
+  await zoomCanvasTo(1);
+};
+
+const fitCanvasView = async () => {
+  if (!graph) return;
+  await graph.fitView({ when: 'always', direction: 'both' });
+};
+
+const autoArrangeCanvas = async () => {
+  nodePositionOverrides.value = {};
+  hoveredNodeId.value = '';
+  lastLayoutSignature = '';
+  await renderGraph(true);
+};
+
+const refreshCanvasFullscreen = () => {
+  if (typeof document === 'undefined') {
+    canvasFullscreen.value = false;
+    return;
+  }
+  const fullEl = document.fullscreenElement;
+  const screenEl = screenRef.value;
+  canvasFullscreen.value = !!(fullEl && screenEl && (fullEl === screenEl || screenEl.contains(fullEl)));
+};
+
+const toggleCanvasFullscreen = async () => {
+  const target = screenRef.value || boardRef.value;
+  if (!target || typeof document === 'undefined') return;
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else if (target.requestFullscreen) {
+      await target.requestFullscreen();
+    }
+  } catch {
+    // Ignore unsupported environment and browser permission errors.
+  } finally {
+    refreshCanvasFullscreen();
+  }
+};
+
 const normalizeCanvasViewport = (viewport: { width: number; height: number }) => ({
   width: Math.max(360, Number(viewport?.width || 0) || 0),
   height: Math.max(520, Number(viewport?.height || 0) || 0)
@@ -1652,6 +2222,43 @@ const waitForCanvasFrame = () =>
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
 
+const stopDispatchEdgeFlow = () => {
+  if (dispatchFlowTimer !== null) {
+    window.clearInterval(dispatchFlowTimer);
+    dispatchFlowTimer = null;
+  }
+  dispatchFlowOffset = 0;
+};
+
+const syncDispatchEdgeFlow = () => {
+  if (!graph) {
+    stopDispatchEdgeFlow();
+    activeDispatchEdgeIds.value = [];
+    return;
+  }
+  activeDispatchEdgeIds.value = projection.value.edges
+    .filter((edge) => edge?.data?.kind === 'dispatch' && edge?.data?.active)
+    .map((edge) => String(edge?.id || '').trim())
+    .filter(Boolean);
+  if (!activeDispatchEdgeIds.value.length) {
+    stopDispatchEdgeFlow();
+    return;
+  }
+  if (dispatchFlowTimer !== null) return;
+  // Keep updating dash offset to simulate flowing dispatch lines.
+  dispatchFlowTimer = window.setInterval(() => {
+    if (!graph || !activeDispatchEdgeIds.value.length) return;
+    dispatchFlowOffset = (dispatchFlowOffset - 1.4) % 120;
+    graph.updateEdgeData(
+      activeDispatchEdgeIds.value.map((id) => ({
+        id,
+        style: { lineDashOffset: dispatchFlowOffset }
+      }))
+    );
+    void graph.draw();
+  }, 110);
+};
+
 function stopChatPolling() {
   if (chatPollTimer !== null) {
     window.clearInterval(chatPollTimer);
@@ -1659,12 +2266,243 @@ function stopChatPolling() {
   }
 }
 
-function restartChatPolling() {
+function syncChatPollingState(options: { immediate?: boolean } = {}) {
   stopChatPolling();
-  if (typeof window === 'undefined' || !activeGroupId.value) return;
+  if (typeof window === 'undefined') return;
+  const groupId = String(activeGroupId.value || '').trim();
+  if (!groupId) return;
+  if (chatRealtimeTransport.value !== 'none') return;
+  if (options.immediate) {
+    void loadManualChatHistory();
+  }
   chatPollTimer = window.setInterval(() => {
     void loadManualChatHistory();
   }, CHAT_POLL_INTERVAL_MS);
+}
+
+function clearChatWatchRetry() {
+  if (chatWatchRetryTimer !== null) {
+    window.clearTimeout(chatWatchRetryTimer);
+    chatWatchRetryTimer = null;
+  }
+}
+
+function clearChatSseRetry() {
+  if (chatSseRetryTimer !== null) {
+    window.clearTimeout(chatSseRetryTimer);
+    chatSseRetryTimer = null;
+  }
+}
+
+function stopChatSseWatch() {
+  clearChatSseRetry();
+  if (chatSseSource) {
+    chatSseSource.close();
+    chatSseSource = null;
+  }
+  chatSseGroupId = '';
+  if (chatRealtimeTransport.value === 'sse') {
+    chatRealtimeTransport.value = 'none';
+    syncChatPollingState();
+  }
+}
+
+function scheduleChatSseRetry(groupId: string) {
+  if (typeof window === 'undefined') return;
+  clearChatSseRetry();
+  chatSseRetryTimer = window.setTimeout(() => {
+    chatSseRetryTimer = null;
+    if (groupId !== activeGroupId.value) return;
+    startChatSseWatch(groupId);
+  }, CHAT_SSE_RETRY_DELAY_MS);
+}
+
+function startChatSseWatch(groupId: string) {
+  const normalizedGroupId = String(groupId || '').trim();
+  if (!normalizedGroupId || typeof window === 'undefined' || typeof EventSource === 'undefined') {
+    return;
+  }
+  if (chatSseSource && chatSseGroupId === normalizedGroupId) {
+    return;
+  }
+  stopChatSseWatch();
+  let source: EventSource;
+  try {
+    source = openBeeroomChatStream(normalizedGroupId, {
+      allowQueryToken: true,
+      params: { after_event_id: 0 }
+    });
+  } catch {
+    scheduleChatSseRetry(normalizedGroupId);
+    return;
+  }
+  chatSseSource = source;
+  chatSseGroupId = normalizedGroupId;
+
+  const bindEvent = (eventType: string) => {
+    source.addEventListener(eventType, (event: Event) => {
+      if (chatSseSource !== source) return;
+      const messageEvent = event as MessageEvent;
+      const dataText =
+        typeof messageEvent.data === 'string'
+          ? messageEvent.data
+          : JSON.stringify(messageEvent.data ?? null);
+      handleChatRealtimeEvent(
+        normalizedGroupId,
+        eventType,
+        dataText,
+        String(messageEvent.lastEventId || ''),
+        'sse'
+      );
+    });
+  };
+
+  bindEvent('watching');
+  bindEvent('sync_required');
+  bindEvent('chat_cleared');
+  bindEvent('chat_message');
+
+  source.onerror = () => {
+    if (chatSseSource !== source) return;
+    source.close();
+    chatSseSource = null;
+    chatSseGroupId = '';
+    if (chatRealtimeTransport.value === 'sse') {
+      chatRealtimeTransport.value = 'none';
+      syncChatPollingState();
+    }
+    if (normalizedGroupId !== activeGroupId.value) return;
+    scheduleChatSseRetry(normalizedGroupId);
+  };
+}
+
+function stopChatRealtimeWatch() {
+  clearChatWatchRetry();
+  stopChatSseWatch();
+  if (chatWatchController) {
+    chatWatchController.abort();
+    chatWatchController = null;
+  }
+  if (chatWatchRequestId) {
+    beeroomWsClient.sendCancel(chatWatchRequestId, activeGroupId.value);
+    chatWatchRequestId = '';
+  }
+  if (chatRealtimeTransport.value === 'ws') {
+    chatRealtimeTransport.value = 'none';
+  }
+  syncChatPollingState();
+}
+
+function handleChatRealtimeEvent(
+  groupId: string,
+  eventType: string,
+  dataText: string,
+  _eventId: string,
+  transport: 'ws' | 'sse' = 'ws'
+) {
+  if (!groupId || groupId !== activeGroupId.value) return;
+  const payload = safeJsonParse(dataText);
+  const normalizedType = String(eventType || '').trim().toLowerCase();
+  if (
+    (normalizedType === 'chat_message' ||
+      normalizedType === 'chat_cleared' ||
+      normalizedType === 'sync_required') &&
+    chatRealtimeTransport.value !== transport
+  ) {
+    chatRealtimeTransport.value = transport;
+    syncChatPollingState();
+  }
+  if (normalizedType === 'watching') {
+    if (transport === 'ws') {
+      stopChatSseWatch();
+      chatRealtimeTransport.value = 'ws';
+    } else if (transport === 'sse') {
+      chatRealtimeTransport.value = 'sse';
+    }
+    syncChatPollingState();
+    return;
+  }
+  if (normalizedType === 'sync_required') {
+    void loadManualChatHistory();
+    return;
+  }
+  if (normalizedType === 'chat_cleared') {
+    manualChatMessages.value = [];
+    return;
+  }
+  if (normalizedType === 'chat_message') {
+    const message = mapApiChatMessage(payload);
+    if (message) {
+      appendManualChatMessage(message);
+    }
+    return;
+  }
+}
+
+function scheduleChatRealtimeRetry(groupId: string) {
+  if (typeof window === 'undefined') return;
+  clearChatWatchRetry();
+  chatWatchRetryTimer = window.setTimeout(() => {
+    chatWatchRetryTimer = null;
+    if (groupId !== activeGroupId.value) return;
+    startChatRealtimeWatch(groupId);
+  }, CHAT_WS_RETRY_DELAY_MS);
+}
+
+function startChatRealtimeWatch(groupId: string) {
+  const normalizedGroupId = String(groupId || '').trim();
+  if (!normalizedGroupId) return;
+  clearChatWatchRetry();
+  if (chatWatchController) {
+    chatWatchController.abort();
+    chatWatchController = null;
+  }
+  if (chatWatchRequestId) {
+    beeroomWsClient.sendCancel(chatWatchRequestId, activeGroupId.value);
+    chatWatchRequestId = '';
+  }
+  chatWatchController = new AbortController();
+  const controller = chatWatchController;
+  const requestId = nextManualMessageKey('chat-watch');
+  chatWatchRequestId = requestId;
+  beeroomWsClient
+    .request({
+      requestId,
+      sessionId: normalizedGroupId,
+      message: {
+        type: 'watch',
+        request_id: requestId,
+        payload: {
+          group_id: normalizedGroupId,
+          after_event_id: 0
+        }
+      },
+      closeOnFinal: false,
+      signal: controller.signal,
+      onEvent: (eventType, dataText, eventId) =>
+        handleChatRealtimeEvent(normalizedGroupId, eventType, dataText, eventId, 'ws')
+    })
+    .catch(() => {
+      if (controller.signal.aborted) return;
+      if (chatRealtimeTransport.value === 'ws') {
+        chatRealtimeTransport.value = 'none';
+        syncChatPollingState();
+      }
+      startChatSseWatch(normalizedGroupId);
+      scheduleChatRealtimeRetry(normalizedGroupId);
+    })
+    .finally(() => {
+      if (chatWatchController === controller) {
+        chatWatchController = null;
+      }
+      if (chatWatchRequestId === requestId) {
+        chatWatchRequestId = '';
+      }
+    });
+}
+
+function restartChatPolling() {
+  syncChatPollingState({ immediate: true });
 }
 
 const waitForCanvasViewport = async (attempts = 10) => {
@@ -1701,7 +2539,34 @@ const ensureGraph = async () => {
       size: [132, 80],
       padding: 10,
       delay: 64,
-      shape: 'key',
+      shape: (id: string, elementType: string, element: any) => {
+        const keyShape = element?.getShape?.('key');
+        if (elementType === 'node') {
+          const keyContainer = element?.getShape?.('key-container') || keyShape;
+          const cloned = keyContainer?.cloneNode?.();
+          if (cloned) {
+            const status = projection.value.nodeMetaMap.get(String(id || '').trim())?.status || '';
+            Object.assign(cloned.style, {
+              fill: resolveMinimapNodeFill(status),
+              stroke: 'rgba(148, 163, 184, 0.48)',
+              lineWidth: 0.8,
+              opacity: 0.96,
+              radius: 3
+            });
+            return cloned;
+          }
+        }
+        if (elementType === 'edge' && keyShape?.cloneNode) {
+          const cloned = keyShape.cloneNode();
+          Object.assign(cloned.style, {
+            stroke: 'rgba(148, 163, 184, 0.42)',
+            lineWidth: 0.8,
+            opacity: 0.9
+          });
+          return cloned;
+        }
+        return keyShape?.cloneNode?.() || element;
+      },
       maskStyle: {
         border: '1px solid rgba(148, 163, 184, 0.56)',
         background: 'rgba(148, 163, 184, 0.12)',
@@ -1713,7 +2578,8 @@ const ensureGraph = async () => {
     container: canvasRef.value,
     width: viewport.width,
     height: viewport.height,
-    devicePixelRatio: Math.max(1, globalThis.devicePixelRatio || 1),
+    devicePixelRatio: Math.max(2, globalThis.devicePixelRatio || 1),
+    zoomRange: [CANVAS_ZOOM_MIN, CANVAS_ZOOM_MAX],
     data: { nodes: [], edges: [] },
     plugins,
     node: {
@@ -1747,6 +2613,7 @@ const ensureGraph = async () => {
   });
 
   graph.on('node:pointerenter', (event: any) => {
+    if (!showNodeTooltip) return;
     const nodeId = String(event?.target?.id || '').trim();
     const boardRect = boardRef.value?.getBoundingClientRect();
     if (!nodeId) return;
@@ -1760,6 +2627,7 @@ const ensureGraph = async () => {
   });
 
   graph.on('node:pointermove', (event: any) => {
+    if (!showNodeTooltip) return;
     const nodeId = String(event?.target?.id || '').trim();
     const boardRect = boardRef.value?.getBoundingClientRect();
     if (!nodeId || !boardRect) return;
@@ -1786,6 +2654,13 @@ const ensureGraph = async () => {
 
   graph.on('canvas:pointerleave', () => {
     hoveredNodeId.value = '';
+  });
+
+  graph.on('node:click', (event: any) => {
+    if (event?.targetType !== 'node') return;
+    const nodeId = String(event?.target?.id || '').trim();
+    if (!nodeId) return;
+    activeNodeId.value = nodeId;
   });
 
   graph.on('node:dblclick', (event: any) => {
@@ -1815,6 +2690,8 @@ const ensureGraph = async () => {
 
 const clearGraph = async () => {
   if (!graph) return;
+  stopDispatchEdgeFlow();
+  activeDispatchEdgeIds.value = [];
   graph.setData({ nodes: [], edges: [] });
   await graph.render();
 };
@@ -1823,6 +2700,8 @@ const renderGraph = async (forceFit = false) => {
   if (!projection.value.nodes.length) {
     activeNodeId.value = '';
     hoveredNodeId.value = '';
+    stopDispatchEdgeFlow();
+    activeDispatchEdgeIds.value = [];
     await clearGraph();
     lastLayoutSignature = '';
     return;
@@ -1838,6 +2717,7 @@ const renderGraph = async (forceFit = false) => {
     await graph.fitView({ when: 'always', direction: 'both' });
     lastLayoutSignature = layoutSignature.value;
   }
+  syncDispatchEdgeFlow();
 };
 
 watch(
@@ -1847,6 +2727,14 @@ watch(
     nodePositionOverrides.value = {};
   },
   { immediate: true }
+);
+
+watch(
+  activeNodeId,
+  async (current, previous) => {
+    if (current === previous || !graph || !projection.value.nodes.length) return;
+    await renderGraph(false);
+  }
 );
 
 watch(
@@ -1864,18 +2752,29 @@ watch(
 );
 
 onMounted(async () => {
+  if (typeof document !== 'undefined') {
+    document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
+    refreshCanvasFullscreen();
+  }
   restartChatPolling();
   await renderGraph();
 });
 
 onBeforeUnmount(() => {
+  resetDispatchRuntime();
   stopChatPolling();
+  stopDispatchEdgeFlow();
+  stopChatRealtimeWatch();
+  beeroomWsClient.close(1000, 'beeroom-canvas-unmount');
   if (resizeFrame) {
     cancelAnimationFrame(resizeFrame);
     resizeFrame = 0;
   }
   resizeObserver?.disconnect();
   resizeObserver = null;
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('fullscreenchange', refreshCanvasFullscreen);
+  }
   graph?.destroy();
   graph = null;
 });
@@ -1883,6 +2782,11 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .beeroom-canvas-screen {
+  --beeroom-motion-fast: 140ms;
+  --beeroom-motion-normal: 180ms;
+  --beeroom-motion-slow: 240ms;
+  --beeroom-ease-standard: cubic-bezier(0.22, 1, 0.36, 1);
+  --beeroom-focus-ring: 0 0 0 2px rgba(96, 165, 250, 0.52);
   position: relative;
   display: flex;
   flex: 1;
@@ -1901,6 +2805,13 @@ onBeforeUnmount(() => {
     0 22px 54px rgba(0, 0, 0, 0.36),
     inset 0 0 0 1px rgba(255, 255, 255, 0.03),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.beeroom-canvas-screen:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  border: 0;
 }
 
 .beeroom-canvas-screen::before {
@@ -1960,7 +2871,7 @@ onBeforeUnmount(() => {
     inset 0 0 0 1px rgba(255, 255, 255, 0.04),
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
     0 20px 38px rgba(0, 0, 0, 0.26);
-  transition: grid-template-columns 0.22s ease;
+  transition: grid-template-columns var(--beeroom-motion-slow) var(--beeroom-ease-standard);
 }
 
 .beeroom-canvas-board::before {
@@ -1980,7 +2891,7 @@ onBeforeUnmount(() => {
   width: 1px;
   background: linear-gradient(180deg, transparent, rgba(148, 163, 184, 0.32), transparent);
   pointer-events: none;
-  transition: right 0.22s ease;
+  transition: right var(--beeroom-motion-slow) var(--beeroom-ease-standard);
 }
 
 .beeroom-canvas-board.chat-collapsed {
@@ -2025,7 +2936,7 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  padding: 9px 10px 8px;
+  padding: 10px 10px 9px;
   border-radius: 12px;
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: linear-gradient(180deg, rgba(23, 26, 35, 0.96), rgba(14, 16, 22, 0.95));
@@ -2037,6 +2948,22 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: geometricPrecision;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  transition:
+    border-color var(--beeroom-motion-normal) var(--beeroom-ease-standard),
+    box-shadow var(--beeroom-motion-normal) var(--beeroom-ease-standard),
+    transform var(--beeroom-motion-normal) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card:hover) {
+  transform: translate3d(0, -1px, 0);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 20px rgba(0, 0, 0, 0.3);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card::before) {
@@ -2053,8 +2980,8 @@ onBeforeUnmount(() => {
 .beeroom-canvas-surface :deep(.beeroom-node-card-head) {
   min-width: 0;
   display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  gap: 8px;
+  grid-template-columns: 24px minmax(0, 1fr) max-content;
+  gap: 7px;
   align-items: center;
 }
 
@@ -2078,34 +3005,40 @@ onBeforeUnmount(() => {
 .beeroom-canvas-surface :deep(.beeroom-node-title-group) {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 3px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-title) {
   color: #f8fafc;
   font-size: 12px;
   font-weight: 650;
-  line-height: 1.25;
+  line-height: 1.18;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.beeroom-canvas-surface :deep(.beeroom-node-subtitle) {
-  color: rgba(148, 163, 184, 0.9);
+.beeroom-canvas-surface :deep(.beeroom-node-role-chip) {
+  justify-self: flex-start;
+  max-width: 96px;
+  min-height: 15px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(30, 41, 59, 0.38);
+  color: rgba(203, 213, 225, 0.92);
   font-size: 9px;
-  line-height: 1.2;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  line-height: 13px;
+  letter-spacing: 0.03em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-status) {
-  max-width: 80px;
+  max-width: 84px;
   height: 20px;
-  padding: 0 7px;
+  padding: 0 6px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.3);
   background: rgba(51, 65, 85, 0.35);
@@ -2113,6 +3046,9 @@ onBeforeUnmount(() => {
   font-size: 10px;
   font-weight: 600;
   line-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2120,16 +3056,28 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.beeroom-canvas-surface :deep(.beeroom-node-status-dot) {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.96);
+  flex-shrink: 0;
+}
+
 .beeroom-canvas-surface :deep(.beeroom-node-metrics) {
-  display: inline-flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   min-width: 0;
   height: 20px;
-  padding: 0 7px;
+  padding: 0 6px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.2);
   background: rgba(30, 41, 59, 0.42);
@@ -2137,17 +3085,37 @@ onBeforeUnmount(() => {
   font-size: 10px;
   line-height: 18px;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-metric i) {
+  font-size: 9px;
+  opacity: 0.9;
+  flex-shrink: 0;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric b) {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   color: rgba(248, 250, 252, 0.94);
-  margin-right: 4px;
+  line-height: 1;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-mother) {
   border-color: rgba(245, 158, 11, 0.42);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-selected) {
+  border-color: rgba(96, 165, 250, 0.62);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(96, 165, 250, 0.36),
+    0 12px 24px rgba(8, 47, 73, 0.3);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-selected::before) {
+  width: 3px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-running .beeroom-node-status) {
@@ -2156,10 +3124,19 @@ onBeforeUnmount(() => {
   color: rgba(134, 239, 172, 0.97);
 }
 
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-running .beeroom-node-status-dot) {
+  background: rgba(34, 197, 94, 0.98);
+  animation: beeroom-node-status-pulse 1.3s ease-in-out infinite;
+}
+
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-success .beeroom-node-status) {
   border-color: rgba(59, 130, 246, 0.44);
   background: rgba(59, 130, 246, 0.16);
   color: rgba(191, 219, 254, 0.98);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-success .beeroom-node-status-dot) {
+  background: rgba(59, 130, 246, 0.98);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-danger .beeroom-node-status) {
@@ -2168,10 +3145,35 @@ onBeforeUnmount(() => {
   color: rgba(252, 165, 165, 0.98);
 }
 
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-danger .beeroom-node-status-dot) {
+  background: rgba(248, 113, 113, 0.98);
+  animation: beeroom-node-status-pulse 1.45s ease-in-out infinite;
+}
+
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-warn .beeroom-node-status) {
   border-color: rgba(245, 158, 11, 0.44);
   background: rgba(245, 158, 11, 0.16);
   color: rgba(253, 230, 138, 0.98);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-warn .beeroom-node-status-dot) {
+  background: rgba(245, 158, 11, 0.98);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-muted .beeroom-node-status-dot) {
+  background: rgba(148, 163, 184, 0.92);
+}
+
+@keyframes beeroom-node-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.78);
+  }
 }
 
 .beeroom-canvas-legend {
@@ -2190,6 +3192,92 @@ onBeforeUnmount(() => {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     0 12px 24px rgba(0, 0, 0, 0.2);
+}
+
+.beeroom-canvas-tools {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(12, 13, 18, 0.72);
+  opacity: 0.72;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.03),
+    0 8px 16px rgba(0, 0, 0, 0.16);
+  transition:
+    opacity var(--beeroom-motion-normal) var(--beeroom-ease-standard),
+    border-color var(--beeroom-motion-normal) var(--beeroom-ease-standard),
+    background var(--beeroom-motion-normal) var(--beeroom-ease-standard),
+    box-shadow var(--beeroom-motion-normal) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-board:hover .beeroom-canvas-tools,
+.beeroom-canvas-tools:focus-within {
+  opacity: 1;
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(12, 13, 18, 0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 10px 20px rgba(0, 0, 0, 0.22);
+}
+
+.beeroom-canvas-tool-btn {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(30, 41, 59, 0.28);
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    border-color var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    background var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    color var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    transform var(--beeroom-motion-fast) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-tool-btn:hover,
+.beeroom-canvas-tool-btn:focus-visible,
+.beeroom-canvas-tool-btn.is-active {
+  border-color: rgba(96, 165, 250, 0.48);
+  background: rgba(30, 64, 175, 0.32);
+  color: #dbeafe;
+  transform: translateY(-1px);
+}
+
+.beeroom-canvas-tool-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--beeroom-focus-ring);
+}
+
+.beeroom-canvas-tool-btn:disabled {
+  opacity: 0.46;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.beeroom-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .beeroom-canvas-legend-item {
@@ -2296,7 +3384,11 @@ onBeforeUnmount(() => {
     inset 1px 0 0 rgba(255, 255, 255, 0.03),
     inset 0 1px 0 rgba(255, 255, 255, 0.02);
   overflow: hidden;
-  transition: width 0.2s ease, padding 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+  transition:
+    width var(--beeroom-motion-slow) var(--beeroom-ease-standard),
+    padding var(--beeroom-motion-slow) var(--beeroom-ease-standard),
+    background var(--beeroom-motion-normal) var(--beeroom-ease-standard),
+    opacity var(--beeroom-motion-normal) var(--beeroom-ease-standard);
 }
 
 .beeroom-canvas-chat::before {
@@ -2337,7 +3429,10 @@ onBeforeUnmount(() => {
   opacity: 0;
   pointer-events: none;
   box-shadow: none;
-  transition: opacity 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+  transition:
+    opacity var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    border-color var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    background var(--beeroom-motion-fast) var(--beeroom-ease-standard);
 }
 
 .beeroom-canvas-board:hover .beeroom-canvas-chat-handle,
@@ -2363,6 +3458,11 @@ onBeforeUnmount(() => {
   background: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
   border-color: rgba(148, 163, 184, 0.56);
   transform: translateY(-50%);
+}
+
+.beeroom-canvas-chat-handle:focus-visible {
+  outline: none;
+  box-shadow: var(--beeroom-focus-ring);
 }
 
 .beeroom-canvas-chat-head {
@@ -2391,6 +3491,22 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition:
+    border-color var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    background var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    color var(--beeroom-motion-fast) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-icon-btn:hover:not(:disabled),
+.beeroom-canvas-icon-btn:focus-visible:not(:disabled) {
+  border-color: rgba(96, 165, 250, 0.42);
+  background: rgba(30, 41, 59, 0.96);
+  color: #e2e8f0;
+}
+
+.beeroom-canvas-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--beeroom-focus-ring);
 }
 
 .beeroom-canvas-icon-btn:disabled {
@@ -2411,6 +3527,55 @@ onBeforeUnmount(() => {
 .beeroom-canvas-chat-overview-label {
   color: rgba(156, 163, 175, 0.92);
   font-size: 11px;
+}
+
+.beeroom-canvas-chat-runtime {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.beeroom-canvas-runtime-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(30, 41, 59, 0.48);
+  color: rgba(226, 232, 240, 0.92);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.beeroom-canvas-runtime-chip.is-running {
+  border-color: rgba(59, 130, 246, 0.36);
+  background: rgba(30, 64, 175, 0.28);
+  color: rgba(191, 219, 254, 0.96);
+}
+
+.beeroom-canvas-runtime-chip.is-success {
+  border-color: rgba(34, 197, 94, 0.36);
+  background: rgba(21, 128, 61, 0.28);
+  color: rgba(187, 247, 208, 0.96);
+}
+
+.beeroom-canvas-runtime-chip.is-danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(127, 29, 29, 0.3);
+  color: rgba(254, 202, 202, 0.96);
+}
+
+.beeroom-canvas-runtime-chip.is-warn {
+  border-color: rgba(245, 158, 11, 0.42);
+  background: rgba(146, 64, 14, 0.28);
+  color: rgba(254, 240, 138, 0.98);
+}
+
+.beeroom-canvas-runtime-session {
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.92);
 }
 
 .beeroom-canvas-chat-count {
@@ -2437,6 +3602,87 @@ onBeforeUnmount(() => {
   padding-right: 2px;
 }
 
+.beeroom-canvas-chat-approvals {
+  display: grid;
+  gap: 8px;
+  max-height: 178px;
+  overflow: auto;
+  padding: 8px 0 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.beeroom-canvas-chat-approvals-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: rgba(226, 232, 240, 0.94);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.beeroom-canvas-chat-approvals-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(245, 158, 11, 0.32);
+  background: rgba(120, 53, 15, 0.28);
+  color: rgba(254, 240, 138, 0.96);
+  font-size: 11px;
+}
+
+.beeroom-canvas-chat-approval-item {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.5);
+}
+
+.beeroom-canvas-chat-approval-summary {
+  color: rgba(243, 244, 246, 0.94);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.beeroom-canvas-chat-approval-meta {
+  color: rgba(148, 163, 184, 0.94);
+  font-size: 11px;
+}
+
+.beeroom-canvas-chat-approval-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.beeroom-canvas-chat-approval-btn {
+  min-height: 26px;
+  padding: 0 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(30, 41, 59, 0.65);
+  color: rgba(226, 232, 240, 0.96);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.beeroom-canvas-chat-approval-btn.is-danger {
+  border-color: rgba(239, 68, 68, 0.34);
+  background: rgba(127, 29, 29, 0.44);
+  color: rgba(254, 202, 202, 0.98);
+}
+
+.beeroom-canvas-chat-approval-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .beeroom-canvas-chat-message {
   display: flex;
   align-items: flex-start;
@@ -2457,6 +3703,10 @@ onBeforeUnmount(() => {
   font-weight: 700;
   flex-shrink: 0;
   cursor: pointer;
+  transition:
+    border-color var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    background var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    box-shadow var(--beeroom-motion-fast) var(--beeroom-ease-standard);
 }
 
 .beeroom-canvas-chat-avatar.is-system {
@@ -2487,6 +3737,13 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+  border-radius: 8px;
+}
+
+.beeroom-canvas-chat-avatar:focus-visible,
+.beeroom-canvas-chat-sender:focus-visible {
+  outline: none;
+  box-shadow: var(--beeroom-focus-ring);
 }
 
 .beeroom-canvas-chat-sender.is-system {
@@ -2604,7 +3861,7 @@ onBeforeUnmount(() => {
 .beeroom-canvas-chat-select :deep(.is-focused .el-select__wrapper),
 .beeroom-canvas-chat-select :deep(.el-select__wrapper.is-focused) {
   box-shadow:
-    0 0 0 1px rgba(239, 68, 68, 0.3),
+    0 0 0 2px rgba(96, 165, 250, 0.46),
     inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -2613,6 +3870,12 @@ onBeforeUnmount(() => {
   min-height: 84px;
   padding: 10px 12px;
   line-height: 1.6;
+}
+
+.beeroom-canvas-chat-textarea:focus-visible {
+  box-shadow:
+    var(--beeroom-focus-ring),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 :deep(.beeroom-canvas-chat-select-popper.el-popper) {
@@ -2650,6 +3913,22 @@ onBeforeUnmount(() => {
   color: #fee2e2;
   cursor: pointer;
   box-shadow: 0 10px 24px rgba(127, 29, 29, 0.24);
+  transition:
+    transform var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    filter var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    opacity var(--beeroom-motion-fast) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-chat-send:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.04);
+}
+
+.beeroom-canvas-chat-send:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--beeroom-focus-ring),
+    0 10px 24px rgba(127, 29, 29, 0.24);
 }
 
 .beeroom-canvas-chat-send:disabled {
@@ -2984,6 +4263,16 @@ onBeforeUnmount(() => {
 .beeroom-canvas-minimap :deep(.minimap) {
   width: 100% !important;
   height: 100% !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .beeroom-canvas-screen *,
+  .beeroom-canvas-screen *::before,
+  .beeroom-canvas-screen *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 @media (max-width: 1240px) {

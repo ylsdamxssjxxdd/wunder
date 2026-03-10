@@ -218,6 +218,90 @@ const resolveFilenameFromDisposition = (headers: unknown, fallback: string): str
   return basic || fallback;
 };
 
+const normalizeScalar = (value: unknown): string => String(value ?? '').trim();
+
+const stableMissionTaskFingerprint = (task: BeeroomMissionTask): string =>
+  [
+    normalizeScalar(task.task_id),
+    normalizeScalar(task.agent_id),
+    normalizeScalar(task.status),
+    normalizeScalar(task.priority),
+    normalizeScalar(task.started_time),
+    normalizeScalar(task.finished_time),
+    normalizeScalar(task.elapsed_s),
+    normalizeScalar(task.updated_time),
+    normalizeScalar(task.result_summary),
+    normalizeScalar(task.error)
+  ].join('|');
+
+const stableMissionFingerprint = (mission: BeeroomMission): string =>
+  [
+    normalizeScalar(mission.mission_id || mission.team_run_id),
+    normalizeScalar(mission.team_run_id),
+    normalizeScalar(mission.status),
+    normalizeScalar(mission.completion_status),
+    normalizeScalar(mission.updated_time),
+    normalizeScalar(mission.started_time),
+    normalizeScalar(mission.finished_time),
+    normalizeScalar(mission.task_total),
+    normalizeScalar(mission.task_success),
+    normalizeScalar(mission.task_failed),
+    normalizeScalar(mission.context_tokens_total),
+    normalizeScalar(mission.context_tokens_peak),
+    normalizeScalar(mission.model_round_total),
+    normalizeScalar(mission.summary),
+    normalizeScalar(mission.error),
+    asArray<BeeroomMissionTask>(mission.tasks).map(stableMissionTaskFingerprint).join('~')
+  ].join('|');
+
+const stableMemberFingerprint = (member: BeeroomMember): string =>
+  [
+    normalizeScalar(member.agent_id),
+    normalizeScalar(member.name),
+    normalizeScalar(member.description),
+    normalizeScalar(member.status),
+    normalizeScalar(member.hive_id),
+    normalizeScalar(member.idle),
+    normalizeScalar(member.active_session_total),
+    normalizeScalar(member.sandbox_container_id),
+    asArray<string>(member.active_session_ids).map(normalizeScalar).join(','),
+    asArray<string>(member.tool_names).map(normalizeScalar).join(',')
+  ].join('|');
+
+const stableGroupFingerprint = (group: BeeroomGroup | null | undefined): string => {
+  if (!group) return '';
+  const latestMission = group.latest_mission || null;
+  const latestMissionFingerprint = latestMission ? stableMissionFingerprint(latestMission) : '';
+  const membersFingerprint = asArray<BeeroomMember>(group.members)
+    .map(stableMemberFingerprint)
+    .join('~');
+  return [
+    normalizeScalar(group.group_id || group.hive_id),
+    normalizeScalar(group.hive_id),
+    normalizeScalar(group.name),
+    normalizeScalar(group.description),
+    normalizeScalar(group.status),
+    normalizeScalar(group.is_default),
+    normalizeScalar(group.created_time),
+    normalizeScalar(group.updated_time),
+    normalizeScalar(group.agent_total),
+    normalizeScalar(group.active_agent_total),
+    normalizeScalar(group.idle_agent_total),
+    normalizeScalar(group.running_mission_total),
+    normalizeScalar(group.mission_total),
+    normalizeScalar(group.mother_agent_id),
+    normalizeScalar(group.mother_agent_name),
+    latestMissionFingerprint,
+    membersFingerprint
+  ].join('|');
+};
+
+const stableMembersFingerprint = (items: BeeroomMember[]): string =>
+  items.map(stableMemberFingerprint).join('||');
+
+const stableMissionsFingerprint = (items: BeeroomMission[]): string =>
+  items.map(stableMissionFingerprint).join('||');
+
 let groupsRequestSerial = 0;
 let groupsInFlight: Promise<BeeroomGroup[]> | null = null;
 let groupsInFlightKey = '';
@@ -277,7 +361,11 @@ export const useBeeroomStore = defineStore('beeroom', {
         (item) => normalizeGroupId(item.group_id || item.hive_id) === groupId
       );
       if (index >= 0) {
-        this.groups.splice(index, 1, { ...this.groups[index], ...nextGroup });
+        const merged = { ...this.groups[index], ...nextGroup };
+        if (stableGroupFingerprint(this.groups[index]) === stableGroupFingerprint(merged)) {
+          return;
+        }
+        this.groups.splice(index, 1, merged);
       } else {
         this.groups.unshift(nextGroup);
       }
@@ -288,9 +376,18 @@ export const useBeeroomStore = defineStore('beeroom', {
       const group = (source.group || source) as BeeroomGroup | null;
       const agents = asArray<BeeroomMember>(source.agents);
       const missions = asArray<BeeroomMission>(source.missions);
-      this.activeGroup = group && normalizeGroupId(group.group_id || group.hive_id) ? group : null;
-      this.activeAgents = agents;
-      this.activeMissions = missions;
+      const nextGroup = group && normalizeGroupId(group.group_id || group.hive_id) ? group : null;
+      const currentGroupFingerprint = stableGroupFingerprint(this.activeGroup);
+      const nextGroupFingerprint = stableGroupFingerprint(nextGroup);
+      if (currentGroupFingerprint !== nextGroupFingerprint) {
+        this.activeGroup = nextGroup;
+      }
+      if (stableMembersFingerprint(this.activeAgents) !== stableMembersFingerprint(agents)) {
+        this.activeAgents = agents;
+      }
+      if (stableMissionsFingerprint(this.activeMissions) !== stableMissionsFingerprint(missions)) {
+        this.activeMissions = missions;
+      }
       if (this.activeGroup) {
         const groupId = normalizeGroupId(this.activeGroup.group_id || this.activeGroup.hive_id);
         this.activeGroupId = groupId;

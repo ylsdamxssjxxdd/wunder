@@ -1,6 +1,6 @@
 ﻿<template>
   <section class="beeroom-workbench" :class="{ 'beeroom-workbench--canvas': isCanvasView }">
-    <div v-if="loading" class="beeroom-state beeroom-state--loading">{{ t('common.loading') }}</div>
+    <div v-if="loading && !group" class="beeroom-state beeroom-state--loading">{{ t('common.loading') }}</div>
     <div v-else-if="!group" class="beeroom-state">
       <i class="fa-solid fa-hexagon-nodes" aria-hidden="true"></i>
       <span>{{ t('beeroom.empty.selectGroup') }}</span>

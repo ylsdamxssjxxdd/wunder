@@ -7,6 +7,7 @@
 mod apply_patch_tool;
 mod browser_tool;
 mod catalog;
+mod command_output_guard;
 mod context;
 mod desktop_control;
 mod dispatch;
@@ -98,6 +99,11 @@ use tracing::warn;
 use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
+
+use command_output_guard::{
+    render_command_output, CommandOutputCapture, CommandOutputCaptureMeta, CommandOutputCollector,
+    STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
+};
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
 const MAX_READ_LINES: usize = 1000;
@@ -4219,19 +4225,26 @@ async fn read_stream_output<R>(
     command: String,
     stream_name: &'static str,
     chunk_size: usize,
-) -> Result<Vec<u8>>
+    capture_policy: command_output_guard::CommandOutputPolicy,
+) -> Result<CommandOutputCapture>
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let Some(stream_emitter) = emitter.as_ref().filter(|item| item.stream_enabled()) else {
-        let mut output = Vec::new();
-        reader.read_to_end(&mut output).await?;
-        return Ok(output);
-    };
-
-    let mut output = Vec::new();
     let read_size = chunk_size.max(256);
     let mut buffer = vec![0u8; read_size];
+    let mut collector = CommandOutputCollector::new(capture_policy);
+
+    let Some(stream_emitter) = emitter.as_ref().filter(|item| item.stream_enabled()) else {
+        loop {
+            let read = reader.read(&mut buffer).await?;
+            if read == 0 {
+                break;
+            }
+            collector.push_chunk(&buffer[..read]);
+        }
+        return Ok(collector.finish());
+    };
+
     let mut pending_bytes = Vec::new();
     let mut pending_text = String::new();
     loop {
@@ -4240,7 +4253,7 @@ where
             break;
         }
         let chunk = &buffer[..read];
-        output.extend_from_slice(chunk);
+        collector.push_chunk(chunk);
         pending_bytes.extend_from_slice(chunk);
         loop {
             match std::str::from_utf8(&pending_bytes) {
@@ -4290,7 +4303,7 @@ where
         true,
     );
 
-    Ok(output)
+    Ok(collector.finish())
 }
 
 struct CommandRunResult {
@@ -4298,17 +4311,19 @@ struct CommandRunResult {
     stdout: String,
     stderr: String,
     timed_out: bool,
+    stdout_capture: CommandOutputCaptureMeta,
+    stderr_capture: CommandOutputCaptureMeta,
 }
 
 async fn join_output_task(
-    handle: Option<tokio::task::JoinHandle<Result<Vec<u8>>>>,
-) -> Result<Vec<u8>> {
+    handle: Option<tokio::task::JoinHandle<Result<CommandOutputCapture>>>,
+) -> Result<CommandOutputCapture> {
     match handle {
         Some(handle) => match handle.await {
             Ok(result) => result,
             Err(err) => Err(anyhow!(err.to_string())),
         },
-        None => Ok(Vec::new()),
+        None => Ok(CommandOutputCapture::empty()),
     }
 }
 
@@ -4469,6 +4484,7 @@ async fn run_spawned_child_streaming(
                 command_text,
                 "stdout",
                 chunk_size,
+                STDOUT_CAPTURE_POLICY,
             )
             .await
         })
@@ -4485,6 +4501,7 @@ async fn run_spawned_child_streaming(
                 command_text,
                 "stderr",
                 chunk_size,
+                STDERR_CAPTURE_POLICY,
             )
             .await
         })
@@ -4505,10 +4522,10 @@ async fn run_spawned_child_streaming(
         Some(child.wait().await?)
     };
 
-    let stdout_bytes = join_output_task(stdout_task).await?;
-    let stderr_bytes = join_output_task(stderr_task).await?;
-    let stdout = decode_command_output(&stdout_bytes);
-    let stderr = decode_command_output(&stderr_bytes);
+    let stdout_capture = join_output_task(stdout_task).await?;
+    let stderr_capture = join_output_task(stderr_task).await?;
+    let stdout = render_command_output(&stdout_capture, decode_command_output);
+    let stderr = render_command_output(&stderr_capture, decode_command_output);
     let returncode = status.and_then(|value| value.code()).unwrap_or(-1);
 
     Ok(CommandRunResult {
@@ -4516,6 +4533,8 @@ async fn run_spawned_child_streaming(
         stdout,
         stderr,
         timed_out,
+        stdout_capture: stdout_capture.meta,
+        stderr_capture: stderr_capture.meta,
     })
 }
 
@@ -4721,6 +4740,10 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
     }
 
     let mut results = Vec::new();
+    let mut guarded_total_bytes: usize = 0;
+    let mut guarded_omitted_bytes: usize = 0;
+    let mut guarded_total_commands: usize = 0;
+    let mut guarded_truncated_commands: usize = 0;
     let execute_tool_name = resolve_tool_name("execute_command");
     for raw_line in content.lines() {
         let command = raw_line.trim();
@@ -4737,11 +4760,33 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         }
         let run =
             run_command_streaming(context, command, &cwd, timeout, &execute_tool_name).await?;
+        let command_total_bytes = run
+            .stdout_capture
+            .total_bytes
+            .saturating_add(run.stderr_capture.total_bytes);
+        let command_omitted_bytes = run
+            .stdout_capture
+            .omitted_bytes
+            .saturating_add(run.stderr_capture.omitted_bytes);
+        let command_truncated = run.stdout_capture.truncated || run.stderr_capture.truncated;
+        guarded_total_bytes = guarded_total_bytes.saturating_add(command_total_bytes);
+        guarded_omitted_bytes = guarded_omitted_bytes.saturating_add(command_omitted_bytes);
+        guarded_total_commands = guarded_total_commands.saturating_add(1);
+        if command_truncated {
+            guarded_truncated_commands = guarded_truncated_commands.saturating_add(1);
+        }
         results.push(json!({
             "command": command,
             "returncode": run.returncode,
             "stdout": run.stdout,
             "stderr": run.stderr,
+            "output_meta": {
+                "truncated": command_truncated,
+                "total_bytes": command_total_bytes,
+                "omitted_bytes": command_omitted_bytes,
+                "stdout": run.stdout_capture.to_json(),
+                "stderr": run.stderr_capture.to_json(),
+            },
         }));
         if run.timed_out {
             let detail = if timeout_s > 0.0 {
@@ -4770,6 +4815,15 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                     "tool.exec.command_failed",
                     &HashMap::from([("detail".to_string(), detail)]),
                 ),
+                "meta": {
+                    "output_guard": {
+                        "truncated": guarded_truncated_commands > 0,
+                        "commands": guarded_total_commands,
+                        "truncated_commands": guarded_truncated_commands,
+                        "total_bytes": guarded_total_bytes,
+                        "omitted_bytes": guarded_omitted_bytes,
+                    }
+                },
                 "sandbox": false,
             }));
         }
@@ -4779,6 +4833,15 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                 "ok": false,
                 "data": { "results": results },
                 "error": i18n::t("tool.exec.failed"),
+                "meta": {
+                    "output_guard": {
+                        "truncated": guarded_truncated_commands > 0,
+                        "commands": guarded_total_commands,
+                        "truncated_commands": guarded_truncated_commands,
+                        "total_bytes": guarded_total_bytes,
+                        "omitted_bytes": guarded_omitted_bytes,
+                    }
+                },
                 "sandbox": false,
             }));
         }
@@ -4788,6 +4851,15 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         "ok": true,
         "data": { "results": results },
         "error": "",
+        "meta": {
+            "output_guard": {
+                "truncated": guarded_truncated_commands > 0,
+                "commands": guarded_total_commands,
+                "truncated_commands": guarded_truncated_commands,
+                "total_bytes": guarded_total_bytes,
+                "omitted_bytes": guarded_omitted_bytes,
+            }
+        },
         "sandbox": false,
     }))
 }

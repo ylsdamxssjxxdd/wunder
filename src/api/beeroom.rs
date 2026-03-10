@@ -328,6 +328,7 @@ async fn append_beeroom_chat_message(
             payload.created_at.unwrap_or(0.0),
         )
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    state.beeroom_realtime.publish_chat_message(&record).await;
     Ok(Json(
         json!({ "data": beeroom_chat_message_payload(record) }),
     ))
@@ -349,12 +350,22 @@ async fn clear_beeroom_chat_messages(
         .user_store
         .delete_beeroom_chat_messages(&user_id, &group.hive_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if deleted > 0 {
+        state
+            .beeroom_realtime
+            .publish_chat_cleared(&user_id, &group.hive_id, deleted, now_ts())
+            .await;
+    }
     Ok(Json(
         json!({ "data": { "deleted": deleted, "group_id": group.hive_id } }),
     ))
 }
 
-fn load_group(state: &AppState, user_id: &str, group_id: &str) -> Result<HiveRecord, Response> {
+pub(crate) fn load_group(
+    state: &AppState,
+    user_id: &str,
+    group_id: &str,
+) -> Result<HiveRecord, Response> {
     let normalized = normalize_hive_id(group_id);
     state
         .user_store

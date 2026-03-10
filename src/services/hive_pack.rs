@@ -99,6 +99,16 @@ struct HivePackMeta {
 struct HiveWorkerRef {
     #[serde(default)]
     worker_id: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    duty: Option<String>,
+    #[serde(default)]
+    approval_mode: Option<String>,
+    #[serde(default)]
+    icon: Option<String>,
     path: String,
 }
 
@@ -183,38 +193,17 @@ struct HiveExportWorker {
     worker_id: String,
     path: String,
     role: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct WorkerExportManifest {
-    protocol: String,
-    kind: String,
-    worker: WorkerExportMeta,
-    agent_profile: WorkerExportProfile,
-    skills: Vec<WorkerExportSkillRef>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct WorkerExportMeta {
-    id: String,
     display_name: String,
     description: String,
     duty: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct WorkerExportProfile {
-    system_prompt_file: String,
-    model_hint: String,
     approval_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct WorkerExportSkillRef {
-    skill_id: String,
-    path: String,
-    required: bool,
+struct WorkerSkillsExportManifest {
+    skills: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -267,6 +256,18 @@ struct WorkerImportSnapshot {
 struct ImportWorkerRef {
     worker_id: String,
     path: PathBuf,
+    display_name: Option<String>,
+    description: Option<String>,
+    duty: Option<String>,
+    approval_mode: Option<String>,
+    icon: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkerSkillSource {
+    source_skill_id: String,
+    preferred_name: String,
+    source_dir: PathBuf,
 }
 
 #[derive(Debug)]
@@ -711,6 +712,7 @@ async fn run_export_job_inner(
     let package_root = export_root.join("package");
     std::fs::create_dir_all(&package_root)?;
     std::fs::create_dir_all(package_root.join("workers"))?;
+    std::fs::create_dir_all(package_root.join("skills"))?;
 
     update_job(job, "installing", 35, "building hivepack structure");
     persist_job(state, job)?;
@@ -725,75 +727,64 @@ async fn run_export_job_inner(
 
     let mut workers = Vec::new();
     let mut worker_reports = Vec::new();
-    let mut total_skills = 0usize;
+    let mut total_skill_links = 0usize;
+    let mut exported_skill_names = BTreeSet::new();
     for (index, agent) in agents.iter().enumerate() {
         let worker_id = export_worker_id(agent, index);
         let worker_dir = package_root.join("workers").join(&worker_id);
-        std::fs::create_dir_all(worker_dir.join("skills"))?;
+        std::fs::create_dir_all(&worker_dir)?;
         std::fs::write(
             worker_dir.join("WORKER_ROLE.md"),
             agent.system_prompt.as_bytes(),
         )?;
 
-        let worker_skill_names =
+        let mut worker_skill_names =
             collect_agent_skill_names(agent, &bindings.alias_map, &user.user_id);
-        let mut skills_refs = Vec::new();
-        for skill_name in worker_skill_names {
+        worker_skill_names.sort();
+        worker_skill_names.dedup();
+        let mut attached_skill_names = Vec::new();
+        for skill_name in &worker_skill_names {
             let source = skill_root.join(&skill_name);
             if !source.exists() || !source.is_dir() || !source.join("SKILL.md").is_file() {
                 continue;
             }
-            let relative = format!("skills/{skill_name}");
+            attached_skill_names.push(skill_name.clone());
+            if exported_skill_names.contains(skill_name) {
+                continue;
+            }
+            let relative = package_root.join("skills").join(skill_name);
             if export_mode == "full" {
-                copy_dir_recursive(&source, &worker_dir.join(&relative))?;
+                copy_dir_recursive(&source, &relative)?;
             } else {
-                std::fs::create_dir_all(worker_dir.join(&relative))?;
+                std::fs::create_dir_all(&relative)?;
                 std::fs::write(
-                    worker_dir.join(&relative).join("SKILL.md"),
+                    relative.join("SKILL.md"),
                     b"# Placeholder\n\nreference_only mode does not include full skill files.\n",
                 )?;
             }
-            write_skill_meta(&worker_dir.join(&relative), &skill_name)?;
-            total_skills += 1;
-            skills_refs.push(WorkerExportSkillRef {
-                skill_id: skill_name.clone(),
-                path: relative,
-                required: true,
-            });
+            write_skill_meta(&relative, skill_name)?;
+            exported_skill_names.insert(skill_name.clone());
         }
-
-        let worker_manifest = WorkerExportManifest {
-            protocol: "hpp/1.0".to_string(),
-            kind: "worker_pack".to_string(),
-            worker: WorkerExportMeta {
-                id: worker_id.clone(),
-                display_name: agent.name.clone(),
-                description: agent.description.clone(),
-                duty: "specialist".to_string(),
-            },
-            agent_profile: WorkerExportProfile {
-                system_prompt_file: "WORKER_ROLE.md".to_string(),
-                model_hint: "inherit".to_string(),
-                approval_mode: normalize_approval_mode(Some(&agent.approval_mode)),
-                icon: agent.icon.clone(),
-            },
-            skills: skills_refs.clone(),
-        };
-        std::fs::write(
-            worker_dir.join("worker.yaml"),
-            serde_yaml::to_string(&worker_manifest)?,
-        )?;
+        attached_skill_names.sort();
+        attached_skill_names.dedup();
+        write_worker_skills_manifest(&worker_dir, &attached_skill_names)?;
+        total_skill_links += attached_skill_names.len();
 
         workers.push(HiveExportWorker {
             worker_id: worker_id.clone(),
             path: format!("workers/{worker_id}"),
             role: "specialist".to_string(),
+            display_name: agent.name.clone(),
+            description: agent.description.clone(),
+            duty: "specialist".to_string(),
+            approval_mode: normalize_approval_mode(Some(&agent.approval_mode)),
+            icon: agent.icon.clone(),
         });
         worker_reports.push(json!({
             "worker_id": worker_id,
             "agent_id": agent.agent_id,
             "agent_name": agent.name,
-            "skills": skills_refs.iter().map(|item| item.skill_id.clone()).collect::<Vec<_>>(),
+            "skills": attached_skill_names,
         }));
     }
 
@@ -839,8 +830,8 @@ async fn run_export_job_inner(
     persist_job(state, job)?;
 
     let package_filename = format!(
-        "{}-{}.hivepack",
-        normalize_file_stem(&hive.name),
+        "{}-{}.zip",
+        normalize_export_filename_stem(&hive.name, &hive.hive_id),
         chrono::Local::now().format("%Y%m%d%H%M%S")
     );
     let package_path = export_root.join(&package_filename);
@@ -857,7 +848,8 @@ async fn run_export_job_inner(
         "hive_id": hive.hive_id,
         "hive_name": hive.name,
         "worker_total": agents.len(),
-        "skill_total": total_skills,
+        "skill_total": total_skill_links,
+        "unique_skill_total": exported_skill_names.len(),
         "mode": export_mode,
         "workers": worker_reports,
     }));
@@ -895,6 +887,7 @@ fn install_worker_snapshot(
         .worker
         .display_name
         .clone()
+        .or_else(|| worker_ref.display_name.clone())
         .unwrap_or_else(|| {
             worker_manifest
                 .worker
@@ -906,54 +899,40 @@ fn install_worker_snapshot(
         .worker
         .description
         .clone()
+        .or_else(|| worker_ref.description.clone())
         .unwrap_or_default();
-    let duty = worker_manifest.worker.duty.clone().unwrap_or_default();
+    let duty = worker_manifest
+        .worker
+        .duty
+        .clone()
+        .or_else(|| worker_ref.duty.clone())
+        .unwrap_or_default();
     let approval_mode = normalize_approval_mode(
         worker_manifest
             .agent_profile
             .as_ref()
-            .and_then(|profile| profile.approval_mode.as_deref()),
+            .and_then(|profile| profile.approval_mode.as_deref())
+            .or(worker_ref.approval_mode.as_deref()),
     );
     let icon = worker_manifest
         .agent_profile
         .as_ref()
-        .and_then(|profile| profile.icon.clone());
+        .and_then(|profile| profile.icon.clone())
+        .or_else(|| worker_ref.icon.clone());
 
-    // Keep manual packaging ergonomic: when worker.yaml omits skills (or is absent),
-    // discover skills from skills/*/SKILL.md automatically.
-    let skill_refs = resolve_worker_skill_refs(&worker_root, &worker_manifest)?;
+    // Support both protocol layouts:
+    // 1) preferred: workers/<id>/skills.yaml + root skills/<name>/...
+    // 2) legacy: worker.yaml skills[] or workers/<id>/skills/<name>/...
+    let skill_sources = resolve_worker_skill_sources(package_root, &worker_root, &worker_manifest)?;
     let mut installed_skills = Vec::new();
     let mut skill_installs = Vec::new();
-    for skill_ref in &skill_refs {
-        let skill_path = validate_relative_path(&skill_ref.path)?;
-        let skill_source = worker_root.join(&skill_path);
-        if !skill_source.exists() || !skill_source.is_dir() {
-            return Err(anyhow!(
-                "skill path missing: {}",
-                skill_source.to_string_lossy()
-            ));
-        }
-        if !skill_source.join("SKILL.md").is_file() {
-            return Err(anyhow!(
-                "skill missing SKILL.md: {}",
-                skill_source.to_string_lossy()
-            ));
-        }
-        let preferred = normalize_name(
-            skill_ref
-                .skill_id
-                .as_deref()
-                .or_else(|| skill_source.file_name().and_then(|name| name.to_str()))
-                .unwrap_or("skill"),
-            "skill",
-        );
-        let source_skill_id = skill_ref
-            .skill_id
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .unwrap_or_else(|| preferred.clone());
+    for skill_source in &skill_sources {
+        let preferred = normalize_name(&skill_source.preferred_name, "skill");
+        let source_skill_id = if skill_source.source_skill_id.trim().is_empty() {
+            preferred.clone()
+        } else {
+            skill_source.source_skill_id.trim().to_string()
+        };
         let final_name = resolve_import_skill_name(
             skill_root,
             &preferred,
@@ -972,7 +951,7 @@ fn install_worker_snapshot(
             });
             std::fs::remove_dir_all(&skill_target)?;
         }
-        copy_dir_recursive(&skill_source, &skill_target)?;
+        copy_dir_recursive(&skill_source.source_dir, &skill_target)?;
         runtime.installed_skill_dirs.push(skill_target);
         runtime.installed_skill_names.push(final_name.clone());
         runtime.import_skill_name_keys.insert(final_name.clone());
@@ -1012,6 +991,11 @@ fn resolve_import_workers(
                     index + 1,
                 ),
                 path: worker_path,
+                display_name: worker_ref.display_name.clone(),
+                description: worker_ref.description.clone(),
+                duty: worker_ref.duty.clone(),
+                approval_mode: worker_ref.approval_mode.clone(),
+                icon: worker_ref.icon.clone(),
             });
         }
     } else {
@@ -1032,6 +1016,11 @@ fn resolve_import_workers(
                         index + 1,
                     ),
                     path: worker_path,
+                    display_name: None,
+                    description: None,
+                    duty: None,
+                    approval_mode: None,
+                    icon: None,
                 });
             }
         }
@@ -1070,27 +1059,91 @@ fn load_worker_manifest(
         kind: None,
         worker: WorkerMeta {
             id: Some(worker_ref.worker_id.clone()),
-            display_name: Some(worker_ref.worker_id.clone()),
-            description: None,
-            duty: None,
+            display_name: worker_ref
+                .display_name
+                .clone()
+                .or_else(|| Some(worker_ref.worker_id.clone())),
+            description: worker_ref.description.clone(),
+            duty: worker_ref.duty.clone(),
         },
-        agent_profile: None,
+        agent_profile: Some(WorkerAgentProfile {
+            approval_mode: worker_ref.approval_mode.clone(),
+            icon: worker_ref.icon.clone(),
+        }),
         skills: Vec::new(),
     })
 }
 
-fn resolve_worker_skill_refs(
+fn resolve_worker_skill_sources(
+    package_root: &Path,
     worker_root: &Path,
     worker_manifest: &WorkerManifest,
-) -> Result<Vec<WorkerSkillRef>> {
+) -> Result<Vec<WorkerSkillSource>> {
+    if let Some(skill_names) = load_worker_skill_names_from_yaml(worker_root)? {
+        let mut sources = Vec::new();
+        for name in skill_names {
+            let source_skill_id = name.trim().to_string();
+            if source_skill_id.is_empty() {
+                continue;
+            }
+            let source_dir =
+                resolve_declared_skill_source_dir(package_root, worker_root, &source_skill_id)?;
+            sources.push(WorkerSkillSource {
+                source_skill_id: source_skill_id.clone(),
+                preferred_name: source_skill_id,
+                source_dir,
+            });
+        }
+        if sources.is_empty() {
+            return Err(anyhow!(
+                "worker skills missing: skills.yaml exists but no valid skill names found"
+            ));
+        }
+        return Ok(sources);
+    }
+
     if !worker_manifest.skills.is_empty() {
-        return Ok(worker_manifest.skills.clone());
+        let mut sources = Vec::new();
+        for skill_ref in &worker_manifest.skills {
+            let skill_path = validate_relative_path(&skill_ref.path)?;
+            let candidate_dirs = [
+                package_root.join(&skill_path),
+                worker_root.join(&skill_path),
+                package_root.join("skills").join(
+                    skill_ref
+                        .skill_id
+                        .as_deref()
+                        .map(|value| normalize_name(value, "skill"))
+                        .unwrap_or_else(|| "skill".to_string()),
+                ),
+            ];
+            let source_dir = candidate_dirs
+                .into_iter()
+                .find(|path| path.is_dir() && path.join("SKILL.md").is_file())
+                .ok_or_else(|| anyhow!("skill path missing or invalid: {}", skill_ref.path))?;
+            let preferred_name = skill_ref
+                .skill_id
+                .clone()
+                .or_else(|| {
+                    source_dir
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(ToOwned::to_owned)
+                })
+                .unwrap_or_else(|| "skill".to_string());
+            sources.push(WorkerSkillSource {
+                source_skill_id: preferred_name.clone(),
+                preferred_name,
+                source_dir,
+            });
+        }
+        return Ok(sources);
     }
 
     let skills_root = worker_root.join("skills");
     if !skills_root.is_dir() {
         return Err(anyhow!(
-            "worker skills missing: provide worker.yaml skills[] or create skills/<id>/SKILL.md"
+            "worker skills missing: provide workers/<id>/skills.yaml, worker.yaml skills[], or skills/<id>/SKILL.md"
         ));
     }
 
@@ -1103,13 +1156,14 @@ fn resolve_worker_skill_refs(
                 return None;
             }
             let dir_name = entry.file_name().to_string_lossy().to_string();
-            Some(WorkerSkillRef {
-                skill_id: Some(dir_name.clone()),
-                path: format!("skills/{dir_name}"),
+            Some(WorkerSkillSource {
+                source_skill_id: dir_name.clone(),
+                preferred_name: dir_name,
+                source_dir: skill_dir,
             })
         })
         .collect::<Vec<_>>();
-    refs.sort_by_key(|item| item.path.clone());
+    refs.sort_by_key(|item| item.preferred_name.clone());
     if refs.is_empty() {
         return Err(anyhow!(
             "worker skills missing: no SKILL.md found under {}",
@@ -1117,6 +1171,92 @@ fn resolve_worker_skill_refs(
         ));
     }
     Ok(refs)
+}
+
+fn load_worker_skill_names_from_yaml(worker_root: &Path) -> Result<Option<Vec<String>>> {
+    let skills_yaml_path = worker_root.join("skills.yaml");
+    if !skills_yaml_path.is_file() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&skills_yaml_path)
+        .with_context(|| format!("read {} failed", skills_yaml_path.display()))?;
+    let value: serde_yaml::Value = serde_yaml::from_str(&content)
+        .with_context(|| format!("parse {} failed", skills_yaml_path.display()))?;
+    let mut names = Vec::new();
+    match value {
+        serde_yaml::Value::Sequence(items) => {
+            for item in items {
+                if let Some(name) = parse_worker_skill_name_value(&item) {
+                    names.push(name);
+                }
+            }
+        }
+        serde_yaml::Value::Mapping(map) => {
+            for key in ["skills", "skill_names"] {
+                let map_key = serde_yaml::Value::String(key.to_string());
+                let Some(raw) = map.get(&map_key) else {
+                    continue;
+                };
+                if let Some(name) = parse_worker_skill_name_value(raw) {
+                    names.push(name);
+                    continue;
+                }
+                if let serde_yaml::Value::Sequence(items) = raw {
+                    for item in items {
+                        if let Some(name) = parse_worker_skill_name_value(item) {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(Some(names))
+}
+
+fn parse_worker_skill_name_value(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(text) => {
+            let cleaned = text.trim();
+            if cleaned.is_empty() {
+                None
+            } else {
+                Some(cleaned.to_string())
+            }
+        }
+        serde_yaml::Value::Mapping(map) => map
+            .get(&serde_yaml::Value::String("name".to_string()))
+            .and_then(parse_worker_skill_name_value),
+        _ => None,
+    }
+}
+
+fn resolve_declared_skill_source_dir(
+    package_root: &Path,
+    worker_root: &Path,
+    skill_name: &str,
+) -> Result<PathBuf> {
+    let sanitized = skill_name.trim();
+    if sanitized.is_empty() {
+        return Err(anyhow!("declared skill name is empty"));
+    }
+    let normalized = normalize_name(sanitized, "skill");
+    let candidate_dirs = [
+        package_root.join("skills").join(sanitized),
+        package_root.join("skills").join(&normalized),
+        worker_root.join("skills").join(sanitized),
+        worker_root.join("skills").join(&normalized),
+    ];
+    candidate_dirs
+        .into_iter()
+        .find(|path| path.is_dir() && path.join("SKILL.md").is_file())
+        .ok_or_else(|| {
+            anyhow!(
+                "declared skill source missing: {} (expected under package skills/ or worker skills/)",
+                skill_name
+            )
+        })
 }
 
 fn resolve_worker_id(preferred: Option<&str>, from_path: Option<&str>, index: usize) -> String {
@@ -1571,6 +1711,17 @@ fn write_skill_meta(skill_root: &Path, skill_name: &str) -> Result<()> {
     Ok(())
 }
 
+fn write_worker_skills_manifest(worker_root: &Path, skill_names: &[String]) -> Result<()> {
+    let payload = WorkerSkillsExportManifest {
+        skills: skill_names.to_vec(),
+    };
+    std::fs::write(
+        worker_root.join("skills.yaml"),
+        serde_yaml::to_string(&payload)?,
+    )?;
+    Ok(())
+}
+
 fn write_checksums(package_root: &Path) -> Result<()> {
     let mut lines = Vec::new();
     for entry in WalkDir::new(package_root)
@@ -1894,8 +2045,36 @@ fn normalize_name(raw: &str, fallback: &str) -> String {
     }
 }
 
-fn normalize_file_stem(raw: &str) -> String {
-    normalize_name(raw, "hivepack")
+fn normalize_export_filename_stem(hive_name: &str, hive_id: &str) -> String {
+    let base = if hive_name.trim().is_empty() {
+        hive_id.trim()
+    } else {
+        hive_name.trim()
+    };
+    let mut output = String::with_capacity(base.len());
+    for ch in base.chars() {
+        if ch.is_control() {
+            continue;
+        }
+        if matches!(ch, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+            output.push('-');
+            continue;
+        }
+        if ch.is_whitespace() {
+            output.push('-');
+        } else {
+            output.push(ch);
+        }
+    }
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let cleaned = output.trim_matches(['-', '.', ' ']).to_string();
+    if cleaned.is_empty() {
+        normalize_name(hive_id, "hivepack")
+    } else {
+        cleaned
+    }
 }
 
 fn normalize_approval_mode(raw: Option<&str>) -> String {
@@ -1961,11 +2140,11 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_approval_mode, normalize_conflict_key, normalize_import_conflict_mode,
-        normalize_name, resolve_import_skill_name, resolve_import_workers,
-        resolve_worker_skill_refs, unique_label_with_reserved, unique_slug_with_reserved,
-        validate_archive_entry_path, validate_hive_manifest, validate_relative_path, HiveManifest,
-        HivePackMeta, ImportConflictMode, WorkerManifest,
+        normalize_approval_mode, normalize_conflict_key, normalize_export_filename_stem,
+        normalize_import_conflict_mode, normalize_name, resolve_import_skill_name,
+        resolve_import_workers, resolve_worker_skill_sources, unique_label_with_reserved,
+        unique_slug_with_reserved, validate_archive_entry_path, validate_hive_manifest,
+        validate_relative_path, HiveManifest, HivePackMeta, ImportConflictMode, WorkerManifest,
     };
     use std::collections::HashSet;
     use tempfile::tempdir;
@@ -2118,7 +2297,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_worker_skill_refs_auto_discovers_skill_dirs() {
+    fn resolve_worker_skill_sources_auto_discovers_legacy_skill_dirs() {
         let root = tempdir().expect("tempdir");
         let worker_root = root.path().join("workers").join("planner");
         let skill_root = worker_root.join("skills").join("requirement_analyzer");
@@ -2126,9 +2305,42 @@ mod tests {
         std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
 
         let worker_manifest = WorkerManifest::default();
-        let skill_refs = resolve_worker_skill_refs(worker_root.as_path(), &worker_manifest)
-            .expect("resolve worker skills");
+        let skill_refs =
+            resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_manifest)
+                .expect("resolve worker skills");
         assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].path, "skills/requirement_analyzer");
+        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
+    }
+
+    #[test]
+    fn resolve_worker_skill_sources_prefers_skills_yaml_with_root_skills_dir() {
+        let root = tempdir().expect("tempdir");
+        let worker_root = root.path().join("workers").join("planner");
+        std::fs::create_dir_all(&worker_root).expect("worker dir");
+        std::fs::write(
+            worker_root.join("skills.yaml"),
+            "skills:\n  - requirement_analyzer\n",
+        )
+        .expect("skills yaml");
+        let skill_root = root.path().join("skills").join("requirement_analyzer");
+        std::fs::create_dir_all(&skill_root).expect("skill dir");
+        std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
+
+        let worker_manifest = WorkerManifest::default();
+        let skill_refs =
+            resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_manifest)
+                .expect("resolve worker skills");
+        assert_eq!(skill_refs.len(), 1);
+        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
+        assert_eq!(skill_refs[0].source_dir, skill_root);
+    }
+
+    #[test]
+    fn normalize_export_filename_stem_keeps_chinese_hive_name() {
+        assert_eq!(
+            normalize_export_filename_stem("人力资源蜂群", "hive_123"),
+            "人力资源蜂群"
+        );
+        assert_eq!(normalize_export_filename_stem("  ", "hive_123"), "hive_123");
     }
 }

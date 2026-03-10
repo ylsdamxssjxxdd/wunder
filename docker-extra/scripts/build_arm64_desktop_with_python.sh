@@ -10,6 +10,7 @@ CARGO_HOME_DIR="${ROOT_DIR}/.cargo/arm64-20"
 TARGET_DIR="${ROOT_DIR}/target/arm64-20"
 DIST_DIR="${TARGET_DIR}/dist"
 BUILD_ROOT="${TARGET_DIR}/.build/python"
+APPIMAGE_COMP="${APPIMAGE_COMP:-zstd}"
 
 echo "[1/8] Checking prerequisites..."
 if ! command -v docker >/dev/null 2>&1; then
@@ -65,6 +66,7 @@ echo "[6/8] Packaging extra sidecar archive..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   BUILD_ROOT=/app/target/arm64-20/.build/python \
+  OUTPUT_DIR=/app/target/arm64-20/dist \
     bash /app/docker-extra/scripts/package_sidecar_python.sh
 "
 
@@ -93,6 +95,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   EMBED_PYTHON=0 \
   BUNDLE_PLAYWRIGHT_DEPS=0 \
   PLAYWRIGHT_INSTALL_DEPS=0 \
+  APPIMAGE_COMP="${APPIMAGE_COMP}" \
     bash /app/docker-extra/scripts/package_appimage_with_python.sh
 '
 

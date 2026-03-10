@@ -1223,6 +1223,18 @@ def is_table_separator_line(line: str) -> bool:
     return all(TABLE_SEPARATOR_CELL_RE.match(cell.strip()) for cell in cells)
 
 
+def is_markdown_thematic_break(line: str) -> bool:
+    candidate = line.strip()
+    if not candidate or "|" in candidate:
+        return False
+    compact = candidate.replace(" ", "")
+    return (
+        len(compact) >= 3
+        and compact[0] in "-*_"
+        and all(ch == compact[0] for ch in compact)
+    )
+
+
 def parse_table_alignments(line: str) -> list[WD_ALIGN_PARAGRAPH]:
     alignments: list[WD_ALIGN_PARAGRAPH] = []
     cells = split_table_row(line)
@@ -1706,14 +1718,8 @@ def markdown_to_docx(md_text: str, doc: Document, args: argparse.Namespace) -> N
             i += 1
             continue
 
-        if (
-            stripped == "---"
-            or re.match(r"^-{3,}$", stripped)
-            or re.match(r"^[*_]{3,}$", stripped)
-        ):
+        if is_markdown_thematic_break(stripped):
             flush_paragraph()
-            add_red_separator(doc)
-            separator_inserted = True
             i += 1
             continue
 

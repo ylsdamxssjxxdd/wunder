@@ -2081,7 +2081,35 @@
 - `DELETE /wunder/beeroom/groups/{group_id}/chat/messages`：清空当前蜂群协作对话历史。
   - 返回：`data.deleted`、`data.group_id`。
 
-### 4.1.63 蜂群工具与 TeamRun 补充说明
+### 4.1.63 `/wunder/beeroom/ws`
+
+- `GET /wunder/beeroom/ws`：蜂群协作对话实时 WS 通道（多路复用协议，与主聊天 WS 一致）。
+  - 认证：支持 `Authorization: Bearer <token>`；浏览器端可通过 query `access_token/token` 兜底。
+  - 客户端消息：
+    - `connect`：握手与能力确认；
+    - `watch`：开始监听某个蜂群 `group_id`（payload 支持 `after_event_id?`）；
+    - `cancel`：取消指定 watch（`target_request_id?`）；
+    - `ping`：心跳。
+  - 服务端事件：
+    - `watching`：已开始监听；
+    - `chat_message`：蜂群协作消息追加；
+    - `chat_cleared`：协作消息被清空；
+    - `sync_required`：客户端落后（lag）需要全量补齐；
+    - `final/error/pong/ready`：协议控制事件。
+
+### 4.1.64 `/wunder/beeroom/groups/{group_id}/chat/stream`
+
+- `GET /wunder/beeroom/groups/{group_id}/chat/stream`：蜂群协作对话 SSE 通道（WS 不可用时兜底）。
+  - Query：`after_event_id?`、`access_token?`、`token?`
+  - Header：可选 `Last-Event-ID`（未传 `after_event_id` 时用作续传游标）
+  - 服务端事件：
+    - `watching`：流已建立，返回当前游标；
+    - `chat_message`：单条消息事件（带 `id=event_id`）；
+    - `chat_cleared`：清空事件；
+    - `sync_required`：消费者 lag 触发补齐提示。
+  - 说明：当前事件总线为内存广播，仅保证“在线近实时推送”；断线重连后由前端调用 `GET /chat/messages` 做一致性补齐。
+
+### 4.1.65 蜂群工具与 TeamRun 补充说明
 
 - `agent_swarm send` / `agent_swarm batch_send` 现在会：
   - 自动解析当前蜂巢 `hive_id`；
@@ -2097,7 +2125,7 @@
   - 首次读取智能体列表会按 `config/wunder.yaml` 的 `user_agents.presets` 自动补齐默认智能体，可通过配置调整数量与内容。
   - `sandbox_container_id` 取值范围 1~10，默认 1；同一用户下相同容器编号的智能体共享同一文件工作区。
 
-### 4.1.64 `/wunder/beeroom/packs/*`（已实现，Phase 1）
+### 4.1.66 `/wunder/beeroom/packs/*`（已实现，Phase 1）
 
 - 说明：用于“蜂群包（HivePack）/工蜂包（WorkerPack）”资产导入导出；协议细节见 `docs/蜂巢协议设计.md`。
 - 任务状态机：
@@ -2112,10 +2140,11 @@
     - `group_id/groupId/hive_id/hiveId`：可选，目标蜂群 ID（与 `options.group_id` 二选一）
   - 行为：
     - 校验包结构与路径安全；
-    - 解析 `hive.yaml/worker.yaml`；
-    - 支持极简手工包：`hive.yaml + workers/*/WORKER_ROLE.md + workers/*/skills/*/SKILL.md`；
+    - 解析 `hive.yaml` 与 `workers/*/skills.yaml`；
+    - 支持新结构：`skills/*` 存放技能原始文件，`workers/*/skills.yaml` 仅记录技能名；
+    - 支持极简手工包：`hive.yaml + skills/*/SKILL.md + workers/*/WORKER_ROLE.md + workers/*/skills.yaml`；
     - 当 `hive.yaml.workers[]` 为空时，自动扫描 `workers/*` 目录作为工蜂；
-    - 当 `worker.yaml` 缺失或 `skills[]` 为空时，自动扫描 `skills/*/SKILL.md`；
+    - 当 `workers/*/skills.yaml` 缺失时，兼容读取旧版 `worker.yaml` 或 `workers/*/skills/*/SKILL.md`；
     - `skill.yaml/checksums.sha256/signatures/package.sig` 为可选增强，缺失不阻塞导入；
     - 安装技能包到用户 `custom skills`；
     - 自动创建工蜂智能体并归属蜂群；
@@ -2143,9 +2172,10 @@
     - `mode`：可选，`full|reference_only`（默认 `full`）
   - 行为：
     - 按蜂群成员生成标准目录；
-    - `full` 导出技能完整内容，`reference_only` 导出占位技能说明；
-    - 自动生成 `hive.yaml/worker.yaml`，并附加可选增强元数据 `skill.yaml/checksums.sha256`；
-    - 产出 `.hivepack` 文件并回写任务产物信息。
+    - `full` 导出技能完整内容到包根 `skills/*`，`reference_only` 导出占位技能说明；
+    - 工蜂目录仅保留 `WORKER_ROLE.md + skills.yaml`（不再导出 `worker.yaml` 与工蜂内 skills 目录）；
+    - 自动生成 `hive.yaml/workers/*/skills.yaml`，并附加可选增强元数据 `skill.yaml/checksums.sha256`；
+    - 产出 `.zip` 文件并回写任务产物信息（文件名默认含蜂群名称+时间戳）。
   - 返回：`data`（任务快照）。
 
 - `GET /wunder/beeroom/packs/export/{job_id}`
@@ -2153,7 +2183,7 @@
 
 - `GET /wunder/beeroom/packs/export/{job_id}/download`
   - 说明：仅当导出任务 `status=completed` 可下载。
-  - 返回：`.hivepack` 文件流（`Content-Type: application/vnd.wunder.hivepack+zip`）。
+  - 返回：`.zip` 文件流（`Content-Type: application/zip`）。
 - 用户侧 UI（Messenger/蜂群）已接入：
   - 中栏 `+` 直接选择 `.hivepack` 并发起导入；
   - 蜂群列表条目 hover 浮出导出按钮并触发 `full` 导出；
@@ -2426,6 +2456,7 @@
 - `event: tool_output_delta`：工具执行输出增量（`data.tool`/`data.command`/`data.stream`/`data.delta`）
   - 说明：当前仅内置“执行命令”在本机模式会输出该事件，沙盒执行不流式返回。
 - `event: tool_result`：工具执行结果（data.meta.duration_ms/truncated/output_chars/exit_code/policy）
+  - 执行命令工具结果新增 `data.results[].output_meta`（分 stdout/stderr 记录 `total_bytes/omitted_bytes/truncated/head_bytes/tail_bytes`）；同时 `data.meta.output_guard` 提供本次命令批次汇总（`commands/truncated_commands/total_bytes/omitted_bytes`），用于大输出场景的稳态消费。
 - `event: workspace_update`：工作区变更事件（data.workspace_id/agent_id/container_id/tree_version/tool/reason/path/changed_paths）
 - `event: plan_update`：计划看板更新（`data.explanation` 可选，`data.plan` 为步骤数组，包含 `step`/`status`）
 - `event: question_panel`：问询面板更新（`data.question` 可选，`data.routes` 为路线数组，包含 `label`/`description`/`recommended`/`selected`）

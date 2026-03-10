@@ -6232,7 +6232,14 @@ const submitAgentCreate = async (payload: Record<string, unknown>) => {
 
 const refreshActiveBeeroom = async () => {
   try {
-    await Promise.all([beeroomStore.loadGroups(), beeroomStore.loadActiveGroup({ silent: true })]);
+    if (String(beeroomStore.activeGroupId || '').trim()) {
+      await beeroomStore.loadActiveGroup({ silent: true });
+      return;
+    }
+    await beeroomStore.loadGroups();
+    if (String(beeroomStore.activeGroupId || '').trim()) {
+      await beeroomStore.loadActiveGroup({ silent: true });
+    }
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }

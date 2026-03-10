@@ -212,7 +212,7 @@ async fn download_export_pack(
     *response.status_mut() = StatusCode::OK;
     response.headers_mut().insert(
         header::CONTENT_TYPE,
-        HeaderValue::from_static("application/vnd.wunder.hivepack+zip"),
+        HeaderValue::from_static("application/zip"),
     );
     if let Ok(value) = HeaderValue::from_str(&metadata.len().to_string()) {
         response.headers_mut().insert(header::CONTENT_LENGTH, value);
@@ -221,10 +221,9 @@ async fn download_export_pack(
         .artifact
         .as_ref()
         .map(|item| item.filename.as_str())
-        .unwrap_or("hivepack.hivepack");
-    if let Ok(content_disposition) =
-        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
-    {
+        .unwrap_or("hivepack.zip");
+    let content_disposition = build_content_disposition(filename);
+    if let Ok(content_disposition) = HeaderValue::from_str(&content_disposition) {
         response
             .headers_mut()
             .insert(header::CONTENT_DISPOSITION, content_disposition);
@@ -238,4 +237,42 @@ struct ExportHivePackRequest {
     group_id: String,
     #[serde(default)]
     mode: Option<String>,
+}
+
+fn build_content_disposition(filename: &str) -> String {
+    let ascii_name = sanitize_filename_ascii(filename);
+    if ascii_name == filename {
+        return format!("attachment; filename=\"{ascii_name}\"");
+    }
+    let encoded = percent_encode(filename);
+    format!("attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{encoded}")
+}
+
+fn sanitize_filename_ascii(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.trim().is_empty() {
+        "hivepack.zip".to_string()
+    } else {
+        output
+    }
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.as_bytes() {
+        let ch = *byte as char;
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' || ch == '~' {
+            output.push(ch);
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
 }
