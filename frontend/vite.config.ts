@@ -42,6 +42,9 @@ const resolveManualChunk = (rawId: string) => {
   if (id.includes('/node_modules/element-plus/')) {
     return 'vendor-element-plus';
   }
+  if (id.includes('/node_modules/@antv/')) {
+    return 'vendor-antv';
+  }
   if (id.includes('/node_modules/echarts/') || id.includes('/node_modules/zrender/')) {
     return 'vendor-echarts';
   }

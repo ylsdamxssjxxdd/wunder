@@ -256,15 +256,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, defineAsyncComponent, ref, watch } from 'vue';
 
 import { useI18n } from '@/i18n';
-import BeeroomMissionCanvas from '@/components/beeroom/BeeroomMissionCanvas.vue';
 import {
   type BeeroomGroup,
   type BeeroomMember,
   type BeeroomMission
 } from '@/stores/beeroom';
+
+const BeeroomMissionCanvas = defineAsyncComponent(() => import('@/components/beeroom/BeeroomMissionCanvas.vue'));
 
 type AgentOption = {
   id: string;

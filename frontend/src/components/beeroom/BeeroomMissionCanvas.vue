@@ -296,7 +296,7 @@
 </template>
 
 <script setup lang="ts">
-import { Graph } from '@antv/g6';
+import type { Graph as G6Graph } from '@antv/g6';
 import { ElMessage } from 'element-plus';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 
@@ -466,7 +466,11 @@ const canvasFullscreen = ref(false);
 
 let manualMessageSerial = 0;
 
-let graph: Graph | null = null;
+type G6Module = typeof import('@antv/g6');
+type GraphCtor = G6Module['Graph'];
+
+let graph: G6Graph | null = null;
+let graphCtor: GraphCtor | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let resizeFrame = 0;
 let chatPollTimer: number | null = null;
@@ -481,6 +485,16 @@ let dispatchStopRequested = false;
 let dispatchFlowTimer: number | null = null;
 let dispatchFlowOffset = 0;
 const activeDispatchEdgeIds = ref<string[]>([]);
+
+const loadGraphCtor = async (): Promise<GraphCtor> => {
+  if (graphCtor) {
+    return graphCtor;
+  }
+  // Lazy-load G6 so desktop startup does not eagerly execute heavy graph runtime on non-beeroom pages.
+  const g6 = await import('@antv/g6');
+  graphCtor = g6.Graph;
+  return graphCtor;
+};
 
 const formatDateTime = (value: unknown) => {
   const numeric = Number(value || 0);
@@ -2519,6 +2533,7 @@ const waitForCanvasViewport = async (attempts = 10) => {
 
 const ensureGraph = async () => {
   if (!canvasRef.value || graph) return;
+  const Graph = await loadGraphCtor();
   const viewport = await waitForCanvasViewport();
   const plugins: any[] = [
     {
