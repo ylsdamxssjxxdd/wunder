@@ -24,6 +24,7 @@ use tokio_xmpp::parsers::message::{Body, Message, MessageType, Thread};
 use tokio_xmpp::parsers::ns;
 use tokio_xmpp::parsers::ping::Ping;
 use tokio_xmpp::parsers::presence::{Presence, Type as PresenceType};
+use tokio_xmpp::parsers::roster::{Ask as RosterAsk, Roster, Subscription as RosterSubscription};
 use tokio_xmpp::{AsyncClient, AsyncConfig, Event};
 use tracing::warn;
 
@@ -34,6 +35,8 @@ const XMPP_DEFAULT_DIRECT_TLS_PORT: u16 = 5223;
 const XMPP_RUNTIME_SEND_TIMEOUT_S: u64 = 12;
 const XMPP_RUNTIME_QUEUE_SIZE: usize = 128;
 const XMPP_DIRECT_SEND_TIMEOUT_S: u64 = 20;
+const XMPP_ROSTER_QUERY_TIMEOUT_S: u64 = 20;
+const XMPP_ROSTER_CACHE_TTL_S: u64 = 120;
 const XMPP_HEARTBEAT_DEFAULT_INTERVAL_S: u64 = 60;
 const XMPP_HEARTBEAT_DEFAULT_TIMEOUT_S: u64 = 20;
 const XMPP_HEARTBEAT_MIN_INTERVAL_S: u64 = 5;
@@ -109,8 +112,26 @@ enum XmppRuntimeCommand {
 
 static XMPP_RUNTIME_NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static XMPP_HEARTBEAT_SEQ: AtomicU64 = AtomicU64::new(1);
+static XMPP_ROSTER_SEQ: AtomicU64 = AtomicU64::new(1);
 static XMPP_RUNTIME_DISPATCHERS: LazyLock<DashMap<String, XmppRuntimeDispatcher>> =
     LazyLock::new(DashMap::new);
+static XMPP_ROSTER_CACHE: LazyLock<DashMap<String, XmppRosterCacheEntry>> =
+    LazyLock::new(DashMap::new);
+
+#[derive(Debug, Clone)]
+struct XmppRosterCacheEntry {
+    contacts: Vec<XmppRosterContact>,
+    expires_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct XmppRosterContact {
+    pub jid: String,
+    pub name: Option<String>,
+    pub subscription: String,
+    pub ask: Option<String>,
+    pub groups: Vec<String>,
+}
 
 struct PendingHeartbeatPing {
     id: String,
@@ -147,6 +168,33 @@ pub async fn send_outbound(
     }
 
     send_outbound_with_new_connection(outbound, config).await
+}
+
+pub async fn fetch_roster_contacts(
+    account_id: &str,
+    config: &XmppConfig,
+    force_refresh: bool,
+) -> Result<Vec<XmppRosterContact>> {
+    let cache_key = runtime_key(account_id);
+    if !force_refresh {
+        if let Some(entry) = XMPP_ROSTER_CACHE.get(&cache_key) {
+            if Instant::now() < entry.expires_at {
+                return Ok(entry.contacts.clone());
+            }
+        }
+    }
+
+    let settings = build_runtime_settings(config)?;
+    let mut contacts = fetch_roster_contacts_with_new_connection(account_id, &settings).await?;
+    contacts.sort_by(|left, right| left.jid.cmp(&right.jid));
+    XMPP_ROSTER_CACHE.insert(
+        cache_key,
+        XmppRosterCacheEntry {
+            contacts: contacts.clone(),
+            expires_at: Instant::now() + Duration::from_secs(XMPP_ROSTER_CACHE_TTL_S),
+        },
+    );
+    Ok(contacts)
 }
 
 pub async fn run_long_connection_session<F, Fut>(
@@ -373,6 +421,120 @@ async fn send_outbound_with_new_connection(
     timeout(Duration::from_secs(XMPP_DIRECT_SEND_TIMEOUT_S), send_task)
         .await
         .map_err(|_| anyhow!("xmpp outbound timed out"))?
+}
+
+async fn fetch_roster_contacts_with_new_connection(
+    account_id: &str,
+    settings: &XmppRuntimeSettings,
+) -> Result<Vec<XmppRosterContact>> {
+    let mut client = build_client(settings);
+    let query_id = next_roster_query_id(account_id);
+    let mut query = Some(Iq::from_get(
+        query_id.clone(),
+        Roster {
+            ver: None,
+            items: Vec::new(),
+        },
+    ));
+
+    let fetch_task = async {
+        loop {
+            let Some(event) = client.next().await else {
+                return Err(anyhow!("xmpp stream ended before roster response"));
+            };
+            match event {
+                Event::Online { .. } => {
+                    if let Some(iq) = query.take() {
+                        client
+                            .send_stanza(iq.into())
+                            .await
+                            .map_err(|err| anyhow!("xmpp send roster query failed: {err}"))?;
+                    }
+                }
+                Event::Disconnected(err) => {
+                    return Err(anyhow!("xmpp disconnected before roster fetched: {err}"));
+                }
+                Event::Stanza(stanza) => {
+                    if let Some(contacts) = parse_roster_result_stanza(&stanza, &query_id)? {
+                        let _ = client.send_end().await;
+                        return Ok(contacts);
+                    }
+                }
+            }
+        }
+    };
+
+    timeout(Duration::from_secs(XMPP_ROSTER_QUERY_TIMEOUT_S), fetch_task)
+        .await
+        .map_err(|_| anyhow!("xmpp roster query timed out"))?
+}
+
+fn parse_roster_result_stanza(
+    stanza: &Element,
+    expected_id: &str,
+) -> Result<Option<Vec<XmppRosterContact>>> {
+    let iq = match Iq::try_from(stanza.clone()) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    if iq.id.trim() != expected_id {
+        return Ok(None);
+    }
+    match iq.payload {
+        IqType::Result(None) => Ok(Some(Vec::new())),
+        IqType::Result(Some(payload)) => {
+            let roster = Roster::try_from(payload)
+                .map_err(|err| anyhow!("xmpp roster parse failed: {err}"))?;
+            Ok(Some(convert_roster_contacts(roster)))
+        }
+        IqType::Error(error) => Err(anyhow!("xmpp roster query failed: {error:?}")),
+        IqType::Get(_) | IqType::Set(_) => Ok(None),
+    }
+}
+
+fn convert_roster_contacts(roster: Roster) -> Vec<XmppRosterContact> {
+    let mut contacts = Vec::new();
+    for item in roster.items {
+        if matches!(item.subscription, RosterSubscription::Remove) {
+            continue;
+        }
+        let jid = item.jid.to_string();
+        if jid.trim().is_empty() {
+            continue;
+        }
+        let mut groups = item
+            .groups
+            .into_iter()
+            .filter_map(|group| normalize_owned_string(group.0))
+            .collect::<Vec<_>>();
+        groups.sort();
+        groups.dedup();
+        contacts.push(XmppRosterContact {
+            jid,
+            name: item.name.and_then(normalize_owned_string),
+            subscription: roster_subscription_name(item.subscription).to_string(),
+            ask: roster_ask_name(item.ask).map(str::to_string),
+            groups,
+        });
+    }
+    contacts
+}
+
+fn roster_subscription_name(value: RosterSubscription) -> &'static str {
+    match value {
+        RosterSubscription::None => "none",
+        RosterSubscription::From => "from",
+        RosterSubscription::To => "to",
+        RosterSubscription::Both => "both",
+        RosterSubscription::Remove => "remove",
+    }
+}
+
+fn roster_ask_name(value: RosterAsk) -> Option<&'static str> {
+    match value {
+        RosterAsk::None => None,
+        RosterAsk::Subscribe => Some("subscribe"),
+    }
 }
 
 fn build_client(settings: &XmppRuntimeSettings) -> AsyncClient<XmppTlsServerConfig> {
@@ -638,6 +800,11 @@ fn parse_heartbeat_iq_event(stanza: &Element) -> Option<HeartbeatIqEvent> {
 fn next_heartbeat_ping_id(account_id: &str) -> String {
     let seq = XMPP_HEARTBEAT_SEQ.fetch_add(1, Ordering::Relaxed);
     format!("wunder-hb:{}:{seq}", runtime_key(account_id))
+}
+
+fn next_roster_query_id(account_id: &str) -> String {
+    let seq = XMPP_ROSTER_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("wunder-roster:{}:{seq}", runtime_key(account_id))
 }
 
 fn resolve_outbound_target(outbound: &ChannelOutboundMessage) -> String {
@@ -1255,6 +1422,48 @@ mod tests {
             }
             _ => panic!("expected ping response"),
         }
+    }
+
+    #[test]
+    fn parse_roster_result_stanza_extracts_contacts() {
+        let roster_payload: Element = r#"<query xmlns='jabber:iq:roster'>
+  <item jid='alice@example.com' name='Alice' subscription='both'>
+    <group>Friends</group>
+    <group>TeamA</group>
+  </item>
+  <item jid='bob@example.com' subscription='from' ask='subscribe'/>
+  <item jid='carol@example.com' subscription='remove'/>
+</query>"#
+            .parse()
+            .unwrap();
+        let stanza = Element::builder("iq", ns::DEFAULT_NS)
+            .attr("id", "roster-1")
+            .attr("type", "result")
+            .append(roster_payload)
+            .build();
+
+        let contacts = parse_roster_result_stanza(&stanza, "roster-1")
+            .unwrap()
+            .expect("should parse roster contacts");
+        assert_eq!(contacts.len(), 2);
+        assert_eq!(contacts[0].jid, "alice@example.com");
+        assert_eq!(contacts[0].name.as_deref(), Some("Alice"));
+        assert_eq!(contacts[0].subscription, "both");
+        assert_eq!(contacts[0].groups, vec!["Friends", "TeamA"]);
+        assert_eq!(contacts[1].jid, "bob@example.com");
+        assert_eq!(contacts[1].subscription, "from");
+        assert_eq!(contacts[1].ask.as_deref(), Some("subscribe"));
+    }
+
+    #[test]
+    fn parse_roster_result_stanza_ignores_mismatched_id() {
+        let stanza = Element::builder("iq", ns::DEFAULT_NS)
+            .attr("id", "other-id")
+            .attr("type", "result")
+            .append(Element::builder("query", ns::ROSTER).build())
+            .build();
+        let parsed = parse_roster_result_stanza(&stanza, "roster-expected").unwrap();
+        assert!(parsed.is_none());
     }
 
     #[test]

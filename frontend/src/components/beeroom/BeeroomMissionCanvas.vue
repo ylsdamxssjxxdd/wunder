@@ -107,8 +107,8 @@
           <div class="beeroom-canvas-chat-head">
             <div>
               <div class="beeroom-canvas-chat-title">{{ t('beeroom.canvas.chatTitle') }}</div>
-              <div class="beeroom-canvas-chat-runtime">
-                <span class="beeroom-canvas-runtime-chip" :class="`is-${dispatchRuntimeTone}`">
+              <div v-if="dispatchRuntimeStatus !== 'idle' || dispatchSessionId" class="beeroom-canvas-chat-runtime">
+                <span v-if="dispatchRuntimeStatus !== 'idle'" class="beeroom-canvas-runtime-chip" :class="`is-${dispatchRuntimeTone}`">
                   {{ dispatchRuntimeLabel }}
                 </span>
                 <span v-if="dispatchSessionId" class="beeroom-canvas-runtime-session">
@@ -3670,38 +3670,38 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-surface :deep(.beeroom-node-workflow-step) {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
+  grid-template-columns: 7px minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  gap: 7px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-workflow-step-dot) {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.78);
-  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.12);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-workflow.is-loading .beeroom-node-workflow-step-dot) {
   background: rgba(59, 130, 246, 0.98);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
   animation: beeroom-node-status-pulse 1.3s ease-in-out infinite;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-workflow.is-completed .beeroom-node-workflow-step-dot) {
   background: rgba(34, 197, 94, 0.95);
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.16);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-workflow.is-failed .beeroom-node-workflow-step-dot) {
   background: rgba(248, 113, 113, 0.98);
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.16);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-workflow.is-pending .beeroom-node-workflow-step-dot) {
   background: rgba(148, 163, 184, 0.9);
-  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.14);
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.14);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-workflow-step-text),

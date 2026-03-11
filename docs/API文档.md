@@ -158,6 +158,9 @@
 - `子智能体控制` 的 `send` 支持 `timeoutSeconds` 等待回复，`spawn` 支持 `runTimeoutSeconds` 等待完成并返回 `reply/elapsed_s`。
 - 新增内置工具 `节点调用`（英文别名 `node.invoke`/`node_invoke`），通过 `action=list|invoke` 统一完成节点发现与节点调用。
 - 新增内置工具 `用户世界工具`（英文别名 `user_world`），通过 `action=list_users|send_message` 获取用户列表或发送私信（消息会在用户世界页面可见）。
+- 新增内置工具 `渠道工具`（英文别名 `channel_tool`），通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
+- `渠道工具.list_contacts` 默认融合会话历史与 XMPP roster（若可用），返回 `source=session_history|roster|session_history+roster`；可传 `refresh=true` 强制刷新 roster 缓存。
+- 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
 - 新增内置工具 `浏览器`（英文别名 `browser`），通过 `action=navigate|click|type|screenshot|read_page|close` 统一操作，仅 desktop 模式可用。
 - 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
 - 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
@@ -1740,7 +1743,7 @@
   1. 服务端会先将 `provider` 统一转为小写并查找 `ChannelAdapterRegistry`。
   2. 若命中适配器，先执行 `verify_inbound`（失败返回 `401`），再执行 `parse_inbound`（失败返回 `400`）。
   3. 若适配器 `parse_inbound` 返回 `None` 或未命中适配器，则回退到通用 `ChannelMessage` JSON 解析。
-- 渠道审批交互：当工具命中审批策略时，系统会向渠道回发审批提示文本；用户可在原会话回复 `1/2/3`（分别对应同意一次/同意本会话/拒绝）继续流程，`/stop` 会同时取消当前会话与待审批请求。
+- 渠道审批交互：默认逻辑是当工具命中审批策略时，系统会向渠道回发审批提示文本；用户可在原会话回复 `1/2/3`（分别对应同意一次/同意本会话/拒绝）继续流程，`/stop` 会同时取消当前会话与待审批请求。测试开放态（2026-03-11）下该链路默认关闭。
 
 #### ChannelMessage
 
@@ -2115,6 +2118,8 @@
 - 演示运行快照字段（`data`）：
   - `run_id/group_id/status/team_run_id?/mother_session_id?/selected_worker_ids[]/seed/started_at/updated_at/finished_at?/error?`
   - `status` 取值：`starting/running/cancelling/completed/failed/cancelled`。
+  - 终态对齐真实蜂群运行：仅当关联 `team_run` 达到终态且涉及成员回到空闲后，`status` 才会进入 `completed/failed/cancelled`。
+  - 实时事件：蜂群 WS/SSE 会额外广播 `beeroom_demo_status`，字段与快照基本一致，可用于按钮状态与提示区即时刷新。
 
 ### 4.1.63 `/wunder/beeroom/ws`
 
@@ -2129,6 +2134,7 @@
     - `watching`：已开始监听；
     - `chat_message`：蜂群协作消息追加；
     - `chat_cleared`：协作消息被清空；
+    - `beeroom_demo_status`：演示运行状态变化（启动、运行、取消中、终态）；
     - `team_start`：蜂群任务启动；
     - `team_task_dispatch`：母蜂派发子任务（创建 TeamTask 后即时下发）；
     - `team_task_update`：子任务状态更新（如 `running/cancelled/failed`）；
@@ -2153,6 +2159,7 @@
     - `watching`：流已建立，返回当前游标；
     - `chat_message`：单条消息事件（带 `id=event_id`）；
     - `chat_cleared`：清空事件；
+    - `beeroom_demo_status`：演示运行状态变化事件；
     - `team_start/team_task_dispatch/team_task_update/team_task_result/team_merge/team_finish/team_error`：与 WS 同语义；
     - `sync_required`：消费者 lag 触发补齐提示。
   - 说明：当前事件总线为内存广播，仅保证“在线近实时推送”；断线重连后由前端调用 `GET /chat/messages` 与 `GET /beeroom/groups/{group_id}` 做一致性补齐。

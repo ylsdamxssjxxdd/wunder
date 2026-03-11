@@ -1,4 +1,5 @@
 use super::catalog::resolve_tool_name;
+use super::channel_tool;
 use super::context::ToolContext;
 use super::search_content_tool::search_content;
 use super::{
@@ -125,6 +126,7 @@ pub async fn execute_builtin_tool(
         }
         sleep_tool::TOOL_SLEEP_WAIT => sleep_tool::tool_sleep_wait(context, args).await,
         "用户世界工具" => user_world_tool(context, args).await,
+        channel_tool::TOOL_CHANNEL => channel_tool::channel_tool(context, args).await,
         "记忆管理" => execute_memory_manager_tool(context, args).await,
         _ => Err(anyhow!("未知内置工具: {canonical}")),
     }

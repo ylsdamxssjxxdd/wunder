@@ -7,6 +7,7 @@
 mod apply_patch_tool;
 mod browser_tool;
 mod catalog;
+mod channel_tool;
 mod command_output_guard;
 mod context;
 mod desktop_control;

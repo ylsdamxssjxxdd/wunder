@@ -1787,6 +1787,94 @@
     "en-US": "User world tool: list users or send direct messages.",
     "zh-CN": "用户世界工具：获取用户列表或发送私信。"
   },
+  "tool.spec.channel_tool.description": {
+    "en-US": "Channel tool: list contacts or send messages/files through channel accounts.",
+    "zh-CN": "渠道工具：查询可联系对象，或通过渠道账号发送消息/文件。"
+  },
+  "tool.spec.channel_tool.args.action": {
+    "en-US": "Action: list_contacts/send_message.",
+    "zh-CN": "动作类型：list_contacts/send_message。"
+  },
+  "tool.spec.channel_tool.args.channel": {
+    "en-US": "Channel name, e.g. xmpp/feishu.",
+    "zh-CN": "渠道名称，例如 xmpp/feishu。"
+  },
+  "tool.spec.channel_tool.args.account_id": {
+    "en-US": "Channel account id.",
+    "zh-CN": "渠道账号 ID。"
+  },
+  "tool.spec.channel_tool.args.keyword": {
+    "en-US": "Keyword for contact search.",
+    "zh-CN": "联系人搜索关键字。"
+  },
+  "tool.spec.channel_tool.args.offset": {
+    "en-US": "Pagination offset.",
+    "zh-CN": "分页偏移量。"
+  },
+  "tool.spec.channel_tool.args.limit": {
+    "en-US": "Pagination size (1-200).",
+    "zh-CN": "分页大小（1-200）。"
+  },
+  "tool.spec.channel_tool.args.refresh": {
+    "en-US": "Force refresh contacts from source (e.g. XMPP roster) instead of cache.",
+    "zh-CN": "强制从源端刷新联系人（如 XMPP roster），而不是使用缓存。"
+  },
+  "tool.spec.channel_tool.args.to": {
+    "en-US": "Target peer id/JID.",
+    "zh-CN": "目标接收方 ID/JID。"
+  },
+  "tool.spec.channel_tool.args.peer_kind": {
+    "en-US": "Peer type: user/group.",
+    "zh-CN": "会话对象类型：user/group。"
+  },
+  "tool.spec.channel_tool.args.thread_id": {
+    "en-US": "Optional thread id.",
+    "zh-CN": "可选线程 ID。"
+  },
+  "tool.spec.channel_tool.args.text": {
+    "en-US": "Message text.",
+    "zh-CN": "消息文本。"
+  },
+  "tool.spec.channel_tool.args.content": {
+    "en-US": "Alias of text.",
+    "zh-CN": "text 的别名。"
+  },
+  "tool.spec.channel_tool.args.attachments": {
+    "en-US": "Optional attachment list.",
+    "zh-CN": "可选附件列表。"
+  },
+  "tool.spec.channel_tool.args.attachments.kind": {
+    "en-US": "Attachment kind: file/image/audio/video.",
+    "zh-CN": "附件类型：file/image/audio/video。"
+  },
+  "tool.spec.channel_tool.args.attachments.url": {
+    "en-US": "Attachment URL.",
+    "zh-CN": "附件 URL。"
+  },
+  "tool.spec.channel_tool.args.attachments.mime": {
+    "en-US": "Attachment MIME type.",
+    "zh-CN": "附件 MIME 类型。"
+  },
+  "tool.spec.channel_tool.args.attachments.size": {
+    "en-US": "Attachment byte size.",
+    "zh-CN": "附件字节大小。"
+  },
+  "tool.spec.channel_tool.args.attachments.name": {
+    "en-US": "Attachment display name.",
+    "zh-CN": "附件显示名称。"
+  },
+  "tool.spec.channel_tool.args.meta": {
+    "en-US": "Optional channel-specific metadata.",
+    "zh-CN": "可选渠道扩展元数据。"
+  },
+  "tool.spec.channel_tool.args.wait": {
+    "en-US": "Wait for outbox delivery result.",
+    "zh-CN": "是否等待出站投递结果。"
+  },
+  "tool.spec.channel_tool.args.wait_timeout_s": {
+    "en-US": "Wait timeout in seconds (1-30).",
+    "zh-CN": "等待超时秒数（1-30）。"
+  },
   "tool.spec.memory_manager.description": {
     "en-US": "Manage the current agent's long-term memory entries (list/add/update/delete/clear). Trigger after key facts, preferences, constraints, or persistent to-dos appear; avoid frequent writes for transient details. Changes affect new sessions only; existing sessions keep their prompt snapshot.",
     "zh-CN": "管理当前智能体的长期记忆条目（list/add/update/delete/clear）。当出现稳定事实、用户偏好、长期约束或持续待办时调用；临时信息不要频繁写入。记忆变更仅对新会话生效，已有会话保持原提示词快照。"

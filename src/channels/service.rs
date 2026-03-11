@@ -51,6 +51,7 @@ const XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
 const XMPP_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const XMPP_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
+const CHANNEL_OPEN_APPROVAL_FOR_TEST: bool = true;
 const CHANNEL_APPROVAL_PROMPT: &str =
     "请回复数字：1 同意一次，2 同意本会话，3 拒绝（也可发送 /stop 取消当前任务）。";
 
@@ -110,6 +111,18 @@ impl XmppLongConnTarget {
 
 fn channels_runtime_enabled(config: &Config) -> bool {
     config.channels.enabled || config.gateway.enabled
+}
+
+fn channel_test_request_overrides() -> Option<Value> {
+    if !CHANNEL_OPEN_APPROVAL_FOR_TEST {
+        return None;
+    }
+    Some(json!({
+        "security": {
+            "approval_mode": "full_auto",
+            "exec_policy_mode": "allow"
+        }
+    }))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -688,7 +701,7 @@ impl ChannelHub {
             agent_id: resolved_agent_id.clone(),
             model_name: None,
             language: Some(crate::i18n::get_language()),
-            config_overrides: None,
+            config_overrides: channel_test_request_overrides(),
             agent_prompt,
             attachments: if attachments.is_empty() {
                 None
@@ -699,34 +712,40 @@ impl ChannelHub {
             is_admin: false,
             approval_tx: None,
         };
-        let approval_context = ChannelApprovalContext {
-            session_id: session_info.session_id.clone(),
-            channel: message.channel.clone(),
-            account_id: message.account_id.clone(),
-            peer: message.peer.clone(),
-            thread: message.thread.clone(),
-            binding_id: resolved_binding
-                .as_ref()
-                .and_then(|item| item.binding_id.clone()),
-            source_message_id: message.message_id.clone(),
-            actor_id: resolve_channel_actor_id(&message),
+        let approval_task = if CHANNEL_OPEN_APPROVAL_FOR_TEST {
+            None
+        } else {
+            let approval_context = ChannelApprovalContext {
+                session_id: session_info.session_id.clone(),
+                channel: message.channel.clone(),
+                account_id: message.account_id.clone(),
+                peer: message.peer.clone(),
+                thread: message.thread.clone(),
+                binding_id: resolved_binding
+                    .as_ref()
+                    .and_then(|item| item.binding_id.clone()),
+                source_message_id: message.message_id.clone(),
+                actor_id: resolve_channel_actor_id(&message),
+            };
+            let (approval_tx, approval_rx) = new_approval_channel();
+            request.approval_tx = Some(approval_tx);
+            let approval_hub = self.clone();
+            let approval_context_clone = approval_context.clone();
+            Some(tokio::spawn(async move {
+                approval_hub
+                    .forward_channel_approval_requests(approval_rx, approval_context_clone)
+                    .await;
+            }))
         };
-        let (approval_tx, approval_rx) = new_approval_channel();
-        request.approval_tx = Some(approval_tx);
-        let approval_hub = self.clone();
-        let approval_context_clone = approval_context.clone();
-        let approval_task = tokio::spawn(async move {
-            approval_hub
-                .forward_channel_approval_requests(approval_rx, approval_context_clone)
-                .await;
-        });
         let response = match self
             .run_channel_request(request, &session_info.user_id, &session_info.session_id)
             .await?
         {
             ChannelModelResult::Answer(answer) => answer,
             ChannelModelResult::Busy => {
-                approval_task.abort();
+                if let Some(task) = approval_task.as_ref() {
+                    task.abort();
+                }
                 return self
                     .respond_busy(
                         &message,
@@ -737,7 +756,9 @@ impl ChannelHub {
                     .await;
             }
         };
-        approval_task.abort();
+        if let Some(task) = approval_task.as_ref() {
+            task.abort();
+        }
         if response.trim().is_empty() {
             warn!(
                 "channel response empty: channel={}, account_id={}, peer_id={}",

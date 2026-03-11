@@ -492,7 +492,7 @@ fn is_swarm_resolvable_agent(
 }
 
 fn resolve_worker_count(requested: Option<i64>, mode: &str, total: usize, seed: u64) -> usize {
-    let capped_total = total.min(6).max(1);
+    let capped_total = total.clamp(1, 6);
     if let Some(requested) = requested {
         return (requested.max(1) as usize).min(capped_total);
     }
@@ -821,10 +821,7 @@ async fn mock_chat_completions(
         if observations.is_empty() {
             mother_dispatch_response(&scenario)
         } else {
-            openai_chat_response(
-                "Demo mother merged worker outputs. Final report is ready.",
-                None,
-            )
+            mother_followup_response(&scenario, &current_observations)
         }
     } else if user_message.contains(WORKER_MARKER) {
         worker_response(&scenario, &user_message, &observed_tools)
@@ -871,6 +868,50 @@ fn mother_dispatch_response(scenario: &MockScenario) -> Value {
         ),
         Some(vec![function_tool_call("agent_swarm", &args)]),
     )
+}
+
+fn mother_followup_response(scenario: &MockScenario, observations: &[Value]) -> Value {
+    if let Some(wait_args) = build_mother_wait_args(scenario, observations) {
+        return openai_chat_response(
+            "Demo mother is still waiting for workers to finish.",
+            Some(vec![function_tool_call("agent_swarm", &wait_args)]),
+        );
+    }
+    openai_chat_response(
+        "Demo mother merged worker outputs. Final report is ready.",
+        None,
+    )
+}
+
+fn build_mother_wait_args(scenario: &MockScenario, observations: &[Value]) -> Option<Value> {
+    let latest = observations.last()?;
+    let wait_payload = latest.get("wait").unwrap_or(latest);
+    let all_finished = wait_payload
+        .get("all_finished")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let run_ids = wait_payload
+        .get("run_ids")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if all_finished || run_ids.is_empty() {
+        return None;
+    }
+    Some(json!({
+        "action": "wait",
+        "runIds": run_ids,
+        "waitSeconds": scenario.wait_seconds,
+        "pollIntervalSeconds": 0.25
+    }))
 }
 
 fn worker_response(

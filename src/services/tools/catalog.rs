@@ -1,4 +1,4 @@
-use super::{browser_tool, desktop_control, read_image_tool, sleep_tool};
+use super::{browser_tool, channel_tool, desktop_control, read_image_tool, sleep_tool};
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
@@ -178,6 +178,62 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                             "anyOf": [
                                 {"required": ["user_id"]},
                                 {"required": ["user_ids"]}
+                            ]
+                        }
+                    }
+                ]
+            }),
+        },
+        ToolSpec {
+            name: channel_tool::TOOL_CHANNEL.to_string(),
+            description: t("tool.spec.channel_tool.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.channel_tool.args.action"),
+                        "enum": ["list_contacts", "send_message"]
+                    },
+                    "channel": {"type": "string", "description": t("tool.spec.channel_tool.args.channel")},
+                    "account_id": {"type": "string", "description": t("tool.spec.channel_tool.args.account_id")},
+                    "keyword": {"type": "string", "description": t("tool.spec.channel_tool.args.keyword")},
+                    "offset": {"type": "integer", "minimum": 0, "description": t("tool.spec.channel_tool.args.offset")},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.channel_tool.args.limit")},
+                    "refresh": {"type": "boolean", "description": t("tool.spec.channel_tool.args.refresh")},
+                    "to": {"type": "string", "description": t("tool.spec.channel_tool.args.to")},
+                    "peer_kind": {"type": "string", "enum": ["user", "group"], "description": t("tool.spec.channel_tool.args.peer_kind")},
+                    "thread_id": {"type": "string", "description": t("tool.spec.channel_tool.args.thread_id")},
+                    "text": {"type": "string", "description": t("tool.spec.channel_tool.args.text")},
+                    "content": {"type": "string", "description": t("tool.spec.channel_tool.args.content")},
+                    "attachments": {
+                        "type": "array",
+                        "description": t("tool.spec.channel_tool.args.attachments"),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "kind": {"type": "string", "description": t("tool.spec.channel_tool.args.attachments.kind")},
+                                "url": {"type": "string", "description": t("tool.spec.channel_tool.args.attachments.url")},
+                                "mime": {"type": "string", "description": t("tool.spec.channel_tool.args.attachments.mime")},
+                                "size": {"type": "integer", "description": t("tool.spec.channel_tool.args.attachments.size")},
+                                "name": {"type": "string", "description": t("tool.spec.channel_tool.args.attachments.name")}
+                            }
+                        }
+                    },
+                    "meta": {"type": "object", "description": t("tool.spec.channel_tool.args.meta")},
+                    "wait": {"type": "boolean", "description": t("tool.spec.channel_tool.args.wait")},
+                    "wait_timeout_s": {"type": "number", "minimum": 1, "maximum": 30, "description": t("tool.spec.channel_tool.args.wait_timeout_s")}
+                },
+                "required": ["action"],
+                "allOf": [
+                    {
+                        "if": {"properties": {"action": {"const": "send_message"}}},
+                        "then": {
+                            "required": ["channel", "account_id", "to"],
+                            "anyOf": [
+                                {"required": ["text"]},
+                                {"required": ["content"]},
+                                {"required": ["attachments"]}
                             ]
                         }
                     }
@@ -666,6 +722,18 @@ pub fn builtin_aliases() -> HashMap<String, String> {
         sleep_tool::TOOL_SLEEP_WAIT.to_string(),
     );
     map.insert("user_world".to_string(), "用户世界工具".to_string());
+    map.insert(
+        "channel_tool".to_string(),
+        channel_tool::TOOL_CHANNEL.to_string(),
+    );
+    map.insert(
+        "channel_send".to_string(),
+        channel_tool::TOOL_CHANNEL.to_string(),
+    );
+    map.insert(
+        "channel_contacts".to_string(),
+        channel_tool::TOOL_CHANNEL.to_string(),
+    );
     map.insert("memory_manager".to_string(), "记忆管理".to_string());
     map.insert("memory_manage".to_string(), "记忆管理".to_string());
     map.insert("a2a_observe".to_string(), "a2a观察".to_string());
@@ -820,6 +888,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "智能体蜂群" => Some("agent_swarm"),
         "节点调用" => Some("node_invoke"),
         "用户世界工具" => Some("user_world"),
+        channel_tool::TOOL_CHANNEL => Some("channel_tool"),
         "记忆管理" => Some("memory_manager"),
         browser_tool::TOOL_BROWSER => Some("browser"),
         desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
