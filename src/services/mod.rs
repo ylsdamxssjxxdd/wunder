@@ -1,6 +1,7 @@
 pub mod a2a_store;
 pub mod agent_runtime;
 pub mod attachment;
+pub mod beeroom_demo;
 pub mod beeroom_realtime;
 pub mod chat_attachments;
 pub mod cron;

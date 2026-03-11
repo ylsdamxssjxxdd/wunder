@@ -7,6 +7,7 @@ pub mod admin_swarm;
 pub(crate) mod attachment_convert;
 pub mod auth;
 pub mod beeroom;
+pub mod beeroom_demo;
 pub mod beeroom_packs;
 pub mod beeroom_ws;
 pub mod channel;
@@ -43,6 +44,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(auth::router())
         .merge(beeroom::router())
+        .merge(beeroom_demo::router())
         .merge(beeroom_ws::router())
         .merge(beeroom_packs::router())
         .merge(channel::router())
@@ -82,6 +84,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
     Router::new()
         .merge(auth::router())
         .merge(beeroom::router())
+        .merge(beeroom_demo::router())
         .merge(beeroom_ws::router())
         .merge(beeroom_packs::router())
         .merge(chat::router())

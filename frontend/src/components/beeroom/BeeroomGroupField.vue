@@ -31,6 +31,7 @@
         :placeholder="t('messenger.agentGroup.placeholder')"
         @change="emitChange"
       >
+        <el-option :label="t('messenger.agentGroup.noneOption')" :value="UNGROUPED_GROUP_VALUE" />
         <el-option
           v-for="group in normalizedGroups"
           :key="group.group_id"
@@ -96,6 +97,17 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const UNGROUPED_GROUP_VALUE = '__ungrouped__';
+
+function normalizeSelectableGroupId(value: unknown) {
+  const cleaned = String(value || '').trim();
+  return cleaned ? cleaned : UNGROUPED_GROUP_VALUE;
+}
+
+function normalizePayloadGroupId(value: unknown) {
+  const cleaned = String(value || '').trim();
+  return cleaned === UNGROUPED_GROUP_VALUE ? '' : cleaned;
+}
 
 const normalizedGroups = computed(() =>
   (Array.isArray(props.groups) ? props.groups : [])
@@ -113,23 +125,29 @@ const localDraft = reactive<BeeroomGroupDraft>(createBeeroomGroupDraft(props.def
 const syncLocalDraft = (value: Partial<BeeroomGroupDraft> | null | undefined) => {
   const next = normalizeBeeroomGroupDraft(value, props.defaultGroupId);
   localDraft.mode = props.allowCreate ? next.mode : 'existing';
-  localDraft.hive_id = next.hive_id;
+  localDraft.hive_id =
+    localDraft.mode === 'existing' ? normalizeSelectableGroupId(next.hive_id) : next.hive_id;
   localDraft.hive_name = props.allowCreate ? next.hive_name : '';
   localDraft.hive_description = props.allowCreate ? next.hive_description : '';
 };
 
 const emitChange = () => {
   const next = normalizeBeeroomGroupDraft(localDraft, props.defaultGroupId);
+  const nextHiveId =
+    next.mode === 'existing' ? normalizePayloadGroupId(next.hive_id) : next.hive_id;
   if (!props.allowCreate) {
     emit('update:modelValue', {
       mode: 'existing',
-      hive_id: next.hive_id,
+      hive_id: nextHiveId,
       hive_name: '',
       hive_description: ''
     });
     return;
   }
-  emit('update:modelValue', next);
+  emit('update:modelValue', {
+    ...next,
+    hive_id: nextHiveId
+  });
 };
 
 const setMode = (mode: 'existing' | 'new') => {

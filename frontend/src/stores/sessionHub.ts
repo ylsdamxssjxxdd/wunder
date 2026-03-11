@@ -65,7 +65,11 @@ export const useSessionHubStore = defineStore('session-hub', {
   },
   actions: {
     setSection(section: MessengerSection | string) {
-      this.activeSection = normalizeSection(section);
+      const normalized = normalizeSection(section);
+      if (this.activeSection === normalized) {
+        return;
+      }
+      this.activeSection = normalized;
     },
     setKeyword(keyword: string) {
       this.keyword = String(keyword || '').trimStart();
@@ -90,7 +94,11 @@ export const useSessionHubStore = defineStore('session-hub', {
       this.activeConversation = null;
     },
     setRightTab(tab: RightPanelTab | string) {
-      this.rightTab = normalizeTab(tab);
+      const normalized = normalizeTab(tab);
+      if (this.rightTab === normalized) {
+        return;
+      }
+      this.rightTab = normalized;
     }
   }
 });

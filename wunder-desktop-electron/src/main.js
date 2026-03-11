@@ -40,7 +40,7 @@ const disableBackgroundThrottling = process.env.WUNDER_DISABLE_BACKGROUND_THROTT
 const sidecarRuntime = process.env.WUNDER_SIDECAR_RUNTIME === '1'
 const disableGpu = process.env.WUNDER_DISABLE_GPU === '1'
 const suppressGpuWarnings = process.env.WUNDER_SUPPRESS_GPU_WARNINGS !== '0'
-const bridgeVerboseLogs = process.env.WUNDER_BRIDGE_LOG_VERBOSE === '1'
+const bridgeVerboseLogs = process.env.WUNDER_BRIDGE_LOG_VERBOSE !== '0'
 const defaultLoadingShellDelayMs = app.isPackaged ? 1200 : 220
 const loadingShellDelayMs = parseEnvNonNegativeNumber(
   process.env.WUNDER_LOADING_SHELL_DELAY_MS,
@@ -61,7 +61,7 @@ const OVERLAY_BOX_SIZE = 80
 const startupTimingEnabled =
   process.env.WUNDER_STARTUP_TIMING !== undefined
     ? process.env.WUNDER_STARTUP_TIMING !== '0'
-    : !app.isPackaged
+    : true
 const startupBootNs = process.hrtime.bigint()
 
 const elapsedMsSince = (startedNs) => Number(process.hrtime.bigint() - startedNs) / 1_000_000

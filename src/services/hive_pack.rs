@@ -1,5 +1,6 @@
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
-use crate::services::user_tools::UserToolKind;
+use crate::services::user_tools::{UserToolBindings, UserToolKind};
+use crate::skills::SkillSpec;
 use crate::state::AppState;
 use crate::storage::{
     normalize_hive_id, HiveRecord, UserAccountRecord, UserAgentRecord, DEFAULT_HIVE_ID,
@@ -267,6 +268,12 @@ struct ImportWorkerRef {
 struct WorkerSkillSource {
     source_skill_id: String,
     preferred_name: String,
+    source_dir: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct ExportSkillSource {
+    name: String,
     source_dir: PathBuf,
 }
 
@@ -719,6 +726,7 @@ async fn run_export_job_inner(
 
     let config = state.config_store.get().await;
     let skills = state.skills.read().await.clone();
+    let global_skill_specs = skills.list_specs();
     let bindings = state
         .user_tool_manager
         .build_bindings(&config, &skills, &user.user_id);
@@ -728,7 +736,7 @@ async fn run_export_job_inner(
     let mut workers = Vec::new();
     let mut worker_reports = Vec::new();
     let mut total_skill_links = 0usize;
-    let mut exported_skill_names = BTreeSet::new();
+    let mut exported_skill_names: BTreeSet<String> = BTreeSet::new();
     let mut occupied_worker_id_keys = HashSet::new();
     for (index, agent) in agents.iter().enumerate() {
         let preferred_worker_id = export_worker_id(agent, index);
@@ -745,23 +753,27 @@ async fn run_export_job_inner(
             agent.system_prompt.as_bytes(),
         )?;
 
-        let mut worker_skill_names =
-            collect_agent_skill_names(agent, &bindings.alias_map, &user.user_id);
-        worker_skill_names.sort();
-        worker_skill_names.dedup();
+        let mut worker_skill_sources =
+            collect_agent_skills_for_export(agent, &bindings, &skill_root, &global_skill_specs);
+        worker_skill_sources.sort_by(|left, right| left.name.cmp(&right.name));
+        worker_skill_sources.dedup_by(|left, right| left.name == right.name);
         let mut attached_skill_names = Vec::new();
-        for skill_name in &worker_skill_names {
-            let source = skill_root.join(skill_name);
+        for skill in &worker_skill_sources {
+            let skill_name = skill.name.trim();
+            if skill_name.is_empty() {
+                continue;
+            }
+            let source = &skill.source_dir;
             if !source.exists() || !source.is_dir() || !source.join("SKILL.md").is_file() {
                 continue;
             }
-            attached_skill_names.push(skill_name.clone());
+            attached_skill_names.push(skill_name.to_string());
             if exported_skill_names.contains(skill_name) {
                 continue;
             }
             let relative = package_root.join("skills").join(skill_name);
             if export_mode == "full" {
-                copy_dir_recursive(&source, &relative)?;
+                copy_dir_recursive(source, &relative)?;
             } else {
                 std::fs::create_dir_all(&relative)?;
                 std::fs::write(
@@ -770,7 +782,7 @@ async fn run_export_job_inner(
                 )?;
             }
             write_skill_meta(&relative, skill_name)?;
-            exported_skill_names.insert(skill_name.clone());
+            exported_skill_names.insert(skill_name.to_string());
         }
         attached_skill_names.sort();
         attached_skill_names.dedup();
@@ -1295,28 +1307,108 @@ fn collect_non_skill_tools(
     names
 }
 
-fn collect_agent_skill_names(
+fn collect_agent_skills_for_export(
     agent: &UserAgentRecord,
-    alias_map: &HashMap<String, crate::services::user_tools::UserToolAlias>,
-    owner_user_id: &str,
-) -> Vec<String> {
-    let mut names = BTreeSet::new();
-    for tool_name in &agent.tool_names {
-        let Some(alias) = alias_map.get(tool_name) else {
-            continue;
-        };
-        if alias.owner_id != owner_user_id {
+    bindings: &UserToolBindings,
+    skill_root: &Path,
+    global_skill_specs: &[SkillSpec],
+) -> Vec<ExportSkillSource> {
+    let mut alias_to_skill_name = HashMap::new();
+    let mut skill_name_to_source = HashMap::new();
+    for spec in &bindings.skill_specs {
+        let alias_name = spec.name.trim();
+        if alias_name.is_empty() {
             continue;
         }
+        let Some(alias) = bindings.alias_map.get(alias_name) else {
+            continue;
+        };
         if !matches!(alias.kind, UserToolKind::Skill) {
             continue;
         }
-        if alias.target.trim().is_empty() {
+        let skill_name = alias.target.trim();
+        if skill_name.is_empty() {
             continue;
         }
-        names.insert(alias.target.clone());
+        alias_to_skill_name.insert(alias_name.to_string(), skill_name.to_string());
+        skill_name_to_source
+            .entry(skill_name.to_string())
+            .or_insert_with(|| spec.root.clone());
     }
-    names.into_iter().collect()
+    for spec in global_skill_specs {
+        let skill_name = spec.name.trim();
+        if skill_name.is_empty() {
+            continue;
+        }
+        skill_name_to_source
+            .entry(skill_name.to_string())
+            .or_insert_with(|| spec.root.clone());
+    }
+
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for tool_name in &agent.tool_names {
+        let normalized_tool_name = tool_name.trim();
+        if normalized_tool_name.is_empty() {
+            continue;
+        }
+
+        let mut skill_name = String::new();
+        if let Some(alias) = bindings.alias_map.get(normalized_tool_name) {
+            if matches!(alias.kind, UserToolKind::Skill) && !alias.target.trim().is_empty() {
+                skill_name = alias.target.trim().to_string();
+            }
+        }
+        if skill_name.is_empty() {
+            if let Some(from_alias) = alias_to_skill_name.get(normalized_tool_name) {
+                skill_name = from_alias.clone();
+            } else if skill_name_to_source.contains_key(normalized_tool_name) {
+                skill_name = normalized_tool_name.to_string();
+            } else if let Some((owner_id, maybe_skill_name)) = normalized_tool_name.split_once('@')
+            {
+                if !owner_id.trim().is_empty()
+                    && skill_name_to_source.contains_key(maybe_skill_name)
+                {
+                    skill_name = maybe_skill_name.to_string();
+                }
+            }
+        }
+        if skill_name.is_empty() {
+            continue;
+        }
+
+        let source_dir = skill_name_to_source
+            .get(&skill_name)
+            .cloned()
+            .or_else(|| {
+                let candidate = skill_root.join(&skill_name);
+                if candidate.is_dir() && candidate.join("SKILL.md").is_file() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                let candidate = skill_root.join(normalized_tool_name);
+                if candidate.is_dir() && candidate.join("SKILL.md").is_file() {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            });
+        let Some(source_dir) = source_dir else {
+            continue;
+        };
+        if !seen.insert(normalize_conflict_key(&skill_name)) {
+            continue;
+        }
+        output.push(ExportSkillSource {
+            name: skill_name,
+            source_dir,
+        });
+    }
+
+    output
 }
 
 fn resolve_or_create_target_hive(
@@ -2144,15 +2236,18 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        export_worker_id, normalize_approval_mode, normalize_conflict_key,
-        normalize_export_filename_stem, normalize_import_conflict_mode, normalize_name,
-        resolve_import_skill_name, resolve_import_workers, resolve_worker_skill_sources,
-        unique_label_with_reserved, unique_slug_with_reserved, validate_archive_entry_path,
-        validate_hive_manifest, validate_relative_path, HiveManifest, HivePackMeta,
-        ImportConflictMode, WorkerManifest,
+        collect_agent_skills_for_export, export_worker_id, normalize_approval_mode,
+        normalize_conflict_key, normalize_export_filename_stem, normalize_import_conflict_mode,
+        normalize_name, resolve_import_skill_name, resolve_import_workers,
+        resolve_worker_skill_sources, unique_label_with_reserved, unique_slug_with_reserved,
+        validate_archive_entry_path, validate_hive_manifest, validate_relative_path, HiveManifest,
+        HivePackMeta, ImportConflictMode, WorkerManifest,
     };
+    use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
+    use crate::skills::SkillSpec;
     use crate::storage::{UserAgentRecord, DEFAULT_SANDBOX_CONTAINER_ID};
-    use std::collections::HashSet;
+    use serde_json::json;
+    use std::collections::{HashMap, HashSet};
     use tempfile::tempdir;
 
     #[test]
@@ -2348,6 +2443,118 @@ mod tests {
             "人力资源蜂群"
         );
         assert_eq!(normalize_export_filename_stem("  ", "hive_123"), "hive_123");
+    }
+
+    #[test]
+    fn collect_agent_skills_for_export_supports_plain_skill_name_entries() {
+        let root = tempdir().expect("tempdir");
+        let skill_root = root.path().join("skills");
+        let skill_dir = skill_root.join("recruit-specialist");
+        std::fs::create_dir_all(&skill_dir).expect("skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), "# demo").expect("skill file");
+
+        let owner_id = "u_1".to_string();
+        let alias_name = format!("{}@{}", owner_id, "招聘助手");
+        let mut alias_map = HashMap::new();
+        alias_map.insert(
+            alias_name.clone(),
+            UserToolAlias {
+                kind: UserToolKind::Skill,
+                owner_id: owner_id.clone(),
+                target: "招聘助手".to_string(),
+            },
+        );
+
+        let bindings = UserToolBindings {
+            alias_specs: HashMap::new(),
+            alias_map,
+            skill_specs: vec![SkillSpec {
+                name: alias_name,
+                description: String::new(),
+                path: skill_dir.join("SKILL.md").to_string_lossy().to_string(),
+                input_schema: json!({}),
+                frontmatter: String::new(),
+                root: skill_dir.clone(),
+                entrypoint: None,
+            }],
+            skill_sources: HashMap::new(),
+            mcp_servers: HashMap::new(),
+            shared_tools_enabled: HashSet::new(),
+            user_version: 0.0,
+            shared_version: 0.0,
+        };
+
+        let agent = UserAgentRecord {
+            agent_id: "worker_100".to_string(),
+            user_id: owner_id.clone(),
+            hive_id: "hive_1".to_string(),
+            name: "Recruit Specialist".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            tool_names: vec!["招聘助手".to_string()],
+            access_level: "private".to_string(),
+            approval_mode: "suggest".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+            created_at: 0.0,
+            updated_at: 0.0,
+        };
+
+        let skill_refs = collect_agent_skills_for_export(&agent, &bindings, &skill_root, &[]);
+        assert_eq!(skill_refs.len(), 1);
+        assert_eq!(skill_refs[0].name, "招聘助手");
+        assert_eq!(skill_refs[0].source_dir, skill_dir);
+    }
+
+    #[test]
+    fn collect_agent_skills_for_export_supports_global_skill_specs() {
+        let root = tempdir().expect("tempdir");
+        let user_skill_root = root.path().join("user_skills");
+        let global_skill_dir = root.path().join("global_skills").join("report_writer");
+        std::fs::create_dir_all(&global_skill_dir).expect("global skill dir");
+        std::fs::write(global_skill_dir.join("SKILL.md"), "# demo").expect("global skill file");
+
+        let agent = UserAgentRecord {
+            agent_id: "worker_200".to_string(),
+            user_id: "u_2".to_string(),
+            hive_id: "hive_1".to_string(),
+            name: "Report Worker".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            tool_names: vec!["report_writer".to_string()],
+            access_level: "private".to_string(),
+            approval_mode: "suggest".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+            created_at: 0.0,
+            updated_at: 0.0,
+        };
+        let global_specs = vec![SkillSpec {
+            name: "report_writer".to_string(),
+            description: String::new(),
+            path: global_skill_dir
+                .join("SKILL.md")
+                .to_string_lossy()
+                .to_string(),
+            input_schema: json!({}),
+            frontmatter: String::new(),
+            root: global_skill_dir.clone(),
+            entrypoint: None,
+        }];
+
+        let skill_refs = collect_agent_skills_for_export(
+            &agent,
+            &UserToolBindings::default(),
+            &user_skill_root,
+            &global_specs,
+        );
+        assert_eq!(skill_refs.len(), 1);
+        assert_eq!(skill_refs[0].name, "report_writer");
+        assert_eq!(skill_refs[0].source_dir, global_skill_dir);
     }
 
     #[test]

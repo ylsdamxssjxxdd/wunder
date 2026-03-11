@@ -14,7 +14,7 @@ use crate::storage::{
     UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
     UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
     UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
-    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord,
+    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -7035,6 +7035,21 @@ impl StorageBackend for SqliteStorage {
         Ok(rows)
     }
 
+    fn delete_hive(&self, user_id: &str, hive_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let normalized_hive_id = normalize_hive_id(hive_id);
+        if cleaned_user.is_empty() || normalized_hive_id == DEFAULT_HIVE_ID {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM hives WHERE user_id = ? AND hive_id = ? AND is_default = 0",
+            params![cleaned_user, normalized_hive_id],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn move_agents_to_hive(
         &self,
         user_id: &str,
@@ -7105,6 +7120,21 @@ impl StorageBackend for SqliteStorage {
             ],
         )?;
         Ok(())
+    }
+
+    fn delete_team_runs_by_hive(&self, user_id: &str, hive_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_user = user_id.trim();
+        let normalized_hive_id = normalize_hive_id(hive_id);
+        if cleaned_user.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM team_runs WHERE user_id = ? AND hive_id = ?",
+            params![cleaned_user, normalized_hive_id],
+        )?;
+        Ok(affected as i64)
     }
 
     fn get_team_run(&self, team_run_id: &str) -> Result<Option<TeamRunRecord>> {

@@ -8,12 +8,14 @@ use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use axum::http::{header, HeaderMap};
 use bytes::Bytes;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use uuid::Uuid;
+
+const MAX_REMOTE_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
 
 pub fn resolve_public_base_url(headers: &HeaderMap, config: &Config) -> String {
     let scheme = headers
@@ -135,6 +137,7 @@ pub async fn append_temp_dir_links_for_outbound(
     workspace: &WorkspaceManager,
     user_store: &UserStore,
     config: &Config,
+    channel: &str,
     outbound: &mut ChannelOutboundMessage,
 ) -> Result<bool> {
     let Some(text) = outbound.text.as_deref() else {
@@ -158,7 +161,7 @@ pub async fn append_temp_dir_links_for_outbound(
         return Ok(false);
     }
 
-    let mut links = Vec::new();
+    let mut replacements: Vec<(String, String)> = Vec::new();
     let mut seen = HashSet::new();
     for raw in candidates {
         let normalized = normalize_public_path(&raw);
@@ -176,26 +179,100 @@ pub async fn append_temp_dir_links_for_outbound(
         if !metadata.is_file() {
             continue;
         }
-        if let Some(link) = copy_to_temp_dir(&resolved, user_id, base_url.as_str()).await? {
-            links.push(link);
+        if let Some(link) = copy_to_temp_dir(&resolved, user_id, channel, base_url.as_str()).await?
+        {
+            replacements.push((normalized, link.url));
         }
     }
 
-    if links.is_empty() {
+    if replacements.is_empty() {
         return Ok(false);
     }
 
-    let mut new_text = text.to_string();
-    if !new_text.ends_with('\n') {
-        new_text.push('\n');
+    let mut rewritten = text.to_string();
+    let mut changed = false;
+    for (path, url) in replacements {
+        if path.is_empty() || url.is_empty() || !rewritten.contains(&path) {
+            continue;
+        }
+        rewritten = rewritten.replace(&path, &url);
+        changed = true;
     }
-    new_text.push('\n');
-    new_text.push_str("附件：\n");
-    for link in &links {
-        new_text.push_str(&format!("- {}: {}\n", link.name, link.url));
+    if !changed {
+        return Ok(false);
     }
-    outbound.text = Some(new_text);
+    outbound.text = Some(rewritten);
     Ok(true)
+}
+
+pub async fn download_remote_attachments_to_workspace(
+    http: &Client,
+    workspace: &WorkspaceManager,
+    user_store: &UserStore,
+    user_id: &str,
+    agent_id: Option<&str>,
+    channel: &str,
+    message: &mut ChannelMessage,
+) -> Result<()> {
+    if message.attachments.is_empty() {
+        return Ok(());
+    }
+    // Keep channel inbound files under the same scoped workspace that the agent session uses.
+    let workspace_id = resolve_workspace_id(workspace, user_store, user_id, agent_id);
+    workspace.ensure_user_root(&workspace_id)?;
+    let message_id = message
+        .message_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let base_dir = build_channel_inbound_dir(channel, message_id);
+
+    for attachment in &mut message.attachments {
+        let source_url = attachment.url.trim();
+        if !is_http_url(source_url) {
+            continue;
+        }
+        let download = match fetch_remote_bytes(http, source_url).await {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        let display_name = pick_display_name(attachment, &download);
+        let mut safe_name = sanitize_filename(&display_name);
+        if !has_extension(&safe_name) {
+            if let Some(ext) = extension_from_content_type(download.content_type.as_deref()) {
+                safe_name.push('.');
+                safe_name.push_str(ext);
+            }
+        }
+        if safe_name.is_empty() {
+            safe_name = format!("file_{}", Uuid::new_v4().simple());
+        }
+        let relative_path = format!("{base_dir}/{safe_name}");
+        let target = match workspace.resolve_path(&workspace_id, &relative_path) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if let Some(parent) = target.parent() {
+            if fs::create_dir_all(parent).await.is_err() {
+                continue;
+            }
+        }
+        let target = match ensure_unique_path(target).await {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+        if fs::write(&target, &download.bytes).await.is_err() {
+            continue;
+        }
+        let public_path = workspace.display_path(&workspace_id, &target);
+        attachment.url = public_path;
+        if attachment.name.as_deref().unwrap_or("").trim().is_empty() {
+            attachment.name = Some(display_name);
+        }
+        attachment.mime = download.content_type;
+        attachment.size = Some(download.bytes.len() as i64);
+    }
+    Ok(())
 }
 
 fn resolve_workspace_id(
@@ -224,6 +301,10 @@ fn map_resource_type(kind: &str) -> &'static str {
         "media" | "video" => "video",
         _ => "file",
     }
+}
+
+fn is_http_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
 }
 
 struct FeishuDownload {
@@ -281,6 +362,42 @@ async fn fetch_feishu_bytes(http: &Client, token: &str, url: &str) -> Result<Fei
         .get(header::CONTENT_DISPOSITION)
         .and_then(|value| value.to_str().ok())
         .and_then(parse_content_disposition_filename);
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_string());
+    Ok(FeishuDownload {
+        bytes,
+        filename,
+        content_type,
+    })
+}
+
+async fn fetch_remote_bytes(http: &Client, url: &str) -> Result<FeishuDownload> {
+    let response = http.get(url).send().await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(anyhow!("remote download failed: {status}"));
+    }
+    if response.content_length().unwrap_or(0) > MAX_REMOTE_ATTACHMENT_BYTES as u64 {
+        return Err(anyhow!(
+            "remote attachment exceeds max bytes: {}",
+            MAX_REMOTE_ATTACHMENT_BYTES
+        ));
+    }
+    let headers = response.headers().clone();
+    let bytes = response.bytes().await?;
+    if bytes.len() > MAX_REMOTE_ATTACHMENT_BYTES {
+        return Err(anyhow!(
+            "remote attachment exceeds max bytes: {}",
+            MAX_REMOTE_ATTACHMENT_BYTES
+        ));
+    }
+    let filename = headers
+        .get(header::CONTENT_DISPOSITION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_content_disposition_filename)
+        .or_else(|| filename_from_url(url));
     let content_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -417,11 +534,20 @@ async fn ensure_unique_path(path: PathBuf) -> Result<PathBuf> {
 }
 
 fn build_inbound_dir(message_id: Option<&str>) -> String {
+    build_channel_inbound_dir("feishu", message_id)
+}
+
+fn build_channel_inbound_dir(channel: &str, message_id: Option<&str>) -> String {
     let suffix = message_id
         .map(sanitize_path_component)
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
-    format!("inbox/feishu/{suffix}")
+    let safe_channel = sanitize_path_component(channel);
+    if safe_channel.is_empty() {
+        format!("inbox/files/{suffix}")
+    } else {
+        format!("inbox/{safe_channel}/{suffix}")
+    }
 }
 
 fn sanitize_path_component(value: &str) -> String {
@@ -468,13 +594,13 @@ fn extract_workspace_paths(text: &str) -> Vec<String> {
 }
 
 struct TempDownloadLink {
-    name: String,
     url: String,
 }
 
 async fn copy_to_temp_dir(
     source: &Path,
     user_id: &str,
+    channel: &str,
     base_url: &str,
 ) -> Result<Option<TempDownloadLink>> {
     let filename = source
@@ -482,9 +608,15 @@ async fn copy_to_temp_dir(
         .and_then(|value| value.to_str())
         .unwrap_or("download");
     let safe_user = sanitize_path_component(user_id);
+    let safe_channel = sanitize_path_component(channel);
     let temp_root = temp_dir_root()?;
     let unique = Uuid::new_v4().simple().to_string();
-    let dest_relative = format!("feishu/{safe_user}/{unique}_{filename}");
+    let channel_segment = if safe_channel.is_empty() {
+        "files".to_string()
+    } else {
+        safe_channel
+    };
+    let dest_relative = format!("channels/{channel_segment}/{safe_user}/{unique}_{filename}");
     let dest_path = temp_root.join(&dest_relative);
     if let Some(parent) = dest_path.parent() {
         fs::create_dir_all(parent).await?;
@@ -498,10 +630,7 @@ async fn copy_to_temp_dir(
         base_url.trim_end_matches('/'),
         encoded
     );
-    Ok(Some(TempDownloadLink {
-        name: filename.to_string(),
-        url,
-    }))
+    Ok(Some(TempDownloadLink { url }))
 }
 
 fn temp_dir_root() -> Result<PathBuf> {
@@ -547,6 +676,15 @@ fn default_public_base_url(config: &Config) -> String {
         config.server.host.as_str()
     };
     format!("http://{host}:{}", config.server.port)
+}
+
+fn filename_from_url(value: &str) -> Option<String> {
+    let url = Url::parse(value).ok()?;
+    let filename = url.path_segments()?.next_back()?.trim();
+    if filename.is_empty() {
+        return None;
+    }
+    Some(filename.to_string())
 }
 
 #[cfg(test)]

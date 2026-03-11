@@ -5,6 +5,10 @@ import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { resolveApiBase } from '@/config/runtime';
+import {
+  FORCE_LOGOUT_QUERY_KEY,
+  isForcedLogoutQuery
+} from '@/utils/authNavigation';
 
 const UserLayout = () => import('@/layouts/UserLayout.vue');
 const AdminLayout = () => import('@/layouts/AdminLayout.vue');
@@ -21,6 +25,7 @@ const USER_LOGIN_PATH = '/login';
 const USER_BEEHIVE_PATH = '/app/home';
 const DESKTOP_HOME_PATH = '/desktop/home';
 const EMBED_AUTH_QUERY_KEYS = new Set(['wunder_token', 'access_token', 'wunder_code']);
+EMBED_AUTH_QUERY_KEYS.add(FORCE_LOGOUT_QUERY_KEY);
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
 
@@ -207,6 +212,7 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   const authStore = useAuthStore();
+  const forcedLogout = isForcedLogoutQuery(to.query);
 
   const query = to.query;
   let tokenFromQuery = resolveQueryToken(query);
@@ -250,6 +256,9 @@ router.beforeEach(async (to) => {
 
   if (desktopMode && !to.path.startsWith('/admin')) {
     const remoteAuthMode = isDesktopRemoteAuthMode();
+    if (forcedLogout && to.path === '/login') {
+      return true;
+    }
 
     if (remoteAuthMode && (to.path === '/login' || to.path === '/register')) {
       if (!hasAccessToken()) {
@@ -308,6 +317,9 @@ router.beforeEach(async (to) => {
   const token = hasAccessToken();
 
   if ((to.path === '/login' || to.path === '/register') && token) {
+    if (forcedLogout && to.path === '/login') {
+      return true;
+    }
     try {
       if (!authStore.user) {
         await authStore.loadProfile();

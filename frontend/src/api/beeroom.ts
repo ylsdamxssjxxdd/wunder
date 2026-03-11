@@ -84,6 +84,9 @@ export const createBeeroomGroup = (payload: ApiPayload) =>
 export const getBeeroomGroup = (groupId: ApiId, params: QueryParams = {}) =>
   api.get(`/beeroom/groups/${encodeURIComponent(groupId)}`, { params, timeout: 60000 });
 
+export const deleteBeeroomGroup = (groupId: ApiId) =>
+  api.delete(`/beeroom/groups/${encodeURIComponent(groupId)}`, { timeout: 60000 });
+
 export const moveBeeroomAgents = (groupId: ApiId, payload: ApiPayload) =>
   api.post(`/beeroom/groups/${encodeURIComponent(groupId)}/move_agents`, payload, {
     timeout: 60000
@@ -105,6 +108,38 @@ export const appendBeeroomChatMessage = (groupId: ApiId, payload: ApiPayload) =>
 
 export const clearBeeroomChatMessages = (groupId: ApiId) =>
   api.delete(`/beeroom/groups/${encodeURIComponent(groupId)}/chat/messages`, { timeout: 60000 });
+
+export type StartBeeroomDemoRunRequest = {
+  seed?: number;
+  worker_count_mode?: 'random' | 'all' | string;
+  worker_count?: number;
+  speed?: 'fast' | 'normal' | 'slow' | string;
+  scenario?: string;
+  tool_profile?: 'safe' | string;
+};
+
+export const startBeeroomDemoRun = (
+  groupId: ApiId,
+  payload: StartBeeroomDemoRunRequest = {}
+) =>
+  api.post(`/beeroom/groups/${encodeURIComponent(groupId)}/demo_runs`, payload, {
+    timeout: 60000
+  });
+
+export const getBeeroomDemoRun = (groupId: ApiId, runId: ApiId) =>
+  api.get(
+    `/beeroom/groups/${encodeURIComponent(groupId)}/demo_runs/${encodeURIComponent(String(runId || '').trim())}`,
+    {
+      timeout: 60000
+    }
+  );
+
+export const cancelBeeroomDemoRun = (groupId: ApiId, runId: ApiId) =>
+  api.post(
+    `/beeroom/groups/${encodeURIComponent(groupId)}/demo_runs/${encodeURIComponent(String(runId || '').trim())}/cancel`,
+    {},
+    { timeout: 60000 }
+  );
 
 export const openBeeroomSocket = (options: OpenSocketOptions = {}): WebSocket => {
   const token = resolveAccessToken();

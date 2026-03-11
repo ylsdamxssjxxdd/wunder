@@ -554,6 +554,30 @@ impl ChannelHub {
                 }
             }
         }
+        if message
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(xmpp::XMPP_CHANNEL)
+        {
+            if let Some(xmpp_cfg) = account_cfg.xmpp.as_ref() {
+                if let Err(err) = self
+                    .send_xmpp_processing_ack(
+                        &message,
+                        &session_info,
+                        resolved_binding.as_ref(),
+                        xmpp_cfg,
+                    )
+                    .await
+                {
+                    warn!(
+                        "send channel processing ack failed: channel={}, account_id={}, session_id={}, error={err}",
+                        message.channel,
+                        message.account_id,
+                        session_info.session_id
+                    );
+                }
+            }
+        }
 
         for attachment in &message.attachments {
             if let Err(err) = self
@@ -590,6 +614,28 @@ impl ChannelHub {
                         message.channel, message.account_id, session_info.session_id
                     );
                 }
+            }
+        }
+        if message
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(xmpp::XMPP_CHANNEL)
+        {
+            if let Err(err) = feishu_files::download_remote_attachments_to_workspace(
+                &self.http,
+                &self.workspace,
+                &self.user_store,
+                &session_info.user_id,
+                resolved_agent_id.as_deref(),
+                xmpp::XMPP_CHANNEL,
+                &mut message,
+            )
+            .await
+            {
+                warn!(
+                    "download xmpp attachments failed: channel={}, account_id={}, session_id={}, error={err}",
+                    message.channel, message.account_id, session_info.session_id
+                );
             }
         }
 
@@ -1499,24 +1545,19 @@ impl ChannelHub {
         let outbound: ChannelOutboundMessage = serde_json::from_value(record.payload.clone())
             .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
         let mut outbound = outbound;
-        if record
-            .channel
-            .trim()
-            .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
+        if let Err(err) = feishu_files::append_temp_dir_links_for_outbound(
+            &self.workspace,
+            &self.user_store,
+            &config,
+            &record.channel,
+            &mut outbound,
+        )
+        .await
         {
-            if let Err(err) = feishu_files::append_temp_dir_links_for_outbound(
-                &self.workspace,
-                &self.user_store,
-                &config,
-                &mut outbound,
-            )
-            .await
-            {
-                warn!(
-                    "append feishu temp dir links failed: channel={}, account_id={}, outbox_id={}, error={err}",
-                    record.channel, record.account_id, record.outbox_id
-                );
-            }
+            warn!(
+                "rewrite outbound workspace links failed: channel={}, account_id={}, outbox_id={}, error={err}",
+                record.channel, record.account_id, record.outbox_id
+            );
         }
         if let Some(adapter) = self.adapter_registry.get(&record.channel) {
             let context = OutboundContext {
@@ -2279,6 +2320,31 @@ impl ChannelHub {
         };
         let result = feishu::send_outbound(&self.http, &outbound, feishu_cfg).await?;
         Ok(result.message_id)
+    }
+
+    async fn send_xmpp_processing_ack(
+        &self,
+        message: &ChannelMessage,
+        session_info: &ChannelSessionInfo,
+        resolved_binding: Option<&BindingResolution>,
+        xmpp_cfg: &XmppConfig,
+    ) -> Result<()> {
+        let ack_text = "已收到消息，正在处理中，请稍后。".to_string();
+        let outbound = ChannelOutboundMessage {
+            channel: message.channel.clone(),
+            account_id: message.account_id.clone(),
+            peer: message.peer.clone(),
+            thread: message.thread.clone(),
+            text: Some(ack_text),
+            attachments: Vec::new(),
+            meta: Some(json!({
+                "session_id": session_info.session_id,
+                "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
+                "message_id": message.message_id,
+                "processing_ack": true,
+            })),
+        };
+        xmpp::send_outbound(&message.account_id, &outbound, xmpp_cfg).await
     }
 
     #[allow(clippy::too_many_arguments)]

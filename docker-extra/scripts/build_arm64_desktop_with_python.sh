@@ -10,7 +10,9 @@ CARGO_HOME_DIR="${ROOT_DIR}/.cargo/arm64-20"
 TARGET_DIR="${ROOT_DIR}/target/arm64-20"
 DIST_DIR="${TARGET_DIR}/dist"
 BUILD_ROOT="${TARGET_DIR}/.build/python"
-APPIMAGE_COMP="${APPIMAGE_COMP:-auto}"
+APPIMAGE_COMP="${APPIMAGE_COMP:-gzip}"
+VALIDATE_MODULES="${VALIDATE_MODULES:-matplotlib,cartopy,pyproj,shapely,netCDF4,cftime,h5py,cinrad}"
+ALLOW_PYTHON_REBUILD="${ALLOW_PYTHON_REBUILD:-0}"
 
 echo "[1/8] Checking prerequisites..."
 if ! command -v docker >/dev/null 2>&1; then
@@ -50,17 +52,44 @@ echo "[4/8] Packaging Electron arm64 AppImage..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
   set -euo pipefail
   cd /app/wunder-desktop-electron
-  npm install
+  npm install --prefer-offline --no-audit --no-fund
   WUNDER_BRIDGE_BIN=/app/target/arm64-20/release/wunder-desktop-bridge \
     npm run build:linux:arm64 -- --config.directories.output=/app/target/arm64-20/dist
 "
 
-echo "[5/8] Syncing embedded Python runtime..."
-docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
-  set -euo pipefail
-  BUILD_ROOT=/app/target/arm64-20/.build/python \
-    bash /app/docker-extra/scripts/build_embedded_python.sh
-"
+if docker compose -f "${COMPOSE_FILE}" exec -T \
+  -e VALIDATE_MODULES="${VALIDATE_MODULES}" \
+  "${SERVICE}" bash -lc '
+    set -euo pipefail
+    python_bin=/app/target/arm64-20/.build/python/stage/opt/python/bin/python3
+    [ -x "${python_bin}" ] || exit 1
+    "${python_bin}" - <<'"'"'PY'"'"'
+import importlib
+import os
+
+modules = [item.strip() for item in os.environ.get("VALIDATE_MODULES", "").split(",") if item.strip()]
+for name in modules:
+    importlib.import_module(name)
+PY
+  '; then
+  echo "[5/8] Embedded Python runtime already ready; skipping rebuild."
+elif [ "${FORCE_PYTHON_SYNC:-0}" = "1" ] || [ "${ALLOW_PYTHON_REBUILD}" = "1" ]; then
+  echo "[5/8] Rebuilding embedded Python runtime by explicit request..."
+  docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
+    set -euo pipefail
+    BUILD_ROOT=/app/target/arm64-20/.build/python \
+      bash /app/docker-extra/scripts/build_embedded_python.sh
+  "
+else
+  echo "[5/8] Embedded Python runtime missing or invalid." >&2
+  echo "Expected prebuilt runtime under: ${BUILD_ROOT}/stage/opt" >&2
+  echo "Required files:" >&2
+  echo "  - ${BUILD_ROOT}/stage/opt/python/bin/python3" >&2
+  echo "  - ${BUILD_ROOT}/stage/opt/git/bin/git" >&2
+  echo "Unpack your sidecar backup so the extracted root contains opt/python and opt/git." >&2
+  echo "Python rebuild is disabled by default. Set ALLOW_PYTHON_REBUILD=1 or FORCE_PYTHON_SYNC=1 to rebuild explicitly." >&2
+  exit 1
+fi
 
 echo "[6/8] Packaging extra sidecar archive..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
@@ -70,7 +99,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc "
     bash /app/docker-extra/scripts/package_sidecar_python.sh
 "
 
-echo "[7/8] Repacking AppImage with sidecar Python + embedded Git (qemu may take 10-30 min)..."
+echo "[7/8] Repacking AppImage for sidecar Python/Git runtime (qemu may take 10-30 min)..."
 docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   set -euo pipefail
   output_dir=/app/target/arm64-20/dist
@@ -94,6 +123,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
   PREFER_PREBUILT_PYTHON=1 \
   PREFER_PREBUILT_GIT=1 \
   EMBED_PYTHON=0 \
+  EMBED_GIT=0 \
   BUNDLE_PLAYWRIGHT_DEPS=0 \
   PLAYWRIGHT_INSTALL_DEPS=0 \
   APPIMAGE_COMP="${APPIMAGE_COMP}" \
@@ -103,7 +133,7 @@ docker compose -f "${COMPOSE_FILE}" exec -T "${SERVICE}" bash -lc '
 echo "[8/8] Done. Artifacts:"
 echo "  - ${TARGET_DIR}/release/wunder-desktop-bridge"
 echo "  - ${DIST_DIR}/wunder-desktop-arm64.AppImage"
-echo "  - ${DIST_DIR}/wunder-desktop-arm64-sidecar.AppImage (sidecar Python)"
+echo "  - ${DIST_DIR}/wunder-desktop-arm64-sidecar.AppImage (sidecar Python/Git)"
 SIDECAR_ARCHIVE=$(find "${DIST_DIR}" -maxdepth 1 -type f -name '*.tar.gz' | head -n 1 || true)
 if [ -n "${SIDECAR_ARCHIVE}" ]; then
   echo "  - ${SIDECAR_ARCHIVE} (sidecar extra package)"

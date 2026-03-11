@@ -44,14 +44,6 @@
                 >
                   {{ t('toolManager.system.knowledge') }}
                 </button>
-                <button
-                  class="user-tools-tab"
-                  :class="{ active: activeTab === 'shared' }"
-                  type="button"
-                  @click="activeTab = 'shared'"
-                >
-                  {{ t('toolManager.section.shared') }}
-                </button>
               </div>
               <div class="user-tools-content">
                 <div v-show="activeTab === 'system'" class="user-tools-pane tool-catalog-pane">
@@ -111,7 +103,6 @@
                   :status="statusMessage"
                   @status="updateStatus"
                 />
-                <UserSharedToolsPanel v-show="activeTab === 'shared'" />
               </div>
             </div>
           </section>
@@ -128,7 +119,6 @@ import { ElMessage } from 'element-plus';
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
 import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
-import UserSharedToolsPanel from '@/components/user-tools/UserSharedToolsPanel.vue';
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';

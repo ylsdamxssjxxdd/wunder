@@ -358,16 +358,28 @@
             <span class="messenger-list-unread">{{ group.active_agent_total || 0 }}</span>
           </div>
         </div>
-        <button
-          class="messenger-list-item-action"
-          type="button"
-          :title="t('beeroom.pack.action.exportFull')"
-          :aria-label="t('beeroom.pack.action.exportFull')"
-          :disabled="beeroomStore.packImportLoading || beeroomStore.packExportLoading"
-          @click.stop="handleSwarmExport(group)"
-        >
-          <i class="fa-solid fa-download" aria-hidden="true"></i>
-        </button>
+        <div class="messenger-list-item-actions">
+          <button
+            class="messenger-list-item-action"
+            type="button"
+            :title="t('beeroom.pack.action.exportFull')"
+            :aria-label="t('beeroom.pack.action.exportFull')"
+            :disabled="beeroomStore.packImportLoading || beeroomStore.packExportLoading"
+            @click.stop="handleSwarmExport(group)"
+          >
+            <i class="fa-solid fa-download" aria-hidden="true"></i>
+          </button>
+          <button
+            v-if="!group.is_default"
+            class="messenger-list-item-action"
+            type="button"
+            :title="t('common.delete')"
+            :aria-label="t('common.delete')"
+            @click.stop="emit('delete-beeroom-group', group)"
+          >
+            <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+          </button>
+        </div>
       </div>
       <div v-if="!filteredBeeroomGroups.length" class="messenger-list-empty">
         {{ t('messenger.empty.swarms') }}
@@ -552,25 +564,6 @@
         </div>
       </button>
 
-      <template v-if="!desktopLocalMode">
-        <div class="messenger-block-title">{{ t('messenger.tools.sharedTitle') }}</div>
-        <button
-          class="messenger-list-item"
-          :class="{ active: selectedToolEntryKey === 'category:shared' }"
-          type="button"
-          @click="selectToolCategory('shared')"
-        >
-          <div class="messenger-list-avatar"><i class="fa-solid fa-share-nodes" aria-hidden="true"></i></div>
-          <div class="messenger-list-main">
-            <div class="messenger-list-row">
-              <span class="messenger-list-name">{{ t('messenger.tools.sharedTitle') }}</span>
-            </div>
-            <div class="messenger-list-row">
-              <span class="messenger-list-preview">{{ t('messenger.tools.sharedDesc') }}</span>
-            </div>
-          </div>
-        </button>
-      </template>
     </template>
 
     <template v-else-if="activeSection === 'files'">
@@ -935,7 +928,7 @@ const {
   openAgentById: (agentId: any) => void | Promise<void>;
   normalizeAgentId: (value: unknown) => string;
   selectedToolEntryKey: string;
-  selectToolCategory: (category: 'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared') => void;
+  selectToolCategory: (category: 'admin' | 'mcp' | 'skills' | 'knowledge') => void;
   desktopLocalMode: boolean;
   fileScope: 'agent' | 'user';
   selectedFileContainerId: number;
@@ -956,6 +949,7 @@ const emit = defineEmits<{
   (event: 'update:selectedContactUnitId', value: string): void;
   (event: 'update:selectedAgentHiveGroupId', value: string): void;
   (event: 'update:settingsPanelMode', value: string): void;
+  (event: 'delete-beeroom-group', group: Record<string, any>): void;
 }>();
 
 const updateKeyword = (value: string) => {

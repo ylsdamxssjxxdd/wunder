@@ -21,7 +21,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/beeroom/groups",
             get(list_beeroom_groups).post(create_beeroom_group),
         )
-        .route("/wunder/beeroom/groups/{group_id}", get(get_beeroom_group))
+        .route(
+            "/wunder/beeroom/groups/{group_id}",
+            get(get_beeroom_group).delete(delete_beeroom_group),
+        )
         .route(
             "/wunder/beeroom/groups/{group_id}/move_agents",
             axum::routing::post(move_agents_to_group),
@@ -185,6 +188,81 @@ async fn get_beeroom_group(
                 .map(|agent| agent_payload(agent, activity.get(&agent.agent_id)))
                 .collect::<Vec<_>>(),
             "missions": missions,
+        }
+    })))
+}
+
+async fn delete_beeroom_group(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(group_id): AxumPath<String>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id;
+    state
+        .user_store
+        .ensure_default_hive(&user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let group = load_group(state.as_ref(), &user_id, &group_id)?;
+    if group.is_default || normalize_hive_id(&group.hive_id) == DEFAULT_HIVE_ID {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "default beeroom group cannot be deleted".to_string(),
+        ));
+    }
+
+    let member_ids = state
+        .user_store
+        .list_user_agents_by_hive(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .into_iter()
+        .map(|agent| agent.agent_id)
+        .collect::<Vec<_>>();
+    let reset_agent_total = if member_ids.is_empty() {
+        0
+    } else {
+        state
+            .user_store
+            .move_agents_to_hive(&user_id, DEFAULT_HIVE_ID, &member_ids)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    };
+    let deleted_mission_total = state
+        .user_store
+        .delete_team_runs_by_hive(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let deleted_chat_message_total = state
+        .user_store
+        .delete_beeroom_chat_messages(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let deleted = state
+        .user_store
+        .delete_hive(&user_id, &group.hive_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if deleted <= 0 {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            "beeroom group not found".to_string(),
+        ));
+    }
+    if deleted_chat_message_total > 0 {
+        state
+            .beeroom_realtime
+            .publish_chat_cleared(
+                &user_id,
+                &group.hive_id,
+                deleted_chat_message_total,
+                now_ts(),
+            )
+            .await;
+    }
+    Ok(Json(json!({
+        "data": {
+            "deleted": deleted,
+            "group_id": group.hive_id,
+            "reset_agent_total": reset_agent_total,
+            "deleted_mission_total": deleted_mission_total,
+            "deleted_chat_message_total": deleted_chat_message_total,
+            "fallback_group_id": DEFAULT_HIVE_ID,
         }
     })))
 }

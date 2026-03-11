@@ -16,10 +16,20 @@ PREBUILT_GIT_ROOT="${BUILD_ROOT}/stage/opt/git"
 BUNDLE_PLAYWRIGHT_DEPS="${BUNDLE_PLAYWRIGHT_DEPS:-auto}"
 PLAYWRIGHT_INSTALL_DEPS="${PLAYWRIGHT_INSTALL_DEPS:-1}"
 EMBED_PYTHON="${EMBED_PYTHON:-1}"
+EMBED_GIT="${EMBED_GIT:-}"
 APPIMAGE_SUFFIX="${APPIMAGE_SUFFIX:-}"
 APPIMAGE_COMP="${APPIMAGE_COMP:-auto}"
 APPIMAGE_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
 VALIDATE_MODULES="${VALIDATE_MODULES:-matplotlib,cartopy,pyproj,shapely,netCDF4,cftime,h5py,cinrad}"
+ALLOW_PYTHON_REBUILD="${ALLOW_PYTHON_REBUILD:-0}"
+
+if [ -z "${EMBED_GIT}" ]; then
+  if [ "${EMBED_PYTHON}" = "1" ]; then
+    EMBED_GIT=1
+  else
+    EMBED_GIT=0
+  fi
+fi
 
 validate_embedded_python_root() {
   local python_root=$1
@@ -35,6 +45,61 @@ patch_appimage_runtime_magic() {
   dd if=/dev/zero of="${target_file}" bs=1 seek=8 count=3 conv=notrunc >/dev/null 2>&1
 }
 
+resolve_appimage_offset() {
+  local input_path=$1
+  local offset=""
+
+  if offset=$("${input_path}" --appimage-offset 2>/dev/null); then
+    :
+  elif offset=$(APPIMAGE_EXTRACT_AND_RUN=1 "${input_path}" --appimage-offset 2>/dev/null); then
+    :
+  elif command -v python3 >/dev/null 2>&1; then
+    offset=$(python3 - "${input_path}" <<'PY'
+import sys
+
+needle = b"hsqs"
+carry = b""
+position = 0
+with open(sys.argv[1], "rb") as fh:
+    while True:
+        chunk = fh.read(4 * 1024 * 1024)
+        if not chunk:
+            break
+        data = carry + chunk
+        idx = data.find(needle)
+        if idx != -1:
+            print(position - len(carry) + idx)
+            raise SystemExit(0)
+        position += len(chunk)
+        carry = data[-(len(needle) - 1):]
+raise SystemExit(1)
+PY
+)
+  fi
+
+  if [[ "${offset}" =~ ^[0-9]+$ ]] && [ "${offset}" -gt 0 ]; then
+    echo "${offset}"
+    return 0
+  fi
+  return 1
+}
+
+extract_runtime_from_appimage() {
+  local input_path=$1
+  local runtime_path=$2
+  local offset=""
+
+  if ! offset=$(resolve_appimage_offset "${input_path}"); then
+    return 1
+  fi
+
+  mkdir -p "$(dirname "${runtime_path}")"
+  if ! dd if="${input_path}" of="${runtime_path}" bs=1 count="${offset}" 2>/dev/null; then
+    return 1
+  fi
+  chmod +x "${runtime_path}" || true
+}
+
 extract_appimage() {
   local input_path=$1
   local workdir=$2
@@ -45,6 +110,14 @@ extract_appimage() {
   chmod +x "${workdir}/app.AppImage"
 
   pushd "${workdir}" >/dev/null
+  local offset=""
+  if command -v unsquashfs >/dev/null 2>&1 && offset=$(resolve_appimage_offset ./app.AppImage); then
+    if unsquashfs -d squashfs-root -offset "${offset}" app.AppImage >/dev/null 2>&1 || \
+      unsquashfs -d squashfs-root -o "${offset}" app.AppImage >/dev/null 2>&1; then
+      popd >/dev/null
+      return 0
+    fi
+  fi
   if ! ./app.AppImage --appimage-extract >/dev/null 2>&1; then
     echo "Direct AppImage extraction failed; retrying with patched runtime header..." >&2
     cp ./app.AppImage ./app.extract.AppImage
@@ -272,16 +345,23 @@ fi
 if [ "${EMBED_PYTHON}" = "1" ]; then
   if [ "${PREFER_PREBUILT_PYTHON}" = "1" ] && [ -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
     echo "Using prebuilt embedded Python under ${PREBUILT_PYTHON_ROOT}."
-  else
+  elif [ "${ALLOW_PYTHON_REBUILD}" = "1" ]; then
     "${ROOT_DIR}/docker-extra/scripts/build_embedded_python.sh"
+  else
+    echo "Embedded Python not found at ${PREBUILT_PYTHON_ROOT}." >&2
+    echo "Python rebuild is disabled by default." >&2
+    echo "Populate ${PREBUILT_PYTHON_ROOT} first, or rerun with ALLOW_PYTHON_REBUILD=1." >&2
+    exit 1
   fi
   validate_embedded_python_root "${PREBUILT_PYTHON_ROOT}" "${VALIDATE_MODULES}"
 fi
 
-if [ "${PREFER_PREBUILT_GIT}" = "1" ] && [ -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
-  echo "Using prebuilt embedded Git under ${PREBUILT_GIT_ROOT}."
-else
-  "${ROOT_DIR}/docker-extra/scripts/build_embedded_git.sh"
+if [ "${EMBED_GIT}" = "1" ]; then
+  if [ "${PREFER_PREBUILT_GIT}" = "1" ] && [ -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
+    echo "Using prebuilt embedded Git under ${PREBUILT_GIT_ROOT}."
+  else
+    "${ROOT_DIR}/docker-extra/scripts/build_embedded_git.sh"
+  fi
 fi
 
 extract_appimage "${APPIMAGE_PATH}" "${APPIMAGE_WORK}"
@@ -291,7 +371,7 @@ if [ ! -d "${APPDIR}" ]; then
   echo "Extracted AppDir not found at ${APPDIR}." >&2
   exit 1
 fi
-if [ ! -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
+if [ "${EMBED_GIT}" = "1" ] && [ ! -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
   echo "Embedded Git not found under ${PREBUILT_GIT_ROOT}." >&2
   exit 1
 fi
@@ -306,7 +386,9 @@ if [ "${EMBED_PYTHON}" = "1" ]; then
   cp -a "${PREBUILT_PYTHON_ROOT}" "${APPDIR}/opt/"
 fi
 rm -rf "${APPDIR}/opt/git"
-cp -a "${PREBUILT_GIT_ROOT}" "${APPDIR}/opt/"
+if [ "${EMBED_GIT}" = "1" ]; then
+  cp -a "${PREBUILT_GIT_ROOT}" "${APPDIR}/opt/"
+fi
 if [ "${EMBED_PYTHON}" = "1" ]; then
   if [ ! -e "${APPDIR}/opt/python/bin/python" ] && [ -x "${APPDIR}/opt/python/bin/python3" ]; then
     ln -s python3 "${APPDIR}/opt/python/bin/python"
@@ -485,6 +567,12 @@ fi
 if [ -z "${APPIMAGETOOL_BIN}" ]; then
   APPIMAGETOOL_BIN=$(find "${HOME}/.cache/tauri" -name appimagetool -type f 2>/dev/null | head -n 1 || true)
 fi
+if [ -n "${APPIMAGETOOL_BIN}" ]; then
+  APPIMAGETOOL_REAL=$(readlink -f "${APPIMAGETOOL_BIN}" 2>/dev/null || true)
+  if [ -n "${APPIMAGETOOL_REAL}" ] && [ -f "${APPIMAGETOOL_REAL}" ]; then
+    APPIMAGETOOL_BIN="${APPIMAGETOOL_REAL}"
+  fi
+fi
 
 APPIMAGETOOL_RUNNER=""
 if [ -n "${APPIMAGETOOL_BIN}" ]; then
@@ -504,12 +592,23 @@ else
   chmod +x "${APPIMAGETOOL_RUNNER}"
 fi
 
+APPIMAGETOOL_RUNNER_ORIG="${APPIMAGETOOL_RUNNER}"
 APPIMAGETOOL_RUNNER=$(prepare_appimagetool_runner "${APPIMAGETOOL_RUNNER}" "${APPIMAGE_WORK}")
 
 mkdir -p "${OUTPUT_DIR}"
 OUT_NAME=$(basename "${APPIMAGE_PATH}")
 OUT_NAME="${OUT_NAME%.AppImage}-${APPIMAGE_SUFFIX}.AppImage"
 OUT_PATH="${OUTPUT_DIR}/${OUT_NAME}"
+
+if [ -z "${APPIMAGE_RUNTIME_FILE}" ]; then
+  AUTO_RUNTIME_FILE="${BUILD_ROOT}/runtime/appimage-runtime-${ARCH}.bin"
+  if extract_runtime_from_appimage "${APPIMAGE_PATH}" "${AUTO_RUNTIME_FILE}"; then
+    APPIMAGE_RUNTIME_FILE="${AUTO_RUNTIME_FILE}"
+    echo "Auto extracted AppImage runtime file: ${APPIMAGE_RUNTIME_FILE}"
+  else
+    echo "Warning: failed to auto extract runtime from ${APPIMAGE_PATH}; appimagetool may attempt network download." >&2
+  fi
+fi
 
 APPIMAGE_MKSQUASHFS_BIN="mksquashfs"
 if [ -x "$(dirname "${APPIMAGETOOL_RUNNER}")/usr/bin/mksquashfs" ]; then
@@ -531,14 +630,52 @@ if [ -n "${APPIMAGE_RUNTIME_FILE}" ]; then
 fi
 APPIMAGE_TOOL_ARGS+=("${APPDIR}" "${OUT_PATH}")
 
+run_appimagetool() {
+  local runner=$1
+  if [[ "${runner}" == *.AppImage ]]; then
+    APPIMAGE_EXTRACT_AND_RUN=1 "${runner}" "${APPIMAGE_TOOL_ARGS[@]}"
+  else
+    "${runner}" "${APPIMAGE_TOOL_ARGS[@]}"
+  fi
+}
+
+drop_appimage_comp_arg() {
+  local -a filtered=()
+  local skip_next=0
+  for arg in "${APPIMAGE_TOOL_ARGS[@]}"; do
+    if [ "${skip_next}" = "1" ]; then
+      skip_next=0
+      continue
+    fi
+    if [ "${arg}" = "--comp" ]; then
+      skip_next=1
+      continue
+    fi
+    filtered+=("${arg}")
+  done
+  APPIMAGE_TOOL_ARGS=("${filtered[@]}")
+}
+
 if [[ "${APPIMAGETOOL_RUNNER}" == *.AppImage ]]; then
-  APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL_RUNNER}" "${APPIMAGE_TOOL_ARGS[@]}"
+  run_appimagetool "${APPIMAGETOOL_RUNNER}"
 else
-  "${APPIMAGETOOL_RUNNER}" "${APPIMAGE_TOOL_ARGS[@]}"
+  if ! run_appimagetool "${APPIMAGETOOL_RUNNER}"; then
+    if [[ "${APPIMAGETOOL_RUNNER_ORIG}" == *.AppImage ]]; then
+      echo "Extracted appimagetool runner failed, retrying with AppImage runner..." >&2
+      drop_appimage_comp_arg
+      run_appimagetool "${APPIMAGETOOL_RUNNER_ORIG}"
+    else
+      exit 1
+    fi
+  fi
 fi
 
-if [ "${EMBED_PYTHON}" = "1" ]; then
+if [ "${EMBED_PYTHON}" = "1" ] && [ "${EMBED_GIT}" = "1" ]; then
   echo "AppImage with embedded Python and Git: ${OUT_PATH}"
-else
+elif [ "${EMBED_PYTHON}" = "1" ]; then
+  echo "AppImage with embedded Python: ${OUT_PATH}"
+elif [ "${EMBED_GIT}" = "1" ]; then
   echo "AppImage with sidecar Python and embedded Git: ${OUT_PATH}"
+else
+  echo "AppImage with sidecar Python/Git from extra package: ${OUT_PATH}"
 fi

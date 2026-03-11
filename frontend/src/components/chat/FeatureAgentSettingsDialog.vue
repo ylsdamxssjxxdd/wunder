@@ -54,17 +54,11 @@
                 </div>
               </div>
             </el-checkbox-group>
-            <div v-if="sharedToolsNotice" class="agent-editor-hint">{{ t('portal.agent.tools.notice') }}</div>
           </div>
         </el-form-item>
         <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
           <div class="agent-basic-settings">
             <div class="agent-share-card agent-share-card--combined">
-              <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
-              <div v-if="showShareSetting" class="agent-share-row">
-                <el-switch v-model="form.is_shared" />
-                <span>{{ t('portal.agent.share.label') }}</span>
-              </div>
               <div class="agent-share-row agent-share-row--sandbox">
                 <span>{{ t('portal.agent.sandbox.title') }}</span>
                 <el-select v-model="form.sandbox_container_id" size="small" class="agent-sandbox-select">
@@ -143,9 +137,6 @@ const beeroomStore = useBeeroomStore();
 const showApprovalModeSetting = computed(
   () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
 );
-const showShareSetting = computed(
-  () => !isDesktopModeEnabled() || isDesktopRemoteAuthMode()
-);
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
@@ -223,30 +214,14 @@ const normalizeOptions = (list) =>
 
 const toolGroups = computed(() => {
   const summary = toolSummary.value || {};
-  const sharedSelected = new Set(
-    Array.isArray(summary.shared_tools_selected) ? summary.shared_tools_selected : []
-  );
-  const sharedPool = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
-  const sharedTools =
-    sharedSelected.size > 0
-      ? sharedPool.filter((tool) => sharedSelected.has(String(tool?.name || '').trim()))
-      : sharedPool;
   return [
     { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(summary.builtin_tools) },
     { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(summary.mcp_tools) },
     { label: t('portal.agent.tools.group.a2a'), options: normalizeOptions(summary.a2a_tools) },
     { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(summary.skills) },
     { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
-    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) },
-    { label: t('portal.agent.tools.group.shared'), options: normalizeOptions(sharedTools) }
+    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) }
   ].filter((group) => group.options.length > 0);
-});
-
-const sharedToolsNotice = computed(() => {
-  const summary = toolSummary.value || {};
-  const shared = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
-  const selected = Array.isArray(summary.shared_tools_selected) ? summary.shared_tools_selected : [];
-  return shared.length > 0 && selected.length === 0;
 });
 
 const isToolGroupFullySelected = (group) => {
@@ -296,7 +271,7 @@ const loadAgent = async () => {
     }
     form.name = agent.name || '';
     form.description = agent.description || '';
-    form.is_shared = showShareSetting.value ? Boolean(agent.is_shared) : false;
+    form.is_shared = false;
     form.system_prompt = agent.system_prompt || '';
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
@@ -319,14 +294,13 @@ const saveAgent = async () => {
     const payload: Record<string, unknown> = {
       name,
       description: form.description || '',
-      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
+      is_shared: false,
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: form.system_prompt || '',
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
-    if (!payload.hive_id) delete payload.hive_id;
     if (!payload.hive_name) delete payload.hive_name;
     if (!payload.hive_description) delete payload.hive_description;
     await agentStore.updateAgent(normalizedAgentId.value, payload);

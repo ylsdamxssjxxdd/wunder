@@ -1257,6 +1257,7 @@ pub trait StorageBackend: Send + Sync {
     fn upsert_hive(&self, record: &HiveRecord) -> Result<()>;
     fn get_hive(&self, user_id: &str, hive_id: &str) -> Result<Option<HiveRecord>>;
     fn list_hives(&self, user_id: &str, include_archived: bool) -> Result<Vec<HiveRecord>>;
+    fn delete_hive(&self, user_id: &str, hive_id: &str) -> Result<i64>;
     fn move_agents_to_hive(
         &self,
         user_id: &str,
@@ -1265,6 +1266,7 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<i64>;
 
     fn upsert_team_run(&self, record: &TeamRunRecord) -> Result<()>;
+    fn delete_team_runs_by_hive(&self, user_id: &str, hive_id: &str) -> Result<i64>;
     fn get_team_run(&self, team_run_id: &str) -> Result<Option<TeamRunRecord>>;
     fn list_team_runs(
         &self,

@@ -317,19 +317,11 @@
                   </div>
                 </div>
               </el-checkbox-group>
-              <div v-if="sharedToolsNotice" class="agent-editor-hint">
-                {{ t('portal.agent.tools.notice') }}
-              </div>
             </div>
           </el-form-item>
           <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
             <div class="agent-basic-settings">
               <div class="agent-share-card agent-share-card--combined">
-                <div class="agent-share-title">{{ t('portal.agent.share.title') }}</div>
-                <div v-if="showShareSetting" class="agent-share-row">
-                  <el-switch v-model="form.is_shared" />
-                  <span>{{ t('portal.agent.share.label') }}</span>
-                </div>
                 <div class="agent-share-row agent-share-row--sandbox">
                   <span>{{ t('portal.agent.sandbox.title') }}</span>
                   <el-select v-model="form.sandbox_container_id" size="small" class="agent-sandbox-select">
@@ -407,7 +399,6 @@ const chatStore = useChatStore();
 const { t } = useI18n();
 const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
 const showApprovalModeSetting = computed(() => desktopLocalMode.value);
-const showShareSetting = computed(() => !desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 const RUNNING_REFRESH_MS = 6000;
@@ -1013,20 +1004,13 @@ const normalizeOptions = (list) =>
 
 const toolGroups = computed(() => {
   const payload = toolCatalog.value || {};
-  const sharedSelected = new Set(
-    Array.isArray(payload.shared_tools_selected) ? payload.shared_tools_selected : []
-  );
-  const sharedTools = (Array.isArray(payload.shared_tools) ? payload.shared_tools : []).filter(
-    (tool) => sharedSelected.has(tool.name)
-  );
   return [
     { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(payload.builtin_tools) },
     { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(payload.mcp_tools) },
     { label: t('portal.agent.tools.group.a2a'), options: normalizeOptions(payload.a2a_tools) },
     { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(payload.skills) },
     { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(payload.knowledge_tools) },
-    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(payload.user_tools) },
-    { label: t('portal.agent.tools.group.shared'), options: normalizeOptions(sharedTools) }
+    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(payload.user_tools) }
   ].filter((group) => group.options.length > 0);
 });
 
@@ -1036,13 +1020,6 @@ const allToolValues = computed(() => {
     group.options.forEach((option) => values.add(option.value));
   });
   return Array.from(values);
-});
-
-const sharedToolsNotice = computed(() => {
-  const payload = toolCatalog.value || {};
-  const shared = Array.isArray(payload.shared_tools) ? payload.shared_tools : [];
-  const selected = Array.isArray(payload.shared_tools_selected) ? payload.shared_tools_selected : [];
-  return shared.length > 0 && selected.length === 0;
 });
 
 const applyDefaultTools = () => {
@@ -1389,7 +1366,7 @@ const saveAgent = async () => {
     const payload: Record<string, unknown> = {
       name,
       description: form.description || '',
-      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
+      is_shared: false,
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       ...buildBeeroomGroupPayload(form.group),

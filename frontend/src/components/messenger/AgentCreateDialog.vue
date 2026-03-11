@@ -85,10 +85,6 @@
         </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.base')">
           <div class="base-grid">
-            <label v-if="showShareSetting" class="base-item">
-              <span>{{ t('messenger.agentCreate.isShared') }}</span>
-              <el-switch v-model="form.is_shared" />
-            </label>
             <label class="base-item base-item-select">
               <span>{{ t('messenger.agentCreate.sandbox') }}</span>
               <el-select v-model="form.sandbox_container_id">
@@ -182,9 +178,6 @@ const { t } = useI18n();
 const showApprovalModeSetting = computed(
   () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
 );
-const showShareSetting = computed(
-  () => !isDesktopModeEnabled() || isDesktopRemoteAuthMode()
-);
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
@@ -240,14 +233,6 @@ const normalizeOptions = (list: unknown): ToolOption[] => {
 
 const toolGroups = computed<ToolGroup[]>(() => {
   const summary = toolSummary.value || {};
-  const sharedPool = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
-  const sharedSelected = new Set(
-    Array.isArray(summary.shared_tools_selected) ? summary.shared_tools_selected.map((name) => String(name)) : []
-  );
-  const sharedTools =
-    sharedSelected.size > 0
-      ? sharedPool.filter((tool) => sharedSelected.has(String((tool as Record<string, unknown>)?.name || '').trim()))
-      : sharedPool;
 
   return [
     {
@@ -273,10 +258,6 @@ const toolGroups = computed<ToolGroup[]>(() => {
     {
       label: t('portal.agent.tools.group.user'),
       options: normalizeOptions(summary.user_tools)
-    },
-    {
-      label: t('portal.agent.tools.group.shared'),
-      options: normalizeOptions(sharedTools)
     }
   ].filter((group) => group.options.length > 0);
 });
@@ -361,15 +342,12 @@ const handleSave = async () => {
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: String(form.system_prompt || ''),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
-      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
+      is_shared: false,
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
     if (!payload.copy_from_agent_id) {
       delete payload.copy_from_agent_id;
-    }
-    if (!payload.hive_id) {
-      delete payload.hive_id;
     }
     if (!payload.hive_name) {
       delete payload.hive_name;

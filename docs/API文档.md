@@ -161,6 +161,7 @@
 - 新增内置工具 `浏览器`（英文别名 `browser`），通过 `action=navigate|click|type|screenshot|read_page|close` 统一操作，仅 desktop 模式可用。
 - 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
 - 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
+- `桌面控制器/桌面监视器` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。
 - 新增内置工具 `休眠等待`（英文别名 `sleep`/`sleep_wait`/`pause`），参数 `seconds` 必填；用于主动等待（如 `300` 秒），并自动适配工具超时。
 - 新增内置工具 `读图工具`（英文别名 `read_image`/`view_image`），参数 `path` 必填、`prompt` 可选；执行成功后会在下一轮自动附加 `image_url` 供模型视觉分析。
 - `读图工具` 仅在 `llm.models.<name>.support_vision=true` 的模型下会出现在可用工具列表中，非视觉模型会自动隐藏并拒绝调用。
@@ -1933,8 +1934,11 @@
   - `respond_ping`：是否自动应答对端 IQ ping（可选，默认 `true`）
 - 运行机制：
   - 当账号 `status=active` 且 `xmpp.long_connection_enabled=true` 且凭证完整时，后台 worker 会自动建立 XMPP 长连接。
-  - 长连接接收文本消息后会标准化为 `ChannelMessage`，并进入 `handle_inbound` 主链路。
+  - 入站消息进入主链路前会先回发“已收到，正在处理”即时回执（飞书/XMPP）。
+  - 长连接接收消息后会标准化为 `ChannelMessage`，并进入 `handle_inbound` 主链路。
+  - 入站支持解析 `jabber:x:oob` 与 `urn:xmpp:reference:0` 的 URL 附件；可下载的 `http/https` 附件会落盘到当前会话作用域工作区（优先按 `agent_id` 对应容器映射）。
   - 出站优先复用长连接会话发包；会话不可用时自动降级为短连接发送。
+  - 出站文本中的 `/workspaces/...` 路径（包含 `![](...)` 形式）会改写为 `/wunder/temp_dir/download?filename=...` 下载链接后再投递（飞书/XMPP 均生效）。
   - 心跳兼容：支持被动应答 IQ ping；启用主动心跳时会周期发送 ping，超时触发重连。
 
 ### 4.1.55 `/wunder/chat/*`
@@ -2059,6 +2063,9 @@
 - `GET /wunder/beeroom/groups/{group_id}`：获取蜂群详情。
   - Query：`mission_limit?`
   - 返回：`data.group`（蜂群摘要）、`data.agents[]`（完整成员态势，包含 `tool_names[]` 便于画布 hover 提示与协作对话栏汇总工具摘要）、`data.missions[]`（最近任务快照，包含 `tasks[]`，可直接驱动画布节点、协作链路边与右侧协作对话栏）。
+- `DELETE /wunder/beeroom/groups/{group_id}`：删除蜂群。
+  - 行为：默认蜂群不可删除；删除后会把该蜂群内智能体归属回退为“无 / 默认蜂群”，并清空该蜂群的协作聊天记录与任务运行记录。
+  - 返回：`data.deleted`、`data.group_id`、`data.reset_agent_total`、`data.deleted_mission_total`、`data.deleted_chat_message_total`、`data.fallback_group_id`。
 
 ### 4.1.59 `/wunder/beeroom/groups/{group_id}/move_agents`
 
@@ -2087,6 +2094,27 @@
   - 说明：服务端会按 `user_id + group_id + client_msg_id` 做幂等去重，适合前端乐观追加与重试。
 - `DELETE /wunder/beeroom/groups/{group_id}/chat/messages`：清空当前蜂群协作对话历史。
   - 返回：`data.deleted`、`data.group_id`。
+
+### 4.1.62.1 `/wunder/beeroom/groups/{group_id}/demo_runs*`
+
+- `POST /wunder/beeroom/groups/{group_id}/demo_runs`：启动蜂群演示运行（高一致度模式，走真实编排与 `agent_swarm` 工具链，模型侧改为本地 mock，不依赖外部大模型）。
+  - 入参（JSON）：
+    - `seed?`：随机种子（u64）；
+    - `worker_count?`（兼容 `workerCount`）：指定工蜂数量（默认随机，最大 6）；
+    - `worker_count_mode?`（兼容 `workerCountMode`）：`random | all`；
+    - `speed?`：`fast | normal | slow`（影响派发等待与工蜂步骤节奏）；
+    - `scenario?`：演示场景标识（默认 `standard`）；
+    - `tool_profile?`（兼容 `toolProfile`）：`safe`（默认）或其他策略（按工蜂工具清单挑选步骤工具）。
+  - 返回：`data` 为演示运行快照（见下方统一结构）。
+  - 错误码：若同一 `user_id + group_id` 已有进行中演示，返回 `409 Conflict`。
+- `GET /wunder/beeroom/groups/{group_id}/demo_runs/{run_id}`：查询演示运行状态。
+  - 返回：`data` 为演示运行快照；不存在返回 `404`。
+- `POST /wunder/beeroom/groups/{group_id}/demo_runs/{run_id}/cancel`：请求取消演示运行。
+  - 语义：标记 `cancelling`，并尝试取消母蜂会话监控与 `team_run`。
+  - 返回：`data` 为取消后的最新快照；不存在返回 `404`。
+- 演示运行快照字段（`data`）：
+  - `run_id/group_id/status/team_run_id?/mother_session_id?/selected_worker_ids[]/seed/started_at/updated_at/finished_at?/error?`
+  - `status` 取值：`starting/running/cancelling/completed/failed/cancelled`。
 
 ### 4.1.63 `/wunder/beeroom/ws`
 

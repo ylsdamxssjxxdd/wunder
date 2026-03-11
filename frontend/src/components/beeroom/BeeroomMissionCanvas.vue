@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <section ref="screenRef" class="beeroom-canvas-screen" :class="{ 'is-empty': !projection.nodes.length }">
     <div v-if="!projection.nodes.length" class="beeroom-canvas-empty">
       <i class="fa-solid fa-diagram-project" aria-hidden="true"></i>
@@ -23,7 +23,7 @@
               <span>{{ t('beeroom.members.idle') }} {{ canvasStatusSummary.idle }}</span>
             </span>
           </div>
-          <div class="beeroom-canvas-tools" role="toolbar" aria-label="画布控制区">
+          <div class="beeroom-canvas-tools" role="toolbar" aria-label="画布控制">
             <button class="beeroom-canvas-tool-btn" type="button" title="放大画布" aria-label="放大画布" @click="zoomCanvasIn">
               <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
               <span class="beeroom-visually-hidden">放大画布</span>
@@ -107,7 +107,6 @@
           <div class="beeroom-canvas-chat-head">
             <div>
               <div class="beeroom-canvas-chat-title">{{ t('beeroom.canvas.chatTitle') }}</div>
-              <div class="beeroom-canvas-chat-subtitle">{{ chatPanelSubtitle }}</div>
               <div class="beeroom-canvas-chat-runtime">
                 <span class="beeroom-canvas-runtime-chip" :class="`is-${dispatchRuntimeTone}`">
                   {{ dispatchRuntimeLabel }}
@@ -124,16 +123,7 @@
                 :title="t('common.clear')"
                 @click="clearManualChatHistory"
               >
-                <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
-              </button>
-              <button
-                class="beeroom-canvas-icon-btn"
-                type="button"
-                :title="refreshing ? t('common.loading') : t('common.refresh')"
-                :disabled="refreshing"
-                @click="emit('refresh')"
-              >
-                <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+                <i class="fa-solid fa-broom" aria-hidden="true"></i>
               </button>
               <button
                 class="beeroom-canvas-icon-btn"
@@ -153,7 +143,6 @@
               >
                 <i class="fa-solid fa-play" aria-hidden="true"></i>
               </button>
-              <span class="beeroom-canvas-chat-count">{{ displayChatMessages.length }}</span>
             </div>
           </div>
 
@@ -285,8 +274,18 @@
               >
                 {{ composerSending ? t('common.loading') : t('chat.input.send') }}
               </button>
+              <button
+                class="beeroom-canvas-chat-demo"
+                :class="{ 'is-running': demoCanCancel }"
+                type="button"
+                :disabled="demoActionDisabled"
+                @click="handleDemoAction"
+              >
+                {{ demoActionLabel }}
+              </button>
             </div>
             <div v-if="composerError" class="beeroom-canvas-chat-compose-status is-error">{{ composerError }}</div>
+            <div v-else-if="demoError" class="beeroom-canvas-chat-compose-status is-error">{{ demoError }}</div>
           </section>
         </template>
         </aside>
@@ -307,6 +306,7 @@ import {
   openBeeroomChatStream,
   openBeeroomSocket
 } from '@/api/beeroom';
+import { useBeeroomDemo } from '@/components/beeroom/useBeeroomDemo';
 import {
   cancelMessageStream,
   createSession,
@@ -314,6 +314,10 @@ import {
   resumeMessageStream,
   sendMessageStream
 } from '@/api/chat';
+import {
+  buildNodeWorkflowHtml,
+  buildTaskWorkflowRuntime
+} from '@/components/beeroom/beeroomTaskWorkflow';
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
 import {
@@ -331,6 +335,7 @@ import {
   setBeeroomMissionCanvasState,
   type BeeroomCanvasViewportState
 } from '@/components/beeroom/beeroomMissionCanvasStateCache';
+import { useBeeroomMissionWorkflowPreview } from '@/components/beeroom/useBeeroomMissionWorkflowPreview';
 
 type CanvasNodeMeta = {
   id: string;
@@ -416,18 +421,18 @@ const HEX_DIRECTIONS: HoneycombSlot[] = [
   { q: -1, r: 1 },
   { q: 0, r: 1 }
 ];
-const HONEYCOMB_RADIUS = 164;
-const HONEYCOMB_VERTICAL_RATIO = 1.18;
-const NODE_WIDTH = 248;
+const HONEYCOMB_RADIUS = 186;
+const HONEYCOMB_VERTICAL_RATIO = 1.2;
+const NODE_WIDTH = 272;
 const MOTHER_NODE_WIDTH = NODE_WIDTH;
-const NODE_HEIGHT = 94;
+const NODE_HEIGHT = 156;
 const MOTHER_NODE_HEIGHT = NODE_HEIGHT;
 const GRID_PLUGIN_KEY = 'beeroom-grid-line';
 const MANUAL_CHAT_HISTORY_LIMIT = 120;
 const CHAT_POLL_INTERVAL_MS = 2000;
 const CHAT_WS_RETRY_DELAY_MS = 1400;
 const CHAT_SSE_RETRY_DELAY_MS = 2200;
-const TEAM_REALTIME_REFRESH_THROTTLE_MS = 700;
+const TEAM_REALTIME_REFRESH_THROTTLE_MS = 360;
 const CARD_ACCENT_PALETTE = ['#3b82f6', '#8b5cf6', '#22c55e', '#06b6d4', '#eab308', '#f97316', '#ef4444'];
 const TEAM_RUNTIME_EVENT_TYPES = new Set([
   'team_start',
@@ -438,6 +443,7 @@ const TEAM_RUNTIME_EVENT_TYPES = new Set([
   'team_finish',
   'team_error'
 ]);
+const DEMO_RUNTIME_EVENT_TYPES = new Set(['beeroom_demo_status']);
 
 const beeroomWsClient = createWsMultiplexer(() => openBeeroomSocket({ allowQueryToken: true }), {
   idleTimeoutMs: 20000,
@@ -490,6 +496,19 @@ const dispatchRespondingApprovalId = ref('');
 const chatRealtimeTransport = ref<'none' | 'ws' | 'sse'>('none');
 const nodePositionOverrides = ref<Record<string, CanvasPositionOverride>>({});
 const canvasFullscreen = ref(false);
+const canvasMounted = ref(false);
+const chatMessagesClearedAfter = ref(0);
+
+const {
+  workflowItemsByTask,
+  workflowItemsSignature,
+  workflowPreviewByTask,
+  workflowPreviewSignature,
+  syncMissionWorkflowState
+} = useBeeroomMissionWorkflowPreview({
+  mission: computed(() => props.mission || null),
+  t
+});
 
 let manualMessageSerial = 0;
 
@@ -513,6 +532,7 @@ let chatWatchRetryTimer: number | null = null;
 let chatSseRetryTimer: number | null = null;
 let chatSseSource: EventSource | null = null;
 let chatSseGroupId = '';
+let chatAuthDenied = false;
 let teamRealtimeReconcileTimer: number | null = null;
 let lastTeamRealtimeRefreshAt = 0;
 let dispatchStreamController: AbortController | null = null;
@@ -651,6 +671,12 @@ const resolveDispatchTaskLabel = (mission: BeeroomMission | null, task: BeeroomM
   return taskId ? `#${taskId.slice(0, 8)}` : '';
 };
 
+const resolveTaskTimelineMoment = (task: BeeroomMissionTask | null | undefined) =>
+  Number(task?.updated_time || task?.finished_time || task?.started_time || 0);
+
+const pickLatestTask = (tasks: BeeroomMissionTask[]): BeeroomMissionTask | null =>
+  [...tasks].sort((left, right) => resolveTaskTimelineMoment(right) - resolveTaskTimelineMoment(left))[0] || null;
+
 const projectionMemberBusy = (member: BeeroomMember | undefined) => member?.idle === false;
 
 const resolveMinimapNodeFill = (status: unknown) => {
@@ -691,8 +717,7 @@ const buildCanvasNodeCardHtml = (options: {
   roleLabel: string;
   status: string;
   statusLabel: string;
-  taskTotal: number;
-  sessionTotal: number;
+  workflowHtml: string;
 }) => {
   const statusClass = resolveCanvasNodeStatusClass(options.status);
   const title = escapeHtml(options.displayName);
@@ -700,26 +725,23 @@ const buildCanvasNodeCardHtml = (options: {
   const roleLabel = escapeHtml(trimNodeTitle(options.roleLabel, 6));
   const statusLabel = escapeHtml(trimNodeTitle(options.statusLabel, 7));
   const avatar = escapeHtml(options.avatar);
-  const tools = escapeHtml(formatCount(options.taskTotal));
-  const reports = escapeHtml(formatCount(options.sessionTotal));
   const ariaLabel = escapeHtml(`${options.fullName} ${options.roleLabel} ${options.statusLabel}`);
   const accentColor = String(options.accentColor || '#64748b').replace(/[^#a-zA-Z0-9(),.\s-]/g, '');
 
   // Render a compact, fully-clipped card to avoid overflow under any zoom level.
   return `
     <div class="beeroom-node-card ${statusClass} ${options.isMother ? 'is-mother' : ''} ${options.selected ? 'is-selected' : ''}" role="group" aria-label="${ariaLabel}" style="--node-accent:${accentColor};">
-      <div class="beeroom-node-card-head">
-        <span class="beeroom-node-avatar">${avatar}</span>
-        <div class="beeroom-node-title-group">
-          <div class="beeroom-node-title" title="${fullName}">${title}</div>
-          <div class="beeroom-node-role-chip">${roleLabel}</div>
+      <div class="beeroom-node-card-body">
+        <div class="beeroom-node-card-head">
+          <span class="beeroom-node-avatar">${avatar}</span>
+          <div class="beeroom-node-title-group">
+            <div class="beeroom-node-title" title="${fullName}">${title}</div>
+            <div class="beeroom-node-role-chip">${roleLabel}</div>
+          </div>
+          <span class="beeroom-node-status"><i class="beeroom-node-status-dot"></i><span>${statusLabel}</span></span>
         </div>
-        <span class="beeroom-node-status"><i class="beeroom-node-status-dot"></i><span>${statusLabel}</span></span>
       </div>
-      <div class="beeroom-node-metrics">
-        <span class="beeroom-node-metric" title="任务总数"><i class="fa-solid fa-list-check" aria-hidden="true"></i><b>${tools}</b></span>
-        <span class="beeroom-node-metric" title="会话总数"><i class="fa-solid fa-comments" aria-hidden="true"></i><b>${reports}</b></span>
-      </div>
+      ${options.workflowHtml}
     </div>
   `;
 };
@@ -862,6 +884,7 @@ const projection = computed(() => {
   const nodes = orderedAgentIds.map((agentId, index) => {
     const member = memberMap.get(agentId);
     const agentTasks = tasksByAgent.get(agentId) || [];
+    const latestTask = pickLatestTask(agentTasks);
     const isMother = agentId === motherAgentId || (!motherAgentId && index === 0);
     const status = resolveNodeStatus(agentTasks, member, missionStatus);
     const statusLabel = resolveStatusLabel(status);
@@ -882,6 +905,19 @@ const projection = computed(() => {
     const position = nodePositionOverrides.value[nodeId] || resolveHoneycombPosition(slot);
     const width = isMother ? MOTHER_NODE_WIDTH : NODE_WIDTH;
     const height = isMother ? MOTHER_NODE_HEIGHT : NODE_HEIGHT;
+    const latestTaskId = String(latestTask?.task_id || '').trim();
+    const workflowRuntime = latestTaskId
+      ? (() => {
+          const workflowItems = workflowItemsByTask.value[latestTaskId];
+          if (Array.isArray(workflowItems) && workflowItems.length) {
+            return {
+              items: workflowItems,
+              preview: workflowPreviewByTask.value[latestTaskId] || buildTaskWorkflowRuntime(latestTask, [], t).preview
+            };
+          }
+          return buildTaskWorkflowRuntime(latestTask, [], t);
+        })()
+      : buildTaskWorkflowRuntime(null, [], t);
     const innerHTML = buildCanvasNodeCardHtml({
       isMother,
       selected,
@@ -892,8 +928,11 @@ const projection = computed(() => {
       roleLabel,
       status,
       statusLabel,
-      taskTotal: agentTasks.length,
-      sessionTotal
+      workflowHtml: buildNodeWorkflowHtml(
+        workflowRuntime.items,
+        t('chat.toolWorkflow.empty'),
+        workflowRuntime.preview.badgeTone
+      )
     });
 
     minX = Math.min(minX, position.x - width / 2);
@@ -944,9 +983,7 @@ const projection = computed(() => {
     orderedAgentIds.forEach((agentId) => {
       if (!agentId || agentId === effectiveMotherAgentId) return;
       const agentTasks = tasksByAgent.get(agentId) || [];
-      const latestTask = [...agentTasks].sort(
-        (left, right) => Number(right.started_time || right.updated_time || 0) - Number(left.started_time || left.updated_time || 0)
-      )[0] || null;
+      const latestTask = pickLatestTask(agentTasks);
       const latestStatus = String(latestTask?.status || '').trim().toLowerCase();
       const memberBusy = projectionMemberBusy(memberMap.get(agentId));
       const dispatchActive = ACTIVE_DISPATCH_STATUSES.has(latestStatus) || (memberBusy && agentTasks.length > 0);
@@ -1018,9 +1055,7 @@ const activeNodeTasks = computed(() => {
   if (!meta) return [] as BeeroomMissionTask[];
   return [...(projection.value.tasksByAgent.get(meta.agent_id) || [])]
     .sort(
-      (left, right) =>
-        Number(right.updated_time || right.finished_time || right.started_time || 0) -
-        Number(left.updated_time || left.finished_time || left.started_time || 0)
+      (left, right) => resolveTaskTimelineMoment(right) - resolveTaskTimelineMoment(left)
     )
     .slice(0, 3);
 });
@@ -1108,11 +1143,7 @@ const activeNodeCollaborationLinks = computed(() => {
     Array.from(projection.value.tasksByAgent.entries())
       .filter(([agentId, tasks]) => agentId !== meta.agent_id && tasks.length > 0)
       .map(([agentId, tasks]) => {
-        const latest = [...tasks].sort(
-          (left, right) =>
-            Number(right.updated_time || right.finished_time || right.started_time || 0) -
-            Number(left.updated_time || left.finished_time || left.started_time || 0)
-        )[0];
+        const latest = pickLatestTask(tasks);
         const workerMeta = projection.value.nodeMetaMap.get(`agent:${agentId}`);
         return {
           key: `mother:${agentId}:${latest?.task_id || ''}`,
@@ -1291,6 +1322,28 @@ const composerCanSend = computed(
 );
 
 const activeGroupId = computed(() => String(props.group?.group_id || '').trim());
+const {
+  demoBusy,
+  demoError,
+  demoActionLabel,
+  demoCanStart,
+  demoCanCancel,
+  handleDemoAction,
+  handleDemoRealtimeEvent
+} = useBeeroomDemo({
+  activeGroupId,
+  t,
+  onRefresh: () => {
+    scheduleTeamRealtimeReconcile(true);
+    emit('refresh');
+  }
+});
+const demoActionDisabled = computed(() => {
+  if (demoCanCancel.value) {
+    return demoBusy.value;
+  }
+  return demoBusy.value || composerSending.value || !demoCanStart.value;
+});
 const dispatchApprovals = computed<DispatchApprovalItem[]>(() => {
   const sessionId = String(dispatchSessionId.value || '').trim();
   if (!sessionId) return [];
@@ -1401,7 +1454,15 @@ const sameManualChatMessages = (left: MissionChatMessage[], right: MissionChatMe
   return true;
 };
 
+const resolveHttpStatus = (error: unknown): number => {
+  const status = Number((error as { response?: { status?: unknown } })?.response?.status ?? 0);
+  return Number.isFinite(status) ? status : 0;
+};
+
+const isAuthDeniedStatus = (status: number): boolean => status === 401 || status === 403;
+
 const loadManualChatHistory = async () => {
+  if (chatAuthDenied) return;
   const groupId = activeGroupId.value;
   if (!groupId) {
     manualChatMessages.value = [];
@@ -1409,6 +1470,7 @@ const loadManualChatHistory = async () => {
   }
   try {
     const response = await listBeeroomChatMessages(groupId, { limit: MANUAL_CHAT_HISTORY_LIMIT });
+    chatAuthDenied = false;
     const items = Array.isArray(response?.data?.data?.items)
       ? response.data.data.items
           .map((item: unknown) => mapApiChatMessage(item))
@@ -1420,7 +1482,13 @@ const loadManualChatHistory = async () => {
     if (!sameManualChatMessages(manualChatMessages.value, next)) {
       replaceManualChatMessages(next);
     }
-  } catch {
+  } catch (error) {
+    if (isAuthDeniedStatus(resolveHttpStatus(error))) {
+      chatAuthDenied = true;
+      stopChatRealtimeWatch();
+      stopChatPolling();
+      return;
+    }
     // Keep the last successful snapshot to avoid empty flashes on transient network errors.
   }
 };
@@ -1463,14 +1531,16 @@ const persistManualChatMessage = async (payload: {
 
 const clearManualChatHistory = async () => {
   composerError.value = '';
+  const clearedAfter = Date.now() / 1000;
+  chatMessagesClearedAfter.value = Math.max(chatMessagesClearedAfter.value, clearedAfter);
+  manualChatMessages.value = [];
   try {
     const groupId = activeGroupId.value;
     if (groupId) {
       await clearBeeroomChatMessages(groupId);
     }
-    manualChatMessages.value = [];
   } catch {
-    ElMessage.error(t('common.requestFailed'));
+    // Keep the panel cleared locally even if the server-side cleanup fails.
   }
 };
 
@@ -1977,17 +2047,6 @@ const handleDispatchApproval = async (
   }
 };
 
-const chatPanelSubtitle = computed(() => {
-  const mission = props.mission;
-  const groupName = props.group?.name || props.group?.group_id || t('messenger.section.swarms');
-  if (!mission) {
-    return `${groupName} / ${t('beeroom.canvas.chatStandby')}`;
-  }
-  return `${groupName} / ${resolveStatusLabel(mission.completion_status || mission.status)} / ${t('beeroom.missions.taskCount', {
-    count: mission.task_total || 0
-  })}`;
-});
-
 const missionChatMessages = computed(() => {
   const mission = props.mission;
   const messages: MissionChatMessage[] = [];
@@ -2082,9 +2141,12 @@ const missionChatMessages = computed(() => {
 });
 
 const displayChatMessages = computed(() =>
-  [...missionChatMessages.value, ...manualChatMessages.value].sort(
-    (left, right) => left.time - right.time || left.key.localeCompare(right.key)
-  )
+  [...missionChatMessages.value, ...manualChatMessages.value]
+    .sort((left, right) => left.time - right.time || left.key.localeCompare(right.key))
+    .filter(
+      (message) =>
+        !chatMessagesClearedAfter.value || Number(message.time || 0) > chatMessagesClearedAfter.value
+    )
 );
 
 watch(
@@ -2101,21 +2163,28 @@ watch(
   { immediate: true }
 );
 
+const handleActiveGroupChanged = (value: unknown) => {
+  if (!canvasMounted.value || canvasDisposed) return;
+  const groupId = String(value || '').trim();
+  chatAuthDenied = false;
+  chatMessagesClearedAfter.value = 0;
+  resetDispatchRuntime();
+  lastTeamRealtimeRefreshAt = 0;
+  composerText.value = '';
+  composerError.value = '';
+  void loadManualChatHistory();
+  stopChatRealtimeWatch();
+  if (groupId) {
+    startChatRealtimeWatch(groupId);
+  }
+  restartChatPolling();
+};
+
 watch(
   activeGroupId,
   (groupId) => {
-    resetDispatchRuntime();
-    lastTeamRealtimeRefreshAt = 0;
-    composerText.value = '';
-    composerError.value = '';
-    void loadManualChatHistory();
-    stopChatRealtimeWatch();
-    if (String(groupId || '').trim()) {
-      startChatRealtimeWatch(String(groupId || '').trim());
-    }
-    restartChatPolling();
-  },
-  { immediate: true }
+    handleActiveGroupChanged(groupId);
+  }
 );
 
 watch(
@@ -2127,12 +2196,12 @@ watch(
   { immediate: true }
 );
 
-const shortTaskId = (value: unknown) => {
+function shortTaskId(value: unknown) {
   const text = String(value || '').trim();
   if (!text) return '-';
   if (text.length <= 12) return text;
   return `${text.slice(0, 6)}...${text.slice(-4)}`;
-};
+}
 
 const renderSignature = computed(() => {
   const mission = props.mission;
@@ -2143,7 +2212,10 @@ const renderSignature = computed(() => {
     return ['standby', props.group?.group_id || '', props.group?.mother_agent_id || '', agentsSignature].join('||');
   }
   const tasksSignature = (Array.isArray(mission.tasks) ? mission.tasks : [])
-    .map((task) => `${task.task_id}:${task.agent_id}:${task.status || ''}:${task.updated_time || 0}:${task.finished_time || 0}`)
+    .map(
+      (task) =>
+        `${task.task_id}:${task.agent_id}:${task.status || ''}:${task.updated_time || 0}:${task.finished_time || 0}:${task.spawned_session_id || ''}:${task.target_session_id || ''}:${task.session_run_id || ''}:${task.retry_count || 0}:${task.result_summary || ''}:${task.error || ''}`
+    )
     .join('|');
   return [
     mission.mission_id || mission.team_run_id || '',
@@ -2152,7 +2224,9 @@ const renderSignature = computed(() => {
     mission.updated_time || 0,
     mission.finished_time || 0,
     tasksSignature,
-    agentsSignature
+    agentsSignature,
+    workflowPreviewSignature.value,
+    workflowItemsSignature.value
   ].join('||');
 });
 
@@ -2498,6 +2572,7 @@ function stopChatPolling() {
 function syncChatPollingState(options: { immediate?: boolean } = {}) {
   stopChatPolling();
   if (typeof window === 'undefined') return;
+  if (chatAuthDenied) return;
   const groupId = String(activeGroupId.value || '').trim();
   if (!groupId) return;
   if (chatRealtimeTransport.value !== 'none') return;
@@ -2531,12 +2606,14 @@ function clearTeamRealtimeReconcileTimer() {
 }
 
 function scheduleTeamRealtimeReconcile(immediate = false) {
+  if (canvasDisposed) return;
   if (typeof window === 'undefined') {
     emit('refresh');
     return;
   }
   const now = Date.now();
   const run = () => {
+    if (canvasDisposed) return;
     clearTeamRealtimeReconcileTimer();
     lastTeamRealtimeRefreshAt = Date.now();
     emit('refresh');
@@ -2564,6 +2641,7 @@ function stopChatSseWatch() {
 }
 
 function scheduleChatSseRetry(groupId: string) {
+  if (chatAuthDenied) return;
   if (typeof window === 'undefined') return;
   clearChatSseRetry();
   chatSseRetryTimer = window.setTimeout(() => {
@@ -2574,6 +2652,7 @@ function scheduleChatSseRetry(groupId: string) {
 }
 
 function startChatSseWatch(groupId: string) {
+  if (chatAuthDenied) return;
   const normalizedGroupId = String(groupId || '').trim();
   if (!normalizedGroupId || typeof window === 'undefined' || typeof EventSource === 'undefined') {
     return;
@@ -2617,6 +2696,7 @@ function startChatSseWatch(groupId: string) {
   bindEvent('sync_required');
   bindEvent('chat_cleared');
   bindEvent('chat_message');
+  DEMO_RUNTIME_EVENT_TYPES.forEach((name) => bindEvent(name));
   TEAM_RUNTIME_EVENT_TYPES.forEach((name) => bindEvent(name));
 
   source.onerror = () => {
@@ -2658,6 +2738,7 @@ function handleChatRealtimeEvent(
   _eventId: string,
   transport: 'ws' | 'sse' = 'ws'
 ) {
+  if (canvasDisposed) return;
   if (!groupId || groupId !== activeGroupId.value) return;
   const payload = safeJsonParse(dataText);
   const normalizedType = String(eventType || '').trim().toLowerCase();
@@ -2665,6 +2746,7 @@ function handleChatRealtimeEvent(
     (normalizedType === 'chat_message' ||
       normalizedType === 'chat_cleared' ||
       normalizedType === 'sync_required' ||
+      DEMO_RUNTIME_EVENT_TYPES.has(normalizedType) ||
       TEAM_RUNTIME_EVENT_TYPES.has(normalizedType)) &&
     chatRealtimeTransport.value !== transport
   ) {
@@ -2687,6 +2769,7 @@ function handleChatRealtimeEvent(
     return;
   }
   if (normalizedType === 'chat_cleared') {
+    chatMessagesClearedAfter.value = Math.max(chatMessagesClearedAfter.value, Date.now() / 1000);
     manualChatMessages.value = [];
     return;
   }
@@ -2697,8 +2780,21 @@ function handleChatRealtimeEvent(
     }
     return;
   }
+  if (DEMO_RUNTIME_EVENT_TYPES.has(normalizedType)) {
+    handleDemoRealtimeEvent(normalizedType, payload);
+    return;
+  }
   if (TEAM_RUNTIME_EVENT_TYPES.has(normalizedType)) {
     const accepted = beeroomStore.applyRealtimeEvent(groupId, normalizedType, payload);
+    const forceWorkflowRefresh =
+      normalizedType === 'team_task_dispatch' ||
+      normalizedType === 'team_task_result' ||
+      normalizedType === 'team_finish' ||
+      normalizedType === 'team_error';
+    void nextTick(() => {
+      if (canvasDisposed) return;
+      return syncMissionWorkflowState(forceWorkflowRefresh);
+    });
     // Always run a throttled background reconcile so event loss or partial payloads self-heal quickly.
     scheduleTeamRealtimeReconcile(!accepted || normalizedType === 'team_finish' || normalizedType === 'team_error');
     return;
@@ -2706,6 +2802,7 @@ function handleChatRealtimeEvent(
 }
 
 function scheduleChatRealtimeRetry(groupId: string) {
+  if (chatAuthDenied) return;
   if (typeof window === 'undefined') return;
   clearChatWatchRetry();
   chatWatchRetryTimer = window.setTimeout(() => {
@@ -2716,8 +2813,9 @@ function scheduleChatRealtimeRetry(groupId: string) {
 }
 
 function startChatRealtimeWatch(groupId: string) {
+  if (chatAuthDenied) return;
   const normalizedGroupId = String(groupId || '').trim();
-  if (!normalizedGroupId) return;
+  if (!normalizedGroupId || canvasDisposed) return;
   clearChatWatchRetry();
   if (chatWatchController) {
     chatWatchController.abort();
@@ -3127,36 +3225,43 @@ watch(chatCollapsed, () => {
   saveCanvasState();
 });
 
+const syncProjectionRender = async () => {
+  if (!canvasMounted.value || canvasDisposed) return;
+  const missionIdentity = String(props.mission?.mission_id || props.mission?.team_run_id || '').trim();
+  const missionChanged = missionIdentity !== lastMissionIdentity;
+  lastMissionIdentity = missionIdentity;
+  if (!activeNodeId.value || !projection.value.nodeMetaMap.has(activeNodeId.value)) {
+    activeNodeId.value = projection.value.motherNodeId || projection.value.nodes[0]?.id || '';
+  }
+  const scopeKey = resolveCanvasScopeKey();
+  const cachedScopeState = getBeeroomMissionCanvasState(scopeKey);
+  const hasManualLayoutOverrides =
+    hasPositionOverrides(nodePositionOverrides.value) || hasPositionOverrides(cachedScopeState?.nodePositionOverrides);
+  const shouldForceFit =
+    missionChanged && !(pendingCanvasViewportRestore?.scopeKey === scopeKey) && !hasManualLayoutOverrides;
+  await enqueueRenderGraph(shouldForceFit);
+};
+
 watch(
   renderSignature,
-  async () => {
-    const missionIdentity = String(props.mission?.mission_id || props.mission?.team_run_id || '').trim();
-    const missionChanged = missionIdentity !== lastMissionIdentity;
-    lastMissionIdentity = missionIdentity;
-    if (!activeNodeId.value || !projection.value.nodeMetaMap.has(activeNodeId.value)) {
-      activeNodeId.value = projection.value.motherNodeId || projection.value.nodes[0]?.id || '';
-    }
-    const scopeKey = resolveCanvasScopeKey();
-    const cachedScopeState = getBeeroomMissionCanvasState(scopeKey);
-    const hasManualLayoutOverrides =
-      hasPositionOverrides(nodePositionOverrides.value) || hasPositionOverrides(cachedScopeState?.nodePositionOverrides);
-    const shouldForceFit =
-      missionChanged && !(pendingCanvasViewportRestore?.scopeKey === scopeKey) && !hasManualLayoutOverrides;
-    await enqueueRenderGraph(shouldForceFit);
-  },
-  { immediate: true }
+  () => {
+    void syncProjectionRender();
+  }
 );
 
 onMounted(async () => {
   canvasDisposed = false;
+  canvasMounted.value = true;
   if (typeof document !== 'undefined') {
     document.addEventListener('fullscreenchange', refreshCanvasFullscreen);
     refreshCanvasFullscreen();
   }
-  restartChatPolling();
+  handleActiveGroupChanged(activeGroupId.value);
+  await syncProjectionRender();
 });
 
 onBeforeUnmount(() => {
+  canvasMounted.value = false;
   canvasDisposed = true;
   renderSequence += 1;
   renderRequested = false;
@@ -3169,7 +3274,6 @@ onBeforeUnmount(() => {
   stopChatPolling();
   stopDispatchEdgeFlow();
   stopChatRealtimeWatch();
-  beeroomWsClient.close(1000, 'beeroom-canvas-unmount');
   if (resizeFrame) {
     cancelAnimationFrame(resizeFrame);
     resizeFrame = 0;
@@ -3181,7 +3285,6 @@ onBeforeUnmount(() => {
   }
   graph?.destroy();
   graph = null;
-  clearCanvasContainers();
 });
 </script>
 
@@ -3341,18 +3444,22 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   width: 100%;
   height: 100%;
-  padding: 8px 8px 7px;
-  border-radius: 11px;
-  border: 1px solid rgba(148, 163, 184, 0.25);
-  background: linear-gradient(180deg, rgba(23, 26, 35, 0.96), rgba(14, 16, 22, 0.95));
+  padding: 12px 12px 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(18, 24, 38, 0.98), rgba(11, 15, 26, 0.96));
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 6px 16px rgba(0, 0, 0, 0.28);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 24px rgba(2, 6, 23, 0.36),
+    0 0 0 1px rgba(15, 23, 42, 0.16);
   color: #e5e7eb;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 10px;
+  justify-content: flex-start;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: geometricPrecision;
@@ -3367,57 +3474,73 @@ onBeforeUnmount(() => {
 .beeroom-canvas-surface :deep(.beeroom-node-card:hover) {
   transform: translate3d(0, -1px, 0);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    0 10px 20px rgba(0, 0, 0, 0.3);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 16px 30px rgba(2, 6, 23, 0.42),
+    0 0 0 1px rgba(96, 165, 250, 0.16);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card::before) {
   content: '';
   position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--node-accent, #64748b);
-  opacity: 0.9;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: linear-gradient(180deg, var(--node-accent, #64748b), rgba(255, 255, 255, 0.18));
+  opacity: 0.96;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card::after) {
+  content: '';
+  position: absolute;
+  inset: auto 12px 0 12px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(148, 163, 184, 0.22), transparent);
+  pointer-events: none;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card-body) {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 10px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card-head) {
   min-width: 0;
   display: grid;
-  grid-template-columns: 22px minmax(0, 1fr) max-content;
-  gap: 6px;
-  align-items: center;
+  grid-template-columns: 28px minmax(0, 1fr) max-content;
+  gap: 8px;
+  align-items: start;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-avatar) {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   color: #f8fafc;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.04)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.04)),
     var(--node-accent, #64748b);
   flex-shrink: 0;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.26);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-title-group) {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: 4px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-title) {
   color: #f8fafc;
-  font-size: 11px;
-  font-weight: 640;
-  line-height: 1.18;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.24;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3425,32 +3548,32 @@ onBeforeUnmount(() => {
 
 .beeroom-canvas-surface :deep(.beeroom-node-role-chip) {
   justify-self: flex-start;
-  max-width: 88px;
-  min-height: 14px;
-  padding: 0 5px;
+  max-width: 104px;
+  min-height: 18px;
+  padding: 0 7px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.24);
-  background: rgba(30, 41, 59, 0.38);
+  background: rgba(30, 41, 59, 0.46);
   color: rgba(203, 213, 225, 0.92);
-  font-size: 8px;
-  line-height: 12px;
-  letter-spacing: 0.03em;
+  font-size: 9px;
+  line-height: 16px;
+  letter-spacing: 0.04em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-status) {
-  max-width: 74px;
-  height: 18px;
-  padding: 0 5px;
+  max-width: 86px;
+  min-height: 20px;
+  padding: 0 7px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.3);
   background: rgba(51, 65, 85, 0.35);
   color: #cbd5e1;
   font-size: 9px;
   font-weight: 600;
-  line-height: 16px;
+  line-height: 18px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3462,8 +3585,8 @@ onBeforeUnmount(() => {
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-status-dot) {
-  width: 5px;
-  height: 5px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
   background: rgba(148, 163, 184, 0.96);
   flex-shrink: 0;
@@ -3472,7 +3595,7 @@ onBeforeUnmount(() => {
 .beeroom-canvas-surface :deep(.beeroom-node-metrics) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
+  gap: 7px;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric) {
@@ -3481,34 +3604,157 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 5px;
   min-width: 0;
-  height: 18px;
-  padding: 0 5px;
+  min-height: 24px;
+  padding: 0 8px;
   border-radius: 999px;
   border: 1px solid rgba(148, 163, 184, 0.2);
-  background: rgba(30, 41, 59, 0.42);
+  background: rgba(30, 41, 59, 0.5);
   color: rgba(226, 232, 240, 0.9);
-  font-size: 9px;
-  line-height: 16px;
+  font-size: 10px;
+  line-height: 18px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric i) {
-  font-size: 8px;
+  font-size: 9px;
   opacity: 0.9;
   flex-shrink: 0;
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-metric b) {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   color: rgba(248, 250, 252, 0.94);
   line-height: 1;
 }
 
+.beeroom-canvas-surface :deep(.beeroom-node-workflow) {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 8px 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.82), rgba(15, 23, 42, 0.52)),
+    linear-gradient(90deg, rgba(59, 130, 246, 0.1), transparent 48%);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow.is-empty) {
+  align-items: center;
+  justify-content: center;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-steps) {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+  padding-right: 3px;
+  gap: 6px;
+  flex-direction: column-reverse;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.42) transparent;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow.is-empty .beeroom-node-workflow-steps) {
+  align-items: center;
+  justify-content: center;
+  padding-right: 0;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-step) {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-step-dot) {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.78);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow.is-loading .beeroom-node-workflow-step-dot) {
+  background: rgba(59, 130, 246, 0.98);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.18);
+  animation: beeroom-node-status-pulse 1.3s ease-in-out infinite;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow.is-completed .beeroom-node-workflow-step-dot) {
+  background: rgba(34, 197, 94, 0.95);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow.is-failed .beeroom-node-workflow-step-dot) {
+  background: rgba(248, 113, 113, 0.98);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow.is-pending .beeroom-node-workflow-step-dot) {
+  background: rgba(148, 163, 184, 0.9);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.14);
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-step-text),
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-empty) {
+  min-width: 0;
+  color: rgba(241, 245, 249, 0.95);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-step-text) {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-step-main) {
+  flex: 0 0 88px;
+  min-width: 88px;
+  max-width: 36%;
+  color: rgba(241, 245, 249, 0.95);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-step-detail) {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: rgba(148, 163, 184, 0.92);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-workflow-empty) {
+  color: rgba(148, 163, 184, 0.92);
+  text-align: center;
+}
+
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-mother) {
   border-color: rgba(245, 158, 11, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 12px 26px rgba(120, 53, 15, 0.16),
+    0 0 0 1px rgba(245, 158, 11, 0.12);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-selected) {
@@ -3516,11 +3762,16 @@ onBeforeUnmount(() => {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 0 0 1px rgba(96, 165, 250, 0.36),
-    0 12px 24px rgba(8, 47, 73, 0.3);
+    0 18px 32px rgba(8, 47, 73, 0.36);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-selected::before) {
-  width: 3px;
+  width: 4px;
+}
+
+.beeroom-canvas-surface :deep(.beeroom-node-card.is-selected .beeroom-node-workflow) {
+  border-color: rgba(96, 165, 250, 0.26);
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.06);
 }
 
 .beeroom-canvas-surface :deep(.beeroom-node-card.is-running .beeroom-node-status) {
@@ -4341,6 +4592,46 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
+.beeroom-canvas-chat-demo {
+  min-width: 86px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.34);
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.9), rgba(29, 78, 216, 0.9));
+  color: #dbeafe;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(30, 64, 175, 0.24);
+  transition:
+    transform var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    filter var(--beeroom-motion-fast) var(--beeroom-ease-standard),
+    opacity var(--beeroom-motion-fast) var(--beeroom-ease-standard);
+}
+
+.beeroom-canvas-chat-demo:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.04);
+}
+
+.beeroom-canvas-chat-demo:focus-visible {
+  outline: none;
+  box-shadow:
+    var(--beeroom-focus-ring),
+    0 10px 24px rgba(30, 64, 175, 0.24);
+}
+
+.beeroom-canvas-chat-demo.is-running {
+  border-color: rgba(245, 158, 11, 0.42);
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.9), rgba(180, 83, 9, 0.9));
+  color: #fef3c7;
+  box-shadow: 0 10px 24px rgba(146, 64, 14, 0.24);
+}
+
+.beeroom-canvas-chat-demo:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .beeroom-canvas-surface {
   position: relative;
   z-index: 1;
@@ -4691,3 +4982,4 @@ onBeforeUnmount(() => {
   }
 }
 </style>
+

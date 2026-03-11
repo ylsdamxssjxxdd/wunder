@@ -760,6 +760,10 @@ impl UserStore {
         self.storage.list_hives(user_id, include_archived)
     }
 
+    pub fn delete_hive(&self, user_id: &str, hive_id: &str) -> Result<i64> {
+        self.storage.delete_hive(user_id, hive_id)
+    }
+
     pub fn move_agents_to_hive(
         &self,
         user_id: &str,
@@ -800,6 +804,10 @@ impl UserStore {
 
     pub fn upsert_team_run(&self, record: &TeamRunRecord) -> Result<()> {
         self.storage.upsert_team_run(record)
+    }
+
+    pub fn delete_team_runs_by_hive(&self, user_id: &str, hive_id: &str) -> Result<i64> {
+        self.storage.delete_team_runs_by_hive(user_id, hive_id)
     }
 
     pub fn get_team_run(&self, team_run_id: &str) -> Result<Option<TeamRunRecord>> {

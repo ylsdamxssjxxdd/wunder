@@ -4,6 +4,7 @@ import type { AxiosError } from 'axios';
 import { resolveAccessToken } from '@/api/requestAuth';
 import { getCurrentLanguage } from '@/i18n';
 import { resolveApiBase } from '@/config/runtime';
+import { FORCE_LOGOUT_LOGIN_PATH } from '@/utils/authNavigation';
 import { clearMaintenance, isMaintenanceStatus, markMaintenance } from '@/utils/maintenance';
 
 type HttpError = AxiosError & {
@@ -38,6 +39,56 @@ api.interceptors.request.use((config) => {
 
 const isCanceledRequest = (error: unknown) => asHttpError(error)?.code === 'ERR_CANCELED';
 
+let authRedirecting = false;
+
+const resolveUnauthorizedRedirectPath = (): string => {
+  if (typeof window === 'undefined') {
+    return FORCE_LOGOUT_LOGIN_PATH;
+  }
+  const currentPath = String(window.location.pathname || '').trim();
+  if (currentPath.startsWith('/admin')) {
+    return '/admin/login';
+  }
+  return FORCE_LOGOUT_LOGIN_PATH;
+};
+
+const shouldForceAuthRedirect = (error: HttpError): boolean => {
+  if (error.response?.status !== 401 || isCanceledRequest(error)) {
+    return false;
+  }
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const currentPath = String(window.location.pathname || '').trim().toLowerCase();
+  if (
+    currentPath === '/login' ||
+    currentPath === '/register' ||
+    currentPath === '/admin/login'
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const forceLogoutAndRedirect = (): void => {
+  if (typeof window === 'undefined' || authRedirecting) {
+    return;
+  }
+  authRedirecting = true;
+  try {
+    localStorage.removeItem('access_token');
+  } catch {
+    // ignore localStorage failures
+  }
+  const targetPath = resolveUnauthorizedRedirectPath();
+  const currentFullPath = `${window.location.pathname}${window.location.search}`;
+  if (currentFullPath === targetPath) {
+    authRedirecting = false;
+    return;
+  }
+  window.location.replace(targetPath);
+};
+
 const shouldEnterMaintenance = (error: unknown) => {
   if (!error || isCanceledRequest(error)) return false;
   const source = asHttpError(error);
@@ -68,6 +119,10 @@ api.interceptors.response.use(
   },
   (error: unknown) => {
     const source = asHttpError(error);
+    if (shouldForceAuthRedirect(source)) {
+      clearMaintenance();
+      forceLogoutAndRedirect();
+    }
     if (shouldEnterMaintenance(source)) {
       markMaintenance({
         status: source.response?.status,

@@ -87,6 +87,7 @@ import ThemeToggle from '@/components/common/ThemeToggle.vue';
 import { useAuthStore } from '@/stores/auth';
 import { isDemoMode } from '@/utils/demo';
 import { useI18n } from '@/i18n';
+import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { resolveUserBasePath } from '@/utils/basePath';
 
 const props = defineProps({
@@ -180,7 +181,8 @@ const handleOpenProfile = () => {
 
 const handleLogout = () => {
   if (basePath.value === '/desktop') {
-    router.push('/desktop/home');
+    authStore.logout();
+    redirectToLoginAfterLogout((to) => router.replace(to));
     return;
   }
   if (demoMode.value) {

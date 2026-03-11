@@ -419,7 +419,7 @@ fn startup_timing_enabled() -> bool {
         Some(value) if matches!(value.as_str(), "1" | "true" | "on" | "yes") => true,
         Some(value) if matches!(value.as_str(), "0" | "false" | "off" | "no") => false,
         Some(_) => true,
-        None => cfg!(debug_assertions),
+        None => true,
     }
 }
 

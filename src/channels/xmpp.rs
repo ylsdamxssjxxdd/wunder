@@ -1,6 +1,7 @@
 use crate::channels::adapter::{ChannelAdapter, OutboundContext};
 use crate::channels::types::{
-    ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender, ChannelThread, XmppConfig,
+    ChannelAttachment, ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender,
+    ChannelThread, XmppConfig,
 };
 use crate::channels::xmpp_tls_connector::{XmppTlsSecurityMode, XmppTlsServerConfig};
 use anyhow::{anyhow, Result};
@@ -9,7 +10,7 @@ use dashmap::DashMap;
 use futures::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +38,8 @@ const XMPP_HEARTBEAT_DEFAULT_INTERVAL_S: u64 = 60;
 const XMPP_HEARTBEAT_DEFAULT_TIMEOUT_S: u64 = 20;
 const XMPP_HEARTBEAT_MIN_INTERVAL_S: u64 = 5;
 const XMPP_HEARTBEAT_MIN_TIMEOUT_S: u64 = 5;
+const XMPP_NS_OOB: &str = "jabber:x:oob";
+const XMPP_NS_REFERENCE: &str = "urn:xmpp:reference:0";
 
 #[derive(Debug, Default)]
 pub struct XmppAdapter;
@@ -689,13 +692,22 @@ fn parse_stanza_message(
     bound_jid: Option<&Jid>,
     active_muc_nick: Option<&str>,
 ) -> Option<ChannelMessage> {
+    let attachments = extract_stanza_attachments(&stanza);
     let message = Message::try_from(stanza).ok()?;
-    parse_inbound_message(account_id, message, settings, bound_jid, active_muc_nick)
+    parse_inbound_message(
+        account_id,
+        message,
+        attachments,
+        settings,
+        bound_jid,
+        active_muc_nick,
+    )
 }
 
 fn parse_inbound_message(
     account_id: &str,
     message: Message,
+    attachments: Vec<ChannelAttachment>,
     settings: &XmppRuntimeSettings,
     bound_jid: Option<&Jid>,
     active_muc_nick: Option<&str>,
@@ -720,7 +732,10 @@ fn parse_inbound_message(
         return None;
     }
 
-    let text = select_message_body(&bodies)?;
+    let text = select_message_body(&bodies);
+    if text.is_none() && attachments.is_empty() {
+        return None;
+    }
 
     let is_group = matches!(type_, MessageType::Groupchat);
     let peer_kind = if is_group { "group" } else { "user" };
@@ -751,6 +766,18 @@ fn parse_inbound_message(
 
     let message_id = id.and_then(normalize_owned_string);
 
+    let message_type = if attachments.is_empty() {
+        "text".to_string()
+    } else if text.is_some() {
+        "mixed".to_string()
+    } else {
+        attachments
+            .first()
+            .map(|item| item.kind.clone())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "file".to_string())
+    };
+
     Some(ChannelMessage {
         channel: XMPP_CHANNEL.to_string(),
         account_id: account_id.to_string(),
@@ -762,9 +789,9 @@ fn parse_inbound_message(
         thread,
         message_id,
         sender,
-        message_type: "text".to_string(),
-        text: Some(text),
-        attachments: Vec::new(),
+        message_type,
+        text,
+        attachments,
         location: None,
         ts: None,
         meta: Some(json!({
@@ -775,6 +802,123 @@ fn parse_inbound_message(
             }
         })),
     })
+}
+
+fn extract_stanza_attachments(stanza: &Element) -> Vec<ChannelAttachment> {
+    // Support URL-style attachments commonly carried by XEP-0066 OOB and xep-0372 references.
+    let mut attachments = Vec::new();
+    let mut seen_urls = HashSet::new();
+
+    for node in stanza.children() {
+        if node.is("x", XMPP_NS_OOB) {
+            if let Some((url, desc)) = extract_oob_url_and_desc(node) {
+                push_attachment_from_url(&mut attachments, &mut seen_urls, &url, desc.as_deref());
+            }
+            continue;
+        }
+        if node.is("reference", XMPP_NS_REFERENCE) {
+            if let Some(url) = node
+                .attr("uri")
+                .and_then(|value| normalize_owned_string(value.to_string()))
+            {
+                push_attachment_from_url(&mut attachments, &mut seen_urls, &url, None);
+            }
+        }
+    }
+
+    attachments
+}
+
+fn extract_oob_url_and_desc(node: &Element) -> Option<(String, Option<String>)> {
+    let mut url = None;
+    let mut desc = None;
+    for child in node.children() {
+        if child.name() == "url" {
+            url = normalize_owned_string(child.text());
+        } else if child.name() == "desc" {
+            desc = normalize_owned_string(child.text());
+        }
+    }
+    url.map(|value| (value, desc))
+}
+
+fn push_attachment_from_url(
+    attachments: &mut Vec<ChannelAttachment>,
+    seen_urls: &mut HashSet<String>,
+    url: &str,
+    desc: Option<&str>,
+) {
+    let cleaned = url.trim();
+    if !is_attachment_url(cleaned) || !seen_urls.insert(cleaned.to_string()) {
+        return;
+    }
+
+    let name = desc
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && !value.contains("://"))
+        .map(str::to_string)
+        .or_else(|| infer_attachment_name_from_url(cleaned));
+
+    attachments.push(ChannelAttachment {
+        kind: infer_attachment_kind_from_url(cleaned),
+        url: cleaned.to_string(),
+        mime: None,
+        size: None,
+        name,
+    });
+}
+
+fn is_attachment_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn infer_attachment_kind_from_url(value: &str) -> String {
+    let lowered = value
+        .split('#')
+        .next()
+        .unwrap_or(value)
+        .split('?')
+        .next()
+        .unwrap_or(value)
+        .to_ascii_lowercase();
+    if lowered.ends_with(".png")
+        || lowered.ends_with(".jpg")
+        || lowered.ends_with(".jpeg")
+        || lowered.ends_with(".gif")
+        || lowered.ends_with(".webp")
+        || lowered.ends_with(".bmp")
+        || lowered.ends_with(".svg")
+    {
+        return "image".to_string();
+    }
+    if lowered.ends_with(".mp3")
+        || lowered.ends_with(".wav")
+        || lowered.ends_with(".ogg")
+        || lowered.ends_with(".opus")
+        || lowered.ends_with(".m4a")
+        || lowered.ends_with(".aac")
+    {
+        return "audio".to_string();
+    }
+    if lowered.ends_with(".mp4")
+        || lowered.ends_with(".mov")
+        || lowered.ends_with(".avi")
+        || lowered.ends_with(".mkv")
+        || lowered.ends_with(".webm")
+    {
+        return "video".to_string();
+    }
+    "file".to_string()
+}
+
+fn infer_attachment_name_from_url(value: &str) -> Option<String> {
+    let head = value.split('#').next().unwrap_or(value);
+    let head = head.split('?').next().unwrap_or(head);
+    let filename = head.rsplit('/').next()?.trim();
+    if filename.is_empty() || filename.contains("://") {
+        return None;
+    }
+    Some(filename.to_string())
 }
 
 fn select_message_body(bodies: &BTreeMap<String, Body>) -> Option<String> {
@@ -921,6 +1065,26 @@ mod tests {
 
     static XMPP_ENV_TEST_SEQ: AtomicU64 = AtomicU64::new(1);
 
+    fn build_test_runtime_settings() -> XmppRuntimeSettings {
+        XmppRuntimeSettings {
+            jid: Jid::from_str("bot@example.com/wunder").unwrap(),
+            password: "secret".to_string(),
+            server: XmppTlsServerConfig::use_srv(XmppTlsSecurityMode::TrustSelfSigned),
+            login_bare: "bot@example.com".to_string(),
+            login_node: Some("bot".to_string()),
+            login_domain: "example.com".to_string(),
+            login_resource: Some("wunder".to_string()),
+            send_initial_presence: true,
+            status_text: None,
+            muc_nick: Some("botnick".to_string()),
+            muc_rooms: vec![],
+            heartbeat_enabled: true,
+            heartbeat_interval_s: 60,
+            heartbeat_timeout_s: 20,
+            respond_ping: true,
+        }
+    }
+
     #[test]
     fn long_connection_enabled_defaults_true() {
         let config = XmppConfig::default();
@@ -978,23 +1142,7 @@ mod tests {
 
     #[test]
     fn parse_group_message_filters_self_by_muc_nick() {
-        let settings = XmppRuntimeSettings {
-            jid: Jid::from_str("bot@example.com/wunder").unwrap(),
-            password: "secret".to_string(),
-            server: XmppTlsServerConfig::use_srv(XmppTlsSecurityMode::TrustSelfSigned),
-            login_bare: "bot@example.com".to_string(),
-            login_node: Some("bot".to_string()),
-            login_domain: "example.com".to_string(),
-            login_resource: Some("wunder".to_string()),
-            send_initial_presence: true,
-            status_text: None,
-            muc_nick: Some("botnick".to_string()),
-            muc_rooms: vec![],
-            heartbeat_enabled: true,
-            heartbeat_interval_s: 60,
-            heartbeat_timeout_s: 20,
-            respond_ping: true,
-        };
+        let settings = build_test_runtime_settings();
 
         let stanza = Element::builder("message", ns::DEFAULT_NS)
             .attr("from", "room@conference.example.com/botnick")
@@ -1008,6 +1156,70 @@ mod tests {
 
         let parsed = parse_stanza_message("acc1", stanza, &settings, None, Some("botnick"));
         assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn parse_oob_attachment_without_body_is_supported() {
+        let settings = build_test_runtime_settings();
+        let stanza = Element::builder("message", ns::DEFAULT_NS)
+            .attr("from", "alice@example.com/mobile")
+            .attr("type", "chat")
+            .append(
+                Element::builder("x", XMPP_NS_OOB)
+                    .append(
+                        Element::builder("url", XMPP_NS_OOB)
+                            .append("https://example.com/files/report.pdf")
+                            .build(),
+                    )
+                    .append(
+                        Element::builder("desc", XMPP_NS_OOB)
+                            .append("report.pdf")
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build();
+
+        let parsed = parse_stanza_message("acc1", stanza, &settings, None, None)
+            .expect("oob file should be parsed");
+        assert!(parsed.text.is_none());
+        assert_eq!(parsed.message_type, "file");
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(
+            parsed.attachments[0].url,
+            "https://example.com/files/report.pdf"
+        );
+        assert_eq!(parsed.attachments[0].name.as_deref(), Some("report.pdf"));
+    }
+
+    #[test]
+    fn parse_oob_attachment_with_body_marks_mixed_message() {
+        let settings = build_test_runtime_settings();
+        let stanza = Element::builder("message", ns::DEFAULT_NS)
+            .attr("from", "alice@example.com/mobile")
+            .attr("type", "chat")
+            .append(
+                Element::builder("body", ns::DEFAULT_NS)
+                    .append("see attachment")
+                    .build(),
+            )
+            .append(
+                Element::builder("x", XMPP_NS_OOB)
+                    .append(
+                        Element::builder("url", XMPP_NS_OOB)
+                            .append("https://example.com/images/a.png")
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build();
+
+        let parsed = parse_stanza_message("acc1", stanza, &settings, None, None)
+            .expect("mixed message should be parsed");
+        assert_eq!(parsed.text.as_deref(), Some("see attachment"));
+        assert_eq!(parsed.message_type, "mixed");
+        assert_eq!(parsed.attachments.len(), 1);
+        assert_eq!(parsed.attachments[0].kind, "image");
     }
 
     #[test]

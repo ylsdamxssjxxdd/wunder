@@ -22,14 +22,6 @@
             :disabled="isReadonlyMode"
           />
         </el-form-item>
-        <el-form-item :label="t('messenger.agentGroup.label')" class="messenger-agent-form-item">
-          <BeeroomGroupField
-            v-model="form.group"
-            :groups="beeroomGroupOptions"
-            :allow-create="false"
-            :disabled="isReadonlyMode"
-          />
-        </el-form-item>
         <el-form-item :label="t('portal.agent.form.prompt')" class="messenger-agent-form-item">
           <el-input
             v-model="form.system_prompt"
@@ -76,18 +68,22 @@
                 </div>
               </div>
             </el-checkbox-group>
-            <div v-if="sharedToolsNotice" class="messenger-inline-hint">
-              {{ t('portal.agent.tools.notice') }}
-            </div>
           </div>
         </el-form-item>
 
         <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item">
           <div class="messenger-agent-base">
-            <label v-if="showShareSetting" class="messenger-agent-base-item">
-              <span class="messenger-agent-base-label">{{ t('portal.agent.share.label') }}</span>
-              <el-switch v-model="form.is_shared" :disabled="isReadonlyMode" />
-            </label>
+            <div class="messenger-agent-base-item messenger-agent-base-item--select">
+              <div class="messenger-agent-base-meta">
+                <span class="messenger-agent-base-label">{{ t('messenger.agentGroup.label') }}</span>
+              </div>
+              <BeeroomGroupField
+                v-model="form.group"
+                :groups="beeroomGroupOptions"
+                :allow-create="false"
+                :disabled="isReadonlyMode"
+              />
+            </div>
             <div class="messenger-agent-base-item messenger-agent-base-item--select">
               <div class="messenger-agent-base-meta">
                 <span class="messenger-agent-base-label">{{ t('portal.agent.sandbox.title') }}</span>
@@ -203,9 +199,6 @@ const desktopLocalMode = computed(
 const showApprovalModeSetting = computed(
   () => desktopLocalMode.value
 );
-const showShareSetting = computed(
-  () => !isDesktopModeEnabled() || isDesktopRemoteAuthMode()
-);
 const resolveDefaultApprovalMode = (): string =>
   showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
 
@@ -288,41 +281,16 @@ const normalizeOptions = (list: unknown): ToolOption[] => {
   return list.map((item) => normalizeOption(item)).filter(Boolean) as ToolOption[];
 };
 
-const resolveSharedTools = (summary: Record<string, unknown>): unknown[] => {
-  const sharedPool = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
-  const sharedSelected = new Set(
-    Array.isArray(summary.shared_tools_selected)
-      ? summary.shared_tools_selected.map((name) => String(name || '').trim())
-      : []
-  );
-  const sharedTools =
-    sharedSelected.size > 0
-      ? sharedPool.filter((tool) =>
-          sharedSelected.has(String((tool as Record<string, unknown>)?.name || '').trim())
-        )
-      : sharedPool;
-  return sharedTools;
-};
-
 const toolGroups = computed<ToolGroup[]>(() => {
   const summary = toolSummary.value || {};
-  const sharedTools = resolveSharedTools(summary);
 
   return [
     { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(summary.builtin_tools) },
     { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(summary.mcp_tools) },
     { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(summary.skills) },
     { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
-    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) },
-    { label: t('portal.agent.tools.group.shared'), options: normalizeOptions(sharedTools) }
+    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) }
   ].filter((group) => group.options.length > 0);
-});
-
-const sharedToolsNotice = computed(() => {
-  const summary = toolSummary.value || {};
-  const shared = Array.isArray(summary.shared_tools) ? summary.shared_tools : [];
-  const selected = Array.isArray(summary.shared_tools_selected) ? summary.shared_tools_selected : [];
-  return shared.length > 0 && selected.length === 0;
 });
 
 const isGroupFullSelected = (group: ToolGroup): boolean => {
@@ -371,7 +339,7 @@ const loadAgent = async () => {
     }
     form.name = String(agent.name || '');
     form.description = String(agent.description || '');
-    form.is_shared = showShareSetting.value ? Boolean(agent.is_shared) : false;
+    form.is_shared = false;
     form.system_prompt = String(agent.system_prompt || '');
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
@@ -398,14 +366,13 @@ const saveAgent = async () => {
     const payload: Record<string, unknown> = {
       name,
       description: String(form.description || '').trim(),
-      is_shared: showShareSetting.value ? Boolean(form.is_shared) : false,
+      is_shared: false,
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: String(form.system_prompt || ''),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
-    if (!payload.hive_id) delete payload.hive_id;
     if (!payload.hive_name) delete payload.hive_name;
     if (!payload.hive_description) delete payload.hive_description;
     await agentStore.updateAgent(normalizedAgentId.value, payload);

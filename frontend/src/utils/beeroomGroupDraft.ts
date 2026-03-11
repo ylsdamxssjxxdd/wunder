@@ -42,7 +42,7 @@ export const normalizeBeeroomGroupDraft = (
   }
   return {
     mode,
-    hive_id: hiveId || normalizeText(defaultGroupId),
+    hive_id: hiveId,
     hive_name: '',
     hive_description: ''
   };

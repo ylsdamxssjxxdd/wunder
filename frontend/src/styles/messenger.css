@@ -642,10 +642,13 @@
 }
 
 .messenger-conversation-item:hover .messenger-list-main,
-.messenger-conversation-item:focus-within .messenger-list-main,
+.messenger-conversation-item:focus-within .messenger-list-main {
+  padding-right: 28px;
+}
+
 .messenger-swarm-item:hover .messenger-list-main,
 .messenger-swarm-item:focus-within .messenger-list-main {
-  padding-right: 28px;
+  padding-right: 56px;
 }
 
 .messenger-list-item-action {
@@ -680,6 +683,32 @@
   border-color: #f0c2cb;
   color: #c14053;
   background: #fbf0f2;
+}
+
+.messenger-list-item-actions {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.messenger-swarm-item:hover .messenger-list-item-actions,
+.messenger-swarm-item:focus-within .messenger-list-item-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.messenger-list-item-actions .messenger-list-item-action {
+  position: static;
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .messenger-pack-rename-dialog-body {

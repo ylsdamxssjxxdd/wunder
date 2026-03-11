@@ -144,6 +144,7 @@
           :filtered-beeroom-groups="filteredBeeroomGroups"
           :selected-beeroom-group-id="beeroomStore.activeGroupId"
           :select-beeroom-group="selectBeeroomGroup"
+          @delete-beeroom-group="handleDeleteBeeroomGroup"
           :filtered-groups="filteredGroups"
           :selected-group-id="selectedGroupId"
           :select-group="selectGroup"
@@ -232,7 +233,6 @@
       </header>
 
       <div
-        :key="chatBodyRenderKey"
         ref="messageListRef"
         class="messenger-chat-body"
         :class="{
@@ -284,7 +284,6 @@
 
         <template v-else-if="sessionHub.activeSection === 'swarms'">
           <div
-            :key="`beeroom-panel:${String(beeroomStore.activeGroupId || '')}`"
             class="messenger-chat-settings messenger-chat-settings--beeroom messenger-chat-settings--beeroom-canvas"
           >
             <BeeroomWorkbench
@@ -577,8 +576,7 @@
                 v-else-if="
                   selectedToolCategory === 'mcp' ||
                   selectedToolCategory === 'skills' ||
-                  selectedToolCategory === 'knowledge' ||
-                  (selectedToolCategory === 'shared' && !desktopLocalMode)
+                  selectedToolCategory === 'knowledge'
                 "
               >
                 <div class="messenger-tools-pane-host user-tools-dialog">
@@ -603,7 +601,6 @@
                     :status="toolPaneStatus"
                     @status="toolPaneStatus = String($event || '')"
                   />
-                  <UserSharedToolsPanel v-if="!desktopLocalMode" v-show="selectedToolCategory === 'shared'" />
                 </div>
               </template>
               <div v-else class="messenger-list-empty">{{ t('messenger.empty.selectTool') }}</div>
@@ -1324,7 +1321,6 @@ import {
   UserKnowledgePane,
   UserMcpPane,
   UserPromptSettingsPanel,
-  UserSharedToolsPanel,
   UserSkillPane
 } from '@/views/messenger/lazyPanels';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
@@ -1345,6 +1341,7 @@ import { useUserWorldStore } from '@/stores/userWorld';
 import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
+import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
@@ -1510,7 +1507,7 @@ const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
 const agentCreateVisible = ref(false);
 const selectedContactUnitId = ref('');
-const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared' | ''>('');
+const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | ''>('');
 const worldDraft = ref('');
 const worldDraftMap = new Map<string, string>();
 const dismissedAgentConversationMap = ref<Record<string, number>>({});
@@ -1991,7 +1988,7 @@ const agentHiveLabelMap = computed(() => {
     const hiveId = String(item?.group_id || item?.hive_id || '').trim();
     if (!hiveId) return;
     const label = String(
-      item?.name || (item?.is_default ? t('messenger.agentGroup.defaultOption') : hiveId)
+      item?.is_default ? t('messenger.agentGroup.defaultOption') : (item?.name || hiveId)
     ).trim();
     if (label) {
       map.set(hiveId, label);
@@ -2002,11 +1999,9 @@ const agentHiveLabelMap = computed(() => {
     if (map.has(hiveId)) return;
     const source = agent as Record<string, unknown>;
     const label = String(
-      source.hive_name ||
-        source.hiveName ||
-        source.hive_id ||
-        source.hiveId ||
-        (hiveId === defaultBeeroomGroupId.value ? t('messenger.agentGroup.defaultOption') : hiveId)
+      hiveId === defaultBeeroomGroupId.value
+        ? t('messenger.agentGroup.defaultOption')
+        : (source.hive_name || source.hiveName || source.hive_id || source.hiveId || hiveId)
     ).trim();
     if (label) {
       map.set(hiveId, label);
@@ -2712,14 +2707,6 @@ const showChatSettingsView = computed(() => sessionHub.activeSection !== 'messag
 const showHelperAppsWorkspace = computed(
   () => sessionHub.activeSection === 'groups' && helperAppsWorkspaceMode.value
 );
-const chatBodyRenderKey = computed(() =>
-  [
-    'chat-body',
-    sessionHub.activeSection,
-    showHelperAppsWorkspace.value ? 'helper' : 'main',
-    showChatSettingsView.value ? 'settings' : 'messages'
-  ].join(':')
-);
 const settingsPanelRenderKey = computed(() =>
   ['settings', sessionHub.activeSection, beeroomWorkbenchMode.value].join(':')
 );
@@ -3043,10 +3030,15 @@ const filteredBeeroomGroups = computed(() => {
 });
 
 const beeroomGroupOptions = computed(() =>
-  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((item) => ({
-    group_id: String(item?.group_id || item?.hive_id || '').trim(),
-    name: String(item?.name || item?.group_id || item?.hive_id || '').trim()
-  }))
+  (Array.isArray(beeroomStore.groups) ? beeroomStore.groups : []).map((item) => {
+    const groupId = String(item?.group_id || item?.hive_id || '').trim();
+    return {
+      group_id: groupId,
+      name: String(
+        item?.is_default ? t('messenger.agentGroup.defaultOption') : (item?.name || groupId)
+      ).trim()
+    };
+  })
 );
 
 const preferredBeeroomGroupId = computed(() => {
@@ -5915,6 +5907,46 @@ const isMixedConversationActive = (item: MixedConversation): boolean => {
 const canDeleteMixedConversation = (item: MixedConversation): boolean =>
   item?.kind === 'agent' || Boolean(item?.sourceId);
 
+let sectionRouteSyncToken = 0;
+
+const normalizeRouteQueryValue = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item ?? '').trim());
+  }
+  if (value === undefined || value === null) {
+    return [];
+  }
+  return [String(value).trim()];
+};
+
+const buildRouteQuerySignature = (query: Record<string, any>): string =>
+  Object.keys(query)
+    .sort((left, right) => left.localeCompare(right))
+    .map((key) => {
+      const values = normalizeRouteQueryValue(query[key]).join(',');
+      return `${key}=${values}`;
+    })
+    .join('&');
+
+const isSameRouteLocation = (path: string, query: Record<string, any>): boolean => {
+  const currentPath = String(route.path || '').trim();
+  if (currentPath !== path) return false;
+  const currentQuery = route.query as Record<string, any>;
+  return buildRouteQuerySignature(currentQuery) === buildRouteQuerySignature(query);
+};
+
+const scheduleSectionRouteSync = (path: string, query: Record<string, any>) => {
+  const normalizedPath = String(path || '').trim();
+  if (!normalizedPath) return;
+  const normalizedQuery = { ...query } as Record<string, any>;
+  const ticket = ++sectionRouteSyncToken;
+  Promise.resolve().then(() => {
+    if (ticket !== sectionRouteSyncToken) return;
+    if (isSameRouteLocation(normalizedPath, normalizedQuery)) return;
+    router.replace({ path: normalizedPath, query: normalizedQuery }).catch(() => undefined);
+  });
+};
+
 const deleteMixedConversation = async (item: MixedConversation) => {
   const sourceId = String(item?.sourceId || '').trim();
   if (!sourceId) return;
@@ -6005,7 +6037,12 @@ const switchSection = (
       selectedFileContainerId.value = agentFileContainers.value[0]?.id ?? USER_CONTAINER_ID;
     }
   }
-  const targetPath = `${basePrefix.value}/${sectionRouteMap[section]}`;
+  const normalizedCurrentPath = String(route.path || '').trim();
+  const normalizedBasePrefix = String(basePrefix.value || '').trim();
+  // Keep navigation inside current messenger shell route to avoid route-level remount churn.
+  const targetPath = normalizedCurrentPath.startsWith(`${normalizedBasePrefix}/`)
+    ? normalizedCurrentPath
+    : `${basePrefix.value}/${sectionRouteMap[section]}`;
   const nextQuery = { ...route.query, section } as Record<string, any>;
   if (panelHint && section === 'more') {
     nextQuery.panel = panelHint;
@@ -6025,7 +6062,7 @@ const switchSection = (
   if (section !== 'users' && section !== 'groups') {
     delete nextQuery.conversation_id;
   }
-  router.push({ path: targetPath, query: nextQuery }).catch(() => undefined);
+  scheduleSectionRouteSync(targetPath, nextQuery);
   if (section === 'tools') {
     loadToolsCatalog();
   }
@@ -6061,12 +6098,10 @@ const handleSettingsLogout = () => {
   if (settingsLogoutDisabled.value) {
     return;
   }
-  if (desktopMode.value) {
-    router.push('/desktop/home').catch(() => undefined);
-    return;
-  }
+  stopRealtimePulse?.();
+  stopBeeroomRealtimeSync?.();
   authStore.logout();
-  router.push('/login').catch(() => undefined);
+  redirectToLoginAfterLogout((to) => router.replace(to));
 };
 
 const applyCurrentUserAppearance = (appearance: UserAppearancePreferences) => {
@@ -6275,6 +6310,9 @@ const submitAgentCreate = async (payload: Record<string, unknown>) => {
 };
 
 const refreshActiveBeeroom = async () => {
+  if (sessionHub.activeSection !== 'swarms') {
+    return;
+  }
   try {
     if (String(beeroomStore.activeGroupId || '').trim()) {
       await beeroomStore.loadActiveGroup({ silent: true });
@@ -6368,6 +6406,35 @@ const selectBeeroomGroup = async (group: Record<string, unknown>) => {
   if (!groupId) return;
   beeroomStore.setActiveGroup(groupId);
   await beeroomStore.loadActiveGroup().catch(() => null);
+};
+
+const handleDeleteBeeroomGroup = async (group: Record<string, unknown>) => {
+  const groupId = String(group?.group_id || group?.hive_id || '').trim();
+  if (!groupId) {
+    return;
+  }
+  const groupName = String(group?.name || groupId).trim() || groupId;
+  try {
+    await ElMessageBox.confirm(
+      t('beeroom.message.deleteConfirm', { name: groupName }),
+      t('common.delete'),
+      {
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    );
+  } catch {
+    return;
+  }
+
+  try {
+    await beeroomStore.deleteGroup(groupId);
+    await Promise.all([agentStore.loadAgents().catch(() => null), loadRunningAgents().catch(() => null)]);
+    ElMessage.success(t('beeroom.message.hiveDeleted'));
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
 };
 
 const openContactConversationFromList = async (contact: Record<string, unknown>) => {
@@ -7130,12 +7197,7 @@ const loadOrgUnits = async () => {
   }
 };
 
-const selectToolCategory = (category: 'admin' | 'mcp' | 'skills' | 'knowledge' | 'shared') => {
-  if (category === 'shared' && desktopLocalMode.value) {
-    selectedToolCategory.value = 'admin';
-    toolPaneStatus.value = '';
-    return;
-  }
+const selectToolCategory = (category: 'admin' | 'mcp' | 'skills' | 'knowledge') => {
   toolPaneStatus.value = '';
   selectedToolCategory.value = category;
 };
@@ -7145,7 +7207,6 @@ const toolCategoryLabel = (category: string) => {
   if (category === 'mcp') return t('toolManager.system.mcp');
   if (category === 'skills') return t('toolManager.system.skills');
   if (category === 'knowledge') return t('toolManager.system.knowledge');
-  if (category === 'shared') return t('messenger.tools.sharedTitle');
   return category;
 };
 
@@ -7244,9 +7305,6 @@ const ensureSectionSelection = () => {
   }
 
   if (sessionHub.activeSection === 'tools') {
-    if (desktopLocalMode.value && selectedToolCategory.value === 'shared') {
-      selectedToolCategory.value = 'admin';
-    }
     if (!selectedToolEntryKey.value) {
       selectedToolCategory.value = 'admin';
     }
@@ -9620,6 +9678,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  sectionRouteSyncToken += 1;
   if (typeof window !== 'undefined') {
     if (viewportResizeHandler) {
       window.removeEventListener('resize', viewportResizeHandler);

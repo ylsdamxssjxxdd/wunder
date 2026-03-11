@@ -107,6 +107,14 @@ RUN set -eux; \
     npm -v; \
     npm config set fund false; \
     npm config set audit false
+
+# AppImage packaging tooling (append-only, keep previous cache layers intact)
+COPY target/arm64-20/.build/python/tools/appimagetool-aarch64.AppImage /opt/wunder-tools/appimagetool-aarch64.AppImage
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      squashfs-tools \
+    && chmod +x /opt/wunder-tools/appimagetool-aarch64.AppImage \
+    && ln -sf /opt/wunder-tools/appimagetool-aarch64.AppImage /usr/local/bin/appimagetool \
+    && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # Build commands (inside container):

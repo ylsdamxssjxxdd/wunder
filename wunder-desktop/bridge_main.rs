@@ -38,20 +38,25 @@ fn run_bridge(args: DesktopArgs) -> Result<()> {
 
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        let startup_timing_enabled = matches!(
-            std::env::var("WUNDER_STARTUP_TIMING")
-                .ok()
-                .map(|value| value.trim().to_ascii_lowercase())
-                .as_deref(),
-            Some("1" | "true" | "on" | "yes")
-        );
-        if startup_timing_enabled || cfg!(debug_assertions) {
+        if startup_timing_enabled() || cfg!(debug_assertions) {
             EnvFilter::new("info")
         } else {
             EnvFilter::new("warn")
         }
     });
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+}
+
+fn startup_timing_enabled() -> bool {
+    match std::env::var("WUNDER_STARTUP_TIMING")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        Some(value) if matches!(value.as_str(), "1" | "true" | "on" | "yes") => true,
+        Some(value) if matches!(value.as_str(), "0" | "false" | "off" | "no") => false,
+        Some(_) => true,
+        None => true,
+    }
 }
 
 fn open_external_browser(web_base: &str) -> Result<()> {

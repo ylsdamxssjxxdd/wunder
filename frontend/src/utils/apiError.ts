@@ -25,6 +25,16 @@ type NotificationOptions = {
 const asRecord = (value: unknown): UnknownRecord =>
   value && typeof value === 'object' ? (value as UnknownRecord) : {};
 
+const normalizeErrorText = (value: string): string => {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const lowered = text.toLowerCase();
+  if (lowered === '[object object]' || lowered === 'object object') {
+    return '';
+  }
+  return text;
+};
+
 const readHeader = (headers: HeaderBag, key: string): string => {
   if (!headers) return '';
   if (typeof (headers as Headers).get === 'function') {
@@ -41,8 +51,11 @@ const readHeader = (headers: HeaderBag, key: string): string => {
 
 const pickString = (...values: unknown[]): string => {
   for (const value of values) {
-    if (typeof value === 'string' && value.trim()) {
-      return value.trim();
+    if (typeof value === 'string') {
+      const normalized = normalizeErrorText(value);
+      if (normalized) {
+        return normalized;
+      }
     }
   }
   return '';

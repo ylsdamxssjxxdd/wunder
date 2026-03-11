@@ -2,6 +2,7 @@ import { defineStore } from 'pinia';
 
 import {
   createBeeroomGroup,
+  deleteBeeroomGroup,
   downloadBeeroomHivePack,
   exportBeeroomHivePack,
   getBeeroomGroup,
@@ -38,6 +39,7 @@ export type BeeroomMissionTask = {
   spawned_session_id?: string | null;
   session_run_id?: string | null;
   status?: string;
+  retry_count?: number | null;
   priority?: number;
   started_time?: number | null;
   finished_time?: number | null;
@@ -224,7 +226,11 @@ const stableMissionTaskFingerprint = (task: BeeroomMissionTask): string =>
   [
     normalizeScalar(task.task_id),
     normalizeScalar(task.agent_id),
+    normalizeScalar(task.target_session_id),
+    normalizeScalar(task.spawned_session_id),
+    normalizeScalar(task.session_run_id),
     normalizeScalar(task.status),
+    normalizeScalar(task.retry_count),
     normalizeScalar(task.priority),
     normalizeScalar(task.started_time),
     normalizeScalar(task.finished_time),
@@ -501,6 +507,11 @@ export const useBeeroomStore = defineStore('beeroom', {
       );
       const taskId = String(source.task_id || source.taskId || '').trim();
       const agentId = String(source.agent_id || source.agentId || '').trim();
+      const targetSessionId = String(source.target_session_id || source.targetSessionId || '').trim();
+      const spawnedSessionId = String(
+        source.spawned_session_id || source.spawnedSessionId || source.session_id || source.sessionId || ''
+      ).trim();
+      const sessionRunId = String(source.session_run_id || source.sessionRunId || '').trim();
       const eventStatus = normalizeStatusText(source.status);
 
       const missions = this.activeMissions.map(cloneMission);
@@ -589,8 +600,22 @@ export const useBeeroomStore = defineStore('beeroom', {
           if (agentId) {
             task.agent_id = agentId;
           }
+          // Keep session linkage reactive so canvas workflow previews can follow the latest worker run.
+          if (targetSessionId) {
+            task.target_session_id = targetSessionId;
+          }
+          if (spawnedSessionId) {
+            task.spawned_session_id = spawnedSessionId;
+          }
+          if (sessionRunId) {
+            task.session_run_id = sessionRunId;
+          }
           if (eventStatus) {
             task.status = eventStatus;
+          }
+          const maybeRetryCount = parseMaybeNumber(source.retry_count);
+          if (maybeRetryCount !== undefined) {
+            task.retry_count = maybeRetryCount;
           }
           const maybePriority = parseMaybeNumber(source.priority);
           if (maybePriority !== undefined) {
@@ -871,6 +896,22 @@ export const useBeeroomStore = defineStore('beeroom', {
         await this.loadActiveGroup();
       }
       return group;
+    },
+
+    async deleteGroup(groupId: unknown) {
+      const normalizedGroupId = normalizeGroupId(groupId || this.activeGroupId);
+      if (!normalizedGroupId) {
+        return 0;
+      }
+      const { data } = await deleteBeeroomGroup(normalizedGroupId);
+      const deleted = Number(data?.data?.deleted || 0);
+      await this.loadGroups();
+      if (this.activeGroupId) {
+        await this.loadActiveGroup({ silent: true }).catch(() => null);
+      } else {
+        this.clearActiveData();
+      }
+      return deleted;
     },
 
     async moveAgents(groupId: unknown, agentIds: string[]) {

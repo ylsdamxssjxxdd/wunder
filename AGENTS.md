@@ -31,6 +31,16 @@
 - 用户侧前端风格一定要保持统一，注意美观和协调
 - 代码关键的地方，逻辑强的地方要有英文注释，方便后期维护
 
+### 前端稳定性（Vue）
+
+- `setup` 阶段禁止出现“先引用后初始化”的时序错误：凡是会被 `computed/watch/watchEffect`（尤其 `immediate: true`）调用的函数，必须使用函数声明（`function fn(){}`）或定义在调用点之前，避免 TDZ（`Cannot access 'x' before initialization`）导致整棵组件更新链路崩溃。
+- 涉及网络请求、WS/SSE 订阅、重渲染调度的 `watch`，默认不使用 `immediate` 直接启动；需在 `onMounted` 后通过 `mounted/disposed` 双标记控制启动与停止，卸载后严禁再写响应式状态。
+- 组件卸载时优先“取消订阅/取消请求/清定时器/断开观察器”，不要对 Vue 管理的节点做破坏性 DOM 操作（如对挂载容器直接 `innerHTML = ''`），避免触发 `patchElement` 空节点异常。
+- 路由切换必须幂等：同路径同查询参数不重复 `router.push/replace`；同一交互帧内避免多次路由写入，统一走去抖或 token 化调度，防止组件树并发重排。
+- 禁止为规避状态同步问题而滥用 `:key` 强制重建大面板（例如聊天主体/蜂群工作台）；优先修复状态流与副作用边界，减少 remount 竞态。
+- 共享连接（如模块级 WS multiplexer）不得在单个页面组件卸载时全局 `close`；页面级仅取消本次请求/订阅，由连接层按空闲策略回收。
+- 异步回调落地前必须检查作用域有效性（如 `if (disposed) return`），包括 `Promise.then/catch/finally`、`requestAnimationFrame`、`setTimeout`、`ResizeObserver` 回调。
+
 ## Rust 开发提示
 
 - 不要构建debug版本

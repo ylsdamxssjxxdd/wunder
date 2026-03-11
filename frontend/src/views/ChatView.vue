@@ -719,6 +719,7 @@ import { isDemoMode } from '@/utils/demo';
 import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
+import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { resolveUserBasePath } from '@/utils/basePath';
 import { chatPerf } from '@/utils/chatPerf';
 
@@ -2321,7 +2322,8 @@ const handleMessageClick = async (event) => {
 
 const handleLogout = () => {
   if (basePath.value === '/desktop') {
-    router.push('/desktop/home');
+    authStore.logout();
+    redirectToLoginAfterLogout((to) => router.replace(to));
     return;
   }
   if (demoMode.value) {
