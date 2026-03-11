@@ -46,7 +46,7 @@ AppDir/
 使用 Ubuntu 20.04 容器执行：
 ```
 BUILD_ROOT=/app/target/arm64-20/.build/python \
-  bash /app/docker-extra/scripts/build_embedded_python.sh
+  bash /app/packaging/docker/scripts/build_embedded_python.sh
 ```
 - Python 会安装到 `${BUILD_ROOT}/stage/opt/python`。
 - 依赖清单默认使用 `packaging/python/requirements-full.txt`。
@@ -55,7 +55,7 @@ BUILD_ROOT=/app/target/arm64-20/.build/python \
 ### 5.2 打包补充包 Sidecar
 ```
 BUILD_ROOT=/app/target/arm64-20/.build/python \
-  bash /app/docker-extra/scripts/package_sidecar_python.sh
+  bash /app/packaging/docker/scripts/package_sidecar_python.sh
 ```
 - 产物：`wunder补充包-<arch>.tar.*`
 - 解压后目录名为 `wunder补充包`（必须保持该名称，内部包含 `opt/python` 与 `opt/git`）。
@@ -75,7 +75,7 @@ PREFER_PREBUILT_GIT=1 \
 EMBED_PYTHON=0 \
 BUNDLE_PLAYWRIGHT_DEPS=0 \
 PLAYWRIGHT_INSTALL_DEPS=0 \
-  bash /app/docker-extra/scripts/package_appimage_with_python.sh
+  bash /app/packaging/docker/scripts/package_appimage_with_python.sh
 ```
 - 输出：`wunder-desktop-*-sidecar.AppImage`
 - AppRun 会自动识别同目录 `wunder补充包` 并注入 `WUNDER_PYTHON_BIN` / `WUNDER_GIT_BIN`。
@@ -85,7 +85,7 @@ PLAYWRIGHT_INSTALL_DEPS=0 \
 若需要单文件交付，使用内置模式：
 ```
 EMBED_PYTHON=1 \
-  bash /app/docker-extra/scripts/package_appimage_with_python.sh
+  bash /app/packaging/docker/scripts/package_appimage_with_python.sh
 ```
 - 输出：`wunder-desktop-*-python.AppImage`
 - 体积更大，但使用体验最省心。
@@ -94,7 +94,7 @@ EMBED_PYTHON=1 \
 ### 7.1 安装 Playwright + Chromium
 ```
 INCLUDE_PLAYWRIGHT=1 BUILD_ROOT=/app/target/arm64-20/.build/python \
-  bash /app/docker-extra/scripts/build_embedded_python.sh
+  bash /app/packaging/docker/scripts/build_embedded_python.sh
 ```
 - 浏览器默认安装在 `${PYTHON_ROOT}/playwright`。
 
@@ -136,3 +136,4 @@ INCLUDE_PLAYWRIGHT=1 BUILD_ROOT=/app/target/arm64-20/.build/python \
 ---
 
 **结论**：默认使用 AppImage + Python Sidecar 方案可显著降低体积，并保持运行时稳定性与可维护性；如需单文件交付，可切换内置 Python 模式。
+

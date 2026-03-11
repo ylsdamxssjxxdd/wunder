@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "wunder-desktop",
+  "version": "0.1.0",
+  "identifier": "com.wunder.desktop",
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "resources": [
+      "../../config",
+      "../../prompts",
+      "../../skills",
+      "../../scripts",
+      "../../frontend/dist"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ]
+  }
+}

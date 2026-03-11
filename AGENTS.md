@@ -1,4 +1,4 @@
-# 仓库指南
+﻿# 仓库指南
 
 - wunder 是一个面向组织或用户的智能体调度系统，wunder拥有三种运行形态：server（服务，云端）、cli（命令行，本地）、desktop（桌面，本地），三种形态可各自独立运行或分发。server是项目核心，支持多租户、用户与单位管理、智能体应用构建与发布、网关统一接入与调度，并内置工具链、知识库与长期记忆能力。cli与desktop基于server构建。个人用户主要使用desktop，也是wunder主推的应用。
 - 核心理念是对开发者来说一切都是接口，对大模型来说一切皆工具
@@ -60,8 +60,8 @@
 - `frontend/`：用户侧前端（Vue3，浅色/深色双主题）。
 - `web/`：管理端/调试端前端（原生 HTML + JS 模块）。
 - `wunder-cli/`：CLI 运行形态（含 TUI）。
-- `wunder-desktop/`：Tauri 桌面形态与本地桥接。
-- `wunder-desktop-electron/`：Electron 桌面壳与打包资源。
+- `desktop/tauri/`：Tauri 桌面形态与本地桥接。
+- `desktop/electron/`：Electron 桌面壳与打包资源。
 - `config/`：基础配置与 i18n/font/matplotlib 等运行配置。
 - `docs/`：设计、API、系统介绍、功能迭代等文档。
 - `scripts/`：仓库级脚本（含 `update_feature_log.py`）。
@@ -69,9 +69,9 @@
 - `prompts/`：系统提示词模板（`zh/`、`en/`）。
 - `knowledge/`：知识库内容。
 - `extra_mcp/`：额外 MCP 运行时与工具脚本。
-- `docker-extra/`、`packaging/`：构建与分发附加资源。
+- `packaging/docker/`、`packaging/python/`：构建与分发附加资源。
 - `images/`、`fonts/`：图标与字体资源。
-- `target/`、`frontend/node_modules/`、`temp_dir/`：构建/临时产物目录，不放业务源码与长期资料。
+- `target/`、`node_modules/`、`temp_dir/`：构建/临时产物目录，不放业务源码与长期资料。
 
 ### 2) `src/` 后端分层建议
 
@@ -92,7 +92,7 @@
 - 新增工具：优先在 `src/services/tools/` 新建文件并接入注册链路；不要继续向 `src/services/tools.rs` 堆功能。
 - 新增用户端页面能力：优先拆分到 `frontend/src/views/messenger/` 与 `frontend/src/components/messenger/`；不要继续向 `frontend/src/views/MessengerView.vue` 堆功能。
 - 管理端页面改动：放在 `web/modules/` 与 `web/styles/`，避免在 `web/app.js` 写大段耦合逻辑。
-- 桌面端资源/打包改动：优先放 `wunder-desktop-electron/resources/`、`wunder-desktop-electron/scripts/` 或 `wunder-desktop/` 对应模块。
+- 桌面端资源/打包改动：优先放 `desktop/electron/resources/`、`desktop/electron/scripts/` 或 `desktop/tauri/` 对应模块。
 - 每次任务完成后必须通过脚本更新 `docs/功能迭代.md`，不要手写破坏分类结构。
 
 ### 4) 协作与维护约束
@@ -100,3 +100,5 @@
 - 单文件超过 2000 行视为维护态，新增功能请拆新文件并在原处保留最小入口。
 - 搜索前端代码时限制范围到 `frontend/src` 下具体子目录，不要直接扫 `frontend/` 根目录。
 - 运行时/临时数据不要沉淀在业务源码目录，示例与文档放 `docs/`，脚本放 `scripts/`，知识内容放 `knowledge/`。
+
+

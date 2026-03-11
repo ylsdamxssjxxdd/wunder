@@ -255,7 +255,7 @@ desktop 默认配置建议：
 
 ## M0：工程骨架（1 天）
 
-- 新建 `wunder-desktop/`（Tauri + Vue3 + TS）。
+- 新建 `desktop/tauri/`（Tauri + Vue3 + TS）。
 - 跑通最小窗口与 `desktop_get_runtime_info` command。
 
 ## M1：运行时落盘与配置分层（1~2 天）
@@ -356,7 +356,7 @@ desktop 默认配置建议：
   - 路由默认进入 `/desktop/home`
 - 已补齐运行时引导接口：`GET /config.json` 与 `GET /wunder/desktop/bootstrap`。
 - 已提供 Tauri command：`desktop_runtime_info`（前端可直接读取 runtime 快照）。
-- Tauri 相关工程资产已统一收敛到 wunder-desktop/（含 build.rs、tauri.conf.json、capabilities/、icons/）。
+- Tauri 相关工程资产已统一收敛到 desktop/tauri/（含 build.rs、tauri.conf.json、capabilities/、icons/）。
 - 已支持 `--workspace`、`--temp-root`、`--frontend-root`、`--user`、`--bridge-only` 等运行参数。
 
 ### 13.2 协议与链路更新
@@ -387,7 +387,7 @@ desktop 默认配置建议：
 
 ### 14.1 后端设置模型
 
-- `wunder-desktop/runtime.rs` 的 `DesktopSettings` 已扩展：
+- `desktop/tauri/runtime.rs` 的 `DesktopSettings` 已扩展：
   - `container_roots: HashMap<i32, String>`
   - `language: String`
   - `remote_gateway`（仅 `enabled` 与 `server_base_url`，用于连接远端 wunder-server）
@@ -427,3 +427,4 @@ desktop 默认配置建议：
 - 远端模式下 runtime `token` 为空；登录成功后由正常鉴权流程写入 `access_token`。
 - 本地 `desktop.settings` 接口继续使用 `desktop_token` 独立鉴权，确保本地设置管理始终可用。
 - 当地址非法或不可达时保持本地模式，并通过 `remote_error` 返回诊断信息。
+

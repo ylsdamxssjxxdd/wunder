@@ -30,7 +30,7 @@
 
 ## 1. 现状基线（代码事实）
 
-- 当前 `remote_gateway` 主要完成远端 API/WS 切换：`wunder-desktop/runtime.rs:341`、`wunder-desktop/bridge.rs:179`、`frontend/src/config/runtime.ts:90`
+- 当前 `remote_gateway` 主要完成远端 API/WS 切换：`desktop/tauri/runtime.rs:341`、`desktop/tauri/bridge.rs:179`、`frontend/src/config/runtime.ts:90`
 - 本地设置接口独立鉴权：`frontend/src/api/desktop.ts:1`
 - 当前“执行命令”默认本地执行：`src/services/tools.rs:4810`
 - 已有 `node.invoke` 机制可复用同步通道：`src/services/tools.rs:1516`、`src/gateway/mod.rs:367`
@@ -230,7 +230,7 @@
 
 ## 8. 代码改造落点
 
-- Desktop runtime/bridge：`wunder-desktop/runtime.rs`、`wunder-desktop/bridge.rs`
+- Desktop runtime/bridge：`desktop/tauri/runtime.rs`、`desktop/tauri/bridge.rs`
 - Desktop settings + sync jobs API：`src/api/desktop.rs`
 - Orchestrator 执行后变更产出：`src/orchestrator/request.rs`、`src/orchestrator/execute.rs`
 - 工具结果结构化：`src/services/tools.rs`
@@ -287,4 +287,5 @@
   - 启动/暂停/继续/取消按钮
   - 轮询任务状态
 - 端云协同时依旧允许浏览本地目录并绑定容器路径。
+
 

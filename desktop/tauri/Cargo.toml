@@ -1,8 +1,9 @@
-﻿[package]
+[package]
 name = "wunder-server"
 version = "0.1.0"
 edition = "2021"
-build = "desktop/tauri/build.rs"
+default-run = "wunder-desktop"
+build = "build.rs"
 rust-version = "1.92"
 
 [features]
@@ -11,16 +12,16 @@ desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
 
 [[bin]]
 name = "wunder-cli"
-path = "wunder-cli/main.rs"
+path = "../../wunder-cli/main.rs"
 
 [[bin]]
 name = "wunder-desktop"
-path = "desktop/tauri/main.rs"
+path = "main.rs"
 required-features = ["desktop"]
 
 [[bin]]
 name = "wunder-desktop-bridge"
-path = "desktop/tauri/bridge_main.rs"
+path = "bridge_main.rs"
 
 [dependencies]
 anyhow = "1"
@@ -119,5 +120,6 @@ windows-sys = { version = "0.52", features = [
 
 [dev-dependencies]
 tempfile = "3"
+
 
 

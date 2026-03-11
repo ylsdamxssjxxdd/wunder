@@ -3,7 +3,7 @@ use crate::channels::types::{
     ChannelAccountConfig, ChannelAttachment, ChannelOutboundMessage, ChannelPeer, ChannelThread,
 };
 use crate::channels::xmpp;
-use crate::storage::{ChannelOutboxRecord, ListChannelUserBindingsQuery};
+use crate::storage::{ChannelAccountRecord, ChannelOutboxRecord, ListChannelUserBindingsQuery};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde::Deserialize;
@@ -16,6 +16,7 @@ const MAX_CONTACT_LIMIT: i64 = 200;
 const DEFAULT_CONTACT_LIMIT: i64 = 20;
 const MAX_CONTACT_FETCH: i64 = 1000;
 const MAX_ACCOUNT_BINDINGS_FETCH: i64 = 2000;
+const MAX_SESSION_RESOLUTION_FETCH: i64 = 256;
 const DEFAULT_WAIT_TIMEOUT_S: f64 = 8.0;
 const MIN_WAIT_TIMEOUT_S: f64 = 1.0;
 const MAX_WAIT_TIMEOUT_S: f64 = 30.0;
@@ -28,9 +29,9 @@ pub(super) const TOOL_CHANNEL: &str = "\u{6e20}\u{9053}\u{5de5}\u{5177}";
 #[derive(Debug, Deserialize, Default)]
 struct ChannelToolArgs {
     action: String,
-    #[serde(default)]
+    #[serde(default, alias = "provider")]
     channel: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "account")]
     account_id: Option<String>,
     #[serde(default)]
     keyword: Option<String>,
@@ -40,13 +41,20 @@ struct ChannelToolArgs {
     limit: Option<i64>,
     #[serde(default)]
     refresh: Option<bool>,
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "target",
+        alias = "peer",
+        alias = "peer_id",
+        alias = "jid",
+        alias = "receiver"
+    )]
     to: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "kind")]
     peer_kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "thread")]
     thread_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "message", alias = "body")]
     text: Option<String>,
     #[serde(default)]
     content: Option<String>,
@@ -58,6 +66,8 @@ struct ChannelToolArgs {
     wait: Option<bool>,
     #[serde(default)]
     wait_timeout_s: Option<f64>,
+    #[serde(default)]
+    contact: Option<ChannelContactInput>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -72,6 +82,41 @@ struct ChannelAttachmentInput {
     size: Option<i64>,
     #[serde(default)]
     name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default, Clone)]
+struct ChannelContactInput {
+    #[serde(default, alias = "provider")]
+    channel: Option<String>,
+    #[serde(default, alias = "account")]
+    account_id: Option<String>,
+    #[serde(
+        default,
+        alias = "target",
+        alias = "peer",
+        alias = "peer_id",
+        alias = "jid",
+        alias = "receiver"
+    )]
+    to: Option<String>,
+    #[serde(default, alias = "kind")]
+    peer_kind: Option<String>,
+    #[serde(default, alias = "thread")]
+    thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedChannelAccount {
+    channel: String,
+    account_id: String,
+    source: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedPeerTarget {
+    peer_id: String,
+    peer_kind: String,
+    thread_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -104,9 +149,9 @@ pub(super) async fn channel_tool(context: &ToolContext<'_>, args: &Value) -> Res
 }
 
 async fn list_contacts(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> Result<Value> {
-    let channel =
+    let mut channel =
         normalize_non_empty(payload.channel.as_deref()).map(|value| value.to_ascii_lowercase());
-    let account_id = normalize_non_empty(payload.account_id.as_deref()).map(str::to_string);
+    let mut account_id = normalize_non_empty(payload.account_id.as_deref()).map(str::to_string);
     let keyword =
         normalize_non_empty(payload.keyword.as_deref()).map(|value| value.to_ascii_lowercase());
     let force_refresh = payload.refresh.unwrap_or(false);
@@ -115,6 +160,29 @@ async fn list_contacts(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> 
         .limit
         .unwrap_or(DEFAULT_CONTACT_LIMIT)
         .clamp(1, MAX_CONTACT_LIMIT);
+    let mut resolved_scope: Option<&'static str> = None;
+
+    if channel.is_none() && account_id.is_none() {
+        if let Some(account) =
+            resolve_account_from_session(context, channel.as_deref(), account_id.as_deref())?
+        {
+            channel = Some(account.channel);
+            account_id = Some(account.account_id);
+            resolved_scope = Some(account.source);
+        }
+    }
+    if channel.is_none() && account_id.is_none() {
+        if let Some(account) = resolve_account_from_active_accounts(
+            context,
+            channel.as_deref(),
+            account_id.as_deref(),
+            false,
+        )? {
+            channel = Some(account.channel);
+            account_id = Some(account.account_id);
+            resolved_scope = Some(account.source);
+        }
+    }
 
     let account_keys =
         resolve_owned_account_keys(context, channel.as_deref(), account_id.as_deref())?;
@@ -173,6 +241,13 @@ async fn list_contacts(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> 
                 "peer_kind": item.peer_kind,
                 "peer_id": item.peer_id,
                 "thread_id": item.thread_id,
+                "contact": build_contact_value(
+                    &item.channel,
+                    &item.account_id,
+                    &item.peer_kind,
+                    &item.peer_id,
+                    item.thread_id.as_deref(),
+                ),
                 "name": item.name,
                 "subscription": item.subscription,
                 "ask": item.ask,
@@ -199,19 +274,37 @@ async fn list_contacts(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> 
             );
         }
     }
+    if let Some(source) = resolved_scope {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert(
+                "resolved_scope".to_string(),
+                json!({
+                    "source": source,
+                    "channel": channel,
+                    "account_id": account_id,
+                }),
+            );
+        }
+    }
     Ok(result)
 }
 
 async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> Result<Value> {
-    let channel = normalize_non_empty(payload.channel.as_deref())
-        .map(|value| value.to_ascii_lowercase())
-        .ok_or_else(|| anyhow!("channel is required"))?;
-    let account_id = normalize_non_empty(payload.account_id.as_deref())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("account_id is required"))?;
-    let to = normalize_non_empty(payload.to.as_deref())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("to is required"))?;
+    let contact = payload.contact.as_ref();
+    let hinted_channel = normalize_non_empty(payload.channel.as_deref())
+        .or_else(|| contact.and_then(|value| normalize_non_empty(value.channel.as_deref())))
+        .map(|value| value.to_ascii_lowercase());
+    let hinted_account_id = normalize_non_empty(payload.account_id.as_deref())
+        .or_else(|| contact.and_then(|value| normalize_non_empty(value.account_id.as_deref())))
+        .map(str::to_string);
+    let resolved_account = resolve_send_account(
+        context,
+        hinted_channel.as_deref(),
+        hinted_account_id.as_deref(),
+    )?;
+    let account_source = resolved_account.source;
+    let channel = resolved_account.channel;
+    let account_id = resolved_account.account_id;
     if !CHANNEL_TOOL_OPEN_ACCESS_FOR_TEST && !user_owns_account(context, &channel, &account_id)? {
         return Err(anyhow!(
             "permission denied: channel account not owned by current user"
@@ -224,6 +317,30 @@ async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> R
     if !account.status.trim().eq_ignore_ascii_case("active") {
         return Err(anyhow!("channel account disabled"));
     }
+    let session_target = resolve_target_from_session(context, &channel, &account_id)?;
+    let default_target =
+        resolve_default_target_from_account_config(&account.config, context.user_id);
+    let explicit_to = normalize_non_empty(payload.to.as_deref())
+        .or_else(|| contact.and_then(|value| normalize_non_empty(value.to.as_deref())))
+        .map(str::to_string);
+    let to = explicit_to
+        .clone()
+        .or_else(|| session_target.as_ref().map(|value| value.peer_id.clone()))
+        .or_else(|| default_target.as_ref().map(|value| value.peer_id.clone()))
+        .ok_or_else(|| {
+            anyhow!(
+                "to is required; provide to/contact, or call in a channel session with unique peer, or preconfigure channel_tool_default_to"
+            )
+        })?;
+    let target_source = if explicit_to.is_some() {
+        "input"
+    } else if session_target.is_some() {
+        "session"
+    } else if default_target.is_some() {
+        "account_default"
+    } else {
+        "unknown"
+    };
 
     let text = normalize_non_empty(payload.text.as_deref())
         .or_else(|| normalize_non_empty(payload.content.as_deref()))
@@ -233,11 +350,44 @@ async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> R
         return Err(anyhow!("text/content or attachments is required"));
     }
 
-    let peer_kind = normalize_peer_kind(payload.peer_kind.as_deref());
-    let thread = normalize_non_empty(payload.thread_id.as_deref()).map(|id| ChannelThread {
-        id: id.to_string(),
-        topic: None,
-    });
+    let peer_kind = normalize_peer_kind(
+        normalize_non_empty(payload.peer_kind.as_deref())
+            .or_else(|| contact.and_then(|value| normalize_non_empty(value.peer_kind.as_deref())))
+            .or_else(|| {
+                session_target
+                    .as_ref()
+                    .map(|value| value.peer_kind.as_str())
+            })
+            .or_else(|| {
+                default_target
+                    .as_ref()
+                    .map(|value| value.peer_kind.as_str())
+            }),
+    );
+    let thread = normalize_non_empty(payload.thread_id.as_deref())
+        .or_else(|| contact.and_then(|value| normalize_non_empty(value.thread_id.as_deref())))
+        .map(|id| ChannelThread {
+            id: id.to_string(),
+            topic: None,
+        })
+        .or_else(|| {
+            session_target
+                .as_ref()
+                .and_then(|value| value.thread_id.as_ref())
+                .map(|id| ChannelThread {
+                    id: id.clone(),
+                    topic: None,
+                })
+        })
+        .or_else(|| {
+            default_target
+                .as_ref()
+                .and_then(|value| value.thread_id.as_ref())
+                .map(|id| ChannelThread {
+                    id: id.clone(),
+                    topic: None,
+                })
+        });
     let mut meta = build_send_meta(context, payload.meta.as_ref(), &to);
     if channel.eq_ignore_ascii_case("xmpp") {
         let meta_obj = meta
@@ -261,16 +411,18 @@ async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> R
         attachments,
         meta: Some(meta),
     };
+    let resolved_peer_kind = outbound.peer.kind.clone();
+    let resolved_thread_id = outbound.thread.as_ref().map(|value| value.id.clone());
 
     let outbox_id = format!("outbox_{}", Uuid::new_v4().simple());
     let now = now_ts();
     let record = ChannelOutboxRecord {
         outbox_id: outbox_id.clone(),
-        channel,
-        account_id,
-        peer_kind: outbound.peer.kind.clone(),
+        channel: channel.clone(),
+        account_id: account_id.clone(),
+        peer_kind: resolved_peer_kind.clone(),
         peer_id: outbound.peer.id.clone(),
-        thread_id: outbound.thread.as_ref().map(|thread| thread.id.clone()),
+        thread_id: resolved_thread_id.clone(),
         payload: json!(outbound),
         status: "pending".to_string(),
         retry_count: 0,
@@ -293,7 +445,16 @@ async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> R
             "action": "send_message",
             "ok": true,
             "outbox_id": outbox_id,
-            "delivery": delivery
+            "delivery": delivery,
+            "resolved": {
+                "channel": channel,
+                "account_id": account_id,
+                "to": to,
+                "peer_kind": resolved_peer_kind.clone(),
+                "thread_id": resolved_thread_id.clone(),
+                "account_source": account_source,
+                "target_source": target_source,
+            }
         }));
     }
 
@@ -301,8 +462,324 @@ async fn send_message(context: &ToolContext<'_>, payload: &ChannelToolArgs) -> R
         "action": "send_message",
         "ok": true,
         "outbox_id": outbox_id,
-        "status": "pending"
+        "status": "pending",
+        "resolved": {
+            "channel": channel,
+            "account_id": account_id,
+            "to": to,
+            "peer_kind": resolved_peer_kind,
+            "thread_id": resolved_thread_id,
+            "account_source": account_source,
+            "target_source": target_source,
+        }
     }))
+}
+
+fn resolve_send_account(
+    context: &ToolContext<'_>,
+    channel_hint: Option<&str>,
+    account_hint: Option<&str>,
+) -> Result<ResolvedChannelAccount> {
+    if let (Some(channel), Some(account_id)) = (channel_hint, account_hint) {
+        return Ok(ResolvedChannelAccount {
+            channel: channel.to_string(),
+            account_id: account_id.to_string(),
+            source: "input",
+        });
+    }
+    if let Some(account) = resolve_account_from_session(context, channel_hint, account_hint)? {
+        return Ok(account);
+    }
+    if let Some(account) =
+        resolve_account_from_active_accounts(context, channel_hint, account_hint, true)?
+    {
+        return Ok(account);
+    }
+    Err(anyhow!(
+        "channel/account_id unresolved; provide channel+account_id, or set channel_tool_default=true in one active account config"
+    ))
+}
+
+fn resolve_account_from_session(
+    context: &ToolContext<'_>,
+    channel_filter: Option<&str>,
+    account_filter: Option<&str>,
+) -> Result<Option<ResolvedChannelAccount>> {
+    let (sessions, _) = context.storage.list_channel_sessions(
+        channel_filter,
+        account_filter,
+        None,
+        Some(context.session_id),
+        0,
+        MAX_SESSION_RESOLUTION_FETCH,
+    )?;
+    let mut candidates = HashSet::<(String, String)>::new();
+    for session in sessions {
+        if !session.user_id.eq_ignore_ascii_case(context.user_id.trim()) {
+            continue;
+        }
+        let channel = session.channel.trim().to_ascii_lowercase();
+        let account_id = session.account_id.trim().to_string();
+        if channel.is_empty() || account_id.is_empty() {
+            continue;
+        }
+        candidates.insert((channel, account_id));
+    }
+    if candidates.len() != 1 {
+        return Ok(None);
+    }
+    let Some((channel, account_id)) = candidates.into_iter().next() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedChannelAccount {
+        channel,
+        account_id,
+        source: "session",
+    }))
+}
+
+fn resolve_account_from_active_accounts(
+    context: &ToolContext<'_>,
+    channel_filter: Option<&str>,
+    account_filter: Option<&str>,
+    strict: bool,
+) -> Result<Option<ResolvedChannelAccount>> {
+    let candidates = collect_active_accessible_accounts(context, channel_filter, account_filter)?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    if candidates.len() == 1 {
+        let account = &candidates[0];
+        return Ok(Some(ResolvedChannelAccount {
+            channel: account.channel.trim().to_ascii_lowercase(),
+            account_id: account.account_id.trim().to_string(),
+            source: "active_single",
+        }));
+    }
+    let defaults = candidates
+        .iter()
+        .filter(|account| account_marked_channel_tool_default(account, context.user_id))
+        .collect::<Vec<_>>();
+    if defaults.len() == 1 {
+        let account = defaults[0];
+        return Ok(Some(ResolvedChannelAccount {
+            channel: account.channel.trim().to_ascii_lowercase(),
+            account_id: account.account_id.trim().to_string(),
+            source: "account_default",
+        }));
+    }
+    if strict {
+        return Err(anyhow!(
+            "multiple channel accounts available; provide account_id or set channel_tool_default=true on one account"
+        ));
+    }
+    Ok(None)
+}
+
+fn collect_active_accessible_accounts(
+    context: &ToolContext<'_>,
+    channel_filter: Option<&str>,
+    account_filter: Option<&str>,
+) -> Result<Vec<ChannelAccountRecord>> {
+    let owned_keys = resolve_owned_account_keys(context, channel_filter, account_filter)?;
+    if owned_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let owned_set: HashSet<(String, String)> = owned_keys
+        .into_iter()
+        .map(|(channel, account_id)| {
+            (
+                channel.to_ascii_lowercase(),
+                account_id.to_ascii_lowercase(),
+            )
+        })
+        .collect();
+    let mut candidates = Vec::new();
+    for mut account in context
+        .storage
+        .list_channel_accounts(channel_filter, Some("active"))?
+    {
+        let channel = account.channel.trim().to_ascii_lowercase();
+        let account_id = account.account_id.trim().to_string();
+        let account_key = account_id.to_ascii_lowercase();
+        if channel.is_empty() || account_id.is_empty() {
+            continue;
+        }
+        if account_filter
+            .map(|value| value.eq_ignore_ascii_case(&account_id))
+            .unwrap_or(true)
+            && owned_set.contains(&(channel.clone(), account_key))
+        {
+            account.channel = channel;
+            account.account_id = account_id;
+            candidates.push(account);
+        }
+    }
+    Ok(candidates)
+}
+
+fn resolve_target_from_session(
+    context: &ToolContext<'_>,
+    channel: &str,
+    account_id: &str,
+) -> Result<Option<ResolvedPeerTarget>> {
+    let (sessions, _) = context.storage.list_channel_sessions(
+        Some(channel),
+        Some(account_id),
+        None,
+        Some(context.session_id),
+        0,
+        MAX_SESSION_RESOLUTION_FETCH,
+    )?;
+    let mut targets = HashMap::<String, ResolvedPeerTarget>::new();
+    for session in sessions {
+        if !session.user_id.eq_ignore_ascii_case(context.user_id.trim()) {
+            continue;
+        }
+        let peer_id = session.peer_id.trim();
+        if peer_id.is_empty() {
+            continue;
+        }
+        let key = contact_key(
+            channel,
+            account_id,
+            session.peer_kind.as_str(),
+            peer_id,
+            session.thread_id.as_deref(),
+        );
+        targets.entry(key).or_insert_with(|| ResolvedPeerTarget {
+            peer_id: peer_id.to_string(),
+            peer_kind: normalize_peer_kind(Some(session.peer_kind.as_str())),
+            thread_id: session
+                .thread_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string),
+        });
+    }
+    if targets.len() != 1 {
+        return Ok(None);
+    }
+    Ok(targets.into_values().next())
+}
+
+fn resolve_default_target_from_account_config(
+    config: &Value,
+    user_id: &str,
+) -> Option<ResolvedPeerTarget> {
+    let peer_id = resolve_config_string_with_user_fallback(
+        config,
+        "channel_tool_default_to",
+        "channel_tool_default_to_by_user",
+        user_id,
+    )?;
+    let peer_kind = normalize_peer_kind(
+        resolve_config_string_with_user_fallback(
+            config,
+            "channel_tool_default_peer_kind",
+            "channel_tool_default_peer_kind_by_user",
+            user_id,
+        )
+        .as_deref(),
+    );
+    let thread_id = resolve_config_string_with_user_fallback(
+        config,
+        "channel_tool_default_thread_id",
+        "channel_tool_default_thread_id_by_user",
+        user_id,
+    );
+    Some(ResolvedPeerTarget {
+        peer_id,
+        peer_kind,
+        thread_id,
+    })
+}
+
+fn resolve_config_string_with_user_fallback(
+    config: &Value,
+    key: &str,
+    per_user_key: &str,
+    user_id: &str,
+) -> Option<String> {
+    let map = config.as_object()?;
+    if let Some(per_user) = map.get(per_user_key).and_then(Value::as_object) {
+        if let Some(value) = per_user
+            .get(user_id)
+            .or_else(|| per_user.get("*"))
+            .and_then(Value::as_str)
+            .and_then(|value| normalize_non_empty(Some(value)))
+        {
+            return Some(value.to_string());
+        }
+        if let Some(value) = per_user
+            .iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(user_id))
+            .and_then(|(_, value)| value.as_str())
+            .and_then(|text| normalize_non_empty(Some(text)))
+        {
+            return Some(value.to_string());
+        }
+    }
+    map.get(key)
+        .and_then(Value::as_str)
+        .and_then(|value| normalize_non_empty(Some(value)))
+        .map(str::to_string)
+}
+
+fn account_marked_channel_tool_default(account: &ChannelAccountRecord, user_id: &str) -> bool {
+    let Some(map) = account.config.as_object() else {
+        return false;
+    };
+    for key in ["channel_tool_default", "default_for_channel_tool"] {
+        if map.get(key).and_then(Value::as_bool).unwrap_or(false) {
+            return true;
+        }
+    }
+    if let Some(raw) = map.get("channel_tool_default_users") {
+        if config_user_match(raw, user_id) {
+            return true;
+        }
+    }
+    false
+}
+
+fn config_user_match(value: &Value, user_id: &str) -> bool {
+    let target = user_id.trim();
+    if target.is_empty() {
+        return false;
+    }
+    if let Some(text) = value.as_str() {
+        return text
+            .split([',', ';', ' '])
+            .map(str::trim)
+            .any(|item| !item.is_empty() && (item == "*" || item.eq_ignore_ascii_case(target)));
+    }
+    if let Some(items) = value.as_array() {
+        return items.iter().any(|item| {
+            item.as_str().is_some_and(|text| {
+                let cleaned = text.trim();
+                !cleaned.is_empty() && (cleaned == "*" || cleaned.eq_ignore_ascii_case(target))
+            })
+        });
+    }
+    false
+}
+
+fn build_contact_value(
+    channel: &str,
+    account_id: &str,
+    peer_kind: &str,
+    peer_id: &str,
+    thread_id: Option<&str>,
+) -> Value {
+    json!({
+        "channel": channel,
+        "account_id": account_id,
+        "peer_kind": peer_kind,
+        "to": peer_id,
+        "thread_id": thread_id,
+    })
 }
 
 fn upsert_session_contact(

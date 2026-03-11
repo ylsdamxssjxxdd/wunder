@@ -1,0 +1,15 @@
+{
+  "name": "wunder-workspace",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "desktop/electron"
+  ],
+  "scripts": {
+    "build:frontend": "npm run build --workspace wunder-frontend",
+    "typecheck:frontend": "npm run typecheck --workspace wunder-frontend",
+    "prepare:desktop:resources": "npm run prepare:resources --workspace wunder-desktop-electron",
+    "build:desktop:linux:x64": "npm run build:linux:x64 --workspace wunder-desktop-electron",
+    "build:desktop:linux:arm64": "npm run build:linux:arm64 --workspace wunder-desktop-electron"
+  }
+}

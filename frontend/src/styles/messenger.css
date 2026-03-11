@@ -9,6 +9,15 @@
   --hula-text: #18181c;
   --hula-accent: var(--ui-accent);
   --hula-accent-soft: var(--ui-accent-soft);
+  --messenger-middle-pane-bg: var(--hula-center-bg);
+  --messenger-chat-bg:
+    radial-gradient(circle at top left, rgba(255, 209, 255, 0.3), rgba(130, 193, 187, 0.3) 100%);
+  --messenger-right-dock-bg: var(--hula-main-bg);
+  --messenger-search-bg: #eaeaea;
+  --messenger-search-border: transparent;
+  --messenger-control-bg: #f6f6f6;
+  --messenger-control-border: #d9d9d9;
+  --messenger-control-text: #4a4a4a;
   --hula-danger: #c14053;
   --messenger-motion-fast: 0.14s;
   --messenger-motion-normal: 0.2s;
@@ -90,11 +99,63 @@
   --hula-text: #1f2937;
   --hula-accent: #6b7280;
   --hula-accent-soft: #f3f4f6;
+  --messenger-middle-pane-bg: #ffffff;
+  --messenger-chat-bg: #ffffff;
+  --messenger-right-dock-bg: #ffffff;
+  --messenger-search-bg: #f3f4f6;
+  --messenger-search-border: #e5e7eb;
+  --messenger-control-bg: #f3f4f6;
+  --messenger-control-border: #d1d5db;
+  --messenger-control-text: #5f6368;
   --messenger-motion-fast: 0s;
   --messenger-motion-normal: 0s;
   --messenger-motion-slow: 0s;
   --messenger-hover-lift: 0px;
   background: #ffffff;
+}
+
+:root[data-user-accent='eva-orange'] .messenger-view {
+  --hula-main-bg: #fff1e6;
+  --hula-center-bg: #fff8f2;
+  --hula-list-hover: rgba(var(--ui-accent-rgb), 0.12);
+  --hula-border: rgba(229, 121, 46, 0.2);
+  --hula-muted: #8d6248;
+  --hula-text: #32170a;
+  --hula-accent-soft: #fff0e3;
+  --messenger-middle-pane-bg: linear-gradient(180deg, #fffaf6 0%, #fff6ef 100%);
+  --messenger-chat-bg:
+    radial-gradient(circle at 0% 0%, rgba(var(--ui-accent-rgb), 0.18), transparent 30%),
+    radial-gradient(circle at 96% 8%, rgba(var(--ui-accent-secondary-rgb), 0.16), transparent 30%),
+    linear-gradient(180deg, #fffbf8 0%, #fff2e8 100%);
+  --messenger-right-dock-bg: linear-gradient(180deg, #fff3e8 0%, #ffeadd 100%);
+  --messenger-search-bg: rgba(var(--ui-accent-rgb), 0.1);
+  --messenger-search-border: rgba(var(--ui-accent-rgb), 0.12);
+  --messenger-control-bg: rgba(255, 249, 244, 0.92);
+  --messenger-control-border: rgba(var(--ui-accent-rgb), 0.18);
+  --messenger-control-text: #995324;
+  background: linear-gradient(180deg, #fff9f4 0%, #fff0e6 100%);
+}
+
+:root[data-user-accent='hula-green'] .messenger-view {
+  --hula-main-bg: #eaf7f1;
+  --hula-center-bg: #f6fcf9;
+  --hula-list-hover: rgba(var(--ui-accent-rgb), 0.12);
+  --hula-border: rgba(14, 141, 114, 0.18);
+  --hula-muted: #5a7c70;
+  --hula-text: #10352d;
+  --hula-accent-soft: #e3f7f0;
+  --messenger-middle-pane-bg: linear-gradient(180deg, #fbfffd 0%, #f1faf6 100%);
+  --messenger-chat-bg:
+    radial-gradient(circle at 0% 0%, rgba(var(--ui-accent-rgb), 0.16), transparent 30%),
+    radial-gradient(circle at 98% 10%, rgba(var(--ui-accent-secondary-rgb), 0.18), transparent 32%),
+    linear-gradient(180deg, #fcfffe 0%, #edf8f3 100%);
+  --messenger-right-dock-bg: linear-gradient(180deg, #eef8f4 0%, #e3f4ed 100%);
+  --messenger-search-bg: rgba(var(--ui-accent-rgb), 0.08);
+  --messenger-search-border: rgba(var(--ui-accent-rgb), 0.12);
+  --messenger-control-bg: rgba(248, 255, 252, 0.94);
+  --messenger-control-border: rgba(var(--ui-accent-rgb), 0.18);
+  --messenger-control-text: #0f6a56;
+  background: linear-gradient(180deg, #f8fdfa 0%, #e8f6f0 100%);
 }
 
 :root[data-user-accent='minimal'] .messenger-left-rail {
@@ -380,7 +441,7 @@
 }
 
 .messenger-middle-pane {
-  background: var(--hula-center-bg);
+  background: var(--messenger-middle-pane-bg);
   border-right: 1px solid var(--hula-border);
   display: flex;
   flex-direction: column;
@@ -431,8 +492,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #eaeaea;
-  border: 1px solid transparent;
+  background: var(--messenger-search-bg);
+  border: 1px solid var(--messenger-search-border);
   border-radius: 8px;
   padding: 0 10px;
   color: var(--hula-muted);
@@ -457,10 +518,10 @@
 .messenger-plus-btn {
   width: 36px;
   height: 36px;
-  border: 1px solid #d9d9d9;
+  border: 1px solid var(--messenger-control-border);
   border-radius: 8px;
-  background: #f6f6f6;
-  color: #4a4a4a;
+  background: var(--messenger-control-bg);
+  color: var(--messenger-control-text);
   cursor: pointer;
   transition:
     border-color var(--messenger-motion-fast) var(--messenger-ease-standard),
@@ -1036,7 +1097,7 @@
 }
 
 .messenger-chat {
-  background: radial-gradient(circle at top left, rgba(255, 209, 255, 0.3), rgba(130, 193, 187, 0.3) 100%);
+  background: var(--messenger-chat-bg);
   border-right: 1px solid var(--hula-border);
   display: flex;
   flex-direction: column;
@@ -2331,7 +2392,7 @@ button.messenger-chat-header-model {
 }
 
 .messenger-right-dock {
-  background: #f1f1f1;
+  background: var(--messenger-right-dock-bg);
   display: flex;
   flex-direction: column;
   flex: 0 0 var(--messenger-right-dock-width);

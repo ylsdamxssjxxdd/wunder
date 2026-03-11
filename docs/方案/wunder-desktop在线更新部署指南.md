@@ -21,12 +21,12 @@
 
 ### 3.1 推荐配置（Generic）
 
-编辑 `wunder-desktop-electron/electron-builder.yml`：
+编辑 `desktop/electron/electron-builder.yml`：
 
 ```yaml
 publish:
   provider: generic
-  url: https://updates.example.com/wunder-desktop/win/x64
+  url: https://updates.example.com/desktop/tauri/win/x64
 ```
 
 建议固定文件名（避免空格和重命名问题）：
@@ -41,7 +41,7 @@ win:
 构建：
 
 ```bash
-cd wunder-desktop-electron
+cd desktop/electron
 npm run build
 ```
 
@@ -58,7 +58,7 @@ npm run build
 - `latest.yml` 必须禁缓存：
 
 ```nginx
-location = /wunder-desktop/win/x64/latest.yml {
+location = /desktop/tauri/win/x64/latest.yml {
   add_header Cache-Control "no-cache, no-store, must-revalidate";
   add_header Pragma "no-cache";
   add_header Expires "0";
@@ -76,7 +76,7 @@ location = /wunder-desktop/win/x64/latest.yml {
   - `checkForUpdates`
   - `getUpdateState`
   - `installUpdate`
-- Tauri 打包已开启更新产物生成：`wunder-desktop/tauri.conf.json` 中 `bundle.createUpdaterArtifacts = true`。
+- Tauri 打包已开启更新产物生成：`desktop/tauri/tauri.conf.json` 中 `bundle.createUpdaterArtifacts = true`。
 
 ### 4.2 运行时配置（环境变量）
 
@@ -88,7 +88,7 @@ location = /wunder-desktop/win/x64/latest.yml {
 示例：
 
 ```bash
-set WUNDER_TAURI_UPDATE_ENDPOINTS=https://updates.example.com/wunder-desktop/tauri/latest.json
+set WUNDER_TAURI_UPDATE_ENDPOINTS=https://updates.example.com/desktop/tauri/tauri/latest.json
 set WUNDER_TAURI_UPDATE_PUBKEY=RWQ...你的公钥...
 ```
 
@@ -132,3 +132,4 @@ set WUNDER_TAURI_UPDATE_PUBKEY=RWQ...你的公钥...
 - 元数据被缓存。
 - 元数据中的版本号未提升。
 - 元数据里的下载 URL 与线上文件不一致。
+

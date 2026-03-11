@@ -31,7 +31,7 @@ jobs:
           set -euo pipefail
           build_date="$(date -u +'%Y%m%d')"
           build_stamp="$(date -u +'%Y%m%d%H%M%S')"
-          base_version="$(python -c 'import json, pathlib; print(json.loads(pathlib.Path("wunder-desktop-electron/package.json").read_text(encoding="utf-8"))["version"])')"
+          base_version="$(python -c 'import json, pathlib; print(json.loads(pathlib.Path("desktop/electron/package.json").read_text(encoding="utf-8"))["version"])')"
           base_core="${base_version%%-*}"
           IFS='.' read -r major minor patch <<<"$base_core"
           if [[ -z "${major:-}" || -z "${minor:-}" || -z "${patch:-}" ]]; then
@@ -53,19 +53,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: |
-            frontend/package-lock.json
-            wunder-desktop-electron/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
       - name: Build frontend
-        working-directory: frontend
         shell: pwsh
         run: |
-          npm ci
-          npm run build
+          npm ci --workspaces --include-workspace-root=false
+          npm run build --workspace wunder-frontend
 
       - name: Build bridge and package Electron (Windows x64)
         shell: pwsh
@@ -76,8 +73,7 @@ jobs:
           if (-not (Test-Path $bridge)) { throw "Bridge not found: $bridge" }
           $outDir = Join-Path $env:GITHUB_WORKSPACE "target\nightly\windows-x64"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-          Push-Location (Join-Path $env:GITHUB_WORKSPACE "wunder-desktop-electron")
-          npm ci
+          Push-Location (Join-Path $env:GITHUB_WORKSPACE "desktop\\electron")
           $env:WUNDER_BRIDGE_BIN = $bridge
           npm run prepare:resources
           npx electron-builder --win --x64 --publish=never --config.directories.output="$outDir" "--config.extraMetadata.version=$nightlyVersion"
@@ -125,19 +121,16 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: |
-            frontend/package-lock.json
-            wunder-desktop-electron/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
       - name: Build frontend
-        working-directory: frontend
         shell: bash
         run: |
-          npm ci
-          npm run build
+          npm ci --workspaces --include-workspace-root=false
+          npm run build --workspace wunder-frontend
 
       - name: Build bridge and package Electron (macOS)
         shell: bash
@@ -151,8 +144,7 @@ jobs:
           fi
           out_dir="$GITHUB_WORKSPACE/target/nightly/macos"
           mkdir -p "$out_dir"
-          cd "$GITHUB_WORKSPACE/wunder-desktop-electron"
-          npm ci
+          cd "$GITHUB_WORKSPACE/desktop/electron"
           WUNDER_BRIDGE_BIN="$bridge" npm run prepare:resources
           CSC_IDENTITY_AUTO_DISCOVERY=false \
             npx electron-builder --mac --x64 --arm64 --publish=never --config.directories.output="$out_dir" \
@@ -227,7 +219,7 @@ jobs:
             .cargo/x86-20-ci/git
             target/x86-20-ci
             .npm-cache/linux-x64
-          key: ${{ runner.os }}-desktop-linux-x64-${{ hashFiles('Cargo.lock', 'frontend/package-lock.json', 'wunder-desktop-electron/package-lock.json', 'docker-extra/scripts/ci_build_linux_electron.sh', 'docker-extra/Dockerfile.ubuntu20-x86') }}
+          key: ${{ runner.os }}-desktop-linux-x64-${{ hashFiles('Cargo.lock', 'package-lock.json', 'packaging/docker/scripts/ci_build_linux_electron.sh', 'packaging/docker/Dockerfile.ubuntu20-x86') }}
           restore-keys: |
             ${{ runner.os }}-desktop-linux-x64-
 
@@ -236,7 +228,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker-extra/Dockerfile.ubuntu20-x86
+          file: packaging/docker/Dockerfile.ubuntu20-x86
           platforms: linux/amd64
           tags: wunder-x86-20-ci:latest
           load: true
@@ -257,7 +249,7 @@ jobs:
             -e OUTPUT_DIR=/app/target/nightly/linux-x64 \
             -e NIGHTLY_VERSION=${{ needs.prepare.outputs.nightly_version }} \
             wunder-x86-20-ci:latest \
-            bash /app/docker-extra/scripts/ci_build_linux_electron.sh
+            bash /app/packaging/docker/scripts/ci_build_linux_electron.sh
 
       - name: Rename Linux x64 artifact
         shell: bash
@@ -309,7 +301,7 @@ jobs:
             .cargo/arm64-20-ci/git
             target/arm64-20-ci
             .npm-cache/linux-arm64
-          key: ${{ runner.os }}-desktop-linux-arm64-${{ hashFiles('Cargo.lock', 'frontend/package-lock.json', 'wunder-desktop-electron/package-lock.json', 'docker-extra/scripts/ci_build_linux_electron.sh', 'docker-extra/Dockerfile.ubuntu20-arm') }}
+          key: ${{ runner.os }}-desktop-linux-arm64-${{ hashFiles('Cargo.lock', 'package-lock.json', 'packaging/docker/scripts/ci_build_linux_electron.sh', 'packaging/docker/Dockerfile.ubuntu20-arm') }}
           restore-keys: |
             ${{ runner.os }}-desktop-linux-arm64-
 
@@ -319,7 +311,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: docker-extra/Dockerfile.ubuntu20-arm
+          file: packaging/docker/Dockerfile.ubuntu20-arm
           platforms: linux/arm64
           tags: wunder-arm-20-ci:latest
           load: true
@@ -340,7 +332,7 @@ jobs:
             -e OUTPUT_DIR=/app/target/nightly/linux-arm64 \
             -e NIGHTLY_VERSION=${{ needs.prepare.outputs.nightly_version }} \
             wunder-arm-20-ci:latest \
-            bash /app/docker-extra/scripts/ci_build_linux_electron.sh
+            bash /app/packaging/docker/scripts/ci_build_linux_electron.sh
 
       - name: Rename Linux arm64 artifact
         shell: bash

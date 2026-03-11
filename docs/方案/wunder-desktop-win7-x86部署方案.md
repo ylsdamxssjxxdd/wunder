@@ -1,4 +1,4 @@
-# wunder-desktop Win7 x86 部署方案（Tauri）
+﻿# wunder-desktop Win7 x86 部署方案（Tauri）
 
 ## 0. 目标与范围
 
@@ -15,12 +15,12 @@
 
 ## 2. 目录约定
 
-- `wunder-desktop/webview2/win7-x86/`：放置解压后的 WebView2 Fixed Runtime 109 x86。
-- `wunder-desktop/tauri.bundle.win7-x86.json`：Win7 x86 专用 bundle 覆盖配置。
+- `desktop/tauri/webview2/win7-x86/`：放置解压后的 WebView2 Fixed Runtime 109 x86。
+- `desktop/tauri/tauri.bundle.win7-x86.json`：Win7 x86 专用 bundle 覆盖配置。
 
 ## 3. 准备材料
 
-- WebView2 Fixed Runtime 109 x86（解压到 `wunder-desktop/webview2/win7-x86/`）。
+- WebView2 Fixed Runtime 109 x86（解压到 `desktop/tauri/webview2/win7-x86/`）。
 - NSIS 安装器（用于生成 `.exe` 安装包）。
 - Rust 工具链与 Tauri CLI。
 - Node.js（用于构建 `frontend/dist`）。
@@ -29,7 +29,7 @@
 
 新增一个 Win7 x86 专用的 bundle 覆盖配置文件：
 
-`wunder-desktop/tauri.bundle.win7-x86.json`
+`desktop/tauri/tauri.bundle.win7-x86.json`
 
 ```json
 {
@@ -60,12 +60,13 @@ cargo build --release --bin wunder-desktop-bridge
 
 2. 构建前端产物
 ```powershell
-npm --prefix frontend run build
+npm install --workspaces --include-workspace-root=false
+npm run build --workspace wunder-frontend
 ```
 
 3. 进入 Tauri 目录
 ```powershell
-Set-Location wunder-desktop
+Set-Location desktop/tauri
 ```
 
 4. 选择 Rust 工具链与目标
@@ -86,8 +87,8 @@ cargo +1.77.2 tauri build -f desktop -c tauri.bundle.win7-x86.json --bundles nsi
 
 ## 6. 产物路径
 
-- 可执行文件：`wunder-desktop/target/i686-pc-windows-msvc/release/wunder-desktop.exe`
-- 安装包：`wunder-desktop/target/i686-pc-windows-msvc/release/bundle/nsis/wunder-desktop_0.1.0_x86-setup.exe`
+- 可执行文件：`desktop/tauri/target/i686-pc-windows-msvc/release/wunder-desktop.exe`
+- 安装包：`desktop/tauri/target/i686-pc-windows-msvc/release/bundle/nsis/wunder-desktop_0.1.0_x86-setup.exe`
 
 ## 7. Win7 真机验证清单
 
@@ -102,4 +103,5 @@ cargo +1.77.2 tauri build -f desktop -c tauri.bundle.win7-x86.json --bundles nsi
   - 默认关闭自动更新。
   - 采用手工更新或内网分发。
 - 后续如需维持 Win7 兼容，应锁定构建工具链版本，避免升级导致最低系统版本提升。
+
 

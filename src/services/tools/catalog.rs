@@ -201,6 +201,17 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "offset": {"type": "integer", "minimum": 0, "description": t("tool.spec.channel_tool.args.offset")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.channel_tool.args.limit")},
                     "refresh": {"type": "boolean", "description": t("tool.spec.channel_tool.args.refresh")},
+                    "contact": {
+                        "type": "object",
+                        "description": t("tool.spec.channel_tool.args.contact"),
+                        "properties": {
+                            "channel": {"type": "string"},
+                            "account_id": {"type": "string"},
+                            "to": {"type": "string"},
+                            "peer_kind": {"type": "string", "enum": ["user", "group"]},
+                            "thread_id": {"type": "string"}
+                        }
+                    },
                     "to": {"type": "string", "description": t("tool.spec.channel_tool.args.to")},
                     "peer_kind": {"type": "string", "enum": ["user", "group"], "description": t("tool.spec.channel_tool.args.peer_kind")},
                     "thread_id": {"type": "string", "description": t("tool.spec.channel_tool.args.thread_id")},
@@ -229,7 +240,6 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     {
                         "if": {"properties": {"action": {"const": "send_message"}}},
                         "then": {
-                            "required": ["channel", "account_id", "to"],
                             "anyOf": [
                                 {"required": ["text"]},
                                 {"required": ["content"]},

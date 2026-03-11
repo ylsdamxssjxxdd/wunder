@@ -1796,12 +1796,12 @@
     "zh-CN": "动作类型：list_contacts/send_message。"
   },
   "tool.spec.channel_tool.args.channel": {
-    "en-US": "Channel name, e.g. xmpp/feishu.",
-    "zh-CN": "渠道名称，例如 xmpp/feishu。"
+    "en-US": "Channel name, e.g. xmpp/feishu. Optional in send_message when auto-resolved from session/default account.",
+    "zh-CN": "渠道名称，例如 xmpp/feishu。send_message 中可选，系统会优先从当前会话或默认账号自动补全。"
   },
   "tool.spec.channel_tool.args.account_id": {
-    "en-US": "Channel account id.",
-    "zh-CN": "渠道账号 ID。"
+    "en-US": "Channel account id. Optional in send_message when auto-resolved from session/default account.",
+    "zh-CN": "渠道账号 ID。send_message 中可选，系统会优先从当前会话或默认账号自动补全。"
   },
   "tool.spec.channel_tool.args.keyword": {
     "en-US": "Keyword for contact search.",
@@ -1819,9 +1819,13 @@
     "en-US": "Force refresh contacts from source (e.g. XMPP roster) instead of cache.",
     "zh-CN": "强制从源端刷新联系人（如 XMPP roster），而不是使用缓存。"
   },
+  "tool.spec.channel_tool.args.contact": {
+    "en-US": "Optional contact object copied from list_contacts item; can replace channel/account_id/to/peer_kind/thread_id.",
+    "zh-CN": "可选联系人对象（可直接复用 list_contacts 返回项），可替代 channel/account_id/to/peer_kind/thread_id。"
+  },
   "tool.spec.channel_tool.args.to": {
-    "en-US": "Target peer id/JID.",
-    "zh-CN": "目标接收方 ID/JID。"
+    "en-US": "Target peer id/JID. Optional when session has a unique peer or account default target is configured.",
+    "zh-CN": "目标接收方 ID/JID。当前会话只有一个对端或账号已配置默认目标时可省略。"
   },
   "tool.spec.channel_tool.args.peer_kind": {
     "en-US": "Peer type: user/group.",

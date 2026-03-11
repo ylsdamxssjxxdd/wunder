@@ -40,6 +40,7 @@ target/
 .rustup/
 config/wunder.yaml
 .env
+node_modules/
 frontend/dist
 frontend/.env
 frontend/node_modules/
@@ -49,7 +50,7 @@ temp_dir
 vector_knowledge
 WUNDER_TEMP
 gen/
-wunder-desktop/gen/
+desktop/tauri/gen/
 .tmp*
 temp_eval*
 *.fon
@@ -57,5 +58,6 @@ temp_eval*
 squashfs-root
 dist
 frontend-old
-wunder-desktop-electron/dist-setup
+desktop/electron/node_modules/
+desktop/electron/dist-setup
 tmp
