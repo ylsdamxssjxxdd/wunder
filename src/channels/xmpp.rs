@@ -2,6 +2,7 @@ use crate::channels::adapter::{ChannelAdapter, OutboundContext};
 use crate::channels::types::{
     ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender, ChannelThread, XmppConfig,
 };
+use crate::channels::xmpp_tls_connector::{XmppTlsSecurityMode, XmppTlsServerConfig};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -22,7 +23,6 @@ use tokio_xmpp::parsers::message::{Body, Message, MessageType, Thread};
 use tokio_xmpp::parsers::ns;
 use tokio_xmpp::parsers::ping::Ping;
 use tokio_xmpp::parsers::presence::{Presence, Type as PresenceType};
-use tokio_xmpp::starttls;
 use tokio_xmpp::{AsyncClient, AsyncConfig, Event};
 use tracing::warn;
 
@@ -76,7 +76,7 @@ impl ChannelAdapter for XmppAdapter {
 struct XmppRuntimeSettings {
     jid: Jid,
     password: String,
-    server: starttls::ServerConfig,
+    server: XmppTlsServerConfig,
     login_bare: String,
     login_node: Option<String>,
     login_domain: String,
@@ -372,7 +372,7 @@ async fn send_outbound_with_new_connection(
         .map_err(|_| anyhow!("xmpp outbound timed out"))?
 }
 
-fn build_client(settings: &XmppRuntimeSettings) -> AsyncClient<starttls::ServerConfig> {
+fn build_client(settings: &XmppRuntimeSettings) -> AsyncClient<XmppTlsServerConfig> {
     let mut client = AsyncClient::new_with_config(AsyncConfig {
         jid: settings.jid.clone(),
         password: settings.password.clone(),
@@ -405,16 +405,18 @@ fn build_runtime_settings(config: &XmppConfig) -> Result<XmppRuntimeSettings> {
     let server = {
         let host = optional_trimmed(config.host.as_deref()).map(str::to_string);
         let domain = optional_trimmed(config.domain.as_deref()).map(str::to_string);
+        let security_mode = if config.trust_self_signed.unwrap_or(true) {
+            XmppTlsSecurityMode::TrustSelfSigned
+        } else {
+            XmppTlsSecurityMode::Strict
+        };
         let port = config.port.unwrap_or(default_port);
         if let Some(host) = host.or(domain) {
-            starttls::ServerConfig::Manual { host, port }
+            XmppTlsServerConfig::manual(host, port, security_mode)
         } else if config.port.is_some() {
-            starttls::ServerConfig::Manual {
-                host: jid.domain().to_string(),
-                port,
-            }
+            XmppTlsServerConfig::manual(jid.domain().to_string(), port, security_mode)
         } else {
-            starttls::ServerConfig::UseSrv
+            XmppTlsServerConfig::use_srv(security_mode)
         }
     };
 
@@ -452,7 +454,7 @@ fn build_runtime_settings(config: &XmppConfig) -> Result<XmppRuntimeSettings> {
 }
 
 async fn send_initial_presence(
-    client: &mut AsyncClient<starttls::ServerConfig>,
+    client: &mut AsyncClient<XmppTlsServerConfig>,
     status_text: Option<&str>,
 ) -> Result<()> {
     let mut presence = Presence::new(PresenceType::None);
@@ -466,7 +468,7 @@ async fn send_initial_presence(
 }
 
 async fn join_muc_rooms(
-    client: &mut AsyncClient<starttls::ServerConfig>,
+    client: &mut AsyncClient<XmppTlsServerConfig>,
     rooms: &[String],
     nick: &str,
 ) -> Result<()> {
@@ -505,7 +507,7 @@ fn resolve_muc_nick(settings: &XmppRuntimeSettings, bound_jid: Option<&Jid>) -> 
 }
 
 async fn send_outbound_stanza(
-    client: &mut AsyncClient<starttls::ServerConfig>,
+    client: &mut AsyncClient<XmppTlsServerConfig>,
     settings: &XmppRuntimeSettings,
     outbound: &ChannelOutboundMessage,
 ) -> Result<()> {
@@ -536,7 +538,7 @@ async fn send_outbound_stanza(
 }
 
 async fn send_heartbeat_ping(
-    client: &mut AsyncClient<starttls::ServerConfig>,
+    client: &mut AsyncClient<XmppTlsServerConfig>,
     ping_id: &str,
 ) -> Result<()> {
     let ping = Iq::from_get(ping_id.to_string(), Ping);
@@ -547,7 +549,7 @@ async fn send_heartbeat_ping(
 }
 
 async fn send_heartbeat_pong(
-    client: &mut AsyncClient<starttls::ServerConfig>,
+    client: &mut AsyncClient<XmppTlsServerConfig>,
     ping_id: &str,
     from: Option<Jid>,
 ) -> Result<()> {
@@ -564,7 +566,7 @@ async fn send_heartbeat_pong(
 }
 
 async fn handle_heartbeat_iq_stanza(
-    client: &mut AsyncClient<starttls::ServerConfig>,
+    client: &mut AsyncClient<XmppTlsServerConfig>,
     stanza: &Element,
     settings: &XmppRuntimeSettings,
     pending_heartbeat_ping: &mut Option<PendingHeartbeatPing>,
@@ -979,7 +981,7 @@ mod tests {
         let settings = XmppRuntimeSettings {
             jid: Jid::from_str("bot@example.com/wunder").unwrap(),
             password: "secret".to_string(),
-            server: starttls::ServerConfig::UseSrv,
+            server: XmppTlsServerConfig::use_srv(XmppTlsSecurityMode::TrustSelfSigned),
             login_bare: "bot@example.com".to_string(),
             login_node: Some("bot".to_string()),
             login_domain: "example.com".to_string(),
@@ -1061,6 +1063,12 @@ mod tests {
             XMPP_HEARTBEAT_DEFAULT_TIMEOUT_S
         );
         assert!(settings.respond_ping);
+        match settings.server {
+            XmppTlsServerConfig::UseSrv { security_mode } => {
+                assert_eq!(security_mode, XmppTlsSecurityMode::TrustSelfSigned);
+            }
+            _ => panic!("expected srv connector"),
+        }
     }
 
     #[test]
@@ -1080,5 +1088,22 @@ mod tests {
         assert_eq!(settings.password, "secret-from-env");
 
         std::env::remove_var(&env_key);
+    }
+
+    #[test]
+    fn build_runtime_settings_respects_strict_tls_mode() {
+        let config = XmppConfig {
+            jid: Some("bot@example.com".to_string()),
+            password: Some("secret".to_string()),
+            trust_self_signed: Some(false),
+            ..XmppConfig::default()
+        };
+        let settings = build_runtime_settings(&config).unwrap();
+        match settings.server {
+            XmppTlsServerConfig::UseSrv { security_mode } => {
+                assert_eq!(security_mode, XmppTlsSecurityMode::Strict);
+            }
+            _ => panic!("expected srv connector"),
+        }
     }
 }

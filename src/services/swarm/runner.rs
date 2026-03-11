@@ -4,9 +4,8 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::WunderRequest;
-use crate::storage::{
-    SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord, DEFAULT_HIVE_ID,
-};
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
+use crate::storage::{SessionRunRecord, TeamRunRecord, TeamTaskRecord, UserAgentRecord};
 use crate::user_store::UserStore;
 use crate::workspace::WorkspaceManager;
 use anyhow::Result;
@@ -65,6 +64,7 @@ pub struct TeamRunRunner {
     workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
     orchestrator: Arc<Orchestrator>,
+    beeroom_realtime: Arc<BeeroomRealtimeService>,
     queue_tx: mpsc::Sender<String>,
     queue_rx: Arc<Mutex<Option<mpsc::Receiver<String>>>>,
     active_runs: Arc<Mutex<HashMap<String, ActiveRunControl>>>,
@@ -77,6 +77,7 @@ impl TeamRunRunner {
         workspace: Arc<WorkspaceManager>,
         monitor: Arc<MonitorState>,
         orchestrator: Arc<Orchestrator>,
+        beeroom_realtime: Arc<BeeroomRealtimeService>,
     ) -> Arc<Self> {
         let (queue_tx, queue_rx) = mpsc::channel(RUNNER_CHANNEL_CAPACITY);
         Arc::new(Self {
@@ -85,6 +86,7 @@ impl TeamRunRunner {
             workspace,
             monitor,
             orchestrator,
+            beeroom_realtime,
             queue_tx,
             queue_rx: Arc::new(Mutex::new(Some(queue_rx))),
             active_runs: Arc::new(Mutex::new(HashMap::new())),
@@ -282,11 +284,11 @@ impl TeamRunRunner {
             updated.updated_time = now;
             self.user_store.upsert_team_run(&updated)?;
             self.emit_team_event(
-                &updated.parent_session_id,
+                &updated,
                 TEAM_START,
                 json!({
                     "team_run_id": updated.team_run_id,
-                    "hive_id": DEFAULT_HIVE_ID,
+                    "hive_id": updated.hive_id,
                     "status": updated.status,
                     "task_total": updated.task_total,
                     "strategy": updated.strategy,
@@ -441,12 +443,12 @@ impl TeamRunRunner {
         task.updated_time = now;
         self.user_store.upsert_team_task(&task)?;
         self.emit_team_event(
-            &run.parent_session_id,
+            &run,
             TEAM_TASK_UPDATE,
             json!({
                 "team_run_id": task.team_run_id,
                 "task_id": task.task_id,
-                "hive_id": DEFAULT_HIVE_ID,
+                "hive_id": run.hive_id,
                 "agent_id": task.agent_id,
                 "status": task.status,
             }),
@@ -555,12 +557,12 @@ impl TeamRunRunner {
         self.user_store.upsert_team_task(&task)?;
 
         self.emit_team_event(
-            &run.parent_session_id,
+            &run,
             TEAM_TASK_RESULT,
             json!({
                 "team_run_id": task.team_run_id,
                 "task_id": task.task_id,
-                "hive_id": DEFAULT_HIVE_ID,
+                "hive_id": run.hive_id,
                 "agent_id": task.agent_id,
                 "session_id": session_id,
                 "created_session": created_session,
@@ -737,12 +739,12 @@ impl TeamRunRunner {
         task.error = Some("cancelled".to_string());
         self.user_store.upsert_team_task(task)?;
         self.emit_team_event(
-            &run.parent_session_id,
+            run,
             TEAM_TASK_UPDATE,
             json!({
                 "team_run_id": task.team_run_id,
                 "task_id": task.task_id,
-                "hive_id": DEFAULT_HIVE_ID,
+                "hive_id": run.hive_id,
                 "agent_id": task.agent_id,
                 "status": task.status,
             }),
@@ -782,12 +784,12 @@ impl TeamRunRunner {
         }
         self.user_store.upsert_team_task(&task)?;
         self.emit_team_event(
-            &run.parent_session_id,
+            run,
             TEAM_TASK_UPDATE,
             json!({
                 "team_run_id": task.team_run_id,
                 "task_id": task.task_id,
-                "hive_id": DEFAULT_HIVE_ID,
+                "hive_id": run.hive_id,
                 "agent_id": task.agent_id,
                 "status": task.status,
             }),
@@ -841,12 +843,12 @@ impl TeamRunRunner {
             task.error = Some(truncate_text(error, TEAM_TASK_RESULT_MAX_CHARS));
             self.user_store.upsert_team_task(&task)?;
             self.emit_team_event(
-                &run.parent_session_id,
+                run,
                 TEAM_TASK_UPDATE,
                 json!({
                     "team_run_id": task.team_run_id,
                     "task_id": task.task_id,
-                    "hive_id": DEFAULT_HIVE_ID,
+                    "hive_id": run.hive_id,
                     "agent_id": task.agent_id,
                     "status": task.status,
                 }),
@@ -912,11 +914,11 @@ impl TeamRunRunner {
 
         if !merge_summary.is_empty() {
             self.emit_team_event(
-                &run.parent_session_id,
+                &run,
                 TEAM_MERGE,
                 json!({
                     "team_run_id": run.team_run_id,
-                    "hive_id": DEFAULT_HIVE_ID,
+                    "hive_id": run.hive_id,
                     "merge_policy": options.merge_policy,
                     "summary": truncate_text(&merge_summary, TEAM_RUN_SUMMARY_MAX_CHARS),
                 }),
@@ -975,11 +977,11 @@ impl TeamRunRunner {
             TEAM_RUN_STATUS_FAILED | TEAM_RUN_STATUS_TIMEOUT
         ) {
             self.emit_team_event(
-                &run.parent_session_id,
+                &run,
                 TEAM_ERROR,
                 json!({
                     "team_run_id": run.team_run_id,
-                    "hive_id": DEFAULT_HIVE_ID,
+                    "hive_id": run.hive_id,
                     "status": run.status,
                     "task_success": run.task_success,
                     "task_failed": run.task_failed,
@@ -988,11 +990,11 @@ impl TeamRunRunner {
         }
 
         self.emit_team_event(
-            &run.parent_session_id,
+            &run,
             TEAM_FINISH,
             json!({
                 "team_run_id": run.team_run_id,
-                "hive_id": DEFAULT_HIVE_ID,
+                "hive_id": run.hive_id,
                 "status": run.status,
                 "task_total": run.task_total,
                 "task_success": run.task_success,
@@ -1087,12 +1089,41 @@ impl TeamRunRunner {
         i18n::t("monitor.summary.received")
     }
 
-    fn emit_team_event(&self, session_id: &str, event_type: &str, payload: Value) {
-        let cleaned = session_id.trim();
-        if cleaned.is_empty() {
+    fn emit_team_event(&self, run: &TeamRunRecord, event_type: &str, payload: Value) {
+        let cleaned_session = run.parent_session_id.trim();
+        if !cleaned_session.is_empty() {
+            self.monitor
+                .record_event(cleaned_session, event_type, &payload);
+        }
+
+        let cleaned_user = run.user_id.trim();
+        let cleaned_hive = run.hive_id.trim();
+        let cleaned_event_type = event_type.trim();
+        if cleaned_user.is_empty() || cleaned_hive.is_empty() || cleaned_event_type.is_empty() {
             return;
         }
-        self.monitor.record_event(cleaned, event_type, &payload);
+
+        let mut realtime_payload = payload;
+        if let Value::Object(ref mut map) = realtime_payload {
+            map.entry("team_run_id".to_string())
+                .or_insert_with(|| Value::String(run.team_run_id.clone()));
+            map.entry("hive_id".to_string())
+                .or_insert_with(|| Value::String(run.hive_id.clone()));
+            map.entry("status".to_string())
+                .or_insert_with(|| Value::String(run.status.clone()));
+            map.entry("updated_time".to_string())
+                .or_insert_with(|| json!(run.updated_time));
+        }
+
+        let realtime_service = self.beeroom_realtime.clone();
+        let user_id = cleaned_user.to_string();
+        let hive_id = cleaned_hive.to_string();
+        let event_name = cleaned_event_type.to_string();
+        tokio::spawn(async move {
+            realtime_service
+                .publish_group_event(&user_id, &hive_id, &event_name, realtime_payload)
+                .await;
+        });
     }
 }
 

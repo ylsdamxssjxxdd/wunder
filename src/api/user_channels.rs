@@ -1638,6 +1638,7 @@ fn build_user_account_item(
                 "host": host,
                 "port": xmpp.port,
                 "direct_tls": xmpp.direct_tls,
+                "trust_self_signed": xmpp.trust_self_signed,
                 "muc_rooms": xmpp.muc_rooms.len(),
                 "heartbeat_enabled": xmpp.heartbeat_enabled,
                 "heartbeat_interval_s": xmpp.heartbeat_interval_s,

@@ -28,6 +28,7 @@ use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::prompting::PromptComposer;
 use crate::sandbox;
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{SessionLockStatus, StorageBackend, UserQuotaStatus};
 use crate::token_utils::{
@@ -103,6 +104,7 @@ pub struct Orchestrator {
     storage: Arc<dyn StorageBackend>,
     memory_store: Arc<MemoryStore>,
     user_world: Arc<UserWorldService>,
+    beeroom_realtime: Arc<BeeroomRealtimeService>,
     cron_wake_signal: Option<CronWakeSignal>,
     http: reqwest::Client,
 }
@@ -121,6 +123,7 @@ impl Orchestrator {
         storage: Arc<dyn StorageBackend>,
         gateway: Arc<GatewayHub>,
         user_world: Arc<UserWorldService>,
+        beeroom_realtime: Arc<BeeroomRealtimeService>,
         cron_wake_signal: Option<CronWakeSignal>,
     ) -> Self {
         let memory_store = Arc::new(MemoryStore::new(storage.clone()));
@@ -137,6 +140,7 @@ impl Orchestrator {
             storage,
             memory_store,
             user_world,
+            beeroom_realtime,
             cron_wake_signal,
             http: reqwest::Client::new(),
         }

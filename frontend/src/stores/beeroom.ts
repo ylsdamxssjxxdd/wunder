@@ -302,6 +302,90 @@ const stableMembersFingerprint = (items: BeeroomMember[]): string =>
 const stableMissionsFingerprint = (items: BeeroomMission[]): string =>
   items.map(stableMissionFingerprint).join('||');
 
+const normalizeRealtimeEventType = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const TEAM_REALTIME_EVENT_TYPES = new Set([
+  'team_start',
+  'team_task_dispatch',
+  'team_task_update',
+  'team_task_result',
+  'team_merge',
+  'team_finish',
+  'team_error'
+]);
+
+const normalizeStatusText = (value: unknown): string =>
+  String(value || '').trim().toLowerCase();
+
+const ACTIVE_TASK_STATUSES = new Set(['queued', 'pending', 'running', 'awaiting_idle', 'resuming', 'merging']);
+const TERMINAL_TASK_STATUSES = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
+const TERMINAL_MISSION_STATUSES = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
+
+const isActiveTaskStatus = (value: unknown): boolean =>
+  ACTIVE_TASK_STATUSES.has(normalizeStatusText(value));
+
+const isTerminalTaskStatus = (value: unknown): boolean =>
+  TERMINAL_TASK_STATUSES.has(normalizeStatusText(value));
+
+const isTerminalMissionStatus = (value: unknown): boolean =>
+  TERMINAL_MISSION_STATUSES.has(normalizeStatusText(value));
+
+const parseMaybeNumber = (value: unknown): number | undefined => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : undefined;
+};
+
+const resolveRealtimeTimestamp = (value: unknown): number => {
+  const numeric = parseMaybeNumber(value);
+  if (!numeric || numeric <= 0) {
+    return Math.floor(Date.now() / 1000);
+  }
+  if (numeric > 1_000_000_000_000) {
+    return Math.floor(numeric / 1000);
+  }
+  return Math.floor(numeric);
+};
+
+const cloneMissionTask = (task: BeeroomMissionTask): BeeroomMissionTask => ({ ...task });
+
+const cloneMission = (mission: BeeroomMission): BeeroomMission => ({
+  ...mission,
+  tasks: asArray<BeeroomMissionTask>(mission.tasks).map(cloneMissionTask)
+});
+
+const createMissionFromRealtimeEvent = (
+  groupId: string,
+  missionId: string,
+  payload: Record<string, unknown>,
+  eventType: string,
+  nowSec: number
+): BeeroomMission => {
+  const missionStatus = normalizeStatusText(payload.status) || (eventType === 'team_error' ? 'failed' : 'running');
+  const completionStatus = normalizeStatusText(payload.completion_status) || missionStatus;
+  return {
+    team_run_id: missionId,
+    mission_id: missionId,
+    hive_id: groupId,
+    strategy: String(payload.strategy || '').trim() || undefined,
+    status: missionStatus || 'running',
+    completion_status: completionStatus || missionStatus || 'running',
+    task_total: parseMaybeNumber(payload.task_total) ?? 0,
+    task_success: parseMaybeNumber(payload.task_success) ?? 0,
+    task_failed: parseMaybeNumber(payload.task_failed) ?? 0,
+    context_tokens_total: parseMaybeNumber(payload.context_tokens_total),
+    context_tokens_peak: parseMaybeNumber(payload.context_tokens_peak),
+    model_round_total: parseMaybeNumber(payload.model_round_total),
+    started_time: parseMaybeNumber(payload.started_time) ?? nowSec,
+    finished_time: parseMaybeNumber(payload.finished_time),
+    elapsed_s: parseMaybeNumber(payload.elapsed_s),
+    summary: String(payload.summary || payload.result_summary || '').trim() || undefined,
+    error: String(payload.error || '').trim() || undefined,
+    updated_time: nowSec,
+    tasks: []
+  };
+};
+
 let groupsRequestSerial = 0;
 let groupsInFlight: Promise<BeeroomGroup[]> | null = null;
 let groupsInFlightKey = '';
@@ -399,6 +483,249 @@ export const useBeeroomStore = defineStore('beeroom', {
           mission_total: this.activeGroup.mission_total ?? missions.length
         });
       }
+    },
+
+    applyRealtimeEvent(groupId: unknown, eventType: unknown, payload: unknown) {
+      const normalizedGroupId = normalizeGroupId(groupId || this.activeGroupId);
+      const normalizedType = normalizeRealtimeEventType(eventType);
+      if (!normalizedGroupId || !TEAM_REALTIME_EVENT_TYPES.has(normalizedType)) {
+        return false;
+      }
+
+      const source = resolveRecord(payload) || {};
+      const nowSec = resolveRealtimeTimestamp(
+        source.updated_time ?? source.updatedAt ?? source.created_at ?? source.createdAt ?? source.time
+      );
+      const missionId = normalizeMissionId(
+        source.team_run_id || source.teamRunId || source.mission_id || source.missionId
+      );
+      const taskId = String(source.task_id || source.taskId || '').trim();
+      const agentId = String(source.agent_id || source.agentId || '').trim();
+      const eventStatus = normalizeStatusText(source.status);
+
+      const missions = this.activeMissions.map(cloneMission);
+      let missionChanged = false;
+      let mission =
+        (missionId
+          ? missions.find((item) => normalizeMissionId(item.mission_id || item.team_run_id) === missionId)
+          : null) || null;
+      if (!mission && missionId) {
+        mission = createMissionFromRealtimeEvent(normalizedGroupId, missionId, source, normalizedType, nowSec);
+        missions.unshift(mission);
+        missionChanged = true;
+      }
+      if (mission) {
+        mission.updated_time = Math.max(Number(mission.updated_time || 0), nowSec);
+        if (!mission.hive_id) {
+          mission.hive_id = normalizedGroupId;
+        }
+        if (normalizedType === 'team_start' && !mission.started_time) {
+          mission.started_time = nowSec;
+        }
+        if (eventStatus) {
+          mission.status = eventStatus;
+          if (normalizedType === 'team_finish' || normalizedType === 'team_error' || isTerminalMissionStatus(eventStatus)) {
+            mission.completion_status = eventStatus;
+          } else if (!isTerminalMissionStatus(mission.completion_status || '')) {
+            mission.completion_status = eventStatus;
+          }
+        }
+        if (normalizedType === 'team_error' && !eventStatus) {
+          mission.status = 'failed';
+          mission.completion_status = 'failed';
+        }
+        if (normalizedType === 'team_finish' && !eventStatus) {
+          mission.status = mission.task_failed && mission.task_failed > 0 ? 'failed' : 'completed';
+          mission.completion_status = mission.status;
+        }
+        const summaryText = String(source.summary || source.result_summary || '').trim();
+        if (summaryText) {
+          mission.summary = summaryText;
+        }
+        const errorText = String(source.error || '').trim();
+        if (errorText) {
+          mission.error = errorText;
+        }
+        const maybeTaskTotal = parseMaybeNumber(source.task_total);
+        if (maybeTaskTotal !== undefined) {
+          mission.task_total = Math.max(mission.task_total || 0, maybeTaskTotal);
+        }
+        const maybeTaskSuccess = parseMaybeNumber(source.task_success);
+        if (maybeTaskSuccess !== undefined) {
+          mission.task_success = maybeTaskSuccess;
+        }
+        const maybeTaskFailed = parseMaybeNumber(source.task_failed);
+        if (maybeTaskFailed !== undefined) {
+          mission.task_failed = maybeTaskFailed;
+        }
+        const maybeTokensTotal = parseMaybeNumber(source.context_tokens_total);
+        if (maybeTokensTotal !== undefined) {
+          mission.context_tokens_total = maybeTokensTotal;
+        }
+        const maybeTokensPeak = parseMaybeNumber(source.context_tokens_peak);
+        if (maybeTokensPeak !== undefined) {
+          mission.context_tokens_peak = maybeTokensPeak;
+        }
+        const maybeModelRoundTotal = parseMaybeNumber(source.model_round_total);
+        if (maybeModelRoundTotal !== undefined) {
+          mission.model_round_total = maybeModelRoundTotal;
+        }
+        const maybeElapsed = parseMaybeNumber(source.elapsed_s);
+        if (maybeElapsed !== undefined) {
+          mission.elapsed_s = maybeElapsed;
+        }
+        if (taskId) {
+          const tasks = asArray<BeeroomMissionTask>(mission.tasks).map(cloneMissionTask);
+          let task = tasks.find((item) => String(item.task_id || '').trim() === taskId) || null;
+          if (!task) {
+            task = {
+              task_id: taskId,
+              agent_id: agentId,
+              status: eventStatus || 'running',
+              updated_time: nowSec
+            };
+            tasks.push(task);
+          }
+          if (agentId) {
+            task.agent_id = agentId;
+          }
+          if (eventStatus) {
+            task.status = eventStatus;
+          }
+          const maybePriority = parseMaybeNumber(source.priority);
+          if (maybePriority !== undefined) {
+            task.priority = maybePriority;
+          }
+          const maybeTaskStartedTime = parseMaybeNumber(source.started_time);
+          if (maybeTaskStartedTime !== undefined) {
+            task.started_time = maybeTaskStartedTime;
+          } else if (!task.started_time && normalizedType === 'team_task_update') {
+            task.started_time = nowSec;
+          }
+          const maybeTaskFinishedTime = parseMaybeNumber(source.finished_time);
+          if (maybeTaskFinishedTime !== undefined) {
+            task.finished_time = maybeTaskFinishedTime;
+          } else if (normalizedType === 'team_task_result' && isTerminalTaskStatus(task.status)) {
+            task.finished_time = nowSec;
+          }
+          const maybeTaskElapsed = parseMaybeNumber(source.elapsed_s);
+          if (maybeTaskElapsed !== undefined) {
+            task.elapsed_s = maybeTaskElapsed;
+          }
+          const resultSummary = String(source.result_summary || '').trim();
+          if (resultSummary) {
+            task.result_summary = resultSummary;
+          }
+          if (errorText) {
+            task.error = errorText;
+          }
+          task.updated_time = nowSec;
+          mission.tasks = tasks;
+        }
+
+        const tasks = asArray<BeeroomMissionTask>(mission.tasks);
+        if (tasks.length) {
+          mission.task_total = Math.max(mission.task_total || 0, tasks.length);
+          const successTotal = tasks.filter((item) =>
+            ['success', 'completed'].includes(normalizeStatusText(item.status))
+          ).length;
+          const failedTotal = tasks.filter((item) =>
+            ['failed', 'error', 'timeout', 'cancelled'].includes(normalizeStatusText(item.status))
+          ).length;
+          mission.task_success = successTotal;
+          mission.task_failed = failedTotal;
+          const allTerminal = tasks.every((item) => isTerminalTaskStatus(item.status));
+          if (allTerminal && !isTerminalMissionStatus(mission.completion_status || mission.status || '')) {
+            mission.status = failedTotal > 0 ? 'failed' : 'completed';
+            mission.completion_status = mission.status;
+          }
+        }
+        if (isTerminalMissionStatus(mission.completion_status || mission.status || '')) {
+          mission.finished_time = mission.finished_time || nowSec;
+        }
+        missionChanged = true;
+      }
+
+      if (missionChanged) {
+        missions.sort((left, right) => Number(right.updated_time || 0) - Number(left.updated_time || 0));
+        if (stableMissionsFingerprint(this.activeMissions) !== stableMissionsFingerprint(missions)) {
+          this.activeMissions = missions;
+        }
+      }
+
+      // Keep agent idle/runtime hints reactive from mission task transitions.
+      let nextAgents = this.activeAgents.map((item) => ({ ...item }));
+      if (nextAgents.length) {
+        const busyAgentIds = new Set<string>();
+        missions.forEach((item) => {
+          asArray<BeeroomMissionTask>(item.tasks).forEach((task) => {
+            const currentTaskAgentId = String(task.agent_id || '').trim();
+            if (!currentTaskAgentId || !isActiveTaskStatus(task.status)) return;
+            busyAgentIds.add(currentTaskAgentId);
+          });
+        });
+        nextAgents = nextAgents.map((item) => {
+          const currentAgentId = String(item.agent_id || '').trim();
+          if (!currentAgentId) return item;
+          const busy = busyAgentIds.has(currentAgentId);
+          return {
+            ...item,
+            idle: !busy,
+            active_session_total: busy ? Math.max(Number(item.active_session_total || 0), 1) : 0
+          };
+        });
+        if (stableMembersFingerprint(this.activeAgents) !== stableMembersFingerprint(nextAgents)) {
+          this.activeAgents = nextAgents;
+        }
+      }
+
+      if (this.activeGroup) {
+        const activeGroupId = normalizeGroupId(this.activeGroup.group_id || this.activeGroup.hive_id);
+        if (activeGroupId === normalizedGroupId) {
+          const runningMissionTotal = missions.filter(
+            (item) => !isTerminalMissionStatus(item.completion_status || item.status)
+          ).length;
+          const activeAgentTotal = nextAgents.filter((item) => item.idle === false).length;
+          const nextGroup: BeeroomGroup = {
+            ...this.activeGroup,
+            group_id: activeGroupId,
+            hive_id: this.activeGroup.hive_id || activeGroupId,
+            running_mission_total: runningMissionTotal,
+            mission_total: missions.length,
+            latest_mission: missions[0] || null,
+            updated_time: Math.max(Number(this.activeGroup.updated_time || 0), nowSec),
+            active_agent_total: nextAgents.length ? activeAgentTotal : this.activeGroup.active_agent_total,
+            idle_agent_total: nextAgents.length
+              ? Math.max(0, nextAgents.length - activeAgentTotal)
+              : this.activeGroup.idle_agent_total,
+            members: nextAgents.length ? nextAgents.slice(0, 6) : this.activeGroup.members
+          };
+          if (stableGroupFingerprint(this.activeGroup) !== stableGroupFingerprint(nextGroup)) {
+            this.activeGroup = nextGroup;
+          }
+          this.upsertGroup(nextGroup);
+        }
+      }
+
+      if (agentId && eventStatus && this.activeAgents.length) {
+        const index = this.activeAgents.findIndex(
+          (item) => String(item.agent_id || '').trim() === agentId
+        );
+        if (index >= 0) {
+          const member = this.activeAgents[index];
+          const busy = isActiveTaskStatus(eventStatus);
+          const updatedMember: BeeroomMember = {
+            ...member,
+            idle: !busy,
+            active_session_total: busy ? Math.max(Number(member.active_session_total || 0), 1) : 0
+          };
+          if (stableMemberFingerprint(member) !== stableMemberFingerprint(updatedMember)) {
+            this.activeAgents.splice(index, 1, updatedMember);
+          }
+        }
+      }
+
+      return missionChanged;
     },
 
     async loadGroups(params: QueryParams = {}) {

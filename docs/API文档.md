@@ -1919,6 +1919,7 @@
   - `host`、`port`：手动连接地址（可选）
   - `server`：`host` 的兼容别名（可选；兼容 openfang `channels.xmpp.server`）
   - `direct_tls`：是否使用 5223 默认端口（可选，默认 `false`）
+  - `trust_self_signed`：是否信任自有/自签证书（可选，默认 `true`）
   - `resource`：登录资源（可选）
   - `muc_nick`：群聊昵称（可选，用于过滤自身群消息）
   - `muc_rooms`：自动加入房间列表（可选，数组或逗号分隔字符串）
@@ -2100,8 +2101,20 @@
     - `watching`：已开始监听；
     - `chat_message`：蜂群协作消息追加；
     - `chat_cleared`：协作消息被清空；
+    - `team_start`：蜂群任务启动；
+    - `team_task_dispatch`：母蜂派发子任务（创建 TeamTask 后即时下发）；
+    - `team_task_update`：子任务状态更新（如 `running/cancelled/failed`）；
+    - `team_task_result`：子任务结果落盘（含 `result_summary/error/retry_count`）；
+    - `team_merge`：母蜂汇总阶段；
+    - `team_finish`：蜂群任务闭环完成；
+    - `team_error`：蜂群任务异常收敛；
     - `sync_required`：客户端落后（lag）需要全量补齐；
     - `final/error/pong/ready`：协议控制事件。
+  - `team_*` 事件公共字段：
+    - `team_run_id`：任务 ID（mission ID）；
+    - `hive_id`：蜂群 ID；
+    - `status`：当前状态；
+    - `updated_time`：事件生成时间戳（秒）。
 
 ### 4.1.64 `/wunder/beeroom/groups/{group_id}/chat/stream`
 
@@ -2112,8 +2125,9 @@
     - `watching`：流已建立，返回当前游标；
     - `chat_message`：单条消息事件（带 `id=event_id`）；
     - `chat_cleared`：清空事件；
+    - `team_start/team_task_dispatch/team_task_update/team_task_result/team_merge/team_finish/team_error`：与 WS 同语义；
     - `sync_required`：消费者 lag 触发补齐提示。
-  - 说明：当前事件总线为内存广播，仅保证“在线近实时推送”；断线重连后由前端调用 `GET /chat/messages` 做一致性补齐。
+  - 说明：当前事件总线为内存广播，仅保证“在线近实时推送”；断线重连后由前端调用 `GET /chat/messages` 与 `GET /beeroom/groups/{group_id}` 做一致性补齐。
 
 ### 4.1.65 蜂群工具与 TeamRun 补充说明
 
@@ -2123,6 +2137,7 @@
   - 自动认领/沿用母蜂；
   - 未显式指定目标会话时优先复用目标智能体主线程，仅在该智能体尚无主线程/会话时才新建；
   - 创建 `team_run/team_task` 并回写 `mother_agent_id`、`session_run_id`；
+  - 在 `team_run/team_task` 创建、状态更新、终态收敛时同步广播 `team_start/team_task_dispatch/team_task_update/team_task_result/team_finish/team_error` 到 Beeroom WS/SSE；
   - 在实际派发消息中自动附带 `SWARM_CONTEXT`（蜂巢基本信息、母蜂、发送者、活跃成员快照、`team_run_id/task_id` 等）。
 - TeamRun / TeamTask 相关返回体新增关键字段：
   - `team_run.mother_agent_id`
@@ -2358,7 +2373,7 @@
 - `tts_voice`：TTS voice 覆盖（可选）
 - `tool_overrides`：默认工具覆盖（可选）
 - `agent_id`：默认路由 agent_id（可选）
-- `xmpp.*`：XMPP 客户端配置（`jid/password/password_env/domain/host/server/port/direct_tls/resource/muc_nick/muc_rooms/rooms/long_connection_enabled/send_initial_presence/status_text/heartbeat_enabled/heartbeat_interval_s/heartbeat_timeout_s/respond_ping`）
+- `xmpp.*`：XMPP 客户端配置（`jid/password/password_env/domain/host/server/port/direct_tls/trust_self_signed/resource/muc_nick/muc_rooms/rooms/long_connection_enabled/send_initial_presence/status_text/heartbeat_enabled/heartbeat_interval_s/heartbeat_timeout_s/respond_ping`）
 
 ### 4.1.60 `/wunder/channels/*`
 
@@ -2411,7 +2426,7 @@
     - `xmpp.jid`（必填或沿用已有值）
     - `xmpp.password` 或 `xmpp.password_env`（二选一，缺失时沿用已有值）
     - `xmpp.domain`（可选，SRV 域名或手动服务器域名）
-    - `xmpp.host`（兼容别名：`xmpp.server`）、`xmpp.port`、`xmpp.direct_tls`（可选，手动连接地址）
+    - `xmpp.host`（兼容别名：`xmpp.server`）、`xmpp.port`、`xmpp.direct_tls`、`xmpp.trust_self_signed`（可选，手动连接地址）
     - `xmpp.resource`（可选，登录资源）
     - `xmpp.muc_nick`、`xmpp.muc_rooms`（兼容别名：`xmpp.rooms`，可选，群聊昵称与自动入群房间）
     - `xmpp.long_connection_enabled`、`xmpp.send_initial_presence`、`xmpp.status_text`（可选，长连接与 presence 策略）

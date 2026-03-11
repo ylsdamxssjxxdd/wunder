@@ -84,8 +84,8 @@ docker compose -f docker-extra/docker-compose-ubuntu20.yml exec -T wunder-build-
 > 说明：重建 embedded Python 时会自动校验 `matplotlib/cartopy/pyproj/shapely/netCDF4/cftime/h5py` 等核心库；
 > 若缺失会尝试补装并把最终结果写到 `${BUILD_ROOT}/reports/stage-pip-freeze.txt`、`${BUILD_ROOT}/reports/stage-pip-list.json`、`${BUILD_ROOT}/reports/stage-import-validation.json`。
 
-> 说明：重打包 AppImage 时会自动将 Playwright 运行库（如 libnss3/libnspr4 等）收集进 AppImage 并设置 `LD_LIBRARY_PATH`，
-> 旧系统缺依赖时可直接使用。若需手动控制，可设置 `BUNDLE_PLAYWRIGHT_DEPS=0/1` 或 `PLAYWRIGHT_INSTALL_DEPS=0/1`。
+> 说明：重打包 AppImage 时可自动将 Playwright 运行库（如 libnss3/libnspr4 等）收集进 AppImage，
+> 若需收集可设置 `BUNDLE_PLAYWRIGHT_DEPS=0/1` 与 `PLAYWRIGHT_INSTALL_DEPS=0/1`；运行时默认不注入 `wunder-playwright` 到 `LD_LIBRARY_PATH`，可通过 `WUNDER_ENABLE_PLAYWRIGHT_LIBS=1` 显式开启。
 > 若希望浏览器也以 sidecar 分发，可将 `${PYTHON_ROOT}/playwright` 打包为 `wunder-playwright` 并与 AppImage 同目录放置。
 
 ### 默认：Python Sidecar（AppImage 不内置 Python）

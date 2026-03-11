@@ -133,6 +133,13 @@ pub struct XmppConfig {
     pub port: Option<u16>,
     #[serde(default, alias = "directTls")]
     pub direct_tls: Option<bool>,
+    #[serde(
+        default,
+        alias = "trustSelfSigned",
+        alias = "allowSelfSigned",
+        alias = "insecureSkipTlsVerify"
+    )]
+    pub trust_self_signed: Option<bool>,
     #[serde(default)]
     pub resource: Option<String>,
     #[serde(default, alias = "mucNick")]
@@ -398,5 +405,24 @@ mod tests {
                 "room2@conference.example.com".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn xmpp_trust_self_signed_aliases_are_supported() {
+        let config = ChannelAccountConfig::from_value(&json!({
+            "xmpp": {
+                "trustSelfSigned": true
+            }
+        }));
+        let xmpp = config.xmpp.expect("xmpp config should exist");
+        assert_eq!(xmpp.trust_self_signed, Some(true));
+
+        let config = ChannelAccountConfig::from_value(&json!({
+            "xmpp": {
+                "insecureSkipTlsVerify": false
+            }
+        }));
+        let xmpp = config.xmpp.expect("xmpp config should exist");
+        assert_eq!(xmpp.trust_self_signed, Some(false));
     }
 }

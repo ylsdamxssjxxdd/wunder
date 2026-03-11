@@ -1,5 +1,6 @@
 use crate::storage::BeeroomChatMessageRecord;
 use anyhow::{anyhow, Result};
+use chrono::Utc;
 use serde::Serialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -86,6 +87,33 @@ impl BeeroomRealtimeService {
         self.publish(normalized_user, normalized_group, event).await;
     }
 
+    pub async fn publish_group_event(
+        &self,
+        user_id: &str,
+        group_id: &str,
+        event_type: &str,
+        payload: serde_json::Value,
+    ) {
+        let normalized_user = user_id.trim();
+        let normalized_group = group_id.trim();
+        let normalized_event_type = event_type.trim();
+        if normalized_user.is_empty()
+            || normalized_group.is_empty()
+            || normalized_event_type.is_empty()
+        {
+            return;
+        }
+        let event = BeeroomRealtimeEvent {
+            event_id: self.next_event_id(),
+            user_id: normalized_user.to_string(),
+            group_id: normalized_group.to_string(),
+            event_type: normalized_event_type.to_string(),
+            payload,
+            created_at: now_ts(),
+        };
+        self.publish(normalized_user, normalized_group, event).await;
+    }
+
     fn next_event_id(&self) -> i64 {
         self.sequence.fetch_add(1, Ordering::Relaxed) + 1
     }
@@ -138,4 +166,8 @@ fn chat_message_payload(record: &BeeroomChatMessageRecord) -> serde_json::Value 
         "client_msg_id": record.client_msg_id,
         "created_at": record.created_at,
     })
+}
+
+fn now_ts() -> f64 {
+    Utc::now().timestamp_millis() as f64 / 1000.0
 }

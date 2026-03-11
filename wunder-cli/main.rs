@@ -60,6 +60,7 @@ const CLI_DEFAULT_SESSION_STATUS: &str = "active";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    wunder_server::rustls_provider::install_process_default_provider();
     init_tracing();
     let cli = Cli::parse();
     let runtime = CliRuntime::init(&cli.global).await?;
@@ -4631,6 +4632,7 @@ async fn run_tool_direct(
         allow_roots: Some(roots.allow_roots.clone()),
         read_roots: Some(roots.read_roots.clone()),
         event_emitter: None,
+        beeroom_realtime: Some(runtime.state.beeroom_realtime.clone()),
         http: &http,
     };
 

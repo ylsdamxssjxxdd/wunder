@@ -12,6 +12,7 @@ use std::process::Command;
 use tracing_subscriber::EnvFilter;
 
 fn main() -> Result<()> {
+    wunder_server::rustls_provider::install_process_default_provider();
     init_tracing();
     let args = DesktopArgs::parse();
     run_bridge(args)
@@ -36,7 +37,20 @@ fn run_bridge(args: DesktopArgs) -> Result<()> {
 }
 
 fn init_tracing() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        let startup_timing_enabled = matches!(
+            std::env::var("WUNDER_STARTUP_TIMING")
+                .ok()
+                .map(|value| value.trim().to_ascii_lowercase())
+                .as_deref(),
+            Some("1" | "true" | "on" | "yes")
+        );
+        if startup_timing_enabled || cfg!(debug_assertions) {
+            EnvFilter::new("info")
+        } else {
+            EnvFilter::new("warn")
+        }
+    });
     let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 

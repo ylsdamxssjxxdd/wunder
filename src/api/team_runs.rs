@@ -205,7 +205,9 @@ async fn create_team_run(
 
     emit_team_event(
         state.as_ref(),
+        &user_id,
         &parent_session_id,
+        &resolved_hive_id,
         TEAM_START,
         json!({
             "team_run_id": team_run_id,
@@ -243,7 +245,9 @@ async fn create_team_run(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         emit_team_event(
             state.as_ref(),
+            &user_id,
             &parent_session_id,
+            &task_record.hive_id,
             TEAM_TASK_DISPATCH,
             json!({
                 "team_run_id": task_record.team_run_id,
@@ -365,7 +369,9 @@ async fn cancel_team_run(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         emit_team_event(
             state.as_ref(),
+            &user_id,
             &run.parent_session_id,
+            &task.hive_id,
             TEAM_TASK_UPDATE,
             json!({
                 "team_run_id": task.team_run_id,
@@ -379,7 +385,9 @@ async fn cancel_team_run(
 
     emit_team_event(
         state.as_ref(),
+        &user_id,
         &run.parent_session_id,
+        &run.hive_id,
         TEAM_FINISH,
         json!({
             "team_run_id": run.team_run_id,
@@ -460,7 +468,14 @@ fn is_active_team_status(status: &str) -> bool {
     )
 }
 
-fn emit_team_event(state: &AppState, session_id: &str, event_type: &str, payload: Value) {
+fn emit_team_event(
+    state: &AppState,
+    user_id: &str,
+    session_id: &str,
+    hive_id: &str,
+    event_type: &str,
+    payload: Value,
+) {
     let cleaned_session_id = session_id.trim();
     if cleaned_session_id.is_empty() {
         return;
@@ -468,6 +483,29 @@ fn emit_team_event(state: &AppState, session_id: &str, event_type: &str, payload
     state
         .monitor
         .record_event(cleaned_session_id, event_type, &payload);
+
+    let cleaned_user = user_id.trim();
+    let cleaned_hive = hive_id.trim();
+    let cleaned_event = event_type.trim();
+    if cleaned_user.is_empty() || cleaned_hive.is_empty() || cleaned_event.is_empty() {
+        return;
+    }
+
+    let mut realtime_payload = payload;
+    if let Value::Object(ref mut map) = realtime_payload {
+        map.entry("hive_id".to_string())
+            .or_insert_with(|| Value::String(cleaned_hive.to_string()));
+    }
+
+    let realtime = state.beeroom_realtime.clone();
+    let user_id = cleaned_user.to_string();
+    let hive_id = cleaned_hive.to_string();
+    let event_name = cleaned_event.to_string();
+    tokio::spawn(async move {
+        realtime
+            .publish_group_event(&user_id, &hive_id, &event_name, realtime_payload)
+            .await;
+    });
 }
 
 fn team_run_payload(record: &TeamRunRecord) -> Value {

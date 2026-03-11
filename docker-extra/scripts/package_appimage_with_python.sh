@@ -18,6 +18,7 @@ PLAYWRIGHT_INSTALL_DEPS="${PLAYWRIGHT_INSTALL_DEPS:-1}"
 EMBED_PYTHON="${EMBED_PYTHON:-1}"
 APPIMAGE_SUFFIX="${APPIMAGE_SUFFIX:-}"
 APPIMAGE_COMP="${APPIMAGE_COMP:-auto}"
+APPIMAGE_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
 VALIDATE_MODULES="${VALIDATE_MODULES:-matplotlib,cartopy,pyproj,shapely,netCDF4,cftime,h5py,cinrad}"
 
 validate_embedded_python_root() {
@@ -239,12 +240,32 @@ resolve_supported_appimage_comp() {
   echo "xz"
 }
 
+resolve_default_appimage_path() {
+  local search_dir=$1
+  local candidate=""
+
+  candidate=$(find "${search_dir}" -maxdepth 1 -type f -name "*.AppImage" ! -name "*-sidecar.AppImage" ! -name "*-python.AppImage" 2>/dev/null | sort | head -n 1 || true)
+  if [ -n "${candidate}" ]; then
+    echo "${candidate}"
+    return 0
+  fi
+
+  candidate=$(find "${search_dir}" -maxdepth 1 -type f -name "*.AppImage" 2>/dev/null | sort | head -n 1 || true)
+  if [ -n "${candidate}" ]; then
+    echo "${candidate}"
+  fi
+}
+
 if [ -z "${APPIMAGE_PATH}" ]; then
-  APPIMAGE_PATH=$(ls -1 "${APPIMAGE_DIR}"/*.AppImage 2>/dev/null | head -n 1 || true)
+  APPIMAGE_PATH=$(resolve_default_appimage_path "${APPIMAGE_DIR}")
 fi
 
 if [ -z "${APPIMAGE_PATH}" ] || [ ! -f "${APPIMAGE_PATH}" ]; then
   echo "AppImage not found under ${APPIMAGE_DIR}." >&2
+  exit 1
+fi
+if [[ "${APPIMAGE_PATH}" == *-sidecar.AppImage ]] && [ "${ALLOW_SIDECAR_INPUT:-0}" != "1" ]; then
+  echo "Refusing to repack from sidecar AppImage input (${APPIMAGE_PATH}). Please pass base AppImage via APPIMAGE_PATH." >&2
   exit 1
 fi
 
@@ -297,6 +318,7 @@ fi
 
 if [ -f "${APPDIR}/AppRun" ]; then
   mv "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
+fi
 cat > "${APPDIR}/AppRun" <<'EOF'
 #!/usr/bin/env bash
 set -e
@@ -306,18 +328,33 @@ APPIMAGE_DIR=""
 if [ -n "${APPIMAGE:-}" ]; then
   APPIMAGE_DIR="$(dirname "$APPIMAGE")"
 fi
+
+has_extra_payload() {
+  local root=$1
+  [ -d "$root/opt/python" ] || [ -d "$root/python" ] || [ -d "$root/opt/git" ] || [ -d "$root/git" ] || [ -d "$root/playwright" ]
+}
+
 EXTRA_ROOT=""
 if [ -n "${WUNDER_EXTRA_DIR:-}" ] && [ -d "${WUNDER_EXTRA_DIR}" ]; then
   EXTRA_ROOT="${WUNDER_EXTRA_DIR}"
 fi
 if [ -z "$EXTRA_ROOT" ] && [ -n "$APPIMAGE_DIR" ]; then
-  for candidate in "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python" "$APPIMAGE_DIR"/wunder*; do
-    if [ -d "$candidate" ] && { [ -d "$candidate/opt/python" ] || [ -d "$candidate/python" ] || [ -d "$candidate/opt/git" ] || [ -d "$candidate/git" ]; }; then
+  for candidate in "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python"; do
+    if [ -d "$candidate" ] && has_extra_payload "$candidate"; then
       EXTRA_ROOT="$candidate"
       break
     fi
   done
 fi
+if [ -z "$EXTRA_ROOT" ] && [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR" ]; then
+  while IFS= read -r -d '' candidate; do
+    if [ -d "$candidate" ] && has_extra_payload "$candidate"; then
+      EXTRA_ROOT="$candidate"
+      break
+    fi
+  done < <(find "$APPIMAGE_DIR" -mindepth 1 -maxdepth 1 -type d -name 'wunder*' -print0 2>/dev/null)
+fi
+
 PYTHON_ROOT=""
 if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/python" ]; then
   PYTHON_ROOT="$EXTRA_ROOT/opt/python"
@@ -358,8 +395,29 @@ if [ -n "$PYTHON_ROOT" ]; then
 else
   export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"
 fi
-# Keep Electron on AppImage/system libs; avoid sidecar git/python libs polluting main process.
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
+
+if [ "${WUNDER_SUPPRESS_GPU_WARNINGS:-1}" != "0" ]; then
+  export MESA_LOG_LEVEL="${MESA_LOG_LEVEL:-error}"
+  export MESA_DEBUG="${MESA_DEBUG:-silent}"
+  export LIBGL_DEBUG="${LIBGL_DEBUG:-quiet}"
+  export EGL_LOG_LEVEL="${EGL_LOG_LEVEL:-error}"
+  export VK_LOADER_DEBUG="${VK_LOADER_DEBUG:-error}"
+  export WUNDER_CHROMIUM_LOG_LEVEL="${WUNDER_CHROMIUM_LOG_LEVEL:-3}"
+fi
+
+if [ ! -d "$APPDIR/opt/python" ]; then
+  export WUNDER_SIDECAR_RUNTIME=1
+fi
+if [ "${WUNDER_SIDECAR_RUNTIME:-0}" = "1" ] && [ -z "${WUNDER_DISABLE_GPU+x}" ] && [ "${WUNDER_SIDECAR_FORCE_DISABLE_GPU:-1}" = "1" ]; then
+  export WUNDER_DISABLE_GPU=1
+fi
+
+LD_PREFIX="$APPDIR/usr/lib"
+if [ "${WUNDER_ENABLE_PLAYWRIGHT_LIBS:-0}" = "1" ] && [ -d "$APPDIR/usr/lib/wunder-playwright" ]; then
+  LD_PREFIX="$APPDIR/usr/lib/wunder-playwright:$LD_PREFIX"
+fi
+export LD_LIBRARY_PATH="$LD_PREFIX${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
 PLAYWRIGHT_DIR=""
 if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
   PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
@@ -382,6 +440,10 @@ if [ -n "$GIT_ROOT" ]; then
     export WUNDER_GIT_BIN="$GIT_ROOT/bin/git"
   fi
 fi
+
+if [ -x "$APPDIR/AppRun.orig" ]; then
+  exec "$APPDIR/AppRun.orig" "$@"
+fi
 MAIN_BIN=""
 for candidate in "$APPDIR/usr/bin/wunder-desktop" "$APPDIR/wunder-desktop"; do
   if [ -x "$candidate" ]; then
@@ -395,106 +457,9 @@ if [ -z "$MAIN_BIN" ]; then
 fi
 exec "$MAIN_BIN" "$@"
 EOF
+if [ -f "${APPDIR}/AppRun.orig" ]; then
   chmod +x "${APPDIR}/AppRun" "${APPDIR}/AppRun.orig"
 else
-cat > "${APPDIR}/AppRun" <<'EOF'
-#!/usr/bin/env bash
-set -e
-HERE="$(dirname "$(readlink -f "$0")")"
-export APPDIR="$HERE"
-APPIMAGE_DIR=""
-if [ -n "${APPIMAGE:-}" ]; then
-  APPIMAGE_DIR="$(dirname "$APPIMAGE")"
-fi
-EXTRA_ROOT=""
-if [ -n "${WUNDER_EXTRA_DIR:-}" ] && [ -d "${WUNDER_EXTRA_DIR}" ]; then
-  EXTRA_ROOT="${WUNDER_EXTRA_DIR}"
-fi
-if [ -z "$EXTRA_ROOT" ] && [ -n "$APPIMAGE_DIR" ]; then
-  for candidate in "$APPIMAGE_DIR/wunder-extra" "$APPIMAGE_DIR/wunder-python" "$APPIMAGE_DIR"/wunder*; do
-    if [ -d "$candidate" ] && { [ -d "$candidate/opt/python" ] || [ -d "$candidate/python" ] || [ -d "$candidate/opt/git" ] || [ -d "$candidate/git" ]; }; then
-      EXTRA_ROOT="$candidate"
-      break
-    fi
-  done
-fi
-PYTHON_ROOT=""
-if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/python" ]; then
-  PYTHON_ROOT="$EXTRA_ROOT/opt/python"
-elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/python" ]; then
-  PYTHON_ROOT="$EXTRA_ROOT/python"
-elif [ -d "$APPDIR/opt/python" ]; then
-  PYTHON_ROOT="$APPDIR/opt/python"
-fi
-GIT_ROOT=""
-if [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/opt/git" ]; then
-  GIT_ROOT="$EXTRA_ROOT/opt/git"
-elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/git" ]; then
-  GIT_ROOT="$EXTRA_ROOT/git"
-elif [ -d "$APPDIR/opt/git" ]; then
-  GIT_ROOT="$APPDIR/opt/git"
-fi
-PY_VER="3.11"
-if [ -n "$PYTHON_ROOT" ] && [ -f "$PYTHON_ROOT/.wunder-python-version" ]; then
-  PY_VER="$(cat "$PYTHON_ROOT/.wunder-python-version" 2>/dev/null || echo "3.11")"
-fi
-PATH_PREFIX=""
-if [ -n "$GIT_ROOT" ] && [ -d "$GIT_ROOT/bin" ]; then
-  PATH_PREFIX="$GIT_ROOT/bin"
-fi
-if [ -n "$PYTHON_ROOT" ]; then
-  export PYTHONHOME="$PYTHON_ROOT"
-  export PYTHONPATH="$PYTHON_ROOT/lib/python${PY_VER}/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-  export WUNDER_PYTHON_BIN="$PYTHON_ROOT/bin/python3"
-  export PATH="${PATH_PREFIX:+$PATH_PREFIX:}$PYTHON_ROOT/bin:${PATH:-}"
-  export PYTHONNOUSERSITE=1
-  export PIP_NO_INDEX=1
-  if [ -f "$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem" ]; then
-    export SSL_CERT_FILE="$PYTHON_ROOT/lib/python${PY_VER}/site-packages/certifi/cacert.pem"
-  fi
-  if [ -d "$PYTHON_ROOT/share/cartopy" ]; then
-    export CARTOPY_DATA_DIR="$PYTHON_ROOT/share/cartopy"
-  fi
-else
-  export PATH="${PATH_PREFIX:+$PATH_PREFIX:}${PATH:-}"
-fi
-# Keep Electron on AppImage/system libs; avoid sidecar git/python libs polluting main process.
-export LD_LIBRARY_PATH="$APPDIR/usr/lib/wunder-playwright:$APPDIR/usr/lib:${LD_LIBRARY_PATH:-}"
-PLAYWRIGHT_DIR=""
-if [ -n "$APPIMAGE_DIR" ] && [ -d "$APPIMAGE_DIR/wunder-playwright" ]; then
-  PLAYWRIGHT_DIR="$APPIMAGE_DIR/wunder-playwright"
-elif [ -n "$EXTRA_ROOT" ] && [ -d "$EXTRA_ROOT/playwright" ]; then
-  PLAYWRIGHT_DIR="$EXTRA_ROOT/playwright"
-elif [ -n "$PYTHON_ROOT" ] && [ -d "$PYTHON_ROOT/playwright" ]; then
-  PLAYWRIGHT_DIR="$PYTHON_ROOT/playwright"
-fi
-if [ -n "$PLAYWRIGHT_DIR" ]; then
-  export PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_DIR"
-fi
-if [ -n "$GIT_ROOT" ]; then
-  if [ -d "$GIT_ROOT/libexec/git-core" ]; then
-    export GIT_EXEC_PATH="$GIT_ROOT/libexec/git-core"
-  fi
-  if [ -d "$GIT_ROOT/share/git-core/templates" ]; then
-    export GIT_TEMPLATE_DIR="$GIT_ROOT/share/git-core/templates"
-  fi
-  if [ -x "$GIT_ROOT/bin/git" ]; then
-    export WUNDER_GIT_BIN="$GIT_ROOT/bin/git"
-  fi
-fi
-MAIN_BIN=""
-for candidate in "$APPDIR/usr/bin/wunder-desktop" "$APPDIR/wunder-desktop"; do
-  if [ -x "$candidate" ]; then
-    MAIN_BIN="$candidate"
-    break
-  fi
-done
-if [ -z "$MAIN_BIN" ]; then
-  echo "wunder-desktop binary not found under $APPDIR" >&2
-  exit 127
-fi
-exec "$MAIN_BIN" "$@"
-EOF
   chmod +x "${APPDIR}/AppRun"
 fi
 
@@ -551,11 +516,20 @@ if [ -x "$(dirname "${APPIMAGETOOL_RUNNER}")/usr/bin/mksquashfs" ]; then
   APPIMAGE_MKSQUASHFS_BIN="$(dirname "${APPIMAGETOOL_RUNNER}")/usr/bin/mksquashfs"
 fi
 APPIMAGE_COMP=$(resolve_supported_appimage_comp "${APPIMAGE_COMP}" "${APPIMAGE_MKSQUASHFS_BIN}")
-APPIMAGE_TOOL_ARGS=("${APPDIR}" "${OUT_PATH}")
+APPIMAGE_TOOL_ARGS=()
 if supports_appimage_compression_flag "${APPIMAGETOOL_RUNNER}"; then
-  APPIMAGE_TOOL_ARGS=(--comp "${APPIMAGE_COMP}" "${APPDIR}" "${OUT_PATH}")
+  APPIMAGE_TOOL_ARGS+=(--comp "${APPIMAGE_COMP}")
   echo "Using AppImage squashfs compression: ${APPIMAGE_COMP}"
 fi
+if [ -n "${APPIMAGE_RUNTIME_FILE}" ]; then
+  if [ ! -f "${APPIMAGE_RUNTIME_FILE}" ]; then
+    echo "APPIMAGE_RUNTIME_FILE does not exist: ${APPIMAGE_RUNTIME_FILE}" >&2
+    exit 1
+  fi
+  APPIMAGE_TOOL_ARGS+=(--runtime-file "${APPIMAGE_RUNTIME_FILE}")
+  echo "Using AppImage runtime file: ${APPIMAGE_RUNTIME_FILE}"
+fi
+APPIMAGE_TOOL_ARGS+=("${APPDIR}" "${OUT_PATH}")
 
 if [[ "${APPIMAGETOOL_RUNNER}" == *.AppImage ]]; then
   APPIMAGE_EXTRACT_AND_RUN=1 "${APPIMAGETOOL_RUNNER}" "${APPIMAGE_TOOL_ARGS[@]}"

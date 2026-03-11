@@ -16,6 +16,7 @@ mod read_image_tool;
 mod search_content_tool;
 mod skill_call;
 mod sleep_tool;
+mod swarm_realtime;
 
 #[cfg(test)]
 pub(crate) use catalog::builtin_tool_specs_with_language;
@@ -92,6 +93,10 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+use swarm_realtime::{
+    emit_swarm_run_started, emit_swarm_run_terminal, emit_swarm_task_dispatched,
+    emit_swarm_task_updated, sync_swarm_run_summary,
+};
 use tokio::io::AsyncReadExt;
 use tokio::sync::oneshot;
 use tokio::time::{sleep, timeout};
@@ -1852,7 +1857,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         };
 
     let mother_agent_id = claim_swarm_mother_for_context(context, user_id, &swarm_hive_id)?;
-    let run_record = create_swarm_team_run_record(
+    let mut run_record = create_swarm_team_run_record(
         context,
         user_id,
         &swarm_hive_id,
@@ -1861,6 +1866,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         1,
     );
     context.storage.upsert_team_run(&run_record)?;
+    emit_swarm_run_started(context, &run_record);
     let mut task_record = create_swarm_team_task_record(
         &run_record,
         &target_agent_id,
@@ -1869,6 +1875,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         0,
     );
     context.storage.upsert_team_task(&task_record)?;
+    emit_swarm_task_dispatched(context, &run_record, &task_record);
     let dispatch_message = build_swarm_dispatch_message(
         context.storage.as_ref(),
         context.monitor.as_deref(),
@@ -1938,6 +1945,12 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         task_record.finished_time = Some(task_record.updated_time);
     }
     context.storage.upsert_team_task(&task_record)?;
+    emit_swarm_task_updated(context, &run_record, &task_record);
+    let (terminal, failed) =
+        sync_swarm_run_summary(context, &mut run_record, std::slice::from_ref(&task_record))?;
+    if terminal {
+        emit_swarm_run_terminal(context, &run_record, failed);
+    }
     if let Value::Object(ref mut map) = result {
         map.insert("agent_id".to_string(), json!(target_agent_id));
         map.insert("session_id".to_string(), json!(target_session_id));
@@ -1982,7 +1995,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
     let current_agent_id = current_agent_id(context);
     let swarm_hive_id = resolve_swarm_hive_id(context, user_id, swarm_hive_arg(args))?;
     let mother_agent_id = claim_swarm_mother_for_context(context, user_id, &swarm_hive_id)?;
-    let run_record = create_swarm_team_run_record(
+    let mut run_record = create_swarm_team_run_record(
         context,
         user_id,
         &swarm_hive_id,
@@ -1991,6 +2004,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         payload.tasks.len(),
     );
     context.storage.upsert_team_run(&run_record)?;
+    emit_swarm_run_started(context, &run_record);
     let allowed_tools = collect_user_allowed_tools(context, user_id)?;
 
     let agent_access = context.storage.get_user_agent_access(user_id)?;
@@ -2154,6 +2168,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
             0,
         );
         context.storage.upsert_team_task(&task_record)?;
+        emit_swarm_task_dispatched(context, &run_record, &task_record);
         let dispatch_message = build_swarm_dispatch_message(
             context.storage.as_ref(),
             context.monitor.as_deref(),
@@ -2239,6 +2254,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                         task_record.finished_time = Some(task_record.updated_time);
                     }
                     context.storage.upsert_team_task(task_record)?;
+                    emit_swarm_task_updated(context, &run_record, task_record);
                 }
                 let task_id = result.get("task_id").cloned().unwrap_or_else(|| {
                     task_records_by_index
@@ -2272,6 +2288,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
                     task_record.updated_time = now_ts();
                     task_record.finished_time = Some(task_record.updated_time);
                     context.storage.upsert_team_task(task_record)?;
+                    emit_swarm_task_updated(context, &run_record, task_record);
                 }
                 indexed_items.push((
                     index,
@@ -2305,6 +2322,11 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         })
         .count();
     let failed_total = items.len().saturating_sub(accepted_total);
+    let run_tasks = task_records_by_index.values().cloned().collect::<Vec<_>>();
+    let (terminal, failed) = sync_swarm_run_summary(context, &mut run_record, &run_tasks)?;
+    if terminal {
+        emit_swarm_run_terminal(context, &run_record, failed);
+    }
 
     let mut response = json!({
         "status": if accepted_total > 0 {

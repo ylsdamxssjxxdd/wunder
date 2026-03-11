@@ -632,6 +632,7 @@
   'channels.form.xmpp.hostPlaceholder': 'For example: xmpp.example.com',
   'channels.form.xmpp.port': 'Server Port (Optional)',
   'channels.form.xmpp.portPlaceholder': 'Default 5222/5223',
+  'channels.form.xmpp.trustSelfSigned': 'Trust private certificate (default)',
   'channels.form.xmpp.directTls': 'Use Direct TLS (5223)',
   'channels.form.xmpp.mucNick': 'MUC Nickname (Optional)',
   'channels.form.xmpp.mucNickPlaceholder': 'Used to filter self messages in MUC',

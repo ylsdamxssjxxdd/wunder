@@ -24,7 +24,6 @@
 - 用户侧前端维护了浅/深两套主题，在修改界面时注意整体考虑页面搭配，避免颜色不适配的情况
 - 会话轮次拆分为“用户轮次/模型轮次”：用户每发送一条消息记 1 轮用户轮次；模型每执行一次动作（模型调用、工具调用或最终回复）记 1 轮模型轮次；一次会话可包含多轮用户轮次，每轮用户轮次可包含多轮模型轮次。
 - 各种通讯的实现以WebSocket为先，SSE作为兜底
-- 可以参考skills/wunder-agent-dev进行wunder系统的开发工作，并且在每次你彻底完成用户的任务后，可以将你任务有价值，技能里没有记载但对后期开发有必要的文字和脚本等资源补充进来。
 - 你在开发的过程中，其他开发者也会在修改文件，如果你遇到了不是你修改的文件，不必理会
 - 后端的开发，明确好功能需求，并且一定做好测试，保证上线可用
 - 超过2000行代码的文件，视为维护状态，新增的功能请用新的文件，做好模块化设计，便于后期维护和协同开发
@@ -40,3 +39,54 @@
 - 能用方法引用时优先用方法引用，减少多余闭包（clippy::redundant_closure_for_method_calls）。
 - 测试中优先对完整对象做 `assert_eq!`，避免逐字段对比。
 - Rust 代码变更完成后记得运行 `cargo check` 要消除所有错误和告警，必要时运行 `cargo clippy`。
+
+## 项目结构提示（可能滞后，你可以根据你看到的最新情况来更新）
+
+- 目录落点优先按“职责边界”而不是“调用方便”决定，避免跨层耦合。
+
+### 1) 顶层目录职责（以当前仓库为准）
+
+- `src/`：Rust 后端主工程（server 核心）。
+- `frontend/`：用户侧前端（Vue3，浅色/深色双主题）。
+- `web/`：管理端/调试端前端（原生 HTML + JS 模块）。
+- `wunder-cli/`：CLI 运行形态（含 TUI）。
+- `wunder-desktop/`：Tauri 桌面形态与本地桥接。
+- `wunder-desktop-electron/`：Electron 桌面壳与打包资源。
+- `config/`：基础配置与 i18n/font/matplotlib 等运行配置。
+- `docs/`：设计、API、系统介绍、功能迭代等文档。
+- `scripts/`：仓库级脚本（含 `update_feature_log.py`）。
+- `tests/`：后端集成/回归测试。
+- `prompts/`：系统提示词模板（`zh/`、`en/`）。
+- `knowledge/`：知识库内容。
+- `extra_mcp/`：额外 MCP 运行时与工具脚本。
+- `docker-extra/`、`packaging/`：构建与分发附加资源。
+- `images/`、`fonts/`：图标与字体资源。
+- `target/`、`frontend/node_modules/`、`temp_dir/`：构建/临时产物目录，不放业务源码与长期资料。
+
+### 2) `src/` 后端分层建议
+
+- `src/api/`：HTTP/WS 路由与请求/响应编排，保持薄层，避免堆业务逻辑。
+- `src/services/`：核心业务实现（chat、agents、tools、skills、cron、workspace 等）。
+- `src/orchestrator/`：模型调度、工具执行编排、上下文与流式事件控制。
+- `src/channels/`：外部渠道适配（企微/飞书/WhatsApp/XMPP/QQ 等）。
+- `src/storage/`：存储抽象与实现（Postgres/SQLite）。
+- `src/core/`：配置、状态、鉴权、通用工具函数与基础能力。
+- `src/sandbox/`：沙盒服务与运行时接入。
+- `src/ops/`：监控、性能、吞吐、评估等运维能力。
+- `src/bin/`：仿真/演练入口（`*_sim`）。
+- `src/gateway/`、`src/lsp/`：网关与 LSP 相关入口模块（按现有结构扩展）。
+
+### 3) 常见开发落点规则
+
+- 新增接口：优先改 `src/api/*` + `src/services/*`，并同步更新 `docs/API文档.md`。
+- 新增工具：优先在 `src/services/tools/` 新建文件并接入注册链路；不要继续向 `src/services/tools.rs` 堆功能。
+- 新增用户端页面能力：优先拆分到 `frontend/src/views/messenger/` 与 `frontend/src/components/messenger/`；不要继续向 `frontend/src/views/MessengerView.vue` 堆功能。
+- 管理端页面改动：放在 `web/modules/` 与 `web/styles/`，避免在 `web/app.js` 写大段耦合逻辑。
+- 桌面端资源/打包改动：优先放 `wunder-desktop-electron/resources/`、`wunder-desktop-electron/scripts/` 或 `wunder-desktop/` 对应模块。
+- 每次任务完成后必须通过脚本更新 `docs/功能迭代.md`，不要手写破坏分类结构。
+
+### 4) 协作与维护约束
+
+- 单文件超过 2000 行视为维护态，新增功能请拆新文件并在原处保留最小入口。
+- 搜索前端代码时限制范围到 `frontend/src` 下具体子目录，不要直接扫 `frontend/` 根目录。
+- 运行时/临时数据不要沉淀在业务源码目录，示例与文档放 `docs/`，脚本放 `scripts/`，知识内容放 `knowledge/`。

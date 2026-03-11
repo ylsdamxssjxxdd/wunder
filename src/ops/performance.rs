@@ -453,6 +453,7 @@ fn build_tool_context<'a>(context: &'a PerformanceContext, session_id: &'a str) 
         storage: context.state.storage.clone(),
         orchestrator: Some(context.orchestrator.clone()),
         monitor: Some(context.state.monitor.clone()),
+        beeroom_realtime: None,
         workspace: context.workspace.clone(),
         lsp_manager: context.lsp_manager.clone(),
         config: context.config.as_ref(),

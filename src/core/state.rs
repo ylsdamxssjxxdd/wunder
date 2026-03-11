@@ -171,6 +171,7 @@ impl AppState {
             storage.clone(),
             gateway.clone(),
             user_world.clone(),
+            beeroom_realtime.clone(),
             Some(cron_wake_signal.clone()),
         ));
         let swarm_service = Arc::new(SwarmService::new(storage.clone()));
@@ -180,6 +181,7 @@ impl AppState {
             workspace.clone(),
             monitor.clone(),
             orchestrator.clone(),
+            beeroom_realtime.clone(),
         );
         if options.start_team_run_runner {
             team_run_runner.clone().start();

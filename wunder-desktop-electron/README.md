@@ -112,6 +112,12 @@ Electron 启动时会：
 - `WUNDER_FRONTEND_ROOT`：覆盖前端资源目录（运行时）
 - `WUNDER_BRIDGE_BIN`：打包时指定桥接程序路径（prepare-resources）
 - `WUNDER_DISABLE_GPU=1`：禁用硬件加速（用于排查 GPU/驱动问题）
+- `WUNDER_SUPPRESS_GPU_WARNINGS=0`：关闭默认 GPU 警告抑制（默认启用抑制）
+- `WUNDER_LOADING_SHELL_DELAY_MS=0`：配置启动壳页延迟（发布版默认 1200ms，开发模式默认 220ms）
+- `WUNDER_BRIDGE_LOG_VERBOSE=1`：打印 bridge 全量 stdout（默认仅关键行）
+- `WUNDER_STARTUP_TIMING=1`：发布版开启启动时序日志（默认关闭）
+- `WUNDER_SIDECAR_RUNTIME=1`：标记 sidecar 运行态（通常由 sidecar AppRun 自动注入）
+- `WUNDER_SIDECAR_FORCE_DISABLE_GPU=0`：关闭 sidecar 默认禁用 GPU 的策略
 
 ### UI 行为
 - 默认移除菜单栏（避免出现 View / Edit 等菜单）。
@@ -124,7 +130,9 @@ Electron 启动时会：
 ## 常见问题
 
 ### 1) 运行时提示 “todo need put discard in shader”
-这是 Chromium/ANGLE 的 GPU 日志噪声，已默认降低日志级别。
+这是 Chromium/ANGLE/Mesa 的 GPU 日志噪声。
+现在默认会抑制常见 GPU 噪声（`MESA_LOG_LEVEL=error`、`MESA_DEBUG=silent`、`LIBGL_DEBUG=quiet`、禁用 Vulkan）。
+sidecar 模式默认会禁用 GPU（可用 `WUNDER_SIDECAR_FORCE_DISABLE_GPU=0` + `WUNDER_DISABLE_GPU=0` 还原）。
 若仍频繁出现，可尝试设置：
 ```bash
 WUNDER_DISABLE_GPU=1

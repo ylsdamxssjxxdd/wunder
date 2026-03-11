@@ -16,7 +16,6 @@ const {
 const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
 const fs = require('fs')
-const http = require('http')
 const net = require('net')
 const path = require('path')
 
@@ -30,7 +29,23 @@ let tray = null
 let closePromptInFlight = false
 let closeBehavior = 'ask'
 let linuxDesktopIntegrationScheduled = false
+const parseEnvNonNegativeNumber = (raw, fallbackValue) => {
+  const parsed = Number(raw)
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed
+  }
+  return fallbackValue
+}
 const disableBackgroundThrottling = process.env.WUNDER_DISABLE_BACKGROUND_THROTTLING === '1'
+const sidecarRuntime = process.env.WUNDER_SIDECAR_RUNTIME === '1'
+const disableGpu = process.env.WUNDER_DISABLE_GPU === '1'
+const suppressGpuWarnings = process.env.WUNDER_SUPPRESS_GPU_WARNINGS !== '0'
+const bridgeVerboseLogs = process.env.WUNDER_BRIDGE_LOG_VERBOSE === '1'
+const defaultLoadingShellDelayMs = app.isPackaged ? 1200 : 220
+const loadingShellDelayMs = parseEnvNonNegativeNumber(
+  process.env.WUNDER_LOADING_SHELL_DELAY_MS,
+  defaultLoadingShellDelayMs
+)
 
 const SCREENSHOT_HIDE_DELAY_MS = 220
 const SCREENSHOT_SELECTOR_RESULT_CHANNEL = 'wunder:screenshot-region-selected'
@@ -43,7 +58,10 @@ const DEFAULT_OVERLAY_DONE_MS = 2000
 const DEFAULT_OVERLAY_MIN_HIDE_MS = 400
 const OVERLAY_BOX_SIZE = 80
 
-const startupTimingEnabled = process.env.WUNDER_STARTUP_TIMING !== '0'
+const startupTimingEnabled =
+  process.env.WUNDER_STARTUP_TIMING !== undefined
+    ? process.env.WUNDER_STARTUP_TIMING !== '0'
+    : !app.isPackaged
 const startupBootNs = process.hrtime.bigint()
 
 const elapsedMsSince = (startedNs) => Number(process.hrtime.bigint() - startedNs) / 1_000_000
@@ -488,11 +506,31 @@ const showMonitorOverlay = (payload) => {
   return true
 }
 
-app.commandLine.appendSwitch('log-level', '2')
+const chromiumLogLevel = process.env.WUNDER_CHROMIUM_LOG_LEVEL || (suppressGpuWarnings ? '3' : '2')
+app.commandLine.appendSwitch('log-level', chromiumLogLevel)
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('class', 'wunder-desktop')
+  if (suppressGpuWarnings) {
+    if (!process.env.MESA_LOG_LEVEL) {
+      process.env.MESA_LOG_LEVEL = 'error'
+    }
+    if (!process.env.MESA_DEBUG) {
+      process.env.MESA_DEBUG = 'silent'
+    }
+    if (!process.env.LIBGL_DEBUG) {
+      process.env.LIBGL_DEBUG = 'quiet'
+    }
+    if (!process.env.EGL_LOG_LEVEL) {
+      process.env.EGL_LOG_LEVEL = 'error'
+    }
+    if (!process.env.VK_LOADER_DEBUG) {
+      process.env.VK_LOADER_DEBUG = 'error'
+    }
+    app.commandLine.appendSwitch('disable-vulkan')
+    app.commandLine.appendSwitch('disable-features', 'Vulkan')
+  }
 }
-if (process.env.WUNDER_DISABLE_GPU === '1') {
+if (disableGpu || sidecarRuntime) {
   app.disableHardwareAcceleration()
 }
 
@@ -1482,25 +1520,17 @@ const waitForBridge = (resolvePort, timeoutMs = 15000) =>
         retry()
         return
       }
-      const req = http.get(
-        {
-          hostname: '127.0.0.1',
-          port,
-          path: '/config.json',
-          timeout: 1000
-        },
-        (res) => {
-          res.resume()
-          if (res.statusCode === 200) {
-            resolve({ attempts })
-            return
-          }
-          retry()
-        }
-      )
-      req.on('error', retry)
-      req.on('timeout', () => {
-        req.destroy()
+      const socket = net.connect({ host: '127.0.0.1', port })
+      socket.once('connect', () => {
+        socket.destroy()
+        resolve({ attempts })
+      })
+      socket.once('error', () => {
+        socket.destroy()
+        retry()
+      })
+      socket.setTimeout(700, () => {
+        socket.destroy()
         retry()
       })
     }
@@ -1738,7 +1768,11 @@ const startBridge = async () => {
       if (!trimmed) {
         continue
       }
-      console.log(`[bridge] ${trimmed}`)
+      const isStartupLine = trimmed.startsWith('[startup]')
+      const isInfoLine = /\bINFO\b/.test(trimmed)
+      if (bridgeVerboseLogs || (!isStartupLine && !isInfoLine)) {
+        console.log(`[bridge] ${trimmed}`)
+      }
       const parsedPort = parseBridgePort(trimmed)
       if (parsedPort) {
         bridgePort = parsedPort
@@ -2072,24 +2106,49 @@ const createWindow = async () => {
     }
   })
   const loadingHtml = createLoadingHtml()
-  const loadShellNs = process.hrtime.bigint()
-  await mainWindow
-    .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHtml)}`)
-    .catch(() => {})
-  logStartupSegment('electron', 'window_loading_shell_loaded', loadShellNs)
+  const bridgeReadyPromise = startBridge()
+  let shellLoadStarted = false
+  let targetLoadStarted = false
+  let shellTimer = null
+  const loadShellIfNeeded = async () => {
+    if (shellLoadStarted || targetLoadStarted) {
+      return
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return
+    }
+    shellLoadStarted = true
+    const loadShellNs = process.hrtime.bigint()
+    await mainWindow
+      .loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHtml)}`)
+      .catch(() => {})
+    logStartupSegment('electron', 'window_loading_shell_loaded', loadShellNs)
+  }
+  if (loadingShellDelayMs === 0) {
+    void loadShellIfNeeded()
+  } else {
+    shellTimer = setTimeout(() => {
+      void loadShellIfNeeded()
+    }, loadingShellDelayMs)
+  }
 
   const startBridgeAndLoad = async () => {
     const startBridgeAndLoadNs = process.hrtime.bigint()
     try {
       const bridgeReadyForWindowNs = process.hrtime.bigint()
-      const port = await startBridge()
+      const port = await bridgeReadyPromise
       logStartupSegment('electron', 'bridge_ready_for_window', bridgeReadyForWindowNs, {
         port
       })
+      if (shellTimer) {
+        clearTimeout(shellTimer)
+        shellTimer = null
+      }
       const target = bridgeWebBase ? `${bridgeWebBase}/` : `http://127.0.0.1:${port}/`
       if (!mainWindow || mainWindow.isDestroyed()) {
         return
       }
+      targetLoadStarted = true
       const loadTargetNs = process.hrtime.bigint()
       await mainWindow.loadURL(target)
       logStartupSegment('electron', 'window_target_loaded', loadTargetNs, {
@@ -2097,6 +2156,10 @@ const createWindow = async () => {
       })
       logStartupSegment('electron', 'start_bridge_and_load_total', startBridgeAndLoadNs)
     } catch (err) {
+      if (shellTimer) {
+        clearTimeout(shellTimer)
+        shellTimer = null
+      }
       logStartupPoint('electron', 'start_bridge_and_load_failed', {
         message: err?.message || String(err)
       })

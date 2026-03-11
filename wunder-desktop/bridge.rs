@@ -412,13 +412,15 @@ fn mask_token(token: &str) -> String {
 }
 
 fn startup_timing_enabled() -> bool {
-    !matches!(
-        std::env::var("WUNDER_STARTUP_TIMING")
-            .ok()
-            .map(|value| value.trim().to_ascii_lowercase())
-            .as_deref(),
-        Some("0" | "false" | "off" | "no")
-    )
+    match std::env::var("WUNDER_STARTUP_TIMING")
+        .ok()
+        .map(|value| value.trim().to_ascii_lowercase())
+    {
+        Some(value) if matches!(value.as_str(), "1" | "true" | "on" | "yes") => true,
+        Some(value) if matches!(value.as_str(), "0" | "false" | "off" | "no") => false,
+        Some(_) => true,
+        None => cfg!(debug_assertions),
+    }
 }
 
 fn startup_elapsed_ms(started: Instant) -> f64 {

@@ -729,8 +729,15 @@ async fn run_export_job_inner(
     let mut worker_reports = Vec::new();
     let mut total_skill_links = 0usize;
     let mut exported_skill_names = BTreeSet::new();
+    let mut occupied_worker_id_keys = HashSet::new();
     for (index, agent) in agents.iter().enumerate() {
-        let worker_id = export_worker_id(agent, index);
+        let preferred_worker_id = export_worker_id(agent, index);
+        let worker_id = unique_label_with_reserved(
+            &preferred_worker_id,
+            &occupied_worker_id_keys,
+            &format!("worker-{}", index + 1),
+        );
+        occupied_worker_id_keys.insert(normalize_conflict_key(&worker_id));
         let worker_dir = package_root.join("workers").join(&worker_id);
         std::fs::create_dir_all(&worker_dir)?;
         std::fs::write(
@@ -1679,16 +1686,13 @@ fn normalize_import_conflict_mode(raw: Option<&str>) -> ImportConflictMode {
 }
 
 fn export_worker_id(agent: &UserAgentRecord, index: usize) -> String {
-    let preferred = if !agent.agent_id.trim().is_empty() {
-        normalize_name(&agent.agent_id, "worker")
+    let indexed_fallback = format!("worker-{}", index + 1);
+    let id_fallback = if agent.agent_id.trim().is_empty() {
+        indexed_fallback.clone()
     } else {
-        normalize_name(&agent.name, "worker")
+        normalize_name(&agent.agent_id, &indexed_fallback)
     };
-    if preferred.is_empty() {
-        format!("worker-{}", index + 1)
-    } else {
-        preferred
-    }
+    normalize_export_filename_stem(&agent.name, &id_fallback)
 }
 
 fn write_skill_meta(skill_root: &Path, skill_name: &str) -> Result<()> {
@@ -2140,12 +2144,14 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_approval_mode, normalize_conflict_key, normalize_export_filename_stem,
-        normalize_import_conflict_mode, normalize_name, resolve_import_skill_name,
-        resolve_import_workers, resolve_worker_skill_sources, unique_label_with_reserved,
-        unique_slug_with_reserved, validate_archive_entry_path, validate_hive_manifest,
-        validate_relative_path, HiveManifest, HivePackMeta, ImportConflictMode, WorkerManifest,
+        export_worker_id, normalize_approval_mode, normalize_conflict_key,
+        normalize_export_filename_stem, normalize_import_conflict_mode, normalize_name,
+        resolve_import_skill_name, resolve_import_workers, resolve_worker_skill_sources,
+        unique_label_with_reserved, unique_slug_with_reserved, validate_archive_entry_path,
+        validate_hive_manifest, validate_relative_path, HiveManifest, HivePackMeta,
+        ImportConflictMode, WorkerManifest,
     };
+    use crate::storage::{UserAgentRecord, DEFAULT_SANDBOX_CONTAINER_ID};
     use std::collections::HashSet;
     use tempfile::tempdir;
 
@@ -2342,5 +2348,27 @@ mod tests {
             "人力资源蜂群"
         );
         assert_eq!(normalize_export_filename_stem("  ", "hive_123"), "hive_123");
+    }
+
+    #[test]
+    fn export_worker_id_prefers_agent_name_over_numeric_id() {
+        let agent = UserAgentRecord {
+            agent_id: "worker_1234567890".to_string(),
+            user_id: "u_1".to_string(),
+            hive_id: "hive_1".to_string(),
+            name: "Recruit Specialist".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            tool_names: Vec::new(),
+            access_level: "private".to_string(),
+            approval_mode: "suggest".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+            created_at: 0.0,
+            updated_at: 0.0,
+        };
+        assert_eq!(export_worker_id(&agent, 0), "Recruit-Specialist");
     }
 }

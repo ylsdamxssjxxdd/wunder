@@ -667,6 +667,12 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
         placeholderKey: 'channels.form.xmpp.portPlaceholder'
       },
       {
+        key: 'trust_self_signed',
+        labelKey: 'channels.form.xmpp.trustSelfSigned',
+        type: 'checkbox',
+        defaultValue: true
+      },
+      {
         key: 'direct_tls',
         labelKey: 'channels.form.xmpp.directTls',
         type: 'checkbox',

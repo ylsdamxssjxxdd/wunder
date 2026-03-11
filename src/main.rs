@@ -50,6 +50,7 @@ use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    core::rustls_provider::install_process_default_provider();
     // 初始化配置存储，用于鉴权与路由行为保持一致。
     let config_store = ConfigStore::new(ConfigStore::override_path_default());
     let config = config_store.get().await;

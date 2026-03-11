@@ -9,6 +9,7 @@ pub mod i18n;
 pub mod json_schema;
 pub mod path_utils;
 pub mod python_runtime;
+pub mod rustls_provider;
 pub mod schemas;
 pub mod shutdown;
 pub mod state;

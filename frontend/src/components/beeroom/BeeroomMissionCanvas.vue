@@ -316,10 +316,16 @@ import {
 } from '@/api/chat';
 import { useI18n } from '@/i18n';
 import { useChatStore } from '@/stores/chat';
+import {
+  useBeeroomStore,
+  type BeeroomGroup,
+  type BeeroomMember,
+  type BeeroomMission,
+  type BeeroomMissionTask
+} from '@/stores/beeroom';
 import { consumeSseStream } from '@/utils/sse';
 import { createWsMultiplexer } from '@/utils/ws';
 import { DEFAULT_AGENT_KEY } from '@/views/messenger/model';
-import type { BeeroomGroup, BeeroomMember, BeeroomMission, BeeroomMissionTask } from '@/stores/beeroom';
 import {
   getBeeroomMissionCanvasState,
   setBeeroomMissionCanvasState,
@@ -421,7 +427,17 @@ const MANUAL_CHAT_HISTORY_LIMIT = 120;
 const CHAT_POLL_INTERVAL_MS = 2000;
 const CHAT_WS_RETRY_DELAY_MS = 1400;
 const CHAT_SSE_RETRY_DELAY_MS = 2200;
+const TEAM_REALTIME_REFRESH_THROTTLE_MS = 700;
 const CARD_ACCENT_PALETTE = ['#3b82f6', '#8b5cf6', '#22c55e', '#06b6d4', '#eab308', '#f97316', '#ef4444'];
+const TEAM_RUNTIME_EVENT_TYPES = new Set([
+  'team_start',
+  'team_task_dispatch',
+  'team_task_update',
+  'team_task_result',
+  'team_merge',
+  'team_finish',
+  'team_error'
+]);
 
 const beeroomWsClient = createWsMultiplexer(() => openBeeroomSocket({ allowQueryToken: true }), {
   idleTimeoutMs: 20000,
@@ -448,6 +464,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 const chatStore = useChatStore();
+const beeroomStore = useBeeroomStore();
 const screenRef = ref<HTMLElement | null>(null);
 const boardRef = ref<HTMLDivElement | null>(null);
 const canvasRef = ref<HTMLDivElement | null>(null);
@@ -496,6 +513,8 @@ let chatWatchRetryTimer: number | null = null;
 let chatSseRetryTimer: number | null = null;
 let chatSseSource: EventSource | null = null;
 let chatSseGroupId = '';
+let teamRealtimeReconcileTimer: number | null = null;
+let lastTeamRealtimeRefreshAt = 0;
 let dispatchStreamController: AbortController | null = null;
 let dispatchStopRequested = false;
 let dispatchFlowTimer: number | null = null;
@@ -2086,6 +2105,7 @@ watch(
   activeGroupId,
   (groupId) => {
     resetDispatchRuntime();
+    lastTeamRealtimeRefreshAt = 0;
     composerText.value = '';
     composerError.value = '';
     void loadManualChatHistory();
@@ -2503,6 +2523,33 @@ function clearChatSseRetry() {
   }
 }
 
+function clearTeamRealtimeReconcileTimer() {
+  if (teamRealtimeReconcileTimer !== null) {
+    window.clearTimeout(teamRealtimeReconcileTimer);
+    teamRealtimeReconcileTimer = null;
+  }
+}
+
+function scheduleTeamRealtimeReconcile(immediate = false) {
+  if (typeof window === 'undefined') {
+    emit('refresh');
+    return;
+  }
+  const now = Date.now();
+  const run = () => {
+    clearTeamRealtimeReconcileTimer();
+    lastTeamRealtimeRefreshAt = Date.now();
+    emit('refresh');
+  };
+  if (immediate || now - lastTeamRealtimeRefreshAt >= TEAM_REALTIME_REFRESH_THROTTLE_MS) {
+    run();
+    return;
+  }
+  if (teamRealtimeReconcileTimer !== null) return;
+  const delayMs = TEAM_REALTIME_REFRESH_THROTTLE_MS - (now - lastTeamRealtimeRefreshAt);
+  teamRealtimeReconcileTimer = window.setTimeout(run, Math.max(80, Math.floor(delayMs)));
+}
+
 function stopChatSseWatch() {
   clearChatSseRetry();
   if (chatSseSource) {
@@ -2570,6 +2617,7 @@ function startChatSseWatch(groupId: string) {
   bindEvent('sync_required');
   bindEvent('chat_cleared');
   bindEvent('chat_message');
+  TEAM_RUNTIME_EVENT_TYPES.forEach((name) => bindEvent(name));
 
   source.onerror = () => {
     if (chatSseSource !== source) return;
@@ -2588,6 +2636,7 @@ function startChatSseWatch(groupId: string) {
 function stopChatRealtimeWatch() {
   clearChatWatchRetry();
   stopChatSseWatch();
+  clearTeamRealtimeReconcileTimer();
   if (chatWatchController) {
     chatWatchController.abort();
     chatWatchController = null;
@@ -2615,7 +2664,8 @@ function handleChatRealtimeEvent(
   if (
     (normalizedType === 'chat_message' ||
       normalizedType === 'chat_cleared' ||
-      normalizedType === 'sync_required') &&
+      normalizedType === 'sync_required' ||
+      TEAM_RUNTIME_EVENT_TYPES.has(normalizedType)) &&
     chatRealtimeTransport.value !== transport
   ) {
     chatRealtimeTransport.value = transport;
@@ -2633,6 +2683,7 @@ function handleChatRealtimeEvent(
   }
   if (normalizedType === 'sync_required') {
     void loadManualChatHistory();
+    scheduleTeamRealtimeReconcile(true);
     return;
   }
   if (normalizedType === 'chat_cleared') {
@@ -2644,6 +2695,12 @@ function handleChatRealtimeEvent(
     if (message) {
       appendManualChatMessage(message);
     }
+    return;
+  }
+  if (TEAM_RUNTIME_EVENT_TYPES.has(normalizedType)) {
+    const accepted = beeroomStore.applyRealtimeEvent(groupId, normalizedType, payload);
+    // Always run a throttled background reconcile so event loss or partial payloads self-heal quickly.
+    scheduleTeamRealtimeReconcile(!accepted || normalizedType === 'team_finish' || normalizedType === 'team_error');
     return;
   }
 }

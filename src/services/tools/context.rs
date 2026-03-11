@@ -6,6 +6,7 @@ use crate::lsp::LspManager;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::path_utils::{is_within_root, normalize_existing_path, normalize_path_for_compare};
+use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::skills::SkillRegistry;
 use crate::storage::StorageBackend;
 use crate::user_tools::{UserToolBindings, UserToolManager, UserToolStore};
@@ -54,6 +55,7 @@ pub struct ToolContext<'a> {
     pub storage: Arc<dyn StorageBackend>,
     pub orchestrator: Option<Arc<Orchestrator>>,
     pub monitor: Option<Arc<MonitorState>>,
+    pub beeroom_realtime: Option<Arc<BeeroomRealtimeService>>,
     pub workspace: Arc<WorkspaceManager>,
     pub lsp_manager: Arc<LspManager>,
     pub config: &'a Config,

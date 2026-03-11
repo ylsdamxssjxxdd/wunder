@@ -381,6 +381,7 @@ fn desktop_window_start_dragging(window: tauri::WebviewWindow) -> Result<(), Str
 }
 
 fn main() -> Result<()> {
+    wunder_server::rustls_provider::install_process_default_provider();
     init_tracing();
     let args = DesktopArgs::parse();
 

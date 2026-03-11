@@ -547,6 +547,7 @@ impl Orchestrator {
                     storage: self.storage.clone(),
                     orchestrator: Some(Arc::new(self.clone())),
                     monitor: Some(self.monitor.clone()),
+                    beeroom_realtime: Some(self.beeroom_realtime.clone()),
                     workspace: self.workspace.clone(),
                     lsp_manager: self.lsp_manager.clone(),
                     config: &config,

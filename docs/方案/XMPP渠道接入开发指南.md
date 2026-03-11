@@ -70,6 +70,7 @@ flowchart LR
 - `server`: `host` 兼容别名（兼容 openfang `channels.xmpp.server`）。
 - `port`: 可选。支持 number 或字符串；有效范围 1~65535。
 - `direct_tls`: 可选。只影响默认端口选择（5223），未改动底层 StartTLS 连接器行为。
+- `trust_self_signed`: 可选，默认 `true`。为 `true` 时信任自有/自签证书；为 `false` 时执行严格证书链校验。
 - `resource`: 可选。登录资源，写入后会覆盖 JID 原资源。
 - `muc_nick`: 可选。群昵称，用于 MUC 自消息过滤。
 - `muc_rooms`: 可选。自动入房列表，支持数组或逗号分隔字符串。
