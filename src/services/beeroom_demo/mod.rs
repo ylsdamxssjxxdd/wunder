@@ -33,6 +33,9 @@ const STATUS_CANCELLED: &str = "cancelled";
 const DEMO_STATUS_EVENT: &str = "beeroom_demo_status";
 const DEMO_TERMINAL_WAIT_TIMEOUT_S: u64 = 90;
 const DEMO_TERMINAL_WAIT_POLL_MS: u64 = 250;
+const DEMO_TEAM_RUN_LOOKUP_TIMEOUT_S: u64 = 8;
+const DEMO_TEAM_RUN_LOOKUP_POLL_MS: u64 = 150;
+const DEMO_TEAM_RUN_LOOKUP_SKEW_S: f64 = 8.0;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct StartBeeroomDemoRequest {
@@ -607,7 +610,10 @@ async fn execute_demo_run(state: Arc<AppState>, control: Arc<DemoRunControl>, pl
             &plan.user_id,
             &plan.group_id,
             &mother_session.session_id,
-        )?;
+            &plan.mother.agent_id,
+            control.started_at,
+        )
+        .await?;
         control.update_team_run_id(team_run_id.clone());
         publish_demo_status(state.as_ref(), control.as_ref()).await;
         if control.cancel_requested.load(Ordering::Relaxed) {
@@ -705,22 +711,81 @@ fn build_mother_request(
     }
 }
 
-fn find_team_run_id(
+async fn find_team_run_id(
     state: &AppState,
     user_id: &str,
     group_id: &str,
     parent_session_id: &str,
+    mother_agent_id: &str,
+    run_started_at: f64,
+) -> Result<Option<String>> {
+    let lookup_started = Instant::now();
+    loop {
+        if let Some(run_id) = select_demo_team_run_id(
+            state,
+            user_id,
+            group_id,
+            parent_session_id,
+            mother_agent_id,
+            run_started_at,
+        )? {
+            return Ok(Some(run_id));
+        }
+        if lookup_started.elapsed() >= Duration::from_secs(DEMO_TEAM_RUN_LOOKUP_TIMEOUT_S) {
+            return Ok(None);
+        }
+        sleep(Duration::from_millis(DEMO_TEAM_RUN_LOOKUP_POLL_MS)).await;
+    }
+}
+
+fn select_demo_team_run_id(
+    state: &AppState,
+    user_id: &str,
+    group_id: &str,
+    parent_session_id: &str,
+    mother_agent_id: &str,
+    run_started_at: f64,
 ) -> Result<Option<String>> {
     let (runs, _) =
         state
             .user_store
-            .list_team_runs(user_id, Some(group_id), Some(parent_session_id), 0, 20)?;
-    let latest = runs
-        .into_iter()
-        .max_by(|left: &TeamRunRecord, right: &TeamRunRecord| {
-            left.updated_time.total_cmp(&right.updated_time)
-        });
+            .list_team_runs(user_id, Some(group_id), Some(parent_session_id), 0, 50)?;
+    if let Some(run) = pick_recent_demo_team_run(runs, run_started_at) {
+        return Ok(Some(run.team_run_id));
+    }
+
+    let scoped_parent_session = parent_session_id.trim();
+    let scoped_mother_agent = mother_agent_id.trim();
+    let (runs, _) = state
+        .user_store
+        .list_team_runs(user_id, Some(group_id), None, 0, 50)?;
+    let latest = pick_recent_demo_team_run(
+        runs.into_iter()
+            .filter(|run| {
+                let run_parent = run.parent_session_id.trim();
+                let run_mother = run.mother_agent_id.as_deref().unwrap_or("").trim();
+                let run_parent_agent = run.parent_agent_id.as_deref().unwrap_or("").trim();
+                run_parent == scoped_parent_session
+                    || (!scoped_mother_agent.is_empty()
+                        && (run_mother == scoped_mother_agent
+                            || run_parent_agent == scoped_mother_agent))
+            })
+            .collect(),
+        run_started_at,
+    );
     Ok(latest.map(|run| run.team_run_id))
+}
+
+fn pick_recent_demo_team_run(
+    runs: Vec<TeamRunRecord>,
+    run_started_at: f64,
+) -> Option<TeamRunRecord> {
+    runs.into_iter()
+        .filter(|run| {
+            let candidate_ts = run.started_time.unwrap_or(run.updated_time);
+            run_started_at <= 0.0 || candidate_ts + DEMO_TEAM_RUN_LOOKUP_SKEW_S >= run_started_at
+        })
+        .max_by(|left, right| left.updated_time.total_cmp(&right.updated_time))
 }
 
 async fn wait_for_demo_terminal(

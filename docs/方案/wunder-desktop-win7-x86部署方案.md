@@ -80,15 +80,15 @@ Set-Location desktop/tauri
 
 5. 打包（示例：推荐方案）
 ```powershell
-$env:CARGO_TARGET_DIR = "target-win7"
+$env:CARGO_TARGET_DIR = "..\\..\\target\\win7-x86"
 $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
-cargo +1.77.2 tauri build -f desktop -c tauri.bundle.win7-x86.json --bundles nsis --no-sign --target i686-pc-windows-msvc -- --manifest-path ../Cargo.toml
+cargo +1.77.2 tauri build -f desktop -c tauri.bundle.win7-x86.json --bundles nsis --no-sign --target i686-pc-windows-msvc -- --manifest-path ../../Cargo.toml
 ```
 
 ## 6. 产物路径
 
-- 可执行文件：`desktop/tauri/target/i686-pc-windows-msvc/release/wunder-desktop.exe`
-- 安装包：`desktop/tauri/target/i686-pc-windows-msvc/release/bundle/nsis/wunder-desktop_0.1.0_x86-setup.exe`
+- 可执行文件：`target/win7-x86/i686-pc-windows-msvc/release/wunder-desktop.exe`
+- 安装包：`target/win7-x86/i686-pc-windows-msvc/release/bundle/nsis/wunder-desktop_0.1.0_x86-setup.exe`
 
 ## 7. Win7 真机验证清单
 

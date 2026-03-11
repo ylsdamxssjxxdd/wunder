@@ -48,6 +48,7 @@ AppDir/
 BUILD_ROOT=/app/target/arm64-20/.build/python \
   bash /app/packaging/docker/scripts/build_embedded_python.sh
 ```
+- 如未显式传 `BUILD_ROOT`，脚本会按 `ARCH` 默认写入 `target/x86-20/.build/python` 或 `target/arm64-20/.build/python`。
 - Python 会安装到 `${BUILD_ROOT}/stage/opt/python`。
 - 依赖清单默认使用 `packaging/python/requirements-full.txt`。
 - 脚本会在安装后自动校验 `matplotlib/cartopy/pyproj/shapely/netCDF4/cftime/h5py` 等核心库；若缺失会尝试补装，并输出 `${BUILD_ROOT}/reports/stage-pip-freeze.txt`、`${BUILD_ROOT}/reports/stage-pip-list.json`、`${BUILD_ROOT}/reports/stage-import-validation.json` 供排查。

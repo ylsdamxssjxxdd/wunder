@@ -36,15 +36,15 @@ Set-Location desktop/tauri
 '@ | Set-Content -Path tauri.bundle.tmp.json -Encoding UTF8
 
 # 5) 打包（NSIS 安装包）
-$env:CARGO_TARGET_DIR = "target"
 $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
 cargo tauri build -f desktop -c tauri.bundle.tmp.json --bundles nsis --no-sign -- --manifest-path ../../Cargo.toml
 ```
 
 ## 产物路径
 
-- 可执行文件：`desktop/tauri/target/release/wunder-desktop.exe`
-- 安装包：`desktop/tauri/target/release/bundle/nsis/wunder-desktop_0.1.0_x64-setup.exe`
+- 可执行文件：`target/release/wunder-desktop.exe`
+- 安装包：`target/release/bundle/nsis/wunder-desktop_0.1.0_x64-setup.exe`
+- `desktop/tauri/.cargo/config.toml` 已固定将本目录下触发的 Cargo/Tauri 产物写入仓库根 `target/`
 
 ## 打包资源说明
 

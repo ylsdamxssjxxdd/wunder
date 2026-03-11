@@ -89,6 +89,11 @@
   --hula-text: #e6f2ff;
   --hula-accent: var(--ui-accent);
   --hula-accent-soft: var(--ui-accent-soft);
+  --messenger-composer-surface-bg: var(--tech-blue-surface);
+  --messenger-composer-box-bg: var(--tech-blue-surface-3);
+  --messenger-composer-panel-bg: var(--tech-blue-surface-3);
+  --messenger-composer-subtle-bg: var(--tech-blue-surface-2);
+  --messenger-composer-border: var(--tech-blue-border);
   background:
     radial-gradient(circle at 18% 12%, rgba(var(--ui-accent-rgb), 0.16), transparent 30%),
     radial-gradient(circle at 84% 0%, rgba(var(--ui-accent-secondary-rgb), 0.16), transparent 34%),

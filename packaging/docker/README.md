@@ -6,6 +6,28 @@ Desktop 的 Linux 打包统一走 `wunder-desktop-electron`，不要用 `cargo t
 
 JavaScript 依赖统一走仓库根 `npm workspace`，共享一套根 `node_modules/`。
 
+## target 目录约定
+
+- `target/release/`、`target/debug/`
+  - 仓库根 Cargo 默认产物（含 `wunder-desktop-bridge`、`wunder-desktop`）。
+- `target/desktop-electron/dist/`
+  - 本地 Electron 默认打包输出目录。
+- `target/nightly/<platform>/`
+  - CI/Nightly 发布产物目录（如 `linux-x64`、`linux-arm64`、`macos`、`windows-x64`）。
+- `target/x86-20/`
+  - Ubuntu 20.04 x86_64 桌面打包工作目录，包含 `release/`、`dist/`、`.build/python/`。
+- `target/arm64-20/`
+  - Ubuntu 20.04 arm64 桌面打包工作目录，包含 `release/`、`dist/`、`.build/python/`。
+- `target/x86-20-ci/`、`target/arm64-20-ci/`
+  - CI 容器专用缓存与编译目录。
+
+说明：
+
+- `x86-20` / `arm64-20` 继续保留，不改成 `x64-20`，避免打断现有 sidecar 补充包、Dockerfile 预置工具和离线缓存路径。
+- `desktop/` 目录下不再存放构建产物；桌面源码目录只保留源码、资源与配置。
+- `package_appimage_with_python.sh` 与 `package_sidecar_python.sh` 在未显式传参时，会自动按 `ARCH` 解析到 `target/x86-20` 或 `target/arm64-20`。
+- `build_embedded_python.sh` 与 `build_embedded_git.sh` 在单独执行时，也会默认按 `ARCH` 写入对应 `target/<arch>-20/.build/python/`，不再回落到仓库根 `.build/python/`。
+
 ## 1. 规则先看
 
 - Linux Desktop 统一打包为 Electron AppImage。
@@ -180,6 +202,18 @@ docker compose -f packaging/docker/docker-compose-ubuntu20.yml exec -T wunder-bu
 - `target/arm64-20/.build/python/stage/opt/git`
 
 如果这些文件齐全，`package_appimage_with_python.sh` 就不会再尝试下载 `appimagetool`，也不会默认重建 Python。
+
+如果你只是单独执行基础脚本，也可以直接传 `ARCH`：
+
+```bash
+ARCH=arm64 bash packaging/docker/scripts/build_embedded_python.sh
+ARCH=arm64 bash packaging/docker/scripts/build_embedded_git.sh
+```
+
+默认会落到：
+
+- `target/arm64-20/.build/python`
+- `target/x86-20/.build/python`
 
 ## 10. 运行时日志与调试开关
 

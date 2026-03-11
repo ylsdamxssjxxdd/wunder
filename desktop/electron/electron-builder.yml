@@ -3,6 +3,7 @@ productName: Wunder Desktop
 icon: build/icon.png
 directories:
   buildResources: build
+  output: ../../target/desktop-electron/dist
 files:
   - "src/**"
   - "package.json"

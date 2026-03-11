@@ -180,23 +180,10 @@ pub fn resolve_agent_main_session(
             }
         }
     }
-
-    let (sessions, _) =
-        storage.list_chat_sessions(cleaned_user, Some(cleaned_agent), None, 0, 1)?;
-    let Some(session) = sessions.into_iter().next() else {
-        return Ok(None);
-    };
-
-    // Always backfill the resolved session as the agent's main thread so future
-    // swarm dispatches and user-triggered coordination land on the same thread.
-    bind_agent_main_thread(
-        storage,
-        cleaned_user,
-        cleaned_agent,
-        &session.session_id,
-        existing_thread,
-    )?;
-    Ok(Some(session))
+    // Do not silently promote an arbitrary historical session as the main thread.
+    // If the explicit binding is missing or stale, callers should create a fresh
+    // main thread through `resolve_or_create_agent_main_session`.
+    Ok(None)
 }
 
 pub fn resolve_or_create_agent_main_session(
@@ -586,7 +573,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn resolve_agent_main_session_backfills_existing_session_as_main_thread() {
+    fn resolve_agent_main_session_requires_explicit_main_thread_binding() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("beeroom-main-thread.db");
         let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
@@ -611,15 +598,64 @@ mod tests {
             .expect("upsert chat session");
 
         let resolved = resolve_agent_main_session(storage.as_ref(), "alice", "agent-intel")
-            .expect("resolve main session")
-            .expect("main session record");
-        let thread = storage
+            .expect("resolve main session");
+
+        assert!(resolved.is_none());
+        assert!(storage
             .get_agent_thread("alice", "agent-intel")
             .expect("get agent thread")
-            .expect("thread record");
+            .is_none());
+    }
 
-        assert_eq!(resolved.session_id, "sess_existing");
-        assert_eq!(thread.session_id, "sess_existing");
+    #[test]
+    fn resolve_or_create_agent_main_session_does_not_promote_arbitrary_existing_session() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("beeroom-create-main-thread-fresh.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+
+        let old_session = ChatSessionRecord {
+            session_id: "sess_old".to_string(),
+            user_id: "alice".to_string(),
+            title: "Legacy".to_string(),
+            status: "active".to_string(),
+            created_at: 5.0,
+            updated_at: 8.0,
+            last_message_at: 8.0,
+            agent_id: Some("agent-ops".to_string()),
+            tool_overrides: Vec::new(),
+            parent_session_id: None,
+            parent_message_id: None,
+            spawn_label: None,
+            spawned_by: None,
+        };
+        storage
+            .upsert_chat_session(&old_session)
+            .expect("upsert old chat session");
+
+        let agent = UserAgentRecord {
+            agent_id: "agent-ops".to_string(),
+            user_id: "alice".to_string(),
+            hive_id: DEFAULT_HIVE_ID.to_string(),
+            name: "Ops Analyst".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            tool_names: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "auto_edit".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 0,
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+
+        let (session, created) =
+            resolve_or_create_agent_main_session(storage.as_ref(), "alice", &agent)
+                .expect("resolve or create main session");
+
+        assert!(created);
+        assert_ne!(session.session_id, old_session.session_id);
     }
 
     #[test]

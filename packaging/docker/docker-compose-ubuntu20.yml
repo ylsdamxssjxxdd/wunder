@@ -28,8 +28,8 @@ services:
     working_dir: /app
     environment:
       <<: *build-env
-      CARGO_HOME: /app/.cargo/x86
-      CARGO_TARGET_DIR: /app/target/x86
+      CARGO_HOME: /app/.cargo/x86-20
+      CARGO_TARGET_DIR: /app/target/x86-20
     volumes: *build-volumes
     command: ["bash", "-lc", "sleep infinity"]
     stdin_open: true
@@ -46,8 +46,8 @@ services:
     working_dir: /app
     environment:
       <<: *build-env
-      CARGO_HOME: /app/.cargo/arm64
-      CARGO_TARGET_DIR: /app/target/arm64
+      CARGO_HOME: /app/.cargo/arm64-20
+      CARGO_TARGET_DIR: /app/target/arm64-20
     volumes: *build-volumes
     command: ["bash", "-lc", "sleep infinity"]
     stdin_open: true

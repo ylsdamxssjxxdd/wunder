@@ -2,7 +2,20 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
-BUILD_ROOT="${BUILD_ROOT:-${ROOT_DIR}/.build/python}"
+ARCH="${ARCH:-$(uname -m 2>/dev/null || true)}"
+case "${ARCH}" in
+  x64|x86_64|amd64|x86)
+    TARGET_FLAVOR_DEFAULT="x86-20"
+    ;;
+  arm64|aarch64)
+    TARGET_FLAVOR_DEFAULT="arm64-20"
+    ;;
+  *)
+    TARGET_FLAVOR_DEFAULT="${ARCH}"
+    ;;
+esac
+TARGET_DIR="${TARGET_DIR:-${ROOT_DIR}/target/${TARGET_FLAVOR_DEFAULT}}"
+BUILD_ROOT="${BUILD_ROOT:-${TARGET_DIR}/.build/python}"
 GIT_PREFIX="${GIT_PREFIX:-/opt/git}"
 STAGE_DIR="${BUILD_ROOT}/stage"
 GIT_ROOT="${STAGE_DIR}${GIT_PREFIX}"

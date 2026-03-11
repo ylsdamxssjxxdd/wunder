@@ -3,10 +3,22 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 ARCH="${ARCH:-arm64}"
-APPIMAGE_DIR="${APPIMAGE_DIR:-${ROOT_DIR}/target/${ARCH}/release/bundle/appimage}"
+case "${ARCH}" in
+  x64|x86_64|amd64|x86)
+    TARGET_FLAVOR_DEFAULT="x86-20"
+    ;;
+  arm64|aarch64)
+    TARGET_FLAVOR_DEFAULT="arm64-20"
+    ;;
+  *)
+    TARGET_FLAVOR_DEFAULT="${ARCH}"
+    ;;
+esac
+TARGET_DIR="${TARGET_DIR:-${ROOT_DIR}/target/${TARGET_FLAVOR_DEFAULT}}"
+APPIMAGE_DIR="${APPIMAGE_DIR:-${TARGET_DIR}/release/bundle/appimage}"
 APPIMAGE_PATH="${APPIMAGE_PATH:-}"
-OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/dist}"
-BUILD_ROOT="${BUILD_ROOT:-${ROOT_DIR}/.build/python}"
+OUTPUT_DIR="${OUTPUT_DIR:-${TARGET_DIR}/dist}"
+BUILD_ROOT="${BUILD_ROOT:-${TARGET_DIR}/.build/python}"
 APPIMAGE_WORK="${APPIMAGE_WORK:-${BUILD_ROOT}/appimage}"
 TOOLS_DIR="${BUILD_ROOT}/tools"
 PREFER_PREBUILT_PYTHON="${PREFER_PREBUILT_PYTHON:-1}"
@@ -346,7 +358,8 @@ if [ "${EMBED_PYTHON}" = "1" ]; then
   if [ "${PREFER_PREBUILT_PYTHON}" = "1" ] && [ -x "${PREBUILT_PYTHON_ROOT}/bin/python3" ]; then
     echo "Using prebuilt embedded Python under ${PREBUILT_PYTHON_ROOT}."
   elif [ "${ALLOW_PYTHON_REBUILD}" = "1" ]; then
-    "${ROOT_DIR}/packaging/docker/scripts/build_embedded_python.sh"
+    BUILD_ROOT="${BUILD_ROOT}" TARGET_DIR="${TARGET_DIR}" ARCH="${ARCH}" \
+      "${ROOT_DIR}/packaging/docker/scripts/build_embedded_python.sh"
   else
     echo "Embedded Python not found at ${PREBUILT_PYTHON_ROOT}." >&2
     echo "Python rebuild is disabled by default." >&2
@@ -360,7 +373,8 @@ if [ "${EMBED_GIT}" = "1" ]; then
   if [ "${PREFER_PREBUILT_GIT}" = "1" ] && [ -x "${PREBUILT_GIT_ROOT}/bin/git" ]; then
     echo "Using prebuilt embedded Git under ${PREBUILT_GIT_ROOT}."
   else
-    "${ROOT_DIR}/packaging/docker/scripts/build_embedded_git.sh"
+    BUILD_ROOT="${BUILD_ROOT}" TARGET_DIR="${TARGET_DIR}" ARCH="${ARCH}" \
+      "${ROOT_DIR}/packaging/docker/scripts/build_embedded_git.sh"
   fi
 fi
 

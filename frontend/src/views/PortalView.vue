@@ -31,7 +31,9 @@
                     :title="agentStatusLabel(DEFAULT_AGENT_KEY)"
                     :aria-label="agentStatusLabel(DEFAULT_AGENT_KEY)"
                   >
-                    <i class="fa-solid fa-robot agent-card-avatar-icon" aria-hidden="true"></i>
+                    <span class="agent-card-avatar-image-shell" aria-hidden="true">
+                      <img class="agent-card-avatar-image" :src="DEFAULT_AGENT_AVATAR_IMAGE" alt="" />
+                    </span>
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ t('portal.card.defaultTitle') }}</div>
@@ -88,7 +90,9 @@
                     :title="agentStatusLabel(agent.id)"
                     :aria-label="agentStatusLabel(agent.id)"
                   >
-                    <i class="fa-solid fa-robot agent-card-avatar-icon" aria-hidden="true"></i>
+                    <span class="agent-card-avatar-image-shell" aria-hidden="true">
+                      <img class="agent-card-avatar-image" :src="DEFAULT_AGENT_AVATAR_IMAGE" alt="" />
+                    </span>
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
@@ -154,7 +158,9 @@
                     :title="agentStatusLabel(agent.id)"
                     :aria-label="agentStatusLabel(agent.id)"
                   >
-                    <i class="fa-solid fa-robot agent-card-avatar-icon" aria-hidden="true"></i>
+                    <span class="agent-card-avatar-image-shell" aria-hidden="true">
+                      <img class="agent-card-avatar-image" :src="DEFAULT_AGENT_AVATAR_IMAGE" alt="" />
+                    </span>
                   </div>
                   <div class="agent-card-head-text">
                     <div class="agent-card-title">{{ agent.name }}</div>
@@ -382,6 +388,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useBeeroomStore } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
+import { DEFAULT_AGENT_AVATAR_IMAGE } from '@/utils/agentAvatar';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,

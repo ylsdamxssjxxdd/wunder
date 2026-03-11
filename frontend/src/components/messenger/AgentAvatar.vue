@@ -1,6 +1,8 @@
 <template>
   <span class="messenger-agent-avatar" :class="[sizeClass, stateClass]" :title="title">
-    <i class="fa-solid fa-robot" aria-hidden="true"></i>
+    <span class="messenger-agent-avatar-image-shell" aria-hidden="true">
+      <img class="messenger-agent-avatar-image" :src="DEFAULT_AGENT_AVATAR_IMAGE" alt="" />
+    </span>
     <span class="messenger-agent-avatar-status" aria-hidden="true">
       <i :class="statusIconClass"></i>
     </span>
@@ -9,6 +11,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+
+import { DEFAULT_AGENT_AVATAR_IMAGE } from '@/utils/agentAvatar';
 
 type AgentAvatarSize = 'sm' | 'md' | 'lg';
 type AgentRuntimeState = 'idle' | 'running' | 'done' | 'pending' | 'error';
@@ -80,9 +84,20 @@ const statusIconClass = computed(() => {
   --avatar-size: 42px;
 }
 
-.messenger-agent-avatar i {
-  font-size: calc(var(--avatar-size) * 0.46);
-  line-height: 1;
+.messenger-agent-avatar-image-shell {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  overflow: hidden;
+  display: block;
+  background: #ffffff;
+}
+
+.messenger-agent-avatar-image {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
 }
 
 .messenger-agent-avatar-status {

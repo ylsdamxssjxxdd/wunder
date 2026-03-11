@@ -3,11 +3,23 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 ARCH="${ARCH:-arm64}"
-BUILD_ROOT="${BUILD_ROOT:-${ROOT_DIR}/target/${ARCH}/.build/python}"
+case "${ARCH}" in
+  x64|x86_64|amd64|x86)
+    TARGET_FLAVOR_DEFAULT="x86-20"
+    ;;
+  arm64|aarch64)
+    TARGET_FLAVOR_DEFAULT="arm64-20"
+    ;;
+  *)
+    TARGET_FLAVOR_DEFAULT="${ARCH}"
+    ;;
+esac
+TARGET_DIR="${TARGET_DIR:-${ROOT_DIR}/target/${TARGET_FLAVOR_DEFAULT}}"
+BUILD_ROOT="${BUILD_ROOT:-${TARGET_DIR}/.build/python}"
 STAGE_DIR="${STAGE_DIR:-${BUILD_ROOT}/stage}"
 PYTHON_ROOT="${PYTHON_ROOT:-${STAGE_DIR}/opt/python}"
 GIT_ROOT="${GIT_ROOT:-${STAGE_DIR}/opt/git}"
-OUTPUT_DIR="${OUTPUT_DIR:-${ROOT_DIR}/target/${ARCH}/dist}"
+OUTPUT_DIR="${OUTPUT_DIR:-${TARGET_DIR}/dist}"
 PACKAGE_DIR_NAME="${PACKAGE_DIR_NAME:-wunder补充包}"
 OUT_NAME="${OUT_NAME:-${PACKAGE_DIR_NAME}-${ARCH}.tar.zst}"
 INCLUDE_GIT="${INCLUDE_GIT:-1}"
@@ -31,7 +43,8 @@ fi
 ITEMS=("opt/python")
 if [ "${INCLUDE_GIT}" = "1" ]; then
   if [ ! -d "${GIT_ROOT}" ]; then
-    "${ROOT_DIR}/packaging/docker/scripts/build_embedded_git.sh"
+    BUILD_ROOT="${BUILD_ROOT}" TARGET_DIR="${TARGET_DIR}" ARCH="${ARCH}" \
+      "${ROOT_DIR}/packaging/docker/scripts/build_embedded_git.sh"
   fi
   if [ -d "${GIT_ROOT}" ]; then
     ITEMS+=("opt/git")

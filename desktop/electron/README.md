@@ -38,13 +38,14 @@ npm run build:linux:arm64
 npm run build
 ```
 
-默认产物输出在 `desktop/electron/dist/`。
+默认产物输出在 `target/desktop-electron/dist/`。
 如果需要自定义输出目录，可以使用：
 ```bash
 npm run build:linux:arm64 -- --config.directories.output=../../target/arm64-20
 ```
 
 JavaScript 依赖统一安装在仓库根目录 `node_modules/`，不要再维护 `frontend/node_modules/` 或 `desktop/electron/node_modules/`。
+桌面相关构建产物统一落到仓库根 `target/`；`desktop/electron/` 与 `desktop/tauri/` 目录只保留源码、资源和配置。
 
 ### Ubuntu 20.04（arm64）推荐目录
 

@@ -62,6 +62,7 @@
                   <i class="fa-solid fa-thumbtack" aria-hidden="true"></i>
                 </button>
                 <button
+                  v-if="!item.isMain"
                   class="messenger-timeline-rename-btn"
                   type="button"
                   :title="t('chat.history.rename')"

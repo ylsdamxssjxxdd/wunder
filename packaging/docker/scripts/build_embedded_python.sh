@@ -4,7 +4,20 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 PYTHON_VERSION="${PYTHON_VERSION:-3.11.5}"
 PYTHON_PREFIX="${PYTHON_PREFIX:-/opt/python}"
-BUILD_ROOT="${BUILD_ROOT:-${ROOT_DIR}/.build/python}"
+ARCH="${ARCH:-$(uname -m 2>/dev/null || true)}"
+case "${ARCH}" in
+  x64|x86_64|amd64|x86)
+    TARGET_FLAVOR_DEFAULT="x86-20"
+    ;;
+  arm64|aarch64)
+    TARGET_FLAVOR_DEFAULT="arm64-20"
+    ;;
+  *)
+    TARGET_FLAVOR_DEFAULT="${ARCH}"
+    ;;
+esac
+TARGET_DIR="${TARGET_DIR:-${ROOT_DIR}/target/${TARGET_FLAVOR_DEFAULT}}"
+BUILD_ROOT="${BUILD_ROOT:-${TARGET_DIR}/.build/python}"
 SRC_DIR="${BUILD_ROOT}/src"
 STAGE_DIR="${BUILD_ROOT}/stage"
 PYTHON_ROOT="${STAGE_DIR}${PYTHON_PREFIX}"
@@ -25,7 +38,6 @@ CARTOPY_FEATURES="${CARTOPY_FEATURES:-coastline,land,ocean,lakes,rivers_lake_cen
 CARTOPY_DOWNLOAD="${CARTOPY_DOWNLOAD:-1}"
 ARM_PYART_BUILD="${ARM_PYART_BUILD:-auto}"
 ARM_PYART_VERSION="${ARM_PYART_VERSION:-2.2.0}"
-ARCH="${ARCH:-$(uname -m 2>/dev/null || true)}"
 SETUPTOOLS_SPEC="${SETUPTOOLS_SPEC:-setuptools<81}"
 BUILD_HELPER_REQUIREMENTS="${BUILD_HELPER_REQUIREMENTS:-setuptools_scm}"
 CINRAD_BUILD="${CINRAD_BUILD:-auto}"

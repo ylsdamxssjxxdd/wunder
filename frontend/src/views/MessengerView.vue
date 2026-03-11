@@ -4219,17 +4219,33 @@ const resolveSessionTimelinePreview = (session: Record<string, unknown>): string
 const rightPanelSessionHistory = computed(() => {
   if (!showAgentRightDock.value) return [];
   const targetAgentId = normalizeAgentId(rightPanelAgentId.value);
+  const seenIds = new Set<string>();
+  let mainAssigned = false;
   const result = (Array.isArray(chatStore.sessions) ? chatStore.sessions : [])
     .filter((session) => normalizeAgentId(session?.agent_id) === targetAgentId)
     .map((session) => ({
-      id: String(session?.id || ''),
+      id: String(session?.id || '').trim(),
       title: String(session?.title || t('chat.newSession')),
       preview: resolveSessionTimelinePreview(session as Record<string, unknown>),
       lastAt: session?.updated_at || session?.last_message_at || session?.created_at,
       isMain: Boolean(session?.is_main)
     }))
     .filter((item) => item.id)
-    .sort((left, right) => normalizeTimestamp(right.lastAt) - normalizeTimestamp(left.lastAt));
+    .sort((left, right) => normalizeTimestamp(right.lastAt) - normalizeTimestamp(left.lastAt))
+    .filter((item) => {
+      if (seenIds.has(item.id)) {
+        return false;
+      }
+      seenIds.add(item.id);
+      return true;
+    })
+    .map((item) => {
+      if (!item.isMain || mainAssigned) {
+        return { ...item, isMain: false };
+      }
+      mainAssigned = true;
+      return item;
+    });
   return result;
 });
 
