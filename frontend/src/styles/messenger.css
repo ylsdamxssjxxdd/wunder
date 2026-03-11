@@ -430,8 +430,80 @@
   transform: none;
 }
 
-.messenger-left-nav-btn--settings {
+.messenger-left-more-wrap {
   margin-top: auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+  z-index: 4;
+}
+
+.messenger-left-more-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 10px) scale(0.94);
+  transform-origin: bottom center;
+  transition:
+    opacity var(--messenger-motion-fast) var(--messenger-ease-standard),
+    transform var(--messenger-motion-fast) var(--messenger-ease-standard);
+}
+
+.messenger-left-more-panel.is-open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.messenger-left-nav-btn--more-item {
+  box-shadow:
+    0 10px 22px rgba(15, 23, 42, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  opacity: 0;
+  transform: translateY(10px) scale(0.92);
+  transition:
+    opacity var(--messenger-motion-fast) var(--messenger-ease-standard),
+    transform var(--messenger-motion-fast) var(--messenger-ease-standard),
+    background-color var(--messenger-motion-fast) var(--messenger-ease-standard),
+    color var(--messenger-motion-fast) var(--messenger-ease-standard);
+}
+
+.messenger-left-more-panel.is-open .messenger-left-nav-btn--more-item {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.messenger-left-more-panel.is-open .messenger-left-nav-btn--more-item:nth-child(1) {
+  transition-delay: 0ms;
+}
+
+.messenger-left-more-panel.is-open .messenger-left-nav-btn--more-item:nth-child(2) {
+  transition-delay: 18ms;
+}
+
+.messenger-left-more-panel.is-open .messenger-left-nav-btn--more-item:nth-child(3) {
+  transition-delay: 36ms;
+}
+
+.messenger-left-more-panel.is-open .messenger-left-nav-btn--more-item:nth-child(4) {
+  transition-delay: 54ms;
+}
+
+.messenger-left-more-wrap.is-open .messenger-left-nav-btn--more-toggle i {
+  transform: rotate(90deg);
+}
+
+.messenger-left-nav-btn--more-toggle i {
+  transition: transform var(--messenger-motion-fast) var(--messenger-ease-standard);
 }
 
 .messenger-left-nav-btn--helper {

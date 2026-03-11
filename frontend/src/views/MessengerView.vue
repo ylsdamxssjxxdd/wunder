@@ -33,59 +33,70 @@
             type="button"
             :title="item.label"
             :aria-label="item.label"
-            @mouseenter="openMiddlePaneOverlay"
-            @focus="openMiddlePaneOverlay"
+            @mouseenter="previewMiddlePaneSection(item.key)"
+            @focus="previewMiddlePaneSection(item.key)"
             @click="switchSection(item.key)"
           >
             <i :class="item.icon" aria-hidden="true"></i>
           </button>
         </div>
-        <div
-          v-if="leftRailSocialSectionOptions.length"
-          class="messenger-left-rail-divider messenger-left-rail-divider--section"
-          aria-hidden="true"
-        ></div>
-        <div v-if="leftRailSocialSectionOptions.length" class="messenger-left-nav-group">
+      </div>
+      <div class="messenger-left-more-wrap" :class="{ 'is-open': leftRailMoreExpanded }">
+        <div class="messenger-left-more-panel" :class="{ 'is-open': leftRailMoreExpanded }">
           <button
             v-for="item in leftRailSocialSectionOptions"
-            :key="item.key"
-            class="messenger-left-nav-btn"
+            :key="`more-${item.key}`"
+            class="messenger-left-nav-btn messenger-left-nav-btn--more-item"
             :class="{ active: isLeftNavSectionActive(item.key) }"
             type="button"
             :title="item.label"
             :aria-label="item.label"
-            @mouseenter="openMiddlePaneOverlay"
-            @focus="openMiddlePaneOverlay"
-            @click="switchSection(item.key)"
+            :tabindex="leftRailMoreExpanded ? 0 : -1"
+            @mouseenter="previewMiddlePaneSection(item.key)"
+            @focus="previewMiddlePaneSection(item.key)"
+            @click="openMoreRailSection(item.key)"
           >
             <i :class="item.icon" aria-hidden="true"></i>
           </button>
           <button
-            class="messenger-left-nav-btn messenger-left-nav-btn--helper"
-            :class="{ active: showHelperAppsWorkspace }"
+            class="messenger-left-nav-btn messenger-left-nav-btn--helper messenger-left-nav-btn--more-item"
+            :class="{ active: isHelperAppsMiddlePaneActive }"
             type="button"
             :title="t('userWorld.helperApps.title')"
             :aria-label="t('userWorld.helperApps.title')"
-            @mouseenter="openMiddlePaneOverlay"
-            @focus="openMiddlePaneOverlay"
+            :tabindex="leftRailMoreExpanded ? 0 : -1"
+            @mouseenter="previewMiddlePaneSection('groups', { helperWorkspace: true })"
+            @focus="previewMiddlePaneSection('groups', { helperWorkspace: true })"
             @click="openHelperAppsDialog"
           >
             <i class="fa-solid fa-toolbox" aria-hidden="true"></i>
           </button>
+          <button
+            class="messenger-left-nav-btn messenger-left-nav-btn--more-item"
+            :class="{ active: isLeftNavSectionActive('more') }"
+            type="button"
+            :title="t('messenger.section.settings')"
+            :aria-label="t('messenger.section.settings')"
+            :tabindex="leftRailMoreExpanded ? 0 : -1"
+            @mouseenter="previewMiddlePaneSection('more')"
+            @focus="previewMiddlePaneSection('more')"
+            @click="openSettingsPage"
+          >
+            <i class="fa-solid fa-gear" aria-hidden="true"></i>
+          </button>
         </div>
+        <button
+          class="messenger-left-nav-btn messenger-left-nav-btn--more-toggle"
+          :class="{ active: isLeftRailMoreActive }"
+          type="button"
+          :title="leftRailMoreToggleTitle"
+          :aria-label="leftRailMoreToggleTitle"
+          :aria-expanded="leftRailMoreExpanded ? 'true' : 'false'"
+          @click="toggleLeftRailMoreMenu"
+        >
+          <i :class="leftRailMoreExpanded ? 'fa-solid fa-xmark' : 'fa-solid fa-ellipsis'" aria-hidden="true"></i>
+        </button>
       </div>
-      <button
-        class="messenger-left-nav-btn messenger-left-nav-btn--settings"
-        :class="{ active: sessionHub.activeSection === 'more' }"
-        type="button"
-        :title="t('messenger.section.settings')"
-        :aria-label="t('messenger.section.settings')"
-        @mouseenter="openMiddlePaneOverlay"
-        @focus="openMiddlePaneOverlay"
-        @click="openSettingsPage"
-      >
-        <i class="fa-solid fa-gear" aria-hidden="true"></i>
-      </button>
     </aside>
 
     <section
@@ -100,11 +111,11 @@
           v-model:selected-contact-unit-id="selectedContactUnitId"
           v-model:selected-agent-hive-group-id="selectedAgentHiveGroupId"
           v-model:settings-panel-mode="settingsPanelMode"
-          :active-section="sessionHub.activeSection"
-          :active-section-title="activeSectionTitle"
-          :active-section-subtitle="activeSectionSubtitle"
-          :show-helper-apps-workspace="showHelperAppsWorkspace"
-          :search-placeholder="searchPlaceholder"
+          :active-section="middlePaneActiveSection"
+          :active-section-title="middlePaneActiveSectionTitle"
+          :active-section-subtitle="middlePaneActiveSectionSubtitle"
+          :show-helper-apps-workspace="showMiddlePaneHelperAppsWorkspace"
+          :search-placeholder="middlePaneSearchPlaceholder"
           :agent-overview-mode="agentOverviewMode"
           :user-world-permission-denied="userWorldPermissionDenied"
           :handle-search-create-action="handleSearchCreateAction"
@@ -172,6 +183,7 @@
           :current-username="currentUsername"
           :settings-logout-disabled="settingsLogoutDisabled"
           :handle-settings-logout="handleSettingsLogout"
+          @activate-settings-panel="activateSettingsPanel"
       />
     </section>
 
@@ -1293,6 +1305,7 @@ import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
+import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import {
   InquiryPanel,
@@ -1599,9 +1612,15 @@ const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
 const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime' | 'archived'>('agent');
-const settingsPanelMode = ref<
-  'general' | 'profile' | 'prompts' | 'desktop-models' | 'desktop-remote' | 'desktop-lan'
->('general');
+type SettingsPanelMode =
+  | 'general'
+  | 'profile'
+  | 'prompts'
+  | 'desktop-models'
+  | 'desktop-remote'
+  | 'desktop-lan';
+
+const settingsPanelMode = ref<SettingsPanelMode>('general');
 const rightDockCollapsed = ref(false);
 const desktopInitialSectionPinned = ref(false);
 const desktopShowFirstLaunchDefaultAgentHint = ref(false);
@@ -1661,6 +1680,7 @@ const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440);
 const middlePaneOverlayVisible = ref(false);
+const leftRailMoreExpanded = ref(false);
 const quickCreatingAgent = ref(false);
 const agentMainReadAtMap = ref<Record<string, number>>({});
 const agentMainUnreadCountMap = ref<Record<string, number>>({});
@@ -1834,10 +1854,19 @@ const leftRailSocialSectionOptions = computed(() =>
 );
 
 const isLeftNavSectionActive = (section: MessengerSection): boolean => {
-  if (helperAppsWorkspaceMode.value && sessionHub.activeSection === 'groups') {
-    return false;
+  return isSectionButtonActive(section);
+};
+
+const closeLeftRailMoreMenu = () => {
+  leftRailMoreExpanded.value = false;
+};
+
+const toggleLeftRailMoreMenu = () => {
+  clearMiddlePaneOverlayHide();
+  leftRailMoreExpanded.value = !leftRailMoreExpanded.value;
+  if (!leftRailMoreExpanded.value) {
+    clearMiddlePaneOverlayPreview();
   }
-  return sessionHub.activeSection === section;
 };
 
 const basePrefix = computed(() => {
@@ -1954,6 +1983,36 @@ const showMiddlePane = computed(
   () => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value
 );
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
+
+const {
+  clearMiddlePaneOverlayPreview,
+  effectiveHelperAppsWorkspace: showMiddlePaneHelperAppsWorkspace,
+  effectiveSearchPlaceholder: middlePaneSearchPlaceholder,
+  effectiveSection: middlePaneActiveSection,
+  effectiveSectionSubtitle: middlePaneActiveSectionSubtitle,
+  effectiveSectionTitle: middlePaneActiveSectionTitle,
+  isHelperWorkspaceButtonActive: isHelperAppsMiddlePaneActive,
+  isSectionButtonActive,
+  previewMiddlePaneSection
+} = useMiddlePaneOverlayPreview({
+  activeSection: computed(() => sessionHub.activeSection),
+  helperAppsWorkspaceMode,
+  isMiddlePaneOverlay,
+  middlePaneOverlayVisible,
+  t
+});
+
+const isLeftRailMoreActive = computed(
+  () =>
+    leftRailMoreExpanded.value ||
+    isLeftNavSectionActive('users') ||
+    isLeftNavSectionActive('groups') ||
+    isLeftNavSectionActive('more') ||
+    isHelperAppsMiddlePaneActive.value
+);
+const leftRailMoreToggleTitle = computed(() =>
+  `${t('common.more')} · ${t(leftRailMoreExpanded.value ? 'common.collapse' : 'common.expand')}`
+);
 
 const DEFAULT_BEEROOM_GROUP_ID = 'default';
 
@@ -4060,6 +4119,7 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
   if (!target) {
     return;
   }
+  const isInLeftRail = Boolean(leftRailRef.value?.contains(target));
   if (fileContainerContextMenu.value.visible) {
     const menu = fileContainerMenuViewRef.value?.getMenuElement() || null;
     if (!menu || !menu.contains(target)) {
@@ -4090,9 +4150,12 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
     }
   }
 
+  if (leftRailMoreExpanded.value && !isInLeftRail) {
+    closeLeftRailMoreMenu();
+  }
+
   if (isMiddlePaneOverlay.value && middlePaneOverlayVisible.value) {
     const isInMiddlePane = Boolean(middlePaneRef.value?.contains(target));
-    const isInLeftRail = Boolean(leftRailRef.value?.contains(target));
     if (!isInMiddlePane && !isInLeftRail) {
       clearMiddlePaneOverlayHide();
       middlePaneOverlayVisible.value = false;
@@ -6013,11 +6076,18 @@ const deleteMixedConversation = async (item: MixedConversation) => {
 
 const switchSection = (
   section: MessengerSection,
-  options: { preserveHelperWorkspace?: boolean; panelHint?: string; helperWorkspace?: boolean } = {}
+  options: {
+    preserveHelperWorkspace?: boolean;
+    panelHint?: string;
+    helperWorkspace?: boolean;
+    settingsPanelMode?: string;
+  } = {}
 ) => {
   const preserveHelperWorkspace = options.preserveHelperWorkspace === true;
   const panelHint = String(options.panelHint || '').trim().toLowerCase();
+  const explicitSettingsPanelMode = normalizeSettingsPanelMode(options.settingsPanelMode);
   const helperWorkspace = options.helperWorkspace === true;
+  closeLeftRailMoreMenu();
   closeFileContainerMenu();
   openMiddlePaneOverlay();
   if (!preserveHelperWorkspace) {
@@ -6031,7 +6101,20 @@ const switchSection = (
   agentPromptPreviewVisible.value = false;
   toolPaneStatus.value = '';
   if (section === 'more') {
-    settingsPanelMode.value = 'general';
+    settingsPanelMode.value =
+      explicitSettingsPanelMode !== 'general'
+        ? explicitSettingsPanelMode
+        : desktopMode.value && (panelHint === 'desktop-models' || panelHint === 'desktop')
+          ? 'desktop-models'
+          : desktopMode.value && panelHint === 'desktop-lan'
+            ? 'desktop-lan'
+            : desktopMode.value && panelHint === 'desktop-remote'
+              ? 'desktop-remote'
+              : panelHint === 'profile'
+                ? 'profile'
+                : panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt'
+                  ? 'prompts'
+                  : 'general';
   }
   if (section !== 'tools') {
     selectedToolCategory.value = '';
@@ -6085,15 +6168,36 @@ const switchSection = (
   ensureSectionSelection();
 };
 
+const activateSettingsPanel = (panelMode: string) => {
+  const nextPanelMode = normalizeSettingsPanelMode(panelMode);
+  const panelHint =
+    nextPanelMode === 'profile' ||
+    nextPanelMode === 'prompts' ||
+    nextPanelMode === 'desktop-models' ||
+    nextPanelMode === 'desktop-lan' ||
+    nextPanelMode === 'desktop-remote'
+      ? nextPanelMode
+      : '';
+  // Commit the overlay preview to the real section before updating the settings panel,
+  // otherwise the middle pane changes while the main content stays on the old section.
+  if (sessionHub.activeSection !== 'more' || helperAppsWorkspaceMode.value) {
+    switchSection('more', { panelHint, settingsPanelMode: nextPanelMode });
+    return;
+  }
+  settingsPanelMode.value = nextPanelMode;
+};
+
+const openMoreRailSection = (section: MessengerSection) => {
+  switchSection(section);
+};
+
 const openSettingsPage = () => {
-  settingsPanelMode.value = 'general';
-  switchSection('more');
+  activateSettingsPanel('general');
 };
 
 const openDesktopModelSettingsFromHeader = () => {
   if (!agentHeaderModelJumpEnabled.value) return;
-  switchSection('more', { panelHint: 'desktop-models' });
-  settingsPanelMode.value = 'desktop-models';
+  activateSettingsPanel('desktop-models');
 };
 
 const openProfilePage = () => {
@@ -6250,7 +6354,22 @@ const handleContactVirtualScroll = () => {
 const openMiddlePaneOverlay = () => {
   if (!isMiddlePaneOverlay.value) return;
   clearMiddlePaneOverlayHide();
+  clearMiddlePaneOverlayPreview();
   middlePaneOverlayVisible.value = true;
+};
+
+const normalizeSettingsPanelMode = (value: unknown): SettingsPanelMode => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (
+    normalized === 'profile' ||
+    normalized === 'prompts' ||
+    normalized === 'desktop-models' ||
+    normalized === 'desktop-lan' ||
+    normalized === 'desktop-remote'
+  ) {
+    return normalized;
+  }
+  return 'general';
 };
 
 const cancelMiddlePaneOverlayHide = () => {
@@ -6262,11 +6381,13 @@ const scheduleMiddlePaneOverlayHide = () => {
   clearMiddlePaneOverlayHide();
   if (typeof window === 'undefined') {
     middlePaneOverlayVisible.value = false;
+    clearMiddlePaneOverlayPreview();
     return;
   }
   middlePaneOverlayHideTimer = window.setTimeout(() => {
     middlePaneOverlayHideTimer = null;
     middlePaneOverlayVisible.value = false;
+    clearMiddlePaneOverlayPreview();
   }, 140);
 };
 
@@ -9102,9 +9223,19 @@ watch(
     if (!overlay) {
       clearMiddlePaneOverlayHide();
       middlePaneOverlayVisible.value = false;
+      clearMiddlePaneOverlayPreview();
     }
   },
   { immediate: true }
+);
+
+watch(
+  () => middlePaneOverlayVisible.value,
+  (visible) => {
+    if (!visible) {
+      clearMiddlePaneOverlayPreview();
+    }
+  }
 );
 
 watch(
@@ -9112,6 +9243,8 @@ watch(
   () => {
     const panelHint = String(route.query.panel || '').trim().toLowerCase();
     if (route.path.includes('/profile')) {
+      settingsPanelMode.value = 'profile';
+    } else if (panelHint === 'profile') {
       settingsPanelMode.value = 'profile';
     } else if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
       settingsPanelMode.value = 'prompts';

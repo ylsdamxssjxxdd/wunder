@@ -949,6 +949,7 @@ const emit = defineEmits<{
   (event: 'update:selectedContactUnitId', value: string): void;
   (event: 'update:selectedAgentHiveGroupId', value: string): void;
   (event: 'update:settingsPanelMode', value: string): void;
+  (event: 'activate-settings-panel', value: string): void;
   (event: 'delete-beeroom-group', group: Record<string, any>): void;
 }>();
 
@@ -966,6 +967,7 @@ const updateSelectedAgentHiveGroupId = (value: string) => {
 
 const updateSettingsPanelMode = (value: string) => {
   emit('update:settingsPanelMode', value);
+  emit('activate-settings-panel', value);
 };
 
 const resolvePlusActionLabel = () => {
