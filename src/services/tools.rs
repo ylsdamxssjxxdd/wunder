@@ -73,7 +73,7 @@ use crate::storage::{
     normalize_hive_id, ChatSessionRecord, SessionRunRecord, StorageBackend, TeamRunRecord,
     TeamTaskRecord, UserAgentAccessRecord, UserAgentRecord,
 };
-use crate::user_store::UserStore;
+use crate::user_store::{build_default_agent_record_from_storage, UserStore};
 use crate::user_tools::{UserToolAlias, UserToolKind};
 use crate::vector_knowledge;
 use crate::workspace::WorkspaceManager;
@@ -1441,6 +1441,8 @@ struct AgentSwarmBatchSendArgs {
     create_if_missing: Option<bool>,
     #[serde(default, rename = "includeCurrent", alias = "include_current")]
     include_current: Option<bool>,
+    #[serde(default, rename = "teamRunId", alias = "team_run_id")]
+    team_run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1579,12 +1581,18 @@ fn create_swarm_team_run_record(
     user_id: &str,
     hive_id: &str,
     mother_agent_id: Option<String>,
+    team_run_id_override: Option<&str>,
     strategy: &str,
     task_total: usize,
 ) -> TeamRunRecord {
     let now = now_ts();
+    let team_run_id = team_run_id_override
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("team_{}", Uuid::new_v4().simple()));
     TeamRunRecord {
-        team_run_id: format!("team_{}", Uuid::new_v4().simple()),
+        team_run_id,
         user_id: user_id.to_string(),
         hive_id: hive_id.to_string(),
         parent_session_id: context.session_id.to_string(),
@@ -1863,6 +1871,7 @@ async fn agent_swarm_send(context: &ToolContext<'_>, args: &Value) -> Result<Val
         user_id,
         &swarm_hive_id,
         mother_agent_id,
+        None,
         "direct_send",
         1,
     );
@@ -2001,6 +2010,7 @@ async fn agent_swarm_batch_send(context: &ToolContext<'_>, args: &Value) -> Resu
         user_id,
         &swarm_hive_id,
         mother_agent_id,
+        payload.team_run_id.as_deref(),
         "batch_send",
         payload.tasks.len(),
     );
@@ -3717,7 +3727,11 @@ fn load_agent_record(
     let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
     };
-    let record = storage.get_user_agent_by_id(agent_id)?;
+    let record = if is_default_agent_alias_value(agent_id) {
+        Some(build_default_agent_record_from_storage(storage, user_id)?)
+    } else {
+        storage.get_user_agent_by_id(agent_id)?
+    };
     let Some(record) = record else {
         if allow_missing {
             return Ok(None);
@@ -3732,6 +3746,11 @@ fn load_agent_record(
         return Err(anyhow!(i18n::t("error.agent_not_found")));
     }
     Ok(Some(record))
+}
+
+fn is_default_agent_alias_value(raw: &str) -> bool {
+    let cleaned = raw.trim();
+    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
 }
 
 async fn execute_user_tool(
@@ -6621,7 +6640,9 @@ fn is_a2a_task_finished(status: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::SqliteStorage;
     use serde_json::json;
+    use tempfile::tempdir;
 
     #[test]
     fn extract_user_world_file_refs_handles_quotes_suffix_and_email_mentions() {
@@ -6714,6 +6735,37 @@ mod tests {
                 .map(String::as_str),
             Some(sleep_tool::TOOL_SLEEP_WAIT)
         );
+    }
+
+    #[test]
+    fn load_agent_record_accepts_default_agent_alias() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("tools-default-agent.db");
+        let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
+
+        let record = load_agent_record(&storage, "alice", Some("__default__"), false)
+            .expect("load default agent")
+            .expect("default agent record");
+
+        assert_eq!(record.agent_id, "__default__");
+        assert_eq!(record.user_id, "alice");
+    }
+
+    #[test]
+    fn agent_swarm_batch_send_args_accept_team_run_id_aliases() {
+        let camel: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
+            "tasks": [{ "agentId": "worker_a", "message": "hello" }],
+            "teamRunId": "team_demo_camel",
+        }))
+        .expect("parse camel args");
+        assert_eq!(camel.team_run_id.as_deref(), Some("team_demo_camel"));
+
+        let snake: AgentSwarmBatchSendArgs = serde_json::from_value(json!({
+            "tasks": [{ "agent_id": "worker_a", "message": "hello" }],
+            "team_run_id": "team_demo_snake",
+        }))
+        .expect("parse snake args");
+        assert_eq!(snake.team_run_id.as_deref(), Some("team_demo_snake"));
     }
 
     #[test]

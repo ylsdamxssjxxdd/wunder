@@ -1,5 +1,7 @@
 use crate::monitor::MonitorState;
-use crate::services::user_store::list_user_agents_by_hive_with_default;
+use crate::services::user_store::{
+    build_default_agent_record_from_storage, list_user_agents_by_hive_with_default,
+};
 use crate::storage::{
     normalize_hive_id, AgentThreadRecord, ChatSessionRecord, SessionRunRecord, StorageBackend,
     TeamRunRecord, TeamTaskRecord, UserAgentRecord, DEFAULT_HIVE_ID,
@@ -61,10 +63,14 @@ pub fn resolve_swarm_hive_id(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let agent = storage
-            .get_user_agent(cleaned_user, agent_id)?
-            .or_else(|| storage.get_user_agent_by_id(agent_id).ok().flatten())
-            .ok_or_else(|| anyhow!("current swarm agent not found"))?;
+        let agent = if is_default_agent_alias(agent_id) {
+            build_default_agent_record_from_storage(storage, cleaned_user)?
+        } else {
+            storage
+                .get_user_agent(cleaned_user, agent_id)?
+                .or_else(|| storage.get_user_agent_by_id(agent_id).ok().flatten())
+                .ok_or_else(|| anyhow!("current swarm agent not found"))?
+        };
         let resolved = normalize_hive_id(&agent.hive_id);
         if let Some(requested) = requested.as_ref() {
             if requested != &resolved {
@@ -145,6 +151,20 @@ pub fn claim_mother_agent(
                 return Ok(existing);
             }
         }
+    }
+
+    set_mother_agent(storage, user_id, hive_id, candidate)
+}
+
+pub fn set_mother_agent(
+    storage: &dyn StorageBackend,
+    user_id: &str,
+    hive_id: &str,
+    candidate_agent_id: &str,
+) -> Result<String> {
+    let candidate = candidate_agent_id.trim();
+    if candidate.is_empty() {
+        return Err(anyhow!("candidate mother agent is empty"));
     }
 
     let key = mother_meta_key(user_id, hive_id);
@@ -563,9 +583,16 @@ fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
+fn is_default_agent_alias(agent_id: &str) -> bool {
+    let cleaned = agent_id.trim();
+    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{resolve_agent_main_session, resolve_or_create_agent_main_session};
+    use super::{
+        resolve_agent_main_session, resolve_or_create_agent_main_session, resolve_swarm_hive_id,
+    };
     use crate::storage::{
         ChatSessionRecord, SqliteStorage, StorageBackend, UserAgentRecord, DEFAULT_HIVE_ID,
     };
@@ -693,5 +720,17 @@ mod tests {
         assert!(created);
         assert_eq!(thread.session_id, session.session_id);
         assert_eq!(session.agent_id.as_deref(), Some("agent-ops"));
+    }
+
+    #[test]
+    fn resolve_swarm_hive_id_accepts_default_agent_alias() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("beeroom-default-agent-hive.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+
+        let resolved = resolve_swarm_hive_id(storage.as_ref(), "alice", Some("__default__"), None)
+            .expect("resolve hive id");
+
+        assert_eq!(resolved, DEFAULT_HIVE_ID);
     }
 }

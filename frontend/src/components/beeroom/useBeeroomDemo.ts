@@ -41,6 +41,7 @@ const normalizeErrorMessage = (error: any): string => {
 
 export const useBeeroomDemo = (options: {
   activeGroupId: Ref<string>;
+  selectedMotherAgentId: Ref<string>;
   t: Translate;
   onRefresh?: () => void;
 }) => {
@@ -164,6 +165,7 @@ export const useBeeroomDemo = (options: {
 
   const startDemo = async () => {
     const groupId = asTrimmed(options.activeGroupId.value);
+    const selectedMotherAgentId = asTrimmed(options.selectedMotherAgentId.value);
     if (!groupId || demoBusy.value) return;
     demoBusy.value = true;
     demoError.value = '';
@@ -173,7 +175,8 @@ export const useBeeroomDemo = (options: {
       const { data } = await startBeeroomDemoRun(groupId, {
         speed: 'normal',
         worker_count_mode: 'random',
-        tool_profile: 'safe'
+        tool_profile: 'safe',
+        mother_agent_id: selectedMotherAgentId || undefined
       });
       const snapshot = data?.data || {};
       const runId = asTrimmed(snapshot?.run_id || snapshot?.runId);

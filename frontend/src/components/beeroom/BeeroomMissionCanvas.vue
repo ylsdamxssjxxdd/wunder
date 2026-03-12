@@ -1332,6 +1332,7 @@ const {
   handleDemoRealtimeEvent
 } = useBeeroomDemo({
   activeGroupId,
+  selectedMotherAgentId: composerTargetAgentId,
   t,
   onRefresh: () => {
     scheduleTeamRealtimeReconcile(true);

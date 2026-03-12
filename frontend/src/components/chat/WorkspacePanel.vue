@@ -587,6 +587,24 @@ const workspacePaddingBottom = computed(() =>
     ? Math.max(0, (displayEntries.value.length - workspaceEndIndex.value) * WORKSPACE_ROW_HEIGHT)
     : 0
 );
+// Keep the virtual spacer aligned with the real scroll container after remounts,
+// layout/theme changes, and incremental refreshes.
+const syncWorkspaceListViewport = async ({ reset = false } = {}) => {
+  await nextTick();
+  const listElement = listRef.value;
+  if (!listElement) {
+    listScrollTop.value = 0;
+    return;
+  }
+  if (reset && listElement.scrollTop !== 0) {
+    listElement.scrollTop = 0;
+  }
+  const maxScrollTop = Math.max(0, listElement.scrollHeight - listElement.clientHeight);
+  if (listElement.scrollTop > maxScrollTop) {
+    listElement.scrollTop = maxScrollTop;
+  }
+  listScrollTop.value = Math.max(0, listElement.scrollTop || 0);
+};
 const flatEntries = computed(() => displayEntries.value.map((item) => item.entry));
 const singleSelectedEntry = computed(() => {
   if (state.selectedPaths.size !== 1) {
@@ -1158,6 +1176,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
       state.expanded = filtered;
     }
     await hydrateExpandedEntries();
+    await syncWorkspaceListViewport({ reset: true });
     return true;
   } catch (error) {
     showApiError(error, t('workspace.loadFailed'));
@@ -1165,6 +1184,7 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
       state.entries = [];
       emitWorkspaceStats(state.entries);
     }
+    await syncWorkspaceListViewport({ reset: true });
     return false;
   } finally {
     state.loading = false;
@@ -1192,11 +1212,13 @@ const loadWorkspaceSearch = async () => {
     state.entries = Array.isArray(payload.entries) ? payload.entries : [];
     state.searchMode = true;
     emitWorkspaceStats(state.entries);
+    await syncWorkspaceListViewport({ reset: true });
     return true;
   } catch (error) {
     showApiError(error, t('workspace.searchFailed'));
     state.entries = [];
     emitWorkspaceStats(state.entries);
+    await syncWorkspaceListViewport({ reset: true });
     return false;
   } finally {
     state.loading = false;
@@ -1259,6 +1281,7 @@ const reloadWorkspaceDirectoryPath = async (path) => {
     );
     reconcileWorkspaceSelection();
     await hydrateExpandedEntries();
+    await syncWorkspaceListViewport();
     return true;
   }
   const sourcePath = normalizeWorkspacePath(path);
@@ -2517,6 +2540,22 @@ watch(
     state.expanded = new Set();
     await loadWorkspace({ path: '', resetExpanded: true, resetSearch: true });
   }
+);
+
+watch(
+  listRef,
+  () => {
+    void syncWorkspaceListViewport();
+  },
+  { flush: 'post' }
+);
+
+watch(
+  () => [displayEntries.value.length, workspaceVirtual.value],
+  () => {
+    void syncWorkspaceListViewport();
+  },
+  { flush: 'post' }
 );
 
 onBeforeUnmount(() => {

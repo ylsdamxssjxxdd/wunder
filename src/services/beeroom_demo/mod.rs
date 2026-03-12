@@ -1,10 +1,12 @@
 use crate::core::schemas::WunderRequest;
 use crate::services::swarm::beeroom::{
     claim_mother_agent, get_mother_agent_id, resolve_or_create_agent_main_session,
-    snapshot_team_run,
+    set_mother_agent, snapshot_team_run,
 };
 use crate::state::AppState;
-use crate::storage::{normalize_hive_id, TeamRunRecord, UserAgentRecord};
+use crate::storage::{normalize_hive_id, UserAgentRecord};
+use crate::tools::resolve_tool_name;
+use crate::user_store::build_default_agent_record_from_storage;
 use anyhow::{anyhow, Result};
 use axum::{extract::State, routing::post, Json, Router};
 use chrono::Utc;
@@ -35,7 +37,6 @@ const DEMO_TERMINAL_WAIT_TIMEOUT_S: u64 = 90;
 const DEMO_TERMINAL_WAIT_POLL_MS: u64 = 250;
 const DEMO_TEAM_RUN_LOOKUP_TIMEOUT_S: u64 = 8;
 const DEMO_TEAM_RUN_LOOKUP_POLL_MS: u64 = 150;
-const DEMO_TEAM_RUN_LOOKUP_SKEW_S: f64 = 8.0;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct StartBeeroomDemoRequest {
@@ -51,6 +52,8 @@ pub struct StartBeeroomDemoRequest {
     pub scenario: Option<String>,
     #[serde(default, alias = "toolProfile", alias = "tool_profile")]
     pub tool_profile: Option<String>,
+    #[serde(default, alias = "motherAgentId", alias = "mother_agent_id")]
+    pub mother_agent_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,9 +128,9 @@ impl DemoSpeed {
 #[derive(Debug, Clone)]
 struct DemoPlan {
     user_id: String,
-    group_id: String,
     mother: UserAgentRecord,
     workers: Vec<DemoWorkerPlan>,
+    team_run_id: String,
     seed: u64,
     speed: DemoSpeed,
     scenario: String,
@@ -238,6 +241,7 @@ impl DemoRunControl {
 #[derive(Debug, Clone, Default)]
 struct MockScenario {
     run_id: String,
+    team_run_id: String,
     workers: Vec<DemoWorkerPlan>,
     seed: u64,
     speed: String,
@@ -394,7 +398,13 @@ fn build_demo_plan(
         ));
     }
 
-    let mother = resolve_mother_agent(state, user_id, group_id, &agents)?;
+    let mother = resolve_mother_agent(
+        state,
+        user_id,
+        group_id,
+        payload.mother_agent_id.as_deref(),
+        &agents,
+    )?;
     let worker_candidates = agents
         .into_iter()
         .filter(|agent| agent.agent_id != mother.agent_id)
@@ -441,9 +451,9 @@ fn build_demo_plan(
 
     Ok(DemoPlan {
         user_id: user_id.to_string(),
-        group_id: group_id.to_string(),
         mother,
         workers,
+        team_run_id: format!("team_{}", Uuid::new_v4().simple()),
         seed,
         speed,
         scenario,
@@ -454,8 +464,24 @@ fn resolve_mother_agent(
     state: &AppState,
     user_id: &str,
     group_id: &str,
+    requested_mother_agent_id: Option<&str>,
     agents: &[UserAgentRecord],
 ) -> Result<UserAgentRecord> {
+    let requested = requested_mother_agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(requested) = requested {
+        let agent = agents
+            .iter()
+            .find(|item| item.agent_id == requested)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!("requested demo mother agent is not available in current beeroom")
+            })?;
+        set_mother_agent(state.storage.as_ref(), user_id, group_id, &agent.agent_id)?;
+        return Ok(agent);
+    }
+
     let mother_id = get_mother_agent_id(state.storage.as_ref(), user_id, group_id)?;
     if let Some(mother_id) = mother_id {
         if let Some(agent) = agents.iter().find(|item| item.agent_id == mother_id) {
@@ -484,6 +510,9 @@ fn is_swarm_resolvable_agent(
     let cleaned_agent = agent_id.trim();
     if cleaned_user.is_empty() || cleaned_agent.is_empty() {
         return Ok(false);
+    }
+    if is_default_agent_alias(cleaned_agent) {
+        return build_default_agent_record_from_storage(storage, cleaned_user).map(|_| true);
     }
     if storage
         .get_user_agent(cleaned_user, cleaned_agent)?
@@ -528,42 +557,59 @@ fn choose_worker_tools(tool_names: &[String], profile: &str) -> (Option<String>,
         .iter()
         .map(|name| name.trim())
         .filter(|name| !name.is_empty())
-        .map(ToString::to_string)
+        .map(|name| (name.to_string(), resolve_tool_name(name)))
         .collect::<Vec<_>>();
     if normalized.is_empty() {
         return (None, None);
     }
     if profile != "safe" {
-        let first = normalized.first().cloned();
+        let first = normalized.first().map(|(raw, _)| raw.clone());
         let second = normalized
             .get(1)
-            .cloned()
+            .map(|(raw, _)| raw.clone())
             .filter(|tool| Some(tool) != first.as_ref());
         return (first, second);
     }
 
     let first = normalized
         .iter()
-        .find(|tool| is_sleep_tool(tool) || is_list_tool(tool))
-        .cloned()
-        .or_else(|| normalized.iter().find(|tool| is_search_tool(tool)).cloned())
-        .or_else(|| normalized.iter().find(|tool| is_read_tool(tool)).cloned());
-    let second = normalized
-        .iter()
-        .find(|tool| Some(*tool) != first.as_ref() && is_search_tool(tool))
-        .cloned()
+        .find(|(_, canonical)| is_sleep_tool(canonical) || is_list_tool(canonical))
+        .map(|(raw, _)| raw.clone())
         .or_else(|| {
             normalized
                 .iter()
-                .find(|tool| Some(*tool) != first.as_ref() && is_read_tool(tool))
-                .cloned()
+                .find(|(_, canonical)| is_search_tool(canonical))
+                .map(|(raw, _)| raw.clone())
         })
         .or_else(|| {
             normalized
                 .iter()
-                .find(|tool| Some(*tool) != first.as_ref() && is_list_tool(tool))
-                .cloned()
+                .find(|(_, canonical)| is_read_tool(canonical))
+                .map(|(raw, _)| raw.clone())
+        })
+        .or_else(|| normalized.first().map(|(raw, _)| raw.clone()));
+    let second = normalized
+        .iter()
+        .find(|(raw, canonical)| Some(raw) != first.as_ref() && is_search_tool(canonical))
+        .map(|(raw, _)| raw.clone())
+        .or_else(|| {
+            normalized
+                .iter()
+                .find(|(raw, canonical)| Some(raw) != first.as_ref() && is_read_tool(canonical))
+                .map(|(raw, _)| raw.clone())
+        })
+        .or_else(|| {
+            normalized
+                .iter()
+                .find(|(raw, canonical)| Some(raw) != first.as_ref() && is_list_tool(canonical))
+                .map(|(raw, _)| raw.clone())
         });
+    let second = second.or_else(|| {
+        normalized
+            .iter()
+            .find(|(raw, _)| Some(raw) != first.as_ref())
+            .map(|(raw, _)| raw.clone())
+    });
     (first, second)
 }
 
@@ -586,6 +632,7 @@ async fn execute_demo_run(state: Arc<AppState>, control: Arc<DemoRunControl>, pl
             let mut scenario = mock_state.scenario.write();
             *scenario = MockScenario {
                 run_id: control.run_id.clone(),
+                team_run_id: plan.team_run_id.clone(),
                 workers: plan.workers.clone(),
                 seed: plan.seed,
                 speed: plan.speed.as_text().to_string(),
@@ -595,6 +642,8 @@ async fn execute_demo_run(state: Arc<AppState>, control: Arc<DemoRunControl>, pl
         }
 
         let (base_url, _addr, server_task) = start_mock_llm_server(mock_state).await?;
+        control.update_team_run_id(Some(plan.team_run_id.clone()));
+        publish_demo_status(state.as_ref(), control.as_ref()).await;
         let request = build_mother_request(
             &plan,
             &mother_session.session_id,
@@ -604,28 +653,12 @@ async fn execute_demo_run(state: Arc<AppState>, control: Arc<DemoRunControl>, pl
         let response = state.orchestrator.run(request).await;
         server_task.abort();
         response?;
-
-        let team_run_id = find_team_run_id(
-            state.as_ref(),
-            &plan.user_id,
-            &plan.group_id,
-            &mother_session.session_id,
-            &plan.mother.agent_id,
-            control.started_at,
-        )
-        .await?;
-        control.update_team_run_id(team_run_id.clone());
-        publish_demo_status(state.as_ref(), control.as_ref()).await;
+        wait_for_demo_team_run_created(state.as_ref(), &plan.team_run_id).await?;
         if control.cancel_requested.load(Ordering::Relaxed) {
-            if let Some(team_run_id) = team_run_id.as_deref() {
-                state.team_run_runner.cancel(team_run_id).await;
-            }
+            state.team_run_runner.cancel(&plan.team_run_id).await;
             return Err(anyhow!("demo cancelled"));
         }
-        let Some(team_run_id) = team_run_id.as_deref() else {
-            return Err(anyhow!("demo team run was not created"));
-        };
-        wait_for_demo_terminal(state.as_ref(), control.as_ref(), team_run_id).await
+        wait_for_demo_terminal(state.as_ref(), control.as_ref(), &plan.team_run_id).await
     }
     .await;
 
@@ -711,81 +744,17 @@ fn build_mother_request(
     }
 }
 
-async fn find_team_run_id(
-    state: &AppState,
-    user_id: &str,
-    group_id: &str,
-    parent_session_id: &str,
-    mother_agent_id: &str,
-    run_started_at: f64,
-) -> Result<Option<String>> {
+async fn wait_for_demo_team_run_created(state: &AppState, team_run_id: &str) -> Result<()> {
     let lookup_started = Instant::now();
     loop {
-        if let Some(run_id) = select_demo_team_run_id(
-            state,
-            user_id,
-            group_id,
-            parent_session_id,
-            mother_agent_id,
-            run_started_at,
-        )? {
-            return Ok(Some(run_id));
+        if state.user_store.get_team_run(team_run_id)?.is_some() {
+            return Ok(());
         }
         if lookup_started.elapsed() >= Duration::from_secs(DEMO_TEAM_RUN_LOOKUP_TIMEOUT_S) {
-            return Ok(None);
+            return Err(anyhow!("demo team run was not created"));
         }
         sleep(Duration::from_millis(DEMO_TEAM_RUN_LOOKUP_POLL_MS)).await;
     }
-}
-
-fn select_demo_team_run_id(
-    state: &AppState,
-    user_id: &str,
-    group_id: &str,
-    parent_session_id: &str,
-    mother_agent_id: &str,
-    run_started_at: f64,
-) -> Result<Option<String>> {
-    let (runs, _) =
-        state
-            .user_store
-            .list_team_runs(user_id, Some(group_id), Some(parent_session_id), 0, 50)?;
-    if let Some(run) = pick_recent_demo_team_run(runs, run_started_at) {
-        return Ok(Some(run.team_run_id));
-    }
-
-    let scoped_parent_session = parent_session_id.trim();
-    let scoped_mother_agent = mother_agent_id.trim();
-    let (runs, _) = state
-        .user_store
-        .list_team_runs(user_id, Some(group_id), None, 0, 50)?;
-    let latest = pick_recent_demo_team_run(
-        runs.into_iter()
-            .filter(|run| {
-                let run_parent = run.parent_session_id.trim();
-                let run_mother = run.mother_agent_id.as_deref().unwrap_or("").trim();
-                let run_parent_agent = run.parent_agent_id.as_deref().unwrap_or("").trim();
-                run_parent == scoped_parent_session
-                    || (!scoped_mother_agent.is_empty()
-                        && (run_mother == scoped_mother_agent
-                            || run_parent_agent == scoped_mother_agent))
-            })
-            .collect(),
-        run_started_at,
-    );
-    Ok(latest.map(|run| run.team_run_id))
-}
-
-fn pick_recent_demo_team_run(
-    runs: Vec<TeamRunRecord>,
-    run_started_at: f64,
-) -> Option<TeamRunRecord> {
-    runs.into_iter()
-        .filter(|run| {
-            let candidate_ts = run.started_time.unwrap_or(run.updated_time);
-            run_started_at <= 0.0 || candidate_ts + DEMO_TEAM_RUN_LOOKUP_SKEW_S >= run_started_at
-        })
-        .max_by(|left, right| left.updated_time.total_cmp(&right.updated_time))
 }
 
 async fn wait_for_demo_terminal(
@@ -920,6 +889,7 @@ fn mother_dispatch_response(scenario: &MockScenario) -> Value {
         .collect::<Vec<_>>();
     let args = json!({
         "action": "batch_send",
+        "teamRunId": scenario.team_run_id,
         "tasks": tasks,
         "waitSeconds": scenario.wait_seconds,
         "pollIntervalSeconds": 0.25,
@@ -1202,30 +1172,36 @@ fn extract_message_value(message: &str, key: &str) -> Option<String> {
 }
 
 fn tool_equal(left: &str, right: &str) -> bool {
-    left.trim().eq_ignore_ascii_case(right.trim())
+    let left = left.trim();
+    let right = right.trim();
+    left.eq_ignore_ascii_case(right) || resolve_tool_name(left) == resolve_tool_name(right)
 }
 
 fn is_sleep_tool(name: &str) -> bool {
     let cleaned = name.trim();
-    cleaned == "休眠等待"
-        || matches!(
-            cleaned.to_ascii_lowercase().as_str(),
-            "sleep" | "sleep_wait" | "pause"
-        )
+    matches!(
+        cleaned.to_ascii_lowercase().as_str(),
+        "sleep" | "sleep_wait" | "pause"
+    ) || resolve_tool_name(cleaned) == resolve_tool_name("sleep")
 }
 
 fn is_list_tool(name: &str) -> bool {
     let normalized = name.trim().to_ascii_lowercase();
-    normalized == "list_files" || normalized == "list"
+    normalized == "list" || resolve_tool_name(name.trim()) == resolve_tool_name("list_files")
 }
 
 fn is_search_tool(name: &str) -> bool {
     let normalized = name.trim().to_ascii_lowercase();
-    normalized == "search_content" || normalized == "search"
+    normalized == "search" || resolve_tool_name(name.trim()) == resolve_tool_name("search_content")
 }
 
 fn is_read_tool(name: &str) -> bool {
-    name.trim().eq_ignore_ascii_case("read_file")
+    resolve_tool_name(name.trim()) == resolve_tool_name("read_file")
+}
+
+fn is_default_agent_alias(agent_id: &str) -> bool {
+    let cleaned = agent_id.trim();
+    cleaned.eq_ignore_ascii_case("__default__") || cleaned.eq_ignore_ascii_case("default")
 }
 
 fn default_seed() -> u64 {
@@ -1261,10 +1237,13 @@ fn is_cancel_like(err: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        choose_worker_tools, extract_message_value, is_swarm_resolvable_agent, normalize_hive_id,
-        resolve_worker_count,
+        choose_worker_tools, extract_message_value, is_swarm_resolvable_agent,
+        mother_dispatch_response, normalize_hive_id, resolve_worker_count, DemoWorkerPlan,
+        MockScenario,
     };
     use crate::storage::{SqliteStorage, StorageBackend, UserAgentRecord, DEFAULT_HIVE_ID};
+    use crate::tools::resolve_tool_name;
+    use serde_json::Value;
     use tempfile::tempdir;
 
     #[test]
@@ -1301,6 +1280,29 @@ mod tests {
     }
 
     #[test]
+    fn choose_worker_tools_safe_profile_supports_canonical_builtin_names() {
+        let read_tool = resolve_tool_name("read_file");
+        let search_tool = resolve_tool_name("search_content");
+        let list_tool = resolve_tool_name("list_files");
+        let tools = vec![read_tool.clone(), search_tool.clone(), list_tool.clone()];
+        let (first, second) = choose_worker_tools(&tools, "safe");
+        assert_eq!(first.as_deref(), Some(list_tool.as_str()));
+        assert_eq!(second.as_deref(), Some(search_tool.as_str()));
+    }
+
+    #[test]
+    fn choose_worker_tools_safe_profile_falls_back_to_declared_order() {
+        let tools = vec![
+            "custom_first".to_string(),
+            "custom_second".to_string(),
+            "custom_third".to_string(),
+        ];
+        let (first, second) = choose_worker_tools(&tools, "safe");
+        assert_eq!(first.as_deref(), Some("custom_first"));
+        assert_eq!(second.as_deref(), Some("custom_second"));
+    }
+
+    #[test]
     fn choose_worker_tools_non_safe_follows_declared_order() {
         let tools = vec![
             "custom_a".to_string(),
@@ -1310,6 +1312,34 @@ mod tests {
         let (first, second) = choose_worker_tools(&tools, "demo");
         assert_eq!(first.as_deref(), Some("custom_a"));
         assert_eq!(second.as_deref(), Some("custom_b"));
+    }
+
+    #[test]
+    fn mother_dispatch_response_carries_planned_team_run_id() {
+        let scenario = MockScenario {
+            run_id: "demo_run_1".to_string(),
+            team_run_id: "team_demo_1".to_string(),
+            workers: vec![DemoWorkerPlan {
+                agent_id: "worker_a".to_string(),
+                tool_step_one: Some("list_files".to_string()),
+                tool_step_two: Some("search_content".to_string()),
+            }],
+            seed: 7,
+            speed: "normal".to_string(),
+            wait_seconds: 6.0,
+            worker_sleep_seconds: 0.5,
+        };
+
+        let response = mother_dispatch_response(&scenario);
+        let args = response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+            .as_str()
+            .expect("tool call args");
+        let payload: Value = serde_json::from_str(args).expect("parse tool args");
+
+        assert_eq!(
+            payload.get("teamRunId").and_then(Value::as_str),
+            Some("team_demo_1")
+        );
     }
 
     #[test]
@@ -1338,14 +1368,14 @@ mod tests {
     }
 
     #[test]
-    fn swarm_resolvable_agent_rejects_virtual_default_alias_without_record() {
+    fn swarm_resolvable_agent_accepts_virtual_default_alias_without_record() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("beeroom-demo-resolvable.db");
         let storage = SqliteStorage::new(db_path.to_string_lossy().to_string());
 
         let can_resolve =
             is_swarm_resolvable_agent(&storage, "u1", "__default__").expect("check resolvable");
-        assert!(!can_resolve);
+        assert!(can_resolve);
     }
 
     #[test]

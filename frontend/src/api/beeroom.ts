@@ -116,6 +116,7 @@ export type StartBeeroomDemoRunRequest = {
   speed?: 'fast' | 'normal' | 'slow' | string;
   scenario?: string;
   tool_profile?: 'safe' | string;
+  mother_agent_id?: string;
 };
 
 export const startBeeroomDemoRun = (
