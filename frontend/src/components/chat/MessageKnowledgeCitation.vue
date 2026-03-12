@@ -22,9 +22,11 @@
 
   <el-dialog
     v-model="detailVisible"
-    class="message-knowledge-citation-dialog"
+    class="messenger-dialog message-knowledge-citation-dialog"
     :title="t('chat.knowledgeCitation.detailTitle')"
     width="680px"
+    append-to-body
+    destroy-on-close
   >
     <template v-if="activeReference">
       <div class="message-knowledge-citation-detail">
@@ -334,11 +336,21 @@ const openDetail = (item: KnowledgeReference) => {
 
 <style scoped>
 .message-knowledge-citation {
-  margin-top: 8px;
-  border: 1px solid var(--hula-border, #dbe1ea);
-  border-radius: 12px;
-  padding: 8px;
-  background: var(--hula-panel-bg, #f8fafc);
+  --message-knowledge-citation-border: var(--chat-border, var(--hula-border, #dbe1ea));
+  --message-knowledge-citation-surface: var(--chat-panel, var(--hula-center-bg, #f8fafc));
+  --message-knowledge-citation-surface-strong: var(--chat-card, var(--hula-main-bg, #ffffff));
+  --message-knowledge-citation-text: var(--chat-text, var(--hula-text, #111827));
+  --message-knowledge-citation-muted: var(--chat-muted, var(--hula-muted, #4b5563));
+  --message-knowledge-citation-accent: var(--chat-primary, var(--ui-accent, #3b82f6));
+  margin-top: 10px;
+  border: 1px solid var(--message-knowledge-citation-border);
+  border-radius: 14px;
+  padding: 10px;
+  background:
+    linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.08), rgba(var(--ui-accent-rgb), 0.03)),
+    var(--message-knowledge-citation-surface);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  color: var(--message-knowledge-citation-text);
 }
 
 .message-knowledge-citation__title {
@@ -347,7 +359,7 @@ const openDetail = (item: KnowledgeReference) => {
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
-  color: var(--hula-text-secondary, #4b5563);
+  color: var(--message-knowledge-citation-muted);
 }
 
 .message-knowledge-citation__list {
@@ -358,58 +370,102 @@ const openDetail = (item: KnowledgeReference) => {
 }
 
 .message-knowledge-citation__item {
-  border: 1px solid var(--hula-border, #dbe1ea);
+  flex: 0 1 280px;
+  width: min(100%, 280px);
+  border: 1px solid var(--message-knowledge-citation-border);
   border-radius: 10px;
-  background: var(--hula-center-bg, #ffffff);
+  background: var(--message-knowledge-citation-surface-strong);
   color: inherit;
-  padding: 6px 8px;
-  max-width: 100%;
+  padding: 8px 10px;
+  max-width: min(100%, 280px);
   text-align: left;
   cursor: pointer;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  appearance: none;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
-.message-knowledge-citation__item:hover {
-  border-color: var(--ui-accent, #3b82f6);
+.message-knowledge-citation__item:hover,
+.message-knowledge-citation__item:focus-visible {
+  border-color: var(--message-knowledge-citation-accent);
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+  outline: none;
 }
 
 .message-knowledge-citation__item-title {
   font-size: 12px;
   font-weight: 600;
-  color: var(--hula-text-primary, #111827);
+  color: var(--message-knowledge-citation-text);
 }
 
 .message-knowledge-citation__item-meta {
   font-size: 11px;
   line-height: 1.35;
-  color: var(--hula-text-secondary, #4b5563);
+  color: var(--message-knowledge-citation-muted);
   word-break: break-word;
+}
+
+.message-knowledge-citation-dialog {
+  --message-knowledge-citation-dialog-bg: #ffffff;
+  --message-knowledge-citation-dialog-surface: #f8fafc;
+  --message-knowledge-citation-dialog-border: #dbe1ea;
+  --message-knowledge-citation-dialog-text: #111827;
+  --message-knowledge-citation-dialog-muted: #6b7280;
+  --el-dialog-bg-color: var(--message-knowledge-citation-dialog-bg);
+  --el-text-color-primary: var(--message-knowledge-citation-dialog-text);
+  --el-text-color-regular: var(--message-knowledge-citation-dialog-text);
+  --el-text-color-secondary: var(--message-knowledge-citation-dialog-muted);
+  --el-border-color: var(--message-knowledge-citation-dialog-border);
+}
+
+.message-knowledge-citation-dialog.el-dialog {
+  width: min(680px, calc(100vw - 24px)) !important;
+  max-width: calc(100vw - 24px);
+  border-radius: 16px;
+  border: 1px solid var(--message-knowledge-citation-dialog-border);
+  background: var(--message-knowledge-citation-dialog-bg);
+  color: var(--message-knowledge-citation-dialog-text);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+}
+
+.message-knowledge-citation-dialog .el-dialog__header {
+  border-bottom: 1px solid var(--message-knowledge-citation-dialog-border);
+}
+
+.message-knowledge-citation-dialog .el-dialog__body {
+  max-height: min(72vh, 680px);
+  overflow: auto;
+  color: var(--message-knowledge-citation-dialog-text);
 }
 
 .message-knowledge-citation-detail {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .message-knowledge-citation-detail__row {
-  display: flex;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 10px;
   align-items: flex-start;
 }
 
 .message-knowledge-citation-detail__label {
-  flex: 0 0 84px;
   font-size: 12px;
-  color: var(--hula-text-secondary, #6b7280);
+  color: var(--message-knowledge-citation-dialog-muted);
 }
 
 .message-knowledge-citation-detail__value {
-  flex: 1;
   font-size: 13px;
-  color: var(--hula-text-primary, #111827);
+  color: var(--message-knowledge-citation-dialog-text);
   word-break: break-word;
 }
 
@@ -422,19 +478,54 @@ const openDetail = (item: KnowledgeReference) => {
   margin: 6px 0 0;
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid var(--hula-border, #dbe1ea);
-  background: var(--hula-center-bg, #ffffff);
+  border: 1px solid var(--message-knowledge-citation-dialog-border);
+  background: var(--message-knowledge-citation-dialog-surface);
   max-height: 300px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 12px;
   line-height: 1.5;
+  color: var(--message-knowledge-citation-dialog-text);
 }
 
 .message-knowledge-citation-detail__raw summary {
   cursor: pointer;
   font-size: 12px;
-  color: var(--hula-text-secondary, #4b5563);
+  color: var(--message-knowledge-citation-dialog-muted);
+}
+
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .message-knowledge-citation) {
+  --message-knowledge-citation-border: rgba(var(--ui-accent-rgb), 0.22);
+  --message-knowledge-citation-surface:
+    linear-gradient(180deg, rgba(12, 22, 38, 0.96), rgba(8, 15, 28, 0.98));
+  --message-knowledge-citation-surface-strong:
+    linear-gradient(180deg, rgba(16, 31, 53, 0.96), rgba(10, 20, 35, 0.98));
+  --message-knowledge-citation-text: #e6f2ff;
+  --message-knowledge-citation-muted: #8aa1c0;
+  --message-knowledge-citation-accent: #58d0ff;
+  box-shadow:
+    0 16px 34px rgba(2, 8, 20, 0.26),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .message-knowledge-citation-dialog.el-dialog) {
+  --message-knowledge-citation-dialog-bg:
+    linear-gradient(180deg, rgba(12, 22, 38, 0.98), rgba(8, 15, 28, 0.98));
+  --message-knowledge-citation-dialog-surface:
+    linear-gradient(180deg, rgba(16, 31, 53, 0.92), rgba(10, 20, 35, 0.96));
+  --message-knowledge-citation-dialog-border: rgba(var(--ui-accent-rgb), 0.2);
+  --message-knowledge-citation-dialog-text: #e6f2ff;
+  --message-knowledge-citation-dialog-muted: #8aa1c0;
+  box-shadow:
+    0 20px 46px rgba(2, 8, 20, 0.32),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+}
+
+@media (max-width: 640px) {
+  .message-knowledge-citation-detail__row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
 }
 </style>

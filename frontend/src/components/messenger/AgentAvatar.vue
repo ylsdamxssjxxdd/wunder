@@ -4,7 +4,12 @@
       <img class="messenger-agent-avatar-image" :src="DEFAULT_AGENT_AVATAR_IMAGE" alt="" />
     </span>
     <span class="messenger-agent-avatar-status" aria-hidden="true">
-      <i :class="[statusIconClass, statusAnimationClass]"></i>
+      <span
+        v-if="isRunning"
+        :class="statusAnimationClass"
+        class="messenger-agent-avatar-status-spinner"
+      ></span>
+      <i v-else :class="statusIconClass"></i>
     </span>
   </span>
 </template>
@@ -32,10 +37,9 @@ const props = withDefaults(
 
 const sizeClass = computed(() => `size-${props.size}`);
 const stateClass = computed(() => `state-${props.state}`);
+const isRunning = computed(() => props.state === 'running');
 const statusIconClass = computed(() => {
   switch (props.state) {
-    case 'running':
-      return 'fa-solid fa-spinner';
     case 'done':
       return 'fa-solid fa-check';
     case 'pending':
@@ -47,9 +51,9 @@ const statusIconClass = computed(() => {
   }
 });
 
-// Mark the running-state icon so global motion guardrails can selectively keep this critical indicator alive.
+// Mark the running-state spinner so global motion guardrails can selectively keep this critical indicator alive.
 const statusAnimationClass = computed(() =>
-  props.state === 'running' ? 'messenger-agent-avatar-status-icon--spinning' : ''
+  props.state === 'running' ? 'messenger-agent-avatar-status-spinner--spinning' : ''
 );
 </script>
 
@@ -138,6 +142,20 @@ const statusAnimationClass = computed(() =>
   display: inline-block;
   transform-origin: center center;
   color: inherit !important;
+}
+
+.messenger-agent-avatar-status-spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 1.7px solid rgba(255, 255, 255, 0.3);
+  border-top-color: currentColor;
+  border-right-color: currentColor;
+  box-sizing: border-box;
+  display: inline-block;
+  flex-shrink: 0;
+  backface-visibility: hidden;
+  transform: translateZ(0);
 }
 
 .messenger-agent-avatar.state-idle {

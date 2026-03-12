@@ -269,8 +269,8 @@
   transform: none;
 }
 
-:root[data-user-accent='minimal'] .messenger-agent-avatar-status i.messenger-agent-avatar-status-icon--spinning {
-  animation: spin 0.9s linear infinite !important;
+:root[data-user-accent='minimal'] .messenger-agent-avatar-status .messenger-agent-avatar-status-spinner--spinning {
+  animation: messenger-agent-avatar-spin 0.82s linear infinite !important;
   transform-origin: center;
 }
 
@@ -5146,8 +5146,8 @@ button.messenger-chat-header-model {
   transform-origin: center;
 }
 
-.messenger-agent-avatar-status i.messenger-agent-avatar-status-icon--spinning {
-  animation: spin 0.9s linear infinite;
+.messenger-agent-avatar-status .messenger-agent-avatar-status-spinner--spinning {
+  animation: messenger-agent-avatar-spin 0.82s linear infinite;
   transform-origin: center;
   will-change: transform;
 }
@@ -6144,8 +6144,17 @@ button.messenger-chat-header-model {
     scroll-behavior: auto !important;
   }
 
-  .messenger-agent-avatar-status i.messenger-agent-avatar-status-icon--spinning {
-    animation: spin 0.9s linear infinite !important;
+  .messenger-agent-avatar-status .messenger-agent-avatar-status-spinner--spinning {
+    animation: messenger-agent-avatar-spin 0.82s linear infinite !important;
+  }
+}
+
+@keyframes messenger-agent-avatar-spin {
+  from {
+    transform: rotate(0turn);
+  }
+  to {
+    transform: rotate(1turn);
   }
 }
 
