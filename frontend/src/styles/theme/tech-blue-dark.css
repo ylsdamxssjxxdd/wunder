@@ -81,23 +81,35 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-view {
   --hula-left-bg: #071321;
   --hula-left-bg-deep: #0b1a2c;
-  --hula-main-bg: #060d18;
-  --hula-center-bg: #0d1728;
+  --hula-main-bg: #0a1422;
+  --hula-center-bg: #122037;
+  --hula-card: linear-gradient(180deg, rgba(17, 29, 47, 0.96), rgba(12, 21, 36, 0.98));
   --hula-list-hover: rgba(88, 208, 255, 0.1);
   --hula-border: rgba(132, 173, 255, 0.18);
   --hula-muted: #8aa1c0;
   --hula-text: #e6f2ff;
   --hula-accent: var(--ui-accent);
   --hula-accent-soft: var(--ui-accent-soft);
+  --messenger-middle-pane-bg:
+    linear-gradient(180deg, rgba(18, 31, 51, 0.97), rgba(12, 23, 39, 0.99));
+  --messenger-chat-bg:
+    radial-gradient(circle at 0% 0%, rgba(var(--ui-accent-rgb), 0.18), transparent 26%),
+    radial-gradient(circle at 100% 0%, rgba(var(--ui-accent-secondary-rgb), 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(17, 31, 52, 0.96), rgba(12, 23, 39, 0.98) 46%, rgba(10, 19, 33, 0.99));
+  --messenger-right-dock-bg:
+    linear-gradient(180deg, rgba(15, 27, 45, 0.97), rgba(10, 20, 34, 0.99));
+  --messenger-search-bg:
+    linear-gradient(180deg, rgba(18, 31, 51, 0.92), rgba(13, 23, 40, 0.94));
+  --messenger-search-border: rgba(132, 173, 255, 0.22);
   --messenger-composer-surface-bg: var(--tech-blue-surface);
   --messenger-composer-box-bg: var(--tech-blue-surface-3);
   --messenger-composer-panel-bg: var(--tech-blue-surface-3);
   --messenger-composer-subtle-bg: var(--tech-blue-surface-2);
   --messenger-composer-border: var(--tech-blue-border);
   background:
-    radial-gradient(circle at 18% 12%, rgba(var(--ui-accent-rgb), 0.16), transparent 30%),
-    radial-gradient(circle at 84% 0%, rgba(var(--ui-accent-secondary-rgb), 0.16), transparent 34%),
-    linear-gradient(145deg, #050c16, #0a1424 46%, #08111e 100%);
+    radial-gradient(circle at 18% 12%, rgba(var(--ui-accent-rgb), 0.18), transparent 32%),
+    radial-gradient(circle at 84% 0%, rgba(var(--ui-accent-secondary-rgb), 0.14), transparent 36%),
+    linear-gradient(145deg, #091321, #0d1a2c 46%, #0b1524 100%);
   color: var(--hula-text);
 }
 
@@ -125,16 +137,16 @@
   color: #ffffff;
 }
 
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-middle-pane,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-middle-pane {
+  background: var(--messenger-middle-pane-bg);
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock {
-  background: rgba(8, 15, 28, 0.9);
+  background: var(--messenger-right-dock-bg);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-chat {
-  background:
-    radial-gradient(circle at 0% 0%, rgba(var(--ui-accent-rgb), 0.14), transparent 24%),
-    radial-gradient(circle at 100% 0%, rgba(var(--ui-accent-secondary-rgb), 0.14), transparent 26%),
-    linear-gradient(180deg, rgba(10, 18, 32, 0.96), rgba(8, 14, 26, 0.98));
+  background: var(--messenger-chat-bg);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-chat-header,

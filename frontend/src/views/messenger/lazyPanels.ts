@@ -22,6 +22,7 @@ export const DesktopContainerManagerPanel = lazy(
 export const DesktopSystemSettingsPanel = lazy(
   () => import('@/components/messenger/DesktopSystemSettingsPanel.vue')
 );
+export const GlobeAppPanel = lazy(() => import('@/components/globe/GlobeAppPanel.vue'));
 export const MessengerLocalFileSearchPanel = lazy(
   () => import('@/components/messenger/MessengerLocalFileSearchPanel.vue')
 );

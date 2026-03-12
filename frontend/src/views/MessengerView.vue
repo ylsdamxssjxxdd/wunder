@@ -60,7 +60,7 @@
           </button>
           <button
             class="messenger-left-nav-btn messenger-left-nav-btn--helper messenger-left-nav-btn--more-item"
-            :class="{ active: isHelperAppsMiddlePaneActive }"
+            :class="{ active: isHelperAppsMiddlePaneActive && !leftRailMoreExpanded }"
             type="button"
             :title="t('userWorld.helperApps.title')"
             :aria-label="t('userWorld.helperApps.title')"
@@ -264,6 +264,9 @@
             <div class="messenger-helper-body">
               <MessengerLocalFileSearchPanel
                 v-if="helperAppsActiveKind === 'offline' && helperAppsActiveKey === 'local-file-search'"
+              />
+              <GlobeAppPanel
+                v-else-if="helperAppsActiveKind === 'offline' && helperAppsActiveKey === 'globe'"
               />
               <div
                 v-else-if="helperAppsActiveKind === 'online' && helperAppsActiveExternalItem"
@@ -1327,6 +1330,7 @@ import {
   ArchivedThreadManager,
   DesktopContainerManagerPanel,
   DesktopSystemSettingsPanel,
+  GlobeAppPanel,
   MessengerLocalFileSearchPanel,
   MessengerSettingsPanel,
   MessengerWorldComposer,
@@ -1859,14 +1863,13 @@ const isLeftNavSectionActive = (section: MessengerSection): boolean => {
 
 const closeLeftRailMoreMenu = () => {
   leftRailMoreExpanded.value = false;
+  clearMiddlePaneOverlayPreview();
 };
 
 const toggleLeftRailMoreMenu = () => {
   clearMiddlePaneOverlayHide();
+  clearMiddlePaneOverlayPreview();
   leftRailMoreExpanded.value = !leftRailMoreExpanded.value;
-  if (!leftRailMoreExpanded.value) {
-    clearMiddlePaneOverlayPreview();
-  }
 };
 
 const basePrefix = computed(() => {
@@ -7757,14 +7760,25 @@ const resolveExternalHost = (url: unknown) => {
   }
 };
 
-const helperAppsOfflineItems = computed<HelperAppOfflineItem[]>(() => [
-  {
-    key: 'local-file-search',
-    title: t('userWorld.helperApps.localFileSearch.cardTitle'),
-    description: t('userWorld.helperApps.localFileSearch.cardDesc'),
-    icon: 'fa-folder-tree'
+const helperAppsOfflineItems = computed<HelperAppOfflineItem[]>(() => {
+  const items: HelperAppOfflineItem[] = [
+    {
+      key: 'local-file-search',
+      title: t('userWorld.helperApps.localFileSearch.cardTitle'),
+      description: t('userWorld.helperApps.localFileSearch.cardDesc'),
+      icon: 'fa-folder-tree'
+    }
+  ];
+  if (!desktopMode.value) {
+    items.push({
+      key: 'globe',
+      title: t('userWorld.helperApps.globe.cardTitle'),
+      description: t('userWorld.helperApps.globe.cardDesc'),
+      icon: 'fa-globe'
+    });
   }
-]);
+  return items;
+});
 
 const helperAppsActiveOfflineItem = computed(() => {
   if (helperAppsActiveKind.value !== 'offline') return null;
@@ -7810,7 +7824,18 @@ const selectHelperApp = (kind: 'offline' | 'online', key: string) => {
 };
 
 const ensureHelperAppsSelection = () => {
-  if (helperAppsActiveKind.value && helperAppsActiveKey.value) return;
+  if (
+    helperAppsActiveKind.value === 'offline' &&
+    helperAppsOfflineItems.value.some((item) => item.key === helperAppsActiveKey.value)
+  ) {
+    return;
+  }
+  if (
+    helperAppsActiveKind.value === 'online' &&
+    helperAppsOnlineItems.value.some((item) => item.linkId === helperAppsActiveKey.value)
+  ) {
+    return;
+  }
   const fallback = helperAppsOfflineItems.value[0];
   if (fallback) {
     helperAppsActiveKind.value = 'offline';

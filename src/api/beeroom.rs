@@ -445,6 +445,12 @@ pub(crate) fn load_group(
     group_id: &str,
 ) -> Result<HiveRecord, Response> {
     let normalized = normalize_hive_id(group_id);
+    if normalized == DEFAULT_HIVE_ID {
+        return state
+            .user_store
+            .ensure_default_hive(user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()));
+    }
     state
         .user_store
         .get_hive(user_id, &normalized)
