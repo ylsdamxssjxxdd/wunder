@@ -6,8 +6,7 @@
     <span class="messenger-agent-avatar-status" aria-hidden="true">
       <span
         v-if="isRunning"
-        :class="statusAnimationClass"
-        class="messenger-agent-avatar-status-spinner"
+        class="messenger-agent-avatar-status-dot-spinner messenger-agent-avatar-status-icon--spinning"
       ></span>
       <i v-else :class="statusIconClass"></i>
     </span>
@@ -50,11 +49,6 @@ const statusIconClass = computed(() => {
       return 'fa-solid fa-pause';
   }
 });
-
-// Mark the running-state spinner so global motion guardrails can selectively keep this critical indicator alive.
-const statusAnimationClass = computed(() =>
-  props.state === 'running' ? 'messenger-agent-avatar-status-spinner--spinning' : ''
-);
 </script>
 
 <style scoped>
@@ -144,18 +138,39 @@ const statusAnimationClass = computed(() =>
   color: inherit !important;
 }
 
-.messenger-agent-avatar-status-spinner {
+.messenger-agent-avatar-status-dot-spinner {
   width: 10px;
   height: 10px;
-  border-radius: 999px;
-  border: 1.7px solid rgba(255, 255, 255, 0.3);
-  border-top-color: currentColor;
-  border-right-color: currentColor;
-  box-sizing: border-box;
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
   flex-shrink: 0;
-  backface-visibility: hidden;
-  transform: translateZ(0);
+  transform-origin: center center;
+}
+
+.messenger-agent-avatar-status-dot-spinner::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 1.7px;
+  height: 1.7px;
+  margin-top: -0.85px;
+  margin-left: -0.85px;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow:
+    0 -4.1px 0 0.85px currentColor,
+    3.55px -2.05px 0 0.85px currentColor,
+    3.55px 2.05px 0 0.85px currentColor,
+    0 4.1px 0 0.85px currentColor,
+    -3.55px 2.05px 0 0.85px currentColor,
+    -3.55px -2.05px 0 0.85px currentColor;
+}
+
+.messenger-agent-avatar-status .messenger-agent-avatar-status-icon--spinning {
+  animation: messenger-agent-avatar-spin 1.48s linear infinite;
 }
 
 .messenger-agent-avatar.state-idle {

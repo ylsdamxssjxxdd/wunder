@@ -117,10 +117,6 @@
   --messenger-composer-panel-bg: #ffffff;
   --messenger-composer-subtle-bg: #fafafa;
   --messenger-composer-border: #e5e7eb;
-  --messenger-motion-fast: 0s;
-  --messenger-motion-normal: 0s;
-  --messenger-motion-slow: 0s;
-  --messenger-hover-lift: 0px;
   background: #ffffff;
 }
 
@@ -249,13 +245,6 @@
   color: #374151;
 }
 
-:root[data-user-accent='minimal'] .messenger-view *,
-:root[data-user-accent='minimal'] .messenger-view *::before,
-:root[data-user-accent='minimal'] .messenger-view *::after {
-  animation: none !important;
-  transition: none !important;
-}
-
 :root[data-user-accent='minimal'] .messenger-chat-empty-state,
 :root[data-user-accent='minimal'] .messenger-world-pop-panel,
 :root[data-user-accent='minimal'] .messenger-agent-grid-card,
@@ -269,8 +258,8 @@
   transform: none;
 }
 
-:root[data-user-accent='minimal'] .messenger-agent-avatar-status .messenger-agent-avatar-status-spinner--spinning {
-  animation: messenger-agent-avatar-spin 0.82s linear infinite !important;
+:root[data-user-accent='minimal'] .messenger-agent-avatar-status .messenger-agent-avatar-status-icon--spinning {
+  animation: messenger-agent-avatar-spin 1.48s linear infinite !important;
   transform-origin: center;
 }
 
@@ -5146,8 +5135,8 @@ button.messenger-chat-header-model {
   transform-origin: center;
 }
 
-.messenger-agent-avatar-status .messenger-agent-avatar-status-spinner--spinning {
-  animation: messenger-agent-avatar-spin 0.82s linear infinite;
+.messenger-agent-avatar-status .messenger-agent-avatar-status-icon--spinning {
+  animation: messenger-agent-avatar-spin 1.48s linear infinite;
   transform-origin: center;
   will-change: transform;
 }
@@ -6121,32 +6110,9 @@ button.messenger-chat-header-model {
   transition-duration: 0.12s;
 }
 
-.messenger-view .chat-shell .message-skeleton-list,
-.messenger-view .chat-shell .workspace-list.refreshing,
-.messenger-view .chat-shell .workspace-skeleton,
-.messenger-view .chat-shell .ai-avatar-working,
-.messenger-view .chat-shell .ai-avatar-working::before {
-  animation: none !important;
-}
-
 .messenger-view .chat-shell .spinner,
 .messenger-view .chat-shell .status-indicator.loading {
   animation-duration: 0.9s;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .messenger-view,
-  .messenger-view *,
-  .messenger-view *::before,
-  .messenger-view *::after {
-    animation: none !important;
-    transition: none !important;
-    scroll-behavior: auto !important;
-  }
-
-  .messenger-agent-avatar-status .messenger-agent-avatar-status-spinner--spinning {
-    animation: messenger-agent-avatar-spin 0.82s linear infinite !important;
-  }
 }
 
 @keyframes messenger-agent-avatar-spin {
