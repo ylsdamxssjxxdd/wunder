@@ -2,7 +2,11 @@ use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::org_units;
 use crate::state::AppState;
-use crate::storage::OrgUnitRecord;
+use crate::storage::{
+    normalize_sandbox_container_id, OrgUnitRecord, UserAccountRecord, UserAgentRecord,
+    DEFAULT_HIVE_ID,
+};
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::user_store::UserStore;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -12,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
+use uuid::Uuid;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -20,6 +25,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/auth/demo", post(login_demo))
         .route("/wunder/auth/external/login", post(external_login))
         .route("/wunder/auth/external/code", post(external_issue_code))
+        .route("/wunder/auth/external/launch", post(external_launch))
         .route("/wunder/auth/external/exchange", post(external_exchange))
         .route("/wunder/auth/org_units", get(list_org_units))
         .route(
@@ -55,6 +61,20 @@ struct ExternalLoginRequest {
     username: String,
     /// External system password (used to set/verify wunder password).
     password: String,
+    #[serde(default)]
+    unit_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalLaunchRequest {
+    /// Shared secret, configured via `security.external_auth_key` (or env `WUNDER_EXTERNAL_AUTH_KEY`).
+    key: String,
+    /// External system account identifier (will be normalized to wunder user_id).
+    username: String,
+    /// Optional external password for backward compatibility.
+    /// If omitted, launch flow issues session token without password sync.
+    #[serde(default)]
+    password: Option<String>,
     #[serde(default)]
     unit_id: Option<String>,
 }
@@ -313,6 +333,83 @@ async fn external_exchange(
     })))
 }
 
+async fn external_launch(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExternalLaunchRequest>,
+) -> Result<Json<Value>, Response> {
+    validate_external_key(&state, &payload.key).await?;
+
+    let username = payload.username.trim();
+    let password = payload
+        .password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if username.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let unit_id = normalize_optional_id(payload.unit_id.as_deref());
+    let desktop_mode = is_desktop_mode(&state).await;
+
+    let user_store = state.user_store.clone();
+    let username_snapshot = username.to_string();
+    let password_snapshot = password;
+    let unit_snapshot = unit_id.clone();
+    let desktop_mode_snapshot = desktop_mode;
+    let (session, created, updated) = tokio::task::spawn_blocking(move || {
+        provision_external_launch_session(
+            &user_store,
+            &username_snapshot,
+            password_snapshot.as_deref(),
+            unit_snapshot,
+            desktop_mode_snapshot,
+        )
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    let config = state.config_store.get().await;
+    let preset_agent_name = config.external_embed_preset_agent_name().ok_or_else(|| {
+        error_response(
+            StatusCode::FORBIDDEN,
+            "external embed preset agent is not configured".to_string(),
+        )
+    })?;
+
+    let target_agent =
+        resolve_or_create_external_embed_agent(&state, &session.user, &preset_agent_name).await?;
+    let record = state
+        .external_auth_codes
+        .issue(
+            session.user.user_id.clone(),
+            session.token.token.clone(),
+            60.0,
+        )
+        .await;
+    let entry_path = format!(
+        "/app/embed/chat?wunder_code={}&agent_id={}&embed=1",
+        record.code, target_agent.agent_id
+    );
+
+    Ok(Json(json!({
+        "data": {
+            "code": record.code,
+            "expires_at": record.expires_at,
+            "entry_path": entry_path,
+            "agent_id": target_agent.agent_id,
+            "agent_name": target_agent.name,
+            "created": created,
+            "updated": updated,
+        }
+    })))
+}
+
 async fn me(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -538,6 +635,113 @@ fn build_unit_map(units: &[OrgUnitRecord]) -> HashMap<String, OrgUnitRecord> {
         .iter()
         .map(|unit| (unit.unit_id.clone(), unit.clone()))
         .collect()
+}
+
+async fn resolve_or_create_external_embed_agent(
+    state: &Arc<AppState>,
+    user: &UserAccountRecord,
+    preset_agent_name: &str,
+) -> Result<UserAgentRecord, Response> {
+    let cleaned_name = preset_agent_name.trim();
+    if cleaned_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "external embed preset agent is empty".to_string(),
+        ));
+    }
+    let config = state.config_store.get().await;
+    let preset = config
+        .user_agents
+        .presets
+        .into_iter()
+        .find(|item| item.name.trim() == cleaned_name)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::NOT_FOUND,
+                format!("preset agent '{cleaned_name}' not found"),
+            )
+        })?;
+
+    let all_agents = state
+        .user_store
+        .list_user_agents(&user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut candidates = all_agents
+        .into_iter()
+        .filter(|item| item.name.trim() == cleaned_name)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| right.updated_at.total_cmp(&left.updated_at));
+
+    // Prefer user-customized same-name agent over preset-template records.
+    if let Some(custom) = candidates
+        .iter()
+        .find(|item| !is_external_embed_preset_template(item, &preset))
+        .cloned()
+    {
+        return Ok(custom);
+    }
+    if let Some(existing) = candidates.first().cloned() {
+        return Ok(existing);
+    }
+
+    state
+        .user_store
+        .ensure_default_hive(&user.user_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let context = build_user_tool_context(state, &user.user_id).await;
+    let mut tool_names = compute_allowed_tool_names(user, &context)
+        .into_iter()
+        .collect::<Vec<_>>();
+    tool_names.sort();
+
+    let icon_name = if preset.icon_name.trim().is_empty() {
+        "spark".to_string()
+    } else {
+        preset.icon_name.trim().to_string()
+    };
+    let icon_color = if preset.icon_color.trim().is_empty() {
+        "#94a3b8".to_string()
+    } else {
+        preset.icon_color.trim().to_string()
+    };
+    let icon = json!({
+        "name": icon_name,
+        "color": icon_color
+    })
+    .to_string();
+    let now = now_ts();
+    let created = UserAgentRecord {
+        agent_id: format!("agent_{}", Uuid::new_v4().simple()),
+        user_id: user.user_id.clone(),
+        hive_id: DEFAULT_HIVE_ID.to_string(),
+        name: cleaned_name.to_string(),
+        description: preset.description.trim().to_string(),
+        system_prompt: preset.system_prompt.trim().to_string(),
+        tool_names,
+        access_level: "A".to_string(),
+        approval_mode: "auto_edit".to_string(),
+        is_shared: false,
+        status: "active".to_string(),
+        icon: Some(icon),
+        sandbox_container_id: normalize_sandbox_container_id(preset.sandbox_container_id),
+        created_at: now,
+        updated_at: now,
+    };
+    state
+        .user_store
+        .upsert_user_agent(&created)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(created)
+}
+
+fn is_external_embed_preset_template(
+    candidate: &UserAgentRecord,
+    preset: &crate::config::UserAgentPresetConfig,
+) -> bool {
+    let preset_description = preset.description.trim();
+    let preset_prompt = preset.system_prompt.trim();
+    candidate.description.trim() == preset_description
+        && candidate.system_prompt.trim() == preset_prompt
 }
 
 fn org_unit_payload(record: &OrgUnitRecord) -> Value {
@@ -833,31 +1037,10 @@ fn provision_external_user(
             updated = true;
         }
 
-        // Update unit binding when provided.
-        if let Some(next_unit_id) = unit_id.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-            if user.unit_id.as_deref() != Some(next_unit_id) {
-                if desktop_mode {
-                    user.unit_id = Some(next_unit_id.to_string());
-                } else {
-                    let previous_level = user
-                        .unit_id
-                        .as_deref()
-                        .and_then(|id| user_store.get_org_unit(id).ok().flatten())
-                        .map(|unit| unit.level);
-                    let next_unit = user_store
-                        .get_org_unit(next_unit_id)?
-                        .ok_or_else(|| anyhow::anyhow!("unit not found"))?;
-                    let previous_default = UserStore::default_daily_quota_by_level(previous_level);
-                    user.unit_id = Some(next_unit.unit_id.clone());
-                    if user.daily_quota == previous_default {
-                        user.daily_quota =
-                            UserStore::default_daily_quota_by_level(Some(next_unit.level));
-                    }
-                }
-                user.updated_at = now_ts();
-                user_store.update_user(&user)?;
-                updated = true;
-            }
+        if sync_external_unit_binding(user_store, &mut user, unit_id.as_deref(), desktop_mode)? {
+            user.updated_at = now_ts();
+            user_store.update_user(&user)?;
+            updated = true;
         }
     } else {
         let create_unit_id = if desktop_mode { None } else { unit_id.clone() };
@@ -871,22 +1054,123 @@ fn provision_external_user(
             "active",
             false,
         )?;
-        if desktop_mode {
-            if let Some(next_unit_id) = unit_id.as_deref().map(str::trim).filter(|v| !v.is_empty())
-            {
-                if created_user.unit_id.as_deref() != Some(next_unit_id) {
-                    created_user.unit_id = Some(next_unit_id.to_string());
-                    created_user.updated_at = now_ts();
-                    user_store.update_user(&created_user)?;
-                    updated = true;
-                }
-            }
+        if sync_external_unit_binding(
+            user_store,
+            &mut created_user,
+            unit_id.as_deref(),
+            desktop_mode,
+        )? {
+            created_user.updated_at = now_ts();
+            user_store.update_user(&created_user)?;
+            updated = true;
         }
         created = true;
     }
 
     let session = user_store.login(&normalized, password)?;
     Ok((session, created, updated))
+}
+
+fn provision_external_launch_session(
+    user_store: &UserStore,
+    username: &str,
+    password: Option<&str>,
+    unit_id: Option<String>,
+    desktop_mode: bool,
+) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
+    if let Some(password) = password {
+        let cleaned = password.trim();
+        if !cleaned.is_empty() {
+            return provision_external_user(user_store, username, cleaned, unit_id, desktop_mode);
+        }
+    }
+
+    let normalized = UserStore::normalize_user_id(username)
+        .ok_or_else(|| anyhow::anyhow!("invalid username"))?;
+    if UserStore::is_default_admin(&normalized) {
+        return Err(anyhow::anyhow!("admin account is protected"));
+    }
+
+    let mut created = false;
+    let mut updated = false;
+    let existing = user_store.get_user_by_username(&normalized)?;
+    let user = if let Some(mut user) = existing {
+        if UserStore::is_admin(&user) {
+            return Err(anyhow::anyhow!("admin account is protected"));
+        }
+        if user.status.trim().to_lowercase() != "active" {
+            return Err(anyhow::anyhow!("user disabled"));
+        }
+        if sync_external_unit_binding(user_store, &mut user, unit_id.as_deref(), desktop_mode)? {
+            user.updated_at = now_ts();
+            user_store.update_user(&user)?;
+            updated = true;
+        }
+        user
+    } else {
+        let create_unit_id = if desktop_mode { None } else { unit_id.clone() };
+        let mut created_user = user_store.create_user(
+            &normalized,
+            None,
+            &format!("ext_launch_{}", Uuid::new_v4().simple()),
+            Some("A"),
+            create_unit_id,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )?;
+        if sync_external_unit_binding(
+            user_store,
+            &mut created_user,
+            unit_id.as_deref(),
+            desktop_mode,
+        )? {
+            created_user.updated_at = now_ts();
+            user_store.update_user(&created_user)?;
+            updated = true;
+        }
+        created = true;
+        created_user
+    };
+    let token = user_store.create_session_token(&user.user_id)?;
+    Ok((
+        crate::user_store::UserSession { user, token },
+        created,
+        updated,
+    ))
+}
+
+fn sync_external_unit_binding(
+    user_store: &UserStore,
+    user: &mut UserAccountRecord,
+    unit_id: Option<&str>,
+    desktop_mode: bool,
+) -> anyhow::Result<bool> {
+    let Some(next_unit_id) = unit_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(false);
+    };
+    if user.unit_id.as_deref() == Some(next_unit_id) {
+        return Ok(false);
+    }
+    if desktop_mode {
+        user.unit_id = Some(next_unit_id.to_string());
+        return Ok(true);
+    }
+
+    let previous_level = user
+        .unit_id
+        .as_deref()
+        .and_then(|id| user_store.get_org_unit(id).ok().flatten())
+        .map(|unit| unit.level);
+    let next_unit = user_store
+        .get_org_unit(next_unit_id)?
+        .ok_or_else(|| anyhow::anyhow!("unit not found"))?;
+    let previous_default = UserStore::default_daily_quota_by_level(previous_level);
+    user.unit_id = Some(next_unit.unit_id.clone());
+    if user.daily_quota == previous_default {
+        user.daily_quota = UserStore::default_daily_quota_by_level(Some(next_unit.level));
+    }
+    Ok(true)
 }
 
 fn error_response(status: StatusCode, message: String) -> Response {

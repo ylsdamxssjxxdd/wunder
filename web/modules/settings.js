@@ -30,6 +30,7 @@ const serverSettings = {
 };
 const securitySettings = {
   apiKey: "",
+  externalEmbedPresetAgentName: "",
   allowCommands: [],
   allowPaths: [],
   denyGlobs: [],
@@ -244,6 +245,9 @@ const applyServerSettings = (options = {}) => {
 };
 
 const applySecuritySettings = (options = {}) => {
+  if (elements.settingsExternalEmbedPresetAgent) {
+    elements.settingsExternalEmbedPresetAgent.value = options.externalEmbedPresetAgentName || "";
+  }
   if (elements.settingsAllowCommands) {
     elements.settingsAllowCommands.value = renderTextList(options.allowCommands);
   }
@@ -426,6 +430,10 @@ const applySystemSettings = (payload = {}) => {
 
   const security = payload.security || {};
   securitySettings.apiKey = typeof security.api_key === "string" ? security.api_key.trim() : "";
+  securitySettings.externalEmbedPresetAgentName =
+    typeof security.external_embed_preset_agent_name === "string"
+      ? security.external_embed_preset_agent_name.trim()
+      : "";
   securitySettings.allowCommands = Array.isArray(security.allow_commands)
     ? security.allow_commands
     : [];
@@ -589,6 +597,7 @@ const buildSystemUpdatePayload = () => {
 
   if (
     elements.apiKey ||
+    elements.settingsExternalEmbedPresetAgent ||
     elements.settingsAllowCommands ||
     elements.settingsAllowPaths ||
     elements.settingsDenyGlobs
@@ -596,6 +605,11 @@ const buildSystemUpdatePayload = () => {
     const security = {};
     if (elements.apiKey) {
       security.api_key = String(elements.apiKey.value || "").trim();
+    }
+    if (elements.settingsExternalEmbedPresetAgent) {
+      security.external_embed_preset_agent_name = String(
+        elements.settingsExternalEmbedPresetAgent.value || ""
+      ).trim();
     }
     if (elements.settingsAllowCommands) {
       security.allow_commands = normalizeTextList(elements.settingsAllowCommands.value);

@@ -1173,7 +1173,7 @@ fn apply_desktop_defaults(
         .into_iter()
         .map(|path| path.to_string_lossy().to_string())
         .collect();
-    for required in ["技能创建器", "公文写作", "电子表格处理"] {
+    for required in ["技能创建器", "公文写作", "大数据处理"] {
         if !config
             .skills
             .enabled

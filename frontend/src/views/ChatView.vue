@@ -457,6 +457,10 @@
                     </span>
                   </div>
                 </div>
+                <MessageKnowledgeCitation
+                  v-if="message.role === 'assistant'"
+                  :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
+                />
               </div>
             </div>
           </div>
@@ -679,6 +683,7 @@ import FeatureAgentSettingsDialog from '@/components/chat/FeatureAgentSettingsDi
 import FeatureChannelDialog from '@/components/chat/FeatureChannelDialog.vue';
 import FeatureCronDialog from '@/components/chat/FeatureCronDialog.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
+import MessageKnowledgeCitation from '@/components/chat/MessageKnowledgeCitation.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
 import PlanPanel from '@/components/chat/PlanPanel.vue';

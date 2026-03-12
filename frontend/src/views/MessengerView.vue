@@ -956,6 +956,10 @@
                     </div>
                   </div>
                 </div>
+                <MessageKnowledgeCitation
+                  v-if="item.message.role === 'assistant'"
+                  :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
+                />
                 <div
                   v-if="hasMessageContent(item.message.content) || shouldShowMessageStats(item.message)"
                   class="messenger-message-extra"
@@ -1312,6 +1316,7 @@ import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlay
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import {
   InquiryPanel,
+  MessageKnowledgeCitation,
   MessageThinking,
   MessageToolWorkflow,
   PlanPanel,

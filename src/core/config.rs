@@ -89,6 +89,7 @@ fn default_prompt_templates_root() -> String {
 pub struct SecurityConfig {
     pub api_key: Option<String>,
     pub external_auth_key: Option<String>,
+    pub external_embed_preset_agent_name: Option<String>,
     #[serde(default)]
     pub allow_commands: Vec<String>,
     #[serde(default)]
@@ -1062,6 +1063,29 @@ impl Config {
             return Some(value.to_string());
         }
         env::var("WUNDER_EXTERNAL_AUTH_KEY")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    // 外链嵌入默认预制智能体名称；未配置时外链启动接口将返回错误。
+    pub fn external_embed_preset_agent_name(&self) -> Option<String> {
+        let inline = self
+            .security
+            .external_embed_preset_agent_name
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        if let Some(value) = inline {
+            if value.starts_with("${") && value.ends_with('}') {
+                return env::var("WUNDER_EXTERNAL_EMBED_PRESET_AGENT_NAME")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+            }
+            return Some(value.to_string());
+        }
+        env::var("WUNDER_EXTERNAL_EMBED_PRESET_AGENT_NAME")
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())

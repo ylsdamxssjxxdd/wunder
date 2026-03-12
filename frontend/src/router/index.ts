@@ -15,6 +15,7 @@ const AdminLayout = () => import('@/layouts/AdminLayout.vue');
 const LoginView = () => import('@/views/LoginView.vue');
 const RegisterView = () => import('@/views/RegisterView.vue');
 const MessengerView = () => import('@/views/MessengerView.vue');
+const EmbeddedChatView = () => import('@/views/EmbeddedChatView.vue');
 const ExternalAppView = () => import('@/views/ExternalAppView.vue');
 const AdminLoginView = () => import('@/views/AdminLoginView.vue');
 const AdminUsersView = () => import('@/views/AdminUsersView.vue');
@@ -141,6 +142,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'desktop-cron', component: MessengerView },
       { path: 'channels', name: 'desktop-channels', component: MessengerView },
       { path: 'chat', name: 'desktop-chat', component: MessengerView },
+      { path: 'embed/chat', name: 'desktop-embed-chat', component: EmbeddedChatView },
       { path: 'beeroom', name: 'desktop-beeroom', component: MessengerView },
       { path: 'user-world', name: 'desktop-user-world', component: MessengerView },
       { path: 'workspace', name: 'desktop-workspace', component: MessengerView },
@@ -162,6 +164,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'cron', component: MessengerView },
       { path: 'channels', name: 'channels', component: MessengerView },
       { path: 'chat', name: 'chat', component: MessengerView },
+      { path: 'embed/chat', name: 'embed-chat', component: EmbeddedChatView },
       { path: 'beeroom', name: 'beeroom', component: MessengerView },
       { path: 'user-world', name: 'user-world', component: MessengerView },
       { path: 'workspace', name: 'workspace', component: MessengerView },
@@ -181,6 +184,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cron', name: 'demo-cron', component: MessengerView, meta: { demo: true } },
       { path: 'channels', name: 'demo-channels', component: MessengerView, meta: { demo: true } },
       { path: 'chat', name: 'demo-chat', component: MessengerView, meta: { demo: true } },
+      { path: 'embed/chat', name: 'demo-embed-chat', component: EmbeddedChatView, meta: { demo: true } },
       { path: 'beeroom', name: 'demo-beeroom', component: MessengerView, meta: { demo: true } },
       { path: 'user-world', name: 'demo-user-world', component: MessengerView, meta: { demo: true } },
       { path: 'workspace', name: 'demo-workspace', component: MessengerView, meta: { demo: true } },

@@ -2842,6 +2842,7 @@ fn build_system_settings_payload(config: &Config) -> Value {
         },
         "security": {
             "api_key": config.api_key(),
+            "external_embed_preset_agent_name": config.external_embed_preset_agent_name(),
             "allow_commands": config.security.allow_commands.clone(),
             "allow_paths": config.security.allow_paths.clone(),
             "deny_globs": config.security.deny_globs.clone(),
@@ -2949,6 +2950,14 @@ async fn admin_system_update(
                         config.security.api_key = None;
                     } else {
                         config.security.api_key = Some(cleaned);
+                    }
+                }
+                if let Some(agent_name) = security.external_embed_preset_agent_name {
+                    let cleaned = agent_name.trim().to_string();
+                    if cleaned.is_empty() {
+                        config.security.external_embed_preset_agent_name = None;
+                    } else {
+                        config.security.external_embed_preset_agent_name = Some(cleaned);
                     }
                 }
                 if let Some(allow_commands) = security.allow_commands {
@@ -6251,6 +6260,8 @@ struct SystemServerUpdateRequest {
 struct SystemSecurityUpdateRequest {
     #[serde(default)]
     api_key: Option<String>,
+    #[serde(default)]
+    external_embed_preset_agent_name: Option<String>,
     #[serde(default)]
     allow_commands: Option<Vec<String>>,
     #[serde(default)]

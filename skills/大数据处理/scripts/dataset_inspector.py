@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Spreadsheet inspector for unknown/possibly broken files.
+"""Dataset inspector for unknown/possibly broken tabular files.
 
 Purpose:
-- Quickly detect whether a spreadsheet file is readable.
+- Quickly detect whether a dataset file is readable.
 - Surface likely issues (format mismatch, corruption, potential encryption).
 - Output structured metadata for LLM workflows (JSON), reducing model guesswork.
 
@@ -367,7 +367,7 @@ def build_top_level_suggestions(result: Dict[str, Any]) -> List[str]:
 
 
 def summarize_stdout(report: Dict[str, Any]) -> None:
-    print("=== Spreadsheet Inspector ===")
+    print("=== Dataset Inspector ===")
     print(f"path: {report['path']}")
     print(f"exists: {report['exists']}, readable: {report['readable']}, status: {report['status']}")
     print(f"file_type: {report.get('file_type')}, size_bytes: {report.get('size_bytes')}")
@@ -485,8 +485,8 @@ def inspect(path: Path, sample_rows: int, selected_sheets: Optional[List[str]]) 
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Inspect spreadsheet health and emit metadata JSON.")
-    parser.add_argument("path", help="Input spreadsheet path (.xlsx/.xlsm/.xls/.csv/.tsv).")
+    parser = argparse.ArgumentParser(description="Inspect tabular dataset health and emit metadata JSON.")
+    parser.add_argument("path", help="Input dataset path (.xlsx/.xlsm/.xls/.csv/.tsv).")
     parser.add_argument("--sample-rows", type=int, default=2000, help="Rows to sample per sheet.")
     parser.add_argument(
         "--sheet",

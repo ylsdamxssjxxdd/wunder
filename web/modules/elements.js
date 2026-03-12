@@ -273,6 +273,7 @@ export const elements = {
   settingsAllowCommands: document.getElementById("settingsAllowCommands"),
   settingsAllowPaths: document.getElementById("settingsAllowPaths"),
   settingsDenyGlobs: document.getElementById("settingsDenyGlobs"),
+  settingsExternalEmbedPresetAgent: document.getElementById("settingsExternalEmbedPresetAgent"),
   settingsLogLevel: document.getElementById("settingsLogLevel"),
   settingsMonitorEventLimit: document.getElementById("settingsMonitorEventLimit"),
   settingsMonitorPayloadLimit: document.getElementById("settingsMonitorPayloadLimit"),

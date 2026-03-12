@@ -23,11 +23,11 @@
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
-- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`，并可通过 `security.external_embed_preset_agent_name` 限定外链默认智能体。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
-- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
+- 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`，隐藏左/中栏）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
@@ -772,6 +772,7 @@
   - `server.stream_chunk_size`：流式输出分片大小（字节）
   - `server.chat_stream_channel`：聊天流式通道默认值（`ws`/`sse`）
   - `security.api_key`：API Key（未配置时为 null）
+  - `security.external_embed_preset_agent_name`：外链嵌入预制智能体名称（为空表示未配置）
   - `security.allow_commands`：允许执行命令前缀列表
   - `security.allow_paths`：允许访问的额外目录列表
   - `security.deny_globs`：拒绝访问的路径通配规则列表
@@ -1677,6 +1678,12 @@
   - 用途：为 iframe 嵌入场景签发一次性登录码（推荐由外部系统后端调用）。
   - 入参（JSON）：同 `/wunder/auth/external/login`
   - 返回（JSON）：`data.code`、`data.expires_at`、`data.created`、`data.updated`
+- `POST /wunder/auth/external/launch`
+  - 用途：外部系统一键启动嵌入聊天页（自动建号/对齐后返回 embed 入口）。
+  - 入参（JSON）：`key`、`username`、`unit_id`（可选）、`password`（可选，兼容旧调用）
+  - 说明：`password` 为空时不会执行密码对齐，直接基于受信任外部身份签发会话（推荐用于更安全的嵌入启动）。
+  - 约束：仅允许进入 `security.external_embed_preset_agent_name` 指定的预制智能体；若该用户下存在同名智能体，优先使用用户同名智能体。
+  - 返回（JSON）：`data.code`、`data.expires_at`、`data.entry_path`（`/app/embed/chat?...`）、`data.agent_id`、`data.agent_name`、`data.created`、`data.updated`
 - `POST /wunder/auth/external/exchange`
   - 用途：前端用一次性登录码换取用户 Token（单次有效，默认 60 秒过期）。
   - 入参（JSON）：`code`
