@@ -78,6 +78,10 @@
                 <i class="fa-solid fa-code-branch"></i>
                 <span data-i18n="panel.users">线程管理</span>
               </button>
+              <button id="navPresetAgents" class="nav-btn">
+                <i class="fa-solid fa-layer-group"></i>
+                <span data-i18n="panel.presetAgents">预设智能体</span>
+              </button>
               <button id="navBuiltin" class="nav-btn">
                 <i class="fa-solid fa-toolbox"></i>
                 <span data-i18n="panel.toolManager">工具管理</span>
@@ -577,7 +581,197 @@
             </div>
           </div>
         </section>
-                <section id="userAccountsPanel" class="panel">
+        <section id="presetAgentsPanel" class="panel">
+          <div class="list-header">
+            <h1 data-i18n="presetAgents.title">预设智能体</h1>
+            <div class="header-actions">
+              <button id="presetAgentsRefreshBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
+              </button>
+              <button id="presetAgentCreateBtn" class="btn-with-icon" type="button">
+                <i class="fa-solid fa-plus"></i>
+                <span data-i18n="presetAgents.action.create">新增预设</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips" data-i18n="presetAgents.tip">
+            管理预设智能体模板，配置与用户侧一致的智能体设置、定时任务与渠道设置。
+          </div>
+          <div id="presetAgentsStatusText" class="muted preset-agents-status"></div>
+          <div class="management-layout preset-agents-layout">
+            <div class="management-list preset-agents-list-pane">
+              <div class="list-header">
+                <label data-i18n="presetAgents.list.title">预设列表</label>
+              </div>
+              <div id="presetAgentList" class="preset-agent-list"></div>
+            </div>
+            <div class="management-detail preset-agents-detail-pane">
+              <div class="detail-header">
+                <div>
+                  <div id="presetAgentDetailTitle" class="detail-title" data-i18n="presetAgents.detail.empty">
+                    未选择预设
+                  </div>
+                  <div id="presetAgentDetailMeta" class="muted"></div>
+                </div>
+                <div class="detail-actions">
+                  <button id="presetAgentSaveBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    <span data-i18n="common.save">保存</span>
+                  </button>
+                  <button id="presetAgentDeleteBtn" class="danger btn-with-icon" type="button">
+                    <i class="fa-solid fa-trash"></i>
+                    <span data-i18n="common.delete">删除</span>
+                  </button>
+                </div>
+              </div>
+
+              <div class="preset-agent-tabs" role="tablist" aria-label="preset agent tabs">
+                <button id="presetAgentTabPreset" class="preset-agent-tab is-active" type="button" role="tab">
+                  <span data-i18n="presetAgents.tab.preset">智能体设置</span>
+                </button>
+                <button id="presetAgentTabCron" class="preset-agent-tab" type="button" role="tab">
+                  <span data-i18n="presetAgents.tab.cron">定时任务</span>
+                </button>
+                <button id="presetAgentTabChannels" class="preset-agent-tab" type="button" role="tab">
+                  <span data-i18n="presetAgents.tab.channels">渠道配置</span>
+                </button>
+              </div>
+
+              <div id="presetAgentTabContentPreset" class="preset-agent-tab-content active" role="tabpanel">
+                <div class="form-section">
+                  <div class="form-row">
+                    <label for="presetAgentFormName" data-i18n="presetAgents.form.name">名称</label>
+                    <input id="presetAgentFormName" type="text" />
+                  </div>
+                  <div class="form-row">
+                    <label for="presetAgentFormDescription" data-i18n="presetAgents.form.description">描述</label>
+                    <textarea id="presetAgentFormDescription" rows="3"></textarea>
+                  </div>
+                  <div class="form-row">
+                    <label for="presetAgentFormPrompt" data-i18n="presetAgents.form.systemPrompt">系统提示词</label>
+                    <textarea id="presetAgentFormPrompt" rows="6"></textarea>
+                  </div>
+                  <div class="form-row">
+                    <label for="presetUserAgentTools" data-i18n="presetAgents.userAgent.tools">工具列表</label>
+                    <div id="presetUserAgentTools" class="tool-list"></div>
+                    <div id="presetUserAgentToolsEmpty" class="muted" data-i18n="presetAgents.userAgent.toolsEmpty">
+                      暂无可选工具
+                    </div>
+                  </div>
+                  <div class="form-row">
+                    <label for="presetUserAgentApproval" data-i18n="presetAgents.userAgent.approvalMode">审批模式</label>
+                    <select id="presetUserAgentApproval">
+                      <option value="suggest">suggest</option>
+                      <option value="auto_edit">auto_edit</option>
+                      <option value="full_auto">full_auto</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="presetAgentFormContainerId" data-i18n="presetAgents.form.containerId">容器编号</label>
+                    <input id="presetAgentFormContainerId" type="number" min="1" step="1" />
+                  </div>
+                  <div class="form-row">
+                    <label for="presetUserAgentHive" data-i18n="presetAgents.userAgent.hive">蜂群</label>
+                    <input
+                      id="presetUserAgentHive"
+                      type="text"
+                      readonly
+                      value="default（不分组）"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div id="presetAgentTabContentCron" class="preset-agent-tab-content" role="tabpanel">
+                <div class="preset-agent-subsection">
+                  <div class="preset-agent-subsection-title" data-i18n="presetAgents.cron.listTitle">任务列表</div>
+                  <div id="presetCronList" class="preset-cron-list"></div>
+                </div>
+                <div class="preset-agent-subsection">
+                  <div class="preset-agent-subsection-title" data-i18n="presetAgents.cron.formTitle">新增 / 编辑任务</div>
+                  <div class="form-section">
+                    <div class="form-row">
+                      <label for="presetCronJobId" data-i18n="presetAgents.cron.jobId">任务 ID</label>
+                      <input id="presetCronJobId" type="text" placeholder="为空表示新增" />
+                    </div>
+                    <div class="form-row">
+                      <label for="presetCronName" data-i18n="presetAgents.cron.name">任务名称</label>
+                      <input id="presetCronName" type="text" />
+                    </div>
+                    <div class="form-row">
+                      <label for="presetCronScheduleText" data-i18n="presetAgents.cron.scheduleText">调度表达式</label>
+                      <input id="presetCronScheduleText" type="text" placeholder="every 1h / cron:0 0 * * *" />
+                    </div>
+                    <div class="form-row">
+                      <label for="presetCronMessage" data-i18n="presetAgents.cron.message">触发消息</label>
+                      <textarea id="presetCronMessage" rows="3"></textarea>
+                    </div>
+                    <div class="form-row">
+                      <label for="presetCronEnabled" data-i18n="presetAgents.cron.enabledLabel">是否启用</label>
+                      <label class="switch-label">
+                        <input id="presetCronEnabled" type="checkbox" checked />
+                        <span data-i18n="presetAgents.cron.enabled">启用</span>
+                      </label>
+                    </div>
+                  </div>
+                  <div class="detail-actions">
+                    <button id="presetCronSaveBtn" class="btn-with-icon" type="button">
+                      <i class="fa-solid fa-floppy-disk"></i>
+                      <span data-i18n="common.save">保存</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div id="presetAgentTabContentChannels" class="preset-agent-tab-content" role="tabpanel">
+                <div class="preset-agent-subsection">
+                  <div class="preset-agent-subsection-title" data-i18n="presetAgents.channels.accounts.title">渠道账号</div>
+                  <div id="presetChannelsAccountList" class="preset-channel-list"></div>
+                  <div class="form-section">
+                    <div class="form-row">
+                      <label for="presetChannelFormChannel" data-i18n="presetAgents.channels.channel">渠道</label>
+                      <select id="presetChannelFormChannel"></select>
+                    </div>
+                    <div class="form-row">
+                      <label for="presetChannelFormAccountId" data-i18n="presetAgents.channels.accountId">账号 ID</label>
+                      <input id="presetChannelFormAccountId" type="text" />
+                    </div>
+                    <div class="form-row">
+                      <label for="presetChannelFormAccountName" data-i18n="presetAgents.channels.accountName">显示名称</label>
+                      <input id="presetChannelFormAccountName" type="text" />
+                    </div>
+                    <div class="form-row">
+                      <label for="presetChannelFormPeerKind" data-i18n="presetAgents.channels.peerKind">默认会话类型</label>
+                      <select id="presetChannelFormPeerKind">
+                        <option value="group">group</option>
+                        <option value="user">user</option>
+                      </select>
+                    </div>
+                    <div class="form-row">
+                      <label for="presetChannelFormEnabled" data-i18n="presetAgents.channels.enabled">是否启用</label>
+                      <label class="switch-label">
+                        <input id="presetChannelFormEnabled" type="checkbox" checked />
+                        <span data-i18n="presetAgents.channels.active">启用</span>
+                      </label>
+                    </div>
+                    <div class="form-row">
+                      <label for="presetChannelFormConfig" data-i18n="presetAgents.channels.config">配置(JSON)</label>
+                      <textarea id="presetChannelFormConfig" rows="8">{}</textarea>
+                    </div>
+                  </div>
+                  <div class="detail-actions">
+                    <button id="presetChannelSaveBtn" class="btn-with-icon" type="button">
+                      <i class="fa-solid fa-floppy-disk"></i>
+                      <span data-i18n="common.save">保存账号</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section id="userAccountsPanel" class="panel">
           <div class="user-management user-account-management">
             <div class="list-header">
               <h1 data-i18n="userAccounts.title">用户管理</h1>
@@ -1265,6 +1459,7 @@
                     <select id="settingsDefaultPanel">
                       <option value="monitor" data-i18n="panel.monitor">Monitor</option>
                       <option value="users" data-i18n="panel.users">Sessions</option>
+                      <option value="presetAgents" data-i18n="panel.presetAgents">Preset Agents</option>
                       <option value="llm" data-i18n="panel.llm">LLM</option>
                       <option value="settings" data-i18n="panel.settings">Settings</option>
                       <option value="builtin" data-i18n="panel.builtin">Builtin</option>

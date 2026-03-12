@@ -4,7 +4,7 @@
       <img class="messenger-agent-avatar-image" :src="DEFAULT_AGENT_AVATAR_IMAGE" alt="" />
     </span>
     <span class="messenger-agent-avatar-status" aria-hidden="true">
-      <i :class="statusIconClass"></i>
+      <i :class="[statusIconClass, statusAnimationClass]"></i>
     </span>
   </span>
 </template>
@@ -35,7 +35,7 @@ const stateClass = computed(() => `state-${props.state}`);
 const statusIconClass = computed(() => {
   switch (props.state) {
     case 'running':
-      return 'fa-solid fa-spinner fa-spin';
+      return 'fa-solid fa-spinner';
     case 'done':
       return 'fa-solid fa-check';
     case 'pending':
@@ -46,6 +46,11 @@ const statusIconClass = computed(() => {
       return 'fa-solid fa-pause';
   }
 });
+
+// Mark the running-state icon so global motion guardrails can selectively keep this critical indicator alive.
+const statusAnimationClass = computed(() =>
+  props.state === 'running' ? 'messenger-agent-avatar-status-icon--spinning' : ''
+);
 </script>
 
 <style scoped>
@@ -130,6 +135,8 @@ const statusIconClass = computed(() => {
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
+  display: inline-block;
+  transform-origin: center center;
   color: inherit !important;
 }
 

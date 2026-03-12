@@ -1288,6 +1288,11 @@
     inset 0 1px 0 rgba(159, 231, 255, 0.08);
 }
 
+/* Keep the dock handle out of the normal flow so it does not reserve phantom space above the sandbox panel. */
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-right-dock-toggle {
+  position: absolute;
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .topbar-icon-btn::before,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-plus-btn::before,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-header-btn:not(.messenger-header-btn--text)::before,

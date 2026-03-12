@@ -8,17 +8,28 @@ import '@/styles/main.css';
 
 import App from './App.vue';
 import router from './router';
-import { usePerformanceStore } from '@/stores/performance';
 import { useThemeStore } from '@/stores/theme';
 import { initI18n } from '@/i18n';
 import { loadRuntimeConfig } from '@/config/runtime';
 import { initDesktopRuntime } from '@/config/desktop';
 import { installElementPlus } from '@/plugins/elementPlus';
 
+const LEGACY_PERFORMANCE_STORAGE_KEYS = ['beeroom-performance-mode', 'wille-performance-mode'] as const;
+
+function clearLegacyPerformanceMode() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  for (const key of LEGACY_PERFORMANCE_STORAGE_KEYS) {
+    window.localStorage.removeItem(key);
+  }
+  document.documentElement.removeAttribute('data-performance-mode');
+}
+
 const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
-usePerformanceStore(pinia);
+clearLegacyPerformanceMode();
 useThemeStore(pinia);
 installElementPlus(app);
 app.use(router);

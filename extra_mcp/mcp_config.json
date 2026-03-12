@@ -1,14 +1,34 @@
 {
+  "mcp": {
+    "transport": "streamable-http",
+    "host": "0.0.0.0",
+    "port": 9010
+  },
   "database": {
-    "default_key": "default",
-    "db_type": "mysql",
-    "host": "host.docker.internal",
-    "port": 3307,
-    "user": "root",
-    "password": "rootpass123!",
-    "database": "personnel",
+    "default_key": "docker_host",
     "description": "人员与组织信息库",
-    "connect_timeout": 5,
+    "targets": {
+      "docker_host": {
+        "type": "mysql",
+        "host": "host.docker.internal",
+        "port": 3307,
+        "user": "root",
+        "password": "rootpass123!",
+        "database": "personnel",
+        "connect_timeout": 5,
+        "description": "人员数据库"
+      },
+      "local": {
+        "type": "mysql",
+        "host": "127.0.0.1",
+        "port": 3307,
+        "user": "root",
+        "password": "rootpass123!",
+        "database": "personnel",
+        "connect_timeout": 5,
+        "description": "本机直接访问 MySQL（适合本地运行 extra_mcp）"
+      }
+    },
     "tables": {
       "employees": {
         "table": "employees",

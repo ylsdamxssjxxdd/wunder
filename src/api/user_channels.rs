@@ -29,6 +29,8 @@ const WILDCARD_PEER_ID: &str = "*";
 #[derive(Debug, Deserialize)]
 struct ChannelAccountsQuery {
     #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
     channel: Option<String>,
 }
 
@@ -110,6 +112,8 @@ struct WechatMpAccountPayload {
 #[derive(Debug, Deserialize)]
 struct ChannelBindingsQuery {
     #[serde(default)]
+    user_id: Option<String>,
+    #[serde(default)]
     channel: Option<String>,
     #[serde(default)]
     account_id: Option<String>,
@@ -133,6 +137,12 @@ struct ChannelBindingUpsertRequest {
     enabled: Option<bool>,
     #[serde(default)]
     priority: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelActionQuery {
+    #[serde(default)]
+    user_id: Option<String>,
 }
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -164,7 +174,7 @@ async fn list_channel_accounts(
     headers: HeaderMap,
     Query(query): Query<ChannelAccountsQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let config = state.config_store.get().await;
     if !config.channels.enabled && !config.gateway.enabled {
@@ -212,9 +222,10 @@ async fn list_channel_accounts(
 async fn upsert_channel_account(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
     Json(payload): Json<ChannelAccountUpsertRequest>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let config = state.config_store.get().await;
     if !config.channels.enabled && !config.gateway.enabled {
@@ -860,9 +871,10 @@ async fn upsert_channel_account(
 async fn delete_channel_account_by_id(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
     AxumPath((channel, account_id)): AxumPath<(String, String)>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let channel = normalize_user_channel(Some(channel.as_str()))?;
     let account_id = account_id.trim().to_string();
@@ -894,9 +906,10 @@ async fn delete_channel_account_by_id(
 async fn delete_channel_account_legacy(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
     AxumPath(channel): AxumPath<String>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let channel = normalize_user_channel(Some(channel.as_str()))?;
 
@@ -935,7 +948,7 @@ async fn list_channel_bindings(
     headers: HeaderMap,
     Query(query): Query<ChannelBindingsQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let query_channel = query
         .channel
@@ -1018,9 +1031,10 @@ async fn list_channel_bindings(
 async fn upsert_channel_binding(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
     Json(payload): Json<ChannelBindingUpsertRequest>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let channel = normalize_user_channel(Some(payload.channel.as_str()))?;
     let account_id = payload.account_id.trim().to_string();
@@ -1157,9 +1171,10 @@ async fn upsert_channel_binding(
 async fn delete_channel_binding(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
     AxumPath((channel, account_id, peer_kind, peer_id)): AxumPath<(String, String, String, String)>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let channel = normalize_user_channel(Some(channel.as_str()))?;
     let account_id = account_id.trim().to_string();

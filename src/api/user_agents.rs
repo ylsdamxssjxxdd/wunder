@@ -57,11 +57,18 @@ pub fn router() -> Router<Arc<AppState>> {
         )
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct AgentUserQuery {
+    #[serde(default)]
+    user_id: Option<String>,
+}
+
 async fn list_agents(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     state
         .user_store
@@ -90,8 +97,9 @@ async fn list_agents(
 async fn list_shared_agents(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let agents = state
         .user_store
@@ -115,8 +123,9 @@ async fn list_shared_agents(
 async fn list_running_agents(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
 
     #[derive(Debug, Clone, Default)]
@@ -470,8 +479,9 @@ async fn list_running_agents(
 async fn list_agent_user_rounds(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let records =
         state
@@ -515,8 +525,9 @@ async fn get_agent(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let cleaned = agent_id.trim();
     if cleaned.is_empty() {
@@ -562,7 +573,7 @@ async fn get_agent_runtime_records(
     AxumPath(agent_id): AxumPath<String>,
     Query(query): Query<AgentRuntimeRecordsQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let normalized_agent_id =
         normalize_agent_id(agent_id.trim().trim_matches('"').trim_matches('\''));
@@ -835,9 +846,10 @@ async fn get_agent_runtime_records(
 async fn create_agent(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
     Json(payload): Json<AgentCreateRequest>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let name = payload.name.trim().to_string();
     if name.is_empty() {
@@ -949,9 +961,10 @@ async fn update_agent(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
     Json(payload): Json<AgentUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let cleaned = agent_id.trim();
     if cleaned.is_empty() {
@@ -1065,8 +1078,9 @@ async fn delete_agent(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let cleaned = agent_id.trim();
     if cleaned.is_empty() {
         return Err(error_response(
@@ -1100,8 +1114,9 @@ async fn get_default_session(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let normalized_agent = normalize_agent_id(&agent_id);
     if !normalized_agent.is_empty() {
@@ -1143,9 +1158,10 @@ async fn set_default_session(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
     Json(payload): Json<DefaultSessionRequest>,
 ) -> Result<Json<Value>, Response> {
-    let resolved = resolve_user(&state, &headers, None).await?;
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
     let normalized_agent = normalize_agent_id(&agent_id);
     if !normalized_agent.is_empty() {
@@ -2028,6 +2044,8 @@ struct DefaultSessionRequest {
 
 #[derive(Debug, Deserialize)]
 struct AgentRuntimeRecordsQuery {
+    #[serde(default)]
+    user_id: Option<String>,
     #[serde(default)]
     days: Option<i64>,
     #[serde(default)]

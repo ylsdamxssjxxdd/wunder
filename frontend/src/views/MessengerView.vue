@@ -727,7 +727,6 @@
                 :send-key="messengerSendKey"
                 :desktop-local-mode="desktopLocalMode"
                 :theme-palette="themeStore.palette"
-                :performance-mode="performanceStore.mode"
                 :ui-font-size="uiFontSize"
                 :username-saving="usernameSaving"
                 :devtools-available="debugToolsAvailable"
@@ -741,7 +740,6 @@
                 @toggle-devtools="openDebugTools"
                 @update:send-key="updateSendKey"
                 @update:theme-palette="updateThemePalette"
-                @update:performance-mode="updatePerformanceMode"
                 @update:ui-font-size="updateUiFontSize"
                 @update:username="updateCurrentUsername"
                 @update:profile-avatar-icon="updateCurrentUserAvatarIcon"
@@ -853,49 +851,31 @@
                                 {{ t('chat.ability.empty') }}
                               </div>
                               <div v-else class="ability-scroll">
-                                <div class="ability-section">
+                                <div
+                                  v-for="section in agentAbilitySections"
+                                  :key="section.key"
+                                  class="ability-section"
+                                >
                                   <div class="ability-section-title">
-                                    <span>{{ t('chat.ability.tools') }}</span>
-                                    <span class="ability-count">{{ agentAbilitySummary.tools.length }}</span>
+                                    <span>{{ section.title }}</span>
+                                    <span class="ability-count">{{ section.items.length }}</span>
                                   </div>
-                                  <div v-if="agentAbilitySummary.tools.length" class="ability-item-list">
+                                  <div v-if="section.items.length" class="ability-item-list">
                                     <div
-                                      v-for="tool in agentAbilitySummary.tools"
-                                      :key="`m-tool-${tool.name}`"
-                                      class="ability-item tool"
+                                      v-for="item in section.items"
+                                      :key="`${section.key}-${item.name}`"
+                                      :class="['ability-item', section.kind]"
                                     >
-                                      <div class="ability-item-name">{{ tool.name }}</div>
+                                      <div class="ability-item-name">{{ item.name }}</div>
                                       <div
                                         class="ability-item-desc"
-                                        :class="{ 'is-empty': !tool.description }"
+                                        :class="{ 'is-empty': !item.description }"
                                       >
-                                        {{ tool.description || t('chat.ability.noDesc') }}
+                                        {{ item.description || t('chat.ability.noDesc') }}
                                       </div>
                                     </div>
                                   </div>
-                                  <div v-else class="ability-empty">{{ t('chat.ability.emptyTools') }}</div>
-                                </div>
-                                <div class="ability-section">
-                                  <div class="ability-section-title">
-                                    <span>{{ t('chat.ability.skills') }}</span>
-                                    <span class="ability-count">{{ agentAbilitySummary.skills.length }}</span>
-                                  </div>
-                                  <div v-if="agentAbilitySummary.skills.length" class="ability-item-list">
-                                    <div
-                                      v-for="skill in agentAbilitySummary.skills"
-                                      :key="`m-skill-${skill.name}`"
-                                      class="ability-item skill"
-                                    >
-                                      <div class="ability-item-name">{{ skill.name }}</div>
-                                      <div
-                                        class="ability-item-desc"
-                                        :class="{ 'is-empty': !skill.description }"
-                                      >
-                                        {{ skill.description || t('chat.ability.noDesc') }}
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div v-else class="ability-empty">{{ t('chat.ability.emptySkills') }}</div>
+                                  <div v-else class="ability-empty">{{ section.emptyText }}</div>
                                 </div>
                               </div>
                             </template>
@@ -1254,7 +1234,7 @@
       :handle-world-container-picker-entry="handleWorldContainerPickerEntry"
       v-model:agent-prompt-preview-visible="agentPromptPreviewVisible"
       :agent-prompt-preview-loading="agentPromptPreviewLoading"
-      :active-agent-prompt-preview-text="activeAgentPromptPreviewText"
+      :active-agent-prompt-preview-html="activeAgentPromptPreviewHtml"
       :image-preview-visible="imagePreviewVisible"
       :image-preview-url="imagePreviewUrl"
       :image-preview-title="imagePreviewTitle"
@@ -1352,7 +1332,6 @@ import { useAgentStore } from '@/stores/agents';
 import { useAuthStore } from '@/stores/auth';
 import { useBeeroomStore, type BeeroomGroup } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
-import { usePerformanceStore } from '@/stores/performance';
 import { useThemeStore } from '@/stores/theme';
 import {
   useSessionHubStore,
@@ -1373,7 +1352,8 @@ import {
   type AudioRecordingResult,
   type AudioRecordingSession
 } from '@/utils/audioRecorder';
-import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
+import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
+import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import {
   buildWorkspaceImagePersistentCacheKey,
   readWorkspaceImagePersistentCache,
@@ -1471,7 +1451,6 @@ const authStore = useAuthStore();
 const agentStore = useAgentStore();
 const chatStore = useChatStore();
 const beeroomStore = useBeeroomStore();
-const performanceStore = usePerformanceStore();
 const themeStore = useThemeStore();
 const userWorldStore = useUserWorldStore();
 const sessionHub = useSessionHubStore();
@@ -2522,6 +2501,7 @@ const filterAbilitySummaryByNames = (
     ...summary,
     builtin_tools: filterList(summary.builtin_tools),
     mcp_tools: filterList(summary.mcp_tools),
+    a2a_tools: filterList(summary.a2a_tools),
     knowledge_tools: filterList(summary.knowledge_tools),
     user_tools: filterList(summary.user_tools),
     shared_tools: filterList(summary.shared_tools),
@@ -2572,15 +2552,71 @@ const effectiveAgentToolSummary = computed<Record<string, unknown> | null>(() =>
   }
   return filterAbilitySummaryByNames(summary, selectedNames);
 });
-
-const agentAbilitySummary = computed(() =>
-  collectAbilityDetails((effectiveAgentToolSummary.value || {}) as Record<string, unknown>)
+const activeAgentPromptPreviewHtml = computed(() =>
+  renderSystemPromptHighlight(
+    activeAgentPromptPreviewText.value,
+    (effectiveAgentToolSummary.value || {}) as Record<string, unknown>
+  )
 );
-const hasAgentAbilitySummary = computed(
-  () =>
-    Array.isArray(agentAbilitySummary.value.tools) &&
-    Array.isArray(agentAbilitySummary.value.skills) &&
-    (agentAbilitySummary.value.tools.length > 0 || agentAbilitySummary.value.skills.length > 0)
+
+const agentAbilitySections = computed(() => {
+  const groups = collectAbilityGroupDetails(
+    (effectiveAgentToolSummary.value || {}) as Record<string, unknown>
+  );
+  return [
+    {
+      key: 'skills',
+      kind: 'skill',
+      title: t('toolManager.system.skills'),
+      emptyText: t('chat.ability.emptySkills'),
+      items: groups.skills
+    },
+    {
+      key: 'mcp',
+      kind: 'tool',
+      title: t('toolManager.system.mcp'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.mcp
+    },
+    {
+      key: 'knowledge',
+      kind: 'tool',
+      title: t('toolManager.system.knowledge'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.knowledge
+    },
+    {
+      key: 'a2a',
+      kind: 'tool',
+      title: t('toolManager.system.a2a'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.a2a
+    },
+    {
+      key: 'user',
+      kind: 'tool',
+      title: t('portal.agent.tools.group.user'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.user
+    },
+    {
+      key: 'shared',
+      kind: 'tool',
+      title: t('portal.agent.tools.group.shared'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.shared
+    },
+    {
+      key: 'builtin',
+      kind: 'tool',
+      title: t('toolManager.system.builtin'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.builtin
+    }
+  ].filter((section) => section.items.length > 0);
+});
+const hasAgentAbilitySummary = computed(() =>
+  agentAbilitySections.value.some((section) => section.items.length > 0)
 );
 const currentContainerId = computed(() => {
   const source = activeAgent.value as Record<string, unknown> | null;
@@ -8645,10 +8681,6 @@ const handleSessionApprovalDecision = async (
 
 const updateThemePalette = (value: ThemePalette) => {
   themeStore.setPalette(normalizeThemePalette(value));
-};
-
-const updatePerformanceMode = (value: 'high' | 'low') => {
-  performanceStore.setMode(value);
 };
 
 const updateUiFontSize = (value: number) => {

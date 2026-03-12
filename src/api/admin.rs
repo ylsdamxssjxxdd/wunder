@@ -6,7 +6,7 @@ use crate::channels::types::ChannelAccountConfig;
 use crate::channels::xmpp;
 use crate::config::{
     normalize_chat_stream_channel, normalize_knowledge_base_type, A2aServiceConfig, Config,
-    KnowledgeBaseConfig, KnowledgeBaseType, LspConfig, McpServerConfig,
+    KnowledgeBaseConfig, KnowledgeBaseType, LspConfig, McpServerConfig, UserAgentPresetConfig,
 };
 use crate::gateway::GatewayNodeInvokeRequest;
 use crate::i18n;
@@ -262,6 +262,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/external_links",
             get(admin_external_links_list).post(admin_external_links_upsert),
+        )
+        .route(
+            "/wunder/admin/preset_agents",
+            get(admin_preset_agents_list).post(admin_preset_agents_update),
         )
         .route(
             "/wunder/admin/external_links/{link_id}",
@@ -3944,6 +3948,41 @@ async fn admin_external_links_delete(
     Ok(Json(json!({ "data": { "link_id": cleaned } })))
 }
 
+async fn admin_preset_agents_list(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, Response> {
+    let config = state.config_store.get().await;
+    let items = config
+        .user_agents
+        .presets
+        .iter()
+        .map(preset_agent_payload)
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "items": items } })))
+}
+
+async fn admin_preset_agents_update(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<PresetAgentsUpdateRequest>,
+) -> Result<Json<Value>, Response> {
+    let normalized = normalize_preset_agents(payload.items)?;
+    let next_presets = normalized.clone();
+    let updated = state
+        .config_store
+        .update(move |config| {
+            config.user_agents.presets = next_presets;
+        })
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let items = updated
+        .user_agents
+        .presets
+        .iter()
+        .map(preset_agent_payload)
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "items": items } })))
+}
+
 async fn admin_user_accounts_list(
     State(state): State<Arc<AppState>>,
     headers: AxumHeaderMap,
@@ -5014,6 +5053,70 @@ fn external_link_payload(record: &ExternalLinkRecord) -> Value {
         "created_at": record.created_at,
         "updated_at": record.updated_at,
     })
+}
+
+fn preset_agent_payload(record: &UserAgentPresetConfig) -> Value {
+    json!({
+        "name": record.name.trim(),
+        "description": record.description.trim(),
+        "system_prompt": record.system_prompt.trim(),
+        "icon_name": normalize_preset_icon_name(Some(record.icon_name.as_str())),
+        "icon_color": normalize_preset_icon_color(Some(record.icon_color.as_str())),
+        "sandbox_container_id": crate::storage::normalize_sandbox_container_id(record.sandbox_container_id),
+    })
+}
+
+fn normalize_preset_agents(
+    items: Vec<PresetAgentUpsertItem>,
+) -> Result<Vec<UserAgentPresetConfig>, Response> {
+    let mut seen_names = HashSet::new();
+    let mut output = Vec::with_capacity(items.len());
+    for item in items {
+        let cleaned_name = item.name.trim();
+        if cleaned_name.is_empty() {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "preset agent name is required".to_string(),
+            ));
+        }
+        let dedupe_key = cleaned_name.to_ascii_lowercase();
+        if !seen_names.insert(dedupe_key) {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("duplicate preset agent name: {cleaned_name}"),
+            ));
+        }
+        output.push(UserAgentPresetConfig {
+            name: cleaned_name.to_string(),
+            description: item.description.trim().to_string(),
+            system_prompt: item.system_prompt.trim().to_string(),
+            icon_name: normalize_preset_icon_name(item.icon_name.as_deref()),
+            icon_color: normalize_preset_icon_color(item.icon_color.as_deref()),
+            sandbox_container_id: crate::storage::normalize_sandbox_container_id(
+                item.sandbox_container_id.unwrap_or(1),
+            ),
+        });
+    }
+    Ok(output)
+}
+
+fn normalize_preset_icon_name(raw: Option<&str>) -> String {
+    let cleaned = raw.unwrap_or_default().trim();
+    if cleaned.is_empty() {
+        return "spark".to_string();
+    }
+    if cleaned
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return cleaned.to_string();
+    }
+    "spark".to_string()
+}
+
+fn normalize_preset_icon_color(raw: Option<&str>) -> String {
+    raw.and_then(normalize_external_icon_color)
+        .unwrap_or_else(|| "#94a3b8".to_string())
 }
 
 fn normalize_external_link_levels(levels: Vec<i32>) -> Vec<i32> {
@@ -6138,6 +6241,27 @@ struct ExternalLinkUpsertRequest {
     sort_order: Option<i64>,
     #[serde(default)]
     enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PresetAgentsUpdateRequest {
+    #[serde(default, alias = "presets")]
+    items: Vec<PresetAgentUpsertItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PresetAgentUpsertItem {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    system_prompt: String,
+    #[serde(default)]
+    icon_name: Option<String>,
+    #[serde(default)]
+    icon_color: Option<String>,
+    #[serde(default)]
+    sandbox_container_id: Option<i32>,
 }
 
 #[derive(Debug, Deserialize, Default)]

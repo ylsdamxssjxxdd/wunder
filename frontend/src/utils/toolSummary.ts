@@ -7,6 +7,15 @@ type AbilityItem = {
   description: string;
 };
 
+export type AbilityGroupKey =
+  | 'skills'
+  | 'mcp'
+  | 'knowledge'
+  | 'a2a'
+  | 'user'
+  | 'shared'
+  | 'builtin';
+
 const asRecord = (value: unknown): UnknownRecord =>
   value && typeof value === 'object' ? (value as UnknownRecord) : {};
 
@@ -97,3 +106,13 @@ export const collectAbilityDetails = (payload: UnknownRecord = {}) => {
   const skills = normalizeAbilityItems(payload.skills || payload.skill_list || payload.skillList || []);
   return { tools, skills };
 };
+
+export const collectAbilityGroupDetails = (payload: UnknownRecord = {}) => ({
+  skills: normalizeAbilityItems(payload.skills || payload.skill_list || payload.skillList || []),
+  mcp: normalizeAbilityItems(payload.mcp_tools || payload.mcpTools || []),
+  knowledge: normalizeAbilityItems(payload.knowledge_tools || payload.knowledgeTools || []),
+  a2a: normalizeAbilityItems(payload.a2a_tools || payload.a2aTools || []),
+  user: normalizeAbilityItems(payload.user_tools || payload.userTools || []),
+  shared: normalizeAbilityItems(payload.shared_tools || payload.sharedTools || []),
+  builtin: normalizeAbilityItems(payload.builtin_tools || payload.builtinTools || [])
+});

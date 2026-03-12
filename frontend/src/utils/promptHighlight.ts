@@ -4,6 +4,16 @@ type PromptSegmentState = {
   inSkills: boolean;
 };
 
+type ToolLineGroup =
+  | 'skills'
+  | 'mcp'
+  | 'knowledge'
+  | 'a2a'
+  | 'user'
+  | 'shared'
+  | 'builtin'
+  | 'other';
+
 const asRecord = (value: unknown): UnknownRecord =>
   value && typeof value === 'object' ? (value as UnknownRecord) : {};
 
@@ -27,6 +37,17 @@ const normalizeToolNames = (list: unknown): string[] => {
     return [];
   }
   return list.map((item) => pickToolName(item).trim()).filter(Boolean);
+};
+
+const TOOL_LINE_GROUP_PRIORITY: Record<ToolLineGroup, number> = {
+  skills: 0,
+  mcp: 1,
+  knowledge: 2,
+  a2a: 3,
+  user: 4,
+  shared: 5,
+  builtin: 6,
+  other: 7
 };
 
 const renderPromptSegmentWithSkills = (segment: string, segmentState: PromptSegmentState): string => {
@@ -53,6 +74,80 @@ const renderPromptSegmentWithSkills = (segment: string, segmentState: PromptSegm
   return output.join('\n');
 };
 
+const resolveToolLineGroup = (
+  name: string,
+  groups: {
+    skills: Set<string>;
+    mcp: Set<string>;
+    knowledge: Set<string>;
+    a2a: Set<string>;
+    user: Set<string>;
+    shared: Set<string>;
+    builtin: Set<string>;
+  }
+): ToolLineGroup => {
+  if (groups.skills.has(name)) return 'skills';
+  if (groups.mcp.has(name)) return 'mcp';
+  if (groups.knowledge.has(name)) return 'knowledge';
+  if (groups.a2a.has(name)) return 'a2a';
+  if (groups.user.has(name)) return 'user';
+  if (groups.shared.has(name)) return 'shared';
+  if (groups.builtin.has(name)) return 'builtin';
+  return 'other';
+};
+
+const reorderToolContentLines = (
+  lines: string[],
+  groups: {
+    skills: Set<string>;
+    mcp: Set<string>;
+    knowledge: Set<string>;
+    a2a: Set<string>;
+    user: Set<string>;
+    shared: Set<string>;
+    builtin: Set<string>;
+  }
+) => {
+  const toolLines = lines
+    .map((line, index) => {
+      const match = line.match(/"name"\s*:\s*"([^"]+)"/);
+      if (!match) {
+        return null;
+      }
+      const name = match[1];
+      const group = resolveToolLineGroup(name, groups);
+      return {
+        index,
+        line,
+        group,
+        priority: TOOL_LINE_GROUP_PRIORITY[group]
+      };
+    })
+    .filter(Boolean) as Array<{
+    index: number;
+    line: string;
+    group: ToolLineGroup;
+    priority: number;
+  }>;
+
+  if (toolLines.length <= 1) {
+    return lines;
+  }
+
+  const sortedToolLines = [...toolLines].sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.index - right.index;
+  });
+
+  const nextLines = [...lines];
+  toolLines.forEach((toolLine, index) => {
+    nextLines[toolLine.index] = sortedToolLines[index].line;
+  });
+  return nextLines;
+};
+
 export const renderSystemPromptHighlight = (
   rawText: string,
   toolsPayload: UnknownRecord = {}
@@ -65,6 +160,15 @@ export const renderSystemPromptHighlight = (
   );
   const knowledgeToolNames = new Set(
     normalizeToolNames(toolsPayload.knowledge_tools || toolsPayload.knowledgeTools)
+  );
+  const skillsNames = new Set(
+    normalizeToolNames(toolsPayload.skills || toolsPayload.skill_list || toolsPayload.skillList)
+  );
+  const mcpToolNames = new Set(
+    normalizeToolNames(toolsPayload.mcp_tools || toolsPayload.mcpTools)
+  );
+  const a2aToolNames = new Set(
+    normalizeToolNames(toolsPayload.a2a_tools || toolsPayload.a2aTools)
   );
   const userToolNames = new Set(
     normalizeToolNames(toolsPayload.user_tools || toolsPayload.userTools)
@@ -93,7 +197,15 @@ export const renderSystemPromptHighlight = (
     output += renderPromptSegmentWithSkills(rawText.slice(cursor, start), skillState);
     output += escapeHtml(startTag);
     const toolsContent = rawText.slice(start + startTag.length, end);
-    const lines = toolsContent.split(/\r?\n/);
+    const lines = reorderToolContentLines(toolsContent.split(/\r?\n/), {
+      skills: skillsNames,
+      mcp: mcpToolNames,
+      knowledge: knowledgeToolNames,
+      a2a: a2aToolNames,
+      user: userToolNames,
+      shared: sharedToolNames,
+      builtin: builtinToolNames
+    });
     const highlighted = lines
       .map((line) => {
         const match = line.match(/"name"\s*:\s*"([^"]+)"/);
@@ -104,14 +216,20 @@ export const renderSystemPromptHighlight = (
         const escapedMatch = escapeHtml(match[0]);
         const escapedName = escapeHtml(match[1]);
         let highlightClass = 'tool-highlight';
-        if (builtinToolNames.has(match[1])) {
-          highlightClass = 'tool-highlight builtin';
+        if (skillsNames.has(match[1])) {
+          highlightClass = 'skill-highlight';
+        } else if (mcpToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight';
         } else if (knowledgeToolNames.has(match[1])) {
           highlightClass = 'tool-highlight knowledge';
+        } else if (a2aToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight';
         } else if (userToolNames.has(match[1])) {
           highlightClass = 'tool-highlight user';
         } else if (sharedToolNames.has(match[1])) {
           highlightClass = 'tool-highlight shared';
+        } else if (builtinToolNames.has(match[1])) {
+          highlightClass = 'tool-highlight builtin';
         }
         const highlightedMatch = escapedMatch.replace(
           escapedName,

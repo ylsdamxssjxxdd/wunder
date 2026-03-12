@@ -260,12 +260,12 @@
     "zh-CN": "本轮已达到模型轮次上限（{max_rounds}），任务可能尚未完成。你可以直接继续对话，让模型基于当前进度接着做；或者把该模型的 max_rounds 调大后重试。如果本轮已经生成了中间文件、表格或草稿，也可以先查看工作区结果。"
   },
   "error.tool_failure_guard_user_guidance": {
-    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}). Retries were stopped to keep this session alive. Please adjust the request or tool arguments and try again.",
-    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）。系统已停止自动重试以保证会话可继续使用，请调整请求或工具参数后重试。"
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}). Automatic retries for this turn were stopped to keep the session alive. You can continue from the current progress, or adjust the request/tool arguments before retrying this step.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）。为保证会话可继续使用，系统已停止本轮自动重试。你可以直接基于当前进度继续对话，或调整请求/工具参数后再让这一步重试。"
   },
   "error.tool_failure_guard_user_guidance_with_error": {
-    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}): {detail}. Retries were stopped to keep this session alive. Please adjust the request or tool arguments and try again.",
-    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。系统已停止自动重试以保证会话可继续使用，请调整请求或工具参数后重试。"
+    "en-US": "Tool `{tool_name}` failed repeatedly ({repeat_count}/{threshold}): {detail}. Automatic retries for this turn were stopped to keep the session alive. You can continue from the current progress, or adjust the request/tool arguments before retrying this step.",
+    "zh-CN": "工具 `{tool_name}` 连续失败（{repeat_count}/{threshold}）：{detail}。为保证会话可继续使用，系统已停止本轮自动重试。你可以直接基于当前进度继续对话，或调整请求/工具参数后再让这一步重试。"
   },
   "error.empty_no_final_answer": {
     "en-US": "The model did not return a displayable final answer. Please retry or check the model stream settings.",
@@ -1046,6 +1046,14 @@
   "tool.read.not_found": {
     "en-US": "File not found.",
     "zh-CN": "文件不存在。"
+  },
+  "tool.read.binary_omitted": {
+    "en-US": "Binary file omitted because `read_file` only supports text content.",
+    "zh-CN": "已省略二进制文件内容，`读取文件` 仅支持文本内容。"
+  },
+  "tool.read.binary_image_use_read_image": {
+    "en-US": "Binary image omitted. Use `read_image` to inspect this file.",
+    "zh-CN": "已省略二进制图片内容，请改用 `read_image` 查看该文件。"
   },
   "tool.skill_call.name_required": {
     "en-US": "Skill name is required.",

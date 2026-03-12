@@ -269,6 +269,11 @@
   transform: none;
 }
 
+:root[data-user-accent='minimal'] .messenger-agent-avatar-status i.messenger-agent-avatar-status-icon--spinning {
+  animation: spin 0.9s linear infinite !important;
+  transform-origin: center;
+}
+
 .messenger-view :is(
     .messenger-avatar-btn,
     .messenger-left-nav-btn,
@@ -5141,6 +5146,12 @@ button.messenger-chat-header-model {
   transform-origin: center;
 }
 
+.messenger-agent-avatar-status i.messenger-agent-avatar-status-icon--spinning {
+  animation: spin 0.9s linear infinite;
+  transform-origin: center;
+  will-change: transform;
+}
+
 .messenger-view .chat-shell .message-thinking {
   flex: 1 1 480px;
   min-width: min(320px, 56vw);
@@ -6123,35 +6134,6 @@ button.messenger-chat-header-model {
   animation-duration: 0.9s;
 }
 
-:root[data-performance-mode='low'] .messenger-view {
-  --messenger-motion-fast: 0s;
-  --messenger-motion-normal: 0s;
-  --messenger-motion-slow: 0s;
-  --messenger-hover-lift: 0px;
-}
-
-:root[data-performance-mode='low'] .messenger-view *,
-:root[data-performance-mode='low'] .messenger-view *::before,
-:root[data-performance-mode='low'] .messenger-view *::after {
-  animation: none !important;
-  transition: none !important;
-}
-
-:root[data-performance-mode='low'] .messenger-chat,
-:root[data-performance-mode='low'] .messenger-right-dock,
-:root[data-performance-mode='low'] .messenger-chat-empty-state,
-:root[data-performance-mode='low'] .messenger-chat-footer,
-:root[data-performance-mode='low'] .messenger-world-composer {
-  background-image: none !important;
-}
-
-:root[data-performance-mode='low'] .messenger-chat-empty-state,
-:root[data-performance-mode='low'] .messenger-agent-grid-card,
-:root[data-performance-mode='low'] .messenger-scroll-bottom-btn,
-:root[data-performance-mode='low'] .messenger-world-pop-panel {
-  box-shadow: none !important;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .messenger-view,
   .messenger-view *,
@@ -6160,6 +6142,10 @@ button.messenger-chat-header-model {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+
+  .messenger-agent-avatar-status i.messenger-agent-avatar-status-icon--spinning {
+    animation: spin 0.9s linear infinite !important;
   }
 }
 

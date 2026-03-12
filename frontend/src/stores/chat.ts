@@ -28,6 +28,11 @@ import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { chatPerf } from '@/utils/chatPerf';
 import { getDesktopToolCallModeForRequest, isDesktopModeEnabled } from '@/config/desktop';
 import { dedupeAssistantMessages, dedupeAssistantMessagesInPlace } from './chatMessageDedup';
+import {
+  clearSupersededPendingAssistantMessages,
+  findPendingAssistantMessage,
+  stopPendingAssistantMessage
+} from './chatPendingMessage';
 
 type SnapshotAssistantMessage = {
   role: string;
@@ -2511,13 +2516,6 @@ const resolveMaxStreamEventId = (messages) => {
   return maxId > 0 ? maxId : null;
 };
 
-const findPendingAssistantMessage = (messages) =>
-  Array.isArray(messages)
-    ? [...messages]
-        .reverse()
-        .find((message) => message?.role === 'assistant' && normalizeFlag(message.stream_incomplete))
-    : null;
-
 const findAssistantMessageByUserRound = (messages, userRound) => {
   const normalizedRound = normalizeStreamRound(userRound);
   if (!Array.isArray(messages) || normalizedRound === null || normalizedRound <= 0) return null;
@@ -4399,7 +4397,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           buildWorkflowItem(t('chat.workflow.error'), pickText(detail), 'failed')
         );
         if (!assistantMessage.content) {
-          assistantMessage.content = t('chat.error.retry');
+          assistantMessage.content = pickText(detail, t('chat.error.retry'));
         }
         break;
       }
@@ -4971,14 +4969,13 @@ export const useChatStore = defineStore('chat', {
         createdAt: sessionCreatedAt,
         greeting: this.greetingOverride
       });
+      clearSupersededPendingAssistantMessages(this.messages);
       applyHistoryMeta(sessionId, sessionDetail, this.messages);
       applyMessageWindow(this, sessionId, this.messages);
       cacheSessionMessages(sessionId, this.messages);
       markSessionDetailWarm(sessionId);
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
-      const pendingMessage = [...this.messages]
-        .reverse()
-        .find((message) => message.role === 'assistant' && message.stream_incomplete);
+      const pendingMessage = findPendingAssistantMessage(this.messages);
       if (pendingMessage) {
         this.resumeStream(sessionId, pendingMessage);
       }
@@ -5268,6 +5265,14 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(initialSessionId);
       abortSendStream(initialSessionId);
       abortWatchStream(initialSessionId);
+      clearSupersededPendingAssistantMessages(this.messages);
+      const supersededPendingAssistant = findPendingAssistantMessage(this.messages);
+      if (stopPendingAssistantMessage(supersededPendingAssistant)) {
+        const panel = normalizeInquiryPanelState(supersededPendingAssistant?.questionPanel);
+        if (panel?.status === 'pending') {
+          supersededPendingAssistant.questionPanel = { ...panel, status: 'dismissed' };
+        }
+      }
       const perfEnabled = chatPerf.enabled();
       const perfStreamStart = perfEnabled ? performance.now() : 0;
       const initialRuntime = ensureRuntime(initialSessionId);
@@ -5511,14 +5516,18 @@ export const useChatStore = defineStore('chat', {
               error?.phase === 'slow_client' ||
               error?.name === 'TypeError');
           if (!transient) {
+            const detail = error?.message || t('chat.workflow.requestFailedDetail');
             errorSeen = true;
             assistantMessage.workflowItems.push(
               buildWorkflowItem(
                 t('chat.workflow.requestFailed'),
-                error?.message || t('chat.workflow.requestFailedDetail'),
+                detail,
                 'failed'
               )
             );
+            if (!assistantMessage.content) {
+              assistantMessage.content = detail;
+            }
           } else if (perfEnabled) {
             chatPerf.count('chat_stream_interrupted', 1, { sessionId });
           }
@@ -5752,16 +5761,17 @@ export const useChatStore = defineStore('chat', {
               error?.phase === 'slow_client' ||
               error?.name === 'TypeError');
           if (!transient) {
+            const detail = error?.message || t('chat.workflow.resumeFailedDetail');
             errorSeen = true;
             message.workflowItems.push(
               buildWorkflowItem(
                 t('chat.workflow.resumeFailed'),
-                error?.message || t('chat.workflow.resumeFailedDetail'),
+                detail,
                 'failed'
               )
             );
             if (!message.content) {
-              message.content = t('chat.error.resumeFailed');
+              message.content = detail;
             }
           } else if (perfEnabled) {
             chatPerf.count('chat_resume_interrupted', 1, { sessionId });

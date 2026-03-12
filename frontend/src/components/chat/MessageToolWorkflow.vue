@@ -24,6 +24,7 @@
         @toggle="handleEntryToggle(entry.key, $event)"
       >
         <summary class="tool-workflow-entry-summary">
+          <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
           <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
           <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
           <span :class="['tool-workflow-entry-status', `is-${entry.status}`]">{{ entry.statusLabel }}</span>
@@ -1901,26 +1902,13 @@ const entries = computed<ToolEntryView[]>(() => {
 
 watch(
   entries,
-  (nextEntries, prevEntries = []) => {
+  (nextEntries) => {
     const validKeys = new Set(nextEntries.map((entry) => entry.key));
     pruneStreamTracking(validKeys);
-    const previousKeys = new Set(prevEntries.map((entry) => entry.key));
-    const newestEntry = [...nextEntries].reverse().find((entry) => !previousKeys.has(entry.key));
     const nextExpanded = new Set<string>();
-    if (newestEntry) {
-      nextExpanded.add(newestEntry.key);
-    } else {
-      expandedKeys.value.forEach((key) => {
-        if (validKeys.has(key)) nextExpanded.add(key);
-      });
-      for (let index = nextEntries.length - 1; index >= 0; index -= 1) {
-        const entry = nextEntries[index];
-        if (entry.status === 'loading' || entry.status === 'pending') {
-          nextExpanded.add(entry.key);
-          break;
-        }
-      }
-    }
+    expandedKeys.value.forEach((key) => {
+      if (validKeys.has(key)) nextExpanded.add(key);
+    });
     expandedKeys.value = nextExpanded;
     void nextTick(() => {
       syncStreamAutoStick();
@@ -2117,6 +2105,32 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+.tool-workflow-entry-lamp {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.78);
+  box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.12);
+  flex: 0 0 auto;
+}
+
+.tool-workflow-entry-lamp.is-loading,
+.tool-workflow-entry-lamp.is-pending {
+  background: rgba(59, 130, 246, 0.98);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+  animation: tool-workflow-status-pulse 1.3s ease-in-out infinite;
+}
+
+.tool-workflow-entry-lamp.is-completed {
+  background: rgba(34, 197, 94, 0.95);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.16);
+}
+
+.tool-workflow-entry-lamp.is-failed {
+  background: rgba(248, 113, 113, 0.98);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.16);
+}
+
 .tool-workflow-entry-duration {
   flex: 0 0 auto;
   color: var(--workflow-term-muted);
@@ -2151,6 +2165,18 @@ onBeforeUnmount(() => {
   background: rgba(220, 38, 38, 0.24);
   border: 1px solid rgba(254, 202, 202, 0.45);
   color: #fee2e2;
+}
+
+@keyframes tool-workflow-status-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(0.78);
+  }
 }
 
 .tool-workflow-entry-body {

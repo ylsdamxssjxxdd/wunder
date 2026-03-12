@@ -1234,9 +1234,9 @@
   'chat.workflow.stage': 'Stage: {stage}',
   'chat.workflow.toolFailureGuardTriggered': 'Tool failure guard triggered',
   'chat.workflow.toolFailureGuardDetail':
-    'Tool "{tool}" failed {repeatCount} times (threshold {threshold}). Auto-retry was stopped. Adjust parameters and retry.',
+    'Tool "{tool}" failed {repeatCount} times (threshold {threshold}). Automatic retries for this turn were stopped. You can continue the conversation, or adjust parameters before retrying this step.',
   'chat.workflow.toolFailureGuardDetailNoTool':
-    'Repeated tool failures reached the threshold ({repeatCount}/{threshold}). Auto-retry was stopped. Adjust parameters and retry.',
+    'Repeated tool failures reached the threshold ({repeatCount}/{threshold}). Automatic retries for this turn were stopped. You can continue the conversation, or adjust parameters before retrying this step.',
   'chat.workflow.title': 'Event Stream',
   'chat.workflow.toolCall': 'Tool call: {tool}',
   'chat.workflow.toolOutput': 'Tool output: {tool}',
@@ -1938,10 +1938,6 @@
   'messenger.settings.themeOptionClaw': 'Claw Orange',
   'messenger.settings.themeOptionMinimal': 'Minimal',
   'messenger.settings.themeOptionTechBlue': 'Tech Blue',
-  'messenger.settings.motion': 'Visual effects',
-  'messenger.settings.motionHint': 'Use power-save mode on older devices to reduce animations and shadows',
-  'messenger.settings.motionOptionHigh': 'Smooth',
-  'messenger.settings.motionOptionLow': 'Power save',
   'messenger.settings.debugTools': 'Debug tools',
   'messenger.settings.debugHint': 'Desktop opens native DevTools. On web, use your browser shortcut.',
   'messenger.settings.openDebug': 'Open debug',

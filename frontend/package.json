@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "typecheck": "npm run typecheck:vue",
     "build:check": "npm run typecheck && vite build",
+    "test:chat-pending": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/chat-pending-regression.test.js",
     "test:message-render": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-render-regression.test.js",
     "typecheck:vue": "vue-tsc --noEmit",
     "typecheck:ts": "tsc --noEmit",

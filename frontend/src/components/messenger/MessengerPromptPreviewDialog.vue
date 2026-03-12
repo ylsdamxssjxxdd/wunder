@@ -8,7 +8,7 @@
     @update:model-value="handleVisibleChange"
   >
     <div v-if="loading" class="messenger-list-empty">{{ t('chat.systemPrompt.loading') }}</div>
-    <pre v-else class="workflow-dialog-detail">{{ content }}</pre>
+    <pre v-else class="workflow-dialog-detail system-prompt-content" v-html="htmlContent"></pre>
   </el-dialog>
 </template>
 
@@ -18,7 +18,7 @@ import { useI18n } from '@/i18n';
 defineProps<{
   visible: boolean;
   loading: boolean;
-  content: string;
+  htmlContent: string;
 }>();
 
 const emit = defineEmits<{

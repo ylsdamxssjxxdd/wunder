@@ -169,16 +169,6 @@
         </div>
         <div class="messenger-settings-row">
           <div>
-            <div class="messenger-settings-label">{{ t('messenger.settings.motion') }}</div>
-            <div class="messenger-settings-hint">{{ t('messenger.settings.motionHint') }}</div>
-          </div>
-          <select v-model="performanceMode" class="messenger-settings-select">
-            <option value="high">{{ t('messenger.settings.motionOptionHigh') }}</option>
-            <option value="low">{{ t('messenger.settings.motionOptionLow') }}</option>
-          </select>
-        </div>
-        <div class="messenger-settings-row">
-          <div>
             <div class="messenger-settings-label">{{ t('messenger.settings.debugTools') }}</div>
             <div class="messenger-settings-hint">{{ t('messenger.settings.debugHint') }}</div>
           </div>
@@ -360,7 +350,6 @@ import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 import { normalizeThemePalette, type ThemePalette } from '@/utils/themeAppearance';
 
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
-type PerformanceMode = 'high' | 'low';
 type WindowCloseBehavior = 'tray' | 'quit';
 type ProfileAvatarOption = {
   key: string;
@@ -402,7 +391,6 @@ const props = withDefaults(
     languageLabel?: string;
     sendKey?: SendKeyMode;
     themePalette?: ThemePalette;
-    performanceMode?: PerformanceMode;
     usernameSaving?: boolean;
     desktopLocalMode?: boolean;
     uiFontSize?: number;
@@ -420,7 +408,6 @@ const props = withDefaults(
     languageLabel: '',
     sendKey: 'ctrl_enter',
     themePalette: 'eva-orange',
-    performanceMode: 'high',
     usernameSaving: false,
     desktopLocalMode: false,
     uiFontSize: 14,
@@ -440,7 +427,6 @@ const emit = defineEmits<{
   (event: 'logout'): void;
   (event: 'update:send-key', value: SendKeyMode): void;
   (event: 'update:theme-palette', value: ThemePalette): void;
-  (event: 'update:performance-mode', value: PerformanceMode): void;
   (event: 'update:ui-font-size', value: number): void;
   (event: 'update:username', value: string): void;
   (event: 'update:profile-avatar-icon', value: string): void;
@@ -452,7 +438,6 @@ const authStore = useAuthStore();
 const chatStore = useChatStore();
 const sendKey = ref<SendKeyMode>('ctrl_enter');
 const themePalette = ref<ThemePalette>('eva-orange');
-const performanceMode = ref<PerformanceMode>('high');
 const usernameDraft = ref('');
 const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
 const windowCloseBehaviorLoading = ref(false);
@@ -470,9 +455,6 @@ const normalizeSendKey = (value: unknown): SendKeyMode =>
     if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
     return 'ctrl_enter';
   })();
-
-const normalizePerformanceMode = (value: unknown): PerformanceMode =>
-  String(value || '').trim().toLowerCase() === 'low' ? 'low' : 'high';
 
 const normalizeWindowCloseBehavior = (value: unknown): WindowCloseBehavior => {
   const text = String(value || '')
@@ -601,21 +583,6 @@ watch(
 
 watch(themePalette, (value) => {
   emit('update:theme-palette', normalizeThemePalette(value));
-});
-
-watch(
-  () => props.performanceMode,
-  (value) => {
-    const normalized = normalizePerformanceMode(value);
-    if (performanceMode.value !== normalized) {
-      performanceMode.value = normalized;
-    }
-  },
-  { immediate: true }
-);
-
-watch(performanceMode, (value) => {
-  emit('update:performance-mode', normalizePerformanceMode(value));
 });
 
 watch(

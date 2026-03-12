@@ -101,7 +101,7 @@
   <MessengerPromptPreviewDialog
     :visible="agentPromptPreviewVisible"
     :loading="agentPromptPreviewLoading"
-    :content="activeAgentPromptPreviewText"
+    :html-content="activeAgentPromptPreviewHtml"
     @update:visible="updateAgentPromptPreviewVisible"
   />
 
@@ -170,7 +170,7 @@ const {
   handleWorldContainerPickerEntry,
   agentPromptPreviewVisible,
   agentPromptPreviewLoading,
-  activeAgentPromptPreviewText,
+  activeAgentPromptPreviewHtml,
   imagePreviewVisible,
   imagePreviewUrl,
   imagePreviewTitle,
@@ -207,7 +207,7 @@ const {
   handleWorldContainerPickerEntry: (entry: { path: string; name: string; type: 'dir' | 'file' }) => void;
   agentPromptPreviewVisible: boolean;
   agentPromptPreviewLoading: boolean;
-  activeAgentPromptPreviewText: string;
+  activeAgentPromptPreviewHtml: string;
   imagePreviewVisible: boolean;
   imagePreviewUrl: string;
   imagePreviewTitle: string;

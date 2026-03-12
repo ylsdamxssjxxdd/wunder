@@ -44,6 +44,7 @@ import { initMonitorPanel, loadMonitorData, toggleMonitorPolling } from "./modul
 import { initUserManagementPanel, loadUserStats } from "./modules/users.js?v=20260215-01";
 import { initUserAccountsPanel, loadUserAccounts } from "./modules/user-accounts.js?v=20260215-01";
 import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-links.js?v=20260215-01";
+import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260215-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
 
@@ -155,6 +156,7 @@ const panelMap = {
   users: { panel: elements.usersPanel, nav: elements.navUsers },
   userAccounts: { panel: elements.userAccountsPanel, nav: elements.navUserAccounts },
   externalLinks: { panel: elements.externalLinksPanel, nav: elements.navExternalLinks },
+  presetAgents: { panel: elements.presetAgentsPanel, nav: elements.navPresetAgents },
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
   channels: { panel: elements.channelsPanel, nav: elements.navChannels },
@@ -477,6 +479,20 @@ const bindNavigation = () => {
       }
     }
   });
+
+  if (elements.navPresetAgents) {
+    elements.navPresetAgents.addEventListener("click", async () => {
+      switchPanel("presetAgents");
+      if (!state.panelLoaded.presetAgents) {
+        try {
+          await loadPresetAgents({ silent: true });
+          state.panelLoaded.presetAgents = true;
+        } catch (error) {
+          appendLog(t("app.panelLoadFailed", { panel: t("panel.presetAgents"), message: error.message }));
+        }
+      }
+    });
+  }
 
   elements.navOrgUnits.addEventListener("click", async () => {
     switchPanel("orgUnits");
@@ -1212,6 +1228,7 @@ const bootstrap = async () => {
   initUserManagementPanel();
   initUserAccountsPanel();
   initExternalLinksPanel();
+  initPresetAgentsPanel();
   initOrgUnitsPanel();
   initChannelsPanel();
 
@@ -1350,6 +1367,16 @@ const bootstrap = async () => {
 
     });
 
+  }
+
+  if (initialPanel === "presetAgents") {
+    loadPresetAgents({ silent: true })
+      .then(() => {
+        state.panelLoaded.presetAgents = true;
+      })
+      .catch((error) => {
+        appendLog(t("app.panelLoadFailed", { panel: t("panel.presetAgents"), message: error.message }));
+      });
   }
 
   loadWorkspace();

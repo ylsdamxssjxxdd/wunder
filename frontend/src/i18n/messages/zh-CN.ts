@@ -1222,9 +1222,9 @@ export default {
   'chat.workflow.stage': '阶段：{stage}',
   'chat.workflow.toolFailureGuardTriggered': '工具失败保护已触发',
   'chat.workflow.toolFailureGuardDetail':
-    '工具「{tool}」连续失败 {repeatCount} 次（阈值 {threshold}），系统已停止自动重试。请调整参数后重试。',
+    '工具「{tool}」连续失败 {repeatCount} 次（阈值 {threshold}），本轮已停止自动重试。你可以继续对话，或调整参数后再试这一步。',
   'chat.workflow.toolFailureGuardDetailNoTool':
-    '同类工具连续失败达到阈值（{repeatCount}/{threshold}），系统已停止自动重试。请调整参数后重试。',
+    '同类工具连续失败达到阈值（{repeatCount}/{threshold}），本轮已停止自动重试。你可以继续对话，或调整参数后再试这一步。',
   'chat.workflow.title': '事件流',
   'chat.workflow.toolCall': '调用工具：{tool}',
   'chat.workflow.toolOutput': '工具输出：{tool}',
@@ -1920,10 +1920,6 @@ export default {
   'messenger.settings.themeOptionEva': 'EVA 橙',
   'messenger.settings.themeOptionMinimal': '极简',
   'messenger.settings.themeOptionTechBlue': '科技蓝',
-  'messenger.settings.motion': '界面动效',
-  'messenger.settings.motionHint': '老设备建议使用省电模式，减少动画和阴影',
-  'messenger.settings.motionOptionHigh': '流畅模式',
-  'messenger.settings.motionOptionLow': '省电模式',
   'messenger.settings.debugTools': '调试工具',
   'messenger.settings.debugHint': '桌面端可直接打开原生调试，网页端请使用浏览器快捷键。',
   'messenger.settings.openDebug': '打开调试',

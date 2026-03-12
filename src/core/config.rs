@@ -1058,7 +1058,8 @@ impl Config {
                 return env::var("WUNDER_EXTERNAL_AUTH_KEY")
                     .ok()
                     .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty());
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| self.api_key());
             }
             return Some(value.to_string());
         }
@@ -1066,6 +1067,7 @@ impl Config {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| self.api_key())
     }
 
     // 外链嵌入默认预制智能体名称；未配置时外链启动接口将返回错误。
@@ -1594,7 +1596,7 @@ sandbox:
     fn test_external_auth_key_prefers_dedicated_key() {
         let mut config = Config::default();
         config.security.api_key = Some("api-key".to_string());
-        assert_eq!(config.external_auth_key(), None);
+        assert_eq!(config.external_auth_key(), Some("api-key".to_string()));
 
         config.security.external_auth_key = Some("external-key".to_string());
         assert_eq!(config.external_auth_key(), Some("external-key".to_string()));

@@ -1831,7 +1831,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_failure_guard_answer_contains_tool_name() {
+    fn tool_failure_guard_answer_encourages_continue_from_current_progress() {
         let result = ToolResultPayload {
             ok: false,
             data: json!({}),
@@ -1843,6 +1843,7 @@ mod tests {
         let answer = build_tool_failure_guard_answer("read_file", &result, 3, 5);
         assert!(answer.contains("read_file"));
         assert!(answer.contains("5"));
+        assert!(answer.contains("继续") || answer.to_ascii_lowercase().contains("continue"));
     }
 
     #[test]

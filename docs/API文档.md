@@ -23,7 +23,7 @@
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
-- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`，并可通过 `security.external_embed_preset_agent_name` 限定外链默认智能体。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；并可通过 `security.external_embed_preset_agent_name` 限定外链默认智能体。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
@@ -1670,7 +1670,7 @@
   - 返回：同注册
 - `POST /wunder/auth/external/login`
   - 用途：外部系统用户直连 wunder，账号不存在时自动创建，存在时自动对齐密码并登录。
-  - 配置：需启用 `security.external_auth_key`（或环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）。
+  - 配置：`security.external_auth_key` 可选（或环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）；未配置时默认回退到 `security.api_key`。
   - 入参（JSON）：`key`、`username`、`password`、`unit_id`（可选）
   - desktop 本地模式下，`unit_id` 支持直接写入任意非空字符串（不依赖组织树）。
   - 返回（JSON）：`data.access_token`、`data.user`（UserProfile）、`data.created`（是否新建）、`data.updated`（是否更新既有账号信息）
@@ -2012,6 +2012,8 @@
 
 ### 4.1.56 `/wunder/agents`
 
+- 管理员代操作：当请求携带管理员 API Key 或管理员 Token 时，以上所有接口均可追加 Query `user_id` 指定目标用户；普通用户 Token 仅允许访问自身（或自身作用域后缀）。
+
 - `GET /wunder/agents`：智能体列表
   - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/approval_mode/is_shared/status/icon/sandbox_container_id/created_at/updated_at）
 - `GET /wunder/agents/shared`：共享智能体列表
@@ -2037,7 +2039,7 @@
   - 返回：`data`（同智能体详情）
   - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）读取默认入口配置（未配置时返回系统默认值）
 - `GET /wunder/agents/{agent_id}/runtime-records`：智能体运行记录（用户侧）
-  - Query：`days`（可选，1~90，默认 14，用于日趋势窗口）、`date`（可选，`YYYY-MM-DD`，用于工具调用热力图日期）
+  - Query：`user_id`（可选，管理员代操作）、`days`（可选，1~90，默认 14，用于日趋势窗口）、`date`（可选，`YYYY-MM-DD`，用于工具调用热力图日期）
   - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`，为该智能体累计汇总）、`data.daily[]`（最近 `days` 天按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
   - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）查看通用聊天入口的运行记录
 - `PUT /wunder/agents/{agent_id}`：更新智能体
@@ -2337,7 +2339,24 @@
 - `leader_ids`：负责人用户 ID 列表
 - `created_at`/`updated_at`：时间戳（秒）
 
-### 4.1.58.1 `/wunder/admin/external_links/*`
+### 4.1.58.1 `/wunder/admin/preset_agents`
+
+- `GET /wunder/admin/preset_agents`
+  - 返回：`data.items`（预设智能体列表）
+  - 字段：`name/description/system_prompt/icon_name/icon_color/sandbox_container_id`
+- `POST /wunder/admin/preset_agents`
+  - 用途：覆盖保存整组预设智能体配置（写入 `config.user_agents.presets`）
+  - 入参（JSON）：
+    - `items[]`：预设列表（兼容 `presets[]`）
+    - `items[].name`：必填，预设名称（全局唯一，去重按不区分大小写）
+    - `items[].description`：可选
+    - `items[].system_prompt`：可选
+    - `items[].icon_name`：可选，默认 `spark`
+    - `items[].icon_color`：可选，默认 `#94a3b8`
+    - `items[].sandbox_container_id`：可选，自动规范化到有效容器编号
+  - 返回：`data.items`（保存后的预设列表）
+
+### 4.1.58.2 `/wunder/admin/external_links/*`
 
 - `GET /wunder/admin/external_links`
   - Returns: `data.items` (ExternalLink list, includes enabled and disabled items)
@@ -2368,7 +2387,7 @@
 - `enabled`: enable status
 - `created_at`/`updated_at`: unix timestamp (seconds)
 
-### 4.1.58.2 `/wunder/external_links`
+### 4.1.58.3 `/wunder/external_links`
 
 - `GET /wunder/external_links`
   - Auth: user token (`Authorization: Bearer <user_token>`)
@@ -2422,9 +2441,10 @@
 
 - 鉴权：必须携带用户侧 token（`Authorization: Bearer <user_token>`）。
 - 用户侧渠道账号仅由当前用户维护，和管理侧渠道账号隔离；管理侧页面仅用于运行态监控。
+- 管理员代操作：当请求携带管理员 API Key 或管理员 Token 时，以下接口可通过 Query `user_id` 指定目标用户。
 
 - `GET /wunder/channels/accounts`
-  - Query：`channel`（可选，按渠道过滤，如 `feishu`）
+  - Query：`user_id`（可选，管理员代操作）、`channel`（可选，按渠道过滤，如 `feishu`）
   - 返回：
     - `data.items`：当前用户的渠道账号列表（`channel/account_id/name/status/active/meta/config/raw_config/created_at/updated_at`）
     - `data.supported_channels`：前端可用的渠道目录列表（由 `src/channels/catalog.rs` 生成），每项包含：
@@ -2442,6 +2462,7 @@
 
 - `POST /wunder/channels/accounts`
   - 用途：新增或更新当前用户的渠道账号。
+  - Query：`user_id`（可选，管理员代操作）
   - 通用入参：
     - `channel`：渠道类型（必填）
     - `account_id`：账号 ID（更新时必填；创建时可不填）
@@ -2483,21 +2504,25 @@
 
 - `DELETE /wunder/channels/accounts/{channel}/{account_id}`
   - 删除指定渠道账号，并清理该账号下当前用户的默认绑定与用户绑定映射。
+  - Query：`user_id`（可选，管理员代操作）
   - 返回：`data.deleted_accounts/deleted_bindings/deleted_user_bindings`。
 
 - `DELETE /wunder/channels/accounts/{channel}`
   - 兼容旧接口。
+  - Query：`user_id`（可选，管理员代操作）
   - 当该用户在该渠道下仅有 1 个账号时可直接删除；若存在多个账号会返回错误，提示改用带 `account_id` 的删除接口。
 
 - `GET /wunder/channels/bindings`
-  - Query：`channel`、`account_id`、`peer_kind`、`peer_id`（均可选）
+  - Query：`user_id`（可选，管理员代操作）、`channel`、`account_id`、`peer_kind`、`peer_id`（均可选）
   - 返回：当前用户可见的绑定列表（含 `binding_id/agent_id/tool_overrides/priority/enabled`）。
 
 - `POST /wunder/channels/bindings`
+  - Query：`user_id`（可选，管理员代操作）
   - 入参：`channel`、`account_id`、`peer_kind`、`peer_id`，可选 `agent_id/tool_overrides/priority/enabled`。
   - 要求：`account_id` 必须属于当前用户，账号需为启用状态。
 
 - `DELETE /wunder/channels/bindings/{channel}/{account_id}/{peer_kind}/{peer_id}`
+  - Query：`user_id`（可选，管理员代操作）
   - 删除当前用户在该会话标识下的绑定。
 
 ### 4.2 流式响应（SSE）

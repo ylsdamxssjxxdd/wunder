@@ -13,6 +13,7 @@ mod context;
 mod desktop_control;
 mod dispatch;
 mod freeform;
+mod read_file_guard;
 mod read_image_tool;
 mod search_content_tool;
 mod skill_call;
@@ -88,8 +89,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use skill_call::render_skill_markdown_for_model;
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
@@ -5323,13 +5323,6 @@ fn summarize_read_ranges(ranges: &[(usize, usize)], total_lines: usize) -> (usiz
     (read_lines, complete)
 }
 
-fn read_text_with_limit(path: &Path, max_bytes: usize) -> Result<String> {
-    let file = File::open(path)?;
-    let mut buffer = Vec::new();
-    file.take(max_bytes as u64).read_to_end(&mut buffer)?;
-    Ok(String::from_utf8_lossy(&buffer).to_string())
-}
-
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let specs = match parse_read_file_specs(args) {
         Ok(specs) => specs,
@@ -5414,7 +5407,28 @@ fn read_files_inner(
             summaries.push(summary);
             continue;
         }
-        let content = read_text_with_limit(&target, MAX_READ_BYTES)?;
+        let guarded = read_file_guard::read_text_file_with_limit(&target, MAX_READ_BYTES)?;
+        let content = match guarded {
+            read_file_guard::ReadFileGuardResult::Text(content) => content,
+            read_file_guard::ReadFileGuardResult::Omitted(notice) => {
+                let read_file_guard::BinaryFileNotice {
+                    message,
+                    kind,
+                    mime_type,
+                } = notice;
+                if let Value::Object(ref mut map) = summary {
+                    map.insert("binary".to_string(), Value::Bool(true));
+                    map.insert("kind".to_string(), Value::String(kind.to_string()));
+                    if let Some(mime_type) = mime_type {
+                        map.insert("mime_type".to_string(), Value::String(mime_type));
+                    }
+                    map.insert("size_bytes".to_string(), Value::from(size));
+                }
+                outputs.push(format!(">>> {}\n{}", raw_path, message));
+                summaries.push(summary);
+                continue;
+            }
+        };
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
         let (read_lines, complete) = summarize_read_ranges(&spec.ranges, total_lines);

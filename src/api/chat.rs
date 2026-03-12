@@ -2400,7 +2400,16 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
             "data": data,
             "timestamp": timestamp,
         });
-        grouped.entry(round).or_default().push(entry);
+        let round_events = grouped.entry(round).or_default();
+        if let Some(previous) = round_events.last_mut() {
+            if should_merge_round_event(previous, &entry) {
+                if round_event_detail_score(&entry) > round_event_detail_score(previous) {
+                    *previous = entry;
+                }
+                continue;
+            }
+        }
+        round_events.push(entry);
     }
     order
         .into_iter()
@@ -2413,6 +2422,100 @@ fn collect_session_event_rounds(record: &Value) -> Vec<Value> {
             }
         })
         .collect()
+}
+
+fn should_merge_round_event(previous: &Value, current: &Value) -> bool {
+    let previous_type = previous.get("event").and_then(Value::as_str).unwrap_or("");
+    let current_type = current.get("event").and_then(Value::as_str).unwrap_or("");
+    if previous_type != "error" || current_type != "error" {
+        return false;
+    }
+
+    let previous_timestamp = previous
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let current_timestamp = current
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if previous_timestamp.is_empty()
+        || current_timestamp.is_empty()
+        || previous_timestamp != current_timestamp
+    {
+        return false;
+    }
+
+    let previous_data = previous.get("data").and_then(Value::as_object);
+    let current_data = current.get("data").and_then(Value::as_object);
+    let previous_trace = previous_data
+        .and_then(|data| data.get("trace_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let current_trace = current_data
+        .and_then(|data| data.get("trace_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if previous_trace.is_empty() || current_trace.is_empty() || previous_trace != current_trace {
+        return false;
+    }
+
+    let previous_text = extract_round_event_error_text(previous_data);
+    let current_text = extract_round_event_error_text(current_data);
+    if previous_text.is_empty() || current_text.is_empty() {
+        return true;
+    }
+    previous_text == current_text
+        || previous_text.contains(&current_text)
+        || current_text.contains(&previous_text)
+}
+
+fn extract_round_event_error_text(data: Option<&serde_json::Map<String, Value>>) -> String {
+    data.and_then(|data| {
+        data.get("message")
+            .or_else(|| data.get("summary"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
+    .unwrap_or_default()
+}
+
+fn round_event_detail_score(entry: &Value) -> usize {
+    let Some(data) = entry.get("data").and_then(Value::as_object) else {
+        return 0;
+    };
+    let mut score = 0usize;
+    if data
+        .get("message")
+        .and_then(Value::as_str)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        score += 4;
+    }
+    if data
+        .get("code")
+        .and_then(Value::as_str)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        score += 2;
+    }
+    if data
+        .get("summary")
+        .and_then(Value::as_str)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        score += 1;
+    }
+    score
 }
 
 fn is_workflow_event(event_type: &str) -> bool {
@@ -2489,4 +2592,84 @@ fn orchestrator_error_response(status: StatusCode, payload: Value) -> Response {
 
 fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{collect_session_event_rounds, should_merge_round_event};
+    use serde_json::json;
+
+    #[test]
+    fn merges_duplicate_round_error_pair_by_trace() {
+        let previous = json!({
+            "event": "error",
+            "timestamp": "2026-03-12T15:40:41.383+08:00",
+            "data": {
+                "trace_id": "trace_1",
+                "code": "INTERNAL_ERROR",
+                "message": "模型调用失败: prompt too long"
+            }
+        });
+        let current = json!({
+            "event": "error",
+            "timestamp": "2026-03-12T15:40:41.383+08:00",
+            "data": {
+                "trace_id": "trace_1",
+                "summary": "模型调用失败: prompt too long"
+            }
+        });
+        assert!(should_merge_round_event(&previous, &current));
+    }
+
+    #[test]
+    fn collect_session_event_rounds_keeps_richer_error_once() {
+        let record = json!({
+            "events": [
+                {
+                    "type": "progress",
+                    "timestamp": 1.0,
+                    "data": { "user_round": 1, "stage": "start" }
+                },
+                {
+                    "type": "error",
+                    "timestamp": 2.0,
+                    "data": {
+                        "user_round": 1,
+                        "trace_id": "trace_1",
+                        "code": "INTERNAL_ERROR",
+                        "message": "模型调用失败: prompt too long"
+                    }
+                },
+                {
+                    "type": "error",
+                    "timestamp": 2.0,
+                    "data": {
+                        "user_round": 1,
+                        "trace_id": "trace_1",
+                        "summary": "模型调用失败: prompt too long"
+                    }
+                }
+            ]
+        });
+
+        let rounds = collect_session_event_rounds(&record);
+        assert_eq!(rounds.len(), 1);
+        let events = rounds[0]
+            .get("events")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let error_events = events
+            .iter()
+            .filter(|item| item.get("event").and_then(|value| value.as_str()) == Some("error"))
+            .collect::<Vec<_>>();
+        assert_eq!(error_events.len(), 1);
+        assert_eq!(
+            error_events[0]
+                .get("data")
+                .and_then(|value| value.get("message"))
+                .and_then(|value| value.as_str()),
+            Some("模型调用失败: prompt too long")
+        );
+    }
 }

@@ -355,49 +355,31 @@
                               {{ t('chat.ability.empty') }}
                             </div>
                             <div v-else class="ability-scroll">
-                              <div class="ability-section">
+                              <div
+                                v-for="section in abilitySections"
+                                :key="section.key"
+                                class="ability-section"
+                              >
                                 <div class="ability-section-title">
-                                  <span>{{ t('chat.ability.tools') }}</span>
-                                  <span class="ability-count">{{ abilitySummary.tools.length }}</span>
+                                  <span>{{ section.title }}</span>
+                                  <span class="ability-count">{{ section.items.length }}</span>
                                 </div>
-                                <div v-if="abilitySummary.tools.length" class="ability-item-list">
+                                <div v-if="section.items.length" class="ability-item-list">
                                   <div
-                                    v-for="tool in abilitySummary.tools"
-                                    :key="`tool-${tool.name}`"
-                                    class="ability-item tool"
+                                    v-for="item in section.items"
+                                    :key="`${section.key}-${item.name}`"
+                                    :class="['ability-item', section.kind]"
                                   >
-                                    <div class="ability-item-name">{{ tool.name }}</div>
+                                    <div class="ability-item-name">{{ item.name }}</div>
                                     <div
                                       class="ability-item-desc"
-                                      :class="{ 'is-empty': !tool.description }"
+                                      :class="{ 'is-empty': !item.description }"
                                     >
-                                      {{ tool.description || t('chat.ability.noDesc') }}
+                                      {{ item.description || t('chat.ability.noDesc') }}
                                     </div>
                                   </div>
                                 </div>
-                                <div v-else class="ability-empty">{{ t('chat.ability.emptyTools') }}</div>
-                              </div>
-                              <div class="ability-section">
-                                <div class="ability-section-title">
-                                  <span>{{ t('chat.ability.skills') }}</span>
-                                  <span class="ability-count">{{ abilitySummary.skills.length }}</span>
-                                </div>
-                                <div v-if="abilitySummary.skills.length" class="ability-item-list">
-                                  <div
-                                    v-for="skill in abilitySummary.skills"
-                                    :key="`skill-${skill.name}`"
-                                    class="ability-item skill"
-                                  >
-                                    <div class="ability-item-name">{{ skill.name }}</div>
-                                    <div
-                                      class="ability-item-desc"
-                                      :class="{ 'is-empty': !skill.description }"
-                                    >
-                                      {{ skill.description || t('chat.ability.noDesc') }}
-                                    </div>
-                                  </div>
-                                </div>
-                                <div v-else class="ability-empty">{{ t('chat.ability.emptySkills') }}</div>
+                                <div v-else class="ability-empty">{{ section.emptyText }}</div>
                               </div>
                             </div>
                           </template>
@@ -721,7 +703,7 @@ import {
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
-import { collectAbilityDetails, collectAbilityNames } from '@/utils/toolSummary';
+import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
@@ -943,9 +925,62 @@ const promptPreviewHtml = computed(() => {
   return renderSystemPromptHighlight(content, effectiveToolSummary.value || {});
 });
 // 能力悬浮提示使用的工具/技能明细
-const abilitySummary = computed(() => collectAbilityDetails(effectiveToolSummary.value || {}));
-const hasAbilitySummary = computed(
-  () => abilitySummary.value.tools.length > 0 || abilitySummary.value.skills.length > 0
+const abilitySections = computed(() => {
+  const groups = collectAbilityGroupDetails(effectiveToolSummary.value || {});
+  return [
+    {
+      key: 'skills',
+      kind: 'skill',
+      title: t('toolManager.system.skills'),
+      emptyText: t('chat.ability.emptySkills'),
+      items: groups.skills
+    },
+    {
+      key: 'mcp',
+      kind: 'tool',
+      title: t('toolManager.system.mcp'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.mcp
+    },
+    {
+      key: 'knowledge',
+      kind: 'tool',
+      title: t('toolManager.system.knowledge'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.knowledge
+    },
+    {
+      key: 'a2a',
+      kind: 'tool',
+      title: t('toolManager.system.a2a'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.a2a
+    },
+    {
+      key: 'user',
+      kind: 'tool',
+      title: t('portal.agent.tools.group.user'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.user
+    },
+    {
+      key: 'shared',
+      kind: 'tool',
+      title: t('portal.agent.tools.group.shared'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.shared
+    },
+    {
+      key: 'builtin',
+      kind: 'tool',
+      title: t('toolManager.system.builtin'),
+      emptyText: t('chat.ability.emptyTools'),
+      items: groups.builtin
+    }
+  ].filter((section) => section.items.length > 0);
+});
+const hasAbilitySummary = computed(() =>
+  abilitySections.value.some((section) => section.items.length > 0)
 );
 const HISTORY_ROW_HEIGHT = 52;
 const HISTORY_OVERSCAN = 6;
@@ -2813,7 +2848,13 @@ const buildMessageStatsEntries = (message) => {
   if (!stats) return [];
   const durationSeconds = resolveDurationSeconds(stats);
   const speed = resolveTokenSpeed(stats, durationSeconds);
-  const hasUsage = Number.isFinite(Number(stats?.usage?.total)) && Number(stats.usage.total) > 0;
+  const contextTokens =
+    stats?.contextTokens ??
+    stats?.context_tokens ??
+    stats?.context_usage?.context_tokens ??
+    stats?.context_usage?.contextTokens ??
+    null;
+  const hasUsage = Number.isFinite(Number(contextTokens)) && Number(contextTokens) > 0;
   const hasDuration = Number.isFinite(Number(durationSeconds)) && Number(durationSeconds) > 0;
   const hasSpeed = Number.isFinite(Number(speed)) && Number(speed) > 0;
   const hasToolCalls = Number.isFinite(Number(stats?.toolCalls)) && Number(stats.toolCalls) > 0;
@@ -2824,7 +2865,7 @@ const buildMessageStatsEntries = (message) => {
   const entries = [
     { label: t('chat.stats.duration'), value: formatDuration(durationSeconds) },
     { label: t('chat.stats.speed'), value: formatSpeed(speed) },
-    { label: t('chat.stats.contextTokens'), value: formatCount(stats?.usage?.total) },
+    { label: t('chat.stats.contextTokens'), value: formatCount(contextTokens) },
     { label: t('chat.stats.toolCalls'), value: formatCount(stats?.toolCalls) },
     { label: t('chat.stats.quota'), value: formatCount(stats?.quotaConsumed) }
   ];
@@ -3053,7 +3094,7 @@ watch(
 );
 
 watch(
-  () => abilitySummary.value,
+  () => abilitySections.value,
   () => {
     if (abilityTooltipVisible.value) {
       updateAbilityTooltip();

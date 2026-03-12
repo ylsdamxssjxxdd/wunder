@@ -168,8 +168,9 @@ impl Orchestrator {
         tool_name: &str,
         result: &ToolResultPayload,
     ) -> String {
-        serde_json::to_string(&result.to_observation_payload(tool_name))
-            .unwrap_or_else(|_| "{}".to_string())
+        let mut payload = result.to_observation_payload(tool_name);
+        compact_observation_payload(&mut payload);
+        serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
     }
 
     pub(super) fn append_tool_log(
@@ -925,6 +926,100 @@ fn merge_tool_result_meta(meta: Option<Value>) -> Map<String, Value> {
     }
 }
 
+const OBSERVATION_MAX_CHARS: usize = 2200;
+const OBSERVATION_HEAD_CHARS: usize = 900;
+const OBSERVATION_TAIL_CHARS: usize = 240;
+const OBSERVATION_MAX_ARRAY_ITEMS: usize = 20;
+const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 12;
+const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 4;
+
+fn compact_observation_payload(payload: &mut Value) {
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+    let Some(raw_data) = map.get("data").cloned() else {
+        return;
+    };
+    let Some(mut compacted_data) = extract_mcp_observation_data(&raw_data) else {
+        return;
+    };
+    truncate_observation_data(
+        &mut compacted_data,
+        OBSERVATION_HEAD_CHARS,
+        OBSERVATION_TAIL_CHARS,
+        TOOL_RESULT_TRUNCATION_MARKER,
+    );
+    let chars = estimate_tool_result_chars(&compacted_data);
+    if chars > OBSERVATION_MAX_CHARS {
+        compacted_data = compact_large_tool_result_data(
+            &compacted_data,
+            chars,
+            OBSERVATION_HEAD_CHARS,
+            OBSERVATION_TAIL_CHARS,
+            TOOL_RESULT_TRUNCATION_MARKER,
+        );
+    }
+    map.insert("data".to_string(), compacted_data);
+    if let Some(meta_value) = map.get("meta").cloned() {
+        if let Some(meta) = compact_observation_meta(&meta_value) {
+            map.insert("meta".to_string(), meta);
+        } else {
+            map.remove("meta");
+        }
+    }
+}
+
+fn compact_observation_meta(value: &Value) -> Option<Value> {
+    let Value::Object(map) = value else {
+        return None;
+    };
+    let mut compacted = Map::new();
+    for key in ["duration_ms", "truncated", "output_chars", "exit_code"] {
+        if let Some(item) = map.get(key) {
+            compacted.insert(key.to_string(), item.clone());
+        }
+    }
+    if compacted.is_empty() {
+        None
+    } else {
+        Some(Value::Object(compacted))
+    }
+}
+
+fn extract_mcp_observation_data(value: &Value) -> Option<Value> {
+    let Value::Object(map) = value else {
+        return None;
+    };
+    if !map.contains_key("structured_content") && !map.contains_key("content") {
+        return None;
+    }
+    if let Some(structured_content) = map.get("structured_content") {
+        if !structured_content.is_null() {
+            return Some(structured_content.clone());
+        }
+    }
+    if let Some(parsed) = parse_json_from_content_text_blocks(value) {
+        return Some(parsed);
+    }
+    map.get("content").cloned().filter(|item| !item.is_null())
+}
+
+fn parse_json_from_content_text_blocks(value: &Value) -> Option<Value> {
+    let content = value.get("content")?.as_array()?;
+    if content.len() != 1 {
+        return None;
+    }
+    let block = content.first()?.as_object()?;
+    if block.get("type").and_then(Value::as_str) != Some("text") {
+        return None;
+    }
+    let text = block.get("text").and_then(Value::as_str)?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Value>(text).ok()
+}
+
 fn truncate_tool_result_string(
     value: &str,
     head_chars: usize,
@@ -991,6 +1086,60 @@ fn truncate_tool_result_data(
             let mut truncated = false;
             for value in map.values_mut() {
                 if truncate_tool_result_data(value, head_chars, tail_chars, marker) {
+                    truncated = true;
+                }
+            }
+            truncated
+        }
+        _ => false,
+    }
+}
+
+fn truncate_observation_data(
+    value: &mut Value,
+    head_chars: usize,
+    tail_chars: usize,
+    marker: &str,
+) -> bool {
+    match value {
+        Value::String(text) => {
+            if text.chars().count() > head_chars + tail_chars {
+                *text = truncate_tool_result_string(text, head_chars, tail_chars, marker);
+                true
+            } else {
+                false
+            }
+        }
+        Value::Array(items) => {
+            let mut truncated = false;
+            if items.len() > OBSERVATION_MAX_ARRAY_ITEMS {
+                let original_len = items.len();
+                let head_items = OBSERVATION_ARRAY_HEAD_ITEMS.min(original_len);
+                let tail_items = OBSERVATION_ARRAY_TAIL_ITEMS.min(original_len - head_items);
+                let omitted = original_len.saturating_sub(head_items + tail_items);
+                let mut compacted = Vec::with_capacity(head_items + tail_items + 1);
+                compacted.extend(items.iter().take(head_items).cloned());
+                compacted.push(json!({
+                    "truncated_items": omitted,
+                    "marker": marker,
+                }));
+                if tail_items > 0 {
+                    compacted.extend(items.iter().skip(original_len - tail_items).cloned());
+                }
+                *items = compacted;
+                truncated = true;
+            }
+            for item in items.iter_mut() {
+                if truncate_observation_data(item, head_chars, tail_chars, marker) {
+                    truncated = true;
+                }
+            }
+            truncated
+        }
+        Value::Object(map) => {
+            let mut truncated = false;
+            for inner in map.values_mut() {
+                if truncate_observation_data(inner, head_chars, tail_chars, marker) {
                     truncated = true;
                 }
             }

@@ -558,6 +558,10 @@ pub(super) fn is_context_window_error_text(message: &str) -> bool {
         "too many tokens",
         "prompt is too long",
         "input is too long",
+        "input length should be",
+        "range of input length",
+        "range of prompt length",
+        "input length exceeds",
         "input token count",
         "prompt token count",
         "maximum number of tokens",
@@ -589,6 +593,9 @@ mod tests {
         ));
         assert!(is_context_window_error_text(
             "input exceeds the available context size"
+        ));
+        assert!(is_context_window_error_text(
+            "InternalError.Algo.InvalidParameter: Range of input length should be [1, 258048]"
         ));
     }
 

@@ -39,6 +39,7 @@ export const state = {
     users: false,
     userAccounts: false,
     externalLinks: false,
+    presetAgents: false,
     orgUnits: false,
     memory: false,
     channels: false,

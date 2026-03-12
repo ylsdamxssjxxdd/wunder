@@ -631,17 +631,49 @@ fn normalize_mcp_arguments(args: &Value) -> Option<JsonObject> {
 
 fn serialize_tool_result(result: CallToolResult) -> Value {
     // 统一将 MCP 返回内容序列化为结构化 JSON，保持前端解析一致。
-    let content = result
+    let mut content = result
         .content
         .into_iter()
         .map(|block| serde_json::to_value(block).unwrap_or(Value::Null))
         .collect::<Vec<_>>();
+    let structured_content = result.structured_content;
+    if should_drop_duplicate_text_content(&content, structured_content.as_ref()) {
+        content.clear();
+    }
     json!({
         "content": content,
-        "structured_content": result.structured_content,
+        "structured_content": structured_content,
         "meta": result.meta,
         "is_error": result.is_error,
     })
+}
+
+fn should_drop_duplicate_text_content(
+    content: &[Value],
+    structured_content: Option<&Value>,
+) -> bool {
+    let Some(structured_content) = structured_content else {
+        return false;
+    };
+    if structured_content.is_null() || content.is_empty() {
+        return false;
+    }
+    parse_json_from_single_text_block(content).as_ref() == Some(structured_content)
+}
+
+fn parse_json_from_single_text_block(content: &[Value]) -> Option<Value> {
+    if content.len() != 1 {
+        return None;
+    }
+    let block = content.first()?.as_object()?;
+    if block.get("type").and_then(Value::as_str) != Some("text") {
+        return None;
+    }
+    let text = block.get("text").and_then(Value::as_str)?.trim();
+    if text.is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Value>(text).ok()
 }
 
 struct SseClientSession {
