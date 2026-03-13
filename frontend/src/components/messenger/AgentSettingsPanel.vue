@@ -77,6 +77,7 @@
           </div>
         </el-form-item>
         <AgentDependencyNotice
+          :notice-key="dependencyNoticeKey"
           :missing-tool-names="dependencyStatus.missingToolNames"
           :missing-skill-names="dependencyStatus.missingSkillNames"
         />
@@ -171,7 +172,11 @@ import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop'
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
-import { buildDeclaredDependencyPayload, resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import {
+  buildDeclaredDependencyPayload,
+  buildWorkerCardDependencyPayload,
+  resolveAgentDependencyStatus
+} from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { downloadWorkerCard } from '@/utils/workerCard';
 import {
@@ -235,6 +240,7 @@ const isDefaultAgentAlias = (value: string): boolean => {
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
 const isDefaultAgent = computed(() => isDefaultAgentAlias(normalizedAgentId.value));
 const isReadonlyMode = computed(() => Boolean(props.readonly));
+const dependencyNoticeKey = computed(() => `agent:${normalizedAgentId.value || '__default__'}`);
 const canView = computed(() => isReadonlyMode.value || Boolean(normalizedAgentId.value));
 const canEdit = computed(() => !isReadonlyMode.value && Boolean(normalizedAgentId.value));
 
@@ -419,7 +425,7 @@ const saveAgent = async () => {
 
 const exportWorkerCard = () => {
   const groupPayload = buildBeeroomGroupPayload(form.group);
-  const dependencyPayload = buildDeclaredDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
+  const dependencyPayload = buildWorkerCardDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
   const filename = downloadWorkerCard({
     id: normalizedAgentId.value,
     name: String(form.name || '').trim() || normalizedAgentId.value,

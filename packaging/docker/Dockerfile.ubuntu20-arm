@@ -109,9 +109,14 @@ RUN set -eux; \
     npm config set audit false
 
 # AppImage packaging tooling (append-only, keep previous cache layers intact)
-COPY target/arm64-20/.build/python/tools/appimagetool-aarch64.AppImage /opt/wunder-tools/appimagetool-aarch64.AppImage
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ARG APPIMAGETOOL_AARCH64_URL=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-aarch64.AppImage
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
       squashfs-tools \
+    && mkdir -p /opt/wunder-tools \
+    && curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      "${APPIMAGETOOL_AARCH64_URL}" \
+      -o /opt/wunder-tools/appimagetool-aarch64.AppImage \
     && chmod +x /opt/wunder-tools/appimagetool-aarch64.AppImage \
     && ln -sf /opt/wunder-tools/appimagetool-aarch64.AppImage /usr/local/bin/appimagetool \
     && rm -rf /var/lib/apt/lists/*

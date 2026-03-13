@@ -88,8 +88,14 @@ const createDownload = (filename: string, payload: string) => {
 
 export const buildWorkerCardDocument = (value: Record<string, unknown> | null | undefined): WorkerCardDocument => {
   const source = value || {};
-  const declaredToolNames = normalizeStringList(source.declared_tool_names ?? source.tool_names);
-  const declaredSkillNames = normalizeStringList(source.declared_skill_names ?? source.skills);
+  const explicitDeclaredToolNames = normalizeStringList(source.declared_tool_names);
+  const explicitDeclaredSkillNames = normalizeStringList(source.declared_skill_names ?? source.skills);
+  const hasExplicitDeclaredDependencies =
+    explicitDeclaredToolNames.length > 0 || explicitDeclaredSkillNames.length > 0;
+  const declaredToolNames = hasExplicitDeclaredDependencies
+    ? explicitDeclaredToolNames
+    : normalizeStringList(source.tool_names);
+  const declaredSkillNames = hasExplicitDeclaredDependencies ? explicitDeclaredSkillNames : [];
   return {
     schema_version: WORKER_CARD_SCHEMA_VERSION,
     kind: 'WorkerCard',

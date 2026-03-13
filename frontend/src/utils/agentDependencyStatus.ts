@@ -5,6 +5,9 @@ type UnknownRecord = Record<string, unknown>;
 const asRecord = (value: unknown): UnknownRecord =>
   value && typeof value === 'object' ? (value as UnknownRecord) : {};
 
+const hasOwn = (record: UnknownRecord, key: string) =>
+  Object.prototype.hasOwnProperty.call(record, key);
+
 export const normalizeDependencyNames = (value: unknown): string[] => {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -20,16 +23,38 @@ export const normalizeDependencyNames = (value: unknown): string[] => {
 
 const readDeclaredToolNames = (source: unknown): string[] => {
   const record = asRecord(source);
-  const explicit = record.declared_tool_names ?? record.declaredToolNames;
-  if (Array.isArray(explicit)) {
-    return normalizeDependencyNames(explicit);
-  }
-  return normalizeDependencyNames(record.tool_names ?? record.toolNames);
+  return normalizeDependencyNames(record.declared_tool_names ?? record.declaredToolNames);
 };
 
 const readDeclaredSkillNames = (source: unknown): string[] => {
   const record = asRecord(source);
   return normalizeDependencyNames(record.declared_skill_names ?? record.declaredSkillNames ?? record.skills);
+};
+
+const hasExplicitDeclaredDependencies = (source: unknown): boolean => {
+  const record = asRecord(source);
+  if (
+    !hasOwn(record, 'declared_tool_names') &&
+    !hasOwn(record, 'declaredToolNames') &&
+    !hasOwn(record, 'declared_skill_names') &&
+    !hasOwn(record, 'declaredSkillNames')
+  ) {
+    return false;
+  }
+  const declaredToolNames = readDeclaredToolNames(source);
+  const declaredSkillNames = readDeclaredSkillNames(source);
+  if (declaredSkillNames.length > 0) {
+    return true;
+  }
+  if (declaredToolNames.length === 0) {
+    return false;
+  }
+  const selectedToolNames = normalizeDependencyNames(record.tool_names ?? record.toolNames);
+  if (selectedToolNames.length === 0) {
+    return true;
+  }
+  const selectedToolNameSet = new Set(selectedToolNames);
+  return declaredToolNames.some((name) => !selectedToolNameSet.has(name));
 };
 
 const collectAvailableNames = (catalog: unknown) => {
@@ -41,7 +66,7 @@ const collectAvailableNames = (catalog: unknown) => {
   };
 };
 
-export const buildDeclaredDependencyPayload = (
+export const buildWorkerCardDependencyPayload = (
   selectedToolNames: unknown,
   source: unknown,
   catalog: unknown
@@ -69,6 +94,24 @@ export const buildDeclaredDependencyPayload = (
   };
 };
 
+export const buildDeclaredDependencyPayload = (
+  selectedToolNames: unknown,
+  source: unknown,
+  catalog: unknown
+) => {
+  const selected = normalizeDependencyNames(selectedToolNames);
+  // Only worker-card style agents persist declared dependencies.
+  // Regular agents should save their current selection without generating missing-dependency warnings.
+  if (!hasExplicitDeclaredDependencies(source)) {
+    return {
+      tool_names: selected,
+      declared_tool_names: [] as string[],
+      declared_skill_names: [] as string[]
+    };
+  }
+  return buildWorkerCardDependencyPayload(selectedToolNames, source, catalog);
+};
+
 export const resolveAgentDependencyStatus = (
   source: unknown,
   catalog: unknown,
@@ -89,4 +132,3 @@ export const resolveAgentDependencyStatus = (
     missingSkillNames: effective.declared_skill_names.filter((name) => !availableSkillNames.has(name))
   };
 };
-

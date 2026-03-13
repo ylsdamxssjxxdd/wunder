@@ -985,7 +985,7 @@ pub(crate) fn build_default_agent_record_from_storage(
         description: snapshot.description,
         system_prompt: snapshot.system_prompt,
         tool_names: snapshot.tool_names.clone(),
-        declared_tool_names: snapshot.tool_names,
+        declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
         preset_questions: snapshot.preset_questions,
         access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
@@ -1165,7 +1165,7 @@ mod tests {
             description: String::new(),
             system_prompt: String::new(),
             tool_names: vec!["file_read".to_string()],
-            declared_tool_names: vec!["file_read".to_string()],
+            declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
             preset_questions: vec![
                 "请先帮我梳理现状".to_string(),

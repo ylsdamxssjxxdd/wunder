@@ -123,23 +123,27 @@
             </label>
             <label class="desktop-system-settings-field">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.modelName') }}</span>
-              <el-select
+              <el-input
+                v-if="selectedProviderUsesManualModelInput"
+                v-model="selectedModel.model"
+                class="desktop-system-settings-input"
+                :placeholder="t('desktop.system.modelNamePlaceholder')"
+                @input="handleModelInput"
+                @blur="handleModelBlur"
+              />
+              <el-autocomplete
+                v-else
                 v-model="selectedModel.model"
                 class="desktop-system-settings-input"
                 popper-class="desktop-system-settings-popper"
-                filterable
-                allow-create
-                default-first-option
+                :fetch-suggestions="queryModelSuggestions"
                 :placeholder="t('desktop.system.modelNamePlaceholder')"
-                @change="handleModelChange"
-              >
-                <el-option
-                  v-for="option in modelOptionsForSelectedModel"
-                  :key="option.value"
-                  :label="option.label"
-                  :value="option.value"
-                />
-              </el-select>
+                :trigger-on-focus="false"
+                clearable
+                @input="handleModelInput"
+                @select="handleModelSuggestionSelect"
+                @blur="handleModelBlur"
+              />
             </label>
             <label class="desktop-system-settings-field desktop-system-settings-field--full">
               <span class="desktop-system-settings-field-label">{{ t('desktop.system.baseUrl') }}</span>
@@ -560,9 +564,13 @@ const modelRowsForList = computed(() =>
 const selectedModel = computed(
   () => modelRows.value.find((item) => item.uid === selectedModelUid.value) || null
 );
+const selectedProviderUsesManualModelInput = computed(
+  () => normalizeProviderId(selectedModel.value?.provider) === 'openai_compatible'
+);
 const modelOptionsForSelectedModel = computed(() => {
   const current = selectedModel.value;
   if (!current) return [];
+  if (normalizeProviderId(current.provider) === 'openai_compatible') return [];
 
   const options: Array<{ value: string; label: string }> = [];
   const existing = new Set<string>();
@@ -686,10 +694,39 @@ const handleProviderChange = (value: string) => {
   applyModelPresetContext(current);
 };
 
-const handleModelChange = (value: string) => {
+const queryModelSuggestions = (
+  queryString: string,
+  callback: (items: Array<{ value: string }>) => void
+) => {
+  const keyword = String(queryString || '').trim().toLowerCase();
+  const items = modelOptionsForSelectedModel.value
+    .filter((option) => {
+      if (!keyword) return true;
+      return option.value.toLowerCase().includes(keyword) || option.label.toLowerCase().includes(keyword);
+    })
+    .map((option) => ({ value: option.value }));
+  callback(items);
+};
+
+const handleModelInput = (value: string) => {
   const current = selectedModel.value;
   if (!current) return;
-  current.model = String(value || '').trim();
+  current.model = String(value || '');
+  applyModelPresetContext(current);
+};
+
+const handleModelBlur = (event: FocusEvent) => {
+  const current = selectedModel.value;
+  if (!current) return;
+  const target = event.target as HTMLInputElement | null;
+  current.model = String(target?.value ?? current.model ?? '').trim();
+  applyModelPresetContext(current);
+};
+
+const handleModelSuggestionSelect = (item: { value?: string }) => {
+  const current = selectedModel.value;
+  if (!current) return;
+  current.model = String(item?.value || '').trim();
   applyModelPresetContext(current);
 };
 

@@ -49,9 +49,11 @@ JavaScript 依赖统一走仓库根 `npm workspace`，共享一套根 `node_modu
 
 ### x86
 
-离线重打包推荐预先放好：
+镜像构建默认会在 Dockerfile 内自动下载 `appimagetool-x86_64.AppImage`。
 
-- `target/x86-20/.build/python/tools/appimagetool-x86_64.AppImage`
+如需改为企业镜像源或私有制品地址，可在构建时传入：
+
+- `--build-arg APPIMAGETOOL_X86_64_URL=<your-url>`
 
 构建命令：
 
@@ -63,9 +65,11 @@ docker build -t wunder-x86-20:latest -t wunder-x86-20 \
 
 ### ARM
 
-离线重打包推荐预先放好：
+镜像构建默认会在 Dockerfile 内自动下载 `appimagetool-aarch64.AppImage`。
 
-- `target/arm64-20/.build/python/tools/appimagetool-aarch64.AppImage`
+如需改为企业镜像源或私有制品地址，可在构建时传入：
+
+- `--build-arg APPIMAGETOOL_AARCH64_URL=<your-url>`
 
 构建命令：
 

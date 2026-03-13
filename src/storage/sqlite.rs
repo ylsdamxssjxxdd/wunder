@@ -194,13 +194,8 @@ impl SqliteStorage {
         serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
     }
 
-    fn parse_declared_tool_names(tool_names: &[String], value: Option<String>) -> Vec<String> {
-        let parsed = Self::parse_string_list(value);
-        if parsed.is_empty() {
-            tool_names.to_vec()
-        } else {
-            parsed
-        }
+    fn parse_declared_tool_names(value: Option<String>) -> Vec<String> {
+        Self::parse_string_list(value)
     }
 
     fn read_user_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserAgentRecord> {
@@ -213,7 +208,7 @@ impl SqliteStorage {
             description: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             system_prompt: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
             tool_names: tool_names.clone(),
-            declared_tool_names: Self::parse_declared_tool_names(&tool_names, row.get(7)?),
+            declared_tool_names: Self::parse_declared_tool_names(row.get(7)?),
             declared_skill_names: Self::parse_string_list(row.get(8)?),
             preset_questions: Self::parse_string_list(row.get(17)?),
             access_level: row.get(9)?,

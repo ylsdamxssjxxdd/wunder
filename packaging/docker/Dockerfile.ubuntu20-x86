@@ -86,10 +86,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       squashfs-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# Offline AppImage tooling (append-only, keep previous cache layers intact)
-COPY target/x86-20/.build/python/tools/appimagetool-x86_64.AppImage /opt/wunder-tools/appimagetool-x86_64.AppImage
-RUN chmod +x /opt/wunder-tools/appimagetool-x86_64.AppImage \
-    && ln -sf /opt/wunder-tools/appimagetool-x86_64.AppImage /usr/local/bin/appimagetool
+# AppImage runner download (append-only, keep previous cache layers intact)
+ARG APPIMAGETOOL_X86_64_URL=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+RUN set -eux; \
+    mkdir -p /opt/wunder-tools; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      "${APPIMAGETOOL_X86_64_URL}" \
+      -o /opt/wunder-tools/appimagetool-x86_64.AppImage; \
+    chmod +x /opt/wunder-tools/appimagetool-x86_64.AppImage; \
+    ln -sf /opt/wunder-tools/appimagetool-x86_64.AppImage /usr/local/bin/appimagetool
 WORKDIR /app
 
 # Build commands (inside container):

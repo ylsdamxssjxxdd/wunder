@@ -1087,8 +1087,14 @@ async fn update_agent(
         record.tool_names = filter_allowed_tools(&requested_tool_names, &allowed);
         let (declared_tool_names, declared_skill_names) = split_declared_agent_dependencies(
             &requested_tool_names,
-            payload.declared_tool_names.clone(),
-            payload.declared_skill_names.clone(),
+            payload
+                .declared_tool_names
+                .clone()
+                .or_else(|| Some(record.declared_tool_names.clone())),
+            payload
+                .declared_skill_names
+                .clone()
+                .or_else(|| Some(record.declared_skill_names.clone())),
             &skill_name_keys,
         );
         record.declared_tool_names = declared_tool_names;
@@ -1404,20 +1410,12 @@ fn split_declared_agent_dependencies(
     explicit_skill_names: Option<Vec<String>>,
     skill_name_keys: &HashSet<String>,
 ) -> (Vec<String>, Vec<String>) {
-    let declared_tool_names = explicit_tool_names.unwrap_or_else(|| {
-        requested_tool_names
-            .iter()
-            .filter(|name| !skill_name_keys.contains(*name))
-            .cloned()
-            .collect()
-    });
-    let declared_skill_names = explicit_skill_names.unwrap_or_else(|| {
-        requested_tool_names
-            .iter()
-            .filter(|name| skill_name_keys.contains(*name))
-            .cloned()
-            .collect()
-    });
+    // Declared dependencies represent worker-card imports only.
+    // Do not synthesize them from a normal agent's selected tools.
+    let _ = requested_tool_names;
+    let _ = skill_name_keys;
+    let declared_tool_names = explicit_tool_names.unwrap_or_default();
+    let declared_skill_names = explicit_skill_names.unwrap_or_default();
     (
         normalize_tool_list(declared_tool_names),
         normalize_tool_list(declared_skill_names),
@@ -1867,7 +1865,7 @@ async fn ensure_preset_agents(
             description: preset.description.clone(),
             system_prompt: preset.system_prompt.clone(),
             tool_names: tool_names.clone(),
-            declared_tool_names: tool_names.clone(),
+            declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
             preset_questions: Vec::new(),
             access_level: access_level.clone(),
@@ -2083,7 +2081,7 @@ fn default_agent_payload(config: &DefaultAgentConfig) -> Value {
         "description": config.description,
         "system_prompt": config.system_prompt,
         "tool_names": config.tool_names,
-        "declared_tool_names": config.tool_names,
+        "declared_tool_names": Vec::<String>::new(),
         "declared_skill_names": Vec::<String>::new(),
         "preset_questions": config.preset_questions,
         "access_level": DEFAULT_AGENT_ACCESS_LEVEL,
@@ -2271,4 +2269,41 @@ struct DefaultAgentConfig {
     created_at: f64,
     #[serde(default)]
     updated_at: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_declared_agent_dependencies;
+    use std::collections::HashSet;
+
+    #[test]
+    fn split_declared_dependencies_stays_empty_without_explicit_worker_card_data() {
+        let requested = vec!["read_file".to_string(), "skill_get".to_string()];
+        let skill_names = HashSet::from(["skill_get".to_string()]);
+
+        let actual = split_declared_agent_dependencies(&requested, None, None, &skill_names);
+
+        assert_eq!(actual, (Vec::<String>::new(), Vec::<String>::new()));
+    }
+
+    #[test]
+    fn split_declared_dependencies_keeps_explicit_worker_card_data() {
+        let requested = vec!["read_file".to_string()];
+        let skill_names = HashSet::from(["skill_get".to_string()]);
+
+        let actual = split_declared_agent_dependencies(
+            &requested,
+            Some(vec!["read_file".to_string(), "write_file".to_string()]),
+            Some(vec!["skill_get".to_string()]),
+            &skill_names,
+        );
+
+        assert_eq!(
+            actual,
+            (
+                vec!["read_file".to_string(), "write_file".to_string()],
+                vec!["skill_get".to_string()],
+            )
+        );
+    }
 }
