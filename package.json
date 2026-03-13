@@ -6,6 +6,7 @@
     "desktop/electron"
   ],
   "scripts": {
+    "sync:app-version": "python scripts/sync_app_version.py",
     "build:frontend": "npm run build --workspace wunder-frontend",
     "typecheck:frontend": "npm run typecheck --workspace wunder-frontend",
     "prepare:desktop:resources": "npm run prepare:resources --workspace wunder-desktop-electron",

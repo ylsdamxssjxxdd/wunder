@@ -307,6 +307,39 @@ impl PostgresStorage {
         serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
     }
 
+    fn parse_declared_tool_names(tool_names: &[String], value: Option<String>) -> Vec<String> {
+        let parsed = Self::parse_string_list(value);
+        if parsed.is_empty() {
+            tool_names.to_vec()
+        } else {
+            parsed
+        }
+    }
+
+    fn read_user_agent_row(row: &tokio_postgres::Row) -> UserAgentRecord {
+        let tool_names = Self::parse_string_list(row.get(6));
+        UserAgentRecord {
+            agent_id: row.get(0),
+            user_id: row.get(1),
+            hive_id: normalize_hive_id(&row.get::<_, String>(2)),
+            name: row.get(3),
+            description: row.get::<_, Option<String>>(4).unwrap_or_default(),
+            system_prompt: row.get::<_, Option<String>>(5).unwrap_or_default(),
+            tool_names: tool_names.clone(),
+            declared_tool_names: Self::parse_declared_tool_names(&tool_names, row.get(7)),
+            declared_skill_names: Self::parse_string_list(row.get(8)),
+            preset_questions: Self::parse_string_list(row.get(17)),
+            access_level: row.get(9),
+            approval_mode: row.get(10),
+            is_shared: row.get::<_, i32>(11) != 0,
+            status: row.get(12),
+            icon: row.get(13),
+            sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(14)),
+            created_at: row.get(15),
+            updated_at: row.get(16),
+        }
+    }
+
     fn i32_list_to_json(list: &[i32]) -> String {
         serde_json::to_string(list).unwrap_or_else(|_| "[]".to_string())
     }
@@ -784,6 +817,24 @@ impl PostgresStorage {
         if !columns.contains("approval_mode") {
             conn.execute(
                 "ALTER TABLE user_agents ADD COLUMN approval_mode TEXT NOT NULL DEFAULT 'auto_edit'",
+                &[],
+            )?;
+        }
+        if !columns.contains("preset_questions") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN preset_questions TEXT",
+                &[],
+            )?;
+        }
+        if !columns.contains("declared_tool_names") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN declared_tool_names TEXT",
+                &[],
+            )?;
+        }
+        if !columns.contains("declared_skill_names") {
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN declared_skill_names TEXT",
                 &[],
             )?;
         }
@@ -1595,6 +1646,8 @@ impl StorageBackend for PostgresStorage {
                   description TEXT,
                   system_prompt TEXT,
                   tool_names TEXT,
+                  declared_tool_names TEXT,
+                  declared_skill_names TEXT,
                   access_level TEXT NOT NULL,
                   approval_mode TEXT NOT NULL DEFAULT 'auto_edit',
                   is_shared INTEGER NOT NULL DEFAULT 0,
@@ -1602,7 +1655,8 @@ impl StorageBackend for PostgresStorage {
                   icon TEXT,
                   sandbox_container_id INTEGER NOT NULL DEFAULT 1,
                   created_at DOUBLE PRECISION NOT NULL,
-                  updated_at DOUBLE PRECISION NOT NULL
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  preset_questions TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_user_agents_user
                   ON user_agents (user_id, updated_at);
@@ -6980,11 +7034,26 @@ impl StorageBackend for PostgresStorage {
         } else {
             Some(Self::string_list_to_json(&record.tool_names))
         };
+        let declared_tool_names = if record.declared_tool_names.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.declared_tool_names))
+        };
+        let declared_skill_names = if record.declared_skill_names.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.declared_skill_names))
+        };
+        let preset_questions = if record.preset_questions.is_empty() {
+            None
+        } else {
+            Some(Self::string_list_to_json(&record.preset_questions))
+        };
         let is_shared = if record.is_shared { 1 } else { 0 };
         let sandbox_container_id = normalize_sandbox_container_id(record.sandbox_container_id);
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, name = EXCLUDED.name, description = EXCLUDED.description,              system_prompt = EXCLUDED.system_prompt, tool_names = EXCLUDED.tool_names, access_level = EXCLUDED.access_level, approval_mode = EXCLUDED.approval_mode,              is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, sandbox_container_id = EXCLUDED.sandbox_container_id, updated_at = EXCLUDED.updated_at",
+            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions)              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)              ON CONFLICT(agent_id) DO UPDATE SET user_id = EXCLUDED.user_id, hive_id = EXCLUDED.hive_id, name = EXCLUDED.name, description = EXCLUDED.description,              system_prompt = EXCLUDED.system_prompt, tool_names = EXCLUDED.tool_names, declared_tool_names = EXCLUDED.declared_tool_names, declared_skill_names = EXCLUDED.declared_skill_names, access_level = EXCLUDED.access_level, approval_mode = EXCLUDED.approval_mode,              is_shared = EXCLUDED.is_shared, status = EXCLUDED.status, icon = EXCLUDED.icon, sandbox_container_id = EXCLUDED.sandbox_container_id, updated_at = EXCLUDED.updated_at, preset_questions = EXCLUDED.preset_questions",
             &[
                 &record.agent_id,
                 &record.user_id,
@@ -6993,6 +7062,8 @@ impl StorageBackend for PostgresStorage {
                 &record.description,
                 &record.system_prompt,
                 &tool_names,
+                &declared_tool_names,
+                &declared_skill_names,
                 &record.access_level,
                 &record.approval_mode,
                 &is_shared,
@@ -7001,6 +7072,7 @@ impl StorageBackend for PostgresStorage {
                 &sandbox_container_id,
                 &record.created_at,
                 &record.updated_at,
+                &preset_questions,
             ],
         )?;
         Ok(())
@@ -7015,26 +7087,10 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE user_id = $1 AND agent_id = $2",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE user_id = $1 AND agent_id = $2",
             &[&cleaned_user, &cleaned_agent],
         )?;
-        Ok(row.map(|row| UserAgentRecord {
-            agent_id: row.get(0),
-            user_id: row.get(1),
-            hive_id: normalize_hive_id(&row.get::<_, String>(2)),
-            name: row.get(3),
-            description: row.get(4),
-            system_prompt: row.get(5),
-            tool_names: Self::parse_string_list(row.get(6)),
-            access_level: row.get(7),
-            approval_mode: row.get(8),
-            is_shared: row.get::<_, i32>(9) != 0,
-            status: row.get(10),
-            icon: row.get(11),
-            sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(12)),
-            created_at: row.get(13),
-            updated_at: row.get(14),
-        }))
+        Ok(row.map(|row| Self::read_user_agent_row(&row)))
     }
 
     fn get_user_agent_by_id(&self, agent_id: &str) -> Result<Option<UserAgentRecord>> {
@@ -7045,26 +7101,10 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE agent_id = $1",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE agent_id = $1",
             &[&cleaned_agent],
         )?;
-        Ok(row.map(|row| UserAgentRecord {
-            agent_id: row.get(0),
-            user_id: row.get(1),
-            hive_id: normalize_hive_id(&row.get::<_, String>(2)),
-            name: row.get(3),
-            description: row.get(4),
-            system_prompt: row.get(5),
-            tool_names: Self::parse_string_list(row.get(6)),
-            access_level: row.get(7),
-            approval_mode: row.get(8),
-            is_shared: row.get::<_, i32>(9) != 0,
-            status: row.get(10),
-            icon: row.get(11),
-            sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(12)),
-            created_at: row.get(13),
-            updated_at: row.get(14),
-        }))
+        Ok(row.map(|row| Self::read_user_agent_row(&row)))
     }
 
     fn list_user_agents(&self, user_id: &str) -> Result<Vec<UserAgentRecord>> {
@@ -7075,28 +7115,12 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE user_id = $1 ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE user_id = $1 ORDER BY updated_at DESC",
             &[&cleaned_user],
         )?;
         let mut output = Vec::new();
         for row in rows {
-            output.push(UserAgentRecord {
-                agent_id: row.get(0),
-                user_id: row.get(1),
-                hive_id: normalize_hive_id(&row.get::<_, String>(2)),
-                name: row.get(3),
-                description: row.get(4),
-                system_prompt: row.get(5),
-                tool_names: Self::parse_string_list(row.get(6)),
-                access_level: row.get(7),
-                approval_mode: row.get(8),
-                is_shared: row.get::<_, i32>(9) != 0,
-                status: row.get(10),
-                icon: row.get(11),
-                sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(12)),
-                created_at: row.get(13),
-                updated_at: row.get(14),
-            });
+            output.push(Self::read_user_agent_row(&row));
         }
         Ok(output)
     }
@@ -7114,28 +7138,12 @@ impl StorageBackend for PostgresStorage {
         let normalized_hive_id = normalize_hive_id(hive_id);
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE user_id = $1 AND hive_id = $2 ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE user_id = $1 AND hive_id = $2 ORDER BY updated_at DESC",
             &[&cleaned_user, &normalized_hive_id],
         )?;
         let mut output = Vec::new();
         for row in rows {
-            output.push(UserAgentRecord {
-                agent_id: row.get(0),
-                user_id: row.get(1),
-                hive_id: normalize_hive_id(&row.get::<_, String>(2)),
-                name: row.get(3),
-                description: row.get(4),
-                system_prompt: row.get(5),
-                tool_names: Self::parse_string_list(row.get(6)),
-                access_level: row.get(7),
-                approval_mode: row.get(8),
-                is_shared: row.get::<_, i32>(9) != 0,
-                status: row.get(10),
-                icon: row.get(11),
-                sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(12)),
-                created_at: row.get(13),
-                updated_at: row.get(14),
-            });
+            output.push(Self::read_user_agent_row(&row));
         }
         Ok(output)
     }
@@ -7148,28 +7156,12 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at              FROM user_agents WHERE is_shared = 1 AND user_id <> $1 ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE is_shared = 1 AND user_id <> $1 ORDER BY updated_at DESC",
             &[&cleaned_user],
         )?;
         let mut output = Vec::new();
         for row in rows {
-            output.push(UserAgentRecord {
-                agent_id: row.get(0),
-                user_id: row.get(1),
-                hive_id: normalize_hive_id(&row.get::<_, String>(2)),
-                name: row.get(3),
-                description: row.get(4),
-                system_prompt: row.get(5),
-                tool_names: Self::parse_string_list(row.get(6)),
-                access_level: row.get(7),
-                approval_mode: row.get(8),
-                is_shared: row.get::<_, i32>(9) != 0,
-                status: row.get(10),
-                icon: row.get(11),
-                sandbox_container_id: normalize_sandbox_container_id(row.get::<_, i32>(12)),
-                created_at: row.get(13),
-                updated_at: row.get(14),
-            });
+            output.push(Self::read_user_agent_row(&row));
         }
         Ok(output)
     }

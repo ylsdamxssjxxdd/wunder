@@ -1,5 +1,7 @@
 use super::*;
 
+const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
+
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
     applied: bool,
@@ -1093,31 +1095,6 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
 
     stats.applied = true;
 
-    let summary_index = messages
-        .iter()
-        .position(|message| message.get("role").and_then(Value::as_str) == Some("user"));
-    let current_user_index = messages
-        .iter()
-        .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
-    if let (Some(summary_index), Some(current_user_index)) = (summary_index, current_user_index) {
-        if current_user_index != summary_index {
-            stats.current_user_tokens_before =
-                estimate_message_tokens(&messages[current_user_index]);
-            let remaining_for_current =
-                (limit - (stats.tokens_before - stats.current_user_tokens_before)).max(1);
-            if let Some(trimmed) =
-                trim_message_to_fit_tokens(&messages[current_user_index], remaining_for_current)
-            {
-                stats.current_user_tokens_after = estimate_message_tokens(&trimmed);
-                stats.current_user_trimmed =
-                    stats.current_user_tokens_after < stats.current_user_tokens_before;
-                messages[current_user_index] = trimmed;
-            } else {
-                stats.current_user_tokens_after = stats.current_user_tokens_before;
-            }
-        }
-    }
-
     let mut total_tokens = estimate_messages_tokens(messages);
 
     if total_tokens > limit {
@@ -1154,6 +1131,48 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
                 messages.remove(summary_index);
                 stats.summary_removed = true;
                 total_tokens = estimate_messages_tokens(messages);
+            }
+        }
+    }
+
+    if total_tokens > limit {
+        let summary_index = messages
+            .iter()
+            .position(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let current_user_index = messages
+            .iter()
+            .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        if let (Some(summary_index), Some(current_user_index)) = (summary_index, current_user_index)
+        {
+            if current_user_index != summary_index {
+                stats.current_user_tokens_before =
+                    estimate_message_tokens(&messages[current_user_index]);
+                let preserve_floor = stats
+                    .current_user_tokens_before
+                    .min(COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS)
+                    .max(1);
+                let remaining_for_current =
+                    limit - (total_tokens - stats.current_user_tokens_before);
+                let target_tokens = remaining_for_current
+                    .max(preserve_floor)
+                    .min(stats.current_user_tokens_before);
+                // Keep the active user intent readable whenever the limit still allows it.
+                if target_tokens < stats.current_user_tokens_before {
+                    if let Some(trimmed) = trim_message_to_fit_tokens(
+                        &messages[current_user_index],
+                        target_tokens,
+                    ) {
+                        stats.current_user_tokens_after = estimate_message_tokens(&trimmed);
+                        stats.current_user_trimmed =
+                            stats.current_user_tokens_after < stats.current_user_tokens_before;
+                        messages[current_user_index] = trimmed;
+                        total_tokens = estimate_messages_tokens(messages);
+                    } else {
+                        stats.current_user_tokens_after = stats.current_user_tokens_before;
+                    }
+                } else {
+                    stats.current_user_tokens_after = stats.current_user_tokens_before;
+                }
             }
         }
     }
@@ -1442,6 +1461,23 @@ mod tests {
         let stats = apply_rebuilt_context_guard(&mut messages, limit);
         assert!(stats.applied);
         assert!(stats.current_user_trimmed || stats.fallback_trim_applied);
+        assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_apply_rebuilt_context_guard_preserves_current_question_before_trimming_it() {
+        let current_question = "请按部门名称分析人员规模和薪资，直接画图，并给 3 条结论。";
+        let mut messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "S".repeat(48_000) }),
+            json!({ "role": "user", "content": current_question }),
+        ];
+        let limit = 256;
+        let stats = apply_rebuilt_context_guard(&mut messages, limit);
+        assert!(stats.applied);
+        assert!(stats.summary_removed || stats.summary_trimmed);
+        assert!(!stats.current_user_trimmed);
+        assert_eq!(messages.last().and_then(|item| item.get("content")).and_then(Value::as_str), Some(current_question));
         assert!(estimate_messages_tokens(&messages) <= limit);
     }
 

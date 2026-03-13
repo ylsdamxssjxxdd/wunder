@@ -1,4 +1,4 @@
-import { defineStore } from 'pinia';
+﻿import { defineStore } from 'pinia';
 
 import {
   createAgent as createAgentApi,
@@ -11,14 +11,17 @@ import {
 
 export const useAgentStore = defineStore('agents', {
   state: () => ({
-    agents: [],
-    sharedAgents: [],
-    agentMap: {},
+    agents: [] as Record<string, unknown>[],
+    sharedAgents: [] as Record<string, unknown>[],
+    agentMap: {} as Record<string, Record<string, unknown> | null>,
     loading: false
   }),
   actions: {
     hydrateMap(agents, sharedAgents) {
-      const map = {};
+      const map: Record<string, Record<string, unknown> | null> = {};
+      if (this.agentMap?.__default__) {
+        map.__default__ = this.agentMap.__default__;
+      }
       [...(agents || []), ...(sharedAgents || [])].forEach((agent) => {
         if (agent?.id) {
           map[agent.id] = agent;
@@ -88,3 +91,4 @@ export const useAgentStore = defineStore('agents', {
     }
   }
 });
+

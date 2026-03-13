@@ -34,6 +34,12 @@
             :placeholder="t('portal.agent.form.placeholder.prompt')"
           />
         </el-form-item>
+        <el-form-item
+          class="agent-form-item agent-form-item--preset-questions"
+          :label="t('portal.agent.form.presetQuestions')"
+        >
+          <AgentPresetQuestionsField v-model="form.preset_questions" />
+        </el-form-item>
         <el-form-item class="agent-form-item agent-form-item--tools" :label="t('portal.agent.form.tools')">
           <div class="agent-tool-picker">
             <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
@@ -56,6 +62,10 @@
             </el-checkbox-group>
           </div>
         </el-form-item>
+        <AgentDependencyNotice
+          :missing-tool-names="dependencyStatus.missingToolNames"
+          :missing-skill-names="dependencyStatus.missingSkillNames"
+        />
         <el-form-item class="agent-form-item agent-form-item--base" :label="t('portal.agent.form.base')">
           <div class="agent-basic-settings">
             <div class="agent-share-card agent-share-card--combined">
@@ -98,6 +108,7 @@
       <el-button type="primary" :loading="saving" :disabled="!canEdit" @click="saveAgent">
         {{ saving ? t('common.saving') : t('portal.agent.save') }}
       </el-button>
+      <el-button :disabled="saving" @click="exportWorkerCard">{{ t('portal.agent.exportWorkerCard') }}</el-button>
     </template>
   </el-dialog>
 </template>
@@ -107,11 +118,16 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
+import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
+import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
+import { buildDeclaredDependencyPayload, resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { downloadWorkerCard } from '@/utils/workerCard';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
@@ -176,6 +192,7 @@ const form = reactive({
   is_shared: false,
   system_prompt: '',
   tool_names: [],
+  preset_questions: [],
   group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode()
@@ -193,6 +210,7 @@ const beeroomGroupOptions = computed(() =>
 const toolSummary = ref(null);
 const toolLoading = ref(false);
 const toolError = ref('');
+const currentAgent = ref<Record<string, unknown> | null>(null);
 
 const normalizeToolOption = (item) => {
   if (!item) return null;
@@ -223,6 +241,10 @@ const toolGroups = computed(() => {
     { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) }
   ].filter((group) => group.options.length > 0);
 });
+
+const dependencyStatus = computed(() =>
+  resolveAgentDependencyStatus(currentAgent.value, toolSummary.value, form.tool_names)
+);
 
 const isToolGroupFullySelected = (group) => {
   if (!group || !Array.isArray(group.options) || group.options.length === 0) return false;
@@ -269,11 +291,13 @@ const loadAgent = async () => {
       ElMessage.error(t('portal.agent.loadingFailed'));
       return;
     }
+    currentAgent.value = agent as Record<string, unknown>;
     form.name = agent.name || '';
     form.description = agent.description || '';
     form.is_shared = false;
     form.system_prompt = agent.system_prompt || '';
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
+    form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
     form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
@@ -291,11 +315,15 @@ const saveAgent = async () => {
   }
   saving.value = true;
   try {
+    const dependencyPayload = buildDeclaredDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
     const payload: Record<string, unknown> = {
       name,
       description: form.description || '',
       is_shared: false,
-      tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      tool_names: dependencyPayload.tool_names,
+      declared_tool_names: dependencyPayload.declared_tool_names,
+      declared_skill_names: dependencyPayload.declared_skill_names,
+      preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: form.system_prompt || '',
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
@@ -303,7 +331,8 @@ const saveAgent = async () => {
     };
     if (!payload.hive_name) delete payload.hive_name;
     if (!payload.hive_description) delete payload.hive_description;
-    await agentStore.updateAgent(normalizedAgentId.value, payload);
+    const updated = await agentStore.updateAgent(normalizedAgentId.value, payload);
+    currentAgent.value = (updated as Record<string, unknown> | null) || currentAgent.value;
     await beeroomStore.loadGroups().catch(() => null);
     ElMessage.success(t('portal.agent.updateSuccess'));
     visible.value = false;
@@ -312,6 +341,27 @@ const saveAgent = async () => {
   } finally {
     saving.value = false;
   }
+};
+
+const exportWorkerCard = () => {
+  const groupPayload = buildBeeroomGroupPayload(form.group);
+  const dependencyPayload = buildDeclaredDependencyPayload(form.tool_names, currentAgent.value, toolSummary.value);
+  const filename = downloadWorkerCard({
+    id: normalizedAgentId.value,
+    name: String(form.name || '').trim() || normalizedAgentId.value,
+    description: String(form.description || '').trim(),
+    system_prompt: String(form.system_prompt || ''),
+    tool_names: dependencyPayload.tool_names,
+    declared_tool_names: dependencyPayload.declared_tool_names,
+    declared_skill_names: dependencyPayload.declared_skill_names,
+    preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
+    approval_mode: normalizeApprovalMode(form.approval_mode),
+    sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+    hive_id: groupPayload.hive_id,
+    hive_name: groupPayload.hive_name,
+    hive_description: groupPayload.hive_description
+  });
+  ElMessage.success(t('portal.agent.workerCardExportSuccess', { name: filename }));
 };
 
 const deleteAgent = async () => {

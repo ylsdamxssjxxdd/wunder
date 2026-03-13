@@ -12,6 +12,7 @@ use crate::user_access::{
     build_user_tool_context, compute_allowed_tool_names, filter_user_agents_by_access,
     is_agent_allowed,
 };
+use crate::user_tools::UserToolKind;
 use anyhow::Result;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
@@ -891,16 +892,40 @@ async fn create_agent(
         payload.hive_description.as_deref(),
     )?;
 
-    let mut tool_names = if let Some(source) = copy_source.as_ref() {
+    let tool_context = build_user_tool_context(&state, &user_id).await;
+    let allowed_tool_names = compute_allowed_tool_names(&resolved.user, &tool_context);
+    let skill_name_keys = collect_context_skill_names(&tool_context);
+
+    let requested_tool_names = if let Some(source) = copy_source.as_ref() {
         source.tool_names.clone()
     } else {
         normalize_tool_list(payload.tool_names.clone())
     };
+    let mut tool_names = requested_tool_names.clone();
     if !tool_names.is_empty() {
-        let context = build_user_tool_context(&state, &user_id).await;
-        let allowed = compute_allowed_tool_names(&resolved.user, &context);
-        tool_names = filter_allowed_tools(&tool_names, &allowed);
+        tool_names = filter_allowed_tools(&tool_names, &allowed_tool_names);
     }
+    let (declared_tool_names, declared_skill_names) = if let Some(source) = copy_source.as_ref() {
+        (
+            source.declared_tool_names.clone(),
+            source.declared_skill_names.clone(),
+        )
+    } else {
+        split_declared_agent_dependencies(
+            &requested_tool_names,
+            if payload.declared_tool_names.is_empty() {
+                None
+            } else {
+                Some(payload.declared_tool_names.clone())
+            },
+            if payload.declared_skill_names.is_empty() {
+                None
+            } else {
+                Some(payload.declared_skill_names.clone())
+            },
+            &skill_name_keys,
+        )
+    };
 
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
     let approval_mode = if let Some(source) = copy_source.as_ref() {
@@ -932,6 +957,11 @@ async fn create_agent(
             payload.icon,
         )
     };
+    let preset_questions = if let Some(source) = copy_source.as_ref() {
+        source.preset_questions.clone()
+    } else {
+        normalize_preset_questions(payload.preset_questions)
+    };
 
     let record = crate::storage::UserAgentRecord {
         agent_id: format!("agent_{}", Uuid::new_v4().simple()),
@@ -941,6 +971,9 @@ async fn create_agent(
         description,
         system_prompt,
         tool_names,
+        declared_tool_names,
+        declared_skill_names,
+        preset_questions,
         access_level,
         approval_mode,
         is_shared,
@@ -997,6 +1030,9 @@ async fn update_agent(
             }
             config.tool_names = normalized;
         }
+        if let Some(preset_questions) = payload.preset_questions {
+            config.preset_questions = normalize_preset_questions(preset_questions);
+        }
         if let Some(status) = payload.status {
             config.status = normalize_agent_status(Some(&status));
         }
@@ -1036,14 +1072,30 @@ async fn update_agent(
     if let Some(is_shared) = payload.is_shared {
         record.is_shared = is_shared;
     }
-    if let Some(tool_names) = payload.tool_names {
-        let mut normalized = normalize_tool_list(tool_names);
-        if !normalized.is_empty() {
-            let context = build_user_tool_context(&state, &user_id).await;
-            let allowed = compute_allowed_tool_names(&resolved.user, &context);
-            normalized = filter_allowed_tools(&normalized, &allowed);
-        }
-        record.tool_names = normalized;
+    if payload.tool_names.is_some()
+        || payload.declared_tool_names.is_some()
+        || payload.declared_skill_names.is_some()
+    {
+        let requested_tool_names = payload
+            .tool_names
+            .clone()
+            .map(normalize_tool_list)
+            .unwrap_or_else(|| record.tool_names.clone());
+        let context = build_user_tool_context(&state, &user_id).await;
+        let allowed = compute_allowed_tool_names(&resolved.user, &context);
+        let skill_name_keys = collect_context_skill_names(&context);
+        record.tool_names = filter_allowed_tools(&requested_tool_names, &allowed);
+        let (declared_tool_names, declared_skill_names) = split_declared_agent_dependencies(
+            &requested_tool_names,
+            payload.declared_tool_names.clone(),
+            payload.declared_skill_names.clone(),
+            &skill_name_keys,
+        );
+        record.declared_tool_names = declared_tool_names;
+        record.declared_skill_names = declared_skill_names;
+    }
+    if let Some(preset_questions) = payload.preset_questions {
+        record.preset_questions = normalize_preset_questions(preset_questions);
     }
     if let Some(status) = payload.status {
         record.status = normalize_agent_status(Some(&status));
@@ -1233,6 +1285,9 @@ fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
         "description": record.description,
         "system_prompt": record.system_prompt,
         "tool_names": record.tool_names,
+        "declared_tool_names": record.declared_tool_names,
+        "declared_skill_names": record.declared_skill_names,
+        "preset_questions": record.preset_questions,
         "access_level": record.access_level,
         "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
         "is_shared": record.is_shared,
@@ -1309,6 +1364,76 @@ fn normalize_tool_list(values: Vec<String>) -> Vec<String> {
         }
         seen.insert(name.clone());
         output.push(name);
+    }
+    output
+}
+
+fn collect_context_skill_names(context: &crate::user_access::UserToolContext) -> HashSet<String> {
+    let mut output = HashSet::new();
+    for spec in context.skills.list_specs() {
+        let cleaned = spec.name.trim();
+        if !cleaned.is_empty() {
+            output.insert(cleaned.to_string());
+        }
+    }
+    for spec in &context.bindings.skill_specs {
+        let cleaned = spec.name.trim();
+        if !cleaned.is_empty() {
+            output.insert(cleaned.to_string());
+        }
+    }
+    for (alias, info) in &context.bindings.alias_map {
+        if !matches!(info.kind, UserToolKind::Skill) {
+            continue;
+        }
+        let cleaned_alias = alias.trim();
+        if !cleaned_alias.is_empty() {
+            output.insert(cleaned_alias.to_string());
+        }
+        let cleaned_target = info.target.trim();
+        if !cleaned_target.is_empty() {
+            output.insert(cleaned_target.to_string());
+        }
+    }
+    output
+}
+
+fn split_declared_agent_dependencies(
+    requested_tool_names: &[String],
+    explicit_tool_names: Option<Vec<String>>,
+    explicit_skill_names: Option<Vec<String>>,
+    skill_name_keys: &HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    let declared_tool_names = explicit_tool_names.unwrap_or_else(|| {
+        requested_tool_names
+            .iter()
+            .filter(|name| !skill_name_keys.contains(*name))
+            .cloned()
+            .collect()
+    });
+    let declared_skill_names = explicit_skill_names.unwrap_or_else(|| {
+        requested_tool_names
+            .iter()
+            .filter(|name| skill_name_keys.contains(*name))
+            .cloned()
+            .collect()
+    });
+    (
+        normalize_tool_list(declared_tool_names),
+        normalize_tool_list(declared_skill_names),
+    )
+}
+
+fn normalize_preset_questions(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for raw in values {
+        let question = raw.trim().to_string();
+        if question.is_empty() || seen.contains(&question) {
+            continue;
+        }
+        seen.insert(question.clone());
+        output.push(question);
     }
     output
 }
@@ -1742,6 +1867,9 @@ async fn ensure_preset_agents(
             description: preset.description.clone(),
             system_prompt: preset.system_prompt.clone(),
             tool_names: tool_names.clone(),
+            declared_tool_names: tool_names.clone(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
             access_level: access_level.clone(),
             approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
             is_shared: false,
@@ -1857,6 +1985,7 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     if config.sandbox_container_id <= 0 {
         config.sandbox_container_id = DEFAULT_SANDBOX_CONTAINER_ID;
     }
+    config.preset_questions = normalize_preset_questions(std::mem::take(&mut config.preset_questions));
 }
 
 async fn load_default_agent_config(
@@ -1897,6 +2026,7 @@ async fn build_default_agent_config(
         description: String::new(),
         system_prompt: String::new(),
         tool_names,
+        preset_questions: Vec::new(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
         status: DEFAULT_AGENT_STATUS.to_string(),
         icon: None,
@@ -1932,6 +2062,7 @@ async fn resolve_default_agent_config(
             description: record.description,
             system_prompt: record.system_prompt,
             tool_names: record.tool_names,
+            preset_questions: record.preset_questions,
             approval_mode: record.approval_mode,
             status: record.status,
             icon: record.icon,
@@ -1952,6 +2083,9 @@ fn default_agent_payload(config: &DefaultAgentConfig) -> Value {
         "description": config.description,
         "system_prompt": config.system_prompt,
         "tool_names": config.tool_names,
+        "declared_tool_names": config.tool_names,
+        "declared_skill_names": Vec::<String>::new(),
+        "preset_questions": config.preset_questions,
         "access_level": DEFAULT_AGENT_ACCESS_LEVEL,
         "approval_mode": normalize_agent_approval_mode(Some(&config.approval_mode)),
         "is_shared": false,
@@ -1996,6 +2130,12 @@ struct AgentCreateRequest {
     system_prompt: Option<String>,
     #[serde(default)]
     tool_names: Vec<String>,
+    #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]
+    declared_tool_names: Vec<String>,
+    #[serde(default, alias = "declaredSkillNames", alias = "declared_skill_names")]
+    declared_skill_names: Vec<String>,
+    #[serde(default, alias = "presetQuestions", alias = "preset_questions")]
+    preset_questions: Vec<String>,
     #[serde(default)]
     is_shared: Option<bool>,
     #[serde(default)]
@@ -2062,6 +2202,12 @@ struct AgentUpdateRequest {
     system_prompt: Option<String>,
     #[serde(default)]
     tool_names: Option<Vec<String>>,
+    #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]
+    declared_tool_names: Option<Vec<String>>,
+    #[serde(default, alias = "declaredSkillNames", alias = "declared_skill_names")]
+    declared_skill_names: Option<Vec<String>>,
+    #[serde(default, alias = "presetQuestions", alias = "preset_questions")]
+    preset_questions: Option<Vec<String>>,
     #[serde(default)]
     is_shared: Option<bool>,
     #[serde(default)]
@@ -2111,6 +2257,8 @@ struct DefaultAgentConfig {
     system_prompt: String,
     #[serde(default)]
     tool_names: Vec<String>,
+    #[serde(default)]
+    preset_questions: Vec<String>,
     #[serde(default)]
     approval_mode: String,
     #[serde(default)]

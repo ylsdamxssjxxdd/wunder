@@ -71,6 +71,24 @@
             @mouseenter="handleWorldCommandPanelMouseEnter"
             @mouseleave="handleWorldCommandPanelMouseLeave"
           >
+            <template v-if="presetQuestionItems.length">
+              <div class="chat-composer-command-section-label">
+                {{ t('chat.commandMenu.presetQuestions') }}
+              </div>
+              <button
+                v-for="item in presetQuestionItems"
+                :key="`preset:${item.command}`"
+                class="chat-composer-command-item chat-composer-command-item--question"
+                type="button"
+                :title="item.command"
+                @click="applyPresetQuestion(item.command)"
+              >
+                <span class="chat-composer-command-name">{{ item.command }}</span>
+              </button>
+              <div class="chat-composer-command-section-label">
+                {{ t('chat.commandMenu.commands') }}
+              </div>
+            </template>
             <button
               v-for="item in quickCommandItems"
               :key="item.command"
@@ -313,6 +331,7 @@ import {
   type ComposerDraftAttachment
 } from '@/components/chat/composerDraftCache';
 import { useI18n } from '@/i18n';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 
 const props = defineProps({
   loading: {
@@ -370,6 +389,10 @@ const props = defineProps({
   modelJumpEnabled: {
     type: Boolean,
     default: false
+  },
+  presetQuestions: {
+    type: Array,
+    default: () => []
   }
 });
 
@@ -733,6 +756,11 @@ const quickCommandItems = computed(() =>
   slashCommandDefinitions.map((item) => ({
     command: item.command,
     description: t(item.descriptionKey)
+  }))
+);
+const presetQuestionItems = computed(() =>
+  normalizeAgentPresetQuestions(props.presetQuestions).map((question) => ({
+    command: question
   }))
 );
 const worldComposerHeight = ref(188);
@@ -1329,6 +1357,29 @@ const sendQuickCommand = async (command: string) => {
   caretPosition.value = 0;
   resetInputHeight();
   clearAttachments();
+};
+
+const applyPresetQuestion = (question: string) => {
+  closeWorldCommandPanel();
+  closeScreenshotMenu();
+  const preset = String(question || '').trim();
+  if (!preset) return;
+  const current = String(inputText.value || '');
+  inputText.value = current.trim() ? `${current.replace(/\s*$/, '')}\n${preset}` : preset;
+  commandMenuDismissed.value = false;
+  nextTick(() => {
+    resizeInput();
+    const el = inputRef.value;
+    const cursor = inputText.value.length;
+    if (!el) return;
+    if (typeof el.focus === 'function') {
+      el.focus();
+    }
+    if (typeof el.setSelectionRange === 'function') {
+      el.setSelectionRange(cursor, cursor);
+    }
+    caretPosition.value = cursor;
+  });
 };
 
 const handleSend = async () => {

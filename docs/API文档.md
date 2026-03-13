@@ -30,6 +30,7 @@
 - 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`，隐藏左/中栏）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
+- Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
@@ -2015,7 +2016,7 @@
 - 管理员代操作：当请求携带管理员 API Key 或管理员 Token 时，以上所有接口均可追加 Query `user_id` 指定目标用户；普通用户 Token 仅允许访问自身（或自身作用域后缀）。
 
 - `GET /wunder/agents`：智能体列表
-  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/access_level/approval_mode/is_shared/status/icon/sandbox_container_id/created_at/updated_at）
+  - 返回：`data.total`、`data.items`（id/name/description/system_prompt/tool_names/declared_tool_names/declared_skill_names/preset_questions/access_level/approval_mode/is_shared/status/icon/sandbox_container_id/created_at/updated_at）
 - `GET /wunder/agents/shared`：共享智能体列表
   - 返回：`data.total`、`data.items`（同上）
 - `GET /wunder/agents/running`：智能体运行状态概览（默认入口 + 个人智能体 + 共享智能体）
@@ -2028,7 +2029,8 @@
   - 返回：`data.total`、`data.items`（agent_id/user_rounds）
   - `agent_id` 为空表示默认入口（通用聊天）
 - `POST /wunder/agents`：创建智能体
-  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）、`hive_id`（可选）、`hive_name`（可选）、`hive_description`（可选）
+  - 入参（JSON）：`name`（必填）、`description`（可选）、`system_prompt`（可选）、`tool_names`（可选）、`declared_tool_names`（可选，字符串数组）、`declared_skill_names`（可选，字符串数组）、`preset_questions`（可选，字符串数组）、`is_shared`（可选）、`status`（可选）、`approval_mode`（可选：`suggest`/`auto_edit`/`full_auto`）、`icon`（可选）、`sandbox_container_id`（可选，1~10，默认 1）、`hive_id`（可选）、`hive_name`（可选）、`hive_description`（可选）
+  - 说明：`declared_tool_names / declared_skill_names` 用于保留工蜂卡声明的目标依赖；即使当前环境缺失，也不会阻断创建，前端可据此提示缺失项。
   - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
   - `hive_id` 兼容别名：`hiveId`、`beeroomGroupId`、`beeroom_group_id`
   - `hive_name` 兼容别名：`hiveName`、`beeroomGroupName`、`beeroom_group_name`
@@ -2043,7 +2045,7 @@
   - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`，为该智能体累计汇总）、`data.daily[]`（最近 `days` 天按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
   - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）查看通用聊天入口的运行记录
 - `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`/`hive_id`/`hive_name`/`hive_description`（均可选）
+  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`preset_questions`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`/`hive_id`/`hive_name`/`hive_description`（均可选）
   - 返回：`data`（同智能体详情）
   - 默认入口支持：`agent_id` 为 `__default__`（或 `default`）时更新默认入口配置
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
@@ -2058,6 +2060,8 @@
 - 说明：
   - 智能体提示词会追加到基础系统提示词末尾。
   - `tool_names` 会按用户工具白名单过滤。
+  - `preset_questions` 会在用户侧输入区快捷命令中展示，点击后仅填入输入框，不会直接发送。
+  - 用户侧“导入/导出工蜂卡”属于前端本地资产编排：导入后本质仍调用 `/wunder/agents` 创建智能体，导出则基于当前智能体配置生成单文件 `WorkerCard`；多选导出时输出 `WorkerCardBundle`。
 - 默认入口（`agent_id` 为空或 `__default__/default`）未配置时按当前用户可用工具集兜底（desktop 本地模式默认额外启用 `计划面板`）。
   - `approval_mode` 默认 `auto_edit`，用于控制命令执行/PTC 工具的审批强度。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
@@ -2193,7 +2197,7 @@
 
 ### 4.1.66 `/wunder/beeroom/packs/*`（已实现，Phase 1）
 
-- 说明：用于“蜂群包（HivePack）/工蜂包（WorkerPack）”资产导入导出；协议细节见 `docs/蜂巢协议设计.md`。
+- 说明：用于“蜂群包（HivePack）”资产导入导出；单工蜂资产统一为“工蜂卡（WorkerCard）”。截至 2026 年 3 月 13 日，蜂群包运行时已经收敛到纯 `workers/*/worker-card.json` 结构，协议细节见 `docs/蜂巢协议设计.md`。
 - 任务状态机：
   - `uploaded` → `validating` → `planning` → `installing` → `creating_agents` → `activating` → `completed|failed`
   - 返回体统一包含：`job_id/job_type/status/phase/progress/summary/detail?/report?/artifact?`
@@ -2206,13 +2210,14 @@
     - `group_id/groupId/hive_id/hiveId`：可选，目标蜂群 ID（与 `options.group_id` 二选一）
   - 行为：
     - 校验包结构与路径安全；
-    - 解析 `hive.yaml` 与 `workers/*/skills.yaml`；
-    - 支持新结构：`skills/*` 存放技能原始文件，`workers/*/skills.yaml` 仅记录技能名；
-    - 支持极简手工包：`hive.yaml + skills/*/SKILL.md + workers/*/WORKER_ROLE.md + workers/*/skills.yaml`；
+    - 解析 `hive.yaml`，并读取 `workers/*/worker-card.json`；
+    - 支持结构：`skills/*` 存放技能原始文件，工蜂只保留 `worker-card.json`；
     - 当 `hive.yaml.workers[]` 为空时，自动扫描 `workers/*` 目录作为工蜂；
-    - 当 `workers/*/skills.yaml` 缺失时，兼容读取旧版 `worker.yaml` 或 `workers/*/skills/*/SKILL.md`；
+    - 当 `workers/*/worker-card.json` 缺失时，导入失败；
     - `skill.yaml/checksums.sha256/signatures/package.sig` 为可选增强，缺失不阻塞导入；
     - 安装技能包到用户 `custom skills`；
+    - 导入前会预检工蜂卡声明的工具/技能依赖；若当前环境缺失，只提示不阻断，并回填到 `declared_tool_names / declared_skill_names`；
+    - 工蜂卡中的 `preset_questions / sandbox_container_id / approval_mode / abilities.tool_names / abilities.skills` 会映射回新建智能体；
     - 自动创建工蜂智能体并归属蜂群；
     - `conflict_mode=auto_rename_only`（默认）：蜂群/智能体/技能冲突时自动追加后缀并新建，不复用；
     - `conflict_mode=update_replace`：定位目标蜂群后原位替换（保留目标蜂群标识，替换原成员；技能同名按原名覆盖）；
@@ -2239,7 +2244,7 @@
   - 行为：
     - 按蜂群成员生成标准目录；
     - `full` 导出技能完整内容到包根 `skills/*`，`reference_only` 导出占位技能说明；
-    - 工蜂目录仅保留 `WORKER_ROLE.md + skills.yaml`（不再导出 `worker.yaml` 与工蜂内 skills 目录）；
+    - 工蜂目录会生成 `worker-card.json`，并保留 `WORKER_ROLE.md + skills.yaml` 作为 Phase 1 兼容输出；
     - 自动生成 `hive.yaml/workers/*/skills.yaml`，并附加可选增强元数据 `skill.yaml/checksums.sha256`；
     - 产出 `.zip` 文件并回写任务产物信息（文件名默认含蜂群名称+时间戳）。
   - 返回：`data`（任务快照）。
@@ -2630,4 +2635,5 @@
 - 审批回传：客户端可发送 `type=approval` 响应审批请求（`payload.approval_id`、`payload.decision=approve_once|approve_session|deny`，可选 `session_id`）
 - 审批事件：服务端会在流中发送 `event=approval_request` 与 `event=approval_result`
 - 详细协议与节点说明：见 `docs/方案/WebSocket-Transport.md`
+
 

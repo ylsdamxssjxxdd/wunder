@@ -389,6 +389,9 @@ fn seed_agents(state: &AppState, user_id: &str, agent_count: usize) -> Result<Ve
             system_prompt: "Return a short deterministic completion for benchmark validation."
                 .to_string(),
             tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
             access_level: "A".to_string(),
             approval_mode: "full_auto".to_string(),
             is_shared: false,

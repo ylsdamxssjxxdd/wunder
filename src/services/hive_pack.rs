@@ -1,10 +1,10 @@
-use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
+﻿use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_tools::{UserToolBindings, UserToolKind};
 use crate::skills::SkillSpec;
 use crate::state::AppState;
 use crate::storage::{
-    normalize_hive_id, HiveRecord, UserAccountRecord, UserAgentRecord, DEFAULT_HIVE_ID,
-    DEFAULT_SANDBOX_CONTAINER_ID,
+    normalize_hive_id, normalize_sandbox_container_id, HiveRecord, UserAccountRecord,
+    UserAgentRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -113,45 +113,82 @@ struct HiveWorkerRef {
     path: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-struct WorkerManifest {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardManifest {
     #[serde(default)]
-    protocol: Option<String>,
+    schema_version: Option<String>,
     #[serde(default)]
     kind: Option<String>,
     #[serde(default)]
-    worker: WorkerMeta,
+    metadata: WorkerCardMetadata,
     #[serde(default)]
-    agent_profile: Option<WorkerAgentProfile>,
+    prompt: WorkerCardPrompt,
     #[serde(default)]
-    skills: Vec<WorkerSkillRef>,
+    abilities: WorkerCardAbilities,
+    #[serde(default)]
+    interaction: WorkerCardInteraction,
+    #[serde(default)]
+    runtime: WorkerCardRuntime,
+    #[serde(default)]
+    hive: WorkerCardHive,
+    #[serde(default)]
+    extensions: Option<Value>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-struct WorkerMeta {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardMetadata {
     #[serde(default)]
     id: Option<String>,
     #[serde(default)]
-    display_name: Option<String>,
+    name: Option<String>,
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
-    duty: Option<String>,
+    icon: Option<String>,
+    #[serde(default)]
+    exported_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
-struct WorkerAgentProfile {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardPrompt {
+    #[serde(default)]
+    system_prompt: Option<String>,
+    #[serde(default)]
+    extra_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardAbilities {
+    #[serde(default)]
+    tool_names: Vec<String>,
+    #[serde(default)]
+    skills: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardInteraction {
+    #[serde(default)]
+    preset_questions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardRuntime {
     #[serde(default)]
     approval_mode: Option<String>,
     #[serde(default)]
-    icon: Option<String>,
+    sandbox_container_id: Option<i32>,
+    #[serde(default)]
+    is_shared: Option<bool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-struct WorkerSkillRef {
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardHive {
     #[serde(default)]
-    skill_id: Option<String>,
-    path: String,
+    id: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,11 +240,6 @@ struct HiveExportWorker {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct WorkerSkillsExportManifest {
-    skills: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
 struct SkillExportMeta {
     protocol: String,
     kind: String,
@@ -249,6 +281,10 @@ struct WorkerImportSnapshot {
     approval_mode: String,
     icon: Option<String>,
     role_prompt: String,
+    declared_tool_names: Vec<String>,
+    declared_skill_names: Vec<String>,
+    preset_questions: Vec<String>,
+    sandbox_container_id: i32,
     installed_skills: Vec<String>,
     skill_installs: Vec<SkillInstallSnapshot>,
 }
@@ -562,7 +598,21 @@ async fn run_import_job_inner(
     let mut agent_renames = Vec::new();
     let now = now_ts();
     for snapshot in &worker_snapshots {
-        let mut tool_names = base_tool_names.clone();
+        let declared_tool_name_keys = snapshot
+            .declared_tool_names
+            .iter()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .collect::<HashSet<_>>();
+        let mut tool_names = if declared_tool_name_keys.is_empty() {
+            base_tool_names.clone()
+        } else {
+            base_tool_names
+                .iter()
+                .filter(|name| declared_tool_name_keys.contains(name.trim()))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         for skill_name in &snapshot.installed_skills {
             let alias = state
                 .user_tool_store
@@ -600,12 +650,15 @@ async fn run_import_job_inner(
             description: snapshot.description.clone(),
             system_prompt: snapshot.role_prompt.clone(),
             tool_names,
+            declared_tool_names: snapshot.declared_tool_names.clone(),
+            declared_skill_names: snapshot.declared_skill_names.clone(),
+            preset_questions: snapshot.preset_questions.clone(),
             access_level: "A".to_string(),
             approval_mode: snapshot.approval_mode.clone(),
             is_shared: false,
             status: "active".to_string(),
             icon: snapshot.icon.clone(),
-            sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+            sandbox_container_id: snapshot.sandbox_container_id,
             created_at: now,
             updated_at: now,
         };
@@ -617,6 +670,7 @@ async fn run_import_job_inner(
             "worker_id": snapshot.worker_id,
             "duty": snapshot.duty,
             "skill_total": snapshot.installed_skills.len(),
+            "preset_question_total": snapshot.preset_questions.len(),
         }));
     }
 
@@ -748,11 +802,6 @@ async fn run_export_job_inner(
         occupied_worker_id_keys.insert(normalize_conflict_key(&worker_id));
         let worker_dir = package_root.join("workers").join(&worker_id);
         std::fs::create_dir_all(&worker_dir)?;
-        std::fs::write(
-            worker_dir.join("WORKER_ROLE.md"),
-            agent.system_prompt.as_bytes(),
-        )?;
-
         let mut worker_skill_sources =
             collect_agent_skills_for_export(agent, &bindings, &skill_root, &global_skill_specs);
         worker_skill_sources.sort_by(|left, right| left.name.cmp(&right.name));
@@ -778,7 +827,10 @@ async fn run_export_job_inner(
                 std::fs::create_dir_all(&relative)?;
                 std::fs::write(
                     relative.join("SKILL.md"),
-                    b"# Placeholder\n\nreference_only mode does not include full skill files.\n",
+                    b"# Placeholder
+
+reference_only mode does not include full skill files.
+",
                 )?;
             }
             write_skill_meta(&relative, skill_name)?;
@@ -786,7 +838,20 @@ async fn run_export_job_inner(
         }
         attached_skill_names.sort();
         attached_skill_names.dedup();
-        write_worker_skills_manifest(&worker_dir, &attached_skill_names)?;
+        let declared_tool_names = collect_agent_declared_tools_for_export(agent, &bindings.alias_map);
+        let declared_skill_names = if agent.declared_skill_names.is_empty() {
+            attached_skill_names.clone()
+        } else {
+            normalize_string_items(&agent.declared_skill_names)
+        };
+        let worker_card = build_worker_card_manifest(
+            &worker_id,
+            agent,
+            &hive,
+            &declared_tool_names,
+            &declared_skill_names,
+        );
+        write_worker_card_manifest(&worker_dir, &worker_card)?;
         total_skill_links += attached_skill_names.len();
 
         workers.push(HiveExportWorker {
@@ -897,52 +962,45 @@ fn install_worker_snapshot(
             worker_root.to_string_lossy()
         ));
     }
-    let worker_manifest = load_worker_manifest(&worker_root, worker_ref)?;
+    let worker_card = load_worker_card_manifest(&worker_root)?.ok_or_else(|| {
+        anyhow!(
+            "worker card missing: provide workers/<id>/worker-card.json"
+        )
+    })?;
 
-    let role_prompt_path = worker_root.join("WORKER_ROLE.md");
-    let role_prompt = std::fs::read_to_string(&role_prompt_path)
-        .with_context(|| format!("read {} failed", role_prompt_path.display()))?;
-    let display_name = worker_manifest
-        .worker
-        .display_name
+    let role_prompt = resolve_worker_role_prompt(&worker_card)?;
+    let display_name = worker_card
+        .metadata
+        .name
         .clone()
         .or_else(|| worker_ref.display_name.clone())
-        .unwrap_or_else(|| {
-            worker_manifest
-                .worker
-                .id
-                .clone()
-                .unwrap_or_else(|| worker_ref.worker_id.clone())
-        });
-    let description = worker_manifest
-        .worker
+        .unwrap_or_else(|| worker_ref.worker_id.clone());
+    let description = worker_card
+        .metadata
         .description
         .clone()
         .or_else(|| worker_ref.description.clone())
         .unwrap_or_default();
-    let duty = worker_manifest
-        .worker
-        .duty
-        .clone()
-        .or_else(|| worker_ref.duty.clone())
-        .unwrap_or_default();
+    let duty = worker_ref.duty.clone().unwrap_or_default();
     let approval_mode = normalize_approval_mode(
-        worker_manifest
-            .agent_profile
-            .as_ref()
-            .and_then(|profile| profile.approval_mode.as_deref())
+        worker_card
+            .runtime
+            .approval_mode
+            .as_deref()
             .or(worker_ref.approval_mode.as_deref()),
     );
-    let icon = worker_manifest
-        .agent_profile
-        .as_ref()
-        .and_then(|profile| profile.icon.clone())
-        .or_else(|| worker_ref.icon.clone());
+    let icon = worker_card.metadata.icon.clone().or_else(|| worker_ref.icon.clone());
+    let declared_tool_names = normalize_string_items(&worker_card.abilities.tool_names);
+    let declared_skill_names = normalize_string_items(&worker_card.abilities.skills);
+    let preset_questions = normalize_string_items(&worker_card.interaction.preset_questions);
+    let sandbox_container_id = normalize_sandbox_container_id(
+        worker_card
+            .runtime
+            .sandbox_container_id
+            .unwrap_or(DEFAULT_SANDBOX_CONTAINER_ID),
+    );
 
-    // Support both protocol layouts:
-    // 1) preferred: workers/<id>/skills.yaml + root skills/<name>/...
-    // 2) legacy: worker.yaml skills[] or workers/<id>/skills/<name>/...
-    let skill_sources = resolve_worker_skill_sources(package_root, &worker_root, &worker_manifest)?;
+    let skill_sources = resolve_worker_skill_sources(package_root, &worker_root, &worker_card)?;
     let mut installed_skills = Vec::new();
     let mut skill_installs = Vec::new();
     for skill_source in &skill_sources {
@@ -990,10 +1048,15 @@ fn install_worker_snapshot(
         approval_mode,
         icon,
         role_prompt,
+        declared_tool_names,
+        declared_skill_names,
+        preset_questions,
+        sandbox_container_id,
         installed_skills,
         skill_installs,
     })
 }
+
 
 fn resolve_import_workers(
     hive_manifest: &HiveManifest,
@@ -1059,203 +1122,163 @@ fn resolve_import_workers(
     Ok(workers)
 }
 
-fn load_worker_manifest(
-    worker_root: &Path,
-    worker_ref: &ImportWorkerRef,
-) -> Result<WorkerManifest> {
-    let worker_manifest_path = worker_root.join("worker.yaml");
-    if worker_manifest_path.is_file() {
-        let worker_manifest_text = std::fs::read_to_string(&worker_manifest_path)
-            .with_context(|| format!("read {} failed", worker_manifest_path.display()))?;
-        let worker_manifest: WorkerManifest = serde_yaml::from_str(&worker_manifest_text)
-            .with_context(|| format!("parse {} failed", worker_manifest_path.display()))?;
-        validate_worker_manifest(&worker_manifest)?;
-        return Ok(worker_manifest);
+fn normalize_string_items(values: &[String]) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut items = Vec::new();
+    for value in values {
+        let cleaned = value.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        let owned = cleaned.to_string();
+        if !seen.insert(owned.clone()) {
+            continue;
+        }
+        items.push(owned);
     }
+    items
+}
 
-    Ok(WorkerManifest {
-        protocol: None,
-        kind: None,
-        worker: WorkerMeta {
-            id: Some(worker_ref.worker_id.clone()),
-            display_name: worker_ref
-                .display_name
-                .clone()
-                .or_else(|| Some(worker_ref.worker_id.clone())),
-            description: worker_ref.description.clone(),
-            duty: worker_ref.duty.clone(),
+fn load_worker_card_manifest(worker_root: &Path) -> Result<Option<WorkerCardManifest>> {
+    for candidate in ["worker-card.json", "worker-card.yaml", "worker-card.yml"] {
+        let path = worker_root.join(candidate);
+        if !path.is_file() {
+            continue;
+        }
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("read {} failed", path.display()))?;
+        let raw = raw.strip_prefix('\u{feff}').unwrap_or(&raw);
+        let manifest = if candidate.ends_with(".json") {
+            serde_json::from_str::<WorkerCardManifest>(raw)
+                .with_context(|| format!("parse {} failed", path.display()))?
+        } else {
+            serde_yaml::from_str::<WorkerCardManifest>(raw)
+                .with_context(|| format!("parse {} failed", path.display()))?
+        };
+        validate_worker_card_manifest(&manifest)?;
+        return Ok(Some(manifest));
+    }
+    Ok(None)
+}
+
+fn validate_worker_card_manifest(manifest: &WorkerCardManifest) -> Result<()> {
+    if manifest
+        .schema_version
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty() && !value.starts_with("wunder/worker-card@"))
+    {
+        return Err(anyhow!("unsupported worker card schema version"));
+    }
+    if manifest.kind.as_deref().is_some_and(|kind| {
+        let normalized = kind.trim();
+        !normalized.is_empty()
+            && normalized != "WorkerCard"
+            && normalized != "worker-card"
+            && normalized != "worker_card"
+    }) {
+        return Err(anyhow!("invalid worker card kind"));
+    }
+    Ok(())
+}
+
+fn worker_card_prompt_text(worker_card: &WorkerCardManifest) -> String {
+    [
+        worker_card.prompt.system_prompt.as_deref(),
+        worker_card.prompt.extra_prompt.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned)
+    .collect::<Vec<_>>()
+    .join("\n\n")
+}
+
+fn resolve_worker_role_prompt(worker_card: &WorkerCardManifest) -> Result<String> {
+    let prompt = worker_card_prompt_text(worker_card);
+    if !prompt.is_empty() {
+        return Ok(prompt);
+    }
+    Ok(String::new())
+}
+
+fn build_worker_card_manifest(
+    worker_id: &str,
+    agent: &UserAgentRecord,
+    hive: &HiveRecord,
+    declared_tool_names: &[String],
+    attached_skill_names: &[String],
+) -> WorkerCardManifest {
+    WorkerCardManifest {
+        schema_version: Some("wunder/worker-card@1".to_string()),
+        kind: Some("WorkerCard".to_string()),
+        metadata: WorkerCardMetadata {
+            id: Some(worker_id.to_string()),
+            name: Some(agent.name.clone()),
+            description: Some(agent.description.clone()),
+            icon: agent.icon.clone(),
+            exported_at: Some(chrono::Utc::now().to_rfc3339()),
         },
-        agent_profile: Some(WorkerAgentProfile {
-            approval_mode: worker_ref.approval_mode.clone(),
-            icon: worker_ref.icon.clone(),
-        }),
-        skills: Vec::new(),
-    })
+        prompt: WorkerCardPrompt {
+            system_prompt: Some(agent.system_prompt.clone()),
+            extra_prompt: None,
+        },
+        abilities: WorkerCardAbilities {
+            tool_names: normalize_string_items(declared_tool_names),
+            skills: normalize_string_items(attached_skill_names),
+        },
+        interaction: WorkerCardInteraction {
+            preset_questions: normalize_string_items(&agent.preset_questions),
+        },
+        runtime: WorkerCardRuntime {
+            approval_mode: Some(normalize_approval_mode(Some(&agent.approval_mode))),
+            sandbox_container_id: Some(normalize_sandbox_container_id(agent.sandbox_container_id)),
+            is_shared: Some(agent.is_shared),
+        },
+        hive: WorkerCardHive {
+            id: Some(hive.hive_id.clone()),
+            name: Some(hive.name.clone()),
+            description: Some(hive.description.clone()),
+        },
+        extensions: None,
+    }
+}
+
+fn write_worker_card_manifest(worker_root: &Path, worker_card: &WorkerCardManifest) -> Result<()> {
+    std::fs::write(
+        worker_root.join("worker-card.json"),
+        serde_json::to_vec_pretty(worker_card)?,
+    )?;
+    Ok(())
 }
 
 fn resolve_worker_skill_sources(
     package_root: &Path,
     worker_root: &Path,
-    worker_manifest: &WorkerManifest,
+    worker_card: &WorkerCardManifest,
 ) -> Result<Vec<WorkerSkillSource>> {
-    if let Some(skill_names) = load_worker_skill_names_from_yaml(worker_root)? {
-        let mut sources = Vec::new();
-        for name in skill_names {
-            let source_skill_id = name.trim().to_string();
-            if source_skill_id.is_empty() {
-                continue;
-            }
-            let source_dir =
-                resolve_declared_skill_source_dir(package_root, worker_root, &source_skill_id)?;
-            sources.push(WorkerSkillSource {
-                source_skill_id: source_skill_id.clone(),
-                preferred_name: source_skill_id,
-                source_dir,
-            });
-        }
-        if sources.is_empty() {
-            return Err(anyhow!(
-                "worker skills missing: skills.yaml exists but no valid skill names found"
-            ));
-        }
-        return Ok(sources);
+    let skill_names = normalize_string_items(&worker_card.abilities.skills);
+    let mut sources = Vec::new();
+    for name in skill_names {
+        let Some(source_dir) = resolve_declared_skill_source_dir(package_root, worker_root, &name)?
+        else {
+            continue;
+        };
+        sources.push(WorkerSkillSource {
+            source_skill_id: name.clone(),
+            preferred_name: name,
+            source_dir,
+        });
     }
-
-    if !worker_manifest.skills.is_empty() {
-        let mut sources = Vec::new();
-        for skill_ref in &worker_manifest.skills {
-            let skill_path = validate_relative_path(&skill_ref.path)?;
-            let candidate_dirs = [
-                package_root.join(&skill_path),
-                worker_root.join(&skill_path),
-                package_root.join("skills").join(
-                    skill_ref
-                        .skill_id
-                        .as_deref()
-                        .map(|value| normalize_name(value, "skill"))
-                        .unwrap_or_else(|| "skill".to_string()),
-                ),
-            ];
-            let source_dir = candidate_dirs
-                .into_iter()
-                .find(|path| path.is_dir() && path.join("SKILL.md").is_file())
-                .ok_or_else(|| anyhow!("skill path missing or invalid: {}", skill_ref.path))?;
-            let preferred_name = skill_ref
-                .skill_id
-                .clone()
-                .or_else(|| {
-                    source_dir
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map(ToOwned::to_owned)
-                })
-                .unwrap_or_else(|| "skill".to_string());
-            sources.push(WorkerSkillSource {
-                source_skill_id: preferred_name.clone(),
-                preferred_name,
-                source_dir,
-            });
-        }
-        return Ok(sources);
-    }
-
-    let skills_root = worker_root.join("skills");
-    if !skills_root.is_dir() {
-        return Err(anyhow!(
-            "worker skills missing: provide workers/<id>/skills.yaml, worker.yaml skills[], or skills/<id>/SKILL.md"
-        ));
-    }
-
-    let mut refs = std::fs::read_dir(&skills_root)?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| {
-            let skill_dir = entry.path();
-            if !skill_dir.join("SKILL.md").is_file() {
-                return None;
-            }
-            let dir_name = entry.file_name().to_string_lossy().to_string();
-            Some(WorkerSkillSource {
-                source_skill_id: dir_name.clone(),
-                preferred_name: dir_name,
-                source_dir: skill_dir,
-            })
-        })
-        .collect::<Vec<_>>();
-    refs.sort_by_key(|item| item.preferred_name.clone());
-    if refs.is_empty() {
-        return Err(anyhow!(
-            "worker skills missing: no SKILL.md found under {}",
-            skills_root.display()
-        ));
-    }
-    Ok(refs)
-}
-
-fn load_worker_skill_names_from_yaml(worker_root: &Path) -> Result<Option<Vec<String>>> {
-    let skills_yaml_path = worker_root.join("skills.yaml");
-    if !skills_yaml_path.is_file() {
-        return Ok(None);
-    }
-    let content = std::fs::read_to_string(&skills_yaml_path)
-        .with_context(|| format!("read {} failed", skills_yaml_path.display()))?;
-    let value: serde_yaml::Value = serde_yaml::from_str(&content)
-        .with_context(|| format!("parse {} failed", skills_yaml_path.display()))?;
-    let mut names = Vec::new();
-    match value {
-        serde_yaml::Value::Sequence(items) => {
-            for item in items {
-                if let Some(name) = parse_worker_skill_name_value(&item) {
-                    names.push(name);
-                }
-            }
-        }
-        serde_yaml::Value::Mapping(map) => {
-            for key in ["skills", "skill_names"] {
-                let map_key = serde_yaml::Value::String(key.to_string());
-                let Some(raw) = map.get(&map_key) else {
-                    continue;
-                };
-                if let Some(name) = parse_worker_skill_name_value(raw) {
-                    names.push(name);
-                    continue;
-                }
-                if let serde_yaml::Value::Sequence(items) = raw {
-                    for item in items {
-                        if let Some(name) = parse_worker_skill_name_value(item) {
-                            names.push(name);
-                        }
-                    }
-                }
-            }
-        }
-        _ => {}
-    }
-    Ok(Some(names))
-}
-
-fn parse_worker_skill_name_value(value: &serde_yaml::Value) -> Option<String> {
-    match value {
-        serde_yaml::Value::String(text) => {
-            let cleaned = text.trim();
-            if cleaned.is_empty() {
-                None
-            } else {
-                Some(cleaned.to_string())
-            }
-        }
-        serde_yaml::Value::Mapping(map) => map
-            .get(serde_yaml::Value::String("name".to_string()))
-            .and_then(parse_worker_skill_name_value),
-        _ => None,
-    }
+    Ok(sources)
 }
 
 fn resolve_declared_skill_source_dir(
     package_root: &Path,
     worker_root: &Path,
     skill_name: &str,
-) -> Result<PathBuf> {
+) -> Result<Option<PathBuf>> {
     let sanitized = skill_name.trim();
     if sanitized.is_empty() {
         return Err(anyhow!("declared skill name is empty"));
@@ -1267,15 +1290,9 @@ fn resolve_declared_skill_source_dir(
         worker_root.join("skills").join(sanitized),
         worker_root.join("skills").join(&normalized),
     ];
-    candidate_dirs
+    Ok(candidate_dirs
         .into_iter()
-        .find(|path| path.is_dir() && path.join("SKILL.md").is_file())
-        .ok_or_else(|| {
-            anyhow!(
-                "declared skill source missing: {} (expected under package skills/ or worker skills/)",
-                skill_name
-            )
-        })
+        .find(|path| path.is_dir() && path.join("SKILL.md").is_file()))
 }
 
 fn resolve_worker_id(preferred: Option<&str>, from_path: Option<&str>, index: usize) -> String {
@@ -1304,6 +1321,36 @@ fn collect_non_skill_tools(
         })
         .collect::<Vec<_>>();
     names.sort();
+    names
+}
+
+fn collect_agent_declared_tools_for_export(
+    agent: &UserAgentRecord,
+    alias_map: &HashMap<String, crate::services::user_tools::UserToolAlias>,
+) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    let source_names = if agent.declared_tool_names.is_empty() {
+        &agent.tool_names
+    } else {
+        &agent.declared_tool_names
+    };
+    for name in source_names {
+        let cleaned = name.trim();
+        if cleaned.is_empty() {
+            continue;
+        }
+        if alias_map
+            .get(cleaned)
+            .is_some_and(|alias| matches!(alias.kind, UserToolKind::Skill))
+        {
+            continue;
+        }
+        let owned = cleaned.to_string();
+        if seen.insert(owned.clone()) {
+            names.push(owned);
+        }
+    }
     names
 }
 
@@ -1807,17 +1854,6 @@ fn write_skill_meta(skill_root: &Path, skill_name: &str) -> Result<()> {
     Ok(())
 }
 
-fn write_worker_skills_manifest(worker_root: &Path, skill_names: &[String]) -> Result<()> {
-    let payload = WorkerSkillsExportManifest {
-        skills: skill_names.to_vec(),
-    };
-    std::fs::write(
-        worker_root.join("skills.yaml"),
-        serde_yaml::to_string(&payload)?,
-    )?;
-    Ok(())
-}
-
 fn write_checksums(package_root: &Path) -> Result<()> {
     let mut lines = Vec::new();
     for entry in WalkDir::new(package_root)
@@ -1997,24 +2033,6 @@ fn validate_hive_manifest(manifest: &HiveManifest) -> Result<()> {
         .is_some_and(|kind| kind.trim() != "hive_pack")
     {
         return Err(anyhow!("invalid hive manifest kind"));
-    }
-    Ok(())
-}
-
-fn validate_worker_manifest(manifest: &WorkerManifest) -> Result<()> {
-    if manifest
-        .protocol
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty() && !value.starts_with("hpp/"))
-    {
-        return Err(anyhow!("unsupported worker manifest protocol"));
-    }
-    if manifest
-        .kind
-        .as_deref()
-        .is_some_and(|kind| kind.trim() != "worker_pack")
-    {
-        return Err(anyhow!("invalid worker manifest kind"));
     }
     Ok(())
 }
@@ -2239,9 +2257,9 @@ mod tests {
         collect_agent_skills_for_export, export_worker_id, normalize_approval_mode,
         normalize_conflict_key, normalize_export_filename_stem, normalize_import_conflict_mode,
         normalize_name, resolve_import_skill_name, resolve_import_workers,
-        resolve_worker_skill_sources, unique_label_with_reserved, unique_slug_with_reserved,
-        validate_archive_entry_path, validate_hive_manifest, validate_relative_path, HiveManifest,
-        HivePackMeta, ImportConflictMode, WorkerManifest,
+        resolve_worker_skill_sources, load_worker_card_manifest, unique_label_with_reserved,
+        unique_slug_with_reserved, validate_archive_entry_path, validate_hive_manifest,
+        validate_relative_path, HiveManifest, HivePackMeta, ImportConflictMode,
     };
     use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
     use crate::skills::SkillSpec;
@@ -2287,13 +2305,13 @@ mod tests {
 
     #[test]
     fn unique_label_with_reserved_appends_numeric_suffix() {
-        let reserved = ["招聘专员".to_string(), "招聘专员-2".to_string()]
+        let reserved = ["鎷涜仒涓撳憳".to_string(), "鎷涜仒涓撳憳-2".to_string()]
             .into_iter()
             .map(|item| normalize_conflict_key(&item))
             .collect::<HashSet<_>>();
         assert_eq!(
-            unique_label_with_reserved("招聘专员", &reserved, "Imported Worker"),
-            "招聘专员-3"
+            unique_label_with_reserved("鎷涜仒涓撳憳", &reserved, "Imported Worker"),
+            "鎷涜仒涓撳憳-3"
         );
     }
 
@@ -2398,38 +2416,29 @@ mod tests {
     }
 
     #[test]
-    fn resolve_worker_skill_sources_auto_discovers_legacy_skill_dirs() {
-        let root = tempdir().expect("tempdir");
-        let worker_root = root.path().join("workers").join("planner");
-        let skill_root = worker_root.join("skills").join("requirement_analyzer");
-        std::fs::create_dir_all(&skill_root).expect("skill dir");
-        std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
-
-        let worker_manifest = WorkerManifest::default();
-        let skill_refs =
-            resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_manifest)
-                .expect("resolve worker skills");
-        assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
-    }
-
-    #[test]
-    fn resolve_worker_skill_sources_prefers_skills_yaml_with_root_skills_dir() {
+    fn resolve_worker_skill_sources_supports_worker_card_declared_skills() {
         let root = tempdir().expect("tempdir");
         let worker_root = root.path().join("workers").join("planner");
         std::fs::create_dir_all(&worker_root).expect("worker dir");
         std::fs::write(
-            worker_root.join("skills.yaml"),
-            "skills:\n  - requirement_analyzer\n",
+            worker_root.join("worker-card.json"),
+            r#"{
+  "schema_version": "wunder/worker-card@1",
+  "kind": "WorkerCard",
+  "metadata": { "name": "Planner" },
+  "prompt": { "system_prompt": "plan first" },
+  "abilities": { "skills": ["requirement_analyzer"] }
+}"#,
         )
-        .expect("skills yaml");
+        .expect("worker card");
         let skill_root = root.path().join("skills").join("requirement_analyzer");
         std::fs::create_dir_all(&skill_root).expect("skill dir");
         std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
-
-        let worker_manifest = WorkerManifest::default();
+        let worker_card = load_worker_card_manifest(worker_root.as_path())
+            .expect("load worker card")
+            .expect("worker card exists");
         let skill_refs =
-            resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_manifest)
+            resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_card)
                 .expect("resolve worker skills");
         assert_eq!(skill_refs.len(), 1);
         assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
@@ -2437,10 +2446,40 @@ mod tests {
     }
 
     #[test]
+    fn resolve_worker_skill_sources_skips_missing_worker_card_skills() {
+        let root = tempdir().expect("tempdir");
+        let worker_root = root.path().join("workers").join("planner");
+        std::fs::create_dir_all(&worker_root).expect("worker dir");
+        std::fs::write(
+            worker_root.join("worker-card.json"),
+            r#"{
+  "schema_version": "wunder/worker-card@1",
+  "kind": "WorkerCard",
+  "metadata": { "name": "Planner" },
+  "prompt": { "system_prompt": "plan first" },
+  "abilities": { "skills": ["requirement_analyzer", "missing_skill"] }
+}"#,
+        )
+        .expect("worker card");
+        let skill_root = root.path().join("skills").join("requirement_analyzer");
+        std::fs::create_dir_all(&skill_root).expect("skill dir");
+        std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
+
+        let worker_card = load_worker_card_manifest(worker_root.as_path())
+            .expect("load worker card")
+            .expect("worker card exists");
+        let skill_refs =
+            resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_card)
+                .expect("resolve worker skills");
+        assert_eq!(skill_refs.len(), 1);
+        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
+    }
+
+    #[test]
     fn normalize_export_filename_stem_keeps_chinese_hive_name() {
         assert_eq!(
-            normalize_export_filename_stem("人力资源蜂群", "hive_123"),
-            "人力资源蜂群"
+            normalize_export_filename_stem("浜哄姏璧勬簮铚傜兢", "hive_123"),
+            "浜哄姏璧勬簮铚傜兢"
         );
         assert_eq!(normalize_export_filename_stem("  ", "hive_123"), "hive_123");
     }
@@ -2454,14 +2493,14 @@ mod tests {
         std::fs::write(skill_dir.join("SKILL.md"), "# demo").expect("skill file");
 
         let owner_id = "u_1".to_string();
-        let alias_name = format!("{}@{}", owner_id, "招聘助手");
+        let alias_name = format!("{}@{}", owner_id, "鎷涜仒鍔╂墜");
         let mut alias_map = HashMap::new();
         alias_map.insert(
             alias_name.clone(),
             UserToolAlias {
                 kind: UserToolKind::Skill,
                 owner_id: owner_id.clone(),
-                target: "招聘助手".to_string(),
+                target: "鎷涜仒鍔╂墜".to_string(),
             },
         );
 
@@ -2491,7 +2530,10 @@ mod tests {
             name: "Recruit Specialist".to_string(),
             description: String::new(),
             system_prompt: String::new(),
-            tool_names: vec!["招聘助手".to_string()],
+            tool_names: vec!["鎷涜仒鍔╂墜".to_string()],
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
             access_level: "private".to_string(),
             approval_mode: "suggest".to_string(),
             is_shared: false,
@@ -2504,7 +2546,7 @@ mod tests {
 
         let skill_refs = collect_agent_skills_for_export(&agent, &bindings, &skill_root, &[]);
         assert_eq!(skill_refs.len(), 1);
-        assert_eq!(skill_refs[0].name, "招聘助手");
+        assert_eq!(skill_refs[0].name, "鎷涜仒鍔╂墜");
         assert_eq!(skill_refs[0].source_dir, skill_dir);
     }
 
@@ -2524,6 +2566,9 @@ mod tests {
             description: String::new(),
             system_prompt: String::new(),
             tool_names: vec!["report_writer".to_string()],
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
             access_level: "private".to_string(),
             approval_mode: "suggest".to_string(),
             is_shared: false,
@@ -2567,6 +2612,9 @@ mod tests {
             description: String::new(),
             system_prompt: String::new(),
             tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
             access_level: "private".to_string(),
             approval_mode: "suggest".to_string(),
             is_shared: false,
@@ -2579,3 +2627,4 @@ mod tests {
         assert_eq!(export_worker_id(&agent, 0), "Recruit-Specialist");
     }
 }
+

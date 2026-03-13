@@ -119,6 +119,8 @@
           :agent-overview-mode="agentOverviewMode"
           :user-world-permission-denied="userWorldPermissionDenied"
           :handle-search-create-action="handleSearchCreateAction"
+          :handle-agent-batch-export="handleAgentBatchExport"
+          :handle-agent-batch-delete="handleAgentBatchDelete"
           :toggle-agent-overview-mode="toggleAgentOverviewMode"
           :helper-apps-offline-items="helperAppsOfflineItems"
           :helper-apps-online-items="helperAppsOnlineItems"
@@ -686,7 +688,7 @@
                     :agent-id="selectedFileAgentIdForApi"
                     :container-id="selectedFileContainerId"
                     :title="fileScope === 'user' ? t('messenger.files.userContainer') : t('messenger.files.title')"
-                    :empty-text="fileScope === 'user' ? t('messenger.files.userEmpty') : t('workspace.empty')"
+                    :empty-text="resolveFileWorkspaceEmptyText({ fileScope, desktopLocalMode, t })"
                     @stats="handleFileWorkspaceStats"
                   />
                 </div>
@@ -1129,6 +1131,7 @@
             :draft-key="agentComposerDraftKey"
             :inquiry-active="Boolean(activeAgentInquiryPanel)"
             :inquiry-selection="agentInquirySelection"
+            :preset-questions="activeAgentPresetQuestions"
             :voice-supported="agentVoiceSupported"
             :voice-recording="agentVoiceRecording"
             :voice-duration-ms="agentVoiceDurationMs"
@@ -1257,6 +1260,13 @@
       :default-beeroom-group-id="defaultAgentCreateBeeroomGroupId"
       @submit="submitAgentCreate"
     />
+    <input
+      ref="workerCardImportInputRef"
+      type="file"
+      accept=".json,application/json"
+      style="display: none"
+      @change="handleWorkerCardImportInput"
+    />
   </div>
 </template>
 
@@ -1265,7 +1275,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, onUpdated, ref, watch }
 import { useRoute, useRouter } from 'vue-router';
 import { ElLoading, ElMessage, ElMessageBox } from 'element-plus';
 
-import { listAgentUserRounds, listRunningAgents } from '@/api/agents';
+import { createAgent as createAgentApi, deleteAgent as deleteAgentApi, listAgentUserRounds, listRunningAgents } from '@/api/agents';
 import { fetchOrgUnits, updateProfile } from '@/api/auth';
 import { listChannelBindings } from '@/api/channels';
 import {
@@ -1325,6 +1335,10 @@ import {
   UserPromptSettingsPanel,
   UserSkillPane
 } from '@/views/messenger/lazyPanels';
+import {
+  resolveFileContainerLifecycleText,
+  resolveFileWorkspaceEmptyText
+} from '@/views/messenger/fileWorkspacePresentation';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { getRuntimeConfig } from '@/config/runtime';
 import { useI18n, getCurrentLanguage, setLanguage } from '@/i18n';
@@ -1342,6 +1356,9 @@ import { useUserWorldStore } from '@/stores/userWorld';
 import { hydrateExternalMarkdownImages, renderMarkdown } from '@/utils/markdown';
 import { prepareMessageMarkdownContent } from '@/utils/messageMarkdown';
 import { showApiError } from '@/utils/apiError';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import { downloadWorkerCardBundle, parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
@@ -1507,6 +1524,7 @@ const agentOverviewMode = ref<'detail' | 'grid'>('detail');
 const selectedContactUserId = ref('');
 const selectedGroupId = ref('');
 const agentCreateVisible = ref(false);
+const workerCardImportInputRef = ref<HTMLInputElement | null>(null);
 const selectedContactUnitId = ref('');
 const selectedToolCategory = ref<'admin' | 'mcp' | 'skills' | 'knowledge' | ''>('');
 const worldDraft = ref('');
@@ -2193,13 +2211,38 @@ const activeAgentId = computed(() => {
 });
 
 const activeAgent = computed(() => agentMap.value.get(activeAgentId.value) || null);
+const defaultAgentProfile = ref<Record<string, unknown> | null>(null);
 const activeAgentIdForApi = computed(() =>
   activeAgentId.value === DEFAULT_AGENT_KEY ? '' : activeAgentId.value
 );
+const activeAgentPresetQuestions = computed(() => {
+  if (activeAgentId.value === DEFAULT_AGENT_KEY) {
+    return normalizeAgentPresetQuestions(defaultAgentProfile.value?.preset_questions);
+  }
+  return normalizeAgentPresetQuestions((activeAgent.value as Record<string, unknown> | null)?.preset_questions);
+});
 const activeAgentName = computed(() =>
   String(
     (activeAgent.value as Record<string, unknown> | null)?.name || t('messenger.defaultAgent')
   )
+);
+
+const loadDefaultAgentProfile = async () => {
+  defaultAgentProfile.value =
+    ((await agentStore.getAgent(DEFAULT_AGENT_KEY, { force: true }).catch(() => null)) as Record<
+      string,
+      unknown
+    > | null) || null;
+};
+
+watch(
+  () => activeAgentId.value,
+  (value) => {
+    if (value === DEFAULT_AGENT_KEY) {
+      void loadDefaultAgentProfile();
+    }
+  },
+  { immediate: true }
 );
 const activeAgentPromptPreviewText = computed(() =>
   String(agentPromptPreviewContent.value || '').trim() || t('chat.systemPrompt.empty')
@@ -4207,37 +4250,16 @@ const closeWorldQuickPanelWhenOutside = (event: Event) => {
   }
 };
 
-const AGENT_CONTAINER_TTL_MS = 24 * 60 * 60 * 1000;
-
-const formatRemainingDuration = (ms: number): string => {
-  const safe = Math.max(0, Math.floor(ms / 1000));
-  const days = Math.floor(safe / 86400);
-  const hours = Math.floor((safe % 86400) / 3600);
-  const minutes = Math.floor((safe % 3600) / 60);
-  if (days > 0) {
-    return t('messenger.files.lifecycleDaysHours', { days, hours });
-  }
-  if (hours > 0) {
-    return t('messenger.files.lifecycleHoursMinutes', { hours, minutes });
-  }
-  return t('messenger.files.lifecycleMinutes', { minutes: Math.max(1, minutes) });
-};
-
-const fileContainerLifecycleText = computed(() => {
-  if (fileScope.value === 'user') {
-    return t('messenger.files.lifecyclePermanentValue');
-  }
-  if (!fileContainerEntryCount.value || fileContainerLatestUpdatedAt.value <= 0) {
-    return t('messenger.files.lifecycleEmptyValue');
-  }
-  const remaining = fileContainerLatestUpdatedAt.value + AGENT_CONTAINER_TTL_MS - fileLifecycleNowTick.value;
-  if (remaining <= 0) {
-    return t('messenger.files.lifecycleExpiredValue');
-  }
-  return t('messenger.files.lifecycleRemainingValue', {
-    remaining: formatRemainingDuration(remaining)
-  });
-});
+const fileContainerLifecycleText = computed(() =>
+  resolveFileContainerLifecycleText({
+    fileScope: fileScope.value,
+    desktopLocalMode: desktopLocalMode.value,
+    entryCount: fileContainerEntryCount.value,
+    latestUpdatedAt: fileContainerLatestUpdatedAt.value,
+    now: fileLifecycleNowTick.value,
+    t
+  })
+);
 
 const activeWorldGroupId = computed(() => {
   if (!isWorldConversationActive.value) return '';
@@ -6542,7 +6564,137 @@ const handleBeeroomMoveAgents = async (agentIds: string[]) => {
   }
 };
 
-const handleSearchCreateAction = async () => {
+const refreshAgentMutationState = async () => {
+  const tasks: Promise<unknown>[] = [agentStore.loadAgents(), loadRunningAgents(), beeroomStore.loadGroups()];
+  if (!cronPermissionDenied.value) {
+    tasks.push(loadCronAgentIds());
+  }
+  await Promise.all(tasks);
+};
+
+const openWorkerCardImportPicker = () => {
+  workerCardImportInputRef.value?.click();
+};
+
+const handleWorkerCardImportInput = async (event) => {
+  const input = event?.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file || quickCreatingAgent.value) return;
+  quickCreatingAgent.value = true;
+  try {
+    const dependencyCatalog = (await fetchUserToolsSummary().catch(() => null))?.data?.data || null;
+    const documents = parseWorkerCardText(await file.text());
+    const createdItems: Record<string, unknown>[] = [];
+    const warnings: string[] = [];
+    for (const document of documents) {
+      const dependencyStatus = resolveAgentDependencyStatus(
+        {
+          declared_tool_names: document.abilities.tool_names,
+          declared_skill_names: document.abilities.skills
+        },
+        dependencyCatalog
+      );
+      const response = await createAgentApi(workerCardToAgentPayload(document));
+      const created = response?.data?.data;
+      if (created) {
+        createdItems.push(created);
+      }
+      if (dependencyStatus.missingToolNames.length || dependencyStatus.missingSkillNames.length) {
+        warnings.push(
+          t('portal.agent.workerCardImportMissingSummary', {
+            name: document.metadata.name,
+            tools: dependencyStatus.missingToolNames.length,
+            skills: dependencyStatus.missingSkillNames.length
+          })
+        );
+      }
+    }
+    await refreshAgentMutationState();
+    if (createdItems[0]?.id) {
+      openCreatedAgentSettings(createdItems[0].id);
+    }
+    ElMessage.success(
+      documents.length === 1
+        ? t('portal.agent.workerCardImportSuccess', { name: documents[0].metadata.name })
+        : t('portal.agent.workerCardImportBatchSuccess', { count: documents.length })
+    );
+    if (warnings.length) {
+      ElMessage.warning(warnings.join('；'));
+    }
+  } catch (error) {
+    showApiError(error, t('portal.agent.workerCardImportFailed'));
+  } finally {
+    quickCreatingAgent.value = false;
+    if (input) {
+      input.value = '';
+    }
+  }
+};
+
+const handleAgentBatchExport = async (agentIds: string[]) => {
+  const normalizedIds = Array.from(new Set(agentIds.map((item) => normalizeAgentId(item)).filter(Boolean)));
+  if (!normalizedIds.length) return;
+  try {
+    const records: Record<string, unknown>[] = [];
+    for (const agentId of normalizedIds) {
+      const agent = await agentStore.getAgent(agentId, { force: true });
+      if (agent) {
+        records.push(agent as Record<string, unknown>);
+      }
+    }
+    if (!records.length) {
+      ElMessage.warning(t('portal.agent.loadingFailed'));
+      return;
+    }
+    const filename = downloadWorkerCardBundle(records);
+    ElMessage.success(t('portal.agent.workerCardExportSuccess', { name: filename }));
+  } catch (error) {
+    showApiError(error, t('portal.agent.saveFailed'));
+  }
+};
+
+const handleAgentBatchDelete = async (agentIds: string[]) => {
+  const normalizedIds = Array.from(new Set(agentIds.map((item) => normalizeAgentId(item)).filter(Boolean)));
+  const ownedIds = new Set(
+    (Array.isArray(agentStore.agents) ? agentStore.agents : []).map((agent) => normalizeAgentId(agent?.id))
+  );
+  const deletableIds = normalizedIds.filter((agentId) => agentId !== DEFAULT_AGENT_KEY && ownedIds.has(agentId));
+  if (!deletableIds.length) {
+    ElMessage.warning(t('portal.agent.deleteBatchUnavailable'));
+    return;
+  }
+  try {
+    await ElMessageBox.confirm(
+      t('portal.agent.deleteBatchConfirm', { count: deletableIds.length }),
+      t('common.notice'),
+      {
+        confirmButtonText: t('portal.agent.delete'),
+        cancelButtonText: t('portal.agent.cancel'),
+        type: 'warning'
+      }
+    );
+  } catch {
+    return;
+  }
+  const results = await Promise.allSettled(deletableIds.map((agentId) => deleteAgentApi(agentId)));
+  const successCount = results.filter((item) => item.status === 'fulfilled').length;
+  const failedCount = results.length - successCount;
+  if (successCount > 0) {
+    await refreshAgentMutationState();
+  }
+  if (failedCount === 0) {
+    ElMessage.success(t('portal.agent.deleteBatchSuccess', { count: successCount }));
+    return;
+  }
+  if (successCount > 0) {
+    ElMessage.warning(t('portal.agent.deleteBatchPartial', { success: successCount, failed: failedCount }));
+    return;
+  }
+  const firstRejected = results.find((item) => item.status === 'rejected');
+  showApiError((firstRejected as PromiseRejectedResult | undefined)?.reason, t('portal.agent.deleteFailed'));
+};
+
+const handleSearchCreateAction = async (command?: string) => {
   if (sessionHub.activeSection === 'groups') {
     if (userWorldPermissionDenied.value) {
       ElMessage.warning(t('auth.login.noPermission'));
@@ -6558,6 +6710,10 @@ const handleSearchCreateAction = async () => {
     return;
   }
   if (sessionHub.activeSection === 'agents') {
+    if (command === 'import_worker_card') {
+      openWorkerCardImportPicker();
+      return;
+    }
     await createAgentQuickly();
   }
 };
@@ -7394,6 +7550,7 @@ const toolCategoryLabel = (category: string) => {
 const handleAgentSettingsSaved = async () => {
   const tasks: Promise<unknown>[] = [
     agentStore.loadAgents(),
+    loadDefaultAgentProfile(),
     loadRunningAgents(),
     loadAgentUserRounds(),
     loadChannelBoundAgentIds()
@@ -9118,10 +9275,10 @@ const scrollLatestAssistantToCenter = async () => {
   });
 };
 
-const normalizeAgentId = (value: unknown): string => {
+function normalizeAgentId(value: unknown): string {
   const text = String(value || '').trim();
   return text || DEFAULT_AGENT_KEY;
-};
+}
 
 const restoreConversationFromRoute = async () => {
   const query = route.query;

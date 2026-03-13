@@ -4337,6 +4337,20 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         updateContextUsage(data ?? payload ?? {});
         break;
       }
+      case 'compaction': {
+        const compactionStatus =
+          String(data?.status ?? payload?.status ?? '').trim().toLowerCase() === 'fallback'
+            ? 'failed'
+            : 'completed';
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem('上下文压缩', buildDetail(data ?? payload), compactionStatus, {
+            isTool: true,
+            eventType: 'compaction',
+            toolName: '上下文压缩'
+          })
+        );
+        break;
+      }
       case 'quota_usage': {
         const round = resolveRound(payload, data);
         updateQuotaUsage(data ?? payload ?? {}, round);

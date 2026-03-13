@@ -125,6 +125,10 @@
           </button>
         </div>
         <div class="messenger-settings-row">
+          <div class="messenger-settings-label">{{ t('messenger.settings.versionNumber') }}</div>
+          <div class="messenger-settings-label">{{ appVersion }}</div>
+        </div>
+        <div class="messenger-settings-row">
           <div class="messenger-settings-label">{{ t('messenger.settings.sendKey') }}</div>
           <select v-model="sendKey" class="messenger-settings-select">
             <option value="ctrl_enter">Ctrl + Enter</option>
@@ -343,6 +347,7 @@
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { APP_VERSION } from '@/config/appVersion';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
@@ -436,6 +441,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
+const appVersion = APP_VERSION;
 const sendKey = ref<SendKeyMode>('ctrl_enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const usernameDraft = ref('');

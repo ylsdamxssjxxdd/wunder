@@ -40,6 +40,16 @@ const SESSION_ACTIVITY_META_PREFIX: &str = "session_activity:";
 const PUBLIC_WORKSPACE_ROOT: &str = "/workspaces";
 const WORKSPACE_SINGLE_ROOT_ENV: &str = "WUNDER_WORKSPACE_SINGLE_ROOT";
 
+fn effective_temp_cleanup_idle_ttl_s(single_root: bool) -> f64 {
+    // Single-root mode points to a user-managed local workspace (CLI/Desktop),
+    // so it must never be treated as disposable temp space.
+    if single_root {
+        0.0
+    } else {
+        TEMP_FILES_IDLE_TTL_S
+    }
+}
+
 type WorkspaceEntriesPage = (Vec<WorkspaceEntry>, u64, String, Option<String>, u64);
 
 #[derive(Debug, Clone, Serialize)]
@@ -214,6 +224,7 @@ impl WorkspaceManager {
     ) -> Self {
         let retention_days = normalize_retention_days(retention_days);
         let single_root = workspace_single_root_enabled();
+        let temp_cleanup_idle_ttl_s = effective_temp_cleanup_idle_ttl_s(single_root);
         if let Err(err) = storage.ensure_initialized() {
             warn!("storage initialization failed: {err}");
         }
@@ -229,7 +240,7 @@ impl WorkspaceManager {
             retention_interval_s: 3600.0,
             retention_state: Arc::new(Mutex::new(RetentionState::default())),
             temp_cleanup_interval_s: TEMP_FILES_CLEANUP_INTERVAL_S,
-            temp_cleanup_idle_ttl_s: TEMP_FILES_IDLE_TTL_S,
+            temp_cleanup_idle_ttl_s,
             temp_cleanup_state: Arc::new(Mutex::new(RetentionState::default())),
             versions: DashMap::new(),
             path_guard: match Regex::new(r#"[\\:*?\"<>|]"#) {
@@ -1863,4 +1874,22 @@ fn now_ts() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
+
+    #[test]
+    fn single_root_workspace_never_uses_temp_cleanup_ttl() {
+        assert_eq!(effective_temp_cleanup_idle_ttl_s(true), 0.0);
+    }
+
+    #[test]
+    fn multi_root_workspace_keeps_default_temp_cleanup_ttl() {
+        assert_eq!(
+            effective_temp_cleanup_idle_ttl_s(false),
+            TEMP_FILES_IDLE_TTL_S
+        );
+    }
 }

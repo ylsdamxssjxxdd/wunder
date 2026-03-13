@@ -307,6 +307,9 @@ export const getDesktopRemoteApiBaseOverride = (): string => readRemoteApiBaseOv
 
 export const isDesktopRemoteAuthMode = (): boolean => Boolean(readRemoteApiBaseOverride());
 
+export const isDesktopLocalModeEnabled = (): boolean =>
+  isDesktopModeEnabled() && !isDesktopRemoteAuthMode();
+
 export const onDesktopRemoteModeChange = (
   listener: (detail: DesktopRemoteModeChangeDetail) => void
 ): (() => void) => {

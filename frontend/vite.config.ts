@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 
 import vue from '@vitejs/plugin-vue';
@@ -16,6 +16,55 @@ const envDir =
     ? repoEnvDirCandidate
     : __dirname);
 const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
+
+const appVersionConfigCandidates = [
+  process.env.WUNDER_APP_VERSION_CONFIG_PATH,
+  process.env.APP_VERSION_CONFIG_PATH,
+  path.resolve(__dirname, 'config', 'app_version.json'),
+  path.resolve(__dirname, '..', 'config', 'app_version.json')
+].filter((value): value is string => Boolean(value && String(value).trim()));
+
+const loadVersionFromPackageJson = (): string => {
+  const packageJsonPath = path.resolve(__dirname, 'package.json');
+  if (!existsSync(packageJsonPath)) {
+    return '';
+  }
+  const raw = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as { version?: unknown };
+  return String(raw?.version || '').trim();
+};
+
+const loadAppVersion = (): string => {
+  const explicitVersion = String(
+    process.env.WUNDER_APP_VERSION || process.env.APP_VERSION || ''
+  ).trim();
+  if (explicitVersion) {
+    return explicitVersion;
+  }
+
+  for (const configPath of appVersionConfigCandidates) {
+    if (!existsSync(configPath)) {
+      continue;
+    }
+    const raw = JSON.parse(readFileSync(configPath, 'utf-8')) as { version?: unknown };
+    const version = String(raw?.version || '').trim();
+    if (version) {
+      return version;
+    }
+    throw new Error(`Missing app version in ${configPath}`);
+  }
+
+  const packageVersion = loadVersionFromPackageJson();
+  if (packageVersion) {
+    console.warn('[vite] app_version.json missing, falling back to frontend/package.json version');
+    return packageVersion;
+  }
+
+  throw new Error(
+    `Unable to resolve app version from env, config, or package.json. Tried: ${appVersionConfigCandidates.join(', ')}`
+  );
+};
+
+const appVersion = loadAppVersion();
 
 const makeProxyRule = () => ({
   target: devProxyTarget,
@@ -62,6 +111,9 @@ const resolveManualChunk = (rawId: string) => {
 
 export default defineConfig({
   envDir,
+  define: {
+    __WUNDER_APP_VERSION__: JSON.stringify(appVersion)
+  },
   plugins: [vue()],
   build: {
     rollupOptions: {

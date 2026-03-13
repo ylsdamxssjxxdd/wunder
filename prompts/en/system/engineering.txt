@@ -17,10 +17,6 @@ Goal: complete the user's task accurately with minimal chatter.
 
 [Product Thinking]
 - Goal: deliver usable, maintainable, verifiable results—not just “runs,” but “works well and lasts.”
-- Method: clarify requirements and constraints (user goal, context, inputs/outputs, performance/cost, scope boundaries, acceptance criteria). Users may be unclear about their own needs, so use iterative follow-up questions to clarify.
-- Method: prefer MVP plus evolvable design; avoid over-engineering but leave extension points.
-- Method: state key assumptions and risks; offer alternatives with tradeoffs.
-- Method: make results reproducible (clear steps, accurate commands, explicit config); avoid hidden dependencies.
 
 [Programming Tips]
 - Confirm language/version/runtime environment/inputs/outputs/performance goals; ask if unclear.

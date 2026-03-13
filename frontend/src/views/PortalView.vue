@@ -6,11 +6,19 @@
         <div class="portal-main-scroll">
           <section class="portal-section portal-section--agents">
             <div class="agent-grid portal-agent-grid">
-              <button class="agent-card agent-card--create" type="button" @click="openCreateDialog">
-                <div class="agent-card-plus">+</div>
-                <div class="agent-card-title">{{ t('portal.card.createTitle') }}</div>
-                <div class="agent-card-desc">{{ t('portal.card.createDesc') }}</div>
-              </button>
+              <el-dropdown trigger="click" placement="bottom-start" @command="openCreateDialog">
+                <button class="agent-card agent-card--create" type="button">
+                  <div class="agent-card-plus">+</div>
+                  <div class="agent-card-title">{{ t('portal.card.createTitle') }}</div>
+                  <div class="agent-card-desc">{{ t('portal.card.createDesc') }}</div>
+                </button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="create">{{ t('messenger.action.newAgent') }}</el-dropdown-item>
+                    <el-dropdown-item command="import_worker_card">{{ t('portal.agent.importWorkerCard') }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
               <div
                 class="agent-card agent-card--compact agent-card--default agent-card--clickable"
                 role="button"
@@ -297,6 +305,12 @@
               :placeholder="t('portal.agent.form.placeholder.prompt')"
             />
           </el-form-item>
+          <el-form-item
+            class="agent-form-item agent-form-item--preset-questions"
+            :label="t('portal.agent.form.presetQuestions')"
+          >
+            <AgentPresetQuestionsField v-model="form.preset_questions" />
+          </el-form-item>
           <el-form-item class="agent-form-item agent-form-item--tools" :label="t('portal.agent.form.tools')">
             <div class="agent-tool-picker">
               <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
@@ -366,6 +380,14 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <input
+      ref="workerCardImportInputRef"
+      type="file"
+      accept=".json,application/json"
+      style="display: none"
+      @change="handleWorkerCardFileChange"
+    />
   </div>
 </template>
 
@@ -374,11 +396,12 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
 
-import { listAgents as listAgentsApi, listRunningAgents } from '@/api/agents';
+import { createAgent as createAgentApi, listAgents as listAgentsApi, listRunningAgents } from '@/api/agents';
 import { fetchExternalLinks } from '@/api/externalLinks';
 import { fetchCronJobs } from '@/api/cron';
 import { listChannelAccounts, listChannelBindings } from '@/api/channels';
 import { fetchUserToolsCatalog } from '@/api/userTools';
+import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
@@ -389,6 +412,9 @@ import { useBeeroomStore } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
 import { DEFAULT_AGENT_AVATAR_IMAGE } from '@/utils/agentAvatar';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import { parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
@@ -423,6 +449,7 @@ const showMoreApps = ref(false);
 const dialogVisible = ref(false);
 const saving = ref(false);
 const editingId = ref('');
+const workerCardImportInputRef = ref<HTMLInputElement | null>(null);
 const toolCatalog = ref(null);
 const toolLoading = ref(false);
 const runningAgentIds = ref<string[]>([]);
@@ -441,10 +468,12 @@ const agentPrefetchTimers = new Map<string, number>();
 const agentPrefetchInFlight = new Map<string, Promise<void>>();
 const agentPrefetchLastAt = new Map<string, number>();
 
+type AgentListItem = Record<string, unknown>;
+
 type AgentListCachePayload = {
   cachedAt: number;
-  owned: unknown[];
-  shared: unknown[];
+  owned: AgentListItem[];
+  shared: AgentListItem[];
 };
 
 type RunningStateCachePayload = {
@@ -532,15 +561,15 @@ function readAgentListCache(): AgentListCachePayload | null {
     const parsed = JSON.parse(raw) as Partial<AgentListCachePayload>;
     const cachedAt = Number(parsed?.cachedAt);
     if (!Number.isFinite(cachedAt) || now - cachedAt > AGENT_LIST_CACHE_TTL_MS) return null;
-    const owned = Array.isArray(parsed?.owned) ? parsed.owned : [];
-    const shared = Array.isArray(parsed?.shared) ? parsed.shared : [];
+    const owned = Array.isArray(parsed?.owned) ? (parsed.owned as AgentListItem[]) : [];
+    const shared = Array.isArray(parsed?.shared) ? (parsed.shared as AgentListItem[]) : [];
     return { cachedAt, owned, shared };
   } catch (error) {
     return null;
   }
 }
 
-function writeAgentListCache(owned: unknown[], shared: unknown[]) {
+function writeAgentListCache(owned: AgentListItem[], shared: AgentListItem[]) {
   if (typeof window === 'undefined') return;
   try {
     const payload: AgentListCachePayload = {
@@ -601,8 +630,8 @@ const hydrateAgentListFromCache = () => {
   if (agentStore.agents?.length || agentStore.sharedAgents?.length) return;
   const cached = readAgentListCache();
   if (!cached) return;
-  const owned = Array.isArray(cached.owned) ? cached.owned : [];
-  const shared = Array.isArray(cached.shared) ? cached.shared : [];
+  const owned = cached.owned as AgentListItem[];
+  const shared = cached.shared as AgentListItem[];
   agentStore.agents = owned;
   agentStore.sharedAgents = shared;
   agentStore.hydrateMap(owned, shared);
@@ -685,6 +714,7 @@ const form = reactive({
   copy_from_agent_id: '',
   tool_names: [],
   system_prompt: '',
+  preset_questions: [],
   group: createBeeroomGroupDraft(),
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode()
@@ -1057,6 +1087,7 @@ const resetForm = () => {
   form.is_shared = false;
   form.copy_from_agent_id = '';
   form.system_prompt = '';
+  form.preset_questions = [];
   form.group = createBeeroomGroupDraft();
   form.sandbox_container_id = 1;
   form.approval_mode = resolveDefaultApprovalMode();
@@ -1350,7 +1381,58 @@ const loadRunningAgents = async () => {
 };
 
 
-const openCreateDialog = async () => {
+const handleWorkerCardFileChange = async (event) => {
+  const input = event?.target as HTMLInputElement | null;
+  const file = input?.files?.[0];
+  if (!file) return;
+  saving.value = true;
+  try {
+    const dependencyCatalog = toolCatalog.value || (await fetchUserToolsCatalog().catch(() => ({ data: { data: null } })))?.data?.data || null;
+    const documents = parseWorkerCardText(await file.text());
+    const warnings: string[] = [];
+    for (const document of documents) {
+      const dependencyStatus = resolveAgentDependencyStatus(
+        {
+          declared_tool_names: document.abilities.tool_names,
+          declared_skill_names: document.abilities.skills
+        },
+        dependencyCatalog
+      );
+      await createAgentApi(workerCardToAgentPayload(document));
+      if (dependencyStatus.missingToolNames.length || dependencyStatus.missingSkillNames.length) {
+        warnings.push(
+          t('portal.agent.workerCardImportMissingSummary', {
+            name: document.metadata.name,
+            tools: dependencyStatus.missingToolNames.length,
+            skills: dependencyStatus.missingSkillNames.length
+          })
+        );
+      }
+    }
+    await Promise.all([loadAgents(), beeroomStore.loadGroups().catch(() => null), loadAgentCopyOptions()]);
+    ElMessage.success(
+      documents.length === 1
+        ? t('portal.agent.workerCardImportSuccess', { name: documents[0].metadata.name })
+        : t('portal.agent.workerCardImportBatchSuccess', { count: documents.length })
+    );
+    if (warnings.length) {
+      ElMessage.warning(warnings.join('；'));
+    }
+  } catch (error) {
+    showApiError(error, t('portal.agent.workerCardImportFailed'));
+  } finally {
+    saving.value = false;
+    if (input) {
+      input.value = '';
+    }
+  }
+};
+
+const openCreateDialog = async (command = 'create') => {
+  if (command === 'import_worker_card') {
+    workerCardImportInputRef.value?.click();
+    return;
+  }
   if (!beeroomStore.groups.length) {
     await beeroomStore.loadGroups().catch(() => null);
   }
@@ -1376,6 +1458,7 @@ const saveAgent = async () => {
       is_shared: false,
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: form.system_prompt || '',
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
@@ -1458,6 +1541,9 @@ const formatTime = (value) => {
   return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}`;
 };
 </script>
+
+
+
 
 
 

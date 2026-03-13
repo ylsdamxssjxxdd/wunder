@@ -43,6 +43,8 @@ struct DefaultAgentConfigSnapshot {
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
+    preset_questions: Vec<String>,
+    #[serde(default)]
     approval_mode: String,
     #[serde(default)]
     status: String,
@@ -982,7 +984,10 @@ pub(crate) fn build_default_agent_record_from_storage(
         name: snapshot.name,
         description: snapshot.description,
         system_prompt: snapshot.system_prompt,
-        tool_names: snapshot.tool_names,
+        tool_names: snapshot.tool_names.clone(),
+        declared_tool_names: snapshot.tool_names,
+        declared_skill_names: Vec::new(),
+        preset_questions: snapshot.preset_questions,
         access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
         approval_mode: snapshot.approval_mode,
         is_shared: false,
@@ -1109,6 +1114,7 @@ mod tests {
                 &json!({
                     "name": "默认智能体",
                     "description": "系统级默认成员",
+                    "preset_questions": ["帮我总结今天的待办", "先列一个三步执行方案"],
                     "approval_mode": "auto_edit",
                     "status": "active"
                 })
@@ -1125,6 +1131,63 @@ mod tests {
         assert_eq!(agents[0].hive_id, DEFAULT_HIVE_ID);
         assert_eq!(agents[0].name, "默认智能体");
         assert_eq!(agents[0].description, "系统级默认成员");
+        assert_eq!(
+            agents[0].preset_questions,
+            vec!["帮我总结今天的待办".to_string(), "先列一个三步执行方案".to_string()]
+        );
+    }
+
+    #[test]
+    fn user_agent_roundtrip_preserves_preset_questions() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-agent-preset-questions.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage);
+
+        let user = store
+            .create_user(
+                "preset-agent-user",
+                None,
+                "secret",
+                Some("A"),
+                None,
+                vec!["user".to_string()],
+                "active",
+                false,
+            )
+            .expect("create user");
+
+        let record = crate::storage::UserAgentRecord {
+            agent_id: "agent_preset_questions".to_string(),
+            user_id: user.user_id.clone(),
+            hive_id: DEFAULT_HIVE_ID.to_string(),
+            name: "预设问题测试".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            tool_names: vec!["file_read".to_string()],
+            declared_tool_names: vec!["file_read".to_string()],
+            declared_skill_names: Vec::new(),
+            preset_questions: vec![
+                "请先帮我梳理现状".to_string(),
+                "给我一个执行清单".to_string(),
+            ],
+            access_level: "A".to_string(),
+            approval_mode: "auto_edit".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 1.0,
+            updated_at: 1.0,
+        };
+
+        store.upsert_user_agent(&record).expect("upsert agent");
+        let loaded = store
+            .get_user_agent(&user.user_id, &record.agent_id)
+            .expect("get agent")
+            .expect("agent exists");
+
+        assert_eq!(loaded.preset_questions, record.preset_questions);
     }
 
     #[test]

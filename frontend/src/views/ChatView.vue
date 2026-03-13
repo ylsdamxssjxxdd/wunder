@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="chat-shell" :style="chatShellStyle">
     <div class="app-shell">
       <header class="topbar">
@@ -434,7 +434,7 @@
                       :key="item.label"
                       class="message-stat"
                     >
-                      <span class="message-stat-label">{{ item.label }}：</span>
+                      <span class="message-stat-label">{{ item.label }}锛?/span>
                       <span class="message-stat-value">{{ item.value }}</span>
                     </span>
                   </div>
@@ -465,6 +465,7 @@
               :demo-mode="demoMode"
               :inquiry-active="Boolean(activeInquiryPanel)"
               :inquiry-selection="inquirySelection"
+              :preset-questions="activeAgentPresetQuestions"
               @send="handleComposerSend"
               @stop="handleStop"
             />
@@ -485,7 +486,7 @@
       <template #header>
         <div class="system-prompt-header">
           <div class="system-prompt-title">{{ t('chat.systemPrompt.title') }}</div>
-          <button class="icon-btn" type="button" @click="closePromptPreview">×</button>
+          <button class="icon-btn" type="button" @click="closePromptPreview">脳</button>
         </div>
       </template>
       <div class="system-prompt-body">
@@ -520,7 +521,7 @@
       <template #header>
         <div class="image-preview-header">
           <div class="image-preview-title">{{ imagePreviewTitle || t('chat.imagePreview') }}</div>
-          <button class="icon-btn" type="button" @click="closeImagePreview">×</button>
+          <button class="icon-btn" type="button" @click="closeImagePreview">脳</button>
         </div>
       </template>
       <div class="image-preview-body">
@@ -541,7 +542,7 @@
       <template #header>
         <div class="image-preview-header">
           <div class="image-preview-title">{{ t('chat.workspacePanel') }}</div>
-          <button class="icon-btn" type="button" @click="workspaceDialogVisible = false">×</button>
+          <button class="icon-btn" type="button" @click="workspaceDialogVisible = false">脳</button>
         </div>
       </template>
       <div class="panel-dialog-body">
@@ -562,7 +563,7 @@
       <template #header>
         <div class="image-preview-header">
           <div class="image-preview-title">{{ t('chat.history') }}</div>
-          <button class="icon-btn" type="button" @click="historyDialogVisible = false">×</button>
+          <button class="icon-btn" type="button" @click="historyDialogVisible = false">脳</button>
         </div>
       </template>
       <div class="panel-dialog-body">
@@ -703,6 +704,7 @@ import {
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { collectAbilityGroupDetails, collectAbilityNames } from '@/utils/toolSummary';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
@@ -721,7 +723,7 @@ const currentUserUnitLabel = computed(() => {
   const unit = currentUser.value?.unit;
   return unit?.path_name || unit?.pathName || unit?.name || currentUser.value?.unit_id || '-';
 });
-// 演示模式用于快速体验
+// 婕旂ず妯″紡鐢ㄤ簬蹇€熶綋楠?
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => resolveUserBasePath(route.path));
 const desktopMode = computed(() => basePath.value === '/desktop');
@@ -746,7 +748,7 @@ const inquirySelection = ref([]);
 const historyListRef = ref(null);
 const historyScrollTop = ref(0);
 const messagesContainerRef = ref(null);
-// 系统提示词预览状态
+// 绯荤粺鎻愮ず璇嶉瑙堢姸鎬?
 const promptPreviewVisible = ref(false);
 const promptPreviewLoading = ref(false);
 const promptPreviewContent = ref('');
@@ -854,12 +856,20 @@ const activeSession = computed(
 const routeAgentId = computed(() => String(route.query.agent_id || '').trim());
 const routeEntry = computed(() => String(route.query.entry || '').trim().toLowerCase());
 const routeContainerId = computed(() => normalizeSandboxContainerId(route.query.container_id));
+const DEFAULT_AGENT_KEY = '__default__';
 const activeAgentId = computed(
   () => activeSession.value?.agent_id || chatStore.draftAgentId || routeAgentId.value || ''
 );
 const activeAgent = computed(() =>
   activeAgentId.value ? agentStore.agentMap[activeAgentId.value] || null : null
 );
+const defaultAgent = computed(() => agentStore.agentMap[DEFAULT_AGENT_KEY] || null);
+const activeAgentPresetQuestions = computed(() => {
+  if (!activeAgentId.value) {
+    return normalizeAgentPresetQuestions((defaultAgent.value as Record<string, unknown> | null)?.preset_questions);
+  }
+  return normalizeAgentPresetQuestions((activeAgent.value as Record<string, unknown> | null)?.preset_questions);
+});
 const normalizeAgentApprovalMode = (value: unknown): string => {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'suggest') return 'suggest';
@@ -914,17 +924,20 @@ const effectiveToolSummary = computed(() => {
   const draftOverrides = Array.isArray(chatStore.draftToolOverrides)
     ? chatStore.draftToolOverrides
     : [];
+  const activeToolNames = Array.isArray((activeAgent.value as Record<string, unknown> | null)?.tool_names)
+    ? ((((activeAgent.value as Record<string, unknown> | null)?.tool_names as string[]) || []))
+    : [];
   return applyToolOverridesToSummary(
     promptToolSummary.value,
     overrides && overrides.length > 0 ? overrides : draftOverrides,
-    activeAgent.value?.tool_names || []
+    activeToolNames
   );
 });
 const promptPreviewHtml = computed(() => {
   const content = promptPreviewContent.value || t('chat.systemPrompt.empty');
   return renderSystemPromptHighlight(content, effectiveToolSummary.value || {});
 });
-// 能力悬浮提示使用的工具/技能明细
+// 鑳藉姏鎮诞鎻愮ず浣跨敤鐨勫伐鍏?鎶€鑳芥槑缁?
 const abilitySections = computed(() => {
   const groups = collectAbilityGroupDetails(effectiveToolSummary.value || {});
   return [
@@ -1345,14 +1358,14 @@ const isLatestAssistant = (index) => index === latestAssistantIndex.value;
 
 const markdownCache = new WeakMap();
 const AGENT_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
-const AGENT_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】]+)?$/;
+const AGENT_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】」』、]+)?$/;
 
 const isAssistantStreaming = (message) => {
   if (!message || message.role !== 'assistant') return false;
   return Boolean(message.workflowStreaming || message.reasoningStreaming || message.stream_incomplete);
 };
 
-// AI 回复使用 Markdown 渲染，主要用于表格等富文本展示
+// AI 鍥炲浣跨敤 Markdown 娓叉煋锛屼富瑕佺敤浜庤〃鏍肩瓑瀵屾枃鏈睍绀?
 const renderAssistantMarkdown = (message) => {
   const content = prepareMessageMarkdownContent(
     normalizeChatMessageContentForMarkdown(message?.content),
@@ -1723,7 +1736,7 @@ const isWorkspaceResourceMissing = (error) => {
     error?.message ??
     '';
   const message = typeof raw === 'string' ? raw : String(raw || '');
-  return /not found|no such|不存在|找不到|已删除|已移除|removed/i.test(message);
+  return /not found|no such|涓嶅瓨鍦▅鎵句笉鍒皘宸插垹闄宸茬Щ闄removed/i.test(message);
 };
 
 const hydrateWorkspaceResourceCard = async (card) => {
@@ -2214,7 +2227,7 @@ const buildInquiryReply = (panel, routes) => {
   const header = t('chat.askPanelPrefix');
   const question = panel?.question ? t('chat.askPanelQuestion', { question: panel.question }) : '';
   const lines = routes.map((route) => {
-    const detail = route.description ? `：${route.description}` : '';
+    const detail = route.description ? `锛?{route.description}` : '';
     return `- ${route.label}${detail}`;
   });
   return [header, question, ...lines].filter(Boolean).join('\n');
@@ -2521,7 +2534,7 @@ const handleBeforeUnload = () => {
   flushChatSnapshot();
 };
 
-// 触发 Popper 重新计算，避免首帧内容变化导致溢出
+// 瑙﹀彂 Popper 閲嶆柊璁＄畻锛岄伩鍏嶉甯у唴瀹瑰彉鍖栧鑷存孩鍑?
 const updateAbilityTooltip = async () => {
   await nextTick();
   const tooltip = abilityTooltipRef.value;
@@ -2539,7 +2552,7 @@ const updateAbilityTooltip = async () => {
   });
 };
 
-// 读取工具与技能汇总信息，供提示词预览与悬浮提示使用
+// 璇诲彇宸ュ叿涓庢妧鑳芥眹鎬讳俊鎭紝渚涙彁绀鸿瘝棰勮涓庢偓娴彁绀轰娇鐢?
 const loadToolSummary = async () => {
   if (toolSummaryLoading.value || promptToolSummary.value) {
     return promptToolSummary.value;
@@ -2574,7 +2587,7 @@ const handleAbilityTooltipHide = () => {
   abilityTooltipVisible.value = false;
 };
 
-// 打开系统提示词预览，优先读取会话快照
+// 鎵撳紑绯荤粺鎻愮ず璇嶉瑙堬紝浼樺厛璇诲彇浼氳瘽蹇収
 const openPromptPreview = async () => {
   promptPreviewVisible.value = true;
   promptPreviewLoading.value = true;
@@ -3041,8 +3054,7 @@ watch(
 watch(
   () => activeAgentId.value,
   (value) => {
-    if (!value) return;
-    agentStore.getAgent(value).catch(() => null);
+    agentStore.getAgent(value || DEFAULT_AGENT_KEY).catch(() => null);
   },
   { immediate: true }
 );
@@ -3103,3 +3115,5 @@ watch(
   { deep: true }
 );
 </script>
+
+

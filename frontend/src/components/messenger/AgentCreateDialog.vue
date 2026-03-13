@@ -58,6 +58,9 @@
             :placeholder="t('messenger.agentCreate.systemPromptPlaceholder')"
           />
         </el-form-item>
+        <el-form-item :label="t('portal.agent.form.presetQuestions')">
+          <AgentPresetQuestionsField v-model="form.preset_questions" />
+        </el-form-item>
         <el-form-item :label="t('messenger.agentCreate.tools')">
           <div class="tool-picker">
             <div v-if="toolLoading" class="tool-picker-empty">{{ t('common.loading') }}</div>
@@ -127,9 +130,11 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { fetchUserToolsSummary } from '@/api/userTools';
+import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import {
   buildBeeroomGroupPayload,
   createBeeroomGroupDraft,
@@ -199,6 +204,7 @@ const form = reactive({
   group: createBeeroomGroupDraft(),
   system_prompt: '',
   tool_names: [] as string[],
+  preset_questions: [] as string[],
   is_shared: false,
   sandbox_container_id: 1,
   approval_mode: resolveDefaultApprovalMode()
@@ -277,6 +283,7 @@ const resetForm = () => {
   form.group = createBeeroomGroupDraft(String(props.defaultBeeroomGroupId || '').trim()) as BeeroomGroupDraft;
   form.system_prompt = '';
   form.tool_names = [...allToolValues.value];
+  form.preset_questions = [];
   form.is_shared = false;
   form.sandbox_container_id = 1;
   form.approval_mode = resolveDefaultApprovalMode();
@@ -342,6 +349,7 @@ const handleSave = async () => {
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: String(form.system_prompt || ''),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
+      preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       is_shared: false,
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)

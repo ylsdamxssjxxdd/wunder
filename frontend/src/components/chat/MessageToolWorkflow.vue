@@ -572,6 +572,8 @@ const isWriteFileTool = (toolName: string): boolean => {
   return normalized === 'write_file' || toolName.includes('写入文件');
 };
 
+const isCompactionTool = (toolName: string): boolean => toolName.trim() === '上下文压缩';
+
 const extractToolResultObject = (detailObject: UnknownObject | null): UnknownObject | null => {
   if (!detailObject) return null;
   return asObject(detailObject.result) || detailObject;
@@ -601,6 +603,7 @@ const resolveToolEventKind = (item: WorkflowItem): 'call' | 'output' | 'result' 
   if (eventType === 'tool_call') return 'call';
   if (eventType === 'tool_output_delta') return 'output';
   if (eventType === 'tool_result') return 'result';
+  if (eventType === 'compaction') return 'result';
 
   const title = String(item.title || '').trim();
   if (/^调用工具[:：]/i.test(title) || /^Tool\s+call:/i.test(title)) return 'call';
@@ -1144,6 +1147,32 @@ const extractDurationMs = (entry: RawEntry): number | null => {
   );
 };
 
+const toBool = (...values: unknown[]): boolean | null => {
+  for (const value of values) {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === 'true') return true;
+      if (normalized === 'false') return false;
+    }
+  }
+  return null;
+};
+
+const formatTokenTransition = (before: number | null, after: number | null): string => {
+  if (before === null && after === null) return '';
+  if (before !== null && after !== null) return `${before} → ${after} tokens`;
+  if (before !== null) return `${before} tokens`;
+  return `${after} tokens`;
+};
+
+const resolveCompactionReasonLabel = (reason: string): string => {
+  if (reason === 'history') return '历史上下文超阈值';
+  if (reason === 'overflow') return '本轮上下文溢出';
+  if (reason === 'overflow_recovery') return '溢出恢复';
+  return reason || '上下文压缩';
+};
+
 const formatDurationLabel = (durationMs: number | null): string => {
   if (durationMs === null || durationMs <= 0) return '';
   if (durationMs < 1000) return `${durationMs}ms`;
@@ -1183,6 +1212,22 @@ const composeEntryTitle = (toolDisplay: string, command: string, pathHints: stri
     return truncateSingleLine(`${toolDisplay} ${command}`);
   }
   return composeSummaryTitle(toolDisplay, pathHints);
+};
+
+const buildCompactionSummaryTitle = (entry: RawEntry): string => {
+  const detailObject = parseDetailObject(entry.resultItem?.detail);
+  const before = toOptionalInt(
+    detailObject?.context_tokens,
+    detailObject?.total_tokens,
+    detailObject?.context_guard_tokens_before
+  );
+  const after = toOptionalInt(
+    detailObject?.context_tokens_after,
+    detailObject?.total_tokens_after,
+    detailObject?.context_guard_tokens_after
+  );
+  const transition = formatTokenTransition(before, after);
+  return transition ? `上下文压缩 ${transition}` : '上下文压缩';
 };
 
 const extractResultPayload = (
@@ -1510,10 +1555,93 @@ const buildGenericResultBlock = (
   return blocks.join('\n\n');
 };
 
+const buildCompactionResultBlock = (entry: RawEntry): string => {
+  const detailObject = parseDetailObject(entry.resultItem?.detail);
+  if (!detailObject) return '';
+
+  const reason = pickString(detailObject.reason);
+  const status = pickString(detailObject.status);
+  const resetMode = pickString(detailObject.reset_mode, detailObject.resetMode);
+  const totalBefore = toOptionalInt(
+    detailObject.context_tokens,
+    detailObject.total_tokens,
+    detailObject.context_guard_tokens_before
+  );
+  const totalAfter = toOptionalInt(
+    detailObject.context_tokens_after,
+    detailObject.total_tokens_after,
+    detailObject.context_guard_tokens_after
+  );
+  const currentBefore = toOptionalInt(
+    detailObject.context_guard_current_user_tokens_before,
+    detailObject.current_user_tokens_before
+  );
+  const currentAfter = toOptionalInt(
+    detailObject.context_guard_current_user_tokens_after,
+    detailObject.current_user_tokens_after
+  );
+  const summaryBefore = toOptionalInt(
+    detailObject.context_guard_summary_tokens_before,
+    detailObject.summary_tokens
+  );
+  const summaryAfter = toOptionalInt(
+    detailObject.context_guard_summary_tokens_after
+  );
+  const currentTrimmed = toBool(
+    detailObject.context_guard_current_user_trimmed,
+    detailObject.current_user_trimmed
+  );
+  const summaryRemoved = toBool(
+    detailObject.context_guard_summary_removed,
+    detailObject.summary_removed
+  );
+  const summaryTrimmed = toBool(
+    detailObject.context_guard_summary_trimmed,
+    detailObject.summary_trimmed
+  );
+  const summaryFallback = toBool(detailObject.summary_fallback);
+
+  const lines: string[] = [];
+  lines.push(`原因：${resolveCompactionReasonLabel(reason)}`);
+
+  const totalLine = formatTokenTransition(totalBefore, totalAfter);
+  if (totalLine) lines.push(`总上下文：${totalLine}`);
+
+  const currentLine = formatTokenTransition(currentBefore, currentAfter);
+  if (currentLine) {
+    const currentSuffix =
+      currentTrimmed === true ? '（当前问题已裁剪）' : '（当前问题已保留）';
+    lines.push(`当前问题：${currentLine}${currentSuffix}`);
+  }
+
+  if (summaryRemoved === true) {
+    const summaryLine = formatTokenTransition(summaryBefore, null);
+    lines.push(`压缩摘要：${summaryLine || '已生成'} → 已移除`);
+  } else if (summaryTrimmed === true || summaryBefore !== null || summaryAfter !== null) {
+    const summaryLine = formatTokenTransition(summaryBefore, summaryAfter);
+    if (summaryLine) {
+      lines.push(`压缩摘要：${summaryLine}${summaryTrimmed === true ? '（已裁剪）' : ''}`);
+    }
+  }
+
+  if (resetMode) {
+    lines.push(`重置模式：${resetMode}`);
+  }
+  if (status === 'fallback' || summaryFallback === true) {
+    lines.push('结果：进入 fallback 压缩恢复');
+  }
+
+  return lines.join('\n');
+};
+
 const buildResultBlock = (entry: RawEntry): string => {
   if (!entry.resultItem) return '';
   if (isApplyPatchTool(entry.toolName)) return '';
   if (isExecuteCommandTool(entry.toolName)) return '';
+
+  if (isCompactionTool(entry.toolName)) {
+    return buildCompactionResultBlock(entry);
+  }
 
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
 
@@ -1643,7 +1771,9 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
-  const summaryTitle = composeEntryTitle(toolDisplay, command, pathHints);
+  const summaryTitle = isCompactionTool(entry.toolName)
+    ? buildCompactionSummaryTitle(entry)
+    : composeEntryTitle(toolDisplay, command, pathHints);
   const status = resolveEntryStatus(entry);
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem) : '';
   const durationLabel = formatDurationLabel(extractDurationMs(entry));

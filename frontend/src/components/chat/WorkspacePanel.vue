@@ -285,6 +285,7 @@ import {
   searchWunderWorkspace,
   uploadWunderWorkspace
 } from '@/api/workspace';
+import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
@@ -327,6 +328,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const panelTitle = computed(() => props.title || t('workspace.title'));
 const showContainerId = computed(() => props.showContainerId);
+const desktopLocalMode = computed(() => isDesktopLocalModeEnabled());
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -483,6 +485,7 @@ const state = reactive({
   renamingPath: '',
   renamingValue: '',
   loading: false,
+  visualLoading: false,
   draggingOver: false,
   preview: {
     visible: false,
@@ -510,7 +513,7 @@ const state = reactive({
 const displayPath = computed(() => (state.path ? `/${state.path}` : '/'));
 const canGoUp = computed(() => Boolean(state.path));
 const selectedEntry = computed(() => state.selected);
-const loading = computed(() => state.loading);
+const loading = computed(() => state.visualLoading);
 const draggingOver = computed(() => state.draggingOver);
 const preview = computed(() => state.preview);
 const editor = computed(() => state.editor);
@@ -519,9 +522,11 @@ const selectedCount = computed(() => state.selectedPaths.size);
 const selectionMeta = computed(() =>
   selectedCount.value ? t('workspace.selection', { count: selectedCount.value }) : ''
 );
-const emptyText = computed(() =>
-  state.searchMode ? t('workspace.empty.search') : props.emptyText || t('workspace.empty')
-);
+const emptyText = computed(() => {
+  if (state.searchMode) return t('workspace.empty.search');
+  if (props.emptyText) return props.emptyText;
+  return desktopLocalMode.value ? t('workspace.emptyPermanent') : t('workspace.empty');
+});
 const searchKeyword = computed({
   get: () => state.searchKeyword,
   set: (value) => {
@@ -1119,7 +1124,12 @@ const promptInput = async (message: string, options: PromptInputOptions = {}) =>
   }
 };
 
-const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSearch = false } = {}) => {
+const loadWorkspace = async ({
+  path = state.path,
+  resetExpanded = false,
+  resetSearch = false,
+  background = false
+} = {}) => {
   const currentPath = normalizeWorkspacePath(path);
   const cacheKey = buildWorkspaceTreeCacheKey(
     normalizedAgentId.value,
@@ -1136,6 +1146,8 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     emitWorkspaceStats(state.entries);
   }
   state.loading = true;
+  // Keep background sync fully silent to avoid empty-state skeleton flicker.
+  state.visualLoading = !background;
   if (resetSearch) {
     state.searchMode = false;
     state.searchKeyword = '';
@@ -1188,19 +1200,21 @@ const loadWorkspace = async ({ path = state.path, resetExpanded = false, resetSe
     return false;
   } finally {
     state.loading = false;
+    state.visualLoading = false;
     if (autoRefreshPending) {
       scheduleWorkspaceAutoRefresh();
     }
   }
 };
 
-const loadWorkspaceSearch = async () => {
+const loadWorkspaceSearch = async ({ background = false } = {}) => {
   const keyword = String(state.searchKeyword || '').trim();
   if (!keyword) {
     state.searchMode = false;
-    return loadWorkspace({ resetSearch: true });
+    return loadWorkspace({ resetSearch: true, background });
   }
   state.loading = true;
+  state.visualLoading = !background;
   state.renamingPath = '';
   state.renamingValue = '';
   resetWorkspaceSelection();
@@ -1222,17 +1236,18 @@ const loadWorkspaceSearch = async () => {
     return false;
   } finally {
     state.loading = false;
+    state.visualLoading = false;
     if (autoRefreshPending) {
       scheduleWorkspaceAutoRefresh();
     }
   }
 };
 
-const reloadWorkspaceView = async () => {
+const reloadWorkspaceView = async ({ background = false } = {}) => {
   if (state.searchMode && String(state.searchKeyword || '').trim()) {
-    return loadWorkspaceSearch();
+    return loadWorkspaceSearch({ background });
   }
-  return loadWorkspace({ resetSearch: true });
+  return loadWorkspace({ resetSearch: true, background });
 };
 
 const fetchWorkspaceDirectorySnapshot = async (path) => {
@@ -1406,7 +1421,7 @@ const scheduleWorkspaceAutoRefresh = () => {
         targets: incrementalTargets.length
       });
     }
-    await reloadWorkspaceView();
+    await reloadWorkspaceView({ background: true });
     chatPerf.count('workspace.panel.refresh', 1, {
       mode: shouldFullReload ? 'full' : 'fallback-full',
       targets: incrementalTargets.length

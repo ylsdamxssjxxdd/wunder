@@ -776,6 +776,16 @@
   color: #ffffff;
 }
 
+.messenger-list-item.selected:not(.active) {
+  background: rgba(var(--ui-accent-rgb), 0.12);
+  border-color: rgba(var(--ui-accent-rgb), 0.24);
+}
+
+.messenger-list-item.selected:not(.active) .messenger-list-preview,
+.messenger-list-item.selected:not(.active) .messenger-list-time {
+  color: var(--hula-text-secondary, #6b7280);
+}
+
 .messenger-conversation-item,
 .messenger-swarm-item {
   position: relative;
@@ -4495,6 +4505,13 @@ button.messenger-chat-header-model {
   z-index: 40;
 }
 
+.messenger-composer-scope.chat-shell .chat-composer-command-section-label {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hula-muted);
+}
+
 .messenger-composer-scope.chat-shell .chat-screenshot-anchor {
   position: relative;
   z-index: 60;
@@ -4570,14 +4587,34 @@ button.messenger-chat-header-model {
   background: var(--ui-accent-soft);
 }
 
+.messenger-composer-scope.chat-shell .chat-composer-command-item--question {
+  align-items: center;
+  gap: 0;
+  padding: 5px 8px;
+}
+
 .messenger-composer-scope.chat-shell .chat-composer-command-name {
   font-weight: 600;
   color: #202020;
 }
 
+.messenger-composer-scope.chat-shell .chat-composer-command-item--question .chat-composer-command-name {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.35;
+}
+
 .messenger-composer-scope.chat-shell .chat-composer-command-desc {
   color: var(--hula-muted);
   text-align: right;
+}
+
+.messenger-composer-scope.chat-shell .chat-composer-command-item--question .chat-composer-command-desc {
+  white-space: nowrap;
 }
 
 .messenger-composer-scope.chat-shell .command-menu {
@@ -5221,6 +5258,27 @@ button.messenger-chat-header-model {
   border-color: rgba(var(--ui-accent-rgb), 0.32);
   color: var(--ui-accent);
   outline: none;
+}
+
+.messenger-files-menu-btn.danger {
+  color: var(--hula-danger);
+}
+
+.messenger-files-menu-btn.danger:hover:not(:disabled),
+.messenger-files-menu-btn.danger:focus-visible {
+  background: #fbeff1;
+  border-color: #f2c8ce;
+  color: var(--hula-danger);
+}
+
+.messenger-agent-context-menu {
+  min-width: 188px;
+}
+
+.messenger-agent-context-menu__meta {
+  padding: 4px 8px 6px;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .workspace-dialog,

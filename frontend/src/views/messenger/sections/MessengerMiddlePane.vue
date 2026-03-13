@@ -44,11 +44,29 @@
         </el-dropdown-menu>
       </template>
     </el-dropdown>
+    <el-dropdown
+      v-else-if="activeSection === 'agents'"
+      trigger="click"
+      placement="bottom-end"
+      @command="handleAgentPlusCommand"
+    >
+      <button
+        class="messenger-plus-btn"
+        type="button"
+        :title="resolvePlusActionLabel()"
+        :aria-label="resolvePlusActionLabel()"
+      >
+        <i class="fa-solid fa-plus" aria-hidden="true"></i>
+      </button>
+      <template #dropdown>
+        <el-dropdown-menu>
+          <el-dropdown-item command="create">{{ t('messenger.action.newAgent') }}</el-dropdown-item>
+          <el-dropdown-item command="import_worker_card">{{ t('portal.agent.importWorkerCard') }}</el-dropdown-item>
+        </el-dropdown-menu>
+      </template>
+    </el-dropdown>
     <button
-      v-else-if="
-        activeSection === 'agents' ||
-        (activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace)
-      "
+      v-else-if="activeSection === 'groups' && !userWorldPermissionDenied && !showHelperAppsWorkspace"
       class="messenger-plus-btn"
       type="button"
       :title="resolvePlusActionLabel()"
@@ -430,10 +448,11 @@
       <button
         v-if="showDefaultAgentEntry"
         class="messenger-list-item messenger-agent-item"
-        :class="{ active: selectedAgentId === defaultAgentKey }"
+        :class="{ active: selectedAgentId === defaultAgentKey, selected: isAgentMultiSelected(defaultAgentKey) }"
         type="button"
-        @click="selectAgentForSettings(defaultAgentKey)"
+        @click="handleAgentSelectionClick($event, defaultAgentKey)"
         @dblclick="openAgentById(defaultAgentKey)"
+        @contextmenu.prevent.stop="openAgentContextMenu($event, defaultAgentKey)"
       >
         <AgentAvatar size="md" :state="resolveAgentRuntimeState(defaultAgentKey)" />
         <div class="messenger-list-main">
@@ -449,10 +468,11 @@
         v-for="agent in filteredOwnedAgents"
         :key="agent.id"
         class="messenger-list-item messenger-agent-item"
-        :class="{ active: selectedAgentId === normalizeAgentId(agent.id) }"
+        :class="{ active: selectedAgentId === normalizeAgentId(agent.id), selected: isAgentMultiSelected(agent.id) }"
         type="button"
-        @click="selectAgentForSettings(agent.id)"
+        @click="handleAgentSelectionClick($event, agent.id)"
         @dblclick="openAgentById(agent.id)"
+        @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
       >
         <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
         <div class="messenger-list-main">
@@ -472,10 +492,11 @@
         v-for="agent in filteredSharedAgents"
         :key="`shared-${agent.id}`"
         class="messenger-list-item messenger-agent-item"
-        :class="{ active: selectedAgentId === normalizeAgentId(agent.id) }"
+        :class="{ active: selectedAgentId === normalizeAgentId(agent.id), selected: isAgentMultiSelected(agent.id) }"
         type="button"
-        @click="selectAgentForSettings(agent.id)"
+        @click="handleAgentSelectionClick($event, agent.id)"
         @dblclick="openAgentById(agent.id)"
+        @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
       >
         <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
         <div class="messenger-list-main">
@@ -767,10 +788,37 @@
     style="display: none"
     @change="handleSwarmPackFileChange"
   />
+
+  <Teleport to="body">
+    <div
+      v-if="agentContextMenuVisible"
+      class="messenger-files-context-menu messenger-agent-context-menu"
+      :style="agentContextMenuStyle"
+      @contextmenu.prevent
+    >
+      <div class="messenger-agent-context-menu__meta">
+        {{ t('messenger.agent.selection', { count: selectedAgentIds.length }) }}
+      </div>
+      <button class="messenger-files-menu-btn" type="button" @click="handleAgentContextExport">
+        {{ t('messenger.agent.context.exportSelected') }}
+      </button>
+      <button
+        class="messenger-files-menu-btn danger"
+        type="button"
+        :disabled="!deletableSelectedAgentIds.length"
+        @click="handleAgentContextDelete"
+      >
+        {{ t('messenger.agent.context.deleteSelected') }}
+      </button>
+      <button class="messenger-files-menu-btn" type="button" @click="clearAgentSelection">
+        {{ t('messenger.agent.context.clearSelection') }}
+      </button>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { computed, h, ref } from 'vue';
+import { computed, h, onBeforeUnmount, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { useI18n } from '@/i18n';
@@ -783,6 +831,10 @@ const beeroomStore = useBeeroomStore();
 const swarmPackInputRef = ref<HTMLInputElement | null>(null);
 const swarmCreateVisible = ref(false);
 const swarmCreateSaving = ref(false);
+const selectedAgentIds = ref<string[]>([]);
+const agentSelectionAnchorId = ref('');
+const agentContextMenuVisible = ref(false);
+const agentContextMenuStyle = ref<Record<string, string>>({});
 
 type ContainerEntry = {
   id: number;
@@ -851,6 +903,8 @@ const {
   selectAgentForSettings,
   openAgentById,
   normalizeAgentId,
+  handleAgentBatchExport,
+  handleAgentBatchDelete,
   selectedToolEntryKey,
   selectToolCategory,
   desktopLocalMode,
@@ -875,7 +929,7 @@ const {
   searchPlaceholder: string;
   agentOverviewMode: 'detail' | 'grid';
   userWorldPermissionDenied: boolean;
-  handleSearchCreateAction: () => void | Promise<void>;
+  handleSearchCreateAction: (command?: string) => void | Promise<void>;
   toggleAgentOverviewMode: () => void;
   helperAppsOfflineItems: Array<{ key: string; title: string; description: string; icon: string }>;
   helperAppsOnlineItems: Array<{ linkId: string; title: string; description: string; icon: string; url: string }>;
@@ -927,6 +981,8 @@ const {
   selectAgentForSettings: (agentId: any) => void;
   openAgentById: (agentId: any) => void | Promise<void>;
   normalizeAgentId: (value: unknown) => string;
+  handleAgentBatchExport: (agentIds: string[]) => void | Promise<void>;
+  handleAgentBatchDelete: (agentIds: string[]) => void | Promise<void>;
   selectedToolEntryKey: string;
   selectToolCategory: (category: 'admin' | 'mcp' | 'skills' | 'knowledge') => void;
   desktopLocalMode: boolean;
@@ -943,6 +999,181 @@ const {
   settingsLogoutDisabled: boolean;
   handleSettingsLogout: () => void;
 }>();
+
+
+type AgentSelectionEntry = {
+  id: string;
+  deletable: boolean;
+};
+
+const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
+  const output: AgentSelectionEntry[] = [];
+  if (showDefaultAgentEntry) {
+    const id = normalizeAgentId(defaultAgentKey);
+    if (id) {
+      output.push({ id, deletable: false });
+    }
+  }
+  (Array.isArray(filteredOwnedAgents) ? filteredOwnedAgents : []).forEach((agent) => {
+    const id = normalizeAgentId(agent?.id);
+    if (!id) return;
+    output.push({ id, deletable: true });
+  });
+  (Array.isArray(filteredSharedAgents) ? filteredSharedAgents : []).forEach((agent) => {
+    const id = normalizeAgentId(agent?.id);
+    if (!id) return;
+    output.push({ id, deletable: false });
+  });
+  return output;
+});
+
+const selectedAgentIdSet = computed(() => new Set(selectedAgentIds.value));
+const deletableSelectedAgentIds = computed(() =>
+  visibleSelectableAgentItems.value
+    .filter((item) => item.deletable && selectedAgentIdSet.value.has(item.id))
+    .map((item) => item.id)
+);
+
+function closeAgentContextMenu() {
+  agentContextMenuVisible.value = false;
+}
+
+function applyAgentSelection(nextIds: string[], anchorId: string) {
+  selectedAgentIds.value = Array.from(new Set(nextIds.map((item) => normalizeAgentId(item)).filter(Boolean)));
+  agentSelectionAnchorId.value = normalizeAgentId(anchorId);
+}
+
+function clearAgentSelection() {
+  selectedAgentIds.value = [];
+  agentSelectionAnchorId.value = '';
+  closeAgentContextMenu();
+}
+
+function isAgentMultiSelected(agentId: unknown) {
+  return selectedAgentIdSet.value.has(normalizeAgentId(agentId));
+}
+
+function extendAgentSelection(targetId: string) {
+  const items = visibleSelectableAgentItems.value;
+  const anchorId = normalizeAgentId(agentSelectionAnchorId.value || targetId);
+  const anchorIndex = items.findIndex((item) => item.id === anchorId);
+  const targetIndex = items.findIndex((item) => item.id === targetId);
+  if (anchorIndex < 0 || targetIndex < 0) {
+    applyAgentSelection([targetId], targetId);
+    return;
+  }
+  const [start, end] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
+  applyAgentSelection(items.slice(start, end + 1).map((item) => item.id), anchorId);
+}
+
+function toggleAgentSelection(targetId: string) {
+  if (selectedAgentIdSet.value.has(targetId)) {
+    applyAgentSelection(
+      selectedAgentIds.value.filter((item) => normalizeAgentId(item) != targetId),
+      agentSelectionAnchorId.value || targetId
+    );
+    return;
+  }
+  applyAgentSelection([...selectedAgentIds.value, targetId], targetId);
+}
+
+function handleAgentSelectionClick(event: MouseEvent, agentId: unknown) {
+  const normalizedId = normalizeAgentId(agentId);
+  if (!normalizedId) return;
+  closeAgentContextMenu();
+  if (event.shiftKey) {
+    extendAgentSelection(normalizedId);
+  } else if (event.ctrlKey || event.metaKey) {
+    toggleAgentSelection(normalizedId);
+  } else {
+    applyAgentSelection([normalizedId], normalizedId);
+  }
+  selectAgentForSettings(normalizedId);
+}
+
+function openAgentContextMenu(event: MouseEvent, agentId: unknown) {
+  const normalizedId = normalizeAgentId(agentId);
+  if (!normalizedId) return;
+  if (!selectedAgentIdSet.value.has(normalizedId)) {
+    applyAgentSelection([normalizedId], normalizedId);
+  }
+  selectAgentForSettings(normalizedId);
+  agentContextMenuStyle.value = {
+    left: `${event.clientX}px`,
+    top: `${event.clientY}px`
+  };
+  agentContextMenuVisible.value = true;
+}
+
+function handleAgentContextExport() {
+  const ids = selectedAgentIds.value.slice();
+  closeAgentContextMenu();
+  Promise.resolve(handleAgentBatchExport(ids)).catch(() => undefined);
+}
+
+function handleAgentContextDelete() {
+  const ids = deletableSelectedAgentIds.value.slice();
+  closeAgentContextMenu();
+  if (!ids.length) {
+    return;
+  }
+  Promise.resolve(handleAgentBatchDelete(ids))
+    .then(() => {
+      clearAgentSelection();
+    })
+    .catch(() => undefined);
+}
+
+function handleGlobalPointerDown(event: PointerEvent) {
+  if (!agentContextMenuVisible.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest('.messenger-agent-context-menu')) {
+    return;
+  }
+  closeAgentContextMenu();
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape') {
+    clearAgentSelection();
+  }
+}
+
+watch(
+  visibleSelectableAgentItems,
+  (items) => {
+    const available = new Set(items.map((item) => item.id));
+    selectedAgentIds.value = selectedAgentIds.value.filter((item) => available.has(normalizeAgentId(item)));
+    if (agentSelectionAnchorId.value && !available.has(normalizeAgentId(agentSelectionAnchorId.value))) {
+      agentSelectionAnchorId.value = '';
+    }
+    if (!selectedAgentIds.value.length) {
+      closeAgentContextMenu();
+    }
+  },
+  { deep: false }
+);
+
+watch(
+  () => activeSection,
+  (value) => {
+    if (value !== 'agents') {
+      clearAgentSelection();
+    }
+  }
+);
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pointerdown', handleGlobalPointerDown);
+  window.addEventListener('keydown', handleGlobalKeydown);
+}
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('pointerdown', handleGlobalPointerDown);
+    window.removeEventListener('keydown', handleGlobalKeydown);
+  }
+});
 
 const emit = defineEmits<{
   (event: 'update:keyword', value: string): void;
@@ -980,8 +1211,8 @@ const resolvePlusActionLabel = () => {
 const resolveSwarmPlusActionLabel = () =>
   `${t('beeroom.pack.action.import')} / ${t('beeroom.dialog.createTitle')}`;
 
-const triggerSearchCreateAction = () => {
-  Promise.resolve(handleSearchCreateAction()).catch(() => undefined);
+const triggerSearchCreateAction = (command?: string) => {
+  Promise.resolve(handleSearchCreateAction(command)).catch(() => undefined);
 };
 
 const swarmCreateCandidateAgents = computed(() => {
@@ -1109,6 +1340,10 @@ const resetSwarmPackInput = () => {
   if (swarmPackInputRef.value) {
     swarmPackInputRef.value.value = '';
   }
+};
+
+const handleAgentPlusCommand = (command: string) => {
+  triggerSearchCreateAction(command);
 };
 
 const handlePlusAction = () => {
