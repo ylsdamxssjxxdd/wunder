@@ -11,7 +11,7 @@ import MessengerView from '@/views/MessengerView.vue';
 <style scoped>
 .embedded-chat-view {
   width: 100%;
-  height: var(--app-viewport-height-dvh, 100dvh);
+  height: var(--app-viewport-height, 100vh);
   min-height: 100vh;
 }
 

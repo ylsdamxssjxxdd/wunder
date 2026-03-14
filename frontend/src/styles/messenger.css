@@ -42,8 +42,8 @@
     var(--messenger-right-dock-width);
   width: 100%;
   max-width: 100%;
-  height: var(--app-viewport-height-dvh, 100dvh);
-  max-height: var(--app-viewport-height-dvh, 100dvh);
+  height: var(--app-viewport-height, 100vh);
+  max-height: var(--app-viewport-height, 100vh);
   min-width: 0;
   background: var(--hula-main-bg);
   color: var(--hula-text);
@@ -2105,7 +2105,7 @@ button.messenger-chat-header-model {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: min(264px, calc(100dvh - 180px));
+  max-height: min(264px, calc(var(--app-viewport-height, 100vh) - 180px));
   overflow-y: auto;
   z-index: 120;
   transform-origin: right bottom;
@@ -2170,7 +2170,7 @@ button.messenger-chat-header-model {
   flex-direction: column;
   gap: 8px;
   min-height: 220px;
-  max-height: min(320px, calc(100dvh - 220px));
+  max-height: min(320px, calc(var(--app-viewport-height, 100vh) - 220px));
   overflow: auto;
 }
 
@@ -4500,7 +4500,7 @@ button.messenger-chat-header-model {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: min(280px, calc(100dvh - 160px));
+  max-height: min(280px, calc(var(--app-viewport-height, 100vh) - 160px));
   overflow: auto;
   z-index: 40;
 }
@@ -4535,7 +4535,7 @@ button.messenger-chat-header-model {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: min(264px, calc(100dvh - 180px));
+  max-height: min(264px, calc(var(--app-viewport-height, 100vh) - 180px));
   overflow-y: auto;
   z-index: 120;
   transform-origin: right bottom;
@@ -5652,7 +5652,7 @@ button.messenger-chat-header-model {
 
 .messenger-timeline-detail-dialog {
   width: min(760px, calc(100vw - 24px)) !important;
-  max-height: calc(100dvh - 24px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 24px);
   margin: 12px auto !important;
   display: flex;
   flex-direction: column;
@@ -5670,7 +5670,7 @@ button.messenger-chat-header-model {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  max-height: calc(100dvh - 220px);
+  max-height: calc(var(--app-viewport-height, 100vh) - 220px);
 }
 
 .messenger-timeline-detail-toolbar {
@@ -5759,7 +5759,7 @@ button.messenger-chat-header-model {
   white-space: pre-wrap;
   word-break: break-word;
   padding: 10px 12px;
-  max-height: min(180px, calc(100dvh - 460px));
+  max-height: min(180px, calc(var(--app-viewport-height, 100vh) - 460px));
   overflow: auto;
 }
 
@@ -5816,7 +5816,7 @@ button.messenger-chat-header-model {
 .messenger-timeline-detail-events {
   flex: 1 1 auto;
   min-height: 180px;
-  max-height: min(480px, calc(100dvh - 430px));
+  max-height: min(480px, calc(var(--app-viewport-height, 100vh) - 430px));
   overflow: auto;
   border: 1px solid #e4e8ef;
   border-radius: 10px;
@@ -5950,7 +5950,7 @@ button.messenger-chat-header-model {
 }
 
 .messenger-world-file-picker-list {
-  max-height: min(360px, calc(100dvh - 280px));
+  max-height: min(360px, calc(var(--app-viewport-height, 100vh) - 280px));
   overflow: auto;
   border: 1px solid #e2e8f0;
   border-radius: 10px;

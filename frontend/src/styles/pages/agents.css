@@ -757,7 +757,7 @@
 
   .user-tools-dialog.agent-editor-dialog .el-dialog__body {
     padding: 14px 16px 18px;
-    max-height: calc(100dvh - 210px);
+    max-height: calc(var(--app-viewport-height, 100vh) - 210px);
   }
 
   .user-tools-dialog.agent-editor-dialog .el-dialog__footer {
@@ -1126,7 +1126,7 @@
 
   .user-tools-dialog.agent-editor-dialog .el-dialog__body {
     padding: 12px 12px 14px;
-    max-height: calc(100dvh - 196px);
+    max-height: calc(var(--app-viewport-height, 100vh) - 196px);
   }
 
   .user-tools-dialog.agent-editor-dialog .el-dialog__footer {

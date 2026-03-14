@@ -639,7 +639,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: min(264px, calc(100dvh - 180px));
+  max-height: min(264px, calc(var(--app-viewport-height, 100vh) - 180px));
   overflow-y: auto;
   z-index: 120;
   transform-origin: right bottom;
