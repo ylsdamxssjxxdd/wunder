@@ -90,6 +90,8 @@ pub struct SecurityConfig {
     pub api_key: Option<String>,
     pub external_auth_key: Option<String>,
     pub external_embed_preset_agent_name: Option<String>,
+    pub external_embed_jwt_secret: Option<String>,
+    pub external_embed_jwt_user_id_claim: Option<String>,
     #[serde(default)]
     pub allow_commands: Vec<String>,
     #[serde(default)]
@@ -1092,6 +1094,52 @@ impl Config {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
     }
+
+    pub fn external_embed_jwt_secret(&self) -> Option<String> {
+        let inline = self
+            .security
+            .external_embed_jwt_secret
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        if let Some(value) = inline {
+            if value.starts_with("${") && value.ends_with('}') {
+                return env::var("WUNDER_EXTERNAL_EMBED_JWT_SECRET")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty());
+            }
+            return Some(value.to_string());
+        }
+        env::var("WUNDER_EXTERNAL_EMBED_JWT_SECRET")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    pub fn external_embed_jwt_user_id_claim(&self) -> String {
+        let inline = self
+            .security
+            .external_embed_jwt_user_id_claim
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty());
+        if let Some(value) = inline {
+            if value.starts_with("${") && value.ends_with('}') {
+                return env::var("WUNDER_EXTERNAL_EMBED_JWT_USER_ID_CLAIM")
+                    .ok()
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or_else(|| "sub".to_string());
+            }
+            return value.to_string();
+        }
+        env::var("WUNDER_EXTERNAL_EMBED_JWT_USER_ID_CLAIM")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "sub".to_string())
+    }
 }
 
 pub fn is_debug_log_level(raw: &str) -> bool {
@@ -1600,6 +1648,12 @@ sandbox:
 
         config.security.external_auth_key = Some("external-key".to_string());
         assert_eq!(config.external_auth_key(), Some("external-key".to_string()));
+    }
+
+    #[test]
+    fn test_external_embed_jwt_user_id_claim_defaults_to_sub() {
+        let config = Config::default();
+        assert_eq!(config.external_embed_jwt_user_id_claim(), "sub");
     }
 
     #[test]

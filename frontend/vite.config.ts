@@ -16,6 +16,7 @@ const envDir =
     ? repoEnvDirCandidate
     : __dirname);
 const devProxyTarget = process.env.VITE_DEV_PROXY_TARGET || 'http://127.0.0.1:18000';
+const viteCacheDir = path.resolve(__dirname, '..', 'node_modules', '.vite', 'wunder-frontend');
 
 const appVersionConfigCandidates = [
   process.env.WUNDER_APP_VERSION_CONFIG_PATH,
@@ -110,6 +111,7 @@ const resolveManualChunk = (rawId: string) => {
 };
 
 export default defineConfig({
+  cacheDir: viteCacheDir,
   envDir,
   define: {
     __WUNDER_APP_VERSION__: JSON.stringify(appVersion)

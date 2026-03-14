@@ -12,11 +12,17 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{routing::get, routing::post, Json, Router};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::Sha256;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use uuid::Uuid;
+
+const DEFAULT_EXTERNAL_LAUNCH_PASSWORD: &str = "123456";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -26,6 +32,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/auth/external/login", post(external_login))
         .route("/wunder/auth/external/code", post(external_issue_code))
         .route("/wunder/auth/external/launch", post(external_launch))
+        .route("/wunder/auth/external/token_launch", post(external_token_launch))
         .route("/wunder/auth/external/exchange", post(external_exchange))
         .route("/wunder/auth/org_units", get(list_org_units))
         .route(
@@ -80,6 +87,16 @@ struct ExternalLaunchRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct ExternalTokenLaunchRequest {
+    token: String,
+    user_id: String,
+    #[serde(default)]
+    username: Option<String>,
+    #[serde(default)]
+    unit_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ExternalExchangeRequest {
     code: String,
 }
@@ -124,6 +141,17 @@ struct UserPreferenceRecord {
     avatar_color: String,
     #[serde(default)]
     updated_at: f64,
+}
+
+#[derive(Debug, Serialize)]
+struct ExternalLaunchResult {
+    code: String,
+    expires_at: f64,
+    entry_path: String,
+    agent_id: String,
+    agent_name: String,
+    created: bool,
+    updated: bool,
 }
 
 async fn register(
@@ -374,40 +402,68 @@ async fn external_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
+    let launch = build_external_launch_result(&state, session, created, updated).await?;
+
+    Ok(Json(json!({ "data": launch })))
+}
+
+async fn external_token_launch(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ExternalTokenLaunchRequest>,
+) -> Result<Json<Value>, Response> {
+    let raw_token = payload.token.trim();
+    let requested_user_id = payload.user_id.trim();
+    if raw_token.is_empty() || requested_user_id.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
     let config = state.config_store.get().await;
-    let preset_agent_name = config.external_embed_preset_agent_name().ok_or_else(|| {
+    let jwt_secret = config.external_embed_jwt_secret().ok_or_else(|| {
         error_response(
             StatusCode::FORBIDDEN,
-            "external embed preset agent is not configured".to_string(),
+            "external embed jwt auth disabled".to_string(),
         )
     })?;
+    let user_id_claim = config.external_embed_jwt_user_id_claim();
+    let validated_user_id = validate_external_embed_jwt(
+        raw_token,
+        &jwt_secret,
+        &user_id_claim,
+        requested_user_id,
+    )
+    .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
 
-    let target_agent =
-        resolve_or_create_external_embed_agent(&state, &session.user, &preset_agent_name).await?;
-    let record = state
-        .external_auth_codes
-        .issue(
-            session.user.user_id.clone(),
-            session.token.token.clone(),
-            60.0,
+    let launch_username = payload
+        .username
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(validated_user_id.as_str());
+    let unit_id = normalize_optional_id(payload.unit_id.as_deref());
+    let desktop_mode = is_desktop_mode(&state).await;
+
+    let user_store = state.user_store.clone();
+    let username_snapshot = launch_username.to_string();
+    let unit_snapshot = unit_id.clone();
+    let desktop_mode_snapshot = desktop_mode;
+    let (session, created, updated) = tokio::task::spawn_blocking(move || {
+        provision_external_launch_session(
+            &user_store,
+            &username_snapshot,
+            None,
+            unit_snapshot,
+            desktop_mode_snapshot,
         )
-        .await;
-    let entry_path = format!(
-        "/app/embed/chat?wunder_code={}&agent_id={}&embed=1",
-        record.code, target_agent.agent_id
-    );
+    })
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    Ok(Json(json!({
-        "data": {
-            "code": record.code,
-            "expires_at": record.expires_at,
-            "entry_path": entry_path,
-            "agent_id": target_agent.agent_id,
-            "agent_name": target_agent.name,
-            "created": created,
-            "updated": updated,
-        }
-    })))
+    let launch = build_external_launch_result(&state, session, created, updated).await?;
+    Ok(Json(json!({ "data": launch })))
 }
 
 async fn me(
@@ -747,6 +803,45 @@ fn is_external_embed_preset_template(
         && candidate.system_prompt.trim() == preset_prompt
 }
 
+async fn build_external_launch_result(
+    state: &Arc<AppState>,
+    session: crate::user_store::UserSession,
+    created: bool,
+    updated: bool,
+) -> Result<ExternalLaunchResult, Response> {
+    let config = state.config_store.get().await;
+    let preset_agent_name = config.external_embed_preset_agent_name().ok_or_else(|| {
+        error_response(
+            StatusCode::FORBIDDEN,
+            "external embed preset agent is not configured".to_string(),
+        )
+    })?;
+
+    let target_agent =
+        resolve_or_create_external_embed_agent(state, &session.user, &preset_agent_name).await?;
+    let record = state
+        .external_auth_codes
+        .issue(
+            session.user.user_id.clone(),
+            session.token.token.clone(),
+            60.0,
+        )
+        .await;
+
+    Ok(ExternalLaunchResult {
+        code: record.code.clone(),
+        expires_at: record.expires_at,
+        entry_path: format!(
+            "/app/embed/chat?wunder_code={}&agent_id={}&embed=1",
+            record.code, target_agent.agent_id
+        ),
+        agent_id: target_agent.agent_id,
+        agent_name: target_agent.name,
+        created,
+        updated,
+    })
+}
+
 fn org_unit_payload(record: &OrgUnitRecord) -> Value {
     json!({
         "unit_id": record.unit_id,
@@ -978,6 +1073,101 @@ async fn is_desktop_mode(state: &AppState) -> bool {
         .eq_ignore_ascii_case("desktop")
 }
 
+fn validate_external_embed_jwt(
+    token: &str,
+    secret: &str,
+    user_id_claim: &str,
+    requested_user_id: &str,
+) -> anyhow::Result<String> {
+    type HmacSha256 = Hmac<Sha256>;
+
+    let cleaned_token = token.trim();
+    let cleaned_user_id = requested_user_id.trim();
+    if cleaned_token.is_empty() || cleaned_user_id.is_empty() {
+        return Err(anyhow::anyhow!("token or user_id is empty"));
+    }
+
+    let mut segments = cleaned_token.split('.');
+    let Some(header_segment) = segments.next() else {
+        return Err(anyhow::anyhow!("invalid jwt format"));
+    };
+    let Some(payload_segment) = segments.next() else {
+        return Err(anyhow::anyhow!("invalid jwt format"));
+    };
+    let Some(signature_segment) = segments.next() else {
+        return Err(anyhow::anyhow!("invalid jwt format"));
+    };
+    if segments.next().is_some() {
+        return Err(anyhow::anyhow!("invalid jwt format"));
+    }
+
+    let signing_input = format!("{header_segment}.{payload_segment}");
+    let signature = URL_SAFE_NO_PAD
+        .decode(signature_segment)
+        .map_err(|_| anyhow::anyhow!("invalid jwt signature"))?;
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())?;
+    mac.update(signing_input.as_bytes());
+    mac.verify_slice(&signature)
+        .map_err(|_| anyhow::anyhow!("invalid jwt signature"))?;
+
+    let header_bytes = URL_SAFE_NO_PAD
+        .decode(header_segment)
+        .map_err(|_| anyhow::anyhow!("invalid jwt header"))?;
+    let header: Value =
+        serde_json::from_slice(&header_bytes).map_err(|_| anyhow::anyhow!("invalid jwt header"))?;
+    let alg = header
+        .get("alg")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !alg.eq_ignore_ascii_case("HS256") {
+        return Err(anyhow::anyhow!("unsupported jwt algorithm"));
+    }
+
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .map_err(|_| anyhow::anyhow!("invalid jwt payload"))?;
+    let payload: Value = serde_json::from_slice(&payload_bytes)
+        .map_err(|_| anyhow::anyhow!("invalid jwt payload"))?;
+    let token_user_id = extract_external_claim_text(&payload, user_id_claim)
+        .ok_or_else(|| anyhow::anyhow!("jwt user claim missing"))?;
+    if token_user_id != cleaned_user_id {
+        return Err(anyhow::anyhow!("jwt user mismatch"));
+    }
+
+    let expires_at = payload
+        .get("exp")
+        .and_then(Value::as_f64)
+        .or_else(|| payload.get("exp").and_then(Value::as_i64).map(|value| value as f64))
+        .or_else(|| payload.get("exp").and_then(Value::as_u64).map(|value| value as f64))
+        .ok_or_else(|| anyhow::anyhow!("jwt exp missing"))?;
+    if expires_at <= now_ts() {
+        return Err(anyhow::anyhow!("jwt expired"));
+    }
+
+    Ok(token_user_id)
+}
+
+fn extract_external_claim_text(payload: &Value, key: &str) -> Option<String> {
+    let value = payload.get(key)?;
+    if let Some(text) = value.as_str() {
+        let cleaned = text.trim();
+        return (!cleaned.is_empty()).then(|| cleaned.to_string());
+    }
+    if let Some(number) = value.as_i64() {
+        return Some(number.to_string());
+    }
+    if let Some(number) = value.as_u64() {
+        return Some(number.to_string());
+    }
+    value.as_f64().map(|number| {
+        if number.fract() == 0.0 {
+            format!("{number:.0}")
+        } else {
+            number.to_string()
+        }
+    })
+}
+
 async fn validate_external_key(state: &Arc<AppState>, key: &str) -> Result<(), Response> {
     let provided = key.trim();
     if provided.is_empty() {
@@ -1115,7 +1305,7 @@ fn provision_external_launch_session(
         let mut created_user = user_store.create_user(
             &normalized,
             None,
-            &format!("ext_launch_{}", Uuid::new_v4().simple()),
+            DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
             Some("A"),
             create_unit_id,
             vec!["user".to_string()],
@@ -1191,8 +1381,30 @@ fn now_ts() -> f64 {
 mod tests {
     use super::{
         normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
-        normalize_theme_palette,
+        normalize_theme_palette, provision_external_launch_session,
+        validate_external_embed_jwt, DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
+    use crate::services::user_store::UserStore;
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    fn build_hs256_token(secret: &str, payload: &str) -> String {
+        type HmacSha256 = Hmac<Sha256>;
+
+        let header = r#"{"alg":"HS256","typ":"JWT"}"#;
+        let header_segment = URL_SAFE_NO_PAD.encode(header);
+        let payload_segment = URL_SAFE_NO_PAD.encode(payload);
+        let signing_input = format!("{header_segment}.{payload_segment}");
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("hmac init");
+        mac.update(signing_input.as_bytes());
+        let signature_segment = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        format!("{signing_input}.{signature_segment}")
+    }
 
     #[test]
     fn normalize_theme_defaults_to_light() {
@@ -1226,5 +1438,52 @@ mod tests {
     fn normalize_avatar_color_accepts_hex_only() {
         assert_eq!(normalize_avatar_color("#AbCdEf"), "#abcdef");
         assert_eq!(normalize_avatar_color("rgb(0,0,0)"), "#3b82f6");
+    }
+
+    #[test]
+    fn validate_external_embed_jwt_accepts_matching_hs256_token() {
+        let secret = "team-secret";
+        let token = build_hs256_token(secret, r#"{"sub":"1","exp":4102444800}"#);
+
+        let validated =
+            validate_external_embed_jwt(&token, secret, "sub", "1").expect("jwt should pass");
+
+        assert_eq!(validated, "1");
+    }
+
+    #[test]
+    fn validate_external_embed_jwt_rejects_mismatched_user() {
+        let secret = "team-secret";
+        let token = build_hs256_token(secret, r#"{"sub":"2","exp":4102444800}"#);
+
+        let error = validate_external_embed_jwt(&token, secret, "sub", "1")
+            .expect_err("jwt should fail when user mismatches");
+
+        assert_eq!(error.to_string(), "jwt user mismatch");
+    }
+
+    #[test]
+    fn provision_external_launch_session_creates_user_with_default_password() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("external-launch-auth.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage as Arc<dyn StorageBackend>);
+
+        let (session, created, updated) = provision_external_launch_session(
+            &store,
+            "external_1",
+            None,
+            None,
+            false,
+        )
+        .expect("create external launch session");
+
+        assert_eq!(created, true);
+        assert_eq!(updated, false);
+        assert_eq!(session.user.user_id, "external_1");
+        let login = store
+            .login("external_1", DEFAULT_EXTERNAL_LAUNCH_PASSWORD)
+            .expect("login with default password");
+        assert_eq!(login.user.user_id, "external_1");
     }
 }

@@ -14,7 +14,7 @@
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
-- docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；`/wunder/temp_dir/*` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`，可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理。
+- docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；`/wunder/temp_dir/*` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`，可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
@@ -1685,6 +1685,13 @@
   - 说明：`password` 为空时不会执行密码对齐，直接基于受信任外部身份签发会话（推荐用于更安全的嵌入启动）。
   - 约束：仅允许进入 `security.external_embed_preset_agent_name` 指定的预制智能体；若该用户下存在同名智能体，优先使用用户同名智能体。
   - 返回（JSON）：`data.code`、`data.expires_at`、`data.entry_path`（`/app/embed/chat?...`）、`data.agent_id`、`data.agent_name`、`data.created`、`data.updated`
+- `POST /wunder/auth/external/token_launch`
+  - 用途：外部系统前端仅携带团队 JWT 与 `user_id` 直接进入 Wunder；后端校验 JWT 后返回嵌入入口。
+  - 配置：`security.external_embed_jwt_secret`（或环境变量 `WUNDER_EXTERNAL_EMBED_JWT_SECRET`）必须配置；`security.external_embed_jwt_user_id_claim` 默认取 `sub`。
+  - 入参（JSON）：`token`、`user_id`、`username`（可选，留空时默认使用 `user_id`）、`unit_id`（可选）
+  - 约束：当前仅支持 `HS256`；会校验签名、`exp` 过期时间以及 `user_id_claim == user_id`。
+  - 建号规则：当目标用户不存在时会自动创建，默认登录密码固定为 `123456`；已存在用户不会在该链路下自动改密。
+  - 返回（JSON）：同 `/wunder/auth/external/launch`
 - `POST /wunder/auth/external/exchange`
   - 用途：前端用一次性登录码换取用户 Token（单次有效，默认 60 秒过期）。
   - 入参（JSON）：`code`
@@ -1712,6 +1719,7 @@
 - iframe 嵌入辅助：
   - 用户侧前端支持在 URL Query 中携带 `wunder_token`（或 `access_token`）自动登录，并在首跳时自动移除敏感参数。
   - 用户侧前端支持在 URL Query 中携带 `wunder_code`，启动后自动调用 `/wunder/auth/external/exchange` 换取 Token 并完成登录。
+  - 用户侧前端支持在 `/login` 携带 `token` + `user_id`；启动后会自动调用 `/wunder/auth/external/token_launch`，再跳转到 `/app/embed/chat`。
 - 错误返回：统一结构见“4.0.1 统一错误响应（HTTP）”；兼容字段仍保留 `detail.message`。
 
 #### UserProfile
@@ -2635,5 +2643,6 @@
 - 审批回传：客户端可发送 `type=approval` 响应审批请求（`payload.approval_id`、`payload.decision=approve_once|approve_session|deny`，可选 `session_id`）
 - 审批事件：服务端会在流中发送 `event=approval_request` 与 `event=approval_result`
 - 详细协议与节点说明：见 `docs/方案/WebSocket-Transport.md`
+
 
 

@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router';
+import type { LocationQuery, LocationQueryRaw, RouteLocationRaw, RouteRecordRaw } from 'vue-router';
 
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
@@ -25,7 +25,7 @@ const AdminSystemView = () => import('@/views/AdminSystemView.vue');
 const USER_LOGIN_PATH = '/login';
 const USER_BEEHIVE_PATH = '/app/home';
 const DESKTOP_HOME_PATH = '/desktop/home';
-const EMBED_AUTH_QUERY_KEYS = new Set(['wunder_token', 'access_token', 'wunder_code']);
+const EMBED_AUTH_QUERY_KEYS = new Set(['wunder_token', 'access_token', 'wunder_code', 'token', 'user_id']);
 EMBED_AUTH_QUERY_KEYS.add(FORCE_LOGOUT_QUERY_KEY);
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
@@ -51,6 +51,10 @@ const resolveQueryToken = (query: LocationQuery): string => {
 };
 
 const resolveQueryCode = (query: LocationQuery): string => asQueryText(query.wunder_code);
+
+const resolveExternalQueryToken = (query: LocationQuery): string => asQueryText(query.token);
+
+const resolveExternalQueryUserId = (query: LocationQuery): string => asQueryText(query.user_id);
 
 const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
   const output: LocationQueryRaw = {};
@@ -91,6 +95,50 @@ const exchangeEmbedCode = async (code: string): Promise<string> => {
     throw new Error('external auth token is empty');
   }
   return token;
+};
+
+const launchExternalTokenEntry = async (token: string, userId: string): Promise<string> => {
+  const response = await fetch(resolveApiEndpoint('/auth/external/token_launch'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, user_id: userId })
+  });
+
+  const payload = asRecord(await response.json().catch(() => ({})));
+  if (!response.ok) {
+    const error = asRecord(payload.error);
+    const message = String(error.message || payload.message || 'external token launch failed').trim();
+    throw new Error(message || 'external token launch failed');
+  }
+
+  const data = asRecord(payload.data);
+  const entryPath = String(data.entry_path || '').trim();
+  if (!entryPath) {
+    throw new Error('external token launch entry_path is empty');
+  }
+  return entryPath;
+};
+
+const resolveEntryRoute = (entryPath: string): RouteLocationRaw => {
+  const url = new URL(entryPath, window.location.origin);
+  const query: LocationQueryRaw = {};
+  url.searchParams.forEach((value, key) => {
+    const existing = query[key];
+    if (existing == null) {
+      query[key] = value;
+      return;
+    }
+    if (Array.isArray(existing)) {
+      query[key] = [...existing, value];
+      return;
+    }
+    query[key] = [existing as string, value];
+  });
+  return {
+    path: url.pathname,
+    query,
+    hash: url.hash
+  };
 };
 
 const isAuthRequiredError = (error: unknown): boolean => {
@@ -219,6 +267,18 @@ router.beforeEach(async (to) => {
   const forcedLogout = isForcedLogoutQuery(to.query);
 
   const query = to.query;
+  const externalToken = resolveExternalQueryToken(query);
+  const externalUserId = resolveExternalQueryUserId(query);
+  if (externalToken && externalUserId) {
+    try {
+      const entryPath = await launchExternalTokenEntry(externalToken, externalUserId);
+      return resolveEntryRoute(entryPath);
+    } catch {
+      authStore.logout();
+      return { path: USER_LOGIN_PATH, replace: true };
+    }
+  }
+
   let tokenFromQuery = resolveQueryToken(query);
   if (!tokenFromQuery) {
     const code = resolveQueryCode(query);

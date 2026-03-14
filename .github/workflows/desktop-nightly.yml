@@ -452,45 +452,97 @@ jobs:
           BUILD_DATE="${{ needs.prepare.outputs.build_date }}"
           COMMIT_SHA="${GITHUB_SHA}"
           COMMIT_SHORT="${COMMIT_SHA:0:7}"
-          {
-            echo "## Wunder Desktop Nightly 每日构建"
-            echo
-            echo "- 构建日期（UTC）：${BUILD_DATE}"
-            echo "- 提交版本：\`${COMMIT_SHA}\`（${COMMIT_SHORT}）"
-            echo "- 触发用户：${GITHUB_ACTOR}"
-            echo
-            echo "### 支持系统与安装方式"
-            echo
-            echo "- **Windows x64**：下载 \`.exe\` 安装包，双击运行并按向导安装。"
-            echo "- **macOS（Apple Silicon / Intel）**：下载对应 \`.dmg\`，打开后将应用拖入“应用程序”目录。"
-            echo "- **Linux x64 / arm64**：下载 \`.AppImage\`，执行 \`chmod +x <文件名>.AppImage\` 后运行。"
-            echo "- **自动更新**：已附带 \`latest*.yml\` 与 \`.blockmap\` 文件供桌面端增量更新使用。"
-            echo
-            echo "### 本次构建产物"
-            echo
-            find "$GITHUB_WORKSPACE/release-assets" -maxdepth 1 -type f ! -name "nightly-release-notes.md" -print \
-              | sed 's|.*/||' \
-              | sort \
-              | while IFS= read -r asset; do
-                  [ -z "${asset}" ] && continue
-                  printf -- '- `%s`\n' "${asset}"
-                done
-            echo
-            echo "### 说明"
-            echo
-            echo "- 此发布为预发布（Nightly），用于持续集成验证与新功能试用。"
-            echo "- 每次 Nightly 发布会覆盖 \`nightly\` 标签，并清理旧的 Nightly 预发布记录。"
-          } > "${RELEASE_NOTE_PATH}"
+          cat > "${RELEASE_NOTE_PATH}" <<EOF
+          ## Wunder Desktop Nightly 每日构建
+
+          - 构建日期（UTC）：${BUILD_DATE}
+          - 提交版本：`${COMMIT_SHA}`（${COMMIT_SHORT}）
+          - 触发用户：${GITHUB_ACTOR}
+
+          ### 支持系统与安装方式
+
+          - **Windows x64**：下载 `.exe` 安装包，双击运行并按向导安装。
+          - **macOS（Apple Silicon / Intel）**：下载对应 `.dmg`，打开后将应用拖入“应用程序”目录。
+          - **Linux x64 / arm64**：下载 `.AppImage`，执行 `chmod +x <文件名>.AppImage` 后运行。
+          - **自动更新**：已附带 `latest*.yml` 与 `.blockmap` 文件供桌面端增量更新使用。
+
+          ### 本次构建产物
+
+          EOF
+
+          find "$GITHUB_WORKSPACE/release-assets" -maxdepth 1 -type f ! -name "nightly-release-notes.md" -print \
+            | sed 's|.*/||' \
+            | sort \
+            | while IFS= read -r asset; do
+                [ -z "${asset}" ] && continue
+                printf -- '- `%s`\n' "${asset}" >> "${RELEASE_NOTE_PATH}"
+              done
+
+          cat >> "${RELEASE_NOTE_PATH}" <<EOF
+
+          ### 说明
+
+          - 此发布为预发布（Nightly），用于持续集成验证与新功能试用。
+          - 每次 Nightly 发布会覆盖 `nightly` 标签，并清理旧的 Nightly 预发布记录。
+          EOF
 
       - name: Publish nightly release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: nightly
-          name: Wunder Desktop Nightly（每日构建）
-          target_commitish: ${{ github.sha }}
-          prerelease: true
-          make_latest: false
-          overwrite_files: true
-          files: |
-            release-assets/*
-          body_path: release-assets/nightly-release-notes.md
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          retry() {
+            local max_attempts="$1"
+            shift
+            local attempt=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -ge "${max_attempts}" ]; then
+                return 1
+              fi
+              echo "Command failed, retrying... (${attempt}/${max_attempts})"
+              attempt=$((attempt + 1))
+              sleep 3
+            done
+          }
+
+          TAG="nightly"
+          TITLE="Wunder Desktop Nightly（每日构建）"
+          NOTES="release-assets/nightly-release-notes.md"
+
+          # Use gh CLI instead of softprops/action-gh-release to avoid draft finalization retries.
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            retry 3 gh release edit "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${TITLE}" \
+              --notes-file "${NOTES}" \
+              --draft=false \
+              --prerelease \
+              --latest=false
+          else
+            retry 3 gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "${TITLE}" \
+              --notes-file "${NOTES}" \
+              --prerelease \
+              --latest=false \
+              --target "${GITHUB_SHA}"
+          fi
+
+          mapfile -d '' -t assets < <(
+            find "$GITHUB_WORKSPACE/release-assets" -maxdepth 1 -type f ! -name "nightly-release-notes.md" -print0 | sort -z
+          )
+
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release assets found in $GITHUB_WORKSPACE/release-assets" >&2
+            exit 1
+          fi
+
+          for asset in "${assets[@]}"; do
+            [ -z "${asset}" ] && continue
+            retry 3 gh release upload "${TAG}" "${asset}" --repo "${GITHUB_REPOSITORY}" --clobber
+          done

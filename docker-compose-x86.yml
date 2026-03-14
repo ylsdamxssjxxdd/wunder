@@ -1,4 +1,4 @@
-x-rust-build: &rust-build
+﻿x-rust-build: &rust-build
   context: .
   dockerfile: Dockerfile
   args:
@@ -172,11 +172,10 @@ services:
       - seccomp:unconfined
     platform: linux/amd64
     container_name: wunder-frontend
-    working_dir: /app
+    working_dir: /workspace
     restart: always
     volumes:
-      - ./frontend:/app
-      # Keep node_modules on the repo bind mount for easier local cleanup/management.
+      - ./:/workspace
     ports:
       - "${FRONTEND_PORT:-18001}:${FRONTEND_PORT:-18001}"
     environment:
@@ -187,32 +186,45 @@ services:
       - FRONTEND_UMASK=${FRONTEND_UMASK:-022}
       - FRONTEND_PORT=${FRONTEND_PORT:-18001}
       - FRONTEND_HOST=${FRONTEND_HOST:-0.0.0.0}
+      - FRONTEND_STRICT_PORT=${FRONTEND_STRICT_PORT:-1}
       - FRONTEND_WAIT_BACKEND_TIMEOUT_S=${FRONTEND_WAIT_BACKEND_TIMEOUT_S:-900}
       - FRONTEND_WAIT_BACKEND_INTERVAL_MS=${FRONTEND_WAIT_BACKEND_INTERVAL_MS:-1000}
     # Force a safe umask so build artifacts remain readable by nginx.
     entrypoint: ["sh", "-lc", "umask ${FRONTEND_UMASK:-022}; exec \"$@\"", "--"]
-    command: ["sh", "-c", "npm install && node ./scripts/wait-backend.mjs && npm run dev -- --host ${FRONTEND_HOST:-0.0.0.0} --port ${FRONTEND_PORT:-18001}"]
-    # command: ["sh", "-c", "npm install && npm run build"]
+    command: ["sh", "-c", "if [ ! -x /workspace/node_modules/.bin/vite ] && [ ! -x /workspace/frontend/node_modules/.bin/vite ]; then npm ci --workspace wunder-frontend --include-workspace-root=false; fi && rm -rf /workspace/node_modules/.vite /workspace/frontend/node_modules/.vite /workspace/frontend/dist && npm run build --workspace wunder-frontend && node ./frontend/scripts/wait-backend.mjs && npm run dev --workspace wunder-frontend"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:' + (process.env.FRONTEND_PORT || '18001') + '/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    # command: ["sh", "-c", "npm install --workspace wunder-frontend --include-workspace-root=false && npm run build --workspace wunder-frontend"]
 
-  # wunder-nginx:
-  #   image: nginx:latest
-  #   privileged: true
-  #   security_opt:
-  #     - seccomp:unconfined
-  #   platform: linux/amd64
-  #   container_name: wunder-nginx
-  #   environment:
-  #     - TZ=Asia/Shanghai
-  #   depends_on:
-  #     - wunder-server
-  #   restart: always
-  #   volumes:
-  #     - ./frontend/dist:/usr/share/nginx/html:ro${NGINX_BIND_OPTS:-}
-  #     - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro${NGINX_BIND_OPTS:-}
-  #     - ./frontend/public/config.json:/etc/wunder/config.json:ro${NGINX_BIND_OPTS:-}
-  #   ports:
-  #     - "${NGINX_PORT:-18002}:80"
+  wunder-nginx:
+    image: nginx:latest
+    privileged: true
+    security_opt:
+      - seccomp:unconfined
+    platform: linux/amd64
+    container_name: wunder-nginx
+    environment:
+      - TZ=Asia/Shanghai
+    depends_on:
+      wunder-server:
+        condition: service_started
+      wunder-frontend:
+        condition: service_healthy
+    restart: always
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro${NGINX_BIND_OPTS:-}
+      - ./frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro${NGINX_BIND_OPTS:-}
+      - ./frontend/public/config.json:/etc/wunder/config.json:ro${NGINX_BIND_OPTS:-}
+    ports:
+      - "${NGINX_PORT:-18002}:80"
 
 volumes:
   wunder_workspaces:
   wunder_logs:
+
+
+
