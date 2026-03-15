@@ -996,12 +996,16 @@
     "zh-CN": "至少提供一条路线。"
   },
   "tool.memory_manager.invalid_action": {
-    "en-US": "Invalid memory action. Use list/add/update/delete/clear.",
-    "zh-CN": "记忆动作无效，可用 list/add/update/delete/clear。"
+    "en-US": "Invalid memory action. Use list/add/update/delete/clear/recall.",
+    "zh-CN": "记忆动作无效，可用 list/add/update/delete/clear/recall。"
   },
   "tool.memory_manager.note_new_sessions_only": {
-    "en-US": "Memory changes apply to new sessions only; existing sessions keep their cached prompt snapshot.",
-    "zh-CN": "记忆变更仅对新会话生效；已有会话继续使用已缓存的提示词快照。"
+    "en-US": "Memory writes affect future sessions only; existing sessions keep their frozen prompt snapshot. Use recall to fetch the latest memory inside the current session.",
+    "zh-CN": "记忆写入仅对后续新会话生效；已有会话继续使用已冻结的提示词快照。当前会话如需最新记忆，请调用 recall 主动检索。"
+  },
+  "tool.memory_manager.note_recall_current_session": {
+    "en-US": "Recall reads the latest long-term memory in the current session without rewriting the thread's frozen system prompt.",
+    "zh-CN": "recall 会在当前会话中读取最新长期记忆，但不会改写该线程已冻结的系统提示词。"
   },
   "tool.list.path_not_found": {
     "en-US": "Path not found.",
@@ -1888,24 +1892,28 @@
     "zh-CN": "等待超时秒数（1-30）。"
   },
   "tool.spec.memory_manager.description": {
-    "en-US": "Manage the current agent's long-term memory entries (list/add/update/delete/clear). Trigger after key facts, preferences, constraints, or persistent to-dos appear; avoid frequent writes for transient details. Changes affect new sessions only; existing sessions keep their prompt snapshot.",
-    "zh-CN": "管理当前智能体的长期记忆条目（list/add/update/delete/clear）。当出现稳定事实、用户偏好、长期约束或持续待办时调用；临时信息不要频繁写入。记忆变更仅对新会话生效，已有会话保持原提示词快照。"
+    "en-US": "Manage and recall the current agent's long-term memory entries (list/add/update/delete/clear/recall). Use recall when the current thread needs the latest memory without changing its frozen system prompt; use write actions only for stable facts, preferences, constraints, or persistent to-dos.",
+    "zh-CN": "管理并检索当前智能体的长期记忆条目（list/add/update/delete/clear/recall）。当当前线程需要读取最新记忆但又不能改写其已冻结的系统提示词时，优先调用 recall；只有在出现稳定事实、用户偏好、长期约束或持续待办时才使用写入类动作。"
   },
   "tool.spec.memory_manager.args.action": {
-    "en-US": "Action: list/add/update/delete/clear.",
-    "zh-CN": "动作类型：list/add/update/delete/clear。"
+    "en-US": "Action: list/add/update/delete/clear/recall.",
+    "zh-CN": "动作类型：list/add/update/delete/clear/recall。"
   },
   "tool.spec.memory_manager.args.memory_id": {
     "en-US": "Memory entry id (required for update/delete).",
     "zh-CN": "记忆条目 ID（update/delete 必填）。"
   },
   "tool.spec.memory_manager.args.content": {
-    "en-US": "Memory content (required for add/update).",
-    "zh-CN": "记忆内容（add/update 必填）。"
+    "en-US": "Memory content (required for add/update; can also be reused as the recall query).",
+    "zh-CN": "记忆内容（add/update 必填；在 recall 时也可复用为检索词）。"
+  },
+  "tool.spec.memory_manager.args.query": {
+    "en-US": "Recall query text. When omitted, returns pinned/confirmed/recent memory candidates.",
+    "zh-CN": "recall 检索词；省略时返回置顶/已确认/近期记忆候选。"
   },
   "tool.spec.memory_manager.args.limit": {
-    "en-US": "Max number of entries for list (1-200).",
-    "zh-CN": "list 时返回条目数量上限（1-200）。"
+    "en-US": "Max number of entries for list/recall (list: 1-200, recall: internally capped to 12).",
+    "zh-CN": "list/recall 返回条目数量上限（list: 1-200；recall 内部最大为 12）。"
   },
   "tool.spec.memory_manager.args.order": {
     "en-US": "List order: desc (latest first) or asc.",

@@ -433,7 +433,7 @@ const { t } = useI18n();
 const desktopLocalMode = computed(() => isDesktopModeEnabled() && !isDesktopRemoteAuthMode());
 const showApprovalModeSetting = computed(() => desktopLocalMode.value);
 const resolveDefaultApprovalMode = (): string =>
-  showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
+  'full_auto';
 const RUNNING_REFRESH_MS = 6000;
 const DEFAULT_AGENT_KEY = '__default__';
 const PORTAL_PREFETCH_HOVER_DELAY_MS = 120;

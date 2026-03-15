@@ -1,0 +1,32 @@
+{
+  "recommendedArch": "x64",
+  "rustToolchain": "nightly-x86_64-pc-windows-msvc",
+  "electronVersion": "22.3.27",
+  "electronBuilderVersion": "24.13.3",
+  "labRoot": "temp_dir\\win7-gnu-lab",
+  "paths": {
+    "cargoHome": "cargo-home-win7-target",
+    "cargoPatchConfig": "cargo-win7-patch.toml",
+    "toolchainManifest": "toolchain-manifest.json",
+    "bridgeTargetDirPattern": "bridge-build-target-{arch}-win7-gnu",
+    "tokioRustlsPatchDir": "patches\\win7\\tokio-rustls-0.26.4-win7"
+  },
+  "architectures": {
+    "x64": {
+      "target": "x86_64-win7-windows-gnu",
+      "mingwBin": "C:\\mingw64\\bin",
+      "gcc": "x86_64-w64-mingw32-gcc",
+      "gxx": "x86_64-w64-mingw32-g++",
+      "ar": "x86_64-w64-mingw32-gcc-ar",
+      "ranlib": "x86_64-w64-mingw32-gcc-ranlib"
+    },
+    "ia32": {
+      "target": "i686-win7-windows-gnu",
+      "mingwBin": "C:\\mingw32\\bin",
+      "gcc": "i686-w64-mingw32-gcc",
+      "gxx": "i686-w64-mingw32-g++",
+      "ar": "i686-w64-mingw32-gcc-ar",
+      "ranlib": "i686-w64-mingw32-gcc-ranlib"
+    }
+  }
+}

@@ -51,7 +51,7 @@ const normalizeStringList = (value: unknown): string[] => normalizeDependencyNam
 
 const normalizeApprovalMode = (value: unknown): 'suggest' | 'auto_edit' | 'full_auto' => {
   const normalized = trimString(value);
-  return APPROVAL_MODES.has(normalized) ? (normalized as 'suggest' | 'auto_edit' | 'full_auto') : 'auto_edit';
+  return APPROVAL_MODES.has(normalized) ? (normalized as 'suggest' | 'auto_edit' | 'full_auto') : 'full_auto';
 };
 
 const normalizeSandboxContainerId = (value: unknown): number => {

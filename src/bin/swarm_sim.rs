@@ -400,6 +400,7 @@ fn seed_agents(state: &AppState, user_id: &str, agent_count: usize) -> Result<Ve
             sandbox_container_id: (index + 1) as i32,
             created_at: now,
             updated_at: now,
+            preset_binding: None,
         };
         state.user_store.upsert_user_agent(&record)?;
         agent_ids.push(agent_id);

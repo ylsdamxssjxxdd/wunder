@@ -12,7 +12,7 @@
     </div>
     <div class="workspace-preview-meta">{{ resolvedWorkspacePath }}</div>
     <div class="workspace-preview embed">
-      <img v-if="imageUrl" :src="imageUrl" :alt="resolvedTitle" />
+      <ZoomableImagePreview :image-url="imageUrl" :alt="resolvedTitle" :active="visible" />
     </div>
     <template #footer>
       <button
@@ -33,6 +33,7 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 
+import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
 import { useI18n } from '@/i18n';
 
 const props = defineProps<{

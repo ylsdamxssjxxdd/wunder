@@ -6,16 +6,18 @@
   "main": "src/main.js",
   "author": "wunder",
   "scripts": {
+    "prepare:runtime-deps": "node scripts/ensure-runtime-deps.js",
     "prepare:icons": "node scripts/sync-icons.js",
     "prepare:resources": "npm run prepare:icons && node scripts/prepare-resources.js",
-    "pack": "npm run prepare:resources && electron-builder --dir --publish never",
-    "build:linux": "npm run prepare:resources && electron-builder --linux --x64 --arm64 --publish never",
-    "build:linux:x64": "npm run prepare:resources && electron-builder --linux --x64 --publish never",
-    "build:linux:arm64": "npm run prepare:resources && electron-builder --linux --arm64 --publish never",
-    "build": "npm run prepare:resources && electron-builder --publish never"
+    "pack": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --dir --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false",
+    "build:linux": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --linux --x64 --arm64 --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false",
+    "build:linux:x64": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --linux --x64 --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false",
+    "build:linux:arm64": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --linux --arm64 --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false",
+    "build": "npm run prepare:runtime-deps && npm run prepare:resources && electron-builder --publish never --config.npmRebuild=false --config.buildDependenciesFromSource=false"
   },
   "dependencies": {
-    "electron-updater": "6.6.2"
+    "electron-updater": "6.6.2",
+    "wunder-workspace": "file:../.."
   },
   "devDependencies": {
     "@resvg/resvg-js": "^2.6.2",

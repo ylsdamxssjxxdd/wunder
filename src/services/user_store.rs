@@ -29,7 +29,7 @@ const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
-const DEFAULT_AGENT_APPROVAL_MODE: &str = "auto_edit";
+const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -996,6 +996,7 @@ pub(crate) fn build_default_agent_record_from_storage(
         sandbox_container_id: snapshot.sandbox_container_id,
         created_at: snapshot.created_at,
         updated_at: snapshot.updated_at,
+        preset_binding: None,
     })
 }
 
@@ -1063,8 +1064,8 @@ mod tests {
         let other_hive = HiveRecord {
             hive_id: "intel".to_string(),
             user_id: user.user_id.clone(),
-            name: "情报蜂群".to_string(),
-            description: "已有蜂群".to_string(),
+            name: "鎯呮姤铚傜兢".to_string(),
+            description: "宸叉湁铚傜兢".to_string(),
             is_default: false,
             status: "active".to_string(),
             created_time: now,
@@ -1115,7 +1116,7 @@ mod tests {
                     "name": "默认智能体",
                     "description": "系统级默认成员",
                     "preset_questions": ["帮我总结今天的待办", "先列一个三步执行方案"],
-                    "approval_mode": "auto_edit",
+                    "approval_mode": "full_auto",
                     "status": "active"
                 })
                 .to_string(),
@@ -1133,7 +1134,10 @@ mod tests {
         assert_eq!(agents[0].description, "系统级默认成员");
         assert_eq!(
             agents[0].preset_questions,
-            vec!["帮我总结今天的待办".to_string(), "先列一个三步执行方案".to_string()]
+            vec![
+                "帮我总结今天的待办".to_string(),
+                "先列一个三步执行方案".to_string()
+            ]
         );
     }
 
@@ -1172,13 +1176,14 @@ mod tests {
                 "给我一个执行清单".to_string(),
             ],
             access_level: "A".to_string(),
-            approval_mode: "auto_edit".to_string(),
+            approval_mode: "full_auto".to_string(),
             is_shared: false,
             status: "active".to_string(),
             icon: None,
             sandbox_container_id: 1,
             created_at: 1.0,
             updated_at: 1.0,
+            preset_binding: None,
         };
 
         store.upsert_user_agent(&record).expect("upsert agent");
@@ -1251,11 +1256,11 @@ mod tests {
                 "alice",
                 DEFAULT_HIVE_ID,
                 "system",
-                "蜂群",
+                "铚傜兢",
                 None,
                 None,
                 None,
-                "待命",
+                "寰呭懡",
                 None,
                 "system",
                 Some("msg-clear"),

@@ -767,6 +767,7 @@ fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(Strin
         sandbox_container_id: 1,
         created_at: now,
         updated_at: now,
+        preset_binding: None,
     };
     state.user_store.upsert_user_agent(&mother)?;
 
@@ -792,6 +793,7 @@ fn seed_agents(state: &AppState, user_id: &str, workers: usize) -> Result<(Strin
             sandbox_container_id: (index + 2) as i32,
             created_at: now,
             updated_at: now,
+            preset_binding: None,
         };
         state.user_store.upsert_user_agent(&worker)?;
         workers_ids.push(agent_id);

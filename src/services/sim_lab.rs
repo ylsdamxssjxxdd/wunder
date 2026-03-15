@@ -1532,6 +1532,7 @@ fn seed_swarm_agents(
         sandbox_container_id: random_sandbox_container_id(workers),
         created_at: now,
         updated_at: now,
+        preset_binding: None,
     };
     state.user_store.upsert_user_agent(&mother)?;
 
@@ -1560,6 +1561,7 @@ fn seed_swarm_agents(
             sandbox_container_id: random_sandbox_container_id(index),
             created_at: now,
             updated_at: now,
+            preset_binding: None,
         };
         state.user_store.upsert_user_agent(&worker)?;
         worker_ids.push(agent_id);

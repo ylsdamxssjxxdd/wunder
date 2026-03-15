@@ -19,6 +19,10 @@ use crate::path_utils::{
 use crate::performance::{
     run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
 };
+use crate::services::user_agent_presets::{
+    self, find_preset_by_id, normalize_agent_approval_mode, normalize_agent_status,
+    normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
+};
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
 use crate::throughput::{
@@ -266,6 +270,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/admin/preset_agents",
             get(admin_preset_agents_list).post(admin_preset_agents_update),
+        )
+        .route(
+            "/wunder/admin/preset_agents/sync",
+            post(admin_preset_agents_sync),
         )
         .route(
             "/wunder/admin/external_links/{link_id}",
@@ -3965,7 +3973,8 @@ async fn admin_preset_agents_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<PresetAgentsUpdateRequest>,
 ) -> Result<Json<Value>, Response> {
-    let normalized = normalize_preset_agents(payload.items)?;
+    let current = state.config_store.get().await;
+    let normalized = normalize_preset_agents(&current.user_agents.presets, payload.items)?;
     let next_presets = normalized.clone();
     let updated = state
         .config_store
@@ -3981,6 +3990,73 @@ async fn admin_preset_agents_update(
         .map(preset_agent_payload)
         .collect::<Vec<_>>();
     Ok(Json(json!({ "data": { "items": items } })))
+}
+
+async fn admin_preset_agents_sync(
+    State(state): State<Arc<AppState>>,
+    headers: AxumHeaderMap,
+    Json(payload): Json<PresetAgentsSyncRequest>,
+) -> Result<Json<Value>, Response> {
+    let units = state
+        .user_store
+        .list_org_units()
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let actor = resolve_admin_actor(&state, &headers, true, &units)?;
+    let unit_scope = match payload.scope_unit_id.as_deref().map(str::trim) {
+        Some(unit_id) if !unit_id.is_empty() => {
+            ensure_unit_scope(&actor, Some(unit_id))?;
+            Some(vec![unit_id.to_string()])
+        }
+        _ => actor.scope_unit_ids.as_ref().map(|ids| {
+            let mut items = ids.iter().cloned().collect::<Vec<_>>();
+            items.sort();
+            items
+        }),
+    };
+    let preset = find_preset_by_id(&state, &payload.preset_id)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mode = if payload.mode.as_deref() == Some("force") {
+        PresetSyncMode::Force
+    } else {
+        PresetSyncMode::Safe
+    };
+    let summary = user_agent_presets::sync_preset_across_users(
+        &state,
+        &preset,
+        mode,
+        unit_scope.as_deref(),
+        payload.dry_run.unwrap_or(false),
+    )
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({
+        "data": {
+            "preset": {
+                "preset_id": preset.preset_id,
+                "name": preset.name,
+                "revision": preset.revision,
+            },
+            "mode": match mode {
+                PresetSyncMode::Safe => "safe",
+                PresetSyncMode::Force => "force",
+            },
+            "dry_run": payload.dry_run.unwrap_or(false),
+            "summary": {
+                "total_users": summary.total_users,
+                "linked_users": summary.linked_users,
+                "missing_users": summary.missing_users,
+                "up_to_date_agents": summary.up_to_date_agents,
+                "stale_agents": summary.stale_agents,
+                "safe_update_agents": summary.safe_update_agents,
+                "overridden_agents": summary.overridden_agents,
+                "force_update_agents": summary.force_update_agents,
+                "created_agents": summary.created_agents,
+                "updated_agents": summary.updated_agents,
+                "rebound_agents": summary.rebound_agents,
+            }
+        }
+    })))
 }
 
 async fn admin_user_accounts_list(
@@ -5057,19 +5133,30 @@ fn external_link_payload(record: &ExternalLinkRecord) -> Value {
 
 fn preset_agent_payload(record: &UserAgentPresetConfig) -> Value {
     json!({
+        "preset_id": resolve_preset_id(&record.preset_id, &record.name),
+        "revision": record.revision.max(1),
         "name": record.name.trim(),
         "description": record.description.trim(),
         "system_prompt": record.system_prompt.trim(),
         "icon_name": normalize_preset_icon_name(Some(record.icon_name.as_str())),
         "icon_color": normalize_preset_icon_color(Some(record.icon_color.as_str())),
         "sandbox_container_id": crate::storage::normalize_sandbox_container_id(record.sandbox_container_id),
+        "tool_names": normalize_tool_list(record.tool_names.clone()),
+        "declared_tool_names": normalize_tool_list(record.declared_tool_names.clone()),
+        "declared_skill_names": normalize_tool_list(record.declared_skill_names.clone()),
+        "preset_questions": normalize_preset_questions(record.preset_questions.clone()),
+        "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
+        "status": normalize_agent_status(Some(&record.status)),
     })
 }
 
 fn normalize_preset_agents(
+    existing_items: &[UserAgentPresetConfig],
     items: Vec<PresetAgentUpsertItem>,
 ) -> Result<Vec<UserAgentPresetConfig>, Response> {
+    let existing_by_id = user_agent_presets::configs_by_preset_id(existing_items);
     let mut seen_names = HashSet::new();
+    let mut seen_ids = HashSet::new();
     let mut output = Vec::with_capacity(items.len());
     for item in items {
         let cleaned_name = item.name.trim();
@@ -5086,7 +5173,57 @@ fn normalize_preset_agents(
                 format!("duplicate preset agent name: {cleaned_name}"),
             ));
         }
+        let preset_id =
+            resolve_preset_id(item.preset_id.as_deref().unwrap_or_default(), cleaned_name);
+        if !seen_ids.insert(preset_id.clone()) {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                format!("duplicate preset agent id: {preset_id}"),
+            ));
+        }
+        let previous = existing_by_id.get(&preset_id);
+        let next_tool_names = normalize_tool_list(item.tool_names.unwrap_or_default());
+        let next_declared_tool_names =
+            normalize_tool_list(item.declared_tool_names.unwrap_or_default());
+        let next_declared_skill_names =
+            normalize_tool_list(item.declared_skill_names.unwrap_or_default());
+        let next_preset_questions =
+            normalize_preset_questions(item.preset_questions.unwrap_or_default());
+        let next_approval_mode = normalize_agent_approval_mode(item.approval_mode.as_deref());
+        let next_status = normalize_agent_status(item.status.as_deref());
+        let revision_changed = previous.is_some_and(|prev| {
+            prev.name.trim() != cleaned_name
+                || prev.description.trim() != item.description.trim()
+                || prev.system_prompt.trim() != item.system_prompt.trim()
+                || normalize_preset_icon_name(Some(prev.icon_name.as_str()))
+                    != normalize_preset_icon_name(item.icon_name.as_deref())
+                || normalize_preset_icon_color(Some(prev.icon_color.as_str()))
+                    != normalize_preset_icon_color(item.icon_color.as_deref())
+                || crate::storage::normalize_sandbox_container_id(prev.sandbox_container_id)
+                    != crate::storage::normalize_sandbox_container_id(
+                        item.sandbox_container_id.unwrap_or(1),
+                    )
+                || normalize_tool_list(prev.tool_names.clone()) != next_tool_names
+                || normalize_tool_list(prev.declared_tool_names.clone()) != next_declared_tool_names
+                || normalize_tool_list(prev.declared_skill_names.clone())
+                    != next_declared_skill_names
+                || normalize_preset_questions(prev.preset_questions.clone())
+                    != next_preset_questions
+                || normalize_agent_approval_mode(Some(&prev.approval_mode)) != next_approval_mode
+                || normalize_agent_status(Some(&prev.status)) != next_status
+        });
+        let revision = previous
+            .map(|prev| {
+                if revision_changed {
+                    prev.revision.max(1) + 1
+                } else {
+                    prev.revision.max(1)
+                }
+            })
+            .unwrap_or(1);
         output.push(UserAgentPresetConfig {
+            preset_id,
+            revision,
             name: cleaned_name.to_string(),
             description: item.description.trim().to_string(),
             system_prompt: item.system_prompt.trim().to_string(),
@@ -5095,6 +5232,12 @@ fn normalize_preset_agents(
             sandbox_container_id: crate::storage::normalize_sandbox_container_id(
                 item.sandbox_container_id.unwrap_or(1),
             ),
+            tool_names: next_tool_names,
+            declared_tool_names: next_declared_tool_names,
+            declared_skill_names: next_declared_skill_names,
+            preset_questions: next_preset_questions,
+            approval_mode: next_approval_mode,
+            status: next_status,
         });
     }
     Ok(output)
@@ -6253,6 +6396,8 @@ struct PresetAgentsUpdateRequest {
 struct PresetAgentUpsertItem {
     name: String,
     #[serde(default)]
+    preset_id: Option<String>,
+    #[serde(default)]
     description: String,
     #[serde(default)]
     system_prompt: String,
@@ -6262,6 +6407,29 @@ struct PresetAgentUpsertItem {
     icon_color: Option<String>,
     #[serde(default)]
     sandbox_container_id: Option<i32>,
+    #[serde(default)]
+    tool_names: Option<Vec<String>>,
+    #[serde(default)]
+    declared_tool_names: Option<Vec<String>>,
+    #[serde(default)]
+    declared_skill_names: Option<Vec<String>>,
+    #[serde(default)]
+    preset_questions: Option<Vec<String>>,
+    #[serde(default)]
+    approval_mode: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PresetAgentsSyncRequest {
+    preset_id: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+    #[serde(default)]
+    scope_unit_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

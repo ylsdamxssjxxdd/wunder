@@ -5,7 +5,9 @@ use crate::gateway::GatewayHub;
 use crate::lsp::LspManager;
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
-use crate::path_utils::{is_within_root, normalize_existing_path, normalize_path_for_compare};
+use crate::path_utils::{
+    is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
+};
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::skills::SkillRegistry;
 use crate::storage::StorageBackend;
@@ -15,7 +17,7 @@ use crate::workspace::WorkspaceManager;
 use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashSet;
-use std::path::{Component, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 type ToolEventCallback = dyn Fn(&str, Value) + Send + Sync;
@@ -126,7 +128,40 @@ pub(crate) fn build_allow_roots(config: &Config) -> Vec<PathBuf> {
         };
         roots.push(resolved);
     }
+    // Desktop local mode should be able to inspect and operate on the local filesystem
+    // without being artificially constrained to the per-user workspace root.
+    if is_desktop_local_mode(config) {
+        roots.extend(desktop_local_allow_roots());
+    }
     dedupe_roots(roots)
+}
+
+fn is_desktop_local_mode(config: &Config) -> bool {
+    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+        && config.sandbox.mode.trim().eq_ignore_ascii_case("local")
+}
+
+#[cfg(windows)]
+fn desktop_local_allow_roots() -> Vec<PathBuf> {
+    ('A'..='Z')
+        .map(|drive| PathBuf::from(format!("{drive}:\\")))
+        .filter(|path| path.exists())
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn desktop_local_allow_roots() -> Vec<PathBuf> {
+    vec![PathBuf::from(std::path::MAIN_SEPARATOR.to_string())]
+}
+
+fn path_is_filesystem_root(path: &Path) -> bool {
+    path.parent().is_none()
+}
+
+fn allow_any_path_in_roots(roots: &[PathBuf]) -> bool {
+    roots
+        .iter()
+        .any(|root| path_is_filesystem_root(root.as_path()))
 }
 
 pub(crate) fn collect_allow_roots(context: &ToolContext<'_>) -> Vec<PathBuf> {
@@ -171,10 +206,16 @@ pub(crate) fn resolve_path_in_roots(raw_path: &str, roots: &[PathBuf]) -> Option
     if trimmed.is_empty() {
         return None;
     }
+    let allow_any_path = allow_any_path_in_roots(roots);
     let candidate = {
         let path = PathBuf::from(trimmed);
         if path.is_absolute() {
             path
+        } else if allow_any_path {
+            // When local desktop mode exposes filesystem roots, keep relative traversal available
+            // so agent tools can follow user-provided local paths instead of failing on `..`.
+            let cwd = std::env::current_dir().ok()?;
+            normalize_target_path(&cwd.join(path))
         } else {
             let relative = sanitize_relative_path(trimmed)?;
             let cwd = std::env::current_dir().ok()?;
@@ -223,4 +264,43 @@ pub(crate) fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
         }
     }
     Some(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_allow_roots, resolve_path_in_roots};
+    use crate::config::Config;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use tempfile::tempdir;
+
+    fn filesystem_root_for(path: &Path) -> PathBuf {
+        path.ancestors()
+            .last()
+            .expect("filesystem root")
+            .to_path_buf()
+    }
+
+    #[test]
+    fn desktop_local_mode_includes_filesystem_roots() {
+        let mut config = Config::default();
+        config.server.mode = "desktop".to_string();
+        config.sandbox.mode = "local".to_string();
+
+        let roots = build_allow_roots(&config);
+
+        assert!(roots.iter().any(|root| root.parent().is_none()));
+    }
+
+    #[test]
+    fn resolve_path_in_roots_allows_absolute_path_under_filesystem_root() {
+        let temp = tempdir().expect("tempdir");
+        let target = temp.path().join("outside.txt");
+        fs::write(&target, "ok").expect("write target");
+        let roots = vec![filesystem_root_for(&target)];
+
+        let resolved = resolve_path_in_roots(&target.to_string_lossy(), &roots).expect("resolved");
+
+        assert_eq!(resolved, target);
+    }
 }

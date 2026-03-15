@@ -1,4 +1,3 @@
-// SQLite 存储实现：参考 Python 版结构，统一持久化历史/监控/记忆数据。
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
 use crate::services::output_quality;
@@ -8,10 +7,11 @@ use crate::storage::{
     ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord, ChatSessionRecord,
     CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord, GatewayNodeRecord,
     GatewayNodeTokenRecord, HiveRecord, ListChannelUserBindingsQuery, MediaAssetRecord,
-    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
-    StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
-    UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord, OrgUnitRecord, SessionLockRecord,
+    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, TeamRunRecord,
+    TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
+    UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
+    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
     UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
     UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
     UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
@@ -198,6 +198,14 @@ impl SqliteStorage {
         Self::parse_string_list(value)
     }
 
+    fn parse_preset_binding(value: Option<String>) -> Option<UserAgentPresetBinding> {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| serde_json::from_str::<UserAgentPresetBinding>(raw).ok())
+    }
+
     fn read_user_agent_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<UserAgentRecord> {
         let tool_names = Self::parse_string_list(row.get(6)?);
         Ok(UserAgentRecord {
@@ -221,6 +229,7 @@ impl SqliteStorage {
             ),
             created_at: row.get(15)?,
             updated_at: row.get(16)?,
+            preset_binding: Self::parse_preset_binding(row.get(18)?),
         })
     }
 
@@ -410,13 +419,25 @@ impl SqliteStorage {
     fn ensure_user_agent_columns(&self, conn: &Connection) -> Result<()> {
         let columns = load_table_columns(conn, "user_agents")?;
         if !columns.contains("preset_questions") {
-            conn.execute("ALTER TABLE user_agents ADD COLUMN preset_questions TEXT", [])?;
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN preset_questions TEXT",
+                [],
+            )?;
         }
         if !columns.contains("declared_tool_names") {
-            conn.execute("ALTER TABLE user_agents ADD COLUMN declared_tool_names TEXT", [])?;
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN declared_tool_names TEXT",
+                [],
+            )?;
         }
         if !columns.contains("declared_skill_names") {
-            conn.execute("ALTER TABLE user_agents ADD COLUMN declared_skill_names TEXT", [])?;
+            conn.execute(
+                "ALTER TABLE user_agents ADD COLUMN declared_skill_names TEXT",
+                [],
+            )?;
+        }
+        if !columns.contains("preset_binding") {
+            conn.execute("ALTER TABLE user_agents ADD COLUMN preset_binding TEXT", [])?;
         }
         Ok(())
     }
@@ -650,6 +671,85 @@ impl StorageBackend for SqliteStorage {
               ON memory_task_logs (updated_time);
             CREATE INDEX IF NOT EXISTS idx_memory_task_logs_task_id
               ON memory_task_logs (task_id);
+            CREATE TABLE IF NOT EXISTS memory_fragments (
+              memory_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              source_session_id TEXT NOT NULL,
+              source_round_id TEXT NOT NULL,
+              source_type TEXT NOT NULL,
+              category TEXT NOT NULL,
+              title_l0 TEXT NOT NULL,
+              summary_l1 TEXT NOT NULL,
+              content_l2 TEXT NOT NULL,
+              fact_key TEXT NOT NULL,
+              tags TEXT NOT NULL,
+              entities TEXT NOT NULL,
+              importance REAL NOT NULL,
+              confidence REAL NOT NULL,
+              tier TEXT NOT NULL,
+              status TEXT NOT NULL,
+              pinned INTEGER NOT NULL DEFAULT 0,
+              confirmed_by_user INTEGER NOT NULL DEFAULT 0,
+              access_count INTEGER NOT NULL DEFAULT 0,
+              hit_count INTEGER NOT NULL DEFAULT 0,
+              last_accessed_at REAL NOT NULL DEFAULT 0,
+              valid_from REAL NOT NULL,
+              invalidated_at REAL,
+              supersedes_memory_id TEXT,
+              superseded_by_memory_id TEXT,
+              embedding_model TEXT,
+              vector_ref TEXT,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_fragments_user_agent
+              ON memory_fragments (user_id, agent_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_fragments_fact_key
+              ON memory_fragments (user_id, agent_id, fact_key);
+            CREATE INDEX IF NOT EXISTS idx_memory_fragments_status
+              ON memory_fragments (user_id, agent_id, status, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS memory_hits (
+              hit_id TEXT PRIMARY KEY,
+              memory_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              round_id TEXT NOT NULL,
+              query_text TEXT NOT NULL,
+              reason_json TEXT NOT NULL,
+              lexical_score REAL NOT NULL,
+              semantic_score REAL NOT NULL,
+              freshness_score REAL NOT NULL,
+              importance_score REAL NOT NULL,
+              final_score REAL NOT NULL,
+              created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_hits_user_agent
+              ON memory_hits (user_id, agent_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_hits_session
+              ON memory_hits (user_id, agent_id, session_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_hits_memory
+              ON memory_hits (memory_id, created_at DESC);
+            CREATE TABLE IF NOT EXISTS memory_jobs (
+              job_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              session_id TEXT NOT NULL,
+              job_type TEXT NOT NULL,
+              status TEXT NOT NULL,
+              request_payload TEXT NOT NULL,
+              result_summary TEXT NOT NULL,
+              error_message TEXT NOT NULL,
+              queued_at REAL NOT NULL,
+              started_at REAL NOT NULL,
+              finished_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_jobs_user_agent
+              ON memory_jobs (user_id, agent_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_jobs_session
+              ON memory_jobs (session_id, updated_at DESC);
             CREATE TABLE IF NOT EXISTS evaluation_runs (
               run_id TEXT PRIMARY KEY,
               user_id TEXT,
@@ -1140,14 +1240,15 @@ impl StorageBackend for SqliteStorage {
               declared_tool_names TEXT,
               declared_skill_names TEXT,
               access_level TEXT NOT NULL,
-              approval_mode TEXT NOT NULL DEFAULT 'auto_edit',
+              approval_mode TEXT NOT NULL DEFAULT 'full_auto',
               is_shared INTEGER NOT NULL DEFAULT 0,
               status TEXT NOT NULL,
               icon TEXT,
               sandbox_container_id INTEGER NOT NULL DEFAULT 1,
               created_at REAL NOT NULL,
               updated_at REAL NOT NULL,
-              preset_questions TEXT
+              preset_questions TEXT,
+              preset_binding TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_user_agents_user
               ON user_agents (user_id, updated_at);
@@ -2957,6 +3058,285 @@ impl StorageBackend for SqliteStorage {
             params![cleaned_user],
         )?;
         Ok(affected as i64)
+    }
+
+    fn upsert_memory_fragment(&self, record: &MemoryFragmentRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO memory_fragments (memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(memory_id) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, source_session_id = excluded.source_session_id, source_round_id = excluded.source_round_id, source_type = excluded.source_type, category = excluded.category, title_l0 = excluded.title_l0, summary_l1 = excluded.summary_l1, content_l2 = excluded.content_l2, fact_key = excluded.fact_key, tags = excluded.tags, entities = excluded.entities, importance = excluded.importance, confidence = excluded.confidence, tier = excluded.tier, status = excluded.status, pinned = excluded.pinned, confirmed_by_user = excluded.confirmed_by_user, access_count = excluded.access_count, hit_count = excluded.hit_count, last_accessed_at = excluded.last_accessed_at, valid_from = excluded.valid_from, invalidated_at = excluded.invalidated_at, supersedes_memory_id = excluded.supersedes_memory_id, superseded_by_memory_id = excluded.superseded_by_memory_id, embedding_model = excluded.embedding_model, vector_ref = excluded.vector_ref, created_at = excluded.created_at, updated_at = excluded.updated_at",
+            params![
+                record.memory_id,
+                record.user_id,
+                record.agent_id,
+                record.source_session_id,
+                record.source_round_id,
+                record.source_type,
+                record.category,
+                record.title_l0,
+                record.summary_l1,
+                record.content_l2,
+                record.fact_key,
+                Self::string_list_to_json(&record.tags),
+                Self::string_list_to_json(&record.entities),
+                record.importance,
+                record.confidence,
+                record.tier,
+                record.status,
+                if record.pinned { 1 } else { 0 },
+                if record.confirmed_by_user { 1 } else { 0 },
+                record.access_count,
+                record.hit_count,
+                record.last_accessed_at,
+                record.valid_from,
+                record.invalidated_at,
+                record.supersedes_memory_id,
+                record.superseded_by_memory_id,
+                record.embedding_model,
+                record.vector_ref,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn get_memory_fragment(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+    ) -> Result<Option<MemoryFragmentRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at FROM memory_fragments WHERE user_id = ? AND agent_id = ? AND memory_id = ? LIMIT 1")?;
+        let row = stmt
+            .query_row(
+                params![user_id.trim(), agent_id.trim(), memory_id.trim()],
+                |row| {
+                    Ok(MemoryFragmentRecord {
+                        memory_id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        agent_id: row.get(2)?,
+                        source_session_id: row.get(3)?,
+                        source_round_id: row.get(4)?,
+                        source_type: row.get(5)?,
+                        category: row.get(6)?,
+                        title_l0: row.get(7)?,
+                        summary_l1: row.get(8)?,
+                        content_l2: row.get(9)?,
+                        fact_key: row.get(10)?,
+                        tags: Self::parse_string_list(row.get(11)?),
+                        entities: Self::parse_string_list(row.get(12)?),
+                        importance: row.get(13)?,
+                        confidence: row.get(14)?,
+                        tier: row.get(15)?,
+                        status: row.get(16)?,
+                        pinned: row.get::<_, Option<i64>>(17)?.unwrap_or(0) != 0,
+                        confirmed_by_user: row.get::<_, Option<i64>>(18)?.unwrap_or(0) != 0,
+                        access_count: row.get::<_, Option<i64>>(19)?.unwrap_or(0),
+                        hit_count: row.get::<_, Option<i64>>(20)?.unwrap_or(0),
+                        last_accessed_at: row.get::<_, Option<f64>>(21)?.unwrap_or(0.0),
+                        valid_from: row.get::<_, Option<f64>>(22)?.unwrap_or(0.0),
+                        invalidated_at: row.get(23)?,
+                        supersedes_memory_id: row.get(24)?,
+                        superseded_by_memory_id: row.get(25)?,
+                        embedding_model: row.get(26)?,
+                        vector_ref: row.get(27)?,
+                        created_at: row.get::<_, Option<f64>>(28)?.unwrap_or(0.0),
+                        updated_at: row.get::<_, Option<f64>>(29)?.unwrap_or(0.0),
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
+    }
+
+    fn list_memory_fragments(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<MemoryFragmentRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at FROM memory_fragments WHERE user_id = ? AND agent_id = ? ORDER BY pinned DESC, updated_at DESC, created_at DESC")?;
+        let rows = stmt
+            .query_map(params![user_id.trim(), agent_id.trim()], |row| {
+                Ok(MemoryFragmentRecord {
+                    memory_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    source_session_id: row.get(3)?,
+                    source_round_id: row.get(4)?,
+                    source_type: row.get(5)?,
+                    category: row.get(6)?,
+                    title_l0: row.get(7)?,
+                    summary_l1: row.get(8)?,
+                    content_l2: row.get(9)?,
+                    fact_key: row.get(10)?,
+                    tags: Self::parse_string_list(row.get(11)?),
+                    entities: Self::parse_string_list(row.get(12)?),
+                    importance: row.get(13)?,
+                    confidence: row.get(14)?,
+                    tier: row.get(15)?,
+                    status: row.get(16)?,
+                    pinned: row.get::<_, Option<i64>>(17)?.unwrap_or(0) != 0,
+                    confirmed_by_user: row.get::<_, Option<i64>>(18)?.unwrap_or(0) != 0,
+                    access_count: row.get::<_, Option<i64>>(19)?.unwrap_or(0),
+                    hit_count: row.get::<_, Option<i64>>(20)?.unwrap_or(0),
+                    last_accessed_at: row.get::<_, Option<f64>>(21)?.unwrap_or(0.0),
+                    valid_from: row.get::<_, Option<f64>>(22)?.unwrap_or(0.0),
+                    invalidated_at: row.get(23)?,
+                    supersedes_memory_id: row.get(24)?,
+                    superseded_by_memory_id: row.get(25)?,
+                    embedding_model: row.get(26)?,
+                    vector_ref: row.get(27)?,
+                    created_at: row.get::<_, Option<f64>>(28)?.unwrap_or(0.0),
+                    updated_at: row.get::<_, Option<f64>>(29)?.unwrap_or(0.0),
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn delete_memory_fragment(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM memory_fragments WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
+            params![user_id.trim(), agent_id.trim(), memory_id.trim()],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn insert_memory_hit(&self, record: &MemoryHitRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO memory_hits (hit_id, memory_id, user_id, agent_id, session_id, round_id, query_text, reason_json, lexical_score, semantic_score, freshness_score, importance_score, final_score, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![record.hit_id, record.memory_id, record.user_id, record.agent_id, record.session_id, record.round_id, record.query_text, Self::json_to_string(&record.reason_json), record.lexical_score, record.semantic_score, record.freshness_score, record.importance_score, record.final_score, record.created_at],
+        )?;
+        Ok(())
+    }
+
+    fn list_memory_hits(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        session_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<MemoryHitRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let cleaned_user = user_id.trim();
+        let cleaned_agent = agent_id.trim();
+        let safe_limit = limit.max(1);
+        let rows = if let Some(cleaned_session) =
+            session_id.map(str::trim).filter(|item| !item.is_empty())
+        {
+            let mut stmt = conn.prepare(
+                "SELECT hit_id, memory_id, user_id, agent_id, session_id, round_id, query_text, reason_json, lexical_score, semantic_score, freshness_score, importance_score, final_score, created_at FROM memory_hits WHERE user_id = ? AND agent_id = ? AND session_id = ? ORDER BY created_at DESC LIMIT ?",
+            )?;
+            let mapped_rows = stmt.query_map(
+                params![cleaned_user, cleaned_agent, cleaned_session, safe_limit],
+                |row| {
+                    let reason_json: String = row.get::<_, Option<String>>(7)?.unwrap_or_default();
+                    Ok(MemoryHitRecord {
+                        hit_id: row.get(0)?,
+                        memory_id: row.get(1)?,
+                        user_id: row.get(2)?,
+                        agent_id: row.get(3)?,
+                        session_id: row.get(4)?,
+                        round_id: row.get(5)?,
+                        query_text: row.get(6)?,
+                        reason_json: Self::json_value_or_null(Some(reason_json)),
+                        lexical_score: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
+                        semantic_score: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
+                        freshness_score: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
+                        importance_score: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
+                        final_score: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
+                        created_at: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
+                    })
+                },
+            )?;
+            mapped_rows.collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT hit_id, memory_id, user_id, agent_id, session_id, round_id, query_text, reason_json, lexical_score, semantic_score, freshness_score, importance_score, final_score, created_at FROM memory_hits WHERE user_id = ? AND agent_id = ? ORDER BY created_at DESC LIMIT ?",
+            )?;
+            let mapped_rows =
+                stmt.query_map(params![cleaned_user, cleaned_agent, safe_limit], |row| {
+                    let reason_json: String = row.get::<_, Option<String>>(7)?.unwrap_or_default();
+                    Ok(MemoryHitRecord {
+                        hit_id: row.get(0)?,
+                        memory_id: row.get(1)?,
+                        user_id: row.get(2)?,
+                        agent_id: row.get(3)?,
+                        session_id: row.get(4)?,
+                        round_id: row.get(5)?,
+                        query_text: row.get(6)?,
+                        reason_json: Self::json_value_or_null(Some(reason_json)),
+                        lexical_score: row.get::<_, Option<f64>>(8)?.unwrap_or(0.0),
+                        semantic_score: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
+                        freshness_score: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
+                        importance_score: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
+                        final_score: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
+                        created_at: row.get::<_, Option<f64>>(13)?.unwrap_or(0.0),
+                    })
+                })?;
+            mapped_rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        Ok(rows)
+    }
+
+    fn upsert_memory_job(&self, record: &MemoryJobRecord) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO memory_jobs (job_id, user_id, agent_id, session_id, job_type, status, request_payload, result_summary, error_message, queued_at, started_at, finished_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, session_id = excluded.session_id, job_type = excluded.job_type, status = excluded.status, request_payload = excluded.request_payload, result_summary = excluded.result_summary, error_message = excluded.error_message, queued_at = excluded.queued_at, started_at = excluded.started_at, finished_at = excluded.finished_at, updated_at = excluded.updated_at",
+            params![record.job_id, record.user_id, record.agent_id, record.session_id, record.job_type, record.status, Self::json_to_string(&record.request_payload), record.result_summary, record.error_message, record.queued_at, record.started_at, record.finished_at, record.updated_at],
+        )?;
+        Ok(())
+    }
+
+    fn list_memory_jobs(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        limit: i64,
+    ) -> Result<Vec<MemoryJobRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT job_id, user_id, agent_id, session_id, job_type, status, request_payload, result_summary, error_message, queued_at, started_at, finished_at, updated_at FROM memory_jobs WHERE user_id = ? AND agent_id = ? ORDER BY updated_at DESC LIMIT ?")?;
+        let rows = stmt
+            .query_map(
+                params![user_id.trim(), agent_id.trim(), limit.max(1)],
+                |row| {
+                    let payload: String = row.get::<_, Option<String>>(6)?.unwrap_or_default();
+                    Ok(MemoryJobRecord {
+                        job_id: row.get(0)?,
+                        user_id: row.get(1)?,
+                        agent_id: row.get(2)?,
+                        session_id: row.get(3)?,
+                        job_type: row.get(4)?,
+                        status: row.get(5)?,
+                        request_payload: Self::json_value_or_null(Some(payload)),
+                        result_summary: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                        error_message: row.get::<_, Option<String>>(8)?.unwrap_or_default(),
+                        queued_at: row.get::<_, Option<f64>>(9)?.unwrap_or(0.0),
+                        started_at: row.get::<_, Option<f64>>(10)?.unwrap_or(0.0),
+                        finished_at: row.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
+                        updated_at: row.get::<_, Option<f64>>(12)?.unwrap_or(0.0),
+                    })
+                },
+            )?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn create_evaluation_run(&self, payload: &Value) -> Result<()> {
@@ -6764,13 +7144,17 @@ impl StorageBackend for SqliteStorage {
         } else {
             Some(Self::string_list_to_json(&record.preset_questions))
         };
+        let preset_binding = record
+            .preset_binding
+            .as_ref()
+            .and_then(|value| serde_json::to_string(value).ok());
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(agent_id) DO UPDATE SET user_id = excluded.user_id, hive_id = excluded.hive_id, name = excluded.name, description = excluded.description, \
              system_prompt = excluded.system_prompt, tool_names = excluded.tool_names, declared_tool_names = excluded.declared_tool_names, declared_skill_names = excluded.declared_skill_names, access_level = excluded.access_level, approval_mode = excluded.approval_mode, \
-             is_shared = excluded.is_shared, status = excluded.status, icon = excluded.icon, sandbox_container_id = excluded.sandbox_container_id, updated_at = excluded.updated_at, preset_questions = excluded.preset_questions",
+             is_shared = excluded.is_shared, status = excluded.status, icon = excluded.icon, sandbox_container_id = excluded.sandbox_container_id, updated_at = excluded.updated_at, preset_questions = excluded.preset_questions, preset_binding = excluded.preset_binding",
             params![
                 record.agent_id,
                 record.user_id,
@@ -6789,7 +7173,8 @@ impl StorageBackend for SqliteStorage {
                 normalize_sandbox_container_id(record.sandbox_container_id),
                 record.created_at,
                 record.updated_at,
-                preset_questions
+                preset_questions,
+                preset_binding
             ],
         )?;
         Ok(())
@@ -6805,7 +7190,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions                  FROM user_agents WHERE user_id = ? AND agent_id = ?",
+                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? AND agent_id = ?",
                 params![cleaned_user, cleaned_agent],
                 Self::read_user_agent_row,
             )
@@ -6822,7 +7207,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions                  FROM user_agents WHERE agent_id = ?",
+                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE agent_id = ?",
                 params![cleaned_agent],
                 Self::read_user_agent_row,
             )
@@ -6838,7 +7223,7 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user], Self::read_user_agent_row)?
@@ -6859,10 +7244,13 @@ impl StorageBackend for SqliteStorage {
         let normalized_hive_id = normalize_hive_id(hive_id);
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE user_id = ? AND hive_id = ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? AND hive_id = ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
-            .query_map(params![cleaned_user, normalized_hive_id], Self::read_user_agent_row)?
+            .query_map(
+                params![cleaned_user, normalized_hive_id],
+                Self::read_user_agent_row,
+            )?
             .collect::<std::result::Result<Vec<UserAgentRecord>, _>>()?;
         Ok(rows)
     }
@@ -6875,7 +7263,7 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions              FROM user_agents WHERE is_shared = 1 AND user_id <> ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE is_shared = 1 AND user_id <> ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user], Self::read_user_agent_row)?

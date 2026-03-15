@@ -1,6 +1,10 @@
 // 运行监控：记录会话状态、事件与系统资源指标，支持持久化恢复与取消控制。
 use crate::config::{ObservabilityConfig, SandboxConfig};
 use crate::i18n;
+use crate::ops::sysinfo_compat::{
+    disk_space, load_average, new_disks, new_system, refresh_system_snapshot, MonitorDisks,
+    MonitorSystem,
+};
 use crate::storage::StorageBackend;
 use chrono::{DateTime, Local, Utc};
 use parking_lot::Mutex;
@@ -17,7 +21,8 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-use sysinfo::{Disks, ProcessRefreshKind, System};
+#[cfg(target_vendor = "win7")]
+use sysinfo::{CpuExt, ProcessExt, SystemExt};
 use tracing::{error, warn};
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -573,8 +578,8 @@ pub struct MonitorState {
     forced_cancelled: Mutex<HashSet<String>>,
     storage: Arc<dyn StorageBackend>,
     write_queue: MonitorWriteQueue,
-    system: Mutex<System>,
-    disks: Mutex<Disks>,
+    system: Mutex<MonitorSystem>,
+    disks: Mutex<MonitorDisks>,
     system_snapshot_cache: Mutex<Option<(SystemSnapshot, f64)>>,
     system_snapshot_ttl_s: f64,
     workspace_root: PathBuf,
@@ -611,10 +616,8 @@ impl MonitorState {
         sandbox: SandboxConfig,
         workspace_root: String,
     ) -> Self {
-        let mut system = System::new_all();
-        system.refresh_all();
-        let mut disks = Disks::new_with_refreshed_list();
-        disks.refresh();
+        let system = new_system();
+        let disks = new_disks();
         let event_limit = resolve_event_limit(observability.monitor_event_limit);
         let payload_limit = resolve_payload_limit(observability.monitor_payload_max_chars);
         let persist_interval_s = DEFAULT_PERSIST_INTERVAL_S;
@@ -1265,15 +1268,8 @@ impl MonitorState {
 
     fn collect_system_snapshot(&self) -> SystemSnapshot {
         let mut system = self.system.lock();
-        system.refresh_cpu_usage();
-        system.refresh_memory();
         let pid = sysinfo::get_current_pid().ok();
-        let refresh_kind = ProcessRefreshKind::new().with_cpu().with_memory();
-        if let Some(pid) = pid {
-            system.refresh_process_specifics(pid, refresh_kind);
-        } else {
-            system.refresh_processes_specifics(refresh_kind);
-        }
+        refresh_system_snapshot(&mut system, pid);
         let cpu_percent = system.global_cpu_info().cpu_usage();
         let total_memory = system.total_memory();
         let used_memory = system.used_memory();
@@ -1286,22 +1282,15 @@ impl MonitorState {
                 process_cpu = process.cpu_usage();
             }
         }
-        let load_avg = System::load_average();
+        let load_avg = load_average(&system);
         drop(system);
 
-        let mut disk_total: u64 = 0;
+        let disk_total: u64;
         let mut disk_used: u64 = 0;
-        let mut disk_free: u64 = 0;
+        let disk_free: u64;
         let mut disk_percent = 0.0;
         let mut disks = self.disks.lock();
-        if disks.list().is_empty() {
-            disks.refresh_list();
-        }
-        disks.refresh();
-        for disk in disks.list() {
-            disk_total = disk_total.saturating_add(disk.total_space());
-            disk_free = disk_free.saturating_add(disk.available_space());
-        }
+        (disk_total, disk_free) = disk_space(&mut disks);
         if disk_total > 0 {
             disk_used = disk_total.saturating_sub(disk_free);
             disk_percent = (disk_used as f64 / disk_total as f64 * 100.0) as f32;

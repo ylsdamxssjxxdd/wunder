@@ -671,13 +671,14 @@ mod tests {
             declared_skill_names: Vec::new(),
             preset_questions: Vec::new(),
             access_level: "A".to_string(),
-            approval_mode: "auto_edit".to_string(),
+            approval_mode: "full_auto".to_string(),
             is_shared: false,
             status: "active".to_string(),
             icon: None,
             sandbox_container_id: 0,
             created_at: 1.0,
             updated_at: 1.0,
+            preset_binding: None,
         };
 
         let (session, created) =
@@ -706,13 +707,14 @@ mod tests {
             declared_skill_names: Vec::new(),
             preset_questions: Vec::new(),
             access_level: "A".to_string(),
-            approval_mode: "auto_edit".to_string(),
+            approval_mode: "full_auto".to_string(),
             is_shared: false,
             status: "active".to_string(),
             icon: None,
             sandbox_container_id: 0,
             created_at: 1.0,
             updated_at: 1.0,
+            preset_binding: None,
         };
 
         let (session, created) =

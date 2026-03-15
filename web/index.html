@@ -619,10 +619,28 @@
                     <i class="fa-solid fa-floppy-disk"></i>
                     <span data-i18n="common.save">保存</span>
                   </button>
+                  <button id="presetAgentSyncSafeBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-rotate"></i>
+                    <span data-i18n="presetAgents.action.syncSafe">同步未自定义项</span>
+                  </button>
+                  <button id="presetAgentSyncForceBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-bolt"></i>
+                    <span data-i18n="presetAgents.action.syncForce">强制覆盖同步</span>
+                  </button>
                   <button id="presetAgentDeleteBtn" class="danger btn-with-icon" type="button">
                     <i class="fa-solid fa-trash"></i>
                     <span data-i18n="common.delete">删除</span>
                   </button>
+                </div>
+              </div>
+
+              <div class="preset-agent-sync-card">
+                <div class="preset-agent-sync-title" data-i18n="presetAgents.sync.title">存量用户同步</div>
+                <div id="presetAgentSyncSummary" class="muted" data-i18n="presetAgents.sync.empty">
+                  保存后会显示可同步、已自定义和待创建的用户数量。
+                </div>
+                <div class="tips preset-agent-sync-tip" data-i18n="presetAgents.sync.tip">
+                  安全同步只覆盖仍跟随模板的字段；强制同步会覆盖所有已关联用户的模板字段，但不会删除会话和工作区数据。
                 </div>
               </div>
 
@@ -653,6 +671,20 @@
                     <textarea id="presetAgentFormPrompt" rows="6"></textarea>
                   </div>
                   <div class="form-row">
+                    <label for="presetAgentPresetQuestions" data-i18n="presetAgents.form.presetQuestions">Preset Questions</label>
+                    <div class="tips preset-agent-question-tip" data-i18n="presetAgents.form.presetQuestionsHint">
+                      Questions shown as quick prompts on the user side only fill the input box.
+                    </div>
+                    <div id="presetAgentPresetQuestions" class="preset-question-list"></div>
+                    <div id="presetAgentPresetQuestionsEmpty" class="muted" data-i18n="presetAgents.form.presetQuestionsEmpty">
+                      No preset questions
+                    </div>
+                    <button id="presetAgentPresetQuestionAddBtn" class="secondary btn-with-icon preset-question-add-btn" type="button">
+                      <i class="fa-solid fa-plus"></i>
+                      <span data-i18n="presetAgents.form.presetQuestionsAdd">Add Question</span>
+                    </button>
+                  </div>
+                  <div class="form-row">
                     <label for="presetUserAgentTools" data-i18n="presetAgents.userAgent.tools">工具列表</label>
                     <div id="presetUserAgentTools" class="tool-list"></div>
                     <div id="presetUserAgentToolsEmpty" class="muted" data-i18n="presetAgents.userAgent.toolsEmpty">
@@ -677,7 +709,7 @@
                       id="presetUserAgentHive"
                       type="text"
                       readonly
-                      value="default（不分组）"
+                      value="default (default hive)"
                     />
                   </div>
                 </div>

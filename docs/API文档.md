@@ -14,7 +14,8 @@
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
-- docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；`/wunder/temp_dir/*` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`，可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
+- docker compose 默认使用两个命名卷：`wunder_workspaces` 挂载到 `/workspaces`（用户工作区）；`wunder_logs` 挂载到 PostgreSQL/Weaviate 数据目录（`/var/lib/postgresql/data`、`/var/lib/weaviate`）；`/wunder/temp_dir/*` 默认落在本地 `./temp_dir`（容器内 `/app/temp_dir`，可用 `WUNDER_TEMP_DIR_ROOT` 覆盖）；运行态可写配置保留在仓库本地 `data/`（`data/config`、`data/prompt_templates`、`data/user_tools` 等）。构建/依赖缓存（`target/`、`.cargo/`、根 `node_modules/`）保持写入仓库目录便于管理；Ubuntu20 Desktop 打包服务默认额外挂载并复用 `target/x86-20/.cache` / `target/arm64-20/.cache` 里的 npm、Electron 与 electron-builder 缓存，便于首次在线构建后迁入内网继续复构；前端开发容器不再额外挂载 `frontend/node_modules` 与 `desktop/electron/node_modules` 的遮罩卷，两处目录应保持为空或不存在；同时前端开发容器仅安装 `wunder-frontend` workspace 依赖，避免在前端调试阶段触发 `desktop/electron` 的 `electron` 下载脚本。
+- `wunder-frontend` 在 docker compose 中会先构建到临时目录 `frontend/dist.__docker_tmp`，再按“资源文件优先、`index.html` 最后切换”的顺序同步到 `frontend/dist`；frontend 健康检查只判断 `dist/index.html` 是否就绪，`wunder-nginx` 仅依赖 frontend 已启动并在自身入口等待静态入口文件，避免首启时因后端仍在编译而把 frontend 误判为启动失败。
 - 沙盒服务：独立容器运行 `wunder-server` 的 `sandbox` 模式（`WUNDER_SERVER_MODE=sandbox`），对外提供 `/sandboxes/execute_tool` 与 `/sandboxes/release`，由 `WUNDER_SANDBOX_ENDPOINT` 指定地址。
 - 工具清单与提示词注入复用统一的工具规格构建逻辑：`tool_call/freeform_call` 模式会注入工具协议片段，`function_call` 模式不注入工具提示词，工具清单仅用于 tools 协议。
 - 当 `tool_call_mode=freeform_call` 且模型走 OpenAI Responses API 时，服务端会把 `apply_patch` 这类语法工具下发为原生 `type=custom` 工具（携带 `format={type:grammar,syntax:lark,definition}`），普通 JSON 工具继续走 `type=function`；工具结果会按 `custom_tool_call_output/function_call_output` 回填历史，避免仅靠 XML 提示词驱动。
@@ -30,7 +31,7 @@
 - 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`，隐藏左/中栏）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
-- Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。
+- Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
@@ -1433,8 +1434,8 @@
 ### 4.1.35 记忆管理接口（已移除）
 
 - 原 `/wunder/admin/memory/*` 管理端接口已下线，不再提供管理员侧记忆面板能力。
-- 当前推荐方式：通过内置工具 `记忆管理`（`memory_manager`）由智能体按需维护自己的长期记忆条目。
-- 作用域：按 `用户 + 智能体` 隔离；记忆变更仅影响新会话，已有会话保持原提示词快照。
+- 当前推荐方式：通过结构化记忆碎片系统 + 可选内置工具 `记忆管理`（`memory_manager`）协同维护长期记忆。
+- 作用域：按 `用户 + 智能体` 隔离；记忆只在线程首次建立时注入到系统提示词快照，同一线程后续不再自动改写系统提示词，如需读取最新记忆请通过 `memory_manager` 的 `recall` 动作主动检索。
 
 ### 4.1.43 `/wunder/admin/throughput/start`
 
@@ -1994,6 +1995,7 @@
   - 约束：`content` 与非图片附件文本合计最多 `1048576` 个字符，超出返回 400（`detail.field=input_text`，并携带 `detail.max_chars/detail.actual_chars`）
   - `approval_mode` 兼容别名：`approvalMode`、`approval_mode`、`permissionLevel`、`permission_level`
   - 会话系统提示词首次构建后固定用于历史还原，工具可用性仍以当前配置与选择为准
+  - 若当前沙盒容器根目录存在 `AGENTS.md`，会在该会话第一次真正发送消息时读取并快照注入系统提示词；同一会话后续不再重新读取该文件，文件变更仅影响新会话
   - 注册用户每日请求额度超额时返回 429（`detail.code=USER_QUOTA_EXCEEDED`）
 - `GET /wunder/chat/sessions/{session_id}/resume`：恢复流式（SSE）
   - Query：`after_event_id`（可选，传入则回放并持续推送后续事件；不传则仅推送新产生的事件）
@@ -2007,6 +2009,7 @@
   - 入参（JSON）：`tool_overrides`（字符串数组，空数组表示恢复默认；传入 `__no_tools__` 表示禁用全部工具）
   - 返回：`data.id`、`data.tool_overrides`
   - desktop 本地模式说明：技能挂载遵循用户技能总开关（`/wunder/user_tools/skills`），会话/智能体 `tool_overrides` 仅过滤非技能工具；`__no_tools__` 仍可禁用全部工具。
+  - 若会话首轮消息已快照 `AGENTS.md`，后续修改工具覆盖时会继续沿用该快照，不会因文件变更重新读取
 - `POST /wunder/chat/system-prompt`：系统提示词预览
   - 入参（JSON）：`agent_id`（可选）、`tool_overrides`（可选）
   - 返回：`data.prompt`
@@ -2052,10 +2055,30 @@
   - Query：`user_id`（可选，管理员代操作）、`days`（可选，1~90，默认 14，用于日趋势窗口）、`date`（可选，`YYYY-MM-DD`，用于工具调用热力图日期）
   - 返回：`data.agent_id`、`data.range`（`days/start_date/end_date/selected_date`）、`data.summary`（`runtime_seconds/billed_tokens/quota_consumed/tool_calls`，为该智能体累计汇总）、`data.daily[]`（最近 `days` 天按天统计折线图数据）、`data.heatmap`（`date/max_calls/items[]`，`items[].hourly_calls` 为 24 小时调用次数）
   - 默认入口支持：`agent_id` 可传 `__default__`（或 `default`）查看通用聊天入口的运行记录
-- `PUT /wunder/agents/{agent_id}`：更新智能体
-  - 入参（JSON）：`name`/`description`/`system_prompt`/`tool_names`/`preset_questions`/`is_shared`/`status`/`approval_mode`/`icon`/`sandbox_container_id`/`hive_id`/`hive_name`/`hive_description`（均可选）
-  - 返回：`data`（同智能体详情）
-  - 默认入口支持：`agent_id` 为 `__default__`（或 `default`）时更新默认入口配置
+- `GET /wunder/agents/{agent_id}/memories`：结构化记忆碎片列表、最近召回说明与最近提炼任务
+  - Query：`user_id`（可选，管理员代操作）、`query/q`（可选，关键词检索）、`category`（可选）、`status`（可选）、`pinned`（可选）、`include_invalidated`（可选，默认 `false`）、`session_id`（可选，用于限定命中记录范围）、`limit`（可选）
+  - 返回：`data.items[]`、`data.total`、`data.categories[]`、`data.recent_hits[]`、`data.recent_jobs[]`；`recent_hits[].reason_json` 用于说明命中词、置顶加权、近期召回等原因，`recent_jobs[]` 用于展示自动提炼后台任务状态
+- `POST /wunder/agents/{agent_id}/memories`：新建记忆碎片
+  - 入参（JSON）：`memory_id?`、`source_session_id?`、`source_round_id?`、`source_type?`、`category?`、`title_l0?`、`summary_l1?`、`content_l2?`、`fact_key?`、`tags?`、`entities?`、`importance?`、`confidence?`、`tier?`、`status?`、`pinned?`、`confirmed_by_user?`、`invalidated?`
+  - 返回：`data.item`（记忆碎片对象）
+- `GET /wunder/agents/{agent_id}/memories/{memory_id}`：记忆碎片详情
+  - 返回：`data.item`
+- `PATCH /wunder/agents/{agent_id}/memories/{memory_id}`：更新记忆碎片
+  - 入参（JSON）：同创建接口，按字段合并更新
+  - 返回：`data.item`
+- `DELETE /wunder/agents/{agent_id}/memories/{memory_id}`：删除记忆碎片
+  - 返回：`data.deleted`（bool）
+- `POST /wunder/agents/{agent_id}/memories/{memory_id}/confirm`：确认/取消确认记忆
+- `POST /wunder/agents/{agent_id}/memories/{memory_id}/pin`：置顶/取消置顶记忆
+- `POST /wunder/agents/{agent_id}/memories/{memory_id}/invalidate`：作废/恢复记忆
+  - 入参（JSON）：`value?`（bool，默认 `true`）
+  - 返回：`data.item`
+- `GET /wunder/agents/{agent_id}/memory-hits`：记忆召回命中记录
+  - Query：`user_id?`、`session_id?`、`limit?`
+  - 返回：`data.items[]`、`data.total`
+- 说明：当前记忆召回以关键词 + 结构化字段匹配为主，不强依赖 embedding；旧 `memory_records` 会在读取时惰性迁移到 `memory_fragments`。
+- 说明：模型输出 `final` 后会异步触发一轮规则型自动记忆提炼，仅从当前用户问题抽取稳定偏好、用户画像与计划并写入 `memory_jobs`；`question_panel` 中断、空回答以及已手工维护（manual/confirmed/pinned/invalidated）的碎片不会被自动覆盖。
+- 说明：记忆碎片 `source_type` / `category` / `tier` 会按 slug 规范化存储；当前常见 `source_type` 为 `manual`、`auto-turn`、`legacy-summary`。
 - `DELETE /wunder/agents/{agent_id}`：删除智能体
   - 返回：`data.id`
   - 默认入口支持：`agent_id` 为 `__default__`（或 `default`）时清空默认入口配置（恢复系统默认值）
@@ -2071,7 +2094,7 @@
   - `preset_questions` 会在用户侧输入区快捷命令中展示，点击后仅填入输入框，不会直接发送。
   - 用户侧“导入/导出工蜂卡”属于前端本地资产编排：导入后本质仍调用 `/wunder/agents` 创建智能体，导出则基于当前智能体配置生成单文件 `WorkerCard`；多选导出时输出 `WorkerCardBundle`。
 - 默认入口（`agent_id` 为空或 `__default__/default`）未配置时按当前用户可用工具集兜底（desktop 本地模式默认额外启用 `计划面板`）。
-  - `approval_mode` 默认 `auto_edit`，用于控制命令执行/PTC 工具的审批强度。
+  - `approval_mode` 默认 `full_auto`，用于控制命令执行/PTC 工具的审批强度。
   - 共享智能体对所有用户可见，管理员可通过单用户权限覆盖进一步调整。
 
 ### 4.1.57 `/wunder/beeroom/groups`
@@ -2356,20 +2379,56 @@
 
 - `GET /wunder/admin/preset_agents`
   - 返回：`data.items`（预设智能体列表）
-  - 字段：`name/description/system_prompt/icon_name/icon_color/sandbox_container_id`
+  - 字段：`preset_id/revision/name/description/system_prompt/icon_name/icon_color/sandbox_container_id/tool_names/declared_tool_names/declared_skill_names/preset_questions/approval_mode/status`
 - `POST /wunder/admin/preset_agents`
   - 用途：覆盖保存整组预设智能体配置（写入 `config.user_agents.presets`）
   - 入参（JSON）：
     - `items[]`：预设列表（兼容 `presets[]`）
+    - `items[].preset_id`：可选，预设稳定标识；已存在预设改名时需保留，避免与已下发用户的绑定关系断开
     - `items[].name`：必填，预设名称（全局唯一，去重按不区分大小写）
     - `items[].description`：可选
     - `items[].system_prompt`：可选
     - `items[].icon_name`：可选，默认 `spark`
     - `items[].icon_color`：可选，默认 `#94a3b8`
     - `items[].sandbox_container_id`：可选，自动规范化到有效容器编号
+    - `items[].tool_names`：可选，模板管理的工具列表
+    - `items[].declared_tool_names`：可选，声明式工具列表
+    - `items[].declared_skill_names`：可选，声明式技能列表
+    - `items[].preset_questions`：可选，预设问题列表
+    - `items[].approval_mode`：可选，审批模式
+    - `items[].status`：可选，状态
+  - 行为：当模板管理字段发生变化时，服务端会自动递增该预设的 `revision`
   - 返回：`data.items`（保存后的预设列表）
 
-### 4.1.58.2 `/wunder/admin/external_links/*`
+### 4.1.58.2 `/wunder/admin/preset_agents/sync`
+
+- `POST /wunder/admin/preset_agents/sync`
+  - 用途：将某个管理员预设按“安全同步”或“强制同步”方式推送到存量注册用户
+  - 入参（JSON）：
+    - `preset_id`：必填，目标预设稳定标识
+    - `mode`：可选，`safe` 或 `force`，默认 `safe`
+    - `dry_run`：可选，`true` 时只返回影响范围预览，不落库
+    - `scope_unit_id`：可选，仅同步指定单位范围内的注册用户；未传时按管理员可见范围执行
+  - 安全同步：仅覆盖仍与上次模板快照一致的字段；若用户已自行修改某字段，则保留用户值并计入 `overridden_agents`
+  - 强制同步：覆盖所有已关联用户的模板管理字段，但不会删除已有会话、工作区、长期记忆等运行数据
+  - 额外行为：若某些已注册用户尚未持有该预设对应的用户智能体，会在同步时补建并完成绑定
+  - 返回：
+    - `data.preset.preset_id/name/revision`
+    - `data.mode`：本次执行模式
+    - `data.dry_run`：是否为预演
+    - `data.summary.total_users`：范围内注册用户总数
+    - `data.summary.linked_users`：已绑定该预设的用户数
+    - `data.summary.missing_users`：缺少该预设用户智能体的用户数
+    - `data.summary.up_to_date_agents`：已是最新版本的用户智能体数
+    - `data.summary.stale_agents`：落后于当前模板版本的用户智能体数
+    - `data.summary.safe_update_agents`：安全同步可直接更新的用户智能体数
+    - `data.summary.overridden_agents`：存在用户自定义字段、因此安全同步不会覆盖的用户智能体数
+    - `data.summary.force_update_agents`：强制同步将覆盖的用户智能体数
+    - `data.summary.created_agents`：本次新建的用户智能体数
+    - `data.summary.updated_agents`：本次更新的用户智能体数
+    - `data.summary.rebound_agents`：本次重新写入模板绑定快照的用户智能体数
+
+### 4.1.58.3 `/wunder/admin/external_links/*`
 
 - `GET /wunder/admin/external_links`
   - Returns: `data.items` (ExternalLink list, includes enabled and disabled items)

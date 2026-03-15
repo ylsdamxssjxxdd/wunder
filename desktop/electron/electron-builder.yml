@@ -6,7 +6,10 @@ directories:
   output: ../../target/desktop-electron/dist
 files:
   - "src/**"
+  - "node_modules/**"
   - "package.json"
+  - "!node_modules/wunder-workspace"
+  - "!node_modules/wunder-workspace/**"
   - "!**/*.map"
 extraResources:
   - from: resources

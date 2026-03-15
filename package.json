@@ -11,6 +11,12 @@
     "typecheck:frontend": "npm run typecheck --workspace wunder-frontend",
     "prepare:desktop:resources": "npm run prepare:resources --workspace wunder-desktop-electron",
     "build:desktop:linux:x64": "npm run build:linux:x64 --workspace wunder-desktop-electron",
-    "build:desktop:linux:arm64": "npm run build:linux:arm64 --workspace wunder-desktop-electron"
+    "build:desktop:linux:arm64": "npm run build:linux:arm64 --workspace wunder-desktop-electron",
+    "setup:desktop:win7:gnu:x64": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/setup-win7-gnu-toolchain.ps1 -Arch x64",
+    "doctor:desktop:win7:gnu:x64": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/setup-win7-gnu-toolchain.ps1 -Arch x64 -Doctor",
+    "build:desktop:win7:gnu:x64": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64",
+    "build:desktop:win7:gnu:x64:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -SkipBootstrap",
+    "build:desktop:win7:gnu:x64:static": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -StaticRuntime",
+    "build:desktop:win7:gnu:x64:static:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -StaticRuntime -SkipBootstrap"
   }
 }

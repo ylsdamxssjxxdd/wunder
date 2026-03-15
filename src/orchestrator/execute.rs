@@ -140,8 +140,7 @@ impl Orchestrator {
                     }
                 }
             }
-
-            // 心跳续租会话锁，避免长任务被误判超时。
+            // Keep renewing the session lock heartbeat for long-running requests.
             let heartbeat_limiter = limiter.clone();
             if acquired {
                 let heartbeat_session = session_id.clone();
@@ -221,6 +220,7 @@ impl Orchestrator {
                 None
             };
 
+            let user_round_id = user_round.to_string();
             let system_prompt = self
                 .resolve_session_prompt(
                     &config,
@@ -236,6 +236,8 @@ impl Orchestrator {
                     prepared.agent_id.as_deref(),
                     is_admin,
                     prepared.agent_prompt.as_deref(),
+                    Some(&question),
+                    Some(user_round_id.as_str()),
                 )
                 .await;
 
@@ -1072,6 +1074,16 @@ impl Orchestrator {
                 last_round_info.insert_into(map);
             }
             emitter.emit("final", final_payload).await;
+            if !waiting_question_panel && !answer.trim().is_empty() {
+                self.spawn_auto_memory_extraction(
+                    &user_id,
+                    prepared.agent_id.as_deref(),
+                    &session_id,
+                    Some(user_round_id.as_str()),
+                    &question,
+                    &answer,
+                );
+            }
             if waiting_question_panel {
                 self.monitor.mark_question_panel(&session_id);
             } else {
@@ -1763,7 +1775,7 @@ mod tests {
         let answer = build_max_rounds_user_guidance(Some(10));
         assert!(!answer.trim().is_empty());
         assert!(answer.contains("10"));
-        assert!(answer.contains("继续") || answer.to_ascii_lowercase().contains("continue"));
+        assert!(answer.contains("缁х画") || answer.to_ascii_lowercase().contains("continue"));
     }
 
     #[test]
@@ -1825,8 +1837,8 @@ mod tests {
             timestamp: Utc::now(),
             meta: None,
         };
-        let signature = build_tool_failure_signature("执行命令", &result);
-        assert!(signature.contains("执行命令"));
+        let signature = build_tool_failure_signature("鎵ц鍛戒护", &result);
+        assert!(signature.contains("鎵ц鍛戒护"));
         assert!(signature.contains("command failed"));
     }
 
@@ -1843,7 +1855,7 @@ mod tests {
         let answer = build_tool_failure_guard_answer("read_file", &result, 3, 5);
         assert!(answer.contains("read_file"));
         assert!(answer.contains("5"));
-        assert!(answer.contains("继续") || answer.to_ascii_lowercase().contains("continue"));
+        assert!(answer.contains("缁х画") || answer.to_ascii_lowercase().contains("continue"));
     }
 
     #[test]

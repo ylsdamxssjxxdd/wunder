@@ -1,12 +1,21 @@
 const fs = require('fs')
 const path = require('path')
 
-const repoRoot = path.resolve(__dirname, '..', '..', '..')
+// Allow staging builds to point back to the real repo root.
+const repoRoot = process.env.WUNDER_REPO_ROOT
+  ? path.resolve(process.env.WUNDER_REPO_ROOT)
+  : path.resolve(__dirname, '..', '..', '..')
 const outputRoot = path.resolve(__dirname, '..', 'resources')
+const electronProjectRoot = path.resolve(__dirname, '..')
+const skipRuntimeDepsCopy = process.env.WUNDER_SKIP_RUNTIME_DEPS_COPY === '1'
+const extraRuntimeFiles = String(process.env.WUNDER_EXTRA_RUNTIME_FILES || '')
+  .split(path.delimiter)
+  .map((item) => item.trim())
+  .filter((item) => item)
 
 const bridgeName = process.platform === 'win32' ? 'wunder-desktop-bridge.exe' : 'wunder-desktop-bridge'
 const bridgeSource = process.env.WUNDER_BRIDGE_BIN || path.join(repoRoot, 'target', 'release', bridgeName)
-const frontendSource = path.join(repoRoot, 'frontend', 'dist')
+const frontendSource = process.env.WUNDER_FRONTEND_DIST || path.join(repoRoot, 'frontend', 'dist')
 const desktopPreconfigSource = path.join(repoRoot, 'docs', '分发', '预配置文件.yml')
 const buildIconIcoSource = path.join(__dirname, '..', 'build', 'icon.ico')
 const fallbackIconIcoSource = path.join(__dirname, '..', 'assets', 'icon.ico')
@@ -16,6 +25,15 @@ const fallbackIconPngSource = path.join(__dirname, '..', 'assets', 'icon.png')
 const iconPngSource = fs.existsSync(buildIconPngSource) ? buildIconPngSource : fallbackIconPngSource
 const linuxIconSetDir = path.join(__dirname, '..', 'build', 'icons')
 const linuxIconSetSizes = [16, 24, 32, 48, 64, 96, 128, 256, 512]
+const runtimeNodeModulesSource = path.join(electronProjectRoot, 'node_modules')
+const runtimeDepsOutputRoot = path.join(outputRoot, 'runtime-deps')
+
+const copyDirWithFilter = (src, dest, filter) => {
+  fs.cpSync(src, dest, {
+    recursive: true,
+    filter: (source) => filter(source)
+  })
+}
 
 const copyDir = (src, dest) => {
   fs.cpSync(src, dest, { recursive: true })
@@ -29,9 +47,50 @@ const copyDirIfExists = (src, dest) => {
   copyDir(src, dest)
 }
 
+const copyRuntimeNodeModules = () => {
+  if (skipRuntimeDepsCopy) {
+    console.log('[prepare] skip runtime deps copy: WUNDER_SKIP_RUNTIME_DEPS_COPY=1')
+    return
+  }
+  if (!fs.existsSync(runtimeNodeModulesSource)) {
+    console.warn(`[prepare] skip runtime deps: ${runtimeNodeModulesSource}`)
+    return
+  }
+  copyDirWithFilter(runtimeNodeModulesSource, runtimeDepsOutputRoot, (source) => {
+    const relative = path.relative(runtimeNodeModulesSource, source)
+    if (!relative) {
+      return true
+    }
+    const normalized = relative.replace(/\\/g, '/')
+    if (normalized === '.bin' || normalized.startsWith('.bin/')) {
+      return false
+    }
+    if (normalized === '.package-lock.json') {
+      return false
+    }
+    if (normalized === 'wunder-workspace' || normalized.startsWith('wunder-workspace/')) {
+      return false
+    }
+    return true
+  })
+  console.log(`[prepare] copied runtime deps to: ${runtimeDepsOutputRoot}`)
+}
+
 const copyFile = (src, dest) => {
   fs.mkdirSync(path.dirname(dest), { recursive: true })
   fs.copyFileSync(src, dest)
+}
+
+const copyExtraRuntimeFiles = () => {
+  for (const source of extraRuntimeFiles) {
+    if (!fs.existsSync(source)) {
+      console.warn(`[prepare] skip missing extra runtime file: ${source}`)
+      continue
+    }
+    const targetPath = path.join(outputRoot, path.basename(source))
+    copyFile(source, targetPath)
+    console.log(`[prepare] copied extra runtime file: ${targetPath}`)
+  }
 }
 
 const ensureLinuxIconSet = () => {
@@ -78,6 +137,8 @@ if (process.platform !== 'win32') {
 }
 
 copyDir(frontendSource, path.join(outputRoot, 'frontend-dist'))
+copyRuntimeNodeModules()
+copyExtraRuntimeFiles()
 if (fs.existsSync(iconPngSource)) {
   copyFile(iconPngSource, path.join(outputRoot, 'frontend-dist', 'desktop-icon.png'))
 }

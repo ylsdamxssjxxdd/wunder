@@ -10,6 +10,7 @@ mod runtime;
 mod slash_command;
 mod tool_display;
 mod tui;
+mod welcome_logo;
 mod workspace_context;
 
 use anyhow::{anyhow, Context, Result};
@@ -228,6 +229,9 @@ async fn run_chat_loop(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
     let mut queued_prompt: Option<String> = None;
+    if io::stdout().is_terminal() {
+        println!("{}", welcome_logo::render_for_terminal().terminal_text());
+    }
     println!(
         "{}",
         locale::tr(

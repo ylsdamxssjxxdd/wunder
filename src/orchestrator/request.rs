@@ -211,7 +211,7 @@ impl Orchestrator {
                 agent_prompt,
             )
             .await;
-        self.append_memory_prompt(user_id, agent_id, prompt, is_admin)
+        self.append_memory_prompt(user_id, agent_id, prompt, is_admin, None, None, None)
             .await
     }
 }

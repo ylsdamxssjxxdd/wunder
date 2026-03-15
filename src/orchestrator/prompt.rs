@@ -2,6 +2,10 @@ use super::*;
 use crate::tools::build_responses_freeform_tool;
 
 const MAX_FUNCTION_NAME_LEN: usize = 64;
+const THREAD_AGENTS_MD_FILE_NAME: &str = "AGENTS.md";
+const THREAD_AGENTS_MD_BLOCK_BEGIN: &str = "<!-- WUNDER_THREAD_AGENTS_MD_BEGIN -->";
+const THREAD_AGENTS_MD_BLOCK_END: &str = "<!-- WUNDER_THREAD_AGENTS_MD_END -->";
+const MAX_THREAD_AGENTS_MD_TOKENS: i64 = 3_000;
 
 pub(super) struct FunctionTooling {
     pub(super) tools: Vec<Value>,
@@ -166,6 +170,8 @@ impl Orchestrator {
         agent_id: Option<&str>,
         is_admin: bool,
         agent_prompt: Option<&str>,
+        query_text: Option<&str>,
+        round_id: Option<&str>,
     ) -> String {
         let resolved_agent_id = agent_id
             .map(str::trim)
@@ -191,16 +197,22 @@ impl Orchestrator {
             .load_session_system_prompt_async(user_id, session_id, None)
             .await
             .unwrap_or(None);
-        if let Some(prompt) = stored {
-            if stored_prompt_matches_workdir(
-                &prompt,
-                &expected_public_workdir,
-                &expected_local_workdir,
-            ) {
-                return prompt;
-            }
+        if let Some(prompt) = reuse_stored_session_prompt_if_valid(
+            stored.as_deref(),
+            &expected_public_workdir,
+            &expected_local_workdir,
+        ) {
+            return prompt;
         }
-        let prompt = self
+        // Snapshot AGENTS.md only when the thread prompt is first finalized so
+        // later file edits do not mutate the prompt already cached for this thread.
+        let effective_agent_prompt = merge_agent_prompt_with_thread_agents_snapshot(
+            agent_prompt,
+            stored.as_deref(),
+            &workdir,
+            true,
+        );
+        let base_prompt = self
             .build_system_prompt_with_allowed(
                 config,
                 config_overrides,
@@ -210,17 +222,67 @@ impl Orchestrator {
                 user_tool_bindings,
                 user_id,
                 workspace_id,
-                agent_prompt,
+                effective_agent_prompt.as_deref(),
             )
             .await;
-        let prompt = self
-            .append_memory_prompt(user_id, resolved_agent_id.as_deref(), prompt, is_admin)
+        // Freeze the initial memory snapshot together with the session prompt so
+        // later turns reuse the same system prompt verbatim within the thread.
+        let session_prompt = self
+            .append_memory_prompt(
+                user_id,
+                resolved_agent_id.as_deref(),
+                base_prompt,
+                is_admin,
+                Some(session_id),
+                round_id,
+                query_text,
+            )
             .await;
-        let _ = self
-            .workspace
-            .save_session_system_prompt(user_id, session_id, &prompt, language);
-        prompt
+        let _ = self.workspace.save_session_system_prompt(
+            user_id,
+            session_id,
+            &session_prompt,
+            language,
+        );
+        session_prompt
     }
+}
+
+pub(crate) fn merge_agent_prompt_with_thread_agents_snapshot(
+    base_agent_prompt: Option<&str>,
+    stored_session_prompt: Option<&str>,
+    workspace_root: &Path,
+    allow_initial_read: bool,
+) -> Option<String> {
+    let base_prompt = base_agent_prompt
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let agents_snapshot = stored_session_prompt
+        .and_then(extract_thread_agents_md_snapshot)
+        .or_else(|| {
+            if allow_initial_read {
+                load_thread_agents_md_snapshot(workspace_root)
+            } else {
+                None
+            }
+        });
+    match (base_prompt, agents_snapshot) {
+        (None, None) => None,
+        (Some(prompt), None) => Some(prompt),
+        (None, Some(snapshot)) => Some(snapshot),
+        (Some(prompt), Some(snapshot)) => Some(format!("{prompt}\n\n{snapshot}")),
+    }
+}
+
+fn reuse_stored_session_prompt_if_valid(
+    stored_prompt: Option<&str>,
+    public_workdir: &str,
+    local_workdir: &str,
+) -> Option<String> {
+    stored_prompt
+        .filter(|prompt| stored_prompt_matches_workdir(prompt, public_workdir, local_workdir))
+        .map(str::to_string)
 }
 
 fn stored_prompt_matches_workdir(prompt: &str, public_workdir: &str, local_workdir: &str) -> bool {
@@ -234,6 +296,51 @@ fn stored_prompt_matches_workdir(prompt: &str, public_workdir: &str, local_workd
     }
     let local = local_workdir.trim();
     !local.is_empty() && cleaned_prompt.contains(local)
+}
+
+fn extract_thread_agents_md_snapshot(prompt: &str) -> Option<String> {
+    let start = prompt.find(THREAD_AGENTS_MD_BLOCK_BEGIN)?;
+    let end_marker_start = prompt[start..].find(THREAD_AGENTS_MD_BLOCK_END)? + start;
+    let end = end_marker_start + THREAD_AGENTS_MD_BLOCK_END.len();
+    let block = prompt[start..end].trim();
+    if block.is_empty() {
+        None
+    } else {
+        Some(block.to_string())
+    }
+}
+
+fn load_thread_agents_md_snapshot(workspace_root: &Path) -> Option<String> {
+    let path = workspace_root.join(THREAD_AGENTS_MD_FILE_NAME);
+    if !path.is_file() {
+        return None;
+    }
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(err) => {
+            warn!(
+                "failed to read {} for thread prompt snapshot: {err}",
+                path.display()
+            );
+            return None;
+        }
+    };
+    format_thread_agents_md_snapshot(&content)
+}
+
+fn format_thread_agents_md_snapshot(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let snapshot = trim_text_to_tokens(
+        trimmed,
+        MAX_THREAD_AGENTS_MD_TOKENS,
+        "\n\n...(AGENTS.md truncated)",
+    );
+    Some(format!(
+        "{THREAD_AGENTS_MD_BLOCK_BEGIN}\nWorkspace instructions snapshot loaded from AGENTS.md in the sandbox container root when this thread received its first user message. Keep following this snapshot for the lifetime of the thread.\n\n{snapshot}\n{THREAD_AGENTS_MD_BLOCK_END}"
+    ))
 }
 
 fn select_preferred_tool_name(
@@ -346,4 +453,81 @@ fn short_hash(value: &str) -> String {
     value.hash(&mut hasher);
     let hash = format!("{:x}", hasher.finish());
     hash.chars().take(6).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("wunder-thread-agents-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn thread_agents_snapshot_round_trips_from_prompt() {
+        let snapshot = format_thread_agents_md_snapshot("# AGENTS\n- keep tests green").unwrap();
+        let prompt = format!("base prompt\n\n{snapshot}\n\nmore");
+        assert_eq!(extract_thread_agents_md_snapshot(&prompt), Some(snapshot));
+    }
+
+    #[test]
+    fn merge_agent_prompt_prefers_stored_thread_snapshot() {
+        let dir = create_temp_dir();
+        std::fs::write(dir.join("AGENTS.md"), "new rules").unwrap();
+        let stored_snapshot = format_thread_agents_md_snapshot("old rules").unwrap();
+        let stored_prompt = format!("system\n\n{stored_snapshot}");
+
+        let merged = merge_agent_prompt_with_thread_agents_snapshot(
+            Some("agent prompt"),
+            Some(&stored_prompt),
+            &dir,
+            true,
+        )
+        .unwrap();
+
+        assert!(merged.contains("agent prompt"));
+        assert!(merged.contains("old rules"));
+        assert!(!merged.contains("new rules"));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn merge_agent_prompt_reads_workspace_agents_only_when_allowed() {
+        let dir = create_temp_dir();
+        std::fs::write(dir.join("AGENTS.md"), "workspace rules").unwrap();
+
+        let initial =
+            merge_agent_prompt_with_thread_agents_snapshot(None, None, &dir, true).unwrap();
+        assert!(initial.contains("workspace rules"));
+
+        let skipped = merge_agent_prompt_with_thread_agents_snapshot(None, None, &dir, false);
+        assert!(skipped.is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reuse_stored_session_prompt_returns_frozen_snapshot_when_workdir_matches() {
+        let prompt = "system prompt /workspace/demo";
+        let reused = reuse_stored_session_prompt_if_valid(
+            Some(prompt),
+            "/workspace/demo",
+            "C:/workspace/demo",
+        );
+        assert_eq!(reused, Some(prompt.to_string()));
+    }
+
+    #[test]
+    fn reuse_stored_session_prompt_skips_mismatched_workdir() {
+        let prompt = "system prompt /workspace/other";
+        let reused = reuse_stored_session_prompt_if_valid(
+            Some(prompt),
+            "/workspace/demo",
+            "C:/workspace/demo",
+        );
+        assert_eq!(reused, None);
+    }
 }

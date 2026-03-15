@@ -875,7 +875,7 @@ const normalizeAgentApprovalMode = (value: unknown): string => {
   if (raw === 'suggest') return 'suggest';
   if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
   if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
-  return 'auto_edit';
+  return 'full_auto';
 };
 const approvalModeForRequest = computed(() => {
   if (!desktopLocalMode.value) {
@@ -886,7 +886,7 @@ const approvalModeForRequest = computed(() => {
     return 'full_auto';
   }
   const agent = activeAgent.value || {};
-  return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'auto_edit');
+  return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'full_auto');
 });
 const normalizeSandboxContainerId = (value) => {
   const parsed = Number.parseInt(String(value ?? ''), 10);

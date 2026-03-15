@@ -3,7 +3,7 @@ use crate::api::user_context::resolve_user;
 use crate::config::normalize_chat_stream_channel;
 use crate::i18n;
 use crate::monitor::MonitorState;
-use crate::orchestrator::OrchestratorError;
+use crate::orchestrator::{merge_agent_prompt_with_thread_agents_snapshot, OrchestratorError};
 use crate::orchestrator_constants::{
     OBSERVATION_PREFIX, STREAM_EVENT_FETCH_LIMIT, STREAM_EVENT_QUEUE_SIZE,
     STREAM_EVENT_RESUME_POLL_INTERVAL_S,
@@ -1646,6 +1646,21 @@ async fn update_session_tools(
         record.agent_id.as_deref(),
         agent_record.as_ref(),
     );
+    let workspace_root = state
+        .workspace
+        .ensure_user_root(&workspace_id)
+        .unwrap_or_else(|_| state.workspace.root().to_path_buf());
+    let stored_prompt = state
+        .workspace
+        .load_session_system_prompt_async(&resolved.user.user_id, &session_id, None)
+        .await
+        .unwrap_or(None);
+    let effective_agent_prompt = merge_agent_prompt_with_thread_agents_snapshot(
+        agent_prompt.as_deref(),
+        stored_prompt.as_deref(),
+        &workspace_root,
+        false,
+    );
     let prompt = state
         .orchestrator
         .build_system_prompt(
@@ -1658,7 +1673,7 @@ async fn update_session_tools(
             UserStore::is_admin(&resolved.user),
             &workspace_id,
             None,
-            agent_prompt.as_deref(),
+            effective_agent_prompt.as_deref(),
         )
         .await;
     let _ = state.workspace.save_session_system_prompt(

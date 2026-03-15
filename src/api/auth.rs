@@ -32,7 +32,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/wunder/auth/external/login", post(external_login))
         .route("/wunder/auth/external/code", post(external_issue_code))
         .route("/wunder/auth/external/launch", post(external_launch))
-        .route("/wunder/auth/external/token_launch", post(external_token_launch))
+        .route(
+            "/wunder/auth/external/token_launch",
+            post(external_token_launch),
+        )
         .route("/wunder/auth/external/exchange", post(external_exchange))
         .route("/wunder/auth/org_units", get(list_org_units))
         .route(
@@ -428,13 +431,9 @@ async fn external_token_launch(
         )
     })?;
     let user_id_claim = config.external_embed_jwt_user_id_claim();
-    let validated_user_id = validate_external_embed_jwt(
-        raw_token,
-        &jwt_secret,
-        &user_id_claim,
-        requested_user_id,
-    )
-    .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
+    let validated_user_id =
+        validate_external_embed_jwt(raw_token, &jwt_secret, &user_id_claim, requested_user_id)
+            .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
 
     let launch_username = payload
         .username
@@ -778,13 +777,14 @@ async fn resolve_or_create_external_embed_agent(
         tool_names,
         preset_questions: Vec::new(),
         access_level: "A".to_string(),
-        approval_mode: "auto_edit".to_string(),
+        approval_mode: "full_auto".to_string(),
         is_shared: false,
         status: "active".to_string(),
         icon: Some(icon),
         sandbox_container_id: normalize_sandbox_container_id(preset.sandbox_container_id),
         created_at: now,
         updated_at: now,
+        preset_binding: None,
     };
     state
         .user_store
@@ -1137,8 +1137,18 @@ fn validate_external_embed_jwt(
     let expires_at = payload
         .get("exp")
         .and_then(Value::as_f64)
-        .or_else(|| payload.get("exp").and_then(Value::as_i64).map(|value| value as f64))
-        .or_else(|| payload.get("exp").and_then(Value::as_u64).map(|value| value as f64))
+        .or_else(|| {
+            payload
+                .get("exp")
+                .and_then(Value::as_i64)
+                .map(|value| value as f64)
+        })
+        .or_else(|| {
+            payload
+                .get("exp")
+                .and_then(Value::as_u64)
+                .map(|value| value as f64)
+        })
         .ok_or_else(|| anyhow::anyhow!("jwt exp missing"))?;
     if expires_at <= now_ts() {
         return Err(anyhow::anyhow!("jwt expired"));
@@ -1381,8 +1391,8 @@ fn now_ts() -> f64 {
 mod tests {
     use super::{
         normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
-        normalize_theme_palette, provision_external_launch_session,
-        validate_external_embed_jwt, DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
+        normalize_theme_palette, provision_external_launch_session, validate_external_embed_jwt,
+        DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
     use crate::services::user_store::UserStore;
     use crate::storage::{SqliteStorage, StorageBackend};
@@ -1469,17 +1479,12 @@ mod tests {
         let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
         let store = UserStore::new(storage as Arc<dyn StorageBackend>);
 
-        let (session, created, updated) = provision_external_launch_session(
-            &store,
-            "external_1",
-            None,
-            None,
-            false,
-        )
-        .expect("create external launch session");
+        let (session, created, updated) =
+            provision_external_launch_session(&store, "external_1", None, None, false)
+                .expect("create external launch session");
 
-        assert_eq!(created, true);
-        assert_eq!(updated, false);
+        assert!(created);
+        assert!(!updated);
         assert_eq!(session.user.user_id, "external_1");
         let login = store
             .login("external_1", DEFAULT_EXTERNAL_LAUNCH_PASSWORD)

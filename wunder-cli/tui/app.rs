@@ -397,6 +397,12 @@ impl TuiApp {
         app.reload_popup_catalogs().await;
         app.sync_model_status().await;
         app.reload_session_stats().await;
+        let logo = crate::welcome_logo::render_for_terminal();
+        app.push_special_log(
+            LogKind::Tool,
+            logo.plain_text().to_string(),
+            build_static_art_log(logo.plain_text().to_string(), logo.tui_lines()),
+        );
         app.push_log(
             LogKind::Info,
             "wunder-cli tui mode. type /help for commands.".to_string(),

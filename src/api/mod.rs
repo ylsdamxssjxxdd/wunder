@@ -1,4 +1,3 @@
-// API 路由聚合入口，按领域拆分以保持结构清晰。
 pub mod a2a;
 pub mod admin;
 pub mod admin_prompt_templates;
@@ -28,6 +27,7 @@ pub mod temp_dir;
 pub mod user_agents;
 pub mod user_channels;
 pub mod user_context;
+pub mod user_memory;
 pub mod user_prompt_templates;
 pub mod user_tools;
 pub mod user_world;
@@ -68,6 +68,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(user_world::router())
         .merge(user_world_ws::router())
         .merge(user_agents::router())
+        .merge(user_memory::router())
         .merge(team_runs::router())
         .merge(user_channels::router())
         .merge(a2a::router())
@@ -102,6 +103,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(user_world::router())
         .merge(user_world_ws::router())
         .merge(user_agents::router())
+        .merge(user_memory::router())
         .merge(user_channels::router())
         .merge(crate::mcp::router(state.clone()))
         .with_state(state)

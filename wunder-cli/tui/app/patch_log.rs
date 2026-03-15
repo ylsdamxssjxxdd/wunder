@@ -14,6 +14,7 @@ use crate::tui::theme;
 
 #[derive(Debug, Clone)]
 pub(super) enum SpecialLogEntry {
+    Art(ArtLogEntry),
     Patch(PatchLogEntry),
     Command(CommandLogEntry),
     Tool(GenericToolLogEntry),
@@ -22,6 +23,7 @@ pub(super) enum SpecialLogEntry {
 impl SpecialLogEntry {
     pub(super) fn summary_text(&self) -> String {
         match self {
+            Self::Art(entry) => entry.summary_text(),
             Self::Patch(entry) => entry.summary_text(),
             Self::Command(entry) => entry.summary_text(),
             Self::Tool(entry) => entry.summary_text(),
@@ -38,6 +40,7 @@ impl SpecialLogEntry {
 
     pub(super) fn render_lines_for_width(&self, width: u16) -> Vec<Line<'static>> {
         match self {
+            Self::Art(entry) => entry.render_lines_for_width(width),
             Self::Patch(entry) => entry.render_lines_for_width(width),
             Self::Command(entry) => entry.render_lines_for_width(width),
             Self::Tool(entry) => entry.render_lines_for_width(width),
@@ -60,6 +63,22 @@ impl SpecialLogEntry {
         if let (Self::Patch(current), Self::Patch(previous)) = (self, previous) {
             current.inherit_diff_from(previous);
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ArtLogEntry {
+    summary: String,
+    lines: Vec<Line<'static>>,
+}
+
+impl ArtLogEntry {
+    fn summary_text(&self) -> String {
+        self.summary.clone()
+    }
+
+    fn render_lines_for_width(&self, _width: u16) -> Vec<Line<'static>> {
+        self.lines.clone()
     }
 }
 
@@ -866,6 +885,10 @@ pub(super) fn build_pending_command_log(args: &Value, is_zh: bool) -> Option<Spe
         metrics: None,
         sections: Vec::new(),
     }))
+}
+
+pub(super) fn build_static_art_log(summary: String, lines: Vec<Line<'static>>) -> SpecialLogEntry {
+    SpecialLogEntry::Art(ArtLogEntry { summary, lines })
 }
 
 pub(super) fn build_completed_command_log(payload: &Value, is_zh: bool) -> Option<SpecialLogEntry> {

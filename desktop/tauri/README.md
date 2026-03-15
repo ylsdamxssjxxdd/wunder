@@ -46,6 +46,35 @@ cargo tauri build -f desktop -c tauri.bundle.tmp.json --bundles nsis --no-sign -
 - 安装包：`target/release/bundle/nsis/wunder-desktop_0.1.0_x64-setup.exe`
 - `desktop/tauri/.cargo/config.toml` 已固定将本目录下触发的 Cargo/Tauri 产物写入仓库根 `target/`
 
+## Win7 x86 试构建（隔离实验）
+
+为避免污染仓库根 `.cargo/` 与 `target/`，仓库提供了隔离实验脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File desktop/tauri/scripts/build-win7.ps1
+```
+
+- 默认使用 `temp_dir/win7-lab/cargo-home` 与 `temp_dir/win7-lab/tauri-build-target`
+- 默认优先使用 `desktop/tauri/webview2/win7-x86/` 下的 Fixed Runtime 109；如果目录不存在，则自动退回 `skip` 模式，仅验证打包链是否可产出 NSIS 包
+- 可用 `-WebviewMode fixed` 强制要求 Fixed Runtime，或 `-WebviewMode skip` 强制跳过 WebView2 打包
+- 默认产物目录：`temp_dir/win7-lab/tauri-build-target/i686-pc-windows-msvc/release/bundle/nsis/`
+
+## Win7 GNU 试构建（减少 MSVC 依赖）
+
+如果想尝试 `windows-gnu` 目标，可执行：
+
+```powershell
+# 推荐先试 x64 GNU
+powershell -ExecutionPolicy Bypass -File desktop/tauri/scripts/build-win7-gnu.ps1 -Arch x64
+
+# 若继续试 32 位 GNU
+powershell -ExecutionPolicy Bypass -File desktop/tauri/scripts/build-win7-gnu.ps1 -Arch ia32
+```
+
+- 脚本会把 `CARGO_HOME` 与 `CARGO_TARGET_DIR` 都隔离到 `temp_dir/win7-gnu-lab/`
+- GNU 试构建默认优先用 `skip-webview`，避免在 WebView2 运行时未就绪时把问题混在一起
+- 默认产物目录：`temp_dir/win7-gnu-lab/tauri-build-target-<arch>-gnu/<target>/release/bundle/nsis/`
+
 ## 打包资源说明
 
 - Tauri 安装包会携带以下运行资源：

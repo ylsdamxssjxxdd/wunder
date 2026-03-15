@@ -13,11 +13,66 @@ const {
   session,
   systemPreferences
 } = require('electron')
-const { autoUpdater } = require('electron-updater')
 const { spawn } = require('child_process')
 const fs = require('fs')
 const net = require('net')
+const Module = require('module')
 const path = require('path')
+
+const resolveRuntimeModuleRoots = () => {
+  const roots = []
+  if (process.resourcesPath) {
+    roots.push(path.join(process.resourcesPath, 'runtime-deps'))
+    roots.push(path.join(process.resourcesPath, 'node_modules'))
+  }
+  roots.push(path.join(__dirname, '..', 'resources', 'runtime-deps'))
+  roots.push(path.join(__dirname, '..', 'resources', 'node_modules'))
+  roots.push(path.join(__dirname, '..', 'node_modules'))
+  return roots
+}
+
+const registerRuntimeModuleRoots = () => {
+  const existing = String(process.env.NODE_PATH || '')
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter((item) => item)
+  const availableRoots = resolveRuntimeModuleRoots().filter((root) => fs.existsSync(root))
+  if (!availableRoots.length) {
+    return
+  }
+  const merged = Array.from(new Set([...availableRoots, ...existing]))
+  process.env.NODE_PATH = merged.join(path.delimiter)
+  Module._initPaths()
+}
+
+const resolveUpdaterCandidates = () => {
+  const candidates = []
+  for (const root of resolveRuntimeModuleRoots()) {
+    candidates.push(path.join(root, 'electron-updater'))
+  }
+  return candidates
+}
+
+registerRuntimeModuleRoots()
+
+let autoUpdater = null
+try {
+  ;({ autoUpdater } = require('electron-updater'))
+} catch (error) {
+  for (const candidate of resolveUpdaterCandidates()) {
+    try {
+      ;({ autoUpdater } = require(candidate))
+      console.info(`[updater] loaded bundled updater module from: ${candidate}`)
+      break
+    } catch {
+      // Continue probing fallback locations.
+    }
+  }
+  if (!autoUpdater) {
+    // Keep the desktop app bootable even if auto-update assets are missing.
+    console.warn('[updater] electron-updater is unavailable, auto update disabled:', error)
+  }
+}
 
 let mainWindow = null
 let bridgeProcess = null
@@ -786,6 +841,13 @@ const configureUpdaterEvents = () => {
   if (updaterReady) {
     return
   }
+  if (!autoUpdater) {
+    setUpdateState({
+      phase: 'unsupported',
+      message: 'electron-updater is unavailable in this build'
+    })
+    return
+  }
   updaterReady = true
 
   autoUpdater.autoDownload = false
@@ -863,6 +925,14 @@ const checkAndDownloadUpdate = async () => {
       return getUpdateState()
     }
 
+    if (!autoUpdater) {
+      setUpdateState({
+        phase: 'unsupported',
+        message: 'electron-updater is unavailable in this build'
+      })
+      return getUpdateState()
+    }
+
     configureUpdaterEvents()
     setUpdateState({
       phase: 'checking',
@@ -913,7 +983,7 @@ const checkAndDownloadUpdate = async () => {
 }
 
 const installDownloadedUpdate = () => {
-  if (!app.isPackaged || !updateState.downloaded || updateState.phase !== 'downloaded') {
+  if (!autoUpdater || !app.isPackaged || !updateState.downloaded || updateState.phase !== 'downloaded') {
     return {
       ok: false,
       state: getUpdateState()

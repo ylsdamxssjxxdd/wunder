@@ -17,6 +17,8 @@
 
 - `desktop/tauri/webview2/win7-x86/`：放置解压后的 WebView2 Fixed Runtime 109 x86。
 - `desktop/tauri/tauri.bundle.win7-x86.json`：Win7 x86 专用 bundle 覆盖配置。
+- `desktop/tauri/tauri.bundle.win7-skip-webview.json`：当本地暂时没有 Fixed Runtime 时，用于仅验证打包链是否能产出 NSIS 包。
+- `desktop/tauri/scripts/build-win7.ps1`：隔离构建脚本，默认把 `CARGO_HOME` 与 `CARGO_TARGET_DIR` 都落到 `temp_dir/win7-lab/`。
 
 ## 3. 准备材料
 
@@ -84,6 +86,17 @@ $env:CARGO_TARGET_DIR = "..\\..\\target\\win7-x86"
 $env:PATH = "C:\Program Files (x86)\NSIS;$env:PATH"
 cargo +1.77.2 tauri build -f desktop -c tauri.bundle.win7-x86.json --bundles nsis --no-sign --target i686-pc-windows-msvc -- --manifest-path ../../Cargo.toml
 ```
+
+如果只是先验证当前仓库能否产出 Win7 x86 安装包，可直接执行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File desktop/tauri/scripts/build-win7.ps1
+```
+
+说明：
+
+- 脚本会优先检测 `desktop/tauri/webview2/win7-x86/`。
+- 若目录不存在，脚本会自动退回 `skip` 模式，仅验证打包链；此时安装包不会内嵌 WebView2 109 Fixed Runtime。
 
 ## 6. 产物路径
 

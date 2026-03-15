@@ -19,6 +19,7 @@ build32
 build_ninja
 workspaces
 data
+wunder_patch
 data/logs
 images/*.7z
 images/*.zip

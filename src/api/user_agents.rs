@@ -1,6 +1,5 @@
 // 用户智能体 API：创建、管理用户自定义智能体。
 use crate::api::user_context::resolve_user;
-use crate::config::UserAgentPresetConfig;
 use crate::i18n;
 use crate::monitor::MonitorState;
 use crate::state::AppState;
@@ -28,7 +27,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
-const DEFAULT_AGENT_APPROVAL_MODE: &str = "auto_edit";
+const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 const DEFAULT_AGENT_NAME: &str = "Default Agent";
@@ -982,6 +981,7 @@ async fn create_agent(
         sandbox_container_id,
         created_at: now,
         updated_at: now,
+        preset_binding: None,
     };
     state
         .user_store
@@ -1347,6 +1347,13 @@ fn resolve_agent_request_hive_id(
     }
 
     let normalized = normalize_hive_id(hive_id.unwrap_or(DEFAULT_HIVE_ID));
+    if normalized == DEFAULT_HIVE_ID {
+        state
+            .user_store
+            .ensure_default_hive(user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        return Ok(normalized);
+    }
     let exists = state
         .user_store
         .get_hive(user_id, &normalized)
@@ -1664,42 +1671,7 @@ const PRESET_CONTAINER_ID_POLICY_ANALYSIS: i32 = 5;
 const PRESET_CONTAINER_ID_OFFICIAL_WRITING: i32 = 6;
 const PRESET_CONTAINER_META_PREFIX: &str = "user_agent_presets_container_v1:";
 
-#[derive(Clone)]
-struct PresetAgent {
-    name: String,
-    description: String,
-    system_prompt: String,
-    icon_name: String,
-    icon_color: String,
-    sandbox_container_id: i32,
-}
-
-impl PresetAgent {
-    fn from_config(config: UserAgentPresetConfig) -> Option<Self> {
-        let name = config.name.trim();
-        if name.is_empty() {
-            return None;
-        }
-        let icon_name = if config.icon_name.trim().is_empty() {
-            "spark".to_string()
-        } else {
-            config.icon_name.trim().to_string()
-        };
-        let icon_color = if config.icon_color.trim().is_empty() {
-            "#94a3b8".to_string()
-        } else {
-            config.icon_color.trim().to_string()
-        };
-        Some(Self {
-            name: name.to_string(),
-            description: config.description.trim().to_string(),
-            system_prompt: config.system_prompt.trim().to_string(),
-            icon_name,
-            icon_color,
-            sandbox_container_id: normalize_sandbox_container_id(config.sandbox_container_id),
-        })
-    }
-}
+type PresetAgent = crate::services::user_agent_presets::PresetAgent;
 
 async fn ensure_preset_agents(
     state: &AppState,
@@ -1842,40 +1814,36 @@ async fn ensure_preset_agents(
     if !container_layout_seeded {
         let _ = state.user_store.set_meta(&container_meta_key, "1");
     }
-    let seeded = state
-        .user_store
-        .get_meta(&meta_key)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    if seeded.is_some() {
-        return Ok(());
-    }
-    let mut tool_names = allowed_tool_names.into_iter().collect::<Vec<_>>();
-    tool_names.sort();
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
     for preset in &preset_agents {
         let preset_name = preset.name.trim();
         if existing_names.contains(preset_name) {
             continue;
         }
+        let target =
+            crate::services::user_agent_presets::build_target_snapshot(state, user, preset).await;
         let record = crate::storage::UserAgentRecord {
             agent_id: format!("agent_{}", Uuid::new_v4().simple()),
             user_id: user.user_id.clone(),
             hive_id: DEFAULT_HIVE_ID.to_string(),
-            name: preset.name.clone(),
-            description: preset.description.clone(),
-            system_prompt: preset.system_prompt.clone(),
-            tool_names: tool_names.clone(),
-            declared_tool_names: Vec::new(),
-            declared_skill_names: Vec::new(),
-            preset_questions: Vec::new(),
+            name: target.name.clone(),
+            description: target.description.clone(),
+            system_prompt: target.system_prompt.clone(),
+            tool_names: target.tool_names.clone(),
+            declared_tool_names: target.declared_tool_names.clone(),
+            declared_skill_names: target.declared_skill_names.clone(),
+            preset_questions: target.preset_questions.clone(),
             access_level: access_level.clone(),
-            approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+            approval_mode: target.approval_mode.clone(),
             is_shared: false,
-            status: "active".to_string(),
-            icon: Some(build_icon_payload(&preset.icon_name, &preset.icon_color)),
-            sandbox_container_id: preset.sandbox_container_id,
+            status: target.status.clone(),
+            icon: target.icon.clone(),
+            sandbox_container_id: target.sandbox_container_id,
             created_at: now,
             updated_at: now,
+            preset_binding: Some(crate::services::user_agent_presets::build_binding(
+                preset, &target,
+            )),
         };
         let _ = state.user_store.upsert_user_agent(&record);
         existing_names.insert(preset_name.to_string());
@@ -1885,18 +1853,7 @@ async fn ensure_preset_agents(
 }
 
 async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
-    let config = state.config_store.get().await;
-    let mut seen_names = HashSet::new();
-    let mut presets = Vec::new();
-    for preset in config.user_agents.presets {
-        let Some(preset) = PresetAgent::from_config(preset) else {
-            continue;
-        };
-        if seen_names.insert(preset.name.clone()) {
-            presets.push(preset);
-        }
-    }
-    presets
+    crate::services::user_agent_presets::configured_preset_agents(state).await
 }
 
 fn apply_legacy_preset_upgrade(
@@ -1983,7 +1940,8 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     if config.sandbox_container_id <= 0 {
         config.sandbox_container_id = DEFAULT_SANDBOX_CONTAINER_ID;
     }
-    config.preset_questions = normalize_preset_questions(std::mem::take(&mut config.preset_questions));
+    config.preset_questions =
+        normalize_preset_questions(std::mem::take(&mut config.preset_questions));
 }
 
 async fn load_default_agent_config(

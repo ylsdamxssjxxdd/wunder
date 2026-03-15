@@ -18,7 +18,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+#[cfg(not(target_vendor = "win7"))]
 use sysinfo::System;
+#[cfg(target_vendor = "win7")]
+use sysinfo::{System, SystemExt};
 use tokio::sync::{Mutex as TokioMutex, Notify};
 
 const DEFAULT_CACHE_TTL_S: f64 = 10.0;
@@ -998,17 +1001,32 @@ fn merge_skill_specs(base: Vec<SkillSpec>, extra: Vec<SkillSpec>) -> Vec<SkillSp
 
 fn system_name() -> String {
     static CACHE: OnceLock<String> = OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            let name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
-            let version = System::os_version().unwrap_or_default();
-            if version.is_empty() {
-                name
-            } else {
-                format!("{name} {version}")
-            }
-        })
-        .clone()
+    CACHE.get_or_init(resolve_system_name).clone()
+}
+
+#[cfg(target_vendor = "win7")]
+fn resolve_system_name() -> String {
+    let system = System::new();
+    let name = system
+        .name()
+        .unwrap_or_else(|| std::env::consts::OS.to_string());
+    let version = system.os_version().unwrap_or_default();
+    if version.is_empty() {
+        name
+    } else {
+        format!("{name} {version}")
+    }
+}
+
+#[cfg(not(target_vendor = "win7"))]
+fn resolve_system_name() -> String {
+    let name = System::name().unwrap_or_else(|| std::env::consts::OS.to_string());
+    let version = System::os_version().unwrap_or_default();
+    if version.is_empty() {
+        name
+    } else {
+        format!("{name} {version}")
+    }
 }
 
 fn now_ts() -> f64 {

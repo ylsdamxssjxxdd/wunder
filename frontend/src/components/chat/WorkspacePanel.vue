@@ -227,7 +227,12 @@
           {{ t('workspace.preview.loading') }}
         </div>
         <template v-else>
-          <img v-if="preview.embed && preview.type === 'image'" :src="preview.url" />
+          <ZoomableImagePreview
+            v-if="preview.embed && preview.type === 'image'"
+            :image-url="preview.url"
+            :alt="preview.entry?.name || t('workspace.preview.dialogTitle')"
+            :active="preview.visible"
+          />
           <iframe v-else-if="preview.embed && (preview.type === 'pdf' || preview.type === 'svg')" :src="preview.url" />
           <pre v-else class="workspace-preview-text">{{ preview.content }}</pre>
         </template>
@@ -285,6 +290,7 @@ import {
   searchWunderWorkspace,
   uploadWunderWorkspace
 } from '@/api/workspace';
+import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
 import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { useI18n } from '@/i18n';
@@ -2137,6 +2143,12 @@ const uploadWorkspaceGroups = async (items, basePath) => {
 const hasWorkspaceDrag = (dataTransfer) =>
   Array.from(dataTransfer?.types || []).includes(WORKSPACE_DRAG_KEY);
 
+const hasExternalFileDrag = (dataTransfer) => {
+  if (!dataTransfer || hasWorkspaceDrag(dataTransfer)) return false;
+  const types = Array.from(dataTransfer.types || []);
+  return types.includes('Files') || Boolean(dataTransfer.items?.length) || Boolean(dataTransfer.files?.length);
+};
+
 const getWorkspaceDragPaths = (dataTransfer) => {
   const raw = dataTransfer?.getData(WORKSPACE_DRAG_KEY) || '';
   if (!raw) return [];
@@ -2149,6 +2161,13 @@ const getWorkspaceDragPaths = (dataTransfer) => {
     return [raw].filter(Boolean);
   }
   return [raw].filter(Boolean);
+};
+
+const resolveExternalDropBasePath = (entry) => {
+  if (entry?.type === 'dir') {
+    return normalizeWorkspacePath(entry.path);
+  }
+  return state.path;
 };
 
 const handleListDragEnter = (event) => {
@@ -2209,23 +2228,35 @@ const handleItemDragEnd = (event) => {
 };
 
 const handleItemDragEnter = (event, entry) => {
-  if (!entry || entry.type !== 'dir') return;
+  const internalDrag = hasWorkspaceDrag(event.dataTransfer);
+  const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
+  if (!internalDrag && !externalFileDrag) return;
+  if (internalDrag && (!entry || entry.type !== 'dir')) return;
   event.preventDefault();
-  event.currentTarget?.classList?.add('drop-target');
+  state.draggingOver = true;
+  if (entry?.type === 'dir') {
+    event.currentTarget?.classList?.add('drop-target');
+  }
 };
 
 const handleItemDragOver = (event, entry) => {
-  if (!entry || entry.type !== 'dir') return;
+  const internalDrag = hasWorkspaceDrag(event.dataTransfer);
+  const externalFileDrag = hasExternalFileDrag(event.dataTransfer);
+  if (!internalDrag && !externalFileDrag) return;
+  if (internalDrag && (!entry || entry.type !== 'dir')) return;
   event.preventDefault();
+  state.draggingOver = true;
   if (event.dataTransfer) {
-    event.dataTransfer.dropEffect = hasWorkspaceDrag(event.dataTransfer) ? 'move' : 'copy';
+    event.dataTransfer.dropEffect = internalDrag ? 'move' : 'copy';
   }
 };
 
 const handleItemDragLeave = (event, entry) => {
-  if (!entry || entry.type !== 'dir') return;
-  if (!event.currentTarget?.contains(event.relatedTarget)) {
+  if (entry?.type === 'dir' && !event.currentTarget?.contains(event.relatedTarget)) {
     event.currentTarget?.classList?.remove('drop-target');
+  }
+  if (!listRef.value?.contains(event.relatedTarget)) {
+    state.draggingOver = false;
   }
 };
 
@@ -2253,9 +2284,9 @@ const handleItemDrop = async (event, entry) => {
   event.stopPropagation();
   event.currentTarget?.classList?.remove('drop-target');
   state.draggingOver = false;
-  if (!entry || entry.type !== 'dir') return;
   const internalPaths = getWorkspaceDragPaths(event.dataTransfer);
   if (internalPaths.length) {
+    if (!entry || entry.type !== 'dir') return;
     const targetDir = normalizeWorkspacePath(entry.path);
     const filtered = filterMoveTargets(internalPaths, targetDir);
     if (!filtered.length) return;
@@ -2276,8 +2307,10 @@ const handleItemDrop = async (event, entry) => {
   }
   const dropped = await collectDroppedFiles(event.dataTransfer);
   if (!dropped.length) return;
+  const uploadBasePath = resolveExternalDropBasePath(entry);
   try {
-    await uploadWorkspaceGroups(dropped, entry.path);
+    // When the list is fully occupied, external drags land on item nodes instead of the list shell.
+    await uploadWorkspaceGroups(dropped, uploadBasePath);
     ElMessage.success(t('workspace.dragUpload.success'));
   } catch (error) {
     ElMessage.error(

@@ -1,4 +1,4 @@
-﻿use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_tools::{UserToolBindings, UserToolKind};
 use crate::skills::SkillSpec;
 use crate::state::AppState;
@@ -661,6 +661,7 @@ async fn run_import_job_inner(
             sandbox_container_id: snapshot.sandbox_container_id,
             created_at: now,
             updated_at: now,
+            preset_binding: None,
         };
         state.user_store.upsert_user_agent(&record)?;
         runtime.created_agents.push(record.agent_id.clone());
@@ -838,7 +839,8 @@ reference_only mode does not include full skill files.
         }
         attached_skill_names.sort();
         attached_skill_names.dedup();
-        let declared_tool_names = collect_agent_declared_tools_for_export(agent, &bindings.alias_map);
+        let declared_tool_names =
+            collect_agent_declared_tools_for_export(agent, &bindings.alias_map);
         let declared_skill_names = if agent.declared_skill_names.is_empty() {
             attached_skill_names.clone()
         } else {
@@ -962,11 +964,8 @@ fn install_worker_snapshot(
             worker_root.to_string_lossy()
         ));
     }
-    let worker_card = load_worker_card_manifest(&worker_root)?.ok_or_else(|| {
-        anyhow!(
-            "worker card missing: provide workers/<id>/worker-card.json"
-        )
-    })?;
+    let worker_card = load_worker_card_manifest(&worker_root)?
+        .ok_or_else(|| anyhow!("worker card missing: provide workers/<id>/worker-card.json"))?;
 
     let role_prompt = resolve_worker_role_prompt(&worker_card)?;
     let display_name = worker_card
@@ -989,7 +988,11 @@ fn install_worker_snapshot(
             .as_deref()
             .or(worker_ref.approval_mode.as_deref()),
     );
-    let icon = worker_card.metadata.icon.clone().or_else(|| worker_ref.icon.clone());
+    let icon = worker_card
+        .metadata
+        .icon
+        .clone()
+        .or_else(|| worker_ref.icon.clone());
     let declared_tool_names = normalize_string_items(&worker_card.abilities.tool_names);
     let declared_skill_names = normalize_string_items(&worker_card.abilities.skills);
     let preset_questions = normalize_string_items(&worker_card.interaction.preset_questions);
@@ -1056,7 +1059,6 @@ fn install_worker_snapshot(
         skill_installs,
     })
 }
-
 
 fn resolve_import_workers(
     hive_manifest: &HiveManifest,
@@ -2254,10 +2256,10 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_agent_skills_for_export, export_worker_id, normalize_approval_mode,
-        normalize_conflict_key, normalize_export_filename_stem, normalize_import_conflict_mode,
-        normalize_name, resolve_import_skill_name, resolve_import_workers,
-        resolve_worker_skill_sources, load_worker_card_manifest, unique_label_with_reserved,
+        collect_agent_skills_for_export, export_worker_id, load_worker_card_manifest,
+        normalize_approval_mode, normalize_conflict_key, normalize_export_filename_stem,
+        normalize_import_conflict_mode, normalize_name, resolve_import_skill_name,
+        resolve_import_workers, resolve_worker_skill_sources, unique_label_with_reserved,
         unique_slug_with_reserved, validate_archive_entry_path, validate_hive_manifest,
         validate_relative_path, HiveManifest, HivePackMeta, ImportConflictMode,
     };
@@ -2542,6 +2544,7 @@ mod tests {
             sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
             created_at: 0.0,
             updated_at: 0.0,
+            preset_binding: None,
         };
 
         let skill_refs = collect_agent_skills_for_export(&agent, &bindings, &skill_root, &[]);
@@ -2577,6 +2580,7 @@ mod tests {
             sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
             created_at: 0.0,
             updated_at: 0.0,
+            preset_binding: None,
         };
         let global_specs = vec![SkillSpec {
             name: "report_writer".to_string(),
@@ -2623,8 +2627,8 @@ mod tests {
             sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
             created_at: 0.0,
             updated_at: 0.0,
+            preset_binding: None,
         };
         assert_eq!(export_worker_id(&agent, 0), "Recruit-Specialist");
     }
 }
-

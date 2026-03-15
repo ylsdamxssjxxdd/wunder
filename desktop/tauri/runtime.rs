@@ -322,6 +322,16 @@ impl DesktopRuntime {
         );
 
         step_start = Instant::now();
+        migrate_desktop_local_agent_approval_modes(state.as_ref(), &user_id)?;
+        log_startup_segment(
+            startup_enabled,
+            "bridge-runtime",
+            "migrate_desktop_agent_approval_modes",
+            step_start,
+            startup_boot,
+        );
+
+        step_start = Instant::now();
         let remote_gateway = settings.remote_gateway.clone();
         let lan_mesh = settings.lan_mesh.clone();
         let (remote_api_base, remote_ws_base, remote_error) =
@@ -1289,6 +1299,49 @@ fn ensure_desktop_identity(state: &AppState, user_id: &str, desktop_token: &str)
         last_used_at: now,
     };
     state.storage.create_user_token(&record)?;
+    Ok(())
+}
+
+fn migrate_desktop_local_agent_approval_modes(state: &AppState, user_id: &str) -> Result<()> {
+    for mut record in state.user_store.list_user_agents(user_id)? {
+        let normalized = record.approval_mode.trim().to_ascii_lowercase();
+        if !(normalized.is_empty() || normalized == "auto_edit" || normalized == "auto-edit") {
+            continue;
+        }
+        record.approval_mode = "full_auto".to_string();
+        record.updated_at = now_ts();
+        state.user_store.upsert_user_agent(&record)?;
+    }
+
+    let default_agent_key = format!("default_agent:{user_id}");
+    let Some(raw) = state.user_store.get_meta(&default_agent_key)? else {
+        return Ok(());
+    };
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return Ok(());
+    }
+    let Ok(mut payload) = serde_json::from_str::<serde_json::Value>(cleaned) else {
+        return Ok(());
+    };
+    let approval_mode = payload
+        .get("approval_mode")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if !(approval_mode.is_empty() || approval_mode == "auto_edit" || approval_mode == "auto-edit") {
+        return Ok(());
+    }
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "approval_mode".to_string(),
+            serde_json::Value::String("full_auto".to_string()),
+        );
+        state
+            .user_store
+            .set_meta(&default_agent_key, &serde_json::to_string(object)?)?;
+    }
     Ok(())
 }
 

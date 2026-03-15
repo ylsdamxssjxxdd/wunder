@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div
     class="messenger-view"
     :class="{
@@ -235,6 +235,17 @@
           </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
+            class="messenger-header-btn messenger-header-btn--text"
+            type="button"
+            :title="t('messenger.memory.button')"
+            :aria-label="t('messenger.memory.button')"
+            @click="openActiveAgentMemory"
+          >
+            <i class="fa-solid fa-brain" aria-hidden="true"></i>
+            {{ t('messenger.memory.button') }}
+          </button>
+          <button
+            v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
             :title="t('common.setting')"
@@ -436,6 +447,14 @@
                   </button>
                   <button
                     class="messenger-inline-btn"
+                    :class="{ active: agentSettingMode === 'memory' }"
+                    type="button"
+                    @click="agentSettingMode = 'memory'"
+                  >
+                    {{ t('messenger.memory.button') }}
+                  </button>
+                  <button
+                    class="messenger-inline-btn"
                     :class="{ active: agentSettingMode === 'archived' }"
                     type="button"
                     @click="agentSettingMode = 'archived'"
@@ -469,6 +488,9 @@
                 </div>
                 <div v-else-if="agentSettingMode === 'runtime'" class="messenger-chat-settings-block">
                   <AgentRuntimeRecordsPanel :agent-id="settingsRuntimeAgentIdForApi" />
+                </div>
+                <div v-else-if="agentSettingMode === 'memory'" class="messenger-chat-settings-block">
+                  <AgentMemoryPanel :agent-id="settingsAgentIdForApi" />
                 </div>
                 <div v-else-if="agentSettingMode === 'archived'" class="messenger-chat-settings-block">
                   <ArchivedThreadManager
@@ -505,7 +527,7 @@
                     <span class="messenger-entity-value">
                       {{ formatContactPresence(selectedContact) }}
                       <template v-if="selectedContact.status">
-                        · {{ selectedContact.status }}
+                        路 {{ selectedContact.status }}
                       </template>
                     </span>
                   </div>
@@ -1320,6 +1342,7 @@ import {
 } from '@/views/messenger/lazyShell';
 import {
   AgentCronPanel,
+  AgentMemoryPanel,
   AgentRuntimeRecordsPanel,
   AgentSettingsPanel,
   ArchivedThreadManager,
@@ -1617,7 +1640,7 @@ const runtimeStateOverrides = ref<Map<string, { state: AgentRuntimeState; expire
 const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
-const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime' | 'archived'>('agent');
+const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'archived'>('agent');
 type SettingsPanelMode =
   | 'general'
   | 'profile'
@@ -2016,7 +2039,7 @@ const isLeftRailMoreActive = computed(
     isHelperAppsMiddlePaneActive.value
 );
 const leftRailMoreToggleTitle = computed(() =>
-  `${t('common.more')} · ${t(leftRailMoreExpanded.value ? 'common.collapse' : 'common.expand')}`
+  `${t('common.more')} 路 ${t(leftRailMoreExpanded.value ? 'common.collapse' : 'common.expand')}`
 );
 
 const DEFAULT_BEEROOM_GROUP_ID = 'default';
@@ -2265,8 +2288,9 @@ const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
     .trim()
     .toLowerCase();
   if (normalized === 'suggest') return 'suggest';
+  if (normalized === 'auto_edit' || normalized === 'auto-edit') return 'auto_edit';
   if (normalized === 'full_auto' || normalized === 'full-auto') return 'full_auto';
-  return 'auto_edit';
+  return 'full_auto';
 };
 
 const tryParseJsonRecord = (value: unknown): Record<string, unknown> | null => {
@@ -2395,13 +2419,13 @@ const activeAgentApprovalMode = computed<AgentApprovalMode>(() => {
     return 'full_auto';
   }
   const agent = asObjectRecord(activeAgent.value);
-  return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'auto_edit');
+  return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'full_auto');
 });
 
 const resolveCompactApprovalOptionLabel = (value: string): string => {
   const source = String(value || '').trim();
   if (!source) return '';
-  const splitIndex = ['（', '(']
+  const splitIndex = ['\uff08', '(']
     .map((marker) => source.indexOf(marker))
     .filter((index) => index > 0)
     .sort((left, right) => left - right)[0];
@@ -5106,7 +5130,7 @@ const buildAgentInquiryReply = (panel: AgentInquiryPanelData, routes: AgentInqui
   const header = t('chat.askPanelPrefix');
   const question = panel?.question ? t('chat.askPanelQuestion', { question: panel.question }) : '';
   const lines = routes.map((route) => {
-    const detail = route.description ? `：${route.description}` : '';
+    const detail = route.description ? `锛?{route.description}` : '';
     return `- ${route.label}${detail}`;
   });
   return [header, question, ...lines].filter(Boolean).join('\n');
@@ -5222,7 +5246,7 @@ const resolveWorldMarkdownWorkspacePath = (rawPath: string, senderUserId: string
 };
 
 const WORLD_AT_PATH_RE = /(^|[\s\n])@("([^"]+)"|'([^']+)'|[^\s]+)/g;
-const WORLD_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】]+)?$/;
+const WORLD_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?\uFF0C\u3002\uFF1B\uFF1A\uFF01\uFF1F\u300B\u3011]+)?$/;
 
 const decodeWorldAtPathToken = (value: string): string => {
   if (!/%[0-9a-fA-F]{2}/.test(value)) return value;
@@ -5313,7 +5337,7 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
       allowed: true
     };
   }
-  // 非管理员仍优先尝试按当前登录用户上下文读取，避免不同展示ID导致的误拦截。
+  // 闈炵鐞嗗憳浠嶄紭鍏堝皾璇曟寜褰撳墠鐧诲綍鐢ㄦ埛涓婁笅鏂囪鍙栵紝閬垮厤涓嶅悓灞曠ずID瀵艰嚧鐨勮鎷︽埅銆?
   return {
     ...parsed,
     requestUserId: null,
@@ -5516,7 +5540,7 @@ const isWorkspaceResourceMissing = (error: unknown): boolean => {
     (error as { message?: string })?.message ||
     '';
   const message = typeof raw === 'string' ? raw : String(raw || '');
-  return /not found|no such|涓嶅瓨鍦▅鎵句笉鍒皘宸插垹闄宸茬Щ闄removed/i.test(message);
+  return /not found|no such|娑撳秴鐡ㄩ崷鈻呴幍鍙ョ瑝閸掔殬瀹告彃鍨归梽顦㈠鑼╅梽顦emoved/i.test(message);
 };
 
 const hydrateWorkspaceResourceCard = async (card: HTMLElement) => {
@@ -6619,7 +6643,7 @@ const handleWorkerCardImportInput = async (event) => {
         : t('portal.agent.workerCardImportBatchSuccess', { count: documents.length })
     );
     if (warnings.length) {
-      ElMessage.warning(warnings.join('；'));
+      ElMessage.warning(warnings.join('\uff1b'));
     }
   } catch (error) {
     showApiError(error, t('portal.agent.workerCardImportFailed'));
@@ -6888,6 +6912,28 @@ const toggleAgentOverviewMode = () => {
 const enterSelectedAgentConversation = async () => {
   const target = settingsAgentId.value || DEFAULT_AGENT_KEY;
   await openAgentById(target);
+};
+
+const openActiveAgentMemory = () => {
+  const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  agentOverviewMode.value = 'detail';
+  selectedAgentId.value = targetAgentId;
+  agentSettingMode.value = 'memory';
+  sessionHub.setSection('agents');
+  const nextQuery = {
+    ...route.query,
+    section: 'agents',
+    agent_id: targetAgentId === DEFAULT_AGENT_KEY ? '' : targetAgentId
+  } as Record<string, any>;
+  delete nextQuery.session_id;
+  delete nextQuery.entry;
+  delete nextQuery.conversation_id;
+  router
+    .push({
+      path: `${basePrefix.value}/home`,
+      query: nextQuery
+    })
+    .catch(() => undefined);
 };
 
 const openActiveAgentSettings = () => {
@@ -10110,3 +10156,4 @@ onBeforeUnmount(() => {
   userWorldStore.stopAllWatchers();
 });
 </script>
+

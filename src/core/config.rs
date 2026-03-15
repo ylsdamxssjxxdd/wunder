@@ -1,4 +1,4 @@
-// 配置读取与覆盖合并，保持与现有 YAML 配置格式兼容。
+// Config loading and YAML override merging.
 use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -250,6 +250,10 @@ impl Default for UserAgentsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserAgentPresetConfig {
+    #[serde(default)]
+    pub preset_id: String,
+    #[serde(default = "default_user_agent_preset_revision")]
+    pub revision: u64,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -261,6 +265,22 @@ pub struct UserAgentPresetConfig {
     pub icon_color: String,
     #[serde(default = "default_user_agent_preset_sandbox_container_id")]
     pub sandbox_container_id: i32,
+    #[serde(default)]
+    pub tool_names: Vec<String>,
+    #[serde(default)]
+    pub declared_tool_names: Vec<String>,
+    #[serde(default)]
+    pub declared_skill_names: Vec<String>,
+    #[serde(default)]
+    pub preset_questions: Vec<String>,
+    #[serde(default = "default_user_agent_preset_approval_mode")]
+    pub approval_mode: String,
+    #[serde(default = "default_user_agent_preset_status")]
+    pub status: String,
+}
+
+fn default_user_agent_preset_revision() -> u64 {
+    1
 }
 
 fn default_user_agent_preset_icon_name() -> String {
@@ -275,47 +295,95 @@ fn default_user_agent_preset_sandbox_container_id() -> i32 {
     1
 }
 
+fn default_user_agent_preset_approval_mode() -> String {
+    "full_auto".to_string()
+}
+
+fn default_user_agent_preset_status() -> String {
+    "active".to_string()
+}
+
 fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
     vec![
         UserAgentPresetConfig {
-            name: "文稿校对".to_string(),
-            description: "语病检查、错别字修正与语气优化".to_string(),
-            system_prompt: "你是专业的中文文稿校对助手。收到文本后：1) 保持原意，给出校对后的完整版本；2) 列出关键修改点（错别字、语病、标点、格式）；3) 如需调整语气，给出替换建议。不要新增未提供的事实。".to_string(),
+            preset_id: String::new(),
+            revision: default_user_agent_preset_revision(),
+            name: "????".to_string(),
+            description: "??????????????????".to_string(),
+            system_prompt: "????????????????????????????????????".to_string(),
             icon_name: "spark".to_string(),
             icon_color: "#fbbf24".to_string(),
-            sandbox_container_id: 1,
+            sandbox_container_id: 2,
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            approval_mode: default_user_agent_preset_approval_mode(),
+            status: default_user_agent_preset_status(),
         },
         UserAgentPresetConfig {
-            name: "数据分析".to_string(),
-            description: "结构化分析数据并输出结论与建议".to_string(),
-            system_prompt: "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。".to_string(),
+            preset_id: String::new(),
+            revision: default_user_agent_preset_revision(),
+            name: "????".to_string(),
+            description: "????????????????".to_string(),
+            system_prompt: "??????????????????????????????????".to_string(),
             icon_name: "chart".to_string(),
             icon_color: "#60a5fa".to_string(),
-            sandbox_container_id: 1,
+            sandbox_container_id: 3,
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            approval_mode: default_user_agent_preset_approval_mode(),
+            status: default_user_agent_preset_status(),
         },
         UserAgentPresetConfig {
-            name: "科学绘图".to_string(),
-            description: "你可以将资料放到沙盒容器来，我会帮你分析数据并绘制专业图表".to_string(),
-            system_prompt: "你是科学绘图助手。根据研究问题与数据，绘制专业图表".to_string(),
+            preset_id: String::new(),
+            revision: default_user_agent_preset_revision(),
+            name: "????".to_string(),
+            description: "?????????????".to_string(),
+            system_prompt: "????????????????????????????????????".to_string(),
             icon_name: "chart".to_string(),
             icon_color: "#22d3ee".to_string(),
-            sandbox_container_id: 1,
+            sandbox_container_id: 4,
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            approval_mode: default_user_agent_preset_approval_mode(),
+            status: default_user_agent_preset_status(),
         },
         UserAgentPresetConfig {
-            name: "政策分析".to_string(),
-            description: "解读政策要点并评估影响".to_string(),
-            system_prompt: "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。".to_string(),
+            preset_id: String::new(),
+            revision: default_user_agent_preset_revision(),
+            name: "????".to_string(),
+            description: "????????????".to_string(),
+            system_prompt: "?????????????????????????????????".to_string(),
             icon_name: "briefcase".to_string(),
             icon_color: "#f97316".to_string(),
-            sandbox_container_id: 1,
+            sandbox_container_id: 5,
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            approval_mode: default_user_agent_preset_approval_mode(),
+            status: default_user_agent_preset_status(),
         },
         UserAgentPresetConfig {
-            name: "公文写作".to_string(),
-            description: "公文起草、格式规范与措辞润色".to_string(),
-            system_prompt: "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。".to_string(),
+            preset_id: String::new(),
+            revision: default_user_agent_preset_revision(),
+            name: "????".to_string(),
+            description: "???????????????".to_string(),
+            system_prompt: "??????????????????????????????".to_string(),
             icon_name: "shield".to_string(),
             icon_color: "#94a3b8".to_string(),
-            sandbox_container_id: 1,
+            sandbox_container_id: 6,
+            tool_names: Vec::new(),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            approval_mode: default_user_agent_preset_approval_mode(),
+            status: default_user_agent_preset_status(),
         },
     ]
 }
@@ -1024,7 +1092,7 @@ pub struct SandboxResources {
 }
 
 impl Config {
-    // 统一归一化 API Key，避免空白字符导致鉴权误判。
+    // Normalize API key values and ignore blank placeholders.
     pub fn api_key(&self) -> Option<String> {
         let inline = self
             .security
@@ -1047,7 +1115,7 @@ impl Config {
             .filter(|value| !value.is_empty())
     }
 
-    // 外部系统嵌入登录专用密钥；未配置时外部登录接口将视为禁用。
+    // Resolve external auth key with environment fallback.
     pub fn external_auth_key(&self) -> Option<String> {
         let inline = self
             .security
@@ -1072,7 +1140,7 @@ impl Config {
             .or_else(|| self.api_key())
     }
 
-    // 外链嵌入默认预制智能体名称；未配置时外链启动接口将返回错误。
+    // Resolve the default preset agent name for external embed flows.
     pub fn external_embed_preset_agent_name(&self) -> Option<String> {
         let inline = self
             .security
@@ -1345,7 +1413,7 @@ where
 }
 
 pub fn load_config() -> Config {
-    // 读取基础配置与覆盖配置，优先使用管理端覆盖内容。
+    // Load base config and then apply override config if present.
     let base_path =
         env::var("WUNDER_CONFIG_PATH").unwrap_or_else(|_| "config/wunder.yaml".to_string());
     let override_path = env::var("WUNDER_CONFIG_OVERRIDE_PATH")
@@ -1355,14 +1423,14 @@ pub fn load_config() -> Config {
     let mut merged = read_yaml(&base_path);
     if override_path.exists() {
         let override_value = read_yaml_path(&override_path);
-        // 只对非空字段做递归覆盖，避免误清空已有配置。
+        // Apply override values without blanking existing keys.
         merge_yaml(&mut merged, override_value);
     }
 
     expand_yaml_env(&mut merged);
 
     serde_yaml::from_value::<Config>(merged).unwrap_or_else(|err| {
-        warn!("配置解析失败，使用默认配置: {err}");
+        warn!("閰嶇疆瑙ｆ瀽澶辫触锛屼娇鐢ㄩ粯璁ら厤缃? {err}");
         Config::default()
     })
 }
@@ -1376,16 +1444,16 @@ pub fn load_base_config_value() -> Value {
 }
 
 fn read_yaml(path: &str) -> Value {
-    // 配置文件允许不存在，避免开发环境首次启动失败。
+    // Missing config files are allowed during bootstrap.
     let content = match read_yaml_content_with_fallback(path) {
         Ok(text) => text,
         Err(err) => {
-            warn!("读取配置失败: {path}, {err}");
+            warn!("璇诲彇閰嶇疆澶辫触: {path}, {err}");
             return Value::Null;
         }
     };
     serde_yaml::from_str(&content).unwrap_or_else(|err| {
-        warn!("解析 YAML 失败: {path}, {err}");
+        warn!("瑙ｆ瀽 YAML 澶辫触: {path}, {err}");
         Value::Null
     })
 }
@@ -1395,12 +1463,12 @@ fn read_yaml_path(path: &Path) -> Value {
     let content = match read_yaml_content_with_fallback(&path_display) {
         Ok(text) => text,
         Err(err) => {
-            warn!("读取配置失败: {path_display}, {err}");
+            warn!("璇诲彇閰嶇疆澶辫触: {path_display}, {err}");
             return Value::Null;
         }
     };
     serde_yaml::from_str(&content).unwrap_or_else(|err| {
-        warn!("解析 YAML 失败: {path_display}, {err}");
+        warn!("瑙ｆ瀽 YAML 澶辫触: {path_display}, {err}");
         Value::Null
     })
 }
@@ -1415,7 +1483,7 @@ fn read_yaml_content_with_fallback(path: &str) -> Result<String, std::io::Error>
             };
             let text = fs::read_to_string(&example_path)?;
             warn!(
-                "配置文件不存在，回退使用示例配置: {} -> {}",
+                "閰嶇疆鏂囦欢涓嶅瓨鍦紝鍥為€€浣跨敤绀轰緥閰嶇疆: {} -> {}",
                 resolved_path.display(),
                 example_path.display()
             );
@@ -1457,7 +1525,7 @@ fn swap_yaml_extension(path: &Path) -> Option<PathBuf> {
 fn merge_yaml(base: &mut Value, override_value: Value) {
     match (base, override_value) {
         (Value::Mapping(base_map), Value::Mapping(override_map)) => {
-            // 递归合并 Mapping，保留原始层级结构。
+            // Merge nested mappings recursively and keep the original structure.
             for (key, value) in override_map {
                 match base_map.get_mut(&key) {
                     Some(existing) => merge_yaml(existing, value),

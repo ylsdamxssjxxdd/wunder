@@ -1,0 +1,30 @@
+appId: com.wunder.desktop
+productName: Wunder Desktop
+artifactName: wunder-desktop-win7-${version}-${arch}-setup.${ext}
+icon: build/icon.png
+directories:
+  buildResources: build
+files:
+  - "src/**"
+  - "node_modules/**"
+  - "package.json"
+  - "!node_modules/wunder-workspace"
+  - "!node_modules/wunder-workspace/**"
+  - "!**/*.map"
+extraResources:
+  - from: resources
+    to: .
+asarUnpack:
+  - "**/wunder-desktop-bridge*"
+win:
+  icon: build/icon.ico
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  include: scripts/installer-custom.nsh

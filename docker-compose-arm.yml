@@ -190,9 +190,9 @@ services:
       - FRONTEND_WAIT_BACKEND_INTERVAL_MS=${FRONTEND_WAIT_BACKEND_INTERVAL_MS:-1000}
     # Force a safe umask so build artifacts remain readable by nginx.
     entrypoint: ["sh", "-lc", "umask ${FRONTEND_UMASK:-022}; exec \"$@\"", "--"]
-    command: ["sh", "-c", "if [ ! -x /workspace/node_modules/.bin/vite ] && [ ! -x /workspace/frontend/node_modules/.bin/vite ]; then npm ci --workspace wunder-frontend --include-workspace-root=false; fi && rm -rf /workspace/node_modules/.vite /workspace/frontend/node_modules/.vite /workspace/frontend/dist && npm run build --workspace wunder-frontend && node ./frontend/scripts/wait-backend.mjs && npm run dev --workspace wunder-frontend"]
+    command: ["node", "./frontend/scripts/docker-dev-bootstrap.mjs"]
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:' + (process.env.FRONTEND_PORT || '18001') + '/').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      test: ["CMD-SHELL", "[ -f /workspace/frontend/dist/index.html ]"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -212,7 +212,8 @@ services:
       wunder-server:
         condition: service_started
       wunder-frontend:
-        condition: service_healthy
+        condition: service_started
+    command: ["/bin/sh", "-lc", "until [ -f /usr/share/nginx/html/index.html ]; do echo '[wunder-nginx] waiting for frontend dist/index.html'; sleep 1; done; exec nginx -g 'daemon off;'"]
     restart: always
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro${NGINX_BIND_OPTS:-}

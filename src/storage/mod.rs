@@ -5,6 +5,7 @@ mod sqlite;
 
 use crate::config::StorageConfig;
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -113,6 +114,29 @@ pub struct UserTokenRecord {
     pub last_used_at: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAgentPresetSnapshot {
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub tool_names: Vec<String>,
+    pub declared_tool_names: Vec<String>,
+    pub declared_skill_names: Vec<String>,
+    pub preset_questions: Vec<String>,
+    pub approval_mode: String,
+    pub status: String,
+    pub icon: Option<String>,
+    pub sandbox_container_id: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserAgentPresetBinding {
+    pub preset_id: String,
+    #[serde(default)]
+    pub preset_revision: u64,
+    pub last_applied: UserAgentPresetSnapshot,
+}
+
 #[derive(Debug, Clone)]
 pub struct UserToolAccessRecord {
     pub user_id: String,
@@ -140,6 +164,7 @@ pub struct UserAgentRecord {
     pub sandbox_container_id: i32,
     pub created_at: f64,
     pub updated_at: f64,
+    pub preset_binding: Option<UserAgentPresetBinding>,
 }
 
 #[derive(Debug, Clone)]
@@ -678,6 +703,75 @@ pub struct UpsertMemoryTaskLogParams<'a> {
     pub updated_time: Option<f64>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryFragmentRecord {
+    pub memory_id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub source_session_id: String,
+    pub source_round_id: String,
+    pub source_type: String,
+    pub category: String,
+    pub title_l0: String,
+    pub summary_l1: String,
+    pub content_l2: String,
+    pub fact_key: String,
+    pub tags: Vec<String>,
+    pub entities: Vec<String>,
+    pub importance: f64,
+    pub confidence: f64,
+    pub tier: String,
+    pub status: String,
+    pub pinned: bool,
+    pub confirmed_by_user: bool,
+    pub access_count: i64,
+    pub hit_count: i64,
+    pub last_accessed_at: f64,
+    pub valid_from: f64,
+    pub invalidated_at: Option<f64>,
+    pub supersedes_memory_id: Option<String>,
+    pub superseded_by_memory_id: Option<String>,
+    pub embedding_model: Option<String>,
+    pub vector_ref: Option<String>,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryHitRecord {
+    pub hit_id: String,
+    pub memory_id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub session_id: String,
+    pub round_id: String,
+    pub query_text: String,
+    pub reason_json: Value,
+    pub lexical_score: f64,
+    pub semantic_score: f64,
+    pub freshness_score: f64,
+    pub importance_score: f64,
+    pub final_score: f64,
+    pub created_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryJobRecord {
+    pub job_id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub session_id: String,
+    pub job_type: String,
+    pub status: String,
+    pub request_payload: Value,
+    pub result_summary: String,
+    pub error_message: String,
+    pub queued_at: f64,
+    pub started_at: f64,
+    pub finished_at: f64,
+    pub updated_at: f64,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ListChannelUserBindingsQuery<'a> {
     pub channel: Option<&'a str>,
@@ -916,6 +1010,35 @@ pub trait StorageBackend: Send + Sync {
     ) -> Result<Option<HashMap<String, Value>>>;
     fn delete_memory_task_log(&self, user_id: &str, session_id: &str) -> Result<i64>;
     fn delete_memory_task_logs_by_user(&self, user_id: &str) -> Result<i64>;
+    fn upsert_memory_fragment(&self, record: &MemoryFragmentRecord) -> Result<()>;
+    fn get_memory_fragment(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+    ) -> Result<Option<MemoryFragmentRecord>>;
+    fn list_memory_fragments(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+    ) -> Result<Vec<MemoryFragmentRecord>>;
+    fn delete_memory_fragment(&self, user_id: &str, agent_id: &str, memory_id: &str)
+        -> Result<i64>;
+    fn insert_memory_hit(&self, record: &MemoryHitRecord) -> Result<()>;
+    fn list_memory_hits(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        session_id: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<MemoryHitRecord>>;
+    fn upsert_memory_job(&self, record: &MemoryJobRecord) -> Result<()>;
+    fn list_memory_jobs(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        limit: i64,
+    ) -> Result<Vec<MemoryJobRecord>>;
 
     fn create_evaluation_run(&self, payload: &Value) -> Result<()>;
     fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()>;

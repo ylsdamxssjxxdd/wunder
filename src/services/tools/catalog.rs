@@ -259,10 +259,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "action": {
                         "type": "string",
                         "description": t("tool.spec.memory_manager.args.action"),
-                        "enum": ["list", "add", "update", "delete", "clear"]
+                        "enum": ["list", "add", "update", "delete", "clear", "recall"]
                     },
                     "memory_id": {"type": "string", "description": t("tool.spec.memory_manager.args.memory_id")},
                     "content": {"type": "string", "description": t("tool.spec.memory_manager.args.content")},
+                    "query": {"type": "string", "description": t("tool.spec.memory_manager.args.query")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.memory_manager.args.limit")},
                     "order": {
                         "type": "string",

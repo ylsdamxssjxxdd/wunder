@@ -8,7 +8,6 @@ use crate::history::HistoryManager;
 use crate::i18n;
 use crate::llm::{build_llm_client, is_llm_configured, is_llm_model, ChatMessage, ToolCallMode};
 use crate::lsp::LspManager;
-use crate::memory::MemoryStore;
 use crate::monitor::MonitorState;
 use crate::orchestrator_constants::{
     COMPACTION_FORCE_FALLBACK_LIMIT, COMPACTION_HISTORY_RATIO, COMPACTION_META_TYPE,
@@ -83,6 +82,7 @@ pub(crate) use error::OrchestratorError;
 use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
+pub(crate) use prompt::merge_agent_prompt_with_thread_agents_snapshot;
 use tool_calls::apply_tool_name_map;
 use tool_calls::collect_tool_calls_from_output;
 use tool_calls::compile_regex;
@@ -102,7 +102,6 @@ pub struct Orchestrator {
     lsp_manager: Arc<LspManager>,
     prompt_composer: Arc<PromptComposer>,
     storage: Arc<dyn StorageBackend>,
-    memory_store: Arc<MemoryStore>,
     user_world: Arc<UserWorldService>,
     beeroom_realtime: Arc<BeeroomRealtimeService>,
     cron_wake_signal: Option<CronWakeSignal>,
@@ -126,7 +125,6 @@ impl Orchestrator {
         beeroom_realtime: Arc<BeeroomRealtimeService>,
         cron_wake_signal: Option<CronWakeSignal>,
     ) -> Self {
-        let memory_store = Arc::new(MemoryStore::new(storage.clone()));
         Self {
             config_store,
             workspace,
@@ -138,7 +136,6 @@ impl Orchestrator {
             lsp_manager,
             prompt_composer: Arc::new(PromptComposer::new(60.0, 256)),
             storage,
-            memory_store,
             user_world,
             beeroom_realtime,
             cron_wake_signal,

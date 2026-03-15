@@ -223,7 +223,7 @@ const showApprovalModeSetting = computed(
   () => desktopLocalMode.value
 );
 const resolveDefaultApprovalMode = (): string =>
-  showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
+  'full_auto';
 
 const sandboxContainerOptions = Object.freeze(Array.from({ length: 10 }, (_, index) => index + 1));
 const approvalModeOptions = computed(() => [

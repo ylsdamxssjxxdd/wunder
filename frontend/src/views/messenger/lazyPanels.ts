@@ -1,4 +1,4 @@
-import { defineAsyncComponent } from 'vue';
+﻿import { defineAsyncComponent } from 'vue';
 
 const lazy = <T extends object>(loader: () => Promise<T>) =>
   defineAsyncComponent({
@@ -44,3 +44,6 @@ export const UserSharedToolsPanel = lazy(
   () => import('@/components/user-tools/UserSharedToolsPanel.vue')
 );
 export const UserSkillPane = lazy(() => import('@/components/user-tools/UserSkillPane.vue'));
+
+export const AgentMemoryPanel = lazy(() => import('@/components/messenger/memory/AgentMemoryPanel.vue'));
+

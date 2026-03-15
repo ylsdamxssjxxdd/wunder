@@ -681,6 +681,8 @@ impl Orchestrator {
                 agent_id,
                 is_admin,
                 agent_prompt,
+                None,
+                None,
             )
             .await;
 
@@ -744,12 +746,16 @@ impl Orchestrator {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn append_memory_prompt(
         &self,
         user_id: &str,
         agent_id: Option<&str>,
         prompt: String,
         is_admin: bool,
+        session_id: Option<&str>,
+        round_id: Option<&str>,
+        query_text: Option<&str>,
     ) -> String {
         if prompt.trim().is_empty() {
             return prompt;
@@ -773,16 +779,32 @@ impl Orchestrator {
             out.trim().to_string()
         }
 
+        fn strip_existing_memory_block(text: &str) -> String {
+            let prefix = crate::i18n::t("memory.block_prefix");
+            let cleaned = text.trim_end();
+            if prefix.trim().is_empty() {
+                return cleaned.to_string();
+            }
+            if let Some(index) = cleaned.find(prefix.trim()) {
+                return cleaned[..index].trim_end().to_string();
+            }
+            cleaned.to_string()
+        }
+
+        let prompt = strip_existing_memory_block(&prompt);
         let placeholder = crate::prompting::SYSTEM_PROMPT_MEMORY_PLACEHOLDER;
         let has_placeholder = prompt.contains(placeholder);
-
-        let memory_owner = crate::memory::build_agent_memory_owner(user_id, agent_id);
-        let limit = if is_admin { Some(0) } else { None };
-        let records = self
-            .memory_store
-            .list_records_async(&memory_owner, limit, false)
-            .await;
-        let block = self.memory_store.build_prompt_block(&records);
+        let fragment_store =
+            crate::services::memory_fragments::MemoryFragmentStore::new(self.storage.clone());
+        let hits = fragment_store.recall_for_prompt(
+            user_id,
+            agent_id,
+            session_id,
+            round_id,
+            query_text,
+            Some(if is_admin { 10 } else { 6 }),
+        );
+        let block = fragment_store.build_prompt_block(&hits);
 
         if has_placeholder {
             let replacement = block.trim();
@@ -798,6 +820,60 @@ impl Orchestrator {
             return prompt;
         }
         format!("{}\n\n{}", prompt.trim_end(), block)
+    }
+
+    pub(super) fn spawn_auto_memory_extraction(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        session_id: &str,
+        round_id: Option<&str>,
+        question: &str,
+        answer: &str,
+    ) {
+        if question.trim().is_empty() || answer.trim().is_empty() {
+            return;
+        }
+        let storage = self.storage.clone();
+        let user_id = user_id.trim().to_string();
+        let session_id = session_id.trim().to_string();
+        let agent_id = agent_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let round_id = round_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let question = question.trim().to_string();
+        let answer = answer.trim().to_string();
+
+        // Run memory extraction off the hot path so final replies stay snappy.
+        tokio::spawn(async move {
+            let log_session_id = session_id.clone();
+            let join_result = tokio::task::spawn_blocking(move || {
+                let service =
+                    crate::services::memory_auto_extract::MemoryAutoExtractService::new(storage);
+                service.capture_turn(
+                    &user_id,
+                    agent_id.as_deref(),
+                    &session_id,
+                    round_id.as_deref(),
+                    &question,
+                    &answer,
+                )
+            })
+            .await;
+            match join_result {
+                Ok(Ok(_)) => {}
+                Ok(Err(err)) => {
+                    warn!("auto memory extraction failed for session {log_session_id}: {err}")
+                }
+                Err(err) => {
+                    warn!("auto memory extraction join failed for session {log_session_id}: {err}")
+                }
+            }
+        });
     }
 
     pub(super) fn build_compaction_user_content(&self, messages: &[Value]) -> String {
@@ -1149,8 +1225,7 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
                     estimate_message_tokens(&messages[current_user_index]);
                 let preserve_floor = stats
                     .current_user_tokens_before
-                    .min(COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS)
-                    .max(1);
+                    .clamp(1, COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS);
                 let remaining_for_current =
                     limit - (total_tokens - stats.current_user_tokens_before);
                 let target_tokens = remaining_for_current
@@ -1158,10 +1233,9 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
                     .min(stats.current_user_tokens_before);
                 // Keep the active user intent readable whenever the limit still allows it.
                 if target_tokens < stats.current_user_tokens_before {
-                    if let Some(trimmed) = trim_message_to_fit_tokens(
-                        &messages[current_user_index],
-                        target_tokens,
-                    ) {
+                    if let Some(trimmed) =
+                        trim_message_to_fit_tokens(&messages[current_user_index], target_tokens)
+                    {
                         stats.current_user_tokens_after = estimate_message_tokens(&trimmed);
                         stats.current_user_trimmed =
                             stats.current_user_tokens_after < stats.current_user_tokens_before;
@@ -1466,7 +1540,8 @@ mod tests {
 
     #[test]
     fn test_apply_rebuilt_context_guard_preserves_current_question_before_trimming_it() {
-        let current_question = "请按部门名称分析人员规模和薪资，直接画图，并给 3 条结论。";
+        let current_question =
+            "Please analyze team size and salaries by department, draw a chart, and summarize in 3 points.";
         let mut messages = vec![
             json!({ "role": "system", "content": "system prompt" }),
             json!({ "role": "user", "content": "S".repeat(48_000) }),
@@ -1477,7 +1552,13 @@ mod tests {
         assert!(stats.applied);
         assert!(stats.summary_removed || stats.summary_trimmed);
         assert!(!stats.current_user_trimmed);
-        assert_eq!(messages.last().and_then(|item| item.get("content")).and_then(Value::as_str), Some(current_question));
+        assert_eq!(
+            messages
+                .last()
+                .and_then(|item| item.get("content"))
+                .and_then(Value::as_str),
+            Some(current_question)
+        );
         assert!(estimate_messages_tokens(&messages) <= limit);
     }
 

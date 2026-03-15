@@ -159,7 +159,7 @@ const showApprovalModeSetting = computed(
   () => isDesktopModeEnabled() && !isDesktopRemoteAuthMode()
 );
 const resolveDefaultApprovalMode = (): string =>
-  showApprovalModeSetting.value ? 'auto_edit' : 'full_auto';
+  'full_auto';
 
 const visible = computed({
   get: () => props.modelValue,

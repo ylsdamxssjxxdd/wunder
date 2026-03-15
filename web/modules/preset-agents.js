@@ -16,6 +16,9 @@ const ensureState = () => {
       selectedPresetName: "",
       activeTab: "preset",
       userAgent: null,
+      syncSummary: null,
+      syncLoading: false,
+      syncRequestToken: 0,
       toolGroups: [],
       cronJobs: [],
       channelAccounts: [],
@@ -40,6 +43,9 @@ const REQUIRED_KEYS = [
   "presetAgentDetailTitle",
   "presetAgentDetailMeta",
   "presetAgentSaveBtn",
+  "presetAgentSyncSafeBtn",
+  "presetAgentSyncForceBtn",
+  "presetAgentSyncSummary",
   "presetAgentDeleteBtn",
   "presetAgentsStatusText",
   "presetAgentTabPreset",
@@ -51,6 +57,9 @@ const REQUIRED_KEYS = [
   "presetAgentFormName",
   "presetAgentFormDescription",
   "presetAgentFormPrompt",
+  "presetAgentPresetQuestions",
+  "presetAgentPresetQuestionsEmpty",
+  "presetAgentPresetQuestionAddBtn",
   "presetAgentFormContainerId",
   "presetUserAgentTools",
   "presetUserAgentToolsEmpty",
@@ -124,13 +133,44 @@ const normalizeIconColor = (value) => {
   return "#" + hex;
 };
 
+const normalizeQuestionDrafts = (values) =>
+  Array.isArray(values) ? values.map((value) => String(value ?? "")) : [];
+
+const normalizeQuestionList = (values) => {
+  const seen = new Set();
+  const output = [];
+  normalizeQuestionDrafts(values).forEach((value) => {
+    const cleaned = String(value || "").trim();
+    if (!cleaned || seen.has(cleaned)) {
+      return;
+    }
+    seen.add(cleaned);
+    output.push(cleaned);
+  });
+  return output;
+};
+
 const normalizePreset = (item) => ({
+  preset_id: String(item?.preset_id || "").trim(),
+  revision: Number.isFinite(Number(item?.revision)) ? Number(item.revision) : 1,
   name: String(item?.name || "").trim(),
   description: String(item?.description || "").trim(),
   system_prompt: String(item?.system_prompt || "").trim(),
   icon_name: normalizeIconName(item?.icon_name),
   icon_color: normalizeIconColor(item?.icon_color),
   sandbox_container_id: Number.isFinite(Number(item?.sandbox_container_id)) ? Number(item.sandbox_container_id) : 1,
+  tool_names: Array.isArray(item?.tool_names)
+    ? item.tool_names.map((value) => String(value || "").trim()).filter(Boolean)
+    : [],
+  declared_tool_names: Array.isArray(item?.declared_tool_names)
+    ? item.declared_tool_names.map((value) => String(value || "").trim()).filter(Boolean)
+    : [],
+  declared_skill_names: Array.isArray(item?.declared_skill_names)
+    ? item.declared_skill_names.map((value) => String(value || "").trim()).filter(Boolean)
+    : [],
+  preset_questions: normalizeQuestionList(item?.preset_questions),
+  approval_mode: String(item?.approval_mode || "full_auto").trim() || "full_auto",
+  status: String(item?.status || "active").trim() || "active",
 });
 
 const normalizeUserAgent = (item) => ({
@@ -141,7 +181,15 @@ const normalizeUserAgent = (item) => ({
   tool_names: Array.isArray(item?.tool_names)
     ? item.tool_names.map((value) => String(value || "").trim()).filter(Boolean)
     : [],
-  approval_mode: String(item?.approval_mode || "auto_edit").trim() || "auto_edit",
+  declared_tool_names: Array.isArray(item?.declared_tool_names)
+    ? item.declared_tool_names.map((value) => String(value || "").trim()).filter(Boolean)
+    : [],
+  declared_skill_names: Array.isArray(item?.declared_skill_names)
+    ? item.declared_skill_names.map((value) => String(value || "").trim()).filter(Boolean)
+    : [],
+  preset_questions: normalizeQuestionList(item?.preset_questions),
+  approval_mode: String(item?.approval_mode || "full_auto").trim() || "full_auto",
+  status: String(item?.status || "active").trim() || "active",
   icon: item?.icon || null,
   sandbox_container_id: Number.isFinite(Number(item?.sandbox_container_id)) ? Number(item.sandbox_container_id) : 1,
   updated_at: item?.updated_at || "",
@@ -287,6 +335,38 @@ const setStatus = (text, kind = "") => {
 const selectedPreset = () =>
   state.presetAgents.presets.find((item) => item.name === state.presetAgents.selectedPresetName) || null;
 
+const buildEffectivePreset = (preset) => {
+  if (!preset) {
+    return null;
+  }
+  const agent = state.presetAgents.userAgent;
+  if (!agent || (agent.name && agent.name !== preset.name)) {
+    return preset;
+  }
+  return {
+    ...preset,
+    description: agent.description,
+    system_prompt: agent.system_prompt,
+    sandbox_container_id: Number.isFinite(Number(agent.sandbox_container_id))
+      ? Number(agent.sandbox_container_id)
+      : preset.sandbox_container_id,
+    tool_names: Array.isArray(agent.tool_names) ? [...agent.tool_names] : preset.tool_names,
+    declared_tool_names: Array.isArray(agent.declared_tool_names)
+      ? [...agent.declared_tool_names]
+      : preset.declared_tool_names,
+    declared_skill_names: Array.isArray(agent.declared_skill_names)
+      ? [...agent.declared_skill_names]
+      : preset.declared_skill_names,
+    preset_questions: Array.isArray(agent.preset_questions)
+      ? [...agent.preset_questions]
+      : preset.preset_questions,
+    approval_mode: String(agent.approval_mode || preset.approval_mode || "full_auto").trim() || "full_auto",
+    status: String(agent.status || preset.status || "active").trim() || "active",
+  };
+};
+
+const effectiveSelectedPreset = () => buildEffectivePreset(selectedPreset());
+
 const fillPresetForm = (preset) => {
   elements.presetAgentFormName.value = preset?.name || "";
   elements.presetAgentFormDescription.value = preset?.description || "";
@@ -296,10 +376,100 @@ const fillPresetForm = (preset) => {
   );
 };
 
-const fillAgentForm = (agent) => {
-  renderToolSelector(agent?.tool_names || []);
-  elements.presetUserAgentApproval.value = agent?.approval_mode || "auto_edit";
+const collectPresetQuestionDrafts = () => {
+  const container = elements.presetAgentPresetQuestions;
+  if (!container) {
+    return [];
+  }
+  return Array.from(container.querySelectorAll("textarea")).map((input) => String(input.value || ""));
+};
+
+const collectPresetQuestionValues = () => normalizeQuestionList(collectPresetQuestionDrafts());
+
+const renderPresetQuestionEditor = (questions) => {
+  const list = elements.presetAgentPresetQuestions;
+  const empty = elements.presetAgentPresetQuestionsEmpty;
+  const addBtn = elements.presetAgentPresetQuestionAddBtn;
+  if (!list || !empty || !addBtn) {
+    return;
+  }
+  const drafts = normalizeQuestionDrafts(questions);
+  list.textContent = "";
+  addBtn.disabled = !selectedPreset();
+  if (!drafts.length) {
+    empty.style.display = "block";
+    return;
+  }
+  empty.style.display = "none";
+  const fragment = document.createDocumentFragment();
+  drafts.forEach((question, index) => {
+    const row = document.createElement("div");
+    row.className = "preset-question-item";
+
+    const badge = document.createElement("div");
+    badge.className = "preset-question-index";
+    badge.textContent = String(index + 1);
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "preset-question-input";
+    textarea.rows = 2;
+    textarea.placeholder = t("presetAgents.form.presetQuestionsPlaceholder");
+    textarea.value = question;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "preset-question-remove";
+    removeBtn.title = t("common.delete");
+    removeBtn.setAttribute("aria-label", t("common.delete"));
+    removeBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+    removeBtn.addEventListener("click", () => {
+      const nextDrafts = collectPresetQuestionDrafts();
+      nextDrafts.splice(index, 1);
+      renderPresetQuestionEditor(nextDrafts);
+    });
+
+    row.appendChild(badge);
+    row.appendChild(textarea);
+    row.appendChild(removeBtn);
+    fragment.appendChild(row);
+  });
+  list.appendChild(fragment);
+};
+
+const fillAgentForm = (preset) => {
+  renderToolSelector(preset?.tool_names || []);
+  renderPresetQuestionEditor(preset?.preset_questions || []);
+  elements.presetUserAgentApproval.value = preset?.approval_mode || "full_auto";
   elements.presetUserAgentHive.value = t("presetAgents.userAgent.hiveFixed");
+};
+
+const renderSyncSummary = () => {
+  const preset = selectedPreset();
+  const canSync = Boolean(preset?.preset_id);
+  elements.presetAgentSyncSafeBtn.disabled = !canSync || state.presetAgents.syncLoading;
+  elements.presetAgentSyncForceBtn.disabled = !canSync || state.presetAgents.syncLoading;
+
+  if (!preset || !preset.preset_id) {
+    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.empty");
+    return;
+  }
+  if (state.presetAgents.syncLoading) {
+    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.summaryLoading");
+    return;
+  }
+  const summary =
+    state.presetAgents.syncSummary?.preset_id === preset.preset_id ? state.presetAgents.syncSummary : null;
+  if (!summary) {
+    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.empty");
+    return;
+  }
+  elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.summary", {
+    linked: summary.linked_users || 0,
+    missing: summary.missing_users || 0,
+    safe: summary.safe_update_agents || 0,
+    overridden: summary.overridden_agents || 0,
+    uptodate: summary.up_to_date_agents || 0,
+  });
 };
 
 const renderPresetList = () => {
@@ -325,13 +495,15 @@ const renderPresetList = () => {
     title.textContent = preset.name || "-";
     const meta = document.createElement("div");
     meta.className = "preset-agent-item-meta";
-    meta.textContent = `#${String(preset.sandbox_container_id || 1)}`;
+    meta.textContent = `v${Math.max(1, Number(preset.revision) || 1)} · #${String(preset.sandbox_container_id || 1)}`;
     row.appendChild(title);
     row.appendChild(meta);
     row.addEventListener("click", async () => {
       state.presetAgents.selectedPresetName = preset.name;
+      state.presetAgents.syncSummary = null;
       renderAll();
       await refreshContext({ ensureAgent: true, silent: true });
+      await loadSyncSummary({ silent: true });
     });
     fragment.appendChild(row);
   });
@@ -351,8 +523,9 @@ const setTab = (tab) => {
 };
 
 const renderPresetDetail = () => {
-  const preset = selectedPreset();
-  if (!preset) {
+  const rawPreset = selectedPreset();
+  const preset = effectiveSelectedPreset();
+  if (!rawPreset || !preset) {
     elements.presetAgentDetailTitle.textContent = t("presetAgents.detail.empty");
     elements.presetAgentDetailMeta.textContent = "";
     elements.presetAgentDeleteBtn.disabled = true;
@@ -360,15 +533,16 @@ const renderPresetDetail = () => {
     fillAgentForm(null);
     return;
   }
-  elements.presetAgentDetailTitle.textContent = preset.name;
+  elements.presetAgentDetailTitle.textContent = rawPreset.name;
   elements.presetAgentDetailMeta.textContent = [
     t("presetAgents.detail.templateUser", { user: TEMPLATE_USER_ID }),
+    `v${Math.max(1, Number(rawPreset.revision) || 1)}`,
     `container: ${preset.sandbox_container_id}`,
     `hive: ${DEFAULT_HIVE_ID}`,
   ].join(" | ");
   elements.presetAgentDeleteBtn.disabled = false;
   fillPresetForm(preset);
-  fillAgentForm(state.presetAgents.userAgent);
+  fillAgentForm(preset);
 };
 
 const renderCronList = () => {
@@ -525,6 +699,7 @@ const renderChannelAccounts = () => {
 const renderAll = () => {
   renderPresetList();
   renderPresetDetail();
+  renderSyncSummary();
   renderCronList();
   renderChannelForms();
   renderChannelAccounts();
@@ -556,9 +731,9 @@ const ensureAgentForPreset = async (preset) => {
     name: preset.name,
     description: preset.description,
     system_prompt: preset.system_prompt,
-    tool_names: [],
-    approval_mode: "auto_edit",
-    status: "active",
+    tool_names: Array.isArray(preset.tool_names) ? preset.tool_names : [],
+    approval_mode: preset.approval_mode || "full_auto",
+    status: preset.status || "active",
     is_shared: false,
     hive_id: DEFAULT_HIVE_ID,
     icon: JSON.stringify({ name: normalizeIconName(preset.icon_name), color: normalizeIconColor(preset.icon_color) }),
@@ -572,7 +747,7 @@ const loadToolCatalog = async () => {
   const payload = await requestJson("/tools", { query: { user_id: TEMPLATE_USER_ID } });
   const source = payload?.data && typeof payload.data === "object" ? payload.data : payload || {};
   state.presetAgents.toolGroups = buildToolGroups(source);
-  renderToolSelector(state.presetAgents.userAgent?.tool_names || []);
+  renderToolSelector(effectiveSelectedPreset()?.tool_names || []);
 };
 
 const loadCronJobs = async () => {
@@ -621,6 +796,8 @@ const refreshContext = async ({ ensureAgent = true, silent = false } = {}) => {
   const preset = selectedPreset();
   if (!preset) {
     state.presetAgents.userAgent = null;
+    state.presetAgents.syncSummary = null;
+    state.presetAgents.syncLoading = false;
     state.presetAgents.toolGroups = [];
     state.presetAgents.cronJobs = [];
     state.presetAgents.channelAccounts = [];
@@ -638,7 +815,7 @@ const refreshContext = async ({ ensureAgent = true, silent = false } = {}) => {
     } else {
       state.presetAgents.userAgent = sameNameAgent(await listUserAgents(), preset.name);
     }
-    fillAgentForm(state.presetAgents.userAgent);
+    fillAgentForm(preset);
     await Promise.all([loadCronJobs(), loadChannelAccounts(), loadToolCatalog()]);
     renderPresetDetail();
     setStatus(t("presetAgents.status.ready", { user: TEMPLATE_USER_ID, agent: state.presetAgents.userAgent?.name || "-" }), "success");
@@ -670,12 +847,20 @@ const collectPresetForm = () => {
 const persistPresets = async (selectedName) => {
   const payload = {
     items: state.presetAgents.presets.map((item) => ({
+      preset_id: item.preset_id,
+      revision: item.revision,
       name: item.name,
       description: item.description,
       system_prompt: item.system_prompt,
       icon_name: item.icon_name,
       icon_color: item.icon_color,
       sandbox_container_id: item.sandbox_container_id,
+      tool_names: item.tool_names,
+      declared_tool_names: item.declared_tool_names,
+      declared_skill_names: item.declared_skill_names,
+      preset_questions: item.preset_questions,
+      approval_mode: item.approval_mode,
+      status: item.status,
     })),
   };
   const saved = await requestJson("/admin/preset_agents", { method: "POST", body: payload });
@@ -697,34 +882,42 @@ const persistPresets = async (selectedName) => {
 const savePreset = async () => {
   try {
     const current = selectedPreset();
-    if (!current) {
+    const effective = effectiveSelectedPreset() || current;
+    if (!current || !effective) {
       throw new Error(t("presetAgents.error.noPresetSelected"));
     }
     const draft = collectPresetForm();
-    const next = { ...current, ...draft };
+    const next = { ...current, ...effective, ...draft };
     const duplicate = state.presetAgents.presets.find(
       (item) => item.name.toLowerCase() === next.name.toLowerCase() && item.name !== current.name
     );
     if (duplicate) {
       throw new Error(t("presetAgents.error.duplicateName", { name: next.name }));
     }
+    const currentTemplateAgentId = String(state.presetAgents.userAgent?.id || "").trim();
     const agentPayload = collectAgentForm();
+    next.tool_names = agentPayload.tool_names;
+    next.declared_tool_names = Array.isArray(effective.declared_tool_names) ? [...effective.declared_tool_names] : [];
+    next.declared_skill_names = Array.isArray(effective.declared_skill_names) ? [...effective.declared_skill_names] : [];
+    next.preset_questions = agentPayload.preset_questions;
+    next.approval_mode = agentPayload.approval_mode;
+    next.status = agentPayload.status || effective.status || current.status || "active";
+    next.sandbox_container_id = agentPayload.sandbox_container_id;
     state.presetAgents.presets = state.presetAgents.presets.map((item) => (item.name === current.name ? next : item));
     state.presetAgents.selectedPresetName = next.name;
     await persistPresets(next.name);
-    await refreshContext({ ensureAgent: true, silent: true });
 
-    let agent = state.presetAgents.userAgent;
-    if (!agent?.id) {
-      throw new Error(t("presetAgents.error.agentNotReady"));
+    if (currentTemplateAgentId) {
+      await requestJson(`/agents/${encodeURIComponent(currentTemplateAgentId)}`, {
+        method: "PUT",
+        query: { user_id: TEMPLATE_USER_ID },
+        body: { ...agentPayload, name: next.name },
+      });
+      await refreshContext({ ensureAgent: false, silent: true });
+    } else {
+      await refreshContext({ ensureAgent: true, silent: true });
     }
-    await requestJson(`/agents/${encodeURIComponent(agent.id)}`, {
-      method: "PUT",
-      query: { user_id: TEMPLATE_USER_ID },
-      body: { ...agentPayload, name: next.name },
-    });
-
-    await refreshContext({ ensureAgent: false, silent: true });
+    await loadSyncSummary({ silent: true });
     renderAll();
     notify(t("presetAgents.toast.savePresetSuccess"), "success");
   } catch (error) {
@@ -742,14 +935,23 @@ const createPreset = () => {
     candidate = `${baseName}${index}`;
   }
   state.presetAgents.presets.push({
+    preset_id: "",
+    revision: 1,
     name: candidate,
     description: "",
     system_prompt: "",
     icon_name: "spark",
     icon_color: "#94a3b8",
     sandbox_container_id: 1,
+    tool_names: [],
+    declared_tool_names: [],
+    declared_skill_names: [],
+    preset_questions: [],
+    approval_mode: "full_auto",
+    status: "active",
   });
   state.presetAgents.selectedPresetName = candidate;
+  state.presetAgents.syncSummary = null;
   renderAll();
   setTab("preset");
 };
@@ -765,9 +967,11 @@ const deletePreset = async () => {
   try {
     state.presetAgents.presets = state.presetAgents.presets.filter((item) => item.name !== current.name);
     state.presetAgents.selectedPresetName = state.presetAgents.presets[0]?.name || "";
+    state.presetAgents.syncSummary = null;
     await persistPresets(state.presetAgents.selectedPresetName);
     if (state.presetAgents.selectedPresetName) {
       await refreshContext({ ensureAgent: true, silent: true });
+      await loadSyncSummary({ silent: true });
     } else {
       state.presetAgents.userAgent = null;
       state.presetAgents.cronJobs = [];
@@ -792,9 +996,12 @@ const collectAgentForm = () => {
     description: String(elements.presetAgentFormDescription.value || "").trim(),
     system_prompt: String(elements.presetAgentFormPrompt.value || "").trim(),
     tool_names,
-    approval_mode: String(elements.presetUserAgentApproval.value || "auto_edit").trim() || "auto_edit",
+    preset_questions: collectPresetQuestionValues(),
+    approval_mode:
+      String(elements.presetUserAgentApproval.value || effectiveSelectedPreset()?.approval_mode || "full_auto").trim() ||
+      "full_auto",
     sandbox_container_id: Number.isFinite(sandbox) && sandbox > 0 ? sandbox : 1,
-    status: "active",
+    status: String(effectiveSelectedPreset()?.status || "active").trim() || "active",
     is_shared: false,
     hive_id: DEFAULT_HIVE_ID,
     icon: String(state.presetAgents.userAgent?.icon || ""),
@@ -928,6 +1135,91 @@ const deleteChannelAccount = async (channel, accountId) => {
   }
 };
 
+const loadSyncSummary = async ({ silent = false } = {}) => {
+  const preset = selectedPreset();
+  if (!preset?.preset_id) {
+    state.presetAgents.syncSummary = null;
+    state.presetAgents.syncLoading = false;
+    renderSyncSummary();
+    return null;
+  }
+
+  const requestToken = (Number(state.presetAgents.syncRequestToken) || 0) + 1;
+  state.presetAgents.syncRequestToken = requestToken;
+  state.presetAgents.syncLoading = true;
+  renderSyncSummary();
+
+  try {
+    const payload = await requestJson("/admin/preset_agents/sync", {
+      method: "POST",
+      body: {
+        preset_id: preset.preset_id,
+        mode: "safe",
+        dry_run: true,
+      },
+    });
+    if (state.presetAgents.syncRequestToken !== requestToken) {
+      return null;
+    }
+    state.presetAgents.syncSummary = {
+      preset_id: preset.preset_id,
+      ...(payload?.data?.summary && typeof payload.data.summary === "object" ? payload.data.summary : {}),
+    };
+    return state.presetAgents.syncSummary;
+  } catch (error) {
+    if (state.presetAgents.syncRequestToken === requestToken) {
+      state.presetAgents.syncSummary = null;
+    }
+    if (!silent) {
+      notify(t("presetAgents.toast.syncFailed", { message: error.message || "-" }), "error");
+    }
+    return null;
+  } finally {
+    if (state.presetAgents.syncRequestToken === requestToken) {
+      state.presetAgents.syncLoading = false;
+      renderSyncSummary();
+    }
+  }
+};
+
+const runPresetSync = async (mode = "safe") => {
+  const preset = selectedPreset();
+  if (!preset?.preset_id) {
+    return;
+  }
+  if (mode === "force" && !window.confirm(t("presetAgents.confirmSyncForce"))) {
+    return;
+  }
+  state.presetAgents.syncLoading = true;
+  renderSyncSummary();
+  try {
+    const payload = await requestJson("/admin/preset_agents/sync", {
+      method: "POST",
+      body: {
+        preset_id: preset.preset_id,
+        mode: mode === "force" ? "force" : "safe",
+        dry_run: false,
+      },
+    });
+    const summary = payload?.data?.summary && typeof payload.data.summary === "object" ? payload.data.summary : {};
+    notify(
+      t("presetAgents.toast.syncSuccess", {
+        created: summary.created_agents || 0,
+        updated: summary.updated_agents || 0,
+        rebound: summary.rebound_agents || 0,
+      }),
+      "success"
+    );
+  } catch (error) {
+    notify(t("presetAgents.toast.syncFailed", { message: error.message || "-" }), "error");
+    return;
+  } finally {
+    state.presetAgents.syncLoading = false;
+    renderSyncSummary();
+  }
+  await loadSyncSummary({ silent: true });
+};
+
 export const loadPresetAgents = async ({ silent = false, selectedName = "" } = {}) => {
   ensureState();
   if (!ensureElements()) {
@@ -949,6 +1241,7 @@ export const loadPresetAgents = async ({ silent = false, selectedName = "" } = {
     }
 
     await refreshContext({ ensureAgent: true, silent: true });
+    await loadSyncSummary({ silent: true });
     renderAll();
     if (!silent) {
       notify(t("presetAgents.toast.refreshSuccess"), "success");
@@ -987,6 +1280,22 @@ const bindActions = () => {
   if (elements.presetAgentSaveBtn.dataset.bound !== "1") {
     elements.presetAgentSaveBtn.dataset.bound = "1";
     elements.presetAgentSaveBtn.addEventListener("click", savePreset);
+  }
+  if (elements.presetAgentPresetQuestionAddBtn.dataset.bound !== "1") {
+    elements.presetAgentPresetQuestionAddBtn.dataset.bound = "1";
+    elements.presetAgentPresetQuestionAddBtn.addEventListener("click", () => {
+      const nextDrafts = collectPresetQuestionDrafts();
+      nextDrafts.push("");
+      renderPresetQuestionEditor(nextDrafts);
+    });
+  }
+  if (elements.presetAgentSyncSafeBtn.dataset.bound !== "1") {
+    elements.presetAgentSyncSafeBtn.dataset.bound = "1";
+    elements.presetAgentSyncSafeBtn.addEventListener("click", async () => runPresetSync("safe"));
+  }
+  if (elements.presetAgentSyncForceBtn.dataset.bound !== "1") {
+    elements.presetAgentSyncForceBtn.dataset.bound = "1";
+    elements.presetAgentSyncForceBtn.addEventListener("click", async () => runPresetSync("force"));
   }
   if (elements.presetAgentDeleteBtn.dataset.bound !== "1") {
     elements.presetAgentDeleteBtn.dataset.bound = "1";
