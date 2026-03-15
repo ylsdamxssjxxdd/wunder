@@ -1578,6 +1578,7 @@ fn clamp01(value: f64) -> f64 {
 mod tests {
     use super::*;
     use crate::storage::{MemoryFragmentEmbeddingRecord, SqliteStorage, StorageBackend};
+    use rusqlite::Connection;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -1713,6 +1714,69 @@ mod tests {
             .expect("load embedding")
             .expect("embedding exists");
         assert_eq!(loaded, record);
+    }
+
+    #[test]
+    fn sqlite_legacy_memory_fragments_table_is_migrated_on_save() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-legacy.db");
+        let conn = Connection::open(&db_path).expect("open legacy db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE memory_fragments (
+              memory_id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              source_session_id TEXT NOT NULL,
+              source_type TEXT NOT NULL,
+              category TEXT NOT NULL,
+              title_l0 TEXT NOT NULL,
+              summary_l1 TEXT NOT NULL,
+              content_l2 TEXT NOT NULL,
+              fact_key TEXT NOT NULL,
+              status TEXT NOT NULL,
+              created_at REAL NOT NULL,
+              updated_at REAL NOT NULL
+            );
+            CREATE INDEX idx_memory_fragments_fact_key
+              ON memory_fragments (user_id, agent_id, fact_key);
+            CREATE INDEX idx_memory_fragments_status
+              ON memory_fragments (user_id, agent_id, status, updated_at DESC);
+            "#,
+        )
+        .expect("create legacy table");
+        drop(conn);
+
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = MemoryFragmentStore::new(storage);
+        let record = store
+            .save_fragment(
+                "u1",
+                Some("__default__"),
+                MemoryFragmentInput {
+                    memory_id: Some("legacy-upgraded".to_string()),
+                    source_session_id: Some("sess-1".to_string()),
+                    source_type: Some("memory_manager".to_string()),
+                    category: Some("tool-note".to_string()),
+                    summary_l1: Some("记住用户姓名：周华健".to_string()),
+                    content_l2: Some("用户姓名：周华健".to_string()),
+                    fact_key: Some("tool-note::legacy-upgraded".to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("save fragment after migration");
+
+        assert_eq!(record.memory_id, "legacy-upgraded");
+        assert_eq!(record.source_round_id, "");
+        assert!(record.tags.is_empty());
+        assert!(record.entities.is_empty());
+
+        let loaded = store
+            .get_fragment("u1", Some("__default__"), "legacy-upgraded")
+            .expect("load upgraded fragment");
+        assert_eq!(loaded.content_l2, "用户姓名：周华健");
+        assert_eq!(loaded.category, "tool-note");
     }
 
     #[test]

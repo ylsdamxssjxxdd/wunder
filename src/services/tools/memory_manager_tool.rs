@@ -188,7 +188,7 @@ pub(crate) async fn execute_memory_manager_tool(
             if memory_id.is_empty() {
                 memory_id = format!("mem_{}", Uuid::new_v4().simple());
             }
-            let saved = fragment_store
+            let saved_record = fragment_store
                 .save_fragment(
                     context.user_id,
                     context.agent_id,
@@ -205,12 +205,12 @@ pub(crate) async fn execute_memory_manager_tool(
                         ..Default::default()
                     },
                 )
-                .is_ok();
+                .map_err(|err| anyhow!(format!("failed to save memory fragment: {err}")))?;
             json!({
                 "action": action,
                 "agent_id": agent_scope,
-                "memory_id": memory_id,
-                "saved": saved,
+                "memory_id": saved_record.memory_id,
+                "saved": true,
                 "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
             })
         }
@@ -223,7 +223,7 @@ pub(crate) async fn execute_memory_manager_tool(
             if content.is_empty() {
                 return Err(anyhow!(i18n::t("error.content_required")));
             }
-            let updated = fragment_store
+            let updated_record = fragment_store
                 .save_fragment(
                     context.user_id,
                     context.agent_id,
@@ -237,17 +237,15 @@ pub(crate) async fn execute_memory_manager_tool(
                         ..Default::default()
                     },
                 )
-                .is_ok();
-            if updated {
-                let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
-                let memory_store = MemoryStore::new(context.storage.clone());
-                cleanup_legacy_memory_record(&memory_store, &owner_key, &memory_id);
-            }
+                .map_err(|err| anyhow!(format!("failed to update memory fragment: {err}")))?;
+            let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
+            let memory_store = MemoryStore::new(context.storage.clone());
+            cleanup_legacy_memory_record(&memory_store, &owner_key, &memory_id);
             json!({
                 "action": action,
                 "agent_id": agent_scope,
-                "memory_id": memory_id,
-                "updated": updated,
+                "memory_id": updated_record.memory_id,
+                "updated": true,
                 "note": i18n::t("tool.memory_manager.note_new_sessions_only"),
             })
         }

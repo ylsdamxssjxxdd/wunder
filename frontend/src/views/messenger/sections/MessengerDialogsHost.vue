@@ -102,8 +102,6 @@
     :visible="agentPromptPreviewVisible"
     :loading="agentPromptPreviewLoading"
     :html-content="activeAgentPromptPreviewHtml"
-    :memory-content="agentPromptPreviewMemoryContent"
-    :memory-count="agentPromptPreviewMemoryCount"
     :memory-mode="agentPromptPreviewMemoryMode"
     @update:visible="updateAgentPromptPreviewVisible"
   />
@@ -174,8 +172,6 @@ const {
   agentPromptPreviewVisible,
   agentPromptPreviewLoading,
   activeAgentPromptPreviewHtml,
-  agentPromptPreviewMemoryContent,
-  agentPromptPreviewMemoryCount,
   agentPromptPreviewMemoryMode,
   imagePreviewVisible,
   imagePreviewUrl,
@@ -214,8 +210,6 @@ const {
   agentPromptPreviewVisible: boolean;
   agentPromptPreviewLoading: boolean;
   activeAgentPromptPreviewHtml: string;
-  agentPromptPreviewMemoryContent: string;
-  agentPromptPreviewMemoryCount: number;
   agentPromptPreviewMemoryMode: 'none' | 'pending' | 'frozen';
   imagePreviewVisible: boolean;
   imagePreviewUrl: string;

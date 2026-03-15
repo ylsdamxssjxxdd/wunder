@@ -5,6 +5,8 @@
     </div>
 
     <div class="tool-workflow-section-body">
+      <pre v-if="section.summary" class="tool-workflow-summary">{{ section.summary }}</pre>
+
       <div
         v-if="section.kind === 'command' && section.commandView"
         class="tool-workflow-main tool-workflow-main--command"
@@ -18,11 +20,11 @@
           @scroll="(event) => onStreamBodyScroll?.('stdout', event)"
         >{{ section.commandView.terminalText }}</pre>
 
-        <div class="tool-workflow-terminal-footer">
-          <span
-            v-if="section.commandView.exitCode !== null"
-            class="tool-workflow-terminal-exit-code"
-          >
+        <div
+          v-if="section.commandView.exitCode !== null && section.commandView.showExitCode !== false"
+          class="tool-workflow-terminal-footer"
+        >
+          <span class="tool-workflow-terminal-exit-code">
             exit {{ section.commandView.exitCode }}
           </span>
         </div>
@@ -38,7 +40,11 @@
         </div>
       </div>
 
-      <pre v-else class="tool-workflow-main" :class="{ 'is-empty': section.empty }">{{ section.body }}</pre>
+      <pre
+        v-else-if="section.body || !section.summary"
+        class="tool-workflow-main"
+        :class="{ 'is-empty': section.empty }"
+      >{{ section.body }}</pre>
     </div>
   </section>
 </template>
@@ -88,6 +94,19 @@ defineProps<{
 
 .tool-workflow-section-body {
   min-width: 0;
+}
+
+.tool-workflow-summary {
+  margin: 0 0 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--workflow-term-border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .tool-workflow-main {

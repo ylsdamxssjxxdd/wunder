@@ -6,8 +6,15 @@
         <div class="agent-memory-subtitle">{{ t('messenger.memory.subtitle') }}</div>
       </div>
       <div class="agent-memory-toolbar-actions">
-        <button class="agent-memory-btn" type="button" @click="loadData">{{ t('common.refresh') }}</button>
-        <button class="agent-memory-btn agent-memory-btn--primary" type="button" @click="startCreate">
+        <button class="agent-memory-btn" type="button" :disabled="loading || saving || mutating" @click="loadData">
+          {{ t('common.refresh') }}
+        </button>
+        <button
+          class="agent-memory-btn agent-memory-btn--primary"
+          type="button"
+          :disabled="saving || mutating"
+          @click="startCreate"
+        >
           {{ t('messenger.memory.new') }}
         </button>
       </div>
@@ -126,13 +133,23 @@
         </div>
 
         <div class="agent-memory-card-actions">
-          <button class="agent-memory-card-action" type="button" @click.stop="togglePinned(item)">
+          <button class="agent-memory-card-action" type="button" :disabled="mutating || saving" @click.stop="togglePinned(item)">
             {{ item.pinned ? t('messenger.memory.action.unpin') : t('messenger.memory.action.pin') }}
           </button>
-          <button class="agent-memory-card-action" type="button" @click.stop="toggleInvalidated(item)">
+          <button
+            class="agent-memory-card-action"
+            type="button"
+            :disabled="mutating || saving"
+            @click.stop="toggleInvalidated(item)"
+          >
             {{ isItemInvalidated(item) ? t('messenger.memory.action.restore') : t('messenger.memory.action.invalidate') }}
           </button>
-          <button class="agent-memory-card-action agent-memory-card-action--danger" type="button" @click.stop="removeMemory(item.memory_id, item.title_l0)">
+          <button
+            class="agent-memory-card-action agent-memory-card-action--danger"
+            type="button"
+            :disabled="mutating || saving"
+            @click.stop="removeMemory(item.memory_id, item.title_l0)"
+          >
             {{ t('common.delete') }}
           </button>
         </div>
@@ -180,11 +197,13 @@
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="min(92vw, 760px)"
-      top="6vh"
+      width="760px"
+      top="4vh"
       append-to-body
       destroy-on-close
-      class="agent-memory-dialog"
+      class="messenger-dialog agent-memory-dialog"
+      :close-on-click-modal="!saving"
+      :close-on-press-escape="!saving"
       @closed="handleDialogClosed"
     >
       <div class="agent-memory-dialog-body">
@@ -198,6 +217,9 @@
         </div>
         <div v-if="currentEditingItem && describeItemRelation(currentEditingItem)" class="agent-memory-meta-row">
           <span class="agent-memory-chip">{{ describeItemRelation(currentEditingItem) }}</span>
+        </div>
+        <div v-if="dialogErrorMessage" class="agent-memory-error agent-memory-error--dialog">
+          {{ dialogErrorMessage }}
         </div>
 
         <div class="agent-memory-grid agent-memory-grid--editor">
@@ -243,13 +265,18 @@
             v-if="editingId"
             class="agent-memory-btn agent-memory-btn--danger"
             type="button"
+            :disabled="saving"
             @click="removeCurrent"
           >
             {{ t('common.delete') }}
           </button>
           <div class="agent-memory-dialog-footer-actions">
-            <button class="agent-memory-btn" type="button" @click="dialogVisible = false">{{ t('common.cancel') }}</button>
-            <button class="agent-memory-btn agent-memory-btn--primary" type="button" @click="saveCurrent">{{ t('common.save') }}</button>
+            <button class="agent-memory-btn" type="button" :disabled="saving" @click="dialogVisible = false">
+              {{ t('common.cancel') }}
+            </button>
+            <button class="agent-memory-btn agent-memory-btn--primary" type="button" :disabled="saving" @click="saveCurrent">
+              {{ saving ? t('common.loading') : t('common.save') }}
+            </button>
           </div>
         </div>
       </template>
@@ -268,6 +295,7 @@ import {
   updateAgentMemory
 } from '@/api/memory';
 import { useI18n } from '@/i18n';
+import { resolveApiError } from '@/utils/apiError';
 type MemoryItem = Record<string, any>;
 type MemoryHit = Record<string, any>;
 type MemoryJob = Record<string, any>;
@@ -285,7 +313,10 @@ type EditorState = {
 const props = defineProps<{ agentId: string }>();
 const { t } = useI18n();
 const loading = ref(false);
+const saving = ref(false);
+const mutating = ref(false);
 const errorMessage = ref('');
+const dialogErrorMessage = ref('');
 const items = ref<MemoryItem[]>([]);
 const hits = ref<MemoryHit[]>([]);
 const jobs = ref<MemoryJob[]>([]);
@@ -299,6 +330,7 @@ const mounted = ref(false);
 let disposed = false;
 let requestToken = 0;
 const normalizedAgentId = computed(() => String(props.agentId || '').trim());
+const requestAgentId = computed(() => normalizedAgentId.value || '__default__');
 const filteredItems = computed(() => {
   const query = search.value.trim().toLowerCase();
   return items.value.filter((item) => {
@@ -415,20 +447,12 @@ function syncEditorFromItem(item: MemoryItem | null | undefined): void {
   };
 }
 async function loadData(): Promise<void> {
-  if (!normalizedAgentId.value) {
-    items.value = [];
-    hits.value = [];
-    jobs.value = [];
-    errorMessage.value = '';
-    loading.value = false;
-    return;
-  }
   const token = ++requestToken;
   loading.value = true;
   errorMessage.value = '';
   try {
     // Always include invalidated fragments so the card wall can review and restore them.
-    const memoryRes = await listAgentMemories(normalizedAgentId.value, { limit: 200, include_invalidated: true });
+    const memoryRes = await listAgentMemories(requestAgentId.value, { limit: 200, include_invalidated: true });
     if (disposed || token !== requestToken) return;
     items.value = Array.isArray(memoryRes?.data?.data?.items) ? memoryRes.data.data.items : [];
     hits.value = Array.isArray(memoryRes?.data?.data?.recent_hits) ? memoryRes.data.data.recent_hits : [];
@@ -445,17 +469,21 @@ async function loadData(): Promise<void> {
 }
 function startCreate(): void {
   errorMessage.value = '';
+  dialogErrorMessage.value = '';
   editingId.value = '';
   editor.value = createEmptyEditor();
   dialogVisible.value = true;
 }
 function beginEdit(memoryId: string): void {
   errorMessage.value = '';
+  dialogErrorMessage.value = '';
   editingId.value = memoryId;
   syncEditorFromItem(items.value.find((item) => item.memory_id === memoryId) || null);
   dialogVisible.value = true;
 }
 function handleDialogClosed(): void {
+  dialogErrorMessage.value = '';
+  saving.value = false;
   editingId.value = '';
   editor.value = createEmptyEditor();
 }
@@ -466,7 +494,7 @@ function isActionCanceled(error: unknown): boolean {
   return error === 'cancel' || error === 'close' || error === 'dismiss';
 }
 function resolveRequestError(error: any, fallbackKey: string): string {
-  return String(error?.response?.data?.error || error?.message || t(fallbackKey));
+  return resolveApiError(error, t(fallbackKey)).message;
 }
 function splitTags(value: string): string[] {
   return value
@@ -474,8 +502,21 @@ function splitTags(value: string): string[] {
     .map((item) => item.trim())
     .filter(Boolean);
 }
+function hasEditorContent(): boolean {
+  return [editor.value.title_l0, editor.value.summary_l1, editor.value.content_l2].some(
+    (value) => String(value || '').trim().length > 0
+  );
+}
 async function saveCurrent(): Promise<void> {
-  if (!normalizedAgentId.value) return;
+  if (saving.value) return;
+  dialogErrorMessage.value = '';
+  errorMessage.value = '';
+  if (!hasEditorContent()) {
+    const message = t('error.content_required');
+    dialogErrorMessage.value = message;
+    ElMessage.warning(message);
+    return;
+  }
   const payload = {
     title_l0: editor.value.title_l0,
     summary_l1: editor.value.summary_l1,
@@ -487,27 +528,34 @@ async function saveCurrent(): Promise<void> {
     pinned: editor.value.pinned,
     invalidated: editor.value.invalidated
   };
+  saving.value = true;
   try {
     const response = editingId.value
-      ? await updateAgentMemory(normalizedAgentId.value, editingId.value, payload)
-      : await createAgentMemory(normalizedAgentId.value, payload);
+      ? await updateAgentMemory(requestAgentId.value, editingId.value, payload)
+      : await createAgentMemory(requestAgentId.value, payload);
     editingId.value = String(response?.data?.data?.item?.memory_id || editingId.value || '');
     dialogVisible.value = false;
     await loadData();
     ElMessage.success(t('messenger.memory.saveSuccess'));
   } catch (error: any) {
-    errorMessage.value = resolveRequestError(error, 'common.saveFailed');
+    const message = resolveRequestError(error, 'common.saveFailed');
+    dialogErrorMessage.value = message;
+    errorMessage.value = message;
+    ElMessage.error(message);
+  } finally {
+    saving.value = false;
   }
 }
 async function removeMemory(memoryId: string, title?: unknown): Promise<void> {
-  if (!normalizedAgentId.value || !memoryId) return;
+  if (mutating.value || saving.value || !memoryId) return;
   try {
     await ElMessageBox.confirm(
       t('messenger.memory.deleteConfirm', { name: String(title || t('messenger.memory.untitled')) }),
       t('common.notice'),
       { type: 'warning' }
     );
-    await deleteAgentMemory(normalizedAgentId.value, memoryId);
+    mutating.value = true;
+    await deleteAgentMemory(requestAgentId.value, memoryId);
     if (editingId.value === memoryId) {
       dialogVisible.value = false;
     }
@@ -515,27 +563,44 @@ async function removeMemory(memoryId: string, title?: unknown): Promise<void> {
     ElMessage.success(t('messenger.memory.deleteSuccess'));
   } catch (error: any) {
     if (isActionCanceled(error)) return;
-    errorMessage.value = resolveRequestError(error, 'common.deleteFailed');
+    const message = resolveRequestError(error, 'common.deleteFailed');
+    dialogErrorMessage.value = message;
+    errorMessage.value = message;
+    ElMessage.error(message);
+  } finally {
+    mutating.value = false;
   }
 }
 async function togglePinned(item: MemoryItem): Promise<void> {
-  if (!normalizedAgentId.value) return;
+  if (mutating.value || saving.value) return;
+  errorMessage.value = '';
   try {
-    await pinAgentMemory(normalizedAgentId.value, item.memory_id, !Boolean(item.pinned));
+    mutating.value = true;
+    await pinAgentMemory(requestAgentId.value, item.memory_id, !Boolean(item.pinned));
     await loadData();
     ElMessage.success(t('messenger.memory.updateSuccess'));
   } catch (error: any) {
-    errorMessage.value = resolveRequestError(error, 'common.saveFailed');
+    const message = resolveRequestError(error, 'common.saveFailed');
+    errorMessage.value = message;
+    ElMessage.error(message);
+  } finally {
+    mutating.value = false;
   }
 }
 async function toggleInvalidated(item: MemoryItem): Promise<void> {
-  if (!normalizedAgentId.value) return;
+  if (mutating.value || saving.value) return;
+  errorMessage.value = '';
   try {
-    await invalidateAgentMemory(normalizedAgentId.value, item.memory_id, !isItemInvalidated(item));
+    mutating.value = true;
+    await invalidateAgentMemory(requestAgentId.value, item.memory_id, !isItemInvalidated(item));
     await loadData();
     ElMessage.success(t('messenger.memory.updateSuccess'));
   } catch (error: any) {
-    errorMessage.value = resolveRequestError(error, 'common.saveFailed');
+    const message = resolveRequestError(error, 'common.saveFailed');
+    errorMessage.value = message;
+    ElMessage.error(message);
+  } finally {
+    mutating.value = false;
   }
 }
 async function removeCurrent(): Promise<void> {
@@ -649,6 +714,9 @@ watch(
   (value, previousValue) => {
     if (!mounted.value || disposed || String(value || '') === String(previousValue || '')) return;
     dialogVisible.value = false;
+    dialogErrorMessage.value = '';
+    saving.value = false;
+    mutating.value = false;
     editingId.value = '';
     editor.value = createEmptyEditor();
     items.value = [];
@@ -802,9 +870,24 @@ watch(
   border: 0;
   background: transparent;
   color: var(--app-primary-color, #3b82f6);
-  padding: 0;
+  padding: 6px 10px;
   font-size: 12px;
   cursor: pointer;
+  border-radius: 10px;
+  transition: background-color 0.16s ease, color 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
+}
+.agent-memory-card-action:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.1);
+}
+.agent-memory-card-action:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.agent-memory-card-action:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+.agent-memory-card-action--danger:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
 }
 .agent-memory-card-action--danger,
 .agent-memory-btn--danger {
@@ -832,6 +915,14 @@ watch(
   background: var(--app-surface-bg, rgba(255, 255, 255, 0.9));
   color: inherit;
   padding: 10px 12px;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
+}
+.agent-memory-input:focus,
+.agent-memory-select:focus,
+.agent-memory-textarea:focus {
+  outline: none;
+  border-color: var(--app-primary-color, #3b82f6);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.14);
 }
 .agent-memory-textarea {
   resize: vertical;
@@ -843,11 +934,29 @@ watch(
   border-radius: 12px;
   padding: 8px 12px;
   cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease,
+    transform 0.16s ease, opacity 0.16s ease;
+}
+.agent-memory-btn:hover:not(:disabled) {
+  border-color: var(--app-primary-color, #3b82f6);
+  background: rgba(59, 130, 246, 0.08);
+}
+.agent-memory-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.agent-memory-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 .agent-memory-btn--primary {
   background: var(--app-primary-color, #3b82f6);
   color: #fff;
   border-color: var(--app-primary-color, #3b82f6);
+}
+.agent-memory-btn--primary:hover:not(:disabled) {
+  background: var(--app-primary-color, #3b82f6);
+  box-shadow: 0 10px 22px rgba(59, 130, 246, 0.22);
 }
 .agent-memory-chip {
   display: inline-flex;
@@ -889,6 +998,9 @@ watch(
   background: rgba(239, 68, 68, 0.12);
   color: #b91c1c;
 }
+.agent-memory-error--dialog {
+  margin-bottom: 4px;
+}
 .agent-memory-hit-list {
   display: flex;
   flex-direction: column;
@@ -902,21 +1014,31 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-height: calc(100vh - 240px);
+  max-height: calc(100vh - 260px);
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 2px 4px 2px 0;
 }
 .agent-memory-toggle-row--dialog {
-  padding-top: 4px;
+  padding-top: 6px;
 }
 .agent-memory-dialog-footer {
   width: 100%;
+  padding-top: 14px;
+  border-top: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.18));
+  align-items: flex-end;
 }
-:deep(.agent-memory-dialog .el-dialog) {
-  max-width: min(92vw, 760px);
-  max-height: calc(100vh - 12vh);
-  margin-bottom: 0;
+:deep(.agent-memory-dialog.el-dialog) {
+  width: min(760px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 8vh);
+  margin: 0 auto;
   overflow: hidden;
+}
+:deep(.agent-memory-dialog .el-dialog__body) {
+  padding-top: 16px;
+}
+:deep(.agent-memory-dialog .el-dialog__footer) {
+  padding-top: 0;
 }
 @media (max-width: 1100px) {
   .agent-memory-filters,

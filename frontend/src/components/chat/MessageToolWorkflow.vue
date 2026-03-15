@@ -876,6 +876,30 @@ const resolvePatchInput = (callItem: WorkflowItem | null): string => {
   return pickString(args?.input, args?.patch, args?.content, args?.raw);
 };
 
+function buildCompactPatchPathLabel(path: string, toPath = ''): string {
+  const compactSingle = (value: string): string => {
+    const normalized = normalizePathLikeText(value);
+    if (!normalized) return '';
+    const shortened = shortenPathLike(normalized, 2) || normalized;
+    const basename = basenameOfPathLike(normalized);
+    const parentLabel = shortened.replace(/^\.\.\//, '');
+    if (!basename || basename.length > 36) return shortened;
+    if (!parentLabel || parentLabel === basename || parentLabel.endsWith(`/${basename}`)) {
+      return basename;
+    }
+    return shortened;
+  };
+
+  const left = compactSingle(path);
+  const right = compactSingle(toPath);
+  const normalizedLeft = normalizePathLikeText(path);
+  const normalizedRight = normalizePathLikeText(toPath);
+  if (left && right && normalizedLeft && normalizedRight && normalizedLeft !== normalizedRight) {
+    return `${left} -> ${right}`;
+  }
+  return left || right;
+}
+
 const buildApplyPatchEntries = (item: WorkflowItem | null, toolName: string): PatchEntry[] => {
   if (!item || !isApplyPatchTool(toolName)) return [];
   const detailObject = parseDetailObject(item.detail);
@@ -912,7 +936,7 @@ const buildApplyPatchEntries = (item: WorkflowItem | null, toolName: string): Pa
       key: `${String(item.id || 'patch')}-${index}`,
       kind,
       sign,
-      text: path && toPath && path !== toPath ? `${path} -> ${toPath}` : path || toPath
+      text: buildCompactPatchPathLabel(path, toPath) || (path && toPath && path !== toPath ? `${path} -> ${toPath}` : path || toPath)
     });
   }
 
@@ -1054,16 +1078,200 @@ const buildApplyPatchDiffBlocks = (callItem: WorkflowItem | null, toolName: stri
 
     return {
       key: `diff-${index}`,
-      title: pathText || `file-${index + 1}`,
+      title: buildCompactPatchPathLabel(preview.path, preview.toPath) || pathText || `file-${index + 1}`,
       pathHint: pathText,
       lines
     };
   });
 };
 
-const buildApplyPatchResultNote = (resultItem: WorkflowItem | null, toolName: string): string => {
-  if (!resultItem || !isApplyPatchTool(toolName)) return '';
-  const detailObject = parseDetailObject(resultItem.detail);
+const formatTimeoutValue = (...values: unknown[]): string => {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return `${Number.isInteger(value) ? value : value.toFixed(value >= 10 ? 0 : 1)}s`;
+    }
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return `${Number.isInteger(parsed) ? parsed : parsed.toFixed(parsed >= 10 ? 0 : 1)}s`;
+    }
+    return trimmed;
+  }
+  return '';
+};
+
+const countNonEmptyCommandLines = (value: string): number =>
+  String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+
+const formatByteCountLabel = (value: number | null): string => {
+  if (value === null || value < 0) return '';
+  if (value < 1024) return `${value} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let unitIndex = -1;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[Math.max(unitIndex, 0)]}`;
+};
+
+const countApplyPatchFiles = (patchInput: string, fallback = 0): number => {
+  if (!patchInput) return fallback;
+  return patchInput.match(/^\*\*\* (?:Add|Update|Delete) File:/gm)?.length || fallback;
+};
+
+const countApplyPatchHunks = (patchInput: string, fallback = 0): number => {
+  if (!patchInput) return fallback;
+  return patchInput.match(/^@@/gm)?.length || fallback;
+};
+
+// Keep command/patch sections consistent: summary shows metadata, body keeps raw payload.
+const buildExecuteCommandCallSummary = (entry: RawEntry): string => {
+  const args = extractCallArgs(entry.callItem);
+  const commandText = pickString(
+    args?.content,
+    args?.input,
+    args?.raw,
+    args?.script,
+    args?.command,
+    args?.cmd,
+    resolveCommandFromCall(entry.callItem)
+  );
+  const commandLine = truncateSingleLine(resolveCommandFromCall(entry.callItem), 120);
+  const commandCount = Math.max(countNonEmptyCommandLines(commandText), commandLine ? 1 : 0);
+  const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory);
+  const timeout = formatTimeoutValue(
+    args?.timeout_s,
+    args?.timeout,
+    args?.timeoutSeconds,
+    args?.timeout_seconds
+  );
+
+  return buildLabeledTextBlock([
+    {
+      label:
+        commandCount > 1
+          ? t('chat.toolWorkflow.detail.commands')
+          : t('chat.toolWorkflow.detail.command'),
+      value: commandCount > 1 ? commandCount : commandLine
+    },
+    { label: t('chat.toolWorkflow.detail.workdir'), value: workdir },
+    { label: t('chat.toolWorkflow.detail.timeout'), value: timeout }
+  ]);
+};
+
+const buildExecuteCommandCallBody = (entry: RawEntry, command: string): string => {
+  const args = extractCallArgs(entry.callItem);
+  const commandText = pickString(
+    args?.content,
+    args?.input,
+    args?.raw,
+    args?.script,
+    args?.command,
+    args?.cmd,
+    command
+  );
+
+  const extraArgs = omitObjectKeys(args, [
+    'command',
+    'cmd',
+    'script',
+    'raw',
+    'content',
+    'input',
+    'workdir',
+    'cwd',
+    'dir',
+    'directory',
+    'timeout_s',
+    'timeout',
+    'timeoutSeconds',
+    'timeout_seconds'
+  ]);
+  const extraPreview = buildObjectPreview(extraArgs);
+  const blocks: string[] = [];
+  if (commandText && (countNonEmptyCommandLines(commandText) > 1 || !extraPreview)) {
+    if (countNonEmptyCommandLines(commandText) > 1) {
+      blocks.push(buildTerminalStream(commandText, 'completed', 120, 16000));
+    }
+  }
+  if (extraPreview) blocks.push(extraPreview);
+  return blocks.join('\n\n').trim();
+};
+
+const buildExecuteCommandResultSummary = (entry: RawEntry): string => {
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const resultMeta = asObject(resultObject?.meta);
+  const dataMeta = asObject(dataObject?.meta);
+  const outputGuard =
+    asObject(resultMeta?.output_guard) || asObject(dataMeta?.output_guard) || asObject(dataObject?.output_guard);
+  const resultList = Array.isArray(dataObject?.results)
+    ? (dataObject.results.map((item) => asObject(item)).filter(Boolean) as UnknownObject[])
+    : [];
+  const commandLine = truncateSingleLine(
+    pickString(
+      resultList[0]?.command,
+      dataObject?.command,
+      resultObject?.command,
+      resolveCommandFromOutput(entry.outputItem),
+      resolveCommandFromResult(entry.resultItem)
+    ),
+    120
+  );
+  const commandCount =
+    toOptionalInt(outputGuard?.commands) || resultList.length || (commandLine ? 1 : 0);
+  const exitCode = resolveExecuteCommandExitCode(resultObject, dataObject);
+  const truncatedCommands = toOptionalInt(outputGuard?.truncated_commands);
+  const totalBytes = toOptionalInt(outputGuard?.total_bytes);
+  const omittedBytes = toOptionalInt(outputGuard?.omitted_bytes);
+
+  return buildLabeledTextBlock([
+    {
+      label:
+        commandCount > 1
+          ? t('chat.toolWorkflow.detail.commands')
+          : t('chat.toolWorkflow.detail.command'),
+      value: commandCount > 1 ? commandCount : commandLine
+    },
+    { label: t('chat.toolWorkflow.detail.exitCode'), value: exitCode === null ? '' : exitCode },
+    {
+      label: t('chat.toolWorkflow.detail.truncatedCommands'),
+      value: truncatedCommands && truncatedCommands > 0 ? truncatedCommands : ''
+    },
+    { label: t('chat.toolWorkflow.detail.totalBytes'), value: formatByteCountLabel(totalBytes) },
+    { label: t('chat.toolWorkflow.detail.omittedBytes'), value: formatByteCountLabel(omittedBytes) }
+  ]);
+};
+
+const buildApplyPatchCallSummary = (entry: RawEntry, patchDiffBlocks: PatchDiffBlock[]): string => {
+  const patchInput = resolvePatchInput(entry.callItem);
+  const fallbackHunks = patchDiffBlocks.reduce(
+    (count, block) => count + block.lines.filter((line) => line.text.startsWith('@@')).length,
+    0
+  );
+  return buildLabeledTextBlock([
+    {
+      label: t('chat.toolWorkflow.detail.changedFiles'),
+      value: countApplyPatchFiles(patchInput, patchDiffBlocks.length) || ''
+    },
+    {
+      label: t('chat.toolWorkflow.detail.hunks'),
+      value: countApplyPatchHunks(patchInput, fallbackHunks) || ''
+    }
+  ]);
+};
+
+const buildApplyPatchResultSummary = (entry: RawEntry): string => {
+  if (!entry.resultItem || !isApplyPatchTool(entry.toolName)) return '';
+  const detailObject = parseDetailObject(entry.resultItem.detail);
   const resultObject = extractToolResultObject(detailObject);
   const dataObject = extractToolResultData(resultObject);
 
@@ -1074,13 +1282,14 @@ const buildApplyPatchResultNote = (resultItem: WorkflowItem | null, toolName: st
   const deleted = toInt(dataObject?.deleted, resultObject?.deleted);
   const moved = toInt(dataObject?.moved, resultObject?.moved);
 
-  const parts: string[] = [];
-  if (changedFiles > 0) parts.push(`files ${changedFiles}`);
-  if (hunksApplied > 0) parts.push(`hunks ${hunksApplied}`);
-  if (added + updated + deleted + moved > 0) {
-    parts.push(`+${added} ~${updated} -${deleted} >${moved}`);
-  }
-  return parts.join(' · ');
+  return buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.changedFiles'), value: changedFiles || '' },
+    { label: t('chat.toolWorkflow.detail.hunks'), value: hunksApplied || '' },
+    { label: t('chat.toolWorkflow.detail.added'), value: added || '' },
+    { label: t('chat.toolWorkflow.detail.updated'), value: updated || '' },
+    { label: t('chat.toolWorkflow.detail.deleted'), value: deleted || '' },
+    { label: t('chat.toolWorkflow.detail.moved'), value: moved || '' }
+  ]);
 };
 
 const extractDurationMs = (entry: RawEntry): number | null => {
@@ -2099,7 +2308,7 @@ const buildToolResultTextBlock = (entry: RawEntry, command: string, errorText: s
   return blocks.join('\n\n').trim();
 };
 
-const buildApplyPatchCallLines = (command: string, patchDiffBlocks: PatchDiffBlock[]): PatchLine[] => {
+const buildApplyPatchCallLines = (_command: string, patchDiffBlocks: PatchDiffBlock[]): PatchLine[] => {
   const rows: PatchLine[] = [];
   let cursor = 0;
   const push = (kind: PatchLine['kind'], text: string) => {
@@ -2108,7 +2317,6 @@ const buildApplyPatchCallLines = (command: string, patchDiffBlocks: PatchDiffBlo
     cursor += 1;
   };
 
-  if (command) push('meta', `$ ${command}`);
   patchDiffBlocks.forEach((block) => {
     push('note', block.title);
     block.lines.forEach((line) => {
@@ -2121,11 +2329,7 @@ const buildApplyPatchCallLines = (command: string, patchDiffBlocks: PatchDiffBlo
   return rows;
 };
 
-const buildApplyPatchResultLines = (
-  resultNote: string,
-  patchEntries: PatchEntry[],
-  errorText: string
-): PatchLine[] => {
+const buildApplyPatchResultLines = (patchEntries: PatchEntry[], errorText: string): PatchLine[] => {
   const rows: PatchLine[] = [];
   let cursor = 0;
   const push = (kind: PatchLine['kind'], text: string) => {
@@ -2134,7 +2338,6 @@ const buildApplyPatchResultLines = (
     cursor += 1;
   };
 
-  if (resultNote) push('note', resultNote);
   patchEntries.forEach((entry) => {
     const kind: PatchLine['kind'] =
       entry.kind === 'add'
@@ -2143,7 +2346,9 @@ const buildApplyPatchResultLines = (
           ? 'delete'
           : entry.kind === 'move'
             ? 'move'
-            : 'update';
+            : entry.kind === 'other'
+              ? 'note'
+              : 'update';
     push(kind, `${entry.sign} ${entry.text}`);
   });
   if (errorText) push('error', `error: ${errorText}`);
@@ -2170,12 +2375,14 @@ const buildModelCallSection = (
   const sectionTitle = t('chat.toolWorkflow.modelCallSection');
 
   if (isApplyPatchTool(entry.toolName)) {
+    const summary = buildApplyPatchCallSummary(entry, patchDiffBlocks);
     const patchLines = buildApplyPatchCallLines(command, patchDiffBlocks);
     if (patchLines.length > 0) {
       return {
         key: sectionKey,
         title: sectionTitle,
         kind: 'patch',
+        summary,
         body: '',
         commandView: null,
         patchLines
@@ -2187,7 +2394,24 @@ const buildModelCallSection = (
         key: sectionKey,
         title: sectionTitle,
         kind: 'text',
+        summary,
         body: patchInput,
+        commandView: null,
+        patchLines: []
+      };
+    }
+  }
+
+  if (isExecuteCommandTool(entry.toolName)) {
+    const summary = buildExecuteCommandCallSummary(entry);
+    const body = buildExecuteCommandCallBody(entry, command) || buildGenericModelCallBlock(entry, command);
+    if (summary || body) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'text',
+        summary,
+        body,
         commandView: null,
         patchLines: []
       };
@@ -2228,16 +2452,29 @@ const buildToolResultSection = (
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
 
   if (isApplyPatchTool(entry.toolName)) {
-    const resultNote = buildApplyPatchResultNote(entry.resultItem, entry.toolName);
-    const patchLines = buildApplyPatchResultLines(resultNote, patchEntries, errorText);
+    const summary = buildApplyPatchResultSummary(entry);
+    const patchLines = buildApplyPatchResultLines(patchEntries, errorText);
     if (patchLines.length > 0) {
       return {
         key: sectionKey,
         title: sectionTitle,
         kind: 'patch',
+        summary,
         body: '',
         commandView: null,
         patchLines
+      };
+    }
+    if (summary) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'text',
+        summary,
+        body: errorText || '',
+        commandView: null,
+        patchLines: [],
+        empty: !errorText
       };
     }
   }
@@ -2248,8 +2485,12 @@ const buildToolResultSection = (
         key: sectionKey,
         title: sectionTitle,
         kind: 'command',
+        summary: buildExecuteCommandResultSummary(entry),
         body: '',
-        commandView: buildExecuteCommandView(entry, command, status, errorText, false),
+        commandView: {
+          ...buildExecuteCommandView(entry, command, status, errorText, false),
+          showExitCode: false
+        },
         patchLines: []
       };
     }

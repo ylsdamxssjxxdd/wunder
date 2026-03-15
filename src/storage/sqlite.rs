@@ -495,6 +495,103 @@ impl SqliteStorage {
         }
         Ok(())
     }
+
+    fn ensure_memory_fragment_columns(&self, conn: &Connection) -> Result<()> {
+        let columns = load_table_columns(conn, "memory_fragments")?;
+        if columns.is_empty() {
+            return Ok(());
+        }
+
+        let ensure_column = |name: &str, ddl: &str| -> Result<()> {
+            if !columns.contains(name) {
+                conn.execute(ddl, [])?;
+            }
+            Ok(())
+        };
+
+        ensure_column(
+            "source_round_id",
+            "ALTER TABLE memory_fragments ADD COLUMN source_round_id TEXT NOT NULL DEFAULT ''",
+        )?;
+        ensure_column(
+            "tags",
+            "ALTER TABLE memory_fragments ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            "entities",
+            "ALTER TABLE memory_fragments ADD COLUMN entities TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            "importance",
+            "ALTER TABLE memory_fragments ADD COLUMN importance REAL NOT NULL DEFAULT 0.6",
+        )?;
+        ensure_column(
+            "confidence",
+            "ALTER TABLE memory_fragments ADD COLUMN confidence REAL NOT NULL DEFAULT 0.7",
+        )?;
+        ensure_column(
+            "tier",
+            "ALTER TABLE memory_fragments ADD COLUMN tier TEXT NOT NULL DEFAULT 'working'",
+        )?;
+        ensure_column(
+            "pinned",
+            "ALTER TABLE memory_fragments ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            "confirmed_by_user",
+            "ALTER TABLE memory_fragments ADD COLUMN confirmed_by_user INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            "access_count",
+            "ALTER TABLE memory_fragments ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            "hit_count",
+            "ALTER TABLE memory_fragments ADD COLUMN hit_count INTEGER NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            "last_accessed_at",
+            "ALTER TABLE memory_fragments ADD COLUMN last_accessed_at REAL NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            "valid_from",
+            "ALTER TABLE memory_fragments ADD COLUMN valid_from REAL NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            "invalidated_at",
+            "ALTER TABLE memory_fragments ADD COLUMN invalidated_at REAL",
+        )?;
+        ensure_column(
+            "supersedes_memory_id",
+            "ALTER TABLE memory_fragments ADD COLUMN supersedes_memory_id TEXT",
+        )?;
+        ensure_column(
+            "superseded_by_memory_id",
+            "ALTER TABLE memory_fragments ADD COLUMN superseded_by_memory_id TEXT",
+        )?;
+        ensure_column(
+            "embedding_model",
+            "ALTER TABLE memory_fragments ADD COLUMN embedding_model TEXT",
+        )?;
+        ensure_column(
+            "vector_ref",
+            "ALTER TABLE memory_fragments ADD COLUMN vector_ref TEXT",
+        )?;
+
+        let _ = conn.execute(
+            "UPDATE memory_fragments SET tags = '[]' WHERE tags IS NULL OR trim(tags) = ''",
+            [],
+        );
+        let _ = conn.execute(
+            "UPDATE memory_fragments SET entities = '[]' WHERE entities IS NULL OR trim(entities) = ''",
+            [],
+        );
+        let _ = conn.execute(
+            "UPDATE memory_fragments SET valid_from = COALESCE(NULLIF(valid_from, 0), updated_at, created_at, 0)",
+            [],
+        );
+        Ok(())
+    }
 }
 
 fn load_table_columns(conn: &Connection, table: &str) -> Result<HashSet<String>> {
@@ -1377,6 +1474,7 @@ impl StorageBackend for SqliteStorage {
         self.ensure_team_task_columns(&conn)?;
         self.ensure_user_world_group_columns(&conn)?;
         self.ensure_cron_columns(&conn)?;
+        self.ensure_memory_fragment_columns(&conn)?;
         self.initialized.store(true, Ordering::SeqCst);
         Ok(())
     }

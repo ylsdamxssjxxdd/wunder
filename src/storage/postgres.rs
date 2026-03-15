@@ -916,6 +916,153 @@ impl PostgresStorage {
         )?;
         Ok(())
     }
+
+    fn ensure_memory_fragment_columns(&self, conn: &mut PgConn<'_>) -> Result<()> {
+        let rows = conn.query(
+            "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'memory_fragments'",
+            &[],
+        )?;
+        let mut columns = HashMap::new();
+        for row in rows {
+            let name: String = row.get(0);
+            let data_type: String = row.get(1);
+            columns.insert(name, data_type);
+        }
+        if columns.is_empty() {
+            return Ok(());
+        }
+
+        let ensure_column = |conn: &mut PgConn<'_>, name: &str, ddl: &str| -> Result<()> {
+            if !columns.contains_key(name) {
+                conn.execute(ddl, &[])?;
+            }
+            Ok(())
+        };
+
+        ensure_column(
+            conn,
+            "source_round_id",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS source_round_id TEXT NOT NULL DEFAULT ''",
+        )?;
+        ensure_column(
+            conn,
+            "tags",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS tags TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            conn,
+            "entities",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS entities TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            conn,
+            "importance",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS importance DOUBLE PRECISION NOT NULL DEFAULT 0.6",
+        )?;
+        ensure_column(
+            conn,
+            "confidence",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS confidence DOUBLE PRECISION NOT NULL DEFAULT 0.7",
+        )?;
+        ensure_column(
+            conn,
+            "tier",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'working'",
+        )?;
+        ensure_column(
+            conn,
+            "pinned",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT FALSE",
+        )?;
+        ensure_column(
+            conn,
+            "confirmed_by_user",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS confirmed_by_user BOOLEAN NOT NULL DEFAULT FALSE",
+        )?;
+        ensure_column(
+            conn,
+            "access_count",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS access_count BIGINT NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "hit_count",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS hit_count BIGINT NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "last_accessed_at",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS last_accessed_at DOUBLE PRECISION NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "valid_from",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS valid_from DOUBLE PRECISION NOT NULL DEFAULT 0",
+        )?;
+        ensure_column(
+            conn,
+            "invalidated_at",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS invalidated_at DOUBLE PRECISION",
+        )?;
+        ensure_column(
+            conn,
+            "supersedes_memory_id",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS supersedes_memory_id TEXT",
+        )?;
+        ensure_column(
+            conn,
+            "superseded_by_memory_id",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS superseded_by_memory_id TEXT",
+        )?;
+        ensure_column(
+            conn,
+            "embedding_model",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS embedding_model TEXT",
+        )?;
+        ensure_column(
+            conn,
+            "vector_ref",
+            "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS vector_ref TEXT",
+        )?;
+
+        if columns.get("pinned").map(String::as_str).is_some_and(|ty| ty != "boolean") {
+            conn.execute(
+                "ALTER TABLE memory_fragments ALTER COLUMN pinned TYPE BOOLEAN USING CASE WHEN pinned::text IN ('1','t','true','TRUE') THEN TRUE ELSE FALSE END",
+                &[],
+            )?;
+            conn.execute(
+                "ALTER TABLE memory_fragments ALTER COLUMN pinned SET DEFAULT FALSE",
+                &[],
+            )?;
+        }
+        if columns
+            .get("confirmed_by_user")
+            .map(String::as_str)
+            .is_some_and(|ty| ty != "boolean")
+        {
+            conn.execute(
+                "ALTER TABLE memory_fragments ALTER COLUMN confirmed_by_user TYPE BOOLEAN USING CASE WHEN confirmed_by_user::text IN ('1','t','true','TRUE') THEN TRUE ELSE FALSE END",
+                &[],
+            )?;
+            conn.execute(
+                "ALTER TABLE memory_fragments ALTER COLUMN confirmed_by_user SET DEFAULT FALSE",
+                &[],
+            )?;
+        }
+        let _ = conn.execute(
+            "UPDATE memory_fragments SET tags = '[]' WHERE tags IS NULL OR btrim(tags) = ''",
+            &[],
+        );
+        let _ = conn.execute(
+            "UPDATE memory_fragments SET entities = '[]' WHERE entities IS NULL OR btrim(entities) = ''",
+            &[],
+        );
+        let _ = conn.execute(
+            "UPDATE memory_fragments SET valid_from = COALESCE(NULLIF(valid_from, 0), updated_at, created_at, 0)",
+            &[],
+        );
+        Ok(())
+    }
     fn ensure_monitor_defaults(&self, conn: &mut PgConn<'_>) -> Result<()> {
         conn.execute(
             "UPDATE monitor_sessions SET updated_time = 0 WHERE updated_time IS NULL",
@@ -1878,6 +2025,7 @@ impl StorageBackend for PostgresStorage {
                     self.ensure_team_task_columns(&mut conn)?;
                     self.ensure_user_world_group_columns(&mut conn)?;
                     self.ensure_cron_columns(&mut conn)?;
+                    self.ensure_memory_fragment_columns(&mut conn)?;
                     self.ensure_performance_indexes(&mut conn)?;
                     self.initialized.store(true, Ordering::SeqCst);
                     return Ok(());
@@ -3485,7 +3633,7 @@ impl StorageBackend for PostgresStorage {
         let mut conn = self.conn()?;
         conn.execute(
             "INSERT INTO memory_fragments (memory_id, user_id, agent_id, source_session_id, source_round_id, source_type, category, title_l0, summary_l1, content_l2, fact_key, tags, entities, importance, confidence, tier, status, pinned, confirmed_by_user, access_count, hit_count, last_accessed_at, valid_from, invalidated_at, supersedes_memory_id, superseded_by_memory_id, embedding_model, vector_ref, created_at, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30) ON CONFLICT(memory_id) DO UPDATE SET user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id, source_session_id = EXCLUDED.source_session_id, source_round_id = EXCLUDED.source_round_id, source_type = EXCLUDED.source_type, category = EXCLUDED.category, title_l0 = EXCLUDED.title_l0, summary_l1 = EXCLUDED.summary_l1, content_l2 = EXCLUDED.content_l2, fact_key = EXCLUDED.fact_key, tags = EXCLUDED.tags, entities = EXCLUDED.entities, importance = EXCLUDED.importance, confidence = EXCLUDED.confidence, tier = EXCLUDED.tier, status = EXCLUDED.status, pinned = EXCLUDED.pinned, confirmed_by_user = EXCLUDED.confirmed_by_user, access_count = EXCLUDED.access_count, hit_count = EXCLUDED.hit_count, last_accessed_at = EXCLUDED.last_accessed_at, valid_from = EXCLUDED.valid_from, invalidated_at = EXCLUDED.invalidated_at, supersedes_memory_id = EXCLUDED.supersedes_memory_id, superseded_by_memory_id = EXCLUDED.superseded_by_memory_id, embedding_model = EXCLUDED.embedding_model, vector_ref = EXCLUDED.vector_ref, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at",
-            &[&record.memory_id, &record.user_id, &record.agent_id, &record.source_session_id, &record.source_round_id, &record.source_type, &record.category, &record.title_l0, &record.summary_l1, &record.content_l2, &record.fact_key, &Self::string_list_to_json(&record.tags), &Self::string_list_to_json(&record.entities), &record.importance, &record.confidence, &record.tier, &record.status, &(if record.pinned { 1i32 } else { 0i32 }), &(if record.confirmed_by_user { 1i32 } else { 0i32 }), &record.access_count, &record.hit_count, &record.last_accessed_at, &record.valid_from, &record.invalidated_at, &record.supersedes_memory_id, &record.superseded_by_memory_id, &record.embedding_model, &record.vector_ref, &record.created_at, &record.updated_at],
+            &[&record.memory_id, &record.user_id, &record.agent_id, &record.source_session_id, &record.source_round_id, &record.source_type, &record.category, &record.title_l0, &record.summary_l1, &record.content_l2, &record.fact_key, &Self::string_list_to_json(&record.tags), &Self::string_list_to_json(&record.entities), &record.importance, &record.confidence, &record.tier, &record.status, &record.pinned, &record.confirmed_by_user, &record.access_count, &record.hit_count, &record.last_accessed_at, &record.valid_from, &record.invalidated_at, &record.supersedes_memory_id, &record.superseded_by_memory_id, &record.embedding_model, &record.vector_ref, &record.created_at, &record.updated_at],
         )?;
         Ok(())
     }

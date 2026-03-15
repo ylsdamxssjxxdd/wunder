@@ -1249,8 +1249,6 @@
       v-model:agent-prompt-preview-visible="agentPromptPreviewVisible"
       :agent-prompt-preview-loading="agentPromptPreviewLoading"
       :active-agent-prompt-preview-html="activeAgentPromptPreviewHtml"
-      :agent-prompt-preview-memory-content="agentPromptPreviewMemoryContent"
-      :agent-prompt-preview-memory-count="agentPromptPreviewMemoryCount"
       :agent-prompt-preview-memory-mode="agentPromptPreviewMemoryMode"
       :image-preview-visible="imagePreviewVisible"
       :image-preview-url="imagePreviewUrl"
@@ -1600,8 +1598,6 @@ const worldContainerPickerEntries = ref<WorldContainerPickerEntry[]>([]);
 const agentPromptPreviewVisible = ref(false);
 const agentPromptPreviewLoading = ref(false);
 const agentPromptPreviewContent = ref('');
-const agentPromptPreviewMemoryContent = ref('');
-const agentPromptPreviewMemoryCount = ref(0);
 const agentPromptPreviewMemoryMode = ref<'none' | 'pending' | 'frozen'>('none');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
@@ -6996,8 +6992,6 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewVisible.value = true;
   agentPromptPreviewLoading.value = true;
   agentPromptPreviewContent.value = '';
-  agentPromptPreviewMemoryContent.value = '';
-  agentPromptPreviewMemoryCount.value = 0;
   agentPromptPreviewMemoryMode.value = 'none';
   const summaryPromise = loadAgentToolSummary({ force: true });
   try {
@@ -7028,16 +7022,12 @@ const openAgentPromptPreview = async () => {
       /<<WUNDER_HISTORY_MEMORY>>/g,
       ''
     );
-    agentPromptPreviewMemoryContent.value = String(promptPayload.memory_preview || '').trim();
-    agentPromptPreviewMemoryCount.value = Number(promptPayload.memory_preview_count || 0);
     const nextMode = String(promptPayload.memory_preview_mode || 'none').trim().toLowerCase();
     agentPromptPreviewMemoryMode.value =
       nextMode === 'frozen' || nextMode === 'pending' ? nextMode : 'none';
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     agentPromptPreviewContent.value = '';
-    agentPromptPreviewMemoryContent.value = '';
-    agentPromptPreviewMemoryCount.value = 0;
     agentPromptPreviewMemoryMode.value = 'none';
   } finally {
     agentPromptPreviewLoading.value = false;

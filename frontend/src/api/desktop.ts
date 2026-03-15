@@ -79,6 +79,7 @@ export type DesktopSettingsData = {
 export type DesktopDirectoryEntry = {
   name: string;
   path: string;
+  entry_type?: 'dir' | 'file';
 };
 
 export type DesktopDirectoryListData = {
@@ -86,6 +87,11 @@ export type DesktopDirectoryListData = {
   parent_path: string | null;
   roots: string[];
   items: DesktopDirectoryEntry[];
+};
+
+export type DesktopPythonInterpreterItem = {
+  path: string;
+  source: string;
 };
 
 export type DesktopSeedJobProgress = {
@@ -158,10 +164,22 @@ export const probeDesktopLlmContextWindow = (payload: DesktopLlmContextProbePayl
     headers: buildDesktopHeaders()
   });
 
-export const listDesktopDirectories = (path?: string) =>
+export const listDesktopDirectories = (
+  path?: string,
+  options?: { includeFiles?: boolean; fileNames?: string[] }
+) =>
   desktopApi.get('/wunder/desktop/fs/list', {
     headers: buildDesktopHeaders(),
-    params: path && path.trim() ? { path: path.trim() } : undefined
+    params: {
+      ...(path && path.trim() ? { path: path.trim() } : {}),
+      ...(options?.includeFiles ? { include_files: true } : {}),
+      ...(options?.fileNames?.length ? { file_names: options.fileNames.join(',') } : {})
+    }
+  });
+
+export const detectDesktopPythonInterpreters = () =>
+  desktopApi.get('/wunder/desktop/python/interpreters', {
+    headers: buildDesktopHeaders()
   });
 
 export const startDesktopSeedJob = (payload: DesktopSeedStartPayload) =>

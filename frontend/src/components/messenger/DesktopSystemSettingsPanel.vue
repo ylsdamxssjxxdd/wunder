@@ -34,11 +34,23 @@
         <span class="desktop-system-settings-field-label">
           {{ t('desktop.system.pythonInterpreterPath') }}
         </span>
-        <el-input
-          v-model="pythonInterpreterPath"
-          clearable
-          :placeholder="t('desktop.system.pythonInterpreterPathPlaceholder')"
-        />
+        <div class="desktop-system-settings-runtime-input">
+          <el-input
+            v-model="pythonInterpreterPath"
+            clearable
+            :placeholder="t('desktop.system.pythonInterpreterPathPlaceholder')"
+          />
+          <el-button class="desktop-system-settings-btn" @click="openPythonPathPicker">
+            {{ t('desktop.common.browse') }}
+          </el-button>
+          <el-button
+            class="desktop-system-settings-btn"
+            :loading="loadingPythonCandidates"
+            @click="loadPythonInterpreterCandidates(true)"
+          >
+            {{ t('desktop.system.pythonInterpreterDetect') }}
+          </el-button>
+        </div>
       </label>
       <div class="desktop-system-settings-runtime-hint">
         {{
@@ -49,6 +61,28 @@
       </div>
       <div class="desktop-system-settings-runtime-subhint">
         {{ t('desktop.system.pythonInterpreterHint') }}
+      </div>
+      <div v-if="pythonInterpreterCandidates.length" class="desktop-system-settings-runtime-candidates">
+        <div class="desktop-system-settings-runtime-candidates-title">
+          {{ t('desktop.system.pythonInterpreterCandidates') }}
+        </div>
+        <div
+          v-for="item in pythonInterpreterCandidates"
+          :key="`python-candidate-${item.path}`"
+          class="desktop-system-settings-runtime-candidate"
+        >
+          <div class="desktop-system-settings-runtime-candidate-main">
+            <div class="desktop-system-settings-runtime-candidate-path" :title="item.path">
+              {{ item.path }}
+            </div>
+            <div class="desktop-system-settings-runtime-candidate-meta">
+              {{ formatPythonCandidateSource(item.source) }}
+            </div>
+          </div>
+          <el-button class="desktop-system-settings-btn" size="small" @click="useDetectedPythonInterpreter(item.path)">
+            {{ t('common.use') }}
+          </el-button>
+        </div>
       </div>
     </section>
     <div class="desktop-system-settings-layout">
@@ -330,6 +364,62 @@
     </div>
   </section>
 
+  <el-dialog
+    v-model="pythonPathPickerVisible"
+    :title="t('desktop.system.pythonPathPickerTitle')"
+    width="720px"
+    append-to-body
+  >
+    <div class="desktop-system-settings-path-picker">
+      <div class="desktop-system-settings-path-picker-toolbar">
+        <el-button
+          size="small"
+          :disabled="!pythonPathPickerParentPath"
+          @click="loadPythonPickerDirectory(pythonPathPickerParentPath || undefined)"
+        >
+          {{ t('desktop.system.pythonPathPickerUp') }}
+        </el-button>
+      </div>
+      <div class="desktop-system-settings-path-picker-current" :title="pythonPathPickerCurrentPath">
+        {{ pythonPathPickerCurrentPath }}
+      </div>
+      <div class="desktop-system-settings-path-picker-roots">
+        <button
+          v-for="root in pythonPathPickerRoots"
+          :key="`python-path-root-${root}`"
+          class="desktop-system-settings-path-picker-root"
+          type="button"
+          @click="loadPythonPickerDirectory(root)"
+        >
+          {{ root }}
+        </button>
+      </div>
+      <div class="desktop-system-settings-path-picker-list" v-loading="pythonPathPickerLoading">
+        <button
+          v-for="item in pythonPathPickerItems"
+          :key="`python-path-item-${item.path}`"
+          class="desktop-system-settings-path-picker-item"
+          type="button"
+          @click="handlePythonPathPickerSelect(item)"
+        >
+          <i
+            :class="
+              item.entry_type === 'file' ? 'fa-brands fa-python' : 'fa-regular fa-folder'
+            "
+            aria-hidden="true"
+          ></i>
+          <span>{{ item.name }}</span>
+        </button>
+        <div
+          v-if="!pythonPathPickerLoading && !pythonPathPickerItems.length"
+          class="desktop-system-settings-path-picker-empty"
+        >
+          {{ t('desktop.system.pythonPathPickerEmpty') }}
+        </div>
+      </div>
+    </div>
+  </el-dialog>
+
   <section
     v-if="showRemotePanel"
     class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--stack"
@@ -473,12 +563,16 @@ import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 
 import {
+  detectDesktopPythonInterpreters,
   fetchDesktopSettings,
+  listDesktopDirectories,
   listDesktopLanPeers,
   probeDesktopLlmContextWindow,
   updateDesktopSettings,
+  type DesktopDirectoryEntry,
   type DesktopLanMeshSettings,
   type DesktopLanPeer,
+  type DesktopPythonInterpreterItem,
   type DesktopRemoteGatewaySettings
 } from '@/api/desktop';
 import {
@@ -525,6 +619,8 @@ type ModelRow = {
   raw: Record<string, unknown>;
 };
 
+const PYTHON_PICKER_FILE_NAMES = ['python.exe', 'python3.exe', 'python', 'python3'];
+
 const EMBEDDING_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_embedding_model';
 
 const props = withDefaults(
@@ -544,6 +640,7 @@ const savingModel = ref(false);
 const probingContext = ref(false);
 const connectingRemote = ref(false);
 const savingRuntime = ref(false);
+const loadingPythonCandidates = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
@@ -551,6 +648,13 @@ const selectedModelUid = ref('');
 const remoteServerBaseUrl = ref('');
 const remoteConnected = ref(false);
 const pythonInterpreterPath = ref('');
+const pythonInterpreterCandidates = ref<DesktopPythonInterpreterItem[]>([]);
+const pythonPathPickerVisible = ref(false);
+const pythonPathPickerLoading = ref(false);
+const pythonPathPickerCurrentPath = ref('');
+const pythonPathPickerParentPath = ref<string | null>(null);
+const pythonPathPickerRoots = ref<string[]>([]);
+const pythonPathPickerItems = ref<DesktopDirectoryEntry[]>([]);
 const savingLan = ref(false);
 const loadingLanPeers = ref(false);
 const lanMeshEnabled = ref(false);
@@ -1099,6 +1203,24 @@ const refreshRemoteConnected = () => {
   remoteConnected.value = isDesktopRemoteAuthMode() && Boolean(override);
 };
 
+const formatPythonCandidateSource = (source: string): string => {
+  const normalized = String(source || '').trim();
+  if (!normalized) return '-';
+  return t(`desktop.system.pythonInterpreterSource.${normalized}`);
+};
+
+const resolvePythonPickerInitialPath = (): string | undefined => {
+  const value = pythonInterpreterPath.value.trim();
+  if (!value) {
+    return undefined;
+  }
+  const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+  if (separatorIndex <= 0) {
+    return undefined;
+  }
+  return value.slice(0, separatorIndex);
+};
+
 const normalizeLineList = (value: string): string[] =>
   String(value || '')
     .split(/\r?\n/)
@@ -1159,6 +1281,80 @@ const applySettingsData = (
   remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
   applyLanSettings(data.lan_mesh as DesktopLanMeshSettings | undefined);
   refreshRemoteConnected();
+};
+
+const loadPythonInterpreterCandidates = async (notifyWhenEmpty = false) => {
+  loadingPythonCandidates.value = true;
+  try {
+    const response = await detectDesktopPythonInterpreters();
+    const items = (response?.data?.data?.items || []) as DesktopPythonInterpreterItem[];
+    pythonInterpreterCandidates.value = Array.isArray(items)
+      ? items
+          .map((item) => ({
+            path: String(item.path || '').trim(),
+            source: String(item.source || '').trim()
+          }))
+          .filter((item) => item.path)
+      : [];
+    if (!pythonInterpreterCandidates.value.length && notifyWhenEmpty) {
+      ElMessage.info(t('desktop.system.pythonInterpreterDetectNone'));
+    }
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(t('desktop.system.pythonInterpreterDetectFailed'));
+  } finally {
+    loadingPythonCandidates.value = false;
+  }
+};
+
+const useDetectedPythonInterpreter = (path: string) => {
+  pythonInterpreterPath.value = String(path || '').trim();
+  ElMessage.success(t('desktop.system.pythonInterpreterSelected'));
+};
+
+const loadPythonPickerDirectory = async (path?: string) => {
+  pythonPathPickerLoading.value = true;
+  try {
+    const response = await listDesktopDirectories(path, {
+      includeFiles: true,
+      fileNames: PYTHON_PICKER_FILE_NAMES
+    });
+    const data = (response?.data?.data || {}) as Record<string, unknown>;
+    pythonPathPickerCurrentPath.value = String(data.current_path || '').trim();
+    pythonPathPickerParentPath.value = data.parent_path ? String(data.parent_path) : null;
+    pythonPathPickerRoots.value = Array.isArray(data.roots)
+      ? data.roots.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    pythonPathPickerItems.value = Array.isArray(data.items)
+      ? (data.items as unknown[])
+          .map((item) => item as Record<string, unknown>)
+          .map((item) => ({
+            name: String(item.name || '').trim(),
+            path: String(item.path || '').trim(),
+            entry_type: (item.entry_type === 'file' ? 'file' : 'dir') as 'file' | 'dir'
+          }))
+          .filter((item) => item.name && item.path)
+      : [];
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(t('desktop.system.pythonPathPickerLoadFailed'));
+  } finally {
+    pythonPathPickerLoading.value = false;
+  }
+};
+
+const openPythonPathPicker = async () => {
+  pythonPathPickerVisible.value = true;
+  await loadPythonPickerDirectory(resolvePythonPickerInitialPath());
+};
+
+const handlePythonPathPickerSelect = async (item: DesktopDirectoryEntry) => {
+  if (item.entry_type === 'file') {
+    pythonInterpreterPath.value = String(item.path || '').trim();
+    pythonPathPickerVisible.value = false;
+    return;
+  }
+  await loadPythonPickerDirectory(item.path);
 };
 
 const saveRuntimeSettings = async () => {
@@ -1402,6 +1598,7 @@ const disconnectRemoteServer = async () => {
 onMounted(() => {
   refreshRemoteConnected();
   void loadSettings();
+  void loadPythonInterpreterCandidates();
 });
 </script>
 
@@ -1627,10 +1824,135 @@ onMounted(() => {
   color: var(--portal-text);
 }
 
+.desktop-system-settings-runtime-input {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
 .desktop-system-settings-runtime-subhint {
   font-size: 12px;
   color: var(--portal-muted);
   line-height: 1.6;
+}
+
+.desktop-system-settings-runtime-candidates {
+  display: grid;
+  gap: 8px;
+}
+
+.desktop-system-settings-runtime-candidates-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
+.desktop-system-settings-runtime-candidate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #d8dee8;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--portal-surface);
+}
+
+.desktop-system-settings-runtime-candidate-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.desktop-system-settings-runtime-candidate-path {
+  font-size: 12px;
+  color: var(--portal-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-system-settings-runtime-candidate-meta {
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.desktop-system-settings-path-picker {
+  display: grid;
+  gap: 12px;
+}
+
+.desktop-system-settings-path-picker-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.desktop-system-settings-path-picker-current {
+  font-size: 12px;
+  color: var(--portal-text);
+  border: 1px solid var(--portal-border);
+  background: var(--portal-surface);
+  border-radius: 10px;
+  padding: 8px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-system-settings-path-picker-roots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.desktop-system-settings-path-picker-root {
+  border: 1px solid var(--portal-border);
+  background: var(--portal-surface);
+  color: var(--portal-text);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.desktop-system-settings-path-picker-list {
+  border: 1px solid var(--portal-border);
+  background: var(--portal-surface);
+  border-radius: 12px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.desktop-system-settings-path-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--portal-text);
+  font-size: 12px;
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.desktop-system-settings-path-picker-item:hover,
+.desktop-system-settings-path-picker-root:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.45);
+  background: var(--ui-accent-soft-2);
+  color: var(--ui-accent-deep);
+}
+
+.desktop-system-settings-path-picker-empty {
+  font-size: 12px;
+  color: var(--portal-muted);
+  padding: 12px 4px;
 }
 
 .desktop-system-settings-checkbox-group {
@@ -1876,6 +2198,11 @@ onMounted(() => {
   }
 
   .desktop-system-settings-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .desktop-system-settings-runtime-input,
+  .desktop-system-settings-runtime-candidate {
     grid-template-columns: 1fr;
   }
 }

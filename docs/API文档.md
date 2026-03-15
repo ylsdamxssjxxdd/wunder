@@ -32,7 +32,7 @@
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
-- Desktop 本地模式的 `/wunder/desktop/settings` 新增 `python_interpreter_path` 字段：留空时优先使用安装包内置 Python，填写有效解释器路径后运行时优先切换到用户自定义 Python。
+- Desktop 本地模式的 `/wunder/desktop/settings` 新增 `python_interpreter_path` 字段：留空时优先使用安装包内置 Python，填写有效解释器路径后运行时优先切换到用户自定义 Python；`GET /wunder/desktop/python/interpreters` 可返回本机已探测到的候选解释器，`GET /wunder/desktop/fs/list` 支持 `include_files/file_names` 查询参数以浏览并筛选可执行文件。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。

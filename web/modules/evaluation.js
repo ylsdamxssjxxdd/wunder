@@ -139,6 +139,7 @@ function cacheRefs() {
   return {
     panel,
     startBtn: panel.querySelector("#benchmarkStartBtn"),
+    historyBtn: panel.querySelector("#benchmarkHistoryBtn"),
     statusIndicator: panel.querySelector("#benchmarkStatusIndicator"),
     userId: panel.querySelector("#benchmarkUserId"),
     modelSelect: panel.querySelector("#benchmarkModelSelect"),
@@ -160,6 +161,9 @@ function cacheRefs() {
     runHint: panel.querySelector("#benchmarkRunHint"),
     historyBody: panel.querySelector("#benchmarkHistoryBody"),
     historyEmpty: panel.querySelector("#benchmarkHistoryEmpty"),
+    historyModal: panel.querySelector("#benchmarkHistoryModal"),
+    historyModalClose: panel.querySelector("#benchmarkHistoryModalClose"),
+    historyModalOk: panel.querySelector("#benchmarkHistoryModalOk"),
     attemptBody: panel.querySelector("#benchmarkAttemptBody"),
     attemptEmpty: panel.querySelector("#benchmarkAttemptEmpty"),
     detailModal: panel.querySelector("#benchmarkDetailModal"),
@@ -322,10 +326,9 @@ function renderHistory() {
       row.classList.add("is-active");
     }
     row.innerHTML = `
-      <td>${String(run.run_id || "").slice(0, 12)}</td>
+      <td>${formatDateTime(Number(run.started_time))}</td>
       <td><span class="benchmark-status-pill" data-status="${run.status || "idle"}">${run.status || "-"}</span></td>
       <td>${formatScore(run.total_score)}</td>
-      <td>${formatDateTime(Number(run.started_time))}</td>
       <td>${run.model_name || "\u9ed8\u8ba4"}</td>
       <td class="benchmark-row-actions">
         <button type="button" class="icon-btn" data-action="delete" data-run-id="${run.run_id}" title="\u5220\u9664"><i class="fa-solid fa-trash"></i></button>
@@ -365,6 +368,18 @@ function clearElapsedClock() {
   if (benchmarkState.elapsedTimer) {
     window.clearInterval(benchmarkState.elapsedTimer);
     benchmarkState.elapsedTimer = null;
+  }
+}
+
+function closeHistoryModal() {
+  if (benchmarkState.refs?.historyModal) {
+    benchmarkState.refs.historyModal.classList.remove("active");
+  }
+}
+
+function openHistoryModal() {
+  if (benchmarkState.refs?.historyModal) {
+    benchmarkState.refs.historyModal.classList.add("active");
   }
 }
 
@@ -725,6 +740,15 @@ function bindEvents() {
     });
   });
 
+  refs.historyBtn?.addEventListener("click", async () => {
+    openHistoryModal();
+    try {
+      await loadHistory();
+    } catch (error) {
+      setFormStatus(error.message || "\u52a0\u8f7d\u5386\u53f2\u5931\u8d25");
+    }
+  });
+
   refs.suiteList?.addEventListener("change", (event) => {
     const input = event.target;
     if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") {
@@ -756,7 +780,17 @@ function bindEvents() {
     if (!runId) {
       return;
     }
-    loadRunDetail(runId, { followRunning: false }).catch((error) => setFormStatus(error.message || "\u52a0\u8f7d\u8fd0\u884c\u8be6\u60c5\u5931\u8d25"));
+    loadRunDetail(runId, { followRunning: false })
+      .then(() => closeHistoryModal())
+      .catch((error) => setFormStatus(error.message || "\u52a0\u8f7d\u8fd0\u884c\u8be6\u60c5\u5931\u8d25"));
+  });
+
+  refs.historyModalClose?.addEventListener("click", closeHistoryModal);
+  refs.historyModalOk?.addEventListener("click", closeHistoryModal);
+  refs.historyModal?.addEventListener("click", (event) => {
+    if (event.target === refs.historyModal) {
+      closeHistoryModal();
+    }
   });
 
   refs.attemptBody?.addEventListener("click", (event) => {

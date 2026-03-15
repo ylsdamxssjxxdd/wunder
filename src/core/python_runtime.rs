@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,12 @@ pub struct PythonRuntime {
     pub lib_dir: Option<PathBuf>,
     pub site_packages: Option<PathBuf>,
     pub ssl_cert: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PythonInterpreterCandidate {
+    pub path: PathBuf,
+    pub source: String,
 }
 
 pub fn resolve_python_runtime() -> Option<PythonRuntime> {
@@ -50,6 +57,52 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
     }
 
     None
+}
+
+pub fn detect_python_interpreters() -> Vec<PythonInterpreterCandidate> {
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Ok(raw) = env::var("WUNDER_PYTHON_BIN") {
+        let trimmed = raw.trim();
+        if !trimmed.is_empty() {
+            push_python_candidate(&mut output, &mut seen, PathBuf::from(trimmed), "env");
+        }
+    }
+
+    if let Some(configured) = resolve_desktop_settings_python_bin() {
+        push_python_candidate(&mut output, &mut seen, configured, "settings");
+    }
+
+    if let Some(app_dir) = resolve_app_dir() {
+        let python_root = app_dir.join("opt/python");
+        for candidate in embedded_python_candidates(&python_root) {
+            push_python_candidate(&mut output, &mut seen, candidate, "bundled");
+        }
+        for candidate in venv_python_candidates(&app_dir) {
+            push_python_candidate(&mut output, &mut seen, candidate, "venv");
+        }
+    }
+
+    if let Some(path_env) = env::var_os("PATH") {
+        for entry in env::split_paths(&path_env) {
+            for binary_name in python_binary_names() {
+                push_python_candidate(&mut output, &mut seen, entry.join(binary_name), "path");
+            }
+        }
+    }
+
+    if cfg!(windows) {
+        for candidate in common_windows_python_candidates() {
+            push_python_candidate(&mut output, &mut seen, candidate, "common");
+        }
+    } else {
+        for candidate in common_unix_python_candidates() {
+            push_python_candidate(&mut output, &mut seen, candidate, "common");
+        }
+    }
+
+    output
 }
 
 pub fn apply_python_env(cmd: &mut Command, runtime: &PythonRuntime) {
@@ -163,7 +216,160 @@ fn resolve_app_dir() -> Option<PathBuf> {
         .filter(|value| value.is_dir())
 }
 
+fn push_python_candidate(
+    output: &mut Vec<PythonInterpreterCandidate>,
+    seen: &mut HashSet<String>,
+    path: PathBuf,
+    source: &str,
+) {
+    if !path.is_file() || is_windows_store_python_stub(&path) {
+        return;
+    }
+    let key = normalize_python_path_key(&path);
+    if key.is_empty() || !seen.insert(key) {
+        return;
+    }
+    output.push(PythonInterpreterCandidate {
+        path,
+        source: source.to_string(),
+    });
+}
+
+fn normalize_python_path_key(path: &Path) -> String {
+    let mut normalized = path.to_string_lossy().trim().replace('\\', "/");
+    if cfg!(windows) {
+        normalized.make_ascii_lowercase();
+    }
+    normalized
+}
+
+fn python_binary_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["python.exe", "python3.exe"]
+    } else {
+        &["python3", "python"]
+    }
+}
+
+fn is_windows_store_python_stub(path: &Path) -> bool {
+    if !cfg!(windows) {
+        return false;
+    }
+    let normalized = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    // Windows Store stubs often redirect to the Store instead of a real runtime.
+    normalized.contains("/windowsapps/python")
+}
+
+fn common_unix_python_candidates() -> Vec<PathBuf> {
+    [
+        "/usr/bin/python3",
+        "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
+        "/usr/bin/python",
+        "/usr/local/bin/python",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .collect()
+}
+
+fn common_windows_python_candidates() -> Vec<PathBuf> {
+    let mut output = Vec::new();
+
+    if let Some(local_app_data) = env_path("LOCALAPPDATA") {
+        output.extend(read_versioned_python_bins(
+            &local_app_data.join("Programs/Python"),
+        ));
+    }
+
+    for env_name in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(base) = env_path(env_name) {
+            output.extend(read_prefixed_python_bins(&base, "python"));
+            output.extend(read_versioned_python_bins(&base.join("Python")));
+        }
+    }
+
+    if let Some(user_profile) = env_path("USERPROFILE") {
+        output.extend(
+            [
+                user_profile.join("miniconda3/python.exe"),
+                user_profile.join("anaconda3/python.exe"),
+                user_profile.join("AppData/Local/Programs/Python/Python311/python.exe"),
+                user_profile.join("AppData/Local/Programs/Python/Python310/python.exe"),
+                user_profile.join("AppData/Local/Programs/Python/Python39/python.exe"),
+                user_profile.join("AppData/Local/Programs/Python/Python38/python.exe"),
+            ]
+            .into_iter(),
+        );
+        output.extend(read_versioned_python_bins(
+            &user_profile.join(".pyenv/pyenv-win/versions"),
+        ));
+    }
+
+    output
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn read_versioned_python_bins(base_dir: &Path) -> Vec<PathBuf> {
+    let mut output = Vec::new();
+    let entries = match fs::read_dir(base_dir) {
+        Ok(entries) => entries,
+        Err(_) => return output,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        for binary_name in python_binary_names() {
+            output.push(path.join(binary_name));
+        }
+    }
+    output
+}
+
+fn read_prefixed_python_bins(base_dir: &Path, prefix: &str) -> Vec<PathBuf> {
+    let mut output = Vec::new();
+    let entries = match fs::read_dir(base_dir) {
+        Ok(entries) => entries,
+        Err(_) => return output,
+    };
+    let prefix = prefix.to_ascii_lowercase();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        for binary_name in python_binary_names() {
+            output.push(path.join(binary_name));
+        }
+    }
+    output
+}
+
 fn resolve_desktop_settings_python_runtime() -> Option<PythonRuntime> {
+    let bin = resolve_desktop_settings_python_bin()?;
+    if !bin.is_file() {
+        return None;
+    }
+    Some(python_runtime_from_bin(bin))
+}
+
+fn resolve_desktop_settings_python_bin() -> Option<PathBuf> {
     let settings_path = env::var(DESKTOP_SETTINGS_PATH_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -176,11 +382,7 @@ fn resolve_desktop_settings_python_runtime() -> Option<PythonRuntime> {
     }
 
     // Desktop users can override the bundled runtime with a custom Python binary.
-    let bin = resolve_configured_python_bin(raw_path)?;
-    if !bin.is_file() {
-        return None;
-    }
-    Some(python_runtime_from_bin(bin))
+    resolve_configured_python_bin(raw_path)
 }
 
 fn resolve_configured_python_bin(raw_path: &str) -> Option<PathBuf> {

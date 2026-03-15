@@ -677,13 +677,19 @@
   max-height: min(360px, 42vh);
 }
 
+.benchmark-history-modal-card,
 .benchmark-detail-modal-card {
   width: min(920px, 100%);
   max-height: calc(100vh - 32px);
 }
 
+.benchmark-history-modal-card .modal-body,
 .benchmark-detail-modal-card .modal-body {
   min-height: 0;
+}
+
+.benchmark-history-modal-scroll {
+  max-height: calc(100vh - 240px);
 }
 
 .evaluation-history-table tbody tr,

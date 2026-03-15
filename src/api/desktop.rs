@@ -1,4 +1,5 @@
 use crate::config::{Config, LlmConfig};
+use crate::core::python_runtime;
 use crate::services::desktop_lan;
 use crate::state::AppState;
 use crate::storage::{
@@ -50,6 +51,10 @@ pub fn router() -> Router<Arc<AppState>> {
             post(desktop_llm_context_window),
         )
         .route("/wunder/desktop/fs/list", get(desktop_fs_list))
+        .route(
+            "/wunder/desktop/python/interpreters",
+            get(desktop_python_interpreters_get),
+        )
         .route("/wunder/desktop/sync/seed/start", post(desktop_seed_start))
         .route("/wunder/desktop/sync/seed/jobs", get(desktop_seed_jobs))
         .route(
@@ -173,12 +178,23 @@ struct DesktopLlmContextProbeRequest {
 struct DesktopDirectoryItem {
     name: String,
     path: String,
+    entry_type: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DesktopPythonInterpreterItem {
+    path: String,
+    source: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 struct DesktopDirectoryListQuery {
     #[serde(default)]
     path: Option<String>,
+    #[serde(default)]
+    include_files: bool,
+    #[serde(default)]
+    file_names: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -561,6 +577,7 @@ async fn desktop_fs_list(
     }
 
     let mut items = Vec::new();
+    let allowed_file_names = parse_desktop_list_file_names(query.file_names.as_deref());
     let entries = fs::read_dir(&current_path).map_err(|err| {
         internal_error(format!(
             "read desktop directory failed {}: {err}",
@@ -580,22 +597,35 @@ async fn desktop_fs_list(
                 entry.path().display()
             ))
         })?;
-        if !file_type.is_dir() {
-            continue;
-        }
         let name = entry.file_name().to_string_lossy().to_string();
         if name.trim().is_empty() {
+            continue;
+        }
+        if file_type.is_dir() {
+            items.push(DesktopDirectoryItem {
+                name,
+                path: entry.path().to_string_lossy().to_string(),
+                entry_type: "dir".to_string(),
+            });
+            continue;
+        }
+        if !query.include_files {
+            continue;
+        }
+        let normalized_name = name.to_ascii_lowercase();
+        if !allowed_file_names.is_empty() && !allowed_file_names.contains(&normalized_name) {
             continue;
         }
         items.push(DesktopDirectoryItem {
             name,
             path: entry.path().to_string_lossy().to_string(),
+            entry_type: "file".to_string(),
         });
     }
     items.sort_by(|left, right| {
-        left.name
-            .to_lowercase()
-            .cmp(&right.name.to_lowercase())
+        left.entry_type
+            .cmp(&right.entry_type)
+            .then(left.name.to_lowercase().cmp(&right.name.to_lowercase()))
             .then(left.name.cmp(&right.name))
     });
 
@@ -610,6 +640,19 @@ async fn desktop_fs_list(
             "items": items,
         }
     })))
+}
+
+async fn desktop_python_interpreters_get(
+    State(_state): State<Arc<AppState>>,
+) -> Result<Json<Value>, Response> {
+    let items = python_runtime::detect_python_interpreters()
+        .into_iter()
+        .map(|item| DesktopPythonInterpreterItem {
+            path: item.path.to_string_lossy().to_string(),
+            source: item.source,
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({ "data": { "items": items } })))
 }
 
 async fn desktop_settings_update(
@@ -1397,6 +1440,15 @@ fn resolve_desktop_list_path(
     let cleaned = raw_path.map(str::trim).filter(|value| !value.is_empty());
     let selected = cleaned.unwrap_or(fallback.as_str());
     resolve_workspace_path(selected, app_dir)
+}
+
+fn parse_desktop_list_file_names(raw: Option<&str>) -> HashSet<String> {
+    raw.unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .collect()
 }
 
 fn list_desktop_directory_roots() -> Vec<String> {

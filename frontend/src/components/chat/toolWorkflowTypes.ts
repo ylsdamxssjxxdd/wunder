@@ -3,6 +3,7 @@ export type ToolWorkflowCommandView = {
   shell: string;
   terminalText: string;
   exitCode: number | null;
+  showExitCode?: boolean;
 };
 
 export type ToolWorkflowPatchLine = {
@@ -15,6 +16,7 @@ export type ToolWorkflowDetailSection = {
   key: string;
   title: string;
   kind: 'text' | 'command' | 'patch';
+  summary?: string;
   body: string;
   commandView: ToolWorkflowCommandView | null;
   patchLines: ToolWorkflowPatchLine[];

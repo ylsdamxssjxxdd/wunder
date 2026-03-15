@@ -3038,6 +3038,10 @@
                 <i class="fa-solid fa-play"></i>
                 <span>开始运行</span>
               </button>
+              <button id="benchmarkHistoryBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+                <span>运行历史</span>
+              </button>
               <div id="benchmarkStatusIndicator" class="status-indicator" data-status="idle" aria-live="polite">
                 <span class="status-dot"></span>
                 <span class="status-text">空闲</span>
@@ -3062,19 +3066,6 @@
                 <div id="benchmarkFormStatus" class="muted benchmark-form-status"></div>
                 <div class="benchmark-section-title">任务组</div>
                 <div id="benchmarkSuiteList" class="benchmark-selection-list"></div>
-              </div>
-              <div class="monitor-block evaluation-history benchmark-history-card">
-                <div class="monitor-block-title">
-                  <i class="fa-solid fa-clock-rotate-left"></i>
-                  <span>历史运行</span>
-                </div>
-                <div class="monitor-table-scroll">
-                  <table class="monitor-table evaluation-history-table">
-                    <thead><tr><th>Run ID</th><th>状态</th><th>得分</th><th>开始时间</th><th>模型</th><th>操作</th></tr></thead>
-                    <tbody id="benchmarkHistoryBody"></tbody>
-                  </table>
-                </div>
-                <div id="benchmarkHistoryEmpty" class="muted">暂无历史运行</div>
               </div>
             </div>
             <div class="evaluation-main">
@@ -3106,6 +3097,27 @@
                   </div>
                   <div id="benchmarkAttemptEmpty" class="muted">暂无 attempt 记录</div>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="benchmarkHistoryModal" class="modal">
+            <div class="modal-card benchmark-history-modal-card">
+              <div class="modal-header">
+                <div class="detail-title">运行历史</div>
+                <button id="benchmarkHistoryModalClose" class="icon-btn" type="button" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button>
+              </div>
+              <div class="modal-body">
+                <div class="monitor-table-scroll benchmark-history-modal-scroll">
+                  <table class="monitor-table evaluation-history-table">
+                    <thead><tr><th>时间</th><th>状态</th><th>得分</th><th>模型</th><th>操作</th></tr></thead>
+                    <tbody id="benchmarkHistoryBody"></tbody>
+                  </table>
+                </div>
+                <div id="benchmarkHistoryEmpty" class="muted">暂无历史运行</div>
+              </div>
+              <div class="modal-actions">
+                <button id="benchmarkHistoryModalOk" class="primary" type="button">关闭</button>
               </div>
             </div>
           </div>
@@ -4685,7 +4697,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260315-03"></script>
+    <script type="module" src="./app.js?v=20260315-05"></script>
 </body>
 </html>
 
