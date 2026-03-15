@@ -235,17 +235,6 @@
           </button>
           <button
             v-if="!showChatSettingsView && isAgentConversationActive"
-            class="messenger-header-btn messenger-header-btn--text"
-            type="button"
-            :title="t('messenger.memory.button')"
-            :aria-label="t('messenger.memory.button')"
-            @click="openActiveAgentMemory"
-          >
-            <i class="fa-solid fa-brain" aria-hidden="true"></i>
-            {{ t('messenger.memory.button') }}
-          </button>
-          <button
-            v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn"
             type="button"
             :title="t('common.setting')"
@@ -1260,6 +1249,9 @@
       v-model:agent-prompt-preview-visible="agentPromptPreviewVisible"
       :agent-prompt-preview-loading="agentPromptPreviewLoading"
       :active-agent-prompt-preview-html="activeAgentPromptPreviewHtml"
+      :agent-prompt-preview-memory-content="agentPromptPreviewMemoryContent"
+      :agent-prompt-preview-memory-count="agentPromptPreviewMemoryCount"
+      :agent-prompt-preview-memory-mode="agentPromptPreviewMemoryMode"
       :image-preview-visible="imagePreviewVisible"
       :image-preview-url="imagePreviewUrl"
       :image-preview-title="imagePreviewTitle"
@@ -1608,6 +1600,9 @@ const worldContainerPickerEntries = ref<WorldContainerPickerEntry[]>([]);
 const agentPromptPreviewVisible = ref(false);
 const agentPromptPreviewLoading = ref(false);
 const agentPromptPreviewContent = ref('');
+const agentPromptPreviewMemoryContent = ref('');
+const agentPromptPreviewMemoryCount = ref(0);
+const agentPromptPreviewMemoryMode = ref<'none' | 'pending' | 'frozen'>('none');
 const imagePreviewVisible = ref(false);
 const imagePreviewUrl = ref('');
 const imagePreviewTitle = ref('');
@@ -6914,27 +6909,6 @@ const enterSelectedAgentConversation = async () => {
   await openAgentById(target);
 };
 
-const openActiveAgentMemory = () => {
-  const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
-  agentOverviewMode.value = 'detail';
-  selectedAgentId.value = targetAgentId;
-  agentSettingMode.value = 'memory';
-  sessionHub.setSection('agents');
-  const nextQuery = {
-    ...route.query,
-    section: 'agents',
-    agent_id: targetAgentId === DEFAULT_AGENT_KEY ? '' : targetAgentId
-  } as Record<string, any>;
-  delete nextQuery.session_id;
-  delete nextQuery.entry;
-  delete nextQuery.conversation_id;
-  router
-    .push({
-      path: `${basePrefix.value}/home`,
-      query: nextQuery
-    })
-    .catch(() => undefined);
-};
 
 const openActiveAgentSettings = () => {
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
@@ -7022,6 +6996,9 @@ const openAgentPromptPreview = async () => {
   agentPromptPreviewVisible.value = true;
   agentPromptPreviewLoading.value = true;
   agentPromptPreviewContent.value = '';
+  agentPromptPreviewMemoryContent.value = '';
+  agentPromptPreviewMemoryCount.value = 0;
+  agentPromptPreviewMemoryMode.value = 'none';
   const summaryPromise = loadAgentToolSummary({ force: true });
   try {
     const session = activeAgentSession.value as Record<string, unknown> | null;
@@ -7051,9 +7028,17 @@ const openAgentPromptPreview = async () => {
       /<<WUNDER_HISTORY_MEMORY>>/g,
       ''
     );
+    agentPromptPreviewMemoryContent.value = String(promptPayload.memory_preview || '').trim();
+    agentPromptPreviewMemoryCount.value = Number(promptPayload.memory_preview_count || 0);
+    const nextMode = String(promptPayload.memory_preview_mode || 'none').trim().toLowerCase();
+    agentPromptPreviewMemoryMode.value =
+      nextMode === 'frozen' || nextMode === 'pending' ? nextMode : 'none';
   } catch (error) {
     showApiError(error, t('chat.systemPromptFailed'));
     agentPromptPreviewContent.value = '';
+    agentPromptPreviewMemoryContent.value = '';
+    agentPromptPreviewMemoryCount.value = 0;
+    agentPromptPreviewMemoryMode.value = 'none';
   } finally {
     agentPromptPreviewLoading.value = false;
   }
@@ -10156,4 +10141,3 @@ onBeforeUnmount(() => {
   userWorldStore.stopAllWatchers();
 });
 </script>
-

@@ -1,9 +1,10 @@
 use super::context::ToolContext;
 use crate::i18n;
 use crate::memory::{build_agent_memory_owner, normalize_agent_memory_scope, MemoryStore};
-use crate::services::memory_fragments::MemoryFragmentStore;
+use crate::services::memory_fragments::{
+    MemoryFragmentInput, MemoryFragmentListOptions, MemoryFragmentStore,
+};
 use anyhow::{anyhow, Result};
-use chrono::Utc;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -92,8 +93,35 @@ fn normalize_memory_order_desc(order: Option<&str>) -> bool {
     !matches!(cleaned.as_str(), "asc" | "ascending")
 }
 
-fn now_ts() -> f64 {
-    Utc::now().timestamp_millis() as f64 / 1000.0
+fn clear_fragment_scope(
+    fragment_store: &MemoryFragmentStore,
+    user_id: &str,
+    agent_id: Option<&str>,
+) -> i64 {
+    let mut deleted = 0i64;
+    loop {
+        let batch = fragment_store.list_fragments(
+            user_id,
+            agent_id,
+            MemoryFragmentListOptions {
+                include_invalidated: true,
+                limit: Some(200),
+                ..Default::default()
+            },
+        );
+        if batch.is_empty() {
+            break;
+        }
+        for item in &batch {
+            if fragment_store.delete_fragment(user_id, agent_id, &item.memory_id) {
+                deleted += 1;
+            }
+        }
+        if batch.len() < 200 {
+            break;
+        }
+    }
+    deleted
 }
 
 pub(crate) async fn execute_memory_manager_tool(
@@ -107,26 +135,39 @@ pub(crate) async fn execute_memory_manager_tool(
         return Err(anyhow!(i18n::t("tool.memory_manager.invalid_action")));
     }
 
-    let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
     let agent_scope = normalize_agent_memory_scope(context.agent_id);
-    let memory_store = MemoryStore::new(context.storage.clone());
+    let fragment_store = MemoryFragmentStore::new(context.storage.clone());
 
     let response = match action.as_str() {
         "list" => {
-            let limit = normalize_memory_list_limit(payload.limit);
-            let records = memory_store.list_records(
-                &owner_key,
-                Some(limit),
-                normalize_memory_order_desc(payload.order.as_deref()),
+            let limit = normalize_memory_list_limit(payload.limit) as usize;
+            let order_desc = normalize_memory_order_desc(payload.order.as_deref());
+            let mut records = fragment_store.list_fragments(
+                context.user_id,
+                context.agent_id,
+                MemoryFragmentListOptions {
+                    query: payload.query.as_deref(),
+                    include_invalidated: true,
+                    limit: Some(limit),
+                    ..Default::default()
+                },
             );
+            if !order_desc {
+                records.reverse();
+            }
             let items = records
                 .into_iter()
                 .map(|record| {
                     json!({
-                        "memory_id": record.session_id,
-                        "content": record.summary,
-                        "created_time_ts": record.created_time,
-                        "updated_time_ts": record.updated_time,
+                        "memory_id": record.memory_id,
+                        "title": record.title_l0,
+                        "summary": record.summary_l1,
+                        "content": record.content_l2,
+                        "category": record.category,
+                        "source_type": record.source_type,
+                        "status": record.status,
+                        "created_time_ts": record.created_at,
+                        "updated_time_ts": record.updated_at,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -147,8 +188,24 @@ pub(crate) async fn execute_memory_manager_tool(
             if memory_id.is_empty() {
                 memory_id = format!("mem_{}", Uuid::new_v4().simple());
             }
-            let saved =
-                memory_store.upsert_record(&owner_key, &memory_id, &content, Some(now_ts()), None);
+            let saved = fragment_store
+                .save_fragment(
+                    context.user_id,
+                    context.agent_id,
+                    MemoryFragmentInput {
+                        memory_id: Some(memory_id.clone()),
+                        source_session_id: Some(context.session_id.to_string()),
+                        source_type: Some("memory_manager".to_string()),
+                        category: Some("tool-note".to_string()),
+                        summary_l1: Some(content.clone()),
+                        content_l2: Some(content),
+                        fact_key: Some(format!("tool-note::{memory_id}")),
+                        pinned: Some(false),
+                        invalidated: Some(false),
+                        ..Default::default()
+                    },
+                )
+                .is_ok();
             json!({
                 "action": action,
                 "agent_id": agent_scope,
@@ -166,8 +223,26 @@ pub(crate) async fn execute_memory_manager_tool(
             if content.is_empty() {
                 return Err(anyhow!(i18n::t("error.content_required")));
             }
-            let updated =
-                memory_store.update_record(&owner_key, &memory_id, &content, Some(now_ts()));
+            let updated = fragment_store
+                .save_fragment(
+                    context.user_id,
+                    context.agent_id,
+                    MemoryFragmentInput {
+                        memory_id: Some(memory_id.clone()),
+                        source_session_id: Some(context.session_id.to_string()),
+                        source_type: Some("memory_manager".to_string()),
+                        category: Some("tool-note".to_string()),
+                        summary_l1: Some(content.clone()),
+                        content_l2: Some(content),
+                        ..Default::default()
+                    },
+                )
+                .is_ok();
+            if updated {
+                let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
+                let memory_store = MemoryStore::new(context.storage.clone());
+                cleanup_legacy_memory_record(&memory_store, &owner_key, &memory_id);
+            }
             json!({
                 "action": action,
                 "agent_id": agent_scope,
@@ -181,7 +256,13 @@ pub(crate) async fn execute_memory_manager_tool(
             if memory_id.is_empty() {
                 return Err(anyhow!(i18n::t("error.content_required")));
             }
-            let deleted = memory_store.delete_record(&owner_key, &memory_id);
+            let fragment_deleted =
+                fragment_store.delete_fragment(context.user_id, context.agent_id, &memory_id);
+            let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
+            let memory_store = MemoryStore::new(context.storage.clone());
+            let legacy_deleted =
+                cleanup_legacy_memory_record(&memory_store, &owner_key, &memory_id);
+            let deleted = i64::from(fragment_deleted) + legacy_deleted;
             json!({
                 "action": action,
                 "agent_id": agent_scope,
@@ -191,7 +272,10 @@ pub(crate) async fn execute_memory_manager_tool(
             })
         }
         "clear" => {
-            let deleted = memory_store.clear_records(&owner_key);
+            let owner_key = build_agent_memory_owner(context.user_id, context.agent_id);
+            let memory_store = MemoryStore::new(context.storage.clone());
+            let deleted = clear_fragment_scope(&fragment_store, context.user_id, context.agent_id)
+                + memory_store.clear_records(&owner_key);
             json!({
                 "action": action,
                 "agent_id": agent_scope,
@@ -202,15 +286,17 @@ pub(crate) async fn execute_memory_manager_tool(
         "recall" => {
             let query = normalize_memory_query(&payload);
             let recall_limit = normalize_memory_recall_limit(payload.limit);
-            let fragment_store = MemoryFragmentStore::new(context.storage.clone());
-            let hits = fragment_store.recall_for_prompt(
-                context.user_id,
-                context.agent_id,
-                Some(context.session_id),
-                None,
-                (!query.is_empty()).then_some(query.as_str()),
-                Some(recall_limit),
-            );
+            let hits = fragment_store
+                .recall_for_prompt(
+                    Some(context.config),
+                    context.user_id,
+                    context.agent_id,
+                    Some(context.session_id),
+                    None,
+                    (!query.is_empty()).then_some(query.as_str()),
+                    Some(recall_limit),
+                )
+                .await;
             let items = hits
                 .into_iter()
                 .map(|hit| {
@@ -225,10 +311,13 @@ pub(crate) async fn execute_memory_manager_tool(
                         "tags": fragment.tags,
                         "entities": fragment.entities,
                         "pinned": fragment.pinned,
-                        "confirmed_by_user": fragment.confirmed_by_user,
                         "status": fragment.status,
                         "updated_at": fragment.updated_at,
                         "score": hit.final_score,
+                        "lexical_score": hit.lexical_score,
+                        "semantic_score": hit.semantic_score,
+                        "freshness_score": hit.freshness_score,
+                        "importance_score": hit.importance_score,
                         "reason": hit.reason_json,
                     })
                 })
@@ -248,9 +337,110 @@ pub(crate) async fn execute_memory_manager_tool(
     Ok(response)
 }
 
+fn cleanup_legacy_memory_record(
+    memory_store: &MemoryStore,
+    owner_key: &str,
+    memory_id: &str,
+) -> i64 {
+    let cleaned = memory_id.trim();
+    if cleaned.is_empty() {
+        return 0;
+    }
+    let direct = memory_store.delete_record(owner_key, cleaned);
+    if let Some(legacy_id) = cleaned.strip_prefix("legacy::") {
+        return direct + memory_store.delete_record(owner_key, legacy_id);
+    }
+    direct
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::a2a_store::A2aStore;
+    use crate::config::Config;
+    use crate::lsp::LspManager;
+    use crate::services::tools::context::ToolContext;
+    use crate::skills::SkillRegistry;
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use crate::workspace::WorkspaceManager;
+    use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    struct TestHarness {
+        _dir: tempfile::TempDir,
+        config: Config,
+        storage: Arc<dyn StorageBackend>,
+        workspace: Arc<WorkspaceManager>,
+        lsp_manager: Arc<LspManager>,
+        a2a_store: A2aStore,
+        skills: SkillRegistry,
+        http: reqwest::Client,
+    }
+
+    impl TestHarness {
+        fn new() -> Self {
+            let dir = tempdir().expect("tempdir");
+            let db_path = dir.path().join("memory-manager-tool.db");
+            let storage: Arc<dyn StorageBackend> =
+                Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+            storage.ensure_initialized().expect("init storage");
+            let config = Config::default();
+            let workspace = Arc::new(WorkspaceManager::new(
+                dir.path().to_string_lossy().as_ref(),
+                storage.clone(),
+                0,
+                &HashMap::new(),
+            ));
+            let lsp_manager = LspManager::new(workspace.clone());
+            Self {
+                _dir: dir,
+                config,
+                storage,
+                workspace,
+                lsp_manager,
+                a2a_store: A2aStore::default(),
+                skills: SkillRegistry::default(),
+                http: reqwest::Client::new(),
+            }
+        }
+
+        fn context<'a>(
+            &'a self,
+            user_id: &'a str,
+            session_id: &'a str,
+            agent_id: Option<&'a str>,
+        ) -> ToolContext<'a> {
+            ToolContext {
+                user_id,
+                session_id,
+                workspace_id: "workspace-test",
+                agent_id,
+                is_admin: false,
+                storage: self.storage.clone(),
+                orchestrator: None,
+                monitor: None,
+                beeroom_realtime: None,
+                workspace: self.workspace.clone(),
+                lsp_manager: self.lsp_manager.clone(),
+                config: &self.config,
+                a2a_store: &self.a2a_store,
+                skills: &self.skills,
+                gateway: None,
+                user_world: None,
+                cron_wake_signal: None,
+                user_tool_manager: None,
+                user_tool_bindings: None,
+                user_tool_store: None,
+                request_config_overrides: None,
+                allow_roots: None,
+                read_roots: None,
+                event_emitter: None,
+                http: &self.http,
+            }
+        }
+    }
 
     #[test]
     fn normalize_action_supports_recall_aliases() {
@@ -265,5 +455,81 @@ mod tests {
         assert_eq!(normalize_memory_recall_limit(None), 6);
         assert_eq!(normalize_memory_recall_limit(Some(0)), 1);
         assert_eq!(normalize_memory_recall_limit(Some(99)), 12);
+    }
+
+    #[tokio::test]
+    async fn memory_manager_tool_writes_visible_fragments() {
+        let harness = TestHarness::new();
+        let context = harness.context("u1", "sess-1", Some("agent-demo"));
+
+        let add = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "add",
+                "memory_id": "pref-reply-language",
+                "content": "默认使用中文回答。"
+            }),
+        )
+        .await
+        .expect("add memory");
+        assert_eq!(add.get("saved").and_then(Value::as_bool), Some(true));
+
+        let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
+        let fragments = fragment_store.list_fragments(
+            "u1",
+            Some("agent-demo"),
+            MemoryFragmentListOptions::default(),
+        );
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].memory_id, "pref-reply-language");
+        assert_eq!(fragments[0].source_type, "memory-manager");
+        assert_eq!(fragments[0].category, "tool-note");
+
+        let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
+            .await
+            .expect("list memory");
+        assert_eq!(listed.get("count").and_then(Value::as_u64), Some(1));
+
+        let recalled = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "recall",
+                "query": "中文回答"
+            }),
+        )
+        .await
+        .expect("recall memory");
+        assert_eq!(recalled.get("count").and_then(Value::as_u64), Some(1));
+
+        let updated = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "update",
+                "memory_id": "pref-reply-language",
+                "content": "默认使用简体中文回答。"
+            }),
+        )
+        .await
+        .expect("update memory");
+        assert_eq!(updated.get("updated").and_then(Value::as_bool), Some(true));
+
+        let refreshed = fragment_store
+            .get_fragment("u1", Some("agent-demo"), "pref-reply-language")
+            .expect("get updated fragment");
+        assert_eq!(refreshed.content_l2, "默认使用简体中文回答。");
+
+        let deleted = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "delete",
+                "memory_id": "pref-reply-language"
+            }),
+        )
+        .await
+        .expect("delete memory");
+        assert_eq!(deleted.get("deleted").and_then(Value::as_i64), Some(1));
+        assert!(fragment_store
+            .get_fragment("u1", Some("agent-demo"), "pref-reply-language")
+            .is_none());
     }
 }

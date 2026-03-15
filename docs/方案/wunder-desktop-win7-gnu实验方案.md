@@ -2,6 +2,7 @@
 
 ## 0. 定位
 
+- 快速发布与日常重建请优先参考：`docs/方案/wunder-desktop-win7-发布SOP.md`
 - 目标：将 **Electron 22 + x64 GNU bridge** 固化为当前仓库里 Win7 方向的首选构建方式。
 - 原则：不污染仓库根 `.cargo/`、`target/`、`node_modules/`，所有 GNU 实验与正式构建产物统一落到 `temp_dir/win7-gnu-lab/`。
 - 当前主线：以 `x86_64-win7-windows-gnu` 为 bridge 目标三元组，通过 nightly `-Zbuild-std=std,panic_abort` 构建 Win7 兼容版 Rust `std`。
@@ -9,6 +10,8 @@
 ## 1. 当前结论
 
 - `x86_64-win7-windows-gnu` 的 `wunder-desktop-bridge` 已成功构建并完成 Electron 22 x64 安装包产出。
+- 当前 Win7 方向的默认正式出包流程，固定为 `npm run build:desktop:win7:gnu:x64:with-supplement:common`。
+- 当前 Win7 方向的最终交付物，固定为该流程产出的 **一体安装包**，而不是单独的补充包 zip。
 - 新 bridge 已移除对 `GetSystemTimePreciseAsFileTime` 的导入，改走 Win7 可用的时间 API 路径。
 - 新 bridge 已移除 `api-ms-win-core-winrt-error-l1-1-0.dll` / `RoOriginateErrorW` 相关依赖链。
 - DPI 感知初始化改为运行时按需加载，避免静态引入 `shcore` 的 Win8+ 入口点。
@@ -17,12 +20,16 @@
 
 ## 2. 推荐构建命令
 
-### 推荐入口
+### 默认发布入口
 
 ```powershell
 npm run setup:desktop:win7:gnu:x64
-npm run build:desktop:win7:gnu:x64
+npm run build:desktop:win7:gnu:x64:with-supplement:common
 ```
+
+- 以后 Win7 版本默认优先走这条链路。
+- 该入口会同时完成：Win7 GNU bridge 构建、Win7 `common` Python/Git 补充运行时构建、Electron NSIS 一体安装包产出。
+- 该入口对应的安装包就是默认交付产物。
 
 ### 快速重建入口
 
@@ -30,10 +37,18 @@ npm run build:desktop:win7:gnu:x64
 npm run build:desktop:win7:gnu:x64:fast
 ```
 
+### 带补充包的一体安装包
+
+```powershell
+npm run build:desktop:win7:gnu:x64:with-supplement
+
+# Win7 正式推荐的一体安装包入口
+npm run build:desktop:win7:gnu:x64:with-supplement:common
+```
+
 ### 静态 CRT 试探入口
 
 ```powershell
-npm run build:desktop:win7:gnu:x64
 npm run build:desktop:win7:gnu:x64:static
 ```
 
@@ -48,9 +63,12 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - Cargo home：`temp_dir/win7-gnu-lab/cargo-home-win7-target`
 - bridge target：`temp_dir/win7-gnu-lab/bridge-build-target-x64-win7-gnu`
 - Electron staging：`temp_dir/win7-gnu-lab/electron-win7-x64/app`
-- Electron 安装包：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder-desktop-win7-0.1.0-x64-setup.exe`
+- 最终交付安装包：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder-desktop-win7-0.1.0-x64-setup.exe`
+- `common` 补充包中间产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
 - Win7 专用 patch 配置：`temp_dir/win7-gnu-lab/cargo-win7-patch.toml`
 - 工具链快照：`temp_dir/win7-gnu-lab/toolchain-manifest.json`
+
+其中，补充包 zip 保留为排障、手工覆盖或独立验证时使用的中间产物；默认对外分发时，以一体安装包为准。
 
 ## 4. 固化点
 
@@ -116,7 +134,38 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 - 下次若要调整 Electron 版本、Rust nightly、目标三元组或 MinGW 路径，只改 `desktop/electron/scripts/win7-gnu-toolchain.json` 一处即可。
 
-## 9. 暂不固化的路径
+## 9. Win7 补充包
+
+- 为 Win7 Electron 试包额外提供一个可直接解压到安装目录根部的 `wunder补充包`，内含 `opt/python` 与 `opt/git`。
+- 构建入口：`npm run build:desktop:win7:supplement:x64`
+- 常用 Python 依赖档位：`npm run build:desktop:win7:supplement:x64:common`
+- 一体安装包入口：`npm run build:desktop:win7:gnu:x64:with-supplement`
+- 带常用 Python 依赖的一体安装包入口：`npm run build:desktop:win7:gnu:x64:with-supplement:common`
+- 构建脚本：`packaging/windows/scripts/build_win7_desktop_supplement.ps1`
+- 配置清单：`packaging/windows/scripts/win7-supplement-manifest.json`
+- 说明文档：`packaging/windows/README.md`
+- 默认产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64.zip`
+- `common` 档位产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
+
+当前补充包版本固定为：
+
+- Python：`3.8.10 embeddable`
+- Git：`MinGit 2.46.2`
+
+其中 `common` 档位会额外引入一组精简的 Win7 友好 Python 常用依赖，并保留绘图能力：
+
+- `pip / setuptools / wheel`
+- `requests / certifi / urllib3`
+- `numpy / pandas / openpyxl / tabulate`
+- `matplotlib / Pillow`
+
+这样做的目的，是让用户将补充包直接解压进桌面安装目录后，Electron / bridge 就能自动识别并优先使用内置 Python / Git，而不依赖系统全局安装。
+
+同时，当前 Win7 GNU 构建链也支持把补充包内容直接并入 NSIS 安装包：安装完成后，安装目录会直接带上 `opt/python` 与 `opt/git`，无需再手工解压补充包。
+
+后续若无特殊排障需求，Win7 版本默认不再以单独补充包作为最终发布物，而是统一以 `with-supplement:common` 产出的一体安装包作为最终产物。
+
+## 10. 暂不固化的路径
 
 ### `i686` GNU
 
@@ -128,7 +177,7 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - 当前会卡在资源编译生成的 `resource.lib` 与 GNU 链接器格式不兼容。
 - 需要额外调整 `tauri-winres` / `embed-resource` 的资源链路后，才有继续推进价值。
 
-## 10. 下一步建议
+## 11. 下一步建议
 
 - 在真实 Win7 x64 环境继续验证 LLM 请求、知识库下载、插件联网、XMPP / WebSocket 等所有 `reqwest` 相关链路。
 - 若目标环境存在企业代理或私有根证书，需要尽快补一套显式代理与自定义 CA 导入方案。

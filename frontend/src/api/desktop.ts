@@ -68,6 +68,7 @@ export type DesktopSettingsData = {
   container_roots: DesktopContainerRoot[];
   container_mounts?: DesktopContainerMount[];
   language: string;
+  python_interpreter_path: string;
   supported_languages: string[];
   llm: DesktopLlmConfig;
   remote_gateway: DesktopRemoteGatewaySettings;

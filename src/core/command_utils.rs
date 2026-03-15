@@ -265,7 +265,11 @@ fn is_shell_builtin(program: &str) -> bool {
 
 fn is_python_program(program: &str) -> bool {
     let lower = program.to_ascii_lowercase();
-    lower == "python" || lower == "python3" || lower.starts_with("python3.")
+    lower == "python"
+        || lower == "python3"
+        || lower == "py"
+        || lower == "py.exe"
+        || lower.starts_with("python3.")
 }
 
 #[cfg(test)]

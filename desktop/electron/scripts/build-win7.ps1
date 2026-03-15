@@ -2,6 +2,7 @@ param(
   [ValidateSet('ia32', 'x64')]
   [string]$Arch = 'ia32',
   [string]$LabRoot = '',
+  [string]$SupplementRoot = '',
   [string]$ElectronVersion = '22.3.27',
   [string]$ElectronBuilderVersion = '24.13.3'
 )
@@ -17,6 +18,25 @@ function Write-Step {
 function Ensure-Directory {
   param([string]$Path)
   New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+function Remove-DirectoryTree {
+  param([string]$Path)
+
+  if (-not (Test-Path $Path)) {
+    return
+  }
+
+  try {
+    Remove-Item $Path -Recurse -Force -ErrorAction Stop
+    return
+  }
+  catch {
+    & cmd.exe /d /c "rmdir /s /q `"$Path`"" | Out-Null
+    if (Test-Path $Path) {
+      throw
+    }
+  }
 }
 
 function Write-Utf8NoBomFile {
@@ -40,11 +60,27 @@ function Resolve-ExistingPath {
   return $null
 }
 
+function Resolve-FullPath {
+  param(
+    [string]$Path,
+    [string]$BasePath = ''
+  )
+
+  if ([System.IO.Path]::IsPathRooted($Path)) {
+    return [System.IO.Path]::GetFullPath($Path)
+  }
+  if ($BasePath) {
+    return [System.IO.Path]::GetFullPath((Join-Path $BasePath $Path))
+  }
+  return [System.IO.Path]::GetFullPath($Path)
+}
+
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDir '..\..\..')).Path
 if (-not $LabRoot) {
   $LabRoot = Join-Path $repoRoot 'temp_dir\win7-lab'
 }
+$LabRoot = Resolve-FullPath -Path $LabRoot -BasePath $repoRoot
 
 $frontendDist = Join-Path $repoRoot 'frontend\dist'
 if (-not (Test-Path $frontendDist)) {
@@ -80,7 +116,7 @@ $builderCache = Join-Path $LabRoot 'electron-builder-cache'
 
 Ensure-Directory $LabRoot
 if (Test-Path $stageRoot) {
-  Remove-Item $stageRoot -Recurse -Force
+  Remove-DirectoryTree -Path $stageRoot
 }
 Ensure-Directory $stageApp
 Ensure-Directory $outputRoot
@@ -114,6 +150,19 @@ $env:WUNDER_REPO_ROOT = $repoRoot
 $env:WUNDER_FRONTEND_DIST = $frontendDist
 $env:WUNDER_BRIDGE_BIN = $bridgeBinary
 $env:WUNDER_SKIP_RUNTIME_DEPS_COPY = '1'
+$env:WUNDER_EXTRA_RUNTIME_ROOTS = ''
+$env:WUNDER_EXTRA_RUNTIME_FILES = ''
+$resolvedSupplementRoot = if ($SupplementRoot -and (Test-Path $SupplementRoot)) {
+  (Resolve-Path $SupplementRoot).Path
+} elseif ($env:WUNDER_SUPPLEMENT_ROOT -and (Test-Path $env:WUNDER_SUPPLEMENT_ROOT)) {
+  (Resolve-Path $env:WUNDER_SUPPLEMENT_ROOT).Path
+} else {
+  $null
+}
+if ($resolvedSupplementRoot) {
+  Write-Step "including supplement root: $resolvedSupplementRoot"
+  $env:WUNDER_EXTRA_RUNTIME_ROOTS = $resolvedSupplementRoot
+}
 $env:npm_config_cache = $npmCache
 $env:ELECTRON_CACHE = $electronCache
 $env:ELECTRON_BUILDER_CACHE = $builderCache

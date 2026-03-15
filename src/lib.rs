@@ -19,7 +19,7 @@ pub use core::{
     approval, auth, command_utils, config, config_store, dpi, exec_policy, i18n, path_utils,
     rustls_provider, schemas, shutdown, state, token_utils,
 };
-pub use ops::{evaluation, evaluation_runner, monitor, performance, throughput};
+pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;
 pub use services::{
     a2a_store, attachment, beeroom_realtime, cron, desktop_lan, doc2md, history, knowledge, llm,

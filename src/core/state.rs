@@ -1,11 +1,11 @@
 // 全局应用状态：集中初始化核心服务并管理依赖注入。
 
 use crate::a2a_store::A2aStore;
+use crate::benchmark::BenchmarkManager;
 use crate::channels::ChannelHub;
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::cron::{CronScheduler, CronWakeSignal};
-use crate::evaluation_runner::EvaluationManager;
 use crate::gateway::GatewayHub;
 use crate::lsp::LspManager;
 use crate::memory::MemoryStore;
@@ -100,7 +100,7 @@ pub struct AppState {
     pub beeroom_realtime: Arc<BeeroomRealtimeService>,
     pub external_auth_codes: Arc<ExternalAuthCodeStore>,
     pub throughput: ThroughputManager,
-    pub evaluation: EvaluationManager,
+    pub benchmark: BenchmarkManager,
     pub storage: Arc<dyn StorageBackend>,
     pub channels: Arc<ChannelHub>,
     pub gateway: Arc<GatewayHub>,
@@ -221,7 +221,7 @@ impl AppState {
         }
 
         let throughput = ThroughputManager::new();
-        let evaluation = EvaluationManager::new(
+        let benchmark = BenchmarkManager::new(
             config_store.clone(),
             storage.clone(),
             workspace.clone(),
@@ -249,7 +249,7 @@ impl AppState {
             beeroom_realtime,
             external_auth_codes,
             throughput,
-            evaluation,
+            benchmark,
             storage,
             channels,
             gateway,

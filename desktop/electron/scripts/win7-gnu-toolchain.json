@@ -1,6 +1,6 @@
 {
   "recommendedArch": "x64",
-  "rustToolchain": "nightly-x86_64-pc-windows-msvc",
+  "rustToolchain": "nightly-2026-03-14-x86_64-pc-windows-msvc",
   "electronVersion": "22.3.27",
   "electronBuilderVersion": "24.13.3",
   "labRoot": "temp_dir\\win7-gnu-lab",

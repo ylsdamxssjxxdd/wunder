@@ -738,6 +738,18 @@ pub struct MemoryFragmentRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MemoryFragmentEmbeddingRecord {
+    pub memory_id: String,
+    pub user_id: String,
+    pub agent_id: String,
+    pub embedding_model: String,
+    pub content_hash: String,
+    pub vector: Vec<f32>,
+    pub dimensions: i64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MemoryHitRecord {
     pub hit_id: String,
     pub memory_id: String,
@@ -1022,6 +1034,24 @@ pub trait StorageBackend: Send + Sync {
         user_id: &str,
         agent_id: &str,
     ) -> Result<Vec<MemoryFragmentRecord>>;
+    fn get_memory_fragment_embedding(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+        embedding_model: &str,
+        content_hash: &str,
+    ) -> Result<Option<MemoryFragmentEmbeddingRecord>>;
+    fn upsert_memory_fragment_embedding(
+        &self,
+        record: &MemoryFragmentEmbeddingRecord,
+    ) -> Result<()>;
+    fn delete_memory_fragment_embeddings(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+    ) -> Result<i64>;
     fn delete_memory_fragment(&self, user_id: &str, agent_id: &str, memory_id: &str)
         -> Result<i64>;
     fn insert_memory_hit(&self, record: &MemoryHitRecord) -> Result<()>;
@@ -1040,10 +1070,11 @@ pub trait StorageBackend: Send + Sync {
         limit: i64,
     ) -> Result<Vec<MemoryJobRecord>>;
 
-    fn create_evaluation_run(&self, payload: &Value) -> Result<()>;
-    fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()>;
-    fn upsert_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()>;
-    fn load_evaluation_runs(
+    fn create_benchmark_run(&self, payload: &Value) -> Result<()>;
+    fn update_benchmark_run(&self, run_id: &str, payload: &Value) -> Result<()>;
+    fn upsert_benchmark_attempt(&self, run_id: &str, payload: &Value) -> Result<()>;
+    fn upsert_benchmark_task_aggregate(&self, run_id: &str, payload: &Value) -> Result<()>;
+    fn load_benchmark_runs(
         &self,
         user_id: Option<&str>,
         status: Option<&str>,
@@ -1052,9 +1083,10 @@ pub trait StorageBackend: Send + Sync {
         until_time: Option<f64>,
         limit: Option<i64>,
     ) -> Result<Vec<Value>>;
-    fn load_evaluation_run(&self, run_id: &str) -> Result<Option<Value>>;
-    fn load_evaluation_items(&self, run_id: &str) -> Result<Vec<Value>>;
-    fn delete_evaluation_run(&self, run_id: &str) -> Result<i64>;
+    fn load_benchmark_run(&self, run_id: &str) -> Result<Option<Value>>;
+    fn load_benchmark_attempts(&self, run_id: &str) -> Result<Vec<Value>>;
+    fn load_benchmark_task_aggregates(&self, run_id: &str) -> Result<Vec<Value>>;
+    fn delete_benchmark_run(&self, run_id: &str) -> Result<i64>;
 
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>>;
 

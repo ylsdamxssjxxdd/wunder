@@ -1,0 +1,79 @@
+{
+  "packageName": "wunder\u8865\u5145\u5305",
+  "defaultBuildRoot": "temp_dir\\win7-gnu-lab\\win7-supplement",
+  "downloadsDir": "downloads",
+  "stageDir": "stage",
+  "distDir": "dist",
+  "layout": {
+    "pythonRoot": "opt\\python",
+    "gitRoot": "opt\\git"
+  },
+  "python": {
+    "version": "3.8.10",
+    "source": "python.org embeddable package",
+    "defaultPackageIndexUrl": "https://pypi.org/simple",
+    "bootstrap": {
+      "getPipUrl": "https://bootstrap.pypa.io/pip/3.8/get-pip.py",
+      "pipSpec": "pip<25",
+      "setuptoolsSpec": "setuptools<76",
+      "wheelSpec": "wheel<0.46"
+    },
+    "profiles": {
+      "minimal": {
+        "description": "Base embeddable Python only, without extra third-party packages.",
+        "requirementsPath": "",
+        "validateImports": []
+      },
+      "common": {
+        "description": "Slim Win7-friendly common package set with requests, pandas, openpyxl and matplotlib plotting.",
+        "requirementsPath": "packaging/python/requirements-win7-common.txt",
+        "validateImports": [
+          "requests",
+          "numpy",
+          "pandas",
+          "openpyxl",
+          "matplotlib",
+          "tabulate",
+          "PIL"
+        ],
+        "plotProbe": true
+      }
+    },
+    "notes": [
+      "Python 3.8 is the last official CPython line that still supports Windows 7.",
+      "The embeddable package is used so the supplement archive can be extracted directly into the desktop install directory.",
+      "Windows 7 should include KB2533623 and the Universal CRT update for best compatibility."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "python-3.8.10-embed-amd64.zip",
+        "url": "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-amd64.zip"
+      },
+      "ia32": {
+        "fileName": "python-3.8.10-embed-win32.zip",
+        "url": "https://www.python.org/ftp/python/3.8.10/python-3.8.10-embed-win32.zip"
+      }
+    }
+  },
+  "git": {
+    "version": "2.46.2.windows.1",
+    "flavor": "MinGit",
+    "source": "git-for-windows",
+    "notes": [
+      "Git for Windows documents 2.46.2 as the last version supporting Windows 7 / 8 / 8.1.",
+      "MinGit is intended for embedding into third-party desktop applications and is sufficient for non-interactive git usage."
+    ],
+    "archives": {
+      "x64": {
+        "fileName": "MinGit-2.46.2-64-bit.zip",
+        "downloadUrl": "https://api.github.com/repos/git-for-windows/git/releases/assets/194599374",
+        "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/MinGit-2.46.2-64-bit.zip"
+      },
+      "ia32": {
+        "fileName": "MinGit-2.46.2-32-bit.zip",
+        "downloadUrl": "https://api.github.com/repos/git-for-windows/git/releases/assets/194599396",
+        "url": "https://github.com/git-for-windows/git/releases/download/v2.46.2.windows.1/MinGit-2.46.2-32-bit.zip"
+      }
+    }
+  }
+}

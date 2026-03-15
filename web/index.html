@@ -3030,181 +3030,96 @@
             </div>
           </div>
         </section>
-        <section id="evaluationPanel" class="panel">
+                        <section id="evaluationPanel" class="panel benchmark-panel">
           <div class="list-header">
             <h1 data-i18n="panel.evaluation">能力评估</h1>
             <div class="header-actions evaluation-header-actions">
-              <button id="evaluationActionBtn" class="btn-with-icon" type="button">
+              <button id="benchmarkStartBtn" class="btn-with-icon" type="button">
                 <i class="fa-solid fa-play"></i>
-                <span data-i18n="evaluation.action.start">开始评估</span>
+                <span>开始运行</span>
               </button>
-              <div
-                id="evaluationStatusIndicator"
-                class="status-indicator"
-                data-status="idle"
-                aria-live="polite"
-              >
+              <div id="benchmarkStatusIndicator" class="status-indicator" data-status="idle" aria-live="polite">
                 <span class="status-dot"></span>
-                <span class="status-text" data-i18n="evaluation.indicator.idle">空闲</span>
+                <span class="status-text">空闲</span>
               </div>
             </div>
           </div>
-          <div class="tips" data-i18n="evaluation.tip">
-            用于评估智能体在工具调用、逻辑推理、常识问答与复杂任务上的表现。
-          </div>
-          <div class="evaluation-layout">
+          <div class="tips">按 PinchBench 的任务组方式执行评测，重点呈现结果、效率与稳定性，避免把评测页面做得过细过杂。</div>
+          <div class="evaluation-layout benchmark-layout">
             <div class="evaluation-side">
-              <div class="evaluation-form">
-                <div class="form-section">
-                  <div class="evaluation-form-grid">
-                    <div class="form-row">
-                      <label for="evaluationUserId" data-i18n="evaluation.form.userId">user_id</label>
-                      <input
-                        id="evaluationUserId"
-                        type="text"
-                        placeholder="user_001"
-                        data-i18n-placeholder="common.placeholder.userId"
-                      />
-                    </div>
-                    <div class="form-row">
-                      <label for="evaluationModelSelect" data-i18n="evaluation.form.modelName">模型名称</label>
-                      <select id="evaluationModelSelect" class="evaluation-model-select"></select>
-                    </div>
-                    <div class="form-row">
-                      <label for="evaluationLanguage" data-i18n="evaluation.form.language">语言</label>
-                      <select id="evaluationLanguage"></select>
-                    </div>
-                    <div class="form-row">
-                      <label for="evaluationCaseSet" data-i18n="evaluation.form.caseSet">用例集</label>
-                      <select id="evaluationCaseSet"></select>
-                    </div>
-                  </div>
-                  <div class="form-row">
-                    <label data-i18n="evaluation.form.dimensions">评估维度</label>
-                    <div class="evaluation-dimension-select">
-                      <label class="checkbox-inline">
-                        <input id="evaluationDimTool" type="checkbox" checked />
-                        <span data-i18n="evaluation.form.dim.tool">工具调用</span>
-                      </label>
-                      <label class="checkbox-inline">
-                        <input id="evaluationDimLogic" type="checkbox" checked />
-                        <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
-                      </label>
-                      <label class="checkbox-inline">
-                        <input id="evaluationDimCommon" type="checkbox" checked />
-                        <span data-i18n="evaluation.form.dim.common">常识问答</span>
-                      </label>
-                      <label class="checkbox-inline">
-                        <input id="evaluationDimComplex" type="checkbox" checked />
-                        <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
-                      </label>
-                    </div>
-                  </div>
-                  <div id="evaluationFormStatus" class="muted"></div>
+              <div class="monitor-block benchmark-control-card">
+                <div class="monitor-block-title"><i class="fa-solid fa-sliders"></i><span>运行配置</span></div>
+                <div class="benchmark-form-grid">
+                  <div class="form-row"><label for="benchmarkUserId">user_id</label><input id="benchmarkUserId" type="text" value="benchmark_admin" placeholder="benchmark_admin" /></div>
+                  <div class="form-row"><label for="benchmarkRunsPerTask">每题轮次</label><input id="benchmarkRunsPerTask" type="number" min="1" max="10" value="2" /></div>
+                  <div class="form-row"><label for="benchmarkModelSelect">被测模型</label><select id="benchmarkModelSelect"></select></div>
+                  <div class="form-row"><label for="benchmarkJudgeModelSelect">裁判模型</label><select id="benchmarkJudgeModelSelect"></select></div>
                 </div>
+                <div class="benchmark-inline-options">
+                  <label class="checkbox-inline"><input id="benchmarkCaptureArtifacts" type="checkbox" checked /><span>保留产物</span></label>
+                  <label class="checkbox-inline"><input id="benchmarkCaptureTranscript" type="checkbox" checked /><span>保留记录</span></label>
+                </div>
+                <div id="benchmarkFormStatus" class="muted benchmark-form-status"></div>
+                <div class="benchmark-section-title">任务组</div>
+                <div id="benchmarkSuiteList" class="benchmark-selection-list"></div>
               </div>
-              <div class="evaluation-history">
-                <div class="list-header">
-                  <h2 data-i18n="evaluation.history.title">历史记录</h2>
+              <div class="monitor-block evaluation-history benchmark-history-card">
+                <div class="monitor-block-title">
+                  <i class="fa-solid fa-clock-rotate-left"></i>
+                  <span>历史运行</span>
                 </div>
                 <div class="monitor-table-scroll">
                   <table class="monitor-table evaluation-history-table">
-                    <thead>
-                      <tr>
-                        <th data-i18n="evaluation.history.table.runId">Run ID</th>
-                        <th data-i18n="evaluation.history.table.status">状态</th>
-                        <th data-i18n="evaluation.history.table.score">总分</th>
-                        <th data-i18n="evaluation.history.table.startedAt">开始时间</th>
-                        <th data-i18n="evaluation.history.table.model">模型</th>
-                        <th data-i18n="evaluation.history.table.action">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody id="evaluationHistoryBody"></tbody>
+                    <thead><tr><th>Run ID</th><th>状态</th><th>得分</th><th>开始时间</th><th>模型</th><th>操作</th></tr></thead>
+                    <tbody id="benchmarkHistoryBody"></tbody>
                   </table>
                 </div>
-                <div id="evaluationHistoryEmpty" class="muted" data-i18n="evaluation.history.empty">
-                  暂无历史记录
-                </div>
+                <div id="benchmarkHistoryEmpty" class="muted">暂无历史运行</div>
               </div>
             </div>
             <div class="evaluation-main">
-              <div class="evaluation-results">
-                <div class="monitor-block evaluation-summary-card">
-                  <div class="monitor-block-title">
-                    <i class="fa-solid fa-flag-checkered"></i>
-                    <span data-i18n="evaluation.summary.title">当前评估</span>
-                    <span id="evaluationRunSpinner" class="evaluation-run-spinner" aria-hidden="true"></span>
-                    <span id="evaluationRunStatus" class="monitor-status">-</span>
-                  </div>
-                  <table class="monitor-kv-table">
-                    <tbody>
-                      <tr>
-                        <th data-i18n="evaluation.summary.runId">Run ID</th>
-                        <td><strong id="evaluationRunId">-</strong></td>
-                      </tr>
-                      <tr>
-                        <th data-i18n="evaluation.summary.startedAt">开始时间</th>
-                        <td><strong id="evaluationRunStartedAt">-</strong></td>
-                      </tr>
-                      <tr>
-                        <th data-i18n="evaluation.summary.elapsed">耗时</th>
-                        <td><strong id="evaluationRunElapsed">-</strong></td>
-                      </tr>
-                      <tr>
-                        <th data-i18n="evaluation.summary.totalScore">总分</th>
-                        <td><strong id="evaluationTotalScore">-</strong></td>
-                      </tr>
-                    </tbody>
-                  </table>
-                  <div class="evaluation-dimension-grid">
-                    <div class="evaluation-dimension-item">
-                      <span data-i18n="evaluation.form.dim.tool">工具调用</span>
-                      <strong id="evaluationScoreTool">-</strong>
-                    </div>
-                    <div class="evaluation-dimension-item">
-                      <span data-i18n="evaluation.form.dim.logic">逻辑推理</span>
-                      <strong id="evaluationScoreLogic">-</strong>
-                    </div>
-                    <div class="evaluation-dimension-item">
-                      <span data-i18n="evaluation.form.dim.common">常识问答</span>
-                      <strong id="evaluationScoreCommon">-</strong>
-                    </div>
-                    <div class="evaluation-dimension-item">
-                      <span data-i18n="evaluation.form.dim.complex">复杂任务</span>
-                      <strong id="evaluationScoreComplex">-</strong>
-                    </div>
+              <div class="evaluation-results benchmark-results">
+                <div class="monitor-block benchmark-summary-card">
+                  <div class="monitor-block-title"><i class="fa-solid fa-flag-checkered"></i><span>运行概览</span></div>
+                  <div class="benchmark-summary-grid">
+                    <div class="benchmark-summary-item"><span>Run ID</span><strong id="benchmarkRunId">-</strong></div>
+                    <div class="benchmark-summary-item"><span>状态</span><strong id="benchmarkRunStatus">-</strong></div>
+                    <div class="benchmark-summary-item"><span>开始时间</span><strong id="benchmarkRunStartedAt">-</strong></div>
+                    <div class="benchmark-summary-item"><span>耗时</span><strong id="benchmarkRunElapsed">-</strong></div>
+                    <div class="benchmark-summary-item"><span>总分</span><strong id="benchmarkTotalScore">-</strong></div>
+                    <div class="benchmark-summary-item"><span>上下文 Token</span><strong id="benchmarkContextTokens">-</strong></div>
                   </div>
                   <div class="evaluation-progress">
-                    <div class="evaluation-progress-bar">
-                      <span id="evaluationProgressFill"></span>
-                    </div>
-                    <div id="evaluationProgressText" class="muted">0/0</div>
+                    <div class="evaluation-progress-bar"><span id="benchmarkProgressFill"></span></div>
+                    <div id="benchmarkProgressText" class="muted">0 / 0</div>
                   </div>
-                  <div id="evaluationCurrentCase" class="muted evaluation-current-case"></div>
-                  <div id="evaluationRunHint" class="muted evaluation-run-hint"></div>
+                  <div id="benchmarkCurrentTask" class="muted evaluation-current-case"></div>
+                  <div id="benchmarkRunHint" class="muted evaluation-run-hint"></div>
                 </div>
-                <div class="monitor-block evaluation-cases">
-                  <div class="monitor-block-title">
-                    <i class="fa-solid fa-list-check"></i>
-                    <span data-i18n="evaluation.cases.title">用例明细</span>
-                  </div>
+                <div class="monitor-block benchmark-attempt-card">
+                  <div class="monitor-block-title"><i class="fa-solid fa-list-check"></i><span>Attempt 列表</span></div>
                   <div class="monitor-table-scroll">
                     <table class="monitor-table evaluation-case-table">
-                      <thead>
-                        <tr>
-                          <th data-i18n="evaluation.cases.table.caseId">用例</th>
-                          <th data-i18n="evaluation.cases.table.dimension">维度</th>
-                          <th data-i18n="evaluation.cases.table.status">状态</th>
-                          <th data-i18n="evaluation.cases.table.score">得分</th>
-                        </tr>
-                      </thead>
-                      <tbody id="evaluationCaseBody"></tbody>
+                      <thead><tr><th>任务</th><th>轮次</th><th>状态</th><th>得分</th><th>耗时</th><th>工具数</th></tr></thead>
+                      <tbody id="benchmarkAttemptBody"></tbody>
                     </table>
                   </div>
-                  <div id="evaluationCaseEmpty" class="muted" data-i18n="evaluation.cases.empty">
-                    暂无用例
-                  </div>
+                  <div id="benchmarkAttemptEmpty" class="muted">暂无 attempt 记录</div>
                 </div>
+              </div>
+            </div>
+          </div>
+          <div id="benchmarkDetailModal" class="modal">
+            <div class="modal-card benchmark-detail-modal-card">
+              <div class="modal-header">
+                <div id="benchmarkDetailModalTitle" class="detail-title">Attempt 明细</div>
+                <button id="benchmarkDetailModalClose" class="icon-btn" type="button" aria-label="关闭"><i class="fa-solid fa-xmark"></i></button>
+              </div>
+              <div class="modal-body">
+                <pre id="benchmarkDetailPre" class="benchmark-detail-pre">暂无明细</pre>
+              </div>
+              <div class="modal-actions">
+                <button id="benchmarkDetailModalOk" class="primary" type="button">关闭</button>
               </div>
             </div>
           </div>
@@ -4770,7 +4685,7 @@
     </div>
     <script src="./third/echarts/echarts.min.js?v=20260118-07"></script>
     <script src="./third/marked.min.js?v=20260118-07"></script>
-    <script type="module" src="./app.js?v=20260215-01"></script>
+    <script type="module" src="./app.js?v=20260315-03"></script>
 </body>
 </html>
 

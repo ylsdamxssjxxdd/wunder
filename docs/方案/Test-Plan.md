@@ -96,19 +96,20 @@ $env:WUNDER_PROFILE="soak"; $env:WUNDER_SOAK_VUS="10"; $env:WUNDER_SOAK_DURATION
 - Define SLO targets (e.g. P95 latency < 2s, error rate < 1%).
 - Run nightly soak; run functional tests + baseline load tests after core changes.
 
-## 8. Evaluation tests (case set)
+## 8. Benchmark tests (PinchBench aligned)
 ### 8.1 Cases
-- `tests/evaluation/cases/basic.yaml`: basic eval cases for non-stream and SSE structure checks.
-- The evaluation script auto-generates user_id to avoid conflicts.
+- `config/benchmark/tasks/*.md`: benchmark task specs covering Markdown frontmatter, required sections, automated grading blocks, and LLM judge rubrics.
+- Validate the benchmark flow through focused unit tests and the `/wunder/admin/benchmark/*` admin chain; run IDs and workspaces stay isolated.
 
 ### 8.2 Command
 ```
-python scripts/run_evaluation.py --base-url http://127.0.0.1:18000/wunder
+cargo test load_repository_benchmark_tasks -- --nocapture
+cargo test empty_attempts_are_marked_cancelled -- --nocapture
 ```
 
 ### 8.3 Output
-- Default output: `data/eval_reports/eval_report_YYYYMMDD_HHMMSS.json`.
-- Use `--output` to set a custom path.
+- Benchmark results persist in `benchmark_runs` / `benchmark_attempts` / `benchmark_task_aggregates`.
+- When triggered from the admin UI, use the benchmark panel to inspect SSE progress, run history, and attempt details.
 
 ## 9. Cleanup test artifacts
 ### 9.1 Cleanup workspace and history

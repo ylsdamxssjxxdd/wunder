@@ -794,16 +794,20 @@ impl Orchestrator {
         let prompt = strip_existing_memory_block(&prompt);
         let placeholder = crate::prompting::SYSTEM_PROMPT_MEMORY_PLACEHOLDER;
         let has_placeholder = prompt.contains(placeholder);
+        let config = self.config_store.get().await;
         let fragment_store =
             crate::services::memory_fragments::MemoryFragmentStore::new(self.storage.clone());
-        let hits = fragment_store.recall_for_prompt(
-            user_id,
-            agent_id,
-            session_id,
-            round_id,
-            query_text,
-            Some(if is_admin { 10 } else { 6 }),
-        );
+        let hits = fragment_store
+            .recall_for_prompt(
+                Some(&config),
+                user_id,
+                agent_id,
+                session_id,
+                round_id,
+                query_text,
+                Some(if is_admin { 10 } else { 6 }),
+            )
+            .await;
         let block = fragment_store.build_prompt_block(&hits);
 
         if has_placeholder {

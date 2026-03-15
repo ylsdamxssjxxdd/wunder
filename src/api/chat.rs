@@ -1488,9 +1488,7 @@ async fn system_prompt(
         )
         .await;
     Ok(Json(json!({
-        "data": {
-            "prompt": sanitize_system_prompt_preview(prompt),
-        }
+        "data": build_system_prompt_preview_payload(prompt, "pending"),
     })))
 }
 
@@ -1533,9 +1531,7 @@ async fn session_system_prompt(
     if let Some(prompt) = stored_prompt {
         if prompt_has_workdir(&prompt, &expected_public_workdir, &expected_local_workdir) {
             return Ok(Json(json!({
-                "data": {
-                    "prompt": sanitize_system_prompt_preview(prompt),
-                }
+                "data": build_system_prompt_preview_payload(prompt, "frozen"),
             })));
         }
     }
@@ -1588,9 +1584,7 @@ async fn session_system_prompt(
         )
         .await;
     Ok(Json(json!({
-        "data": {
-            "prompt": sanitize_system_prompt_preview(prompt),
-        }
+        "data": build_system_prompt_preview_payload(prompt, "pending"),
     })))
 }
 
@@ -2227,6 +2221,43 @@ fn collapse_blank_lines(text: &str) -> String {
     out.trim().to_string()
 }
 
+fn extract_system_prompt_memory_preview(prompt: &str) -> String {
+    let prefix = crate::i18n::t("memory.block_prefix");
+    let normalized_prefix = prefix.trim();
+    if normalized_prefix.is_empty() {
+        return String::new();
+    }
+    let cleaned = prompt.trim();
+    let Some(index) = cleaned.find(normalized_prefix) else {
+        return String::new();
+    };
+    collapse_blank_lines(&cleaned[index..])
+}
+
+fn count_system_prompt_memory_items(memory_preview: &str) -> usize {
+    memory_preview
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| line.starts_with("- ["))
+        .count()
+}
+
+fn build_system_prompt_preview_payload(prompt: String, memory_mode_hint: &str) -> Value {
+    let memory_preview = extract_system_prompt_memory_preview(&prompt);
+    let memory_preview_count = count_system_prompt_memory_items(&memory_preview);
+    let memory_preview_mode = if memory_preview_count == 0 {
+        "none"
+    } else {
+        memory_mode_hint
+    };
+    json!({
+        "prompt": sanitize_system_prompt_preview(prompt),
+        "memory_preview": memory_preview,
+        "memory_preview_mode": memory_preview_mode,
+        "memory_preview_count": memory_preview_count,
+    })
+}
+
 fn normalize_tool_overrides(values: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut output = Vec::new();
@@ -2611,7 +2642,10 @@ fn error_response(status: StatusCode, message: String) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_session_event_rounds, should_merge_round_event};
+    use super::{
+        collect_session_event_rounds, count_system_prompt_memory_items,
+        extract_system_prompt_memory_preview, should_merge_round_event,
+    };
     use serde_json::json;
 
     #[test]
@@ -2686,5 +2720,17 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("模型调用失败: prompt too long")
         );
+    }
+
+    #[test]
+    fn extract_system_prompt_memory_preview_reads_tail_block() {
+        let prefix = crate::i18n::t("memory.block_prefix");
+        let prompt = format!(
+            "You are a helpful assistant.\n\n{}\n- [pref] Reply in Chinese\n- [project] Use Rust",
+            prefix
+        );
+        let memory = extract_system_prompt_memory_preview(&prompt);
+        assert!(memory.contains(&prefix));
+        assert_eq!(count_system_prompt_memory_items(&memory), 2);
     }
 }

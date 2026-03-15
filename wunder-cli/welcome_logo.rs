@@ -6,14 +6,14 @@ use std::fmt::Write as _;
 
 const LOGO_SOURCE_BYTES: &[u8] = include_bytes!("../images/eva01-head.ico");
 const FALLBACK_WORDMARK: &str = "wunder-cli";
-const ASCII_DENSITY: &[u8] = b"@#S%?*+;:,. ";
+const ASCII_DENSITY: &[u8] = b"@#*+=-:. ";
 const TERMINAL_PADDING: u16 = 4;
-const DEFAULT_RENDER_WIDTH: u16 = 44;
-const MAX_RENDER_WIDTH: u16 = 56;
+const DEFAULT_RENDER_WIDTH: u16 = 46;
+const MAX_RENDER_WIDTH: u16 = 50;
 const MIN_RENDER_WIDTH: u16 = 18;
 const MIN_VISIBLE_ALPHA: u8 = 24;
-const ASCII_HEIGHT_RATIO: f32 = 0.50;
-const COLOR_QUANT_STEP: u8 = 16;
+const ASCII_HEIGHT_RATIO: f32 = 0.52;
+const COLOR_QUANT_STEP: u8 = 24;
 
 #[derive(Debug, Clone)]
 pub(crate) struct RenderedWelcomeLogo {
@@ -65,15 +65,15 @@ pub(crate) fn render_for_width(max_width: u16) -> RenderedWelcomeLogo {
 }
 
 fn build_rendered_logo(target_width: u16) -> image::ImageResult<RenderedWelcomeLogo> {
-    let icon = image::load_from_memory_with_format(LOGO_SOURCE_BYTES, ImageFormat::Ico)?;
-    let rgba = icon.into_rgba8();
+    let source = image::load_from_memory_with_format(LOGO_SOURCE_BYTES, ImageFormat::Ico)?;
+    let rgba = source.into_rgba8();
     let cropped = crop_alpha_bounds(rgba.clone()).unwrap_or(rgba);
     let target_height = scaled_height(&cropped, target_width);
     let resized = resize(
         &cropped,
         u32::from(target_width),
         target_height,
-        FilterType::Nearest,
+        FilterType::Triangle,
     );
     let styled_lines = raster_to_runs(&resized);
     if styled_lines.is_empty() {
@@ -126,7 +126,7 @@ fn crop_alpha_bounds(image: RgbaImage) -> Option<RgbaImage> {
 }
 
 fn scaled_height(image: &RgbaImage, target_width: u16) -> u32 {
-    // Pixel-art icons look better with nearest scaling and a slightly compressed Y axis.
+    // Terminal cells are taller than they are wide, so compress the Y axis a bit.
     let aspect_ratio = image.height() as f32 / image.width().max(1) as f32;
     (aspect_ratio * f32::from(target_width) * ASCII_HEIGHT_RATIO)
         .round()
@@ -160,8 +160,14 @@ fn pixel_to_cell(pixel: &Rgba<u8>, min_darkness: f32, max_darkness: f32) -> Styl
         return StyledAsciiCell { ch: ' ', rgb: None };
     };
 
+    let normalized = ((darkness - min_darkness) / (max_darkness - min_darkness).max(f32::EPSILON))
+        .clamp(0.0, 1.0);
+    if normalized < 0.10 {
+        return StyledAsciiCell { ch: ' ', rgb: None };
+    }
+
     StyledAsciiCell {
-        ch: darkness_to_char(darkness, min_darkness, max_darkness),
+        ch: darkness_to_char(normalized),
         rgb: Some(boost_eva_palette(pixel)),
     }
 }
@@ -221,9 +227,7 @@ fn pixel_darkness(pixel: &Rgba<u8>) -> Option<f32> {
     Some((1.0 - luminance) * alpha_weight)
 }
 
-fn darkness_to_char(darkness: f32, min_darkness: f32, max_darkness: f32) -> char {
-    let range = (max_darkness - min_darkness).max(f32::EPSILON);
-    let normalized = ((darkness - min_darkness) / range).clamp(0.0, 1.0);
+fn darkness_to_char(normalized: f32) -> char {
     let index = (normalized * (ASCII_DENSITY.len().saturating_sub(1)) as f32).round() as usize;
     char::from(ASCII_DENSITY[index.min(ASCII_DENSITY.len().saturating_sub(1))])
 }
@@ -234,24 +238,24 @@ fn boost_eva_palette(pixel: &Rgba<u8>) -> [u8; 3] {
         (0.2126 * f32::from(red) + 0.7152 * f32::from(green) + 0.0722 * f32::from(blue)) / 255.0;
 
     let adjusted = if luminance < 0.12 {
-        [78, 56, 112]
+        [88, 64, 120]
     } else if green > red.saturating_add(20) && green > blue.saturating_add(8) {
         [
-            red.saturating_mul(3) / 4,
-            green.saturating_add(28),
-            blue.saturating_mul(2) / 3,
+            red.saturating_mul(7) / 10,
+            green.saturating_add(34),
+            blue.saturating_mul(3) / 5,
         ]
     } else if red > green.saturating_add(40) && red > blue.saturating_add(32) {
         [
-            red.saturating_add(20),
-            green.saturating_mul(3) / 5,
+            red.saturating_add(24),
+            green.saturating_mul(11) / 20,
             blue / 2,
         ]
     } else if red > green && blue > green {
         [
-            red.saturating_add(10),
-            green.saturating_mul(9) / 10,
-            blue.saturating_add(14),
+            red.saturating_add(12),
+            green.saturating_mul(17) / 20,
+            blue.saturating_add(18),
         ]
     } else {
         [red, green, blue]

@@ -7,14 +7,15 @@ use crate::storage::{
     ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord, ChatSessionRecord,
     CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord, GatewayNodeRecord,
     GatewayNodeTokenRecord, HiveRecord, ListChannelUserBindingsQuery, MediaAssetRecord,
-    MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord, OrgUnitRecord, SessionLockRecord,
-    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, TeamRunRecord,
-    TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
-    UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
-    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
-    UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
-    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
-    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
+    MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
+    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
+    StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
+    UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserQuotaStatus,
+    UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
+    UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
+    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
+    VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -242,6 +243,10 @@ impl PostgresStorage {
             .map(|item| item.trim().to_string())
             .filter(|item| !item.is_empty())
             .collect()
+    }
+
+    fn json_to_f32_vec(text: &str) -> Vec<f32> {
+        serde_json::from_str::<Vec<f32>>(text).unwrap_or_default()
     }
 
     fn cron_job_select_fields() -> &'static str {
@@ -1210,6 +1215,21 @@ impl StorageBackend for PostgresStorage {
                   ON memory_fragments (user_id, agent_id, fact_key);
                 CREATE INDEX IF NOT EXISTS idx_memory_fragments_status
                   ON memory_fragments (user_id, agent_id, status, updated_at DESC);
+                CREATE TABLE IF NOT EXISTS memory_fragment_embeddings (
+                  memory_id TEXT NOT NULL,
+                  user_id TEXT NOT NULL,
+                  agent_id TEXT NOT NULL,
+                  embedding_model TEXT NOT NULL,
+                  content_hash TEXT NOT NULL,
+                  vector_json TEXT NOT NULL,
+                  dimensions BIGINT NOT NULL,
+                  updated_at DOUBLE PRECISION NOT NULL,
+                  PRIMARY KEY (memory_id, embedding_model, content_hash)
+                );
+                CREATE INDEX IF NOT EXISTS idx_memory_fragment_embeddings_user_agent
+                  ON memory_fragment_embeddings (user_id, agent_id, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_memory_fragment_embeddings_memory
+                  ON memory_fragment_embeddings (memory_id, updated_at DESC);
                 CREATE TABLE IF NOT EXISTS memory_hits (
                   hit_id TEXT PRIMARY KEY,
                   memory_id TEXT NOT NULL,
@@ -1251,41 +1271,53 @@ impl StorageBackend for PostgresStorage {
                   ON memory_jobs (user_id, agent_id, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_memory_jobs_session
                   ON memory_jobs (session_id, updated_at DESC);
-                CREATE TABLE IF NOT EXISTS evaluation_runs (
-                  run_id TEXT PRIMARY KEY,
-                  user_id TEXT,
-                  model_name TEXT,
-                  language TEXT,
-                  status TEXT,
-                  total_score DOUBLE PRECISION,
-                  started_time DOUBLE PRECISION,
-                  finished_time DOUBLE PRECISION,
-                  payload TEXT NOT NULL
+                CREATE TABLE IF NOT EXISTS benchmark_runs (
+                    run_id TEXT PRIMARY KEY,
+                    user_id TEXT,
+                    model_name TEXT,
+                    judge_model_name TEXT,
+                    status TEXT,
+                    total_score DOUBLE PRECISION,
+                    started_time DOUBLE PRECISION,
+                    finished_time DOUBLE PRECISION,
+                    payload TEXT NOT NULL
                 );
-                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_user
-                  ON evaluation_runs (user_id);
-                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_status
-                  ON evaluation_runs (status);
-                CREATE INDEX IF NOT EXISTS idx_evaluation_runs_started
-                  ON evaluation_runs (started_time);
-                CREATE TABLE IF NOT EXISTS evaluation_items (
-                  id BIGSERIAL PRIMARY KEY,
-                  run_id TEXT NOT NULL,
-                  case_id TEXT NOT NULL,
-                  dimension TEXT,
-                  status TEXT,
-                  score DOUBLE PRECISION,
-                  max_score DOUBLE PRECISION,
-                  weight DOUBLE PRECISION,
-                  started_time DOUBLE PRECISION,
-                  finished_time DOUBLE PRECISION,
-                  payload TEXT NOT NULL
+                CREATE INDEX IF NOT EXISTS idx_benchmark_runs_user
+                  ON benchmark_runs (user_id);
+                CREATE INDEX IF NOT EXISTS idx_benchmark_runs_status
+                  ON benchmark_runs (status);
+                CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started
+                  ON benchmark_runs (started_time);
+                CREATE TABLE IF NOT EXISTS benchmark_attempts (
+                    id BIGSERIAL PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    attempt_no BIGINT NOT NULL,
+                    status TEXT,
+                    final_score DOUBLE PRECISION,
+                    started_time DOUBLE PRECISION,
+                    finished_time DOUBLE PRECISION,
+                    payload TEXT NOT NULL,
+                    UNIQUE(run_id, task_id, attempt_no)
                 );
-                CREATE INDEX IF NOT EXISTS idx_evaluation_items_run
-                  ON evaluation_items (run_id, id);
+                CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_run
+                  ON benchmark_attempts (run_id, task_id, attempt_no);
+                CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_status
+                  ON benchmark_attempts (status);
+                CREATE TABLE IF NOT EXISTS benchmark_task_aggregates (
+                    id BIGSERIAL PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    status TEXT,
+                    mean_score DOUBLE PRECISION,
+                    payload TEXT NOT NULL,
+                    UNIQUE(run_id, task_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_benchmark_task_aggregates_run
+                  ON benchmark_task_aggregates (run_id, task_id);
                 CREATE TABLE IF NOT EXISTS user_accounts (
-                  user_id TEXT PRIMARY KEY,
-                  username TEXT NOT NULL UNIQUE,
+                    user_id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
                   email TEXT,
                   password_hash TEXT NOT NULL,
                   roles TEXT NOT NULL,
@@ -3546,6 +3578,69 @@ impl StorageBackend for PostgresStorage {
             .collect())
     }
 
+    fn get_memory_fragment_embedding(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+        embedding_model: &str,
+        content_hash: &str,
+    ) -> Result<Option<MemoryFragmentEmbeddingRecord>> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        let row = conn.query_opt(
+            "SELECT memory_id, user_id, agent_id, embedding_model, content_hash, vector_json, dimensions, updated_at FROM memory_fragment_embeddings WHERE user_id = $1 AND agent_id = $2 AND memory_id = $3 AND embedding_model = $4 AND content_hash = $5 LIMIT 1",
+            &[&user_id.trim(), &agent_id.trim(), &memory_id.trim(), &embedding_model.trim(), &content_hash.trim()],
+        )?;
+        Ok(row.map(|row| {
+            let vector_json: String = row.get(5);
+            MemoryFragmentEmbeddingRecord {
+                memory_id: row.get(0),
+                user_id: row.get(1),
+                agent_id: row.get(2),
+                embedding_model: row.get(3),
+                content_hash: row.get(4),
+                vector: Self::json_to_f32_vec(&vector_json),
+                dimensions: row.get::<_, i64>(6),
+                updated_at: row.get::<_, f64>(7),
+            }
+        }))
+    }
+
+    fn upsert_memory_fragment_embedding(
+        &self,
+        record: &MemoryFragmentEmbeddingRecord,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        conn.execute(
+            "DELETE FROM memory_fragment_embeddings WHERE memory_id = $1 AND embedding_model = $2 AND content_hash <> $3",
+            &[&record.memory_id, &record.embedding_model, &record.content_hash],
+        )?;
+        let vector_json = Self::json_to_string(&Value::Array(
+            record.vector.iter().map(|value| json!(value)).collect(),
+        ));
+        conn.execute(
+            "INSERT INTO memory_fragment_embeddings (memory_id, user_id, agent_id, embedding_model, content_hash, vector_json, dimensions, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT(memory_id, embedding_model, content_hash) DO UPDATE SET user_id = EXCLUDED.user_id, agent_id = EXCLUDED.agent_id, vector_json = EXCLUDED.vector_json, dimensions = EXCLUDED.dimensions, updated_at = EXCLUDED.updated_at",
+            &[&record.memory_id, &record.user_id, &record.agent_id, &record.embedding_model, &record.content_hash, &vector_json, &record.dimensions, &record.updated_at],
+        )?;
+        Ok(())
+    }
+
+    fn delete_memory_fragment_embeddings(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let mut conn = self.conn()?;
+        Ok(conn.execute(
+            "DELETE FROM memory_fragment_embeddings WHERE user_id = $1 AND agent_id = $2 AND memory_id = $3",
+            &[&user_id.trim(), &agent_id.trim(), &memory_id.trim()],
+        )? as i64)
+    }
+
     fn delete_memory_fragment(
         &self,
         user_id: &str,
@@ -3554,6 +3649,10 @@ impl StorageBackend for PostgresStorage {
     ) -> Result<i64> {
         self.ensure_initialized()?;
         let mut conn = self.conn()?;
+        let _ = conn.execute(
+            "DELETE FROM memory_fragment_embeddings WHERE user_id = $1 AND agent_id = $2 AND memory_id = $3",
+            &[&user_id.trim(), &agent_id.trim(), &memory_id.trim()],
+        )?;
         Ok(conn.execute(
             "DELETE FROM memory_fragments WHERE user_id = $1 AND agent_id = $2 AND memory_id = $3",
             &[&user_id.trim(), &agent_id.trim(), &memory_id.trim()],
@@ -3639,8 +3738,7 @@ impl StorageBackend for PostgresStorage {
             })
             .collect())
     }
-
-    fn create_evaluation_run(&self, payload: &Value) -> Result<()> {
+    fn create_benchmark_run(&self, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let run_id = payload
             .get("run_id")
@@ -3663,8 +3761,8 @@ impl StorageBackend for PostgresStorage {
             .unwrap_or("")
             .trim()
             .to_string();
-        let language = payload
-            .get("language")
+        let judge_model_name = payload
+            .get("judge_model_name")
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim()
@@ -3681,16 +3779,16 @@ impl StorageBackend for PostgresStorage {
         let payload_text = Self::json_to_string(payload);
         let mut conn = self.conn()?;
         conn.execute(
-            "INSERT INTO evaluation_runs (run_id, user_id, model_name, language, status, total_score, started_time, finished_time, payload) \
+            "INSERT INTO benchmark_runs (run_id, user_id, model_name, judge_model_name, status, total_score, started_time, finished_time, payload) \
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
              ON CONFLICT(run_id) DO UPDATE SET user_id = EXCLUDED.user_id, model_name = EXCLUDED.model_name, \
-             language = EXCLUDED.language, status = EXCLUDED.status, total_score = EXCLUDED.total_score, \
+             judge_model_name = EXCLUDED.judge_model_name, status = EXCLUDED.status, total_score = EXCLUDED.total_score, \
              started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, payload = EXCLUDED.payload",
             &[
                 &run_id,
                 &user_id,
                 &model_name,
-                &language,
+                &judge_model_name,
                 &status,
                 &total_score,
                 &started_time,
@@ -3701,7 +3799,7 @@ impl StorageBackend for PostgresStorage {
         Ok(())
     }
 
-    fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()> {
+    fn update_benchmark_run(&self, run_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -3711,81 +3809,101 @@ impl StorageBackend for PostgresStorage {
         if let Value::Object(ref mut map) = merged {
             map.insert("run_id".to_string(), Value::String(cleaned.to_string()));
         }
-        self.create_evaluation_run(&merged)
+        self.create_benchmark_run(&merged)
     }
 
-    fn upsert_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
+    fn upsert_benchmark_attempt(&self, run_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
             return Ok(());
         }
-        let case_id = payload
-            .get("case_id")
+        let task_id = payload
+            .get("task_id")
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim()
             .to_string();
-        if case_id.is_empty() {
+        if task_id.is_empty() {
             return Ok(());
         }
-        let dimension = payload
-            .get("dimension")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let attempt_no = payload
+            .get("attempt_no")
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                payload
+                    .get("attempt_no")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as i64)
+            })
+            .unwrap_or(0);
+        if attempt_no <= 0 {
+            return Ok(());
+        }
         let status = payload
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim()
             .to_string();
-        let score = Self::parse_f64(payload.get("score")).unwrap_or(0.0);
-        let max_score = Self::parse_f64(payload.get("max_score")).unwrap_or(0.0);
-        let weight = Self::parse_f64(payload.get("weight")).unwrap_or(0.0);
+        let final_score = Self::parse_f64(payload.get("final_score")).unwrap_or(0.0);
         let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
         let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
         let mut conn = self.conn()?;
-        let updated = conn.execute(
-            "UPDATE evaluation_items SET dimension = $1, status = $2, score = $3, max_score = $4, weight = $5, \
-             started_time = $6, finished_time = $7, payload = $8 WHERE run_id = $9 AND case_id = $10",
+        conn.execute(
+            "INSERT INTO benchmark_attempts (run_id, task_id, attempt_no, status, final_score, started_time, finished_time, payload) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             ON CONFLICT(run_id, task_id, attempt_no) DO UPDATE SET status = EXCLUDED.status, final_score = EXCLUDED.final_score, \
+             started_time = EXCLUDED.started_time, finished_time = EXCLUDED.finished_time, payload = EXCLUDED.payload",
             &[
-                &dimension,
+                &cleaned,
+                &task_id,
+                &attempt_no,
                 &status,
-                &score,
-                &max_score,
-                &weight,
+                &final_score,
                 &started_time,
                 &finished_time,
                 &payload_text,
-                &cleaned,
-                &case_id,
             ],
         )?;
-        if updated == 0 {
-            conn.execute(
-                "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-                &[
-                    &cleaned,
-                    &case_id,
-                    &dimension,
-                    &status,
-                    &score,
-                    &max_score,
-                    &weight,
-                    &started_time,
-                    &finished_time,
-                    &payload_text,
-                ],
-            )?;
-        }
         Ok(())
     }
 
-    fn load_evaluation_runs(
+    fn upsert_benchmark_task_aggregate(&self, run_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let task_id = payload
+            .get("task_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if task_id.is_empty() {
+            return Ok(());
+        }
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let mean_score = Self::parse_f64(payload.get("mean_score")).unwrap_or(0.0);
+        let payload_text = Self::json_to_string(payload);
+        let mut conn = self.conn()?;
+        conn.execute(
+            "INSERT INTO benchmark_task_aggregates (run_id, task_id, status, mean_score, payload) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT(run_id, task_id) DO UPDATE SET status = EXCLUDED.status, mean_score = EXCLUDED.mean_score, payload = EXCLUDED.payload",
+            &[&cleaned, &task_id, &status, &mean_score, &payload_text],
+        )?;
+        Ok(())
+    }
+
+    fn load_benchmark_runs(
         &self,
         user_id: Option<&str>,
         status: Option<&str>,
@@ -3826,7 +3944,7 @@ impl StorageBackend for PostgresStorage {
             conditions.push(format!("started_time <= ${}", params.len() + 1));
             params.push(Box::new(until));
         }
-        let mut query = String::from("SELECT payload FROM evaluation_runs");
+        let mut query = String::from("SELECT payload FROM benchmark_runs");
         if !conditions.is_empty() {
             query.push_str(" WHERE ");
             query.push_str(&conditions.join(" AND "));
@@ -3852,7 +3970,7 @@ impl StorageBackend for PostgresStorage {
         Ok(records)
     }
 
-    fn load_evaluation_run(&self, run_id: &str) -> Result<Option<Value>> {
+    fn load_benchmark_run(&self, run_id: &str) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -3860,13 +3978,13 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let row = conn.query_opt(
-            "SELECT payload FROM evaluation_runs WHERE run_id = $1",
+            "SELECT payload FROM benchmark_runs WHERE run_id = $1",
             &[&cleaned],
         )?;
         Ok(row.and_then(|row| Self::json_from_str(&row.get::<_, String>(0))))
     }
 
-    fn load_evaluation_items(&self, run_id: &str) -> Result<Vec<Value>> {
+    fn load_benchmark_attempts(&self, run_id: &str) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -3874,7 +3992,7 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let rows = conn.query(
-            "SELECT payload FROM evaluation_items WHERE run_id = $1 ORDER BY id",
+            "SELECT payload FROM benchmark_attempts WHERE run_id = $1 ORDER BY task_id, attempt_no",
             &[&cleaned],
         )?;
         let mut records = Vec::new();
@@ -3887,7 +4005,28 @@ impl StorageBackend for PostgresStorage {
         Ok(records)
     }
 
-    fn delete_evaluation_run(&self, run_id: &str) -> Result<i64> {
+    fn load_benchmark_task_aggregates(&self, run_id: &str) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut conn = self.conn()?;
+        let rows = conn.query(
+            "SELECT payload FROM benchmark_task_aggregates WHERE run_id = $1 ORDER BY task_id",
+            &[&cleaned],
+        )?;
+        let mut records = Vec::new();
+        for row in rows {
+            let payload: String = row.get(0);
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
+    fn delete_benchmark_run(&self, run_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -3895,14 +4034,18 @@ impl StorageBackend for PostgresStorage {
         }
         let mut conn = self.conn()?;
         let mut tx = conn.transaction()?;
-        let items_deleted = tx.execute(
-            "DELETE FROM evaluation_items WHERE run_id = $1",
+        let tasks_deleted = tx.execute(
+            "DELETE FROM benchmark_task_aggregates WHERE run_id = $1",
+            &[&cleaned],
+        )?;
+        let attempts_deleted = tx.execute(
+            "DELETE FROM benchmark_attempts WHERE run_id = $1",
             &[&cleaned],
         )?;
         let runs_deleted =
-            tx.execute("DELETE FROM evaluation_runs WHERE run_id = $1", &[&cleaned])?;
+            tx.execute("DELETE FROM benchmark_runs WHERE run_id = $1", &[&cleaned])?;
         tx.commit()?;
-        Ok((items_deleted + runs_deleted) as i64)
+        Ok((tasks_deleted + attempts_deleted + runs_deleted) as i64)
     }
 
     fn cleanup_retention(&self, _retention_days: i64) -> Result<HashMap<String, i64>> {

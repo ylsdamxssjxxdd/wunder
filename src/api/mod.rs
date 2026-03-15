@@ -9,6 +9,7 @@ pub mod beeroom;
 pub mod beeroom_demo;
 pub mod beeroom_packs;
 pub mod beeroom_ws;
+pub mod benchmark;
 pub mod channel;
 pub mod chat;
 pub mod chat_ws;
@@ -19,7 +20,6 @@ pub mod desktop;
 pub mod desktop_lan;
 pub mod doc2md;
 pub(crate) mod errors;
-pub mod evaluation;
 pub mod external_links;
 pub mod gateway_ws;
 pub mod team_runs;
@@ -61,7 +61,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(admin_prompt_templates::router())
         .merge(admin_swarm::router())
         .merge(admin_sim_lab::router())
-        .merge(evaluation::router())
+        .merge(benchmark::router())
         .merge(external_links::router())
         .merge(user_tools::router())
         .merge(user_prompt_templates::router())

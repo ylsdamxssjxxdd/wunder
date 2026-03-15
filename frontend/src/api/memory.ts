@@ -12,8 +12,6 @@ export const updateAgentMemory = (agentId: ApiId, memoryId: ApiId, payload: ApiP
   api.patch(`/agents/${agentId}/memories/${memoryId}`, payload);
 export const deleteAgentMemory = (agentId: ApiId, memoryId: ApiId) =>
   api.delete(`/agents/${agentId}/memories/${memoryId}`);
-export const confirmAgentMemory = (agentId: ApiId, memoryId: ApiId, value = true) =>
-  api.post(`/agents/${agentId}/memories/${memoryId}/confirm`, { value });
 export const pinAgentMemory = (agentId: ApiId, memoryId: ApiId, value = true) =>
   api.post(`/agents/${agentId}/memories/${memoryId}/pin`, { value });
 export const invalidateAgentMemory = (agentId: ApiId, memoryId: ApiId, value = true) =>

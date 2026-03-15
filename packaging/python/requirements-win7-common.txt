@@ -1,0 +1,27 @@
+# Slim Win7-friendly Python package set for Wunder Desktop supplement.
+# Focus: networking, tables/dataframes, spreadsheet IO, and plotting.
+
+certifi==2024.8.30
+charset-normalizer==3.4.1
+contourpy==1.1.1
+cycler==0.12.1
+et-xmlfile==2.0.0
+fonttools==4.57.0
+idna==3.10
+importlib-resources==6.4.5
+kiwisolver==1.4.7
+matplotlib==3.7.5
+numpy==1.24.4
+openpyxl==3.1.5
+packaging==26.0
+pandas==2.0.3
+pillow==10.4.0
+pyparsing==3.1.4
+python-dateutil==2.9.0.post0
+pytz==2026.1.post1
+requests==2.32.3
+six==1.17.0
+tabulate==0.9.0
+tzdata==2025.3
+urllib3==2.2.3
+zipp==3.20.2

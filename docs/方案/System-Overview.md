@@ -46,7 +46,7 @@ flowchart LR
 - Workspace (`src/services/workspace.rs`): per-user workspace file management.
 - Monitoring (`src/ops/monitor.rs`): session lifecycle, events, and system snapshots persisted via the storage backend.
 - Throughput testing (`src/ops/throughput.rs`): run concurrency lists, randomize built-in questions, persist reports for replay/export.
-- Capability evaluation (`src/ops/evaluation_runner.rs` + `src/api/evaluation.rs`): run case suites, clean eval temp dir on start, precreate active items; cases live in `config/evaluation/cases`.
+- Capability benchmark (`src/ops/benchmark/*` + `src/api/benchmark.rs`): run PinchBench-style suites/tasks/attempts, isolate benchmark workspaces, persist run/task/attempt aggregates; tasks live in `config/benchmark/tasks`.
 - Config (`src/core/config.rs` + `src/core/config_store.rs`): base config + admin overrides; supports `${ENV_VAR:-default}` expansion in YAML strings.
 - Sandbox server (`src/sandbox/server.rs`): run `wunder-server` in sandbox mode to provide `/sandboxes/execute_tool`.
 
@@ -90,8 +90,8 @@ wunder abstracts all capabilities as "tools" and uses prompt injection + tool pr
 
 ## 5. Agent management testing
 ### 5.1 Overview
-- Covers session management, throughput testing, and capability evaluation to keep concurrency stable and measurable.
-- Admin endpoints live under `/wunder/admin/throughput/*` and `/wunder/admin/evaluation/*`, coordinated with monitoring.
+- Covers session management, throughput testing, and capability benchmark runs to keep concurrency stable and measurable.
+- Admin endpoints live under `/wunder/admin/throughput/*` and `/wunder/admin/benchmark/*`, coordinated with monitoring.
 
 ### 5.2 Session management
 #### 5.2.1 Concurrency rules
@@ -127,16 +127,16 @@ stateDiagram-v2
 - Reports persist to `data/throughput` for replay and export.
 
 ### 5.4 Capability evaluation
-- Test cases live in `config/evaluation/cases`, and runs can combine dimensions.
-- Runs stream SSE progress and per-case status; eval temp dir is cleaned on start with active items precreated.
-- Results persist in `evaluation_runs` / `evaluation_items`, with history review and deletion.
+- Benchmark tasks live in `config/benchmark/tasks`, and each run is organized as suites / tasks / attempts.
+- Runs stream SSE progress and task/attempt status; each attempt gets an isolated benchmark workspace.
+- Results persist in `benchmark_runs` / `benchmark_attempts` / `benchmark_task_aggregates`, with history review and deletion.
 
 ## 6. Workspace and persistence
 - Workspace: `workspaces/<user_id>` (prompt shows `/workspaces/<user_id>/`), isolated and persistent.
 - Workspace APIs support read/search/batch ops; UI uses tree view.
 - Chat history/tool logs/artifacts/monitor/locks/overflow events are stored in the selected backend (PostgreSQL by default; SQLite optional).
 - Throughput reports are stored under `data/throughput` for replay/export.
-- Evaluation results are stored in `evaluation_runs` / `evaluation_items` for history.
+- Benchmark results are stored in `benchmark_runs` / `benchmark_attempts` / `benchmark_task_aggregates` for history.
 - Long-term memory in `memory_records` with `[Long-term Memory]` prefix, per-user max 30.
 - Memory task logs in `memory_task_logs` for latest summary per session.
 
@@ -159,7 +159,7 @@ stateDiagram-v2
 - `/wunder/temp_dir/*`: temp file upload/download/list/remove (no auth, rooted at `temp_dir/`).
 - `/wunder/admin/*`: model/MCP/skills/tools/monitor/users management.
 - `/wunder/admin/throughput/*`: throughput test management (start/stop/status/report).
-- `/wunder/admin/evaluation/*`: capability evaluation management (start/cancel/stream/runs/cases).
+- `/wunder/admin/benchmark/*`: capability benchmark management (start/cancel/stream/runs/tasks/suites).
 - `/wunder/admin/memory/*`: long-term memory management.
 - `/wunder/workspace/*`: workspace operations.
 - `/`: admin debug UI entry (`web/index.html`), `web/simple-chat` temporarily disabled.

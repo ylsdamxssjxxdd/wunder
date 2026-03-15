@@ -1,7 +1,17 @@
+use serde::Deserialize;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
+
+const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
+const DESKTOP_SETTINGS_PATH_ENV: &str = "WUNDER_DESKTOP_SETTINGS_PATH";
+
+#[derive(Debug, Deserialize)]
+struct DesktopPythonSettings {
+    #[serde(default)]
+    python_interpreter_path: String,
+}
 
 #[derive(Clone, Debug)]
 pub struct PythonRuntime {
@@ -21,20 +31,22 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
         }
     }
 
-    let app_dir = resolve_app_dir()?;
-    let python_root = app_dir.join("opt/python");
-    let python_bin = python_root.join("bin/python3");
-    if python_bin.is_file() {
-        return Some(python_runtime_from_home(python_root, python_bin));
-    }
-    let python_bin = python_root.join("bin/python");
-    if python_bin.is_file() {
-        return Some(python_runtime_from_home(python_root, python_bin));
+    if let Some(runtime) = resolve_desktop_settings_python_runtime() {
+        return Some(runtime);
     }
 
-    let venv_bin = app_dir.join("opt/venv/bin/python");
-    if venv_bin.is_file() {
-        return Some(python_runtime_from_bin(venv_bin));
+    let app_dir = resolve_app_dir()?;
+    let python_root = app_dir.join("opt/python");
+    for python_bin in embedded_python_candidates(&python_root) {
+        if python_bin.is_file() {
+            return Some(python_runtime_from_home(python_root, python_bin));
+        }
+    }
+
+    for venv_bin in venv_python_candidates(&app_dir) {
+        if venv_bin.is_file() {
+            return Some(python_runtime_from_bin(venv_bin));
+        }
     }
 
     None
@@ -77,8 +89,39 @@ pub fn apply_python_env(cmd: &mut Command, runtime: &PythonRuntime) {
     }
 
     if let Some(lib_dir) = &runtime.lib_dir {
-        prepend_path_env(cmd, "LD_LIBRARY_PATH", lib_dir);
+        if cfg!(windows) {
+            prepend_path_env(cmd, "PATH", lib_dir);
+        } else {
+            prepend_path_env(cmd, "LD_LIBRARY_PATH", lib_dir);
+        }
     }
+}
+
+fn embedded_python_candidates(python_root: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![
+        python_root.join("bin/python3"),
+        python_root.join("bin/python"),
+    ];
+    if cfg!(windows) {
+        candidates.extend([
+            python_root.join("python.exe"),
+            python_root.join("python3.exe"),
+            python_root.join("bin/python.exe"),
+            python_root.join("bin/python3.exe"),
+        ]);
+    }
+    candidates
+}
+
+fn venv_python_candidates(app_dir: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![app_dir.join("opt/venv/bin/python")];
+    if cfg!(windows) {
+        candidates.extend([
+            app_dir.join("opt/venv/Scripts/python.exe"),
+            app_dir.join("opt/venv/python.exe"),
+        ]);
+    }
+    candidates
 }
 
 fn prepend_path_env(cmd: &mut Command, key: &str, value: &Path) {
@@ -103,7 +146,7 @@ fn prepend_path_env(cmd: &mut Command, key: &str, value: &Path) {
 }
 
 fn resolve_app_dir() -> Option<PathBuf> {
-    let candidate = env::var("WUNDER_DESKTOP_APP_DIR")
+    let candidate = env::var(DESKTOP_APP_DIR_ENV)
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from);
@@ -120,6 +163,37 @@ fn resolve_app_dir() -> Option<PathBuf> {
         .filter(|value| value.is_dir())
 }
 
+fn resolve_desktop_settings_python_runtime() -> Option<PythonRuntime> {
+    let settings_path = env::var(DESKTOP_SETTINGS_PATH_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)?;
+    let text = fs::read_to_string(settings_path).ok()?;
+    let settings = serde_json::from_str::<DesktopPythonSettings>(&text).ok()?;
+    let raw_path = settings.python_interpreter_path.trim();
+    if raw_path.is_empty() {
+        return None;
+    }
+
+    // Desktop users can override the bundled runtime with a custom Python binary.
+    let bin = resolve_configured_python_bin(raw_path)?;
+    if !bin.is_file() {
+        return None;
+    }
+    Some(python_runtime_from_bin(bin))
+}
+
+fn resolve_configured_python_bin(raw_path: &str) -> Option<PathBuf> {
+    let path = PathBuf::from(raw_path.trim());
+    if path.as_os_str().is_empty() {
+        return None;
+    }
+    if path.is_absolute() {
+        return Some(path);
+    }
+    resolve_app_dir().map(|app_dir| app_dir.join(path))
+}
+
 fn python_runtime_from_bin(bin: PathBuf) -> PythonRuntime {
     let mut runtime = PythonRuntime {
         bin: bin.clone(),
@@ -134,17 +208,18 @@ fn python_runtime_from_bin(bin: PathBuf) -> PythonRuntime {
         return runtime;
     }
 
-    if let Some(home) = bin.parent().and_then(Path::parent).map(PathBuf::from) {
-        if home.join("lib").is_dir() {
+    for home in python_home_candidates(&bin) {
+        if has_embedded_python_layout(&home) {
             runtime.embedded = is_embedded_home(&home);
             runtime.home = Some(home.clone());
-            runtime.lib_dir = Some(home.join("lib"));
+            runtime.lib_dir = resolve_python_lib_dir(&home);
             runtime.site_packages = find_site_packages(&home);
             runtime.ssl_cert = runtime
                 .site_packages
                 .as_ref()
                 .map(|path| path.join("certifi/cacert.pem"))
                 .filter(|path| path.is_file());
+            break;
         }
     }
 
@@ -152,7 +227,7 @@ fn python_runtime_from_bin(bin: PathBuf) -> PythonRuntime {
 }
 
 fn python_runtime_from_home(home: PathBuf, bin: PathBuf) -> PythonRuntime {
-    let lib_dir = home.join("lib");
+    let lib_dir = resolve_python_lib_dir(&home);
     let site_packages = find_site_packages(&home);
     let ssl_cert = site_packages
         .as_ref()
@@ -162,10 +237,35 @@ fn python_runtime_from_home(home: PathBuf, bin: PathBuf) -> PythonRuntime {
         bin,
         embedded: true,
         home: Some(home),
-        lib_dir: lib_dir.is_dir().then_some(lib_dir),
+        lib_dir,
         site_packages,
         ssl_cert,
     }
+}
+
+fn python_home_candidates(bin: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(parent) = bin.parent() {
+        candidates.push(parent.to_path_buf());
+        if let Some(grand_parent) = parent.parent() {
+            candidates.push(grand_parent.to_path_buf());
+        }
+    }
+    candidates
+}
+
+fn resolve_python_lib_dir(home: &Path) -> Option<PathBuf> {
+    [home.join("lib"), home.join("Lib")]
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
+}
+
+fn has_embedded_python_layout(home: &Path) -> bool {
+    resolve_python_lib_dir(home).is_some()
+        || home.join("python.exe").is_file()
+        || home.join("python3.exe").is_file()
+        || home.join("bin/python").is_file()
+        || home.join("bin/python3").is_file()
 }
 
 fn is_embedded_home(home: &Path) -> bool {
@@ -182,6 +282,10 @@ fn is_embedded_home(home: &Path) -> bool {
 }
 
 fn find_site_packages(home: &Path) -> Option<PathBuf> {
+    let windows_site = home.join("Lib/site-packages");
+    if windows_site.is_dir() {
+        return Some(windows_site);
+    }
     let lib_dir = home.join("lib");
     let entries = fs::read_dir(&lib_dir).ok()?;
     for entry in entries.flatten() {
@@ -200,4 +304,26 @@ fn find_site_packages(home: &Path) -> Option<PathBuf> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{find_site_packages, resolve_python_lib_dir};
+    use tempfile::tempdir;
+
+    #[test]
+    fn resolve_python_lib_dir_supports_windows_layout() {
+        let temp = tempdir().expect("tempdir");
+        let lib_dir = temp.path().join("Lib");
+        std::fs::create_dir_all(&lib_dir).expect("create Lib");
+        assert_eq!(resolve_python_lib_dir(temp.path()), Some(lib_dir));
+    }
+
+    #[test]
+    fn find_site_packages_supports_windows_layout() {
+        let temp = tempdir().expect("tempdir");
+        let site_packages = temp.path().join("Lib/site-packages");
+        std::fs::create_dir_all(&site_packages).expect("create site-packages");
+        assert_eq!(find_site_packages(temp.path()), Some(site_packages));
+    }
 }

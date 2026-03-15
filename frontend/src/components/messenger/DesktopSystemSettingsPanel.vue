@@ -4,6 +4,53 @@
     class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--llm"
     v-loading="loading"
   >
+    <section class="desktop-system-settings-section">
+      <div class="desktop-system-settings-section-head">
+        <div class="desktop-system-settings-section-title">
+          <i class="fa-solid fa-terminal" aria-hidden="true"></i>
+          <span>{{ t('desktop.system.pythonInterpreterTitle') }}</span>
+        </div>
+        <div class="desktop-system-settings-actions">
+          <el-button
+            class="desktop-system-settings-btn"
+            size="small"
+            :disabled="!pythonInterpreterPath.trim()"
+            :loading="savingRuntime"
+            @click="resetPythonInterpreterPath"
+          >
+            {{ t('desktop.system.pythonInterpreterReset') }}
+          </el-button>
+          <el-button
+            class="desktop-system-settings-btn desktop-system-settings-btn--primary"
+            size="small"
+            :loading="savingRuntime"
+            @click="saveRuntimeSettings"
+          >
+            {{ t('desktop.common.save') }}
+          </el-button>
+        </div>
+      </div>
+      <label class="desktop-system-settings-field desktop-system-settings-field--full">
+        <span class="desktop-system-settings-field-label">
+          {{ t('desktop.system.pythonInterpreterPath') }}
+        </span>
+        <el-input
+          v-model="pythonInterpreterPath"
+          clearable
+          :placeholder="t('desktop.system.pythonInterpreterPathPlaceholder')"
+        />
+      </label>
+      <div class="desktop-system-settings-runtime-hint">
+        {{
+          pythonInterpreterPath.trim()
+            ? t('desktop.system.pythonInterpreterCustomHint')
+            : t('desktop.system.pythonInterpreterBundledHint')
+        }}
+      </div>
+      <div class="desktop-system-settings-runtime-subhint">
+        {{ t('desktop.system.pythonInterpreterHint') }}
+      </div>
+    </section>
     <div class="desktop-system-settings-layout">
       <aside class="desktop-system-settings-model-list-wrap">
         <div class="desktop-system-settings-model-list-head">
@@ -442,6 +489,7 @@ import {
   setDesktopRemoteApiBaseOverride
 } from '@/config/desktop';
 import { useI18n } from '@/i18n';
+import { resolveApiError } from '@/utils/apiError';
 import {
   getProviderModelPresets,
   resolveProviderModelPresetMaxContext
@@ -495,12 +543,14 @@ const loading = ref(false);
 const savingModel = ref(false);
 const probingContext = ref(false);
 const connectingRemote = ref(false);
+const savingRuntime = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
 const selectedModelUid = ref('');
 const remoteServerBaseUrl = ref('');
 const remoteConnected = ref(false);
+const pythonInterpreterPath = ref('');
 const savingLan = ref(false);
 const loadingLanPeers = ref(false);
 const lanMeshEnabled = ref(false);
@@ -1105,9 +1155,33 @@ const applySettingsData = (
   );
 
   ensureSelectedModel(preferredSelection);
+  pythonInterpreterPath.value = String(data.python_interpreter_path || '').trim();
   remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
   applyLanSettings(data.lan_mesh as DesktopLanMeshSettings | undefined);
   refreshRemoteConnected();
+};
+
+const saveRuntimeSettings = async () => {
+  savingRuntime.value = true;
+  try {
+    const preferredSelection = buildSelectedModelPreference(selectedModel.value);
+    const response = await updateDesktopSettings({
+      python_interpreter_path: pythonInterpreterPath.value.trim()
+    });
+    const data = (response?.data?.data || {}) as Record<string, any>;
+    applySettingsData(data, preferredSelection);
+    ElMessage.success(t('desktop.common.saveSuccess'));
+  } catch (error) {
+    console.error(error);
+    ElMessage.error(resolveApiError(error, t('desktop.common.saveFailed')).message);
+  } finally {
+    savingRuntime.value = false;
+  }
+};
+
+const resetPythonInterpreterPath = async () => {
+  pythonInterpreterPath.value = '';
+  await saveRuntimeSettings();
 };
 
 const refreshLanPeers = async () => {
@@ -1341,6 +1415,7 @@ onMounted(() => {
 .desktop-system-settings-panel--llm {
   height: 100%;
   min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .desktop-system-settings-panel--stack {
@@ -1544,6 +1619,18 @@ onMounted(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
+}
+
+.desktop-system-settings-runtime-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
+.desktop-system-settings-runtime-subhint {
+  font-size: 12px;
+  color: var(--portal-muted);
+  line-height: 1.6;
 }
 
 .desktop-system-settings-checkbox-group {

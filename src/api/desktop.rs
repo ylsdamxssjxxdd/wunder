@@ -81,6 +81,8 @@ struct DesktopSettingsFile {
     #[serde(default)]
     language: String,
     #[serde(default)]
+    python_interpreter_path: String,
+    #[serde(default)]
     llm: Option<LlmConfig>,
     #[serde(default)]
     remote_gateway: DesktopRemoteGatewaySettings,
@@ -97,6 +99,7 @@ impl Default for DesktopSettingsFile {
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
+            python_interpreter_path: String::new(),
             llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
             lan_mesh: desktop_lan::DesktopLanMeshSettings::default(),
@@ -144,6 +147,8 @@ struct DesktopSettingsUpdateRequest {
     container_mounts: Option<Vec<DesktopContainerMountInput>>,
     #[serde(default)]
     language: Option<String>,
+    #[serde(default)]
+    python_interpreter_path: Option<String>,
     #[serde(default)]
     llm: Option<LlmConfig>,
     #[serde(default)]
@@ -688,6 +693,27 @@ async fn desktop_settings_update(
             settings.language = language.to_string();
         }
     }
+    if let Some(raw_python_interpreter_path) = payload.python_interpreter_path.as_deref() {
+        let trimmed = raw_python_interpreter_path.trim();
+        if trimmed.is_empty() {
+            settings.python_interpreter_path.clear();
+        } else {
+            let resolved = resolve_workspace_path(trimmed, &app_dir);
+            if !resolved.exists() {
+                return Err(bad_request(format!(
+                    "desktop python interpreter not found: {}",
+                    resolved.display()
+                )));
+            }
+            if !resolved.is_file() {
+                return Err(bad_request(format!(
+                    "desktop python interpreter is not a file: {}",
+                    resolved.display()
+                )));
+            }
+            settings.python_interpreter_path = resolved.to_string_lossy().to_string();
+        }
+    }
     if let Some(llm) = payload.llm.clone() {
         settings.llm = Some(llm);
     }
@@ -924,6 +950,7 @@ fn build_settings_payload(
         "container_roots": container_roots,
         "container_mounts": container_mounts,
         "language": language,
+        "python_interpreter_path": settings.python_interpreter_path,
         "supported_languages": config.i18n.supported_languages,
         "llm": llm,
         "remote_gateway": settings.remote_gateway,

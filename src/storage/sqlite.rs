@@ -7,14 +7,15 @@ use crate::storage::{
     ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord, ChatSessionRecord,
     CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord, GatewayNodeRecord,
     GatewayNodeTokenRecord, HiveRecord, ListChannelUserBindingsQuery, MediaAssetRecord,
-    MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord, OrgUnitRecord, SessionLockRecord,
-    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, TeamRunRecord,
-    TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
-    UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
-    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
-    UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
-    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
-    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
+    MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
+    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
+    StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
+    UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
+    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserQuotaStatus,
+    UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
+    UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
+    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
+    VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -170,6 +171,10 @@ impl SqliteStorage {
             .filter(|item| !item.is_empty())
             .map(|item| item.to_string())
             .collect()
+    }
+
+    fn json_to_f32_vec(text: &str) -> Vec<f32> {
+        serde_json::from_str::<Vec<f32>>(text).unwrap_or_default()
     }
 
     fn parse_i32_list(value: Option<String>) -> Vec<i32> {
@@ -709,6 +714,21 @@ impl StorageBackend for SqliteStorage {
               ON memory_fragments (user_id, agent_id, fact_key);
             CREATE INDEX IF NOT EXISTS idx_memory_fragments_status
               ON memory_fragments (user_id, agent_id, status, updated_at DESC);
+            CREATE TABLE IF NOT EXISTS memory_fragment_embeddings (
+              memory_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              agent_id TEXT NOT NULL,
+              embedding_model TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              vector_json TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              updated_at REAL NOT NULL,
+              PRIMARY KEY (memory_id, embedding_model, content_hash)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memory_fragment_embeddings_user_agent
+              ON memory_fragment_embeddings (user_id, agent_id, updated_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_memory_fragment_embeddings_memory
+              ON memory_fragment_embeddings (memory_id, updated_at DESC);
             CREATE TABLE IF NOT EXISTS memory_hits (
               hit_id TEXT PRIMARY KEY,
               memory_id TEXT NOT NULL,
@@ -750,38 +770,50 @@ impl StorageBackend for SqliteStorage {
               ON memory_jobs (user_id, agent_id, updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_memory_jobs_session
               ON memory_jobs (session_id, updated_at DESC);
-            CREATE TABLE IF NOT EXISTS evaluation_runs (
+            CREATE TABLE IF NOT EXISTS benchmark_runs (
               run_id TEXT PRIMARY KEY,
               user_id TEXT,
               model_name TEXT,
-              language TEXT,
+              judge_model_name TEXT,
               status TEXT,
               total_score REAL,
               started_time REAL,
               finished_time REAL,
               payload TEXT NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS idx_evaluation_runs_user
-              ON evaluation_runs (user_id);
-            CREATE INDEX IF NOT EXISTS idx_evaluation_runs_status
-              ON evaluation_runs (status);
-            CREATE INDEX IF NOT EXISTS idx_evaluation_runs_started
-              ON evaluation_runs (started_time);
-            CREATE TABLE IF NOT EXISTS evaluation_items (
+            CREATE INDEX IF NOT EXISTS idx_benchmark_runs_user
+              ON benchmark_runs (user_id);
+            CREATE INDEX IF NOT EXISTS idx_benchmark_runs_status
+              ON benchmark_runs (status);
+            CREATE INDEX IF NOT EXISTS idx_benchmark_runs_started
+              ON benchmark_runs (started_time);
+            CREATE TABLE IF NOT EXISTS benchmark_attempts (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               run_id TEXT NOT NULL,
-              case_id TEXT NOT NULL,
-              dimension TEXT,
+              task_id TEXT NOT NULL,
+              attempt_no INTEGER NOT NULL,
               status TEXT,
-              score REAL,
-              max_score REAL,
-              weight REAL,
+              final_score REAL,
               started_time REAL,
               finished_time REAL,
-              payload TEXT NOT NULL
+              payload TEXT NOT NULL,
+              UNIQUE(run_id, task_id, attempt_no)
             );
-            CREATE INDEX IF NOT EXISTS idx_evaluation_items_run
-              ON evaluation_items (run_id, id);
+            CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_run
+              ON benchmark_attempts (run_id, task_id, attempt_no);
+            CREATE INDEX IF NOT EXISTS idx_benchmark_attempts_status
+              ON benchmark_attempts (status);
+            CREATE TABLE IF NOT EXISTS benchmark_task_aggregates (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              run_id TEXT NOT NULL,
+              task_id TEXT NOT NULL,
+              status TEXT,
+              mean_score REAL,
+              payload TEXT NOT NULL,
+              UNIQUE(run_id, task_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_benchmark_task_aggregates_run
+              ON benchmark_task_aggregates (run_id, task_id);
             CREATE TABLE IF NOT EXISTS user_accounts (
               user_id TEXT PRIMARY KEY,
               username TEXT NOT NULL UNIQUE,
@@ -3199,6 +3231,78 @@ impl StorageBackend for SqliteStorage {
         Ok(rows)
     }
 
+    fn get_memory_fragment_embedding(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+        embedding_model: &str,
+        content_hash: &str,
+    ) -> Result<Option<MemoryFragmentEmbeddingRecord>> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let mut stmt = conn.prepare("SELECT memory_id, user_id, agent_id, embedding_model, content_hash, vector_json, dimensions, updated_at FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ? AND embedding_model = ? AND content_hash = ? LIMIT 1")?;
+        stmt.query_row(
+            params![
+                user_id.trim(),
+                agent_id.trim(),
+                memory_id.trim(),
+                embedding_model.trim(),
+                content_hash.trim()
+            ],
+            |row| {
+                let vector_json: String = row.get(5)?;
+                Ok(MemoryFragmentEmbeddingRecord {
+                    memory_id: row.get(0)?,
+                    user_id: row.get(1)?,
+                    agent_id: row.get(2)?,
+                    embedding_model: row.get(3)?,
+                    content_hash: row.get(4)?,
+                    vector: Self::json_to_f32_vec(&vector_json),
+                    dimensions: row.get::<_, Option<i64>>(6)?.unwrap_or(0),
+                    updated_at: row.get::<_, Option<f64>>(7)?.unwrap_or(0.0),
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    fn upsert_memory_fragment_embedding(
+        &self,
+        record: &MemoryFragmentEmbeddingRecord,
+    ) -> Result<()> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        conn.execute(
+            "DELETE FROM memory_fragment_embeddings WHERE memory_id = ? AND embedding_model = ? AND content_hash <> ?",
+            params![record.memory_id, record.embedding_model, record.content_hash],
+        )?;
+        let vector_json = Self::json_to_string(&Value::Array(
+            record.vector.iter().map(|value| json!(value)).collect(),
+        ));
+        conn.execute(
+            "INSERT INTO memory_fragment_embeddings (memory_id, user_id, agent_id, embedding_model, content_hash, vector_json, dimensions, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(memory_id, embedding_model, content_hash) DO UPDATE SET user_id = excluded.user_id, agent_id = excluded.agent_id, vector_json = excluded.vector_json, dimensions = excluded.dimensions, updated_at = excluded.updated_at",
+            params![record.memory_id, record.user_id, record.agent_id, record.embedding_model, record.content_hash, vector_json, record.dimensions, record.updated_at],
+        )?;
+        Ok(())
+    }
+
+    fn delete_memory_fragment_embeddings(
+        &self,
+        user_id: &str,
+        agent_id: &str,
+        memory_id: &str,
+    ) -> Result<i64> {
+        self.ensure_initialized()?;
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
+            params![user_id.trim(), agent_id.trim(), memory_id.trim()],
+        )?;
+        Ok(affected as i64)
+    }
+
     fn delete_memory_fragment(
         &self,
         user_id: &str,
@@ -3207,6 +3311,10 @@ impl StorageBackend for SqliteStorage {
     ) -> Result<i64> {
         self.ensure_initialized()?;
         let conn = self.open()?;
+        let _ = conn.execute(
+            "DELETE FROM memory_fragment_embeddings WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
+            params![user_id.trim(), agent_id.trim(), memory_id.trim()],
+        )?;
         let affected = conn.execute(
             "DELETE FROM memory_fragments WHERE user_id = ? AND agent_id = ? AND memory_id = ?",
             params![user_id.trim(), agent_id.trim(), memory_id.trim()],
@@ -3338,8 +3446,7 @@ impl StorageBackend for SqliteStorage {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
     }
-
-    fn create_evaluation_run(&self, payload: &Value) -> Result<()> {
+    fn create_benchmark_run(&self, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let run_id = payload
             .get("run_id")
@@ -3362,8 +3469,8 @@ impl StorageBackend for SqliteStorage {
             .unwrap_or("")
             .trim()
             .to_string();
-        let language = payload
-            .get("language")
+        let judge_model_name = payload
+            .get("judge_model_name")
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim()
@@ -3380,16 +3487,16 @@ impl StorageBackend for SqliteStorage {
         let payload_text = Self::json_to_string(payload);
         let conn = self.open()?;
         conn.execute(
-            "INSERT INTO evaluation_runs (run_id, user_id, model_name, language, status, total_score, started_time, finished_time, payload) \
+            "INSERT INTO benchmark_runs (run_id, user_id, model_name, judge_model_name, status, total_score, started_time, finished_time, payload) \
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(run_id) DO UPDATE SET user_id = excluded.user_id, model_name = excluded.model_name, \
-             language = excluded.language, status = excluded.status, total_score = excluded.total_score, \
+             judge_model_name = excluded.judge_model_name, status = excluded.status, total_score = excluded.total_score, \
              started_time = excluded.started_time, finished_time = excluded.finished_time, payload = excluded.payload",
             params![
                 run_id,
                 user_id,
                 model_name,
-                language,
+                judge_model_name,
                 status,
                 total_score,
                 started_time,
@@ -3400,7 +3507,7 @@ impl StorageBackend for SqliteStorage {
         Ok(())
     }
 
-    fn update_evaluation_run(&self, run_id: &str, payload: &Value) -> Result<()> {
+    fn update_benchmark_run(&self, run_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -3410,81 +3517,101 @@ impl StorageBackend for SqliteStorage {
         if let Value::Object(ref mut map) = merged {
             map.insert("run_id".to_string(), Value::String(cleaned.to_string()));
         }
-        self.create_evaluation_run(&merged)
+        self.create_benchmark_run(&merged)
     }
 
-    fn upsert_evaluation_item(&self, run_id: &str, payload: &Value) -> Result<()> {
+    fn upsert_benchmark_attempt(&self, run_id: &str, payload: &Value) -> Result<()> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
             return Ok(());
         }
-        let case_id = payload
-            .get("case_id")
+        let task_id = payload
+            .get("task_id")
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim()
             .to_string();
-        if case_id.is_empty() {
+        if task_id.is_empty() {
             return Ok(());
         }
-        let dimension = payload
-            .get("dimension")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let attempt_no = payload
+            .get("attempt_no")
+            .and_then(Value::as_i64)
+            .or_else(|| {
+                payload
+                    .get("attempt_no")
+                    .and_then(Value::as_u64)
+                    .map(|value| value as i64)
+            })
+            .unwrap_or(0);
+        if attempt_no <= 0 {
+            return Ok(());
+        }
         let status = payload
             .get("status")
             .and_then(Value::as_str)
             .unwrap_or("")
             .trim()
             .to_string();
-        let score = Self::parse_f64(payload.get("score")).unwrap_or(0.0);
-        let max_score = Self::parse_f64(payload.get("max_score")).unwrap_or(0.0);
-        let weight = Self::parse_f64(payload.get("weight")).unwrap_or(0.0);
+        let final_score = Self::parse_f64(payload.get("final_score")).unwrap_or(0.0);
         let started_time = Self::parse_f64(payload.get("started_time")).unwrap_or(0.0);
         let finished_time = Self::parse_f64(payload.get("finished_time")).unwrap_or(0.0);
         let payload_text = Self::json_to_string(payload);
         let conn = self.open()?;
-        let updated = conn.execute(
-            "UPDATE evaluation_items SET dimension = ?, status = ?, score = ?, max_score = ?, weight = ?, \
-             started_time = ?, finished_time = ?, payload = ? WHERE run_id = ? AND case_id = ?",
+        conn.execute(
+            "INSERT INTO benchmark_attempts (run_id, task_id, attempt_no, status, final_score, started_time, finished_time, payload) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?) \
+             ON CONFLICT(run_id, task_id, attempt_no) DO UPDATE SET status = excluded.status, final_score = excluded.final_score, \
+             started_time = excluded.started_time, finished_time = excluded.finished_time, payload = excluded.payload",
             params![
-                dimension,
+                cleaned,
+                task_id,
+                attempt_no,
                 status,
-                score,
-                max_score,
-                weight,
+                final_score,
                 started_time,
                 finished_time,
-                payload_text,
-                cleaned,
-                case_id,
+                payload_text
             ],
         )?;
-        if updated == 0 {
-            conn.execute(
-                "INSERT INTO evaluation_items (run_id, case_id, dimension, status, score, max_score, weight, started_time, finished_time, payload) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                params![
-                    cleaned,
-                    case_id,
-                    dimension,
-                    status,
-                    score,
-                    max_score,
-                    weight,
-                    started_time,
-                    finished_time,
-                    payload_text
-                ],
-            )?;
-        }
         Ok(())
     }
 
-    fn load_evaluation_runs(
+    fn upsert_benchmark_task_aggregate(&self, run_id: &str, payload: &Value) -> Result<()> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(());
+        }
+        let task_id = payload
+            .get("task_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if task_id.is_empty() {
+            return Ok(());
+        }
+        let status = payload
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let mean_score = Self::parse_f64(payload.get("mean_score")).unwrap_or(0.0);
+        let payload_text = Self::json_to_string(payload);
+        let conn = self.open()?;
+        conn.execute(
+            "INSERT INTO benchmark_task_aggregates (run_id, task_id, status, mean_score, payload) \
+             VALUES (?, ?, ?, ?, ?) \
+             ON CONFLICT(run_id, task_id) DO UPDATE SET status = excluded.status, mean_score = excluded.mean_score, payload = excluded.payload",
+            params![cleaned, task_id, status, mean_score, payload_text],
+        )?;
+        Ok(())
+    }
+
+    fn load_benchmark_runs(
         &self,
         user_id: Option<&str>,
         status: Option<&str>,
@@ -3526,7 +3653,7 @@ impl StorageBackend for SqliteStorage {
             conditions.push("started_time <= ?".to_string());
             params.push(SqlValue::from(until));
         }
-        let mut sql = String::from("SELECT payload FROM evaluation_runs");
+        let mut sql = String::from("SELECT payload FROM benchmark_runs");
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
@@ -3551,14 +3678,14 @@ impl StorageBackend for SqliteStorage {
         Ok(records)
     }
 
-    fn load_evaluation_run(&self, run_id: &str) -> Result<Option<Value>> {
+    fn load_benchmark_run(&self, run_id: &str) -> Result<Option<Value>> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
             return Ok(None);
         }
         let conn = self.open()?;
-        let mut stmt = conn.prepare("SELECT payload FROM evaluation_runs WHERE run_id = ?")?;
+        let mut stmt = conn.prepare("SELECT payload FROM benchmark_runs WHERE run_id = ?")?;
         let mut rows = stmt.query([cleaned])?;
         if let Some(row) = rows.next()? {
             let payload: String = row.get(0)?;
@@ -3567,15 +3694,16 @@ impl StorageBackend for SqliteStorage {
         Ok(None)
     }
 
-    fn load_evaluation_items(&self, run_id: &str) -> Result<Vec<Value>> {
+    fn load_benchmark_attempts(&self, run_id: &str) -> Result<Vec<Value>> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
             return Ok(Vec::new());
         }
         let conn = self.open()?;
-        let mut stmt =
-            conn.prepare("SELECT payload FROM evaluation_items WHERE run_id = ? ORDER BY id")?;
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM benchmark_attempts WHERE run_id = ? ORDER BY task_id, attempt_no",
+        )?;
         let rows = stmt
             .query_map([cleaned], |row| row.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<String>, _>>()?;
@@ -3588,7 +3716,29 @@ impl StorageBackend for SqliteStorage {
         Ok(records)
     }
 
-    fn delete_evaluation_run(&self, run_id: &str) -> Result<i64> {
+    fn load_benchmark_task_aggregates(&self, run_id: &str) -> Result<Vec<Value>> {
+        self.ensure_initialized()?;
+        let cleaned = run_id.trim();
+        if cleaned.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.open()?;
+        let mut stmt = conn.prepare(
+            "SELECT payload FROM benchmark_task_aggregates WHERE run_id = ? ORDER BY task_id",
+        )?;
+        let rows = stmt
+            .query_map([cleaned], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<String>, _>>()?;
+        let mut records = Vec::new();
+        for payload in rows {
+            if let Some(value) = Self::json_from_str(&payload) {
+                records.push(value);
+            }
+        }
+        Ok(records)
+    }
+
+    fn delete_benchmark_run(&self, run_id: &str) -> Result<i64> {
         self.ensure_initialized()?;
         let cleaned = run_id.trim();
         if cleaned.is_empty() {
@@ -3596,16 +3746,20 @@ impl StorageBackend for SqliteStorage {
         }
         let mut conn = self.open()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let items_deleted = tx.execute(
-            "DELETE FROM evaluation_items WHERE run_id = ?",
+        let tasks_deleted = tx.execute(
+            "DELETE FROM benchmark_task_aggregates WHERE run_id = ?",
+            params![cleaned],
+        )?;
+        let attempts_deleted = tx.execute(
+            "DELETE FROM benchmark_attempts WHERE run_id = ?",
             params![cleaned],
         )?;
         let runs_deleted = tx.execute(
-            "DELETE FROM evaluation_runs WHERE run_id = ?",
+            "DELETE FROM benchmark_runs WHERE run_id = ?",
             params![cleaned],
         )?;
         tx.commit()?;
-        Ok((items_deleted + runs_deleted) as i64)
+        Ok((tasks_deleted + attempts_deleted + runs_deleted) as i64)
     }
 
     fn cleanup_retention(&self, retention_days: i64) -> Result<HashMap<String, i64>> {

@@ -72,7 +72,7 @@ import { initPaperPanel } from "./modules/paper.js?v=20260215-01";
 import { initThroughputPanel, toggleThroughputPolling } from "./modules/throughput.js?v=20260215-01";
 import { initPerformancePanel } from "./modules/performance.js?v=20260215-01";
 import { initSimLabPanel } from "./modules/sim-lab.js?v=20260215-01";
-import { initEvaluationPanel } from "./modules/evaluation.js?v=20260215-01";
+import { initEvaluationPanel } from "./modules/evaluation.js?v=20260315-05";
 import { applyAuthHeaders, getAuthScope, initAdminAuth } from "./modules/admin-auth.js?v=20260215-01";
 
 import { getCurrentLanguage, setLanguage, t } from "./modules/i18n.js?v=20260215-01";

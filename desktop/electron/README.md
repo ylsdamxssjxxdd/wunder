@@ -100,58 +100,43 @@ npm run prepare:icons
 WUNDER_BRIDGE_BIN=/path/to/wunder-desktop-bridge
 ```
 
-## Win7 试构建（隔离实验）
-
-为避免污染仓库根 `node_modules/`、`.cargo/` 与 `target/`，仓库提供了隔离实验脚本：
-
-```powershell
-# 先准备 x86 bridge（推荐 Win7 先看 ia32 可能性）
-cargo build --release --bin wunder-desktop-bridge --target i686-pc-windows-msvc
-
-# 再执行 Win7 Electron 试构建
-powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7.ps1 -Arch ia32
-```
-
-- 该脚本会把 staging、npm 缓存、Electron 缓存和构建输出统一放到 `temp_dir/win7-lab/`
-- Electron 版本固定为 `22.3.27`，用于验证 Win7 兼容窗口
-- 运行时默认不打包 `electron-updater`，Win7 试包将自动关闭桌面端自动更新能力
-- 默认产物目录：`temp_dir/win7-lab/electron-win7-ia32/dist/`
-
-## Win7 GNU 固化路径
+## Win7 默认流程
 
 当前仓库中，Win7 方向推荐优先使用 **Electron 22 + x64 GNU bridge**：
+
+- 快速发布与日常重建优先参考：`docs/方案/wunder-desktop-win7-发布SOP.md`
+- 更完整的技术背景与兼容性经验见：`docs/方案/wunder-desktop-win7-gnu实验方案.md`
 
 ```powershell
 # 首次初始化工具链与缓存
 npm run setup:desktop:win7:gnu:x64
 
-# 推荐入口
-npm run build:desktop:win7:gnu:x64
+# Win7 默认正式出包入口
+npm run build:desktop:win7:gnu:x64:with-supplement:common
 
 # 已初始化后的快速重建入口
 npm run build:desktop:win7:gnu:x64:fast
-
-# 静态 CRT 试探入口
-npm run build:desktop:win7:gnu:x64:static
-```
-
-也可以直接执行脚本：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64
 ```
 
 - GNU 方案的缓存、staging 与安装包统一隔离在 `temp_dir/win7-gnu-lab/`
+- Win7 版本默认优先使用 `build:desktop:win7:gnu:x64:with-supplement:common` 这条链路出包
+- Win7 版本默认最终交付物为该命令产出的 NSIS 一体安装包，不再优先单独分发补充包 zip
 - 当前仅 `x64` 路线已完成构建验证
-- `ia32` GNU 仍受本机 `mingw32` 工具链限制，暂不建议作为默认方案
-- `desktop/electron/scripts/win7-gnu-toolchain.json` 固化了 Rust nightly、Electron 版本、MinGW 路径和目标三元组
-- `desktop/electron/scripts/setup-win7-gnu-toolchain.ps1` 用于一次性预热工具链、Cargo 缓存与 Win7 补丁配置
-- bridge 当前使用 `x86_64-win7-windows-gnu` 目标，通过 nightly `-Zbuild-std` 构建 Win7 兼容版 Rust `std`
-- 构建脚本会临时注入 `patches/win7/tokio-rustls-0.26.4-win7/`，将 Win7 GNU 包的 `tokio-rustls` 后端固定为 `ring`
-- Win7 GNU 包会关闭 `reqwest` 的 Windows 系统代理读取，避免重新引入 `windows-registry` / `winrt-error` 依赖链
-- Win7 GNU 包的 HTTP/TLS 根证书改为 `rustls + webpki-roots`，公网 HTTPS/WSS 基本不受影响，但依赖企业内网私有 CA 或系统代理注入证书时需要额外验证
-- 每次初始化后会在 `temp_dir/win7-gnu-lab/toolchain-manifest.json` 写出当前工具链快照和推荐重建命令
-- 默认产物目录：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/`
+- 最终安装包路径：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder-desktop-win7-0.1.0-x64-setup.exe`
+
+### Win7 补充包（Python + Git）
+
+Win7 默认发布时，不再优先单独分发补充包；补充包主要保留给调试和手工兜底。
+
+如需单独构建补充包，可在仓库根目录执行：
+
+```powershell
+npm run build:desktop:win7:supplement:x64:common
+```
+
+- `common` 档位产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
+- `common` 档位会额外内置 `pip / setuptools / wheel`，并预装精简常用依赖：`requests`、`numpy`、`pandas`、`openpyxl`、`matplotlib`、`Pillow`、`tabulate`
+- 详细说明见 `packaging/windows/README.md`
 ## 运行行为说明
 
 Electron 启动时会：

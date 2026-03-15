@@ -595,6 +595,53 @@ const desktopAppId = 'com.wunder.desktop'
 const closePreferenceFileName = 'window-close-preference.json'
 const closeBehaviorValues = new Set(['ask', 'tray', 'quit'])
 
+const prependProcessPathEntries = (entries) => {
+  const existing = String(process.env.PATH || '')
+    .split(path.delimiter)
+    .map((item) => item.trim())
+    .filter((item) => item)
+  const merged = Array.from(new Set([...entries, ...existing]))
+  process.env.PATH = merged.join(path.delimiter)
+}
+
+const resolveDesktopAppDir = () => {
+  const manual = String(process.env.WUNDER_DESKTOP_APP_DIR || '').trim()
+  if (manual && fs.existsSync(manual)) {
+    return manual
+  }
+  if (app.isPackaged && process.resourcesPath) {
+    return path.dirname(process.resourcesPath)
+  }
+  return repoRoot
+}
+
+const registerBundledToolPaths = () => {
+  const appDir = resolveDesktopAppDir()
+  if (!appDir || !fs.existsSync(appDir)) {
+    return
+  }
+
+  process.env.WUNDER_DESKTOP_APP_DIR = appDir
+
+  const candidates = [
+    path.join(appDir, 'opt', 'python'),
+    path.join(appDir, 'opt', 'python', 'Scripts'),
+    path.join(appDir, 'opt', 'python', 'bin'),
+    path.join(appDir, 'opt', 'git', 'cmd'),
+    path.join(appDir, 'opt', 'git', 'bin')
+  ].filter((candidate) => fs.existsSync(candidate))
+
+  if (!candidates.length) {
+    return
+  }
+
+  // Keep bundled tool paths ahead of system PATH so a supplement package
+  // extracted into the install directory is picked up automatically.
+  prependProcessPathEntries(candidates)
+}
+
+registerBundledToolPaths()
+
 if (process.platform === 'win32') {
   app.setAppUserModelId(desktopAppId)
 }

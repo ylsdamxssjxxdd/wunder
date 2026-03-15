@@ -61,6 +61,8 @@ pub struct DesktopSettings {
     #[serde(default)]
     pub language: String,
     #[serde(default)]
+    pub python_interpreter_path: String,
+    #[serde(default)]
     pub llm: Option<LlmConfig>,
     #[serde(default)]
     pub remote_gateway: DesktopRemoteGatewaySettings,
@@ -77,6 +79,7 @@ impl Default for DesktopSettings {
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
+            python_interpreter_path: String::new(),
             llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
             lan_mesh: DesktopLanMeshSettings::default(),
@@ -235,6 +238,7 @@ impl DesktopRuntime {
         set_env_path("WUNDER_VECTOR_KNOWLEDGE_ROOT", &vector_root);
         set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
+        prepend_embedded_tool_paths(&app_dir);
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
         set_env_path(BUILTIN_SKILLS_ROOT_ENV, &repo_root.join("skills"));
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
@@ -978,6 +982,33 @@ fn set_env_path(key: &str, value: &Path) {
 fn set_env_path_if_exists(key: &str, value: &Path) {
     if value.exists() {
         set_env_path(key, value);
+    }
+}
+
+fn prepend_path_entry_if_exists(value: &Path) {
+    if !value.exists() {
+        return;
+    }
+    let mut entries = vec![value.to_path_buf()];
+    if let Some(existing) = std::env::var_os("PATH") {
+        entries.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(entries) {
+        std::env::set_var("PATH", joined);
+    }
+}
+
+fn prepend_embedded_tool_paths(app_dir: &Path) {
+    // Keep bundled supplement paths ahead of the system PATH so extracting
+    // opt/python and opt/git into the install root becomes effective immediately.
+    for candidate in [
+        app_dir.join("opt/python"),
+        app_dir.join("opt/python/Scripts"),
+        app_dir.join("opt/python/bin"),
+        app_dir.join("opt/git/cmd"),
+        app_dir.join("opt/git/bin"),
+    ] {
+        prepend_path_entry_if_exists(&candidate);
     }
 }
 

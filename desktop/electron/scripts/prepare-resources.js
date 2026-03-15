@@ -12,6 +12,10 @@ const extraRuntimeFiles = String(process.env.WUNDER_EXTRA_RUNTIME_FILES || '')
   .split(path.delimiter)
   .map((item) => item.trim())
   .filter((item) => item)
+const extraRuntimeRoots = String(process.env.WUNDER_EXTRA_RUNTIME_ROOTS || '')
+  .split(path.delimiter)
+  .map((item) => item.trim())
+  .filter((item) => item)
 
 const bridgeName = process.platform === 'win32' ? 'wunder-desktop-bridge.exe' : 'wunder-desktop-bridge'
 const bridgeSource = process.env.WUNDER_BRIDGE_BIN || path.join(repoRoot, 'target', 'release', bridgeName)
@@ -93,6 +97,26 @@ const copyExtraRuntimeFiles = () => {
   }
 }
 
+const copyExtraRuntimeRoots = () => {
+  for (const source of extraRuntimeRoots) {
+    if (!fs.existsSync(source)) {
+      console.warn(`[prepare] skip missing extra runtime root: ${source}`)
+      continue
+    }
+    const stat = fs.statSync(source)
+    if (!stat.isDirectory()) {
+      console.warn(`[prepare] extra runtime root is not a directory: ${source}`)
+      continue
+    }
+    for (const entry of fs.readdirSync(source)) {
+      const sourcePath = path.join(source, entry)
+      const targetPath = path.join(outputRoot, entry)
+      fs.cpSync(sourcePath, targetPath, { recursive: true, force: true })
+      console.log(`[prepare] merged extra runtime entry: ${targetPath}`)
+    }
+  }
+}
+
 const ensureLinuxIconSet = () => {
   if (!fs.existsSync(iconPngSource)) {
     console.warn('[prepare] skip linux icon set: icon.png not found')
@@ -139,6 +163,7 @@ if (process.platform !== 'win32') {
 copyDir(frontendSource, path.join(outputRoot, 'frontend-dist'))
 copyRuntimeNodeModules()
 copyExtraRuntimeFiles()
+copyExtraRuntimeRoots()
 if (fs.existsSync(iconPngSource)) {
   copyFile(iconPngSource, path.join(outputRoot, 'frontend-dist', 'desktop-icon.png'))
 }

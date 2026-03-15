@@ -5,7 +5,7 @@ use crate::storage::{MemoryFragmentRecord, MemoryJobRecord, StorageBackend};
 use anyhow::Result;
 use chrono::Utc;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
@@ -22,6 +22,9 @@ const JOB_STATUS_FAILED: &str = "failed";
 const MAX_AUTO_CANDIDATES: usize = 4;
 const MAX_SEGMENT_CHARS: usize = 240;
 const MAX_TEXT_CHARS: usize = 1_000;
+const MAX_EXTRACTION_WINDOW_MESSAGES: usize = 6;
+const MAX_EXTRACTION_WINDOW_CHARS: usize = 2_400;
+const MAX_EXTRACTION_HISTORY_MESSAGES: i64 = 16;
 
 const ZH_REPLY: &str = "回复";
 const ZH_ANSWER: &str = "回答";
@@ -138,6 +141,10 @@ impl MemoryAutoExtractService {
         answer: &str,
     ) -> Result<MemoryAutoExtractOutcome> {
         let now = now_ts();
+        let extraction_window =
+            self.build_recent_user_extraction_window(user_id, session_id, question);
+        let extraction_window_preview =
+            truncate_chars(&extraction_window.join("\n"), MAX_TEXT_CHARS);
         let agent_scope = agent_id.unwrap_or("__default__").trim().to_string();
         let mut job = MemoryJobRecord {
             job_id: format!("mjob_{}", Uuid::new_v4().simple()),
@@ -150,6 +157,8 @@ impl MemoryAutoExtractService {
                 "question": truncate_chars(question, MAX_TEXT_CHARS),
                 "answer": truncate_chars(answer, MAX_TEXT_CHARS),
                 "round_id": round_id.unwrap_or("").trim(),
+                "window_user_messages": extraction_window.len(),
+                "window_preview": extraction_window_preview,
             }),
             result_summary: String::new(),
             error_message: String::new(),
@@ -165,7 +174,14 @@ impl MemoryAutoExtractService {
         job.updated_at = job.started_at;
         self.storage.upsert_memory_job(&job)?;
 
-        let run_result = self.capture_turn_inner(user_id, agent_id, session_id, round_id, question);
+        let run_result = self.capture_turn_inner(
+            user_id,
+            agent_id,
+            session_id,
+            round_id,
+            question,
+            &extraction_window,
+        );
         match run_result {
             Ok(outcome) => {
                 job.status = if outcome.created + outcome.updated > 0 {
@@ -201,8 +217,13 @@ impl MemoryAutoExtractService {
         session_id: &str,
         round_id: Option<&str>,
         question: &str,
+        extraction_window: &[String],
     ) -> Result<MemoryAutoExtractOutcome> {
-        let candidates = extract_candidates(question);
+        let candidates = if extraction_window.is_empty() {
+            extract_candidates(question)
+        } else {
+            extract_candidates_from_texts(extraction_window)
+        };
         if candidates.is_empty() {
             return Ok(MemoryAutoExtractOutcome::default());
         }
@@ -219,6 +240,9 @@ impl MemoryAutoExtractService {
         let mut existing_by_fact_key = HashMap::<String, MemoryFragmentRecord>::new();
         for item in existing {
             if item.fact_key.trim().is_empty() {
+                continue;
+            }
+            if is_invalidated(&item) || is_superseded(&item) {
                 continue;
             }
             existing_by_fact_key
@@ -252,6 +276,28 @@ impl MemoryAutoExtractService {
         Ok(outcome)
     }
 
+    fn build_recent_user_extraction_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        question: &str,
+    ) -> Vec<String> {
+        let mut texts = self
+            .storage
+            .load_chat_history(user_id, session_id, Some(MAX_EXTRACTION_HISTORY_MESSAGES))
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|payload| extract_user_message_text(&payload))
+            .collect::<Vec<_>>();
+
+        let normalized_question = normalize_sentence(question);
+        if !normalized_question.is_empty() {
+            texts.push(normalized_question);
+        }
+
+        trim_extraction_window(texts)
+    }
+
     fn apply_candidate(
         &self,
         user_id: &str,
@@ -273,7 +319,6 @@ impl MemoryAutoExtractService {
                 user_id,
                 agent_id,
                 MemoryFragmentInput {
-                    memory_id: Some(existing.memory_id.clone()),
                     source_session_id: Some(session_id.trim().to_string()),
                     source_round_id: round_id
                         .map(str::trim)
@@ -291,9 +336,8 @@ impl MemoryAutoExtractService {
                     confidence: Some(candidate.confidence),
                     tier: Some(candidate.tier.clone()),
                     status: Some(ACTIVE_STATUS.to_string()),
-                    pinned: Some(existing.pinned),
-                    confirmed_by_user: Some(existing.confirmed_by_user),
                     invalidated: Some(false),
+                    ..Default::default()
                 },
             )?;
             return Ok(CandidateApplyAction::Updated(record));
@@ -338,29 +382,113 @@ enum CandidateApplyAction {
 }
 
 fn extract_candidates(question: &str) -> Vec<ExtractionCandidate> {
-    let normalized = normalize_sentence(question);
-    if normalized.is_empty() {
-        return Vec::new();
-    }
+    extract_candidates_from_texts(&[question.to_string()])
+}
 
+fn extract_candidates_from_texts(texts: &[String]) -> Vec<ExtractionCandidate> {
     let mut items = Vec::new();
     let mut seen = HashSet::new();
-    for segment in split_segments(&normalized) {
-        for candidate in extract_segment_candidates(&segment) {
-            if items.len() >= MAX_AUTO_CANDIDATES {
-                return items;
+    for text in texts {
+        let normalized = normalize_sentence(text);
+        if normalized.is_empty() {
+            continue;
+        }
+        let mut inherited_reply_context = false;
+        for segment in split_segments(&normalized) {
+            let has_local_reply_context = segment_has_reply_context(&segment);
+            for candidate in extract_segment_candidates(&segment, inherited_reply_context) {
+                if items.len() >= MAX_AUTO_CANDIDATES {
+                    return items;
+                }
+                if !seen.insert(candidate.fact_key.clone()) {
+                    continue;
+                }
+                items.push(candidate);
             }
-            if !seen.insert(candidate.fact_key.clone()) {
-                continue;
-            }
-            items.push(candidate);
+            inherited_reply_context = inherited_reply_context || has_local_reply_context;
         }
     }
     items
 }
 
-fn extract_segment_candidates(segment: &str) -> Vec<ExtractionCandidate> {
-    let mut items = extract_response_preferences(segment);
+fn extract_user_message_text(payload: &Value) -> Option<String> {
+    let role = payload
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if role != "user" {
+        return None;
+    }
+    let text = extract_payload_text(payload.get("content").unwrap_or(&Value::Null));
+    let normalized = normalize_sentence(&text);
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn extract_payload_text(content: &Value) -> String {
+    match content {
+        Value::Null => String::new(),
+        Value::String(text) => text.trim().to_string(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| {
+                let obj = part.as_object()?;
+                if obj.get("type").and_then(Value::as_str).unwrap_or("") == "text" {
+                    return obj.get("text").and_then(Value::as_str).map(str::to_string);
+                }
+                obj.get("content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string(),
+        Value::Object(map) => map
+            .get("text")
+            .and_then(Value::as_str)
+            .or_else(|| map.get("content").and_then(Value::as_str))
+            .unwrap_or("")
+            .trim()
+            .to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn trim_extraction_window(texts: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    let mut total_chars = 0usize;
+
+    // Keep the most recent unique user texts so extraction can recover cross-turn preferences and plans.
+    for text in texts.into_iter().rev() {
+        let normalized = normalize_sentence(&text);
+        if normalized.is_empty() || !seen.insert(normalized.clone()) {
+            continue;
+        }
+        let chars = normalized.chars().count();
+        if !output.is_empty() && total_chars + chars > MAX_EXTRACTION_WINDOW_CHARS {
+            break;
+        }
+        total_chars += chars;
+        output.push(normalized);
+        if output.len() >= MAX_EXTRACTION_WINDOW_MESSAGES {
+            break;
+        }
+    }
+    output.reverse();
+    output
+}
+
+fn extract_segment_candidates(
+    segment: &str,
+    inherited_reply_context: bool,
+) -> Vec<ExtractionCandidate> {
+    let mut items = extract_response_preferences(segment, inherited_reply_context);
     if let Some(candidate) = extract_profile(segment) {
         items.push(candidate);
     }
@@ -378,21 +506,14 @@ fn extract_segment_candidates(segment: &str) -> Vec<ExtractionCandidate> {
     items
 }
 
-fn extract_response_preferences(segment: &str) -> Vec<ExtractionCandidate> {
-    let has_reply_context = contains_any(
-        segment,
-        &[
-            ZH_REPLY,
-            ZH_ANSWER,
-            ZH_OUTPUT,
-            ZH_EXPLAIN,
-            ZH_COMMUNICATE,
-            "reply",
-            "respond",
-            "response",
-            "answer",
-        ],
-    );
+fn extract_response_preferences(
+    segment: &str,
+    inherited_reply_context: bool,
+) -> Vec<ExtractionCandidate> {
+    // Allow adjacent segments in the same user utterance to inherit a previously
+    // established reply context, so phrases like "回答尽量简洁，不要表格" can be
+    // extracted as one coherent response preference set.
+    let has_reply_context = inherited_reply_context || segment_has_reply_context(segment);
     let has_directive = has_memory_directive(segment);
     if !has_reply_context && !has_directive {
         return Vec::new();
@@ -501,6 +622,23 @@ fn extract_response_preferences(segment: &str) -> Vec<ExtractionCandidate> {
         ));
     }
     items
+}
+
+fn segment_has_reply_context(segment: &str) -> bool {
+    contains_any(
+        segment,
+        &[
+            ZH_REPLY,
+            ZH_ANSWER,
+            ZH_OUTPUT,
+            ZH_EXPLAIN,
+            ZH_COMMUNICATE,
+            "reply",
+            "respond",
+            "response",
+            "answer",
+        ],
+    )
 }
 
 fn extract_profile(segment: &str) -> Option<ExtractionCandidate> {
@@ -873,6 +1011,15 @@ fn is_invalidated(record: &MemoryFragmentRecord) -> bool {
     record.invalidated_at.unwrap_or(0.0) > 0.0 || record.status.trim() == "invalidated"
 }
 
+fn is_superseded(record: &MemoryFragmentRecord) -> bool {
+    record.status.trim() == "superseded"
+        || record
+            .superseded_by_memory_id
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+}
+
 fn truncate_chars(text: &str, limit: usize) -> String {
     let trimmed = text.trim();
     if trimmed.chars().count() <= limit {
@@ -897,8 +1044,29 @@ mod tests {
     use super::*;
     use crate::services::memory_fragments::{MemoryFragmentInput, MemoryFragmentStore};
     use crate::storage::{SqliteStorage, StorageBackend};
+    use serde_json::json;
     use std::sync::Arc;
     use tempfile::tempdir;
+
+    fn append_chat_record(
+        storage: &Arc<dyn StorageBackend>,
+        user_id: &str,
+        session_id: &str,
+        role: &str,
+        content: &str,
+    ) {
+        storage
+            .append_chat(
+                user_id,
+                &json!({
+                    "role": role,
+                    "content": content,
+                    "session_id": session_id,
+                    "timestamp": "2026-03-15T00:00:00Z"
+                }),
+            )
+            .expect("append chat record");
+    }
 
     #[test]
     fn extract_candidates_detects_response_preference() {
@@ -920,6 +1088,21 @@ mod tests {
             fact_keys,
             vec![
                 "constraint::reply_language".to_string(),
+                "constraint::response_style".to_string(),
+                "constraint::response_format".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_candidates_inherits_reply_context_across_segments() {
+        let fact_keys = extract_candidates("回答尽量简洁，不要表格。")
+            .into_iter()
+            .map(|item| item.fact_key)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            fact_keys,
+            vec![
                 "constraint::response_style".to_string(),
                 "constraint::response_format".to_string(),
             ]
@@ -985,6 +1168,50 @@ mod tests {
     }
 
     #[test]
+    fn capture_turn_uses_recent_user_window() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-window.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let service = MemoryAutoExtractService::new(storage.clone());
+
+        append_chat_record(&storage, "u1", "s-window", "user", "以后请用中文回复。");
+        append_chat_record(&storage, "u1", "s-window", "assistant", "好的。");
+
+        let outcome = service
+            .capture_turn(
+                "u1",
+                Some("agent-demo"),
+                "s-window",
+                Some("9"),
+                "另外回答尽量简洁，不要表格。",
+                "收到。",
+            )
+            .expect("capture turn with recent window");
+
+        assert_eq!(
+            outcome,
+            MemoryAutoExtractOutcome {
+                created: 3,
+                updated: 0,
+                skipped: 0,
+            }
+        );
+
+        let items = storage
+            .list_memory_fragments("u1", "agent-demo")
+            .expect("list memory fragments");
+        let fact_keys = items
+            .into_iter()
+            .map(|item| item.fact_key)
+            .collect::<Vec<_>>();
+        assert!(fact_keys.contains(&"constraint::reply_language".to_string()));
+        assert!(fact_keys.contains(&"constraint::response_style".to_string()));
+        assert!(fact_keys.contains(&"constraint::response_format".to_string()));
+    }
+
+    #[test]
     fn capture_turn_keeps_manual_memory_intact() {
         let dir = tempdir().expect("tempdir");
         let db_path = dir.path().join("memory-manual.db");
@@ -1035,5 +1262,76 @@ mod tests {
             .expect("fragment exists");
         assert_eq!(stored.source_type, "manual");
         assert_eq!(stored.summary_l1, TITLE_REPLY_ZH.to_string());
+    }
+
+    #[test]
+    fn capture_turn_supersedes_changed_auto_memory() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-auto-supersede.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let service = MemoryAutoExtractService::new(storage.clone());
+        let fragment_store = MemoryFragmentStore::new(storage.clone());
+
+        let original = fragment_store
+            .save_fragment(
+                "u1",
+                Some("agent-demo"),
+                MemoryFragmentInput {
+                    source_type: Some("auto_turn".to_string()),
+                    category: Some("response-preference".to_string()),
+                    title_l0: Some("Response format".to_string()),
+                    summary_l1: Some("Use markdown tables.".to_string()),
+                    content_l2: Some(
+                        "When possible, present answers as markdown tables.".to_string(),
+                    ),
+                    fact_key: Some("constraint::response_format".to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("save original fragment");
+
+        let outcome = service
+            .capture_turn(
+                "u1",
+                Some("agent-demo"),
+                "s1",
+                Some("3"),
+                "回答尽量简洁，不要表格。",
+                "好的，我会改用简洁的要点列表。",
+            )
+            .expect("capture turn");
+
+        assert!(outcome.updated >= 1);
+
+        let items = storage
+            .list_memory_fragments("u1", "agent-demo")
+            .expect("list memory fragments");
+        let response_format_items = items
+            .iter()
+            .filter(|item| item.fact_key == "constraint::response_format")
+            .collect::<Vec<_>>();
+        assert_eq!(response_format_items.len(), 2);
+
+        let previous = response_format_items
+            .iter()
+            .find(|item| item.memory_id == original.memory_id)
+            .expect("previous fragment exists");
+        assert_eq!(previous.status, "superseded");
+
+        let current = response_format_items
+            .iter()
+            .find(|item| item.memory_id != original.memory_id)
+            .expect("current fragment exists");
+        assert_eq!(current.status, "active");
+        assert_eq!(
+            current.supersedes_memory_id.as_deref(),
+            Some(original.memory_id.as_str())
+        );
+        assert_eq!(
+            previous.superseded_by_memory_id.as_deref(),
+            Some(current.memory_id.as_str())
+        );
     }
 }

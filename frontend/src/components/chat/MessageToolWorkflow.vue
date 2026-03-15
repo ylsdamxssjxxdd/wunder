@@ -31,39 +31,13 @@
         </summary>
 
         <div class="tool-workflow-entry-body">
-          <div
-            v-if="entry.viewKind === 'command' && entry.commandView"
-            class="tool-workflow-main tool-workflow-main--command"
-          >
-            <div class="tool-workflow-terminal-head">{{ entry.commandView.shell }}</div>
-
-            <pre
-              class="tool-workflow-terminal-body"
-              :ref="(el) => bindStreamBodyRef(entry.key, 'stdout', el)"
-              @scroll="handleStreamBodyScroll(entry.key, 'stdout', $event)"
-            >{{ entry.commandView.terminalText }}</pre>
-
-            <div class="tool-workflow-terminal-footer">
-              <span
-                v-if="entry.commandView.exitCode !== null"
-                class="tool-workflow-terminal-exit-code"
-              >
-                exit {{ entry.commandView.exitCode }}
-              </span>
-            </div>
-          </div>
-
-          <div v-else-if="entry.viewKind === 'patch'" class="tool-workflow-main tool-workflow-main--patch">
-            <div
-              v-for="line in entry.patchLines"
-              :key="line.key"
-              :class="['tool-workflow-patch-line', `is-${line.kind}`]"
-            >
-              {{ line.text }}
-            </div>
-          </div>
-
-          <pre v-else-if="entry.mainBlock" class="tool-workflow-main">{{ entry.mainBlock }}</pre>
+          <MessageToolWorkflowSection
+            v-for="section in entry.sections"
+            :key="section.key"
+            :section="section"
+            :bind-stream-body-ref="(stream, el) => bindStreamBodyRef(entry.key, stream, el)"
+            :on-stream-body-scroll="(stream, event) => handleStreamBodyScroll(entry.key, stream, event)"
+          />
         </div>
       </details>
     </div>
@@ -76,6 +50,12 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicIn
 import { useI18n } from '@/i18n';
 import { buildToolResultPreview } from './toolWorkflowPreview';
 import { chatPerf } from '@/utils/chatPerf';
+import MessageToolWorkflowSection from './MessageToolWorkflowSection.vue';
+import type {
+  ToolWorkflowCommandView as CommandView,
+  ToolWorkflowDetailSection,
+  ToolWorkflowPatchLine as PatchLine
+} from './toolWorkflowTypes';
 
 type WorkflowItem = {
   id?: string | number;
@@ -114,17 +94,7 @@ type ToolEntryView = {
   status: string;
   statusLabel: string;
   durationLabel: string;
-  viewKind: 'text' | 'command' | 'patch';
-  mainBlock: string;
-  commandView: CommandView | null;
-  patchLines: PatchLine[];
-};
-
-type CommandView = {
-  command: string;
-  shell: string;
-  terminalText: string;
-  exitCode: number | null;
+  sections: ToolWorkflowDetailSection[];
 };
 
 type CommandRecord = {
@@ -132,12 +102,6 @@ type CommandRecord = {
   stdout: string;
   stderr: string;
   returncode: number | null;
-};
-
-type PatchLine = {
-  key: string;
-  kind: 'meta' | 'note' | 'add' | 'delete' | 'move' | 'update' | 'error';
-  text: string;
 };
 
 type RawEntry = {
@@ -484,6 +448,31 @@ const buildTextPreview = (
     rows.push(`${indent}... (${extras.join(', ')})`);
   }
   return rows.join('\n');
+};
+
+const buildLabeledTextBlock = (
+  rows: Array<{ label: string; value: unknown }>,
+  separator = ': '
+): string =>
+  rows
+    .map(({ label, value }) => {
+      const text = String(value ?? '')
+        .trim()
+        .replace(/\s+/g, ' ');
+      if (!label || !text) return '';
+      return `${label}${separator}${text}`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+const buildBulletListBlock = (items: string[], limit = 6, maxChars = 180): string => {
+  const normalized = items.map((item) => String(item || '').trim()).filter(Boolean);
+  if (!normalized.length) return '';
+  const visible = normalized.slice(0, limit).map((item) => `- ${truncateSingleLine(item, maxChars)}`);
+  if (normalized.length > visible.length) {
+    visible.push(`... (+${normalized.length - visible.length})`);
+  }
+  return visible.join('\n');
 };
 
 const normalizeTerminalAutoStickMode = (value: unknown): TerminalAutoStickMode => {
@@ -1094,46 +1083,6 @@ const buildApplyPatchResultNote = (resultItem: WorkflowItem | null, toolName: st
   return parts.join(' · ');
 };
 
-const buildApplyPatchLines = (
-  command: string,
-  resultNote: string,
-  patchEntries: PatchEntry[],
-  patchDiffBlocks: PatchDiffBlock[],
-  errorText: string
-): PatchLine[] => {
-  const rows: PatchLine[] = [];
-  let cursor = 0;
-  const push = (kind: PatchLine['kind'], text: string) => {
-    if (!text.trim()) return;
-    rows.push({ key: `patch-${cursor}`, kind, text });
-    cursor += 1;
-  };
-
-  if (command) push('meta', `$ ${command}`);
-  if (resultNote) push('note', resultNote);
-  patchEntries.forEach((entry) => {
-    const kind: PatchLine['kind'] =
-      entry.kind === 'add'
-        ? 'add'
-        : entry.kind === 'delete'
-          ? 'delete'
-          : entry.kind === 'move'
-            ? 'move'
-            : 'update';
-    push(kind, `${entry.sign} ${entry.text}`);
-  });
-  patchDiffBlocks.forEach((block) => {
-    push('meta', `@@ ${block.title}`);
-    block.lines.forEach((line) => {
-      if (line.kind === 'add') push('add', line.text);
-      else if (line.kind === 'delete') push('delete', line.text);
-      else push('meta', line.text);
-    });
-  });
-  if (errorText) push('error', `error: ${errorText}`);
-  return rows;
-};
-
 const extractDurationMs = (entry: RawEntry): number | null => {
   const detailObject = parseDetailObject(entry.resultItem?.detail);
   const resultObject = extractToolResultObject(detailObject);
@@ -1199,19 +1148,296 @@ const collectEntryPathHints = (
   return Array.from(hints).slice(0, FILE_HINT_LIMIT);
 };
 
+const normalizePathLikeText = (value: unknown): string =>
+  String(value || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/');
+
+const basenameOfPathLike = (value: unknown): string => {
+  const normalized = normalizePathLikeText(value).replace(/\/+$/, '');
+  if (!normalized) return '';
+  const segments = normalized.split('/').filter(Boolean);
+  return segments.length > 0 ? segments[segments.length - 1] : normalized;
+};
+
+const isPtcTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return normalized === 'ptc' || normalized === 'programmatic_tool_call';
+};
+
+const resolveSummaryToolDisplay = (toolName: string, fallback: string): string => {
+  if (isPtcTool(toolName)) return t('chat.toolWorkflow.toolLabel.ptc');
+  if (isExecuteCommandTool(toolName)) return t('chat.toolWorkflow.toolLabel.executeCommand');
+  if (isApplyPatchTool(toolName)) return t('chat.toolWorkflow.toolLabel.applyPatch');
+  if (isReadFileTool(toolName)) return t('chat.toolWorkflow.toolLabel.readFile');
+  if (isWriteFileTool(toolName)) return t('chat.toolWorkflow.toolLabel.writeFile');
+  if (isListFilesTool(toolName)) return t('chat.toolWorkflow.toolLabel.listFiles');
+  if (isSearchContentTool(toolName)) return t('chat.toolWorkflow.toolLabel.searchContent');
+  return fallback;
+};
+
+const formatContextWindowLabel = (before: unknown, after: unknown): string => {
+  const beforeCount = toInt(before);
+  const afterCount = toInt(after);
+  if (beforeCount <= 0 && afterCount <= 0) return '';
+  return `-${beforeCount} / +${afterCount}`;
+};
+
+const collectReadRangeLabels = (source: UnknownObject | null): string[] => {
+  if (!source) return [];
+  const labels: string[] = [];
+  const pushRange = (startValue: unknown, endValue: unknown) => {
+    const start = toOptionalInt(startValue);
+    const end = toOptionalInt(endValue);
+    if (start === null) return;
+    labels.push(start === end || end === null ? `${start}` : `${start}-${end}`);
+  };
+
+  if (Array.isArray(source.line_ranges)) {
+    source.line_ranges.forEach((item) => {
+      if (!Array.isArray(item) || item.length < 2) return;
+      pushRange(item[0], item[1]);
+    });
+  }
+  if (labels.length === 0) {
+    pushRange(source.start_line, source.end_line);
+  }
+  return labels;
+};
+
+const collectReadTargetLabels = (args: UnknownObject | null): string[] => {
+  if (!args) return [];
+  const specs = Array.isArray(args.files) && args.files.length > 0 ? args.files : [args];
+  return specs
+    .map((item) => asObject(item))
+    .filter((item): item is UnknownObject => Boolean(item))
+    .map((item) => {
+      const path = pickString(item.path, item.file_path, item.file);
+      const ranges = collectReadRangeLabels(item);
+      if (!path) return '';
+      return ranges.length > 0 ? `${path} (${ranges.join(', ')})` : path;
+    })
+    .filter(Boolean);
+};
+
+const splitPathLikeSegments = (value: unknown): string[] =>
+  normalizePathLikeText(value)
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .split('/')
+    .filter(Boolean);
+
+const isLikelyFilePath = (value: unknown): boolean => {
+  const basename = basenameOfPathLike(value);
+  return /\.[a-z0-9_-]{1,16}$/i.test(basename);
+};
+
+const shortenPathLike = (value: unknown, segmentCount = 2): string => {
+  const normalized = normalizePathLikeText(value);
+  if (!normalized) return '';
+  const segments = splitPathLikeSegments(normalized);
+  if (segments.length === 0) return normalized;
+  if (segments.length <= segmentCount) return segments.join('/');
+  return `.../${segments.slice(-segmentCount).join('/')}`;
+};
+
+const isSamePathTail = (left: unknown, right: unknown): boolean => {
+  const leftText = normalizePathLikeText(left).replace(/\/+$/, '');
+  const rightText = normalizePathLikeText(right).replace(/\/+$/, '');
+  if (!leftText || !rightText) return false;
+  if (leftText === rightText) return true;
+  return leftText.endsWith(`/${rightText}`) || rightText.endsWith(`/${leftText}`);
+};
+
+const isParentPathLike = (parent: unknown, child: unknown): boolean => {
+  const parentText = normalizePathLikeText(parent).replace(/\/+$/, '');
+  const childText = normalizePathLikeText(child).replace(/\/+$/, '');
+  if (!parentText || !childText || parentText === childText) return false;
+  return childText.startsWith(`${parentText}/`);
+};
+
+type SummaryPathCandidate = {
+  raw: string;
+  normalized: string;
+  basename: string;
+  isFile: boolean;
+};
+
+// Keep workflow titles compact by collapsing basename/full-path duplicates before display.
+const buildSummaryPathLabels = (pathHints: string[]): string[] => {
+  const candidates: SummaryPathCandidate[] = [];
+  pathHints.forEach((hint) => {
+    const normalized = normalizePathLikeText(hint);
+    if (!normalized) return;
+    if (candidates.some((item) => item.normalized === normalized)) return;
+    candidates.push({
+      raw: hint,
+      normalized,
+      basename: basenameOfPathLike(normalized),
+      isFile: isLikelyFilePath(normalized)
+    });
+  });
+
+  const selected: SummaryPathCandidate[] = [];
+  candidates.forEach((candidate) => {
+    if (selected.some((item) => isSamePathTail(item.normalized, candidate.normalized))) {
+      return;
+    }
+    if (
+      !candidate.isFile &&
+      selected.some((item) => item.isFile && isParentPathLike(candidate.normalized, item.normalized))
+    ) {
+      return;
+    }
+    selected.push(candidate);
+  });
+
+  const basenameCount = new Map<string, number>();
+  selected.forEach((candidate) => {
+    if (!candidate.basename) return;
+    basenameCount.set(candidate.basename, (basenameCount.get(candidate.basename) || 0) + 1);
+  });
+
+  const labels: string[] = [];
+  selected.forEach((candidate) => {
+    const label =
+      candidate.basename && basenameCount.get(candidate.basename) === 1
+        ? candidate.basename
+        : shortenPathLike(candidate.normalized, candidate.isFile ? 2 : 2) || candidate.raw;
+    if (!label || labels.includes(label)) return;
+    labels.push(label);
+  });
+  return labels;
+};
+
+const normalizeSummaryPathLabel = (value: string): string => {
+  const normalized = normalizePathLikeText(value);
+  return normalized === '.' || normalized === './' ? '' : value;
+};
+
+const resolvePrimarySummaryPathLabel = (pathHints: string[]): string =>
+  normalizeSummaryPathLabel(buildSummaryPathLabels(pathHints)[0] || '');
+
+const countReadFileTargets = (entry: RawEntry): number => {
+  const args = extractCallArgs(entry.callItem);
+  if (Array.isArray(args?.files) && args.files.length > 0) {
+    return args.files.length;
+  }
+  const { dataObject } = extractResultPayload(entry.resultItem);
+  const meta = asObject(dataObject?.meta);
+  if (Array.isArray(meta?.files) && meta.files.length > 0) {
+    return meta.files.length;
+  }
+  return pickString(args?.path, args?.file, args?.file_path).trim() ? 1 : 0;
+};
+
+const formatCountSuffix = (count: number | null | undefined): string => {
+  if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) return '';
+  return ` (${count})`;
+};
+
+const resolveListFilesSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
+  const { dataObject } = extractResultPayload(entry.resultItem);
+  const itemCount = Array.isArray(dataObject?.items) ? dataObject.items.length : null;
+  const pathLabel = resolvePrimarySummaryPathLabel(pathHints);
+  return truncateSingleLine(`${toolDisplay}${pathLabel ? ` ${pathLabel}` : ''}${formatCountSuffix(itemCount)}`);
+};
+
+const resolveSearchContentSummaryTitle = (
+  entry: RawEntry,
+  toolDisplay: string,
+  pathHints: string[]
+): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { dataObject } = extractResultPayload(entry.resultItem);
+  const pathLabel = resolvePrimarySummaryPathLabel(pathHints);
+  const queryLabel = truncateSingleLine(pickString(args?.query), 28);
+  const hitCount = Array.isArray(dataObject?.hits)
+    ? dataObject.hits.length
+    : Array.isArray(dataObject?.matches)
+      ? dataObject.matches.length
+      : null;
+
+  const quotedQuery = queryLabel ? `"${queryLabel}"` : '';
+  const core = quotedQuery
+    ? `${toolDisplay} ${quotedQuery}${pathLabel ? ` · ${pathLabel}` : ''}`
+    : `${toolDisplay}${pathLabel ? ` ${pathLabel}` : ''}`;
+  return truncateSingleLine(`${core}${formatCountSuffix(hitCount)}`);
+};
+
+const resolveReadFileSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
+  const pathLabel = resolvePrimarySummaryPathLabel(pathHints);
+  const targetCount = countReadFileTargets(entry);
+  const moreCount = Math.max(targetCount - (pathLabel ? 1 : 0), 0);
+  return truncateSingleLine(`${toolDisplay}${pathLabel ? ` ${pathLabel}` : ''}${moreCount > 0 ? ` +${moreCount}` : ''}`);
+};
+
+const resolveWriteFileSummaryTitle = (toolDisplay: string, pathHints: string[]): string => {
+  const pathLabel = resolvePrimarySummaryPathLabel(pathHints);
+  return truncateSingleLine(`${toolDisplay}${pathLabel ? ` ${pathLabel}` : ''}`);
+};
+
+const resolveFileToolSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
+  if (isPtcTool(entry.toolName)) {
+    return resolvePtcSummaryTitle(entry, toolDisplay, pathHints);
+  }
+  if (isWriteFileTool(entry.toolName)) {
+    return resolveWriteFileSummaryTitle(toolDisplay, pathHints);
+  }
+  if (isReadFileTool(entry.toolName)) {
+    return resolveReadFileSummaryTitle(entry, toolDisplay, pathHints);
+  }
+  if (isListFilesTool(entry.toolName)) {
+    return resolveListFilesSummaryTitle(entry, toolDisplay, pathHints);
+  }
+  if (isSearchContentTool(entry.toolName)) {
+    return resolveSearchContentSummaryTitle(entry, toolDisplay, pathHints);
+  }
+  return composeSummaryTitle(toolDisplay, pathHints);
+};
+
 const composeSummaryTitle = (base: string, pathHints: string[]): string => {
-  if (!pathHints.length) return truncateSingleLine(base);
-  const visible = pathHints.slice(0, FILE_HINT_SUMMARY_LIMIT);
-  const moreCount = Math.max(pathHints.length - visible.length, 0);
+  const labels = buildSummaryPathLabels(pathHints);
+  if (!labels.length) return truncateSingleLine(base);
+  const visible = labels.slice(0, FILE_HINT_SUMMARY_LIMIT);
+  const moreCount = Math.max(labels.length - visible.length, 0);
   const suffix = moreCount > 0 ? ` +${moreCount}` : '';
   return truncateSingleLine(`${base} ${visible.join(', ')}${suffix}`);
 };
 
-const composeEntryTitle = (toolDisplay: string, command: string, pathHints: string[]): string => {
+const resolvePtcSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const candidates = [
+    args?.filename,
+    args?.path,
+    args?.file,
+    dataObject?.path,
+    resultObject?.path,
+    ...pathHints
+  ];
+  const scriptName =
+    candidates
+      .map((value) => basenameOfPathLike(value))
+      .find((value) => value && /\.py$/i.test(value)) ||
+    candidates
+      .map((value) => basenameOfPathLike(value))
+      .find(Boolean) ||
+    '';
+  return truncateSingleLine(scriptName ? `${toolDisplay} ${scriptName}` : toolDisplay);
+};
+
+const composeEntryTitle = (
+  entry: RawEntry,
+  toolDisplay: string,
+  command: string,
+  pathHints: string[]
+): string => {
   if (command) {
     return truncateSingleLine(`${toolDisplay} ${command}`);
   }
-  return composeSummaryTitle(toolDisplay, pathHints);
+  return resolveFileToolSummaryTitle(entry, toolDisplay, pathHints);
 };
 
 const buildCompactionSummaryTitle = (entry: RawEntry): string => {
@@ -1284,6 +1510,10 @@ const buildReadFileResultBlock = (dataObject: UnknownObject | null): string => {
   const content = pickString(dataObject.content);
   if (!content) return '';
   const sections = parseReadFileSections(content);
+  const meta = asObject(dataObject.meta);
+  const metaFiles = Array.isArray(meta?.files)
+    ? (meta.files.map((item) => asObject(item)).filter(Boolean) as UnknownObject[])
+    : [];
   if (!sections.length) return buildTextPreview(content, 14, 1800, '');
 
   const fileBlocks = sections.slice(0, 3).map((section) => {
@@ -1294,7 +1524,28 @@ const buildReadFileResultBlock = (dataObject: UnknownObject | null): string => {
   if (sections.length > fileBlocks.length) {
     fileBlocks.push(`... (+${sections.length - fileBlocks.length} files)`);
   }
-  return fileBlocks.join('\n\n');
+
+  const summaryLines = metaFiles
+    .slice(0, 3)
+    .map((item) => {
+      const path = pickString(item.path);
+      const readLines = toInt(item.read_lines);
+      const totalLines = toInt(item.total_lines);
+      const binary = item.binary === true;
+      if (!path) return '';
+      if (binary) return `${path} · ${t('chat.toolWorkflow.detail.binary')}`;
+      if (readLines > 0 && totalLines > 0) return `${path} · ${readLines}/${totalLines}`;
+      if (totalLines > 0) return `${path} · ${totalLines}`;
+      return path;
+    })
+    .filter(Boolean);
+  const summaryBlock = summaryLines.length
+    ? `${buildLabeledTextBlock([
+        { label: t('chat.toolWorkflow.detail.files'), value: metaFiles.length || sections.length }
+      ])}\n${buildBulletListBlock(summaryLines, 3, 120)}`
+    : '';
+
+  return [summaryBlock, fileBlocks.join('\n\n')].filter(Boolean).join('\n\n');
 };
 
 const buildListFilesResultBlock = (dataObject: UnknownObject | null): string => {
@@ -1302,12 +1553,10 @@ const buildListFilesResultBlock = (dataObject: UnknownObject | null): string => 
   if (!items.length) return '';
   const normalized = items.map((item) => String(item || '').trim()).filter(Boolean);
   if (!normalized.length) return '';
-  const visible = normalized.slice(0, 30);
-  const rows = visible.map((item) => `- ${item}`);
-  if (normalized.length > visible.length) {
-    rows.push(`... (+${normalized.length - visible.length})`);
-  }
-  return rows.join('\n');
+  const metaBlock = buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.items'), value: normalized.length }
+  ]);
+  return [metaBlock, buildBulletListBlock(normalized, 30, 180)].filter(Boolean).join('\n\n');
 };
 
 const buildSearchResultBlock = (dataObject: UnknownObject | null): string => {
@@ -1315,12 +1564,11 @@ const buildSearchResultBlock = (dataObject: UnknownObject | null): string => {
   if (!matches.length) return '';
   const normalized = matches.map((item) => String(item || '').trim()).filter(Boolean);
   if (!normalized.length) return '';
-  const visible = normalized.slice(0, 24);
-  const rows = visible.map((item) => `- ${truncateSingleLine(item, 160)}`);
-  if (normalized.length > visible.length) {
-    rows.push(`... (+${normalized.length - visible.length})`);
-  }
-  return rows.join('\n');
+  const metaBlock = buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.hits'), value: normalized.length },
+    { label: t('chat.toolWorkflow.detail.scannedFiles'), value: toInt(dataObject?.scanned_files) }
+  ]);
+  return [metaBlock, buildBulletListBlock(normalized, 24, 160)].filter(Boolean).join('\n\n');
 };
 
 const buildWriteFileResultBlock = (
@@ -1349,11 +1597,10 @@ const buildWriteFileResultBlock = (
     resultObject?.bytes,
     resultObject?.written_bytes
   );
-
-  const rows: string[] = [];
-  if (path) rows.push(path);
-  if (bytes > 0) rows.push(`${bytes} bytes`);
-  return rows.join('\n');
+  return buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.path'), value: path },
+    { label: t('chat.toolWorkflow.detail.bytes'), value: bytes > 0 ? bytes : '' }
+  ]);
 };
 
 const resolveExecuteCommandExitCode = (
@@ -1406,10 +1653,13 @@ const buildExecuteCommandTerminalText = (
   stderrRaw: string,
   previewRaw: string,
   errorText: string,
-  status: string
+  status: string,
+  includeCommandLine = true
 ): string => {
   const lines: string[] = [];
-  lines.push(`$ ${command || '(command)'}`);
+  if (includeCommandLine) {
+    lines.push(`$ ${command || '(command)'}`);
+  }
 
   const stdout = buildTerminalStream(stdoutRaw, status, 140, 18000);
   const stderr = buildTerminalStream(stderrRaw, status, 100, 12000);
@@ -1443,7 +1693,8 @@ const buildExecuteCommandView = (
   entry: RawEntry,
   command: string,
   status: string,
-  errorText: string
+  errorText: string,
+  includeCommandLine = true
 ): CommandView => {
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
   const firstResult = Array.isArray(dataObject?.results)
@@ -1526,7 +1777,8 @@ const buildExecuteCommandView = (
       displayStderr,
       previewRaw,
       errorText,
-      status
+      status,
+      includeCommandLine
     ),
     exitCode
   };
@@ -1709,40 +1961,317 @@ const buildOutputBlock = (entry: RawEntry, command: string): string => {
   return '';
 };
 
-const buildMainBlock = (
-  command: string,
-  resultBlock: string,
-  outputBlock: string,
-  errorText: string
+const buildObjectPreview = (
+  value: unknown,
+  maxLines = 18,
+  maxChars = 2200
 ): string => {
-  const rows: string[] = [];
-  if (command) rows.push(`$ ${command}`);
-  if (resultBlock) {
-    if (rows.length > 0) rows.push('');
-    rows.push(resultBlock);
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') {
+    return buildTextPreview(value, maxLines, maxChars, '  ');
   }
-  if (outputBlock) {
-    if (rows.length > 0) rows.push('');
-    rows.push(outputBlock);
+  try {
+    const serialized = JSON.stringify(value, null, 2);
+    if (!serialized || serialized === '{}' || serialized === '[]') {
+      return '';
+    }
+    return buildTextPreview(serialized, maxLines, maxChars, '  ');
+  } catch {
+    return buildTextPreview(String(value), maxLines, maxChars, '  ');
   }
-  if (errorText) {
-    if (rows.length > 0) rows.push('');
-    rows.push(`error: ${errorText}`);
-  }
-  return rows.join('\n').trim();
 };
 
-const buildWriteFileMainBlock = (entry: RawEntry): string => {
-  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
-  const metaBlock = buildWriteFileResultBlock(resultObject, dataObject);
-  const args = extractCallArgs(entry.callItem);
-  const content = pickString(args?.content, args?.text, args?.input);
-  if (!content) return metaBlock;
+const omitObjectKeys = (value: UnknownObject | null, keys: string[]): UnknownObject | null => {
+  if (!value) return null;
+  const next = { ...value };
+  keys.forEach((key) => {
+    delete next[key];
+  });
+  return Object.keys(next).length > 0 ? next : null;
+};
 
-  const contentPreview = buildTerminalStream(content, 'completed', 80, 12000);
-  if (!contentPreview) return metaBlock;
-  if (!metaBlock) return contentPreview;
-  return `${metaBlock}\n\n${contentPreview}`;
+// Build a concise view of the model-issued tool call so users can compare it with the result.
+const buildGenericModelCallBlock = (entry: RawEntry, command: string): string => {
+  const args = extractCallArgs(entry.callItem);
+  const blocks: string[] = [];
+  if (command) blocks.push(`$ ${command}`);
+  const argsPreview = buildObjectPreview(
+    omitObjectKeys(args, command ? ['command', 'cmd', 'script', 'raw'] : [])
+  );
+  if (argsPreview) blocks.push(argsPreview);
+  return blocks.join('\n\n').trim();
+};
+
+const buildListFilesCallBlock = (entry: RawEntry): string => {
+  const args = extractCallArgs(entry.callItem);
+  return buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.path'), value: pickString(args?.path) || '.' },
+    { label: t('chat.toolWorkflow.detail.depth'), value: toInt(args?.max_depth) || '' }
+  ]);
+};
+
+const buildSearchContentCallBlock = (entry: RawEntry): string => {
+  const args = extractCallArgs(entry.callItem);
+  return buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.query'), value: pickString(args?.query) },
+    { label: t('chat.toolWorkflow.detail.path'), value: pickString(args?.path) || '.' },
+    { label: t('chat.toolWorkflow.detail.pattern'), value: pickString(args?.file_pattern) },
+    {
+      label: t('chat.toolWorkflow.detail.caseMode'),
+      value:
+        args?.case_sensitive === true
+          ? t('chat.toolWorkflow.detail.caseSensitive')
+          : args?.case_sensitive === false
+            ? t('chat.toolWorkflow.detail.caseInsensitive')
+            : ''
+    },
+    { label: t('chat.toolWorkflow.detail.depth'), value: toInt(args?.max_depth) || '' },
+    { label: t('chat.toolWorkflow.detail.maxFiles'), value: toInt(args?.max_files) || '' },
+    {
+      label: t('chat.toolWorkflow.detail.context'),
+      value: formatContextWindowLabel(args?.context_before, args?.context_after)
+    }
+  ]);
+};
+
+const buildReadFileCallBlock = (entry: RawEntry): string => {
+  const args = extractCallArgs(entry.callItem);
+  const targets = collectReadTargetLabels(args);
+  const summaryBlock = buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.files'), value: targets.length || '' }
+  ]);
+  const targetBlock = buildBulletListBlock(targets, 6, 160);
+  return [summaryBlock, targetBlock].filter(Boolean).join('\n\n');
+};
+
+const buildWriteFileCallBlock = (entry: RawEntry, command: string): string => {
+  const args = extractCallArgs(entry.callItem);
+  const blocks: string[] = [];
+  if (command) blocks.push(`$ ${command}`);
+
+  const path = pickString(
+    args?.path,
+    args?.file,
+    args?.filename,
+    args?.target,
+    args?.target_path,
+    args?.targetPath
+  );
+  const metaBlock = buildLabeledTextBlock([
+    { label: t('chat.toolWorkflow.detail.path'), value: path }
+  ]);
+  if (metaBlock) blocks.push(metaBlock);
+
+  const content = pickString(args?.content, args?.text, args?.input);
+  if (content) {
+    const contentPreview = buildTerminalStream(content, 'completed', 80, 12000);
+    if (contentPreview) blocks.push(contentPreview);
+  }
+
+  const extraArgs = omitObjectKeys(args, [
+    'command',
+    'cmd',
+    'script',
+    'raw',
+    'content',
+    'text',
+    'input',
+    'path',
+    'file',
+    'filename',
+    'target',
+    'target_path',
+    'targetPath'
+  ]);
+  const extraPreview = buildObjectPreview(extraArgs);
+  if (extraPreview) blocks.push(extraPreview);
+
+  return blocks.join('\n\n').trim();
+};
+
+const buildToolResultTextBlock = (entry: RawEntry, command: string, errorText: string): string => {
+  const blocks: string[] = [];
+  const resultBlock = buildResultBlock(entry);
+  const outputBlock = buildOutputBlock(entry, command);
+  if (resultBlock) blocks.push(resultBlock);
+  if (outputBlock) blocks.push(outputBlock);
+  if (errorText) blocks.push(`error: ${errorText}`);
+  return blocks.join('\n\n').trim();
+};
+
+const buildApplyPatchCallLines = (command: string, patchDiffBlocks: PatchDiffBlock[]): PatchLine[] => {
+  const rows: PatchLine[] = [];
+  let cursor = 0;
+  const push = (kind: PatchLine['kind'], text: string) => {
+    if (!text.trim()) return;
+    rows.push({ key: `patch-call-${cursor}`, kind, text });
+    cursor += 1;
+  };
+
+  if (command) push('meta', `$ ${command}`);
+  patchDiffBlocks.forEach((block) => {
+    push('note', block.title);
+    block.lines.forEach((line) => {
+      if (line.kind === 'add') push('add', line.text);
+      else if (line.kind === 'delete') push('delete', line.text);
+      else push('meta', line.text);
+    });
+  });
+
+  return rows;
+};
+
+const buildApplyPatchResultLines = (
+  resultNote: string,
+  patchEntries: PatchEntry[],
+  errorText: string
+): PatchLine[] => {
+  const rows: PatchLine[] = [];
+  let cursor = 0;
+  const push = (kind: PatchLine['kind'], text: string) => {
+    if (!text.trim()) return;
+    rows.push({ key: `patch-result-${cursor}`, kind, text });
+    cursor += 1;
+  };
+
+  if (resultNote) push('note', resultNote);
+  patchEntries.forEach((entry) => {
+    const kind: PatchLine['kind'] =
+      entry.kind === 'add'
+        ? 'add'
+        : entry.kind === 'delete'
+          ? 'delete'
+          : entry.kind === 'move'
+            ? 'move'
+            : 'update';
+    push(kind, `${entry.sign} ${entry.text}`);
+  });
+  if (errorText) push('error', `error: ${errorText}`);
+
+  return rows;
+};
+
+const buildEmptySection = (key: string, title: string, body: string): ToolWorkflowDetailSection => ({
+  key,
+  title,
+  kind: 'text',
+  body,
+  commandView: null,
+  patchLines: [],
+  empty: true
+});
+
+const buildModelCallSection = (
+  entry: RawEntry,
+  command: string,
+  patchDiffBlocks: PatchDiffBlock[]
+): ToolWorkflowDetailSection => {
+  const sectionKey = `${entry.key}-model-call`;
+  const sectionTitle = t('chat.toolWorkflow.modelCallSection');
+
+  if (isApplyPatchTool(entry.toolName)) {
+    const patchLines = buildApplyPatchCallLines(command, patchDiffBlocks);
+    if (patchLines.length > 0) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'patch',
+        body: '',
+        commandView: null,
+        patchLines
+      };
+    }
+    const patchInput = buildTextPreview(resolvePatchInput(entry.callItem), 18, 2200, '  ');
+    if (patchInput) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'text',
+        body: patchInput,
+        commandView: null,
+        patchLines: []
+      };
+    }
+  }
+
+  const body = isWriteFileTool(entry.toolName)
+    ? buildWriteFileCallBlock(entry, command)
+    : isReadFileTool(entry.toolName)
+      ? buildReadFileCallBlock(entry)
+      : isListFilesTool(entry.toolName)
+        ? buildListFilesCallBlock(entry)
+        : isSearchContentTool(entry.toolName)
+          ? buildSearchContentCallBlock(entry)
+          : buildGenericModelCallBlock(entry, command);
+  if (body) {
+    return {
+      key: sectionKey,
+      title: sectionTitle,
+      kind: 'text',
+      body,
+      commandView: null,
+      patchLines: []
+    };
+  }
+
+  return buildEmptySection(sectionKey, sectionTitle, t('chat.toolWorkflow.modelCallMissing'));
+};
+
+const buildToolResultSection = (
+  entry: RawEntry,
+  command: string,
+  status: string,
+  errorText: string,
+  patchEntries: PatchEntry[]
+): ToolWorkflowDetailSection => {
+  const sectionKey = `${entry.key}-tool-result`;
+  const sectionTitle = t('chat.toolWorkflow.toolResultSection');
+
+  if (isApplyPatchTool(entry.toolName)) {
+    const resultNote = buildApplyPatchResultNote(entry.resultItem, entry.toolName);
+    const patchLines = buildApplyPatchResultLines(resultNote, patchEntries, errorText);
+    if (patchLines.length > 0) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'patch',
+        body: '',
+        commandView: null,
+        patchLines
+      };
+    }
+  }
+
+  if (isExecuteCommandTool(entry.toolName)) {
+    if (entry.outputItem || entry.resultItem || errorText) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'command',
+        body: '',
+        commandView: buildExecuteCommandView(entry, command, status, errorText, false),
+        patchLines: []
+      };
+    }
+  } else {
+    const body = buildToolResultTextBlock(entry, command, errorText);
+    if (body) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'text',
+        body,
+        commandView: null,
+        patchLines: []
+      };
+    }
+  }
+
+  const placeholder =
+    status === 'loading' || status === 'pending'
+      ? t('chat.toolWorkflow.toolResultPending')
+      : t('chat.toolWorkflow.toolResultMissing');
+  return buildEmptySection(sectionKey, sectionTitle, placeholder);
 };
 
 const buildErrorText = (resultItem: WorkflowItem | null): string => {
@@ -1767,63 +2296,19 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     resolveCommandFromResult(entry.resultItem)
   );
   const command = isExecuteCommandTool(entry.toolName) ? rawCommand : '';
-  const toolDisplay = entry.toolName || t('chat.workflow.toolUnknown');
+  const toolDisplay = resolveSummaryToolDisplay(
+    entry.toolName,
+    entry.toolName || t('chat.workflow.toolUnknown')
+  );
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
   const summaryTitle = isCompactionTool(entry.toolName)
     ? buildCompactionSummaryTitle(entry)
-    : composeEntryTitle(toolDisplay, command, pathHints);
+    : composeEntryTitle(entry, toolDisplay, command, pathHints);
   const status = resolveEntryStatus(entry);
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem) : '';
   const durationLabel = formatDurationLabel(extractDurationMs(entry));
-
-  if (isApplyPatchTool(entry.toolName)) {
-    const resultNote = buildApplyPatchResultNote(entry.resultItem, entry.toolName);
-    return {
-      key: entry.key,
-      summaryTitle,
-      status,
-      statusLabel: statusLabel(status),
-      durationLabel,
-      viewKind: 'patch',
-      mainBlock: '',
-      commandView: null,
-      patchLines: buildApplyPatchLines(command, resultNote, patchEntries, patchDiffBlocks, errorText)
-    };
-  }
-
-  if (isExecuteCommandTool(entry.toolName)) {
-    return {
-      key: entry.key,
-      summaryTitle,
-      status,
-      statusLabel: statusLabel(status),
-      durationLabel,
-      viewKind: 'command',
-      mainBlock: '',
-      commandView: buildExecuteCommandView(entry, command, status, errorText),
-      patchLines: []
-    };
-  }
-
-  if (isWriteFileTool(entry.toolName)) {
-    return {
-      key: entry.key,
-      summaryTitle,
-      status,
-      statusLabel: statusLabel(status),
-      durationLabel,
-      viewKind: 'text',
-      mainBlock: buildWriteFileMainBlock(entry),
-      commandView: null,
-      patchLines: []
-    };
-  }
-
-  const outputBlock = buildOutputBlock(entry, command);
-  const resultBlock = buildResultBlock(entry);
-  const mainBlock = buildMainBlock(command, resultBlock, outputBlock, errorText);
 
   return {
     key: entry.key,
@@ -1831,10 +2316,10 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     status,
     statusLabel: statusLabel(status),
     durationLabel,
-    viewKind: 'text',
-    mainBlock,
-    commandView: null,
-    patchLines: []
+    sections: [
+      buildModelCallSection(entry, command, patchDiffBlocks),
+      buildToolResultSection(entry, command, status, errorText, patchEntries)
+    ]
   };
 };
 
@@ -2316,126 +2801,4 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.tool-workflow-main {
-  margin: 0;
-  padding: 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: var(--workflow-term-bg-soft);
-  color: var(--workflow-term-text);
-  font-size: 12px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 320px;
-  overflow: auto;
-  scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
-}
-
-.tool-workflow-main::-webkit-scrollbar,
-.tool-workflow-terminal-body::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.tool-workflow-main::-webkit-scrollbar-track,
-.tool-workflow-terminal-body::-webkit-scrollbar-track {
-  background: var(--workflow-term-scroll-track);
-}
-
-.tool-workflow-main::-webkit-scrollbar-thumb,
-.tool-workflow-terminal-body::-webkit-scrollbar-thumb {
-  background: var(--workflow-term-scroll-thumb);
-  border-radius: 999px;
-}
-
-.tool-workflow-main--command {
-  white-space: normal;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.tool-workflow-terminal-head {
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-  letter-spacing: 0.2px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-.tool-workflow-terminal-body {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--workflow-term-code);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-  max-height: 260px;
-  overflow: auto;
-  padding: 0;
-  scrollbar-color: var(--workflow-term-scroll-thumb) var(--workflow-term-scroll-track);
-}
-
-.tool-workflow-terminal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
-
-.tool-workflow-terminal-exit-code {
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-.tool-workflow-main--patch {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
-    'Courier New', monospace;
-}
-
-.tool-workflow-patch-line {
-  display: block;
-  padding: 1px 4px;
-  border-radius: 5px;
-}
-
-.tool-workflow-patch-line.is-meta {
-  color: var(--workflow-term-muted);
-}
-
-.tool-workflow-patch-line.is-note {
-  color: var(--workflow-term-muted);
-  font-weight: 600;
-}
-
-.tool-workflow-patch-line.is-add {
-  color: #bbf7d0;
-  background: rgba(22, 101, 52, 0.44);
-  border-left: 2px solid rgba(74, 222, 128, 0.62);
-}
-
-.tool-workflow-patch-line.is-delete {
-  color: #fecaca;
-  background: rgba(127, 29, 29, 0.5);
-  border-left: 2px solid rgba(248, 113, 113, 0.56);
-}
-
-.tool-workflow-patch-line.is-move,
-.tool-workflow-patch-line.is-update {
-  color: #bfdbfe;
-  background: rgba(30, 64, 175, 0.36);
-}
-
-.tool-workflow-patch-line.is-error {
-  color: #fecaca;
-  background: rgba(153, 27, 27, 0.48);
-}
 </style>
