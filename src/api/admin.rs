@@ -2854,7 +2854,10 @@ fn build_system_settings_payload(config: &Config) -> Value {
         },
         "security": {
             "api_key": config.api_key(),
+            "external_auth_key": config.external_auth_key(),
             "external_embed_preset_agent_name": config.external_embed_preset_agent_name(),
+            "external_embed_jwt_secret": config.external_embed_jwt_secret(),
+            "external_embed_jwt_user_id_claim": config.external_embed_jwt_user_id_claim(),
             "allow_commands": config.security.allow_commands.clone(),
             "allow_paths": config.security.allow_paths.clone(),
             "deny_globs": config.security.deny_globs.clone(),
@@ -2964,12 +2967,36 @@ async fn admin_system_update(
                         config.security.api_key = Some(cleaned);
                     }
                 }
+                if let Some(external_auth_key) = security.external_auth_key {
+                    let cleaned = external_auth_key.trim().to_string();
+                    if cleaned.is_empty() {
+                        config.security.external_auth_key = None;
+                    } else {
+                        config.security.external_auth_key = Some(cleaned);
+                    }
+                }
                 if let Some(agent_name) = security.external_embed_preset_agent_name {
                     let cleaned = agent_name.trim().to_string();
                     if cleaned.is_empty() {
                         config.security.external_embed_preset_agent_name = None;
                     } else {
                         config.security.external_embed_preset_agent_name = Some(cleaned);
+                    }
+                }
+                if let Some(jwt_secret) = security.external_embed_jwt_secret {
+                    let cleaned = jwt_secret.trim().to_string();
+                    if cleaned.is_empty() {
+                        config.security.external_embed_jwt_secret = None;
+                    } else {
+                        config.security.external_embed_jwt_secret = Some(cleaned);
+                    }
+                }
+                if let Some(user_id_claim) = security.external_embed_jwt_user_id_claim {
+                    let cleaned = user_id_claim.trim().to_string();
+                    if cleaned.is_empty() {
+                        config.security.external_embed_jwt_user_id_claim = None;
+                    } else {
+                        config.security.external_embed_jwt_user_id_claim = Some(cleaned);
                     }
                 }
                 if let Some(allow_commands) = security.allow_commands {
@@ -6553,7 +6580,13 @@ struct SystemSecurityUpdateRequest {
     #[serde(default)]
     api_key: Option<String>,
     #[serde(default)]
+    external_auth_key: Option<String>,
+    #[serde(default)]
     external_embed_preset_agent_name: Option<String>,
+    #[serde(default)]
+    external_embed_jwt_secret: Option<String>,
+    #[serde(default)]
+    external_embed_jwt_user_id_claim: Option<String>,
     #[serde(default)]
     allow_commands: Option<Vec<String>>,
     #[serde(default)]

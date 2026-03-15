@@ -24,7 +24,7 @@
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
-- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；并可通过 `security.external_embed_preset_agent_name` 限定外链默认智能体。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>` 对应的 JWT 直登优先使用 `security.external_embed_jwt_secret`，留空时自动回退到 `security.external_auth_key`，再回退到 `security.api_key`；并可通过 `security.external_embed_preset_agent_name` 限定外链默认智能体。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
@@ -774,8 +774,11 @@
   - `server.max_active_sessions`：全局最大并发会话数
   - `server.stream_chunk_size`：流式输出分片大小（字节）
   - `server.chat_stream_channel`：聊天流式通道默认值（`ws`/`sse`）
-  - `security.api_key`：API Key（未配置时为 null）
-  - `security.external_embed_preset_agent_name`：外链嵌入预制智能体名称（为空表示未配置）
+- `security.api_key`：API Key（未配置时为 null）
+- `security.external_auth_key`：外部系统嵌入登录密钥（为空时自动回退到 `security.api_key`）
+- `security.external_embed_preset_agent_name`：外链嵌入预制智能体名称（为空表示未配置）
+- `security.external_embed_jwt_secret`：外链 JWT 直登密钥（为空时自动回退到 `security.external_auth_key` / `security.api_key`）
+- `security.external_embed_jwt_user_id_claim`：外链 JWT 中映射 wunder 用户 ID 的 claim 名称（默认 `sub`）
   - `security.allow_commands`：允许执行命令前缀列表
   - `security.allow_paths`：允许访问的额外目录列表
   - `security.deny_globs`：拒绝访问的路径通配规则列表

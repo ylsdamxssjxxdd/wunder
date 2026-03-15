@@ -223,6 +223,42 @@ impl PostgresStorage {
         }
     }
 
+    fn read_compat_bool(row: &tokio_postgres::Row, index: usize) -> bool {
+        if let Ok(value) = row.try_get::<_, bool>(index) {
+            return value;
+        }
+        if let Ok(value) = row.try_get::<_, Option<bool>>(index) {
+            return value.unwrap_or(false);
+        }
+        if let Ok(value) = row.try_get::<_, i16>(index) {
+            return value != 0;
+        }
+        if let Ok(value) = row.try_get::<_, Option<i16>>(index) {
+            return value.unwrap_or(0) != 0;
+        }
+        if let Ok(value) = row.try_get::<_, i32>(index) {
+            return value != 0;
+        }
+        if let Ok(value) = row.try_get::<_, Option<i32>>(index) {
+            return value.unwrap_or(0) != 0;
+        }
+        if let Ok(value) = row.try_get::<_, i64>(index) {
+            return value != 0;
+        }
+        if let Ok(value) = row.try_get::<_, Option<i64>>(index) {
+            return value.unwrap_or(0) != 0;
+        }
+        if let Ok(value) = row.try_get::<_, String>(index) {
+            let lowered = value.trim().to_ascii_lowercase();
+            return matches!(lowered.as_str(), "1" | "t" | "true" | "yes" | "y" | "on");
+        }
+        if let Ok(value) = row.try_get::<_, Option<String>>(index) {
+            let lowered = value.unwrap_or_default().trim().to_ascii_lowercase();
+            return matches!(lowered.as_str(), "1" | "t" | "true" | "yes" | "y" | "on");
+        }
+        false
+    }
+
     fn parse_string_list(value: Option<String>) -> Vec<String> {
         let Some(raw) = value else {
             return Vec::new();
@@ -1025,7 +1061,11 @@ impl PostgresStorage {
             "ALTER TABLE memory_fragments ADD COLUMN IF NOT EXISTS vector_ref TEXT",
         )?;
 
-        if columns.get("pinned").map(String::as_str).is_some_and(|ty| ty != "boolean") {
+        if columns
+            .get("pinned")
+            .map(String::as_str)
+            .is_some_and(|ty| ty != "boolean")
+        {
             conn.execute(
                 "ALTER TABLE memory_fragments ALTER COLUMN pinned TYPE BOOLEAN USING CASE WHEN pinned::text IN ('1','t','true','TRUE') THEN TRUE ELSE FALSE END",
                 &[],
@@ -3665,8 +3705,8 @@ impl StorageBackend for PostgresStorage {
             confidence: row.get::<_, Option<f64>>(14).unwrap_or(0.0),
             tier: row.get(15),
             status: row.get(16),
-            pinned: row.get::<_, i32>(17) != 0,
-            confirmed_by_user: row.get::<_, i32>(18) != 0,
+            pinned: Self::read_compat_bool(&row, 17),
+            confirmed_by_user: Self::read_compat_bool(&row, 18),
             access_count: row.get::<_, Option<i64>>(19).unwrap_or(0),
             hit_count: row.get::<_, Option<i64>>(20).unwrap_or(0),
             last_accessed_at: row.get::<_, Option<f64>>(21).unwrap_or(0.0),
@@ -3709,8 +3749,8 @@ impl StorageBackend for PostgresStorage {
                 confidence: row.get::<_, Option<f64>>(14).unwrap_or(0.0),
                 tier: row.get(15),
                 status: row.get(16),
-                pinned: row.get::<_, i32>(17) != 0,
-                confirmed_by_user: row.get::<_, i32>(18) != 0,
+                pinned: Self::read_compat_bool(&row, 17),
+                confirmed_by_user: Self::read_compat_bool(&row, 18),
                 access_count: row.get::<_, Option<i64>>(19).unwrap_or(0),
                 hit_count: row.get::<_, Option<i64>>(20).unwrap_or(0),
                 last_accessed_at: row.get::<_, Option<f64>>(21).unwrap_or(0.0),

@@ -13,8 +13,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     let activity_visible = app.activity_highlighted();
     let layout = layout::build_layout(frame.area(), popup_view.lines.len(), activity_visible);
 
-    let transcript_viewport = layout::inner_rect(layout.transcript);
-    transcript::draw(frame, layout.transcript, transcript_viewport, app, is_zh);
+    transcript::draw(frame, layout.transcript, layout.transcript, app, is_zh);
 
     if let Some(popup_area) = layout.popup {
         popup::draw(
@@ -31,8 +30,7 @@ pub fn draw(frame: &mut Frame, app: &mut TuiApp) {
     }
 
     app.set_mouse_regions(layout.transcript, layout.input);
-    let inner = layout::inner_rect(layout.input);
-    composer::draw_input(frame, layout.input, inner, app, is_zh);
+    composer::draw_input(frame, layout.input, app, is_zh);
 
     if let Some((rows, selected)) = app.resume_picker_rows() {
         modals::draw_resume_modal(frame, frame.area(), rows, selected, is_zh);

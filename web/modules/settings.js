@@ -30,7 +30,10 @@ const serverSettings = {
 };
 const securitySettings = {
   apiKey: "",
+  externalAuthKey: "",
   externalEmbedPresetAgentName: "",
+  externalEmbedJwtSecret: "",
+  externalEmbedJwtUserIdClaim: "sub",
   allowCommands: [],
   allowPaths: [],
   denyGlobs: [],
@@ -245,8 +248,17 @@ const applyServerSettings = (options = {}) => {
 };
 
 const applySecuritySettings = (options = {}) => {
+  if (elements.externalAuthKey) {
+    elements.externalAuthKey.value = options.externalAuthKey || "";
+  }
   if (elements.settingsExternalEmbedPresetAgent) {
     elements.settingsExternalEmbedPresetAgent.value = options.externalEmbedPresetAgentName || "";
+  }
+  if (elements.externalEmbedJwtSecret) {
+    elements.externalEmbedJwtSecret.value = options.externalEmbedJwtSecret || "";
+  }
+  if (elements.externalEmbedJwtUserIdClaim) {
+    elements.externalEmbedJwtUserIdClaim.value = options.externalEmbedJwtUserIdClaim || "sub";
   }
   if (elements.settingsAllowCommands) {
     elements.settingsAllowCommands.value = renderTextList(options.allowCommands);
@@ -430,10 +442,21 @@ const applySystemSettings = (payload = {}) => {
 
   const security = payload.security || {};
   securitySettings.apiKey = typeof security.api_key === "string" ? security.api_key.trim() : "";
+  securitySettings.externalAuthKey =
+    typeof security.external_auth_key === "string" ? security.external_auth_key.trim() : "";
   securitySettings.externalEmbedPresetAgentName =
     typeof security.external_embed_preset_agent_name === "string"
       ? security.external_embed_preset_agent_name.trim()
       : "";
+  securitySettings.externalEmbedJwtSecret =
+    typeof security.external_embed_jwt_secret === "string"
+      ? security.external_embed_jwt_secret.trim()
+      : "";
+  securitySettings.externalEmbedJwtUserIdClaim =
+    typeof security.external_embed_jwt_user_id_claim === "string" &&
+    security.external_embed_jwt_user_id_claim.trim()
+      ? security.external_embed_jwt_user_id_claim.trim()
+      : "sub";
   securitySettings.allowCommands = Array.isArray(security.allow_commands)
     ? security.allow_commands
     : [];
@@ -597,7 +620,10 @@ const buildSystemUpdatePayload = () => {
 
   if (
     elements.apiKey ||
+    elements.externalAuthKey ||
     elements.settingsExternalEmbedPresetAgent ||
+    elements.externalEmbedJwtSecret ||
+    elements.externalEmbedJwtUserIdClaim ||
     elements.settingsAllowCommands ||
     elements.settingsAllowPaths ||
     elements.settingsDenyGlobs
@@ -606,9 +632,22 @@ const buildSystemUpdatePayload = () => {
     if (elements.apiKey) {
       security.api_key = String(elements.apiKey.value || "").trim();
     }
+    if (elements.externalAuthKey) {
+      security.external_auth_key = String(elements.externalAuthKey.value || "").trim();
+    }
     if (elements.settingsExternalEmbedPresetAgent) {
       security.external_embed_preset_agent_name = String(
         elements.settingsExternalEmbedPresetAgent.value || ""
+      ).trim();
+    }
+    if (elements.externalEmbedJwtSecret) {
+      security.external_embed_jwt_secret = String(
+        elements.externalEmbedJwtSecret.value || ""
+      ).trim();
+    }
+    if (elements.externalEmbedJwtUserIdClaim) {
+      security.external_embed_jwt_user_id_claim = String(
+        elements.externalEmbedJwtUserIdClaim.value || ""
       ).trim();
     }
     if (elements.settingsAllowCommands) {

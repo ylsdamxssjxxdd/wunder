@@ -18,6 +18,10 @@ pub(crate) fn success_text() -> Style {
     Style::default().fg(Color::Green)
 }
 
+pub(crate) fn link_text() -> Style {
+    accent_text().add_modifier(Modifier::UNDERLINED)
+}
+
 pub(crate) fn brand_text() -> Style {
     Style::default().fg(Color::Magenta)
 }

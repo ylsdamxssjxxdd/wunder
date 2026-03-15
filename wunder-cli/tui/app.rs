@@ -8,7 +8,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{json, Value};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -41,6 +41,7 @@ const MAX_HISTORY_ENTRY_CHARS: usize = 4000;
 const MAX_PERSISTED_POPUP_RECENTS: usize = 120;
 const POPUP_VISIBLE_LIMIT: usize = 7;
 const POPUP_MAX_CANDIDATES: usize = 120;
+const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
 const PASTE_BURST_CHAR_GAP: Duration = Duration::from_millis(28);
 const PASTE_BURST_ENTER_GAP: Duration = Duration::from_millis(36);
 const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 16;
@@ -201,6 +202,8 @@ pub struct TuiApp {
     pending_attachments: Vec<crate::attachments::PreparedAttachment>,
     pending_attachment_paths: VecDeque<String>,
     pending_paste: VecDeque<String>,
+    pending_large_pastes: Vec<(String, String)>,
+    large_paste_counters: HashMap<usize, usize>,
     workspace_files: Vec<IndexedFile>,
     active_assistant: Option<usize>,
     active_reasoning: Option<usize>,
@@ -303,6 +306,8 @@ impl TuiApp {
             pending_attachments: Vec::new(),
             pending_attachment_paths: VecDeque::new(),
             pending_paste: VecDeque::new(),
+            pending_large_pastes: Vec::new(),
+            large_paste_counters: HashMap::new(),
             workspace_files: Vec::new(),
             active_assistant: None,
             active_reasoning: None,
@@ -2010,7 +2015,8 @@ impl TuiApp {
             .map(|session| session.session_id.clone())
     }
 
-    pub fn input_view(&self, viewport_width: u16, viewport_height: u16) -> (String, u16, u16) {
+    pub fn input_view(&mut self, viewport_width: u16, viewport_height: u16) -> (String, u16, u16) {
+        self.sync_large_paste_placeholders();
         let width = viewport_width.max(1) as usize;
         let height = viewport_height.max(1) as usize;
         let lines = build_wrapped_input_lines(&self.input, width);
@@ -2661,8 +2667,36 @@ impl TuiApp {
 
     fn flush_pending_paste(&mut self) {
         while let Some(chunk) = self.pending_paste.pop_front() {
-            self.insert_text_at_cursor(chunk.as_str());
+            self.apply_pasted_text(chunk.as_str());
         }
+    }
+
+    fn apply_pasted_text(&mut self, pasted: &str) {
+        let char_count = pasted.chars().count();
+        if char_count > LARGE_PASTE_CHAR_THRESHOLD {
+            let placeholder =
+                next_large_paste_placeholder(&mut self.large_paste_counters, char_count);
+            self.insert_text_at_cursor(placeholder.as_str());
+            self.pending_large_pastes
+                .push((placeholder, pasted.to_string()));
+            return;
+        }
+        self.insert_text_at_cursor(pasted);
+    }
+
+    fn sync_large_paste_placeholders(&mut self) {
+        if self.pending_large_pastes.is_empty() {
+            return;
+        }
+        self.pending_large_pastes
+            .retain(|(placeholder, _)| self.input.contains(placeholder));
+    }
+
+    pub fn large_paste_placeholders(&self) -> Vec<String> {
+        self.pending_large_pastes
+            .iter()
+            .map(|(placeholder, _)| placeholder.clone())
+            .collect()
     }
 
     async fn drain_pending_attachment_paths(&mut self) {
@@ -2714,16 +2748,16 @@ impl TuiApp {
     }
 
     pub fn on_paste(&mut self, text: String) {
-        if text.is_empty() {
+        let Some(normalized) = normalize_clipboard_text(text) else {
             return;
-        }
+        };
         if let Some(paths) =
-            detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), &text)
+            detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), normalized.as_str())
         {
             self.pending_attachment_paths.extend(paths);
             return;
         }
-        self.pending_paste.push_back(text);
+        self.pending_paste.push_back(normalized);
     }
 
     fn paste_from_system_clipboard(&mut self) {
@@ -2994,6 +3028,7 @@ impl TuiApp {
             KeyCode::Esc => {
                 self.input.clear();
                 self.input_cursor = 0;
+                self.pending_large_pastes.clear();
                 self.history_cursor = None;
             }
             KeyCode::Enter => {
@@ -3341,6 +3376,7 @@ impl TuiApp {
         };
         self.input = text;
         self.input_cursor = self.input.len();
+        self.pending_large_pastes.clear();
         self.history_cursor = None;
         self.focus_area = FocusArea::Input;
         self.push_log(
@@ -3430,6 +3466,7 @@ impl TuiApp {
         }
         self.input = cleaned.to_string();
         self.input_cursor = self.input.len();
+        self.pending_large_pastes.clear();
         self.history_cursor = None;
         self.focus_area = FocusArea::Input;
         if self.is_zh_language() {
@@ -3503,6 +3540,7 @@ impl TuiApp {
         self.runtime.save_session(&self.session_id).ok();
         self.input.clear();
         self.input_cursor = 0;
+        self.pending_large_pastes.clear();
         self.history_cursor = None;
         self.config_wizard = None;
         self.last_usage = None;
@@ -3654,6 +3692,8 @@ impl TuiApp {
     }
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
+        let line = expand_large_paste_placeholders(line.as_str(), &self.pending_large_pastes);
+        self.pending_large_pastes.clear();
         if self.config_wizard.is_some() {
             return self.handle_config_wizard_input(line.trim()).await;
         }
@@ -3819,6 +3859,7 @@ impl TuiApp {
             };
             self.input = format!("/{suggestion} ");
             self.input_cursor = self.input.len();
+            self.pending_large_pastes.clear();
             return;
         }
 
@@ -3877,6 +3918,7 @@ impl TuiApp {
         if let Some(cursor) = self.history_cursor {
             self.input = self.history.get(cursor).cloned().unwrap_or_default();
             self.input_cursor = self.input.len();
+            self.pending_large_pastes.clear();
         }
     }
 
@@ -3889,11 +3931,13 @@ impl TuiApp {
             self.history_cursor = None;
             self.input = self.history_draft.clone();
             self.input_cursor = self.input.len();
+            self.pending_large_pastes.clear();
             return;
         }
         self.history_cursor = Some(next);
         self.input = self.history.get(next).cloned().unwrap_or_default();
         self.input_cursor = self.input.len();
+        self.pending_large_pastes.clear();
     }
 
     fn push_history(&mut self, value: &str) {
@@ -5264,6 +5308,31 @@ fn approval_option_labels(request: &ApprovalRequest, is_zh: bool) -> [String; 3]
             }
         }
     }
+}
+
+fn next_large_paste_placeholder(counters: &mut HashMap<usize, usize>, char_count: usize) -> String {
+    let base = format!("[Pasted Content {char_count} chars]");
+    let next_suffix = counters.entry(char_count).or_insert(0);
+    *next_suffix += 1;
+    if *next_suffix == 1 {
+        base
+    } else {
+        format!("{base} #{next_suffix}")
+    }
+}
+
+fn expand_large_paste_placeholders(text: &str, pending: &[(String, String)]) -> String {
+    if pending.is_empty() || text.is_empty() {
+        return text.to_string();
+    }
+
+    let mut expanded = text.to_string();
+    for (placeholder, actual) in pending {
+        if expanded.contains(placeholder) {
+            expanded = expanded.replacen(placeholder, actual, 1);
+        }
+    }
+    expanded
 }
 
 #[cfg(test)]

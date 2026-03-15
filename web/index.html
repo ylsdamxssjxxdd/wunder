@@ -3270,6 +3270,51 @@
                       </button>
                     </div>
                   </div>
+                  <div class="form-row form-row-span">
+                    <label for="externalAuthKey" data-i18n="settings.label.externalAuthKey">
+                      External auth key
+                    </label>
+                    <input
+                      id="externalAuthKey"
+                      type="password"
+                      placeholder="可选"
+                      data-i18n-placeholder="settings.placeholder.optional"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.externalAuthKey">
+                      Used by /wunder/auth/external/* and as the fallback JWT launch secret.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label for="externalEmbedJwtSecret" data-i18n="settings.label.externalEmbedJwtSecret">
+                      External embed JWT secret
+                    </label>
+                    <input
+                      id="externalEmbedJwtSecret"
+                      type="password"
+                      placeholder="可选"
+                      data-i18n-placeholder="settings.placeholder.optional"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.externalEmbedJwtSecret">
+                      Leave empty to fall back to external auth key, then API Key.
+                    </div>
+                  </div>
+                  <div class="form-row form-row-span">
+                    <label
+                      for="externalEmbedJwtUserIdClaim"
+                      data-i18n="settings.label.externalEmbedJwtUserIdClaim"
+                    >
+                      External embed JWT user claim
+                    </label>
+                    <input
+                      id="externalEmbedJwtUserIdClaim"
+                      type="text"
+                      placeholder="sub"
+                      data-i18n-placeholder="settings.placeholder.externalEmbedJwtUserIdClaim"
+                    />
+                    <div class="settings-field-hint" data-i18n="settings.hint.externalEmbedJwtUserIdClaim">
+                      Claim name used to map the wunder user id from the team JWT.
+                    </div>
+                  </div>
                 </div>
                 <div class="settings-hint" data-i18n="settings.hint.advanced">
                   API base 固定为当前访问地址，API Key 默认从服务端配置加载。

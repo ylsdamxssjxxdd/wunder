@@ -1542,8 +1542,7 @@ fn build_title(summary: &str, content: &str) -> String {
     let mut title = String::new();
     for ch in seed.trim().chars() {
         title.push(ch);
-        if matches!(ch, '。' | '.' | '！' | '!' | '？' | '?' | '\n') || title.chars().count() >= 40
-        {
+        if SENTENCE_STOP_CHARS.contains(&ch) || title.chars().count() >= 40 {
             break;
         }
     }
@@ -1558,7 +1557,7 @@ fn truncate_chars(text: &str, limit: usize) -> String {
     let mut output = String::new();
     for (index, ch) in trimmed.chars().enumerate() {
         if index >= limit {
-            output.push('…');
+            output.push(ELLIPSIS);
             break;
         }
         output.push(ch);

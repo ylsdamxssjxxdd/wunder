@@ -1175,7 +1175,8 @@ impl Config {
                 return env::var("WUNDER_EXTERNAL_EMBED_JWT_SECRET")
                     .ok()
                     .map(|value| value.trim().to_string())
-                    .filter(|value| !value.is_empty());
+                    .filter(|value| !value.is_empty())
+                    .or_else(|| self.external_auth_key());
             }
             return Some(value.to_string());
         }
@@ -1183,6 +1184,7 @@ impl Config {
             .ok()
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
+            .or_else(|| self.external_auth_key())
     }
 
     pub fn external_embed_jwt_user_id_claim(&self) -> String {
@@ -1716,6 +1718,28 @@ sandbox:
 
         config.security.external_auth_key = Some("external-key".to_string());
         assert_eq!(config.external_auth_key(), Some("external-key".to_string()));
+    }
+
+    #[test]
+    fn test_external_embed_jwt_secret_falls_back_to_external_keys() {
+        let mut config = Config::default();
+        config.security.api_key = Some("api-key".to_string());
+        assert_eq!(
+            config.external_embed_jwt_secret(),
+            Some("api-key".to_string())
+        );
+
+        config.security.external_auth_key = Some("external-key".to_string());
+        assert_eq!(
+            config.external_embed_jwt_secret(),
+            Some("external-key".to_string())
+        );
+
+        config.security.external_embed_jwt_secret = Some("jwt-secret".to_string());
+        assert_eq!(
+            config.external_embed_jwt_secret(),
+            Some("jwt-secret".to_string())
+        );
     }
 
     #[test]

@@ -68,7 +68,8 @@ pub(crate) fn draw_input(
             theme::secondary_text(),
         ))])
     } else {
-        Text::from(input_text)
+        let large_paste_placeholders = app.large_paste_placeholders();
+        render_input_text(input_text.as_str(), large_paste_placeholders.as_slice())
     };
 
     let input = Paragraph::new(body)
@@ -116,6 +117,60 @@ fn build_footer_line(app: &TuiApp, width: u16) -> Option<Line<'static>> {
         )));
     }
     Some(Line::from(spans))
+}
+
+fn render_input_text(text: &str, large_paste_placeholders: &[String]) -> Text<'static> {
+    let lines = text
+        .split('\n')
+        .map(|line| render_input_line(line, large_paste_placeholders))
+        .collect::<Vec<_>>();
+    Text::from(lines)
+}
+
+fn render_input_line(line: &str, large_paste_placeholders: &[String]) -> Line<'static> {
+    if line.is_empty() || large_paste_placeholders.is_empty() {
+        return Line::from(line.to_string());
+    }
+
+    let mut spans = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < line.len() {
+        let mut next_match: Option<(usize, &str)> = None;
+        for placeholder in large_paste_placeholders {
+            let Some(offset) = line[cursor..].find(placeholder.as_str()) else {
+                continue;
+            };
+            let match_start = cursor + offset;
+            let should_replace = match next_match {
+                None => true,
+                Some((current_start, current_placeholder)) => {
+                    match_start < current_start
+                        || (match_start == current_start
+                            && placeholder.len() > current_placeholder.len())
+                }
+            };
+            if should_replace {
+                next_match = Some((match_start, placeholder.as_str()));
+            }
+        }
+
+        let Some((match_start, placeholder)) = next_match else {
+            spans.push(Span::raw(line[cursor..].to_string()));
+            break;
+        };
+
+        if match_start > cursor {
+            spans.push(Span::raw(line[cursor..match_start].to_string()));
+        }
+        spans.push(Span::styled(placeholder.to_string(), theme::link_text()));
+        cursor = match_start + placeholder.len();
+    }
+
+    if spans.is_empty() {
+        Line::from(line.to_string())
+    } else {
+        Line::from(spans)
+    }
 }
 
 fn build_footer_line_with_right(

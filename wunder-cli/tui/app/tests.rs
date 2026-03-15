@@ -1,4 +1,5 @@
 use super::*;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -154,6 +155,34 @@ fn paste_shortcut_rejects_plain_or_alt_modified_v() {
         KeyCode::Char('v'),
         KeyModifiers::ALT | KeyModifiers::CONTROL
     )));
+}
+
+#[test]
+fn large_paste_placeholder_matches_reference_format() {
+    let mut counters = HashMap::new();
+    assert_eq!(
+        next_large_paste_placeholder(&mut counters, 1005),
+        "[Pasted Content 1005 chars]"
+    );
+    assert_eq!(
+        next_large_paste_placeholder(&mut counters, 1005),
+        "[Pasted Content 1005 chars] #2"
+    );
+    assert_eq!(
+        next_large_paste_placeholder(&mut counters, 1003),
+        "[Pasted Content 1003 chars]"
+    );
+}
+
+#[test]
+fn expand_large_paste_placeholders_restores_original_text() {
+    let large = format!("{}\n{}", "alpha".repeat(220), "beta".repeat(220));
+    let pending = vec![("[Pasted Content 1981 chars]".to_string(), large.clone())];
+    let input = "before [Pasted Content 1981 chars] after";
+    assert_eq!(
+        expand_large_paste_placeholders(input, pending.as_slice()),
+        format!("before {large} after")
+    );
 }
 
 #[test]
