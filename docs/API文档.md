@@ -185,6 +185,55 @@
 - A2A 服务工具命名为 `a2a@service`，服务由管理员配置并启用。
 - 内置提供 `a2a观察`/`a2a等待`，用于观察任务状态与等待结果。
 
+### 4.1.2A 智能体应用与模型选择（`/wunder/agents`）
+
+#### `GET /wunder/agents/models`
+
+- 方法：`GET`
+- 入参（Query，可选）：`user_id`
+- 返回（JSON）：
+  - `data.items`：可选模型配置名列表（仅 `model_type=llm`）
+  - `data.default_model_name`：当前默认模型配置名（可能为 `null`）
+- 说明：
+  - 返回的模型名为 **模型配置键**，不是上游 provider 的原始模型字符串。
+  - 用户侧“智能体设置/新建智能体/工蜂卡导入导出”应使用该列表作为可选项。
+
+#### `GET /wunder/agents`
+
+- 方法：`GET`
+- 入参（Query，可选）：`user_id`、`hive_id`
+- 返回（JSON）：`data.items[]`（智能体列表）
+- 与模型选择相关字段：
+  - `configured_model_name`：该智能体显式配置的模型；为空表示跟随默认模型
+  - `model_name`：当前生效模型（优先取 `configured_model_name`，否则回退到默认模型）
+
+#### `POST /wunder/agents`
+
+- 方法：`POST`
+- 入参（Query）：`user_id`
+- 入参（JSON）：
+  - `name`：智能体名称（必填）
+  - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示使用默认模型）
+  - 其余字段同现有智能体创建接口（如 `description/system_prompt/tool_names/...`）
+
+#### `PUT /wunder/agents/{agent_id}`
+
+- 方法：`PUT`
+- 入参（Query）：`user_id`
+- 入参（JSON）：
+  - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示清除显式配置并回退默认模型）
+  - 其余字段按需增量更新
+
+#### `POST /wunder/admin/preset_agents`
+
+- 方法：`POST`
+- 入参（JSON）：`items[]`
+- 预设项新增字段：
+  - `model_name`：预设智能体默认模型配置名（可选，支持 `modelName`/`model_name`）
+- 说明：
+  - 管理端预设保存后，模板用户同名智能体会同步该 `model_name`。
+  - 新注册用户或存量同步时，若该字段非空，会将该模型配置下发到用户智能体。
+
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 
 - 方法：`GET/POST`
@@ -595,11 +644,11 @@
 ### 4.1.2.30 `/wunder/cron/*`
 
 - 说明：定时任务管理（用户侧）。
-- `GET /wunder/cron/list`：列出当前用户的定时任务
+- `GET /wunder/cron/list`：列出当前用户的定时任务（可选 `agent_id`，按智能体作用域过滤）
   - 返回：`data.jobs`（包含 job_id/name/schedule/next_run_at/last_status/consecutive_failures/auto_disabled_reason 等）
 - `GET /wunder/cron/status`：查询调度器健康状态与当前用户任务概况
   - 返回：`data.scheduler`（started/enabled/running_jobs/next_run_at/last_tick_at/last_error、`poll_interval_ms`、`max_idle_sleep_ms`、`lease_ttl_ms`、`lease_heartbeat_ms`、`max_concurrent_runs`、`idle_retry_ms`、`max_busy_wait_ms`、`max_consecutive_failures` 等）+ `data.jobs_total/jobs_enabled/jobs_running`；任务项额外返回派生字段 `running/heartbeat_at/lease_expires_at` 用于前端与模型判断当前执行态。
-- `GET /wunder/cron/runs?job_id=...&limit=...`：查询任务运行记录
+- `GET /wunder/cron/runs?job_id=...&limit=...&agent_id=...`：查询任务运行记录（传入 `agent_id` 时校验任务归属）
   - 返回：`data.runs`
 - `POST /wunder/cron/add|update|remove|enable|disable|get|run|action`：新增/更新/删除/启停/查询/立即执行（`action=status` 与 `GET /wunder/cron/status` 等价）
   - 入参：与内置工具 `schedule_task` schema 一致（`action` + `job`）

@@ -57,7 +57,7 @@
           </div>
           <div class="messenger-cron-kv">
             <span>{{ t('cron.detail.nextRun') }}</span>
-            <span>{{ selectedJob.next_run_at_text || t('cron.status.noNext') }}</span>
+            <span>{{ formatDateTimeValue(selectedJob.next_run_at_text || selectedJob.next_run_at) || t('cron.status.noNext') }}</span>
           </div>
           <div class="messenger-cron-actions">
             <button class="messenger-inline-btn" type="button" @click="toggleEnable">
@@ -270,6 +270,26 @@ const toDateTimeLocalValue = (date: Date): string => {
   );
 };
 
+const formatDateTimeValue = (value: unknown): string => {
+  if (value === null || value === undefined || value === '') return '';
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return (
+    String(parsed.getFullYear()) +
+    '-' +
+    pad(parsed.getMonth() + 1) +
+    '-' +
+    pad(parsed.getDate()) +
+    ' ' +
+    pad(parsed.getHours()) +
+    ':' +
+    pad(parsed.getMinutes())
+  );
+};
+
 const resolveDefaultRunAt = () => toDateTimeLocalValue(new Date(Date.now() + 5 * 60 * 1000));
 
 const resetCreateForm = () => {
@@ -296,7 +316,7 @@ const formatSchedule = (job: Record<string, unknown>): string => {
     return [String(schedule.cron || ''), String(schedule.tz || '')].filter(Boolean).join(' ');
   }
   if (schedule.kind === 'at') {
-    return String(schedule.at || '-');
+    return formatDateTimeValue(schedule.at) || '-';
   }
   return '-';
 };
@@ -310,7 +330,7 @@ const formatRunStatus = (status: unknown): string => {
 };
 
 const formatRunTime = (run: Record<string, unknown>): string =>
-  String(run?.created_at_text || run?.created_at || '-');
+  formatDateTimeValue(run?.created_at_text || run?.created_at) || '-';
 
 const resolveIntervalMs = (): number | null => {
   const intervalValue = Number.parseInt(String(createForm.intervalValue), 10);
@@ -441,6 +461,10 @@ const createJob = async () => {
   const runAt = new Date(createForm.runAt);
   if (Number.isNaN(runAt.getTime())) {
     ElMessage.warning(t('cron.create.runAtInvalid'));
+    return;
+  }
+  if (runAt.getTime() <= Date.now()) {
+    ElMessage.warning(t('cron.create.runAtPast'));
     return;
   }
 

@@ -106,7 +106,7 @@
                       <span class="cron-job-tag">{{ job.schedule?.kind || '-' }}</span>
                     </div>
                     <div class="cron-job-next">
-                      {{ job.next_run_at_text || t('cron.status.noNext') }}
+                      {{ formatTime(job.next_run_at_text || job.next_run_at) || t('cron.status.noNext') }}
                     </div>
                   </button>
                 </div>
@@ -157,13 +157,13 @@
                     <tr>
                       <th>{{ t('cron.detail.nextRun') }}</th>
                       <td class="cron-detail-value">
-                        {{ selectedJob.next_run_at_text || t('cron.status.noNext') }}
+                        {{ formatTime(selectedJob.next_run_at_text || selectedJob.next_run_at) || t('cron.status.noNext') }}
                       </td>
                     </tr>
                     <tr>
                       <th>{{ t('cron.detail.lastRun') }}</th>
                       <td class="cron-detail-value">
-                        {{ selectedJob.last_run_at_text || t('common.none') }}
+                        {{ formatTime(selectedJob.last_run_at_text || selectedJob.last_run_at) || t('common.none') }}
                       </td>
                     </tr>
                     <tr>
@@ -403,7 +403,7 @@ const formatTime = (value) => {
   );
 };
 
-const formatRunTime = (run) => run?.created_at_text || formatTime(run?.created_at) || '-';
+const formatRunTime = (run) => formatTime(run?.created_at_text || run?.created_at) || '-';
 
 const formatDuration = (durationMs) => {
   if (durationMs === null || durationMs === undefined || Number.isNaN(Number(durationMs))) {
@@ -509,6 +509,10 @@ const createJob = async () => {
   const runAt = new Date(createForm.runAt);
   if (Number.isNaN(runAt.getTime())) {
     ElMessage.warning(t('cron.create.runAtInvalid'));
+    return;
+  }
+  if (runAt.getTime() <= Date.now()) {
+    ElMessage.warning(t('cron.create.runAtPast'));
     return;
   }
   let schedule: CronSchedulePayload = {
@@ -705,7 +709,7 @@ const formatSchedule = (job) => {
     return parts.join(' ');
   }
   if (kind === 'at') {
-    return schedule.at || '-';
+    return formatTime(schedule.at) || '-';
   }
   return '-';
 };

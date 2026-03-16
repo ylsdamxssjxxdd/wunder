@@ -2,16 +2,18 @@
   <el-dialog
     :model-value="visible"
     :title="t('workspace.preview.dialogTitle')"
-    width="720px"
-    class="workspace-dialog"
+    width="960px"
+    class="workspace-dialog messenger-image-preview-dialog"
     append-to-body
     @update:model-value="handleDialogVisibleChange"
   >
-    <div class="workspace-preview-title">
-      {{ resolvedTitle }}
+    <div class="messenger-image-preview-head">
+      <div class="workspace-preview-title">
+        {{ resolvedTitle }}
+      </div>
+      <div class="workspace-preview-meta" :title="resolvedWorkspacePath">{{ resolvedWorkspacePath }}</div>
     </div>
-    <div class="workspace-preview-meta">{{ resolvedWorkspacePath }}</div>
-    <div class="workspace-preview embed">
+    <div class="workspace-preview embed messenger-image-preview-body">
       <ZoomableImagePreview :image-url="imageUrl" :alt="resolvedTitle" :active="visible" />
     </div>
     <template #footer>
@@ -60,3 +62,28 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
   emit('close');
 };
 </script>
+
+<style scoped>
+.messenger-image-preview-head {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.messenger-image-preview-head .workspace-preview-meta {
+  margin-bottom: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messenger-image-preview-body {
+  min-height: clamp(320px, 64vh, 760px);
+  max-height: 74vh;
+}
+
+:deep(.messenger-image-preview-dialog.el-dialog) {
+  width: min(92vw, 980px);
+}
+</style>

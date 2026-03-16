@@ -38,7 +38,7 @@
         >
           <AgentPresetQuestionsField v-model="form.preset_questions" :readonly="isReadonlyMode" />
         </el-form-item>
-        <el-form-item :label="t('portal.agent.form.tools')">
+        <el-form-item :label="t('portal.agent.form.tools')" class="messenger-agent-form-item messenger-agent-form-item--tools">
           <div class="messenger-tool-picker">
             <div v-if="toolLoading" class="messenger-list-empty">{{ t('portal.agent.tools.loading') }}</div>
             <div v-else-if="toolError" class="messenger-list-empty">{{ toolError }}</div>
@@ -53,7 +53,7 @@
             >
               <div v-for="group in toolGroups" :key="group.label" class="messenger-tool-group">
                 <div class="messenger-tool-group-head">
-                  <span>{{ group.label }}</span>
+                  <span class="messenger-tool-group-title">{{ group.label }}</span>
                   <button
                     class="messenger-tool-group-toggle"
                     type="button"
@@ -82,7 +82,7 @@
           :missing-skill-names="dependencyStatus.missingSkillNames"
         />
 
-        <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item">
+        <el-form-item :label="t('portal.agent.form.base')" class="messenger-agent-form-item messenger-agent-form-item--base">
           <div class="messenger-agent-base">
             <div class="messenger-agent-base-item messenger-agent-base-item--select">
               <div class="messenger-agent-base-meta">
@@ -94,6 +94,28 @@
                 :allow-create="false"
                 :disabled="isReadonlyMode"
               />
+            </div>
+            <div class="messenger-agent-base-item messenger-agent-base-item--select">
+              <div class="messenger-agent-base-meta">
+                <span class="messenger-agent-base-label">{{ t('portal.agent.model.title') }}</span>
+                <span class="messenger-inline-hint">{{ t('portal.agent.model.hint') }}</span>
+              </div>
+              <el-select
+                v-model="form.model_name"
+                class="messenger-agent-base-select"
+                :disabled="isReadonlyMode || modelLoading"
+              >
+                <el-option
+                  :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })"
+                  value=""
+                />
+                <el-option
+                  v-for="model in modelSelectOptions"
+                  :key="model"
+                  :label="model"
+                  :value="model"
+                />
+              </el-select>
             </div>
             <div class="messenger-agent-base-item messenger-agent-base-item--select">
               <div class="messenger-agent-base-meta">
@@ -164,6 +186,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
+import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsSummary } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
@@ -249,6 +272,7 @@ const form = reactive({
   description: '',
   is_shared: false,
   system_prompt: '',
+  model_name: '',
   tool_names: [] as string[],
   preset_questions: [] as string[],
   group: createBeeroomGroupDraft(),
@@ -269,6 +293,9 @@ const toolSummary = ref<Record<string, unknown> | null>(null);
 const toolLoading = ref(false);
 const toolError = ref('');
 const currentAgent = ref<Record<string, unknown> | null>(null);
+const modelLoading = ref(false);
+const availableModelNames = ref<string[]>([]);
+const defaultModelName = ref('');
 
 const normalizeSandboxContainerId = (value: unknown): number => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -283,6 +310,17 @@ const normalizeApprovalMode = (value: unknown): string => {
   if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
   if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
   return resolveDefaultApprovalMode();
+};
+
+const resolveConfiguredModelName = (agent: Record<string, unknown>): string => {
+  const configured = String(agent.configured_model_name || '').trim();
+  if (configured) return configured;
+  const fallback = String(agent.model_name || '').trim();
+  const defaultName = String(defaultModelName.value || '').trim();
+  if (fallback && fallback !== defaultName) {
+    return fallback;
+  }
+  return '';
 };
 
 const normalizeOption = (item: unknown): ToolOption | null => {
@@ -317,6 +355,28 @@ const toolGroups = computed<ToolGroup[]>(() => {
     { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
     { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) }
   ].filter((group) => group.options.length > 0);
+});
+
+const defaultModelDisplayName = computed(() => {
+  const fallback = t('portal.agent.model.defaultName');
+  const value = String(defaultModelName.value || '').trim();
+  return value || fallback;
+});
+
+const modelSelectOptions = computed<string[]>(() => {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const item of availableModelNames.value) {
+    const cleaned = String(item || '').trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    output.push(cleaned);
+  }
+  const configured = String(form.model_name || '').trim();
+  if (configured && !seen.has(configured)) {
+    output.unshift(configured);
+  }
+  return output;
 });
 
 const dependencyStatus = computed(() =>
@@ -356,6 +416,25 @@ const loadToolSummary = async () => {
   }
 };
 
+const loadModelOptions = async () => {
+  if (modelLoading.value) return;
+  modelLoading.value = true;
+  try {
+    const result = await listAgentModels();
+    const payload = (result?.data?.data || {}) as Record<string, unknown>;
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    availableModelNames.value = items
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    defaultModelName.value = String(payload.default_model_name || '').trim();
+  } catch {
+    availableModelNames.value = [];
+    defaultModelName.value = '';
+  } finally {
+    modelLoading.value = false;
+  }
+};
+
 const loadAgent = async () => {
   if (!canView.value) return;
   try {
@@ -372,6 +451,7 @@ const loadAgent = async () => {
     form.description = String(agent.description || '');
     form.is_shared = false;
     form.system_prompt = String(agent.system_prompt || '');
+    form.model_name = resolveConfiguredModelName(currentAgent.value);
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
     form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
@@ -383,7 +463,8 @@ const loadAgent = async () => {
 };
 
 const reloadAgent = async () => {
-  await Promise.all([loadAgent(), loadToolSummary()]);
+  await Promise.all([loadToolSummary(), loadModelOptions()]);
+  await loadAgent();
 };
 
 const saveAgent = async () => {
@@ -406,6 +487,7 @@ const saveAgent = async () => {
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: String(form.system_prompt || ''),
+      model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
@@ -431,6 +513,7 @@ const exportWorkerCard = () => {
     name: String(form.name || '').trim() || normalizedAgentId.value,
     description: String(form.description || '').trim(),
     system_prompt: String(form.system_prompt || ''),
+    model_name: String(form.model_name || '').trim(),
     tool_names: dependencyPayload.tool_names,
     declared_tool_names: dependencyPayload.declared_tool_names,
     declared_skill_names: dependencyPayload.declared_skill_names,
@@ -468,7 +551,7 @@ const deleteAgent = async () => {
 watch(
   () => normalizedAgentId.value,
   async () => {
-    await loadToolSummary();
+    await Promise.all([loadToolSummary(), loadModelOptions()]);
     await loadAgent();
   },
   { immediate: true }

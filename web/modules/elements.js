@@ -384,6 +384,7 @@ export const elements = {
   presetAgentFormName: document.getElementById("presetAgentFormName"),
   presetAgentFormDescription: document.getElementById("presetAgentFormDescription"),
   presetAgentFormPrompt: document.getElementById("presetAgentFormPrompt"),
+  presetAgentFormModelName: document.getElementById("presetAgentFormModelName"),
   presetAgentPresetQuestions: document.getElementById("presetAgentPresetQuestions"),
   presetAgentPresetQuestionsEmpty: document.getElementById("presetAgentPresetQuestionsEmpty"),
   presetAgentPresetQuestionAddBtn: document.getElementById("presetAgentPresetQuestionAddBtn"),

@@ -1520,6 +1520,7 @@ fn seed_swarm_agents(
         name: "SwarmMotherSim".to_string(),
         description: "Deterministic mother agent for flow simulation".to_string(),
         system_prompt: "Follow the simulation protocol and use agent_swarm.".to_string(),
+        model_name: None,
         tool_names: vec!["agent_swarm".to_string()],
         declared_tool_names: vec!["agent_swarm".to_string()],
         declared_skill_names: Vec::new(),
@@ -1549,6 +1550,7 @@ fn seed_swarm_agents(
             system_prompt:
                 "Execute assigned task in two tool loops, then await the next task round."
                     .to_string(),
+            model_name: None,
             tool_names: worker_tools.clone(),
             declared_tool_names: worker_tools.clone(),
             declared_skill_names: Vec::new(),

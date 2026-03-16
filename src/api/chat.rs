@@ -1120,11 +1120,11 @@ pub(crate) async fn build_chat_request(
         .as_ref()
         .map(|record| normalize_agent_approval_mode(Some(record.approval_mode.as_str())));
     let resolved_approval_mode = request_approval_mode.or(agent_approval_mode);
+    let config = state.config_store.get().await;
+    let selected_model_name = resolve_chat_model_name(&config, agent_record.as_ref());
     let mut config_override_map = serde_json::Map::new();
     if let Some(mode) = tool_call_mode {
-        let config = state.config_store.get().await;
-        let selected_model = config.llm.default.trim().to_string();
-        if !selected_model.is_empty() {
+        if let Some(selected_model) = selected_model_name.as_deref() {
             config_override_map.insert(
                 "llm".to_string(),
                 json!({
@@ -1160,7 +1160,7 @@ pub(crate) async fn build_chat_request(
         debug_payload: false,
         session_id: Some(session_id),
         agent_id: record.agent_id.clone(),
-        model_name: None,
+        model_name: selected_model_name,
         language: Some(i18n::get_language()),
         config_overrides,
         agent_prompt,
@@ -2112,6 +2112,48 @@ fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> 
         }
     }
     None
+}
+
+fn resolve_chat_model_name(
+    config: &crate::config::Config,
+    agent_record: Option<&crate::storage::UserAgentRecord>,
+) -> Option<String> {
+    if let Some(name) =
+        agent_record.and_then(|record| normalize_optional_model_name(record.model_name.as_deref()))
+    {
+        if config
+            .llm
+            .models
+            .get(&name)
+            .is_some_and(crate::services::llm::is_llm_model)
+        {
+            return Some(name);
+        }
+    }
+    resolve_default_model_key(config)
+}
+
+fn resolve_default_model_key(config: &crate::config::Config) -> Option<String> {
+    let default_key = config.llm.default.trim();
+    if !default_key.is_empty() {
+        return Some(default_key.to_string());
+    }
+    for (key, cfg) in config.llm.models.iter() {
+        if !is_llm_model(cfg) {
+            continue;
+        }
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
+}
+
+fn normalize_optional_model_name(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn resolve_pagination(query: &SessionListQuery) -> (i64, i64) {

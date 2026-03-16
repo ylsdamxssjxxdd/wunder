@@ -53,8 +53,6 @@
       </div>
     </div>
 
-    <div class="workspace-path">{{ displayPath }}</div>
-
     <div
       :class="[
         'workspace-upload-progress',
@@ -191,12 +189,6 @@
         </button>
         <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleRename">
           {{ t('workspace.menu.rename') }}
-        </button>
-        <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleMove">
-          {{ t('workspace.menu.move') }}
-        </button>
-        <button class="workspace-menu-btn" :disabled="!hasSelection" @click="handleCopy">
-          {{ t('workspace.menu.copy') }}
         </button>
         <button class="workspace-menu-btn" @click="handleNewFolder">
           {{ t('workspace.menu.newFolder') }}
@@ -1707,9 +1699,8 @@ const handleWorkspaceItemClick = (event, entry) => {
 const handleWorkspaceItemDoubleClick = (entry) => {
   if (!entry || state.renamingPath) return;
   if (entry.type === 'dir') {
-    state.path = entry.path || '';
-    state.expanded = new Set();
-    loadWorkspace({ resetExpanded: true, resetSearch: true });
+    // Folder double click only toggles tree expansion to avoid accidental navigation.
+    void toggleWorkspaceDirectory(entry);
     return;
   }
   if (isWorkspaceTextEditable(entry)) {
@@ -1752,22 +1743,6 @@ const handleRename = () => {
   closeContextMenu();
   if (!singleSelectedEntry.value) return;
   startWorkspaceRename(singleSelectedEntry.value);
-};
-
-const handleMove = async () => {
-  closeContextMenu();
-  if (!hasSelection.value) return;
-  if (selectedCount.value > 1) {
-    await moveWorkspaceSelectionToDirectory();
-    return;
-  }
-  await moveWorkspaceEntryToDirectory(singleSelectedEntry.value);
-};
-
-const handleCopy = async () => {
-  closeContextMenu();
-  if (!hasSelection.value) return;
-  await copyWorkspaceSelectionToDirectory();
 };
 
 const handleNewFile = async () => {
@@ -1968,6 +1943,17 @@ const moveWorkspaceEntryToDirectory = async (entry) => {
   }
 };
 
+const resolveWorkspaceCreationDirectoryPath = () => {
+  const target = singleSelectedEntry.value;
+  if (target?.type === 'dir') {
+    return normalizeWorkspacePath(target.path);
+  }
+  if (target?.type === 'file') {
+    return normalizeWorkspacePath(getWorkspaceParentPath(target.path));
+  }
+  return normalizeWorkspacePath(state.path);
+};
+
 const createWorkspaceFile = async () => {
   const fileName = await promptInput(t('workspace.createFile.prompt'), {
     placeholder: t('workspace.createFile.placeholder'),
@@ -1979,12 +1965,13 @@ const createWorkspaceFile = async () => {
     ElMessage.warning(t('workspace.name.invalid'));
     return;
   }
-  const targetPath = joinWorkspacePath(state.path, trimmed);
+  const targetDir = resolveWorkspaceCreationDirectoryPath();
+  const targetPath = joinWorkspacePath(targetDir, trimmed);
   try {
     await saveWunderWorkspaceFile(
       withAgentParams({ path: targetPath, content: '', create_if_missing: true })
     );
-    await refreshWorkspacePathWithFallback(getWorkspaceParentPath(targetPath));
+    await refreshWorkspacePathWithFallback(targetDir);
     ElMessage.success(t('workspace.createFile.success', { name: trimmed }));
   } catch (error) {
     showApiError(error, t('workspace.createFile.failed'));
@@ -2001,10 +1988,11 @@ const createWorkspaceFolder = async () => {
     ElMessage.warning(t('workspace.name.invalid'));
     return;
   }
-  const targetPath = joinWorkspacePath(state.path, trimmed);
+  const targetDir = resolveWorkspaceCreationDirectoryPath();
+  const targetPath = joinWorkspacePath(targetDir, trimmed);
   try {
     await createWunderWorkspaceDir(withAgentParams({ path: targetPath }));
-    await refreshWorkspacePathWithFallback(getWorkspaceParentPath(targetPath));
+    await refreshWorkspacePathWithFallback(targetDir);
     ElMessage.success(t('workspace.createFolder.success'));
   } catch (error) {
     showApiError(error, t('workspace.createFolder.failed'));

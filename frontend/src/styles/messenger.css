@@ -3104,26 +3104,29 @@ button.messenger-chat-header-model {
   border: 1px solid #e1e5ea;
   border-radius: 12px;
   background: #f8faf9;
-  padding: 10px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 
 .messenger-tool-groups {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  align-items: start;
 }
 
 .messenger-tool-group {
   border: 1px solid #e4e9ef;
   border-radius: 10px;
   background: #ffffff;
-  padding: 8px;
+  padding: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  min-height: 0;
 }
 
 .messenger-tool-group-head {
@@ -3134,6 +3137,13 @@ button.messenger-chat-header-model {
   font-size: 12px;
   font-weight: 600;
   color: #334155;
+}
+
+.messenger-tool-group-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .messenger-tool-group-toggle {
@@ -3155,13 +3165,36 @@ button.messenger-chat-header-model {
 
 .messenger-tool-options {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 6px 8px;
+  grid-template-columns: repeat(auto-fill, minmax(164px, 1fr));
+  gap: 8px;
+  min-width: 0;
+  max-height: 228px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .messenger-tool-options .el-checkbox {
-  margin-right: 0;
+  margin: 0;
   max-width: 100%;
+  min-width: 0;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.17);
+  border-radius: 8px;
+  background: rgba(var(--ui-accent-rgb), 0.05);
+  padding: 4px 8px;
+  transition: border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.messenger-tool-options .el-checkbox:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.32);
+  background: rgba(var(--ui-accent-rgb), 0.09);
+}
+
+.messenger-tool-options .el-checkbox.is-checked {
+  border-color: rgba(var(--ui-accent-rgb), 0.42);
+  background: rgba(var(--ui-accent-rgb), 0.14);
 }
 
 .messenger-tool-options .el-checkbox__label {
@@ -3176,25 +3209,28 @@ button.messenger-chat-header-model {
   border: 1px solid #e3e8ee;
   border-radius: 12px;
   background: #f8faf9;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 10px;
 }
 
 .messenger-agent-base-item {
-  display: grid;
-  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   align-items: start;
-  gap: 12px;
+  gap: 8px;
   font-size: 12px;
   color: #334155;
+  min-width: 0;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.16);
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px;
 }
 
 .messenger-agent-base-item--select {
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  gap: 6px;
+  min-height: 88px;
 }
 
 .messenger-agent-base-item--select .el-select {
@@ -3203,7 +3239,7 @@ button.messenger-chat-header-model {
 }
 
 .messenger-agent-base-item--select .messenger-agent-base-meta {
-  gap: 2px;
+  gap: 4px;
 }
 
 .messenger-agent-base-meta {
@@ -3222,6 +3258,23 @@ button.messenger-chat-header-model {
 .messenger-agent-base-item .el-switch {
   margin-top: 2px;
   justify-self: start;
+}
+
+@media (max-width: 1320px) {
+  .messenger-tool-groups {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .messenger-tool-groups,
+  .messenger-agent-base {
+    grid-template-columns: 1fr;
+  }
+
+  .messenger-tool-options {
+    max-height: 188px;
+  }
 }
 
 .messenger-agent-settings .messenger-inline-actions {
@@ -4587,9 +4640,9 @@ button.messenger-chat-header-model {
   right: -2px;
   bottom: calc(100% + 10px);
   min-width: 210px;
-  border: 1px solid var(--messenger-composer-border);
+  border: 1px solid var(--messenger-composer-border, #dce2df);
   border-radius: 10px;
-  background: var(--messenger-composer-panel-bg);
+  background: var(--messenger-composer-panel-bg, #f8faf9);
   box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
   padding: 4px;
   display: flex;

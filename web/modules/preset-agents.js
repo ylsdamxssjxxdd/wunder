@@ -20,6 +20,8 @@ const ensureState = () => {
       syncLoading: false,
       syncRequestToken: 0,
       toolGroups: [],
+      modelOptions: [],
+      defaultModelName: "",
       cronJobs: [],
       channelAccounts: [],
       supportedChannels: [],
@@ -57,6 +59,7 @@ const REQUIRED_KEYS = [
   "presetAgentFormName",
   "presetAgentFormDescription",
   "presetAgentFormPrompt",
+  "presetAgentFormModelName",
   "presetAgentPresetQuestions",
   "presetAgentPresetQuestionsEmpty",
   "presetAgentPresetQuestionAddBtn",
@@ -150,12 +153,88 @@ const normalizeQuestionList = (values) => {
   return output;
 };
 
+const normalizeOptionalModelName = (value) => {
+  const cleaned = String(value || "").trim();
+  return cleaned || "";
+};
+
+const normalizeModelType = (value) => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) {
+    return "llm";
+  }
+  if (raw === "embed" || raw === "embeddings") {
+    return "embedding";
+  }
+  return raw === "embedding" ? "embedding" : "llm";
+};
+
+const resolveDefaultModelDisplayName = () => {
+  const configured = normalizeOptionalModelName(state.presetAgents?.defaultModelName);
+  return configured || t("presetAgents.form.modelDefaultName");
+};
+
+const extractLlmModelCatalog = (payload) => {
+  const root =
+    payload?.llm && typeof payload.llm === "object"
+      ? payload.llm
+      : payload?.data?.llm && typeof payload.data.llm === "object"
+        ? payload.data.llm
+        : {};
+  const rawModels = root?.models && typeof root.models === "object" ? root.models : {};
+  const names = Object.keys(rawModels)
+    .map((name) => String(name || "").trim())
+    .filter(Boolean);
+  const options = names.filter((name) => normalizeModelType(rawModels?.[name]?.model_type) === "llm");
+  const requestedDefault = normalizeOptionalModelName(root?.default);
+  const defaultModelName =
+    (requestedDefault && options.includes(requestedDefault) && requestedDefault) ||
+    options[0] ||
+    "";
+  return { options, defaultModelName };
+};
+
+const renderModelOptions = (selectedModelName = "") => {
+  const select = elements.presetAgentFormModelName;
+  if (!select) {
+    return;
+  }
+  const options = Array.isArray(state.presetAgents.modelOptions) ? state.presetAgents.modelOptions : [];
+  const selected = normalizeOptionalModelName(selectedModelName || select.value);
+  select.textContent = "";
+
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = t("presetAgents.form.modelDefaultOption", {
+    name: resolveDefaultModelDisplayName(),
+  });
+  select.appendChild(defaultOption);
+
+  options.forEach((name) => {
+    const value = normalizeOptionalModelName(name);
+    if (!value) {
+      return;
+    }
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    select.appendChild(option);
+  });
+
+  if (selected && options.includes(selected)) {
+    select.value = selected;
+  } else {
+    select.value = "";
+  }
+};
+
 const normalizePreset = (item) => ({
   preset_id: String(item?.preset_id || "").trim(),
   revision: Number.isFinite(Number(item?.revision)) ? Number(item.revision) : 1,
   name: String(item?.name || "").trim(),
   description: String(item?.description || "").trim(),
   system_prompt: String(item?.system_prompt || "").trim(),
+  model_name: normalizeOptionalModelName(item?.model_name || item?.modelName),
   icon_name: normalizeIconName(item?.icon_name),
   icon_color: normalizeIconColor(item?.icon_color),
   sandbox_container_id: Number.isFinite(Number(item?.sandbox_container_id)) ? Number(item.sandbox_container_id) : 1,
@@ -178,6 +257,8 @@ const normalizeUserAgent = (item) => ({
   name: String(item?.name || "").trim(),
   description: String(item?.description || "").trim(),
   system_prompt: String(item?.system_prompt || "").trim(),
+  configured_model_name: normalizeOptionalModelName(item?.configured_model_name || item?.configuredModelName),
+  model_name: normalizeOptionalModelName(item?.model_name || item?.modelName),
   tool_names: Array.isArray(item?.tool_names)
     ? item.tool_names.map((value) => String(value || "").trim()).filter(Boolean)
     : [],
@@ -343,10 +424,12 @@ const buildEffectivePreset = (preset) => {
   if (!agent || (agent.name && agent.name !== preset.name)) {
     return preset;
   }
+  const configuredModelName = normalizeOptionalModelName(agent.configured_model_name);
   return {
     ...preset,
     description: agent.description,
     system_prompt: agent.system_prompt,
+    model_name: configuredModelName || normalizeOptionalModelName(preset.model_name),
     sandbox_container_id: Number.isFinite(Number(agent.sandbox_container_id))
       ? Number(agent.sandbox_container_id)
       : preset.sandbox_container_id,
@@ -371,6 +454,7 @@ const fillPresetForm = (preset) => {
   elements.presetAgentFormName.value = preset?.name || "";
   elements.presetAgentFormDescription.value = preset?.description || "";
   elements.presetAgentFormPrompt.value = preset?.system_prompt || "";
+  renderModelOptions(normalizeOptionalModelName(preset?.model_name));
   elements.presetAgentFormContainerId.value = String(
     Number.isFinite(Number(preset?.sandbox_container_id)) ? Number(preset.sandbox_container_id) : 1
   );
@@ -731,6 +815,7 @@ const ensureAgentForPreset = async (preset) => {
     name: preset.name,
     description: preset.description,
     system_prompt: preset.system_prompt,
+    model_name: normalizeOptionalModelName(preset.model_name) || undefined,
     tool_names: Array.isArray(preset.tool_names) ? preset.tool_names : [],
     approval_mode: preset.approval_mode || "full_auto",
     status: preset.status || "active",
@@ -741,6 +826,23 @@ const ensureAgentForPreset = async (preset) => {
   };
   const created = await requestJson("/agents", { method: "POST", query: { user_id: TEMPLATE_USER_ID }, body: payload });
   return normalizeUserAgent(created?.data || {});
+};
+
+const loadModelCatalog = async ({ silent = false } = {}) => {
+  try {
+    const payload = await requestJson("/admin/llm");
+    const catalog = extractLlmModelCatalog(payload);
+    state.presetAgents.modelOptions = catalog.options;
+    state.presetAgents.defaultModelName = catalog.defaultModelName;
+    renderModelOptions(normalizeOptionalModelName(effectiveSelectedPreset()?.model_name));
+  } catch (error) {
+    state.presetAgents.modelOptions = [];
+    state.presetAgents.defaultModelName = "";
+    renderModelOptions(normalizeOptionalModelName(effectiveSelectedPreset()?.model_name));
+    if (!silent) {
+      notify(t("presetAgents.toast.refreshFailed", { message: error.message || "-" }), "error");
+    }
+  }
 };
 
 const loadToolCatalog = async () => {
@@ -840,6 +942,7 @@ const collectPresetForm = () => {
     name,
     description: String(elements.presetAgentFormDescription.value || "").trim(),
     system_prompt: String(elements.presetAgentFormPrompt.value || "").trim(),
+    model_name: normalizeOptionalModelName(elements.presetAgentFormModelName?.value),
     sandbox_container_id: Number.isFinite(sandbox) && sandbox > 0 ? sandbox : 1,
   };
 };
@@ -852,6 +955,7 @@ const persistPresets = async (selectedName) => {
       name: item.name,
       description: item.description,
       system_prompt: item.system_prompt,
+      model_name: normalizeOptionalModelName(item.model_name),
       icon_name: item.icon_name,
       icon_color: item.icon_color,
       sandbox_container_id: item.sandbox_container_id,
@@ -902,6 +1006,7 @@ const savePreset = async () => {
     next.preset_questions = agentPayload.preset_questions;
     next.approval_mode = agentPayload.approval_mode;
     next.status = agentPayload.status || effective.status || current.status || "active";
+    next.model_name = normalizeOptionalModelName(agentPayload.model_name);
     next.sandbox_container_id = agentPayload.sandbox_container_id;
     state.presetAgents.presets = state.presetAgents.presets.map((item) => (item.name === current.name ? next : item));
     state.presetAgents.selectedPresetName = next.name;
@@ -940,6 +1045,7 @@ const createPreset = () => {
     name: candidate,
     description: "",
     system_prompt: "",
+    model_name: "",
     icon_name: "spark",
     icon_color: "#94a3b8",
     sandbox_container_id: 1,
@@ -995,6 +1101,7 @@ const collectAgentForm = () => {
     name,
     description: String(elements.presetAgentFormDescription.value || "").trim(),
     system_prompt: String(elements.presetAgentFormPrompt.value || "").trim(),
+    model_name: normalizeOptionalModelName(elements.presetAgentFormModelName?.value),
     tool_names,
     preset_questions: collectPresetQuestionValues(),
     approval_mode:
@@ -1227,6 +1334,7 @@ export const loadPresetAgents = async ({ silent = false, selectedName = "" } = {
   }
   state.presetAgents.loading = true;
   try {
+    await loadModelCatalog({ silent: true });
     const payload = await requestJson("/admin/preset_agents");
     state.presetAgents.presets = (Array.isArray(payload?.data?.items) ? payload.data.items : []).map(normalizePreset).filter((item) => item.name);
 

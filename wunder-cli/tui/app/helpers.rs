@@ -465,25 +465,6 @@ pub(super) fn should_store_history_entry(value: &str) -> bool {
     !trimmed.is_empty() && !trimmed.trim_start().starts_with('/')
 }
 
-pub(super) fn format_compose_attachment_hint(names: &[String], is_zh: bool) -> Option<String> {
-    let first = names.first()?.trim();
-    if first.is_empty() {
-        return None;
-    }
-    let preview = backtrack_preview_line(first, 20);
-    Some(if names.len() == 1 {
-        if is_zh {
-            format!("已附加: {preview}")
-        } else {
-            format!("attached: {preview}")
-        }
-    } else if is_zh {
-        format!("已附加 {} 项 · {preview} +{}", names.len(), names.len() - 1)
-    } else {
-        format!("attached {} · {preview} +{}", names.len(), names.len() - 1)
-    })
-}
-
 pub(super) fn detect_pasted_attachment_paths(base_dir: &Path, text: &str) -> Option<Vec<String>> {
     let normalized = normalize_clipboard_text(text.to_string())?;
     let raw_has_path_syntax = normalized.contains('"')

@@ -5165,6 +5165,7 @@ fn preset_agent_payload(record: &UserAgentPresetConfig) -> Value {
         "name": record.name.trim(),
         "description": record.description.trim(),
         "system_prompt": record.system_prompt.trim(),
+        "model_name": user_agent_presets::normalize_optional_model_name(record.model_name.as_deref()),
         "icon_name": normalize_preset_icon_name(Some(record.icon_name.as_str())),
         "icon_color": normalize_preset_icon_color(Some(record.icon_color.as_str())),
         "sandbox_container_id": crate::storage::normalize_sandbox_container_id(record.sandbox_container_id),
@@ -5216,12 +5217,16 @@ fn normalize_preset_agents(
             normalize_tool_list(item.declared_skill_names.unwrap_or_default());
         let next_preset_questions =
             normalize_preset_questions(item.preset_questions.unwrap_or_default());
+        let next_model_name =
+            user_agent_presets::normalize_optional_model_name(item.model_name.as_deref());
         let next_approval_mode = normalize_agent_approval_mode(item.approval_mode.as_deref());
         let next_status = normalize_agent_status(item.status.as_deref());
         let revision_changed = previous.is_some_and(|prev| {
             prev.name.trim() != cleaned_name
                 || prev.description.trim() != item.description.trim()
                 || prev.system_prompt.trim() != item.system_prompt.trim()
+                || user_agent_presets::normalize_optional_model_name(prev.model_name.as_deref())
+                    != next_model_name
                 || normalize_preset_icon_name(Some(prev.icon_name.as_str()))
                     != normalize_preset_icon_name(item.icon_name.as_deref())
                 || normalize_preset_icon_color(Some(prev.icon_color.as_str()))
@@ -5254,6 +5259,7 @@ fn normalize_preset_agents(
             name: cleaned_name.to_string(),
             description: item.description.trim().to_string(),
             system_prompt: item.system_prompt.trim().to_string(),
+            model_name: next_model_name,
             icon_name: normalize_preset_icon_name(item.icon_name.as_deref()),
             icon_color: normalize_preset_icon_color(item.icon_color.as_deref()),
             sandbox_container_id: crate::storage::normalize_sandbox_container_id(
@@ -6428,6 +6434,8 @@ struct PresetAgentUpsertItem {
     description: String,
     #[serde(default)]
     system_prompt: String,
+    #[serde(default, alias = "modelName", alias = "model_name")]
+    model_name: Option<String>,
     #[serde(default)]
     icon_name: Option<String>,
     #[serde(default)]

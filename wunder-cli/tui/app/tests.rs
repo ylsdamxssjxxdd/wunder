@@ -509,19 +509,6 @@ fn detect_pasted_attachment_paths_leaves_plain_text_alone() {
 }
 
 #[test]
-fn format_compose_attachment_hint_handles_single_and_multiple_items() {
-    assert_eq!(format_compose_attachment_hint(&[], true), None);
-    assert_eq!(
-        format_compose_attachment_hint(&["diagram.png".to_string()], true),
-        Some("已附加: diagram.png".to_string())
-    );
-    assert_eq!(
-        format_compose_attachment_hint(&["diagram.png".to_string(), "notes.md".to_string()], false,),
-        Some("attached 2 · diagram.png +1".to_string())
-    );
-}
-
-#[test]
 fn format_apply_patch_approval_lines_show_real_diff_preview() {
     let args = serde_json::json!({
         "input": "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-old\n+new\n*** End Patch"

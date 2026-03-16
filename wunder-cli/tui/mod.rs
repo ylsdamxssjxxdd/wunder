@@ -6,6 +6,7 @@ mod line_utils;
 mod markdown;
 mod markdown_render;
 mod markdown_stream;
+mod scrollback;
 mod theme;
 mod ui;
 mod wrapping;
@@ -111,6 +112,11 @@ async fn run_loop(
         sync_mouse_mode(terminal, app, &mut mouse_capture_enabled)?;
 
         terminal.draw(|frame| ui::draw(frame, app))?;
+
+        let pending_scrollback_lines = app.drain_pending_scrollback_lines();
+        if !pending_scrollback_lines.is_empty() {
+            scrollback::insert_history_lines(terminal, pending_scrollback_lines)?;
+        }
 
         if app.should_quit() {
             break;

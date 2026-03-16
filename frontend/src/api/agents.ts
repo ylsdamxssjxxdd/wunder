@@ -3,6 +3,7 @@ import api from './http';
 import type { ApiId, ApiPayload, QueryParams } from './types';
 
 export const listAgents = (params: QueryParams = {}) => api.get('/agents', { params });
+export const listAgentModels = (params: QueryParams = {}) => api.get('/agents/models', { params });
 export const listSharedAgents = () => api.get('/agents/shared');
 export const listRunningAgents = () => api.get('/agents/running');
 export const listAgentUserRounds = () => api.get('/agents/user-rounds');

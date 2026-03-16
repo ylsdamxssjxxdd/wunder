@@ -1390,6 +1390,7 @@ mod tests {
             name: "Worker 1".to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            model_name: None,
             tool_names: vec!["list_files".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),

@@ -52,12 +52,16 @@ const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(60);
 const PASTE_BURST_ENTER_GAP: Duration = Duration::from_millis(120);
 const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 3;
 const PASTE_BURST_CAPTURE_CHAR_THRESHOLD: usize = 3;
+const CLIPBOARD_PASTE_PROBE_CACHE_TTL: Duration = Duration::from_millis(400);
+const SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT: Duration = Duration::from_millis(1200);
 mod commands;
+mod input_placeholders;
 
 pub(super) mod helpers;
 mod patch_log;
 
 use helpers::*;
+use input_placeholders::*;
 use patch_log::*;
 
 const STATUSLINE_ITEM_KEYS: &[&str] = &[
@@ -200,6 +204,8 @@ pub struct TuiApp {
     transcript_viewport_width: u16,
     transcript_viewport_height: u16,
     transcript_rendered_lines: usize,
+    history_archived_entries: usize,
+    pending_scrollback_lines: Vec<Line<'static>>,
     logs: Vec<LogEntry>,
     busy: bool,
     should_quit: bool,
@@ -253,6 +259,9 @@ pub struct TuiApp {
     key_char_burst_last_at: Option<Instant>,
     key_paste_burst_buffer: String,
     key_paste_burst_last_at: Option<Instant>,
+    clipboard_probe_cache: Option<(Instant, Option<String>)>,
+    suppressed_clipboard_paste: String,
+    suppressed_clipboard_paste_last_at: Option<Instant>,
     statusline_items: Vec<String>,
     workspace_project_name: Option<String>,
     workspace_git_branch: Option<String>,
@@ -306,6 +315,8 @@ impl TuiApp {
             transcript_viewport_width: 1,
             transcript_viewport_height: 1,
             transcript_rendered_lines: 0,
+            history_archived_entries: 0,
+            pending_scrollback_lines: Vec::new(),
             logs: Vec::new(),
             busy: false,
             should_quit: false,
@@ -359,6 +370,9 @@ impl TuiApp {
             key_char_burst_last_at: None,
             key_paste_burst_buffer: String::new(),
             key_paste_burst_last_at: None,
+            clipboard_probe_cache: None,
+            suppressed_clipboard_paste: String::new(),
+            suppressed_clipboard_paste_last_at: None,
             statusline_items: Vec::new(),
             workspace_project_name: None,
             workspace_git_branch: None,
@@ -390,7 +404,7 @@ impl TuiApp {
                 match crate::attachments::prepare_attachment_from_path(&app.runtime, raw.as_str())
                     .await
                 {
-                    Ok(prepared) => app.pending_attachments.push(prepared),
+                    Ok(prepared) => app.queue_prepared_attachment(prepared, false),
                     Err(err) => {
                         if app.is_zh_language() {
                             app.push_log(LogKind::Error, format!("预加载附件失败: {raw} ({err})"));
@@ -638,27 +652,10 @@ impl TuiApp {
         ))
     }
 
-    pub fn composer_attachment_hint(&self) -> Option<String> {
-        let names = self
-            .pending_attachments
-            .iter()
-            .map(|item| {
-                item.payload
-                    .name
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToString::to_string)
-                    .or_else(|| {
-                        std::path::Path::new(item.source.as_str())
-                            .file_name()
-                            .and_then(|value| value.to_str())
-                            .map(ToString::to_string)
-                    })
-                    .unwrap_or_else(|| item.source.clone())
-            })
-            .collect::<Vec<_>>();
-        format_compose_attachment_hint(names.as_slice(), self.is_zh_language())
+    pub fn inline_input_placeholders(&self) -> Vec<String> {
+        let mut placeholders = attachment_placeholders(self.pending_attachments.as_slice());
+        placeholders.extend(self.large_paste_placeholders());
+        placeholders
     }
 
     pub fn shortcuts_visible(&self) -> bool {
@@ -1565,8 +1562,17 @@ impl TuiApp {
         self.transcript_rendered_lines = lines;
     }
 
+    pub fn drain_pending_scrollback_lines(&mut self) -> Vec<Line<'static>> {
+        std::mem::take(&mut self.pending_scrollback_lines)
+    }
+
     fn invalidate_transcript_metrics(&mut self) {
         self.transcript_rendered_lines = 0;
+    }
+
+    fn reset_scrollback_archive(&mut self) {
+        self.history_archived_entries = 0;
+        self.pending_scrollback_lines.clear();
     }
 
     fn clear_markdown_streams(&mut self) {
@@ -1881,6 +1887,8 @@ impl TuiApp {
 
     pub fn input_view(&mut self, viewport_width: u16, viewport_height: u16) -> (String, u16, u16) {
         self.sync_large_paste_placeholders();
+        self.sync_attachment_placeholders();
+        self.clamp_input_cursor_outside_attachment_placeholder();
         let width = viewport_width.max(1) as usize;
         let height = viewport_height.max(1) as usize;
         let lines = build_wrapped_input_lines(&self.input, width);
@@ -1917,9 +1925,12 @@ impl TuiApp {
     }
 
     pub fn transcript_render_window(&mut self, viewport_height: u16) -> TranscriptRenderWindow {
+        self.archive_scrollback_entries(viewport_height);
+
         let width = usize::from(self.transcript_viewport_width.max(1));
-        let mut line_counts = Vec::with_capacity(self.logs.len());
-        for index in 0..self.logs.len() {
+        let archived = self.history_archived_entries.min(self.logs.len());
+        let mut line_counts = Vec::with_capacity(self.logs.len().saturating_sub(archived));
+        for index in archived..self.logs.len() {
             line_counts.push(self.entry_visual_line_count(index, width));
         }
         let window = compute_transcript_window_spec(
@@ -1929,7 +1940,7 @@ impl TuiApp {
         );
         let entries = (window.start_entry..window.end_entry_exclusive)
             .map(|index| TranscriptRenderEntry {
-                global_index: index,
+                global_index: archived + index,
             })
             .collect::<Vec<_>>();
 
@@ -1938,6 +1949,52 @@ impl TuiApp {
             local_scroll: window.local_scroll,
             total_lines: window.total_lines,
         }
+    }
+
+    fn archive_scrollback_entries(&mut self, viewport_height: u16) {
+        if self.transcript_offset_from_bottom > 0 {
+            return;
+        }
+
+        let archived = self.history_archived_entries.min(self.logs.len());
+        if archived >= self.logs.len() {
+            return;
+        }
+
+        let width = usize::from(self.transcript_viewport_width.max(1));
+        let mut line_counts = Vec::with_capacity(self.logs.len().saturating_sub(archived));
+        for index in archived..self.logs.len() {
+            line_counts.push(self.entry_visual_line_count(index, width));
+        }
+        let window = compute_transcript_window_spec(line_counts.as_slice(), viewport_height, 0);
+        if window.start_entry == 0 {
+            return;
+        }
+
+        let archive_end = archived
+            .saturating_add(window.start_entry)
+            .min(self.logs.len());
+        let mut lines = Vec::new();
+        let render_width = self.transcript_viewport_width.max(1);
+        for index in archived..archive_end {
+            lines.extend(self.render_entry_lines(index, false, render_width));
+        }
+        if lines.is_empty() {
+            return;
+        }
+
+        self.pending_scrollback_lines.extend(lines);
+        self.history_archived_entries = archive_end;
+        if let Some(selected) = self.transcript_selected {
+            if selected < self.history_archived_entries {
+                self.transcript_selected = if self.history_archived_entries < self.logs.len() {
+                    Some(self.history_archived_entries)
+                } else {
+                    None
+                };
+            }
+        }
+        self.invalidate_transcript_metrics();
     }
 
     fn scroll_transcript_up(&mut self, lines: u16) {
@@ -2034,8 +2091,9 @@ impl TuiApp {
         }
 
         let width = usize::from(self.transcript_viewport_width.max(1));
+        let archived = self.history_archived_entries.min(self.logs.len());
         let mut total = 0usize;
-        for index in 0..self.logs.len() {
+        for index in archived..self.logs.len() {
             total = total.saturating_add(self.entry_visual_line_count(index, width));
         }
         total
@@ -2571,7 +2629,9 @@ impl TuiApp {
         let had_draft = !self.input.is_empty()
             || !self.pending_paste.is_empty()
             || !self.pending_large_pastes.is_empty()
-            || self.key_paste_burst_active();
+            || !self.pending_attachments.is_empty()
+            || self.key_paste_burst_active()
+            || !self.suppressed_clipboard_paste.is_empty();
         if !had_draft {
             return false;
         }
@@ -2579,8 +2639,11 @@ impl TuiApp {
         self.input_cursor = 0;
         self.pending_paste.clear();
         self.pending_large_pastes.clear();
+        self.clear_pending_attachments();
         self.key_paste_burst_buffer.clear();
         self.key_paste_burst_last_at = None;
+        self.clear_suppressed_clipboard_paste();
+        self.clear_clipboard_probe_cache();
         self.history_cursor = None;
         self.reset_plain_char_burst();
         true
@@ -2604,6 +2667,7 @@ impl TuiApp {
         self.input.replace_range(start..self.input_cursor, "");
         self.input_cursor = start;
         self.sync_large_paste_placeholders();
+        self.sync_attachment_placeholders();
         grabbed
     }
 
@@ -2674,6 +2738,253 @@ impl TuiApp {
             .collect()
     }
 
+    fn sync_attachment_placeholders(&mut self) {
+        if self.pending_attachments.is_empty() {
+            return;
+        }
+        let previous = self.pending_attachments.clone();
+        self.pending_attachments = previous
+            .iter()
+            .enumerate()
+            .filter(|(index, item)| {
+                let placeholder = attachment_placeholder(item, *index);
+                self.input.contains(placeholder.as_str())
+            })
+            .map(|(_, item)| item.clone())
+            .collect();
+        if previous.len() != self.pending_attachments.len() {
+            self.input = replace_attachment_placeholders(
+                self.input.as_str(),
+                previous.as_slice(),
+                self.pending_attachments.as_slice(),
+            );
+            self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
+                self.input.as_str(),
+                self.input_cursor.min(self.input.len()),
+                self.pending_attachments.as_slice(),
+            );
+        }
+    }
+
+    fn clamp_input_cursor_outside_attachment_placeholder(&mut self) {
+        self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
+            self.input.as_str(),
+            self.input_cursor.min(self.input.len()),
+            self.pending_attachments.as_slice(),
+        );
+    }
+
+    fn insert_attachment_placeholder_at_cursor(&mut self, placeholder: &str) {
+        self.clamp_input_cursor_outside_attachment_placeholder();
+        let cursor = self.input_cursor.min(self.input.len());
+        let needs_leading_space = cursor > 0
+            && self
+                .input
+                .get(..cursor)
+                .and_then(|value| value.chars().next_back())
+                .is_some_and(|ch| !ch.is_whitespace());
+        let needs_trailing_space = self
+            .input
+            .get(cursor..)
+            .and_then(|value| value.chars().next())
+            .map(|ch| !ch.is_whitespace())
+            .unwrap_or(false);
+        let mut token = String::new();
+        if needs_leading_space {
+            token.push(' ');
+        }
+        token.push_str(placeholder);
+        if needs_trailing_space {
+            token.push(' ');
+        }
+        self.insert_text_at_cursor(token.as_str());
+    }
+
+    fn remove_pending_attachment_at(
+        &mut self,
+        index: usize,
+    ) -> Option<crate::attachments::PreparedAttachment> {
+        if index >= self.pending_attachments.len() {
+            return None;
+        }
+        let previous = self.pending_attachments.clone();
+        let removed = self.pending_attachments.remove(index);
+        self.input = replace_attachment_placeholders(
+            self.input.as_str(),
+            previous.as_slice(),
+            self.pending_attachments.as_slice(),
+        );
+        self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
+            self.input.as_str(),
+            self.input_cursor.min(self.input.len()),
+            self.pending_attachments.as_slice(),
+        );
+        Some(removed)
+    }
+
+    fn remove_attachment_placeholder_match(&mut self, matched: AttachmentPlaceholderMatch) {
+        let mut remove_start = matched.start;
+        let mut remove_end = matched.end;
+        if self
+            .input
+            .get(remove_end..)
+            .is_some_and(|value| value.starts_with(' '))
+        {
+            remove_end = next_char_boundary(&self.input, remove_end);
+        } else if remove_start > 0
+            && self
+                .input
+                .get(..remove_start)
+                .and_then(|value| value.chars().next_back())
+                .is_some_and(char::is_whitespace)
+        {
+            remove_start = prev_char_boundary(&self.input, remove_start);
+        }
+        self.input.replace_range(remove_start..remove_end, "");
+        self.input_cursor = remove_start;
+
+        let previous = self.pending_attachments.clone();
+        self.pending_attachments.remove(matched.index);
+        self.input = replace_attachment_placeholders(
+            self.input.as_str(),
+            previous.as_slice(),
+            self.pending_attachments.as_slice(),
+        );
+        self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
+            self.input.as_str(),
+            self.input_cursor.min(self.input.len()),
+            self.pending_attachments.as_slice(),
+        );
+    }
+
+    fn clear_pending_attachments(&mut self) {
+        if self.pending_attachments.is_empty() {
+            return;
+        }
+        let previous = self.pending_attachments.clone();
+        self.pending_attachments.clear();
+        self.input = replace_attachment_placeholders(self.input.as_str(), previous.as_slice(), &[]);
+        self.input_cursor = self.input_cursor.min(self.input.len());
+    }
+
+    fn recent_input_chars(&self, char_count: usize) -> String {
+        if char_count == 0 || self.input_cursor == 0 {
+            return String::new();
+        }
+        let mut start = self.input_cursor.min(self.input.len());
+        for _ in 0..char_count {
+            if start == 0 {
+                break;
+            }
+            start = prev_char_boundary(&self.input, start);
+        }
+        if start >= self.input_cursor {
+            return String::new();
+        }
+        self.input[start..self.input_cursor].to_string()
+    }
+
+    fn cached_clipboard_text_for_promotion(&mut self) -> Option<String> {
+        let now = Instant::now();
+        if let Some((cached_at, cached_text)) = &self.clipboard_probe_cache {
+            if now.saturating_duration_since(*cached_at) <= CLIPBOARD_PASTE_PROBE_CACHE_TTL {
+                return cached_text.clone();
+            }
+        }
+        let detected = read_system_clipboard_text().ok().flatten();
+        self.clipboard_probe_cache = Some((now, detected.clone()));
+        detected
+    }
+
+    fn clear_clipboard_probe_cache(&mut self) {
+        self.clipboard_probe_cache = None;
+    }
+
+    fn clear_suppressed_clipboard_paste(&mut self) {
+        self.suppressed_clipboard_paste.clear();
+        self.suppressed_clipboard_paste_last_at = None;
+    }
+
+    fn should_promote_clipboard_text(&self, text: &str) -> bool {
+        text.chars().count() > LARGE_PASTE_CHAR_THRESHOLD
+            || text.contains('\n')
+            || detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), text).is_some()
+    }
+
+    fn try_consume_suppressed_clipboard_key(&mut self, key: KeyEvent) -> bool {
+        if self.suppressed_clipboard_paste.is_empty() {
+            return false;
+        }
+        let now = Instant::now();
+        if self.suppressed_clipboard_paste_last_at.is_some_and(|last| {
+            now.saturating_duration_since(last) > SUPPRESSED_CLIPBOARD_PASTE_TIMEOUT
+        }) {
+            self.clear_suppressed_clipboard_paste();
+            return false;
+        }
+        let mut remaining = self.suppressed_clipboard_paste.chars();
+        let Some(expected) = remaining.next() else {
+            self.clear_suppressed_clipboard_paste();
+            return false;
+        };
+        let matches = match key.code {
+            KeyCode::Char(ch) => ch == expected,
+            KeyCode::Enter => expected == '\n',
+            _ => false,
+        };
+        if !matches {
+            self.clear_suppressed_clipboard_paste();
+            return false;
+        }
+        self.suppressed_clipboard_paste = remaining.collect();
+        self.suppressed_clipboard_paste_last_at = Some(now);
+        if self.suppressed_clipboard_paste.is_empty() {
+            self.clear_suppressed_clipboard_paste();
+        }
+        true
+    }
+
+    fn try_promote_clipboard_paste(&mut self, ch: char) -> bool {
+        let max_prior_chars = self
+            .input
+            .get(..self.input_cursor.min(self.input.len()))
+            .map(|value| value.chars().count().min(8))
+            .unwrap_or(0);
+        if max_prior_chars == 0 {
+            return false;
+        }
+        let Some(clipboard_text) = self.cached_clipboard_text_for_promotion() else {
+            return false;
+        };
+        if !self.should_promote_clipboard_text(clipboard_text.as_str()) {
+            return false;
+        }
+        for prior_chars in (1..=max_prior_chars).rev() {
+            let mut candidate = self.recent_input_chars(prior_chars);
+            candidate.push(ch);
+            if !clipboard_text.starts_with(candidate.as_str()) {
+                continue;
+            }
+            let _ = self.take_recent_input_chars(prior_chars);
+            let consumed_prefix_chars = candidate.chars().count();
+            let remaining = clipboard_text
+                .chars()
+                .skip(consumed_prefix_chars)
+                .collect::<String>();
+            if !remaining.is_empty() {
+                self.suppressed_clipboard_paste = remaining;
+                self.suppressed_clipboard_paste_last_at = Some(Instant::now());
+            } else {
+                self.clear_suppressed_clipboard_paste();
+            }
+            self.on_paste(clipboard_text);
+            self.flush_pending_paste();
+            self.reset_plain_char_burst();
+            return true;
+        }
+        false
+    }
+
     async fn drain_pending_attachment_paths(&mut self) {
         while let Some(raw_path) = self.pending_attachment_paths.pop_front() {
             let prepared = match crate::attachments::prepare_attachment_from_path(
@@ -2697,6 +3008,12 @@ impl TuiApp {
         prepared: crate::attachments::PreparedAttachment,
         emit_feedback: bool,
     ) {
+        let previous = self.pending_attachments.clone();
+        let existing_placeholder = previous
+            .iter()
+            .enumerate()
+            .find(|(_, item)| item.source.eq_ignore_ascii_case(prepared.source.as_str()))
+            .map(|(index, item)| attachment_placeholder(item, index));
         if let Some(existing) = self
             .pending_attachments
             .iter()
@@ -2705,6 +3022,27 @@ impl TuiApp {
             self.pending_attachments.remove(existing);
         }
         self.pending_attachments.push(prepared);
+        self.input = replace_attachment_placeholders(
+            self.input.as_str(),
+            previous.as_slice(),
+            self.pending_attachments.as_slice(),
+        );
+        self.input_cursor = clamp_cursor_out_of_attachment_placeholder(
+            self.input.as_str(),
+            self.input_cursor.min(self.input.len()),
+            self.pending_attachments.as_slice(),
+        );
+        let placeholder_already_visible = existing_placeholder
+            .as_deref()
+            .is_some_and(|placeholder| self.input.contains(placeholder));
+        if !placeholder_already_visible {
+            let placeholder_index = self.pending_attachments.len().saturating_sub(1);
+            if let Some(item) = self.pending_attachments.get(placeholder_index) {
+                let placeholder = attachment_placeholder(item, placeholder_index);
+                self.insert_attachment_placeholder_at_cursor(placeholder.as_str());
+            }
+        }
+        self.history_cursor = None;
         if emit_feedback {
             if let Some(last) = self.pending_attachments.last() {
                 let summary = crate::attachments::summarize_attachment(
@@ -2713,7 +3051,7 @@ impl TuiApp {
                     self.display_language.as_str(),
                 );
                 let message = if self.is_zh_language() {
-                    format!("附件已加入队列（下一轮自动发送）: {summary}")
+                    format!("attachment queued (auto-send on next turn): {summary}")
                 } else {
                     format!("attachment queued (auto-send on next turn): {summary}")
                 };
@@ -2729,6 +3067,8 @@ impl TuiApp {
         self.reset_plain_char_burst();
         self.key_paste_burst_buffer.clear();
         self.key_paste_burst_last_at = None;
+        self.clear_suppressed_clipboard_paste();
+        self.clear_clipboard_probe_cache();
         if let Some(paths) =
             detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), normalized.as_str())
         {
@@ -2751,8 +3091,13 @@ impl TuiApp {
 
         match read_system_clipboard_text() {
             Ok(Some(text)) => {
+                let normalized = normalize_clipboard_text(text.clone());
                 self.on_paste(text);
                 self.flush_pending_paste();
+                if let Some(normalized) = normalized {
+                    self.suppressed_clipboard_paste = normalized;
+                    self.suppressed_clipboard_paste_last_at = Some(Instant::now());
+                }
             }
             Ok(None) => {}
             Err(error) => {
@@ -2815,6 +3160,10 @@ impl TuiApp {
         }
         if self.mouse_mode == MouseMode::Auto && self.mouse_passthrough_active() {
             self.clear_mouse_passthrough();
+        }
+        self.clamp_input_cursor_outside_attachment_placeholder();
+        if self.try_consume_suppressed_clipboard_key(key) {
+            return Ok(());
         }
 
         let plain_char_input = matches!(key.code, KeyCode::Char(_))
@@ -2886,6 +3235,7 @@ impl TuiApp {
                 }
                 KeyCode::Char('l') => {
                     self.logs.clear();
+                    self.reset_scrollback_archive();
                     self.invalidate_transcript_metrics();
                     self.active_assistant = None;
                     self.active_reasoning = None;
@@ -3139,6 +3489,9 @@ impl TuiApp {
             }
             KeyCode::Char('?') => {
                 self.observe_plain_char_event();
+                if self.try_promote_clipboard_paste('?') {
+                    return Ok(());
+                }
                 if self.handle_plain_char_paste_burst('?') {
                     return Ok(());
                 }
@@ -3149,6 +3502,9 @@ impl TuiApp {
                     || is_altgr(key.modifiers)
                 {
                     self.observe_plain_char_event();
+                    if self.try_promote_clipboard_paste(ch) {
+                        return Ok(());
+                    }
                     if self.handle_plain_char_paste_burst(ch) {
                         return Ok(());
                     }
@@ -3574,6 +3930,7 @@ impl TuiApp {
         self.active_inquiry_panel = None;
         self.inquiry_selected_index = 0;
         self.logs.clear();
+        self.reset_scrollback_archive();
         self.invalidate_transcript_metrics();
 
         let restored = self.restore_transcript_from_history(history);
@@ -3699,30 +4056,44 @@ impl TuiApp {
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
         self.flush_pending_paste();
-        let line = expand_large_paste_placeholders(line.as_str(), &self.pending_large_pastes);
+        self.sync_attachment_placeholders();
+        let visible_line = line.trim_end().to_string();
+        let expanded_line =
+            expand_large_paste_placeholders(visible_line.as_str(), &self.pending_large_pastes);
         self.pending_large_pastes.clear();
         if self.config_wizard.is_some() {
-            return self.handle_config_wizard_input(line.trim()).await;
+            return self.handle_config_wizard_input(expanded_line.trim()).await;
         }
         self.shortcuts_visible = false;
         self.resume_picker = None;
         self.focus_area = FocusArea::Input;
 
-        let mut prompt = line.trim_end().to_string();
-        if prompt.trim().is_empty() {
+        self.drain_pending_attachment_paths().await;
+        self.sync_attachment_placeholders();
+
+        let has_attachments = !self.pending_attachments.is_empty();
+        let mut prompt = strip_attachment_placeholders(
+            expanded_line.as_str(),
+            self.pending_attachments.as_slice(),
+        )
+        .trim_end()
+        .to_string();
+        let mut user_echo = visible_line;
+        if prompt.trim().is_empty() && !has_attachments {
             return Ok(());
         }
         if let Some(converted) = self.try_convert_inquiry_input(prompt.as_str()) {
-            if converted.trim().is_empty() {
+            if converted.trim().is_empty() && !has_attachments {
                 return Ok(());
             }
-            prompt = converted;
+            prompt = converted.clone();
+            if !has_attachments {
+                user_echo = converted;
+            }
         } else if self.active_inquiry_panel.is_some() && !prompt.trim_start().starts_with('/') {
             self.active_inquiry_panel = None;
             self.inquiry_selected_index = 0;
         }
-
-        self.drain_pending_attachment_paths().await;
 
         self.scroll_transcript_to_bottom();
         self.track_popup_tokens_from_text(prompt.as_str());
@@ -3730,7 +4101,9 @@ impl TuiApp {
         if prompt.trim_start().starts_with('/') {
             return self.handle_slash_command(prompt.trim().to_string()).await;
         }
-        self.push_history(prompt.trim());
+        if !prompt.trim().is_empty() {
+            self.push_history(user_echo.trim());
+        }
 
         if self.busy {
             self.push_log(
@@ -3759,20 +4132,9 @@ impl TuiApp {
             self.push_log(LogKind::Error, err.to_string());
             return Ok(());
         }
-        let user_echo = prompt.clone();
         self.start_stream_request(prompt, user_echo, request_attachments)
             .await?;
-        if !self.pending_attachments.is_empty() {
-            self.pending_attachments.clear();
-            self.push_log(
-                LogKind::Info,
-                crate::locale::tr(
-                    self.display_language.as_str(),
-                    "已消费待发送的附件队列",
-                    "queued attachments consumed",
-                ),
-            );
-        }
+        self.clear_pending_attachments();
         Ok(())
     }
 
@@ -3987,6 +4349,7 @@ impl TuiApp {
     }
 
     fn insert_char_at_cursor(&mut self, ch: char) {
+        self.clamp_input_cursor_outside_attachment_placeholder();
         if self.input_cursor > self.input.len() {
             self.input_cursor = self.input.len();
         }
@@ -4001,6 +4364,7 @@ impl TuiApp {
         if text.is_empty() {
             return;
         }
+        self.clamp_input_cursor_outside_attachment_placeholder();
         if self.input_cursor > self.input.len() {
             self.input_cursor = self.input.len();
         }
@@ -4015,6 +4379,15 @@ impl TuiApp {
         if self.input_cursor == 0 {
             return;
         }
+        if let Some(matched) = find_attachment_placeholder_covering_cursor(
+            self.input.as_str(),
+            self.input_cursor.min(self.input.len()),
+            self.pending_attachments.as_slice(),
+            true,
+        ) {
+            self.remove_attachment_placeholder_match(matched);
+            return;
+        }
         let prev = prev_char_boundary(&self.input, self.input_cursor);
         self.input.replace_range(prev..self.input_cursor, "");
         self.input_cursor = prev;
@@ -4022,6 +4395,15 @@ impl TuiApp {
 
     fn delete_at_cursor(&mut self) {
         if self.input_cursor >= self.input.len() {
+            return;
+        }
+        if let Some(matched) = find_attachment_placeholder_covering_cursor(
+            self.input.as_str(),
+            self.input_cursor.min(self.input.len()),
+            self.pending_attachments.as_slice(),
+            false,
+        ) {
+            self.remove_attachment_placeholder_match(matched);
             return;
         }
         let next = next_char_boundary(&self.input, self.input_cursor);
@@ -4033,6 +4415,7 @@ impl TuiApp {
             return;
         }
         self.input_cursor = prev_char_boundary(&self.input, self.input_cursor);
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn move_cursor_right(&mut self) {
@@ -4040,6 +4423,7 @@ impl TuiApp {
             return;
         }
         self.input_cursor = next_char_boundary(&self.input, self.input_cursor);
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn line_start_index(&self) -> usize {
@@ -4069,6 +4453,7 @@ impl TuiApp {
         } else {
             self.input_cursor = line_start;
         }
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn move_cursor_to_line_end_with_wrap(&mut self, move_down_at_eol: bool) {
@@ -4084,6 +4469,7 @@ impl TuiApp {
         } else {
             self.input_cursor = line_end;
         }
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn move_cursor_word_left(&mut self) {
@@ -4120,6 +4506,7 @@ impl TuiApp {
         }
 
         self.input_cursor = cursor;
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn move_cursor_word_right(&mut self) {
@@ -4157,11 +4544,21 @@ impl TuiApp {
         }
 
         self.input_cursor = cursor;
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn delete_word_left(&mut self) {
         let end = self.input_cursor.min(self.input.len());
         if end == 0 {
+            return;
+        }
+        if let Some(matched) = find_attachment_placeholder_covering_cursor(
+            self.input.as_str(),
+            end,
+            self.pending_attachments.as_slice(),
+            true,
+        ) {
+            self.remove_attachment_placeholder_match(matched);
             return;
         }
 
@@ -4205,6 +4602,15 @@ impl TuiApp {
         if start >= len {
             return;
         }
+        if let Some(matched) = find_attachment_placeholder_covering_cursor(
+            self.input.as_str(),
+            start,
+            self.pending_attachments.as_slice(),
+            false,
+        ) {
+            self.remove_attachment_placeholder_match(matched);
+            return;
+        }
 
         let mut end = start;
         while end < len {
@@ -4242,6 +4648,15 @@ impl TuiApp {
 
     fn delete_to_line_start(&mut self) {
         let end = self.input_cursor.min(self.input.len());
+        if let Some(matched) = find_attachment_placeholder_covering_cursor(
+            self.input.as_str(),
+            end,
+            self.pending_attachments.as_slice(),
+            true,
+        ) {
+            self.remove_attachment_placeholder_match(matched);
+            return;
+        }
         let start = self.line_start_index();
         if start < end {
             self.input.replace_range(start..end, "");
@@ -4251,6 +4666,15 @@ impl TuiApp {
 
     fn delete_to_line_end(&mut self) {
         let start = self.input_cursor.min(self.input.len());
+        if let Some(matched) = find_attachment_placeholder_covering_cursor(
+            self.input.as_str(),
+            start,
+            self.pending_attachments.as_slice(),
+            false,
+        ) {
+            self.remove_attachment_placeholder_match(matched);
+            return;
+        }
         let end = self.line_end_index();
         if start < end {
             self.input.replace_range(start..end, "");
@@ -4264,6 +4688,7 @@ impl TuiApp {
             self.input_cursor,
             -1,
         );
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn move_cursor_down(&mut self) {
@@ -4273,6 +4698,7 @@ impl TuiApp {
             self.input_cursor,
             1,
         );
+        self.clamp_input_cursor_outside_attachment_placeholder();
     }
 
     fn begin_turn_metrics(&mut self) {
@@ -4660,6 +5086,9 @@ impl TuiApp {
             return;
         }
         self.logs.remove(index);
+        if index < self.history_archived_entries {
+            self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
+        }
         if let Some(active) = self.active_assistant {
             self.active_assistant = if active == index {
                 None
@@ -4679,6 +5108,9 @@ impl TuiApp {
             };
         }
         self.adjust_markdown_stream_indices_after_remove(index);
+        if self.logs.is_empty() {
+            self.reset_scrollback_archive();
+        }
         self.invalidate_transcript_metrics();
     }
 
@@ -4687,6 +5119,9 @@ impl TuiApp {
             return;
         }
         self.logs.remove(0);
+        if self.history_archived_entries > 0 {
+            self.history_archived_entries = self.history_archived_entries.saturating_sub(1);
+        }
         if let Some(index) = self.active_assistant.as_mut() {
             *index = index.saturating_sub(1);
         }
@@ -4697,6 +5132,9 @@ impl TuiApp {
             *index = index.saturating_sub(1);
         }
         self.adjust_markdown_stream_indices_after_remove(0);
+        if self.logs.is_empty() {
+            self.reset_scrollback_archive();
+        }
         self.invalidate_transcript_metrics();
     }
 

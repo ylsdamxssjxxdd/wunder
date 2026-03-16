@@ -99,6 +99,18 @@
                 />
               </el-select>
             </label>
+            <label class="base-item base-item-select">
+              <span>{{ t('portal.agent.model.title') }}</span>
+              <el-select v-model="form.model_name" :disabled="modelLoading">
+                <el-option :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })" value="" />
+                <el-option
+                  v-for="model in modelSelectOptions"
+                  :key="model"
+                  :label="model"
+                  :value="model"
+                />
+              </el-select>
+            </label>
             <label v-if="showApprovalModeSetting" class="base-item base-item-select">
               <span>{{ t('portal.agent.permission.title') }}</span>
               <el-select v-model="form.approval_mode">
@@ -129,6 +141,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
+import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsSummary } from '@/api/userTools';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
@@ -195,6 +208,9 @@ const approvalModeOptions = computed(() => [
 const toolLoading = ref(false);
 const toolError = ref('');
 const toolSummary = ref<Record<string, unknown> | null>(null);
+const modelLoading = ref(false);
+const availableModelNames = ref<string[]>([]);
+const defaultModelName = ref('');
 const saving = ref(false);
 
 const form = reactive({
@@ -203,6 +219,7 @@ const form = reactive({
   copy_from_agent_id: '',
   group: createBeeroomGroupDraft(),
   system_prompt: '',
+  model_name: '',
   tool_names: [] as string[],
   preset_questions: [] as string[],
   is_shared: false,
@@ -268,6 +285,28 @@ const toolGroups = computed<ToolGroup[]>(() => {
   ].filter((group) => group.options.length > 0);
 });
 
+const defaultModelDisplayName = computed(() => {
+  const fallback = t('portal.agent.model.defaultName');
+  const value = String(defaultModelName.value || '').trim();
+  return value || fallback;
+});
+
+const modelSelectOptions = computed<string[]>(() => {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const item of availableModelNames.value) {
+    const cleaned = String(item || '').trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    output.push(cleaned);
+  }
+  const configured = String(form.model_name || '').trim();
+  if (configured && !seen.has(configured)) {
+    output.unshift(configured);
+  }
+  return output;
+});
+
 const allToolValues = computed(() => {
   const values = new Set<string>();
   toolGroups.value.forEach((group) => {
@@ -282,6 +321,7 @@ const resetForm = () => {
   form.copy_from_agent_id = '';
   form.group = createBeeroomGroupDraft(String(props.defaultBeeroomGroupId || '').trim()) as BeeroomGroupDraft;
   form.system_prompt = '';
+  form.model_name = '';
   form.tool_names = [...allToolValues.value];
   form.preset_questions = [];
   form.is_shared = false;
@@ -300,6 +340,25 @@ const loadToolSummary = async () => {
     toolError.value = String(error?.response?.data?.detail || error?.message || t('common.requestFailed'));
   } finally {
     toolLoading.value = false;
+  }
+};
+
+const loadModelOptions = async () => {
+  if (modelLoading.value) return;
+  modelLoading.value = true;
+  try {
+    const result = await listAgentModels();
+    const payload = (result?.data?.data || {}) as Record<string, unknown>;
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    availableModelNames.value = items
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    defaultModelName.value = String(payload.default_model_name || '').trim();
+  } catch {
+    availableModelNames.value = [];
+    defaultModelName.value = '';
+  } finally {
+    modelLoading.value = false;
   }
 };
 
@@ -348,6 +407,7 @@ const handleSave = async () => {
       copy_from_agent_id: String(form.copy_from_agent_id || '').trim(),
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: String(form.system_prompt || ''),
+      model_name: String(form.model_name || '').trim(),
       tool_names: Array.isArray(form.tool_names) ? form.tool_names : [],
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       is_shared: false,
@@ -373,7 +433,7 @@ watch(
   () => visible.value,
   async (value) => {
     if (!value) return;
-    await loadToolSummary();
+    await Promise.all([loadToolSummary(), loadModelOptions()]);
     resetForm();
   }
 );

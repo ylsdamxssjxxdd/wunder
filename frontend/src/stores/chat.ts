@@ -5279,6 +5279,11 @@ export const useChatStore = defineStore('chat', {
       abortResumeStream(initialSessionId);
       abortSendStream(initialSessionId);
       abortWatchStream(initialSessionId);
+      this.messages.forEach((message) => {
+        if (message && typeof message === 'object') {
+          (message as Record<string, unknown>).resume_available = false;
+        }
+      });
       clearSupersededPendingAssistantMessages(this.messages);
       const supersededPendingAssistant = findPendingAssistantMessage(this.messages);
       if (stopPendingAssistantMessage(supersededPendingAssistant)) {
@@ -5613,6 +5618,7 @@ export const useChatStore = defineStore('chat', {
         pendingAssistant.workflowStreaming = false;
         pendingAssistant.reasoningStreaming = false;
         pendingAssistant.stream_incomplete = false;
+        pendingAssistant.resume_available = true;
         if (!pendingAssistant.content) {
           pendingAssistant.content = t('chat.workflow.aborted');
         }
@@ -5637,6 +5643,8 @@ export const useChatStore = defineStore('chat', {
       setSessionLoading(this, sessionId, true);
       const perfEnabled = chatPerf.enabled();
       const perfStreamStart = perfEnabled ? performance.now() : 0;
+      message.resume_available = false;
+      message.slow_client = false;
       message.workflowStreaming = true;
       message.stream_incomplete = true;
       const sessionMessagesRef = getSessionMessages(sessionId) || this.messages;

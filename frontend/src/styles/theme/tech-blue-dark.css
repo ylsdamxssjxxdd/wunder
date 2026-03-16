@@ -321,6 +321,7 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .input-box,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .command-menu,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .chat-screenshot-menu,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-screenshot-menu.chat-screenshot-menu--world,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .upload-preview,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .upload-preview-item,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .input-icon-btn,
@@ -386,6 +387,7 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .chat-composer-input--world,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .command-menu-item,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .chat-screenshot-menu-item,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-screenshot-menu.chat-screenshot-menu--world .chat-screenshot-menu-item,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .chat-composer-command-item,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-composer-scope.chat-shell .chat-composer-command-name,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-cron-field textarea,
@@ -1058,6 +1060,12 @@
   box-shadow: 0 10px 22px rgba(2, 8, 20, 0.22), inset 0 0 0 1px rgba(255, 255, 255, 0.02);
 }
 
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-base-item {
+  border-color: rgba(var(--ui-accent-rgb), 0.2);
+  background: linear-gradient(180deg, rgba(13, 23, 40, 0.92), rgba(10, 18, 33, 0.94));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.02);
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .agent-tool-group-header {
   border-bottom-color: rgba(var(--ui-accent-rgb), 0.16);
 }
@@ -1098,6 +1106,21 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-tool-options .el-checkbox__input.is-checked .el-checkbox__inner {
   border-color: var(--ui-accent);
   background: var(--ui-accent);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-tool-options .el-checkbox {
+  border-color: rgba(var(--ui-accent-rgb), 0.24);
+  background: rgba(var(--ui-accent-rgb), 0.12);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-tool-options .el-checkbox:hover {
+  border-color: rgba(var(--ui-accent-rgb), 0.4);
+  background: rgba(var(--ui-accent-rgb), 0.18);
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-tool-options .el-checkbox.is-checked {
+  border-color: rgba(var(--ui-accent-rgb), 0.52);
+  background: rgba(var(--ui-accent-rgb), 0.24);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-form .el-select__placeholder,

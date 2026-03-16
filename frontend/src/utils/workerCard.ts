@@ -23,6 +23,7 @@ export type WorkerCardDocument = {
     preset_questions: string[];
   };
   runtime: {
+    model_name?: string;
     approval_mode: 'suggest' | 'auto_edit' | 'full_auto';
     sandbox_container_id: number;
     is_shared: boolean;
@@ -52,6 +53,11 @@ const normalizeStringList = (value: unknown): string[] => normalizeDependencyNam
 const normalizeApprovalMode = (value: unknown): 'suggest' | 'auto_edit' | 'full_auto' => {
   const normalized = trimString(value);
   return APPROVAL_MODES.has(normalized) ? (normalized as 'suggest' | 'auto_edit' | 'full_auto') : 'full_auto';
+};
+
+const normalizeOptionalModelName = (value: unknown): string | undefined => {
+  const normalized = trimString(value);
+  return normalized || undefined;
 };
 
 const normalizeSandboxContainerId = (value: unknown): number => {
@@ -118,6 +124,7 @@ export const buildWorkerCardDocument = (value: Record<string, unknown> | null | 
       preset_questions: normalizeAgentPresetQuestions(source.preset_questions)
     },
     runtime: {
+      model_name: normalizeOptionalModelName(source.model_name),
       approval_mode: normalizeApprovalMode(source.approval_mode),
       sandbox_container_id: normalizeSandboxContainerId(source.sandbox_container_id),
       is_shared: Boolean(source.is_shared)
@@ -178,6 +185,7 @@ const normalizeWorkerCardDocument = (value: Record<string, unknown> | null | und
     tool_names: abilities.tool_names,
     skills: abilities.skills,
     preset_questions: interaction.preset_questions,
+    model_name: runtime.model_name,
     approval_mode: runtime.approval_mode,
     sandbox_container_id: runtime.sandbox_container_id,
     is_shared: runtime.is_shared,
@@ -228,6 +236,7 @@ export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<s
     declared_tool_names: declaredToolNames,
     declared_skill_names: declaredSkillNames,
     preset_questions: normalizeAgentPresetQuestions(document.interaction.preset_questions),
+    model_name: normalizeOptionalModelName(document.runtime.model_name),
     approval_mode: normalizeApprovalMode(document.runtime.approval_mode),
     sandbox_container_id: normalizeSandboxContainerId(document.runtime.sandbox_container_id),
     is_shared: Boolean(document.runtime.is_shared)

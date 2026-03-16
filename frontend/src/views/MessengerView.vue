@@ -985,6 +985,16 @@
                     </span>
                   </div>
                   <button
+                    v-if="shouldShowAgentResumeButton(item.message)"
+                    class="messenger-message-footer-copy"
+                    type="button"
+                    :title="t('chat.message.resume')"
+                    :aria-label="t('chat.message.resume')"
+                    @click="resumeAgentMessage(item.message)"
+                  >
+                    <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
+                  </button>
+                  <button
                     class="messenger-message-footer-copy"
                     type="button"
                     :title="t('chat.message.copy')"
@@ -1574,6 +1584,7 @@ const worldVoicePlaybackCurrentMs = ref(0);
 const worldVoicePlaybackDurationMs = ref(0);
 const agentVoiceModelHearingSupported = ref<boolean | null>(null);
 const desktopDefaultModelDisplayName = ref('');
+const serverDefaultModelDisplayName = ref('');
 const worldVoicePlayingMessageKey = ref('');
 const worldVoiceLoadingMessageKey = ref('');
 const worldComposerHeight = ref(188);
@@ -1781,6 +1792,8 @@ let desktopDefaultModelMetaFetchPromise: Promise<{
   hearingSupported: boolean;
   modelDisplayName: string;
 }> | null = null;
+let serverDefaultModelCheckedAt = 0;
+let serverDefaultModelFetchPromise: Promise<string> | null = null;
 let agentVoiceModelSupportCheckedAt = 0;
 let beeroomGroupsLastRefreshAt = 0;
 const agentUnreadRefreshInFlight = new Set<string>();
@@ -1793,6 +1806,7 @@ const MESSAGE_VIRTUAL_OVERSCAN = 8;
 const MESSAGE_VIRTUAL_ESTIMATED_HEIGHT = 118;
 const MESSAGE_VIRTUAL_GAP = 12;
 const AGENT_VOICE_MODEL_SUPPORT_CACHE_MS = 30_000;
+const SERVER_DEFAULT_MODEL_CACHE_MS = 30_000;
 const BEEROOM_GROUPS_REFRESH_MIN_MS_HOT = 2800;
 const BEEROOM_GROUPS_REFRESH_MIN_MS_IDLE = 7000;
 const markdownCache = new Map<string, { source: string; html: string; updatedAt: number }>();
@@ -2302,6 +2316,44 @@ const loadDefaultAgentProfile = async () => {
     > | null) || null;
 };
 
+
+async function readServerDefaultModelName(force = false): Promise<string> {
+  if (desktopMode.value) {
+    serverDefaultModelDisplayName.value = '';
+    return '';
+  }
+  const now = Date.now();
+  if (
+    !force &&
+    String(serverDefaultModelDisplayName.value || '').trim() &&
+    now - serverDefaultModelCheckedAt <= SERVER_DEFAULT_MODEL_CACHE_MS
+  ) {
+    return String(serverDefaultModelDisplayName.value || '').trim();
+  }
+  if (serverDefaultModelFetchPromise) {
+    return serverDefaultModelFetchPromise;
+  }
+  serverDefaultModelFetchPromise = (async () => {
+    try {
+      const profile =
+        ((await agentStore.getAgent(DEFAULT_AGENT_KEY, { force }).catch(() => null)) as Record<
+          string,
+          unknown
+        > | null) || null;
+      if (profile) {
+        defaultAgentProfile.value = profile;
+      }
+      const resolved = String(resolveModelNameFromRecord(profile) || '').trim();
+      serverDefaultModelDisplayName.value = resolved;
+      return resolved;
+    } finally {
+      serverDefaultModelCheckedAt = Date.now();
+      serverDefaultModelFetchPromise = null;
+    }
+  })();
+  return serverDefaultModelFetchPromise;
+}
+
 watch(
   () => activeAgentId.value,
   (value) => {
@@ -2432,16 +2484,28 @@ const activeAgentRuntimeModelName = computed(() => {
   return '';
 });
 
+const activeAgentConfiguredModelName = computed(() => {
+  if (!isAgentConversationActive.value) return '';
+  const currentAgentProfile =
+    activeAgentId.value === DEFAULT_AGENT_KEY ? defaultAgentProfile.value : activeAgent.value;
+  const directModelName = resolveModelNameFromRecord(currentAgentProfile);
+  if (directModelName) return directModelName;
+  if (desktopMode.value) {
+    return String(desktopDefaultModelDisplayName.value || '').trim();
+  }
+  return String(serverDefaultModelDisplayName.value || '').trim();
+});
+
 const agentHeaderModelDisplayName = computed(() => {
   if (!isAgentConversationActive.value) return '';
   const sessionModelName = activeAgentSessionModelName.value;
   if (sessionModelName) return sessionModelName;
+  const configuredModelName = activeAgentConfiguredModelName.value;
+  if (configuredModelName) return configuredModelName;
   const runtimeModelName = activeAgentRuntimeModelName.value;
   if (runtimeModelName) return runtimeModelName;
-  if (desktopMode.value) {
-    const desktopModelName = String(desktopDefaultModelDisplayName.value || '').trim();
-    if (desktopModelName) return desktopModelName;
-    if (desktopLocalMode.value) return t('desktop.system.modelUnnamed');
+  if (desktopMode.value && desktopLocalMode.value) {
+    return t('desktop.system.modelUnnamed');
   }
   return t('common.unknown');
 });
@@ -3347,6 +3411,11 @@ const resolveAdminToolDetail = (item: ToolEntry): string => {
   return name ? `${name}\n${detail}` : detail;
 };
 
+function resolveSessionActivityTimestamp(session: Record<string, unknown>): number {
+  // Keep conversation ordering aligned to real message activity to avoid list jumps on UI-only updates.
+  return normalizeTimestamp(session.last_message_at || session.updated_at || session.created_at);
+}
+
 const mixedConversations = computed<MixedConversation[]>(() => {
   const dismissedMap = dismissedAgentConversationMap.value;
   const sessionsByAgent = new Map<
@@ -3359,7 +3428,7 @@ const mixedConversations = computed<MixedConversation[]>(() => {
     const list = sessionsByAgent.get(agentId) || [];
     list.push({
       session,
-      lastAt: normalizeTimestamp(session.updated_at || session.last_message_at || session.created_at),
+      lastAt: resolveSessionActivityTimestamp(session),
       isMain: Boolean(session.is_main)
     });
     sessionsByAgent.set(agentId, list);
@@ -3766,8 +3835,8 @@ const collectMainAgentSessionEntries = (): AgentMainSessionEntry[] => {
     .map(([agentId, sessions]) => {
       const sorted = [...sessions].sort(
         (left, right) =>
-          normalizeTimestamp(right.updated_at || right.last_message_at || right.created_at) -
-          normalizeTimestamp(left.updated_at || left.last_message_at || left.created_at)
+          resolveSessionActivityTimestamp(right) -
+          resolveSessionActivityTimestamp(left)
       );
       const main = sorted.find((item) => Boolean(item?.is_main)) || sorted[0];
       const sessionId = String(main?.id || '').trim();
@@ -3777,7 +3846,7 @@ const collectMainAgentSessionEntries = (): AgentMainSessionEntry[] => {
       return {
         agentId,
         sessionId,
-        lastAt: normalizeTimestamp(main?.last_message_at || main?.updated_at || main?.created_at)
+        lastAt: resolveSessionActivityTimestamp(main as Record<string, unknown>)
       } as AgentMainSessionEntry;
     })
     .filter((item): item is AgentMainSessionEntry => Boolean(item));
@@ -4424,7 +4493,7 @@ const rightPanelSessionHistory = computed(() => {
       id: String(session?.id || '').trim(),
       title: String(session?.title || t('chat.newSession')),
       preview: resolveSessionTimelinePreview(session as Record<string, unknown>),
-      lastAt: session?.updated_at || session?.last_message_at || session?.created_at,
+      lastAt: resolveSessionActivityTimestamp((session || {}) as Record<string, unknown>),
       isMain: Boolean(session?.is_main)
     }))
     .filter((item) => item.id)
@@ -5863,6 +5932,32 @@ const resolveWorldVoiceDurationLabel = (message: Record<string, unknown>): strin
 const resolveWorldVoiceActionLabel = (message: Record<string, unknown>): string =>
   isWorldVoicePlaying(message) ? t('messenger.world.voice.pause') : t('messenger.world.voice.play');
 
+const shouldShowAgentResumeButton = (message: Record<string, unknown>): boolean => {
+  if (String(message?.role || '') !== 'assistant') return false;
+  if (Boolean(message?.workflowStreaming) || Boolean(message?.reasoningStreaming)) return false;
+  return Boolean(message?.resume_available || message?.slow_client);
+};
+
+const resumeAgentMessage = async (message: Record<string, unknown>) => {
+  if (String(message?.role || '') !== 'assistant') return;
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) return;
+  const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  message.resume_available = false;
+  message.slow_client = false;
+  autoStickToBottom.value = true;
+  setRuntimeStateOverride(targetAgentId, 'running', 30_000);
+  try {
+    await chatStore.resumeStream(sessionId, message, { force: true });
+    setRuntimeStateOverride(targetAgentId, 'done', 8_000);
+    await scrollMessagesToBottom();
+  } catch (error) {
+    message.resume_available = true;
+    setRuntimeStateOverride(targetAgentId, 'error', 8_000);
+    showApiError(error, t('chat.error.resumeFailed'));
+  }
+};
+
 const copyMessageContent = async (payload: unknown) => {
   const message = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
   const text = prepareMessageMarkdownContent(message?.content ?? payload, message).trim();
@@ -6789,6 +6884,13 @@ const handleSearchCreateAction = async (command?: string) => {
 const openMixedConversation = async (item: MixedConversation) => {
   clearMiddlePaneOverlayHide();
   middlePaneOverlayVisible.value = false;
+  if (
+    sessionHub.activeSection === 'messages' &&
+    !showChatSettingsView.value &&
+    isMixedConversationActive(item)
+  ) {
+    return;
+  }
   if (item.kind === 'agent') {
     await openAgentById(item.agentId);
     return;
@@ -6911,8 +7013,8 @@ const openAgentById = async (agentId: unknown) => {
     .filter((item) => normalizeAgentId(item?.agent_id) === normalized)
     .sort(
       (left, right) =>
-        normalizeTimestamp(right?.updated_at || right?.last_message_at || right?.created_at) -
-        normalizeTimestamp(left?.updated_at || left?.last_message_at || left?.created_at)
+        resolveSessionActivityTimestamp((right || {}) as Record<string, unknown>) -
+        resolveSessionActivityTimestamp((left || {}) as Record<string, unknown>)
     );
   const mainSession = sessions.find((item) => Boolean(item?.is_main));
   const targetSession = mainSession || sessions[0];
@@ -9986,15 +10088,25 @@ watch(
 );
 
 watch(
-  () => [isAgentConversationActive.value, desktopMode.value] as const,
-  ([active, desktop]) => {
+  () =>
+    [
+      isAgentConversationActive.value,
+      desktopMode.value,
+      activeAgentId.value,
+      String(chatStore.activeSessionId || '').trim(),
+      showChatSettingsView.value
+    ] as const,
+  ([active, desktop, _agentId, _sessionId, showingSettings], previous) => {
     if (!active) {
       void cancelAgentVoiceRecording();
       return;
     }
+    const forceRefresh = Boolean(previous?.[4] && !showingSettings);
     if (desktop) {
-      void readDesktopDefaultModelMeta(false);
+      void readDesktopDefaultModelMeta(forceRefresh);
+      return;
     }
+    void readServerDefaultModelName(forceRefresh);
   },
   { immediate: true }
 );

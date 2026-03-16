@@ -1,45 +1,50 @@
 <template>
   <div class="zoomable-image-preview">
-    <div v-if="imageUrl" class="zoomable-image-toolbar">
-      <button
-        class="zoomable-image-btn"
-        type="button"
-        :title="t('common.zoomOut')"
-        :aria-label="t('common.zoomOut')"
-        :disabled="!canZoomOut"
-        @click="zoomOut"
-      >
-        <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
-      </button>
-      <button
-        class="zoomable-image-btn"
-        type="button"
-        :title="t('common.fit')"
-        :aria-label="t('common.fit')"
-        @click="fitToView"
-      >
-        <i class="fa-solid fa-maximize" aria-hidden="true"></i>
-      </button>
-      <button
-        class="zoomable-image-btn"
-        type="button"
-        :title="t('common.reset')"
-        :aria-label="t('common.reset')"
-        @click="resetZoom"
-      >
-        <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
-      </button>
-      <span class="zoomable-image-scale" aria-live="polite">{{ scaleLabel }}</span>
-      <button
-        class="zoomable-image-btn"
-        type="button"
-        :title="t('common.zoomIn')"
-        :aria-label="t('common.zoomIn')"
-        :disabled="!canZoomIn"
-        @click="zoomIn"
-      >
-        <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
-      </button>
+    <div v-if="imageUrl" class="zoomable-image-toolbar" role="toolbar" :aria-label="t('chat.imagePreview')">
+      <div class="zoomable-image-meta">
+        <span class="zoomable-image-scale" aria-live="polite">{{ scaleLabel }}</span>
+        <span v-if="imageResolutionLabel" class="zoomable-image-resolution">{{ imageResolutionLabel }}</span>
+      </div>
+      <div class="zoomable-image-actions">
+        <button
+          class="zoomable-image-btn"
+          type="button"
+          :title="t('common.zoomOut')"
+          :aria-label="t('common.zoomOut')"
+          :disabled="!canZoomOut"
+          @click="zoomOut"
+        >
+          <i class="fa-solid fa-magnifying-glass-minus" aria-hidden="true"></i>
+        </button>
+        <button
+          class="zoomable-image-btn"
+          type="button"
+          :title="t('common.zoomIn')"
+          :aria-label="t('common.zoomIn')"
+          :disabled="!canZoomIn"
+          @click="zoomIn"
+        >
+          <i class="fa-solid fa-magnifying-glass-plus" aria-hidden="true"></i>
+        </button>
+        <button
+          class="zoomable-image-btn"
+          type="button"
+          :title="t('common.fit')"
+          :aria-label="t('common.fit')"
+          @click="fitToView"
+        >
+          <i class="fa-solid fa-maximize" aria-hidden="true"></i>
+        </button>
+        <button
+          class="zoomable-image-btn zoomable-image-btn--label"
+          type="button"
+          :title="t('common.reset')"
+          :aria-label="t('common.reset')"
+          @click="resetZoom"
+        >
+          100%
+        </button>
+      </div>
     </div>
     <div
       ref="stageRef"
@@ -52,9 +57,6 @@
       @wheel="handleWheel"
       @dblclick="handleDoubleClick"
     >
-      <div v-if="imageUrl" class="zoomable-image-hint">
-        {{ t('chat.imagePreviewHint') }}
-      </div>
       <img
         v-if="imageUrl"
         :src="imageUrl"
@@ -120,6 +122,10 @@ const canPan = computed(
   () => renderedWidth.value > stageWidth.value + 1 || renderedHeight.value > stageHeight.value + 1
 );
 const scaleLabel = computed(() => `${Math.round(scale.value * 100)}%`);
+const imageResolutionLabel = computed(() => {
+  if (!naturalWidth.value || !naturalHeight.value) return '';
+  return `${naturalWidth.value} x ${naturalHeight.value}`;
+});
 const fitScale = computed(() => {
   if (!naturalWidth.value || !naturalHeight.value || !stageWidth.value || !stageHeight.value) {
     return 1;
@@ -326,36 +332,70 @@ onBeforeUnmount(() => {
 .zoomable-image-preview {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
+  min-height: 0;
+  width: 100%;
 }
 
 .zoomable-image-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.24);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--ui-accent-rgb, 77, 216, 255), 0.08),
+    rgba(var(--ui-accent-rgb, 77, 216, 255), 0.02)
+  );
+}
+
+.zoomable-image-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.zoomable-image-actions {
+  display: inline-flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .zoomable-image-btn {
   width: 32px;
   height: 32px;
   border-radius: 8px;
-  border: 1px solid rgba(77, 216, 255, 0.2);
-  background: rgba(15, 23, 42, 0.68);
-  color: var(--chat-text);
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.26);
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.12);
+  color: var(--chat-text, var(--el-text-color-primary, #1f2937));
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease, color 0.2s ease;
+}
+
+.zoomable-image-btn--label {
+  min-width: 54px;
+  width: auto;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .zoomable-image-btn:hover:not(:disabled),
 .zoomable-image-btn:focus-visible:not(:disabled) {
-  border-color: rgba(77, 216, 255, 0.4);
-  background: rgba(26, 39, 68, 0.9);
+  border-color: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.48);
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.2);
   transform: translateY(-1px);
+  outline: none;
 }
 
 .zoomable-image-btn:disabled {
@@ -364,17 +404,59 @@ onBeforeUnmount(() => {
 }
 
 .zoomable-image-scale {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 56px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.28);
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.12);
   text-align: center;
   font-size: 12px;
-  color: var(--chat-muted);
+  font-weight: 600;
+  color: var(--chat-text, var(--el-text-color-primary, #1f2937));
+}
+
+.zoomable-image-resolution {
+  font-size: 12px;
+  color: var(--chat-muted, var(--el-text-color-secondary, #64748b));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .zoomable-image-stage {
   position: relative;
-  min-height: 240px;
-  max-height: 60vh;
+  min-height: 280px;
+  max-height: 64vh;
   overflow: auto;
+  padding: 16px;
+  border: 1px solid rgba(var(--ui-accent-rgb, 77, 216, 255), 0.2);
+  border-radius: 12px;
+  background-color: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.04);
+  background-image:
+    linear-gradient(
+      45deg,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06)
+    ),
+    linear-gradient(
+      45deg,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 25%,
+      transparent 25%,
+      transparent 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06) 75%,
+      rgba(var(--ui-accent-rgb, 77, 216, 255), 0.06)
+    );
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.46) transparent;
 }
 
 .zoomable-image-stage.is-pannable {
@@ -386,27 +468,40 @@ onBeforeUnmount(() => {
   user-select: none;
 }
 
-.zoomable-image-hint {
-  position: sticky;
-  top: 12px;
-  left: calc(100% - 12px);
-  z-index: 1;
-  margin-left: auto;
-  margin-right: 12px;
-  max-width: min(360px, calc(100% - 24px));
-  padding: 8px 10px;
-  border: 1px solid rgba(77, 216, 255, 0.2);
-  border-radius: 10px;
-  background: rgba(8, 13, 24, 0.78);
-  color: var(--chat-muted);
-  font-size: 12px;
-  line-height: 1.45;
-  pointer-events: none;
+.zoomable-image-stage::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.zoomable-image-stage::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.zoomable-image-stage::-webkit-scrollbar-thumb {
+  background: rgba(var(--ui-accent-rgb, 77, 216, 255), 0.42);
+  border-radius: 999px;
 }
 
 .zoomable-image {
   display: block;
   height: auto;
   margin: 0 auto;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.2);
+}
+
+@media (max-width: 768px) {
+  .zoomable-image-toolbar {
+    padding: 8px;
+  }
+
+  .zoomable-image-resolution {
+    display: none;
+  }
+
+  .zoomable-image-stage {
+    min-height: 220px;
+    max-height: 56vh;
+    padding: 12px;
+  }
 }
 </style>

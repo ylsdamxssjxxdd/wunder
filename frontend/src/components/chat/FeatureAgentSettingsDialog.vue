@@ -81,6 +81,18 @@
                   />
                 </el-select>
               </div>
+              <div class="agent-share-row agent-share-row--sandbox">
+                <span>{{ t('portal.agent.model.title') }}</span>
+                <el-select v-model="form.model_name" size="small" class="agent-sandbox-select" :disabled="modelLoading">
+                  <el-option :label="t('portal.agent.model.defaultOption', { name: defaultModelDisplayName })" value="" />
+                  <el-option
+                    v-for="model in modelSelectOptions"
+                    :key="model"
+                    :label="model"
+                    :value="model"
+                  />
+                </el-select>
+              </div>
               <div v-if="showApprovalModeSetting" class="agent-share-row agent-share-row--sandbox">
                 <span>{{ t('portal.agent.permission.title') }}</span>
                 <el-select v-model="form.approval_mode" size="small" class="agent-sandbox-select">
@@ -93,6 +105,7 @@
                 </el-select>
               </div>
               <div class="agent-editor-hint">{{ t('portal.agent.sandbox.hint') }}</div>
+              <div class="agent-editor-hint">{{ t('portal.agent.model.hint') }}</div>
               <div v-if="showApprovalModeSetting" class="agent-editor-hint">
                 {{ t('portal.agent.permission.hint') }}
               </div>
@@ -118,6 +131,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
+import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsSummary } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
@@ -192,11 +206,23 @@ const normalizeApprovalMode = (value) => {
   return resolveDefaultApprovalMode();
 };
 
+const resolveConfiguredModelName = (agent: Record<string, unknown>) => {
+  const configured = String(agent.configured_model_name || '').trim();
+  if (configured) return configured;
+  const fallback = String(agent.model_name || '').trim();
+  const defaultName = String(defaultModelName.value || '').trim();
+  if (fallback && fallback !== defaultName) {
+    return fallback;
+  }
+  return '';
+};
+
 const form = reactive({
   name: '',
   description: '',
   is_shared: false,
   system_prompt: '',
+  model_name: '',
   tool_names: [],
   preset_questions: [],
   group: createBeeroomGroupDraft(),
@@ -217,6 +243,9 @@ const toolSummary = ref(null);
 const toolLoading = ref(false);
 const toolError = ref('');
 const currentAgent = ref<Record<string, unknown> | null>(null);
+const modelLoading = ref(false);
+const availableModelNames = ref<string[]>([]);
+const defaultModelName = ref('');
 
 const normalizeToolOption = (item) => {
   if (!item) return null;
@@ -246,6 +275,28 @@ const toolGroups = computed(() => {
     { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
     { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) }
   ].filter((group) => group.options.length > 0);
+});
+
+const defaultModelDisplayName = computed(() => {
+  const fallback = t('portal.agent.model.defaultName');
+  const value = String(defaultModelName.value || '').trim();
+  return value || fallback;
+});
+
+const modelSelectOptions = computed<string[]>(() => {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const item of availableModelNames.value) {
+    const cleaned = String(item || '').trim();
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    output.push(cleaned);
+  }
+  const configured = String(form.model_name || '').trim();
+  if (configured && !seen.has(configured)) {
+    output.unshift(configured);
+  }
+  return output;
 });
 
 const dependencyStatus = computed(() =>
@@ -284,6 +335,25 @@ const loadToolSummary = async () => {
   }
 };
 
+const loadModelOptions = async () => {
+  if (modelLoading.value) return;
+  modelLoading.value = true;
+  try {
+    const result = await listAgentModels();
+    const payload = (result?.data?.data || {}) as Record<string, unknown>;
+    const items = Array.isArray(payload.items) ? payload.items : [];
+    availableModelNames.value = items
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    defaultModelName.value = String(payload.default_model_name || '').trim();
+  } catch {
+    availableModelNames.value = [];
+    defaultModelName.value = '';
+  } finally {
+    modelLoading.value = false;
+  }
+};
+
 const loadAgent = async () => {
   if (!canEdit.value) {
     return;
@@ -302,6 +372,7 @@ const loadAgent = async () => {
     form.description = agent.description || '';
     form.is_shared = false;
     form.system_prompt = agent.system_prompt || '';
+    form.model_name = resolveConfiguredModelName(currentAgent.value);
     form.tool_names = Array.isArray(agent.tool_names) ? [...agent.tool_names] : [];
     form.preset_questions = normalizeAgentPresetQuestions(agent.preset_questions);
     form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
@@ -332,6 +403,7 @@ const saveAgent = async () => {
       preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
       ...buildBeeroomGroupPayload(form.group),
       system_prompt: form.system_prompt || '',
+      model_name: String(form.model_name || '').trim(),
       sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
       approval_mode: normalizeApprovalMode(form.approval_mode)
     };
@@ -357,6 +429,7 @@ const exportWorkerCard = () => {
     name: String(form.name || '').trim() || normalizedAgentId.value,
     description: String(form.description || '').trim(),
     system_prompt: String(form.system_prompt || ''),
+    model_name: String(form.model_name || '').trim(),
     tool_names: dependencyPayload.tool_names,
     declared_tool_names: dependencyPayload.declared_tool_names,
     declared_skill_names: dependencyPayload.declared_skill_names,
@@ -394,19 +467,20 @@ const deleteAgent = async () => {
 
 watch(
   () => visible.value,
-  (value) => {
+  async (value) => {
     if (value) {
-      loadToolSummary();
-      loadAgent();
+      await Promise.all([loadToolSummary(), loadModelOptions()]);
+      await loadAgent();
     }
   }
 );
 
 watch(
   () => normalizedAgentId.value,
-  () => {
+  async () => {
     if (visible.value) {
-      loadAgent();
+      await Promise.all([loadModelOptions()]);
+      await loadAgent();
     }
   }
 );

@@ -1221,7 +1221,9 @@ impl TuiApp {
                     }
                     return Ok(());
                 }
-                let removed = self.pending_attachments.remove(drop_index);
+                let removed = self
+                    .remove_pending_attachment_at(drop_index)
+                    .expect("attachment index already validated");
                 let removed_name = removed
                     .payload
                     .name

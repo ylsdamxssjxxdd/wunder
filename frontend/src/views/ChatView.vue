@@ -2315,13 +2315,14 @@ const handleCopyMessage = async (message) => {
 const shouldShowResumeButton = (message) => {
   if (!message || message.role !== 'assistant') return false;
   if (message.workflowStreaming) return false;
-  return Boolean(message.slow_client);
+  return Boolean(message.slow_client || message.resume_available);
 };
 
 const handleResumeMessage = async (message) => {
   if (!message) return;
   const sessionId = chatStore.activeSessionId;
   if (!sessionId) return;
+  message.resume_available = false;
   message.slow_client = false;
   await chatStore.resumeStream(sessionId, message, { force: true });
 };

@@ -119,6 +119,8 @@ pub struct UserAgentPresetSnapshot {
     pub name: String,
     pub description: String,
     pub system_prompt: String,
+    #[serde(default)]
+    pub model_name: Option<String>,
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,
@@ -152,6 +154,7 @@ pub struct UserAgentRecord {
     pub name: String,
     pub description: String,
     pub system_prompt: String,
+    pub model_name: Option<String>,
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,

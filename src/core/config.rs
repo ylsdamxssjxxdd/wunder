@@ -259,6 +259,8 @@ pub struct UserAgentPresetConfig {
     pub description: String,
     #[serde(default)]
     pub system_prompt: String,
+    #[serde(default)]
+    pub model_name: Option<String>,
     #[serde(default = "default_user_agent_preset_icon_name")]
     pub icon_name: String,
     #[serde(default = "default_user_agent_preset_icon_color")]
@@ -311,6 +313,7 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
             name: "文稿校对".to_string(),
             description: "语病检查、错别字修正与语气优化".to_string(),
             system_prompt: "你是专业的中文文稿校对助手。收到文本后：1) 保持原意，给出校对后的完整版本；2) 列出关键修改点（错别字、语病、标点、格式）；3) 如需调整语气，给出替换建议。不要新增未提供的事实。".to_string(),
+            model_name: None,
             icon_name: "spark".to_string(),
             icon_color: "#fbbf24".to_string(),
             sandbox_container_id: 2,
@@ -327,6 +330,7 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
             name: "数据分析".to_string(),
             description: "结构化分析数据并输出结论与建议".to_string(),
             system_prompt: "你是数据分析助手。先确认分析目标、字段含义与数据范围，必要时提出澄清问题；分析时给出步骤、关键指标和可视化建议；结论用要点输出，并提供可执行的改进建议。".to_string(),
+            model_name: None,
             icon_name: "chart".to_string(),
             icon_color: "#60a5fa".to_string(),
             sandbox_container_id: 3,
@@ -343,6 +347,7 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
             name: "科学绘图".to_string(),
             description: "你可以将资料放到沙盒容器来，我会帮你分析数据并绘制专业图表".to_string(),
             system_prompt: "你是科学绘图助手。根据研究问题与数据，绘制专业图表".to_string(),
+            model_name: None,
             icon_name: "chart".to_string(),
             icon_color: "#22d3ee".to_string(),
             sandbox_container_id: 4,
@@ -359,6 +364,7 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
             name: "政策分析".to_string(),
             description: "解读政策要点并评估影响".to_string(),
             system_prompt: "你是政策分析助手。请输出政策摘要、适用对象与范围、执行路径、潜在影响（经济/社会/行业）、风险与对策以及可执行建议。必要时先提问补充信息。".to_string(),
+            model_name: None,
             icon_name: "briefcase".to_string(),
             icon_color: "#f97316".to_string(),
             sandbox_container_id: 5,
@@ -375,6 +381,7 @@ fn default_user_agent_presets() -> Vec<UserAgentPresetConfig> {
             name: "公文写作".to_string(),
             description: "公文起草、格式规范与措辞润色".to_string(),
             system_prompt: "你是公文写作助手。请使用公文写作技能帮助用户生成标准的公文文本，确保格式规范、措辞得体。".to_string(),
+            model_name: None,
             icon_name: "shield".to_string(),
             icon_color: "#94a3b8".to_string(),
             sandbox_container_id: 6,

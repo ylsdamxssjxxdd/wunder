@@ -2,6 +2,7 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::monitor::MonitorState;
+use crate::services::llm::is_llm_model;
 use crate::state::AppState;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, HiveRecord, DEFAULT_HIVE_ID,
@@ -40,6 +41,7 @@ const HEATMAP_TOOL_LIMIT: usize = 24;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/wunder/agents", get(list_agents).post(create_agent))
+        .route("/wunder/agents/models", get(list_agent_models))
         .route("/wunder/agents/shared", get(list_shared_agents))
         .route("/wunder/agents/running", get(list_running_agents))
         .route("/wunder/agents/user-rounds", get(list_agent_user_rounds))
@@ -84,10 +86,12 @@ async fn list_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
+    let app_config = state.config_store.get().await;
+    let configured_model_name = resolve_default_model_name(&app_config);
     let items = filtered
         .into_iter()
         .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
-        .map(|record| agent_payload(&record))
+        .map(|record| agent_payload(&record, configured_model_name.as_deref()))
         .collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
@@ -110,14 +114,33 @@ async fn list_shared_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
+    let app_config = state.config_store.get().await;
+    let configured_model_name = resolve_default_model_name(&app_config);
     let items = filtered
         .into_iter()
         .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
-        .map(|record| agent_payload(&record))
+        .map(|record| agent_payload(&record, configured_model_name.as_deref()))
         .collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
     ))
+}
+
+async fn list_agent_models(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let _resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let config = state.config_store.get().await;
+    let items = resolve_available_model_names(&config);
+    let default_model_name = resolve_default_model_name(&config);
+    Ok(Json(json!({
+        "data": {
+            "items": items,
+            "default_model_name": default_model_name,
+        }
+    })))
 }
 
 async fn list_running_agents(
@@ -539,7 +562,11 @@ async fn get_agent(
     let normalized_agent_id = normalize_agent_id(cleaned);
     if normalized_agent_id.is_empty() {
         let config = resolve_default_agent_config(&state, &resolved.user).await?;
-        return Ok(Json(json!({ "data": default_agent_payload(&config) })));
+        let app_config = state.config_store.get().await;
+        let configured_model_name = resolve_default_model_name(&app_config);
+        return Ok(Json(
+            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref()) }),
+        ));
     }
     let record = state
         .user_store
@@ -556,7 +583,11 @@ async fn get_agent(
             i18n::t("error.agent_not_found"),
         ));
     }
-    Ok(Json(json!({ "data": agent_payload(&record) })))
+    let app_config = state.config_store.get().await;
+    let configured_model_name = resolve_default_model_name(&app_config);
+    Ok(Json(
+        json!({ "data": agent_payload(&record, configured_model_name.as_deref()) }),
+    ))
 }
 
 #[derive(Debug, Default, Clone)]
@@ -868,6 +899,7 @@ async fn create_agent(
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let requested_model_name = normalize_request_model_name(payload.model_name.as_deref());
     let copy_source = if let Some(copy_id) = copy_from_agent_id {
         let source = state
             .user_store
@@ -969,6 +1001,11 @@ async fn create_agent(
         name,
         description,
         system_prompt,
+        model_name: requested_model_name.or_else(|| {
+            copy_source
+                .as_ref()
+                .and_then(|item| normalize_request_model_name(item.model_name.as_deref()))
+        }),
         tool_names,
         declared_tool_names,
         declared_skill_names,
@@ -987,7 +1024,11 @@ async fn create_agent(
         .user_store
         .upsert_user_agent(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": agent_payload(&record) })))
+    let app_config = state.config_store.get().await;
+    let configured_model_name = resolve_default_model_name(&app_config);
+    Ok(Json(
+        json!({ "data": agent_payload(&record, configured_model_name.as_deref()) }),
+    ))
 }
 
 async fn update_agent(
@@ -1050,7 +1091,11 @@ async fn update_agent(
             config.created_at = config.updated_at;
         }
         save_default_agent_config(&state, &user_id, &config)?;
-        return Ok(Json(json!({ "data": default_agent_payload(&config) })));
+        let app_config = state.config_store.get().await;
+        let configured_model_name = resolve_default_model_name(&app_config);
+        return Ok(Json(
+            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref()) }),
+        ));
     }
     let mut record = state
         .user_store
@@ -1068,6 +1113,9 @@ async fn update_agent(
     }
     if let Some(system_prompt) = payload.system_prompt {
         record.system_prompt = system_prompt;
+    }
+    if payload.model_name.is_some() {
+        record.model_name = normalize_request_model_name(payload.model_name.as_deref());
     }
     if let Some(is_shared) = payload.is_shared {
         record.is_shared = is_shared;
@@ -1129,7 +1177,11 @@ async fn update_agent(
         .user_store
         .upsert_user_agent(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(Json(json!({ "data": agent_payload(&record) })))
+    let app_config = state.config_store.get().await;
+    let configured_model_name = resolve_default_model_name(&app_config);
+    Ok(Json(
+        json!({ "data": agent_payload(&record, configured_model_name.as_deref()) }),
+    ))
 }
 
 async fn delete_agent(
@@ -1284,12 +1336,21 @@ async fn set_default_session(
     })))
 }
 
-fn agent_payload(record: &crate::storage::UserAgentRecord) -> Value {
+fn agent_payload(
+    record: &crate::storage::UserAgentRecord,
+    default_model_name: Option<&str>,
+) -> Value {
+    let configured_model_name = normalize_request_model_name(record.model_name.as_deref());
+    let effective_model_name = configured_model_name
+        .clone()
+        .or_else(|| normalize_request_model_name(default_model_name));
     json!({
         "id": record.agent_id,
         "name": record.name,
         "description": record.description,
         "system_prompt": record.system_prompt,
+        "configured_model_name": configured_model_name,
+        "model_name": effective_model_name,
         "tool_names": record.tool_names,
         "declared_tool_names": record.declared_tool_names,
         "declared_skill_names": record.declared_skill_names,
@@ -1829,6 +1890,7 @@ async fn ensure_preset_agents(
             name: target.name.clone(),
             description: target.description.clone(),
             system_prompt: target.system_prompt.clone(),
+            model_name: target.model_name.clone(),
             tool_names: target.tool_names.clone(),
             declared_tool_names: target.declared_tool_names.clone(),
             declared_skill_names: target.declared_skill_names.clone(),
@@ -2032,12 +2094,15 @@ async fn resolve_default_agent_config(
     Ok(build_default_agent_config(state, user).await)
 }
 
-fn default_agent_payload(config: &DefaultAgentConfig) -> Value {
+fn default_agent_payload(config: &DefaultAgentConfig, model_name: Option<&str>) -> Value {
+    let effective_model_name = normalize_request_model_name(model_name);
     json!({
         "id": DEFAULT_AGENT_ID_ALIAS,
         "name": config.name,
         "description": config.description,
         "system_prompt": config.system_prompt,
+        "configured_model_name": Value::Null,
+        "model_name": effective_model_name,
         "tool_names": config.tool_names,
         "declared_tool_names": Vec::<String>::new(),
         "declared_skill_names": Vec::<String>::new(),
@@ -2052,6 +2117,36 @@ fn default_agent_payload(config: &DefaultAgentConfig) -> Value {
         "created_at": format_ts(config.created_at),
         "updated_at": format_ts(config.updated_at),
     })
+}
+
+fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {
+    let default_key = config.llm.default.trim();
+    if !default_key.is_empty() {
+        return Some(default_key.to_string());
+    }
+    resolve_available_model_names(config).into_iter().next()
+}
+
+fn resolve_available_model_names(config: &crate::config::Config) -> Vec<String> {
+    let mut names = Vec::new();
+    for (key, cfg) in config.llm.models.iter() {
+        if !is_llm_model(cfg) {
+            continue;
+        }
+        let trimmed = key.trim();
+        if !trimmed.is_empty() {
+            names.push(trimmed.to_string());
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn normalize_request_model_name(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn save_default_agent_config(
@@ -2084,6 +2179,8 @@ struct AgentCreateRequest {
     description: Option<String>,
     #[serde(default)]
     system_prompt: Option<String>,
+    #[serde(default, alias = "modelName", alias = "model_name")]
+    model_name: Option<String>,
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]
@@ -2156,6 +2253,8 @@ struct AgentUpdateRequest {
     description: Option<String>,
     #[serde(default)]
     system_prompt: Option<String>,
+    #[serde(default, alias = "modelName", alias = "model_name")]
+    model_name: Option<String>,
     #[serde(default)]
     tool_names: Option<Vec<String>>,
     #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]

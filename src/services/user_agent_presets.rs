@@ -26,6 +26,7 @@ pub struct PresetAgent {
     pub name: String,
     pub description: String,
     pub system_prompt: String,
+    pub model_name: Option<String>,
     pub icon_name: String,
     pub icon_color: String,
     pub sandbox_container_id: i32,
@@ -96,6 +97,12 @@ pub fn normalize_preset_questions(values: Vec<String>) -> Vec<String> {
     output
 }
 
+pub fn normalize_optional_model_name(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
 pub fn normalize_agent_approval_mode(raw: Option<&str>) -> String {
     match raw.unwrap_or_default().trim().to_ascii_lowercase().as_str() {
         "suggest" => "suggest".to_string(),
@@ -147,6 +154,7 @@ pub fn preset_from_config(config: &UserAgentPresetConfig) -> Option<PresetAgent>
         name: name.to_string(),
         description: config.description.trim().to_string(),
         system_prompt: config.system_prompt.trim().to_string(),
+        model_name: normalize_optional_model_name(config.model_name.as_deref()),
         icon_name,
         icon_color,
         sandbox_container_id: normalize_sandbox_container_id(config.sandbox_container_id),
@@ -186,6 +194,7 @@ pub fn snapshot_from_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot
         name: record.name.clone(),
         description: record.description.clone(),
         system_prompt: record.system_prompt.clone(),
+        model_name: record.model_name.clone(),
         tool_names: normalize_tool_list(record.tool_names.clone()),
         declared_tool_names: normalize_tool_list(record.declared_tool_names.clone()),
         declared_skill_names: normalize_tool_list(record.declared_skill_names.clone()),
@@ -240,6 +249,7 @@ pub async fn build_target_snapshot(
         name: preset.name.clone(),
         description: preset.description.clone(),
         system_prompt: preset.system_prompt.clone(),
+        model_name: normalize_optional_model_name(preset.model_name.as_deref()),
         tool_names: requested_tool_names,
         declared_tool_names: preset.declared_tool_names.clone(),
         declared_skill_names: preset.declared_skill_names.clone(),
@@ -274,6 +284,7 @@ fn same_name_agent<'a>(agents: &'a [UserAgentRecord], name: &str) -> Option<&'a 
 fn apply_template_agent_fields(preset: &mut PresetAgent, template: &UserAgentRecord) {
     preset.description = template.description.trim().to_string();
     preset.system_prompt = template.system_prompt.trim().to_string();
+    preset.model_name = normalize_optional_model_name(template.model_name.as_deref());
     preset.sandbox_container_id = normalize_sandbox_container_id(template.sandbox_container_id);
     preset.tool_names = normalize_tool_list(template.tool_names.clone());
     preset.declared_tool_names = normalize_tool_list(template.declared_tool_names.clone());
@@ -342,6 +353,7 @@ fn plan_snapshot_sync(
     compare_field!(name);
     compare_field!(description);
     compare_field!(system_prompt);
+    compare_field!(model_name);
     compare_field!(tool_names);
     compare_field!(declared_tool_names);
     compare_field!(declared_skill_names);
@@ -375,6 +387,7 @@ fn apply_sync_mode(
     sync_field!(name);
     sync_field!(description);
     sync_field!(system_prompt);
+    sync_field!(model_name);
     sync_field!(tool_names);
     sync_field!(declared_tool_names);
     sync_field!(declared_skill_names);
@@ -407,6 +420,7 @@ pub async fn create_preset_agent_record(
         name: target.name.clone(),
         description: target.description.clone(),
         system_prompt: target.system_prompt.clone(),
+        model_name: target.model_name.clone(),
         tool_names: target.tool_names.clone(),
         declared_tool_names: target.declared_tool_names.clone(),
         declared_skill_names: target.declared_skill_names.clone(),

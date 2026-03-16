@@ -55,29 +55,12 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
         return;
     }
 
-    let attachment_hint = app.composer_attachment_hint();
-    let attachment_height = u16::from(attachment_hint.is_some() && area.height >= 3);
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(attachment_height),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(area);
-    let attachment_area = sections[0];
-    let input_area = sections[1];
-    let footer_area = sections[2];
-
-    if attachment_area.height > 0 && attachment_area.width > 0 {
-        if let Some(hint) = attachment_hint {
-            frame.render_widget(
-                Paragraph::new(Line::from(Span::styled(hint, theme::success_text())))
-                    .wrap(Wrap { trim: false }),
-                attachment_area,
-            );
-        }
-    }
+    let input_area = sections[0];
+    let footer_area = sections[1];
 
     let prompt_width = UnicodeWidthStr::width(INPUT_PROMPT) as u16;
     let text_area = Rect {
@@ -120,8 +103,8 @@ pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh:
                 theme::secondary_text(),
             ))])
         } else {
-            let large_paste_placeholders = app.large_paste_placeholders();
-            render_input_text(input_text.as_str(), large_paste_placeholders.as_slice())
+            let inline_placeholders = app.inline_input_placeholders();
+            render_input_text(input_text.as_str(), inline_placeholders.as_slice())
         };
 
         frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), text_area);

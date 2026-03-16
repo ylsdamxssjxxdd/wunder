@@ -95,6 +95,7 @@ pub async fn handle_cron_action(
     payload: CronActionRequest,
 ) -> Result<Value> {
     let action = payload.action.trim().to_lowercase();
+    let scoped_agent_id = resolve_scoped_agent_id(agent_id, payload.job.as_ref());
     let now = now_ts();
     match action.as_str() {
         "status" => {
@@ -117,13 +118,14 @@ pub async fn handle_cron_action(
                     .await
                     .map_err(|err| anyhow!(err.to_string()))??
             };
-            let user_total_jobs = user_jobs.len();
-            let user_enabled_jobs = user_jobs.iter().filter(|job| job.enabled).count();
-            let user_running_jobs = user_jobs
+            let scoped_jobs = filter_jobs_by_agent_scope(user_jobs, scoped_agent_id.as_deref());
+            let user_total_jobs = scoped_jobs.len();
+            let user_enabled_jobs = scoped_jobs.iter().filter(|job| job.enabled).count();
+            let user_running_jobs = scoped_jobs
                 .iter()
                 .filter(|job| cron_job_is_running(job, now))
                 .count();
-            let user_next_run_at = user_jobs
+            let user_next_run_at = scoped_jobs
                 .iter()
                 .filter(|job| job.enabled)
                 .filter_map(|job| job.next_run_at)
@@ -161,6 +163,7 @@ pub async fn handle_cron_action(
             let jobs = tokio::task::spawn_blocking(move || storage.list_cron_jobs(&cleaned, true))
                 .await
                 .map_err(|err| anyhow!(err.to_string()))??;
+            let jobs = filter_jobs_by_agent_scope(jobs, scoped_agent_id.as_deref());
             let items = jobs.iter().map(cron_job_to_value).collect::<Vec<_>>();
             Ok(json!({ "action": "list", "jobs": items }))
         }
@@ -183,6 +186,9 @@ pub async fn handle_cron_action(
             let Some(job) = job else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
+            if !cron_job_matches_agent_scope(&job, scoped_agent_id.as_deref()) {
+                return Err(anyhow!(i18n::t("error.task_not_found")));
+            }
             Ok(json!({ "action": "get", "job": cron_job_to_value(&job) }))
         }
         "add" => {
@@ -212,12 +218,14 @@ pub async fn handle_cron_action(
                     .await
                     .map_err(|err| anyhow!(err.to_string()))??
                 };
-                if let Some(mut record) = existing {
+                if let Some(mut record) = existing.filter(|record| {
+                    cron_job_matches_agent_scope(record, scoped_agent_id.as_deref())
+                }) {
                     apply_job_patch(
                         &mut record,
                         &input,
                         job_session_id.as_str(),
-                        agent_id,
+                        scoped_agent_id.as_deref(),
                         now,
                         true,
                     )?;
@@ -236,7 +244,13 @@ pub async fn handle_cron_action(
                     }));
                 }
             }
-            let record = build_job_record(user_id, job_session_id.as_str(), agent_id, now, input)?;
+            let record = build_job_record(
+                user_id,
+                job_session_id.as_str(),
+                scoped_agent_id.as_deref(),
+                now,
+                input,
+            )?;
             let storage = storage.clone();
             let record_clone = record.clone();
             tokio::task::spawn_blocking(move || storage.upsert_cron_job(&record_clone))
@@ -268,6 +282,9 @@ pub async fn handle_cron_action(
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
+            if !cron_job_matches_agent_scope(&record, scoped_agent_id.as_deref()) {
+                return Err(anyhow!(i18n::t("error.task_not_found")));
+            }
             let fallback_session_id = record.session_id.clone();
             let job_session_id = input
                 .session_id
@@ -279,7 +296,7 @@ pub async fn handle_cron_action(
                 &mut record,
                 &input,
                 job_session_id.as_str(),
-                agent_id,
+                scoped_agent_id.as_deref(),
                 now,
                 false,
             )?;
@@ -314,6 +331,9 @@ pub async fn handle_cron_action(
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
+            if !cron_job_matches_agent_scope(&record, scoped_agent_id.as_deref()) {
+                return Err(anyhow!(i18n::t("error.task_not_found")));
+            }
             record.enabled = action == "enable";
             if record.enabled {
                 record.consecutive_failures = 0;
@@ -350,9 +370,23 @@ pub async fn handle_cron_action(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| anyhow!("job_id required"))?;
-            let storage = storage.clone();
             let cleaned_user = user_id.trim().to_string();
             let cleaned_job = job_id.to_string();
+            let existing = {
+                let storage = storage.clone();
+                let lookup_user = cleaned_user.clone();
+                let lookup_job = cleaned_job.clone();
+                tokio::task::spawn_blocking(move || storage.get_cron_job(&lookup_user, &lookup_job))
+                    .await
+                    .map_err(|err| anyhow!(err.to_string()))??
+            };
+            let Some(record) = existing else {
+                return Err(anyhow!(i18n::t("error.task_not_found")));
+            };
+            if !cron_job_matches_agent_scope(&record, scoped_agent_id.as_deref()) {
+                return Err(anyhow!(i18n::t("error.task_not_found")));
+            }
+            let storage = storage.clone();
             let removed = tokio::task::spawn_blocking(move || {
                 storage.delete_cron_job(&cleaned_user, &cleaned_job)
             })
@@ -386,6 +420,9 @@ pub async fn handle_cron_action(
             let Some(mut record) = existing else {
                 return Err(anyhow!(i18n::t("error.task_not_found")));
             };
+            if !cron_job_matches_agent_scope(&record, scoped_agent_id.as_deref()) {
+                return Err(anyhow!(i18n::t("error.task_not_found")));
+            }
 
             if cron_job_is_running(&record, now) {
                 return Ok(json!({
@@ -448,11 +485,26 @@ pub async fn list_cron_runs(
     storage: Arc<dyn StorageBackend>,
     user_id: &str,
     job_id: &str,
+    scoped_agent_id: Option<&str>,
     limit: i64,
 ) -> Result<Value> {
     let cleaned_user = user_id.trim().to_string();
     let cleaned_job = job_id.trim().to_string();
     let safe_limit = limit.clamp(1, 200);
+    let existing = {
+        let storage = storage.clone();
+        let cleaned_user = cleaned_user.clone();
+        let cleaned_job = cleaned_job.clone();
+        tokio::task::spawn_blocking(move || storage.get_cron_job(&cleaned_user, &cleaned_job))
+            .await
+            .map_err(|err| anyhow!(err.to_string()))??
+    };
+    let Some(record) = existing else {
+        return Err(anyhow!(i18n::t("error.task_not_found")));
+    };
+    if !cron_job_matches_agent_scope(&record, scoped_agent_id) {
+        return Err(anyhow!(i18n::t("error.task_not_found")));
+    }
     let storage = storage.clone();
     let runs = {
         let job_id = cleaned_job.clone();
@@ -765,6 +817,9 @@ fn validate_schedule_fields(
                 .ok_or_else(|| anyhow!("invalid schedule.at"))?;
             let now_dt = DateTime::<Utc>::from_timestamp_millis((now * 1000.0) as i64)
                 .ok_or_else(|| anyhow!("invalid current timestamp"))?;
+            if at <= now_dt {
+                return Err(anyhow!("schedule.at must be in the future"));
+            }
             validate_schedule_at(at, now_dt)?;
         }
         "every" => {
@@ -1038,6 +1093,41 @@ fn format_ts(value: Option<f64>) -> Option<String> {
     let ts = value?;
     let millis = (ts * 1000.0) as i64;
     DateTime::<Utc>::from_timestamp_millis(millis).map(|dt| dt.to_rfc3339())
+}
+
+fn normalize_agent_id(agent_id: Option<&str>) -> Option<String> {
+    agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "__default__" && *value != "default")
+        .map(|value| value.to_string())
+}
+
+fn resolve_scoped_agent_id(
+    request_agent_id: Option<&str>,
+    job: Option<&CronJobInput>,
+) -> Option<String> {
+    normalize_agent_id(request_agent_id)
+        .or_else(|| job.and_then(|job| normalize_agent_id(job.agent_id.as_deref())))
+}
+
+fn cron_job_matches_agent_scope(record: &CronJobRecord, scoped_agent_id: Option<&str>) -> bool {
+    match scoped_agent_id {
+        Some(agent_id) => record.agent_id.as_deref() == Some(agent_id),
+        None => true,
+    }
+}
+
+fn filter_jobs_by_agent_scope(
+    jobs: Vec<CronJobRecord>,
+    scoped_agent_id: Option<&str>,
+) -> Vec<CronJobRecord> {
+    match scoped_agent_id {
+        Some(agent_id) => jobs
+            .into_iter()
+            .filter(|job| job.agent_id.as_deref() == Some(agent_id))
+            .collect(),
+        None => jobs,
+    }
 }
 
 fn resolve_agent_record(

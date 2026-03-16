@@ -1,15 +1,20 @@
 use axum::{
     body::{to_bytes, Body},
+    extract::State,
     http::{header::AUTHORIZATION, Method, Request, StatusCode},
-    Router,
+    routing::post,
+    Json, Router,
 };
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
+use tokio::time::{sleep, Duration};
 use tower::ServiceExt;
 use wunder_server::{
     build_desktop_router,
-    config::Config,
+    config::{Config, LlmModelConfig},
     config_store::ConfigStore,
     state::{AppState, AppStateInitOptions},
 };
@@ -17,10 +22,25 @@ use wunder_server::{
 struct TestContext {
     app: Router,
     token: String,
+    mock_llm_state: Option<Arc<MockLlmState>>,
     _temp_dir: TempDir,
 }
 
+#[derive(Default)]
+struct MockLlmState {
+    total_calls: AtomicUsize,
+    chat_calls: AtomicUsize,
+    extraction_calls: AtomicUsize,
+}
+
 async fn build_test_context(username: &str) -> TestContext {
+    build_test_context_with_config(username, |_| {}).await
+}
+
+async fn build_test_context_with_config<F>(username: &str, configure: F) -> TestContext
+where
+    F: FnOnce(&mut Config),
+{
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let mut config = Config::default();
     config.storage.backend = "sqlite".to_string();
@@ -34,6 +54,7 @@ async fn build_test_context(username: &str) -> TestContext {
         .join("workspaces")
         .to_string_lossy()
         .to_string();
+    configure(&mut config);
 
     let config_store = ConfigStore::new(temp_dir.path().join("wunder.override.yaml"));
     let config_for_store = config.clone();
@@ -68,8 +89,46 @@ async fn build_test_context(username: &str) -> TestContext {
     TestContext {
         app: build_desktop_router(state.clone()),
         token,
+        mock_llm_state: None,
         _temp_dir: temp_dir,
     }
+}
+
+async fn build_test_context_with_mock_llm(username: &str) -> TestContext {
+    let (base_url, mock_llm_state) = spawn_mock_llm_server().await;
+    let mut context = build_test_context_with_config(username, |config| {
+        config.llm.default = "mock-auto-memory".to_string();
+        config.llm.models.insert(
+            "mock-auto-memory".to_string(),
+            LlmModelConfig {
+                enable: Some(true),
+                provider: Some("openai".to_string()),
+                api_mode: None,
+                base_url: Some(base_url.clone()),
+                api_key: Some("memory-test-key".to_string()),
+                model: Some("mock-auto-memory".to_string()),
+                temperature: Some(0.0),
+                timeout_s: Some(15),
+                retry: Some(0),
+                max_rounds: Some(4),
+                max_context: Some(16_384),
+                max_output: Some(512),
+                support_vision: Some(false),
+                support_hearing: Some(false),
+                stream: Some(false),
+                stream_include_usage: Some(false),
+                history_compaction_ratio: None,
+                history_compaction_reset: None,
+                tool_call_mode: Some("tool_call".to_string()),
+                model_type: None,
+                stop: None,
+                mock_if_unconfigured: None,
+            },
+        );
+    })
+    .await;
+    context.mock_llm_state = Some(mock_llm_state);
+    context
 }
 
 async fn send_json(
@@ -106,6 +165,161 @@ async fn send_json(
         serde_json::from_slice(&bytes).expect("parse response json")
     };
     (status, payload)
+}
+
+async fn wait_for_memory_count(
+    app: &Router,
+    token: &str,
+    min_count: usize,
+    attempts: usize,
+) -> Value {
+    for _ in 0..attempts {
+        let (status, payload) = send_json(
+            app,
+            token,
+            Method::GET,
+            "/wunder/agents/__default__/memories?limit=200&include_invalidated=true",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let count = payload["data"]["total"].as_u64().unwrap_or(0) as usize;
+        if count >= min_count {
+            return payload;
+        }
+        sleep(Duration::from_millis(150)).await;
+    }
+    panic!("memory fragments did not reach expected count");
+}
+
+async fn spawn_mock_llm_server() -> (String, Arc<MockLlmState>) {
+    let state = Arc::new(MockLlmState::default());
+    let app = Router::new()
+        .route("/v1/chat/completions", post(mock_chat_completions))
+        .with_state(state.clone());
+
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock llm listener");
+    let addr = listener.local_addr().expect("mock llm addr");
+    tokio::spawn(async move {
+        if let Err(err) = axum::serve(listener, app).await {
+            eprintln!("[memory_routes] mock llm server failed: {err}");
+        }
+    });
+    (format!("http://{addr}"), state)
+}
+
+async fn mock_chat_completions(
+    State(state): State<Arc<MockLlmState>>,
+    Json(payload): Json<Value>,
+) -> Json<Value> {
+    state.total_calls.fetch_add(1, Ordering::Relaxed);
+    let messages = payload
+        .get("messages")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let joined = messages
+        .iter()
+        .map(flatten_message_content)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let last_user = last_user_message(&messages);
+    let is_auto_extract = last_user.contains("[Current User Message]")
+        || joined.contains("<memory_fragments>")
+        || joined.contains("long-term memory extraction engine")
+        || joined.contains("长期记忆提炼器");
+
+    if is_auto_extract {
+        state.extraction_calls.fetch_add(1, Ordering::Relaxed);
+        return Json(openai_chat_response(
+            r#"<memory_fragments>
+{
+  "items": [
+    {
+      "category": "profile",
+      "slot": "name",
+      "title": "用户姓名",
+      "summary": "用户姓名是周华健",
+      "content": "用户明确说自己叫周华健",
+      "tags": ["identity", "name"],
+      "tier": "core",
+      "importance": 0.95,
+      "confidence": 0.98
+    },
+    {
+      "category": "response-preference",
+      "slot": "reply_language",
+      "title": "默认使用中文回复",
+      "summary": "默认使用中文回复",
+      "content": "用户要求后续默认使用中文回复",
+      "tags": ["language", "reply", "zh"],
+      "tier": "core",
+      "importance": 0.92,
+      "confidence": 0.97
+    }
+  ]
+}
+</memory_fragments>"#,
+        ));
+    }
+
+    state.chat_calls.fetch_add(1, Ordering::Relaxed);
+    Json(openai_chat_response("好的，我记住了。"))
+}
+
+fn last_user_message(messages: &[Value]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        .map(flatten_message_content)
+        .unwrap_or_default()
+}
+
+fn flatten_message_content(message: &Value) -> String {
+    match message.get("content").unwrap_or(&Value::Null) {
+        Value::String(text) => text.trim().to_string(),
+        Value::Array(items) => items
+            .iter()
+            .filter_map(|item| {
+                let obj = item.as_object()?;
+                if obj.get("type").and_then(Value::as_str) == Some("text") {
+                    return obj.get("text").and_then(Value::as_str).map(str::to_string);
+                }
+                obj.get("content")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn openai_chat_response(content: &str) -> Value {
+    json!({
+        "id": "chatcmpl_memory_test",
+        "object": "chat.completion",
+        "created": 1_773_620_812,
+        "model": "mock-auto-memory",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": content,
+            },
+            "finish_reason": "stop"
+        }],
+        "usage": {
+            "prompt_tokens": 64,
+            "completion_tokens": 32,
+            "total_tokens": 96
+        }
+    })
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -420,4 +634,81 @@ async fn agent_memory_settings_can_toggle_auto_extract() {
         refreshed_settings["data"]["settings"]["auto_extract_enabled"],
         json!(true)
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn auto_extract_uses_mock_llm_and_persists_fragments_end_to_end() {
+    let context = build_test_context_with_mock_llm("memory_auto_extract_user").await;
+
+    let (status, session_created) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/chat/sessions",
+        Some(json!({
+            "title": "Auto Extract Session"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = session_created["data"]["id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let (status, updated_settings) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/agents/__default__/memory-settings",
+        Some(json!({
+            "auto_extract_enabled": true
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        updated_settings["data"]["settings"]["auto_extract_enabled"],
+        json!(true)
+    );
+
+    let (status, message_result) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": "我叫周华健，以后请默认使用中文回复。",
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let answer = message_result["data"]["answer"]
+        .as_str()
+        .expect("final answer");
+    assert!(answer.contains("记住"));
+
+    let listed = wait_for_memory_count(&context.app, &context.token, 2, 30).await;
+    let items = listed["data"]["items"]
+        .as_array()
+        .expect("memory items array");
+    assert!(items
+        .iter()
+        .any(|item| item["summary_l1"] == json!("用户姓名是周华健")));
+    assert!(items
+        .iter()
+        .any(|item| item["summary_l1"] == json!("默认使用中文回复")));
+
+    let jobs = listed["data"]["recent_jobs"]
+        .as_array()
+        .expect("recent jobs array");
+    assert!(!jobs.is_empty());
+    assert_eq!(jobs[0]["job_type"], json!("auto_extract_turn"));
+    assert!(jobs[0]["status"] == json!("completed") || jobs[0]["status"] == json!("skipped"));
+
+    let mock_llm_state = context.mock_llm_state.expect("mock llm state");
+    assert!(mock_llm_state.chat_calls.load(Ordering::Relaxed) >= 1);
+    assert!(mock_llm_state.extraction_calls.load(Ordering::Relaxed) >= 1);
+    assert!(mock_llm_state.total_calls.load(Ordering::Relaxed) >= 2);
 }

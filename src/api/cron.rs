@@ -25,6 +25,8 @@ struct CronActionQuery {
 struct CronRunsQuery {
     #[serde(default)]
     user_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
     job_id: String,
     #[serde(default)]
     limit: Option<i64>,
@@ -87,6 +89,7 @@ async fn cron_runs(
         state.storage.clone(),
         &resolved.user.user_id,
         cleaned,
+        query.agent_id.as_deref(),
         limit,
     )
     .await
