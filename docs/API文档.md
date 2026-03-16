@@ -24,7 +24,7 @@
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
-- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>` 对应的 JWT 直登优先使用 `security.external_embed_jwt_secret`，留空时自动回退到 `security.external_auth_key`，再回退到 `security.api_key`；并可通过 `security.external_embed_preset_agent_name` 限定外链默认智能体。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>` 对应的 JWT 直登优先使用 `security.external_embed_jwt_secret`，留空时自动回退到 `security.external_auth_key`，再回退到 `security.api_key`。该登录链接还支持追加 `agent_name=<URL 编码后的智能体名称>` 指定进入的智能体；未传时回退到 `security.external_embed_preset_agent_name`。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
@@ -1440,11 +1440,12 @@
 - 原 `/wunder/admin/memory/*` 管理端接口已下线，不再提供管理员侧记忆面板能力。
 - 当前推荐方式：通过结构化记忆碎片系统 + 可选内置工具 `记忆管理`（`memory_manager`）协同维护长期记忆。
 - 作用域：按 `用户 + 智能体` 隔离；记忆只在线程首次建立时注入到系统提示词快照，同一线程后续不再自动改写系统提示词，如需读取最新记忆请通过 `memory_manager` 的 `recall` 动作主动检索。
-- recall 命中解释会输出 `matched_terms`、`matched_fields`、`phrase_match`、`category_match`、置顶/近期等原因字段；当系统存在可用 embedding 模型时，还会以 best-effort 方式追加语义 rerank，并在命中记录中写入 `semantic_score` 与相关原因字段。记忆碎片 embedding 会按 `memory_id + embedding_model + content_hash` 持久化缓存，避免后续 recall 重复为同一碎片做 embedding。
+- recall 目前仅保留轻量关键词召回，不再使用 embedding/语义 rerank；工具返回会收敛为更适合模型消费的精简结构（如 `matched_terms`、`why`），以降低上下文开销。
 - 记忆碎片当前可见状态为 `active / superseded / invalidated`；其中 `superseded` 表示该碎片已被同 `fact_key` 的新版本替代，默认不会被 recall 返回，但仍会在列表接口与用户可视化卡片墙中展示。
 - recall 命中、碎片创建/编辑、列表读取时会惰性刷新 `tier(core/working/peripheral)` 与状态链路；因此接口返回的 `tier`、`status`、`supersedes_memory_id`、`superseded_by_memory_id` 字段可直接用于前端展示版本关系与生命周期信息。
 - `memory_manager` 的 `list/add/update/delete/clear/recall` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。
 - `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 recall 排序和提示词快照构建。
+- 当前系统已停用自动记忆提炼；不会在最终回复后自动新增 `auto-turn` 记忆。长期记忆只会由用户显式编辑，或由智能体主动调用 `memory_manager` 写入。
 - 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照。
 
 ### 4.1.43 `/wunder/admin/throughput/start`

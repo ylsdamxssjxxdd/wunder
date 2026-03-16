@@ -33,6 +33,7 @@ const DEFAULT_CONFIDENCE: f64 = 0.7;
 const DEFAULT_RECALL_LIMIT: usize = 6;
 const MAX_LIST_LIMIT: usize = 200;
 const MAX_RECALL_LIMIT: usize = 12;
+const MEMORY_SEMANTIC_RECALL_ENABLED: bool = false;
 const MAX_REASON_TERMS: usize = 8;
 const MAX_REASON_FIELDS: usize = 6;
 const SEMANTIC_RECALL_CANDIDATE_LIMIT: usize = 24;
@@ -514,7 +515,7 @@ impl MemoryFragmentStore {
             .collect::<Vec<_>>();
         hits.sort_by(compare_recall_hits);
         hits = dedupe_recall_hits(hits);
-        if !query.is_empty() {
+        if MEMORY_SEMANTIC_RECALL_ENABLED && !query.is_empty() {
             if let Some(config) = config {
                 hits = self
                     .apply_semantic_recall(config, &query, &fragments, hits, now)

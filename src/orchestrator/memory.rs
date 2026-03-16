@@ -835,49 +835,10 @@ impl Orchestrator {
         question: &str,
         answer: &str,
     ) {
-        if question.trim().is_empty() || answer.trim().is_empty() {
-            return;
-        }
-        let storage = self.storage.clone();
-        let user_id = user_id.trim().to_string();
-        let session_id = session_id.trim().to_string();
-        let agent_id = agent_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let round_id = round_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
-        let question = question.trim().to_string();
-        let answer = answer.trim().to_string();
-
-        // Run memory extraction off the hot path so final replies stay snappy.
-        tokio::spawn(async move {
-            let log_session_id = session_id.clone();
-            let join_result = tokio::task::spawn_blocking(move || {
-                let service =
-                    crate::services::memory_auto_extract::MemoryAutoExtractService::new(storage);
-                service.capture_turn(
-                    &user_id,
-                    agent_id.as_deref(),
-                    &session_id,
-                    round_id.as_deref(),
-                    &question,
-                    &answer,
-                )
-            })
-            .await;
-            match join_result {
-                Ok(Ok(_)) => {}
-                Ok(Err(err)) => {
-                    warn!("auto memory extraction failed for session {log_session_id}: {err}")
-                }
-                Err(err) => {
-                    warn!("auto memory extraction join failed for session {log_session_id}: {err}")
-                }
-            }
-        });
+        let _ = (
+            self, user_id, agent_id, session_id, round_id, question, answer,
+        );
+        // Long-term memory writes are currently manual-only via memory_manager.
     }
 
     pub(super) fn build_compaction_user_content(&self, messages: &[Value]) -> String {

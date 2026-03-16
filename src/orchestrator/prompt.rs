@@ -170,7 +170,7 @@ impl Orchestrator {
         agent_id: Option<&str>,
         is_admin: bool,
         agent_prompt: Option<&str>,
-        query_text: Option<&str>,
+        _query_text: Option<&str>,
         round_id: Option<&str>,
     ) -> String {
         let resolved_agent_id = agent_id
@@ -235,7 +235,7 @@ impl Orchestrator {
                 is_admin,
                 Some(session_id),
                 round_id,
-                query_text,
+                None,
             )
             .await;
         let _ = self.workspace.save_session_system_prompt(

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::services::memory_fragments::{
     MemoryFragmentInput, MemoryFragmentListOptions, MemoryFragmentStore,
 };
@@ -652,7 +654,11 @@ fn extract_profile(segment: &str) -> Option<ExtractionCandidate> {
         ],
     ) {
         let cleaned = clean_statement(&value);
-        if cleaned.is_empty() {
+        if cleaned.is_empty()
+            || looks_like_question(segment)
+            || looks_like_question(&cleaned)
+            || looks_like_placeholder_profile_name(&cleaned)
+        {
             return None;
         }
         return Some(build_candidate(
@@ -984,7 +990,35 @@ fn has_memory_directive(text: &str) -> bool {
 fn looks_like_question(text: &str) -> bool {
     contains_any(
         text,
-        &["?", ZH_QM, ZH_HOW, ZH_HOW_ALT, "how ", "what ", "why "],
+        &[
+            "?",
+            ZH_QM,
+            ZH_HOW,
+            ZH_HOW_ALT,
+            "什么",
+            "谁",
+            "哪位",
+            "哪个",
+            "哪里",
+            "为何",
+            "为什么",
+            "吗",
+            "呢",
+            "么",
+            "是不是",
+            "how ",
+            "what ",
+            "why ",
+            "who ",
+            "where ",
+        ],
+    )
+}
+
+fn looks_like_placeholder_profile_name(text: &str) -> bool {
+    matches!(
+        clean_statement(text).to_lowercase().as_str(),
+        "什么" | "谁" | "哪位" | "哪个" | "名字" | "姓名" | "name"
     )
 }
 
@@ -1107,6 +1141,21 @@ mod tests {
                 "constraint::response_format".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn extract_candidates_skips_profile_questions() {
+        let fact_keys = extract_candidates("我叫什么")
+            .into_iter()
+            .map(|item| item.fact_key)
+            .collect::<Vec<_>>();
+        assert!(!fact_keys.contains(&"profile::name".to_string()));
+
+        let fact_keys = extract_candidates("我是谁")
+            .into_iter()
+            .map(|item| item.fact_key)
+            .collect::<Vec<_>>();
+        assert!(!fact_keys.contains(&"profile::identity".to_string()));
     }
 
     #[test]

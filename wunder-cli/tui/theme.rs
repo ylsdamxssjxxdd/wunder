@@ -75,14 +75,6 @@ pub(crate) fn diff_deleted_marker() -> Style {
     diff_deleted_text().add_modifier(Modifier::BOLD)
 }
 
-pub(crate) fn block_border(active: bool) -> Style {
-    if active {
-        accent_text()
-    } else {
-        secondary_text()
-    }
-}
-
 pub(crate) fn block_title(active: bool) -> Style {
     if active {
         accent_text()
@@ -96,24 +88,33 @@ pub(crate) fn popup_item() -> Style {
 }
 
 pub(crate) fn popup_selected() -> Style {
-    accent_text().add_modifier(Modifier::REVERSED)
+    Style::default()
+        .fg(Color::Cyan)
+        .bg(Color::Rgb(26, 42, 54))
+        .add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn modal_selected() -> Style {
-    accent_text().add_modifier(Modifier::REVERSED)
+    Style::default()
+        .fg(Color::Cyan)
+        .bg(Color::Rgb(26, 42, 54))
+        .add_modifier(Modifier::BOLD)
 }
 
 pub(crate) fn transcript_selection(base: Style) -> Style {
-    base.patch(Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD))
+    Style::default()
+        .fg(base.fg.unwrap_or(Color::White))
+        .bg(Color::Rgb(24, 36, 48))
+        .add_modifier(base.add_modifier | Modifier::BOLD)
 }
 
 pub(crate) fn log_style(kind: LogKind) -> Style {
     match kind {
         LogKind::Info => secondary_text(),
-        LogKind::User => accent_text(),
-        LogKind::Assistant => success_text(),
+        LogKind::User => Style::default(),
+        LogKind::Assistant => Style::default(),
         LogKind::Reasoning => secondary_text(),
-        LogKind::Tool => brand_text(),
+        LogKind::Tool => secondary_text(),
         LogKind::Error => danger_text(),
     }
 }

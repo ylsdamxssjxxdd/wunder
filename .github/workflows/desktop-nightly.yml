@@ -111,6 +111,87 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-windows-win7-compat:
+    needs: prepare
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          location: C:\
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-gcc
+
+      - name: Prepare Win7 GNU toolchain paths
+        shell: pwsh
+        run: |
+          $msysRoot = "${{ steps.msys2.outputs.msys2-location }}"
+          if (-not $msysRoot) {
+            throw 'MSYS2 location output is empty'
+          }
+          $mingw64 = Join-Path $msysRoot 'mingw64'
+          if (-not (Test-Path $mingw64)) {
+            throw "MSYS2 mingw64 directory not found: $mingw64"
+          }
+          if (Test-Path 'C:\mingw64') {
+            Remove-Item 'C:\mingw64' -Force -Recurse
+          }
+          New-Item -ItemType Junction -Path 'C:\mingw64' -Target $mingw64 | Out-Null
+
+      - name: Build frontend
+        shell: pwsh
+        run: |
+          npm ci --workspaces --include-workspace-root=false
+          npm run build --workspace wunder-frontend
+
+      - name: Build Win7 compatibility installer (GNU x64 + bundled Python)
+        shell: pwsh
+        run: |
+          npm run build:desktop:win7:gnu:x64:with-supplement:common
+
+      - name: Rename Win7 compatibility artifacts
+        shell: pwsh
+        run: |
+          $date = "${{ needs.prepare.outputs.build_date }}"
+          $installerDist = Join-Path $env:GITHUB_WORKSPACE 'temp_dir\win7-gnu-lab\electron-win7-x64\dist'
+          $supplementDist = Join-Path $env:GITHUB_WORKSPACE 'temp_dir\win7-gnu-lab\win7-supplement\dist'
+          $out = Join-Path $env:GITHUB_WORKSPACE 'release-assets\windows-win7-compat'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+
+          $installer = Get-ChildItem -Path $installerDist -File -Filter '*.exe' | Sort-Object Length -Descending | Select-Object -First 1
+          if (-not $installer) { throw "No Win7 compatibility installer found in $installerDist" }
+          Copy-Item $installer.FullName (Join-Path $out "Wunder-Desktop-win7-compat-x64-$date-with-python.exe")
+
+          $supplement = Get-ChildItem -Path $supplementDist -File -Filter '*common*.zip' | Sort-Object Length -Descending | Select-Object -First 1
+          if ($supplement) {
+            Copy-Item $supplement.FullName (Join-Path $out "Wunder-Desktop-win7-compat-x64-$date-python-supplement.zip")
+          }
+
+          $manifest = Join-Path $env:GITHUB_WORKSPACE 'temp_dir\win7-gnu-lab\toolchain-manifest.json'
+          if (Test-Path $manifest) {
+            Copy-Item $manifest (Join-Path $out 'Wunder-Desktop-win7-compat-toolchain-manifest.json')
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-windows-win7-compat
+          path: release-assets/windows-win7-compat/*
+          if-no-files-found: error
+          retention-days: 7
+
   build-macos:
     needs: prepare
     runs-on: macos-latest
@@ -374,12 +455,14 @@ jobs:
     needs:
       - prepare
       - build-windows
+      - build-windows-win7-compat
       - build-macos
       - build-linux-x64
       - build-linux-arm64
     if: >-
       ${{ always() && (
         needs.build-windows.result == 'success' ||
+        needs.build-windows-win7-compat.result == 'success' ||
         needs.build-macos.result == 'success' ||
         needs.build-linux-x64.result == 'success' ||
         needs.build-linux-arm64.result == 'success'
@@ -396,30 +479,19 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Move nightly tag to current commit
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -fa nightly -m "Nightly build ${GITHUB_SHA}" "${GITHUB_SHA}"
-          git push origin refs/tags/nightly --force
-
-      - name: Remove old nightly assets
+      - name: Reset nightly release and move tag
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if gh release view nightly --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            assets="$(gh release view nightly --repo "${GITHUB_REPOSITORY}" --json assets -q '.assets[].name' || true)"
-            if [ -n "${assets}" ]; then
-              while IFS= read -r asset; do
-                [ -z "${asset}" ] && continue
-                gh release delete-asset nightly "${asset}" --repo "${GITHUB_REPOSITORY}" -y || true
-              done <<< "${assets}"
-            fi
+            gh release delete nightly --repo "${GITHUB_REPOSITORY}" -y
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -fa nightly -m "Nightly build ${GITHUB_SHA}" "${GITHUB_SHA}"
+          git push origin refs/tags/nightly --force
 
       - name: Remove stale nightly releases
         shell: bash
@@ -432,7 +504,7 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --limit 200 \
               --json tagName,isPrerelease,isDraft,name \
-              --jq '.[] | select(.tagName != "nightly") | select(.isPrerelease == true and .isDraft == false) | select(((.tagName | ascii_downcase) | test("nightly")) or (((.name // "") | ascii_downcase) | test("nightly"))) | .tagName'
+              --jq '.[] | select(.tagName != "nightly") | select(((.tagName | ascii_downcase) | test("nightly")) or (((.name // "") | ascii_downcase) | test("nightly"))) | .tagName'
           )"
           if [ -z "${stale_tags}" ]; then
             echo "No stale nightly releases to remove."
@@ -462,6 +534,7 @@ jobs:
           ### 支持系统与安装方式
 
           - **Windows x64**：下载 `.exe` 安装包，双击运行并按向导安装。
+          - **Windows 7 x64 兼容版**：下载 `Wunder-Desktop-win7-compat-*.exe`，该安装包为兼容性分发，已内置 `Python + Git` 运行时，并附带 `wunder-cli.exe`，适合 Win7 存量环境直接安装。
           - **macOS（Apple Silicon / Intel）**：下载对应 `.dmg`，打开后将应用拖入“应用程序”目录。
           - **Linux x64 / arm64**：下载 `.AppImage`，执行 `chmod +x <文件名>.AppImage` 后运行。
           - **自动更新**：已附带 `latest*.yml` 与 `.blockmap` 文件供桌面端增量更新使用。
@@ -484,6 +557,12 @@ jobs:
 
           - 此发布为预发布（Nightly），用于持续集成验证与新功能试用。
           - 每次 Nightly 发布会覆盖 `nightly` 标签，并清理旧的 Nightly 预发布记录。
+
+          ### Windows 7 兼容版说明
+
+          - `Wunder-Desktop-win7-compat-*.exe` 为 **兼容性安装包**，目标环境为 Windows 7 SP1 x64。
+          - 该安装包已直接内置 `opt/python`、`opt/git` 与 `wunder-cli.exe`，安装后无需额外单独部署 Python/Git 即可供 Wunder 桌面端与 CLI 使用。
+          - 如同时附带 `Wunder-Desktop-win7-compat-*-python-supplement.zip`，它仅用于排障或手工覆盖；默认优先使用一体安装包。
           EOF
 
       - name: Publish nightly release
@@ -514,24 +593,13 @@ jobs:
           TITLE="Wunder Desktop Nightly（每日构建）"
           NOTES="release-assets/nightly-release-notes.md"
 
-          # Use gh CLI instead of softprops/action-gh-release to avoid draft finalization retries.
-          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            retry 3 gh release edit "${TAG}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${TITLE}" \
-              --notes-file "${NOTES}" \
-              --draft=false \
-              --prerelease \
-              --latest=false
-          else
-            retry 3 gh release create "${TAG}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --title "${TITLE}" \
-              --notes-file "${NOTES}" \
-              --prerelease \
-              --latest=false \
-              --target "${GITHUB_SHA}"
-          fi
+          retry 3 gh release create "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${TITLE}" \
+            --notes-file "${NOTES}" \
+            --prerelease \
+            --latest=false \
+            --target "${GITHUB_SHA}"
 
           mapfile -d '' -t assets < <(
             find "$GITHUB_WORKSPACE/release-assets" -maxdepth 1 -type f ! -name "nightly-release-notes.md" -print0 | sort -z

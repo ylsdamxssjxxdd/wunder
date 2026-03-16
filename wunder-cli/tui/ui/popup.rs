@@ -1,8 +1,6 @@
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use ratatui::Frame;
@@ -16,26 +14,28 @@ pub(crate) fn draw(
     lines: &[String],
     selected: Option<usize>,
 ) {
-    let popup_lines = lines
-        .iter()
-        .enumerate()
-        .map(|(index, line)| {
-            if selected.is_some_and(|current| current == index) {
-                Line::from(Span::styled(line.clone(), theme::popup_selected()))
-            } else {
-                Line::from(Span::styled(line.clone(), theme::popup_item()))
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut popup_lines = Vec::with_capacity(lines.len().saturating_add(1));
+    if !title.trim().is_empty() {
+        popup_lines.push(Line::from(Span::styled(
+            title.trim().to_string(),
+            theme::block_title(false),
+        )));
+    }
+    popup_lines.extend(lines.iter().enumerate().map(|(index, line)| {
+        let marker = if selected.is_some_and(|current| current == index) {
+            Span::styled("\u{203a} ", theme::accent_text())
+        } else {
+            Span::raw("  ")
+        };
+        let body_style = if selected.is_some_and(|current| current == index) {
+            theme::popup_selected()
+        } else {
+            theme::popup_item()
+        };
+        Line::from(vec![marker, Span::styled(line.clone(), body_style)])
+    }));
 
-    let widget = Paragraph::new(popup_lines)
-        .block(
-            Block::default()
-                .title(Span::styled(title, theme::block_title(false)))
-                .borders(Borders::ALL)
-                .border_style(theme::block_border(false)),
-        )
-        .wrap(Wrap { trim: false });
+    let widget = Paragraph::new(popup_lines).wrap(Wrap { trim: false });
     frame.render_widget(widget, area);
 }
 

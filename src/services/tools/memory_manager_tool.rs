@@ -93,6 +93,55 @@ fn normalize_memory_order_desc(order: Option<&str>) -> bool {
     !matches!(cleaned.as_str(), "asc" | "ascending")
 }
 
+fn compact_recall_reason(reason: &Value, pinned: bool, query: &str) -> (Vec<String>, String) {
+    let matched_terms = reason
+        .get("matched_terms")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .take(3)
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let matched_fields = reason
+        .get("matched_fields")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .take(2)
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default();
+    let mut parts = Vec::new();
+    if !query.trim().is_empty() && !matched_terms.is_empty() {
+        parts.push(format!("matched {}", matched_terms.join(", ")));
+    }
+    if !query.trim().is_empty() && !matched_fields.is_empty() {
+        parts.push(format!("in {matched_fields}"));
+    }
+    if pinned {
+        parts.push("pinned".to_string());
+    }
+    if parts.is_empty() {
+        parts.push(if query.trim().is_empty() {
+            "recent memory".to_string()
+        } else {
+            "keyword recall".to_string()
+        });
+    }
+    (matched_terms, parts.join("; "))
+}
+
 fn clear_fragment_scope(
     fragment_store: &MemoryFragmentStore,
     user_id: &str,
@@ -299,6 +348,8 @@ pub(crate) async fn execute_memory_manager_tool(
                 .into_iter()
                 .map(|hit| {
                     let fragment = hit.fragment;
+                    let (matched_terms, why) =
+                        compact_recall_reason(&hit.reason_json, fragment.pinned, &query);
                     json!({
                         "memory_id": fragment.memory_id,
                         "title": fragment.title_l0,
@@ -307,16 +358,11 @@ pub(crate) async fn execute_memory_manager_tool(
                         "category": fragment.category,
                         "source_type": fragment.source_type,
                         "tags": fragment.tags,
-                        "entities": fragment.entities,
                         "pinned": fragment.pinned,
                         "status": fragment.status,
                         "updated_at": fragment.updated_at,
-                        "score": hit.final_score,
-                        "lexical_score": hit.lexical_score,
-                        "semantic_score": hit.semantic_score,
-                        "freshness_score": hit.freshness_score,
-                        "importance_score": hit.importance_score,
-                        "reason": hit.reason_json,
+                        "matched_terms": matched_terms,
+                        "why": why,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -498,6 +544,16 @@ mod tests {
         .await
         .expect("recall memory");
         assert_eq!(recalled.get("count").and_then(Value::as_u64), Some(1));
+        let recall_item = recalled
+            .get("items")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .cloned()
+            .expect("recall item");
+        assert!(recall_item.get("score").is_none());
+        assert!(recall_item.get("lexical_score").is_none());
+        assert!(recall_item.get("reason").is_none());
+        assert!(recall_item.get("why").and_then(Value::as_str).is_some());
 
         let updated = execute_memory_manager_tool(
             &context,
@@ -529,5 +585,46 @@ mod tests {
         assert!(fragment_store
             .get_fragment("u1", Some("agent-demo"), "pref-reply-language")
             .is_none());
+    }
+
+    #[tokio::test]
+    async fn memory_manager_tool_defaults_to_default_agent_scope() {
+        let harness = TestHarness::new();
+        let context = harness.context("u1", "sess-2", None);
+
+        let add = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "add",
+                "memory_id": "pref-tone-default",
+                "content": "Prefer concise answers by default."
+            }),
+        )
+        .await
+        .expect("add default-scope memory");
+        assert_eq!(add.get("saved").and_then(Value::as_bool), Some(true));
+        assert_eq!(
+            add.get("agent_id").and_then(Value::as_str),
+            Some("__default__")
+        );
+
+        let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
+        let fragments = fragment_store.list_fragments(
+            "u1",
+            Some("__default__"),
+            MemoryFragmentListOptions::default(),
+        );
+        assert_eq!(fragments.len(), 1);
+        assert_eq!(fragments[0].memory_id, "pref-tone-default");
+        assert_eq!(fragments[0].agent_id, "__default__");
+
+        let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
+            .await
+            .expect("list default-scope memory");
+        assert_eq!(listed.get("count").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            listed.get("agent_id").and_then(Value::as_str),
+            Some("__default__")
+        );
     }
 }

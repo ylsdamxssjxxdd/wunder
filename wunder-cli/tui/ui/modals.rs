@@ -2,8 +2,6 @@ use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::text::Span;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Clear;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
@@ -12,18 +10,18 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::theme;
 
-pub(crate) fn draw_shortcuts_modal(frame: &mut Frame, area: Rect, lines: Vec<String>, is_zh: bool) {
+pub(crate) fn draw_shortcuts_modal(
+    frame: &mut Frame,
+    area: Rect,
+    lines: Vec<String>,
+    _is_zh: bool,
+) {
     if area.width < 20 || area.height < 8 {
         return;
     }
-    let popup = centered_popup(area, lines.as_slice(), 26, 8);
+    let popup = centered_popup(area, lines.as_slice(), 24, 6);
     frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(lines))
-        .block(modal_block(
-            if is_zh { " 快捷键 " } else { " Shortcuts " },
-            false,
-        ))
-        .wrap(Wrap { trim: false });
+    let widget = Paragraph::new(to_modal_lines(lines)).wrap(Wrap { trim: false });
     frame.render_widget(widget, popup);
 }
 
@@ -32,40 +30,25 @@ pub(crate) fn draw_resume_modal(
     area: Rect,
     rows: Vec<String>,
     selected: usize,
-    is_zh: bool,
+    _is_zh: bool,
 ) {
     if area.width < 20 || area.height < 8 {
         return;
     }
-    let mut modal_lines = rows
+    let modal_lines = rows
         .into_iter()
         .enumerate()
         .map(|(index, row)| {
             if index == selected {
-                format!("> {row}")
+                format!("› {}. {row}", index + 1)
             } else {
-                format!("  {row}")
+                format!("  {}. {row}", index + 1)
             }
         })
         .collect::<Vec<_>>();
-    modal_lines.push(String::new());
-    modal_lines.push(if is_zh {
-        "上下选择，Enter 恢复，Esc 取消".to_string()
-    } else {
-        "Up/Down select, Enter resume, Esc cancel".to_string()
-    });
-    let popup = centered_popup(area, modal_lines.as_slice(), 30, 8);
+    let popup = centered_popup(area, modal_lines.as_slice(), 28, 6);
     frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(modal_lines))
-        .block(modal_block(
-            if is_zh {
-                " 恢复会话 "
-            } else {
-                " Resume Sessions "
-            },
-            false,
-        ))
-        .wrap(Wrap { trim: false });
+    let widget = Paragraph::new(to_modal_lines(modal_lines)).wrap(Wrap { trim: false });
     frame.render_widget(widget, popup);
 }
 
@@ -74,19 +57,14 @@ pub(crate) fn draw_approval_modal(
     area: Rect,
     input_area: Rect,
     lines: Vec<String>,
-    is_zh: bool,
+    _is_zh: bool,
 ) {
     if area.width < 24 || area.height < 8 {
         return;
     }
-    let popup = anchored_popup(area, input_area, lines.as_slice(), 60, 12);
+    let popup = anchored_popup(area, input_area, lines.as_slice(), 56, 9);
     frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(lines))
-        .block(modal_block(
-            if is_zh { " 审批 " } else { " Approval " },
-            true,
-        ))
-        .wrap(Wrap { trim: false });
+    let widget = Paragraph::new(to_modal_lines(lines)).wrap(Wrap { trim: false });
     frame.render_widget(widget, popup);
 }
 
@@ -95,31 +73,15 @@ pub(crate) fn draw_inquiry_modal(
     area: Rect,
     input_area: Rect,
     lines: Vec<String>,
-    is_zh: bool,
+    _is_zh: bool,
 ) {
     if area.width < 24 || area.height < 8 {
         return;
     }
-    let popup = anchored_popup(area, input_area, lines.as_slice(), 60, 11);
+    let popup = anchored_popup(area, input_area, lines.as_slice(), 56, 8);
     frame.render_widget(Clear, popup);
-    let widget = Paragraph::new(to_modal_lines(lines))
-        .block(modal_block(
-            if is_zh {
-                " 问询面板 "
-            } else {
-                " Inquiry Panel "
-            },
-            true,
-        ))
-        .wrap(Wrap { trim: false });
+    let widget = Paragraph::new(to_modal_lines(lines)).wrap(Wrap { trim: false });
     frame.render_widget(widget, popup);
-}
-
-fn modal_block(title: &str, active: bool) -> Block<'static> {
-    Block::default()
-        .title(Span::styled(title.to_string(), theme::block_title(active)))
-        .borders(Borders::ALL)
-        .border_style(theme::block_border(active))
 }
 
 fn centered_popup(area: Rect, lines: &[String], min_width: u16, min_height: u16) -> Rect {
@@ -130,11 +92,11 @@ fn centered_popup(area: Rect, lines: &[String], min_width: u16, min_height: u16)
         .max()
         .unwrap_or(0) as u16;
     let width = max_line_width
-        .saturating_add(6)
+        .saturating_add(2)
         .max(min_width)
         .min(area.width.saturating_sub(2));
     let height = (lines.len() as u16)
-        .saturating_add(4)
+        .saturating_add(2)
         .max(min_height)
         .min(area.height.saturating_sub(2));
     Rect {
@@ -160,12 +122,12 @@ fn anchored_popup(
         .max()
         .unwrap_or(0) as u16;
     let width = max_line_width
-        .saturating_add(6)
+        .saturating_add(2)
         .max(min_width)
         .min(horizontal_bounds.width.saturating_sub(2))
         .max(1);
     let height = (lines.len() as u16)
-        .saturating_add(4)
+        .saturating_add(2)
         .max(min_height)
         .min(area.height.saturating_sub(2));
     Rect {
@@ -194,7 +156,7 @@ fn style_modal_line(line: String) -> Line<'static> {
     if let Some(rendered) = style_modal_labeled_line(line.as_str()) {
         return rendered;
     }
-    if trimmed.starts_with('>') {
+    if trimmed.starts_with('>') || trimmed.starts_with('›') {
         return Line::from(Span::styled(line, theme::modal_selected()));
     }
     if trimmed.ends_with('?') || trimmed.ends_with('？') {
@@ -223,7 +185,7 @@ fn style_modal_option_line(line: &str) -> Option<Line<'static>> {
         theme::secondary_text(),
     )];
     if parsed.selected {
-        spans.push(Span::styled("> ".to_string(), theme::modal_selected()));
+        spans.push(Span::styled("› ".to_string(), theme::modal_selected()));
     }
     spans.push(Span::styled(parsed.option.to_string(), option_style));
     spans.push(Span::styled(" ".to_string(), body_style));
@@ -252,6 +214,8 @@ fn parse_modal_option_line(line: &str) -> Option<ParsedModalOptionLine<'_>> {
     let trimmed = line.trim_start();
     let leading = &line[..line.len().saturating_sub(trimmed.len())];
     let (selected, option_src) = if let Some(rest) = trimmed.strip_prefix('>') {
+        (true, rest.trim_start())
+    } else if let Some(rest) = trimmed.strip_prefix('›') {
         (true, rest.trim_start())
     } else {
         (false, trimmed)
@@ -501,13 +465,21 @@ mod tests {
 
     #[test]
     fn selected_option_line_keeps_structured_spans() {
-        let lines = to_modal_lines(vec!["> 1. Route (recommended)".to_string()]);
+        let lines = to_modal_lines(vec!["› 1. Route (recommended)".to_string()]);
         let rendered = lines[0]
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert_eq!(rendered, "> 1. Route (recommended)");
+        assert_eq!(rendered, "› 1. Route (recommended)");
         assert!(lines[0].spans.len() >= 5);
+    }
+
+    #[test]
+    fn parse_modal_option_line_supports_chevron_marker() {
+        let parsed = parse_modal_option_line("› 2. Proceed").expect("parsed option");
+        assert!(parsed.selected);
+        assert_eq!(parsed.option, "2.");
+        assert_eq!(parsed.body, "Proceed");
     }
 }

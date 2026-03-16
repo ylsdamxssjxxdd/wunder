@@ -214,6 +214,12 @@ fn resolve_app_dir() -> Option<PathBuf> {
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
         .filter(|value| value.is_dir())
+        .or_else(|| {
+            env::current_exe()
+                .ok()
+                .and_then(|path| path.parent().map(PathBuf::from))
+                .filter(|value| value.is_dir())
+        })
 }
 
 fn push_python_candidate(

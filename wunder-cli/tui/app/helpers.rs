@@ -76,24 +76,13 @@ pub(super) fn compute_transcript_window_spec(
 
 pub(crate) fn log_prefix(kind: LogKind) -> &'static str {
     match kind {
-        LogKind::Info => "- ",
-        LogKind::User => "you> ",
-        LogKind::Assistant => "assistant> ",
-        LogKind::Reasoning => "think> ",
-        LogKind::Tool => "",
-        LogKind::Error => "error> ",
+        LogKind::Info => "• ",
+        LogKind::User => "• ",
+        LogKind::Assistant => "• ",
+        LogKind::Reasoning => "• ",
+        LogKind::Tool => "• ",
+        LogKind::Error => "✕ ",
     }
-}
-
-pub(super) fn wrapped_log_visual_line_count(kind: LogKind, text: &str, width: usize) -> usize {
-    let width = width.max(1).min(u16::MAX as usize) as u16;
-    let mut rendered = String::with_capacity(log_prefix(kind).len().saturating_add(text.len()));
-    rendered.push_str(log_prefix(kind));
-    rendered.push_str(text);
-    Paragraph::new(rendered)
-        .wrap(Wrap { trim: false })
-        .line_count(width)
-        .max(1)
 }
 
 pub(super) fn backtrack_user_text(entry: &LogEntry) -> Option<String> {

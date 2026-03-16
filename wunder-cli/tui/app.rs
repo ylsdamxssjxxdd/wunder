@@ -6,7 +6,6 @@ use futures::StreamExt;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -135,7 +134,7 @@ enum MouseMode {
 
 impl MouseMode {
     fn captures_mouse(self) -> bool {
-        matches!(self, Self::Auto | Self::Scroll)
+        matches!(self, Self::Scroll)
     }
 }
 
@@ -513,8 +512,7 @@ impl TuiApp {
     }
 
     pub fn activity_highlighted(&self) -> bool {
-        self.busy
-            || self.active_approval.is_some()
+        self.active_approval.is_some()
             || self.active_inquiry_panel.is_some()
             || self.resume_picker.is_some()
             || self
@@ -567,44 +565,14 @@ impl TuiApp {
         }
 
         if self.busy {
-            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let tick = (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis()
-                / 80) as usize;
-            let spinner = frames[tick % frames.len()];
-            let mut pieces = Vec::new();
-            pieces.push(if is_zh {
-                format!("{spinner} 处理中")
-            } else {
-                format!("{spinner} Working")
-            });
-            pieces.push(if is_zh {
-                "Ctrl+C 中断".to_string()
-            } else {
-                "Ctrl+C interrupts".to_string()
-            });
-            pieces.push(if is_zh {
-                format!("模式={}", self.tool_call_mode)
-            } else {
-                format!("mode={}", self.tool_call_mode)
-            });
-            if self.stream_catchup_mode {
-                pieces.push(if is_zh {
-                    "追帧".to_string()
-                } else {
-                    "catch-up".to_string()
-                });
-            }
-            if !self.terminal_focused {
-                pieces.push(if is_zh {
-                    "未聚焦".to_string()
-                } else {
-                    "unfocused".to_string()
-                });
-            }
-            return pieces.join(" · ");
+            let elapsed_secs =
+                current_activity_elapsed_secs(self.turn_llm_started_at, self.turn_llm_active_secs);
+            return format_busy_activity_line(
+                is_zh,
+                elapsed_secs,
+                self.stream_catchup_mode,
+                self.terminal_focused,
+            );
         }
 
         String::new()
@@ -630,11 +598,37 @@ impl TuiApp {
     }
 
     pub fn composer_footer_items(&self) -> Vec<(String, String)> {
-        Vec::new()
+        let mut items = vec![(
+            "?".to_string(),
+            if self.is_zh_language() {
+                "???".to_string()
+            } else {
+                "for shortcuts".to_string()
+            },
+        )];
+
+        if !self.model_name.trim().is_empty() && self.model_name != "<none>" {
+            items.push((String::new(), self.model_name.clone()));
+        }
+
+        let cwd_display = crate::path_display::format_directory_display(
+            self.runtime.launch_dir.as_path(),
+            Some(self.runtime.repo_root.as_path()),
+            Some(28),
+        );
+        if !cwd_display.trim().is_empty() {
+            items.push((String::new(), cwd_display));
+        }
+
+        items
     }
 
     pub fn composer_footer_context(&self) -> Option<String> {
-        None
+        Some(format_footer_context_summary(
+            self.is_zh_language(),
+            self.session_stats.context_used_tokens,
+            self.model_max_context,
+        ))
     }
 
     pub fn composer_attachment_hint(&self) -> Option<String> {
@@ -1128,10 +1122,6 @@ impl TuiApp {
         self.transcript_selected
     }
 
-    pub fn transcript_focus_active(&self) -> bool {
-        self.focus_area == FocusArea::Transcript
-    }
-
     pub fn resume_picker_rows(&self) -> Option<(Vec<String>, usize)> {
         let picker = self.resume_picker.as_ref()?;
         let rows = picker
@@ -1168,97 +1158,40 @@ impl TuiApp {
         } else {
             None
         };
-        let has_patch_preview = patch_preview.is_some();
-        let mut lines = Vec::new();
-        lines.push(prompt);
+        let mut lines = vec![prompt];
         if !summary.trim().is_empty() {
-            lines.push(if is_zh {
-                format!("摘要：{summary}")
-            } else {
-                format!("summary: {summary}")
-            });
+            lines.push(summary);
         }
         if !self.approval_queue.is_empty() {
             lines.push(if is_zh {
-                format!("队列：还有 {} 个待处理请求", self.approval_queue.len())
-            } else {
                 format!(
-                    "queue: {} more pending request(s)",
+                    "\u{8fd8}\u{6709} {} \u{4e2a}\u{5f85}\u{5904}\u{7406}\u{8bf7}\u{6c42}",
                     self.approval_queue.len()
                 )
+            } else {
+                format!("{} more pending request(s)", self.approval_queue.len())
             });
         }
         lines.push(String::new());
-        if is_zh {
-            if has_patch_preview {
-                lines.push(format!("工具：{}", request.tool));
-                if let Some(preview) = patch_preview {
-                    lines.extend(preview);
-                }
-                lines.push(String::new());
-            } else {
-                lines.push(format!("工具：{}", request.tool));
-                if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
-                    lines.push(format!("详情：{detail}"));
-                }
-                if !args.trim().is_empty() && args != "{}" && args != "null" {
-                    lines.push(format!("参数：{args}"));
-                }
-                lines.push(String::new());
-            }
-            lines.push("选项：".to_string());
-            lines.push(format!(
-                "{} 1. {}",
-                if selected == 0 { ">" } else { " " },
-                option_labels[0]
-            ));
-            lines.push(format!(
-                "{} 2. {}",
-                if selected == 1 { ">" } else { " " },
-                option_labels[1]
-            ));
-            lines.push(format!(
-                "{} 3. {}",
-                if selected == 2 { ">" } else { " " },
-                option_labels[2]
-            ));
-            lines.push(String::new());
-            lines.push("Enter 确认 · Y/A/N 或 1/2/3 · Esc 返回".to_string());
+        if let Some(preview) = patch_preview {
+            lines.extend(preview);
         } else {
-            if has_patch_preview {
-                lines.push(format!("tool: {}", request.tool));
-                if let Some(preview) = patch_preview {
-                    lines.extend(preview);
-                }
-                lines.push(String::new());
-            } else {
-                lines.push(format!("tool: {}", request.tool));
-                if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
-                    lines.push(format!("detail: {detail}"));
-                }
-                if !args.trim().is_empty() && args != "{}" && args != "null" {
-                    lines.push(format!("args: {args}"));
-                }
-                lines.push(String::new());
+            lines.push(request.tool.clone());
+            if !detail.trim().is_empty() && detail != "{}" && detail != "null" {
+                lines.push(detail);
             }
-            lines.push("Options:".to_string());
+            if !args.trim().is_empty() && args != "{}" && args != "null" {
+                lines.push(args);
+            }
+        }
+        lines.push(String::new());
+        for (index, label) in option_labels.iter().enumerate() {
             lines.push(format!(
-                "{} 1. {}",
-                if selected == 0 { ">" } else { " " },
-                option_labels[0]
+                "{} {}. {}",
+                if index == selected { "\u{203a}" } else { " " },
+                index + 1,
+                label
             ));
-            lines.push(format!(
-                "{} 2. {}",
-                if selected == 1 { ">" } else { " " },
-                option_labels[1]
-            ));
-            lines.push(format!(
-                "{} 3. {}",
-                if selected == 2 { ">" } else { " " },
-                option_labels[2]
-            ));
-            lines.push(String::new());
-            lines.push("Enter confirm · Y/A/N or 1/2/3 · Esc back".to_string());
         }
         Some(lines)
     }
@@ -1271,50 +1204,25 @@ impl TuiApp {
         let selected = self
             .inquiry_selected_index
             .min(panel.routes.len().saturating_sub(1));
-        let mut lines = Vec::new();
-        if self.is_zh_language() {
-            lines.push(format!("问题：{}", panel.question));
-            lines.push(format!(
-                "模式：{}",
-                if panel.multiple { "多选" } else { "单选" }
-            ));
-            lines.push(String::new());
-            lines.push("候选路由：".to_string());
-        } else {
-            lines.push(format!("question: {}", panel.question));
-            lines.push(format!(
-                "mode: {}",
-                if panel.multiple { "multiple" } else { "single" }
-            ));
-            lines.push(String::new());
-            lines.push("Routes:".to_string());
-        }
+        let mut lines = vec![panel.question.clone(), String::new()];
         for (index, route) in panel.routes.iter().enumerate() {
-            let marker = if index == selected { ">" } else { " " };
+            let marker = if index == selected { "\u{203a}" } else { " " };
             let mut title = route.label.clone();
             if route.recommended {
                 if self.is_zh_language() {
-                    title.push_str("（推荐）");
+                    title.push_str("\u{ff08}\u{63a8}\u{8350}\u{ff09}");
                 } else {
                     title.push_str(" (recommended)");
                 }
             }
-            lines.push(format!("{marker} {}. {}", index + 1, title));
-            if let Some(description) = route.description.as_deref() {
-                lines.push(format!("    {description}"));
-            }
+            let body = match route.description.as_deref() {
+                Some(description) if !description.trim().is_empty() => {
+                    format!("{title}  {description}")
+                }
+                _ => title,
+            };
+            lines.push(format!("{marker} {}. {body}", index + 1));
         }
-        lines.push(String::new());
-        lines.push(crate::locale::tr(
-            self.display_language.as_str(),
-            "Enter 发送 · 数字快速选择 · Esc 关闭",
-            "Enter send · number quick select · Esc close",
-        ));
-        lines.push(crate::locale::tr(
-            self.display_language.as_str(),
-            "也可以直接输入自由文本；多选请用逗号分隔，例如 1,3",
-            "you can also type free text; use comma for multi-select (e.g. 1,3)",
-        ));
         Some(lines)
     }
 
@@ -1612,69 +1520,21 @@ impl TuiApp {
     }
 
     pub fn shortcuts_lines(&self) -> Vec<String> {
-        let mouse_mode = match self.mouse_mode {
-            MouseMode::Auto => "auto",
-            MouseMode::Scroll => "scroll",
-            MouseMode::Select => "select/copy",
-        };
         if self.is_zh_language() {
-            let mouse_mode = match self.mouse_mode {
-                MouseMode::Auto => "自动",
-                MouseMode::Scroll => "滚动",
-                MouseMode::Select => "选择/复制",
-            };
             return vec![
-                "Esc / ?               关闭快捷键面板".to_string(),
-                "Enter                 发送消息".to_string(),
-                "Shift+Enter / Ctrl+J  插入换行".to_string(),
-                "Ctrl+V / Shift+Insert 优先粘贴图片，回退文本".to_string(),
-                "拖入图片/文件         自动加入附件队列".to_string(),
-                "Right Click           粘贴剪贴板文本（滚动模式）".to_string(),
-                "Left / Right          光标左移/右移".to_string(),
-                "Ctrl+B / Ctrl+F       光标左移/右移".to_string(),
-                "Alt+B / Alt+F         按单词移动".to_string(),
-                "Alt+Left/Right        按单词移动".to_string(),
-                "Ctrl+W / Alt+Backspace 删除前一个单词".to_string(),
-                "Alt+Delete            删除后一个单词".to_string(),
-                "Ctrl+U / Ctrl+K       删除到行首/行尾".to_string(),
-                "Ctrl+A / Ctrl+E       跳到行首/行尾".to_string(),
-                "Up / Down             历史记录（不含 slash 命令）".to_string(),
-                "F3                    切换输入/输出焦点".to_string(),
-                "(输出焦点) arrows     选择消息条目".to_string(),
-                "(输出焦点) Enter      复用选中的用户消息".to_string(),
-                "Tab                   补全 slash/@/$/#".to_string(),
-                "@                     补全或引用文件路径".to_string(),
-                "PgUp/PgDn             滚动输出".to_string(),
-                "Mouse Wheel           终端原生滚动 / 或切到 /mouse scroll".to_string(),
-                "Drag                  终端原生选择/复制（auto/select）".to_string(),
-                format!("F2                    可选：切换鼠标模式 ({mouse_mode})"),
+                "/ 命令 · Enter 发送".to_string(),
+                "Shift + Enter / Ctrl + J 换行 · Tab 补全".to_string(),
+                "@ 文件路径 · Ctrl + V / Shift + Insert 粘贴图片".to_string(),
+                "F3 查看输出 · Ctrl + C 退出".to_string(),
+                "Esc / ? 关闭快捷键 · 拖入图片或文件即可附加".to_string(),
             ];
         }
         vec![
-            "Esc / ?               close shortcuts".to_string(),
-            "Enter                 send message".to_string(),
-            "Shift+Enter / Ctrl+J  insert newline".to_string(),
-            "Ctrl+V / Shift+Insert paste image first, then text".to_string(),
-            "Drag images/files     queue as attachments".to_string(),
-            "Right Click           paste clipboard text (scroll mode)".to_string(),
-            "Left / Right          move cursor left/right".to_string(),
-            "Ctrl+B / Ctrl+F       move cursor left/right".to_string(),
-            "Alt+B / Alt+F         move by word".to_string(),
-            "Alt+Left/Right        move by word".to_string(),
-            "Ctrl+W / Alt+Backspace delete previous word".to_string(),
-            "Alt+Delete            delete next word".to_string(),
-            "Ctrl+U / Ctrl+K       delete to line start/end".to_string(),
-            "Ctrl+A / Ctrl+E       move to line start/end".to_string(),
-            "Up / Down             history (slash commands excluded)".to_string(),
-            "F3                    toggle input/output focus".to_string(),
-            "(output focus) arrows select transcript entries".to_string(),
-            "(output focus) Enter  reuse selected user message".to_string(),
-            "Tab                   complete slash/@/$/#".to_string(),
-            "@                     complete or reference file paths".to_string(),
-            "PgUp/PgDn             scroll output".to_string(),
-            "Mouse Wheel           terminal-native scroll or use /mouse scroll".to_string(),
-            "Drag                  native terminal select/copy (auto/select)".to_string(),
-            format!("F2                    optional: switch mouse mode ({mouse_mode})"),
+            "/ for commands                             enter to send".to_string(),
+            "shift + enter for newline                  tab to complete".to_string(),
+            "@ for file paths                           ctrl + v to paste images".to_string(),
+            "f3 to view transcript                      ctrl + c to exit".to_string(),
+            "esc / ? to close shortcuts                drag images/files to attach".to_string(),
         ]
     }
 
@@ -1902,7 +1762,7 @@ impl TuiApp {
         self.mouse_mode = mode;
         let notice = match mode {
             MouseMode::Auto => {
-                "mouse mode: auto (wheel scrolls output; switch to select/copy when you need native selection)"
+                "mouse mode: auto (native selection enabled; switch to scroll when you want wheel scrolling)"
             }
             MouseMode::Scroll => "mouse mode: scroll (capture wheel events for transcript scrolling)",
             MouseMode::Select => {
@@ -2186,7 +2046,8 @@ impl TuiApp {
             return 1;
         };
         if let Some(special) = entry.special.as_ref() {
-            return special.line_count(width.min(u16::MAX as usize) as u16);
+            return special.line_count(width.min(u16::MAX as usize) as u16)
+                + transcript_entry_spacing_before(index);
         }
         if matches!(kind, LogKind::Assistant | LogKind::Reasoning) {
             if streaming {
@@ -2195,7 +2056,8 @@ impl TuiApp {
                     .as_ref()
                     .map(|cache| cache.lines.len())
                     .unwrap_or(1)
-                    .max(1);
+                    .max(1)
+                    + transcript_entry_spacing_before(index);
             }
             ensure_markdown_cache(entry, width as u16);
             return entry
@@ -2203,9 +2065,17 @@ impl TuiApp {
                 .as_ref()
                 .map(|cache| cache.lines.len())
                 .unwrap_or(1)
-                .max(1);
+                .max(1)
+                + transcript_entry_spacing_before(index);
         }
-        wrapped_log_visual_line_count(entry.kind, entry.text.as_str(), width)
+        render_plain_lines(
+            entry.kind,
+            entry.text.as_str(),
+            log_base_style(entry.kind),
+            width as u16,
+        )
+        .len()
+            + transcript_entry_spacing_before(index)
     }
 
     pub fn render_entry_lines(
@@ -2251,11 +2121,11 @@ impl TuiApp {
                     .as_ref()
                     .map(|cache| cache.lines.clone())
                     .unwrap_or_else(|| {
-                        render_plain_lines(entry.kind, entry.text.as_str(), base_style)
+                        render_plain_lines(entry.kind, entry.text.as_str(), base_style, width)
                     })
             }
         } else {
-            render_plain_lines(entry.kind, entry.text.as_str(), base_style)
+            render_plain_lines(entry.kind, entry.text.as_str(), base_style, width)
         };
 
         if selected {
@@ -2263,6 +2133,10 @@ impl TuiApp {
             for line in &mut lines {
                 line.style = selected_style.patch(line.style);
             }
+        }
+
+        if index > 0 {
+            lines.insert(0, Line::from(String::new()));
         }
 
         lines
@@ -3028,6 +2902,7 @@ impl TuiApp {
             KeyCode::Esc => {
                 self.input.clear();
                 self.input_cursor = 0;
+                self.pending_paste.clear();
                 self.pending_large_pastes.clear();
                 self.history_cursor = None;
             }
@@ -3050,6 +2925,7 @@ impl TuiApp {
                     return Ok(());
                 }
                 self.reset_plain_char_burst();
+                self.flush_pending_paste();
 
                 let raw_line = std::mem::take(&mut self.input);
                 self.input_cursor = 0;
@@ -3692,6 +3568,7 @@ impl TuiApp {
     }
 
     pub async fn submit_line(&mut self, line: String) -> Result<()> {
+        self.flush_pending_paste();
         let line = expand_large_paste_placeholders(line.as_str(), &self.pending_large_pastes);
         self.pending_large_pastes.clear();
         if self.config_wizard.is_some() {
@@ -5114,22 +4991,43 @@ fn log_base_style(kind: LogKind) -> Style {
     super::theme::log_style(kind)
 }
 
-fn render_plain_lines(kind: LogKind, text: &str, style: Style) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-    let mut segments = text.split('\n');
+// Keep plain transcript cells visually close to Codex: one leading bullet
+// on the first line, then hanging indents for wrapped and explicit newline content.
+fn render_plain_lines(kind: LogKind, text: &str, style: Style, width: u16) -> Vec<Line<'static>> {
     let prefix = log_prefix(kind);
-    if let Some(first) = segments.next() {
-        lines.push(Line::from(Span::styled(format!("{prefix}{first}"), style)));
+    let prefix_width = UnicodeWidthStr::width(prefix).max(1);
+    let leading_indent = Line::from(Span::styled(prefix.to_string(), style));
+    let continuation_indent = Line::from(Span::styled(" ".repeat(prefix_width), style));
+    let body_indent = Line::from(Span::styled(" ".repeat(prefix_width), style));
+    let wrap_width = usize::from(width.max(1));
+    let mut lines = Vec::new();
+
+    for (segment_index, segment) in text.split('\n').enumerate() {
+        let initial_indent = if segment_index == 0 {
+            leading_indent.clone()
+        } else {
+            body_indent.clone()
+        };
+        let content = Line::from(vec![Span::styled(segment.to_string(), style)]);
+        let wrapped = super::wrapping::word_wrap_line(
+            &content,
+            super::wrapping::RtOptions::new(wrap_width)
+                .initial_indent(initial_indent)
+                .subsequent_indent(continuation_indent.clone()),
+        );
+
+        if wrapped.is_empty() {
+            lines.push(Line::from(Span::styled(prefix.to_string(), style)));
+        } else {
+            super::line_utils::push_owned_lines(wrapped.as_slice(), &mut lines);
+        }
     }
-    for segment in segments {
-        lines.push(Line::from(Span::styled(segment.to_string(), style)));
-    }
+
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(prefix.to_string(), style)));
     }
     lines
 }
-
 fn render_markdown_lines(kind: LogKind, text: &str, width: u16) -> Vec<Line<'static>> {
     let prefix = log_prefix(kind);
     let prefix_width = UnicodeWidthStr::width(prefix);
@@ -5333,6 +5231,76 @@ fn expand_large_paste_placeholders(text: &str, pending: &[(String, String)]) -> 
         }
     }
     expanded
+}
+
+// Keep one spacer row before every transcript entry after the first so the
+// chat stream breathes more like the reference Codex TUI while preserving
+// correct scroll math.
+fn transcript_entry_spacing_before(index: usize) -> usize {
+    usize::from(index > 0)
+}
+
+fn current_activity_elapsed_secs(started_at: Option<Instant>, settled_secs: f64) -> u64 {
+    let live_secs = started_at
+        .map(|started| settled_secs + started.elapsed().as_secs_f64())
+        .unwrap_or(settled_secs);
+    live_secs.max(0.0).round() as u64
+}
+
+fn format_busy_activity_line(
+    is_zh: bool,
+    elapsed_secs: u64,
+    stream_catchup_mode: bool,
+    terminal_focused: bool,
+) -> String {
+    let mut parts = vec![if is_zh {
+        format!("\u{2022} ??? ({elapsed_secs}s \u{00b7} Ctrl+C ??)")
+    } else {
+        format!("\u{2022} Working ({elapsed_secs}s \u{00b7} ctrl+c to interrupt)")
+    }];
+    if stream_catchup_mode {
+        parts.push(if is_zh {
+            "???".to_string()
+        } else {
+            "catch-up".to_string()
+        });
+    }
+    if !terminal_focused {
+        parts.push(if is_zh {
+            "???".to_string()
+        } else {
+            "unfocused".to_string()
+        });
+    }
+    parts.join(" \u{00b7} ")
+}
+
+fn format_footer_context_summary(
+    is_zh: bool,
+    used_tokens: i64,
+    max_context: Option<u32>,
+) -> String {
+    if let Some(max_context) = max_context {
+        let percent_left = crate::context_left_percent(used_tokens, Some(max_context)).unwrap_or(0);
+        if is_zh {
+            return format!("上下文余量 {percent_left}%");
+        }
+        return format!("{percent_left}% context left");
+    }
+
+    let used_tokens = used_tokens.max(0);
+    if used_tokens > 0 {
+        if is_zh {
+            return format!("上下文占用 {used_tokens}");
+        }
+        return format!("{used_tokens} used");
+    }
+
+    if is_zh {
+        "上下文余量 100%".to_string()
+    } else {
+        "100% context left".to_string()
+    }
 }
 
 #[cfg(test)]

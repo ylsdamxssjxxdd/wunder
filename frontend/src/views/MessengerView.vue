@@ -4,7 +4,8 @@
     :class="{
       'messenger-view--without-right': !showRightDock,
       'messenger-view--without-middle': !showMiddlePane,
-      'messenger-view--right-collapsed': showRightDock && rightDockCollapsed
+      'messenger-view--right-collapsed': showRightDock && rightDockCollapsed,
+      'messenger-view--nav-collapsed': navigationPaneCollapsed
     }"
   >
     <aside
@@ -188,6 +189,22 @@
           @activate-settings-panel="activateSettingsPanel"
       />
     </section>
+
+    <div class="messenger-nav-toggle-hitbox" aria-hidden="true"></div>
+    <button
+      class="messenger-nav-toggle"
+      type="button"
+      :title="navigationPaneToggleTitle"
+      :aria-label="navigationPaneToggleTitle"
+      :aria-expanded="navigationPaneCollapsed ? 'false' : 'true'"
+      @click="toggleNavigationPaneCollapsed"
+    >
+      <i
+        class="fa-solid"
+        :class="navigationPaneCollapsed ? 'fa-chevron-right' : 'fa-chevron-left'"
+        aria-hidden="true"
+      ></i>
+    </button>
 
     <section class="messenger-chat chat-shell">
       <header v-if="sessionHub.activeSection !== 'swarms'" class="messenger-chat-header">
@@ -1700,6 +1717,8 @@ const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440);
 const middlePaneOverlayVisible = ref(false);
+const embeddedNavigationCollapsed = ref(true);
+const standardNavigationCollapsed = ref(false);
 const leftRailMoreExpanded = ref(false);
 const quickCreatingAgent = ref(false);
 const agentMainReadAtMap = ref<Record<string, number>>({});
@@ -1894,6 +1913,40 @@ const basePrefix = computed(() => {
   return '/app';
 });
 
+const isEmbeddedChatRoute = computed(() => /\/embed\/chat$/.test(String(route.path || '').trim()));
+const navigationPaneCollapsed = computed(() =>
+  isEmbeddedChatRoute.value ? embeddedNavigationCollapsed.value : standardNavigationCollapsed.value
+);
+const navigationPaneToggleTitle = computed(() =>
+  navigationPaneCollapsed.value ? t('common.expand') : t('common.collapse')
+);
+
+function setNavigationPaneCollapsed(collapsed: boolean): void {
+  if (isEmbeddedChatRoute.value) {
+    embeddedNavigationCollapsed.value = collapsed;
+  } else {
+    standardNavigationCollapsed.value = collapsed;
+  }
+  if (collapsed) {
+    leftRailMoreExpanded.value = false;
+    clearMiddlePaneOverlayHide();
+    clearMiddlePaneOverlayPreview();
+    middlePaneOverlayVisible.value = false;
+    return;
+  }
+  if (isMiddlePaneOverlay.value) {
+    openMiddlePaneOverlay();
+  }
+}
+
+function toggleNavigationPaneCollapsed(): void {
+  setNavigationPaneCollapsed(!navigationPaneCollapsed.value);
+}
+
+function resolveChatShellPath(): string {
+  return isEmbeddedChatRoute.value ? String(route.path || '').trim() : `${basePrefix.value}/chat`;
+}
+
 const getDesktopBridge = (): DesktopBridge | null => {
   if (typeof window === 'undefined') return null;
   const candidate = (window as Window & { wunderDesktop?: DesktopBridge }).wunderDesktop;
@@ -1999,7 +2052,7 @@ const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.active
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 960);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
 const showMiddlePane = computed(
-  () => !isMiddlePaneOverlay.value || middlePaneOverlayVisible.value
+  () => !navigationPaneCollapsed.value && (!isMiddlePaneOverlay.value || middlePaneOverlayVisible.value)
 );
 const middlePaneTransitionName = computed(() => 'messenger-middle-pane-slide');
 
@@ -6143,7 +6196,7 @@ const deleteMixedConversation = async (item: MixedConversation) => {
           delete nextQuery.session_id;
           delete nextQuery.agent_id;
           delete nextQuery.entry;
-          router.replace({ path: `${basePrefix.value}/chat`, query: nextQuery }).catch(() => undefined);
+          router.replace({ path: resolveChatShellPath(), query: nextQuery }).catch(() => undefined);
         }
       }
     } else {
@@ -6822,7 +6875,7 @@ const openWorldConversation = async (
     delete nextQuery.entry;
     markMessengerPerfTrace(perfTrace, 'beforeRouteReplace');
     router.replace({
-      path: mode === 'messages' ? `${basePrefix.value}/chat` : `${basePrefix.value}/user-world`,
+      path: mode === 'messages' ? resolveChatShellPath() : `${basePrefix.value}/user-world`,
       query: nextQuery
     }).catch(() => undefined);
     markMessengerPerfTrace(perfTrace, 'afterRouteReplace');
@@ -6885,7 +6938,7 @@ const openAgentById = async (agentId: unknown) => {
   delete nextQuery.conversation_id;
   delete nextQuery.session_id;
   router.replace({
-    path: `${basePrefix.value}/chat`,
+    path: resolveChatShellPath(),
     query: nextQuery
   }).catch(() => undefined);
   await scrollMessagesToBottom(true);
@@ -7160,7 +7213,7 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
   } as Record<string, any>;
   delete nextQuery.conversation_id;
   router.replace({
-    path: `${basePrefix.value}/chat`,
+    path: resolveChatShellPath(),
     query: nextQuery
   }).catch(() => undefined);
   await scrollMessagesToBottom(true);

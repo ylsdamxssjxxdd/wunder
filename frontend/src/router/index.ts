@@ -25,7 +25,15 @@ const AdminSystemView = () => import('@/views/AdminSystemView.vue');
 const USER_LOGIN_PATH = '/login';
 const USER_BEEHIVE_PATH = '/app/home';
 const DESKTOP_HOME_PATH = '/desktop/home';
-const EMBED_AUTH_QUERY_KEYS = new Set(['wunder_token', 'access_token', 'wunder_code', 'token', 'user_id']);
+const EMBED_AUTH_QUERY_KEYS = new Set([
+  'wunder_token',
+  'access_token',
+  'wunder_code',
+  'token',
+  'user_id',
+  'agent_name',
+  'agent'
+]);
 EMBED_AUTH_QUERY_KEYS.add(FORCE_LOGOUT_QUERY_KEY);
 
 const hasAccessToken = () => Boolean(localStorage.getItem('access_token'));
@@ -55,6 +63,14 @@ const resolveQueryCode = (query: LocationQuery): string => asQueryText(query.wun
 const resolveExternalQueryToken = (query: LocationQuery): string => asQueryText(query.token);
 
 const resolveExternalQueryUserId = (query: LocationQuery): string => asQueryText(query.user_id);
+
+const resolveExternalQueryAgentName = (query: LocationQuery): string => {
+  const explicitAgentName = asQueryText(query.agent_name);
+  if (explicitAgentName) {
+    return explicitAgentName;
+  }
+  return asQueryText(query.agent);
+};
 
 const stripEmbedAuthQuery = (query: LocationQuery): LocationQueryRaw => {
   const output: LocationQueryRaw = {};
@@ -97,11 +113,15 @@ const exchangeEmbedCode = async (code: string): Promise<string> => {
   return token;
 };
 
-const launchExternalTokenEntry = async (token: string, userId: string): Promise<string> => {
+const launchExternalTokenEntry = async (
+  token: string,
+  userId: string,
+  agentName?: string
+): Promise<string> => {
   const response = await fetch(resolveApiEndpoint('/auth/external/token_launch'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token, user_id: userId })
+    body: JSON.stringify({ token, user_id: userId, agent_name: agentName || undefined })
   });
 
   const payload = asRecord(await response.json().catch(() => ({})));
@@ -269,9 +289,14 @@ router.beforeEach(async (to) => {
   const query = to.query;
   const externalToken = resolveExternalQueryToken(query);
   const externalUserId = resolveExternalQueryUserId(query);
+  const externalAgentName = resolveExternalQueryAgentName(query);
   if (externalToken && externalUserId) {
     try {
-      const entryPath = await launchExternalTokenEntry(externalToken, externalUserId);
+      const entryPath = await launchExternalTokenEntry(
+        externalToken,
+        externalUserId,
+        externalAgentName || undefined
+      );
       return resolveEntryRoute(entryPath);
     } catch {
       authStore.logout();

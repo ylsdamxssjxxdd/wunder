@@ -100,6 +100,9 @@ pub(super) struct GenericToolLogEntry {
 impl GenericToolLogEntry {
     fn summary_text(&self) -> String {
         let header = self.header_text();
+        if self.promoted_summary().is_some() {
+            return header;
+        }
         if let Some(summary) = self.summary.as_ref().filter(|value| !value.is_empty()) {
             format!("{header} {summary}")
         } else {
@@ -108,9 +111,15 @@ impl GenericToolLogEntry {
     }
 
     fn render_lines_for_width(&self, width: u16) -> Vec<Line<'static>> {
+        let promoted_summary = self.promoted_summary();
         let summary = self.summary.as_ref().filter(|value| !value.is_empty());
+        let body_summary = if promoted_summary.is_some() {
+            None
+        } else {
+            summary
+        };
         let mut used_inline_summary = false;
-        let mut lines = vec![if let Some(summary) = summary {
+        let mut lines = vec![if let Some(summary) = body_summary {
             if let Some(line) = self.header_line_with_summary(summary.as_str(), width) {
                 used_inline_summary = true;
                 line
@@ -121,11 +130,11 @@ impl GenericToolLogEntry {
             self.header_line()
         }];
         let mut remaining_items = self.details.len();
-        if !used_inline_summary && summary.is_some() {
+        if !used_inline_summary && body_summary.is_some() {
             remaining_items += 1;
         }
         if !used_inline_summary {
-            if let Some(summary) = summary {
+            if let Some(summary) = body_summary {
                 let is_last = remaining_items == 1;
                 lines.extend(render_wrapped_tree_text(
                     summary.as_str(),
@@ -145,25 +154,28 @@ impl GenericToolLogEntry {
     }
 
     fn header_text(&self) -> String {
+        if let Some(summary) = self.promoted_summary() {
+            return summary.to_string();
+        }
         let tool_is_zh = looks_like_zh_text(self.tool_name.as_str());
         match self.status {
             GenericToolLogStatus::Pending => {
                 if tool_is_zh {
-                    format!("调用 {}", self.tool_name)
+                    format!("\u{4f7f}\u{7528} {}", self.tool_name)
                 } else {
-                    format!("Calling {}", self.tool_name)
+                    format!("Using {}", self.tool_name)
                 }
             }
             GenericToolLogStatus::Success => {
                 if tool_is_zh {
-                    format!("已完成 {}", self.tool_name)
+                    format!("\u{5df2}\u{4f7f}\u{7528} {}", self.tool_name)
                 } else {
-                    format!("Called {}", self.tool_name)
+                    format!("Used {}", self.tool_name)
                 }
             }
             GenericToolLogStatus::Failure => {
                 if tool_is_zh {
-                    format!("{} 失败", self.tool_name)
+                    format!("{} \u{5931}\u{8d25}", self.tool_name)
                 } else {
                     format!("{} failed", self.tool_name)
                 }
@@ -177,6 +189,16 @@ impl GenericToolLogEntry {
             Span::styled(format!("{icon} "), icon_style),
             Span::styled(self.header_text(), text_style),
         ])
+    }
+
+    fn promoted_summary(&self) -> Option<&str> {
+        if self.status != GenericToolLogStatus::Success {
+            return None;
+        }
+        self.summary
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && *value != "{}")
     }
 
     fn header_line_with_summary(&self, summary: &str, width: u16) -> Option<Line<'static>> {
@@ -317,12 +339,16 @@ impl CommandSection {
         let mut rendered = Vec::new();
         let mut iter = self.lines.iter();
         if let Some(first) = iter.next() {
-            rendered.extend(render_wrapped_labeled_tree_text(
-                format!("{}{}: ", tree_prefix(first_body), self.label),
-                first.as_str(),
-                self.style,
-                width,
-            ));
+            if hides_command_section_label(self.label.as_str()) {
+                rendered.extend(render_wrapped_pipe_text(first.as_str(), self.style, width));
+            } else {
+                rendered.extend(render_wrapped_labeled_tree_text(
+                    format!("{}{}: ", tree_prefix(first_body), self.label),
+                    first.as_str(),
+                    self.style,
+                    width,
+                ));
+            }
         }
         for line in iter {
             rendered.extend(render_wrapped_continuation_text(
@@ -735,6 +761,10 @@ fn tree_prefix(first_body: bool) -> &'static str {
     } else {
         continuation_prefix()
     }
+}
+
+fn hides_command_section_label(label: &str) -> bool {
+    matches!(label, "stdout" | "stderr" | "output" | "??")
 }
 
 fn render_wrapped_tree_text(
@@ -1996,7 +2026,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(rendered.len(), 1);
-        assert!(rendered[0].contains("Calling read_file path=src/main.rs"));
+        assert!(rendered[0].contains("Using read_file path=src/main.rs"));
     }
 
     #[test]
@@ -2020,6 +2050,26 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(rendered.len() > 1);
         assert!(rendered.iter().any(|line| line.starts_with("  └ ")));
+    }
+
+    #[test]
+    fn completed_generic_tool_log_uses_summary_as_header() {
+        let entry = build_completed_tool_log(
+            "read_file",
+            &serde_json::json!({
+                "result": {
+                    "ok": true,
+                    "data": {
+                        "content": "fn main() {}",
+                        "meta": { "files": [{ "path": "src/main.rs", "bytes": 12 }] }
+                    }
+                }
+            }),
+        );
+        let SpecialLogEntry::Tool(entry) = entry else {
+            panic!("expected tool log");
+        };
+        assert!(entry.header_text().contains("src/main.rs"));
     }
 
     #[test]

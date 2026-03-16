@@ -1,4 +1,3 @@
-use super::layout;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
@@ -6,8 +5,6 @@ use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use ratatui::Frame;
@@ -16,6 +13,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::app::TuiApp;
 use crate::tui::theme;
+
+const INPUT_PROMPT: &str = "› ";
 
 pub(crate) fn draw_activity(frame: &mut Frame, area: Rect, app: &TuiApp) {
     if area.height == 0 || area.width == 0 {
@@ -32,55 +31,82 @@ pub(crate) fn draw_activity(frame: &mut Frame, area: Rect, app: &TuiApp) {
     );
 }
 
-pub(crate) fn draw_input(
-    frame: &mut Frame,
-    area: Rect,
-    _inner: Rect,
-    app: &mut TuiApp,
-    is_zh: bool,
-) {
+pub(crate) fn draw_input(frame: &mut Frame, area: Rect, app: &mut TuiApp, is_zh: bool) {
+    if area.height == 0 || area.width == 0 {
+        return;
+    }
+
+    let attachment_hint = app.composer_attachment_hint();
+    let attachment_height = u16::from(attachment_hint.is_some() && area.height >= 3);
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(5), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(attachment_height),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(area);
-    let input_area = sections[0];
-    let footer_area = sections[1];
-    let inner = layout::inner_rect(input_area);
-    app.set_input_viewport(inner.width);
-    let (input_text, cursor_x, cursor_y) = app.input_view(inner.width, inner.height);
-    let active = app.input_focus_active();
-    let title = if is_zh { " 输入 " } else { " Input " };
-    let mut title_spans = vec![Span::styled(title, theme::block_title(active))];
-    if let Some(attachment_hint) = app.composer_attachment_hint() {
-        title_spans.push(Span::raw("  "));
-        title_spans.push(Span::styled(attachment_hint, theme::success_text()));
+    let attachment_area = sections[0];
+    let input_area = sections[1];
+    let footer_area = sections[2];
+
+    if attachment_area.height > 0 && attachment_area.width > 0 {
+        if let Some(hint) = attachment_hint {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(hint, theme::success_text())))
+                    .wrap(Wrap { trim: false }),
+                attachment_area,
+            );
+        }
     }
-    let title_line = Line::from(title_spans);
 
-    let body = if app.input_is_empty() {
-        let placeholder = if is_zh {
-            "直接提问，或使用 / 命令、@ 文件、# 技能、$ 应用；拖入图片或文件即可附加"
-        } else {
-            "Ask directly, or use / commands, @ files, # skills, and $ apps; drop images/files to attach"
-        };
-        Text::from(vec![Line::from(Span::styled(
-            placeholder,
-            theme::secondary_text(),
-        ))])
-    } else {
-        let large_paste_placeholders = app.large_paste_placeholders();
-        render_input_text(input_text.as_str(), large_paste_placeholders.as_slice())
+    let prompt_width = UnicodeWidthStr::width(INPUT_PROMPT) as u16;
+    let text_area = Rect {
+        x: input_area.x.saturating_add(prompt_width),
+        y: input_area.y,
+        width: input_area.width.saturating_sub(prompt_width),
+        height: input_area.height,
     };
+    app.set_input_viewport(text_area.width.max(1));
+    let (input_text, cursor_x, cursor_y) =
+        app.input_view(text_area.width.max(1), text_area.height.max(1));
 
-    let input = Paragraph::new(body)
-        .block(
-            Block::default()
-                .title(title_line)
-                .borders(Borders::ALL)
-                .border_style(theme::block_border(active)),
-        )
-        .wrap(Wrap { trim: false });
-    frame.render_widget(input, input_area);
+    if input_area.height > 0 && input_area.width > 0 {
+        let prompt_style = if app.input_focus_active() {
+            theme::accent_text()
+        } else {
+            theme::secondary_text()
+        };
+        let prompt_area = Rect {
+            x: input_area.x,
+            y: input_area.y,
+            width: input_area.width.min(prompt_width.max(1)),
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(INPUT_PROMPT, prompt_style))),
+            prompt_area,
+        );
+    }
+
+    if text_area.height > 0 && text_area.width > 0 {
+        let body = if app.input_is_empty() {
+            let placeholder = if is_zh {
+                "直接提问，或使用 / 命令、@ 文件、# 技能、$ 应用；拖入图片或文件即可附加"
+            } else {
+                "Ask directly, or use / commands, @ files, # skills, and $ apps; drop images/files to attach"
+            };
+            Text::from(vec![Line::from(Span::styled(
+                placeholder,
+                theme::secondary_text(),
+            ))])
+        } else {
+            let large_paste_placeholders = app.large_paste_placeholders();
+            render_input_text(input_text.as_str(), large_paste_placeholders.as_slice())
+        };
+
+        frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), text_area);
+    }
 
     if footer_area.height > 0 {
         if let Some(footer) = build_footer_line(app, footer_area.width) {
@@ -88,9 +114,9 @@ pub(crate) fn draw_input(
         }
     }
 
-    if inner.width > 0 && inner.height > 0 {
-        let x = inner.x + cursor_x.min(inner.width.saturating_sub(1));
-        let y = inner.y + cursor_y.min(inner.height.saturating_sub(1));
+    if text_area.width > 0 && text_area.height > 0 {
+        let x = text_area.x + cursor_x.min(text_area.width.saturating_sub(1));
+        let y = text_area.y + cursor_y.min(text_area.height.saturating_sub(1));
         frame.set_cursor_position((x, y));
     }
 }
@@ -100,15 +126,18 @@ fn build_footer_line(app: &TuiApp, width: u16) -> Option<Line<'static>> {
         return None;
     }
 
+    let items = app.composer_footer_items();
+
     if let Some(right_text) = app.composer_footer_context() {
-        if let Some(line) =
-            build_footer_line_with_right(app.composer_footer_items(), right_text, width)
-        {
+        if let Some(line) = build_footer_line_with_right(items.clone(), right_text.clone(), width) {
+            return Some(line);
+        }
+        if let Some(line) = build_right_aligned_footer_line(right_text, width) {
             return Some(line);
         }
     }
 
-    let spans = build_footer_spans(app.composer_footer_items(), width);
+    let spans = build_footer_spans(items, width);
 
     if spans.is_empty() {
         return Some(Line::from(Span::styled(
@@ -202,6 +231,20 @@ fn build_footer_line_with_right(
     Some(Line::from(spans))
 }
 
+fn build_right_aligned_footer_line(text: String, width: u16) -> Option<Line<'static>> {
+    if width == 0 || text.trim().is_empty() {
+        return None;
+    }
+
+    let total_width = usize::from(width);
+    let text_width = UnicodeWidthStr::width(text.as_str());
+    let padding = total_width.saturating_sub(text_width);
+    Some(Line::from(vec![
+        Span::raw(" ".repeat(padding)),
+        Span::styled(text, theme::secondary_text()),
+    ]))
+}
+
 fn spans_width(spans: &[Span<'static>]) -> usize {
     spans
         .iter()
@@ -214,6 +257,29 @@ fn build_footer_spans(items: Vec<(String, String)>, width: u16) -> Vec<Span<'sta
     let mut used = 0usize;
     for (index, (key, label)) in items.into_iter().enumerate() {
         let gap = if index == 0 { 0 } else { 2 };
+        let remaining_width = usize::from(width).saturating_sub(used);
+        if remaining_width == 0 {
+            break;
+        }
+
+        if key.is_empty() {
+            let available = remaining_width.saturating_sub(gap);
+            let Some(rendered_label) = compact_footer_label(label.as_str(), available) else {
+                continue;
+            };
+            let rendered_width = UnicodeWidthStr::width(rendered_label.as_str());
+            if rendered_width == 0 || gap + rendered_width > remaining_width {
+                continue;
+            }
+            if gap > 0 {
+                spans.push(Span::styled("  ", theme::secondary_text()));
+                used = used.saturating_add(gap);
+            }
+            spans.push(Span::styled(rendered_label, theme::secondary_text()));
+            used = used.saturating_add(rendered_width);
+            continue;
+        }
+
         let key_width = UnicodeWidthStr::width(key.as_str());
         let compact_width = gap + key_width;
         let remaining_after_key = usize::from(width)
@@ -372,5 +438,36 @@ mod tests {
             .collect::<String>();
         assert!(rendered.contains("@ files"));
         assert!(rendered.ends_with("ctx 72% · att 2"));
+    }
+
+    #[test]
+    fn footer_can_render_right_context_without_left_items() {
+        let line = build_right_aligned_footer_line("100% context left".to_string(), 32)
+            .expect("footer line");
+        let rendered = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(rendered.ends_with("100% context left"));
+    }
+
+    #[test]
+    fn footer_supports_label_only_items_for_model_and_cwd() {
+        let spans = build_footer_spans(
+            vec![
+                ("?".to_string(), "for shortcuts".to_string()),
+                (String::new(), "gpt-5.1-codex".to_string()),
+                (String::new(), "workspace/app".to_string()),
+            ],
+            80,
+        );
+        let rendered = spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(rendered.contains("? for shortcuts"));
+        assert!(rendered.contains("gpt-5.1-codex"));
+        assert!(rendered.contains("workspace/app"));
     }
 }

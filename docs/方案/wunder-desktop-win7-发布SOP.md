@@ -25,6 +25,13 @@ npm run build:desktop:win7:gnu:x64:with-supplement:common
 - 最终安装包：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder-desktop-win7-0.1.0-x64-setup.exe`
 - 中间补充包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
 
+### CI / 自动发布
+
+- Nightly 自动发布链路已接入 Win7 兼容版构建。
+- 自动发布产物名统一为：`Wunder-Desktop-win7-compat-x64-<date>-with-python.exe`。
+- 该资产在自动发布说明中会明确标注为 **Windows 7 兼容性安装包**，并说明其已内置 `Python + Git` 运行时。
+- 若补充包也一并上传，则命名为：`Wunder-Desktop-win7-compat-x64-<date>-python-supplement.zip`，仅用于排障或手工覆盖，不作为默认交付物。
+
 默认对外分发时，以安装包为准；补充包只保留给调试、手工覆盖和应急兜底使用。
 
 ## 4. 安装包内置内容
@@ -32,8 +39,11 @@ npm run build:desktop:win7:gnu:x64:with-supplement:common
 - Win7 GNU bridge
 - `opt/python`
 - `opt/git`
+- `wunder-cli.exe`
 - `pip / setuptools / wheel`
 - `requests / numpy / pandas / openpyxl / matplotlib / Pillow / tabulate`
+
+- CI 补充说明：Nightly 自动发布中的 Win7 兼容性安装包现已额外携带 `wunder-cli.exe`，并在发布说明中明确标注。
 
 ## 5. 发布前最小验证
 

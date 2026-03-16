@@ -186,8 +186,64 @@ fn expand_large_paste_placeholders_restores_original_text() {
 }
 
 #[test]
+fn footer_context_matches_reference_style_with_max_context() {
+    assert_eq!(
+        format_footer_context_summary(false, 280, Some(1000)),
+        "72% context left"
+    );
+}
+
+#[test]
+fn footer_context_defaults_to_full_when_empty() {
+    assert_eq!(
+        format_footer_context_summary(false, 0, None),
+        "100% context left"
+    );
+}
+
+#[test]
+fn transcript_entry_spacing_is_only_added_after_first_item() {
+    assert_eq!(transcript_entry_spacing_before(0), 0);
+    assert_eq!(transcript_entry_spacing_before(1), 1);
+    assert_eq!(transcript_entry_spacing_before(8), 1);
+}
+
+#[test]
+fn busy_activity_line_uses_codex_like_status_copy() {
+    assert_eq!(
+        format_busy_activity_line(false, 3, false, true),
+        "\u{2022} Working (3s \u{00b7} ctrl+c to interrupt)"
+    );
+}
+
+#[test]
+fn plain_transcript_lines_use_hanging_indent_without_role_labels() {
+    let lines = render_plain_lines(
+        LogKind::Assistant,
+        "this line wraps across the viewport width",
+        ratatui::style::Style::default(),
+        16,
+    );
+    let rendered = lines
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    assert!(rendered
+        .first()
+        .is_some_and(|line| line.starts_with("\u{2022} ")));
+    assert!(rendered.iter().skip(1).all(|line| line.starts_with("  ")));
+    assert!(rendered.iter().all(|line| !line.contains("assistant>")));
+    assert!(rendered.iter().all(|line| !line.contains("you>")));
+}
+
+#[test]
 fn mouse_mode_capture_policy_matches_codex_like_behavior() {
-    assert!(MouseMode::Auto.captures_mouse());
+    assert!(!MouseMode::Auto.captures_mouse());
     assert!(MouseMode::Scroll.captures_mouse());
     assert!(!MouseMode::Select.captures_mouse());
 }

@@ -1,9 +1,7 @@
-use ratatui::layout::Rect;
+﻿use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
 use ratatui::widgets::Paragraph;
 use ratatui::widgets::Wrap;
 use ratatui::Frame;
@@ -41,28 +39,7 @@ pub(crate) fn draw(frame: &mut Frame, area: Rect, viewport: Rect, app: &mut TuiA
         )));
     }
 
-    let transcript_title = if app.transcript_focus_active() {
-        if is_zh {
-            " 对话（输出焦点） "
-        } else {
-            " Conversation (Output Focus) "
-        }
-    } else if is_zh {
-        " 对话 "
-    } else {
-        " Conversation "
-    };
-    let transcript = Paragraph::new(Text::from(transcript_lines))
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    transcript_title,
-                    theme::block_title(app.transcript_focus_active()),
-                ))
-                .borders(Borders::ALL)
-                .border_style(theme::block_border(app.transcript_focus_active())),
-        )
-        .wrap(Wrap { trim: false });
+    let transcript = Paragraph::new(Text::from(transcript_lines)).wrap(Wrap { trim: false });
     app.set_transcript_rendered_lines(transcript_total_lines);
     frame.render_widget(transcript.scroll((transcript_scroll, 0)), area);
 }

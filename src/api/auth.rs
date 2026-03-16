@@ -87,6 +87,8 @@ struct ExternalLaunchRequest {
     password: Option<String>,
     #[serde(default)]
     unit_id: Option<String>,
+    #[serde(default)]
+    agent_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +99,8 @@ struct ExternalTokenLaunchRequest {
     username: Option<String>,
     #[serde(default)]
     unit_id: Option<String>,
+    #[serde(default)]
+    agent_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -405,7 +409,14 @@ async fn external_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let launch = build_external_launch_result(&state, session, created, updated).await?;
+    let launch = build_external_launch_result(
+        &state,
+        session,
+        created,
+        updated,
+        payload.agent_name.as_deref(),
+    )
+    .await?;
 
     Ok(Json(json!({ "data": launch })))
 }
@@ -461,7 +472,14 @@ async fn external_token_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let launch = build_external_launch_result(&state, session, created, updated).await?;
+    let launch = build_external_launch_result(
+        &state,
+        session,
+        created,
+        updated,
+        payload.agent_name.as_deref(),
+    )
+    .await?;
     Ok(Json(json!({ "data": launch })))
 }
 
@@ -695,28 +713,15 @@ fn build_unit_map(units: &[OrgUnitRecord]) -> HashMap<String, OrgUnitRecord> {
 async fn resolve_or_create_external_embed_agent(
     state: &Arc<AppState>,
     user: &UserAccountRecord,
-    preset_agent_name: &str,
+    target_agent_name: &str,
 ) -> Result<UserAgentRecord, Response> {
-    let cleaned_name = preset_agent_name.trim();
+    let cleaned_name = target_agent_name.trim();
     if cleaned_name.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
-            "external embed preset agent is empty".to_string(),
+            "external embed agent is empty".to_string(),
         ));
     }
-    let config = state.config_store.get().await;
-    let preset = config
-        .user_agents
-        .presets
-        .into_iter()
-        .find(|item| item.name.trim() == cleaned_name)
-        .ok_or_else(|| {
-            error_response(
-                StatusCode::NOT_FOUND,
-                format!("preset agent '{cleaned_name}' not found"),
-            )
-        })?;
-
     let all_agents = state
         .user_store
         .list_user_agents(&user.user_id)
@@ -727,17 +732,33 @@ async fn resolve_or_create_external_embed_agent(
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| right.updated_at.total_cmp(&left.updated_at));
 
-    // Prefer user-customized same-name agent over preset-template records.
-    if let Some(custom) = candidates
-        .iter()
-        .find(|item| !is_external_embed_preset_template(item, &preset))
-        .cloned()
-    {
-        return Ok(custom);
+    let config = state.config_store.get().await;
+    let preset = config
+        .user_agents
+        .presets
+        .into_iter()
+        .find(|item| item.name.trim() == cleaned_name);
+
+    // Prefer the user's same-name custom agent before falling back to preset templates.
+    if let Some(preset) = preset.as_ref() {
+        if let Some(custom) = candidates
+            .iter()
+            .find(|item| !is_external_embed_preset_template(item, preset))
+            .cloned()
+        {
+            return Ok(custom);
+        }
     }
     if let Some(existing) = candidates.first().cloned() {
         return Ok(existing);
     }
+
+    let Some(preset) = preset else {
+        return Err(error_response(
+            StatusCode::NOT_FOUND,
+            format!("agent '{cleaned_name}' not found"),
+        ));
+    };
 
     state
         .user_store
@@ -803,22 +824,37 @@ fn is_external_embed_preset_template(
         && candidate.system_prompt.trim() == preset_prompt
 }
 
+fn resolve_external_embed_target_agent_name(
+    requested_agent_name: Option<&str>,
+    default_agent_name: Option<String>,
+) -> anyhow::Result<String> {
+    if let Some(agent_name) = requested_agent_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(agent_name.to_string());
+    }
+
+    default_agent_name
+        .ok_or_else(|| anyhow::anyhow!("external embed preset agent is not configured"))
+}
+
 async fn build_external_launch_result(
     state: &Arc<AppState>,
     session: crate::user_store::UserSession,
     created: bool,
     updated: bool,
+    requested_agent_name: Option<&str>,
 ) -> Result<ExternalLaunchResult, Response> {
     let config = state.config_store.get().await;
-    let preset_agent_name = config.external_embed_preset_agent_name().ok_or_else(|| {
-        error_response(
-            StatusCode::FORBIDDEN,
-            "external embed preset agent is not configured".to_string(),
-        )
-    })?;
+    let target_agent_name = resolve_external_embed_target_agent_name(
+        requested_agent_name,
+        config.external_embed_preset_agent_name(),
+    )
+    .map_err(|err| error_response(StatusCode::FORBIDDEN, err.to_string()))?;
 
     let target_agent =
-        resolve_or_create_external_embed_agent(state, &session.user, &preset_agent_name).await?;
+        resolve_or_create_external_embed_agent(state, &session.user, &target_agent_name).await?;
     let record = state
         .external_auth_codes
         .issue(
@@ -1391,7 +1427,8 @@ fn now_ts() -> f64 {
 mod tests {
     use super::{
         normalize_avatar_color, normalize_avatar_icon, normalize_theme_mode,
-        normalize_theme_palette, provision_external_launch_session, validate_external_embed_jwt,
+        normalize_theme_palette, provision_external_launch_session,
+        resolve_external_embed_target_agent_name, validate_external_embed_jwt,
         DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
     };
     use crate::services::user_store::UserStore;
@@ -1470,6 +1507,25 @@ mod tests {
             .expect_err("jwt should fail when user mismatches");
 
         assert_eq!(error.to_string(), "jwt user mismatch");
+    }
+
+    #[test]
+    fn resolve_external_embed_target_agent_name_prefers_request_value() {
+        let resolved = resolve_external_embed_target_agent_name(
+            Some("  数据分析  "),
+            Some("文稿校对".to_string()),
+        )
+        .expect("requested agent name should win");
+
+        assert_eq!(resolved, "数据分析");
+    }
+
+    #[test]
+    fn resolve_external_embed_target_agent_name_falls_back_to_default_value() {
+        let resolved = resolve_external_embed_target_agent_name(None, Some("文稿校对".to_string()))
+            .expect("default preset agent should be used");
+
+        assert_eq!(resolved, "文稿校对");
     }
 
     #[test]

@@ -309,6 +309,10 @@ fn resolve_repo_root(launch_dir: &Path) -> PathBuf {
             if looks_like_repo_root(app_dir) {
                 return app_dir.to_path_buf();
             }
+            let resources_dir = app_dir.join("resources");
+            if looks_like_repo_root(&resources_dir) {
+                return resources_dir;
+            }
         }
     }
 

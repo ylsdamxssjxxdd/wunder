@@ -18,7 +18,9 @@ const extraRuntimeRoots = String(process.env.WUNDER_EXTRA_RUNTIME_ROOTS || '')
   .filter((item) => item)
 
 const bridgeName = process.platform === 'win32' ? 'wunder-desktop-bridge.exe' : 'wunder-desktop-bridge'
+const cliName = process.platform === 'win32' ? 'wunder-cli.exe' : 'wunder-cli'
 const bridgeSource = process.env.WUNDER_BRIDGE_BIN || path.join(repoRoot, 'target', 'release', bridgeName)
+const cliSource = process.env.WUNDER_CLI_BIN || path.join(repoRoot, 'target', 'release', cliName)
 const frontendSource = process.env.WUNDER_FRONTEND_DIST || path.join(repoRoot, 'frontend', 'dist')
 const desktopPreconfigSource = path.join(repoRoot, 'docs', '分发', '预配置文件.yml')
 const buildIconIcoSource = path.join(__dirname, '..', 'build', 'icon.ico')
@@ -146,6 +148,9 @@ fs.mkdirSync(outputRoot, { recursive: true })
 ensureLinuxIconSet()
 
 copyFile(bridgeSource, path.join(outputRoot, bridgeName))
+if (fs.existsSync(cliSource)) {
+  copyFile(cliSource, path.join(outputRoot, cliName))
+}
 if (fs.existsSync(iconIcoSource)) {
   copyFile(iconIcoSource, path.join(outputRoot, 'icon.ico'))
 }
@@ -157,6 +162,13 @@ if (process.platform !== 'win32') {
     fs.chmodSync(path.join(outputRoot, bridgeName), 0o755)
   } catch (err) {
     console.warn('[prepare] failed to chmod bridge binary:', err)
+  }
+  if (fs.existsSync(path.join(outputRoot, cliName))) {
+    try {
+      fs.chmodSync(path.join(outputRoot, cliName), 0o755)
+    } catch (err) {
+      console.warn('[prepare] failed to chmod cli binary:', err)
+    }
   }
 }
 
