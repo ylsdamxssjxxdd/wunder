@@ -511,7 +511,7 @@
     <el-dialog
       v-model="imagePreviewVisible"
       class="image-preview-dialog"
-      width="auto"
+      :width="imagePreviewDialogWidth"
       top="6vh"
       :show-close="false"
       :close-on-click-modal="true"
@@ -765,6 +765,7 @@ const cronDialogVisible = ref(false);
 const channelDialogVisible = ref(false);
 const agentSettingsVisible = ref(false);
 const isCompactLayout = ref(false);
+const imagePreviewDialogWidth = computed(() => (isCompactLayout.value ? '94vw' : '92vw'));
 const promptToolSummary = ref(null);
 const toolSummaryLoading = ref(false);
 const toolSummaryError = ref('');

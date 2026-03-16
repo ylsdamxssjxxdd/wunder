@@ -18,7 +18,6 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::warn;
 
 #[derive(Debug, Deserialize)]
 struct WebhookQuery {
@@ -214,14 +213,14 @@ async fn whatsapp_webhook(
         }
         let result = state
             .channels
-            .handle_inbound(
+            .enqueue_inbound(
                 whatsapp_cloud::WHATSAPP_CHANNEL,
                 &headers,
                 messages,
                 Some(payload.clone()),
             )
             .await
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+            .map_err(|err| inbound_enqueue_error_response(&err.to_string()))?;
         return Ok(success_response(result));
     }
 
@@ -233,14 +232,14 @@ async fn whatsapp_webhook(
     );
     let result = state
         .channels
-        .handle_inbound(
+        .enqueue_inbound(
             whatsapp_cloud::WHATSAPP_CHANNEL,
             &headers,
             messages,
             Some(payload),
         )
         .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+        .map_err(|err| inbound_enqueue_error_response(&err.to_string()))?;
     Ok(success_response(result))
 }
 
@@ -305,14 +304,14 @@ async fn feishu_webhook(
 
     let result = state
         .channels
-        .handle_inbound(
+        .enqueue_inbound(
             feishu::FEISHU_CHANNEL,
             &headers,
             messages,
             Some(resolved_payload),
         )
         .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+        .map_err(|err| inbound_enqueue_error_response(&err.to_string()))?;
     Ok(success_response(result))
 }
 
@@ -503,26 +502,11 @@ async fn wechat_webhook(
         "payload_xml": xml_payload,
     });
 
-    let async_state = state.clone();
-    let async_headers = headers.clone();
-    let async_account_id = account_id.clone();
-    tokio::spawn(async move {
-        if let Err(err) = async_state
-            .channels
-            .handle_inbound(
-                wechat::WECHAT_CHANNEL,
-                &async_headers,
-                messages,
-                Some(payload),
-            )
-            .await
-        {
-            warn!(
-                "wechat async inbound handle failed: account_id={}, error={err}",
-                async_account_id
-            );
-        }
-    });
+    state
+        .channels
+        .enqueue_inbound(wechat::WECHAT_CHANNEL, &headers, messages, Some(payload))
+        .await
+        .map_err(|err| inbound_enqueue_error_response(&err.to_string()))?;
 
     Ok((StatusCode::OK, "success").into_response())
 }
@@ -742,26 +726,16 @@ async fn wechat_mp_webhook(
         "raw_xml": raw_xml,
         "payload_xml": xml_payload,
     });
-    let async_state = state.clone();
-    let async_headers = headers.clone();
-    let async_account_id = account_id.clone();
-    tokio::spawn(async move {
-        if let Err(err) = async_state
-            .channels
-            .handle_inbound(
-                wechat_mp::WECHAT_MP_CHANNEL,
-                &async_headers,
-                messages,
-                Some(payload),
-            )
-            .await
-        {
-            warn!(
-                "wechat mp async inbound handle failed: account_id={}, error={err}",
-                async_account_id
-            );
-        }
-    });
+    state
+        .channels
+        .enqueue_inbound(
+            wechat_mp::WECHAT_MP_CHANNEL,
+            &headers,
+            messages,
+            Some(payload),
+        )
+        .await
+        .map_err(|err| inbound_enqueue_error_response(&err.to_string()))?;
 
     Ok((StatusCode::OK, "success").into_response())
 }
@@ -772,13 +746,93 @@ async fn qqbot_webhook(
     Query(query): Query<WebhookQuery>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, Response> {
-    let account_id =
-        resolve_channel_account_id(&headers, &query, qqbot::QQBOT_CHANNEL, &payload).await?;
-    let message = payload
-        .get("message")
-        .or_else(|| payload.get("d"))
-        .unwrap_or(&payload)
-        .clone();
+    let account_id = match resolve_qqbot_account_id(&state, &headers, &query, &payload).await {
+        Ok(value) => value,
+        Err(response) => {
+            state.channels.record_runtime_warn(
+                qqbot::QQBOT_CHANNEL,
+                None,
+                "account_resolve_failed",
+                format!(
+                    "resolve qqbot account failed: status={}, app_id_hint={}",
+                    response.status(),
+                    extract_qqbot_app_id(&payload).unwrap_or_else(|| "(none)".to_string())
+                ),
+            );
+            return Err(response);
+        }
+    };
+    if qqbot::is_validation_event(&payload) {
+        let account =
+            match load_account_by_channel_and_id(&state, qqbot::QQBOT_CHANNEL, &account_id).await {
+                Ok(value) => value,
+                Err(response) => {
+                    state.channels.record_runtime_error(
+                        qqbot::QQBOT_CHANNEL,
+                        Some(&account_id),
+                        "validation_account_load_failed",
+                        format!(
+                            "qqbot callback validation account load failed: status={}",
+                            response.status()
+                        ),
+                    );
+                    return Err(response);
+                }
+            };
+        let config = ChannelAccountConfig::from_value(&account.config);
+        let response = qqbot::validation_response(
+            &payload,
+            config
+                .qqbot
+                .as_ref()
+                .and_then(|qq_cfg| qq_cfg.client_secret.as_deref()),
+        )
+        .map_err(|err| {
+            state.channels.record_runtime_error(
+                qqbot::QQBOT_CHANNEL,
+                Some(&account_id),
+                "validation_failed",
+                format!("qqbot callback validation failed: {err}"),
+            );
+            error_response(StatusCode::BAD_REQUEST, &err.to_string())
+        })?;
+        if let Some(response) = response {
+            state.channels.record_runtime_info(
+                qqbot::QQBOT_CHANNEL,
+                Some(&account_id),
+                "validation_succeeded",
+                "qqbot callback validation succeeded",
+            );
+            return Ok(Json(response));
+        }
+    }
+
+    if let Some(response) = qqbot::heartbeat_ack(&payload) {
+        return Ok(Json(response));
+    }
+
+    let is_dispatch_event = qqbot::is_dispatch_event(&payload);
+    if qqbot::callback_opcode(&payload).is_some() && !is_dispatch_event {
+        state.channels.record_runtime_info(
+            qqbot::QQBOT_CHANNEL,
+            Some(&account_id),
+            "callback_ignored",
+            format!(
+                "ignore qqbot callback without dispatch payload: op={}",
+                qqbot::callback_opcode(&payload).unwrap_or_default()
+            ),
+        );
+        return Ok(Json(qqbot::dispatch_ack(true)));
+    }
+
+    let message = qqbot::inbound_message_payload(&payload).clone();
+    let event_type = payload
+        .get("t")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("unknown")
+        .to_string();
     let content = message
         .get("content")
         .and_then(Value::as_str)
@@ -797,6 +851,7 @@ async fn qqbot_webhook(
                 .get("member_openid")
                 .or_else(|| value.get("id"))
                 .or_else(|| value.get("user_openid"))
+                .or_else(|| value.get("openid"))
         })
         .and_then(Value::as_str)
         .unwrap_or("")
@@ -807,13 +862,40 @@ async fn qqbot_webhook(
         .and_then(Value::as_str)
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let peer_kind = if group_openid.is_some() {
-        "group"
+    let channel_id = message
+        .get("channel_id")
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let (peer_kind, peer_id) = if let Some(group_openid) = group_openid {
+        ("group", group_openid)
+    } else if let Some(channel_id) = channel_id {
+        ("channel", channel_id)
     } else {
-        "user"
+        ("user", sender_id.clone())
     };
-    let peer_id = group_openid.clone().unwrap_or_else(|| sender_id.clone());
     if peer_id.is_empty() {
+        if is_dispatch_event {
+            state.channels.record_runtime_info(
+                qqbot::QQBOT_CHANNEL,
+                Some(&account_id),
+                "dispatch_without_peer_ignored",
+                format!(
+                    "ignore qqbot dispatch without peer id: event_type={event_type}, op={}",
+                    qqbot::callback_opcode(&payload).unwrap_or_default()
+                ),
+            );
+            return Ok(Json(qqbot::dispatch_ack(true)));
+        }
+        state.channels.record_runtime_error(
+            qqbot::QQBOT_CHANNEL,
+            Some(&account_id),
+            "invalid_payload",
+            format!(
+                "invalid qqbot payload: missing peer id, event_type={event_type}, op={}",
+                qqbot::callback_opcode(&payload).unwrap_or_default()
+            ),
+        );
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "invalid qqbot payload: missing peer id",
@@ -827,7 +909,7 @@ async fn qqbot_webhook(
 
     let normalized = ChannelMessage {
         channel: qqbot::QQBOT_CHANNEL.to_string(),
-        account_id,
+        account_id: account_id.clone(),
         peer: crate::channels::types::ChannelPeer {
             kind: peer_kind.to_string(),
             id: peer_id,
@@ -857,14 +939,34 @@ async fn qqbot_webhook(
 
     let result = state
         .channels
-        .handle_inbound(
+        .enqueue_inbound(
             qqbot::QQBOT_CHANNEL,
             &headers,
             vec![normalized],
             Some(payload),
         )
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+        .await;
+    if let Err(err) = &result {
+        state.channels.record_runtime_error(
+            qqbot::QQBOT_CHANNEL,
+            Some(&account_id),
+            "inbound_enqueue_failed",
+            format!("qqbot inbound enqueue failed: event_type={event_type}, error={err}"),
+        );
+    } else if let Ok(outcome) = &result {
+        if outcome.accepted == 0 {
+            state.channels.record_runtime_warn(
+                qqbot::QQBOT_CHANNEL,
+                Some(&account_id),
+                "inbound_ignored",
+                format!("qqbot inbound ignored: event_type={event_type}, accepted=0"),
+            );
+        }
+    }
+    if is_dispatch_event {
+        return Ok(Json(qqbot::dispatch_ack(result.is_ok())));
+    }
+    let result = result.map_err(|err| inbound_enqueue_error_response(&err.to_string()))?;
     Ok(success_response(result))
 }
 
@@ -915,9 +1017,9 @@ async fn channel_webhook(
     messages = apply_overrides(&provider, account_override.as_deref(), messages);
     let result = state
         .channels
-        .handle_inbound(&provider, &headers, messages, raw_payload)
+        .enqueue_inbound(&provider, &headers, messages, raw_payload)
         .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, &err.to_string()))?;
+        .map_err(|err| inbound_enqueue_error_response(&err.to_string()))?;
     Ok(success_response(result))
 }
 
@@ -967,11 +1069,16 @@ fn apply_overrides(
 }
 
 fn success_response(result: crate::channels::service::ChannelHandleResult) -> Json<Value> {
+    let queued = result.accepted > 0
+        && result.session_ids.is_empty()
+        && result.outbox_ids.is_empty()
+        && result.errors.is_empty();
     Json(json!({ "data": {
         "accepted": result.accepted,
         "session_ids": result.session_ids,
         "outbox_ids": result.outbox_ids,
         "errors": result.errors,
+        "queued": queued,
     }}))
 }
 
@@ -985,6 +1092,36 @@ fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
 
 fn error_response(status: StatusCode, message: &str) -> Response {
     crate::api::errors::error_response(status, message)
+}
+
+fn inbound_enqueue_error_response(message: &str) -> Response {
+    error_response(StatusCode::SERVICE_UNAVAILABLE, message)
+}
+
+fn value_to_trimmed_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(item) => {
+            let text = item.trim();
+            if text.is_empty() {
+                None
+            } else {
+                Some(text.to_string())
+            }
+        }
+        Value::Number(item) => Some(item.to_string()),
+        _ => None,
+    }
+}
+
+fn extract_qqbot_app_id(payload: &Value) -> Option<String> {
+    payload
+        .get("app_id")
+        .or_else(|| payload.get("appid"))
+        .or_else(|| payload.get("appId"))
+        .or_else(|| payload.get("d").and_then(|value| value.get("app_id")))
+        .or_else(|| payload.get("d").and_then(|value| value.get("appid")))
+        .or_else(|| payload.get("d").and_then(|value| value.get("appId")))
+        .and_then(value_to_trimmed_string)
 }
 
 async fn load_account_configs_by_channel(
@@ -1010,6 +1147,84 @@ async fn load_account_records_by_channel(
     .await
     .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "storage error"))?
     .map_err(|err| error_response(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))
+}
+
+async fn resolve_qqbot_account_id(
+    state: &Arc<AppState>,
+    headers: &HeaderMap,
+    query: &WebhookQuery,
+    payload: &Value,
+) -> Result<String, Response> {
+    if let Some(value) = query
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    {
+        return Ok(value.to_string());
+    }
+    if let Some(value) = header_string(headers, "x-channel-account") {
+        return Ok(value);
+    }
+
+    let records = load_account_records_by_channel(state, qqbot::QQBOT_CHANNEL).await?;
+    if records.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "channel account not found",
+        ));
+    }
+
+    if let Some(app_id) = extract_qqbot_app_id(payload) {
+        if let Some(record) = records
+            .iter()
+            .find(|record| record.account_id.eq_ignore_ascii_case(&app_id))
+        {
+            return Ok(record.account_id.clone());
+        }
+        let matched = records
+            .iter()
+            .filter_map(|record| {
+                let account_cfg = ChannelAccountConfig::from_value(&record.config);
+                let account_app_id = account_cfg
+                    .qqbot
+                    .as_ref()
+                    .and_then(|cfg| cfg.app_id.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                if account_app_id
+                    .map(|account_app_id| account_app_id.eq_ignore_ascii_case(&app_id))
+                    .unwrap_or(false)
+                {
+                    Some(record.account_id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if let [account_id] = matched.as_slice() {
+            return Ok(account_id.clone());
+        }
+        if matched.len() > 1 {
+            return Err(error_response(
+                StatusCode::BAD_REQUEST,
+                "multiple qqbot accounts matched app_id",
+            ));
+        }
+    }
+
+    if records.len() == 1 {
+        return Ok(records
+            .into_iter()
+            .next()
+            .expect("single qqbot account")
+            .account_id);
+    }
+
+    Err(error_response(
+        StatusCode::BAD_REQUEST,
+        "missing account_id",
+    ))
 }
 
 async fn resolve_wechat_account(
@@ -1373,15 +1588,8 @@ async fn resolve_channel_account_id(
         }
     }
     if channel.eq_ignore_ascii_case(qqbot::QQBOT_CHANNEL) {
-        if let Some(app_id) = payload
-            .get("app_id")
-            .or_else(|| payload.get("appid"))
-            .or_else(|| payload.get("d").and_then(|value| value.get("app_id")))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            return Ok(app_id.to_string());
+        if let Some(app_id) = extract_qqbot_app_id(payload) {
+            return Ok(app_id);
         }
     }
     Err(error_response(

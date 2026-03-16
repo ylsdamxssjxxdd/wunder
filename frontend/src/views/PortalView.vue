@@ -332,7 +332,7 @@
                       :key="option.value"
                       :value="option.value"
                     >
-                      <span :title="option.description || option.label">{{ option.label }}</span>
+                      <span :title="option.hint">{{ option.label }}</span>
                     </el-checkbox>
                   </div>
                 </div>
@@ -414,6 +414,7 @@ import { showApiError } from '@/utils/apiError';
 import { DEFAULT_AGENT_AVATAR_IMAGE } from '@/utils/agentAvatar';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
+import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { parseWorkerCardText, workerCardToAgentPayload } from '@/utils/workerCard';
 import {
   buildBeeroomGroupPayload,
@@ -1033,11 +1034,33 @@ const dialogTitle = computed(() =>
 );
 
 const normalizeOptions = (list) =>
-  (Array.isArray(list) ? list : []).map((item) => ({
-    label: item.name,
-    value: item.name,
-    description: item.description
-  }));
+  (Array.isArray(list) ? list : [])
+    .map((item) => {
+      const label =
+        typeof item === 'string'
+          ? item.trim()
+          : String(item?.name || item?.tool_name || item?.toolName || item?.id || '').trim();
+      if (!label) return null;
+      const description =
+        typeof item === 'string' ? '' : String(item?.description || '').trim();
+      const option = {
+        label,
+        value: label,
+        description,
+        hint: ''
+      };
+      option.hint = resolveToolUsageHint({
+        name: option.value,
+        label: option.label,
+        description: option.description,
+        input_schema: typeof item === 'string' ? null : item?.input_schema,
+        inputSchema: typeof item === 'string' ? null : item?.inputSchema,
+        schema: typeof item === 'string' ? null : item?.schema
+      });
+      if (!option.hint) option.hint = option.label;
+      return option;
+    })
+    .filter(Boolean);
 
 const toolGroups = computed(() => {
   const payload = toolCatalog.value || {};

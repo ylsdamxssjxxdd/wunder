@@ -25,6 +25,7 @@ pub mod gateway_ws;
 pub mod team_runs;
 pub mod temp_dir;
 pub mod user_agents;
+pub mod user_channel_logs;
 pub mod user_channels;
 pub mod user_context;
 pub mod user_memory;
@@ -71,6 +72,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .merge(user_memory::router())
         .merge(team_runs::router())
         .merge(user_channels::router())
+        .merge(user_channel_logs::router())
         .merge(a2a::router())
         .merge(crate::mcp::router(state.clone()))
         .with_state(state)
@@ -105,6 +107,7 @@ pub fn build_desktop_router(state: Arc<AppState>) -> Router {
         .merge(user_agents::router())
         .merge(user_memory::router())
         .merge(user_channels::router())
+        .merge(user_channel_logs::router())
         .merge(crate::mcp::router(state.clone()))
         .with_state(state)
 }

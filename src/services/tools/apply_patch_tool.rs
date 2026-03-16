@@ -545,17 +545,27 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
     }
     // Models may emit raw empty lines in Update hunks; treat them as context blank lines.
     let has_raw_empty_line = lines.iter().any(|line| line.is_empty());
-    let has_prefixed_non_empty_line = lines
-        .iter()
-        .any(|line| !line.is_empty() && matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
+    let has_prefixed_non_empty_line = lines.iter().any(|line| {
+        !line.is_empty() && matches!(line.chars().next(), Some(' ') | Some('+') | Some('-'))
+    });
     let all_non_empty_lines_prefixed = lines
         .iter()
         .filter(|line| !line.is_empty())
         .all(|line| matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
-    if !has_separator && has_raw_empty_line && has_prefixed_non_empty_line && all_non_empty_lines_prefixed {
+    if !has_separator
+        && has_raw_empty_line
+        && has_prefixed_non_empty_line
+        && all_non_empty_lines_prefixed
+    {
         return lines
             .iter()
-            .map(|line| if line.is_empty() { " ".to_string() } else { line.clone() })
+            .map(|line| {
+                if line.is_empty() {
+                    " ".to_string()
+                } else {
+                    line.clone()
+                }
+            })
             .collect();
     }
     if !has_separator {
@@ -1716,7 +1726,8 @@ mod tests {
 
  line3
 *** End Patch"#;
-        let ops = parse_patch(patch).expect("raw blank lines should be normalized to context lines");
+        let ops =
+            parse_patch(patch).expect("raw blank lines should be normalized to context lines");
         let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
             panic!("expected update op");
         };
@@ -1742,7 +1753,8 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or_default();
         assert!(
-            hint.contains("blank lines also require a prefix") || hint.contains("空白行也必须带前缀"),
+            hint.contains("blank lines also require a prefix")
+                || hint.contains("空白行也必须带前缀"),
             "unexpected hint: {hint}"
         );
     }

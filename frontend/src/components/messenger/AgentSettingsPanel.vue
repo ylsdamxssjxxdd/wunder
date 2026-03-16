@@ -71,7 +71,7 @@
                 </div>
                 <div class="messenger-tool-options">
                   <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
-                    <span :title="option.description || option.label">{{ option.label }}</span>
+                    <span :title="option.hint">{{ option.label }}</span>
                   </el-checkbox>
                 </div>
               </div>
@@ -203,6 +203,7 @@ import {
   resolveAgentDependencyStatus
 } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { downloadWorkerCard } from '@/utils/workerCard';
 import {
   buildBeeroomGroupPayload,
@@ -215,6 +216,7 @@ type ToolOption = {
   label: string;
   value: string;
   description: string;
+  hint: string;
 };
 
 type ToolGroup = {
@@ -330,16 +332,27 @@ const normalizeOption = (item: unknown): ToolOption | null => {
   if (typeof item === 'string') {
     const value = item.trim();
     if (!value) return null;
-    return { label: value, value, description: '' };
+    return { label: value, value, description: '', hint: value };
   }
   const source = item as Record<string, unknown>;
   const value = String(source.name || source.tool_name || source.toolName || source.id || '').trim();
   if (!value) return null;
-  return {
+  const option: ToolOption = {
     label: value,
     value,
-    description: String(source.description || '').trim()
+    description: String(source.description || '').trim(),
+    hint: ''
   };
+  option.hint = resolveToolUsageHint({
+    name: option.value,
+    label: option.label,
+    description: option.description,
+    input_schema: source.input_schema,
+    inputSchema: source.inputSchema,
+    schema: source.schema
+  });
+  if (!option.hint) option.hint = option.label;
+  return option;
 };
 
 const normalizeOptions = (list: unknown): ToolOption[] => {

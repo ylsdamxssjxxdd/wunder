@@ -2,7 +2,8 @@
   <el-dialog
     :model-value="visible"
     :title="t('workspace.preview.dialogTitle')"
-    width="960px"
+    :width="dialogWidth"
+    top="4vh"
     class="workspace-dialog messenger-image-preview-dialog"
     append-to-body
     @update:model-value="handleDialogVisibleChange"
@@ -52,6 +53,7 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
+const dialogWidth = 'min(92vw, 980px)';
 const resolvedTitle = computed(() => String(props.title || '').trim() || t('chat.imagePreview'));
 const resolvedWorkspacePath = computed(
   () => String(props.workspacePath || '').trim() || t('chat.imagePreview')
@@ -79,11 +81,40 @@ const handleDialogVisibleChange = (nextVisible: boolean) => {
 }
 
 .messenger-image-preview-body {
-  min-height: clamp(320px, 64vh, 760px);
-  max-height: 74vh;
+  min-height: 0;
+  height: clamp(260px, 62vh, 760px);
+  max-height: calc(92vh - 180px);
+  overflow: hidden;
 }
 
 :deep(.messenger-image-preview-dialog.el-dialog) {
-  width: min(92vw, 980px);
+  max-width: min(92vw, 980px);
+  max-height: 92vh;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+:deep(.messenger-image-preview-dialog .el-dialog__body) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+:deep(.messenger-image-preview-body .zoomable-image-preview) {
+  height: 100%;
+}
+
+:deep(.messenger-image-preview-body .zoomable-image-stage) {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+@media (max-width: 960px) {
+  .messenger-image-preview-body {
+    height: clamp(220px, 58vh, 700px);
+    max-height: calc(94vh - 170px);
+  }
 }
 </style>

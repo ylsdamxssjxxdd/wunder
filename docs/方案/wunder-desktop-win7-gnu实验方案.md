@@ -156,8 +156,14 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 - `pip / setuptools / wheel`
 - `requests / certifi / urllib3`
-- `numpy / pandas / openpyxl / tabulate`
-- `matplotlib / Pillow`
+- `numpy / pandas / openpyxl / xlrd / xlsxwriter / tabulate`
+- `python-docx / python-pptx / pypdf2 / lxml`
+- `ffmpeg-python / imageio / imageio-ffmpeg / opencv-python-headless`
+- `matplotlib / seaborn / plotly / pyecharts / Pillow`
+- `folium / pyproj / shapely / netcdf4 / cftime / h5py / arm-pyart / metpy`
+- `sqlalchemy / pymysql / aiosqlite`
+
+另外会参考 ARM sidecar 的做法，在打包阶段将仓库 `fonts/` 中的常用中英文字体注入到 matplotlib 字体目录，提升 Win7 离线绘图与图表导出时的中文渲染稳定性。
 
 这样做的目的，是让用户将补充包直接解压进桌面安装目录后，Electron / bridge 就能自动识别并优先使用内置 Python / Git，而不依赖系统全局安装。
 

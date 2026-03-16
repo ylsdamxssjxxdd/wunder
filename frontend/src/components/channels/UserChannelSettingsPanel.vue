@@ -279,18 +279,60 @@
           </div>
         </div>
       </div>
+
+      <div v-if="!permissionDenied" class="channel-runtime-log-card">
+        <div class="channel-runtime-log-header">
+          <div class="channel-detail-title">{{ t('channels.runtime.title') }}</div>
+          <div class="channel-runtime-log-actions">
+            <button
+              class="channel-refresh-btn subtle"
+              type="button"
+              :disabled="runtimeLogsLoading"
+              @click="refreshRuntimeLogs()"
+            >
+              {{ t('common.refresh') }}
+            </button>
+            <button class="channel-refresh-btn subtle" type="button" @click="clearRuntimeLogsView">
+              {{ t('common.clear') }}
+            </button>
+          </div>
+        </div>
+        <div v-if="runtimeLogsLoading && !runtimeLogs.length" class="channel-empty">{{ t('common.loading') }}</div>
+        <div v-else-if="runtimeLogsError" class="channel-runtime-log-error">{{ runtimeLogsError }}</div>
+        <div v-else-if="!visibleRuntimeLogs.length" class="channel-empty">{{ t('channels.runtime.empty') }}</div>
+        <div v-else class="channel-runtime-log-list">
+          <div
+            v-for="item in visibleRuntimeLogs"
+            :key="item.id"
+            class="channel-runtime-log-item"
+            :class="`channel-runtime-log-item--${item.level}`"
+          >
+            <div class="channel-runtime-log-meta">
+              <span class="channel-runtime-log-level">{{ runtimeLevelLabel(item.level) }}</span>
+              <span>{{ providerLabel(item.channel) }}</span>
+              <span v-if="item.account_id">{{ item.account_id }}</span>
+              <span>{{ formatRuntimeLogTime(item.ts) }}</span>
+              <span v-if="item.repeat_count > 1" class="channel-runtime-log-repeat">
+                x{{ item.repeat_count }}
+              </span>
+            </div>
+            <div class="channel-runtime-log-message">{{ item.message }}</div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
   deleteChannelAccount,
   listChannelAccounts,
   listChannelBindings,
+  listChannelRuntimeLogs,
   upsertChannelAccount
 } from '@/api/channels';
 import { useI18n } from '@/i18n';
@@ -381,6 +423,17 @@ type ChannelAccountItem = {
   wechatSecretSet: boolean;
   wechatMpAppSecretSet: boolean;
   rawConfig: Record<string, unknown>;
+};
+
+type ChannelRuntimeLogItem = {
+  id: string;
+  ts: number;
+  level: string;
+  channel: string;
+  account_id: string;
+  event: string;
+  message: string;
+  repeat_count: number;
 };
 
 const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
@@ -735,6 +788,7 @@ const FALLBACK_CHANNELS = [
   'xmpp'
 ];
 const USER_ONLY_CHANNELS = ['wechat', 'wechat_mp'];
+const RUNTIME_LOG_POLL_INTERVAL_MS = 5000;
 const resolvedAgentId = computed(() => {
   const trimmed = String(props.agentId || '').trim();
   return trimmed || '';
@@ -755,6 +809,15 @@ const editXmppAdvancedEnabled = ref(false);
 const createDynamicFields = reactive<Record<string, string | boolean>>({});
 const editDynamicFields = reactive<Record<string, string | boolean>>({});
 const editSecretSaved = reactive<Record<string, boolean>>({});
+const runtimeLogs = ref<ChannelRuntimeLogItem[]>([]);
+const runtimeLogsLoading = ref(false);
+const runtimeLogsError = ref('');
+const runtimeLogsClearedAt = ref(0);
+const mounted = ref(false);
+const disposed = ref(false);
+let runtimeLogsPollTimer: ReturnType<typeof setTimeout> | null = null;
+let loadAccountsRequestId = 0;
+let runtimeLogsRequestId = 0;
 
 const createForm = reactive({
   channel: 'feishu',
@@ -775,6 +838,9 @@ const editForm = reactive({
 
 const selectedAccount = computed(
   () => accounts.value.find((item) => item.key === selectedKey.value) || null
+);
+const visibleRuntimeLogs = computed(() =>
+  runtimeLogs.value.filter((item) => item.ts > runtimeLogsClearedAt.value)
 );
 
 const supportedChannelOptions = computed(() => {
@@ -873,6 +939,18 @@ const providerDesc = (channel) => {
 };
 
 const peerKindLabel = (peerKind) => (peerKind === 'user' ? t('channels.peerKind.user') : t('channels.peerKind.group'));
+const runtimeLevelLabel = (level: string) => {
+  const key = `channels.runtime.level.${String(level || '').trim().toLowerCase() || 'info'}`;
+  const translated = t(key);
+  return translated === key ? String(level || '').toUpperCase() : translated;
+};
+const formatRuntimeLogTime = (ts: number) => {
+  const parsed = Number(ts);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return '';
+  }
+  return new Date(parsed * 1000).toLocaleString();
+};
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -1187,13 +1265,100 @@ const parseAdvancedJsonConfig = (
   return parseJsonConfig(rawText);
 };
 
+const clearRuntimeLogTimer = () => {
+  if (runtimeLogsPollTimer === null) {
+    return;
+  }
+  clearTimeout(runtimeLogsPollTimer);
+  runtimeLogsPollTimer = null;
+};
+
+const scheduleRuntimeLogPolling = () => {
+  if (!mounted.value || disposed.value) {
+    return;
+  }
+  clearRuntimeLogTimer();
+  runtimeLogsPollTimer = setTimeout(() => {
+    if (!mounted.value || disposed.value) {
+      return;
+    }
+    void refreshRuntimeLogs(true);
+  }, RUNTIME_LOG_POLL_INTERVAL_MS);
+};
+
+const normalizeRuntimeLog = (item: unknown, index: number): ChannelRuntimeLogItem | null => {
+  const row = isObjectRecord(item) ? item : null;
+  if (!row) {
+    return null;
+  }
+  const channel = String(row.channel || '').trim().toLowerCase();
+  if (!channel) {
+    return null;
+  }
+  const accountId = String(row.account_id || '').trim();
+  const ts = Number(row.ts || 0);
+  return {
+    id: String(row.id || `${channel}:${accountId}:${ts}:${index}`),
+    ts: Number.isFinite(ts) ? ts : 0,
+    level: String(row.level || 'info').trim().toLowerCase(),
+    channel,
+    account_id: accountId,
+    event: String(row.event || '').trim().toLowerCase(),
+    message: String(row.message || '').trim(),
+    repeat_count: Math.max(1, Number(row.repeat_count || 1) || 1)
+  };
+};
+
+const clearRuntimeLogsView = () => {
+  runtimeLogsClearedAt.value = Date.now() / 1000;
+};
+
+const refreshRuntimeLogs = async (silent = false) => {
+  const requestId = ++runtimeLogsRequestId;
+  if (!silent) {
+    runtimeLogsLoading.value = true;
+  }
+  try {
+    const params: { limit: number; agent_id?: string } = {
+      limit: 80
+    };
+    if (resolvedAgentId.value) {
+      params.agent_id = resolvedAgentId.value;
+    }
+    const { data } = await listChannelRuntimeLogs(params);
+    if (requestId !== runtimeLogsRequestId || disposed.value) {
+      return;
+    }
+    const rows = Array.isArray(data?.data?.items) ? data.data.items : [];
+    runtimeLogs.value = rows
+      .map((item, index) => normalizeRuntimeLog(item, index))
+      .filter((item): item is ChannelRuntimeLogItem => Boolean(item));
+    runtimeLogsError.value = '';
+  } catch (error) {
+    if (requestId !== runtimeLogsRequestId || disposed.value) {
+      return;
+    }
+    runtimeLogs.value = [];
+    runtimeLogsError.value = t('channels.runtime.loadFailed');
+  } finally {
+    if (requestId === runtimeLogsRequestId) {
+      runtimeLogsLoading.value = false;
+      scheduleRuntimeLogPolling();
+    }
+  }
+};
+
 const loadAccounts = async (preferred = undefined) => {
+  const requestId = ++loadAccountsRequestId;
   loading.value = true;
   try {
     const [accountsResp, bindingsResp] = await Promise.all([
       listChannelAccounts(),
       resolvedAgentId.value ? listChannelBindings() : Promise.resolve({ data: null })
     ]);
+    if (requestId !== loadAccountsRequestId || disposed.value) {
+      return;
+    }
     const data = accountsResp?.data;
     const payload = data?.data || {};
     const items = Array.isArray(payload.items) ? payload.items : [];
@@ -1240,6 +1405,9 @@ const loadAccounts = async (preferred = undefined) => {
     resetEditForm();
     permissionDenied.value = false;
   } catch (error) {
+    if (requestId !== loadAccountsRequestId || disposed.value) {
+      return;
+    }
     const status = resolveHttpStatus(error);
     if (status === 401 || status === 403) {
       permissionDenied.value = true;
@@ -1253,12 +1421,15 @@ const loadAccounts = async (preferred = undefined) => {
     }
     showApiError(error, t('channels.loadFailed'));
   } finally {
-    loading.value = false;
+    if (requestId === loadAccountsRequestId) {
+      loading.value = false;
+    }
   }
 };
 
 const refreshAll = async () => {
   await loadAccounts();
+  await refreshRuntimeLogs(true);
 };
 
 const startCreate = () => {
@@ -1564,8 +1735,30 @@ defineExpose({
   refreshAll
 });
 
+watch(
+  () => resolvedAgentId.value,
+  () => {
+    if (!mounted.value || disposed.value) {
+      return;
+    }
+    permissionDenied.value = false;
+    accounts.value = [];
+    selectedKey.value = '';
+    resetEditForm();
+    void refreshAll();
+  }
+);
+
 onMounted(() => {
-  refreshAll();
+  mounted.value = true;
+  disposed.value = false;
+  void refreshAll();
+});
+
+onBeforeUnmount(() => {
+  disposed.value = true;
+  mounted.value = false;
+  clearRuntimeLogTimer();
 });
 </script>
 
@@ -1856,6 +2049,112 @@ onMounted(() => {
 .channel-detail-hint {
   font-size: 11px;
   color: #8a8a8a;
+}
+
+.channel-runtime-log-card {
+  border: 1px solid #e7e7e7;
+  border-radius: 10px;
+  background: #fafafa;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.channel-runtime-log-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.channel-runtime-log-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.channel-runtime-log-list {
+  max-height: 220px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.channel-runtime-log-item {
+  border: 1px solid #e3e3e3;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.channel-runtime-log-item--warn {
+  border-color: #f0d8aa;
+}
+
+.channel-runtime-log-item--error {
+  border-color: #efc0c0;
+}
+
+.channel-runtime-log-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: #747474;
+}
+
+.channel-runtime-log-level {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid #d7d7d7;
+  background: #f5f5f5;
+  color: #5a5a5a;
+}
+
+.channel-runtime-log-item--warn .channel-runtime-log-level {
+  border-color: #f0d8aa;
+  background: #fff6e7;
+  color: #9a6a1c;
+}
+
+.channel-runtime-log-item--error .channel-runtime-log-level {
+  border-color: #efc0c0;
+  background: #ffefef;
+  color: #b43a3a;
+}
+
+.channel-runtime-log-repeat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 1px 7px;
+  border: 1px solid rgba(var(--ui-accent-rgb), 0.32);
+  background: var(--ui-accent-soft);
+  color: var(--ui-accent);
+}
+
+.channel-runtime-log-message {
+  font-size: 12px;
+  color: #2d2d2d;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.channel-runtime-log-error {
+  font-size: 12px;
+  color: #b43a3a;
 }
 
 @media (max-width: 980px) {

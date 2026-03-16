@@ -1,27 +1,52 @@
 # Slim Win7-friendly Python package set for Wunder Desktop supplement.
-# Focus: networking, tables/dataframes, spreadsheet IO, and plotting.
+# Focus: networking, tables/dataframes, office document IO, lightweight video IO, geo/radar plotting, and database access.
 
+aiosqlite==0.20.0
+arm-pyart==1.14.5
 certifi==2024.8.30
+cftime==1.6.4.post1
 charset-normalizer==3.4.1
 contourpy==1.1.1
 cycler==0.12.1
 et-xmlfile==2.0.0
+ffmpeg-python==0.2.0
+folium==0.17.0
 fonttools==4.57.0
+h5py==3.11.0
 idna==3.10
+imageio==2.35.1
+imageio-ffmpeg==0.5.1
 importlib-resources==6.4.5
 kiwisolver==1.4.7
+lxml==5.3.0
 matplotlib==3.7.5
+metpy==1.5.1
+netcdf4==1.6.5
 numpy==1.24.4
+opencv-python-headless==4.5.5.64
 openpyxl==3.1.5
 packaging==26.0
 pandas==2.0.3
 pillow==10.4.0
+plotly==5.24.1
+pymysql==1.1.1
 pyparsing==3.1.4
+pypdf2==3.0.1
+pyecharts==2.0.8
+pyproj==3.5.0
 python-dateutil==2.9.0.post0
+python-docx==1.1.2
+python-pptx==1.0.2
 pytz==2026.1.post1
 requests==2.32.3
+scipy==1.10.1
+seaborn==0.13.2
+shapely==2.0.7
+sqlalchemy==2.0.36
 six==1.17.0
 tabulate==0.9.0
 tzdata==2025.3
-urllib3==2.2.3
+urllib3==1.26.20
+xlrd==2.0.1
+xlsxwriter==3.2.0
 zipp==3.20.2

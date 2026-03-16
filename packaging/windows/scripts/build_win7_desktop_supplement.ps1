@@ -313,6 +313,52 @@ function Install-EmbeddedPythonSupportFiles {
   Copy-Item -Path $matplotlibRcSource -Destination (Join-Path $etcDir 'matplotlibrc') -Force
 }
 
+function Install-EmbeddedMatplotlibFonts {
+  param(
+    [string]$PythonRoot,
+    [string]$RepoRoot,
+    [string[]]$FontList = @()
+  )
+
+  $fontsSourceDir = Join-Path $RepoRoot 'fonts'
+  if (-not (Test-Path $fontsSourceDir)) {
+    return
+  }
+
+  # Mirror ARM sidecar behavior so bundled Python keeps stable CJK/Latin rendering on Win7.
+  $matplotlibFontsDir = Join-Path $PythonRoot 'Lib\site-packages\matplotlib\mpl-data\fonts\ttf'
+  if (-not (Test-Path $matplotlibFontsDir)) {
+    return
+  }
+
+  $defaultFonts = @(
+    'NotoSansSC-VF.ttf',
+    'NotoSerifSC-VF.ttf',
+    'msyh.ttc',
+    'msyhbd.ttc',
+    'simsun.ttc',
+    'simhei.ttf',
+    'arial.ttf',
+    'arialbd.ttf',
+    'times.ttf',
+    'timesbd.ttf',
+    'consola.ttf'
+  )
+  $fontsToCopy = if ($FontList.Count -gt 0) { $FontList } else { $defaultFonts }
+
+  foreach ($font in $fontsToCopy) {
+    $name = $font.Trim()
+    if ([string]::IsNullOrWhiteSpace($name)) {
+      continue
+    }
+    $sourcePath = Join-Path $fontsSourceDir $name
+    if (-not (Test-Path $sourcePath)) {
+      continue
+    }
+    Copy-Item -Path $sourcePath -Destination (Join-Path $matplotlibFontsDir $name) -Force
+  }
+}
+
 function Install-EmbeddedPythonPackages {
   param(
     [string]$PythonRoot,
@@ -579,6 +625,7 @@ Expand-ZipArchive -Archive $pythonArchivePath -Destination $pythonRoot
 Initialize-EmbeddedPythonLayout -PythonRoot $pythonRoot
 Install-EmbeddedPythonSupportFiles -PythonRoot $pythonRoot -RepoRoot $repoRoot
 Install-EmbeddedPythonPackages -PythonRoot $pythonRoot -BuildRoot $resolvedBuildRoot -RequirementsPath $resolvedPythonRequirementsPath -PackageIndexUrl $resolvedPythonPackageIndexUrl -Config $config -Refresh:$RefreshDownloads
+Install-EmbeddedMatplotlibFonts -PythonRoot $pythonRoot -RepoRoot $repoRoot
 
 Write-Step "extracting Git runtime"
 Expand-ZipArchive -Archive $gitArchivePath -Destination $gitRoot

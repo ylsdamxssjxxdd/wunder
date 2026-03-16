@@ -71,7 +71,7 @@
                           v-for="item in group.items"
                           :key="item.name"
                           class="tool-catalog-tag"
-                          :title="item.description || item.name"
+                          :title="resolveToolUsageHint(item) || item.name"
                         >
                           {{ item.name }}
                         </span>
@@ -122,6 +122,7 @@ import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
+import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { showApiError } from '@/utils/apiError';
 
 const toolCatalog = ref(null);

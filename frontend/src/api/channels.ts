@@ -15,6 +15,9 @@ export const deleteChannelAccount = (channel: string, accountId?: ApiId) =>
 export const listChannelBindings = (params: QueryParams | undefined = undefined) =>
   api.get('/channels/bindings', { params });
 
+export const listChannelRuntimeLogs = (params: QueryParams | undefined = undefined) =>
+  api.get('/channels/runtime_logs', { params });
+
 export const upsertChannelBinding = (payload: ApiPayload) => api.post('/channels/bindings', payload);
 
 export const deleteChannelBinding = (

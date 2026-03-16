@@ -55,7 +55,7 @@
                 </div>
                 <div class="agent-tool-options">
                   <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
-                    <span :title="option.description || option.label">{{ option.label }}</span>
+                    <span :title="option.hint">{{ option.label }}</span>
                   </el-checkbox>
                 </div>
               </div>
@@ -146,6 +146,7 @@ import {
   resolveAgentDependencyStatus
 } from '@/utils/agentDependencyStatus';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { downloadWorkerCard } from '@/utils/workerCard';
 import {
   buildBeeroomGroupPayload,
@@ -251,15 +252,26 @@ const normalizeToolOption = (item) => {
   if (!item) return null;
   if (typeof item === 'string') {
     const name = item.trim();
-    return name ? { label: name, value: name, description: '' } : null;
+    return name ? { label: name, value: name, description: '', hint: name } : null;
   }
   const value = String(item.name || item.tool_name || item.toolName || item.id || '').trim();
   if (!value) return null;
-  return {
+  const option = {
     label: value,
     value,
-    description: String(item.description || '').trim()
+    description: String(item.description || '').trim(),
+    hint: ''
   };
+  option.hint = resolveToolUsageHint({
+    name: option.value,
+    label: option.label,
+    description: option.description,
+    input_schema: item.input_schema,
+    inputSchema: item.inputSchema,
+    schema: item.schema
+  });
+  if (!option.hint) option.hint = option.label;
+  return option;
 };
 
 const normalizeOptions = (list) =>

@@ -30,6 +30,7 @@
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
 - 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`，隐藏左/中栏）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
+- 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 本地模式的 `/wunder/desktop/settings` 新增 `python_interpreter_path` 字段：留空时优先使用安装包内置 Python，填写有效解释器路径后运行时优先切换到用户自定义 Python；`GET /wunder/desktop/python/interpreters` 可返回本机已探测到的候选解释器，`GET /wunder/desktop/fs/list` 支持 `include_files/file_names` 查询参数以浏览并筛选可执行文件。
@@ -660,6 +661,28 @@
     - 连续失败达到 `cron.max_consecutive_failures` 会自动停用任务并写入 `auto_disabled_reason`。
     - 周期任务失败后会按退避策略推迟下一次执行时间，取“自然下一次执行时间”和“错误退避时间”中的较大值，降低高错误率场景下的重试风暴。
   - 返回：`data` 中包含 action 结果与 job 信息
+
+### 4.1.2.31 `/wunder/channels/runtime_logs`
+
+- 方法：`GET`
+- 说明：用户侧渠道运行日志查询接口；用于在渠道设置面板展示长连接告警/重连信息，服务端对重复日志做时间窗口聚合（防洪）。
+- 入参（Query）：
+  - `user_id`：用户唯一标识（可选）
+  - `channel`：渠道过滤（可选）
+  - `account_id`：账号过滤（可选）
+  - `agent_id`：按智能体过滤（可选，仅返回该智能体绑定账号对应日志）
+  - `limit`：返回条数（可选，默认 80，最大 200）
+- 返回（JSON）：
+  - `data.items`：日志列表（按时间倒序）
+    - `id`：日志记录标识
+    - `ts`：时间戳（秒）
+    - `level`：日志等级（`info/warn/error`）
+    - `channel`：渠道名
+    - `account_id`：账号 ID（若为空表示渠道级日志）
+    - `event`：事件类型（如 `long_connection_failed`）
+    - `message`：日志内容
+    - `repeat_count`：聚合计数（同类日志在窗口内重复次数）
+  - `data.total`：本次返回条数
 
 ### 4.1.3 `/wunder/admin/mcp`
 

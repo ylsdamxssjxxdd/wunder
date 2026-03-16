@@ -25,7 +25,7 @@
         "validateImports": []
       },
       "common": {
-        "description": "Slim Win7-friendly common package set with requests, pandas, openpyxl and matplotlib plotting.",
+        "description": "Slim Win7-friendly common package set with networking, office/video document IO, fonts, map/radar tooling, database access, and plotting.",
         "requirementsPath": "packaging/python/requirements-win7-common.txt",
         "validateImports": [
           "requests",
@@ -34,7 +34,31 @@
           "openpyxl",
           "matplotlib",
           "tabulate",
-          "PIL"
+          "PIL",
+          "docx",
+          "pptx",
+          "PyPDF2",
+          "xlrd",
+          "xlsxwriter",
+          "sqlalchemy",
+          "pymysql",
+          "aiosqlite",
+          "lxml.etree",
+          "ffmpeg",
+          "imageio",
+          "imageio_ffmpeg",
+          "cv2",
+          "folium",
+          "pyproj",
+          "shapely",
+          "netCDF4",
+          "cftime",
+          "h5py",
+          "pyart",
+          "metpy",
+          "seaborn",
+          "plotly",
+          "pyecharts"
         ],
         "plotProbe": true
       }

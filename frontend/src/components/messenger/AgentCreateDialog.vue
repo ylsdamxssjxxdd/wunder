@@ -79,7 +79,7 @@
                 </div>
                 <div class="tool-options">
                   <el-checkbox v-for="tool in group.options" :key="tool.value" :value="tool.value">
-                    <span :title="tool.description || tool.label">{{ tool.label }}</span>
+                    <span :title="tool.hint">{{ tool.label }}</span>
                   </el-checkbox>
                 </div>
               </div>
@@ -154,11 +154,13 @@ import {
   type BeeroomGroupDraft,
   type BeeroomGroupOption
 } from '@/utils/beeroomGroupDraft';
+import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 
 type ToolOption = {
   label: string;
   value: string;
   description: string;
+  hint: string;
 };
 
 type ToolGroup = {
@@ -237,16 +239,27 @@ const normalizeOption = (item: unknown): ToolOption | null => {
   if (typeof item === 'string') {
     const value = item.trim();
     if (!value) return null;
-    return { label: value, value, description: '' };
+    return { label: value, value, description: '', hint: value };
   }
   const source = item as Record<string, unknown>;
   const value = String(source.name || source.tool_name || source.toolName || source.id || '').trim();
   if (!value) return null;
-  return {
+  const option: ToolOption = {
     label: value,
     value,
-    description: String(source.description || '').trim()
+    description: String(source.description || '').trim(),
+    hint: ''
   };
+  option.hint = resolveToolUsageHint({
+    name: option.value,
+    label: option.label,
+    description: option.description,
+    input_schema: source.input_schema,
+    inputSchema: source.inputSchema,
+    schema: source.schema
+  });
+  if (!option.hint) option.hint = option.label;
+  return option;
 };
 
 const normalizeOptions = (list: unknown): ToolOption[] => {

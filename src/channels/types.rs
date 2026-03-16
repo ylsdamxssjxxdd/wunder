@@ -77,9 +77,9 @@ pub struct FeishuConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QqBotConfig {
-    #[serde(default, alias = "appId")]
+    #[serde(default, alias = "appId", alias = "appid")]
     pub app_id: Option<String>,
-    #[serde(default, alias = "clientSecret")]
+    #[serde(default, alias = "clientSecret", alias = "appSecret", alias = "secret")]
     pub client_secret: Option<String>,
     #[serde(default, alias = "markdownSupport")]
     pub markdown_support: Option<bool>,
@@ -424,5 +424,18 @@ mod tests {
         }));
         let xmpp = config.xmpp.expect("xmpp config should exist");
         assert_eq!(xmpp.trust_self_signed, Some(false));
+    }
+
+    #[test]
+    fn qqbot_openfang_compatibility_aliases_are_supported() {
+        let config = ChannelAccountConfig::from_value(&json!({
+            "qqbot": {
+                "appid": "123456",
+                "secret": "qq-secret"
+            }
+        }));
+        let qqbot = config.qqbot.expect("qqbot config should exist");
+        assert_eq!(qqbot.app_id.as_deref(), Some("123456"));
+        assert_eq!(qqbot.client_secret.as_deref(), Some("qq-secret"));
     }
 }

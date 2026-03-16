@@ -2,10 +2,18 @@ use crate::channels::adapter::OutboundContext;
 use crate::channels::binding::{resolve_binding, BindingResolution};
 use crate::channels::feishu;
 use crate::channels::feishu_files;
+use crate::channels::inbound_queue::{
+    enqueue_with_timeout, new_channel as new_inbound_channel, spawn_dispatcher,
+    ChannelInboundEnvelope, ChannelInboundProcessor, CHANNEL_INBOUND_ENQUEUE_TIMEOUT_MS,
+    CHANNEL_INBOUND_MAX_IN_FLIGHT, CHANNEL_INBOUND_QUEUE_CAPACITY,
+};
 use crate::channels::media::{MediaProcessingResult, MediaProcessor};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
 use crate::channels::registry::{build_default_channel_adapter_registry, ChannelAdapterRegistry};
+use crate::channels::runtime_log::{
+    ChannelRuntimeLogBuffer, ChannelRuntimeLogEntry, ChannelRuntimeLogLevel,
+};
 use crate::channels::types::{
     ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig, XmppConfig,
 };
@@ -28,15 +36,16 @@ use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use axum::http::{HeaderMap, HeaderValue as AxumHeaderValue};
 use chrono::Local;
+use futures::FutureExt;
 use parking_lot::Mutex;
 use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{mpsc::Sender as TokioSender, Mutex as AsyncMutex};
 use tokio::time::{sleep, Duration};
 use tokio_stream::StreamExt;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 const TOOL_OVERRIDE_NONE: &str = "__no_tools__";
@@ -51,6 +60,8 @@ const XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
 const XMPP_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const XMPP_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
+const CHANNEL_RUNTIME_LOG_CAPACITY: usize = 300;
+const CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S: f64 = 20.0;
 const CHANNEL_OPEN_APPROVAL_FOR_TEST: bool = true;
 const CHANNEL_APPROVAL_PROMPT: &str =
     "请回复数字：1 同意一次，2 同意本会话，3 拒绝（也可发送 /stop 取消当前任务）。";
@@ -200,6 +211,8 @@ pub struct ChannelHub {
     http: reqwest::Client,
     recent_inbound: Arc<Mutex<HashMap<String, f64>>>,
     pending_approvals: Arc<AsyncMutex<HashMap<String, PendingChannelApprovalEntry>>>,
+    runtime_logs: Arc<Mutex<ChannelRuntimeLogBuffer>>,
+    inbound_queue_tx: TokioSender<ChannelInboundEnvelope>,
 }
 
 impl ChannelHub {
@@ -212,6 +225,8 @@ impl ChannelHub {
         workspace: Arc<WorkspaceManager>,
         monitor: Arc<MonitorState>,
     ) -> Self {
+        let (inbound_queue_tx, inbound_queue_rx) =
+            new_inbound_channel(CHANNEL_INBOUND_QUEUE_CAPACITY);
         let hub = Self {
             config_store,
             storage,
@@ -225,7 +240,22 @@ impl ChannelHub {
             http: reqwest::Client::new(),
             recent_inbound: Arc::new(Mutex::new(HashMap::new())),
             pending_approvals: Arc::new(AsyncMutex::new(HashMap::new())),
+            runtime_logs: Arc::new(Mutex::new(ChannelRuntimeLogBuffer::new(
+                CHANNEL_RUNTIME_LOG_CAPACITY,
+                CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S,
+            ))),
+            inbound_queue_tx,
         };
+        let inbound_worker = hub.clone();
+        let inbound_processor: ChannelInboundProcessor = Arc::new(move |envelope| {
+            let inbound_worker = inbound_worker.clone();
+            async move { inbound_worker.process_inbound_envelope(envelope).await }.boxed()
+        });
+        spawn_dispatcher(
+            inbound_queue_rx,
+            CHANNEL_INBOUND_MAX_IN_FLIGHT,
+            inbound_processor,
+        );
         let worker = hub.clone();
         tokio::spawn(async move {
             worker.outbox_loop().await;
@@ -243,6 +273,137 @@ impl ChannelHub {
 
     pub fn adapter_registry(&self) -> ChannelAdapterRegistry {
         self.adapter_registry.clone()
+    }
+
+    pub fn record_runtime_info(
+        &self,
+        channel: &str,
+        account_id: Option<&str>,
+        event: &str,
+        message: impl Into<String>,
+    ) {
+        self.record_runtime_log(
+            ChannelRuntimeLogLevel::Info,
+            channel,
+            account_id,
+            event,
+            message.into(),
+        );
+    }
+
+    pub fn record_runtime_warn(
+        &self,
+        channel: &str,
+        account_id: Option<&str>,
+        event: &str,
+        message: impl Into<String>,
+    ) {
+        self.record_runtime_log(
+            ChannelRuntimeLogLevel::Warn,
+            channel,
+            account_id,
+            event,
+            message.into(),
+        );
+    }
+
+    pub fn record_runtime_error(
+        &self,
+        channel: &str,
+        account_id: Option<&str>,
+        event: &str,
+        message: impl Into<String>,
+    ) {
+        self.record_runtime_log(
+            ChannelRuntimeLogLevel::Error,
+            channel,
+            account_id,
+            event,
+            message.into(),
+        );
+    }
+
+    pub fn list_runtime_logs(
+        &self,
+        channel: Option<&str>,
+        account_id: Option<&str>,
+        limit: usize,
+    ) -> Vec<ChannelRuntimeLogEntry> {
+        self.runtime_logs.lock().list(channel, account_id, limit)
+    }
+
+    fn record_runtime_log(
+        &self,
+        level: ChannelRuntimeLogLevel,
+        channel: &str,
+        account_id: Option<&str>,
+        event: &str,
+        message: String,
+    ) {
+        self.runtime_logs.lock().push(
+            level,
+            channel,
+            account_id.unwrap_or_default(),
+            event,
+            &message,
+            now_ts(),
+        );
+    }
+
+    async fn process_inbound_envelope(&self, envelope: ChannelInboundEnvelope) -> Result<()> {
+        let ChannelInboundEnvelope {
+            provider,
+            headers,
+            messages,
+            raw_payload,
+        } = envelope;
+        let result = self
+            .handle_inbound(&provider, &headers, messages, raw_payload)
+            .await?;
+        if !result.errors.is_empty() {
+            warn!(
+                "channel inbound worker rejected messages: provider={}, errors={}",
+                provider,
+                result.errors.join(" | ")
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn enqueue_inbound(
+        &self,
+        provider: &str,
+        headers: &HeaderMap,
+        messages: Vec<ChannelMessage>,
+        raw_payload: Option<Value>,
+    ) -> Result<ChannelHandleResult> {
+        if messages.is_empty() {
+            return Ok(ChannelHandleResult {
+                accepted: 0,
+                session_ids: Vec::new(),
+                outbox_ids: Vec::new(),
+                errors: Vec::new(),
+            });
+        }
+        let accepted = messages.len();
+        let envelope = ChannelInboundEnvelope {
+            provider: provider.to_string(),
+            headers: headers.clone(),
+            messages,
+            raw_payload,
+        };
+        enqueue_with_timeout(
+            &self.inbound_queue_tx,
+            envelope,
+            CHANNEL_INBOUND_ENQUEUE_TIMEOUT_MS,
+        )
+        .await?;
+        Ok(ChannelHandleResult {
+            accepted,
+            session_ids: Vec::new(),
+            outbox_ids: Vec::new(),
+            errors: Vec::new(),
+        })
     }
 
     pub async fn handle_inbound(
@@ -1720,7 +1881,13 @@ impl ChannelHub {
                     }
                 }
                 Err(err) => {
-                    warn!("load feishu long connection targets failed: {err}");
+                    self.record_runtime_warn(
+                        feishu::FEISHU_CHANNEL,
+                        None,
+                        "long_connection_targets_load_failed",
+                        format!("load feishu long connection targets failed: {err}"),
+                    );
+                    debug!("load feishu long connection targets failed: {err}");
                 }
             }
 
@@ -1746,7 +1913,16 @@ impl ChannelHub {
                 continue;
             }
             if !feishu::has_long_connection_credentials(&feishu_cfg) {
-                warn!(
+                self.record_runtime_warn(
+                    feishu::FEISHU_CHANNEL,
+                    Some(&record.account_id),
+                    "long_connection_credentials_missing",
+                    format!(
+                        "skip feishu long connection target without app credentials: account_id={}",
+                        record.account_id
+                    ),
+                );
+                debug!(
                     "skip feishu long connection target without app credentials: account_id={}",
                     record.account_id
                 );
@@ -1786,13 +1962,31 @@ impl ChannelHub {
                     retry_delay_s = endpoint
                         .reconnect_interval_s
                         .clamp(FEISHU_LONG_CONN_RETRY_BASE_S, FEISHU_LONG_CONN_RETRY_MAX_S);
-                    warn!(
+                    self.record_runtime_warn(
+                        feishu::FEISHU_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_closed",
+                        format!(
+                            "feishu long connection closed: account_id={}, retry_in={}s",
+                            target.account_id, retry_delay_s
+                        ),
+                    );
+                    debug!(
                         "feishu long connection closed: account_id={}, retry_in={}s",
                         target.account_id, retry_delay_s
                     );
                 }
                 Err(err) => {
-                    warn!(
+                    self.record_runtime_warn(
+                        feishu::FEISHU_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_failed",
+                        format!(
+                            "feishu long connection failed: account_id={}, retry_in={}s, error={err}",
+                            target.account_id, retry_delay_s
+                        ),
+                    );
+                    debug!(
                         "feishu long connection failed: account_id={}, retry_in={}s, error={err}",
                         target.account_id, retry_delay_s
                     );
@@ -1821,19 +2015,13 @@ impl ChannelHub {
         }
         let headers = build_internal_channel_headers(target.inbound_token.as_deref())?;
         let result = self
-            .handle_inbound(
+            .enqueue_inbound(
                 feishu::FEISHU_CHANNEL,
                 &headers,
                 messages,
                 Some(resolved_payload),
             )
             .await?;
-        if !result.errors.is_empty() {
-            return Err(anyhow!(
-                "feishu long connection inbound rejected: {}",
-                result.errors.join(" | ")
-            ));
-        }
         if result.accepted == 0 {
             return Err(anyhow!(
                 "feishu long connection inbound ignored: no message accepted"
@@ -1885,7 +2073,13 @@ impl ChannelHub {
                     }
                 }
                 Err(err) => {
-                    warn!("load xmpp long connection targets failed: {err}");
+                    self.record_runtime_warn(
+                        xmpp::XMPP_CHANNEL,
+                        None,
+                        "long_connection_targets_load_failed",
+                        format!("load xmpp long connection targets failed: {err}"),
+                    );
+                    debug!("load xmpp long connection targets failed: {err}");
                 }
             }
 
@@ -1911,7 +2105,16 @@ impl ChannelHub {
                 continue;
             }
             if !xmpp::has_long_connection_credentials(&xmpp_cfg) {
-                warn!(
+                self.record_runtime_warn(
+                    xmpp::XMPP_CHANNEL,
+                    Some(&record.account_id),
+                    "long_connection_credentials_missing",
+                    format!(
+                        "skip xmpp long connection target without credentials: account_id={}",
+                        record.account_id
+                    ),
+                );
+                debug!(
                     "skip xmpp long connection target without credentials: account_id={}",
                     record.account_id
                 );
@@ -1948,13 +2151,31 @@ impl ChannelHub {
             match result {
                 Ok(()) => {
                     retry_delay_s = XMPP_LONG_CONN_RETRY_BASE_S;
-                    warn!(
+                    self.record_runtime_warn(
+                        xmpp::XMPP_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_closed",
+                        format!(
+                            "xmpp long connection closed: account_id={}, retry_in={}s",
+                            target.account_id, retry_delay_s
+                        ),
+                    );
+                    debug!(
                         "xmpp long connection closed: account_id={}, retry_in={}s",
                         target.account_id, retry_delay_s
                     );
                 }
                 Err(err) => {
-                    warn!(
+                    self.record_runtime_warn(
+                        xmpp::XMPP_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_failed",
+                        format!(
+                            "xmpp long connection failed: account_id={}, retry_in={}s, error={err}",
+                            target.account_id, retry_delay_s
+                        ),
+                    );
+                    debug!(
                         "xmpp long connection failed: account_id={}, retry_in={}s, error={err}",
                         target.account_id, retry_delay_s
                     );
@@ -1973,14 +2194,8 @@ impl ChannelHub {
     ) -> Result<()> {
         let headers = build_internal_channel_headers(target.inbound_token.as_deref())?;
         let result = self
-            .handle_inbound(xmpp::XMPP_CHANNEL, &headers, vec![message], None)
+            .enqueue_inbound(xmpp::XMPP_CHANNEL, &headers, vec![message], None)
             .await?;
-        if !result.errors.is_empty() {
-            return Err(anyhow!(
-                "xmpp long connection inbound rejected: {}",
-                result.errors.join(" | ")
-            ));
-        }
         if result.accepted == 0 {
             return Err(anyhow!(
                 "xmpp long connection inbound ignored: no message accepted"
@@ -2011,6 +2226,7 @@ impl ChannelHub {
                     for record in items {
                         let outcome = self.deliver_outbox_record(&record).await;
                         if let Err(err) = outcome {
+                            let error_text = err.to_string();
                             warn!(
                                 "deliver outbox failed: outbox_id={}, channel={}, account_id={}, retry_count={}, error={err}",
                                 record.outbox_id,
@@ -2018,8 +2234,17 @@ impl ChannelHub {
                                 record.account_id,
                                 record.retry_count
                             );
+                            self.record_runtime_error(
+                                &record.channel,
+                                Some(&record.account_id),
+                                "outbound_delivery_failed",
+                                format!(
+                                    "deliver outbox failed: outbox_id={}, retry_count={}, error={}",
+                                    record.outbox_id, record.retry_count, error_text
+                                ),
+                            );
                             let mut status = "retry";
-                            let error_text = Some(err.to_string());
+                            let error_text = Some(error_text);
                             if record.retry_count as u32 >= outbox_cfg.max_retries {
                                 status = "failed";
                             }
