@@ -33,6 +33,7 @@ apply_patch 专用规则（对齐 Codex）：
 - 严禁把补丁正文放进 JSON 字符串或 Markdown 代码块；
 - 输入必须以 *** Begin Patch 开始，并以 *** End Patch 结束；
 - 按需使用 *** Add File: / *** Update File: / *** Delete File: / *** Move to:；
+- Update File 的 @@ 之后每一行都必须以 空格 / + / - 开头；空白上下文行也必须写成仅包含一个前导空格的行（" "），不能留裸空行；
 - 修改必须最小且精确，避免无关重排或格式化；
 - 如果失败，优先根据 error_code、hint、retryable 做最小修复后重试。
 

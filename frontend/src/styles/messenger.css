@@ -3139,11 +3139,22 @@ button.messenger-chat-header-model {
   color: #334155;
 }
 
-.messenger-tool-group-title {
+.messenger-tool-group-head-left {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1 1 auto;
+}
+
+.messenger-tool-group-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.35;
+  font-weight: 700;
 }
 
 .messenger-tool-group-toggle {

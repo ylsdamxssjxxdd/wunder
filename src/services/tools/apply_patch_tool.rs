@@ -155,6 +155,16 @@ fn patch_format_error(zh: impl Into<String>, en: impl Into<String>) -> anyhow::E
     )
 }
 
+fn patch_empty_update_line_error(line_no: usize) -> anyhow::Error {
+    patch_error_with_hint(
+        "PATCH_FORMAT_INVALID",
+        format!("补丁格式错误（第 {line_no} 行）：Update File 内容行不能为空"),
+        format!("Invalid patch format (line {line_no}): Update File content line cannot be empty"),
+        "在 @@ 之后，空白行也必须带前缀。请把空白行写成单个空格开头的一行（\" \"），不要直接留空。",
+        "After @@, blank lines also require a prefix. Represent a blank context line as a single leading space (\" \"), not an empty line.",
+    )
+}
+
 fn build_patch_error_result(error: anyhow::Error) -> Value {
     if let Some(detail) = error.downcast_ref::<PatchToolError>() {
         let mut data = serde_json::Map::new();
@@ -533,6 +543,21 @@ fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
             .cloned()
             .collect();
     }
+    // Models may emit raw empty lines in Update hunks; treat them as context blank lines.
+    let has_raw_empty_line = lines.iter().any(|line| line.is_empty());
+    let has_prefixed_non_empty_line = lines
+        .iter()
+        .any(|line| !line.is_empty() && matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
+    let all_non_empty_lines_prefixed = lines
+        .iter()
+        .filter(|line| !line.is_empty())
+        .all(|line| matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
+    if !has_separator && has_raw_empty_line && has_prefixed_non_empty_line && all_non_empty_lines_prefixed {
+        return lines
+            .iter()
+            .map(|line| if line.is_empty() { " ".to_string() } else { line.clone() })
+            .collect();
+    }
     if !has_separator {
         return lines.to_vec();
     }
@@ -685,13 +710,7 @@ fn parse_patch(input: &str) -> Result<Vec<ParsedPatchOp>> {
                 }
                 let mut chars = raw.chars();
                 let Some(marker) = chars.next() else {
-                    return Err(patch_format_error(
-                        format!("补丁格式错误（第 {} 行）：Update File 内容行不能为空", index + 1),
-                        format!(
-                            "Invalid patch format (line {}): Update File content line cannot be empty",
-                            index + 1
-                        ),
-                    ));
+                    return Err(patch_empty_update_line_error(index + 1));
                 };
                 let text = chars.collect::<String>();
                 let kind = match marker {
@@ -1684,5 +1703,47 @@ mod tests {
         assert_eq!(chunks[0].lines[2].text, "new");
         assert!(matches!(chunks[0].lines[3].kind, ChunkLineKind::Add));
         assert_eq!(chunks[0].lines[3].text, "keep");
+    }
+
+    #[test]
+    fn parse_patch_repairs_unprefixed_blank_lines_in_update_chunk() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+ line1
+-line2
++line2x
+
+ line3
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("raw blank lines should be normalized to context lines");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].lines.len(), 5);
+        assert!(matches!(chunks[0].lines[3].kind, ChunkLineKind::Context));
+        assert_eq!(chunks[0].lines[3].text, "");
+    }
+
+    #[test]
+    fn parse_patch_reports_actionable_hint_for_empty_update_line() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+
+*** End Patch"#;
+        let error = parse_patch(patch).expect_err("invalid empty update line should fail");
+        let result = build_patch_error_result(error);
+        let hint = result
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("hint"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            hint.contains("blank lines also require a prefix") || hint.contains("空白行也必须带前缀"),
+            "unexpected hint: {hint}"
+        );
     }
 }

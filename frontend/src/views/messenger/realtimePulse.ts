@@ -4,8 +4,10 @@ type MessengerRealtimePulseOptions = {
   refreshRunningAgents: AsyncTask;
   refreshCronAgentIds: AsyncTask;
   refreshChannelBoundAgentIds: AsyncTask;
+  refreshChatSessions?: AsyncTask;
   refreshContacts?: AsyncTask;
   shouldRefreshCron?: () => boolean;
+  shouldRefreshChatSessions?: () => boolean;
   shouldRefreshContacts?: () => boolean;
   isHotState?: () => boolean;
   onError?: (error: unknown) => void;
@@ -36,6 +38,7 @@ export const createMessengerRealtimePulse = (
   let timerId: number | null = null;
   let running = false;
   let started = false;
+  let pendingTrigger = false;
 
   const clearTimer = () => {
     if (typeof window === 'undefined') return;
@@ -85,6 +88,9 @@ export const createMessengerRealtimePulse = (
     if (options.shouldRefreshCron?.() !== false) {
       tasks.push(scheduleTask(options.refreshCronAgentIds));
     }
+    if (options.refreshChatSessions && options.shouldRefreshChatSessions?.() !== false) {
+      tasks.push(scheduleTask(options.refreshChatSessions));
+    }
     if (options.refreshContacts && options.shouldRefreshContacts?.() !== false) {
       tasks.push(scheduleTask(options.refreshContacts));
     }
@@ -92,6 +98,11 @@ export const createMessengerRealtimePulse = (
       const results = await Promise.allSettled(tasks);
       if (handleFailures(results)) {
         scheduleNext(ERROR_RETRY_MS);
+        return;
+      }
+      if (pendingTrigger) {
+        pendingTrigger = false;
+        scheduleNext(TRIGGER_DELAY_MS);
         return;
       }
       scheduleNext(resolveDelay());
@@ -106,7 +117,7 @@ export const createMessengerRealtimePulse = (
   const trigger = (_reason = '') => {
     if (!started) return;
     if (running) {
-      scheduleNext(TRIGGER_DELAY_MS);
+      pendingTrigger = true;
       return;
     }
     scheduleNext(0);
@@ -131,6 +142,7 @@ export const createMessengerRealtimePulse = (
   const stop = () => {
     if (!started) return;
     started = false;
+    pendingTrigger = false;
     clearTimer();
     if (typeof window !== 'undefined') {
       window.removeEventListener('focus', handleVisibility);

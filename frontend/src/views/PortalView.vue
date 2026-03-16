@@ -317,7 +317,7 @@
               <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
                 <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
                   <div class="agent-tool-group-header">
-                    <div class="agent-tool-group-title">{{ group.label }}</div>
+                    <div class="agent-tool-group-title">{{ t('chat.approval.kind') }} · {{ group.label }}</div>
                     <button
                       class="agent-tool-group-select"
                       type="button"

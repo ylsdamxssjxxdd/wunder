@@ -6297,6 +6297,7 @@ const deleteMixedConversation = async (item: MixedConversation) => {
     } else {
       await userWorldStore.dismissConversation(sourceId);
     }
+    triggerRealtimePulseRefresh?.('delete-mixed-conversation');
     ElMessage.success(t('chat.history.delete'));
   } catch (error) {
     showApiError(error, t('chat.sessions.deleteFailed'));
@@ -7022,6 +7023,11 @@ const openAgentById = async (agentId: unknown) => {
     await openAgentSession(String(targetSession.id), normalized);
     return;
   }
+  await openAgentDraftSessionWithScroll(normalized);
+};
+
+const openAgentDraftSession = (agentId: unknown) => {
+  const normalized = normalizeAgentId(agentId);
   chatStore.openDraftSession({ agent_id: normalized === DEFAULT_AGENT_KEY ? '' : normalized });
   clearMiddlePaneOverlayHide();
   middlePaneOverlayVisible.value = false;
@@ -7043,6 +7049,10 @@ const openAgentById = async (agentId: unknown) => {
     path: resolveChatShellPath(),
     query: nextQuery
   }).catch(() => undefined);
+};
+
+const openAgentDraftSessionWithScroll = async (agentId: unknown) => {
+  openAgentDraftSession(agentId);
   await scrollMessagesToBottom(true);
 };
 
@@ -7433,6 +7443,7 @@ const archiveTimelineSession = async (sessionId: string) => {
   try {
     await chatStore.archiveSession(targetId);
     timelinePreviewMap.value.delete(targetId);
+    triggerRealtimePulseRefresh?.('archive-session');
     ElMessage.success(t('chat.history.archiveSuccess'));
   } catch (error) {
     showApiError(error, t('chat.history.archiveFailed'));
@@ -7446,6 +7457,7 @@ const handleArchivedSessionRemoved = (sessionId: string) => {
   if (timelineDetailSessionId.value === targetId) {
     timelineDetailDialogVisible.value = false;
   }
+  triggerRealtimePulseRefresh?.('archived-session-removed');
 };
 
 const closeFileContainerMenu = () => {
@@ -7903,14 +7915,7 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
   if (command === 'new') {
     try {
       const payloadAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
-      const created = await chatStore.createSession(
-        payloadAgentId === DEFAULT_AGENT_KEY ? {} : { agent_id: payloadAgentId }
-      );
-      sessionHub.setActiveConversation({
-        kind: 'agent',
-        id: String(created?.id || chatStore.activeSessionId || ''),
-        agentId: normalizeAgentId(created?.agent_id || payloadAgentId)
-      });
+      openAgentDraftSession(payloadAgentId);
       appendAgentLocalCommandMessages(rawText, t('chat.command.newSuccess'));
     } catch (error) {
       appendAgentLocalCommandMessages(
@@ -8774,17 +8779,8 @@ const startNewSession = async () => {
   if (!isAgentConversationActive.value) return;
   const targetAgent = activeAgentId.value;
   try {
-    // Explicit new-session clicks should materialize immediately so channel-bound traffic
-    // can switch to the empty main session before the first user message is sent.
-    const created = await chatStore.createSession(
-      targetAgent === DEFAULT_AGENT_KEY ? {} : { agent_id: targetAgent }
-    );
-    sessionHub.setActiveConversation({
-      kind: 'agent',
-      id: String(created?.id || chatStore.activeSessionId || ''),
-      agentId: normalizeAgentId(created?.agent_id || targetAgent)
-    });
-    await scrollMessagesToBottom(true);
+    // Keep new-thread action in draft mode; persist only when user sends the first real message.
+    await openAgentDraftSessionWithScroll(targetAgent);
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }
@@ -9272,6 +9268,15 @@ const loadChannelBoundAgentIds = async () => {
     }
   }
 };
+
+const refreshRealtimeChatSessions = async () => {
+  await chatStore.loadSessions({
+    // Realtime pulse only needs session list delta; skip transport profile requests on every tick.
+    skipTransportRefresh: true
+  });
+};
+
+const shouldRefreshRealtimeChatSessions = () => sessionHub.activeSection === 'messages';
 
 const refreshAll = async () => {
   const tasks: Promise<unknown>[] = [
@@ -10208,6 +10213,7 @@ onMounted(async () => {
     refreshRunningAgents: loadRunningAgents,
     refreshCronAgentIds: loadCronAgentIds,
     refreshChannelBoundAgentIds: loadChannelBoundAgentIds,
+    refreshChatSessions: refreshRealtimeChatSessions,
     refreshContacts: () =>
       userWorldStore.refreshContacts('', {
         shouldApply: () =>
@@ -10215,6 +10221,7 @@ onMounted(async () => {
       }),
     isHotState: () => hasHotRuntimeState.value,
     shouldRefreshCron: () => !cronPermissionDenied.value,
+    shouldRefreshChatSessions: shouldRefreshRealtimeChatSessions,
     shouldRefreshContacts: () =>
       !userWorldPermissionDenied.value &&
       (sessionHub.activeSection === 'users' || sessionHub.activeSection === 'messages')

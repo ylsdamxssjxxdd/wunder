@@ -1088,6 +1088,12 @@
   color: var(--ui-accent-deep);
 }
 
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-tool-group-kind {
+  border-color: rgba(var(--ui-accent-rgb), 0.32);
+  background: rgba(var(--ui-accent-rgb), 0.18);
+  color: var(--tech-blue-text);
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .agent-tool-group-select:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-tool-group-toggle:hover {
   border-color: rgba(var(--ui-accent-rgb), 0.46);

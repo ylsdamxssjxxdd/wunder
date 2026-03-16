@@ -2788,7 +2788,7 @@ impl TuiApp {
             .get(cursor..)
             .and_then(|value| value.chars().next())
             .map(|ch| !ch.is_whitespace())
-            .unwrap_or(false);
+            .unwrap_or(true);
         let mut token = String::new();
         if needs_leading_space {
             token.push(' ');
@@ -2950,14 +2950,27 @@ impl TuiApp {
             .get(..self.input_cursor.min(self.input.len()))
             .map(|value| value.chars().count().min(8))
             .unwrap_or(0);
-        if max_prior_chars == 0 {
-            return false;
-        }
         let Some(clipboard_text) = self.cached_clipboard_text_for_promotion() else {
             return false;
         };
         if !self.should_promote_clipboard_text(clipboard_text.as_str()) {
             return false;
+        }
+        if max_prior_chars == 0 {
+            if !clipboard_text.starts_with(ch) {
+                return false;
+            }
+            let remaining = clipboard_text.chars().skip(1).collect::<String>();
+            if !remaining.is_empty() {
+                self.suppressed_clipboard_paste = remaining;
+                self.suppressed_clipboard_paste_last_at = Some(Instant::now());
+            } else {
+                self.clear_suppressed_clipboard_paste();
+            }
+            self.on_paste(clipboard_text);
+            self.flush_pending_paste();
+            self.reset_plain_char_burst();
+            return true;
         }
         for prior_chars in (1..=max_prior_chars).rev() {
             let mut candidate = self.recent_input_chars(prior_chars);

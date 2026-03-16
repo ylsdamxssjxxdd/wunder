@@ -14,7 +14,8 @@
     "test:message-render": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-render-regression.test.js",
     "typecheck:vue": "vue-tsc --noEmit",
     "typecheck:ts": "tsc --noEmit",
-    "typecheck:api": "tsc -p tsconfig.api-strict.json --pretty false"
+    "typecheck:api": "tsc -p tsconfig.api-strict.json --pretty false",
+    "test:realtime-pulse": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/realtime-pulse-regression.test.js"
   },
   "dependencies": {
     "@antv/g6": "^5.0.51",

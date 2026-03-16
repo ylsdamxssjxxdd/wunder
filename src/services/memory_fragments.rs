@@ -8,7 +8,7 @@ use crate::storage::{
     MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, StorageBackend,
 };
 use anyhow::Result;
-use chrono::{TimeZone, Utc};
+use chrono::{Local, TimeZone, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::cmp::Ordering;
@@ -980,9 +980,10 @@ fn format_prompt_memory_timestamp(value: f64) -> String {
     if seconds <= 0 {
         return "unknown time".to_string();
     }
-    Utc.timestamp_opt(seconds, 0)
+    Local
+        .timestamp_opt(seconds, 0)
         .single()
-        .map(|datetime| datetime.format("%Y-%m-%d %H:%M UTC").to_string())
+        .map(|datetime| datetime.format("%Y-%m-%d %H:%M").to_string())
         .unwrap_or_else(|| "unknown time".to_string())
 }
 
@@ -1699,7 +1700,13 @@ mod tests {
         }]);
 
         assert!(block.contains("[长期记忆]"));
-        assert!(block.contains("[2023-11-14 22:13 UTC]"));
+        let expected_timestamp = Local
+            .timestamp_opt(1_700_000_000, 0)
+            .single()
+            .expect("local timestamp")
+            .format("%Y-%m-%d %H:%M")
+            .to_string();
+        assert!(block.contains(&format!("[{expected_timestamp}]")));
         assert!(block.contains("项目长期偏好 Rust、Axum、SQLite。"));
         assert!(!block.contains("preference"));
         assert!(!block.contains("matched"));

@@ -33,6 +33,7 @@ apply_patch rules (Codex-aligned):
 - NEVER wrap patch text in JSON strings or markdown fences.
 - Input must start with *** Begin Patch and end with *** End Patch.
 - Use the right section header: *** Add File:, *** Update File:, *** Delete File:, *** Move to:.
+- After @@ in Update File hunks, every line must start with one of: space / + / -. Blank context lines must be encoded as a single leading space line (" ").
 - Keep edits minimal and surgical; avoid unrelated reformat/reordering.
 - On errors, use error_code/hint/retryable to make the smallest possible retry.
 

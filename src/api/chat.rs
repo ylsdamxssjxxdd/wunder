@@ -246,8 +246,7 @@ async fn create_session(
         .as_deref()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
-    let agent_record =
-        fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
+    fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), false).await?;
     let record = crate::storage::ChatSessionRecord {
         session_id: session_id.clone(),
         user_id: resolved.user.user_id.clone(),
@@ -271,51 +270,6 @@ async fn create_session(
         .user_store
         .upsert_chat_session(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let user_context = build_user_tool_context(&state, &resolved.user.user_id).await;
-    let mut allowed = compute_allowed_tool_names(&resolved.user, &user_context);
-    let overrides = resolve_agent_tool_defaults(agent_record.as_ref());
-    allowed = apply_tool_overrides(
-        allowed,
-        &overrides,
-        &user_context.config,
-        &user_context.skills,
-    );
-    let tool_names = finalize_tool_names(allowed);
-    let agent_prompt = agent_record
-        .as_ref()
-        .map(|item| item.system_prompt.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let workspace_id = resolve_agent_workspace_id(
-        &state,
-        &resolved.user.user_id,
-        record.agent_id.as_deref(),
-        agent_record.as_ref(),
-    );
-    let prompt = state
-        .orchestrator
-        .build_system_prompt(
-            &user_context.config,
-            &tool_names,
-            &user_context.skills,
-            Some(&user_context.bindings),
-            &resolved.user.user_id,
-            record.agent_id.as_deref(),
-            UserStore::is_admin(&resolved.user),
-            &workspace_id,
-            None,
-            agent_prompt.as_deref(),
-        )
-        .await;
-    if let Err(err) = state.workspace.save_session_system_prompt(
-        &resolved.user.user_id,
-        &session_id,
-        &prompt,
-        None,
-    ) {
-        warn!("failed to snapshot initial session system prompt for {session_id}: {err}");
-    } else {
-        let _ = state.workspace.flush_writes_async().await;
-    }
     let is_main = state
         .agent_runtime
         .set_main_session(

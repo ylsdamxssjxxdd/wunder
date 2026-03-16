@@ -48,32 +48,6 @@
       </div>
     </div>
 
-    <div class="agent-memory-overview">
-      <div class="agent-memory-overview-main">
-        <div class="agent-memory-overview-count">{{ filteredItems.length }}/{{ items.length }}</div>
-        <div class="agent-memory-overview-label">{{ t('messenger.memory.visibleLabel') }}</div>
-      </div>
-      <div class="agent-memory-overview-stats">
-        <div class="agent-memory-overview-item">
-          <span>{{ t('messenger.memory.status.active') }}</span>
-          <strong>{{ activeCount }}</strong>
-        </div>
-        <div class="agent-memory-overview-item">
-          <span>{{ t('messenger.memory.status.superseded') }}</span>
-          <strong>{{ supersededCount }}</strong>
-        </div>
-        <div class="agent-memory-overview-item">
-          <span>{{ t('messenger.memory.status.invalidated') }}</span>
-          <strong>{{ invalidatedCount }}</strong>
-        </div>
-        <div class="agent-memory-overview-item">
-          <span>{{ t('messenger.memory.pinnedLabel') }}</span>
-          <strong>{{ pinnedCount }}</strong>
-        </div>
-      </div>
-      <div class="agent-memory-overview-note">{{ formatFragmentSource('auto_turn') }} {{ autoExtractedCount }}</div>
-    </div>
-
     <div class="agent-memory-filters">
       <input v-model.trim="search" class="agent-memory-input agent-memory-search" :placeholder="t('messenger.memory.search')" />
       <select v-model="statusFilter" class="agent-memory-select">
@@ -404,11 +378,6 @@ const filteredItems = computed(() => {
   });
 });
 const categories = computed(() => [...new Set(items.value.map((item) => String(item.category || '').trim()).filter(Boolean))]);
-const pinnedCount = computed(() => items.value.filter((item) => item.pinned).length);
-const supersededCount = computed(() => items.value.filter((item) => isItemSuperseded(item)).length);
-const invalidatedCount = computed(() => items.value.filter((item) => isItemInvalidated(item)).length);
-const activeCount = computed(() => items.value.filter((item) => isItemActive(item)).length);
-const autoExtractedCount = computed(() => items.value.filter((item) => normalizeSourceType(item.source_type) === 'auto_turn').length);
 const currentEditingItem = computed(() => items.value.find((item) => item.memory_id === editingId.value) || null);
 const dialogTitle = computed(() => (editingId.value ? `${t('common.edit')} - ${t('messenger.memory.title')}` : t('messenger.memory.new')));
 const memoryTitleMap = computed(() => {
@@ -427,17 +396,11 @@ function createEmptyEditor(): EditorState {
     invalidated: false
   };
 }
-function normalizeSourceType(value: unknown): string {
-  return String(value || '').trim().replace(/-/g, '_') || 'manual';
-}
 function isItemSuperseded(item: MemoryItem | null | undefined): boolean {
   return String(item?.status || '') === 'superseded' || Boolean(item?.superseded_by_memory_id);
 }
 function isItemInvalidated(item: MemoryItem | null | undefined): boolean {
   return Boolean(item?.invalidated_at) || String(item?.status || '') === 'invalidated';
-}
-function isItemActive(item: MemoryItem | null | undefined): boolean {
-  return !isItemInvalidated(item) && !isItemSuperseded(item);
 }
 function describeItemStatus(item: MemoryItem | null | undefined): string {
   if (isItemInvalidated(item)) return t('messenger.memory.status.invalidated');
@@ -849,48 +812,6 @@ watch(
   color: var(--app-text-muted, #64748b);
   font-size: 12px;
 }
-.agent-memory-overview {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px;
-  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.2));
-  border-radius: 18px;
-  background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
-}
-.agent-memory-overview-main {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.agent-memory-overview-count {
-  font-size: 30px;
-  line-height: 1;
-  font-weight: 800;
-}
-.agent-memory-overview-label,
-.agent-memory-overview-note {
-  color: var(--app-text-muted, #64748b);
-  font-size: 12px;
-}
-.agent-memory-overview-stats {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-.agent-memory-overview-item {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: rgba(148, 163, 184, 0.08);
-}
-.agent-memory-overview-item strong {
-  font-size: 15px;
-}
 .agent-memory-auto-extract-panel {
   display: flex;
   align-items: flex-start;
@@ -967,8 +888,8 @@ watch(
 }
 .agent-memory-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
 }
 .agent-memory-insight-grid {
   display: grid;
@@ -980,18 +901,17 @@ watch(
 .agent-memory-hit-card {
   border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
   background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
-  border-radius: 18px;
+  border-radius: 16px;
 }
 .agent-memory-insight-panel {
   padding: 16px;
 }
 .agent-memory-card {
-  padding: 16px;
+  padding: 12px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  min-height: 220px;
+  gap: 8px;
   transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 .agent-memory-card--invalidated {
@@ -1016,28 +936,28 @@ watch(
 .agent-memory-card-head-main {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   min-width: 0;
 }
 .agent-memory-card-title {
   font-weight: 700;
-  line-height: 1.5;
-  font-size: 15px;
+  line-height: 1.35;
+  font-size: 14px;
 }
 .agent-memory-card-summary,
 .agent-memory-hit-reason {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--app-text-color, #0f172a);
-  line-height: 1.7;
+  line-height: 1.55;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 .agent-memory-card-meta-item {
   color: var(--app-text-muted, #64748b);
-  font-size: 12px;
+  font-size: 11px;
 }
 .agent-memory-card-taxonomy {
   display: flex;
@@ -1055,17 +975,17 @@ watch(
 }
 .agent-memory-card-actions {
   margin-top: auto;
-  padding-top: 10px;
+  padding-top: 8px;
   border-top: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.16));
 }
 .agent-memory-card-action {
   border: 0;
   background: transparent;
   color: var(--app-primary-color, #3b82f6);
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: 4px 8px;
+  font-size: 11px;
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: 8px;
   transition: background-color 0.16s ease, color 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
 }
 .agent-memory-card-action:hover:not(:disabled) {
@@ -1250,10 +1170,6 @@ watch(
   .agent-memory-filters,
   .agent-memory-grid--editor {
     grid-template-columns: 1fr;
-  }
-  .agent-memory-overview {
-    flex-direction: column;
-    align-items: flex-start;
   }
   .agent-memory-search,
   .agent-memory-field--full {

@@ -2485,10 +2485,10 @@ const buildToolResultSection = (
         key: sectionKey,
         title: sectionTitle,
         kind: 'command',
-        summary: buildExecuteCommandResultSummary(entry),
         body: '',
         commandView: {
-          ...buildExecuteCommandView(entry, command, status, errorText, false),
+          // Keep command workflows concise: show command + terminal output in one block.
+          ...buildExecuteCommandView(entry, command, status, errorText, true),
           showExitCode: false
         },
         patchLines: []
@@ -2550,6 +2550,10 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const status = resolveEntryStatus(entry);
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem) : '';
   const durationLabel = formatDurationLabel(extractDurationMs(entry));
+  const shouldKeepModelCall = isWriteFileTool(entry.toolName) || isApplyPatchTool(entry.toolName);
+  const modelCallSection = buildModelCallSection(entry, command, patchDiffBlocks);
+  const toolResultSection = buildToolResultSection(entry, command, status, errorText, patchEntries);
+  const sections = shouldKeepModelCall ? [modelCallSection, toolResultSection] : [toolResultSection];
 
   return {
     key: entry.key,
@@ -2557,10 +2561,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
     status,
     statusLabel: statusLabel(status),
     durationLabel,
-    sections: [
-      buildModelCallSection(entry, command, patchDiffBlocks),
-      buildToolResultSection(entry, command, status, errorText, patchEntries)
-    ]
+    sections
   };
 };
 

@@ -1161,9 +1161,9 @@ const init = async () => {
 const handleCreateSession = async () => {
   const agentId = activeAgentId.value;
   try {
-    // Explicit new-session clicks should materialize immediately so channel-bound traffic
-    // can switch to the empty main session before the first user message is sent.
-    await chatStore.createSession(agentId ? { agent_id: agentId } : {});
+    // Keep new-thread action in draft mode; persist only when user sends the first real message.
+    manualDraftPending.value = true;
+    chatStore.openDraftSession({ agent_id: agentId || '' });
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }
@@ -2113,7 +2113,8 @@ const handleLocalCommand = async (command: ChatLocalCommand, rawText) => {
   if (command === 'new') {
     try {
       const agentId = String(activeAgentId.value || '').trim();
-      await chatStore.createSession(agentId ? { agent_id: agentId } : {});
+      manualDraftPending.value = true;
+      chatStore.openDraftSession({ agent_id: agentId || '' });
       appendLocalCommandMessages(rawText, t('chat.command.newSuccess'));
     } catch (error) {
       appendLocalCommandMessages(

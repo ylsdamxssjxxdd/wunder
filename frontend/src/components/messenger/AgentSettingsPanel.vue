@@ -53,7 +53,9 @@
             >
               <div v-for="group in toolGroups" :key="group.label" class="messenger-tool-group">
                 <div class="messenger-tool-group-head">
-                  <span class="messenger-tool-group-title">{{ group.label }}</span>
+                  <div class="messenger-tool-group-head-left">
+                    <span class="messenger-tool-group-title">{{ t('chat.approval.kind') }}：{{ group.label }}</span>
+                  </div>
                   <button
                     class="messenger-tool-group-toggle"
                     type="button"

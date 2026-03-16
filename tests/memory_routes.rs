@@ -476,8 +476,8 @@ async fn memory_routes_and_prompt_preview_work_end_to_end() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn session_prompt_preview_reuses_frozen_memory_snapshot() {
-    let context = build_test_context("memory_prompt_user").await;
+async fn session_prompt_preview_freezes_after_first_user_message() {
+    let context = build_test_context_with_mock_llm("memory_prompt_user").await;
 
     let (status, created) = send_json(
         &context.app,
@@ -511,7 +511,7 @@ async fn session_prompt_preview_reuses_frozen_memory_snapshot() {
         .expect("session id")
         .to_string();
 
-    let (status, session_preview_before_change) = send_json(
+    let (status, session_preview_before_first_message) = send_json(
         &context.app,
         &context.token,
         Method::POST,
@@ -521,10 +521,43 @@ async fn session_prompt_preview_reuses_frozen_memory_snapshot() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        session_preview_before_change["data"]["memory_preview_mode"],
+        session_preview_before_first_message["data"]["memory_preview_mode"],
+        json!("pending")
+    );
+    let pending_prompt = session_preview_before_first_message["data"]["prompt"]
+        .as_str()
+        .expect("pending system prompt")
+        .to_string();
+    assert!(pending_prompt.contains("Reply in English by default."));
+
+    let (status, message_result) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": "Use the saved preference in this thread.",
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(message_result["data"]["answer"].is_string());
+
+    let (status, session_preview_after_first_message) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/system-prompt"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        session_preview_after_first_message["data"]["memory_preview_mode"],
         json!("frozen")
     );
-    let frozen_prompt = session_preview_before_change["data"]["prompt"]
+    let frozen_prompt = session_preview_after_first_message["data"]["prompt"]
         .as_str()
         .expect("frozen system prompt")
         .to_string();
@@ -563,7 +596,7 @@ async fn session_prompt_preview_reuses_frozen_memory_snapshot() {
     let reused_prompt = session_preview["data"]["prompt"]
         .as_str()
         .expect("session system prompt");
-    assert!(reused_prompt.contains("Reply in English by default."));
+    assert_eq!(reused_prompt, frozen_prompt);
     assert!(!reused_prompt.contains("Reply in Chinese by default."));
 }
 
