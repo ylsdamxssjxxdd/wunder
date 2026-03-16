@@ -1,3 +1,4 @@
+mod activity_indicator;
 mod app;
 mod frame_scheduler;
 mod highlight;
@@ -16,14 +17,12 @@ use crossterm::event::{
     EventStream, KeyEventKind,
 };
 use crossterm::execute;
-use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use frame_scheduler::spawn_frame_scheduler;
 use frame_scheduler::FrameNotifications;
 use futures::StreamExt;
 use ratatui::backend::CrosstermBackend;
-use ratatui::Terminal;
+use ratatui::{Terminal, TerminalOptions, Viewport};
 use std::io;
 
 use crate::args::GlobalArgs;
@@ -59,6 +58,7 @@ pub async fn run_main(
 
     run_result?;
     restore_result?;
+    println!();
     Ok(())
 }
 
@@ -124,21 +124,26 @@ async fn run_loop(
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+    execute!(stdout, EnableBracketedPaste)?;
+
+    // Use an inline viewport so the transcript stays in normal scrollback,
+    // matching Codex-style wheel scrolling and native text selection.
+    let (_, rows) = crossterm::terminal::size()?;
+    let viewport = Viewport::Inline(rows.max(1));
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::with_options(backend, TerminalOptions { viewport })?;
     terminal.clear()?;
     Ok(terminal)
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableBracketedPaste,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), DisableBracketedPaste)?;
+    if let Err(error) = execute!(terminal.backend_mut(), DisableMouseCapture) {
+        if !cfg!(windows) || !error.to_string().contains("Initial console modes not set") {
+            return Err(error.into());
+        }
+    }
     terminal.show_cursor()?;
     Ok(())
 }
@@ -150,6 +155,10 @@ fn sync_mouse_mode(
 ) -> Result<()> {
     let desired_mouse_capture = app.mouse_capture_enabled();
     if *mouse_capture_enabled == Some(desired_mouse_capture) {
+        return Ok(());
+    }
+    if mouse_capture_enabled.is_none() && !desired_mouse_capture {
+        *mouse_capture_enabled = Some(false);
         return Ok(());
     }
     if desired_mouse_capture {

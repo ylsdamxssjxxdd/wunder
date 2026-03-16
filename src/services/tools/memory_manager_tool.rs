@@ -21,9 +21,15 @@ struct MemoryManagerArgs {
     #[serde(default)]
     session_id: Option<String>,
     #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
     content: Option<String>,
     #[serde(default)]
     summary: Option<String>,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
     #[serde(default)]
     query: Option<String>,
     #[serde(default)]
@@ -75,6 +81,89 @@ fn normalize_memory_query(payload: &MemoryManagerArgs) -> String {
         .unwrap_or("")
         .trim()
         .to_string()
+}
+
+fn normalize_memory_title(payload: &MemoryManagerArgs) -> String {
+    payload.title.as_deref().unwrap_or("").trim().to_string()
+}
+
+fn normalize_memory_summary(payload: &MemoryManagerArgs) -> String {
+    payload.summary.as_deref().unwrap_or("").trim().to_string()
+}
+
+fn normalize_memory_category(payload: &MemoryManagerArgs) -> Option<String> {
+    let cleaned = payload.category.as_deref().unwrap_or("").trim().to_string();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
+fn normalize_memory_tags(payload: &MemoryManagerArgs) -> Option<Vec<String>> {
+    let tags = payload
+        .tags
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect::<Vec<_>>();
+    (!tags.is_empty()).then_some(tags)
+}
+
+fn derive_memory_title_and_summary(
+    title: &str,
+    summary: &str,
+    content: &str,
+) -> (Option<String>, Option<String>) {
+    let clean_title = title.trim();
+    let clean_summary = summary.trim();
+    if !clean_title.is_empty() || !clean_summary.is_empty() {
+        return (
+            (!clean_title.is_empty()).then(|| clean_title.to_string()),
+            (!clean_summary.is_empty()).then(|| clean_summary.to_string()),
+        );
+    }
+
+    let clean_content = content.trim();
+    for separator in ['：', ':'] {
+        if let Some((left, right)) = clean_content.split_once(separator) {
+            let candidate_title = left.trim();
+            let candidate_summary = right.trim();
+            if !candidate_title.is_empty()
+                && !candidate_summary.is_empty()
+                && candidate_title.chars().count() <= 48
+            {
+                return (
+                    Some(candidate_title.to_string()),
+                    Some(candidate_summary.to_string()),
+                );
+            }
+        }
+    }
+
+    if !clean_content.is_empty() && clean_content.chars().count() <= 80 {
+        return (Some(clean_content.to_string()), None);
+    }
+
+    (None, None)
+}
+
+fn build_memory_fact_key(category: Option<&str>, title: Option<&str>, memory_id: &str) -> String {
+    let category_prefix = category
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("tool-note");
+    let title_suffix = title
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| {
+            value
+                .chars()
+                .map(|ch| if ch.is_whitespace() { '_' } else { ch })
+                .take(40)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| memory_id.trim().to_string());
+    format!("{category_prefix}::{title_suffix}")
 }
 
 fn normalize_memory_list_limit(limit: Option<i64>) -> i64 {
@@ -233,10 +322,23 @@ pub(crate) async fn execute_memory_manager_tool(
             if content.is_empty() {
                 return Err(anyhow!(i18n::t("error.content_required")));
             }
+            let title = normalize_memory_title(&payload);
+            let summary = normalize_memory_summary(&payload);
+            let category = normalize_memory_category(&payload);
+            let tags = normalize_memory_tags(&payload);
+            let (derived_title, derived_summary) =
+                derive_memory_title_and_summary(&title, &summary, &content);
             let mut memory_id = normalize_memory_record_id(&payload);
             if memory_id.is_empty() {
                 memory_id = format!("mem_{}", Uuid::new_v4().simple());
             }
+            let fact_key = build_memory_fact_key(
+                category.as_deref(),
+                derived_title
+                    .as_deref()
+                    .or((!title.is_empty()).then_some(title.as_str())),
+                &memory_id,
+            );
             let saved_record = fragment_store
                 .save_fragment(
                     context.user_id,
@@ -245,10 +347,12 @@ pub(crate) async fn execute_memory_manager_tool(
                         memory_id: Some(memory_id.clone()),
                         source_session_id: Some(context.session_id.to_string()),
                         source_type: Some("memory_manager".to_string()),
-                        category: Some("tool-note".to_string()),
-                        summary_l1: Some(content.clone()),
+                        category: Some(category.unwrap_or_else(|| "tool-note".to_string())),
+                        title_l0: derived_title,
+                        summary_l1: derived_summary,
                         content_l2: Some(content),
-                        fact_key: Some(format!("tool-note::{memory_id}")),
+                        fact_key: Some(fact_key),
+                        tags,
                         pinned: Some(false),
                         invalidated: Some(false),
                         ..Default::default()
@@ -272,6 +376,26 @@ pub(crate) async fn execute_memory_manager_tool(
             if content.is_empty() {
                 return Err(anyhow!(i18n::t("error.content_required")));
             }
+            let title = normalize_memory_title(&payload);
+            let summary = normalize_memory_summary(&payload);
+            let category = normalize_memory_category(&payload);
+            let tags = normalize_memory_tags(&payload);
+            let (derived_title, derived_summary) =
+                derive_memory_title_and_summary(&title, &summary, &content);
+            let existing_fragment =
+                fragment_store.get_fragment(context.user_id, context.agent_id, &memory_id);
+            let fact_key = build_memory_fact_key(
+                category.as_deref().or(existing_fragment
+                    .as_ref()
+                    .map(|item| item.category.as_str())),
+                derived_title
+                    .as_deref()
+                    .or((!title.is_empty()).then_some(title.as_str()))
+                    .or(existing_fragment
+                        .as_ref()
+                        .map(|item| item.title_l0.as_str())),
+                &memory_id,
+            );
             let updated_record = fragment_store
                 .save_fragment(
                     context.user_id,
@@ -280,9 +404,12 @@ pub(crate) async fn execute_memory_manager_tool(
                         memory_id: Some(memory_id.clone()),
                         source_session_id: Some(context.session_id.to_string()),
                         source_type: Some("memory_manager".to_string()),
-                        category: Some("tool-note".to_string()),
-                        summary_l1: Some(content.clone()),
+                        category,
+                        title_l0: derived_title,
+                        summary_l1: derived_summary,
                         content_l2: Some(content),
+                        fact_key: Some(fact_key),
+                        tags,
                         ..Default::default()
                     },
                 )
@@ -501,6 +628,18 @@ mod tests {
         assert_eq!(normalize_memory_recall_limit(Some(99)), 12);
     }
 
+    #[test]
+    fn derive_memory_title_and_summary_prefers_structured_fields() {
+        assert_eq!(
+            derive_memory_title_and_summary("用户姓名", "周华健", "用户姓名：周华健"),
+            (Some("用户姓名".to_string()), Some("周华健".to_string()))
+        );
+        assert_eq!(
+            derive_memory_title_and_summary("", "", "用户姓名：周华健"),
+            (Some("用户姓名".to_string()), Some("周华健".to_string()))
+        );
+    }
+
     #[tokio::test]
     async fn memory_manager_tool_writes_visible_fragments() {
         let harness = TestHarness::new();
@@ -528,6 +667,7 @@ mod tests {
         assert_eq!(fragments[0].memory_id, "pref-reply-language");
         assert_eq!(fragments[0].source_type, "memory-manager");
         assert_eq!(fragments[0].category, "tool-note");
+        assert_eq!(fragments[0].title_l0, "默认使用中文回答。");
 
         let listed = execute_memory_manager_tool(&context, &json!({ "action": "list" }))
             .await
@@ -626,5 +766,41 @@ mod tests {
             listed.get("agent_id").and_then(Value::as_str),
             Some("__default__")
         );
+    }
+
+    #[tokio::test]
+    async fn memory_manager_tool_supports_structured_fields() {
+        let harness = TestHarness::new();
+        let context = harness.context("u1", "sess-3", Some("agent-demo"));
+
+        let add = execute_memory_manager_tool(
+            &context,
+            &json!({
+                "action": "add",
+                "memory_id": "profile-name",
+                "title": "用户姓名",
+                "summary": "周华健",
+                "content": "用户姓名：周华健",
+                "category": "profile",
+                "tags": ["identity", "name"]
+            }),
+        )
+        .await
+        .expect("add structured memory");
+        assert_eq!(add.get("saved").and_then(Value::as_bool), Some(true));
+
+        let fragment_store = MemoryFragmentStore::new(harness.storage.clone());
+        let fragment = fragment_store
+            .get_fragment("u1", Some("agent-demo"), "profile-name")
+            .expect("get structured fragment");
+        assert_eq!(fragment.title_l0, "用户姓名");
+        assert_eq!(fragment.summary_l1, "周华健");
+        assert_eq!(fragment.content_l2, "用户姓名：周华健");
+        assert_eq!(fragment.category, "profile");
+        assert_eq!(
+            fragment.tags,
+            vec!["identity".to_string(), "name".to_string()]
+        );
+        assert_eq!(fragment.fact_key, "profile::用户姓名");
     }
 }

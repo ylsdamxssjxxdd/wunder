@@ -147,7 +147,7 @@ fn non_admin_debug_payload_still_uses_normal_profile() {
 }
 
 #[test]
-fn admin_debug_profile_keeps_delta_and_full_payload() {
+fn admin_debug_profile_keeps_delta_and_summarizes_llm_request() {
     let monitor = build_monitor(4);
     let session_id = format!("sess_{}", uuid::Uuid::new_v4().simple());
     let long_text = "abcdefghijklmnopqrstuvwxyz";
@@ -161,7 +161,25 @@ fn admin_debug_profile_keeps_delta_and_full_payload() {
     monitor.record_event(
         &session_id,
         "llm_request",
-        &json!({ "nested": { "text": long_text } }),
+        &json!({
+            "provider": "openai",
+            "payload": {
+                "messages": [
+                    { "role": "system", "content": long_text },
+                    { "role": "user", "content": "hello" }
+                ],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "apply_patch",
+                            "description": long_text
+                        }
+                    }
+                ],
+                "max_tokens": 2048
+            }
+        }),
     );
 
     let detail = monitor
@@ -173,7 +191,24 @@ fn admin_debug_profile_keeps_delta_and_full_payload() {
     assert_eq!(delta_event["data"]["delta"], json!(long_text));
 
     let request_event = find_event(&detail, "llm_request").expect("request event should exist");
-    assert_eq!(request_event["data"]["nested"]["text"], json!(long_text));
+    assert!(request_event["data"].get("payload").is_none());
+    assert_eq!(request_event["data"]["message_count"], json!(2));
+    assert_eq!(
+        request_event["data"]["payload_summary"]["messages"]["count"],
+        json!(2)
+    );
+    assert_eq!(
+        request_event["data"]["payload_summary"]["messages"]["role_counts"]["system"],
+        json!(1)
+    );
+    assert_eq!(
+        request_event["data"]["payload_summary"]["tools"]["count"],
+        json!(1)
+    );
+    assert_eq!(
+        request_event["data"]["payload_summary"]["tools"]["preview"][0]["function"]["name"],
+        json!("apply_patch")
+    );
 }
 
 #[test]

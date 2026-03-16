@@ -262,7 +262,11 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                         "enum": ["list", "add", "update", "delete", "clear", "recall"]
                     },
                     "memory_id": {"type": "string", "description": t("tool.spec.memory_manager.args.memory_id")},
+                    "title": {"type": "string", "description": t("tool.spec.memory_manager.args.title")},
+                    "summary": {"type": "string", "description": t("tool.spec.memory_manager.args.summary")},
                     "content": {"type": "string", "description": t("tool.spec.memory_manager.args.content")},
+                    "category": {"type": "string", "description": t("tool.spec.memory_manager.args.category")},
+                    "tags": {"type": "array", "items": {"type": "string"}, "description": t("tool.spec.memory_manager.args.tags")},
                     "query": {"type": "string", "description": t("tool.spec.memory_manager.args.query")},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": t("tool.spec.memory_manager.args.limit")},
                     "order": {
@@ -314,7 +318,19 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "properties": {
                     "content": {"type": "string", "description": t("tool.spec.exec.args.content")},
                     "workdir": {"type": "string", "description": t("tool.spec.exec.args.workdir")},
-                    "timeout_s": {"type": "integer", "description": t("tool.spec.exec.args.timeout")}
+                    "timeout_s": {"type": "number", "description": t("tool.spec.exec.args.timeout")},
+                    "dry_run": {"type": "boolean", "description": "Validate command and budgets without execution."},
+                    "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000, "description": "Optional execution time budget in milliseconds."},
+                    "output_budget_bytes": {"type": "integer", "minimum": 4096, "maximum": 4194304, "description": "Optional command output capture budget in bytes."},
+                    "max_commands": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Optional limit for number of commands parsed from content."},
+                    "budget": {
+                        "type": "object",
+                        "properties": {
+                            "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000},
+                            "output_budget_bytes": {"type": "integer", "minimum": 4096, "maximum": 4194304},
+                            "max_commands": {"type": "integer", "minimum": 1, "maximum": 200}
+                        }
+                    }
                 },
                 "required": ["content"]
             }),
@@ -357,6 +373,23 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                     "case_sensitive": {"type": "boolean", "description": t("tool.spec.search.args.case_sensitive")},
                     "max_depth": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_depth")},
                     "max_files": {"type": "integer", "minimum": 0, "description": t("tool.spec.search.args.max_files")},
+                    "max_matches": {"type": "integer", "minimum": 1, "maximum": 2000, "description": "Maximum number of matches to return (default 200)."},
+                    "max_candidates": {"type": "integer", "minimum": 1, "maximum": 20000, "description": "Maximum candidate files produced by fast search engine (default 4000)."},
+                    "timeout_ms": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "Search timeout in milliseconds (default 30000)."},
+                    "engine": {"type": "string", "enum": ["auto", "rg", "rust"], "description": "Search engine strategy: auto prefers rg and falls back to rust scanner."},
+                    "dry_run": {"type": "boolean", "description": "Validate search plan and resolved budget without scanning files."},
+                    "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 120000, "description": "Optional time budget cap in milliseconds for this search call."},
+                    "output_budget_bytes": {"type": "integer", "minimum": 2048, "maximum": 4194304, "description": "Optional cap for returned hits payload size in bytes."},
+                    "budget": {
+                        "type": "object",
+                        "properties": {
+                            "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 120000},
+                            "output_budget_bytes": {"type": "integer", "minimum": 2048, "maximum": 4194304},
+                            "max_files": {"type": "integer", "minimum": 1, "maximum": 20000},
+                            "max_matches": {"type": "integer", "minimum": 1, "maximum": 2000},
+                            "max_candidates": {"type": "integer", "minimum": 1, "maximum": 20000}
+                        }
+                    },
                     "context_before": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_before")},
                     "context_after": {"type": "integer", "minimum": 0, "maximum": 20, "description": t("tool.spec.search.args.context_after")}
                 },
@@ -369,6 +402,18 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             input_schema: json!({
                 "type": "object",
                 "properties": {
+                    "dry_run": {"type": "boolean", "description": "Resolve targets and metadata without reading full file content."},
+                    "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000, "description": "Optional time budget cap in milliseconds for this read call."},
+                    "output_budget_bytes": {"type": "integer", "minimum": 1024, "maximum": 2097152, "description": "Optional cap for aggregated read output text bytes."},
+                    "max_files": {"type": "integer", "minimum": 1, "maximum": 20, "description": "Optional cap for number of files processed in this call."},
+                    "budget": {
+                        "type": "object",
+                        "properties": {
+                            "time_budget_ms": {"type": "integer", "minimum": 1, "maximum": 600000},
+                            "output_budget_bytes": {"type": "integer", "minimum": 1024, "maximum": 2097152},
+                            "max_files": {"type": "integer", "minimum": 1, "maximum": 20}
+                        }
+                    },
                     "files": {
                         "type": "array",
                         "items": {
@@ -377,7 +422,18 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                                 "path": {"type": "string", "description": t("tool.spec.read.args.files.path")},
                                 "start_line": {"type": "integer", "description": t("tool.spec.read.args.files.start_line")},
                                 "end_line": {"type": "integer", "description": t("tool.spec.read.args.files.end_line")},
-                                "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}}
+                                "line_ranges": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}, "minItems": 2}},
+                                "mode": {"type": "string", "enum": ["slice", "indentation"], "description": "Read mode: slice ranges or indentation-aware block."},
+                                "indentation": {
+                                    "type": "object",
+                                    "properties": {
+                                        "anchor_line": {"type": "integer", "minimum": 1},
+                                        "max_levels": {"type": "integer", "minimum": 0},
+                                        "include_siblings": {"type": "boolean"},
+                                        "include_header": {"type": "boolean"},
+                                        "max_lines": {"type": "integer", "minimum": 1}
+                                    }
+                                }
                             },
                             "required": ["path"]
                         }
@@ -416,7 +472,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": t("tool.spec.write.args.path")},
-                    "content": {"type": "string", "description": t("tool.spec.write.args.content")}
+                    "content": {"type": "string", "description": t("tool.spec.write.args.content")},
+                    "dry_run": {"type": "boolean", "description": "Preview write target and size changes without writing to disk."}
                 },
                 "required": ["path", "content"]
             }),
@@ -427,7 +484,8 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "input": {"type": "string", "description": t("tool.spec.apply_patch.args.input")}
+                    "input": {"type": "string", "description": t("tool.spec.apply_patch.args.input")},
+                    "dry_run": {"type": "boolean", "description": "Parse and resolve patch targets without writing files."}
                 },
                 "required": ["input"]
             }),

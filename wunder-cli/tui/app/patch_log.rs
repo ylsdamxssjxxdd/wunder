@@ -10,7 +10,19 @@ use crate::patch_diff::{
     PatchDiffPreview,
 };
 use crate::tool_display::summarize_tool_result;
+use crate::tui::activity_indicator;
 use crate::tui::theme;
+
+fn pending_status_icon_span() -> Span<'static> {
+    Span::styled(
+        format!("{} ", activity_indicator::RUNNING_INDICATOR),
+        activity_indicator::pending_indicator_style(),
+    )
+}
+
+fn status_icon_span(icon: &str, icon_style: Style) -> Span<'static> {
+    Span::styled(format!("{icon} "), icon_style)
+}
 
 #[derive(Debug, Clone)]
 pub(super) enum SpecialLogEntry {
@@ -185,8 +197,13 @@ impl GenericToolLogEntry {
 
     fn header_line(&self) -> Line<'static> {
         let (icon, icon_style, text_style) = self.header_parts();
+        let icon_span = if self.status == GenericToolLogStatus::Pending {
+            pending_status_icon_span()
+        } else {
+            status_icon_span(icon, icon_style)
+        };
         Line::from(vec![
-            Span::styled(format!("{icon} "), icon_style),
+            icon_span,
             Span::styled(self.header_text(), text_style),
         ])
     }
@@ -211,8 +228,13 @@ impl GenericToolLogEntry {
         if total_width > usize::from(width.max(1)) {
             return None;
         }
+        let icon_span = if self.status == GenericToolLogStatus::Pending {
+            pending_status_icon_span()
+        } else {
+            status_icon_span(icon, icon_style)
+        };
         Some(Line::from(vec![
-            Span::styled(format!("{icon} "), icon_style),
+            icon_span,
             Span::styled(header, text_style),
             Span::raw(" "),
             Span::styled(summary.to_string(), summary_style()),
@@ -463,8 +485,13 @@ impl PatchLogEntry {
 
     fn header_line(&self) -> Line<'static> {
         let (icon, icon_style, text_style) = self.header_parts();
+        let icon_span = if self.status == PatchLogStatus::Pending {
+            pending_status_icon_span()
+        } else {
+            status_icon_span(icon, icon_style)
+        };
         Line::from(vec![
-            Span::styled(format!("{icon} "), icon_style),
+            icon_span,
             Span::styled(self.header.clone(), text_style),
         ])
     }
@@ -479,8 +506,13 @@ impl PatchLogEntry {
         if total_width > usize::from(width.max(1)) {
             return None;
         }
+        let icon_span = if self.status == PatchLogStatus::Pending {
+            pending_status_icon_span()
+        } else {
+            status_icon_span(icon, icon_style)
+        };
         Some(Line::from(vec![
-            Span::styled(format!("{icon} "), icon_style),
+            icon_span,
             Span::styled(self.header.clone(), text_style),
             Span::raw(" "),
             Span::styled(summary.to_string(), summary_style()),

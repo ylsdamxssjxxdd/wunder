@@ -10,6 +10,34 @@
           {{ t('common.refresh') }}
         </button>
         <button
+          class="agent-memory-icon-btn"
+          type="button"
+          :disabled="loading"
+          :title="t('messenger.memory.hitsTitle')"
+          :aria-label="t('messenger.memory.hitsTitle')"
+          @click="hitsDialogVisible = true"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M10.5 4a6.5 6.5 0 1 0 4.07 11.57l3.93 3.93 1.41-1.41-3.93-3.93A6.5 6.5 0 0 0 10.5 4Zm0 2a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Zm7.5 1h2v2h-2V7Zm-1 4h3v2h-3v-2Zm-2 4h5v2h-5v-2Z"
+            />
+          </svg>
+        </button>
+        <button
+          class="agent-memory-icon-btn"
+          type="button"
+          :disabled="loading"
+          :title="t('messenger.memory.jobsTitle')"
+          :aria-label="t('messenger.memory.jobsTitle')"
+          @click="jobsDialogVisible = true"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M7 3h10v3h3v14a2 2 0 0 1-2 2H7a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3Zm8 1.5H7A1.5 1.5 0 0 0 5.5 6v13A1.5 1.5 0 0 0 7 20.5h11a.5.5 0 0 0 .5-.5V7.5H15V4.5Zm-6 5h6v1.75H9V9.5Zm0 4h6v1.75H9V13.5Zm0-8h4v1.75H9V5.5Z"
+            />
+          </svg>
+        </button>
+        <button
           class="agent-memory-btn agent-memory-btn--primary"
           type="button"
           :disabled="saving || mutating"
@@ -20,19 +48,30 @@
       </div>
     </div>
 
-    <div class="agent-memory-stats">
-      <span class="agent-memory-chip agent-memory-chip--stat">
-        {{ t('messenger.memory.visible', { visible: filteredItems.length, total: items.length }) }}
-      </span>
-      <span class="agent-memory-chip agent-memory-chip--stat">{{ t('messenger.memory.status.active') }} {{ activeCount }}</span>
-      <span class="agent-memory-chip agent-memory-chip--stat">
-        {{ t('messenger.memory.status.superseded') }} {{ supersededCount }}
-      </span>
-      <span class="agent-memory-chip agent-memory-chip--stat">
-        {{ t('messenger.memory.status.invalidated') }} {{ invalidatedCount }}
-      </span>
-      <span class="agent-memory-chip agent-memory-chip--stat">{{ t('messenger.memory.pinned', { count: pinnedCount }) }}</span>
-      <span class="agent-memory-chip agent-memory-chip--stat">{{ formatFragmentSource('auto_turn') }} {{ autoExtractedCount }}</span>
+    <div class="agent-memory-overview">
+      <div class="agent-memory-overview-main">
+        <div class="agent-memory-overview-count">{{ filteredItems.length }}/{{ items.length }}</div>
+        <div class="agent-memory-overview-label">{{ t('messenger.memory.visibleLabel') }}</div>
+      </div>
+      <div class="agent-memory-overview-stats">
+        <div class="agent-memory-overview-item">
+          <span>{{ t('messenger.memory.status.active') }}</span>
+          <strong>{{ activeCount }}</strong>
+        </div>
+        <div class="agent-memory-overview-item">
+          <span>{{ t('messenger.memory.status.superseded') }}</span>
+          <strong>{{ supersededCount }}</strong>
+        </div>
+        <div class="agent-memory-overview-item">
+          <span>{{ t('messenger.memory.status.invalidated') }}</span>
+          <strong>{{ invalidatedCount }}</strong>
+        </div>
+        <div class="agent-memory-overview-item">
+          <span>{{ t('messenger.memory.pinnedLabel') }}</span>
+          <strong>{{ pinnedCount }}</strong>
+        </div>
+      </div>
+      <div class="agent-memory-overview-note">{{ formatFragmentSource('auto_turn') }} {{ autoExtractedCount }}</div>
     </div>
 
     <div class="agent-memory-filters">
@@ -69,9 +108,12 @@
       >
         <div class="agent-memory-card-topline">
           <div class="agent-memory-card-topline-chips">
+            <span v-if="item.pinned" class="agent-memory-chip agent-memory-chip--warn">{{ t('messenger.memory.pinTag') }}</span>
+            <span v-if="isItemSuperseded(item)" class="agent-memory-chip">{{ t('messenger.memory.status.superseded') }}</span>
+            <span v-else-if="isItemInvalidated(item)" class="agent-memory-chip agent-memory-chip--danger">
+              {{ t('messenger.memory.invalidateTag') }}
+            </span>
             <span class="agent-memory-chip">{{ item.category || '-' }}</span>
-            <span class="agent-memory-chip">{{ formatFragmentSource(item.source_type) }}</span>
-            <span v-if="item.fact_key" class="agent-memory-chip agent-memory-chip--mono">{{ item.fact_key }}</span>
           </div>
           <span class="agent-memory-card-time">{{ formatFragmentTime(item.updated_at) }}</span>
         </div>
@@ -79,57 +121,30 @@
         <div class="agent-memory-card-head">
           <div class="agent-memory-card-head-main">
             <span class="agent-memory-card-title">{{ getMemoryTitle(item) }}</span>
-            <span v-if="item.pinned" class="agent-memory-chip agent-memory-chip--warn">{{ t('messenger.memory.pinTag') }}</span>
-            <span v-if="isItemSuperseded(item)" class="agent-memory-chip">
-              {{ t('messenger.memory.status.superseded') }}
-            </span>
-            <span v-if="isItemInvalidated(item)" class="agent-memory-chip agent-memory-chip--danger">
-              {{ t('messenger.memory.invalidateTag') }}
-            </span>
           </div>
         </div>
 
-        <div class="agent-memory-card-summary">{{ item.summary_l1 || item.content_l2 || getMemoryTitle(item) }}</div>
+        <div class="agent-memory-card-summary">{{ getMemoryPreview(item) }}</div>
 
-        <div v-if="hasTaxonomy(item)" class="agent-memory-card-taxonomy">
-          <div v-if="previewList(item.tags).length" class="agent-memory-card-section">
-            <span class="agent-memory-card-section-label">{{ t('messenger.memory.field.tags') }}</span>
-            <div class="agent-memory-card-section-chips">
-              <span
-                v-for="tag in previewList(item.tags)"
-                :key="`${item.memory_id}-tag-${tag}`"
-                class="agent-memory-chip"
-              >
-                {{ tag }}
-              </span>
-              <span v-if="remainingListCount(item.tags)" class="agent-memory-chip">+{{ remainingListCount(item.tags) }}</span>
-            </div>
-          </div>
-          <div v-if="previewList(item.entities).length" class="agent-memory-card-section">
-            <span class="agent-memory-card-section-label">{{ t('messenger.memory.field.entities') }}</span>
-            <div class="agent-memory-card-section-chips">
-              <span
-                v-for="entity in previewList(item.entities)"
-                :key="`${item.memory_id}-entity-${entity}`"
-                class="agent-memory-chip"
-              >
-                {{ entity }}
-              </span>
-              <span v-if="remainingListCount(item.entities)" class="agent-memory-chip">
-                +{{ remainingListCount(item.entities) }}
-              </span>
-            </div>
-          </div>
+        <div v-if="hasTaxonomy(item)" class="agent-memory-card-section-chips">
+          <span v-for="tag in previewList(item.tags, 2)" :key="`${item.memory_id}-tag-${tag}`" class="agent-memory-chip">
+            {{ tag }}
+          </span>
+          <span v-for="entity in previewList(item.entities, 2)" :key="`${item.memory_id}-entity-${entity}`" class="agent-memory-chip">
+            {{ entity }}
+          </span>
+          <span
+            v-if="remainingListCount(item.tags, 2) + remainingListCount(item.entities, 2)"
+            class="agent-memory-chip"
+          >
+            +{{ remainingListCount(item.tags, 2) + remainingListCount(item.entities, 2) }}
+          </span>
         </div>
 
         <div class="agent-memory-card-meta">
-          <span class="agent-memory-chip">{{ describeItemStatus(item) }}</span>
-          <span class="agent-memory-chip">{{ describeItemTier(item) }}</span>
-          <span class="agent-memory-chip">{{ t('messenger.memory.meta.hitCount', { count: Number(item.hit_count || 0) }) }}</span>
-          <span class="agent-memory-chip">
-            {{ t('messenger.memory.meta.accessCount', { count: Number(item.access_count || 0) }) }}
-          </span>
-          <span v-if="describeItemRelation(item)" class="agent-memory-chip">{{ describeItemRelation(item) }}</span>
+          <span class="agent-memory-card-meta-item">{{ formatFragmentSource(item.source_type) }}</span>
+          <span class="agent-memory-card-meta-item">{{ t('messenger.memory.meta.hitCount', { count: Number(item.hit_count || 0) }) }}</span>
+          <span v-if="describeItemRelation(item)" class="agent-memory-card-meta-item">{{ describeItemRelation(item) }}</span>
         </div>
 
         <div class="agent-memory-card-actions">
@@ -156,43 +171,65 @@
       </article>
     </div>
 
-    <div class="agent-memory-insight-grid">
-      <section class="agent-memory-insight-panel">
-        <div class="agent-memory-insight-head">
-          <div class="agent-memory-title">{{ t('messenger.memory.hitsTitle') }}</div>
-          <span class="agent-memory-chip">{{ hits.length }}</span>
-        </div>
-        <div v-if="!visibleHits.length" class="agent-memory-empty agent-memory-empty--compact">{{ t('messenger.memory.hitsEmpty') }}</div>
-        <div v-else class="agent-memory-hit-list">
-          <article v-for="hit in visibleHits" :key="hit.hit_id" class="agent-memory-hit-card">
-            <div class="agent-memory-hit-head">
-              <strong>{{ resolveHitTitle(hit.memory_id) }}</strong>
-              <span>{{ formatHitTime(hit.created_at) }}</span>
-            </div>
-            <div class="agent-memory-hit-reason">{{ formatHitReason(hit.reason_json) }}</div>
-            <div class="agent-memory-hit-score">{{ formatHitScoreLine(hit) }}</div>
-          </article>
-        </div>
-      </section>
+    <el-dialog
+      v-model="hitsDialogVisible"
+      :title="t('messenger.memory.hitsTitle')"
+      width="680px"
+      top="6vh"
+      append-to-body
+      destroy-on-close
+      class="messenger-dialog agent-memory-dialog agent-memory-dialog--insight"
+    >
+      <div v-if="!hits.length" class="agent-memory-empty agent-memory-empty--compact">{{ t('messenger.memory.hitsEmpty') }}</div>
+      <div v-else class="agent-memory-hit-list agent-memory-hit-list--dialog">
+        <article v-for="hit in hits" :key="hit.hit_id" class="agent-memory-hit-card">
+          <div class="agent-memory-hit-head">
+            <strong>{{ resolveHitTitle(hit.memory_id) }}</strong>
+            <span>{{ formatHitTime(hit.created_at) }}</span>
+          </div>
+          <div class="agent-memory-hit-reason">{{ formatHitReason(hit.reason_json) }}</div>
+          <div class="agent-memory-hit-score">{{ formatHitScoreLine(hit) }}</div>
+        </article>
+      </div>
+    </el-dialog>
 
-      <section class="agent-memory-insight-panel">
-        <div class="agent-memory-insight-head">
-          <div class="agent-memory-title">{{ t('messenger.memory.jobsTitle') }}</div>
-          <span class="agent-memory-chip">{{ jobs.length }}</span>
+    <el-dialog
+      v-model="jobsDialogVisible"
+      :title="t('messenger.memory.jobsTitle')"
+      width="680px"
+      top="6vh"
+      append-to-body
+      destroy-on-close
+      class="messenger-dialog agent-memory-dialog agent-memory-dialog--insight"
+    >
+      <div class="agent-memory-auto-extract-panel">
+        <div class="agent-memory-auto-extract-copy">
+          <div class="agent-memory-auto-extract-title">{{ t('messenger.memory.autoExtract.title') }}</div>
+          <div class="agent-memory-auto-extract-hint">{{ t('messenger.memory.autoExtract.hint') }}</div>
         </div>
-        <div v-if="!visibleJobs.length" class="agent-memory-empty agent-memory-empty--compact">{{ t('messenger.memory.jobsEmpty') }}</div>
-        <div v-else class="agent-memory-hit-list">
-          <article v-for="job in visibleJobs" :key="job.job_id" class="agent-memory-hit-card">
-            <div class="agent-memory-hit-head">
-              <strong>{{ formatJobType(job.job_type) }}</strong>
-              <span class="agent-memory-chip" :class="formatJobStatusClass(job.status)">{{ formatJobStatus(job.status) }}</span>
-            </div>
-            <div class="agent-memory-hit-reason">{{ formatJobSummary(job) }}</div>
-            <div class="agent-memory-hit-score">{{ formatJobMeta(job) }}</div>
-          </article>
+        <div class="agent-memory-auto-extract-switch">
+          <span class="agent-memory-auto-extract-label">{{ t('messenger.memory.autoExtract.enable') }}</span>
+          <el-switch
+            :model-value="autoExtractEnabled"
+            :loading="autoExtractSaving"
+            :disabled="loading || autoExtractSaving"
+            @change="handleAutoExtractChange"
+          />
         </div>
-      </section>
-    </div>
+      </div>
+      <div class="agent-memory-dialog-divider"></div>
+      <div v-if="!jobs.length" class="agent-memory-empty agent-memory-empty--compact">{{ t('messenger.memory.jobsEmpty') }}</div>
+      <div v-else class="agent-memory-hit-list agent-memory-hit-list--dialog">
+        <article v-for="job in jobs" :key="job.job_id" class="agent-memory-hit-card">
+          <div class="agent-memory-hit-head">
+            <strong>{{ formatJobType(job.job_type) }}</strong>
+            <span class="agent-memory-chip" :class="formatJobStatusClass(job.status)">{{ formatJobStatus(job.status) }}</span>
+          </div>
+          <div class="agent-memory-hit-reason">{{ formatJobSummary(job) }}</div>
+          <div class="agent-memory-hit-score">{{ formatJobMeta(job) }}</div>
+        </article>
+      </div>
+    </el-dialog>
 
     <el-dialog
       v-model="dialogVisible"
@@ -208,7 +245,6 @@
     >
       <div class="agent-memory-dialog-body">
         <div v-if="currentEditingItem" class="agent-memory-meta-row">
-          <span class="agent-memory-chip agent-memory-chip--mono">{{ currentEditingItem.memory_id }}</span>
           <span class="agent-memory-chip">{{ t('messenger.memory.meta.source') }}: {{ formatFragmentSource(currentEditingItem.source_type) }}</span>
           <span class="agent-memory-chip">{{ describeItemStatus(currentEditingItem) }}</span>
           <span class="agent-memory-chip">{{ describeItemTier(currentEditingItem) }}</span>
@@ -222,26 +258,38 @@
           {{ dialogErrorMessage }}
         </div>
 
+        <div class="agent-memory-editor-hint">{{ t('messenger.memory.editorHint') }}</div>
+
         <div class="agent-memory-grid agent-memory-grid--editor">
           <div class="agent-memory-field agent-memory-field--full">
             <label>{{ t('messenger.memory.field.title') }}</label>
-            <input v-model.trim="editor.title_l0" class="agent-memory-input" />
+            <input
+              v-model.trim="editor.title_l0"
+              class="agent-memory-input"
+              :placeholder="t('messenger.memory.placeholder.title')"
+            />
           </div>
           <div class="agent-memory-field agent-memory-field--full">
             <label>{{ t('messenger.memory.field.summary') }}</label>
-            <textarea v-model.trim="editor.summary_l1" class="agent-memory-textarea" rows="4"></textarea>
+            <textarea
+              v-model.trim="editor.summary_l1"
+              class="agent-memory-textarea"
+              rows="4"
+              :placeholder="t('messenger.memory.placeholder.summary')"
+            ></textarea>
           </div>
           <div class="agent-memory-field agent-memory-field--full">
             <label>{{ t('messenger.memory.field.content') }}</label>
-            <textarea v-model.trim="editor.content_l2" class="agent-memory-textarea" rows="8"></textarea>
+            <textarea
+              v-model.trim="editor.content_l2"
+              class="agent-memory-textarea"
+              rows="8"
+              :placeholder="t('messenger.memory.placeholder.content')"
+            ></textarea>
           </div>
           <div class="agent-memory-field">
             <label>{{ t('messenger.memory.field.category') }}</label>
             <input v-model.trim="editor.category" class="agent-memory-input" />
-          </div>
-          <div class="agent-memory-field">
-            <label>{{ t('messenger.memory.field.factKey') }}</label>
-            <input v-model.trim="editor.fact_key" class="agent-memory-input" />
           </div>
           <div class="agent-memory-field">
             <label>{{ t('messenger.memory.field.tags') }}</label>
@@ -292,6 +340,7 @@ import {
   invalidateAgentMemory,
   listAgentMemories,
   pinAgentMemory,
+  updateAgentMemorySettings,
   updateAgentMemory
 } from '@/api/memory';
 import { useI18n } from '@/i18n';
@@ -304,7 +353,6 @@ type EditorState = {
   summary_l1: string;
   content_l2: string;
   category: string;
-  fact_key: string;
   tagsText: string;
   entitiesText: string;
   pinned: boolean;
@@ -324,6 +372,10 @@ const search = ref('');
 const categoryFilter = ref('');
 const statusFilter = ref('');
 const dialogVisible = ref(false);
+const hitsDialogVisible = ref(false);
+const jobsDialogVisible = ref(false);
+const autoExtractEnabled = ref(false);
+const autoExtractSaving = ref(false);
 const editingId = ref('');
 const editor = ref<EditorState>(createEmptyEditor());
 const mounted = ref(false);
@@ -357,8 +409,6 @@ const supersededCount = computed(() => items.value.filter((item) => isItemSupers
 const invalidatedCount = computed(() => items.value.filter((item) => isItemInvalidated(item)).length);
 const activeCount = computed(() => items.value.filter((item) => isItemActive(item)).length);
 const autoExtractedCount = computed(() => items.value.filter((item) => normalizeSourceType(item.source_type) === 'auto_turn').length);
-const visibleHits = computed(() => hits.value.slice(0, 6));
-const visibleJobs = computed(() => jobs.value.slice(0, 6));
 const currentEditingItem = computed(() => items.value.find((item) => item.memory_id === editingId.value) || null);
 const dialogTitle = computed(() => (editingId.value ? `${t('common.edit')} - ${t('messenger.memory.title')}` : t('messenger.memory.new')));
 const memoryTitleMap = computed(() => {
@@ -370,8 +420,7 @@ function createEmptyEditor(): EditorState {
     title_l0: '',
     summary_l1: '',
     content_l2: '',
-    category: 'session_summary',
-    fact_key: '',
+    category: 'tool-note',
     tagsText: '',
     entitiesText: '',
     pinned: false,
@@ -438,8 +487,7 @@ function syncEditorFromItem(item: MemoryItem | null | undefined): void {
     title_l0: String(item.title_l0 || ''),
     summary_l1: String(item.summary_l1 || ''),
     content_l2: String(item.content_l2 || ''),
-    category: String(item.category || 'session_summary'),
-    fact_key: String(item.fact_key || ''),
+    category: String(item.category || 'tool-note'),
     tagsText: normalizeStringList(item.tags).join(', '),
     entitiesText: normalizeStringList(item.entities).join(', '),
     pinned: Boolean(item.pinned),
@@ -457,12 +505,13 @@ async function loadData(): Promise<void> {
     items.value = Array.isArray(memoryRes?.data?.data?.items) ? memoryRes.data.data.items : [];
     hits.value = Array.isArray(memoryRes?.data?.data?.recent_hits) ? memoryRes.data.data.recent_hits : [];
     jobs.value = Array.isArray(memoryRes?.data?.data?.recent_jobs) ? memoryRes.data.data.recent_jobs : [];
+    autoExtractEnabled.value = Boolean(memoryRes?.data?.data?.settings?.auto_extract_enabled);
     if (editingId.value) {
       syncEditorFromItem(items.value.find((item) => item.memory_id === editingId.value) || null);
     }
   } catch (error: any) {
     if (disposed || token !== requestToken) return;
-    errorMessage.value = String(error?.response?.data?.error || error?.message || t('common.loadFailed'));
+    errorMessage.value = resolveRequestError(error, 'common.loadFailed');
   } finally {
     if (!disposed && token === requestToken) loading.value = false;
   }
@@ -490,6 +539,14 @@ function handleDialogClosed(): void {
 function getMemoryTitle(item: MemoryItem | null | undefined): string {
   return String(item?.title_l0 || t('messenger.memory.untitled'));
 }
+function getMemoryPreview(item: MemoryItem | null | undefined): string {
+  const title = getMemoryTitle(item);
+  const summary = String(item?.summary_l1 || '').trim();
+  const content = String(item?.content_l2 || '').trim();
+  if (summary && summary !== title) return summary;
+  if (content && content !== title) return content;
+  return title;
+}
 function isActionCanceled(error: unknown): boolean {
   return error === 'cancel' || error === 'close' || error === 'dismiss';
 }
@@ -501,6 +558,29 @@ function splitTags(value: string): string[] {
     .split(/[\n,]/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+async function handleAutoExtractChange(value: string | number | boolean): Promise<void> {
+  if (autoExtractSaving.value) return;
+  const nextValue = Boolean(value);
+  const previousValue = autoExtractEnabled.value;
+  autoExtractEnabled.value = nextValue;
+  errorMessage.value = '';
+  try {
+    autoExtractSaving.value = true;
+    const response = await updateAgentMemorySettings(requestAgentId.value, {
+      auto_extract_enabled: nextValue
+    });
+    if (disposed) return;
+    autoExtractEnabled.value = Boolean(response?.data?.data?.settings?.auto_extract_enabled);
+    ElMessage.success(t('messenger.memory.autoExtract.saveSuccess'));
+  } catch (error: any) {
+    autoExtractEnabled.value = previousValue;
+    const message = resolveRequestError(error, 'common.saveFailed');
+    errorMessage.value = message;
+    ElMessage.error(message);
+  } finally {
+    if (!disposed) autoExtractSaving.value = false;
+  }
 }
 function hasEditorContent(): boolean {
   return [editor.value.title_l0, editor.value.summary_l1, editor.value.content_l2].some(
@@ -522,7 +602,6 @@ async function saveCurrent(): Promise<void> {
     summary_l1: editor.value.summary_l1,
     content_l2: editor.value.content_l2,
     category: editor.value.category,
-    fact_key: editor.value.fact_key,
     tags: splitTags(editor.value.tagsText),
     entities: splitTags(editor.value.entitiesText),
     pinned: editor.value.pinned,
@@ -714,6 +793,8 @@ watch(
   (value, previousValue) => {
     if (!mounted.value || disposed || String(value || '') === String(previousValue || '')) return;
     dialogVisible.value = false;
+    hitsDialogVisible.value = false;
+    jobsDialogVisible.value = false;
     dialogErrorMessage.value = '';
     saving.value = false;
     mutating.value = false;
@@ -722,6 +803,8 @@ watch(
     items.value = [];
     hits.value = [];
     jobs.value = [];
+    autoExtractEnabled.value = false;
+    autoExtractSaving.value = false;
     void loadData();
   }
 );
@@ -744,7 +827,6 @@ watch(
   gap: 12px;
 }
 .agent-memory-toolbar-actions,
-.agent-memory-stats,
 .agent-memory-card-topline-chips,
 .agent-memory-card-meta,
 .agent-memory-card-actions,
@@ -767,8 +849,113 @@ watch(
   color: var(--app-text-muted, #64748b);
   font-size: 12px;
 }
-.agent-memory-stats {
-  gap: 8px;
+.agent-memory-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.2));
+  border-radius: 18px;
+  background: var(--app-panel-bg, rgba(15, 23, 42, 0.04));
+}
+.agent-memory-overview-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.agent-memory-overview-count {
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 800;
+}
+.agent-memory-overview-label,
+.agent-memory-overview-note {
+  color: var(--app-text-muted, #64748b);
+  font-size: 12px;
+}
+.agent-memory-overview-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.agent-memory-overview-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(148, 163, 184, 0.08);
+}
+.agent-memory-overview-item strong {
+  font-size: 15px;
+}
+.agent-memory-auto-extract-panel {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.22));
+  border-radius: 16px;
+  background: rgba(59, 130, 246, 0.04);
+}
+.agent-memory-auto-extract-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.agent-memory-auto-extract-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+.agent-memory-auto-extract-hint,
+.agent-memory-auto-extract-label {
+  color: var(--app-text-muted, #64748b);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.agent-memory-auto-extract-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.agent-memory-dialog-divider {
+  height: 1px;
+  margin: 14px 0 16px;
+  background: var(--app-border-color, rgba(148, 163, 184, 0.16));
+}
+.agent-memory-icon-btn {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  border: 1px solid var(--app-border-color, rgba(148, 163, 184, 0.24));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
+}
+.agent-memory-icon-btn svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.agent-memory-icon-btn:hover:not(:disabled) {
+  border-color: var(--app-primary-color, #3b82f6);
+  background: rgba(59, 130, 246, 0.08);
+}
+.agent-memory-icon-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.agent-memory-icon-btn:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
 }
 .agent-memory-filters {
   display: grid;
@@ -804,7 +991,7 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-height: 250px;
+  min-height: 220px;
   transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 .agent-memory-card--invalidated {
@@ -836,6 +1023,7 @@ watch(
 .agent-memory-card-title {
   font-weight: 700;
   line-height: 1.5;
+  font-size: 15px;
 }
 .agent-memory-card-summary,
 .agent-memory-hit-reason {
@@ -843,9 +1031,13 @@ watch(
   color: var(--app-text-color, #0f172a);
   line-height: 1.7;
   display: -webkit-box;
-  -webkit-line-clamp: 4;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.agent-memory-card-meta-item {
+  color: var(--app-text-muted, #64748b);
+  font-size: 12px;
 }
 .agent-memory-card-taxonomy {
   display: flex;
@@ -1007,14 +1199,28 @@ watch(
   gap: 12px;
   margin-top: 14px;
 }
+.agent-memory-hit-list--dialog {
+  max-height: min(60vh, 640px);
+  overflow-y: auto;
+  margin-top: 0;
+  padding-right: 4px;
+}
 .agent-memory-hit-card {
   padding: 12px;
+}
+.agent-memory-editor-hint {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--app-text-muted, #475569);
+  font-size: 12px;
+  line-height: 1.6;
 }
 .agent-memory-dialog-body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-height: calc(100vh - 260px);
+  max-height: calc(100vh - 220px);
   overflow-y: auto;
   padding: 2px 4px 2px 0;
 }
@@ -1028,10 +1234,10 @@ watch(
   align-items: flex-end;
 }
 :deep(.agent-memory-dialog.el-dialog) {
-  width: min(760px, calc(100vw - 32px));
-  max-width: calc(100vw - 32px);
-  max-height: calc(100vh - 8vh);
-  margin: 0 auto;
+  width: min(720px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 32px);
+  margin: 24px auto 8px;
   overflow: hidden;
 }
 :deep(.agent-memory-dialog .el-dialog__body) {
@@ -1042,9 +1248,12 @@ watch(
 }
 @media (max-width: 1100px) {
   .agent-memory-filters,
-  .agent-memory-insight-grid,
   .agent-memory-grid--editor {
     grid-template-columns: 1fr;
+  }
+  .agent-memory-overview {
+    flex-direction: column;
+    align-items: flex-start;
   }
   .agent-memory-search,
   .agent-memory-field--full {

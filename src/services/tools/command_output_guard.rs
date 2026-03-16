@@ -9,6 +9,10 @@ pub(crate) const STDERR_CAPTURE_POLICY: CommandOutputPolicy = CommandOutputPolic
     head_bytes: 8 * 1024,
     tail_bytes: 56 * 1024,
 };
+pub(crate) const DEFAULT_CAPTURE_TOTAL_BYTES: usize =
+    STDOUT_CAPTURE_POLICY.max_bytes() + STDERR_CAPTURE_POLICY.max_bytes();
+const MIN_CAPTURE_TOTAL_BYTES: usize = 4 * 1024;
+const MAX_CAPTURE_TOTAL_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandOutputPolicy {
@@ -19,6 +23,44 @@ pub(crate) struct CommandOutputPolicy {
 impl CommandOutputPolicy {
     pub(crate) const fn max_bytes(self) -> usize {
         self.head_bytes + self.tail_bytes
+    }
+}
+
+pub(crate) fn derive_capture_policies(
+    output_budget_bytes: Option<usize>,
+) -> (CommandOutputPolicy, CommandOutputPolicy) {
+    let Some(total_budget) = output_budget_bytes else {
+        return (STDOUT_CAPTURE_POLICY, STDERR_CAPTURE_POLICY);
+    };
+    let clamped_total = total_budget.clamp(MIN_CAPTURE_TOTAL_BYTES, MAX_CAPTURE_TOTAL_BYTES);
+    let mut stdout_budget = clamped_total / 2;
+    let mut stderr_budget = clamped_total.saturating_sub(stdout_budget);
+    if stdout_budget == 0 {
+        stdout_budget = 1;
+    }
+    if stderr_budget == 0 {
+        stderr_budget = 1;
+        stdout_budget = stdout_budget.saturating_sub(1).max(1);
+    }
+    (
+        scale_policy(STDOUT_CAPTURE_POLICY, stdout_budget),
+        scale_policy(STDERR_CAPTURE_POLICY, stderr_budget),
+    )
+}
+
+fn scale_policy(default: CommandOutputPolicy, budget: usize) -> CommandOutputPolicy {
+    if budget <= 1 {
+        return CommandOutputPolicy {
+            head_bytes: budget,
+            tail_bytes: 0,
+        };
+    }
+    let default_total = default.max_bytes().max(1);
+    let head = ((budget as u128 * default.head_bytes as u128) / default_total as u128) as usize;
+    let head = head.clamp(1, budget - 1);
+    CommandOutputPolicy {
+        head_bytes: head,
+        tail_bytes: budget - head,
     }
 }
 
@@ -270,5 +312,23 @@ mod tests {
         assert!(rendered.starts_with("abc"));
         assert!(rendered.contains("truncated command output"));
         assert!(rendered.ends_with("jkl"));
+    }
+
+    #[test]
+    fn derive_capture_policies_defaults_when_budget_missing() {
+        let (stdout_policy, stderr_policy) = derive_capture_policies(None);
+        assert_eq!(stdout_policy, STDOUT_CAPTURE_POLICY);
+        assert_eq!(stderr_policy, STDERR_CAPTURE_POLICY);
+    }
+
+    #[test]
+    fn derive_capture_policies_scales_to_budget() {
+        let (stdout_policy, stderr_policy) = derive_capture_policies(Some(10 * 1024));
+        assert_eq!(
+            stdout_policy.max_bytes() + stderr_policy.max_bytes(),
+            10 * 1024
+        );
+        assert!(stdout_policy.head_bytes > 0);
+        assert!(stderr_policy.tail_bytes > 0);
     }
 }

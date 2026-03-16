@@ -15,6 +15,7 @@ pub mod knowledge;
 pub mod llm;
 pub mod mcp;
 pub mod memory;
+pub mod memory_agent_settings;
 pub mod memory_auto_extract;
 pub mod memory_fragments;
 pub mod org_units;

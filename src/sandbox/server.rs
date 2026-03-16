@@ -13,6 +13,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
@@ -20,13 +21,23 @@ use crate::command_utils;
 use crate::core::python_runtime;
 use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
 use crate::i18n;
+use crate::services::tools::command_options::{
+    apply_time_budget_secs, parse_command_budget, parse_dry_run,
+};
+use crate::services::tools::command_output_guard::{
+    derive_capture_policies, render_command_output, CommandOutputCapture, CommandOutputCaptureMeta,
+    CommandOutputCollector, CommandOutputPolicy, STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
+};
+use crate::services::tools::tool_error::{with_error_meta, ToolErrorMeta};
 
 const DEFAULT_WORKSPACE_ROOT: &str = "/workspaces";
-const DEFAULT_COMMAND_TIMEOUT_S: u64 = 30;
+const DEFAULT_COMMAND_TIMEOUT_S: f64 = 30.0;
 const PTC_TIMEOUT_S: u64 = 60;
 const PTC_DIR_NAME: &str = "ptc_temp";
 const RULES_CACHE_CAPACITY: usize = 512;
 const RULES_CACHE_TTL: Duration = Duration::from_secs(600);
+const STREAM_READ_CHUNK_SIZE: usize = 4096;
+const STREAM_DRAIN_TIMEOUT_MS: u64 = 2000;
 
 #[derive(Debug, Deserialize)]
 struct SandboxToolRequest {
@@ -313,6 +324,8 @@ fn recover_tool_args_value(args: &Value) -> Value {
 
 async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
     let args = recover_tool_args_value(args);
+    let dry_run = parse_dry_run(&args);
+    let command_budget = parse_command_budget(&args);
     let content = args
         .get("content")
         .and_then(Value::as_str)
@@ -322,12 +335,21 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
     if content.is_empty() {
         return ToolResult {
             ok: false,
-            data: json!({}),
+            data: with_error_meta(
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_COMMAND_REQUIRED",
+                    Some("请在 content 中提供要执行的命令或脚本文本。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
             error: i18n::t("tool.exec.command_required"),
         };
     }
 
     let timeout_s = parse_timeout_secs(args.get("timeout_s")).unwrap_or(DEFAULT_COMMAND_TIMEOUT_S);
+    let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
     let workdir = args
         .get("workdir")
         .and_then(Value::as_str)
@@ -340,7 +362,15 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
         Err(error) => {
             return ToolResult {
                 ok: false,
-                data: json!({}),
+                data: with_error_meta(
+                    json!({ "workdir": workdir }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_WORKDIR_INVALID",
+                        Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
                 error,
             };
         }
@@ -348,24 +378,102 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
     if !cwd.exists() {
         return ToolResult {
             ok: false,
-            data: json!({}),
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_FOUND",
+                    Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
             error: i18n::t("tool.exec.workdir_not_found"),
         };
     }
     if !cwd.is_dir() {
         return ToolResult {
             ok: false,
-            data: json!({}),
+            data: with_error_meta(
+                json!({ "workdir": workdir }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_WORKDIR_NOT_DIR",
+                    Some("请将 workdir 指向目录而非文件。".to_string()),
+                    false,
+                    None,
+                ),
+            ),
             error: i18n::t("tool.exec.workdir_not_dir"),
         };
     }
 
     let allow_all = context.allow_commands.contains("*");
+    let (stdout_policy, stderr_policy) =
+        derive_capture_policies(command_budget.output_budget_bytes);
+    let effective_output_budget_bytes = stdout_policy
+        .max_bytes()
+        .saturating_add(stderr_policy.max_bytes());
     let mut results = Vec::new();
+    let mut guarded_total_bytes: usize = 0;
+    let mut guarded_omitted_bytes: usize = 0;
+    let mut guarded_total_commands: usize = 0;
+    let mut guarded_truncated_commands: usize = 0;
 
-    for raw_line in content.lines() {
-        let command = raw_line.trim();
-        if command.is_empty() {
+    let commands = if allow_all {
+        vec![content.clone()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    if let Some(max_commands) = command_budget.max_commands {
+        if commands.len() > max_commands {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({
+                        "command_count": commands.len(),
+                        "max_commands": max_commands,
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_BUDGET_COMMAND_LIMIT",
+                        Some("请减少单次执行命令数量，或提高 max_commands 预算。".to_string()),
+                        true,
+                        Some(200),
+                    ),
+                ),
+                error: format!(
+                    "command count {} exceeds budget limit {}",
+                    commands.len(),
+                    max_commands
+                ),
+            };
+        }
+    }
+    if dry_run {
+        return ToolResult {
+            ok: true,
+            data: json!({
+                "dry_run": true,
+                "workdir": cwd.to_string_lossy().to_string(),
+                "command_count": commands.len(),
+                "commands": commands,
+                "timeout_s": timeout_s,
+                "budget": command_budget.to_json(),
+                "meta": {
+                    "output_guard": {
+                        "effective_total_bytes": effective_output_budget_bytes,
+                    }
+                }
+            }),
+            error: String::new(),
+        };
+    }
+
+    for command in commands {
+        if command.trim().is_empty() {
             continue;
         }
         if !allow_all {
@@ -377,20 +485,39 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
             {
                 return ToolResult {
                     ok: false,
-                    data: json!({}),
+                    data: with_error_meta(
+                        json!({ "command": command }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_NOT_ALLOWED",
+                            Some("命令不在 allow_commands 白名单内。".to_string()),
+                            false,
+                            None,
+                        ),
+                    ),
                     error: i18n::t("tool.exec.not_allowed"),
                 };
             }
         }
 
-        let output = run_shell_command(command, &cwd, timeout_s).await;
+        let output =
+            run_shell_command(&command, &cwd, timeout_s, stdout_policy, stderr_policy).await;
 
         let output = match output {
             Ok(output) => output,
             Err(detail) => {
                 return ToolResult {
                     ok: false,
-                    data: json!({}),
+                    data: with_error_meta(
+                        json!({
+                            "command": command,
+                        }),
+                        ToolErrorMeta::new(
+                            "TOOL_EXEC_COMMAND_FAILED",
+                            Some("请检查命令内容、运行环境或可执行文件是否存在。".to_string()),
+                            true,
+                            Some(200),
+                        ),
+                    ),
                     error: i18n::t_with_params(
                         "tool.exec.command_failed",
                         &std::collections::HashMap::from([("detail".to_string(), detail)]),
@@ -399,17 +526,97 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
             }
         };
 
+        let command_total_bytes = output
+            .stdout_capture
+            .total_bytes
+            .saturating_add(output.stderr_capture.total_bytes);
+        let command_omitted_bytes = output
+            .stdout_capture
+            .omitted_bytes
+            .saturating_add(output.stderr_capture.omitted_bytes);
+        let command_truncated = output.stdout_capture.truncated || output.stderr_capture.truncated;
+        guarded_total_bytes = guarded_total_bytes.saturating_add(command_total_bytes);
+        guarded_omitted_bytes = guarded_omitted_bytes.saturating_add(command_omitted_bytes);
+        guarded_total_commands = guarded_total_commands.saturating_add(1);
+        if command_truncated {
+            guarded_truncated_commands = guarded_truncated_commands.saturating_add(1);
+        }
+
         results.push(json!({
             "command": command,
             "returncode": output.returncode,
             "stdout": output.stdout,
             "stderr": output.stderr,
+            "output_meta": {
+                "truncated": command_truncated,
+                "total_bytes": command_total_bytes,
+                "omitted_bytes": command_omitted_bytes,
+                "stdout": output.stdout_capture.to_json(),
+                "stderr": output.stderr_capture.to_json(),
+            },
         }));
+
+        if output.timed_out {
+            return ToolResult {
+                ok: false,
+                data: with_error_meta(
+                    json!({
+                        "results": results,
+                        "meta": {
+                            "output_guard": {
+                                "truncated": guarded_truncated_commands > 0,
+                                "commands": guarded_total_commands,
+                                "truncated_commands": guarded_truncated_commands,
+                                "total_bytes": guarded_total_bytes,
+                                "omitted_bytes": guarded_omitted_bytes,
+                                "effective_total_bytes": effective_output_budget_bytes,
+                            }
+                        }
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_TIMEOUT",
+                        Some(
+                            "命令执行超时，可拆分脚本或提高 timeout/budget.time_budget_ms 后重试。"
+                                .to_string(),
+                        ),
+                        true,
+                        Some(500),
+                    ),
+                ),
+                error: i18n::t_with_params(
+                    "tool.exec.command_failed",
+                    &std::collections::HashMap::from([(
+                        "detail".to_string(),
+                        format!("timeout after {timeout_s}s"),
+                    )]),
+                ),
+            };
+        }
 
         if output.returncode != 0 {
             return ToolResult {
                 ok: false,
-                data: json!({ "results": results }),
+                data: with_error_meta(
+                    json!({
+                        "results": results,
+                        "meta": {
+                            "output_guard": {
+                                "truncated": guarded_truncated_commands > 0,
+                                "commands": guarded_total_commands,
+                                "truncated_commands": guarded_truncated_commands,
+                                "total_bytes": guarded_total_bytes,
+                                "omitted_bytes": guarded_omitted_bytes,
+                                "effective_total_bytes": effective_output_budget_bytes,
+                            }
+                        }
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_NON_ZERO_EXIT",
+                        Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
+                        false,
+                        None,
+                    ),
+                ),
                 error: i18n::t("tool.exec.failed"),
             };
         }
@@ -417,7 +624,20 @@ async fn execute_command(context: &SandboxContext, args: &Value) -> ToolResult {
 
     ToolResult {
         ok: true,
-        data: json!({ "results": results }),
+        data: json!({
+            "results": results,
+            "meta": {
+                "output_guard": {
+                    "truncated": guarded_truncated_commands > 0,
+                    "commands": guarded_total_commands,
+                    "truncated_commands": guarded_truncated_commands,
+                    "total_bytes": guarded_total_bytes,
+                    "omitted_bytes": guarded_omitted_bytes,
+                    "effective_total_bytes": effective_output_budget_bytes,
+                }
+            },
+            "budget": command_budget.to_json()
+        }),
         error: String::new(),
     }
 }
@@ -573,6 +793,9 @@ struct CommandOutput {
     returncode: i32,
     stdout: String,
     stderr: String,
+    timed_out: bool,
+    stdout_capture: CommandOutputCaptureMeta,
+    stderr_capture: CommandOutputCaptureMeta,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -580,7 +803,6 @@ enum CommandErrorKind {
     SpawnNotFound,
     SpawnFailed,
     WaitFailed,
-    Timeout,
 }
 
 #[derive(Debug)]
@@ -608,19 +830,14 @@ impl CommandError {
             detail: err.to_string(),
         }
     }
-
-    fn timeout(timeout_s: u64) -> Self {
-        CommandError {
-            kind: CommandErrorKind::Timeout,
-            detail: format!("timeout after {timeout_s}s"),
-        }
-    }
 }
 
 async fn run_shell_command(
     command: &str,
     cwd: &Path,
-    timeout_s: u64,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
 ) -> Result<CommandOutput, String> {
     let runtime = python_runtime::resolve_python_runtime();
 
@@ -634,7 +851,7 @@ async fn run_shell_command(
         if let Some(runtime) = runtime.as_ref() {
             python_runtime::apply_python_env(&mut cmd, runtime);
         }
-        match run_command_output(cmd, timeout_s).await {
+        match run_command_output(cmd, timeout_s, stdout_policy, stderr_policy).await {
             Ok(output) => return Ok(output),
             Err(err) if err.kind == CommandErrorKind::SpawnNotFound => {}
             Err(err) => return Err(err.detail),
@@ -645,7 +862,7 @@ async fn run_shell_command(
     if let Some(runtime) = runtime.as_ref() {
         python_runtime::apply_python_env(&mut cmd, runtime);
     }
-    run_command_output(cmd, timeout_s)
+    run_command_output(cmd, timeout_s, stdout_policy, stderr_policy)
         .await
         .map_err(|err| err.detail)
 }
@@ -668,34 +885,106 @@ async fn run_python_script(
         python_runtime::apply_python_env(&mut cmd, runtime);
     }
     command_utils::apply_platform_spawn_options(&mut cmd);
-    run_command_output(cmd, timeout_s)
-        .await
-        .map_err(|err| err.detail)
+    run_command_output(
+        cmd,
+        timeout_s as f64,
+        STDOUT_CAPTURE_POLICY,
+        STDERR_CAPTURE_POLICY,
+    )
+    .await
+    .map_err(|err| err.detail)
 }
 
 async fn run_command_output(
     mut cmd: Command,
-    timeout_s: u64,
+    timeout_s: f64,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
 ) -> Result<CommandOutput, CommandError> {
     cmd.kill_on_drop(true);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let child = cmd.spawn().map_err(CommandError::from_spawn)?;
-    let output = if timeout_s > 0 {
-        match timeout(Duration::from_secs(timeout_s), child.wait_with_output()).await {
-            Ok(result) => result.map_err(CommandError::from_wait)?,
-            Err(_) => return Err(CommandError::timeout(timeout_s)),
+    let mut child = cmd.spawn().map_err(CommandError::from_spawn)?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let stdout_task = stdout.map(|stream| tokio::spawn(read_stream_capture(stream, stdout_policy)));
+    let stderr_task = stderr.map(|stream| tokio::spawn(read_stream_capture(stream, stderr_policy)));
+
+    let mut timed_out = false;
+    let status = if timeout_s > 0.0 {
+        match timeout(Duration::from_secs_f64(timeout_s), child.wait()).await {
+            Ok(result) => Some(result.map_err(CommandError::from_wait)?),
+            Err(_) => {
+                timed_out = true;
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                None
+            }
         }
     } else {
-        child
-            .wait_with_output()
-            .await
-            .map_err(CommandError::from_wait)?
+        Some(child.wait().await.map_err(CommandError::from_wait)?)
     };
+    let stdout_capture = join_capture_task(stdout_task, stdout_policy).await?;
+    let stderr_capture = join_capture_task(stderr_task, stderr_policy).await?;
+    let stdout = render_command_output(&stdout_capture, decode_command_output);
+    let stderr = render_command_output(&stderr_capture, decode_command_output);
+    let returncode = status.and_then(|item| item.code()).unwrap_or(-1);
+
     Ok(CommandOutput {
-        returncode: output.status.code().unwrap_or(-1),
-        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        returncode,
+        stdout,
+        stderr,
+        timed_out,
+        stdout_capture: stdout_capture.meta,
+        stderr_capture: stderr_capture.meta,
     })
+}
+
+async fn join_capture_task(
+    handle: Option<tokio::task::JoinHandle<Result<CommandOutputCapture, CommandError>>>,
+    policy: CommandOutputPolicy,
+) -> Result<CommandOutputCapture, CommandError> {
+    let Some(mut handle) = handle else {
+        return Ok(CommandOutputCollector::new(policy).finish());
+    };
+    match timeout(Duration::from_millis(STREAM_DRAIN_TIMEOUT_MS), &mut handle).await {
+        Ok(result) => match result {
+            Ok(output) => output,
+            Err(err) => Err(CommandError {
+                kind: CommandErrorKind::WaitFailed,
+                detail: err.to_string(),
+            }),
+        },
+        Err(_) => {
+            handle.abort();
+            Ok(CommandOutputCollector::new(policy).finish())
+        }
+    }
+}
+
+async fn read_stream_capture<R>(
+    mut reader: R,
+    policy: CommandOutputPolicy,
+) -> Result<CommandOutputCapture, CommandError>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    let mut collector = CommandOutputCollector::new(policy);
+    let mut chunk = vec![0u8; STREAM_READ_CHUNK_SIZE];
+    loop {
+        let read = reader
+            .read(&mut chunk)
+            .await
+            .map_err(CommandError::from_wait)?;
+        if read == 0 {
+            break;
+        }
+        collector.push_chunk(&chunk[..read]);
+    }
+    Ok(collector.finish())
+}
+
+fn decode_command_output(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).to_string()
 }
 
 fn resolve_path(context: &SandboxContext, raw_path: &str) -> Result<PathBuf, String> {
@@ -955,15 +1244,40 @@ fn looks_like_windows_drive(value: &str) -> bool {
     bytes[1] == b':' && value.chars().next().map(|ch| ch.is_ascii_alphabetic()) == Some(true)
 }
 
-fn parse_timeout_secs(value: Option<&Value>) -> Option<u64> {
+fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     match value {
-        Some(Value::Number(num)) => num.as_u64(),
-        Some(Value::String(text)) => text.trim().parse::<u64>().ok(),
-        Some(Value::Bool(flag)) => Some(if *flag { 1 } else { 0 }),
+        Some(Value::Number(num)) => num.as_f64(),
+        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        Some(Value::Bool(flag)) => Some(if *flag { 1.0 } else { 0.0 }),
         _ => None,
     }
 }
 
 fn default_container_root() -> String {
     DEFAULT_WORKSPACE_ROOT.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_timeout_secs_accepts_float_number_and_string() {
+        let numeric = json!(1.5);
+        let text = json!("2.25");
+        assert_eq!(parse_timeout_secs(Some(&numeric)), Some(1.5));
+        assert_eq!(parse_timeout_secs(Some(&text)), Some(2.25));
+    }
+
+    #[test]
+    fn parse_timeout_secs_handles_bool_and_invalid_values() {
+        let enabled = json!(true);
+        let disabled = json!(false);
+        let invalid = json!("oops");
+        assert_eq!(parse_timeout_secs(Some(&enabled)), Some(1.0));
+        assert_eq!(parse_timeout_secs(Some(&disabled)), Some(0.0));
+        assert_eq!(parse_timeout_secs(Some(&invalid)), None);
+        assert_eq!(parse_timeout_secs(None), None);
+    }
 }

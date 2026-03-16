@@ -145,7 +145,14 @@
   - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
   - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
-- `搜索内容`（`search_content`）新增 `query_mode=literal|regex`、`case_sensitive`、`context_before/context_after` 入参；返回保留兼容字段 `matches`，并新增结构化 `hits`（命中行 + 前后文 + 高亮分段）以便前端直接渲染。
+- `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并新增 `timeout_ms`、`max_matches`、`max_candidates` 入参；返回保留兼容字段 `matches`，同时提供结构化 `hits` 与 `meta.search`（包含 `requested_engine/resolved_engine/fallback/elapsed_ms/timeout_hit` 等），便于前端与调度层做可观测优化。
+- `读取文件`（`read_file`）支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。
+- `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
+- `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
+- `写入文件` 与 `应用补丁` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘。
+- `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
+- `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。
+- 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，便于前端与模型按错误码做自动恢复。
 - 新增内置工具 `计划面板`（英文别名 `update_plan`），用于更新计划看板并触发 `plan_update` 事件。
 - 新增内置工具 `问询面板`（英文别名 `question_panel`/`ask_panel`），用于提供多条路线选择并触发 `question_panel` 事件。
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
@@ -1445,8 +1452,50 @@
 - recall 命中、碎片创建/编辑、列表读取时会惰性刷新 `tier(core/working/peripheral)` 与状态链路；因此接口返回的 `tier`、`status`、`supersedes_memory_id`、`superseded_by_memory_id` 字段可直接用于前端展示版本关系与生命周期信息。
 - `memory_manager` 的 `list/add/update/delete/clear/recall` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。
 - `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 recall 排序和提示词快照构建。
-- 当前系统已停用自动记忆提炼；不会在最终回复后自动新增 `auto-turn` 记忆。长期记忆只会由用户显式编辑，或由智能体主动调用 `memory_manager` 写入。
+- 自动记忆提炼改为按 `用户 + 智能体` 单独开关，默认关闭。只有在用户侧“记忆碎片 -> 最近提炼任务”弹窗中显式开启后，系统才会在每个用户轮次结束并发出 `final` 回复后异步尝试写入 `auto-turn` 记忆；提炼阶段走独立的大模型提示词 `prompts/{zh|en}/memory_auto_extract.txt`，而最终写入前仍由服务端执行去重、`fact_key` 版本替代与手工/置顶碎片保护。
 - 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照。
+
+#### `GET /wunder/agents/{agent_id}/memory-settings`
+
+- 返回当前用户在指定智能体上的记忆设置。
+- 响应示例：
+
+```json
+{
+  "data": {
+    "settings": {
+      "auto_extract_enabled": false,
+      "updated_at": 0
+    }
+  }
+}
+```
+
+#### `POST /wunder/agents/{agent_id}/memory-settings`
+
+- 更新当前用户在指定智能体上的记忆设置。
+- 请求体：
+
+```json
+{
+  "auto_extract_enabled": true
+}
+```
+
+- 响应示例：
+
+```json
+{
+  "data": {
+    "settings": {
+      "auto_extract_enabled": true,
+      "updated_at": 1773620812.637
+    }
+  }
+}
+```
+
+- `GET /wunder/agents/{agent_id}/memories` 的响应体中也会附带同一份 `data.settings`，便于前端在记忆卡片页一次请求同时渲染列表、命中记录、提炼任务与设置开关。
 
 ### 4.1.43 `/wunder/admin/throughput/start`
 

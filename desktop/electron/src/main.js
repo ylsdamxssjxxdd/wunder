@@ -2417,6 +2417,7 @@ if (!gotLock) {
       })
       logStartupSegment('electron', 'app_ipc_handlers_registered', registerIpcNs)
       Menu.setApplicationMenu(null)
+      createTray()
       const createWindowCallNs = process.hrtime.bigint()
       await createWindow()
       logStartupSegment('electron', 'app_create_window_returned', createWindowCallNs)

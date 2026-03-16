@@ -267,15 +267,27 @@ impl TuiApp {
         ));
     }
 
+    pub(super) fn cancel_config_wizard(&mut self) -> bool {
+        if self.config_wizard.take().is_none() {
+            return false;
+        }
+        self.input.clear();
+        self.input_cursor = 0;
+        self.pending_paste.clear();
+        self.pending_large_pastes.clear();
+        self.history_cursor = None;
+        self.push_config_log(crate::locale::tr(
+            self.display_language.as_str(),
+            "已取消配置",
+            "config cancelled",
+        ));
+        true
+    }
+
     pub(super) async fn handle_config_wizard_input(&mut self, input: &str) -> Result<()> {
         let cleaned = input.trim();
         if cleaned.eq_ignore_ascii_case("/cancel") || cleaned.eq_ignore_ascii_case("/exit") {
-            self.config_wizard = None;
-            self.push_config_log(crate::locale::tr(
-                self.display_language.as_str(),
-                "已取消配置",
-                "config cancelled",
-            ));
+            self.cancel_config_wizard();
             return Ok(());
         }
 
@@ -285,11 +297,7 @@ impl TuiApp {
 
         if wizard.base_url.is_none() {
             if cleaned.is_empty() {
-                self.push_config_log(crate::locale::tr(
-                    self.display_language.as_str(),
-                    "已取消配置",
-                    "config cancelled",
-                ));
+                self.cancel_config_wizard();
                 return Ok(());
             }
             wizard.base_url = Some(cleaned.to_string());
@@ -304,11 +312,7 @@ impl TuiApp {
 
         if wizard.api_key.is_none() {
             if cleaned.is_empty() {
-                self.push_config_log(crate::locale::tr(
-                    self.display_language.as_str(),
-                    "已取消配置",
-                    "config cancelled",
-                ));
+                self.cancel_config_wizard();
                 return Ok(());
             }
             wizard.api_key = Some(cleaned.to_string());
@@ -323,11 +327,7 @@ impl TuiApp {
 
         if wizard.model_name.is_none() {
             if cleaned.is_empty() {
-                self.push_config_log(crate::locale::tr(
-                    self.display_language.as_str(),
-                    "已取消配置",
-                    "config cancelled",
-                ));
+                self.cancel_config_wizard();
                 return Ok(());
             }
             wizard.model_name = Some(cleaned.to_string());

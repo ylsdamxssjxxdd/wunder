@@ -1900,14 +1900,14 @@ impl MonitorState {
         data: &Value,
         log_profile: MonitorLogProfile,
     ) -> Value {
+        if event_type == "llm_request" {
+            return summarize_llm_request_event(data, self.payload_limit);
+        }
         if log_profile.keeps_full_payload() {
             return data.clone();
         }
         if !data.is_object() {
             return data.clone();
-        }
-        if event_type == "llm_request" {
-            return trim_string_fields(data, self.payload_limit);
         }
         if event_type == "llm_output" {
             let mut trimmed = trim_string_fields(data, self.payload_limit);
@@ -2355,6 +2355,160 @@ fn should_merge_monitor_event(previous: &MonitorEvent, event_type: &str, data: &
                 && previous.data.get("model_round") == data.get("model_round")
         }
         _ => false,
+    }
+}
+
+fn summarize_llm_request_event(data: &Value, limit: Option<usize>) -> Value {
+    let Some(map) = data.as_object() else {
+        return trim_string_fields(data, limit);
+    };
+    let mut summary = serde_json::Map::new();
+    for (key, value) in map {
+        if key == "payload" {
+            continue;
+        }
+        summary.insert(key.clone(), trim_json_value(value, limit, 0));
+    }
+    if let Some(payload) = map.get("payload") {
+        let (message_count, payload_summary) = summarize_llm_request_payload(payload, limit);
+        summary.insert("message_count".to_string(), json!(message_count));
+        summary.insert("payload_summary".to_string(), payload_summary);
+        summary.remove("payload_omitted");
+    }
+    Value::Object(summary)
+}
+
+fn summarize_llm_request_payload(payload: &Value, limit: Option<usize>) -> (usize, Value) {
+    let Some(map) = payload.as_object() else {
+        return (0, trim_json_value(payload, limit, 0));
+    };
+    let message_count = map
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|items| items.len())
+        .or_else(|| {
+            map.get("input")
+                .and_then(Value::as_array)
+                .map(|items| items.len())
+        })
+        .unwrap_or(0);
+    let mut summary = serde_json::Map::new();
+    for (key, value) in map {
+        let compact = match key.as_str() {
+            "messages" | "input" => summarize_request_message_array(value),
+            "tools" | "functions" => summarize_request_tool_array(value),
+            _ => summarize_request_json_value(value, limit, 0),
+        };
+        summary.insert(key.clone(), compact);
+    }
+    (message_count, Value::Object(summary))
+}
+
+fn summarize_request_message_array(value: &Value) -> Value {
+    let Some(items) = value.as_array() else {
+        return value.clone();
+    };
+    let mut role_counts: HashMap<String, usize> = HashMap::new();
+    for item in items {
+        let role = item
+            .get("role")
+            .and_then(Value::as_str)
+            .or_else(|| item.get("type").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("unknown")
+            .to_string();
+        *role_counts.entry(role).or_default() += 1;
+    }
+    let mut summary = serde_json::Map::new();
+    summary.insert("count".to_string(), json!(items.len()));
+    if !role_counts.is_empty() {
+        let mut roles = serde_json::Map::new();
+        let mut keys = role_counts.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        for key in keys {
+            roles.insert(key.clone(), json!(role_counts[&key]));
+        }
+        summary.insert("role_counts".to_string(), Value::Object(roles));
+    }
+    Value::Object(summary)
+}
+
+fn summarize_request_tool_array(value: &Value) -> Value {
+    let Some(items) = value.as_array() else {
+        return value.clone();
+    };
+    let preview = items
+        .iter()
+        .take(12)
+        .map(summarize_request_tool_item)
+        .collect::<Vec<_>>();
+    json!({
+        "count": items.len(),
+        "preview": preview,
+        "truncated": items.len() > 12
+    })
+}
+
+fn summarize_request_tool_item(value: &Value) -> Value {
+    let Some(map) = value.as_object() else {
+        return value.clone();
+    };
+    let mut summary = serde_json::Map::new();
+    if let Some(value) = map.get("type") {
+        summary.insert("type".to_string(), value.clone());
+    }
+    if let Some(value) = map.get("name") {
+        summary.insert("name".to_string(), value.clone());
+    }
+    if let Some(function) = map.get("function").and_then(Value::as_object) {
+        let mut compact = serde_json::Map::new();
+        if let Some(value) = function.get("name") {
+            compact.insert("name".to_string(), value.clone());
+        }
+        if !compact.is_empty() {
+            summary.insert("function".to_string(), Value::Object(compact));
+        }
+    }
+    if summary.is_empty() {
+        return Value::String("tool".to_string());
+    }
+    Value::Object(summary)
+}
+
+fn summarize_request_json_value(value: &Value, limit: Option<usize>, depth: usize) -> Value {
+    const MAX_DEPTH: usize = 4;
+    const MAX_OBJECT_KEYS: usize = 12;
+    const MAX_ARRAY_PREVIEW: usize = 3;
+    if depth >= MAX_DEPTH {
+        return Value::String("...(truncated)".to_string());
+    }
+    match value {
+        Value::Array(items) => json!({
+            "count": items.len(),
+            "preview": items
+                .iter()
+                .take(MAX_ARRAY_PREVIEW)
+                .map(|item| summarize_request_json_value(item, limit, depth + 1))
+                .collect::<Vec<_>>(),
+            "truncated": items.len() > MAX_ARRAY_PREVIEW
+        }),
+        Value::Object(map) => {
+            let mut compact = serde_json::Map::new();
+            for (index, (key, item)) in map.iter().enumerate() {
+                if index >= MAX_OBJECT_KEYS {
+                    compact.insert("_truncated".to_string(), Value::Bool(true));
+                    break;
+                }
+                compact.insert(
+                    key.clone(),
+                    summarize_request_json_value(item, limit, depth + 1),
+                );
+            }
+            Value::Object(compact)
+        }
+        Value::String(text) => Value::String(trim_text(text, limit)),
+        _ => value.clone(),
     }
 }
 

@@ -1967,12 +1967,14 @@ pub(super) fn localize_cli_notice(language: &str, text: &str) -> String {
         "- max_context: auto probe unavailable (or keep existing)" => {
             "- max_context: 自动探测不可用（或保留现有值）".to_string()
         }
-        "mouse mode: auto (wheel + temporary selection passthrough)" => {
-            "鼠标模式：auto（滚轮 + 临时选择透传）".to_string()
+        "mouse mode: auto (native selection and terminal wheel scrolling enabled; switch to scroll for app-captured transcript scrolling)" => {
+            "鼠标模式：auto（启用终端原生选择与滚轮滚动；切到 scroll 时由应用接管输出滚动）".to_string()
         }
-        "mouse mode: scroll (wheel enabled)" => "鼠标模式：scroll（启用滚轮）".to_string(),
-        "mouse mode: select/copy (wheel disabled)" => {
-            "鼠标模式：select/copy（禁用滚轮）".to_string()
+        "mouse mode: scroll (capture wheel events for transcript scrolling)" => {
+            "鼠标模式：scroll（由应用接管滚轮并滚动输出区）".to_string()
+        }
+        "mouse mode: select/copy (native terminal selection enabled)" => {
+            "鼠标模式：select/copy（启用终端原生选择复制）".to_string()
         }
         "usage: /mouse [auto|scroll|select]  (F2 optional)" => {
             "用法: /mouse [auto|scroll|select]  （F2 可切换）".to_string()

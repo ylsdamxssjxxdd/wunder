@@ -41,9 +41,17 @@ const MAX_PERSISTED_POPUP_RECENTS: usize = 120;
 const POPUP_VISIBLE_LIMIT: usize = 7;
 const POPUP_MAX_CANDIDATES: usize = 120;
 const LARGE_PASTE_CHAR_THRESHOLD: usize = 1000;
-const PASTE_BURST_CHAR_GAP: Duration = Duration::from_millis(28);
-const PASTE_BURST_ENTER_GAP: Duration = Duration::from_millis(36);
-const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 16;
+#[cfg(not(windows))]
+const PASTE_BURST_CHAR_GAP: Duration = Duration::from_millis(8);
+#[cfg(windows)]
+const PASTE_BURST_CHAR_GAP: Duration = Duration::from_millis(30);
+#[cfg(not(windows))]
+const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(8);
+#[cfg(windows)]
+const PASTE_BURST_ACTIVE_IDLE_TIMEOUT: Duration = Duration::from_millis(60);
+const PASTE_BURST_ENTER_GAP: Duration = Duration::from_millis(120);
+const PASTE_BURST_ENTER_CHAR_THRESHOLD: usize = 3;
+const PASTE_BURST_CAPTURE_CHAR_THRESHOLD: usize = 3;
 mod commands;
 
 pub(super) mod helpers;
@@ -243,6 +251,8 @@ pub struct TuiApp {
     terminal_focused: bool,
     key_char_burst_len: usize,
     key_char_burst_last_at: Option<Instant>,
+    key_paste_burst_buffer: String,
+    key_paste_burst_last_at: Option<Instant>,
     statusline_items: Vec<String>,
     workspace_project_name: Option<String>,
     workspace_git_branch: Option<String>,
@@ -347,6 +357,8 @@ impl TuiApp {
             terminal_focused: true,
             key_char_burst_len: 0,
             key_char_burst_last_at: None,
+            key_paste_burst_buffer: String::new(),
+            key_paste_burst_last_at: None,
             statusline_items: Vec::new(),
             workspace_project_name: None,
             workspace_git_branch: None,
@@ -492,12 +504,16 @@ impl TuiApp {
         let ctrl_c_pending = self
             .ctrl_c_hint_deadline
             .is_some_and(|deadline| Instant::now() <= deadline);
-        if self.busy
-            || self.stream_rx.is_some()
-            || self.approval_rx.is_some()
-            || self.active_approval.is_some()
-            || ctrl_c_pending
-        {
+        if self.busy || self.stream_rx.is_some() {
+            self.frame_requester
+                .schedule_frame_in(super::activity_indicator::RUNNING_ANIMATION_FRAME);
+            return;
+        }
+        if self.key_paste_burst_active() {
+            self.frame_requester.schedule_frame_in(PASTE_BURST_CHAR_GAP);
+            return;
+        }
+        if self.approval_rx.is_some() || self.active_approval.is_some() || ctrl_c_pending {
             self.frame_requester
                 .schedule_frame_in(Duration::from_millis(90));
         }
@@ -589,23 +605,14 @@ impl TuiApp {
             .unwrap_or_else(|| "-".to_string());
         let tool_calls = self.status_tool_calls();
         if self.is_zh_language() {
-            format!(
-                "\u{8017}\u{65f6}={elapsed_label} | \u{901f}\u{5ea6}={speed_label} | \u{5de5}\u{5177}={tool_calls}"
-            )
+            format!("耗时={elapsed_label} | 速度={speed_label} | 工具={tool_calls}")
         } else {
             format!("elapsed={elapsed_label} | speed={speed_label} | tools={tool_calls}")
         }
     }
 
     pub fn composer_footer_items(&self) -> Vec<(String, String)> {
-        let mut items = vec![(
-            "?".to_string(),
-            if self.is_zh_language() {
-                "???".to_string()
-            } else {
-                "for shortcuts".to_string()
-            },
-        )];
+        let mut items = Vec::new();
 
         if !self.model_name.trim().is_empty() && self.model_name != "<none>" {
             items.push((String::new(), self.model_name.clone()));
@@ -747,9 +754,9 @@ impl TuiApp {
         let mouse_hint = match self.mouse_mode {
             MouseMode::Auto => {
                 if is_zh {
-                    "鼠标=自动(输出优先)".to_string()
+                    "鼠标=自动(终端原生)".to_string()
                 } else {
-                    "mouse=auto(output-first)".to_string()
+                    "mouse=auto(native)".to_string()
                 }
             }
             MouseMode::Scroll => {
@@ -811,7 +818,7 @@ impl TuiApp {
             parts.insert(
                 "project",
                 if is_zh {
-                    format!("\u{9879}\u{76ee}={project_display}")
+                    format!("项目={project_display}")
                 } else {
                     format!("project={project_display}")
                 },
@@ -821,7 +828,7 @@ impl TuiApp {
             parts.insert(
                 "branch",
                 if is_zh {
-                    format!("\u{5206}\u{652f}={branch_display}")
+                    format!("分支={branch_display}")
                 } else {
                     format!("branch={branch_display}")
                 },
@@ -1164,10 +1171,7 @@ impl TuiApp {
         }
         if !self.approval_queue.is_empty() {
             lines.push(if is_zh {
-                format!(
-                    "\u{8fd8}\u{6709} {} \u{4e2a}\u{5f85}\u{5904}\u{7406}\u{8bf7}\u{6c42}",
-                    self.approval_queue.len()
-                )
+                format!("还有 {} 个待处理请求", self.approval_queue.len())
             } else {
                 format!("{} more pending request(s)", self.approval_queue.len())
             });
@@ -1188,7 +1192,7 @@ impl TuiApp {
         for (index, label) in option_labels.iter().enumerate() {
             lines.push(format!(
                 "{} {}. {}",
-                if index == selected { "\u{203a}" } else { " " },
+                if index == selected { "›" } else { " " },
                 index + 1,
                 label
             ));
@@ -1206,11 +1210,11 @@ impl TuiApp {
             .min(panel.routes.len().saturating_sub(1));
         let mut lines = vec![panel.question.clone(), String::new()];
         for (index, route) in panel.routes.iter().enumerate() {
-            let marker = if index == selected { "\u{203a}" } else { " " };
+            let marker = if index == selected { "›" } else { " " };
             let mut title = route.label.clone();
             if route.recommended {
                 if self.is_zh_language() {
-                    title.push_str("\u{ff08}\u{63a8}\u{8350}\u{ff09}");
+                    title.push_str("（推荐）");
                 } else {
                     title.push_str(" (recommended)");
                 }
@@ -1371,7 +1375,7 @@ impl TuiApp {
             };
             let line = if let Some(description) = route.description.as_deref() {
                 if self.is_zh_language() {
-                    format!("  {}. {}{}?{}", index + 1, route.label, badge, description)
+                    format!("  {}. {}{}：{}", index + 1, route.label, badge, description)
                 } else {
                     format!("  {}. {}{}: {}", index + 1, route.label, badge, description)
                 }
@@ -1505,7 +1509,7 @@ impl TuiApp {
             if let Some(route) = panel.routes.get(index) {
                 if let Some(description) = route.description.as_deref() {
                     if self.is_zh_language() {
-                        lines.push(format!("- {}?{}", route.label, description));
+                        lines.push(format!("- {}：{}", route.label, description));
                     } else {
                         lines.push(format!("- {}: {}", route.label, description));
                     }
@@ -1526,7 +1530,7 @@ impl TuiApp {
                 "Shift + Enter / Ctrl + J 换行 · Tab 补全".to_string(),
                 "@ 文件路径 · Ctrl + V / Shift + Insert 粘贴图片".to_string(),
                 "F3 查看输出 · Ctrl + C 退出".to_string(),
-                "Esc / ? 关闭快捷键 · 拖入图片或文件即可附加".to_string(),
+                "Esc 关闭快捷键 · 拖入图片或文件即可附加".to_string(),
             ];
         }
         vec![
@@ -1534,7 +1538,7 @@ impl TuiApp {
             "shift + enter for newline                  tab to complete".to_string(),
             "@ for file paths                           ctrl + v to paste images".to_string(),
             "f3 to view transcript                      ctrl + c to exit".to_string(),
-            "esc / ? to close shortcuts                drag images/files to attach".to_string(),
+            "esc to close shortcuts                    drag images/files to attach".to_string(),
         ]
     }
 
@@ -1762,7 +1766,7 @@ impl TuiApp {
         self.mouse_mode = mode;
         let notice = match mode {
             MouseMode::Auto => {
-                "mouse mode: auto (native selection enabled; switch to scroll when you want wheel scrolling)"
+                "mouse mode: auto (native selection and terminal wheel scrolling enabled; switch to scroll for app-captured transcript scrolling)"
             }
             MouseMode::Scroll => "mouse mode: scroll (capture wheel events for transcript scrolling)",
             MouseMode::Select => {
@@ -2420,6 +2424,7 @@ impl TuiApp {
     }
 
     pub async fn drain_stream_events(&mut self) {
+        self.flush_key_paste_burst_if_due(false);
         self.flush_pending_paste();
         self.drain_pending_attachment_paths().await;
         self.drain_approval_requests();
@@ -2558,6 +2563,102 @@ impl TuiApp {
         self.insert_text_at_cursor(pasted);
     }
 
+    fn key_paste_burst_active(&self) -> bool {
+        !self.key_paste_burst_buffer.is_empty()
+    }
+
+    fn clear_input_draft(&mut self) -> bool {
+        let had_draft = !self.input.is_empty()
+            || !self.pending_paste.is_empty()
+            || !self.pending_large_pastes.is_empty()
+            || self.key_paste_burst_active();
+        if !had_draft {
+            return false;
+        }
+        self.input.clear();
+        self.input_cursor = 0;
+        self.pending_paste.clear();
+        self.pending_large_pastes.clear();
+        self.key_paste_burst_buffer.clear();
+        self.key_paste_burst_last_at = None;
+        self.history_cursor = None;
+        self.reset_plain_char_burst();
+        true
+    }
+
+    fn take_recent_input_chars(&mut self, char_count: usize) -> String {
+        if char_count == 0 || self.input_cursor == 0 {
+            return String::new();
+        }
+        let mut start = self.input_cursor.min(self.input.len());
+        for _ in 0..char_count {
+            if start == 0 {
+                break;
+            }
+            start = prev_char_boundary(&self.input, start);
+        }
+        if start >= self.input_cursor {
+            return String::new();
+        }
+        let grabbed = self.input[start..self.input_cursor].to_string();
+        self.input.replace_range(start..self.input_cursor, "");
+        self.input_cursor = start;
+        self.sync_large_paste_placeholders();
+        grabbed
+    }
+
+    fn flush_key_paste_burst(&mut self) -> bool {
+        if self.key_paste_burst_buffer.is_empty() {
+            self.key_paste_burst_last_at = None;
+            return false;
+        }
+        let burst = std::mem::take(&mut self.key_paste_burst_buffer);
+        self.key_paste_burst_last_at = None;
+        self.on_paste(burst);
+        self.flush_pending_paste();
+        self.reset_plain_char_burst();
+        true
+    }
+
+    fn flush_key_paste_burst_if_due(&mut self, force: bool) -> bool {
+        let Some(last) = self.key_paste_burst_last_at else {
+            return false;
+        };
+        let timeout = if self.key_paste_burst_active() {
+            PASTE_BURST_ACTIVE_IDLE_TIMEOUT
+        } else {
+            PASTE_BURST_CHAR_GAP
+        };
+        if !force && Instant::now().saturating_duration_since(last) <= timeout {
+            return false;
+        }
+        self.flush_key_paste_burst()
+    }
+
+    fn handle_plain_char_paste_burst(&mut self, ch: char) -> bool {
+        let now = Instant::now();
+        if self.key_paste_burst_active() {
+            if self
+                .key_paste_burst_last_at
+                .is_some_and(|last| now.saturating_duration_since(last) <= PASTE_BURST_CHAR_GAP)
+            {
+                self.key_paste_burst_buffer.push(ch);
+                self.key_paste_burst_last_at = Some(now);
+                return true;
+            }
+            self.flush_key_paste_burst();
+        }
+        if self.key_char_burst_len < PASTE_BURST_CAPTURE_CHAR_THRESHOLD {
+            return false;
+        }
+        let retro_text =
+            self.take_recent_input_chars(PASTE_BURST_CAPTURE_CHAR_THRESHOLD.saturating_sub(1));
+        self.key_paste_burst_buffer.push_str(retro_text.as_str());
+        self.key_paste_burst_buffer.push(ch);
+        self.key_paste_burst_last_at = Some(now);
+        true
+    }
+
     fn sync_large_paste_placeholders(&mut self) {
         if self.pending_large_pastes.is_empty() {
             return;
@@ -2625,6 +2726,9 @@ impl TuiApp {
         let Some(normalized) = normalize_clipboard_text(text) else {
             return;
         };
+        self.reset_plain_char_burst();
+        self.key_paste_burst_buffer.clear();
+        self.key_paste_burst_last_at = None;
         if let Some(paths) =
             detect_pasted_attachment_paths(self.runtime.launch_dir.as_path(), normalized.as_str())
         {
@@ -2646,7 +2750,10 @@ impl TuiApp {
         }
 
         match read_system_clipboard_text() {
-            Ok(Some(text)) => self.on_paste(text),
+            Ok(Some(text)) => {
+                self.on_paste(text);
+                self.flush_pending_paste();
+            }
             Ok(None) => {}
             Err(error) => {
                 let hint = crate::locale::tr(
@@ -2708,6 +2815,17 @@ impl TuiApp {
         }
         if self.mouse_mode == MouseMode::Auto && self.mouse_passthrough_active() {
             self.clear_mouse_passthrough();
+        }
+
+        let plain_char_input = matches!(key.code, KeyCode::Char(_))
+            && (matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
+                || is_altgr(key.modifiers));
+        let interrupt_key = key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
+        let enter_may_extend_paste = matches!(key.code, KeyCode::Enter)
+            && (self.key_paste_burst_active() || self.should_treat_enter_as_paste_newline());
+        if !plain_char_input && !interrupt_key && !enter_may_extend_paste {
+            self.flush_key_paste_burst_if_due(true);
         }
 
         if self.active_approval.is_some() {
@@ -2870,7 +2988,7 @@ impl TuiApp {
 
         if self.shortcuts_visible {
             self.reset_plain_char_burst();
-            if matches!(key.code, KeyCode::Esc | KeyCode::Char('?')) {
+            if matches!(key.code, KeyCode::Esc) {
                 self.shortcuts_visible = false;
             }
             return Ok(());
@@ -2900,13 +3018,15 @@ impl TuiApp {
 
         match key.code {
             KeyCode::Esc => {
-                self.input.clear();
-                self.input_cursor = 0;
-                self.pending_paste.clear();
-                self.pending_large_pastes.clear();
-                self.history_cursor = None;
+                self.clear_input_draft();
             }
             KeyCode::Enter => {
+                if self.key_paste_burst_active() {
+                    self.key_paste_burst_buffer.push('\n');
+                    self.key_paste_burst_last_at = Some(Instant::now());
+                    self.observe_plain_char_event();
+                    return Ok(());
+                }
                 if self.config_wizard.is_none()
                     && key
                         .modifiers
@@ -2925,6 +3045,7 @@ impl TuiApp {
                     return Ok(());
                 }
                 self.reset_plain_char_burst();
+                self.flush_key_paste_burst_if_due(true);
                 self.flush_pending_paste();
 
                 let raw_line = std::mem::take(&mut self.input);
@@ -3017,19 +3138,20 @@ impl TuiApp {
                 }
             }
             KeyCode::Char('?') => {
-                if self.input.trim().is_empty() && self.config_wizard.is_none() {
-                    self.reset_plain_char_burst();
-                    self.shortcuts_visible = true;
-                } else {
-                    self.observe_plain_char_event();
-                    self.insert_char_at_cursor('?');
+                self.observe_plain_char_event();
+                if self.handle_plain_char_paste_burst('?') {
+                    return Ok(());
                 }
+                self.insert_char_at_cursor('?');
             }
             KeyCode::Char(ch) => {
                 if matches!(key.modifiers, KeyModifiers::NONE | KeyModifiers::SHIFT)
                     || is_altgr(key.modifiers)
                 {
                     self.observe_plain_char_event();
+                    if self.handle_plain_char_paste_burst(ch) {
+                        return Ok(());
+                    }
                     self.insert_char_at_cursor(ch);
                 }
             }
@@ -3039,6 +3161,14 @@ impl TuiApp {
     }
 
     fn handle_ctrl_c(&mut self) {
+        if self.config_wizard.is_some() {
+            self.cancel_config_wizard();
+            return;
+        }
+        if self.clear_input_draft() {
+            return;
+        }
+
         let now = Instant::now();
         if self.busy {
             if self
@@ -5254,25 +5384,25 @@ fn format_busy_activity_line(
     terminal_focused: bool,
 ) -> String {
     let mut parts = vec![if is_zh {
-        format!("\u{2022} ??? ({elapsed_secs}s \u{00b7} Ctrl+C ??)")
+        format!("• 运行中 ({elapsed_secs}s · Ctrl+C 可中断)")
     } else {
-        format!("\u{2022} Working ({elapsed_secs}s \u{00b7} ctrl+c to interrupt)")
+        format!("• Working ({elapsed_secs}s · ctrl+c to interrupt)")
     }];
     if stream_catchup_mode {
         parts.push(if is_zh {
-            "???".to_string()
+            "追帧中".to_string()
         } else {
             "catch-up".to_string()
         });
     }
     if !terminal_focused {
         parts.push(if is_zh {
-            "???".to_string()
+            "未聚焦".to_string()
         } else {
             "unfocused".to_string()
         });
     }
-    parts.join(" \u{00b7} ")
+    parts.join(" · ")
 }
 
 fn format_footer_context_summary(

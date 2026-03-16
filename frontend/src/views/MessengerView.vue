@@ -245,7 +245,7 @@
             type="button"
             :title="t('chat.newSession')"
             :aria-label="t('chat.newSession')"
-            @click="startNewDraftSession"
+            @click="startNewSession"
           >
             <i class="fa-solid fa-plus" aria-hidden="true"></i>
             {{ t('chat.newSession') }}
@@ -8668,16 +8668,24 @@ const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
   await sendWorldMessage();
 };
 
-const startNewDraftSession = async () => {
+const startNewSession = async () => {
   if (!isAgentConversationActive.value) return;
   const targetAgent = activeAgentId.value;
-  chatStore.openDraftSession({ agent_id: targetAgent === DEFAULT_AGENT_KEY ? '' : targetAgent });
-  sessionHub.setActiveConversation({
-    kind: 'agent',
-    id: `draft:${targetAgent}`,
-    agentId: targetAgent
-  });
-  await scrollMessagesToBottom(true);
+  try {
+    // Explicit new-session clicks should materialize immediately so channel-bound traffic
+    // can switch to the empty main session before the first user message is sent.
+    const created = await chatStore.createSession(
+      targetAgent === DEFAULT_AGENT_KEY ? {} : { agent_id: targetAgent }
+    );
+    sessionHub.setActiveConversation({
+      kind: 'agent',
+      id: String(created?.id || chatStore.activeSessionId || ''),
+      agentId: normalizeAgentId(created?.agent_id || targetAgent)
+    });
+    await scrollMessagesToBottom(true);
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
 };
 
 const toggleLanguage = async () => {

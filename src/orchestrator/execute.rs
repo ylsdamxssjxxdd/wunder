@@ -1082,6 +1082,7 @@ impl Orchestrator {
                     Some(user_round_id.as_str()),
                     &question,
                     &answer,
+                    llm_config.clone(),
                 );
             }
             if waiting_question_panel {

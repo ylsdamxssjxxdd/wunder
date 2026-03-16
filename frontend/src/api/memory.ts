@@ -37,3 +37,7 @@ export const invalidateAgentMemory = (agentId: ApiId, memoryId: ApiId, value = t
   api.post(`${buildAgentMemoryBasePath(agentId)}/memories/${encodeMemoryId(memoryId)}/invalidate`, { value });
 export const listAgentMemoryHits = (agentId: ApiId, params: QueryParams = {}) =>
   api.get(`${buildAgentMemoryBasePath(agentId)}/memory-hits`, { params });
+export const getAgentMemorySettings = (agentId: ApiId, params: QueryParams = {}) =>
+  api.get(`${buildAgentMemoryBasePath(agentId)}/memory-settings`, { params });
+export const updateAgentMemorySettings = (agentId: ApiId, payload: ApiPayload) =>
+  api.post(`${buildAgentMemoryBasePath(agentId)}/memory-settings`, payload);

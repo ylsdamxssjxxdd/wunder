@@ -4,13 +4,15 @@ use crate::services::memory_fragments::{
     MemoryFragmentInput, MemoryFragmentListOptions, MemoryFragmentStore,
 };
 use crate::storage::{MemoryFragmentRecord, MemoryJobRecord, StorageBackend};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::Utc;
-use serde::Serialize;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 const ACTIVE_STATUS: &str = "active";
@@ -119,6 +121,28 @@ struct ExtractionCandidate {
     confidence: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct LlmExtractionCandidate {
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub slot: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub content: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub tier: String,
+    #[serde(default)]
+    pub importance: f64,
+    #[serde(default)]
+    pub confidence: f64,
+}
+
 pub struct MemoryAutoExtractService {
     storage: Arc<dyn StorageBackend>,
     fragment_store: MemoryFragmentStore,
@@ -133,7 +157,7 @@ impl MemoryAutoExtractService {
         }
     }
 
-    pub fn capture_turn(
+    pub fn queue_turn_job(
         &self,
         user_id: &str,
         agent_id: Option<&str>,
@@ -141,21 +165,20 @@ impl MemoryAutoExtractService {
         round_id: Option<&str>,
         question: &str,
         answer: &str,
-    ) -> Result<MemoryAutoExtractOutcome> {
+        extraction_window: &[String],
+    ) -> Result<MemoryJobRecord> {
         let now = now_ts();
-        let extraction_window =
-            self.build_recent_user_extraction_window(user_id, session_id, question);
         let extraction_window_preview =
             truncate_chars(&extraction_window.join("\n"), MAX_TEXT_CHARS);
-        let agent_scope = agent_id.unwrap_or("__default__").trim().to_string();
-        let mut job = MemoryJobRecord {
+        let job = MemoryJobRecord {
             job_id: format!("mjob_{}", Uuid::new_v4().simple()),
             user_id: user_id.trim().to_string(),
-            agent_id: agent_scope,
+            agent_id: agent_id.unwrap_or("__default__").trim().to_string(),
             session_id: session_id.trim().to_string(),
             job_type: JOB_TYPE_AUTO_EXTRACT_TURN.to_string(),
             status: JOB_STATUS_QUEUED.to_string(),
             request_payload: json!({
+                "extractor": "llm",
                 "question": truncate_chars(question, MAX_TEXT_CHARS),
                 "answer": truncate_chars(answer, MAX_TEXT_CHARS),
                 "round_id": round_id.unwrap_or("").trim(),
@@ -170,11 +193,96 @@ impl MemoryAutoExtractService {
             updated_at: now,
         };
         self.storage.upsert_memory_job(&job)?;
+        Ok(job)
+    }
 
+    pub fn mark_job_running(&self, job: &mut MemoryJobRecord) -> Result<()> {
         job.status = JOB_STATUS_RUNNING.to_string();
         job.started_at = now_ts();
         job.updated_at = job.started_at;
-        self.storage.upsert_memory_job(&job)?;
+        self.storage.upsert_memory_job(job)
+    }
+
+    pub fn finish_job_success(
+        &self,
+        job: &mut MemoryJobRecord,
+        outcome: &MemoryAutoExtractOutcome,
+        extracted_count: usize,
+    ) -> Result<()> {
+        job.status = if outcome.created + outcome.updated > 0 {
+            JOB_STATUS_COMPLETED.to_string()
+        } else {
+            JOB_STATUS_SKIPPED.to_string()
+        };
+        job.result_summary = format!(
+            "llm_items={extracted_count}, created={}, updated={}, skipped={}",
+            outcome.created, outcome.updated, outcome.skipped
+        );
+        job.error_message.clear();
+        job.finished_at = now_ts();
+        job.updated_at = job.finished_at;
+        self.storage.upsert_memory_job(job)
+    }
+
+    pub fn finish_job_failed(&self, job: &mut MemoryJobRecord, err: &str) {
+        job.status = JOB_STATUS_FAILED.to_string();
+        job.result_summary.clear();
+        job.error_message = truncate_chars(err, 300);
+        job.finished_at = now_ts();
+        job.updated_at = job.finished_at;
+        let _ = self.storage.upsert_memory_job(job);
+    }
+
+    pub fn build_recent_user_window(
+        &self,
+        user_id: &str,
+        session_id: &str,
+        question: &str,
+    ) -> Vec<String> {
+        self.build_recent_user_extraction_window(user_id, session_id, question)
+    }
+
+    pub fn apply_llm_candidates(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        session_id: &str,
+        round_id: Option<&str>,
+        items: Vec<LlmExtractionCandidate>,
+    ) -> Result<MemoryAutoExtractOutcome> {
+        let candidates = items
+            .into_iter()
+            .filter_map(normalize_llm_candidate)
+            .take(MAX_AUTO_CANDIDATES)
+            .collect::<Vec<_>>();
+        self.apply_candidates(user_id, agent_id, session_id, round_id, candidates)
+    }
+
+    pub fn parse_llm_response(text: &str) -> Result<Vec<LlmExtractionCandidate>> {
+        parse_llm_response(text)
+    }
+
+    pub fn capture_turn(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        session_id: &str,
+        round_id: Option<&str>,
+        question: &str,
+        answer: &str,
+    ) -> Result<MemoryAutoExtractOutcome> {
+        let extraction_window =
+            self.build_recent_user_extraction_window(user_id, session_id, question);
+        let mut job = self.queue_turn_job(
+            user_id,
+            agent_id,
+            session_id,
+            round_id,
+            question,
+            answer,
+            &extraction_window,
+        )?;
+        self.mark_job_running(&mut job)?;
 
         let run_result = self.capture_turn_inner(
             user_id,
@@ -186,50 +294,31 @@ impl MemoryAutoExtractService {
         );
         match run_result {
             Ok(outcome) => {
-                job.status = if outcome.created + outcome.updated > 0 {
-                    JOB_STATUS_COMPLETED.to_string()
-                } else {
-                    JOB_STATUS_SKIPPED.to_string()
-                };
-                job.result_summary = format!(
-                    "created={}, updated={}, skipped={}",
-                    outcome.created, outcome.updated, outcome.skipped
-                );
-                job.error_message.clear();
-                job.finished_at = now_ts();
-                job.updated_at = job.finished_at;
-                self.storage.upsert_memory_job(&job)?;
+                self.finish_job_success(
+                    &mut job,
+                    &outcome,
+                    outcome.created + outcome.updated + outcome.skipped,
+                )?;
                 Ok(outcome)
             }
             Err(err) => {
-                job.status = JOB_STATUS_FAILED.to_string();
-                job.result_summary.clear();
-                job.error_message = truncate_chars(&err.to_string(), 300);
-                job.finished_at = now_ts();
-                job.updated_at = job.finished_at;
-                let _ = self.storage.upsert_memory_job(&job);
+                self.finish_job_failed(&mut job, &err.to_string());
                 Err(err)
             }
         }
     }
-    fn capture_turn_inner(
+
+    fn apply_candidates(
         &self,
         user_id: &str,
         agent_id: Option<&str>,
         session_id: &str,
         round_id: Option<&str>,
-        question: &str,
-        extraction_window: &[String],
+        candidates: Vec<ExtractionCandidate>,
     ) -> Result<MemoryAutoExtractOutcome> {
-        let candidates = if extraction_window.is_empty() {
-            extract_candidates(question)
-        } else {
-            extract_candidates_from_texts(extraction_window)
-        };
         if candidates.is_empty() {
             return Ok(MemoryAutoExtractOutcome::default());
         }
-
         let existing = self.fragment_store.list_fragments(
             user_id,
             agent_id,
@@ -276,6 +365,23 @@ impl MemoryAutoExtractService {
             }
         }
         Ok(outcome)
+    }
+
+    fn capture_turn_inner(
+        &self,
+        user_id: &str,
+        agent_id: Option<&str>,
+        session_id: &str,
+        round_id: Option<&str>,
+        question: &str,
+        extraction_window: &[String],
+    ) -> Result<MemoryAutoExtractOutcome> {
+        let candidates = if extraction_window.is_empty() {
+            extract_candidates(question)
+        } else {
+            extract_candidates_from_texts(extraction_window)
+        };
+        self.apply_candidates(user_id, agent_id, session_id, round_id, candidates)
     }
 
     fn build_recent_user_extraction_window(
@@ -870,6 +976,298 @@ fn build_candidate(
     }
 }
 
+fn parse_llm_response(text: &str) -> Result<Vec<LlmExtractionCandidate>> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let parsed = parse_llm_response_value(trimmed)
+        .ok_or_else(|| anyhow!("memory auto extract llm output is not valid JSON"))?;
+    deserialize_llm_candidates(parsed)
+}
+
+fn parse_llm_response_value(text: &str) -> Option<Value> {
+    if let Some(tagged) = extract_tagged_json_block(text) {
+        if let Ok(value) = serde_json::from_str::<Value>(&tagged) {
+            return Some(value);
+        }
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        return Some(value);
+    }
+    if let Some(code_block) = extract_json_code_block(text) {
+        if let Ok(value) = serde_json::from_str::<Value>(&code_block) {
+            return Some(value);
+        }
+    }
+    for candidate in extract_json_candidates(text).into_iter().rev() {
+        if let Ok(value) = serde_json::from_str::<Value>(&candidate) {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn deserialize_llm_candidates(value: Value) -> Result<Vec<LlmExtractionCandidate>> {
+    let items_value = match value {
+        Value::Array(items) => Value::Array(items),
+        Value::Object(map) => map
+            .get("items")
+            .cloned()
+            .or_else(|| map.get("memories").cloned())
+            .or_else(|| map.get("fragments").cloned())
+            .unwrap_or(Value::Array(Vec::new())),
+        _ => Value::Array(Vec::new()),
+    };
+    serde_json::from_value::<Vec<LlmExtractionCandidate>>(items_value)
+        .map_err(|err| anyhow!("memory auto extract llm items parse failed: {err}"))
+}
+
+fn normalize_llm_candidate(item: LlmExtractionCandidate) -> Option<ExtractionCandidate> {
+    let category = normalize_llm_category(&item.category)?;
+    let slot = normalize_llm_slot(&category, &item.slot);
+    let title = truncate_chars(item.title.trim(), 60);
+    let summary = truncate_chars(
+        &first_non_empty_text(&[
+            item.summary.as_str(),
+            item.title.as_str(),
+            item.content.as_str(),
+        ]),
+        120,
+    );
+    let content = truncate_chars(
+        &first_non_empty_text(&[
+            item.content.as_str(),
+            item.summary.as_str(),
+            item.title.as_str(),
+        ]),
+        280,
+    );
+    if summary.is_empty() || content.is_empty() {
+        return None;
+    }
+    let resolved_title = if title.is_empty() {
+        truncate_chars(&summary, 60)
+    } else {
+        title
+    };
+    let tags = normalize_string_list(item.tags)
+        .into_iter()
+        .take(8)
+        .collect::<Vec<_>>();
+    let tier = normalize_llm_tier(&item.tier, &category);
+    Some(ExtractionCandidate {
+        category: category.clone(),
+        fact_key: build_llm_fact_key(&category, &slot, &resolved_title, &summary, &content),
+        title: resolved_title,
+        summary,
+        content,
+        tags,
+        tier,
+        importance: item.importance.clamp(0.0, 1.0),
+        confidence: item.confidence.clamp(0.0, 1.0),
+    })
+}
+
+fn normalize_llm_category(value: &str) -> Option<String> {
+    let normalized = normalize_key(value);
+    match normalized.as_str() {
+        "response_preference" | "responsepreference" | "reply_preference" | "constraint" => {
+            Some("response-preference".to_string())
+        }
+        "profile" | "identity" => Some("profile".to_string()),
+        "plan" | "current_plan" | "currentplan" => Some("plan".to_string()),
+        "preference" | "user_preference" | "userpreference" => Some("preference".to_string()),
+        "working_note" | "workingnote" | "note" | "memory_note" | "memorynote" => {
+            Some("working-note".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn normalize_llm_slot(category: &str, value: &str) -> String {
+    let normalized = normalize_key(value);
+    match category {
+        "response-preference" => match normalized.as_str() {
+            "reply_language" | "language" => "reply_language".to_string(),
+            "response_style" | "style" => "response_style".to_string(),
+            "response_format" | "format" => "response_format".to_string(),
+            _ => normalized,
+        },
+        "profile" => match normalized.as_str() {
+            "name" => "name".to_string(),
+            "identity" | "role" | "title" => "identity".to_string(),
+            "background" => "background".to_string(),
+            _ => normalized,
+        },
+        "plan" => {
+            if normalized.is_empty() {
+                "current".to_string()
+            } else {
+                normalized
+            }
+        }
+        _ => normalized,
+    }
+}
+
+fn normalize_llm_tier(value: &str, category: &str) -> String {
+    let normalized = normalize_key(value);
+    match normalized.as_str() {
+        "core" => "core".to_string(),
+        "working" => "working".to_string(),
+        "peripheral" => "peripheral".to_string(),
+        _ => match category {
+            "response-preference" | "profile" | "preference" => "core".to_string(),
+            _ => "working".to_string(),
+        },
+    }
+}
+
+fn build_llm_fact_key(
+    category: &str,
+    slot: &str,
+    title: &str,
+    summary: &str,
+    content: &str,
+) -> String {
+    let basis = first_non_empty_text(&[summary, title, content]).to_lowercase();
+    match category {
+        "response-preference" => match slot {
+            "reply_language" => "constraint::reply_language".to_string(),
+            "response_style" => "constraint::response_style".to_string(),
+            "response_format" => "constraint::response_format".to_string(),
+            other if !other.is_empty() => format!("constraint::{other}"),
+            _ => format!("constraint::{}", stable_hash(&basis)),
+        },
+        "profile" => match slot {
+            "name" => "profile::name".to_string(),
+            "identity" => "profile::identity".to_string(),
+            "background" => format!("profile::{}", stable_hash(&format!("profile:{basis}"))),
+            other if !other.is_empty() => format!("profile::{other}"),
+            _ => format!("profile::{}", stable_hash(&format!("profile:{basis}"))),
+        },
+        "plan" => {
+            if !slot.is_empty() && slot != "current" {
+                format!("plan::{slot}")
+            } else {
+                format!("plan::{}", stable_hash(&format!("plan:{basis}")))
+            }
+        }
+        "preference" => {
+            if !slot.is_empty() && slot != "generic" {
+                format!("preference::{slot}")
+            } else {
+                format!("preference::{}", stable_hash(&format!("pref:{basis}")))
+            }
+        }
+        "working-note" => {
+            if !slot.is_empty() && slot != "generic" {
+                format!("note::{slot}")
+            } else {
+                format!("note::{}", stable_hash(&format!("note:{basis}")))
+            }
+        }
+        _ => format!("memory::{}", stable_hash(&basis)),
+    }
+}
+
+fn first_non_empty_text(values: &[&str]) -> String {
+    values
+        .iter()
+        .map(|value| clean_statement(value))
+        .find(|value| !value.is_empty())
+        .unwrap_or_default()
+}
+
+fn normalize_key(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .replace('-', "_")
+        .replace(' ', "_")
+}
+
+fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for value in values {
+        let cleaned = clean_statement(&value);
+        if cleaned.is_empty() {
+            continue;
+        }
+        let key = cleaned.to_lowercase();
+        if seen.insert(key) {
+            output.push(cleaned);
+        }
+    }
+    output
+}
+
+fn extract_tagged_json_block(text: &str) -> Option<String> {
+    tagged_fragments_regex()
+        .captures(text)
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+}
+
+fn tagged_fragments_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| {
+        Regex::new(r"(?is)<memory_fragments>(.*?)</memory_fragments>")
+            .expect("memory fragments regex")
+    })
+}
+
+fn extract_json_code_block(text: &str) -> Option<String> {
+    json_code_block_regex()
+        .captures(text)
+        .and_then(|caps| caps.get(1).map(|value| value.as_str().trim().to_string()))
+}
+
+fn json_code_block_regex() -> &'static Regex {
+    static REGEX: OnceLock<Regex> = OnceLock::new();
+    REGEX.get_or_init(|| Regex::new(r"(?s)```json\s*(.*?)\s*```").expect("json code block regex"))
+}
+
+fn extract_json_candidates(text: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let mut object_depth = 0usize;
+    let mut array_depth = 0usize;
+    let mut start = None;
+    for (index, ch) in text.char_indices() {
+        if matches!(ch, '{' | '[') {
+            if object_depth == 0 && array_depth == 0 {
+                start = Some(index);
+            }
+            if ch == '{' {
+                object_depth += 1;
+            } else {
+                array_depth += 1;
+            }
+            continue;
+        }
+        if ch == '}' {
+            if object_depth == 0 {
+                continue;
+            }
+            object_depth -= 1;
+        } else if ch == ']' {
+            if array_depth == 0 {
+                continue;
+            }
+            array_depth -= 1;
+        } else {
+            continue;
+        }
+        if object_depth == 0 && array_depth == 0 {
+            if let Some(begin) = start.take() {
+                candidates.push(text[begin..=index].to_string());
+            }
+        }
+    }
+    candidates
+}
+
 fn split_segments(text: &str) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = String::new();
@@ -1100,6 +1498,97 @@ mod tests {
                 }),
             )
             .expect("append chat record");
+    }
+
+    #[test]
+    fn parse_llm_response_supports_tagged_json_payload() {
+        let parsed = MemoryAutoExtractService::parse_llm_response(
+            r#"
+<memory_fragments>
+{
+  "items": [
+    {
+      "category": "profile",
+      "slot": "name",
+      "title": "用户姓名",
+      "summary": "用户姓名是周华健",
+      "content": "用户明确说自己叫周华健",
+      "tags": ["identity", "name"],
+      "tier": "core",
+      "importance": 0.9,
+      "confidence": 0.95
+    }
+  ]
+}
+</memory_fragments>
+"#,
+        )
+        .expect("parse llm response");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].category, "profile");
+        assert_eq!(parsed[0].slot, "name");
+        assert_eq!(parsed[0].summary, "用户姓名是周华健");
+    }
+
+    #[test]
+    fn apply_llm_candidates_keeps_manual_memory_intact() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-llm-manual.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let fragment_store = MemoryFragmentStore::new(storage.clone());
+        let service = MemoryAutoExtractService::new(storage.clone());
+
+        let manual = fragment_store
+            .save_fragment(
+                "u1",
+                Some("agent-demo"),
+                MemoryFragmentInput {
+                    source_type: Some("manual".to_string()),
+                    category: Some("response-preference".to_string()),
+                    title_l0: Some("默认使用中文回复".to_string()),
+                    summary_l1: Some("默认使用中文回复".to_string()),
+                    content_l2: Some("默认使用中文回复".to_string()),
+                    fact_key: Some("constraint::reply_language".to_string()),
+                    ..Default::default()
+                },
+            )
+            .expect("save manual fragment");
+
+        let outcome = service
+            .apply_llm_candidates(
+                "u1",
+                Some("agent-demo"),
+                "s1",
+                Some("round-1"),
+                vec![LlmExtractionCandidate {
+                    category: "response-preference".to_string(),
+                    slot: "reply_language".to_string(),
+                    title: "默认使用英文回复".to_string(),
+                    summary: "默认使用英文回复".to_string(),
+                    content: "用户希望以后默认英文回复".to_string(),
+                    tags: vec!["language".to_string(), "reply".to_string()],
+                    tier: "core".to_string(),
+                    importance: 0.9,
+                    confidence: 0.9,
+                }],
+            )
+            .expect("apply llm candidates");
+
+        assert_eq!(
+            outcome,
+            MemoryAutoExtractOutcome {
+                created: 0,
+                updated: 0,
+                skipped: 1
+            }
+        );
+        let stored = fragment_store
+            .get_fragment("u1", Some("agent-demo"), &manual.memory_id)
+            .expect("get manual fragment");
+        assert_eq!(stored.source_type, "manual");
+        assert_eq!(stored.summary_l1, "默认使用中文回复");
     }
 
     #[test]

@@ -11,6 +11,7 @@ use ratatui::Frame;
 use unicode_width::UnicodeWidthChar;
 use unicode_width::UnicodeWidthStr;
 
+use crate::tui::activity_indicator;
 use crate::tui::app::TuiApp;
 use crate::tui::theme;
 
@@ -20,13 +21,31 @@ pub(crate) fn draw_activity(frame: &mut Frame, area: Rect, app: &TuiApp) {
     if area.height == 0 || area.width == 0 {
         return;
     }
-    let style = if app.activity_highlighted() {
+
+    let line = app.activity_line();
+    let text_style = if app.activity_highlighted() {
         theme::accent_text()
     } else {
         theme::secondary_text()
     };
+
+    if let Some(rest) = line.strip_prefix("• ") {
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    activity_indicator::RUNNING_INDICATOR,
+                    activity_indicator::pending_indicator_style(),
+                ),
+                Span::raw(" "),
+                Span::styled(rest.to_string(), text_style),
+            ])),
+            area,
+        );
+        return;
+    }
+
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(app.activity_line(), style))),
+        Paragraph::new(Line::from(Span::styled(line, text_style))),
         area,
     );
 }
@@ -456,7 +475,6 @@ mod tests {
     fn footer_supports_label_only_items_for_model_and_cwd() {
         let spans = build_footer_spans(
             vec![
-                ("?".to_string(), "for shortcuts".to_string()),
                 (String::new(), "gpt-5.1-codex".to_string()),
                 (String::new(), "workspace/app".to_string()),
             ],
@@ -466,7 +484,6 @@ mod tests {
             .iter()
             .map(|span| span.content.as_ref())
             .collect::<String>();
-        assert!(rendered.contains("? for shortcuts"));
         assert!(rendered.contains("gpt-5.1-codex"));
         assert!(rendered.contains("workspace/app"));
     }

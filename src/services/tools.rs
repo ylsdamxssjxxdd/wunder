@@ -8,7 +8,8 @@ mod apply_patch_tool;
 mod browser_tool;
 mod catalog;
 mod channel_tool;
-mod command_output_guard;
+pub(crate) mod command_options;
+pub(crate) mod command_output_guard;
 mod context;
 mod desktop_control;
 mod dispatch;
@@ -16,10 +17,12 @@ mod freeform;
 mod memory_manager_tool;
 mod read_file_guard;
 mod read_image_tool;
+mod read_indentation;
 mod search_content_tool;
 mod skill_call;
 mod sleep_tool;
 mod swarm_realtime;
+pub(crate) mod tool_error;
 
 #[cfg(test)]
 pub(crate) use catalog::builtin_tool_specs_with_language;
@@ -49,6 +52,7 @@ use crate::config::{
     is_debug_log_level, normalize_knowledge_base_type, A2aServiceConfig, Config,
     KnowledgeBaseConfig, KnowledgeBaseType,
 };
+use crate::core::atomic_write::atomic_write_text;
 use crate::core::python_runtime;
 use crate::core::tool_args::recover_tool_args_value as recover_tool_args_value_lossy;
 use crate::core::tool_fs_filter;
@@ -107,14 +111,21 @@ use url::Url;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
+use command_options::{apply_time_budget_secs, parse_command_budget, parse_dry_run};
 use command_output_guard::{
-    render_command_output, CommandOutputCapture, CommandOutputCaptureMeta, CommandOutputCollector,
+    derive_capture_policies, render_command_output, CommandOutputCapture, CommandOutputCaptureMeta,
+    CommandOutputCollector, CommandOutputPolicy, DEFAULT_CAPTURE_TOTAL_BYTES,
     STDERR_CAPTURE_POLICY, STDOUT_CAPTURE_POLICY,
 };
+use tool_error::{build_failed_tool_result, ToolErrorMeta};
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
 const MAX_READ_LINES: usize = 1000;
 const MAX_READ_FILES: usize = 5;
+const MAX_READ_BUDGET_FILES: usize = 20;
+const MIN_READ_OUTPUT_BUDGET_BYTES: usize = 1024;
+const MAX_READ_OUTPUT_BUDGET_BYTES: usize = 2 * 1024 * 1024;
+const MAX_READ_TIME_BUDGET_MS: u64 = 10 * 60 * 1000;
 const MAX_RANGE_SPAN: usize = 1000;
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_ITEMS: usize = 200;
@@ -4017,6 +4028,14 @@ fn parse_timeout_secs(value: Option<&Value>) -> Option<f64> {
     }
 }
 
+fn extract_direct_patch_from_command(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.starts_with("*** Begin Patch") && trimmed.ends_with("*** End Patch") {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
 fn resolve_stream_chunk_size(config: &Config) -> usize {
     let size = config.server.stream_chunk_size;
     if size == 0 {
@@ -4340,6 +4359,8 @@ async fn run_spawned_child_streaming(
     tool_name: &str,
     command_text: &str,
     timeout: Option<Duration>,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
 ) -> Result<CommandRunResult> {
     let chunk_size = resolve_stream_chunk_size(context.config);
     let stdout = child.stdout.take();
@@ -4357,7 +4378,7 @@ async fn run_spawned_child_streaming(
                 command_text,
                 "stdout",
                 chunk_size,
-                STDOUT_CAPTURE_POLICY,
+                stdout_policy,
             )
             .await
         })
@@ -4374,7 +4395,7 @@ async fn run_spawned_child_streaming(
                 command_text,
                 "stderr",
                 chunk_size,
-                STDERR_CAPTURE_POLICY,
+                stderr_policy,
             )
             .await
         })
@@ -4417,6 +4438,8 @@ async fn run_command_streaming(
     cwd: &Path,
     timeout: Option<Duration>,
     tool_name: &str,
+    stdout_policy: CommandOutputPolicy,
+    stderr_policy: CommandOutputPolicy,
 ) -> Result<CommandRunResult> {
     let command_text = command.to_string();
     let runtime = python_runtime::resolve_python_runtime();
@@ -4451,7 +4474,16 @@ async fn run_command_streaming(
         }
         Err(err) => return Err(anyhow!(err)),
     };
-    run_spawned_child_streaming(context, child, tool_name, &command_text, timeout).await
+    run_spawned_child_streaming(
+        context,
+        child,
+        tool_name,
+        &command_text,
+        timeout,
+        stdout_policy,
+        stderr_policy,
+    )
+    .await
 }
 
 async fn run_ptc_python_script_streaming(
@@ -4490,6 +4522,8 @@ async fn run_ptc_python_script_streaming(
                     &tool_name,
                     &command_text,
                     timeout,
+                    STDOUT_CAPTURE_POLICY,
+                    STDERR_CAPTURE_POLICY,
                 )
                 .await;
             }
@@ -4525,6 +4559,8 @@ async fn run_ptc_python_script_streaming(
                     &tool_name,
                     &command_text,
                     timeout,
+                    STDOUT_CAPTURE_POLICY,
+                    STDERR_CAPTURE_POLICY,
                 )
                 .await;
             }
@@ -4543,6 +4579,32 @@ async fn run_ptc_python_script_streaming(
 
 async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
+    let dry_run = parse_dry_run(&args);
+    let command_budget = parse_command_budget(&args);
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if let Some(patch_input) = extract_direct_patch_from_command(&content) {
+        // Route accidental inline patch payloads to apply_patch to keep edit semantics stable.
+        let payload = json!({
+            "input": patch_input,
+            "dry_run": dry_run,
+        });
+        let mut result = apply_patch_tool::apply_patch(context, &payload).await?;
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert(
+                "intercepted_from".to_string(),
+                Value::String("execute_command".to_string()),
+            );
+        }
+        if !dry_run {
+            context.workspace.mark_tree_dirty(context.workspace_id);
+        }
+        return Ok(result);
+    }
     if sandbox::sandbox_enabled(context.config) {
         let result = sandbox::execute_tool(
             context.config,
@@ -4555,23 +4617,24 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             context.user_tool_bindings,
         )
         .await;
-        context.workspace.mark_tree_dirty(context.workspace_id);
+        if !dry_run {
+            context.workspace.mark_tree_dirty(context.workspace_id);
+        }
         return Ok(result);
     }
 
-    let content = args
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .trim()
-        .to_string();
     if content.is_empty() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.exec.command_required"),
-            "sandbox": false,
-        }));
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.exec.command_required"),
+            json!({}),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_COMMAND_REQUIRED",
+                Some("请在 content 中提供要执行的命令或脚本文本。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
     }
     let content = context
         .workspace
@@ -4579,9 +4642,19 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
 
     let allow_commands = &context.config.security.allow_commands;
     let allow_all = allow_commands.iter().any(|item| item == "*");
+    let normalized_allow_commands = if allow_all {
+        Vec::new()
+    } else {
+        allow_commands
+            .iter()
+            .map(|item| item.trim().to_lowercase())
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+    };
     let timeout_s = parse_timeout_secs(args.get("timeout_s"))
         .unwrap_or(0.0)
         .max(0.0);
+    let timeout_s = apply_time_budget_secs(timeout_s, &command_budget);
     let timeout = if timeout_s > 0.0 {
         Some(Duration::from_secs_f64(timeout_s))
     } else {
@@ -4596,20 +4669,30 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
             .resolve_path(context.workspace_id, workdir)?
     };
     if !cwd.exists() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.exec.workdir_not_found"),
-            "sandbox": false,
-        }));
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.exec.workdir_not_found"),
+            json!({ "workdir": workdir }),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_WORKDIR_NOT_FOUND",
+                Some("请确认 workdir 路径存在且在允许范围内。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
     }
     if !cwd.is_dir() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.exec.workdir_not_dir"),
-            "sandbox": false,
-        }));
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.exec.workdir_not_dir"),
+            json!({ "workdir": workdir }),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_WORKDIR_NOT_DIR",
+                Some("请将 workdir 指向目录而非文件。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
     }
 
     let mut results = Vec::new();
@@ -4618,21 +4701,112 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
     let mut guarded_total_commands: usize = 0;
     let mut guarded_truncated_commands: usize = 0;
     let execute_tool_name = resolve_tool_name("execute_command");
-    for raw_line in content.lines() {
-        let command = raw_line.trim();
-        if command.is_empty() {
+    let (stdout_policy, stderr_policy) =
+        derive_capture_policies(command_budget.output_budget_bytes);
+    let effective_output_budget_bytes = stdout_policy
+        .max_bytes()
+        .saturating_add(stderr_policy.max_bytes());
+    let commands = if allow_all {
+        vec![content.clone()]
+    } else {
+        content
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+    };
+    if commands.is_empty() {
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.exec.command_required"),
+            json!({}),
+            ToolErrorMeta::new(
+                "TOOL_EXEC_COMMAND_REQUIRED",
+                Some("请在 content 中提供要执行的命令或脚本文本。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
+    }
+    if let Some(max_commands) = command_budget.max_commands {
+        if commands.len() > max_commands {
+            return Ok(build_failed_tool_result(
+                format!(
+                    "command count {} exceeds budget limit {}",
+                    commands.len(),
+                    max_commands
+                ),
+                json!({
+                    "command_count": commands.len(),
+                    "max_commands": max_commands,
+                }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_BUDGET_COMMAND_LIMIT",
+                    Some("请减少单次执行命令数量，或提高 max_commands 预算。".to_string()),
+                    true,
+                    Some(200),
+                ),
+                false,
+            ));
+        }
+    }
+    if dry_run {
+        return Ok(json!({
+            "ok": true,
+            "data": {
+                "dry_run": true,
+                "workdir": cwd.to_string_lossy().to_string(),
+                "command_count": commands.len(),
+                "commands": commands,
+                "timeout_s": timeout_s,
+                "budget": command_budget.to_json(),
+            },
+            "error": "",
+            "meta": {
+                "output_guard": {
+                    "default_total_bytes": DEFAULT_CAPTURE_TOTAL_BYTES,
+                    "effective_total_bytes": effective_output_budget_bytes,
+                }
+            },
+            "sandbox": false,
+        }));
+    }
+    for command in commands {
+        if command.trim().is_empty() {
             continue;
         }
-        if !allow_all && !allow_commands.iter().any(|item| command.starts_with(item)) {
-            return Ok(json!({
-                "ok": false,
-                "data": {},
-                "error": i18n::t("tool.exec.not_allowed"),
-                "sandbox": false,
-            }));
+        if !allow_all {
+            let lower = command.to_lowercase();
+            if !normalized_allow_commands
+                .iter()
+                .any(|item| lower.starts_with(item))
+            {
+                return Ok(build_failed_tool_result(
+                    i18n::t("tool.exec.not_allowed"),
+                    json!({
+                        "command": command,
+                    }),
+                    ToolErrorMeta::new(
+                        "TOOL_EXEC_NOT_ALLOWED",
+                        Some("命令不在 allow_commands 白名单内。".to_string()),
+                        false,
+                        None,
+                    ),
+                    false,
+                ));
+            }
         }
-        let run =
-            run_command_streaming(context, command, &cwd, timeout, &execute_tool_name).await?;
+        let run = run_command_streaming(
+            context,
+            &command,
+            &cwd,
+            timeout,
+            &execute_tool_name,
+            stdout_policy,
+            stderr_policy,
+        )
+        .await?;
         let command_total_bytes = run
             .stdout_capture
             .total_bytes
@@ -4681,42 +4855,61 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                 last.insert("stderr".to_string(), Value::String(merged));
             }
             context.workspace.mark_tree_dirty(context.workspace_id);
-            return Ok(json!({
-                "ok": false,
-                "data": { "results": results },
-                "error": i18n::t_with_params(
+            return Ok(build_failed_tool_result(
+                i18n::t_with_params(
                     "tool.exec.command_failed",
                     &HashMap::from([("detail".to_string(), detail)]),
                 ),
-                "meta": {
-                    "output_guard": {
-                        "truncated": guarded_truncated_commands > 0,
-                        "commands": guarded_total_commands,
-                        "truncated_commands": guarded_truncated_commands,
-                        "total_bytes": guarded_total_bytes,
-                        "omitted_bytes": guarded_omitted_bytes,
+                json!({
+                    "results": results,
+                    "meta": {
+                        "output_guard": {
+                            "truncated": guarded_truncated_commands > 0,
+                            "commands": guarded_total_commands,
+                            "truncated_commands": guarded_truncated_commands,
+                            "total_bytes": guarded_total_bytes,
+                            "omitted_bytes": guarded_omitted_bytes,
+                            "effective_total_bytes": effective_output_budget_bytes,
+                        }
                     }
-                },
-                "sandbox": false,
-            }));
+                }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_TIMEOUT",
+                    Some(
+                        "命令执行超时，可拆分脚本或提高 timeout/budget.time_budget_ms 后重试。"
+                            .to_string(),
+                    ),
+                    true,
+                    Some(500),
+                ),
+                false,
+            ));
         }
         if run.returncode != 0 {
             context.workspace.mark_tree_dirty(context.workspace_id);
-            return Ok(json!({
-                "ok": false,
-                "data": { "results": results },
-                "error": i18n::t("tool.exec.failed"),
-                "meta": {
-                    "output_guard": {
-                        "truncated": guarded_truncated_commands > 0,
-                        "commands": guarded_total_commands,
-                        "truncated_commands": guarded_truncated_commands,
-                        "total_bytes": guarded_total_bytes,
-                        "omitted_bytes": guarded_omitted_bytes,
+            return Ok(build_failed_tool_result(
+                i18n::t("tool.exec.failed"),
+                json!({
+                    "results": results,
+                    "meta": {
+                        "output_guard": {
+                            "truncated": guarded_truncated_commands > 0,
+                            "commands": guarded_total_commands,
+                            "truncated_commands": guarded_truncated_commands,
+                            "total_bytes": guarded_total_bytes,
+                            "omitted_bytes": guarded_omitted_bytes,
+                            "effective_total_bytes": effective_output_budget_bytes,
+                        }
                     }
-                },
-                "sandbox": false,
-            }));
+                }),
+                ToolErrorMeta::new(
+                    "TOOL_EXEC_NON_ZERO_EXIT",
+                    Some("命令返回非 0，请先根据 stderr 修正后再重试。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            ));
         }
     }
     context.workspace.mark_tree_dirty(context.workspace_id);
@@ -4724,6 +4917,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
         "ok": true,
         "data": { "results": results },
         "error": "",
+        "budget": command_budget.to_json(),
         "meta": {
             "output_guard": {
                 "truncated": guarded_truncated_commands > 0,
@@ -4731,6 +4925,7 @@ async fn execute_command(context: &ToolContext<'_>, args: &Value) -> Result<Valu
                 "truncated_commands": guarded_truncated_commands,
                 "total_bytes": guarded_total_bytes,
                 "omitted_bytes": guarded_omitted_bytes,
+                "effective_total_bytes": effective_output_budget_bytes,
             }
         },
         "sandbox": false,
@@ -4981,6 +5176,31 @@ fn list_files_inner(
 struct ReadFileSpec {
     path: String,
     ranges: Vec<(usize, usize)>,
+    mode: ReadFileMode,
+    indentation: read_indentation::IndentationReadOptions,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReadFileMode {
+    Slice,
+    Indentation,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ReadBudget {
+    time_budget_ms: Option<u64>,
+    output_budget_bytes: Option<usize>,
+    max_files: Option<usize>,
+}
+
+impl ReadBudget {
+    fn to_json(self) -> Value {
+        json!({
+            "time_budget_ms": self.time_budget_ms,
+            "output_budget_bytes": self.output_budget_bytes,
+            "max_files": self.max_files,
+        })
+    }
 }
 
 fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>, String> {
@@ -5010,6 +5230,8 @@ fn parse_read_file_specs(args: &Value) -> std::result::Result<Vec<ReadFileSpec>,
             specs.push(ReadFileSpec {
                 path: path.to_string(),
                 ranges: vec![(1, MAX_READ_LINES)],
+                mode: ReadFileMode::Slice,
+                indentation: read_indentation::IndentationReadOptions::default(),
             });
         }
     }
@@ -5064,8 +5286,94 @@ fn parse_read_file_spec_object(obj: &serde_json::Map<String, Value>) -> Option<R
     if ranges.is_empty() {
         ranges.push((1, MAX_READ_LINES));
     }
+    let mode = parse_read_mode(obj);
+    let mut indentation = parse_indentation_options(obj);
+    if indentation.anchor_line.is_none() {
+        indentation.anchor_line = ranges.first().map(|(start, _)| *start);
+    }
+    Some(ReadFileSpec {
+        path,
+        ranges,
+        mode,
+        indentation,
+    })
+}
 
-    Some(ReadFileSpec { path, ranges })
+fn parse_read_mode(obj: &serde_json::Map<String, Value>) -> ReadFileMode {
+    let raw = obj
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("slice")
+        .trim()
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "indentation" | "indent" | "block" => ReadFileMode::Indentation,
+        _ => ReadFileMode::Slice,
+    }
+}
+
+fn parse_indentation_options(
+    obj: &serde_json::Map<String, Value>,
+) -> read_indentation::IndentationReadOptions {
+    let mut options = read_indentation::IndentationReadOptions::default();
+    let Some(indentation) = obj.get("indentation").and_then(Value::as_object) else {
+        return options;
+    };
+    options.anchor_line = indentation.get("anchor_line").and_then(parse_line_number);
+    options.max_levels = indentation
+        .get("max_levels")
+        .and_then(parse_line_number)
+        .unwrap_or(0);
+    options.include_siblings = indentation
+        .get("include_siblings")
+        .and_then(Value::as_bool)
+        .unwrap_or(options.include_siblings);
+    options.include_header = indentation
+        .get("include_header")
+        .and_then(Value::as_bool)
+        .unwrap_or(options.include_header);
+    options.max_lines = indentation.get("max_lines").and_then(parse_line_number);
+    options
+}
+
+fn parse_read_budget(args: &Value) -> ReadBudget {
+    let Some(obj) = args.as_object() else {
+        return ReadBudget::default();
+    };
+    let budget_obj = obj.get("budget").and_then(Value::as_object);
+    let time_budget_ms = budget_obj
+        .and_then(|value| value.get("time_budget_ms"))
+        .or_else(|| obj.get("time_budget_ms"))
+        .and_then(parse_optional_positive_u64)
+        .map(|value| value.clamp(1, MAX_READ_TIME_BUDGET_MS));
+    let output_budget_bytes = budget_obj
+        .and_then(|value| value.get("output_budget_bytes"))
+        .or_else(|| obj.get("output_budget_bytes"))
+        .and_then(parse_optional_positive_usize)
+        .map(|value| value.clamp(MIN_READ_OUTPUT_BUDGET_BYTES, MAX_READ_OUTPUT_BUDGET_BYTES));
+    let max_files = budget_obj
+        .and_then(|value| value.get("max_files"))
+        .or_else(|| obj.get("max_files"))
+        .and_then(parse_optional_positive_usize)
+        .map(|value| value.clamp(1, MAX_READ_BUDGET_FILES));
+    ReadBudget {
+        time_budget_ms,
+        output_budget_bytes,
+        max_files,
+    }
+}
+
+fn parse_optional_positive_u64(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(number) => number.as_u64(),
+        Value::String(text) => text.trim().parse::<u64>().ok(),
+        _ => None,
+    }
+    .filter(|value| *value > 0)
+}
+
+fn parse_optional_positive_usize(value: &Value) -> Option<usize> {
+    parse_optional_positive_u64(value).map(|value| value as usize)
 }
 
 fn normalize_read_path_hint(path: String) -> String {
@@ -5155,27 +5463,54 @@ fn summarize_read_ranges(ranges: &[(usize, usize)], total_lines: usize) -> (usiz
 }
 
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
-    let specs = match parse_read_file_specs(args) {
+    let args = recover_tool_args_value(args);
+    let dry_run = parse_dry_run(&args);
+    let read_budget = parse_read_budget(&args);
+    let mut specs = match parse_read_file_specs(&args) {
         Ok(specs) => specs,
         Err(message) => {
-            return Ok(json!({
-                "ok": false,
-                "data": {},
-                "error": message
-            }))
+            return Ok(build_failed_tool_result(
+                message,
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_READ_INVALID_ARGS",
+                    Some("请检查 files/path/line_ranges/mode/budget 参数格式。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            ));
         }
     };
+    let requested_files = specs.len();
+    let mut budget_file_limit_hit = false;
+    if let Some(max_files) = read_budget.max_files {
+        if specs.len() > max_files {
+            specs.truncate(max_files);
+            budget_file_limit_hit = true;
+        }
+    }
 
     let specs_for_lsp = specs.clone();
     let workspace = context.workspace.clone();
     let user_id = context.workspace_id.to_string();
     let extra_roots = collect_read_roots(context);
+    let budget_for_task = read_budget;
     let result = tokio::task::spawn_blocking(move || {
-        read_files_inner(workspace.as_ref(), &user_id, &extra_roots, specs)
+        read_files_inner(
+            workspace.as_ref(),
+            &user_id,
+            &extra_roots,
+            specs,
+            budget_for_task,
+            dry_run,
+            requested_files,
+            budget_file_limit_hit,
+        )
     })
     .await
     .map_err(|err| anyhow!(err.to_string()))?;
-    if result.is_ok() && context.config.lsp.enabled {
+    if result.is_ok() && context.config.lsp.enabled && !dry_run {
         for spec in specs_for_lsp {
             if let Ok(target) = context
                 .workspace
@@ -5193,16 +5528,31 @@ fn read_files_inner(
     user_id: &str,
     extra_roots: &[PathBuf],
     specs: Vec<ReadFileSpec>,
+    budget: ReadBudget,
+    dry_run: bool,
+    requested_files: usize,
+    budget_file_limit_hit: bool,
 ) -> Result<Value> {
+    let started_at = Instant::now();
     let mut outputs = Vec::new();
     let mut summaries = Vec::new();
+    let mut timeout_hit = false;
+    let mut output_budget_hit = false;
+    let mut output_budget_omitted_bytes = 0usize;
     for spec in specs {
+        if let Some(limit_ms) = budget.time_budget_ms {
+            if started_at.elapsed() >= Duration::from_millis(limit_ms) {
+                timeout_hit = true;
+                break;
+            }
+        }
         let raw_path = spec.path.as_str();
         let mut summary = json!({
             "path": raw_path,
             "read_lines": 0,
             "total_lines": 0,
-            "complete": false
+            "complete": false,
+            "dry_run": dry_run
         });
         let target = match workspace.resolve_path(user_id, raw_path) {
             Ok(path) => Some(path),
@@ -5229,6 +5579,30 @@ fn read_files_inner(
             continue;
         }
         let size = target.metadata().map(|meta| meta.len()).unwrap_or(0);
+        if dry_run {
+            if let Value::Object(ref mut map) = summary {
+                map.insert("exists".to_string(), Value::Bool(true));
+                map.insert("size_bytes".to_string(), Value::from(size));
+                map.insert(
+                    "mode".to_string(),
+                    Value::String(match spec.mode {
+                        ReadFileMode::Slice => "slice".to_string(),
+                        ReadFileMode::Indentation => "indentation".to_string(),
+                    }),
+                );
+            }
+            outputs.push(format!(
+                ">>> {}\n[dry_run] exists=true size={} bytes mode={}",
+                raw_path,
+                size,
+                match spec.mode {
+                    ReadFileMode::Slice => "slice",
+                    ReadFileMode::Indentation => "indentation",
+                }
+            ));
+            summaries.push(summary);
+            continue;
+        }
         if size > MAX_READ_BYTES as u64 {
             outputs.push(format!(
                 ">>> {}\n{}",
@@ -5262,47 +5636,123 @@ fn read_files_inner(
         };
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
-        let (read_lines, complete) = summarize_read_ranges(&spec.ranges, total_lines);
-        if let Value::Object(ref mut map) = summary {
-            map.insert("read_lines".to_string(), Value::from(read_lines as u64));
-            map.insert("total_lines".to_string(), Value::from(total_lines as u64));
-            map.insert("complete".to_string(), Value::Bool(complete));
+        match spec.mode {
+            ReadFileMode::Slice => {
+                let (read_lines, complete) = summarize_read_ranges(&spec.ranges, total_lines);
+                if let Value::Object(ref mut map) = summary {
+                    map.insert("mode".to_string(), Value::String("slice".to_string()));
+                    map.insert("read_lines".to_string(), Value::from(read_lines as u64));
+                    map.insert("total_lines".to_string(), Value::from(total_lines as u64));
+                    map.insert("complete".to_string(), Value::Bool(complete));
+                }
+                let mut file_output = Vec::new();
+                for (start, end) in spec.ranges {
+                    if lines.is_empty() {
+                        file_output.push(i18n::t("tool.read.empty_file"));
+                        continue;
+                    }
+                    if start > lines.len() {
+                        let params = HashMap::from([
+                            ("start".to_string(), start.to_string()),
+                            ("end".to_string(), end.to_string()),
+                            ("total".to_string(), lines.len().to_string()),
+                        ]);
+                        file_output
+                            .push(i18n::t_with_params("tool.read.range_out_of_file", &params));
+                        continue;
+                    }
+                    let last = end.min(lines.len());
+                    let mut slice_lines = Vec::new();
+                    for (idx, line) in lines.iter().enumerate().take(last).skip(start - 1) {
+                        slice_lines.push(format!("{}: {}", idx + 1, line));
+                    }
+                    file_output.push(slice_lines.join("\n"));
+                }
+                let joined = file_output.join("\n---\n");
+                outputs.push(format!(">>> {}\n{}", raw_path, joined));
+            }
+            ReadFileMode::Indentation => {
+                let selected = read_indentation::read_block(&content, &spec.indentation);
+                let read_lines = selected.len();
+                let complete = total_lines == read_lines;
+                if let Value::Object(ref mut map) = summary {
+                    map.insert("mode".to_string(), Value::String("indentation".to_string()));
+                    map.insert("read_lines".to_string(), Value::from(read_lines as u64));
+                    map.insert("total_lines".to_string(), Value::from(total_lines as u64));
+                    map.insert("complete".to_string(), Value::Bool(complete));
+                }
+                if selected.is_empty() {
+                    outputs.push(format!(
+                        ">>> {}\n{}",
+                        raw_path,
+                        i18n::t("tool.read.empty_file")
+                    ));
+                } else {
+                    let formatted = selected
+                        .into_iter()
+                        .map(|(line, text)| format!("{line}: {text}"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    outputs.push(format!(">>> {}\n{}", raw_path, formatted));
+                }
+            }
         }
-        let mut file_output = Vec::new();
-        for (start, end) in spec.ranges {
-            if lines.is_empty() {
-                file_output.push(i18n::t("tool.read.empty_file"));
-                continue;
-            }
-            if start > lines.len() {
-                let params = HashMap::from([
-                    ("start".to_string(), start.to_string()),
-                    ("end".to_string(), end.to_string()),
-                    ("total".to_string(), lines.len().to_string()),
-                ]);
-                file_output.push(i18n::t_with_params("tool.read.range_out_of_file", &params));
-                continue;
-            }
-            let last = end.min(lines.len());
-            let mut slice_lines = Vec::new();
-            for (idx, line) in lines.iter().enumerate().take(last).skip(start - 1) {
-                slice_lines.push(format!("{}: {}", idx + 1, line));
-            }
-            file_output.push(slice_lines.join("\n"));
-        }
-        let joined = file_output.join("\n---\n");
-        outputs.push(format!(">>> {}\n{}", raw_path, joined));
         summaries.push(summary);
     }
-    let result = if outputs.is_empty() {
+    let mut result = if outputs.is_empty() {
         i18n::t("tool.read.empty_result")
     } else {
         outputs.join("\n\n")
     };
+    let bytes_before_budget = result.len();
+    if let Some(output_budget_bytes) = budget.output_budget_bytes {
+        let (truncated, omitted) = truncate_utf8_output(result.as_str(), output_budget_bytes);
+        if omitted > 0 {
+            output_budget_hit = true;
+            output_budget_omitted_bytes = omitted;
+        }
+        result = truncated;
+    }
+    let processed_files = summaries.len();
     Ok(json!({
         "content": result,
-        "meta": { "files": summaries }
+        "meta": {
+            "files": summaries,
+            "read": {
+                "dry_run": dry_run,
+                "requested_files": requested_files,
+                "processed_files": processed_files,
+                "budget_file_limit_hit": budget_file_limit_hit,
+                "timeout_hit": timeout_hit,
+                "output_budget_hit": output_budget_hit,
+                "output_budget_omitted_bytes": output_budget_omitted_bytes,
+                "content_bytes_before_budget": bytes_before_budget,
+                "budget": budget.to_json(),
+            }
+        }
     }))
+}
+
+fn truncate_utf8_output(text: &str, budget_bytes: usize) -> (String, usize) {
+    if text.len() <= budget_bytes {
+        return (text.to_string(), 0);
+    }
+    let mut cut = budget_bytes.min(text.len());
+    while cut > 0 && !text.is_char_boundary(cut) {
+        cut = cut.saturating_sub(1);
+    }
+    if cut == 0 {
+        return ("".to_string(), text.len());
+    }
+    let omitted = text.len().saturating_sub(cut);
+    (
+        format!(
+            "{}\n...(truncated read output, omitted {} bytes)...",
+            &text[..cut],
+            omitted
+        ),
+        omitted,
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -5590,11 +6040,33 @@ async fn touch_lsp_file(
     })
 }
 
+struct WriteFileOutcome {
+    target: PathBuf,
+    existed: bool,
+    previous_bytes: u64,
+}
+
 async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let args = recover_tool_args_value(args);
     let path = args
         .get("path")
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("缺少 path"))?;
+        .unwrap_or("")
+        .trim();
+    if path.is_empty() {
+        return Ok(build_failed_tool_result(
+            "缺少 path",
+            json!({}),
+            ToolErrorMeta::new(
+                "TOOL_WRITE_PATH_REQUIRED",
+                Some("请提供写入目标路径。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
+    }
+    let dry_run = parse_dry_run(&args);
     let content = args.get("content").and_then(Value::as_str).unwrap_or("");
     let path = path.to_string();
     let content = content.to_string();
@@ -5603,9 +6075,25 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let user_id = context.workspace_id.to_string();
     let path_for_write = path.clone();
     let allow_roots = collect_allow_roots(context);
-    let target = tokio::task::spawn_blocking(move || {
+    let write_outcome = tokio::task::spawn_blocking(move || {
         let target =
             resolve_tool_path(workspace.as_ref(), &user_id, &path_for_write, &allow_roots)?;
+        if target.exists() && target.is_dir() {
+            return Err(anyhow!("target path is a directory"));
+        }
+        let existed = target.exists();
+        let previous_bytes = if existed {
+            target.metadata().map(|meta| meta.len()).unwrap_or(0)
+        } else {
+            0
+        };
+        if dry_run {
+            return Ok::<WriteFileOutcome, anyhow::Error>(WriteFileOutcome {
+                target,
+                existed,
+                previous_bytes,
+            });
+        }
         let workspace_root = workspace.workspace_root(&user_id);
         if is_within_root(&workspace_root, &target) {
             workspace.write_file(&user_id, &path_for_write, &content, true)?;
@@ -5613,17 +6101,48 @@ async fn write_file(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            std::fs::write(&target, &content)?;
+            atomic_write_text(&target, &content)?;
         }
-        Ok::<PathBuf, anyhow::Error>(target)
+        Ok::<WriteFileOutcome, anyhow::Error>(WriteFileOutcome {
+            target,
+            existed,
+            previous_bytes,
+        })
     })
     .await
-    .map_err(|err| anyhow!(err.to_string()))??;
-    let lsp_info = touch_lsp_file(context, &target, true).await;
+    .map_err(|err| anyhow!(err.to_string()));
+    let write_outcome = match write_outcome {
+        Ok(Ok(outcome)) => outcome,
+        Ok(Err(err)) | Err(err) => {
+            return Ok(build_failed_tool_result(
+                format!("写入文件失败：{err}"),
+                json!({
+                    "path": path,
+                    "dry_run": dry_run,
+                }),
+                ToolErrorMeta::new(
+                    "TOOL_WRITE_FAILED",
+                    Some("请确认路径权限与目录状态后重试。".to_string()),
+                    true,
+                    Some(200),
+                ),
+                false,
+            ));
+        }
+    };
+    let lsp_info = if dry_run {
+        Value::Null
+    } else {
+        touch_lsp_file(context, &write_outcome.target, true).await
+    };
     Ok(json!({
         "ok": true,
         "path": path,
         "bytes": bytes,
+        "dry_run": dry_run,
+        "existed": write_outcome.existed,
+        "previous_bytes": write_outcome.previous_bytes,
+        "target": write_outcome.target.to_string_lossy().to_string(),
         "lsp": lsp_info
     }))
 }
@@ -6551,6 +7070,82 @@ mod tests {
 
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].path, "Cargo.toml");
+    }
+
+    #[test]
+    fn parse_read_file_specs_parses_indentation_mode() {
+        let specs = parse_read_file_specs(&json!({
+            "path": "src/main.rs",
+            "mode": "indentation",
+            "indentation": {
+                "anchor_line": 12,
+                "max_levels": 2,
+                "include_siblings": true,
+                "include_header": false,
+                "max_lines": 40
+            }
+        }))
+        .expect("indentation mode should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert!(matches!(specs[0].mode, ReadFileMode::Indentation));
+        assert_eq!(specs[0].indentation.anchor_line, Some(12));
+        assert_eq!(specs[0].indentation.max_levels, 2);
+        assert!(specs[0].indentation.include_siblings);
+        assert!(!specs[0].indentation.include_header);
+        assert_eq!(specs[0].indentation.max_lines, Some(40));
+    }
+
+    #[test]
+    fn parse_read_budget_reads_nested_and_top_level_fields() {
+        let budget = parse_read_budget(&json!({
+            "time_budget_ms": 9000,
+            "budget": {
+                "output_budget_bytes": 4096,
+                "max_files": 3
+            }
+        }));
+        assert_eq!(budget.time_budget_ms, Some(9000));
+        assert_eq!(budget.output_budget_bytes, Some(4096));
+        assert_eq!(budget.max_files, Some(3));
+    }
+
+    #[test]
+    fn truncate_utf8_output_respects_char_boundary() {
+        let text = "a中b";
+        let (truncated, omitted) = truncate_utf8_output(text, 2);
+        assert!(omitted > 0);
+        assert!(truncated.contains("truncated read output"));
+    }
+
+    #[test]
+    fn extract_direct_patch_from_command_accepts_raw_patch_payload() {
+        let command = r#"
+*** Begin Patch
+*** Update File: src/main.rs
+@@
+-fn old() {}
++fn new() {}
+*** End Patch
+"#;
+        let extracted = extract_direct_patch_from_command(command);
+        assert!(extracted.is_some());
+        let patch = extracted.expect("patch should be extracted");
+        assert!(patch.starts_with("*** Begin Patch"));
+        assert!(patch.ends_with("*** End Patch"));
+    }
+
+    #[test]
+    fn extract_direct_patch_from_command_rejects_wrapped_shell_text() {
+        let command = r#"cat <<'PATCH'
+*** Begin Patch
+*** Update File: src/main.rs
+@@
+-fn old() {}
++fn new() {}
+*** End Patch
+PATCH"#;
+        assert!(extract_direct_patch_from_command(command).is_none());
     }
 
     #[test]

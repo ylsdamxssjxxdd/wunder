@@ -1,4 +1,6 @@
+use super::command_options::parse_dry_run;
 use super::*;
+use crate::core::atomic_write::{atomic_write_bytes, atomic_write_text};
 
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
@@ -167,6 +169,12 @@ fn build_patch_error_result(error: anyhow::Error) -> Value {
         return json!({
             "ok": false,
             "error": detail.message,
+            "error_meta": {
+                "code": detail.code,
+                "hint": detail.hint.clone(),
+                "retryable": detail.retryable,
+                "retry_after_ms": Value::Null,
+            },
             "data": Value::Object(data),
         });
     }
@@ -179,9 +187,16 @@ fn build_patch_error_result(error: anyhow::Error) -> Value {
         "请缩小补丁范围后重试；若持续失败，请记录补丁与日志供排查。",
         "Retry with a smaller patch; if it keeps failing, capture the patch and logs for diagnosis.",
     );
+    let hint_for_meta = hint.clone();
     json!({
         "ok": false,
         "error": message,
+        "error_meta": {
+            "code": "PATCH_UNKNOWN",
+            "hint": hint_for_meta,
+            "retryable": false,
+            "retry_after_ms": Value::Null,
+        },
         "data": {
             "error_code": "PATCH_UNKNOWN",
             "retryable": false,
@@ -199,6 +214,7 @@ pub(super) async fn apply_patch(context: &ToolContext<'_>, args: &Value) -> Resu
 }
 
 async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let dry_run = parse_dry_run(args);
     let input = extract_patch_input(args)?;
     if input.len() > PATCH_INPUT_MAX_BYTES {
         return Err(patch_error_with_hint(
@@ -263,6 +279,27 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
         .map(|op| resolve_patch_op(context, &allow_roots, op))
         .collect::<Result<Vec<_>>>()?;
 
+    if dry_run {
+        let summary = summarize_patch_ops(&resolved_ops);
+        return Ok(json!({
+            "ok": true,
+            "dry_run": true,
+            "changed_files": summary.changed_files.len(),
+            "added": summary.added,
+            "updated": summary.updated,
+            "deleted": summary.deleted,
+            "moved": summary.moved,
+            "hunks_applied": summary.hunks_applied,
+            "files": summary.file_summaries.into_iter().map(|item| json!({
+                "action": item.action,
+                "path": item.path,
+                "to_path": item.to_path,
+                "hunks": item.hunks,
+            })).collect::<Vec<_>>(),
+            "lsp": Vec::<Value>::new(),
+        }));
+    }
+
     let summary = tokio::task::spawn_blocking(move || apply_patch_ops(resolved_ops))
         .await
         .map_err(|err| {
@@ -313,26 +350,230 @@ async fn apply_patch_inner(context: &ToolContext<'_>, args: &Value) -> Result<Va
     }))
 }
 
+fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
+    let mut changed_files = HashSet::new();
+    let mut file_summaries = Vec::new();
+    let mut added = 0usize;
+    let mut updated = 0usize;
+    let mut deleted = 0usize;
+    let mut moved = 0usize;
+    let mut hunks_applied = 0usize;
+
+    for op in ops {
+        match op {
+            ResolvedPatchOp::Add { path, target, .. } => {
+                added += 1;
+                changed_files.insert(target.clone());
+                file_summaries.push(FileChangeSummary {
+                    action: "add".to_string(),
+                    path: path.clone(),
+                    to_path: None,
+                    hunks: 0,
+                });
+            }
+            ResolvedPatchOp::Delete { path, target } => {
+                deleted += 1;
+                changed_files.insert(target.clone());
+                file_summaries.push(FileChangeSummary {
+                    action: "delete".to_string(),
+                    path: path.clone(),
+                    to_path: None,
+                    hunks: 0,
+                });
+            }
+            ResolvedPatchOp::Update {
+                path,
+                target,
+                move_to_path,
+                move_to_target,
+                chunks,
+            } => {
+                updated += 1;
+                let hunks = chunks.len();
+                hunks_applied += hunks;
+                changed_files.insert(target.clone());
+                if let Some(new_target) = move_to_target.as_ref() {
+                    moved += 1;
+                    changed_files.insert(new_target.clone());
+                }
+                file_summaries.push(FileChangeSummary {
+                    action: "update".to_string(),
+                    path: path.clone(),
+                    to_path: move_to_path.clone(),
+                    hunks,
+                });
+            }
+        }
+    }
+
+    ApplyPatchSummary {
+        changed_files: changed_files.into_iter().collect(),
+        added,
+        updated,
+        deleted,
+        moved,
+        hunks_applied,
+        file_summaries,
+    }
+}
+
 fn extract_patch_input(args: &Value) -> Result<String> {
     for key in ["input", "patch", "content", "raw"] {
         if let Some(value) = args.get(key).and_then(Value::as_str) {
             let trimmed = value.trim();
             if !trimmed.is_empty() {
+                if let Some(unwrapped) = unwrap_nested_patch_input(trimmed) {
+                    return Ok(unwrapped);
+                }
                 return Ok(trimmed.to_string());
             }
         }
     }
     Err(patch_error_with_hint(
         "PATCH_INPUT_MISSING",
-        "缺少补丁内容，请通过 input 传入完整补丁文本",
+        "缺少补丁内容：请在 input 字段提供完整 patch 文本",
         "Missing patch content; provide the full patch in input",
-        "示例：在 input 中提供从 *** Begin Patch 到 *** End Patch 的完整文本。",
+        "请将完整补丁从 *** Begin Patch 到 *** End Patch 原样放入 input。",
         "Example: pass the full payload from *** Begin Patch to *** End Patch in input.",
     ))
 }
 
+fn unwrap_nested_patch_input(raw: &str) -> Option<String> {
+    let mut current = raw.trim().to_string();
+    for _ in 0..2 {
+        let parsed = serde_json::from_str::<Value>(&current).ok()?;
+        match parsed {
+            Value::String(inner) => {
+                let trimmed = inner.trim();
+                if trimmed.is_empty() {
+                    return None;
+                }
+                current = trimmed.to_string();
+            }
+            Value::Object(map) => {
+                for key in ["input", "patch", "content", "raw"] {
+                    if let Some(value) = map.get(key).and_then(Value::as_str) {
+                        let trimmed = value.trim();
+                        if !trimmed.is_empty() {
+                            return Some(trimmed.to_string());
+                        }
+                    }
+                }
+                return None;
+            }
+            _ => return None,
+        }
+    }
+    current.starts_with(BEGIN_PATCH_MARKER).then_some(current)
+}
+
 fn normalize_patch_text(input: &str) -> String {
-    input.replace("\r\n", "\n").replace('\r', "\n")
+    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+    repair_common_patch_format_issues(&normalized)
+}
+
+fn repair_common_patch_format_issues(input: &str) -> String {
+    let lines = input
+        .split('\n')
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>();
+    let mut repaired = Vec::with_capacity(lines.len());
+    let mut index = 0usize;
+    while index < lines.len() {
+        let line = lines[index].clone();
+        repaired.push(line.clone());
+        index += 1;
+        if !line.starts_with(UPDATE_FILE_MARKER) {
+            continue;
+        }
+        if index < lines.len() && lines[index].starts_with(MOVE_TO_MARKER) {
+            repaired.push(lines[index].clone());
+            index += 1;
+        }
+        while index < lines.len() && !is_file_op_header(lines[index].as_str()) {
+            let raw = lines[index].as_str();
+            if raw.trim() == END_OF_FILE_MARKER {
+                repaired.push(lines[index].clone());
+                index += 1;
+                continue;
+            }
+            if raw == "@@" || raw.starts_with("@@ ") {
+                repaired.push(lines[index].clone());
+                index += 1;
+                continue;
+            }
+            let body_start = index;
+            while index < lines.len()
+                && !is_file_op_header(lines[index].as_str())
+                && lines[index].trim() != END_OF_FILE_MARKER
+                && lines[index].as_str() != "@@"
+                && !lines[index].starts_with("@@ ")
+            {
+                index += 1;
+            }
+            repaired.extend(repair_update_chunk_lines(&lines[body_start..index]));
+        }
+    }
+    repaired.join("\n")
+}
+
+fn repair_update_chunk_lines(lines: &[String]) -> Vec<String> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let has_separator = lines.iter().any(|line| line.trim() == "***");
+    let prefixed_without_separator = lines
+        .iter()
+        .filter(|line| line.trim() != "***")
+        .all(|line| matches!(line.chars().next(), Some(' ') | Some('+') | Some('-')));
+    if prefixed_without_separator {
+        return lines
+            .iter()
+            .filter(|line| line.trim() != "***")
+            .cloned()
+            .collect();
+    }
+    if !has_separator {
+        return lines.to_vec();
+    }
+
+    // Repair display-oriented diffs that models often emit after reading numbered file excerpts.
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    let mut in_after = false;
+    for line in lines {
+        if line.trim() == "***" {
+            in_after = true;
+            continue;
+        }
+        let Some(text) = strip_display_line_number(line) else {
+            return lines.to_vec();
+        };
+        if in_after {
+            after.push(text);
+        } else {
+            before.push(text);
+        }
+    }
+    if before.is_empty() || after.is_empty() {
+        return lines.to_vec();
+    }
+    let mut repaired = Vec::with_capacity(before.len() + after.len());
+    repaired.extend(before.into_iter().map(|line| format!("-{line}")));
+    repaired.extend(after.into_iter().map(|line| format!("+{line}")));
+    repaired
+}
+
+fn strip_display_line_number(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_start();
+    let digit_count = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return None;
+    }
+    let rest = trimmed.get(digit_count..)?;
+    let rest = rest.strip_prefix(':')?;
+    let content = rest.strip_prefix(' ').unwrap_or(rest);
+    Some(content.to_string())
 }
 
 fn parse_patch(input: &str) -> Result<Vec<ParsedPatchOp>> {
@@ -811,7 +1052,7 @@ fn write_staged_entries(staged: &HashMap<PathBuf, StagedEntry>) -> Result<()> {
                         )
                     })?;
                 }
-                fs::write(path, content).map_err(|err| {
+                atomic_write_text(path, content).map_err(|err| {
                     patch_error_with_hint(
                         "PATCH_IO_WRITE_FAILED",
                         format!("写入文件失败：{} ({err})", path.display()),
@@ -857,7 +1098,7 @@ fn restore_original_states(original_states: &HashMap<PathBuf, Option<Vec<u8>>>) 
                         )
                     })?;
                 }
-                fs::write(path, bytes).map_err(|err| {
+                atomic_write_bytes(path, bytes).map_err(|err| {
                     patch_error_with_hint(
                         "PATCH_IO_ROLLBACK_FAILED",
                         format!("回滚写入失败：{} ({err})", path.display()),
@@ -1098,6 +1339,7 @@ fn collect_chunk_match_starts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn create_temp_dir(prefix: &str) -> PathBuf {
@@ -1135,6 +1377,14 @@ mod tests {
             .and_then(|data| data.get("hint"))
             .and_then(Value::as_str)
             .is_some_and(|hint| !hint.trim().is_empty()));
+        assert_eq!(
+            result
+                .get("error_meta")
+                .and_then(Value::as_object)
+                .and_then(|meta| meta.get("code"))
+                .and_then(Value::as_str),
+            Some("PATCH_TEST_CODE")
+        );
     }
 
     #[test]
@@ -1155,6 +1405,51 @@ mod tests {
             .and_then(|data| data.get("detail"))
             .and_then(Value::as_str)
             .is_some_and(|detail| detail.contains("unexpected boom")));
+        assert_eq!(
+            result
+                .get("error_meta")
+                .and_then(Value::as_object)
+                .and_then(|meta| meta.get("code"))
+                .and_then(Value::as_str),
+            Some("PATCH_UNKNOWN")
+        );
+    }
+
+    #[test]
+    fn summarize_patch_ops_counts_actions_for_dry_run_preview() {
+        let add_target = PathBuf::from("/tmp/add.txt");
+        let del_target = PathBuf::from("/tmp/del.txt");
+        let old_target = PathBuf::from("/tmp/old.txt");
+        let new_target = PathBuf::from("/tmp/new.txt");
+        let summary = summarize_patch_ops(&[
+            ResolvedPatchOp::Add {
+                path: "add.txt".to_string(),
+                target: add_target.clone(),
+                lines: vec!["x".to_string()],
+            },
+            ResolvedPatchOp::Delete {
+                path: "del.txt".to_string(),
+                target: del_target.clone(),
+            },
+            ResolvedPatchOp::Update {
+                path: "old.txt".to_string(),
+                target: old_target.clone(),
+                move_to_path: Some("new.txt".to_string()),
+                move_to_target: Some(new_target.clone()),
+                chunks: vec![UpdateChunk {
+                    change_context: None,
+                    lines: vec![],
+                    end_of_file: false,
+                }],
+            },
+        ]);
+        assert_eq!(summary.added, 1);
+        assert_eq!(summary.deleted, 1);
+        assert_eq!(summary.updated, 1);
+        assert_eq!(summary.moved, 1);
+        assert_eq!(summary.hunks_applied, 1);
+        assert_eq!(summary.file_summaries.len(), 3);
+        assert_eq!(summary.changed_files.len(), 4);
     }
 
     #[test]
@@ -1330,5 +1625,64 @@ mod tests {
         assert!(message.contains("目标文件已存在") || message.contains("already exists"));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+    #[test]
+    fn extract_patch_input_unwraps_nested_json_string() {
+        let args = json!({
+            "input": "{\"input\":\"*** Begin Patch\\n*** Add File: demo.txt\\n+ok\\n*** End Patch\"}"
+        });
+        let extracted = extract_patch_input(&args).expect("nested input should unwrap");
+        assert_eq!(
+            extracted,
+            "*** Begin Patch\n*** Add File: demo.txt\n+ok\n*** End Patch"
+        );
+    }
+
+    #[test]
+    fn parse_patch_repairs_display_separator_in_update_chunk() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+-old
+***
++new
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("display separator should be ignored");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].lines.len(), 2);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Delete));
+        assert_eq!(chunks[0].lines[0].text, "old");
+        assert!(matches!(chunks[0].lines[1].kind, ChunkLineKind::Add));
+        assert_eq!(chunks[0].lines[1].text, "new");
+    }
+
+    #[test]
+    fn parse_patch_repairs_numbered_display_diff() {
+        let patch = r#"*** Begin Patch
+*** Update File: demo.txt
+@@
+12: old
+13: keep
+***
+12: new
+13: keep
+*** End Patch"#;
+        let ops = parse_patch(patch).expect("numbered display diff should be repaired");
+        let ParsedPatchOp::Update { chunks, .. } = &ops[0] else {
+            panic!("expected update op");
+        };
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].lines.len(), 4);
+        assert!(matches!(chunks[0].lines[0].kind, ChunkLineKind::Delete));
+        assert_eq!(chunks[0].lines[0].text, "old");
+        assert!(matches!(chunks[0].lines[1].kind, ChunkLineKind::Delete));
+        assert_eq!(chunks[0].lines[1].text, "keep");
+        assert!(matches!(chunks[0].lines[2].kind, ChunkLineKind::Add));
+        assert_eq!(chunks[0].lines[2].text, "new");
+        assert!(matches!(chunks[0].lines[3].kind, ChunkLineKind::Add));
+        assert_eq!(chunks[0].lines[3].text, "keep");
     }
 }

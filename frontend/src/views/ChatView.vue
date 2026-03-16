@@ -1158,11 +1158,15 @@ const init = async () => {
   }
 };
 
-const handleCreateSession = () => {
+const handleCreateSession = async () => {
   const agentId = activeAgentId.value;
-  manualDraftPending.value = true;
-  chatStore.openDraftSession({ agent_id: agentId });
-  draftKey.value += 1;
+  try {
+    // Explicit new-session clicks should materialize immediately so channel-bound traffic
+    // can switch to the empty main session before the first user message is sent.
+    await chatStore.createSession(agentId ? { agent_id: agentId } : {});
+  } catch (error) {
+    showApiError(error, t('common.requestFailed'));
+  }
 };
 
 const handleOpenProfile = () => {

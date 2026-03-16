@@ -9,22 +9,13 @@ use crate::tui::app::TuiApp;
 use crate::tui::theme;
 
 pub(crate) fn draw(frame: &mut Frame, area: Rect, app: &TuiApp) {
-    let help = if app.is_zh_language() {
-        "? 快捷键"
-    } else {
-        "? shortcuts"
-    };
     let commands = if app.is_zh_language() {
         "/ 命令"
     } else {
         "/ commands"
     };
     let status = app.status_line().trim().to_string();
-    let mut spans = vec![
-        Span::styled(help, theme::accent_text()),
-        Span::raw("  "),
-        Span::styled(commands, theme::secondary_text()),
-    ];
+    let mut spans = vec![Span::styled(commands, theme::secondary_text())];
     let left_width = spans
         .iter()
         .map(|span| UnicodeWidthStr::width(span.content.as_ref()))

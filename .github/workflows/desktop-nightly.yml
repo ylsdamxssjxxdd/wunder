@@ -129,7 +129,7 @@ jobs:
       - uses: msys2/setup-msys2@v2
         id: msys2
         with:
-          location: C:\
+          location: ${{ runner.temp }}\wunder-win7-msys2
           msystem: MINGW64
           update: true
           install: >-

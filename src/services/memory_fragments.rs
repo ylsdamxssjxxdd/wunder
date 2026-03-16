@@ -8,7 +8,7 @@ use crate::storage::{
     MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, StorageBackend,
 };
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::cmp::Ordering;
@@ -698,33 +698,13 @@ impl MemoryFragmentStore {
             .iter()
             .map(|hit| {
                 let fragment = &hit.fragment;
-                let mut flags = vec![fragment.category.clone()];
+                let timestamp = format_prompt_memory_timestamp(fragment.updated_at);
+                let content = build_prompt_memory_text(fragment);
                 if fragment.pinned {
-                    flags.push("pinned".to_string());
+                    format!("- [{timestamp}] 【置顶】{content}")
+                } else {
+                    format!("- [{timestamp}] {content}")
                 }
-                let reason = hit
-                    .reason_json
-                    .get("matched_terms")
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .take(4)
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    })
-                    .filter(|value| !value.is_empty());
-                let mut line = format!(
-                    "- [{}] {}: {}",
-                    flags.join("|"),
-                    truncate_chars(&fragment.title_l0, 72),
-                    truncate_chars(&fragment.summary_l1, 180)
-                );
-                if let Some(reason) = reason {
-                    line.push_str(&format!(" (matched: {reason})"));
-                }
-                line
             })
             .collect::<Vec<_>>();
         format!("{}\n{}", i18n::t("memory.block_prefix"), lines.join("\n"))
@@ -960,6 +940,50 @@ fn build_recall_hit(
         importance_score,
         final_score,
     })
+}
+
+fn build_prompt_memory_text(fragment: &MemoryFragmentRecord) -> String {
+    let title = fragment.title_l0.trim();
+    let summary = fragment.summary_l1.trim();
+    let content = fragment.content_l2.trim();
+
+    let combined_title_summary = if !title.is_empty()
+        && !summary.is_empty()
+        && title != summary
+        && !summary.contains(title)
+        && !title.contains(summary)
+    {
+        format!("{title}：{summary}")
+    } else {
+        String::new()
+    };
+
+    let primary = if !content.is_empty() && content.chars().count() <= 120 {
+        content.to_string()
+    } else if !combined_title_summary.is_empty() {
+        combined_title_summary
+    } else if !summary.is_empty() {
+        summary.to_string()
+    } else if !content.is_empty() {
+        content.to_string()
+    } else if !title.is_empty() {
+        title.to_string()
+    } else {
+        "未命名记忆".to_string()
+    };
+
+    truncate_chars(&primary, 180)
+}
+
+fn format_prompt_memory_timestamp(value: f64) -> String {
+    let seconds = value.floor() as i64;
+    if seconds <= 0 {
+        return "unknown time".to_string();
+    }
+    Utc.timestamp_opt(seconds, 0)
+        .single()
+        .map(|datetime| datetime.format("%Y-%m-%d %H:%M UTC").to_string())
+        .unwrap_or_else(|| "unknown time".to_string())
 }
 
 fn compare_fragment_records(left: &MemoryFragmentRecord, right: &MemoryFragmentRecord) -> Ordering {
@@ -1649,6 +1673,36 @@ mod tests {
         assert!(matched_fields
             .iter()
             .any(|value| value.as_str() == Some("tags")));
+    }
+
+    #[test]
+    fn build_prompt_block_is_compact_and_timestamped() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-prompt-block.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let store = MemoryFragmentStore::new(storage);
+
+        let mut fragment = sample_fragment();
+        fragment.updated_at = 1_700_000_000.0;
+        let block = store.build_prompt_block(&[MemoryRecallHit {
+            fragment,
+            reason_json: serde_json::json!({
+                "matched_terms": ["rust"]
+            }),
+            lexical_score: 0.8,
+            semantic_score: 0.0,
+            freshness_score: 0.9,
+            importance_score: 0.8,
+            final_score: 0.85,
+        }]);
+
+        assert!(block.contains("[长期记忆]"));
+        assert!(block.contains("[2023-11-14 22:13 UTC]"));
+        assert!(block.contains("项目长期偏好 Rust、Axum、SQLite。"));
+        assert!(!block.contains("preference"));
+        assert!(!block.contains("matched"));
     }
 
     #[test]

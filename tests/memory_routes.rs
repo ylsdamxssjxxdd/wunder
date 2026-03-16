@@ -352,3 +352,72 @@ async fn session_prompt_preview_reuses_frozen_memory_snapshot() {
     assert!(reused_prompt.contains("Reply in English by default."));
     assert!(!reused_prompt.contains("Reply in Chinese by default."));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn agent_memory_settings_can_toggle_auto_extract() {
+    let context = build_test_context("memory_settings_user").await;
+
+    let (status, initial_settings) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        "/wunder/agents/__default__/memory-settings",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        initial_settings["data"]["settings"]["auto_extract_enabled"],
+        json!(false)
+    );
+
+    let (status, updated_settings) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/agents/__default__/memory-settings",
+        Some(json!({
+            "auto_extract_enabled": true
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        updated_settings["data"]["settings"]["auto_extract_enabled"],
+        json!(true)
+    );
+    assert!(
+        updated_settings["data"]["settings"]["updated_at"]
+            .as_f64()
+            .expect("updated at")
+            > 0.0
+    );
+
+    let (status, listed) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        "/wunder/agents/__default__/memories?limit=200&include_invalidated=true",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        listed["data"]["settings"]["auto_extract_enabled"],
+        json!(true)
+    );
+
+    let (status, refreshed_settings) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        "/wunder/agents/__default__/memory-settings",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        refreshed_settings["data"]["settings"]["auto_extract_enabled"],
+        json!(true)
+    );
+}

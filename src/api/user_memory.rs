@@ -1,6 +1,7 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::services::memory::normalize_agent_memory_scope;
+use crate::services::memory_agent_settings::AgentMemorySettingsService;
 use crate::services::memory_fragments::{
     MemoryFragmentInput, MemoryFragmentListOptions, MemoryFragmentStore,
 };
@@ -44,6 +45,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/agents/{agent_id}/memory-hits",
             get(list_memory_hits),
+        )
+        .route(
+            "/wunder/agents/{agent_id}/memory-settings",
+            get(get_memory_settings).post(update_memory_settings),
         )
 }
 
@@ -113,6 +118,12 @@ struct ToggleRequest {
     value: Option<bool>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+struct MemoryAgentSettingsRequest {
+    #[serde(default, alias = "autoExtractEnabled", alias = "auto_extract")]
+    auto_extract_enabled: Option<bool>,
+}
+
 async fn list_memories(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -122,6 +133,7 @@ async fn list_memories(
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     ensure_agent_access(&state, &resolved.user.user_id, &resolved.user, &agent_id)?;
     let store = MemoryFragmentStore::new(state.storage.clone());
+    let settings_service = AgentMemorySettingsService::new(state.storage.clone());
     let items = store.list_fragments(
         &resolved.user.user_id,
         Some(&agent_id),
@@ -157,6 +169,7 @@ async fn list_memories(
         .collect::<Vec<_>>();
     Ok(Json(json!({
         "data": {
+            "settings": settings_service.get_settings(&resolved.user.user_id, Some(&agent_id)),
             "items": items,
             "total": items.len(),
             "categories": categories,
@@ -164,6 +177,35 @@ async fn list_memories(
             "recent_jobs": recent_jobs,
         }
     })))
+}
+
+async fn get_memory_settings(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    ensure_agent_access(&state, &resolved.user.user_id, &resolved.user, &agent_id)?;
+    let settings = AgentMemorySettingsService::new(state.storage.clone())
+        .get_settings(&resolved.user.user_id, Some(&agent_id));
+    Ok(Json(json!({ "data": { "settings": settings } })))
+}
+
+async fn update_memory_settings(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    AxumPath(agent_id): AxumPath<String>,
+    Query(query): Query<AgentUserQuery>,
+    Json(payload): Json<MemoryAgentSettingsRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    ensure_agent_access(&state, &resolved.user.user_id, &resolved.user, &agent_id)?;
+    let enabled = payload.auto_extract_enabled.unwrap_or(false);
+    let settings = AgentMemorySettingsService::new(state.storage.clone())
+        .set_auto_extract_enabled(&resolved.user.user_id, Some(&agent_id), enabled)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(Json(json!({ "data": { "settings": settings } })))
 }
 
 async fn get_memory(

@@ -1,23 +1,45 @@
+use super::command_options::parse_dry_run;
 use super::{
-    collect_read_roots, resolve_tool_path, ToolContext, MAX_READ_BYTES, MAX_SEARCH_MATCHES,
+    collect_read_roots, resolve_tool_path, tool_error::build_failed_tool_result,
+    tool_error::ToolErrorMeta, ToolContext, MAX_READ_BYTES, MAX_SEARCH_MATCHES,
 };
 use crate::core::tool_fs_filter;
 use crate::i18n;
-use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use ignore::{WalkBuilder, WalkState};
 use regex::{Regex, RegexBuilder};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tokio::process::Command;
+use tokio::time::timeout;
 
 const MAX_CONTEXT_LINES: usize = 20;
+const DEFAULT_TIMEOUT_MS: u64 = 30_000;
+const MAX_TIMEOUT_MS: u64 = 120_000;
+const DEFAULT_MAX_CANDIDATES: usize = 4000;
+const MAX_MAX_CANDIDATES: usize = 20_000;
+const MAX_MATCHES_CAP: usize = 2000;
+const MIN_OUTPUT_BUDGET_BYTES: usize = 2 * 1024;
+const MAX_OUTPUT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
+const BINARY_SAMPLE_BYTES: usize = 4096;
+const CONTROL_BYTE_RATIO_THRESHOLD: f64 = 0.12;
+const DEFAULT_EXCLUDE_GLOBS: &[&str] = &[
+    "**/.git/**",
+    "**/target/**",
+    "**/node_modules/**",
+    "**/.next/**",
+    "**/.nuxt/**",
+    "**/.turbo/**",
+    "**/.cache/**",
+];
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum QueryMode {
@@ -32,6 +54,50 @@ impl QueryMode {
             Self::Regex => "regex",
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum SearchEngine {
+    Auto,
+    Rust,
+    Rg,
+}
+
+impl SearchEngine {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Rust => "rust",
+            Self::Rg => "rg",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SearchParams {
+    query: String,
+    path: String,
+    file_pattern_items: Vec<String>,
+    query_mode: QueryMode,
+    case_sensitive: bool,
+    context_before: usize,
+    context_after: usize,
+    max_depth: usize,
+    max_files: usize,
+    max_matches: usize,
+    max_candidates: usize,
+    timeout_ms: u64,
+    engine: SearchEngine,
+    output_budget_bytes: Option<usize>,
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+struct SearchBudget {
+    time_budget_ms: Option<u64>,
+    output_budget_bytes: Option<usize>,
+    max_files: Option<usize>,
+    max_matches: Option<usize>,
+    max_candidates: Option<usize>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -56,7 +122,273 @@ struct SearchHit {
     after: Vec<ContextLine>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct SearchExecutionMeta {
+    requested_engine: String,
+    resolved_engine: String,
+    fallback: bool,
+    fallback_reason: Option<String>,
+    elapsed_ms: u128,
+    timeout_hit: bool,
+    file_limit_hit: bool,
+    match_limit_hit: bool,
+    candidate_limit_hit: bool,
+    output_budget_hit: bool,
+    scanned_files: usize,
+}
+
+#[derive(Debug, Clone)]
+struct SearchComputation {
+    hits: Vec<SearchHit>,
+    scanned_files: usize,
+    timeout_hit: bool,
+    file_limit_hit: bool,
+    match_limit_hit: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RgCandidateResult {
+    paths: Vec<PathBuf>,
+    timeout_hit: bool,
+    candidate_limit_hit: bool,
+}
+
 pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
+    let dry_run = parse_dry_run(args);
+    let params = match parse_search_params(args) {
+        Ok(value) => value,
+        Err(error) => {
+            return Ok(build_failed_tool_result(
+                error.to_string(),
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_SEARCH_INVALID_ARGS",
+                    Some("请检查 query/path/engine/budget 参数格式。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+
+    let workspace = context.workspace.clone();
+    let user_id = context.workspace_id.to_string();
+    let extra_roots = collect_read_roots(context);
+    let root = {
+        let path = params.path.clone();
+        tokio::task::spawn_blocking(move || {
+            resolve_tool_path(workspace.as_ref(), &user_id, &path, &extra_roots)
+        })
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??
+    };
+    if !root.exists() {
+        return Ok(build_failed_tool_result(
+            i18n::t("tool.search.path_not_found"),
+            json!({ "path": params.path }),
+            ToolErrorMeta::new(
+                "TOOL_SEARCH_PATH_NOT_FOUND",
+                Some("请确认 path 路径存在且在允许范围内。".to_string()),
+                false,
+                None,
+            ),
+            false,
+        ));
+    }
+
+    let matcher = match build_query_matcher(&params.query, params.query_mode, params.case_sensitive)
+    {
+        Ok(value) => Arc::new(value),
+        Err(err) => {
+            return Ok(build_failed_tool_result(
+                err.to_string(),
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_SEARCH_INVALID_QUERY",
+                    Some("请检查 query 或 query_mode=regex 下的正则表达式是否合法。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+    let file_filter = match build_file_filter(&params.file_pattern_items) {
+        Ok(value) => value,
+        Err(err) => {
+            return Ok(build_failed_tool_result(
+                err.to_string(),
+                json!({}),
+                ToolErrorMeta::new(
+                    "TOOL_SEARCH_INVALID_FILE_PATTERN",
+                    Some("请检查 file_pattern 或 budget 参数中的 glob 语法。".to_string()),
+                    false,
+                    None,
+                ),
+                false,
+            ));
+        }
+    };
+
+    if dry_run {
+        return Ok(json!({
+            "ok": true,
+            "data": {
+                "dry_run": true,
+                "path": root.to_string_lossy().to_string(),
+                "query_mode": params.query_mode.as_str(),
+                "case_sensitive": params.case_sensitive,
+                "engine": params.engine.as_str(),
+                "file_pattern_items": params.file_pattern_items,
+                "context_before": params.context_before,
+                "context_after": params.context_after,
+                "max_depth": params.max_depth,
+                "max_files": params.max_files,
+                "max_matches": params.max_matches,
+                "max_candidates": params.max_candidates,
+                "timeout_ms": params.timeout_ms,
+                "output_budget_bytes": params.output_budget_bytes,
+            },
+            "error": "",
+        }));
+    }
+
+    let started_at = Instant::now();
+    let deadline = started_at + Duration::from_millis(params.timeout_ms);
+    let mut resolved_engine = SearchEngine::Rust;
+    let mut fallback_reason: Option<String> = None;
+    let mut rg_timeout_hit = false;
+    let mut candidate_limit_hit = false;
+    let mut rg_candidates: Option<Vec<PathBuf>> = None;
+
+    if matches!(params.engine, SearchEngine::Auto | SearchEngine::Rg) {
+        match collect_candidates_with_rg(&root, &params).await {
+            Ok(result) => {
+                resolved_engine = SearchEngine::Rg;
+                rg_timeout_hit = result.timeout_hit;
+                candidate_limit_hit = result.candidate_limit_hit;
+                rg_candidates = Some(result.paths);
+            }
+            Err(err) => {
+                if params.engine == SearchEngine::Rg {
+                    return Ok(build_failed_tool_result(
+                        err.to_string(),
+                        json!({
+                            "engine": "rg",
+                        }),
+                        ToolErrorMeta::new(
+                            "TOOL_SEARCH_RG_FAILED",
+                            Some(
+                                "rg 快路径执行失败，可改用 engine=rust 或调整查询范围。"
+                                    .to_string(),
+                            ),
+                            true,
+                            Some(200),
+                        ),
+                        false,
+                    ));
+                }
+                fallback_reason = Some(err.to_string());
+            }
+        }
+    }
+
+    let computation = if resolved_engine == SearchEngine::Rg {
+        let candidates = rg_candidates.unwrap_or_default();
+        let matcher = matcher.clone();
+        let file_filter = file_filter.clone();
+        let root_for_task = root.clone();
+        let params_for_task = params.clone();
+        tokio::task::spawn_blocking(move || {
+            search_content_with_candidates(
+                &root_for_task,
+                candidates,
+                matcher.as_ref(),
+                file_filter.as_ref(),
+                &params_for_task,
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??
+    } else {
+        let matcher = matcher.clone();
+        let file_filter = file_filter.clone();
+        let root_for_task = root.clone();
+        let params_for_task = params.clone();
+        tokio::task::spawn_blocking(move || {
+            search_content_walk(
+                &root_for_task,
+                matcher.as_ref(),
+                file_filter.as_ref(),
+                &params_for_task,
+                deadline,
+            )
+        })
+        .await
+        .map_err(|err| anyhow!(err.to_string()))??
+    };
+
+    let mut hits = computation.hits;
+    hits.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.line.cmp(&right.line))
+            .then(left.content.cmp(&right.content))
+    });
+    if hits.len() > params.max_matches {
+        hits.truncate(params.max_matches);
+    }
+    let (hits, output_budget_hit) = limit_hits_by_output_budget(hits, params.output_budget_bytes);
+    let matches = hits
+        .iter()
+        .map(|item| format!("{}:{}:{}", item.path, item.line, item.content.trim()))
+        .collect::<Vec<_>>();
+
+    let elapsed_ms = started_at.elapsed().as_millis();
+    let timeout_hit = rg_timeout_hit || computation.timeout_hit;
+    let fallback = resolved_engine != params.engine && params.engine == SearchEngine::Auto;
+    let meta = SearchExecutionMeta {
+        requested_engine: params.engine.as_str().to_string(),
+        resolved_engine: resolved_engine.as_str().to_string(),
+        fallback,
+        fallback_reason,
+        elapsed_ms,
+        timeout_hit,
+        file_limit_hit: computation.file_limit_hit,
+        match_limit_hit: computation.match_limit_hit,
+        candidate_limit_hit,
+        output_budget_hit,
+        scanned_files: computation.scanned_files,
+    };
+
+    Ok(json!({
+        "matches": matches,
+        "hits": hits,
+        "query_mode": params.query_mode.as_str(),
+        "case_sensitive": params.case_sensitive,
+        "context_before": params.context_before,
+        "context_after": params.context_after,
+        "scanned_files": computation.scanned_files,
+        "file_limit_hit": computation.file_limit_hit,
+        "match_limit_hit": computation.match_limit_hit,
+        "timeout_hit": timeout_hit,
+        "engine": resolved_engine.as_str(),
+        "budget": {
+            "time_budget_ms": params.timeout_ms,
+            "output_budget_bytes": params.output_budget_bytes,
+            "max_files": if params.max_files > 0 { Some(params.max_files) } else { None },
+            "max_matches": params.max_matches,
+            "max_candidates": params.max_candidates,
+        },
+        "meta": {
+            "search": meta,
+        },
+    }))
+}
+
+fn parse_search_params(args: &Value) -> Result<SearchParams> {
     let query = args
         .get("query")
         .and_then(Value::as_str)
@@ -64,23 +396,21 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
         .trim()
         .to_string();
     if query.is_empty() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.search.empty")
-        }));
+        return Err(anyhow!(i18n::t("tool.search.empty")));
     }
+
     let path = args
         .get("path")
         .and_then(Value::as_str)
         .unwrap_or(".")
-        .to_string();
-    let file_pattern = args
-        .get("file_pattern")
-        .and_then(Value::as_str)
-        .unwrap_or("")
         .trim()
         .to_string();
+    let file_pattern_items = split_file_patterns(
+        args.get("file_pattern")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim(),
+    );
     let query_mode = parse_query_mode(args);
     let case_sensitive = args
         .get("case_sensitive")
@@ -89,189 +419,122 @@ pub(super) async fn search_content(context: &ToolContext<'_>, args: &Value) -> R
     let context_before =
         normalize_context_window(args.get("context_before").and_then(Value::as_u64));
     let context_after = normalize_context_window(args.get("context_after").and_then(Value::as_u64));
-    let max_depth = args.get("max_depth").and_then(Value::as_u64).unwrap_or(0) as usize;
-    let max_files = args.get("max_files").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let budget = parse_search_budget(args);
+    let max_depth = parse_optional_usize(args.get("max_depth")).unwrap_or(0);
+    let mut max_files = parse_optional_usize(args.get("max_files")).unwrap_or(0);
+    let mut max_matches = parse_optional_usize(args.get("max_matches"))
+        .unwrap_or(MAX_SEARCH_MATCHES)
+        .clamp(1, MAX_MATCHES_CAP);
+    let mut max_candidates = parse_optional_usize(args.get("max_candidates"))
+        .unwrap_or(DEFAULT_MAX_CANDIDATES)
+        .clamp(1, MAX_MAX_CANDIDATES);
+    let mut timeout_ms = parse_optional_u64(args.get("timeout_ms"))
+        .unwrap_or(DEFAULT_TIMEOUT_MS)
+        .clamp(1, MAX_TIMEOUT_MS);
+    if let Some(limit) = budget.max_files {
+        max_files = if max_files == 0 {
+            limit
+        } else {
+            max_files.min(limit)
+        };
+    }
+    if let Some(limit) = budget.max_matches {
+        max_matches = max_matches.min(limit.clamp(1, MAX_MATCHES_CAP));
+    }
+    if let Some(limit) = budget.max_candidates {
+        max_candidates = max_candidates.min(limit.clamp(1, MAX_MAX_CANDIDATES));
+    }
+    if let Some(limit) = budget.time_budget_ms {
+        timeout_ms = timeout_ms.min(limit.clamp(1, MAX_TIMEOUT_MS));
+    }
+    let output_budget_bytes = budget
+        .output_budget_bytes
+        .map(|value| value.clamp(MIN_OUTPUT_BUDGET_BYTES, MAX_OUTPUT_BUDGET_BYTES));
+    let engine = parse_search_engine(args);
 
-    let workspace = context.workspace.clone();
-    let user_id = context.workspace_id.to_string();
-    let extra_roots = collect_read_roots(context);
-    tokio::task::spawn_blocking(move || {
-        search_content_inner(
-            workspace.as_ref(),
-            &user_id,
-            &query,
-            &path,
-            &file_pattern,
-            query_mode,
-            case_sensitive,
-            context_before,
-            context_after,
-            &extra_roots,
-            max_depth,
-            max_files,
-        )
+    Ok(SearchParams {
+        query,
+        path,
+        file_pattern_items,
+        query_mode,
+        case_sensitive,
+        context_before,
+        context_after,
+        max_depth,
+        max_files,
+        max_matches,
+        max_candidates,
+        timeout_ms,
+        engine,
+        output_budget_bytes,
     })
-    .await
-    .map_err(|err| anyhow!(err.to_string()))?
 }
 
-#[allow(clippy::too_many_arguments)]
-fn search_content_inner(
-    workspace: &WorkspaceManager,
-    user_id: &str,
-    query: &str,
-    path: &str,
-    file_pattern: &str,
-    query_mode: QueryMode,
-    case_sensitive: bool,
-    context_before: usize,
-    context_after: usize,
-    extra_roots: &[PathBuf],
-    max_depth: usize,
-    max_files: usize,
-) -> Result<Value> {
-    let root = resolve_tool_path(workspace, user_id, path, extra_roots)?;
-    if !root.exists() {
-        return Ok(json!({
-            "ok": false,
-            "data": {},
-            "error": i18n::t("tool.search.path_not_found")
-        }));
+fn parse_search_budget(args: &Value) -> SearchBudget {
+    let budget_obj = args.get("budget").and_then(Value::as_object);
+    SearchBudget {
+        time_budget_ms: budget_obj
+            .and_then(|obj| obj.get("time_budget_ms"))
+            .and_then(parse_optional_u64_value)
+            .or_else(|| {
+                args.get("time_budget_ms")
+                    .and_then(parse_optional_u64_value)
+            }),
+        output_budget_bytes: budget_obj
+            .and_then(|obj| obj.get("output_budget_bytes"))
+            .and_then(parse_optional_usize_value)
+            .or_else(|| {
+                args.get("output_budget_bytes")
+                    .and_then(parse_optional_usize_value)
+            }),
+        max_files: budget_obj
+            .and_then(|obj| obj.get("max_files"))
+            .and_then(parse_optional_usize_value),
+        max_matches: budget_obj
+            .and_then(|obj| obj.get("max_matches"))
+            .and_then(parse_optional_usize_value),
+        max_candidates: budget_obj
+            .and_then(|obj| obj.get("max_candidates"))
+            .and_then(parse_optional_usize_value),
     }
+}
 
-    let matcher = match build_query_matcher(query, query_mode, case_sensitive) {
-        Ok(value) => Arc::new(value),
-        Err(err) => {
-            return Ok(json!({
-                "ok": false,
-                "data": {},
-                "error": err.to_string()
-            }));
-        }
-    };
-    let file_filter = Arc::new(build_file_filter(file_pattern));
-    let hit_list = Arc::new(Mutex::new(Vec::<SearchHit>::new()));
-    let scanned_files = Arc::new(AtomicUsize::new(0));
-    let should_stop = Arc::new(AtomicBool::new(false));
-    let match_limit_hit = Arc::new(AtomicBool::new(false));
-    let file_limit_hit = Arc::new(AtomicBool::new(false));
-    let root = Arc::new(root);
+fn parse_optional_usize(value: Option<&Value>) -> Option<usize> {
+    value.and_then(parse_optional_usize_value)
+}
 
-    let mut walker = WalkBuilder::new(root.as_ref());
-    walker.hidden(false);
-    walker.ignore(true);
-    walker.parents(true);
-    walker.git_ignore(true);
-    walker.git_global(true);
-    walker.git_exclude(true);
-    walker.max_filesize(Some(MAX_READ_BYTES as u64));
-    if max_depth > 0 {
-        walker.max_depth(Some(max_depth));
+fn parse_optional_u64(value: Option<&Value>) -> Option<u64> {
+    value.and_then(parse_optional_u64_value)
+}
+
+fn parse_optional_usize_value(value: &Value) -> Option<usize> {
+    match value {
+        Value::Number(num) => num.as_u64().map(|item| item as usize),
+        Value::String(text) => text.trim().parse::<usize>().ok(),
+        _ => None,
     }
+}
 
-    // Keep search parallel and fast while preserving deterministic output by sorting at the end.
-    walker.build_parallel().run(|| {
-        let matcher = Arc::clone(&matcher);
-        let file_filter = Arc::clone(&file_filter);
-        let hit_list = Arc::clone(&hit_list);
-        let scanned_files = Arc::clone(&scanned_files);
-        let should_stop = Arc::clone(&should_stop);
-        let match_limit_hit = Arc::clone(&match_limit_hit);
-        let file_limit_hit = Arc::clone(&file_limit_hit);
-        let root = Arc::clone(&root);
-        Box::new(move |entry| {
-            if should_stop.load(Ordering::Relaxed) {
-                return WalkState::Quit;
-            }
-            let entry = match entry {
-                Ok(value) => value,
-                Err(_) => return WalkState::Continue,
-            };
-            let path = entry.path();
-            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
-            if is_dir {
-                if tool_fs_filter::should_skip_path(path) {
-                    return WalkState::Skip;
-                }
-                return WalkState::Continue;
-            }
-            if tool_fs_filter::should_skip_path(path) {
-                return WalkState::Continue;
-            }
-
-            let scanned = scanned_files.fetch_add(1, Ordering::Relaxed) + 1;
-            if max_files > 0 && scanned > max_files {
-                file_limit_hit.store(true, Ordering::Relaxed);
-                should_stop.store(true, Ordering::Relaxed);
-                return WalkState::Quit;
-            }
-
-            let rel = path.strip_prefix(root.as_ref()).unwrap_or(path);
-            let rel_display = rel.to_string_lossy().replace('\\', "/");
-            if let Some(filter) = file_filter.as_ref() {
-                if !filter.is_match(&rel_display) {
-                    return WalkState::Continue;
-                }
-            }
-
-            let local_hits = match search_file(
-                path,
-                &rel_display,
-                matcher.as_ref(),
-                context_before,
-                context_after,
-            ) {
-                Ok(items) => items,
-                Err(_) => return WalkState::Continue,
-            };
-            if local_hits.is_empty() {
-                return WalkState::Continue;
-            }
-
-            let mut all_hits = match hit_list.lock() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            all_hits.extend(local_hits);
-            if all_hits.len() >= MAX_SEARCH_MATCHES {
-                match_limit_hit.store(true, Ordering::Relaxed);
-                should_stop.store(true, Ordering::Relaxed);
-                return WalkState::Quit;
-            }
-            WalkState::Continue
-        })
-    });
-
-    let mut hit_list = match hit_list.lock() {
-        Ok(guard) => guard.clone(),
-        Err(poisoned) => poisoned.into_inner().clone(),
-    };
-    hit_list.sort_by(|left, right| {
-        left.path
-            .cmp(&right.path)
-            .then(left.line.cmp(&right.line))
-            .then(left.content.cmp(&right.content))
-    });
-    if hit_list.len() > MAX_SEARCH_MATCHES {
-        hit_list.truncate(MAX_SEARCH_MATCHES);
+fn parse_optional_u64_value(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(num) => num.as_u64(),
+        Value::String(text) => text.trim().parse::<u64>().ok(),
+        _ => None,
     }
+}
 
-    // Keep legacy `matches` for backward compatibility while adding rich `hits`.
-    let matches = hit_list
-        .iter()
-        .map(|item| format!("{}:{}:{}", item.path, item.line, item.content.trim()))
-        .collect::<Vec<_>>();
-    Ok(json!({
-        "matches": matches,
-        "hits": hit_list,
-        "query_mode": query_mode.as_str(),
-        "case_sensitive": case_sensitive,
-        "context_before": context_before,
-        "context_after": context_after,
-        "scanned_files": scanned_files.load(Ordering::Relaxed),
-        "file_limit_hit": file_limit_hit.load(Ordering::Relaxed),
-        "match_limit_hit": match_limit_hit.load(Ordering::Relaxed)
-    }))
+fn parse_search_engine(args: &Value) -> SearchEngine {
+    let raw = args
+        .get("engine")
+        .and_then(Value::as_str)
+        .unwrap_or("auto")
+        .trim()
+        .to_ascii_lowercase();
+    match raw.as_str() {
+        "rust" => SearchEngine::Rust,
+        "rg" => SearchEngine::Rg,
+        _ => SearchEngine::Auto,
+    }
 }
 
 fn parse_query_mode(args: &Value) -> QueryMode {
@@ -289,6 +552,14 @@ fn parse_query_mode(args: &Value) -> QueryMode {
 
 fn normalize_context_window(raw: Option<u64>) -> usize {
     raw.unwrap_or(0).min(MAX_CONTEXT_LINES as u64) as usize
+}
+
+fn split_file_patterns(raw: &str) -> Vec<String> {
+    raw.split([',', ';', '\n'])
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
 }
 
 fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool) -> Result<Regex> {
@@ -309,21 +580,357 @@ fn build_query_matcher(query: &str, query_mode: QueryMode, case_sensitive: bool)
         })
 }
 
-fn build_file_filter(raw: &str) -> Option<GlobSet> {
-    let items = raw
-        .split([',', ';', '\n'])
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-        .collect::<Vec<_>>();
-    if items.is_empty() {
-        return None;
+fn build_file_filter(patterns: &[String]) -> Result<Option<GlobSet>> {
+    if patterns.is_empty() {
+        return Ok(None);
     }
     let mut builder = GlobSetBuilder::new();
-    for item in items {
-        let glob = Glob::new(item).ok()?;
+    for item in patterns {
+        let glob =
+            Glob::new(item).map_err(|err| anyhow!("invalid file_pattern `{item}`: {err}"))?;
         builder.add(glob);
     }
-    builder.build().ok()
+    let set = builder
+        .build()
+        .map_err(|err| anyhow!("invalid file_pattern: {err}"))?;
+    Ok(Some(set))
+}
+
+async fn collect_candidates_with_rg(
+    root: &Path,
+    params: &SearchParams,
+) -> Result<RgCandidateResult> {
+    let (cwd, target) = if root.is_dir() {
+        (root.to_path_buf(), PathBuf::from("."))
+    } else {
+        let parent = root
+            .parent()
+            .ok_or_else(|| anyhow!("search path has no parent: {}", root.display()))?;
+        let target = root
+            .file_name()
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow!("search path has invalid file name: {}", root.display()))?;
+        (parent.to_path_buf(), target)
+    };
+
+    let mut command = Command::new("rg");
+    command
+        .current_dir(&cwd)
+        .arg("--files-with-matches")
+        .arg("--no-messages")
+        .arg("--color")
+        .arg("never")
+        .arg("--max-filesize")
+        .arg(MAX_READ_BYTES.to_string())
+        .arg("--regexp")
+        .arg(&params.query)
+        .arg("--");
+    if params.query_mode == QueryMode::Literal {
+        command.arg("--fixed-strings");
+    }
+    if !params.case_sensitive {
+        command.arg("--ignore-case");
+    }
+    if params.max_depth > 0 {
+        command.arg("--max-depth").arg(params.max_depth.to_string());
+    }
+    for glob in DEFAULT_EXCLUDE_GLOBS {
+        command.arg("--glob").arg(format!("!{glob}"));
+    }
+    for item in &params.file_pattern_items {
+        command.arg("--glob").arg(item);
+    }
+    command.arg(target);
+
+    let timeout_window = Duration::from_millis(params.timeout_ms);
+    let output = timeout(timeout_window, command.output())
+        .await
+        .map_err(|_| anyhow!("rg timed out after {}ms", params.timeout_ms))?
+        .map_err(|err| anyhow!("failed to launch rg: {err}"))?;
+
+    match output.status.code() {
+        Some(0) => parse_rg_candidate_output(&output.stdout, &cwd, params.max_candidates),
+        Some(1) => Ok(RgCandidateResult {
+            paths: Vec::new(),
+            timeout_hit: false,
+            candidate_limit_hit: false,
+        }),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            Err(anyhow!("rg search failed: {stderr}"))
+        }
+    }
+}
+
+fn parse_rg_candidate_output(
+    stdout: &[u8],
+    cwd: &Path,
+    max_candidates: usize,
+) -> Result<RgCandidateResult> {
+    let mut paths = Vec::new();
+    let mut seen = HashSet::new();
+    let mut candidate_limit_hit = false;
+
+    for line in stdout.split(|item| *item == b'\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let item = std::str::from_utf8(line)
+            .map_err(|err| anyhow!("rg output is not utf-8: {err}"))?
+            .trim();
+        if item.is_empty() {
+            continue;
+        }
+        let path = {
+            let parsed = PathBuf::from(item);
+            if parsed.is_absolute() {
+                parsed
+            } else {
+                cwd.join(parsed)
+            }
+        };
+        let key = path.to_string_lossy().to_string();
+        if !seen.insert(key) {
+            continue;
+        }
+        paths.push(path);
+        if paths.len() >= max_candidates {
+            candidate_limit_hit = true;
+            break;
+        }
+    }
+
+    Ok(RgCandidateResult {
+        paths,
+        timeout_hit: false,
+        candidate_limit_hit,
+    })
+}
+
+fn search_content_with_candidates(
+    root: &Path,
+    candidates: Vec<PathBuf>,
+    matcher: &Regex,
+    file_filter: Option<&GlobSet>,
+    params: &SearchParams,
+    deadline: Instant,
+) -> Result<SearchComputation> {
+    let display_base = if root.is_dir() {
+        root.to_path_buf()
+    } else {
+        root.parent().unwrap_or(root).to_path_buf()
+    };
+    let mut hits = Vec::new();
+    let mut scanned_files = 0usize;
+    let mut timeout_hit = false;
+    let mut file_limit_hit = false;
+    let mut match_limit_hit = false;
+
+    for candidate in candidates {
+        if Instant::now() >= deadline {
+            timeout_hit = true;
+            break;
+        }
+        if tool_fs_filter::should_skip_path(&candidate) {
+            continue;
+        }
+        let rel = candidate
+            .strip_prefix(&display_base)
+            .unwrap_or(candidate.as_path());
+        let rel_display = rel.to_string_lossy().replace('\\', "/");
+        if let Some(filter) = file_filter {
+            if !filter.is_match(&rel_display) {
+                continue;
+            }
+        }
+
+        scanned_files = scanned_files.saturating_add(1);
+        if params.max_files > 0 && scanned_files > params.max_files {
+            file_limit_hit = true;
+            break;
+        }
+
+        let remaining = params.max_matches.saturating_sub(hits.len());
+        if remaining == 0 {
+            match_limit_hit = true;
+            break;
+        }
+
+        let local_hits = match search_file(
+            &candidate,
+            &rel_display,
+            matcher,
+            params.context_before,
+            params.context_after,
+            remaining,
+        ) {
+            Ok(items) => items,
+            Err(_) => continue,
+        };
+        if !local_hits.is_empty() {
+            hits.extend(local_hits);
+            if hits.len() >= params.max_matches {
+                match_limit_hit = true;
+                break;
+            }
+        }
+    }
+
+    Ok(SearchComputation {
+        hits,
+        scanned_files,
+        timeout_hit,
+        file_limit_hit,
+        match_limit_hit,
+    })
+}
+
+fn search_content_walk(
+    root: &Path,
+    matcher: &Regex,
+    file_filter: Option<&GlobSet>,
+    params: &SearchParams,
+    deadline: Instant,
+) -> Result<SearchComputation> {
+    let hit_list = Arc::new(Mutex::new(Vec::<SearchHit>::new()));
+    let scanned_files = Arc::new(AtomicUsize::new(0));
+    let should_stop = Arc::new(AtomicBool::new(false));
+    let timeout_hit = Arc::new(AtomicBool::new(false));
+    let match_limit_hit = Arc::new(AtomicBool::new(false));
+    let file_limit_hit = Arc::new(AtomicBool::new(false));
+
+    let root = Arc::new(root.to_path_buf());
+    let display_base = Arc::new(if root.is_dir() {
+        root.as_ref().clone()
+    } else {
+        root.parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| root.as_ref().clone())
+    });
+    let matcher = Arc::new(matcher.clone());
+    let file_filter = file_filter.cloned().map(Arc::new);
+
+    let mut walker = WalkBuilder::new(root.as_ref());
+    walker.hidden(false);
+    walker.ignore(true);
+    walker.parents(true);
+    walker.git_ignore(true);
+    walker.git_global(true);
+    walker.git_exclude(true);
+    walker.max_filesize(Some(MAX_READ_BYTES as u64));
+    if params.max_depth > 0 {
+        walker.max_depth(Some(params.max_depth));
+    }
+
+    walker.build_parallel().run(|| {
+        let hit_list = Arc::clone(&hit_list);
+        let scanned_files = Arc::clone(&scanned_files);
+        let should_stop = Arc::clone(&should_stop);
+        let timeout_hit = Arc::clone(&timeout_hit);
+        let match_limit_hit = Arc::clone(&match_limit_hit);
+        let file_limit_hit = Arc::clone(&file_limit_hit);
+        let display_base = Arc::clone(&display_base);
+        let matcher = Arc::clone(&matcher);
+        let file_filter = file_filter.clone();
+        let max_files = params.max_files;
+        let max_matches = params.max_matches;
+        let context_before = params.context_before;
+        let context_after = params.context_after;
+
+        Box::new(move |entry| {
+            if should_stop.load(Ordering::Relaxed) {
+                return WalkState::Quit;
+            }
+            if Instant::now() >= deadline {
+                timeout_hit.store(true, Ordering::Relaxed);
+                should_stop.store(true, Ordering::Relaxed);
+                return WalkState::Quit;
+            }
+
+            let entry = match entry {
+                Ok(value) => value,
+                Err(_) => return WalkState::Continue,
+            };
+            let path = entry.path();
+            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            if is_dir {
+                if tool_fs_filter::should_skip_path(path) {
+                    return WalkState::Skip;
+                }
+                return WalkState::Continue;
+            }
+            if tool_fs_filter::should_skip_path(path) {
+                return WalkState::Continue;
+            }
+
+            let rel = path.strip_prefix(display_base.as_ref()).unwrap_or(path);
+            let rel_display = rel.to_string_lossy().replace('\\', "/");
+            if let Some(filter) = file_filter.as_ref() {
+                if !filter.is_match(&rel_display) {
+                    return WalkState::Continue;
+                }
+            }
+
+            let scanned = scanned_files.fetch_add(1, Ordering::Relaxed) + 1;
+            if max_files > 0 && scanned > max_files {
+                file_limit_hit.store(true, Ordering::Relaxed);
+                should_stop.store(true, Ordering::Relaxed);
+                return WalkState::Quit;
+            }
+
+            let remaining = {
+                let all_hits = match hit_list.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
+                max_matches.saturating_sub(all_hits.len())
+            };
+            if remaining == 0 {
+                match_limit_hit.store(true, Ordering::Relaxed);
+                should_stop.store(true, Ordering::Relaxed);
+                return WalkState::Quit;
+            }
+
+            let local_hits = match search_file(
+                path,
+                &rel_display,
+                matcher.as_ref(),
+                context_before,
+                context_after,
+                remaining,
+            ) {
+                Ok(items) => items,
+                Err(_) => return WalkState::Continue,
+            };
+            if local_hits.is_empty() {
+                return WalkState::Continue;
+            }
+
+            let mut all_hits = match hit_list.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            all_hits.extend(local_hits);
+            if all_hits.len() >= max_matches {
+                match_limit_hit.store(true, Ordering::Relaxed);
+                should_stop.store(true, Ordering::Relaxed);
+                return WalkState::Quit;
+            }
+            WalkState::Continue
+        })
+    });
+
+    let hits = match hit_list.lock() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    };
+    Ok(SearchComputation {
+        hits,
+        scanned_files: scanned_files.load(Ordering::Relaxed),
+        timeout_hit: timeout_hit.load(Ordering::Relaxed),
+        file_limit_hit: file_limit_hit.load(Ordering::Relaxed),
+        match_limit_hit: match_limit_hit.load(Ordering::Relaxed),
+    })
 }
 
 fn search_file(
@@ -332,8 +939,12 @@ fn search_file(
     matcher: &Regex,
     context_before: usize,
     context_after: usize,
+    match_limit: usize,
 ) -> Result<Vec<SearchHit>> {
     let lines = read_file_lines(path)?;
+    if lines.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut hits = Vec::new();
     for (idx, line) in lines.iter().enumerate() {
         if !matcher.is_match(line) {
@@ -349,7 +960,7 @@ fn search_file(
             before: collect_context_lines(&lines, before_start, idx),
             after: collect_context_lines(&lines, idx + 1, after_end),
         });
-        if hits.len() >= MAX_SEARCH_MATCHES {
+        if hits.len() >= match_limit {
             break;
         }
     }
@@ -357,6 +968,10 @@ fn search_file(
 }
 
 fn read_file_lines(path: &Path) -> Result<Vec<String>> {
+    if is_probably_binary(path)? {
+        return Ok(Vec::new());
+    }
+
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
     let mut line_buf = Vec::new();
@@ -371,6 +986,32 @@ fn read_file_lines(path: &Path) -> Result<Vec<String>> {
         lines.push(String::from_utf8_lossy(line).to_string());
     }
     Ok(lines)
+}
+
+fn is_probably_binary(path: &Path) -> Result<bool> {
+    let mut file = File::open(path)?;
+    let mut sample = vec![0u8; BINARY_SAMPLE_BYTES];
+    let read = file.read(&mut sample)?;
+    sample.truncate(read);
+    Ok(looks_like_binary(&sample))
+}
+
+fn looks_like_binary(sample: &[u8]) -> bool {
+    if sample.is_empty() {
+        return false;
+    }
+    if sample.contains(&0) {
+        return true;
+    }
+    if std::str::from_utf8(sample).is_ok() {
+        return false;
+    }
+    let control_ratio = sample
+        .iter()
+        .filter(|item| matches!(**item, 0x01..=0x08 | 0x0B | 0x0C | 0x0E..=0x1A | 0x1C..=0x1F))
+        .count() as f64
+        / sample.len() as f64;
+    control_ratio >= CONTROL_BYTE_RATIO_THRESHOLD
 }
 
 fn collect_context_lines(lines: &[String], start: usize, end: usize) -> Vec<ContextLine> {
@@ -416,6 +1057,63 @@ fn build_highlight_segments(line: &str, matcher: &Regex) -> Vec<HighlightSegment
     segments
 }
 
+fn estimate_hit_bytes(hit: &SearchHit) -> usize {
+    let mut total = hit
+        .path
+        .len()
+        .saturating_add(hit.content.len())
+        .saturating_add(64);
+    total = total.saturating_add(
+        hit.segments
+            .iter()
+            .map(|segment| segment.text.len().saturating_add(8))
+            .sum::<usize>(),
+    );
+    total = total.saturating_add(
+        hit.before
+            .iter()
+            .map(|line| line.content.len().saturating_add(16))
+            .sum::<usize>(),
+    );
+    total.saturating_add(
+        hit.after
+            .iter()
+            .map(|line| line.content.len().saturating_add(16))
+            .sum::<usize>(),
+    )
+}
+
+fn limit_hits_by_output_budget(
+    hits: Vec<SearchHit>,
+    output_budget_bytes: Option<usize>,
+) -> (Vec<SearchHit>, bool) {
+    let Some(output_budget_bytes) = output_budget_bytes else {
+        return (hits, false);
+    };
+    if hits.is_empty() {
+        return (hits, false);
+    }
+    let mut kept = Vec::new();
+    let mut used = 0usize;
+    for hit in hits {
+        let weight = estimate_hit_bytes(&hit).max(1);
+        if kept.is_empty() {
+            kept.push(hit);
+            used = weight.min(output_budget_bytes);
+            if weight > output_budget_bytes {
+                return (kept, true);
+            }
+            continue;
+        }
+        if used.saturating_add(weight) > output_budget_bytes {
+            return (kept, true);
+        }
+        used = used.saturating_add(weight);
+        kept.push(hit);
+    }
+    (kept, false)
+}
+
 fn trim_line_endings(bytes: &[u8]) -> &[u8] {
     let mut end = bytes.len();
     while end > 0 {
@@ -449,8 +1147,16 @@ mod tests {
     }
 
     #[test]
+    fn build_file_filter_rejects_invalid_pattern() {
+        let err = build_file_filter(&["[".to_string()]).expect_err("invalid glob");
+        assert!(err.to_string().contains("invalid file_pattern"));
+    }
+
+    #[test]
     fn file_filter_supports_multiple_globs() {
-        let filter = build_file_filter("*.rs,*.md").expect("filter");
+        let filter = build_file_filter(&["*.rs".to_string(), "*.md".to_string()])
+            .expect("filter")
+            .expect("set");
         assert!(filter.is_match("src/main.rs"));
         assert!(filter.is_match("docs/README.md"));
         assert!(!filter.is_match("assets/logo.png"));
@@ -489,11 +1195,69 @@ mod tests {
         writeln!(file, "Gamma").expect("write");
 
         let matcher = build_query_matcher("beta", QueryMode::Literal, false).expect("matcher");
-        let hits = search_file(&target, "sample.txt", &matcher, 1, 1).expect("search");
+        let hits = search_file(&target, "sample.txt", &matcher, 1, 1, 10).expect("search");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].line, 2);
         assert_eq!(hits[0].before[0].line, 1);
         assert_eq!(hits[0].after[0].line, 3);
         assert!(hits[0].segments.iter().any(|segment| segment.matched));
+    }
+
+    #[test]
+    fn parse_rg_candidates_respects_limit_and_dedup() {
+        let cwd = Path::new("/tmp");
+        let stdout = b"a.txt\na.txt\nb.txt\n";
+        let parsed = parse_rg_candidate_output(stdout, cwd, 1).expect("parse");
+        assert_eq!(parsed.paths.len(), 1);
+        assert!(parsed.candidate_limit_hit);
+    }
+
+    #[test]
+    fn parse_search_params_applies_budget_caps() {
+        let params = parse_search_params(&json!({
+            "query": "foo",
+            "max_matches": 200,
+            "timeout_ms": 30000,
+            "max_candidates": 5000,
+            "max_files": 100,
+            "budget": {
+                "time_budget_ms": 1200,
+                "max_matches": 20,
+                "max_candidates": 80,
+                "max_files": 10,
+                "output_budget_bytes": 4096
+            }
+        }))
+        .expect("params");
+        assert_eq!(params.timeout_ms, 1200);
+        assert_eq!(params.max_matches, 20);
+        assert_eq!(params.max_candidates, 80);
+        assert_eq!(params.max_files, 10);
+        assert_eq!(params.output_budget_bytes, Some(4096));
+    }
+
+    #[test]
+    fn limit_hits_by_output_budget_truncates_hits() {
+        let hit1 = SearchHit {
+            path: "a.rs".to_string(),
+            line: 1,
+            content: "alpha".to_string(),
+            segments: vec![],
+            before: vec![],
+            after: vec![],
+        };
+        let hit2 = SearchHit {
+            path: "b.rs".to_string(),
+            line: 2,
+            content: "beta".to_string(),
+            segments: vec![],
+            before: vec![],
+            after: vec![],
+        };
+        let one_weight = estimate_hit_bytes(&hit1);
+        let (hits, budget_hit) =
+            limit_hits_by_output_budget(vec![hit1, hit2], Some(one_weight + 1));
+        assert_eq!(hits.len(), 1);
+        assert!(budget_hit);
     }
 }

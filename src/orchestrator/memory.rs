@@ -834,11 +834,248 @@ impl Orchestrator {
         round_id: Option<&str>,
         question: &str,
         answer: &str,
+        llm_config: LlmModelConfig,
     ) {
-        let _ = (
-            self, user_id, agent_id, session_id, round_id, question, answer,
-        );
-        // Long-term memory writes are currently manual-only via memory_manager.
+        let storage = self.storage.clone();
+        let config_store = self.config_store.clone();
+        let http = self.http.clone();
+        let language = i18n::get_language();
+        let user_id = user_id.trim().to_string();
+        let agent_id = agent_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let session_id = session_id.trim().to_string();
+        let round_id = round_id
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let question = question.trim().to_string();
+        let answer = answer.trim().to_string();
+
+        // Auto extraction is strictly opt-in per agent. It never mutates the
+        // frozen system prompt of the current thread; it only writes long-term memories.
+        tokio::spawn(async move {
+            i18n::with_language(language, async move {
+                let enabled_storage = storage.clone();
+                let enabled_user_id = user_id.clone();
+                let enabled_agent_id = agent_id.clone();
+                let enabled = match tokio::task::spawn_blocking(move || {
+                    crate::services::memory_agent_settings::AgentMemorySettingsService::new(
+                        enabled_storage,
+                    )
+                    .auto_extract_enabled(&enabled_user_id, enabled_agent_id.as_deref())
+                })
+                .await
+                {
+                    Ok(value) => value,
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "wunder_server",
+                            user_id = %user_id,
+                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                            session_id = %session_id,
+                            "auto memory extraction settings check failed: {err}"
+                        );
+                        return;
+                    }
+                };
+                if !enabled {
+                    return;
+                }
+
+                let prep_storage = storage.clone();
+                let prep_user_id = user_id.clone();
+                let prep_agent_id = agent_id.clone();
+                let prep_session_id = session_id.clone();
+                let prep_round_id = round_id.clone();
+                let prep_question = question.clone();
+                let prep_answer = answer.clone();
+                let prepared = match tokio::task::spawn_blocking(move || {
+                    let service = crate::services::memory_auto_extract::MemoryAutoExtractService::new(prep_storage);
+                    let window = service.build_recent_user_window(&prep_user_id, &prep_session_id, &prep_question);
+                    let mut job = service.queue_turn_job(
+                        &prep_user_id,
+                        prep_agent_id.as_deref(),
+                        &prep_session_id,
+                        prep_round_id.as_deref(),
+                        &prep_question,
+                        &prep_answer,
+                        &window,
+                    )?;
+                    service.mark_job_running(&mut job)?;
+                    Ok::<_, anyhow::Error>((window, job))
+                })
+                .await
+                {
+                    Ok(Ok(result)) => result,
+                    Ok(Err(err)) => {
+                        tracing::warn!(
+                            target: "wunder_server",
+                            user_id = %user_id,
+                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                            session_id = %session_id,
+                            "auto memory extraction job init failed: {err}"
+                        );
+                        return;
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "wunder_server",
+                            user_id = %user_id,
+                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                            session_id = %session_id,
+                            "auto memory extraction init task join failed: {err}"
+                        );
+                        return;
+                    }
+                };
+                let (window, mut job) = prepared;
+
+                let config = config_store.get().await;
+                let prompt = crate::services::prompting::read_prompt_template_from_active_pack(
+                    &config,
+                    Path::new("prompts/memory_auto_extract.txt"),
+                );
+                let prompt = if prompt.trim().is_empty() {
+                    default_auto_memory_extract_prompt().to_string()
+                } else {
+                    prompt.trim().to_string()
+                };
+
+                let mut extract_config = llm_config.clone();
+                extract_config.max_rounds = Some(1);
+                extract_config.max_output = Some(extract_config.max_output.unwrap_or(768).min(768));
+                extract_config.temperature = Some(0.1);
+                extract_config.stream = Some(false);
+                extract_config.stream_include_usage = Some(false);
+
+                if !is_llm_configured(&extract_config) {
+                    let finalize_storage = storage.clone();
+                    let finalize_job = job.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        let mut job = finalize_job;
+                        crate::services::memory_auto_extract::MemoryAutoExtractService::new(finalize_storage)
+                            .finish_job_failed(&mut job, "memory auto extraction llm is not configured");
+                    })
+                    .await;
+                    tracing::warn!(
+                        target: "wunder_server",
+                        user_id = %user_id,
+                        agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                        session_id = %session_id,
+                        "auto memory extraction skipped because llm is not configured"
+                    );
+                    return;
+                }
+
+                let request_text = build_auto_memory_extract_request(&question, &answer, &window);
+                let messages = vec![
+                    ChatMessage {
+                        role: "system".to_string(),
+                        content: json!(prompt),
+                        reasoning_content: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    },
+                    ChatMessage {
+                        role: "user".to_string(),
+                        content: json!(request_text),
+                        reasoning_content: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                    },
+                ];
+                let client = build_llm_client(&extract_config, http.clone());
+                let raw_output = match client.complete(&messages).await {
+                    Ok(response) => response.content,
+                    Err(err) => {
+                        let finalize_storage = storage.clone();
+                        let finalize_job = job.clone();
+                        let error_message = err.to_string();
+                        let _ = tokio::task::spawn_blocking(move || {
+                            let mut job = finalize_job;
+                            crate::services::memory_auto_extract::MemoryAutoExtractService::new(finalize_storage)
+                                .finish_job_failed(&mut job, &error_message);
+                        })
+                        .await;
+                        tracing::warn!(
+                            target: "wunder_server",
+                            user_id = %user_id,
+                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                            session_id = %session_id,
+                            "auto memory extraction llm call failed: {err}"
+                        );
+                        return;
+                    }
+                };
+
+                let apply_storage = storage.clone();
+                let apply_user_id = user_id.clone();
+                let apply_agent_id = agent_id.clone();
+                let apply_session_id = session_id.clone();
+                let apply_round_id = round_id.clone();
+                let apply_output = raw_output.clone();
+                match tokio::task::spawn_blocking(move || {
+                    let service = crate::services::memory_auto_extract::MemoryAutoExtractService::new(apply_storage);
+                    let run = (|| -> anyhow::Result<(crate::services::memory_auto_extract::MemoryAutoExtractOutcome, usize)> {
+                        let items = crate::services::memory_auto_extract::MemoryAutoExtractService::parse_llm_response(&apply_output)?;
+                        let extracted_count = items.len();
+                        let outcome = service.apply_llm_candidates(
+                            &apply_user_id,
+                            apply_agent_id.as_deref(),
+                            &apply_session_id,
+                            apply_round_id.as_deref(),
+                            items,
+                        )?;
+                        Ok((outcome, extracted_count))
+                    })();
+                    match run {
+                        Ok((outcome, extracted_count)) => {
+                            service.finish_job_success(&mut job, &outcome, extracted_count)?;
+                            Ok::<_, anyhow::Error>(outcome)
+                        }
+                        Err(err) => {
+                            service.finish_job_failed(&mut job, &err.to_string());
+                            Err(err)
+                        }
+                    }
+                })
+                .await
+                {
+                    Ok(Ok(outcome)) => {
+                        tracing::debug!(
+                            target: "wunder_server",
+                            user_id = %user_id,
+                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                            session_id = %session_id,
+                            created = outcome.created,
+                            updated = outcome.updated,
+                            skipped = outcome.skipped,
+                            "auto memory extraction finished"
+                        );
+                    }
+                    Ok(Err(err)) => {
+                        tracing::warn!(
+                            target: "wunder_server",
+                            user_id = %user_id,
+                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                            session_id = %session_id,
+                            "auto memory extraction failed: {err}"
+                        );
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            target: "wunder_server",
+                            user_id = %user_id,
+                            agent_id = %agent_id.as_deref().unwrap_or("__default__"),
+                            session_id = %session_id,
+                            "auto memory extraction apply task join failed: {err}"
+                        );
+                    }
+                }
+            }).await;
+        });
     }
 
     pub(super) fn build_compaction_user_content(&self, messages: &[Value]) -> String {
@@ -1419,6 +1656,88 @@ fn data_url_regex() -> Option<&'static Regex> {
             )
         })
         .as_ref()
+}
+
+fn default_auto_memory_extract_prompt() -> &'static str {
+    r#"You are a long-term memory extraction engine.
+Extract up to 4 stable memory fragments from the current user message and the recent user-message window.
+
+Keep only information that is likely to be useful across future turns:
+- user identity or stable profile facts
+- enduring preferences and constraints
+- current ongoing plans that may matter in later turns
+- explicit long-term notes the user asked the system to remember
+
+Do not extract:
+- temporary process chatter
+- one-off execution details
+- tool-call details
+- facts stated only by the assistant
+- guesses or inferred facts
+- questions such as “what is my name” or “who am I” as if they were facts
+
+Output only JSON in this exact shape:
+<memory_fragments>
+{
+  "items": [
+    {
+      "category": "response-preference | profile | plan | preference | working-note",
+      "slot": "reply_language | response_style | response_format | name | identity | background | current | generic | custom_stable_slot",
+      "title": "",
+      "summary": "",
+      "content": "",
+      "tags": [""],
+      "tier": "core | working | peripheral",
+      "importance": 0.0,
+      "confidence": 0.0
+    }
+  ]
+}
+</memory_fragments>"#
+}
+
+fn build_auto_memory_extract_request(question: &str, answer: &str, window: &[String]) -> String {
+    let mut lines = vec![
+        "[Current User Message]".to_string(),
+        truncate_auto_memory_extract_text(question, 1200),
+    ];
+    if !window.is_empty() {
+        lines.push(String::new());
+        lines.push("[Recent User Message Window]".to_string());
+        for (index, item) in window.iter().enumerate() {
+            lines.push(format!(
+                "{}. {}",
+                index + 1,
+                truncate_auto_memory_extract_text(item, 600)
+            ));
+        }
+    }
+    if !answer.trim().is_empty() {
+        lines.push(String::new());
+        lines.push("[Latest Assistant Reply For Context Only]".to_string());
+        lines.push(
+            "Use this only for context disambiguation. Do not turn assistant-only claims into memories."
+                .to_string(),
+        );
+        lines.push(truncate_auto_memory_extract_text(answer, 1000));
+    }
+    lines.join("\n")
+}
+
+fn truncate_auto_memory_extract_text(text: &str, char_limit: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= char_limit {
+        return trimmed.to_string();
+    }
+    let mut output = String::new();
+    for (index, ch) in trimmed.chars().enumerate() {
+        if index >= char_limit {
+            break;
+        }
+        output.push(ch);
+    }
+    output.push('…');
+    output
 }
 
 #[cfg(test)]

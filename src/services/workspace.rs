@@ -1,4 +1,5 @@
 // 工作区管理：路径校验、文件读写、目录操作与压缩打包。
+use crate::core::atomic_write::atomic_write_text;
 use crate::i18n;
 use crate::path_utils::is_within_root;
 use crate::storage::{
@@ -16,7 +17,6 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::Arc;
@@ -1186,8 +1186,7 @@ impl WorkspaceManager {
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut file = fs::File::create(&target)?;
-        file.write_all(content.as_bytes())?;
+        atomic_write_text(&target, content)?;
         self.bump_version(user_id);
         Ok(())
     }
