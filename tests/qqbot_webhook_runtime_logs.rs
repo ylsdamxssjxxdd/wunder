@@ -6,6 +6,7 @@ use axum::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tempfile::TempDir;
+use tokio::time::{sleep, Duration};
 use tower::ServiceExt;
 use wunder_server::{
     build_router,
@@ -239,5 +240,113 @@ async fn qqbot_webhook_resolves_account_by_header_app_id() {
     assert!(logs.iter().any(|item| {
         item.event == "callback_received" && item.message.contains("app_id_hint=1234567890")
     }));
+    assert!(logs.iter().any(|item| item.event == "validation_succeeded"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn qqbot_dispatch_event_is_not_rejected_by_missing_channel_token() {
+    let context = build_test_context().await;
+    let account_id = "uacc_qq_runtime_dispatch";
+    context
+        .state
+        .storage
+        .upsert_channel_account(&ChannelAccountRecord {
+            channel: "qqbot".to_string(),
+            account_id: account_id.to_string(),
+            config: json!({
+                "owner_user_id": "test-owner",
+                "inbound_token": "test-inbound-token",
+                "qqbot": {
+                    "app_id": "1234567890",
+                    "client_secret": "test-secret"
+                }
+            }),
+            status: "active".to_string(),
+            created_at: now_ts(),
+            updated_at: now_ts(),
+        })
+        .expect("upsert qqbot account");
+
+    let (status, payload) = send_json(
+        &context.app,
+        Method::POST,
+        "/wunder/channel/qqbot/webhook",
+        json!({
+            "op": 0,
+            "t": "C2C_MESSAGE_CREATE",
+            "app_id": "1234567890",
+            "d": {
+                "id": "msg_dispatch_1",
+                "content": "hello",
+                "timestamp": "2026-03-17T10:00:00Z",
+                "author": {
+                    "user_openid": "openid_1"
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["op"], json!(12));
+
+    // inbound worker runs asynchronously; wait a short time for runtime logs.
+    sleep(Duration::from_millis(250)).await;
+
+    let logs = context
+        .state
+        .channels
+        .list_runtime_logs(Some("qqbot"), None, 50);
+    assert!(logs.iter().any(|item| item.event == "callback_received"));
+    assert!(!logs.iter().any(|item| {
+        item.event == "inbound_worker_rejected" && item.message.contains("invalid channel token")
+    }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn qqbot_webhook_token_mode_resolves_account_and_validates_signature() {
+    let context = build_test_context().await;
+    let account_id = "uacc_qq_runtime_token_mode";
+    context
+        .state
+        .storage
+        .upsert_channel_account(&ChannelAccountRecord {
+            channel: "qqbot".to_string(),
+            account_id: account_id.to_string(),
+            config: json!({
+                "qqbot": {
+                    "token": "1234567890:test-secret"
+                }
+            }),
+            status: "active".to_string(),
+            created_at: now_ts(),
+            updated_at: now_ts(),
+        })
+        .expect("upsert qqbot account");
+
+    let (status, payload) = send_json(
+        &context.app,
+        Method::POST,
+        "/wunder/channel/qqbot/webhook",
+        json!({
+            "op": 13,
+            "app_id": "1234567890",
+            "d": {
+                "plain_token": "plain-token",
+                "event_ts": "1700000000"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["plain_token"], json!("plain-token"));
+    assert!(payload["signature"]
+        .as_str()
+        .map(|value| value.len() == 128)
+        .unwrap_or(false));
+
+    let logs = context
+        .state
+        .channels
+        .list_runtime_logs(Some("qqbot"), Some(account_id), 30);
     assert!(logs.iter().any(|item| item.event == "validation_succeeded"));
 }

@@ -712,6 +712,23 @@
       <button
         v-if="desktopMode"
         class="messenger-list-item"
+        :class="{ active: settingsPanelMode === 'desktop-system' }"
+        type="button"
+        @click="updateSettingsPanelMode('desktop-system')"
+      >
+        <div class="messenger-list-avatar"><i class="fa-solid fa-gear" aria-hidden="true"></i></div>
+        <div class="messenger-list-main">
+          <div class="messenger-list-row">
+            <span class="messenger-list-name">{{ t('messenger.settings.desktopSystem') }}</span>
+          </div>
+          <div class="messenger-list-row">
+            <span class="messenger-list-preview">{{ t('messenger.settings.desktopSystemHint') }}</span>
+          </div>
+        </div>
+      </button>
+      <button
+        v-if="desktopMode"
+        class="messenger-list-item"
         :class="{ active: settingsPanelMode === 'desktop-models' }"
         type="button"
         @click="updateSettingsPanelMode('desktop-models')"

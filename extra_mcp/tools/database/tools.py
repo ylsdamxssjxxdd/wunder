@@ -94,7 +94,11 @@ def _resolve_schema_hint(target: DbQueryTarget) -> str:
 
 
 def _build_description(target: DbQueryTarget, schema_hint: str, include_db_key: bool) -> str:
-    parts = [f"Run read-only SQL and return compact rows for table {target.table}. ", "Strong constraint: queries can only access this bound table. "]
+    parts = [
+        f"Run read-only SQL and return compact rows for table {target.table}. ",
+        "Strong constraint: queries can only access this bound table. ",
+        "For large datasets, prefer LIMIT/OFFSET pagination and narrower filters. ",
+    ]
     if target.description:
         parts.append(f"Purpose: {target.description}. ")
     if include_db_key and target.db_key:
@@ -139,7 +143,7 @@ def _register_bound_db_query_tool(
         max_rows: Annotated[
             int,
             Field(
-                description="Maximum returned rows, default 200.",
+                description="Maximum returned rows, default 200; if truncated=true, continue with LIMIT/OFFSET or narrower filters.",
                 title="Max Rows",
             ),
         ] = 200,
@@ -198,7 +202,7 @@ def _register_generic_db_query_tool(mcp: FastMCP) -> None:
         max_rows: Annotated[
             int,
             Field(
-                description="Maximum returned rows, default 200.",
+                description="Maximum returned rows, default 200; if truncated=true, continue with LIMIT/OFFSET or narrower filters.",
                 title="Max Rows",
             ),
         ] = 200,

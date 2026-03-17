@@ -253,6 +253,13 @@ impl Orchestrator {
         meta.insert("duration_ms".to_string(), json!(duration_ms));
         meta.insert("truncated".to_string(), json!(truncated));
         meta.insert("output_chars".to_string(), json!(output_chars));
+        if truncated {
+            meta.insert("continuation_required".to_string(), Value::Bool(true));
+            meta.insert(
+                "continuation_hint".to_string(),
+                Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
+            );
+        }
         if let Some(exit_code) = exit_code {
             meta.insert("exit_code".to_string(), json!(exit_code));
         }
@@ -932,6 +939,8 @@ const OBSERVATION_TAIL_CHARS: usize = 240;
 const OBSERVATION_MAX_ARRAY_ITEMS: usize = 20;
 const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 12;
 const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 4;
+const TRUNCATION_CONTINUATION_HINT: &str =
+    "result_truncated_continue_with_pagination_or_narrower_query";
 
 fn compact_observation_payload(payload: &mut Value) {
     let Some(map) = payload.as_object_mut() else {
@@ -943,23 +952,40 @@ fn compact_observation_payload(payload: &mut Value) {
     let Some(mut compacted_data) = extract_mcp_observation_data(&raw_data) else {
         return;
     };
-    truncate_observation_data(
+    let mut observation_truncated = truncate_observation_data(
         &mut compacted_data,
         OBSERVATION_HEAD_CHARS,
         OBSERVATION_TAIL_CHARS,
         TOOL_RESULT_TRUNCATION_MARKER,
     );
-    let chars = estimate_tool_result_chars(&compacted_data);
-    if chars > OBSERVATION_MAX_CHARS {
+    let chars_before_compact = estimate_tool_result_chars(&compacted_data);
+    if chars_before_compact > OBSERVATION_MAX_CHARS {
         compacted_data = compact_large_tool_result_data(
             &compacted_data,
-            chars,
+            chars_before_compact,
             OBSERVATION_HEAD_CHARS,
             OBSERVATION_TAIL_CHARS,
             TOOL_RESULT_TRUNCATION_MARKER,
         );
+        observation_truncated = true;
     }
+    let observation_output_chars = estimate_tool_result_chars(&compacted_data);
     map.insert("data".to_string(), compacted_data);
+    if observation_truncated {
+        let mut meta = merge_tool_result_meta(map.get("meta").cloned());
+        meta.insert("truncated".to_string(), Value::Bool(true));
+        meta.insert("observation_truncated".to_string(), Value::Bool(true));
+        meta.insert(
+            "observation_output_chars".to_string(),
+            json!(observation_output_chars),
+        );
+        meta.insert("continuation_required".to_string(), Value::Bool(true));
+        meta.insert(
+            "continuation_hint".to_string(),
+            Value::String(TRUNCATION_CONTINUATION_HINT.to_string()),
+        );
+        map.insert("meta".to_string(), Value::Object(meta));
+    }
     if let Some(meta_value) = map.get("meta").cloned() {
         if let Some(meta) = compact_observation_meta(&meta_value) {
             map.insert("meta".to_string(), meta);
@@ -974,7 +1000,16 @@ fn compact_observation_meta(value: &Value) -> Option<Value> {
         return None;
     };
     let mut compacted = Map::new();
-    for key in ["duration_ms", "truncated", "output_chars", "exit_code"] {
+    for key in [
+        "duration_ms",
+        "truncated",
+        "output_chars",
+        "observation_truncated",
+        "observation_output_chars",
+        "continuation_required",
+        "continuation_hint",
+        "exit_code",
+    ] {
         if let Some(item) = map.get(key) {
             compacted.insert(key.to_string(), item.clone());
         }
@@ -1162,6 +1197,8 @@ fn compact_large_tool_result_data(
         "truncated": true,
         "original_chars": original_chars,
         "preview": preview,
+        "continuation_required": true,
+        "continuation_hint": TRUNCATION_CONTINUATION_HINT,
     });
     if let Some(exit_code) = extract_exit_code(value) {
         if let Value::Object(ref mut map) = payload {
@@ -1339,6 +1376,78 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or("");
         assert!(!preview.is_empty());
+        assert_eq!(
+            compacted
+                .get("continuation_required")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            compacted
+                .get("continuation_hint")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            TRUNCATION_CONTINUATION_HINT
+        );
+    }
+
+    #[test]
+    fn test_compact_observation_payload_marks_truncation_meta() {
+        let text = "x".repeat(OBSERVATION_HEAD_CHARS + OBSERVATION_TAIL_CHARS + 80);
+        let mut payload = json!({
+            "tool": "extra_mcp@db_query",
+            "ok": true,
+            "data": {
+                "structured_content": {
+                    "rows": [
+                        {"text": text}
+                    ]
+                }
+            },
+            "meta": {
+                "duration_ms": 12
+            }
+        });
+
+        compact_observation_payload(&mut payload);
+
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("truncated"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("observation_truncated"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("continuation_required"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("continuation_hint"))
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            TRUNCATION_CONTINUATION_HINT
+        );
+        assert!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("observation_output_chars"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+                > 0
+        );
     }
 
     #[test]

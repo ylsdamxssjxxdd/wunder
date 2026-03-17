@@ -62,3 +62,6 @@ frontend-old
 desktop/electron/node_modules/
 # desktop/electron default outputs now live under target/desktop-electron/
 tmp
+docs/方案/演示/
+方案/演示
+方案/演示

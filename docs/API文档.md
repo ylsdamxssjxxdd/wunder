@@ -24,13 +24,14 @@
 - compose 镜像策略：`docker-compose-x86.yml` / `docker-compose-arm.yml` 的 `wunder-server` / `wunder-sandbox` / `extra-mcp` 统一使用同名本地镜像（`wunder-x86`/`wunder-arm`），并设置 `pull_policy: never`，已存在镜像时优先复用，不存在时再自动构建，避免首次启动时 `extra-mcp` 先拉取失败。
 - 前端入口：管理端调试 UI `http://127.0.0.1:18000`，调试前端 `http://127.0.0.1:18001`（Vite dev server），用户侧前端 `http://127.0.0.1:18002`（Nginx 静态服务）。
 - Single-port docker compose mode: expose only `18001` publicly; proxy `/wunder`, `/a2a`, and `/.well-known/agent-card.json` to `wunder-server:18000`; keep `wunder-postgres`/`wunder-weaviate`/`extra-mcp` bound to `127.0.0.1`.
-- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>` 对应的 JWT 直登优先使用 `security.external_embed_jwt_secret`，留空时自动回退到 `security.external_auth_key`，再回退到 `security.api_key`。该登录链接还支持追加 `agent_name=<URL 编码后的智能体名称>` 指定进入的智能体；未传时回退到 `security.external_embed_preset_agent_name`。
+- 鉴权：管理员接口使用 `X-API-Key` 或 `Authorization: Bearer <api_key>`（配置项 `security.api_key`），用户侧接口使用 `/wunder/auth` 颁发的 `Authorization: Bearer <user_token>`；外部系统嵌入接入使用 `security.external_auth_key`（环境变量 `WUNDER_EXTERNAL_AUTH_KEY`）调用 `/wunder/auth/external/*`。当未显式配置 `external_auth_key` 时会自动回退到 `security.api_key`，即默认启用外链鉴权；`/login?token=<team_jwt>&user_id=<id>` 当前走 `/wunder/auth/external/token_login` 直换 wunder `access_token`（JWT 校验失败不阻断登录），接口同时返回 `agent_id`，前端直接跳转 `/app/embed/chat`（或 `/desktop/embed/chat`）进入嵌入聊天页，不再依赖 launch 跳转接口。
 - 默认管理员账号为 admin/admin，服务启动时自动创建且不可删除，可通过用户管理重置密码。
 - 用户端请求可省略 `user_id`，后端从 Token 解析；管理员接口可显式传 `user_id` 以指定目标用户。
 - 模型配置新增 `model_type=llm|embedding`，向量知识库依赖 embedding 模型调用 `/v1/embeddings`。
 - 用户侧前端默认入口为 `/app/home`（desktop 为 `/desktop/home`）；`/app/home|chat|user-world|workspace|tools|settings|profile|channels|cron` 统一复用 Messenger 壳。嵌入聊天路由为 `/app/embed/chat`（desktop `/desktop/embed/chat`，demo `/demo/embed/chat`，隐藏左/中栏）。外链详情路由为 `/app/external/:linkId`（demo 为 `/demo/external/:linkId`）。External links are managed via `/wunder/admin/external_links` and delivered by `/wunder/external_links` after org-level filtering; production frontend port is 18002, development port is 18001。
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
+- QQ Bot 渠道支持两种入站模式：`/wunder/channel/qqbot/webhook` 回调模式，以及账号级长连接模式（`qqbot.long_connection_enabled=true`，默认开启）；凭证可使用 `qqbot.app_id + qqbot.client_secret` 或 `qqbot.token=appId:clientSecret`；未显式配置 `qqbot.intents` 时长连接会按 `full -> group+channel -> channel-only` 自动降级重试，并写入渠道运行日志事件。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 本地模式的 `/wunder/desktop/settings` 新增 `python_interpreter_path` 字段：留空时优先使用安装包内置 Python，填写有效解释器路径后运行时优先切换到用户自定义 Python；`GET /wunder/desktop/python/interpreters` 可返回本机已探测到的候选解释器，`GET /wunder/desktop/fs/list` 支持 `include_files/file_names` 查询参数以浏览并筛选可执行文件。
@@ -149,6 +150,7 @@
 - `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并新增 `timeout_ms`、`max_matches`、`max_candidates` 入参；返回保留兼容字段 `matches`，同时提供结构化 `hits` 与 `meta.search`（包含 `requested_engine/resolved_engine/fallback/elapsed_ms/timeout_hit` 等），便于前端与调度层做可观测优化。
 - `读取文件`（`read_file`）支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。
 - `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
+- 工具结果若因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview` 或数组级 `truncated_items` 标记，表示当前结果为片段而非全量。
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
 - `写入文件` 与 `应用补丁` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
@@ -1287,6 +1289,7 @@
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
+- 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
 - 吞吐量/性能/benchmark/模拟：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/benchmark/*`、`/wunder/admin/sim_lab/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
@@ -1299,6 +1302,62 @@
   - `tools`：内置工具列表（name/description/input_schema/enabled）
 - `POST` 入参：
   - `enabled`：启用的内置工具名称列表
+
+### 4.1.25.1 `/wunder/admin/channels/accounts`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`：渠道名过滤
+  - `status`：账号状态过滤（如 `active`）
+- 返回（JSON）：
+  - `data.items[]`：渠道账号列表，字段包括：
+    - `channel`、`account_id`、`status`、`config`、`created_at`、`updated_at`
+    - `runtime`：运行态信息（当前含 `feishu_long_connection`、`xmpp_long_connection`）
+    - `owner_user_id`、`owner_username`：主持有者（基于渠道用户绑定推导）
+    - `owners[]`：持有者预览（`user_id`、`username`）
+    - `owner_count`：持有者数量
+    - `binding_count`：绑定数量
+    - `session_count`：渠道会话数量
+    - `message_count` / `communication_count`：通信消息数量
+    - `last_communication_at`：最近通信时间（秒级时间戳）
+
+### 4.1.25.2 `/wunder/admin/channels/accounts/{channel}/{account_id}`
+
+- 方法：`DELETE`
+- 返回（JSON）：
+  - `data.channel`、`data.account_id`
+  - `data.deleted_accounts`：删除账号记录数
+  - `data.deleted_bindings`：删除渠道绑定数
+  - `data.deleted_user_bindings`：删除渠道用户绑定数
+- 说明：用于管理端快速移除失效渠道账号及其绑定关系。
+
+### 4.1.25.3 `/wunder/admin/channels/bindings`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`：渠道名过滤
+- 返回（JSON）：
+  - `data.items[]`：渠道绑定列表（`binding_id/channel/account_id/peer_kind/peer_id/agent_id/tool_overrides/priority/enabled/created_at/updated_at`）
+
+### 4.1.25.4 `/wunder/admin/channels/user_bindings`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`、`account_id`、`peer_kind`、`peer_id`、`user_id`
+  - `offset`（默认 0）、`limit`（默认 50）
+- 返回（JSON）：
+  - `data.items[]`：用户绑定列表（`channel/account_id/peer_kind/peer_id/user_id/created_at/updated_at`）
+  - `data.total`：总数
+
+### 4.1.25.5 `/wunder/admin/channels/sessions`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `channel`、`account_id`、`peer_id`、`session_id`
+  - `offset`（默认 0）、`limit`（默认 50）
+- 返回（JSON）：
+  - `data.items[]`：会话列表（`channel/account_id/peer_kind/peer_id/thread_id/session_id/agent_id/user_id/tts_enabled/tts_voice/metadata/last_message_at/created_at/updated_at`）
+  - `data.total`：总数
 
 ### 4.1.26 `/wunder/admin/knowledge`
 

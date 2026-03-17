@@ -129,6 +129,10 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_channel_accounts),
         )
         .route(
+            "/wunder/admin/channels/accounts/{channel}/{account_id}",
+            delete(admin_channel_account_delete),
+        )
+        .route(
             "/wunder/admin/channels/bindings",
             get(admin_channel_bindings),
         )
@@ -6753,9 +6757,16 @@ fn resolve_channel_binding_count(
     Ok(total)
 }
 
+const ADMIN_CHANNEL_OWNER_PREVIEW_LIMIT: i64 = 200;
+
+fn normalize_channel_event_ts(raw: Option<f64>) -> Option<f64> {
+    raw.filter(|value| value.is_finite() && *value > 0.0)
+}
+
 fn build_channel_account_runtime(
     storage: &dyn StorageBackend,
     record: &ChannelAccountRecord,
+    binding_count: Option<i64>,
 ) -> Value {
     let account_cfg = ChannelAccountConfig::from_value(&record.config);
     if record
@@ -6763,11 +6774,13 @@ fn build_channel_account_runtime(
         .trim()
         .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
     {
+        let resolved_binding_count = binding_count
+            .or_else(|| resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok());
         let Some(feishu_cfg) = account_cfg.feishu else {
             return json!({
                 "feishu_long_connection": {
                     "status": LongConnectionRuntimeStatus::NotConfigured.as_str(),
-                    "binding_count": 0,
+                    "binding_count": resolved_binding_count.unwrap_or(0),
                     "long_connection_enabled": false,
                     "has_credentials": false,
                 }
@@ -6777,8 +6790,7 @@ fn build_channel_account_runtime(
         let long_connection_enabled = feishu::long_connection_enabled(&feishu_cfg);
         let has_credentials = feishu::has_long_connection_credentials(&feishu_cfg);
         let account_active = record.status.trim().eq_ignore_ascii_case("active");
-        let binding_count =
-            resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok();
+        let binding_count = resolved_binding_count;
 
         let status = if !account_active {
             LongConnectionRuntimeStatus::AccountInactive
@@ -6805,11 +6817,13 @@ fn build_channel_account_runtime(
         .trim()
         .eq_ignore_ascii_case(xmpp::XMPP_CHANNEL)
     {
+        let resolved_binding_count = binding_count
+            .or_else(|| resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok());
         let Some(xmpp_cfg) = account_cfg.xmpp else {
             return json!({
                 "xmpp_long_connection": {
                     "status": LongConnectionRuntimeStatus::NotConfigured.as_str(),
-                    "binding_count": 0,
+                    "binding_count": resolved_binding_count.unwrap_or(0),
                     "long_connection_enabled": false,
                     "has_credentials": false,
                 }
@@ -6819,8 +6833,7 @@ fn build_channel_account_runtime(
         let long_connection_enabled = xmpp::long_connection_enabled(&xmpp_cfg);
         let has_credentials = xmpp::has_long_connection_credentials(&xmpp_cfg);
         let account_active = record.status.trim().eq_ignore_ascii_case("active");
-        let binding_count =
-            resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok();
+        let binding_count = resolved_binding_count;
 
         let status = if !account_active {
             LongConnectionRuntimeStatus::AccountInactive
@@ -6845,6 +6858,116 @@ fn build_channel_account_runtime(
     json!({})
 }
 
+fn resolve_channel_owner_preview(
+    state: &Arc<AppState>,
+    channel: &str,
+    account_id: &str,
+    username_cache: &mut HashMap<String, String>,
+) -> Result<(Vec<Value>, i64), Response> {
+    let (bindings, binding_total) = state
+        .storage
+        .list_channel_user_bindings(ListChannelUserBindingsQuery {
+            channel: Some(channel),
+            account_id: Some(account_id),
+            peer_kind: None,
+            peer_id: None,
+            user_id: None,
+            offset: 0,
+            limit: ADMIN_CHANNEL_OWNER_PREVIEW_LIMIT,
+        })
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut owners = Vec::new();
+    let mut seen = HashSet::new();
+    for record in bindings {
+        let user_id = record.user_id.trim();
+        if user_id.is_empty() || !seen.insert(user_id.to_string()) {
+            continue;
+        }
+        let username = if let Some(cached) = username_cache.get(user_id) {
+            cached.clone()
+        } else {
+            let resolved = state
+                .user_store
+                .get_user_by_id(user_id)
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+                .map(|user| {
+                    let cleaned = user.username.trim();
+                    if cleaned.is_empty() {
+                        user.user_id.trim().to_string()
+                    } else {
+                        cleaned.to_string()
+                    }
+                })
+                .unwrap_or_else(|| user_id.to_string());
+            username_cache.insert(user_id.to_string(), resolved.clone());
+            resolved
+        };
+        owners.push(json!({
+            "user_id": user_id,
+            "username": username,
+        }));
+    }
+    Ok((owners, binding_total))
+}
+
+fn admin_delete_channel_account_records(
+    state: &Arc<AppState>,
+    channel: &str,
+    account_id: &str,
+) -> Result<(i64, i64, i64), Response> {
+    let bindings = state
+        .storage
+        .list_channel_bindings(Some(channel))
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let mut deleted_bindings = 0_i64;
+    for binding in bindings {
+        if !binding.account_id.eq_ignore_ascii_case(account_id) {
+            continue;
+        }
+        deleted_bindings += state
+            .storage
+            .delete_channel_binding(&binding.binding_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    }
+
+    let mut deleted_user_bindings = 0_i64;
+    loop {
+        let (records, _) = state
+            .storage
+            .list_channel_user_bindings(ListChannelUserBindingsQuery {
+                channel: Some(channel),
+                account_id: Some(account_id),
+                peer_kind: None,
+                peer_id: None,
+                user_id: None,
+                offset: 0,
+                limit: 500,
+            })
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        if records.is_empty() {
+            break;
+        }
+        for record in records {
+            deleted_user_bindings += state
+                .storage
+                .delete_channel_user_binding(
+                    &record.channel,
+                    &record.account_id,
+                    &record.peer_kind,
+                    &record.peer_id,
+                )
+                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        }
+    }
+
+    let deleted_account = state
+        .storage
+        .delete_channel_account(channel, account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+
+    Ok((deleted_account, deleted_bindings, deleted_user_bindings))
+}
+
 async fn admin_channel_accounts(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ChannelAccountQuery>,
@@ -6855,22 +6978,95 @@ async fn admin_channel_accounts(
         .storage
         .list_channel_accounts(channel, status)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let items = records
-        .into_iter()
-        .map(|record| {
-            let runtime = build_channel_account_runtime(state.storage.as_ref(), &record);
-            json!({
-                "channel": record.channel,
-                "account_id": record.account_id,
-                "config": record.config,
-                "status": record.status,
-                "created_at": record.created_at,
-                "updated_at": record.updated_at,
-                "runtime": runtime,
-            })
-        })
-        .collect::<Vec<_>>();
+    let mut username_cache: HashMap<String, String> = HashMap::new();
+    let mut items = Vec::with_capacity(records.len());
+    for record in records {
+        let (owners, binding_count) = resolve_channel_owner_preview(
+            &state,
+            &record.channel,
+            &record.account_id,
+            &mut username_cache,
+        )?;
+        let (sessions_preview, session_count) = state
+            .storage
+            .list_channel_sessions(
+                Some(&record.channel),
+                Some(&record.account_id),
+                None,
+                None,
+                0,
+                1,
+            )
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let message_stats = state
+            .storage
+            .get_channel_message_stats(&record.channel, &record.account_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let runtime =
+            build_channel_account_runtime(state.storage.as_ref(), &record, Some(binding_count));
+        let owner_user_id = owners
+            .first()
+            .and_then(|item| item.get("user_id"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let owner_username = owners
+            .first()
+            .and_then(|item| item.get("username"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let owner_count = owners.len();
+        let session_last_message_at = sessions_preview
+            .first()
+            .and_then(|item| normalize_channel_event_ts(Some(item.last_message_at)));
+        let last_communication_at =
+            normalize_channel_event_ts(message_stats.last_message_at).or(session_last_message_at);
+        items.push(json!({
+            "channel": record.channel,
+            "account_id": record.account_id,
+            "config": record.config,
+            "status": record.status,
+            "created_at": record.created_at,
+            "updated_at": record.updated_at,
+            "runtime": runtime,
+            "owner_user_id": owner_user_id,
+            "owner_username": owner_username,
+            "owners": owners,
+            "owner_count": owner_count,
+            "binding_count": binding_count,
+            "session_count": session_count,
+            "message_count": message_stats.total,
+            "communication_count": message_stats.total,
+            "last_communication_at": last_communication_at,
+        }));
+    }
     Ok(Json(json!({ "data": { "items": items } })))
+}
+
+async fn admin_channel_account_delete(
+    State(state): State<Arc<AppState>>,
+    AxumPath((channel, account_id)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, Response> {
+    let cleaned_channel = channel.trim().to_string();
+    let cleaned_account = account_id.trim().to_string();
+    if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let (deleted_account, deleted_bindings, deleted_user_bindings) =
+        admin_delete_channel_account_records(&state, &cleaned_channel, &cleaned_account)?;
+
+    Ok(Json(json!({ "data": {
+        "channel": cleaned_channel,
+        "account_id": cleaned_account,
+        "deleted_accounts": deleted_account,
+        "deleted_bindings": deleted_bindings,
+        "deleted_user_bindings": deleted_user_bindings,
+    }})))
 }
 
 async fn admin_channel_bindings(

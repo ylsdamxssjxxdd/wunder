@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import type { LocationQuery, LocationQueryRaw, RouteLocationRaw, RouteRecordRaw } from 'vue-router';
+import type { LocationQuery, LocationQueryRaw, RouteRecordRaw } from 'vue-router';
 
 import { disableDemoMode, enableDemoMode } from '@/utils/demo';
 import { useAuthStore } from '@/stores/auth';
@@ -113,12 +113,12 @@ const exchangeEmbedCode = async (code: string): Promise<string> => {
   return token;
 };
 
-const launchExternalTokenEntry = async (
+const loginWithExternalToken = async (
   token: string,
   userId: string,
   agentName?: string
-): Promise<string> => {
-  const response = await fetch(resolveApiEndpoint('/auth/external/token_launch'), {
+): Promise<{ accessToken: string; user: Record<string, unknown> | null; agentId: string }> => {
+  const response = await fetch(resolveApiEndpoint('/auth/external/token_login'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, user_id: userId, agent_name: agentName || undefined })
@@ -127,37 +127,21 @@ const launchExternalTokenEntry = async (
   const payload = asRecord(await response.json().catch(() => ({})));
   if (!response.ok) {
     const error = asRecord(payload.error);
-    const message = String(error.message || payload.message || 'external token launch failed').trim();
-    throw new Error(message || 'external token launch failed');
+    const message = String(error.message || payload.message || 'external token login failed').trim();
+    throw new Error(message || 'external token login failed');
   }
 
   const data = asRecord(payload.data);
-  const entryPath = String(data.entry_path || '').trim();
-  if (!entryPath) {
-    throw new Error('external token launch entry_path is empty');
+  const accessToken = String(data.access_token || '').trim();
+  if (!accessToken) {
+    throw new Error('external token login access_token is empty');
   }
-  return entryPath;
-};
-
-const resolveEntryRoute = (entryPath: string): RouteLocationRaw => {
-  const url = new URL(entryPath, window.location.origin);
-  const query: LocationQueryRaw = {};
-  url.searchParams.forEach((value, key) => {
-    const existing = query[key];
-    if (existing == null) {
-      query[key] = value;
-      return;
-    }
-    if (Array.isArray(existing)) {
-      query[key] = [...existing, value];
-      return;
-    }
-    query[key] = [existing as string, value];
-  });
+  const user = asRecord(data.user);
+  const agentId = String(data.agent_id || '').trim();
   return {
-    path: url.pathname,
-    query,
-    hash: url.hash
+    accessToken,
+    user: Object.keys(user).length > 0 ? user : null,
+    agentId
   };
 };
 
@@ -292,12 +276,24 @@ router.beforeEach(async (to) => {
   const externalAgentName = resolveExternalQueryAgentName(query);
   if (externalToken && externalUserId) {
     try {
-      const entryPath = await launchExternalTokenEntry(
+      const result = await loginWithExternalToken(
         externalToken,
         externalUserId,
         externalAgentName || undefined
       );
-      return resolveEntryRoute(entryPath);
+      authStore.token = result.accessToken;
+      authStore.user = result.user;
+      localStorage.setItem('access_token', result.accessToken);
+      const targetPath = isDesktopModeEnabled() ? '/desktop/embed/chat' : '/app/embed/chat';
+      const nextQuery: LocationQueryRaw = {};
+      if (result.agentId) {
+        nextQuery.agent_id = result.agentId;
+      }
+      return {
+        path: targetPath,
+        query: nextQuery,
+        replace: true
+      };
     } catch {
       authStore.logout();
       return { path: USER_LOGIN_PATH, replace: true };

@@ -737,7 +737,8 @@
               <DesktopSystemSettingsPanel
                 v-else-if="
                   desktopMode &&
-                  (settingsPanelMode === 'desktop-models' ||
+                  (settingsPanelMode === 'desktop-system' ||
+                    settingsPanelMode === 'desktop-models' ||
                     settingsPanelMode === 'desktop-remote' ||
                     settingsPanelMode === 'desktop-lan')
                 "
@@ -746,8 +747,11 @@
                     ? 'remote'
                     : settingsPanelMode === 'desktop-lan'
                       ? 'lan'
+                      : settingsPanelMode === 'desktop-system'
+                        ? 'system'
                       : 'models'
                 "
+                @desktop-model-meta-changed="handleDesktopModelMetaChanged"
               />
               <MessengerSettingsPanel
                 v-else
@@ -1665,6 +1669,7 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
+  | 'desktop-system'
   | 'desktop-models'
   | 'desktop-remote'
   | 'desktop-lan';
@@ -3607,6 +3612,7 @@ const chatPanelTitle = computed(() => {
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return t('user.profile.enter');
     if (settingsPanelMode.value === 'prompts') return t('messenger.prompt.title');
+    if (settingsPanelMode.value === 'desktop-system') return t('desktop.system.title');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llm');
     if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.title');
     if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.title');
@@ -3641,6 +3647,7 @@ const chatPanelSubtitle = computed(() => {
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return currentUsername.value;
     if (settingsPanelMode.value === 'prompts') return t('messenger.prompt.desc');
+    if (settingsPanelMode.value === 'desktop-system') return t('messenger.settings.desktopSystemHint');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llmHint');
     if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.hint');
     if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.hint');
@@ -6337,7 +6344,9 @@ const switchSection = (
     settingsPanelMode.value =
       explicitSettingsPanelMode !== 'general'
         ? explicitSettingsPanelMode
-        : desktopMode.value && (panelHint === 'desktop-models' || panelHint === 'desktop')
+        : desktopMode.value && (panelHint === 'desktop-system' || panelHint === 'desktop')
+          ? 'desktop-system'
+          : desktopMode.value && panelHint === 'desktop-models'
           ? 'desktop-models'
           : desktopMode.value && panelHint === 'desktop-lan'
             ? 'desktop-lan'
@@ -6406,6 +6415,7 @@ const activateSettingsPanel = (panelMode: string) => {
   const panelHint =
     nextPanelMode === 'profile' ||
     nextPanelMode === 'prompts' ||
+    nextPanelMode === 'desktop-system' ||
     nextPanelMode === 'desktop-models' ||
     nextPanelMode === 'desktop-lan' ||
     nextPanelMode === 'desktop-remote'
@@ -6430,7 +6440,7 @@ const openSettingsPage = () => {
 
 const openDesktopModelSettingsFromHeader = () => {
   if (!agentHeaderModelJumpEnabled.value) return;
-  activateSettingsPanel('desktop-models');
+  openActiveAgentSettings();
 };
 
 const openProfilePage = () => {
@@ -6596,6 +6606,7 @@ const normalizeSettingsPanelMode = (value: unknown): SettingsPanelMode => {
   if (
     normalized === 'profile' ||
     normalized === 'prompts' ||
+    normalized === 'desktop-system' ||
     normalized === 'desktop-models' ||
     normalized === 'desktop-lan' ||
     normalized === 'desktop-remote'
@@ -7610,6 +7621,13 @@ const handleDesktopContainerRootsChange = (roots: Record<number, string>) => {
   });
   desktopContainerRootMap.value = normalized;
 };
+
+function handleDesktopModelMetaChanged(): void {
+  if (!desktopMode.value) return;
+  agentVoiceModelSupportCheckedAt = 0;
+  desktopDefaultModelMetaFetchPromise = null;
+  void readDesktopDefaultModelMeta(true);
+}
 
 const normalizeToolEntry = (item: unknown): ToolEntry | null => {
   if (!item) return null;
@@ -9711,7 +9729,9 @@ watch(
       settingsPanelMode.value = 'profile';
     } else if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
       settingsPanelMode.value = 'prompts';
-    } else if (desktopMode.value && (panelHint === 'desktop-models' || panelHint === 'desktop')) {
+    } else if (desktopMode.value && (panelHint === 'desktop-system' || panelHint === 'desktop')) {
+      settingsPanelMode.value = 'desktop-system';
+    } else if (desktopMode.value && panelHint === 'desktop-models') {
       settingsPanelMode.value = 'desktop-models';
     } else if (desktopMode.value && panelHint === 'desktop-lan') {
       settingsPanelMode.value = 'desktop-lan';

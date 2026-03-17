@@ -7,6 +7,7 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import Field
 
 from ...common.async_utils import run_in_thread
+from ...common.config import get_config_section, get_section_value
 from .client import query_kb_sync
 from .config import KnowledgeTargetConfig, get_kb_config, load_kb_targets
 
@@ -129,6 +130,11 @@ def _register_generic_kb_query_tool(mcp: FastMCP) -> None:
 
 
 def register_tools(mcp: FastMCP) -> None:
+    # Allow explicit disable to keep the MCP tool surface minimal for scenario-based demos.
+    section = get_config_section("knowledge") or get_config_section("kb")
+    if section and get_section_value(section, "enabled") is False:
+        return
+
     targets = load_kb_targets()
     if not targets:
         _register_generic_kb_query_tool(mcp)

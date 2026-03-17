@@ -20,7 +20,7 @@ pub const CHANNEL_CATALOG: &[ChannelCatalogItem] = &[
     ChannelCatalogItem {
         channel: "qqbot",
         display_name: "QQ Bot",
-        description: "QQ bot webhook and outbound adapter",
+        description: "QQ bot webhook and long-connection runtime adapter",
         user_supported: true,
         webhook_mode: "specialized+generic",
         docs_hint: "/wunder/channel/qqbot/webhook",

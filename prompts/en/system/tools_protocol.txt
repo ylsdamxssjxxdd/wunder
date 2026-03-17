@@ -52,6 +52,11 @@ Fallback XML example (only when native tool calling is unavailable):
 Tool results will come back as a user message with prefix "tool_response: ".
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 
+[Large Result Handling]
+- Treat any of these signals as "incomplete result": `meta.truncated=true`, `meta.observation_truncated=true`, `data.truncated=true`, `truncated_items>0`, or text containing `...(truncated)...`.
+- When results are incomplete, do not finalize directly; continue tool calls to fill gaps (prefer pagination/cursor, then `limit+offset`, then narrower columns/time windows/filters).
+- If `continuation_required=true` is present, follow `continuation_hint` first; only provide a conclusion on partial data when the user explicitly accepts a partial answer.
+
 [[HAS_PLAN_TOOL]]
 [Plan Board]
 When the plan board tool ("计划面板" / update_plan) is available, start by publishing a concise plan (2-6 steps) with it. Keep the plan updated: only one step should be in_progress at a time, mark completed steps as completed, and keep explanations brief.

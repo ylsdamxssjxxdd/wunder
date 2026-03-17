@@ -505,6 +505,12 @@ pub struct ChannelMessageRecord {
     pub created_at: f64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ChannelMessageStats {
+    pub total: i64,
+    pub last_message_at: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChannelOutboxRecord {
     pub outbox_id: String,
@@ -1322,6 +1328,11 @@ pub trait StorageBackend: Send + Sync {
         session_id: Option<&str>,
         limit: i64,
     ) -> Result<Vec<ChannelMessageRecord>>;
+    fn get_channel_message_stats(
+        &self,
+        channel: &str,
+        account_id: &str,
+    ) -> Result<ChannelMessageStats>;
 
     fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()>;
     fn get_channel_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>>;

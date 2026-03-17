@@ -65,7 +65,7 @@
 
           <template v-for="field in createChannelFields" :key="`create-${field.key}`">
             <label
-              v-if="field.type === 'checkbox'"
+              v-if="field.type === 'checkbox' && !(createForm.channel === 'qqbot' && field.key === 'markdown_support')"
               class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
             >
               <input v-model="createDynamicFields[field.key]" type="checkbox" />
@@ -91,7 +91,21 @@
             <div class="channel-detail-hint">{{ t('channels.form.xmpp.advancedHint') }}</div>
           </div>
 
-          <div v-if="showCreateAdvancedConfigToggle" class="channel-advanced-toggle">
+          <div v-if="createForm.channel === 'qqbot'" class="channel-inline-options">
+            <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
+              <input v-model="createDynamicFields.markdown_support" type="checkbox" />
+              <span>{{ t('channels.form.qqbot.markdownSupport') }}</span>
+            </label>
+            <label
+              v-if="showCreateAdvancedConfigToggle"
+              class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
+            >
+              <input v-model="createAdvancedEnabled" type="checkbox" />
+              <span>{{ t('channels.config.advancedToggle') }}</span>
+            </label>
+          </div>
+
+          <div v-if="showCreateAdvancedConfigToggle && createForm.channel !== 'qqbot'" class="channel-advanced-toggle">
             <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
               <input v-model="createAdvancedEnabled" type="checkbox" />
               <span>{{ t('channels.config.advancedToggle') }}</span>
@@ -136,7 +150,7 @@
           @click="selectAccount(account)"
         >
           <div class="channel-account-head">
-            <div class="channel-account-title">{{ account.title }}</div>
+            <div class="channel-account-title" :title="account.title">{{ account.title }}</div>
             <span class="channel-account-status" :class="{ disabled: !account.active }">
               {{ account.active ? t('channels.status.enabled') : t('channels.status.disabled') }}
             </span>
@@ -151,6 +165,12 @@
           {{ selectedAccount ? selectedAccount.title : t('channels.detail.empty') }}
         </div>
         <div class="channel-actions">
+          <button class="channel-action-btn" type="button" :disabled="saving || !selectedAccount" @click="saveAccount">
+            {{ saving ? t('common.saving') : t('common.save') }}
+          </button>
+          <button class="channel-action-btn danger" type="button" :disabled="saving || !selectedAccount" @click="removeAccount">
+            {{ t('channels.action.delete') }}
+          </button>
           <button class="channel-action-btn" type="button" :disabled="saving || !selectedAccount" @click="resetEditForm">
             {{ t('common.reset') }}
           </button>
@@ -218,7 +238,7 @@
 
             <template v-for="field in editChannelFields" :key="`edit-${field.key}`">
               <label
-                v-if="field.type === 'checkbox'"
+                v-if="field.type === 'checkbox' && !(selectedAccount?.channel === 'qqbot' && field.key === 'markdown_support')"
                 class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
               >
                 <input v-model="editDynamicFields[field.key]" type="checkbox" />
@@ -247,7 +267,21 @@
               <div class="channel-detail-hint">{{ t('channels.form.xmpp.advancedHint') }}</div>
             </div>
 
-            <div v-if="showEditAdvancedConfigToggle" class="channel-advanced-toggle">
+            <div v-if="selectedAccount?.channel === 'qqbot'" class="channel-inline-options">
+              <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
+                <input v-model="editDynamicFields.markdown_support" type="checkbox" />
+                <span>{{ t('channels.form.qqbot.markdownSupport') }}</span>
+              </label>
+              <label
+                v-if="showEditAdvancedConfigToggle"
+                class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
+              >
+                <input v-model="editAdvancedEnabled" type="checkbox" />
+                <span>{{ t('channels.config.advancedToggle') }}</span>
+              </label>
+            </div>
+
+            <div v-if="showEditAdvancedConfigToggle && selectedAccount?.channel !== 'qqbot'" class="channel-advanced-toggle">
               <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
                 <input v-model="editAdvancedEnabled" type="checkbox" />
                 <span>{{ t('channels.config.advancedToggle') }}</span>
@@ -269,14 +303,6 @@
             </template>
           </div>
 
-          <div class="channel-form-actions">
-            <button class="channel-action-btn" type="button" :disabled="saving" @click="saveAccount">
-              {{ saving ? t('common.saving') : t('common.save') }}
-            </button>
-            <button class="channel-action-btn danger" type="button" :disabled="saving" @click="removeAccount">
-              {{ t('channels.action.delete') }}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -570,15 +596,19 @@ const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
       {
         key: 'app_id',
         labelKey: 'channels.form.qqbot.appId',
-        placeholderKey: 'channels.form.qqbot.appIdPlaceholder',
-        required: true
+        placeholderKey: 'channels.form.qqbot.appIdPlaceholder'
       },
       {
         key: 'client_secret',
         labelKey: 'channels.form.qqbot.clientSecret',
         placeholderKey: 'channels.form.qqbot.clientSecretPlaceholder',
-        type: 'password',
-        required: true
+        type: 'password'
+      },
+      {
+        key: 'token',
+        labelKey: 'channels.form.qqbot.token',
+        placeholderKey: 'channels.form.qqbot.tokenPlaceholder',
+        type: 'password'
       },
       {
         key: 'markdown_support',
@@ -1234,6 +1264,23 @@ const validateChannelFields = (
   return null;
 };
 
+const validateQqbotCredentialFields = (
+  values: Record<string, string | boolean>,
+  secretFallback: Record<string, boolean> = {}
+): string | null => {
+  const token = trimmedText(values.token);
+  if (token) {
+    return null;
+  }
+  const appId = trimmedText(values.app_id);
+  const clientSecret = trimmedText(values.client_secret);
+  const hasClientSecret = Boolean(clientSecret || secretFallback.client_secret);
+  if (appId && hasClientSecret) {
+    return null;
+  }
+  return t('channels.form.qqbot.credentialRequired');
+};
+
 const buildStructuredConfigPatch = (
   channel: string,
   values: Record<string, string | boolean>,
@@ -1554,6 +1601,13 @@ const createAccount = async () => {
     ElMessage.warning(fieldError);
     return;
   }
+  if (channel === 'qqbot') {
+    const qqCredentialError = validateQqbotCredentialFields(createDynamicFields);
+    if (qqCredentialError) {
+      ElMessage.warning(qqCredentialError);
+      return;
+    }
+  }
 
   if (schema?.mode === 'feishu') {
     payload.app_id = trimmedText(createDynamicFields.app_id);
@@ -1681,6 +1735,13 @@ const saveAccount = async () => {
   if (fieldError) {
     ElMessage.warning(fieldError);
     return;
+  }
+  if (account.channel === 'qqbot') {
+    const qqCredentialError = validateQqbotCredentialFields(editDynamicFields, secretFallback);
+    if (qqCredentialError) {
+      ElMessage.warning(qqCredentialError);
+      return;
+    }
   }
 
   if (schema?.mode === 'feishu') {
@@ -1988,6 +2049,14 @@ onBeforeUnmount(() => {
   grid-column: 1 / -1;
 }
 
+.channel-inline-options {
+  grid-column: 1 / -1;
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
 .channel-input,
 .channel-textarea {
   width: 100%;
@@ -2058,12 +2127,23 @@ onBeforeUnmount(() => {
 }
 
 .channel-account-title {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .channel-account-status {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
   color: var(--ui-accent);
   background: #eaf4f1;
   border: 1px solid rgba(var(--ui-accent-rgb), 0.3);

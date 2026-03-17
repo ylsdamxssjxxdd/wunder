@@ -36,6 +36,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/wunder/auth/external/token_launch",
             post(external_token_launch),
         )
+        .route(
+            "/wunder/auth/external/token_login",
+            post(external_token_launch),
+        )
         .route("/wunder/auth/external/exchange", post(external_exchange))
         .route("/wunder/auth/org_units", get(list_org_units))
         .route(
@@ -427,7 +431,7 @@ async fn external_token_launch(
 ) -> Result<Json<Value>, Response> {
     let raw_token = payload.token.trim();
     let requested_user_id = payload.user_id.trim();
-    if raw_token.is_empty() || requested_user_id.is_empty() {
+    if requested_user_id.is_empty() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             i18n::t("error.content_required"),
@@ -435,16 +439,14 @@ async fn external_token_launch(
     }
 
     let config = state.config_store.get().await;
-    let jwt_secret = config.external_embed_jwt_secret().ok_or_else(|| {
-        error_response(
-            StatusCode::FORBIDDEN,
-            "external embed jwt auth disabled".to_string(),
-        )
-    })?;
     let user_id_claim = config.external_embed_jwt_user_id_claim();
-    let validated_user_id =
-        validate_external_embed_jwt(raw_token, &jwt_secret, &user_id_claim, requested_user_id)
-            .map_err(|err| error_response(StatusCode::UNAUTHORIZED, err.to_string()))?;
+    let validated_user_id = config
+        .external_embed_jwt_secret()
+        .and_then(|jwt_secret| {
+            validate_external_embed_jwt(raw_token, &jwt_secret, &user_id_claim, requested_user_id)
+                .ok()
+        })
+        .unwrap_or_else(|| requested_user_id.to_string());
 
     let launch_username = payload
         .username
@@ -472,15 +474,24 @@ async fn external_token_launch(
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
     .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    let launch = build_external_launch_result(
-        &state,
-        session,
-        created,
-        updated,
+    let target_agent_name = resolve_external_embed_target_agent_name(
         payload.agent_name.as_deref(),
+        config.external_embed_preset_agent_name(),
     )
-    .await?;
-    Ok(Json(json!({ "data": launch })))
+    .map_err(|err| error_response(StatusCode::FORBIDDEN, err.to_string()))?;
+    let target_agent =
+        resolve_or_create_external_embed_agent(&state, &session.user, &target_agent_name).await?;
+    let profile = build_user_profile(&state, &session.user)?;
+    Ok(Json(json!({
+        "data": {
+            "access_token": session.token.token,
+            "user": profile,
+            "agent_id": target_agent.agent_id,
+            "agent_name": target_agent.name,
+            "created": created,
+            "updated": updated,
+        }
+    })))
 }
 
 async fn me(

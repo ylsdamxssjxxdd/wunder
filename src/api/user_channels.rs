@@ -1,5 +1,6 @@
 use crate::api::user_context::resolve_user;
 use crate::channels::catalog;
+use crate::channels::qqbot;
 use crate::channels::types::{ChannelAccountConfig, FeishuConfig, WechatConfig, WechatMpConfig};
 use crate::i18n;
 use crate::state::AppState;
@@ -869,24 +870,23 @@ async fn upsert_channel_account(
         let qqbot_cfg = ChannelAccountConfig::from_value(&config_value)
             .qqbot
             .unwrap_or_default();
-        let app_id_set = qqbot_cfg
-            .app_id
+        let app_id_set = qqbot::resolved_app_id(&qqbot_cfg).is_some();
+        let client_secret_set = qqbot::resolved_client_secret(&qqbot_cfg).is_some();
+        let token_set = qqbot_cfg
+            .token
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .is_some();
-        let client_secret_set = qqbot_cfg
-            .client_secret
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .is_some();
+        let long_connection_enabled = qqbot::long_connection_enabled(&qqbot_cfg);
         if app_id_set && client_secret_set {
             state.channels.record_runtime_info(
                 USER_CHANNEL_QQBOT,
                 Some(&account_id),
                 "qqbot_config_ready",
-                "qqbot config ready; callback path=/wunder/channel/qqbot/webhook",
+                format!(
+                    "qqbot config ready; callback path=/wunder/channel/qqbot/webhook, long_connection_enabled={long_connection_enabled}, token_set={token_set}"
+                ),
             );
         } else {
             state.channels.record_runtime_warn(
@@ -894,7 +894,7 @@ async fn upsert_channel_account(
                 Some(&account_id),
                 "qqbot_config_incomplete",
                 format!(
-                    "qqbot config incomplete: app_id_set={app_id_set}, client_secret_set={client_secret_set}"
+                    "qqbot config incomplete: app_id_set={app_id_set}, client_secret_set={client_secret_set}, token_set={token_set}"
                 ),
             );
         }
@@ -1515,23 +1515,24 @@ fn build_user_account_item(
         });
     } else if channel.eq_ignore_ascii_case(USER_CHANNEL_QQBOT) {
         let qqbot = account_cfg.qqbot.unwrap_or_default();
-        let app_id = qqbot
-            .app_id
+        let app_id = qqbot::resolved_app_id(&qqbot).unwrap_or_default();
+        let client_secret_set = qqbot::resolved_client_secret(&qqbot).is_some();
+        let token_set = qqbot
+            .token
             .as_deref()
             .map(str::trim)
-            .unwrap_or_default()
-            .to_string();
-        let client_secret_set = qqbot
-            .client_secret
-            .as_deref()
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false);
+            .filter(|value| !value.is_empty())
+            .is_some();
+        long_connection_enabled = qqbot::long_connection_enabled(&qqbot);
         configured = !app_id.is_empty() && client_secret_set;
         config_preview = json!({
             "qqbot": {
                 "app_id": app_id,
                 "client_secret_set": client_secret_set,
+                "token_set": token_set,
                 "markdown_support": qqbot.markdown_support,
+                "long_connection_enabled": long_connection_enabled,
+                "intents": qqbot.intents,
             }
         });
     } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WHATSAPP) {
@@ -1732,6 +1733,13 @@ fn build_user_account_item(
                 "receive_id_type".to_string(),
                 Value::String(receive_id_type),
             );
+            meta_map.insert(
+                "long_connection_enabled".to_string(),
+                Value::Bool(long_connection_enabled),
+            );
+        }
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_QQBOT) {
+        if let Some(meta_map) = meta.as_object_mut() {
             meta_map.insert(
                 "long_connection_enabled".to_string(),
                 Value::Bool(long_connection_enabled),

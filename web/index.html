@@ -1987,7 +1987,7 @@
             </div>
           </div>
           <div class="tips" data-i18n="channels.tip">
-            仅用于监控渠道账号的运行状态与配置快照，渠道配置入口已迁移到用户侧。
+            集中查看渠道账号运行状态、持有者与通信统计，并支持删除失效渠道账号。
           </div>
           <div class="management-layout channels-management-layout">
             <div class="management-list channels-list-pane">
@@ -2007,6 +2007,39 @@
                     未选择渠道
                   </div>
                   <div id="channelAccountDetailMeta" class="muted"></div>
+                </div>
+                <div class="detail-actions">
+                  <button id="channelAccountDeleteBtn" class="danger btn-with-icon" type="button">
+                    <i class="fa-solid fa-trash"></i>
+                    <span data-i18n="channels.action.delete">删除</span>
+                  </button>
+                </div>
+              </div>
+              <div class="channel-metrics-grid">
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.owner">持有者</div>
+                  <div id="channelAccountOwner" class="channel-metric-value">-</div>
+                  <div id="channelAccountOwnerExtra" class="channel-metric-extra muted"></div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.messageCount">通信次数</div>
+                  <div id="channelAccountMessageCount" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.sessionCount">会话数</div>
+                  <div id="channelAccountSessionCount" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.bindingCount">绑定数</div>
+                  <div id="channelAccountBindingCount" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.lastCommunication">最近通信</div>
+                  <div id="channelAccountLastCommunication" class="channel-metric-value">-</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.updatedAt">更新时间</div>
+                  <div id="channelAccountUpdatedAt" class="channel-metric-value">-</div>
                 </div>
               </div>
               <div class="channel-detail-section">

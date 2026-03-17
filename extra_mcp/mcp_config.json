@@ -5,62 +5,28 @@
     "port": 9010
   },
   "database": {
-    "default_key": "docker_host",
-    "description": "人员与组织信息库",
+    "default_key": "local_hr_mysql",
+    "description": "HR promotion simulation database (single-tool mode)",
     "targets": {
-      "docker_host": {
-        "type": "mysql",
-        "host": "host.docker.internal",
-        "port": 3307,
-        "user": "root",
-        "password": "rootpass123!",
-        "database": "personnel",
-        "connect_timeout": 5,
-        "description": "人员数据库"
-      },
-      "local": {
+      "local_hr_mysql": {
         "type": "mysql",
         "host": "127.0.0.1",
         "port": 3307,
         "user": "root",
         "password": "rootpass123!",
-        "database": "personnel",
-        "connect_timeout": 5,
-        "description": "本机直接访问 MySQL（适合本地运行 extra_mcp）"
+        "database": "hr_promotion_sim",
+        "connect_timeout": 8,
+        "description": "local mysql for hr simulation"
       }
     },
     "tables": {
-      "employees": {
-        "table": "employees",
-        "description": "人员主数据"
-      },
-      "departments": {
-        "table": "departments",
-        "description": "部门主数据"
+      "promotion_mid_candidates_202607": {
+        "table": "promotion_mid_candidates_202607",
+        "description": "final candidates table for 2026-07 mid-level promotion"
       }
     }
   },
   "knowledge": {
-    "base_url": "http://192.168.0.2",
-    "api_key": "ragflow-xsKC6PT1bqcq2612t1glBC7QGHCG3ySTwCOBLwtoXmU",
-    "default_key": "default",
-    "targets": {
-      "default": {
-        "dataset_ids": [
-          "71034b03fbf411f098530242ac170006"
-        ],
-        "description": "RAGFlow 知识库"
-      }
-    },
-    "request": {
-      "page_size": 20,
-      "similarity_threshold": 0.2,
-      "vector_similarity_weight": 0.3,
-      "top_k": 1024,
-      "keyword": false,
-      "highlight": false,
-      "use_kg": false,
-      "toc_enhance": false
-    }
+    "enabled": false
   }
 }

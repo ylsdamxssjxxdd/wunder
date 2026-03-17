@@ -52,6 +52,11 @@ XML 兜底示例（仅在原生工具调用不可用时使用）：
 工具执行结果会作为带有 "tool_response: " 前缀的 user 消息返回。
 [[/TOOL_CALL_MODE_FREEFORM_CALL]]
 
+[超长结果处理]
+- 若工具结果出现任一信号：`meta.truncated=true`、`meta.observation_truncated=true`、`data.truncated=true`、`truncated_items>0`、字符串含 `...(truncated)...`，均视为“结果不完整”。
+- 结果不完整时，禁止直接给出最终结论；必须继续调用工具补齐数据（优先分页/游标，其次 `limit+offset`，再其次缩小字段、时间范围或按条件分片重查）。
+- 若返回 `continuation_required=true`，优先按 `continuation_hint` 执行下一步工具调用；仅在用户明确接受“部分结果”时才可基于不完整数据给出结论。
+
 [[HAS_PLAN_TOOL]]
 [计划面板]
 当计划面板工具（"计划面板" / update_plan）可用时，请先用它发布一个简洁计划（2-6 步）。执行过程中持续同步计划：任一时刻只保留一个 in_progress，已完成步骤及时标记为 completed，说明保持简短。

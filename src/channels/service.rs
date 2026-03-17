@@ -9,13 +9,15 @@ use crate::channels::inbound_queue::{
 };
 use crate::channels::media::{MediaProcessingResult, MediaProcessor};
 use crate::channels::outbox::{compute_retry_at, resolve_outbox_config};
+use crate::channels::qqbot;
 use crate::channels::rate_limit::{ChannelRateLimiter, RateLimitConfig};
 use crate::channels::registry::{build_default_channel_adapter_registry, ChannelAdapterRegistry};
 use crate::channels::runtime_log::{
     ChannelRuntimeLogBuffer, ChannelRuntimeLogEntry, ChannelRuntimeLogLevel,
 };
 use crate::channels::types::{
-    ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig, XmppConfig,
+    ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig, QqBotConfig,
+    XmppConfig,
 };
 use crate::channels::xmpp;
 use crate::config::{ChannelRateLimitConfig, Config};
@@ -56,6 +58,9 @@ const SESSION_STRATEGY_HYBRID: &str = "hybrid";
 const FEISHU_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
 const FEISHU_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const FEISHU_LONG_CONN_RETRY_MAX_S: u64 = 30;
+const QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
+const QQBOT_LONG_CONN_RETRY_BASE_S: u64 = 3;
+const QQBOT_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
 const XMPP_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const XMPP_LONG_CONN_RETRY_MAX_S: u64 = 30;
@@ -101,6 +106,14 @@ struct FeishuLongConnTarget {
 }
 
 #[derive(Debug, Clone)]
+struct QqBotLongConnTarget {
+    account_id: String,
+    updated_at: f64,
+    inbound_token: Option<String>,
+    config: QqBotConfig,
+}
+
+#[derive(Debug, Clone)]
 struct XmppLongConnTarget {
     account_id: String,
     updated_at: f64,
@@ -115,6 +128,12 @@ impl FeishuLongConnTarget {
 }
 
 impl XmppLongConnTarget {
+    fn task_key(&self) -> String {
+        format!("{}:{:.3}", self.account_id, self.updated_at)
+    }
+}
+
+impl QqBotLongConnTarget {
     fn task_key(&self) -> String {
         format!("{}:{:.3}", self.account_id, self.updated_at)
     }
@@ -264,6 +283,10 @@ impl ChannelHub {
         tokio::spawn(async move {
             feishu_worker.feishu_long_connection_supervisor_loop().await;
         });
+        let qqbot_worker = hub.clone();
+        tokio::spawn(async move {
+            qqbot_worker.qqbot_long_connection_supervisor_loop().await;
+        });
         let xmpp_worker = hub.clone();
         tokio::spawn(async move {
             xmpp_worker.xmpp_long_connection_supervisor_loop().await;
@@ -365,6 +388,14 @@ impl ChannelHub {
             .handle_inbound(&provider, &headers, messages, raw_payload)
             .await?;
         if !result.errors.is_empty() {
+            for item in &result.errors {
+                self.record_runtime_warn(
+                    &provider,
+                    None,
+                    "inbound_worker_rejected",
+                    format!("channel inbound worker rejected message: {item}"),
+                );
+            }
             warn!(
                 "channel inbound worker rejected messages: provider={}, errors={}",
                 provider,
@@ -2031,6 +2062,287 @@ impl ChannelHub {
                 "feishu long connection inbound ignored: no message accepted"
             ));
         }
+        Ok(())
+    }
+
+    async fn qqbot_long_connection_supervisor_loop(&self) {
+        let mut workers: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+        loop {
+            workers.retain(|_, handle| !handle.is_finished());
+            let config = self.config_store.get().await;
+            if !channels_runtime_enabled(&config) {
+                for (_, handle) in workers.drain() {
+                    handle.abort();
+                }
+                sleep(Duration::from_secs(QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+                continue;
+            }
+
+            match self.list_qqbot_long_connection_targets().await {
+                Ok(targets) => {
+                    let mut desired_keys = HashSet::new();
+                    for target in targets {
+                        let task_key = target.task_key();
+                        desired_keys.insert(task_key.clone());
+                        if workers.contains_key(&task_key) {
+                            continue;
+                        }
+                        let worker = self.clone();
+                        workers.insert(
+                            task_key,
+                            tokio::spawn(async move {
+                                worker.qqbot_long_connection_worker_loop(target).await;
+                            }),
+                        );
+                    }
+
+                    let stale_keys = workers
+                        .keys()
+                        .filter(|key| !desired_keys.contains(*key))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    for task_key in stale_keys {
+                        if let Some(handle) = workers.remove(&task_key) {
+                            handle.abort();
+                        }
+                    }
+                }
+                Err(err) => {
+                    self.record_runtime_warn(
+                        qqbot::QQBOT_CHANNEL,
+                        None,
+                        "long_connection_targets_load_failed",
+                        format!("load qqbot long connection targets failed: {err}"),
+                    );
+                    debug!("load qqbot long connection targets failed: {err}");
+                }
+            }
+
+            sleep(Duration::from_secs(QQBOT_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+        }
+    }
+
+    async fn list_qqbot_long_connection_targets(&self) -> Result<Vec<QqBotLongConnTarget>> {
+        let storage = self.storage.clone();
+        let accounts = tokio::task::spawn_blocking(move || {
+            storage.list_channel_accounts(Some(qqbot::QQBOT_CHANNEL), Some("active"))
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+
+        let mut targets = Vec::new();
+        for record in accounts {
+            let account_cfg = ChannelAccountConfig::from_value(&record.config);
+            let Some(qqbot_cfg) = account_cfg.qqbot else {
+                continue;
+            };
+            if !qqbot::long_connection_enabled(&qqbot_cfg) {
+                continue;
+            }
+            if !qqbot::has_long_connection_credentials(&qqbot_cfg) {
+                self.record_runtime_warn(
+                    qqbot::QQBOT_CHANNEL,
+                    Some(&record.account_id),
+                    "long_connection_credentials_missing",
+                    format!(
+                        "skip qqbot long connection target without credentials: account_id={}",
+                        record.account_id
+                    ),
+                );
+                debug!(
+                    "skip qqbot long connection target without credentials: account_id={}",
+                    record.account_id
+                );
+                continue;
+            }
+            targets.push(QqBotLongConnTarget {
+                account_id: record.account_id,
+                updated_at: record.updated_at,
+                inbound_token: account_cfg.inbound_token,
+                config: qqbot_cfg,
+            });
+        }
+
+        Ok(targets)
+    }
+
+    async fn qqbot_long_connection_worker_loop(&self, target: QqBotLongConnTarget) {
+        let intent_candidates = qqbot::resolve_long_connection_intent_candidates(&target.config);
+        let mut intent_index = 0_usize;
+        let mut retry_delay_s = QQBOT_LONG_CONN_RETRY_BASE_S;
+        self.record_runtime_info(
+            qqbot::QQBOT_CHANNEL,
+            Some(&target.account_id),
+            "long_connection_worker_started",
+            format!(
+                "qqbot long connection worker started: account_id={}, intent_candidates={:?}",
+                target.account_id, intent_candidates
+            ),
+        );
+        loop {
+            let intents = intent_candidates
+                .get(intent_index)
+                .copied()
+                .unwrap_or_else(|| qqbot::resolve_long_connection_intents(&target.config));
+            self.record_runtime_info(
+                qqbot::QQBOT_CHANNEL,
+                Some(&target.account_id),
+                "long_connection_connecting",
+                format!(
+                    "qqbot long connection connecting: account_id={}, intents={}, intent_level={}/{}",
+                    target.account_id,
+                    intents,
+                    intent_index + 1,
+                    intent_candidates.len()
+                ),
+            );
+
+            let result = qqbot::run_long_connection_session_with_intents(
+                &self.http,
+                &target.config,
+                intents,
+                {
+                    let worker = self.clone();
+                    let event_target = target.clone();
+                    move |payload| {
+                        let worker = worker.clone();
+                        let event_target = event_target.clone();
+                        async move {
+                            worker
+                                .handle_qqbot_long_connection_payload(&event_target, payload)
+                                .await
+                        }
+                    }
+                },
+            )
+            .await;
+
+            match result {
+                Ok(()) => {
+                    retry_delay_s = QQBOT_LONG_CONN_RETRY_BASE_S;
+                    self.record_runtime_warn(
+                        qqbot::QQBOT_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_closed",
+                        format!(
+                            "qqbot long connection closed: account_id={}, retry_in={}s",
+                            target.account_id, retry_delay_s
+                        ),
+                    );
+                    debug!(
+                        "qqbot long connection closed: account_id={}, retry_in={}s",
+                        target.account_id, retry_delay_s
+                    );
+                }
+                Err(err) => {
+                    let err_text = err.to_string();
+                    let should_try_lower_intent = intent_candidates.len() > 1
+                        && intent_index + 1 < intent_candidates.len()
+                        && qqbot::should_try_lower_intent_after_error(err_text.as_str());
+                    if should_try_lower_intent {
+                        let previous_intents = intents;
+                        intent_index += 1;
+                        let next_intents = intent_candidates[intent_index];
+                        retry_delay_s = QQBOT_LONG_CONN_RETRY_BASE_S;
+                        self.record_runtime_warn(
+                            qqbot::QQBOT_CHANNEL,
+                            Some(&target.account_id),
+                            "long_connection_intents_downgraded",
+                            format!(
+                                "qqbot long connection downgrade intents: account_id={}, from={}, to={}, reason={}",
+                                target.account_id, previous_intents, next_intents, err_text
+                            ),
+                        );
+                        debug!(
+                            "qqbot long connection downgrade intents: account_id={}, from={}, to={}, reason={}",
+                            target.account_id, previous_intents, next_intents, err_text
+                        );
+                    } else {
+                        self.record_runtime_warn(
+                            qqbot::QQBOT_CHANNEL,
+                            Some(&target.account_id),
+                            "long_connection_failed",
+                            format!(
+                                "qqbot long connection failed: account_id={}, retry_in={}s, intents={}, error={}",
+                                target.account_id, retry_delay_s, intents, err_text
+                            ),
+                        );
+                        debug!(
+                            "qqbot long connection failed: account_id={}, retry_in={}s, intents={}, error={}",
+                            target.account_id, retry_delay_s, intents, err_text
+                        );
+                        retry_delay_s = (retry_delay_s * 2).min(QQBOT_LONG_CONN_RETRY_MAX_S);
+                    }
+                }
+            }
+
+            sleep(Duration::from_secs(retry_delay_s)).await;
+        }
+    }
+
+    async fn handle_qqbot_long_connection_payload(
+        &self,
+        target: &QqBotLongConnTarget,
+        payload: Value,
+    ) -> Result<()> {
+        let event_type = qqbot::dispatch_event_type(&payload).unwrap_or_default();
+        let messages = match qqbot::extract_dispatch_messages(&payload, &target.account_id) {
+            Ok(value) => value,
+            Err(err) => {
+                self.record_runtime_warn(
+                    qqbot::QQBOT_CHANNEL,
+                    Some(&target.account_id),
+                    "long_connection_dispatch_parse_failed",
+                    format!("qqbot long connection dispatch parse failed: event_type={event_type}, error={err}"),
+                );
+                return Ok(());
+            }
+        };
+        if messages.is_empty() {
+            return Ok(());
+        }
+        let headers = build_internal_channel_headers(target.inbound_token.as_deref())?;
+        let result = match self
+            .enqueue_inbound(
+                qqbot::QQBOT_CHANNEL,
+                &headers,
+                messages,
+                Some(payload.clone()),
+            )
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                self.record_runtime_error(
+                    qqbot::QQBOT_CHANNEL,
+                    Some(&target.account_id),
+                    "long_connection_inbound_enqueue_failed",
+                    format!("qqbot long connection inbound enqueue failed: event_type={event_type}, error={err}"),
+                );
+                return Ok(());
+            }
+        };
+        if result.accepted == 0 {
+            self.record_runtime_warn(
+                qqbot::QQBOT_CHANNEL,
+                Some(&target.account_id),
+                "long_connection_inbound_ignored",
+                format!(
+                    "qqbot long connection inbound ignored: event_type={event_type}, accepted=0"
+                ),
+            );
+            return Ok(());
+        }
+
+        self.record_runtime_info(
+            qqbot::QQBOT_CHANNEL,
+            Some(&target.account_id),
+            "long_connection_inbound_received",
+            format!(
+                "qqbot long connection inbound accepted: event_type={event_type}, accepted={}",
+                result.accepted
+            ),
+        );
         Ok(())
     }
 

@@ -3515,14 +3515,53 @@
 .channels-detail-pane .detail-header {
   padding-bottom: 10px;
   border-bottom: 1px solid #e2e8f0;
+  align-items: flex-start;
 }
 
 .channels-detail-pane .detail-actions {
-  margin-top: 4px;
-  padding: 10px 12px;
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.channels-detail-pane .detail-actions .btn-with-icon {
+  min-width: 110px;
+}
+
+.channel-metrics-grid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.channel-metric-card {
   border: 1px solid #e2e8f0;
   border-radius: 10px;
+  padding: 10px 12px;
   background: #f8fafc;
+  min-height: 74px;
+}
+
+.channel-metric-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.channel-metric-value {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #0f172a;
+  word-break: break-word;
+}
+
+.channel-metric-extra {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .channels-detail-pane .channel-detail-section {

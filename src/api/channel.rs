@@ -9,7 +9,7 @@ use crate::channels::ChannelMessage;
 use crate::state::AppState;
 use axum::body::Bytes;
 use axum::extract::{Path as AxumPath, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::{
     routing::{get, post},
@@ -771,40 +771,40 @@ async fn qqbot_webhook(
             return Err(response);
         }
     };
+    let account =
+        match load_account_by_channel_and_id(&state, qqbot::QQBOT_CHANNEL, &account_id).await {
+            Ok(value) => value,
+            Err(response) => {
+                state.channels.record_runtime_error(
+                    qqbot::QQBOT_CHANNEL,
+                    Some(&account_id),
+                    "account_load_failed",
+                    format!(
+                        "qqbot account load failed before dispatch: status={}",
+                        response.status()
+                    ),
+                );
+                return Err(response);
+            }
+        };
+    let account_cfg = ChannelAccountConfig::from_value(&account.config);
+    let inbound_headers =
+        with_channel_inbound_token(&headers, account_cfg.inbound_token.as_deref());
     if qqbot::is_validation_event(&payload) {
-        let account =
-            match load_account_by_channel_and_id(&state, qqbot::QQBOT_CHANNEL, &account_id).await {
-                Ok(value) => value,
-                Err(response) => {
-                    state.channels.record_runtime_error(
-                        qqbot::QQBOT_CHANNEL,
-                        Some(&account_id),
-                        "validation_account_load_failed",
-                        format!(
-                            "qqbot callback validation account load failed: status={}",
-                            response.status()
-                        ),
-                    );
-                    return Err(response);
-                }
-            };
-        let config = ChannelAccountConfig::from_value(&account.config);
-        let response = qqbot::validation_response(
-            &payload,
-            config
-                .qqbot
-                .as_ref()
-                .and_then(|qq_cfg| qq_cfg.client_secret.as_deref()),
-        )
-        .map_err(|err| {
-            state.channels.record_runtime_error(
-                qqbot::QQBOT_CHANNEL,
-                Some(&account_id),
-                "validation_failed",
-                format!("qqbot callback validation failed: {err}"),
-            );
-            error_response(StatusCode::BAD_REQUEST, &err.to_string())
-        })?;
+        let qq_client_secret = account_cfg
+            .qqbot
+            .as_ref()
+            .and_then(qqbot::resolved_client_secret);
+        let response =
+            qqbot::validation_response(&payload, qq_client_secret.as_deref()).map_err(|err| {
+                state.channels.record_runtime_error(
+                    qqbot::QQBOT_CHANNEL,
+                    Some(&account_id),
+                    "validation_failed",
+                    format!("qqbot callback validation failed: {err}"),
+                );
+                error_response(StatusCode::BAD_REQUEST, &err.to_string())
+            })?;
         if let Some(response) = response {
             state.channels.record_runtime_info(
                 qqbot::QQBOT_CHANNEL,
@@ -950,7 +950,7 @@ async fn qqbot_webhook(
         .channels
         .enqueue_inbound(
             qqbot::QQBOT_CHANNEL,
-            &headers,
+            &inbound_headers,
             vec![normalized],
             Some(payload),
         )
@@ -1099,6 +1099,29 @@ fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn with_channel_inbound_token(headers: &HeaderMap, inbound_token: Option<&str>) -> HeaderMap {
+    let mut merged = headers.clone();
+    let Some(token) = inbound_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return merged;
+    };
+    let has_token = merged
+        .get("x-channel-token")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    if has_token {
+        return merged;
+    }
+    if let Ok(value) = HeaderValue::from_str(token) {
+        merged.insert("x-channel-token", value);
+    }
+    merged
+}
+
 fn error_response(status: StatusCode, message: &str) -> Response {
     crate::api::errors::error_response(status, message)
 }
@@ -1210,14 +1233,10 @@ async fn resolve_qqbot_account_id(
             .iter()
             .filter_map(|record| {
                 let account_cfg = ChannelAccountConfig::from_value(&record.config);
-                let account_app_id = account_cfg
-                    .qqbot
-                    .as_ref()
-                    .and_then(|cfg| cfg.app_id.as_deref())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty());
+                let account_app_id = account_cfg.qqbot.as_ref().and_then(qqbot::resolved_app_id);
                 if account_app_id
-                    .map(|account_app_id| account_app_id.eq_ignore_ascii_case(&app_id))
+                    .as_deref()
+                    .map(|item| item.eq_ignore_ascii_case(&app_id))
                     .unwrap_or(false)
                 {
                     Some(record.account_id.clone())

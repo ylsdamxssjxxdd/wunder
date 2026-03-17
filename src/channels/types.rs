@@ -81,8 +81,14 @@ pub struct QqBotConfig {
     pub app_id: Option<String>,
     #[serde(default, alias = "clientSecret", alias = "appSecret", alias = "secret")]
     pub client_secret: Option<String>,
+    #[serde(default, alias = "botToken")]
+    pub token: Option<String>,
     #[serde(default, alias = "markdownSupport")]
     pub markdown_support: Option<bool>,
+    #[serde(default, alias = "longConnectionEnabled")]
+    pub long_connection_enabled: Option<bool>,
+    #[serde(default)]
+    pub intents: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -431,11 +437,15 @@ mod tests {
         let config = ChannelAccountConfig::from_value(&json!({
             "qqbot": {
                 "appid": "123456",
-                "secret": "qq-secret"
+                "secret": "qq-secret",
+                "botToken": "123456:qq-secret",
+                "longConnectionEnabled": false
             }
         }));
         let qqbot = config.qqbot.expect("qqbot config should exist");
         assert_eq!(qqbot.app_id.as_deref(), Some("123456"));
         assert_eq!(qqbot.client_secret.as_deref(), Some("qq-secret"));
+        assert_eq!(qqbot.token.as_deref(), Some("123456:qq-secret"));
+        assert_eq!(qqbot.long_connection_enabled, Some(false));
     }
 }

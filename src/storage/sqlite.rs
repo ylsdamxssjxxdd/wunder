@@ -4,12 +4,12 @@ use crate::services::output_quality;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     BeeroomChatMessageRecord, ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord,
-    ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord, ChatSessionRecord,
-    CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord, GatewayNodeRecord,
-    GatewayNodeTokenRecord, HiveRecord, ListChannelUserBindingsQuery, MediaAssetRecord,
-    MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord,
-    OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord, SpeechJobRecord,
-    StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
+    ChannelMessageStats, ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord,
+    ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord,
+    GatewayNodeRecord, GatewayNodeTokenRecord, HiveRecord, ListChannelUserBindingsQuery,
+    MediaAssetRecord, MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord,
+    MemoryJobRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
+    SpeechJobRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
     UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
     UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserQuotaStatus,
     UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
@@ -6301,6 +6301,29 @@ impl StorageBackend for SqliteStorage {
             output.push(record);
         }
         Ok(output)
+    }
+
+    fn get_channel_message_stats(
+        &self,
+        channel: &str,
+        account_id: &str,
+    ) -> Result<ChannelMessageStats> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+            return Ok(ChannelMessageStats::default());
+        }
+        let conn = self.open()?;
+        let (total, last_message_at): (i64, Option<f64>) = conn.query_row(
+            "SELECT COUNT(*), MAX(created_at) FROM channel_messages WHERE channel = ? AND account_id = ?",
+            params![cleaned_channel, cleaned_account],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok(ChannelMessageStats {
+            total,
+            last_message_at,
+        })
     }
 
     fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()> {

@@ -172,7 +172,7 @@ if (-not (Test-Path $stageIconPng) -and $fallbackIconPng) {
 }
 
 $stageBuilderConfig = Join-Path $stageApp 'electron-builder.win7.yml'
-if (Test-Path $stageBuilderConfig -and -not (Test-Path $stageIconPng)) {
+if ((Test-Path $stageBuilderConfig) -and -not (Test-Path $stageIconPng)) {
   $configContent = Get-Content -Raw -Path $stageBuilderConfig
   $nextContent = $configContent -replace '(?m)^\s*icon:\s*build/icon\.png\s*$', 'icon: build/icon.ico'
   if ($nextContent -ne $configContent) {
