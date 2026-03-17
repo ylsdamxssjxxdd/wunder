@@ -175,7 +175,12 @@
     0 10px 24px rgba(2, 8, 20, 0.2);
 }
 
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-chat-header,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-chat-header {
+  background:
+    radial-gradient(circle at 14% -28%, rgba(var(--ui-accent-rgb), 0.2), transparent 60%),
+    linear-gradient(180deg, rgba(21, 45, 76, 0.92), rgba(14, 31, 54, 0.94));
+}
+
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-chat-footer,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-world-composer {
   background: var(--tech-blue-surface);
@@ -907,7 +912,9 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .workspace-dialog .workspace-preview,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .workspace-dialog .el-dialog__body {
   border-color: var(--tech-blue-border);
-  background: linear-gradient(180deg, rgba(11, 20, 35, 0.94), rgba(8, 16, 28, 0.96));
+  background:
+    radial-gradient(circle at 12% 0%, rgba(var(--ui-accent-rgb), 0.12), transparent 44%),
+    linear-gradient(180deg, rgba(18, 37, 63, 0.9), rgba(12, 27, 47, 0.92));
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .chat-shell .workspace-list.dragover,
@@ -1790,15 +1797,33 @@
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-left-nav-btn--helper {
-  border: 1px solid rgba(var(--ui-accent-rgb), 0.2);
-  background: rgba(var(--ui-accent-rgb), 0.08);
-  color: #cfe7ff;
+  border: 0;
+  background: transparent;
+  color: #bfd2ea;
+  box-shadow: none;
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-left-nav-btn--helper:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-left-nav-btn--helper:focus-visible {
-  border-color: rgba(var(--ui-accent-rgb), 0.28);
+  border-color: transparent;
   background: rgba(var(--ui-accent-rgb), 0.14);
+  color: #ecf7ff;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-left-nav-btn--helper.active {
+  border-color: rgba(var(--ui-accent-rgb), 0.34);
+  background: rgba(var(--ui-accent-rgb), 0.18);
+  color: #f4fbff;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-left-more-panel.is-open .messenger-left-nav-btn--helper:not(.active) {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-entity-value {
+  color: var(--tech-blue-text);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-left-nav-btn i,

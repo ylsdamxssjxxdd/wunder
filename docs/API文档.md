@@ -683,6 +683,28 @@
     - `message`：日志内容
     - `repeat_count`：聚合计数（同类日志在窗口内重复次数）
   - `data.total`：本次返回条数
+  - `data.status`：运行状态摘要
+    - `collector_alive`：日志采集器是否存活（布尔）
+    - `server_ts`：服务端当前时间戳（秒）
+    - `owned_accounts`：当前用户可见账号数
+    - `scanned_total`：本次扫描到的原始日志条数（过滤前）
+
+### 4.1.2.31.1 `/wunder/channels/runtime_logs/probe`
+
+- 方法：`POST`
+- 说明：写入一条渠道运行测试日志，用于排查“面板无日志”与权限过滤问题。
+- 入参（JSON）：
+  - `channel`：渠道名（可选）
+  - `account_id`：账号 ID（可选）
+  - `agent_id`：智能体 ID（可选）
+  - `message`：自定义日志内容（可选）
+- 返回（JSON）：
+  - `data.channel`：实际写入渠道
+  - `data.account_id`：实际写入账号
+  - `data.event`：固定 `runtime_probe`
+  - `data.message`：日志内容
+  - `data.ts`：写入时间戳（秒）
+  - `data.status`：同 `/wunder/channels/runtime_logs` 的 `status` 字段
 
 ### 4.1.3 `/wunder/admin/mcp`
 

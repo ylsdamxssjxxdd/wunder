@@ -62,13 +62,27 @@ async fn send_json(
     path: &str,
     payload: Value,
 ) -> (StatusCode, Value) {
+    send_json_with_headers(app, method, path, payload, &[]).await
+}
+
+async fn send_json_with_headers(
+    app: &Router,
+    method: Method,
+    path: &str,
+    payload: Value,
+    extra_headers: &[(&str, &str)],
+) -> (StatusCode, Value) {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json");
+    for (key, value) in extra_headers {
+        builder = builder.header(*key, *value);
+    }
     let response = app
         .clone()
         .oneshot(
-            Request::builder()
-                .method(method)
-                .uri(path)
-                .header("content-type", "application/json")
+            builder
                 .body(Body::from(payload.to_string()))
                 .expect("build request"),
         )
@@ -168,4 +182,62 @@ async fn qqbot_webhook_records_runtime_log_when_account_resolution_fails() {
         .find(|item| item.event == "account_resolve_failed")
         .expect("account resolve failed log should exist");
     assert!(log.message.contains("app_id_hint=1234567890"));
+    let callback_log = logs
+        .iter()
+        .find(|item| item.event == "callback_received")
+        .expect("callback received log should exist");
+    assert!(callback_log.message.contains("app_id_hint=1234567890"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn qqbot_webhook_resolves_account_by_header_app_id() {
+    let context = build_test_context().await;
+    let account_id = "uacc_qq_runtime_header";
+    context
+        .state
+        .storage
+        .upsert_channel_account(&ChannelAccountRecord {
+            channel: "qqbot".to_string(),
+            account_id: account_id.to_string(),
+            config: json!({
+                "qqbot": {
+                    "app_id": "1234567890",
+                    "client_secret": "test-secret"
+                }
+            }),
+            status: "active".to_string(),
+            created_at: now_ts(),
+            updated_at: now_ts(),
+        })
+        .expect("upsert qqbot account");
+
+    let (status, payload) = send_json_with_headers(
+        &context.app,
+        Method::POST,
+        "/wunder/channel/qqbot/webhook",
+        json!({
+            "op": 13,
+            "d": {
+                "plain_token": "plain-token",
+                "event_ts": 1700000001
+            }
+        }),
+        &[("x-bot-appid", "1234567890")],
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["plain_token"], json!("plain-token"));
+    assert!(payload["signature"]
+        .as_str()
+        .map(|value| value.len() == 128)
+        .unwrap_or(false));
+
+    let logs = context
+        .state
+        .channels
+        .list_runtime_logs(Some("qqbot"), None, 30);
+    assert!(logs.iter().any(|item| {
+        item.event == "callback_received" && item.message.contains("app_id_hint=1234567890")
+    }));
+    assert!(logs.iter().any(|item| item.event == "validation_succeeded"));
 }

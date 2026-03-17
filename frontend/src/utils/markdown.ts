@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import { t } from '@/i18n';
+import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import {
   isImagePath,
   normalizeWorkspaceBareRelativePath,
@@ -590,6 +591,9 @@ function escapeMarkdownLiteralLine(line = '') {
     .replace(/([`*_{}\[\]()#+.!|~-])/g, '\\$1');
 }
 
+const resolveWorkspaceResourceActionLabel = (): string =>
+  isDesktopLocalModeEnabled() ? t('workspace.action.exportCopy') : t('common.download');
+
 function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', fallbackText = '') {
   const title = decodeResourceLabel(label);
   const fallback = decodeResourceLabel(filename);
@@ -600,7 +604,7 @@ function buildWorkspaceResourceCard(publicPath, label, filename, kind = 'file', 
   const metaText = title && fallback && title !== fallback ? escapeHtml(fallback) : '';
   const metaInline = metaText ? `<span class="ai-resource-meta-inline">${metaText}</span>` : '';
   const fileExt = extractFileExtension(fallback || displayName);
-  const downloadLabel = t('common.download');
+  const downloadLabel = resolveWorkspaceResourceActionLabel();
   const fileActionLabel = escapeHtml(`${downloadLabel} ${displayName}`);
   const fileIcon = resolveFileIconPath(fileExt);
   const fileBadge = fileExt ? fileExt.toUpperCase() : 'FILE';

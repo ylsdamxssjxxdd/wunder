@@ -333,16 +333,10 @@ function Install-EmbeddedMatplotlibFonts {
 
   $defaultFonts = @(
     'NotoSansSC-VF.ttf',
-    'NotoSerifSC-VF.ttf',
     'msyh.ttc',
-    'msyhbd.ttc',
     'simsun.ttc',
     'simhei.ttf',
-    'arial.ttf',
-    'arialbd.ttf',
-    'times.ttf',
-    'timesbd.ttf',
-    'consola.ttf'
+    'arial.ttf'
   )
   $fontsToCopy = if ($FontList.Count -gt 0) { $FontList } else { $defaultFonts }
 

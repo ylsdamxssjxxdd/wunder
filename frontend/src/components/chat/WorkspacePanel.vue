@@ -5,52 +5,6 @@
         <div class="workspace-title">{{ panelTitle }}</div>
         <div v-if="showContainerId" class="workspace-container-id">{{ normalizedContainerId }}</div>
       </div>
-      <div class="workspace-header-actions">
-        <button
-          class="workspace-icon-btn"
-          :disabled="!canGoUp"
-          :title="t('workspace.action.up')"
-          :aria-label="t('workspace.action.up')"
-          @click="handleGoUp"
-          @dragover="handleUpDragOver"
-          @dragleave="handleUpDragLeave"
-          @drop="handleUpDrop"
-        >
-          <i class="fa-solid fa-arrow-up workspace-icon" aria-hidden="true"></i>
-        </button>
-        <button
-          class="workspace-icon-btn"
-          :title="t('common.refresh')"
-          :aria-label="t('common.refresh')"
-          @click="refreshWorkspace"
-        >
-          <i class="fa-solid fa-rotate workspace-icon" aria-hidden="true"></i>
-        </button>
-        <button
-          class="workspace-icon-btn"
-          :title="t('workspace.action.clear')"
-          :aria-label="t('workspace.action.clear')"
-          @click="clearWorkspaceCurrent"
-        >
-          <i class="fa-solid fa-trash-can workspace-icon" aria-hidden="true"></i>
-        </button>
-        <button
-          class="workspace-icon-btn"
-          :title="t('common.upload')"
-          :aria-label="t('common.upload')"
-          @click="triggerUpload"
-        >
-          <i class="fa-solid fa-upload workspace-icon" aria-hidden="true"></i>
-        </button>
-        <button
-          class="workspace-icon-btn"
-          :title="t('workspace.action.downloadAll')"
-          :aria-label="t('workspace.action.downloadAll')"
-          @click="downloadArchive"
-        >
-          <i class="fa-solid fa-download workspace-icon" aria-hidden="true"></i>
-        </button>
-      </div>
     </div>
 
     <div
@@ -184,6 +138,9 @@
         <button class="workspace-menu-btn" @click="handleNewFile">
           {{ t('workspace.menu.newFile') }}
         </button>
+        <button class="workspace-menu-btn" @click="handleContextMenuUpload">
+          {{ t('common.upload') }}
+        </button>
         <button class="workspace-menu-btn" :disabled="!canEdit" @click="handleEdit">
           {{ t('common.edit') }}
         </button>
@@ -194,7 +151,7 @@
           {{ t('workspace.menu.newFolder') }}
         </button>
         <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleDownload">
-          {{ t('common.download') }}
+          {{ resourceActionLabel }}
         </button>
         <button class="workspace-menu-btn danger" :disabled="!hasSelection" @click="handleDelete">
           {{ t('common.delete') }}
@@ -231,7 +188,7 @@
       </div>
       <template #footer>
         <button class="workspace-btn secondary" @click="downloadPreview">
-          {{ t('common.download') }}
+          {{ resourceActionLabel }}
         </button>
         <button class="workspace-btn secondary" @click="closePreview">
           {{ t('common.close') }}
@@ -327,6 +284,9 @@ const { t } = useI18n();
 const panelTitle = computed(() => props.title || t('workspace.title'));
 const showContainerId = computed(() => props.showContainerId);
 const desktopLocalMode = computed(() => isDesktopLocalModeEnabled());
+const resourceActionLabel = computed(() =>
+  desktopLocalMode.value ? t('workspace.action.exportCopy') : t('common.download')
+);
 
 const TEXT_EXTENSIONS = new Set([
   'txt',
@@ -1755,6 +1715,11 @@ const handleNewFolder = async () => {
   await createWorkspaceFolder();
 };
 
+const handleContextMenuUpload = () => {
+  closeContextMenu();
+  triggerUpload();
+};
+
 const handleDownload = async () => {
   closeContextMenu();
   if (!singleSelectedEntry.value) return;
@@ -2039,7 +2004,7 @@ const downloadEntry = async (entry) => {
     );
     saveBlob(response.data, filename);
   } catch (error) {
-    ElMessage.error(t('workspace.download.failed'));
+    ElMessage.error(resolveWorkspaceTransferFailedText());
   }
 };
 
@@ -2048,9 +2013,9 @@ const downloadArchive = async () => {
     const response = await downloadWunderWorkspaceArchive(withAgentParams({}));
     const filename = getFilenameFromHeaders(response.headers, 'workspace.zip');
     saveBlob(response.data, filename);
-    ElMessage.success(t('workspace.download.archiveSuccess'));
+    ElMessage.success(resolveWorkspaceArchiveSuccessText());
   } catch (error) {
-    ElMessage.error(t('workspace.download.archiveFailed'));
+    ElMessage.error(resolveWorkspaceArchiveFailedText());
   }
 };
 
@@ -2352,6 +2317,25 @@ const clearPreviewUrl = () => {
   state.preview.url = '';
 };
 
+const resolvePreviewUnsupportedHint = () =>
+  desktopLocalMode.value ? t('workspace.preview.unsupportedHintLocal') : t('workspace.preview.unsupportedHint');
+
+const resolvePreviewTooLargeHint = () =>
+  desktopLocalMode.value ? t('workspace.preview.tooLargeHintLocal') : t('workspace.preview.tooLargeHint');
+
+const resolveWorkspaceTransferFailedText = () =>
+  desktopLocalMode.value ? t('workspace.download.exportFailed') : t('workspace.download.failed');
+
+const resolveWorkspaceArchiveSuccessText = () =>
+  desktopLocalMode.value
+    ? t('workspace.download.exportArchiveSuccess')
+    : t('workspace.download.archiveSuccess');
+
+const resolveWorkspaceArchiveFailedText = () =>
+  desktopLocalMode.value
+    ? t('workspace.download.exportArchiveFailed')
+    : t('workspace.download.archiveFailed');
+
 const openPreview = async (entry) => {
   if (!entry || entry.type !== 'file') return;
   state.preview.entry = entry;
@@ -2368,14 +2352,14 @@ const openPreview = async (entry) => {
   const canPreviewText = sizeValue <= MAX_TEXT_PREVIEW_SIZE;
 
   if (OFFICE_EXTENSIONS.has(extension)) {
-    state.preview.hint = t('workspace.preview.unsupportedHint');
+    state.preview.hint = resolvePreviewUnsupportedHint();
     state.preview.content = t('workspace.preview.empty');
     state.preview.loading = false;
     return;
   }
   const isMediaPreview = IMAGE_EXTENSIONS.has(extension) || PDF_EXTENSIONS.has(extension);
   if (!isMediaPreview && !canPreviewText) {
-    state.preview.hint = t('workspace.preview.tooLargeHint');
+    state.preview.hint = resolvePreviewTooLargeHint();
     state.preview.content = t('workspace.preview.empty');
     state.preview.loading = false;
     return;

@@ -8,6 +8,7 @@ const repoRoot = process.env.WUNDER_REPO_ROOT
 const outputRoot = path.resolve(__dirname, '..', 'resources')
 const electronProjectRoot = path.resolve(__dirname, '..')
 const skipRuntimeDepsCopy = process.env.WUNDER_SKIP_RUNTIME_DEPS_COPY === '1'
+const includeCli = process.env.WUNDER_INCLUDE_CLI !== '0'
 const extraRuntimeFiles = String(process.env.WUNDER_EXTRA_RUNTIME_FILES || '')
   .split(path.delimiter)
   .map((item) => item.trim())
@@ -148,7 +149,7 @@ fs.mkdirSync(outputRoot, { recursive: true })
 ensureLinuxIconSet()
 
 copyFile(bridgeSource, path.join(outputRoot, bridgeName))
-if (fs.existsSync(cliSource)) {
+if (includeCli && fs.existsSync(cliSource)) {
   copyFile(cliSource, path.join(outputRoot, cliName))
 }
 if (fs.existsSync(iconIcoSource)) {
@@ -163,7 +164,7 @@ if (process.platform !== 'win32') {
   } catch (err) {
     console.warn('[prepare] failed to chmod bridge binary:', err)
   }
-  if (fs.existsSync(path.join(outputRoot, cliName))) {
+  if (includeCli && fs.existsSync(path.join(outputRoot, cliName))) {
     try {
       fs.chmodSync(path.join(outputRoot, cliName), 0o755)
     } catch (err) {

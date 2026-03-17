@@ -126,14 +126,59 @@ Ensure-Directory $builderCache
 
 # Keep the stage minimal so Win7 experiments do not contaminate workspace node_modules.
 $itemsToCopy = @(
-  'src',
-  'scripts',
-  'build',
-  'assets',
-  'electron-builder.win7.yml'
+  @{ Name = 'src'; Required = $true },
+  @{ Name = 'scripts'; Required = $true },
+  @{ Name = 'build'; Required = $false },
+  @{ Name = 'assets'; Required = $true },
+  @{ Name = 'electron-builder.win7.yml'; Required = $true }
 )
 foreach ($item in $itemsToCopy) {
-  Copy-Item -Path (Join-Path (Join-Path $repoRoot 'desktop\electron') $item) -Destination $stageApp -Recurse -Force
+  $sourcePath = Join-Path (Join-Path $repoRoot 'desktop\electron') $item.Name
+  if (-not (Test-Path $sourcePath)) {
+    if ($item.Required) {
+      throw "missing required electron staging item: $sourcePath"
+    }
+    Write-Step "skip optional missing staging item: $sourcePath"
+    continue
+  }
+  Copy-Item -Path $sourcePath -Destination $stageApp -Recurse -Force
+}
+
+$stageBuildDir = Join-Path $stageApp 'build'
+Ensure-Directory $stageBuildDir
+$stageIconIco = Join-Path $stageBuildDir 'icon.ico'
+$stageIconPng = Join-Path $stageBuildDir 'icon.png'
+$fallbackIconIco = Resolve-ExistingPath @(
+  (Join-Path $stageApp 'assets\icon.ico'),
+  (Join-Path $repoRoot 'desktop\electron\assets\icon.ico')
+)
+$fallbackIconPng = Resolve-ExistingPath @(
+  (Join-Path $stageApp 'assets\icon.png'),
+  (Join-Path $repoRoot 'desktop\electron\assets\icon.png')
+)
+
+if (-not (Test-Path $stageIconIco)) {
+  if ($fallbackIconIco) {
+    Copy-Item -Path $fallbackIconIco -Destination $stageIconIco -Force
+    Write-Step "injected fallback icon.ico into staged build resources"
+  } else {
+    throw "missing icon resource: build/icon.ico and assets/icon.ico were both not found"
+  }
+}
+
+if (-not (Test-Path $stageIconPng) -and $fallbackIconPng) {
+  Copy-Item -Path $fallbackIconPng -Destination $stageIconPng -Force
+  Write-Step "injected fallback icon.png into staged build resources"
+}
+
+$stageBuilderConfig = Join-Path $stageApp 'electron-builder.win7.yml'
+if (Test-Path $stageBuilderConfig -and -not (Test-Path $stageIconPng)) {
+  $configContent = Get-Content -Raw -Path $stageBuilderConfig
+  $nextContent = $configContent -replace '(?m)^\s*icon:\s*build/icon\.png\s*$', 'icon: build/icon.ico'
+  if ($nextContent -ne $configContent) {
+    Write-Utf8NoBomFile -Path $stageBuilderConfig -Content $nextContent
+    Write-Step "build/icon.png missing; patched win7 builder icon path to build/icon.ico"
+  }
 }
 
 $stagePackage = @{
@@ -149,6 +194,8 @@ Write-Utf8NoBomFile -Path (Join-Path $stageApp 'package.json') -Content $stagePa
 $env:WUNDER_REPO_ROOT = $repoRoot
 $env:WUNDER_FRONTEND_DIST = $frontendDist
 $env:WUNDER_BRIDGE_BIN = $bridgeBinary
+$env:WUNDER_INCLUDE_CLI = '0'
+$env:WUNDER_CLI_BIN = ''
 $env:WUNDER_SKIP_RUNTIME_DEPS_COPY = '1'
 $env:WUNDER_EXTRA_RUNTIME_ROOTS = ''
 $env:WUNDER_EXTRA_RUNTIME_FILES = ''

@@ -6,7 +6,10 @@ use crate::state::AppState;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::{routing::get, Json, Router};
+use axum::{
+    routing::{get, post},
+    Json, Router,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -34,11 +37,28 @@ struct ChannelRuntimeLogsQuery {
     limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ChannelRuntimeLogsProbeRequest {
+    #[serde(default)]
+    channel: Option<String>,
+    #[serde(default)]
+    account_id: Option<String>,
+    #[serde(default)]
+    agent_id: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+}
+
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route(
-        "/wunder/channels/runtime_logs",
-        get(list_channel_runtime_logs),
-    )
+    Router::new()
+        .route(
+            "/wunder/channels/runtime_logs",
+            get(list_channel_runtime_logs),
+        )
+        .route(
+            "/wunder/channels/runtime_logs/probe",
+            post(write_channel_runtime_probe),
+        )
 }
 
 async fn list_channel_runtime_logs(
@@ -83,12 +103,20 @@ async fn list_channel_runtime_logs(
         agent_filter.as_deref(),
     )?;
     if account_keys.is_empty() {
-        return Ok(Json(json!({ "data": { "items": [], "total": 0 } })));
+        return Ok(Json(json!({ "data": {
+            "items": [],
+            "total": 0,
+            "status": runtime_log_status_payload(0, 0),
+        } })));
     }
     if let Some(account_id) = account_filter.as_deref() {
         let channel = channel_filter.clone().unwrap_or_default();
         if !channel.is_empty() && !account_keys.contains(&(channel, account_id.to_string())) {
-            return Ok(Json(json!({ "data": { "items": [], "total": 0 } })));
+            return Ok(Json(json!({ "data": {
+                "items": [],
+                "total": 0,
+                "status": runtime_log_status_payload(account_keys.len(), 0),
+            } })));
         }
     }
 
@@ -98,6 +126,7 @@ async fn list_channel_runtime_logs(
         account_filter.as_deref(),
         query_limit,
     );
+    let scanned_total = runtime_logs.len();
     let mut items = Vec::new();
     for (index, item) in runtime_logs.into_iter().enumerate() {
         let channel = item.channel.trim().to_ascii_lowercase();
@@ -133,6 +162,100 @@ async fn list_channel_runtime_logs(
     Ok(Json(json!({ "data": {
         "items": items,
         "total": items.len(),
+        "status": runtime_log_status_payload(account_keys.len(), scanned_total),
+    } })))
+}
+
+async fn write_channel_runtime_probe(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<ChannelRuntimeLogsProbeRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, None).await?;
+    let user_id = resolved.user.user_id.clone();
+
+    let config = state.config_store.get().await;
+    if !config.channels.enabled && !config.gateway.enabled {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "channels disabled".to_string(),
+        ));
+    }
+
+    let channel_filter = payload
+        .channel
+        .as_deref()
+        .map(|value| normalize_user_channel(Some(value)))
+        .transpose()?;
+    let account_filter = payload
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let agent_filter = payload
+        .agent_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let account_keys = list_owned_account_keys_for_agent(
+        &state,
+        &user_id,
+        channel_filter.as_deref(),
+        agent_filter.as_deref(),
+    )?;
+    if account_keys.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "no owned channel accounts".to_string(),
+        ));
+    }
+
+    let target = if let (Some(channel), Some(account_id)) =
+        (channel_filter.as_deref(), account_filter.as_deref())
+    {
+        let key = (channel.to_string(), account_id.to_string());
+        if !account_keys.contains(&key) {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                i18n::t("error.permission_denied"),
+            ));
+        }
+        key
+    } else {
+        account_keys.iter().next().cloned().ok_or_else(|| {
+            error_response(StatusCode::BAD_REQUEST, "no available account".to_string())
+        })?
+    };
+
+    let custom_message = payload
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let message = custom_message.map(str::to_string).unwrap_or_else(|| {
+        format!(
+            "runtime probe ok: user_id={}, agent_id={}",
+            user_id,
+            agent_filter.as_deref().unwrap_or("-")
+        )
+    });
+    state.channels.record_runtime_info(
+        &target.0,
+        Some(&target.1),
+        "runtime_probe",
+        message.clone(),
+    );
+    let ts = chrono::Utc::now().timestamp_millis() as f64 / 1000.0;
+    Ok(Json(json!({ "data": {
+        "channel": target.0,
+        "account_id": target.1,
+        "event": "runtime_probe",
+        "message": message,
+        "ts": ts,
+        "status": runtime_log_status_payload(account_keys.len(), 1),
     } })))
 }
 
@@ -285,10 +408,40 @@ fn list_owned_account_keys(
             .get_channel_account(&channel, &legacy_account_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         if legacy_record.is_some() {
-            account_keys.insert((channel, legacy_account_id));
+            account_keys.insert((channel.clone(), legacy_account_id));
+        }
+
+        let records = state
+            .storage
+            .list_channel_accounts(Some(channel.as_str()), None)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        for record in records {
+            let owner_user_id = record
+                .config
+                .get("owner_user_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if owner_user_id != Some(user_id) {
+                continue;
+            }
+            let account_id = record.account_id.trim().to_string();
+            if account_id.is_empty() {
+                continue;
+            }
+            account_keys.insert((channel.clone(), account_id));
         }
     }
     Ok(account_keys)
+}
+
+fn runtime_log_status_payload(owned_accounts: usize, scanned_total: usize) -> Value {
+    json!({
+        "collector_alive": true,
+        "server_ts": chrono::Utc::now().timestamp_millis() as f64 / 1000.0,
+        "owned_accounts": owned_accounts,
+        "scanned_total": scanned_total,
+    })
 }
 
 fn normalize_user_channel(channel: Option<&str>) -> Result<String, Response> {

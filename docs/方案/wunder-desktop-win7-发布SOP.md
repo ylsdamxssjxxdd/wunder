@@ -39,11 +39,8 @@ npm run build:desktop:win7:gnu:x64:with-supplement:common
 - Win7 GNU bridge
 - `opt/python`
 - `opt/git`
-- `wunder-cli.exe`
 - `pip / setuptools / wheel`
 - `requests / numpy / pandas / openpyxl / matplotlib / Pillow / tabulate`
-
-- CI 补充说明：Nightly 自动发布中的 Win7 兼容性安装包现已额外携带 `wunder-cli.exe`，并在发布说明中明确标注。
 
 ## 5. 发布前最小验证
 

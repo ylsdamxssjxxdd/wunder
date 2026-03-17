@@ -272,6 +272,10 @@ async fn list_channel_runtime_logs_filters_by_agent_and_collapses_repeats() {
         .as_array()
         .cloned()
         .unwrap_or_default();
+    assert_eq!(
+        payload_agent["data"]["status"]["collector_alive"],
+        json!(true)
+    );
     assert_eq!(items_agent.len(), 1);
     assert_eq!(items_agent[0]["channel"], json!("feishu"));
     assert_eq!(items_agent[0]["account_id"], json!(account_a));
@@ -291,6 +295,10 @@ async fn list_channel_runtime_logs_filters_by_agent_and_collapses_repeats() {
         .as_array()
         .cloned()
         .unwrap_or_default();
+    assert_eq!(
+        payload_all["data"]["status"]["collector_alive"],
+        json!(true)
+    );
     assert_eq!(items_all.len(), 2);
 }
 
@@ -350,7 +358,160 @@ async fn list_channel_runtime_logs_falls_back_to_account_agent_id_when_binding_m
         .as_array()
         .cloned()
         .unwrap_or_default();
+    assert_eq!(payload["data"]["status"]["collector_alive"], json!(true));
     assert_eq!(items.len(), 1);
     assert_eq!(items[0]["channel"], json!("qqbot"));
     assert_eq!(items[0]["account_id"], json!(account_id));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_logs_probe_endpoint_writes_runtime_probe_log() {
+    let context = build_test_context("runtime_probe_user").await;
+    let now = now_ts();
+    let account_id = "uacc_probe_1";
+    context
+        .state
+        .storage
+        .upsert_channel_account(&ChannelAccountRecord {
+            channel: "qqbot".to_string(),
+            account_id: account_id.to_string(),
+            config: json!({
+                "owner_user_id": context.user_id.clone(),
+                "qqbot": {
+                    "app_id": "1234567890"
+                }
+            }),
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("upsert probe account");
+
+    let (status_probe, payload_probe) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/channels/runtime_logs/probe",
+        Some(json!({
+            "channel": "qqbot",
+            "account_id": account_id,
+            "message": "probe-from-test"
+        })),
+    )
+    .await;
+    assert_eq!(status_probe, StatusCode::OK);
+    assert_eq!(payload_probe["data"]["event"], json!("runtime_probe"));
+    assert_eq!(payload_probe["data"]["account_id"], json!(account_id));
+
+    let (status_logs, payload_logs) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        "/wunder/channels/runtime_logs?channel=qqbot&account_id=uacc_probe_1&limit=20",
+        None,
+    )
+    .await;
+    assert_eq!(status_logs, StatusCode::OK);
+    let items = payload_logs["data"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(items
+        .iter()
+        .any(|item| item["event"] == json!("runtime_probe")));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_logs_owner_fallback_works_without_user_binding() {
+    let context = build_test_context("runtime_owner_fallback").await;
+    let now = now_ts();
+    let account_id = "uacc_owner_only";
+    context
+        .state
+        .storage
+        .upsert_channel_account(&ChannelAccountRecord {
+            channel: "qqbot".to_string(),
+            account_id: account_id.to_string(),
+            config: json!({
+                "owner_user_id": context.user_id.clone(),
+                "qqbot": {
+                    "app_id": "1234567890"
+                }
+            }),
+            status: "active".to_string(),
+            created_at: now,
+            updated_at: now,
+        })
+        .expect("upsert owner fallback account");
+    context.state.channels.record_runtime_warn(
+        "qqbot",
+        Some(account_id),
+        "inbound_enqueue_failed",
+        "owner-only account log",
+    );
+
+    let (status, payload) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        "/wunder/channels/runtime_logs?channel=qqbot&limit=20",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let items = payload["data"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["account_id"], json!(account_id));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn upsert_qqbot_account_writes_runtime_init_logs() {
+    let context = build_test_context("runtime_upsert_log_user").await;
+    let (status_upsert, payload_upsert) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/channels/accounts",
+        Some(json!({
+            "channel": "qqbot",
+            "create_new": true,
+            "enabled": true,
+            "config": {
+                "qqbot": {
+                    "app_id": "1234567890",
+                    "client_secret": "test-secret",
+                    "markdown_support": true
+                }
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status_upsert, StatusCode::OK);
+    let account_id = payload_upsert["data"]["account_id"]
+        .as_str()
+        .expect("account_id should exist")
+        .to_string();
+
+    let (status_logs, payload_logs) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        &format!("/wunder/channels/runtime_logs?channel=qqbot&account_id={account_id}&limit=20"),
+        None,
+    )
+    .await;
+    assert_eq!(status_logs, StatusCode::OK);
+    let items = payload_logs["data"]["items"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(items
+        .iter()
+        .any(|item| item["event"] == json!("account_upserted")));
+    assert!(items
+        .iter()
+        .any(|item| item["event"] == json!("qqbot_config_ready")));
 }

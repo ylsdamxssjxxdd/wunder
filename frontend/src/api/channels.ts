@@ -18,6 +18,9 @@ export const listChannelBindings = (params: QueryParams | undefined = undefined)
 export const listChannelRuntimeLogs = (params: QueryParams | undefined = undefined) =>
   api.get('/channels/runtime_logs', { params });
 
+export const writeChannelRuntimeProbe = (payload: ApiPayload) =>
+  api.post('/channels/runtime_logs/probe', payload);
+
 export const upsertChannelBinding = (payload: ApiPayload) => api.post('/channels/bindings', payload);
 
 export const deleteChannelBinding = (

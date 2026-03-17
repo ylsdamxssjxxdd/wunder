@@ -282,8 +282,19 @@
 
       <div v-if="!permissionDenied" class="channel-runtime-log-card">
         <div class="channel-runtime-log-header">
-          <div class="channel-detail-title">{{ t('channels.runtime.title') }}</div>
+          <div>
+            <div class="channel-detail-title">{{ t('channels.runtime.title') }}</div>
+            <div v-if="runtimeStatusText" class="channel-runtime-log-status">{{ runtimeStatusText }}</div>
+          </div>
           <div class="channel-runtime-log-actions">
+            <button
+              class="channel-refresh-btn subtle"
+              type="button"
+              :disabled="runtimeProbeLoading || runtimeLogsLoading"
+              @click="writeRuntimeProbe"
+            >
+              {{ runtimeProbeLoading ? t('common.saving') : t('channels.runtime.probe') }}
+            </button>
             <button
               class="channel-refresh-btn subtle"
               type="button"
@@ -333,7 +344,8 @@ import {
   listChannelAccounts,
   listChannelBindings,
   listChannelRuntimeLogs,
-  upsertChannelAccount
+  upsertChannelAccount,
+  writeChannelRuntimeProbe
 } from '@/api/channels';
 import { useI18n } from '@/i18n';
 import { showApiError } from '@/utils/apiError';
@@ -434,6 +446,13 @@ type ChannelRuntimeLogItem = {
   event: string;
   message: string;
   repeat_count: number;
+};
+
+type ChannelRuntimeLogStatus = {
+  collector_alive: boolean;
+  server_ts: number;
+  owned_accounts: number;
+  scanned_total: number;
 };
 
 const CHANNEL_SCHEMAS: Record<string, ChannelSchema> = {
@@ -810,7 +829,9 @@ const createDynamicFields = reactive<Record<string, string | boolean>>({});
 const editDynamicFields = reactive<Record<string, string | boolean>>({});
 const editSecretSaved = reactive<Record<string, boolean>>({});
 const runtimeLogs = ref<ChannelRuntimeLogItem[]>([]);
+const runtimeStatus = ref<ChannelRuntimeLogStatus | null>(null);
 const runtimeLogsLoading = ref(false);
+const runtimeProbeLoading = ref(false);
 const runtimeLogsError = ref('');
 const runtimeLogsClearedAt = ref(0);
 const mounted = ref(false);
@@ -951,6 +972,19 @@ const formatRuntimeLogTime = (ts: number) => {
   }
   return new Date(parsed * 1000).toLocaleString();
 };
+const runtimeStatusText = computed(() => {
+  const status = runtimeStatus.value;
+  if (!status) {
+    return '';
+  }
+  if (!status.owned_accounts) {
+    return t('channels.runtime.statusNoOwnedAccounts');
+  }
+  const tsText = formatRuntimeLogTime(status.server_ts);
+  return `${t('channels.runtime.statusAlive')} · ${t('channels.runtime.statusOwnedAccounts')}: ${
+    status.owned_accounts
+  }${tsText ? ` · ${tsText}` : ''}`;
+});
 
 const isObjectRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -1309,6 +1343,22 @@ const normalizeRuntimeLog = (item: unknown, index: number): ChannelRuntimeLogIte
   };
 };
 
+const normalizeRuntimeStatus = (value: unknown): ChannelRuntimeLogStatus | null => {
+  const row = isObjectRecord(value) ? value : null;
+  if (!row) {
+    return null;
+  }
+  const serverTs = Number(row.server_ts || 0);
+  const ownedAccounts = Number(row.owned_accounts || 0);
+  const scannedTotal = Number(row.scanned_total || 0);
+  return {
+    collector_alive: row.collector_alive !== false,
+    server_ts: Number.isFinite(serverTs) ? serverTs : 0,
+    owned_accounts: Number.isFinite(ownedAccounts) ? Math.max(0, ownedAccounts) : 0,
+    scanned_total: Number.isFinite(scannedTotal) ? Math.max(0, scannedTotal) : 0
+  };
+};
+
 const clearRuntimeLogsView = () => {
   runtimeLogsClearedAt.value = Date.now() / 1000;
 };
@@ -1319,10 +1369,18 @@ const refreshRuntimeLogs = async (silent = false) => {
     runtimeLogsLoading.value = true;
   }
   try {
-    const params: { limit: number; agent_id?: string } = {
+    const params: {
+      limit: number;
+      agent_id?: string;
+      channel?: string;
+      account_id?: string;
+    } = {
       limit: 80
     };
-    if (resolvedAgentId.value) {
+    if (selectedAccount.value) {
+      params.channel = selectedAccount.value.channel;
+      params.account_id = selectedAccount.value.account_id;
+    } else if (resolvedAgentId.value) {
       params.agent_id = resolvedAgentId.value;
     }
     const { data } = await listChannelRuntimeLogs(params);
@@ -1330,6 +1388,7 @@ const refreshRuntimeLogs = async (silent = false) => {
       return;
     }
     const rows = Array.isArray(data?.data?.items) ? data.data.items : [];
+    runtimeStatus.value = normalizeRuntimeStatus(data?.data?.status);
     runtimeLogs.value = rows
       .map((item, index) => normalizeRuntimeLog(item, index))
       .filter((item): item is ChannelRuntimeLogItem => Boolean(item));
@@ -1339,12 +1398,33 @@ const refreshRuntimeLogs = async (silent = false) => {
       return;
     }
     runtimeLogs.value = [];
+    runtimeStatus.value = null;
     runtimeLogsError.value = t('channels.runtime.loadFailed');
   } finally {
     if (requestId === runtimeLogsRequestId) {
       runtimeLogsLoading.value = false;
       scheduleRuntimeLogPolling();
     }
+  }
+};
+
+const writeRuntimeProbe = async () => {
+  runtimeProbeLoading.value = true;
+  try {
+    const payload: Record<string, string> = {};
+    if (selectedAccount.value) {
+      payload.channel = selectedAccount.value.channel;
+      payload.account_id = selectedAccount.value.account_id;
+    } else if (resolvedAgentId.value) {
+      payload.agent_id = resolvedAgentId.value;
+    }
+    await writeChannelRuntimeProbe(payload);
+    ElMessage.success(t('channels.runtime.probeSuccess'));
+    await refreshRuntimeLogs(true);
+  } catch (error) {
+    showApiError(error, t('channels.runtime.probeFailed'));
+  } finally {
+    runtimeProbeLoading.value = false;
   }
 };
 
@@ -2063,9 +2143,15 @@ onBeforeUnmount(() => {
 
 .channel-runtime-log-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+}
+
+.channel-runtime-log-status {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6f6f6f;
 }
 
 .channel-runtime-log-actions {

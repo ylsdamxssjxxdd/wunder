@@ -243,6 +243,7 @@
             v-if="!showChatSettingsView && isAgentConversationActive"
             class="messenger-header-btn messenger-header-btn--text"
             type="button"
+            :disabled="creatingAgentSession"
             :title="t('chat.newSession')"
             :aria-label="t('chat.newSession')"
             @click="startNewSession"
@@ -1726,6 +1727,7 @@ const groupCreateName = ref('');
 const groupCreateKeyword = ref('');
 const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
+const creatingAgentSession = ref(false);
 const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440);
 const middlePaneOverlayVisible = ref(false);
 const embeddedNavigationCollapsed = ref(true);
@@ -2498,10 +2500,11 @@ const activeAgentConfiguredModelName = computed(() => {
 
 const agentHeaderModelDisplayName = computed(() => {
   if (!isAgentConversationActive.value) return '';
+  const configuredModelName = activeAgentConfiguredModelName.value;
+  // Keep composer label stable by preferring configured model alias over runtime model id.
+  if (configuredModelName) return configuredModelName;
   const sessionModelName = activeAgentSessionModelName.value;
   if (sessionModelName) return sessionModelName;
-  const configuredModelName = activeAgentConfiguredModelName.value;
-  if (configuredModelName) return configuredModelName;
   const runtimeModelName = activeAgentRuntimeModelName.value;
   if (runtimeModelName) return runtimeModelName;
   if (desktopMode.value && desktopLocalMode.value) {
@@ -7914,9 +7917,9 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
 
   if (command === 'new') {
     try {
-      const payloadAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
-      openAgentDraftSession(payloadAgentId);
-      appendAgentLocalCommandMessages(rawText, t('chat.command.newSuccess'));
+      await runStartNewSession();
+      const sessionId = String(chatStore.activeSessionId || '').trim();
+      chatStore.appendLocalMessage('assistant', t('chat.command.newSuccess'), { sessionId });
     } catch (error) {
       appendAgentLocalCommandMessages(
         rawText,
@@ -8775,16 +8778,68 @@ const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
   await sendWorldMessage();
 };
 
-const startNewSession = async () => {
-  if (!isAgentConversationActive.value) return;
-  const targetAgent = activeAgentId.value;
+function hasSentUserMessageInActiveAgentSession(): boolean {
+  return (Array.isArray(chatStore.messages) ? chatStore.messages : []).some((message) => {
+    const current = (message || {}) as Record<string, unknown>;
+    if (Boolean(current.isGreeting)) return false;
+    if (String(current.role || '').trim() !== 'user') return false;
+    const hasText = Boolean(String(current.content || '').trim());
+    const hasAttachments = Array.isArray(current.attachments) && current.attachments.length > 0;
+    return hasText || hasAttachments;
+  });
+}
+
+function resolveReusableFreshAgentSessionId(targetAgentId: string): string {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (!activeSessionId) return '';
+  const activeSession = chatStore.sessions.find((item) => String(item?.id || '').trim() === activeSessionId);
+  const activeSessionAgentId = normalizeAgentId(activeSession?.agent_id ?? chatStore.draftAgentId);
+  if (activeSessionAgentId !== targetAgentId) return '';
+  if (hasSentUserMessageInActiveAgentSession()) return '';
+  return activeSessionId;
+}
+
+function requestStopActiveAgentSessionStream() {
+  if (!chatStore.activeSessionId) return;
+  // Stop active stream immediately before switching to a fresh thread.
+  void chatStore.stopStream().catch(() => null);
+}
+
+async function openOrReuseFreshAgentSession(targetAgentId: string): Promise<string> {
+  const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgentId);
+  if (reusableSessionId) {
+    await chatStore.setMainSession(reusableSessionId);
+    return reusableSessionId;
+  }
+  requestStopActiveAgentSessionStream();
+  const payloadAgentId = targetAgentId === DEFAULT_AGENT_KEY ? '' : targetAgentId;
+  const session = await chatStore.createSession(payloadAgentId ? { agent_id: payloadAgentId } : {});
+  const sessionId = String((session as Record<string, unknown> | null)?.id || '').trim();
+  if (!sessionId) return '';
+  await chatStore.setMainSession(sessionId);
+  return sessionId;
+}
+
+async function runStartNewSession(): Promise<void> {
+  if (!isAgentConversationActive.value || creatingAgentSession.value) return;
+  const targetAgent = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  creatingAgentSession.value = true;
   try {
-    // Keep new-thread action in draft mode; persist only when user sends the first real message.
-    await openAgentDraftSessionWithScroll(targetAgent);
+    const sessionId = await openOrReuseFreshAgentSession(targetAgent);
+    if (!sessionId) return;
+    await openAgentSession(sessionId, targetAgent);
+  } finally {
+    creatingAgentSession.value = false;
+  }
+}
+
+async function startNewSession() {
+  try {
+    await runStartNewSession();
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }
-};
+}
 
 const toggleLanguage = async () => {
   const next = getCurrentLanguage() === 'zh-CN' ? 'en-US' : 'zh-CN';

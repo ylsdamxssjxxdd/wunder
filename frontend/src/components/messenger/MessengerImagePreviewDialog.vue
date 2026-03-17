@@ -24,7 +24,7 @@
         :disabled="!workspacePath"
         @click="emit('download')"
       >
-        {{ t('common.download') }}
+        {{ actionLabel }}
       </button>
       <button class="workspace-btn secondary" type="button" @click="emit('close')">
         {{ t('common.close') }}
@@ -37,6 +37,7 @@
 import { computed } from 'vue';
 
 import ZoomableImagePreview from '@/components/common/ZoomableImagePreview.vue';
+import { isDesktopLocalModeEnabled } from '@/config/desktop';
 import { useI18n } from '@/i18n';
 
 const props = defineProps<{
@@ -54,6 +55,9 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 const dialogWidth = 'min(92vw, 980px)';
+const actionLabel = computed(() =>
+  isDesktopLocalModeEnabled() ? t('workspace.action.exportCopy') : t('common.download')
+);
 const resolvedTitle = computed(() => String(props.title || '').trim() || t('chat.imagePreview'));
 const resolvedWorkspacePath = computed(
   () => String(props.workspacePath || '').trim() || t('chat.imagePreview')

@@ -26,24 +26,14 @@ $context = New-Win7GnuBuildContext -RepoRoot $repoRoot -Arch $Arch -LabRoot $Lab
 Initialize-Win7GnuToolchain -Context $context -SkipRustup:$SkipBootstrap -SkipFetch:$SkipBootstrap -StaticRuntime:$StaticRuntime
 
 $env:WUNDER_BRIDGE_BIN = Join-Path $context.BridgeTargetDir (Join-Path $context.Target 'release\wunder-desktop-bridge.exe')
-$env:WUNDER_CLI_BIN = Join-Path $context.BridgeTargetDir (Join-Path $context.Target 'release\wunder-cli.exe')
 Write-Win7GnuStep "building Win7 GNU bridge for $($context.Target)"
 cargo --config $context.CargoPatchConfigPath build --release --bin wunder-desktop-bridge '-Zbuild-std=std,panic_abort' --target $context.Target
 if ($LASTEXITCODE -ne 0) {
   throw "Win7 GNU bridge build failed with exit code $LASTEXITCODE"
 }
 
-Write-Win7GnuStep "building Win7 GNU CLI for $($context.Target)"
-cargo --config $context.CargoPatchConfigPath build --release --bin wunder-cli '-Zbuild-std=std,panic_abort' --target $context.Target
-if ($LASTEXITCODE -ne 0) {
-  throw "Win7 GNU CLI build failed with exit code $LASTEXITCODE"
-}
-
 if (-not (Test-Path $env:WUNDER_BRIDGE_BIN)) {
   throw "Win7 GNU bridge binary missing: $env:WUNDER_BRIDGE_BIN"
-}
-if (-not (Test-Path $env:WUNDER_CLI_BIN)) {
-  throw "Win7 GNU CLI binary missing: $env:WUNDER_CLI_BIN"
 }
 
 $supplementRoot = ''

@@ -855,6 +855,51 @@ async fn upsert_channel_account(
         now,
     )?;
 
+    state.channels.record_runtime_info(
+        &channel,
+        Some(&account_id),
+        "account_upserted",
+        format!(
+            "channel account upserted: status={status}, peer_kind={}, agent_id={}",
+            selected_peer_kind,
+            agent_id_for_binding.as_deref().unwrap_or("-")
+        ),
+    );
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_QQBOT) {
+        let qqbot_cfg = ChannelAccountConfig::from_value(&config_value)
+            .qqbot
+            .unwrap_or_default();
+        let app_id_set = qqbot_cfg
+            .app_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some();
+        let client_secret_set = qqbot_cfg
+            .client_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .is_some();
+        if app_id_set && client_secret_set {
+            state.channels.record_runtime_info(
+                USER_CHANNEL_QQBOT,
+                Some(&account_id),
+                "qqbot_config_ready",
+                "qqbot config ready; callback path=/wunder/channel/qqbot/webhook",
+            );
+        } else {
+            state.channels.record_runtime_warn(
+                USER_CHANNEL_QQBOT,
+                Some(&account_id),
+                "qqbot_config_incomplete",
+                format!(
+                    "qqbot config incomplete: app_id_set={app_id_set}, client_secret_set={client_secret_set}"
+                ),
+            );
+        }
+    }
+
     let item = build_user_account_item(
         &channel,
         &account_id,

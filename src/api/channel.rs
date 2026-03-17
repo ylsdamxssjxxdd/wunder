@@ -746,6 +746,16 @@ async fn qqbot_webhook(
     Query(query): Query<WebhookQuery>,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, Response> {
+    let callback_op = qqbot::callback_opcode(&payload).unwrap_or_default();
+    let app_id_hint = extract_qqbot_app_id(&payload)
+        .or_else(|| extract_qqbot_app_id_from_headers(&headers))
+        .unwrap_or_else(|| "(none)".to_string());
+    state.channels.record_runtime_info(
+        qqbot::QQBOT_CHANNEL,
+        None,
+        "callback_received",
+        format!("qqbot callback received: op={callback_op}, app_id_hint={app_id_hint}"),
+    );
     let account_id = match resolve_qqbot_account_id(&state, &headers, &query, &payload).await {
         Ok(value) => value,
         Err(response) => {
@@ -754,9 +764,8 @@ async fn qqbot_webhook(
                 None,
                 "account_resolve_failed",
                 format!(
-                    "resolve qqbot account failed: status={}, app_id_hint={}",
+                    "resolve qqbot account failed: status={}, app_id_hint={app_id_hint}",
                     response.status(),
-                    extract_qqbot_app_id(&payload).unwrap_or_else(|| "(none)".to_string())
                 ),
             );
             return Err(response);
@@ -1124,6 +1133,19 @@ fn extract_qqbot_app_id(payload: &Value) -> Option<String> {
         .and_then(value_to_trimmed_string)
 }
 
+fn extract_qqbot_app_id_from_headers(headers: &HeaderMap) -> Option<String> {
+    const APP_ID_HEADER_CANDIDATES: [&str; 5] = [
+        "x-bot-appid",
+        "x-qqbot-appid",
+        "x-bot-app-id",
+        "x-appid",
+        "x-app-id",
+    ];
+    APP_ID_HEADER_CANDIDATES
+        .iter()
+        .find_map(|key| header_string(headers, key))
+}
+
 async fn load_account_configs_by_channel(
     state: &Arc<AppState>,
     channel: &str,
@@ -1175,7 +1197,9 @@ async fn resolve_qqbot_account_id(
         ));
     }
 
-    if let Some(app_id) = extract_qqbot_app_id(payload) {
+    if let Some(app_id) =
+        extract_qqbot_app_id(payload).or_else(|| extract_qqbot_app_id_from_headers(headers))
+    {
         if let Some(record) = records
             .iter()
             .find(|record| record.account_id.eq_ignore_ascii_case(&app_id))

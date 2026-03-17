@@ -40,6 +40,7 @@
           <button
             class="new-chat-btn"
             type="button"
+            :disabled="creatingSession"
             :title="t('chat.newSession')"
             :aria-label="t('chat.newSession')"
             @click="handleCreateSession"
@@ -758,6 +759,7 @@ const imagePreviewTitle = ref('');
 const workspaceDialogVisible = ref(false);
 const historyDialogVisible = ref(false);
 const manualDraftPending = ref(false);
+const creatingSession = ref(false);
 const bootstrappingSession = ref(true);
 const featureMenuVisible = ref(false);
 const featureMenuRef = ref(null);
@@ -1159,12 +1161,70 @@ const init = async () => {
   }
 };
 
-const handleCreateSession = async () => {
-  const agentId = activeAgentId.value;
+const hasSentUserMessageInActiveSession = () =>
+  chatStore.messages.some((message) => {
+    if (!message || message.isGreeting || message.role !== 'user') {
+      return false;
+    }
+    const hasText = Boolean(String(message.content || '').trim());
+    const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
+    return hasText || hasAttachments;
+  });
+
+const resolveReusableFreshSessionId = () => {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (!activeSessionId) {
+    return '';
+  }
+  if (hasSentUserMessageInActiveSession()) {
+    return '';
+  }
+  return activeSessionId;
+};
+
+const requestStopActiveSessionStream = () => {
+  if (!chatStore.activeSessionId) {
+    return;
+  }
+  // Stop the previous active thread immediately before opening a new one.
+  void chatStore.stopStream().catch(() => null);
+};
+
+const openOrReuseFreshSession = async () => {
+  const reusableSessionId = resolveReusableFreshSessionId();
+  if (reusableSessionId) {
+    await chatStore.setMainSession(reusableSessionId);
+    manualDraftPending.value = false;
+    return reusableSessionId;
+  }
+
+  requestStopActiveSessionStream();
+  const agentId = String(activeAgentId.value || '').trim();
+  const payload = agentId ? { agent_id: agentId } : {};
+  const session = await chatStore.createSession(payload);
+  const sessionId = String(session?.id || '').trim();
+  if (sessionId) {
+    await chatStore.setMainSession(sessionId);
+  }
+  manualDraftPending.value = false;
+  return sessionId;
+};
+
+const createFreshSessionWithGuard = async () => {
+  if (creatingSession.value) {
+    return String(chatStore.activeSessionId || '').trim();
+  }
+  creatingSession.value = true;
   try {
-    // Keep new-thread action in draft mode; persist only when user sends the first real message.
-    manualDraftPending.value = true;
-    chatStore.openDraftSession({ agent_id: agentId || '' });
+    return await openOrReuseFreshSession();
+  } finally {
+    creatingSession.value = false;
+  }
+};
+
+const handleCreateSession = async () => {
+  try {
+    await createFreshSessionWithGuard();
   } catch (error) {
     showApiError(error, t('common.requestFailed'));
   }
@@ -2113,10 +2173,8 @@ const handleLocalCommand = async (command: ChatLocalCommand, rawText) => {
 
   if (command === 'new') {
     try {
-      const agentId = String(activeAgentId.value || '').trim();
-      manualDraftPending.value = true;
-      chatStore.openDraftSession({ agent_id: agentId || '' });
-      appendLocalCommandMessages(rawText, t('chat.command.newSuccess'));
+      await createFreshSessionWithGuard();
+      chatStore.appendLocalMessage('assistant', t('chat.command.newSuccess'));
     } catch (error) {
       appendLocalCommandMessages(
         rawText,

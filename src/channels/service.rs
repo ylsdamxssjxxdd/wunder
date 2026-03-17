@@ -268,6 +268,10 @@ impl ChannelHub {
         tokio::spawn(async move {
             xmpp_worker.xmpp_long_connection_supervisor_loop().await;
         });
+        let bootstrap_worker = hub.clone();
+        tokio::spawn(async move {
+            bootstrap_worker.runtime_bootstrap_log_once().await;
+        });
         hub
     }
 
@@ -2274,6 +2278,37 @@ impl ChannelHub {
                     sleep(Duration::from_millis(outbox_cfg.poll_interval_ms)).await;
                 }
             }
+        }
+    }
+
+    async fn runtime_bootstrap_log_once(&self) {
+        let storage = self.storage.clone();
+        let records = tokio::task::spawn_blocking(move || {
+            storage.list_channel_accounts(None, Some("active"))
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)));
+        let records = match records {
+            Ok(items) => items,
+            Err(err) => {
+                debug!("runtime bootstrap skipped: load active channel accounts failed: {err}");
+                return;
+            }
+        };
+        for record in records {
+            let channel = record.channel.trim().to_ascii_lowercase();
+            let account_id = record.account_id.trim().to_string();
+            if channel.is_empty() || account_id.is_empty() {
+                continue;
+            }
+            self.record_runtime_info(
+                &channel,
+                Some(&account_id),
+                "runtime_bootstrap",
+                format!(
+                    "channel runtime collector ready: channel={channel}, account_id={account_id}"
+                ),
+            );
         }
     }
 
