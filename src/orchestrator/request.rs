@@ -183,7 +183,7 @@ impl Orchestrator {
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
         agent_id: Option<&str>,
-        is_admin: bool,
+        _is_admin: bool,
         workspace_id: &str,
         config_overrides: Option<&Value>,
         agent_prompt: Option<&str>,
@@ -211,7 +211,7 @@ impl Orchestrator {
                 agent_prompt,
             )
             .await;
-        self.append_memory_prompt(user_id, agent_id, prompt, is_admin, None, None, None)
+        self.append_memory_prompt(user_id, agent_id, prompt, None, None, None)
             .await
     }
 }

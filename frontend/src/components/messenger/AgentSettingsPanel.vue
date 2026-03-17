@@ -185,7 +185,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listAgentModels } from '@/api/agents';
@@ -300,6 +300,17 @@ const currentAgent = ref<Record<string, unknown> | null>(null);
 const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
+const panelMounted = ref(false);
+let panelDisposed = false;
+let latestAgentLoadRequestId = 0;
+
+const nextAgentLoadRequestId = (): number => {
+  latestAgentLoadRequestId += 1;
+  return latestAgentLoadRequestId;
+};
+
+const isAgentLoadRequestActive = (requestId: number): boolean =>
+  !panelDisposed && requestId === latestAgentLoadRequestId;
 
 const normalizeSandboxContainerId = (value: unknown): number => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -450,17 +461,20 @@ const loadModelOptions = async () => {
   }
 };
 
-const loadAgent = async () => {
+const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
   if (!canView.value) return;
   try {
     if (!beeroomStore.groups.length) {
       await beeroomStore.loadGroups().catch(() => null);
     }
+    if (!isAgentLoadRequestActive(requestId)) return;
     const agent = await agentStore.getAgent(normalizedAgentId.value, { force: true });
+    if (!isAgentLoadRequestActive(requestId)) return;
     if (!agent) {
       ElMessage.error(t('portal.agent.loadingFailed'));
       return;
     }
+    // Only the latest async selection is allowed to write into the form.
     currentAgent.value = agent as Record<string, unknown>;
     form.name = String(agent.name || '');
     form.description = String(agent.description || '');
@@ -478,8 +492,10 @@ const loadAgent = async () => {
 };
 
 const reloadAgent = async () => {
+  const requestId = nextAgentLoadRequestId();
   await Promise.all([loadToolSummary(), loadModelOptions()]);
-  await loadAgent();
+  if (!isAgentLoadRequestActive(requestId)) return;
+  await loadAgent(requestId);
 };
 
 const saveAgent = async () => {
@@ -563,13 +579,22 @@ const deleteAgent = async () => {
   }
 };
 
+onMounted(() => {
+  panelMounted.value = true;
+  void reloadAgent();
+});
+
 watch(
   () => normalizedAgentId.value,
-  async () => {
-    await Promise.all([loadToolSummary(), loadModelOptions()]);
-    await loadAgent();
-  },
-  { immediate: true }
+  () => {
+    if (!panelMounted.value || panelDisposed) return;
+    void reloadAgent();
+  }
 );
+
+onBeforeUnmount(() => {
+  panelDisposed = true;
+  latestAgentLoadRequestId += 1;
+});
 </script>
 

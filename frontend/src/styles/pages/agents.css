@@ -706,6 +706,7 @@
 }
 
 .agent-form-item .el-form-item__content {
+  width: 100%;
   min-width: 0;
 }
 
@@ -871,6 +872,8 @@
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(9, 14, 26, 0.7);
   padding: 12px 14px;
+  width: 100%;
+  min-width: 0;
 }
 
 :root[data-user-theme='light'] .agent-tool-picker {
@@ -884,9 +887,12 @@
 }
 
 .agent-tool-groups {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
   gap: 12px;
+  align-items: start;
+  width: 100%;
+  min-width: 0;
 }
 
 .agent-tool-group {
@@ -894,6 +900,7 @@
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(15, 23, 42, 0.55);
+  min-width: 0;
 }
 
 :root[data-user-theme='light'] .agent-tool-group {
@@ -942,14 +949,18 @@
 }
 
 .agent-tool-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(164px, 100%), 1fr));
+  gap: 8px 12px;
+  width: 100%;
+  min-width: 0;
 }
 
 .agent-tool-options .el-checkbox {
   border-radius: 10px;
-  padding: 2px 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
   margin-right: 0;
 }
 

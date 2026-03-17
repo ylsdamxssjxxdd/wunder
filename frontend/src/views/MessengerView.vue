@@ -1,11 +1,15 @@
 ﻿<template>
   <div
+    ref="messengerRootRef"
     class="messenger-view"
     :class="{
       'messenger-view--without-right': !showRightDock,
       'messenger-view--without-middle': !showMiddlePane,
       'messenger-view--right-collapsed': showRightDock && rightDockCollapsed,
-      'messenger-view--nav-collapsed': navigationPaneCollapsed
+      'messenger-view--nav-collapsed': navigationPaneCollapsed,
+      'messenger-view--host-medium': isRightDockOverlay,
+      'messenger-view--host-small': isMiddlePaneOverlay,
+      'messenger-view--host-tight': viewportWidth <= 840
     }"
   >
     <aside
@@ -1345,6 +1349,7 @@ import {
 } from '@/views/messenger/bootstrap';
 import { createBeeroomRealtimeSync } from '@/views/messenger/beeroomRealtimeSync';
 import { createMessengerRealtimePulse } from '@/views/messenger/realtimePulse';
+import { useMessengerHostWidth } from '@/views/messenger/hostWidth';
 import MessengerMiddlePane from '@/views/messenger/sections/MessengerMiddlePane.vue';
 import MessengerDialogsHost from '@/views/messenger/sections/MessengerDialogsHost.vue';
 import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlayPreview';
@@ -1734,7 +1739,7 @@ const groupCreateKeyword = ref('');
 const groupCreateMemberIds = ref<string[]>([]);
 const groupCreating = ref(false);
 const creatingAgentSession = ref(false);
-const viewportWidth = ref(typeof window !== 'undefined' ? window.innerWidth : 1440);
+const { hostRootRef: messengerRootRef, hostWidth: viewportWidth, refreshHostWidth } = useMessengerHostWidth();
 const middlePaneOverlayVisible = ref(false);
 const embeddedNavigationCollapsed = ref(true);
 const standardNavigationCollapsed = ref(false);
@@ -10241,7 +10246,7 @@ onUpdated(() => {
 onMounted(async () => {
   if (typeof window !== 'undefined') {
     viewportResizeHandler = () => {
-      viewportWidth.value = window.innerWidth;
+      refreshHostWidth();
       closeFileContainerMenu();
       syncContactVirtualMetrics();
       syncMessageVirtualMetrics();

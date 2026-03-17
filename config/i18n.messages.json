@@ -1928,8 +1928,8 @@
     "zh-CN": "recall 检索词；省略时返回置顶/已确认/近期记忆候选。"
   },
   "tool.spec.memory_manager.args.limit": {
-    "en-US": "Max number of entries for list/recall (list: 1-200, recall: internally capped to 12).",
-    "zh-CN": "list/recall 返回条目数量上限（list: 1-200；recall 内部最大为 12）。"
+    "en-US": "Max number of entries for list/recall (list: 1-200, recall: internally capped to 30).",
+    "zh-CN": "list/recall 返回条目数量上限（list: 1-200；recall 内部最大为 30）。"
   },
   "tool.spec.memory_manager.args.order": {
     "en-US": "List order: desc (latest first) or asc.",

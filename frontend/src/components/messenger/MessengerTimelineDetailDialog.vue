@@ -138,6 +138,16 @@ type TimelineDetailSession = {
   messages: Record<string, unknown>[];
 };
 
+type TimelineExportEventDigest = {
+  order: number;
+  round: number;
+  event: string;
+  title: string;
+  timestamp: string;
+  timestamp_ms: number;
+  summary: Record<string, unknown>;
+};
+
 const TIMELINE_DETAIL_EVENT_TITLE_MAX_LENGTH = 120;
 
 const props = defineProps<{
@@ -578,6 +588,66 @@ const buildExportFilename = (sessionId: string): string => {
   return `timeline-detail-${safeSessionId}-${timestamp}.json`;
 };
 
+const buildEventSummary = (eventType: string, payload: unknown): Record<string, unknown> => {
+  const data = unwrapEventData(payload);
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return {};
+  }
+  const source = data as Record<string, unknown>;
+  const summary: Record<string, unknown> = {};
+  for (const key of [
+    'stage',
+    'summary',
+    'message',
+    'question',
+    'trace_id',
+    'model_round',
+    'tool',
+    'tool_name',
+    'stop_reason',
+    'ok'
+  ]) {
+    const value = source[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      summary[key] = value;
+    }
+  }
+  if (eventType === 'tool_call' && source.args && typeof source.args === 'object') {
+    summary.args = source.args;
+  }
+  if (eventType === 'tool_result' && source.meta && typeof source.meta === 'object') {
+    summary.meta = source.meta;
+  }
+  if (eventType === 'llm_output' && source.usage && typeof source.usage === 'object') {
+    summary.usage = source.usage;
+  }
+  return summary;
+};
+
+const buildExportEventDigests = (): TimelineExportEventDigest[] => {
+  const output: TimelineExportEventDigest[] = [];
+  let order = 0;
+  rounds.value.forEach((round, roundIndex) => {
+    const roundValue = normalizeRoundIndex(round?.user_round ?? round?.round, roundIndex + 1);
+    const eventList = Array.isArray(round?.events) ? round.events : [];
+    eventList.forEach((event) => {
+      order += 1;
+      const eventType = String(event?.event || event?.type || 'unknown').trim() || 'unknown';
+      const timestampMs = normalizeTimestamp(event?.timestamp);
+      output.push({
+        order,
+        round: roundValue,
+        event: eventType,
+        title: resolveEventTitle(eventType, event?.data),
+        timestamp: typeof event?.timestamp === 'string' ? String(event.timestamp) : formatEventTimestamp(event?.timestamp),
+        timestamp_ms: timestampMs,
+        summary: buildEventSummary(eventType, event?.data)
+      });
+    });
+  });
+  return output;
+};
+
 const saveBlobUrl = (url: string, filename: string) => {
   const anchor = document.createElement('a');
   anchor.href = url;
@@ -634,10 +704,24 @@ const exportTimelineDetail = () => {
     return;
   }
   try {
+    const flatEvents = buildExportEventDigests();
+    const eventTypes = Array.from(new Set(flatEvents.map((item) => item.event))).sort((left, right) =>
+      left.localeCompare(right)
+    );
     const payload = {
+      export_schema_version: 2,
       exported_at: new Date().toISOString(),
+      summary: {
+        question: detailQuestion.value,
+        round_count: rounds.value.length,
+        event_count: flatEvents.length,
+        event_types: eventTypes,
+        running: running.value,
+        last_event_id: lastEventId.value
+      },
       session,
       rounds: rounds.value,
+      flat_events: flatEvents,
       running: running.value,
       last_event_id: lastEventId.value
     };

@@ -939,6 +939,9 @@ const OBSERVATION_TAIL_CHARS: usize = 240;
 const OBSERVATION_MAX_ARRAY_ITEMS: usize = 20;
 const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 12;
 const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 4;
+const OBSERVATION_TABLE_SAMPLE_ROWS: usize = 4;
+const OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS: usize = 240;
+const OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS: usize = 80;
 const TRUNCATION_CONTINUATION_HINT: &str =
     "result_truncated_continue_with_pagination_or_narrower_query";
 
@@ -952,6 +955,7 @@ fn compact_observation_payload(payload: &mut Value) {
     let Some(mut compacted_data) = extract_mcp_observation_data(&raw_data) else {
         return;
     };
+    compact_tabular_observation_data(&mut compacted_data);
     let mut observation_truncated = truncate_observation_data(
         &mut compacted_data,
         OBSERVATION_HEAD_CHARS,
@@ -1025,6 +1029,9 @@ fn extract_mcp_observation_data(value: &Value) -> Option<Value> {
     let Value::Object(map) = value else {
         return None;
     };
+    if map.get("truncated").and_then(Value::as_bool) == Some(true) && map.contains_key("preview") {
+        return Some(compact_truncated_observation_wrapper(map));
+    }
     if !map.contains_key("structured_content") && !map.contains_key("content") {
         return None;
     }
@@ -1037,6 +1044,57 @@ fn extract_mcp_observation_data(value: &Value) -> Option<Value> {
         return Some(parsed);
     }
     map.get("content").cloned().filter(|item| !item.is_null())
+}
+
+fn compact_tabular_observation_data(value: &mut Value) {
+    let Value::Object(map) = value else {
+        return;
+    };
+    let Some(rows) = map.get_mut("rows").and_then(Value::as_array_mut) else {
+        return;
+    };
+    if rows.len() <= OBSERVATION_TABLE_SAMPLE_ROWS {
+        return;
+    }
+    let original_len = rows.len();
+    rows.truncate(OBSERVATION_TABLE_SAMPLE_ROWS);
+    // Keep a tiny head sample only; large tabular payloads should stay in tools/files,
+    // not be replayed through the model context page by page.
+    map.insert(
+        "rows_sampled".to_string(),
+        json!(OBSERVATION_TABLE_SAMPLE_ROWS.min(original_len)),
+    );
+    map.insert(
+        "rows_omitted".to_string(),
+        json!(original_len.saturating_sub(OBSERVATION_TABLE_SAMPLE_ROWS)),
+    );
+}
+
+fn compact_truncated_observation_wrapper(map: &Map<String, Value>) -> Value {
+    let mut compacted = Map::new();
+    for key in [
+        "truncated",
+        "original_chars",
+        "continuation_required",
+        "continuation_hint",
+        "exit_code",
+    ] {
+        if let Some(value) = map.get(key) {
+            compacted.insert(key.to_string(), value.clone());
+        }
+    }
+    if let Some(preview) = map.get("preview").and_then(Value::as_str) {
+        compacted.insert(
+            "preview".to_string(),
+            Value::String(truncate_tool_result_string(
+                preview,
+                OBSERVATION_WRAPPER_PREVIEW_HEAD_CHARS,
+                OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS,
+                TOOL_RESULT_TRUNCATION_MARKER,
+            )),
+        );
+    }
+    Value::Object(compacted)
 }
 
 fn parse_json_from_content_text_blocks(value: &Value) -> Option<Value> {
@@ -1447,6 +1505,72 @@ mod tests {
                 .and_then(Value::as_u64)
                 .unwrap_or_default()
                 > 0
+        );
+    }
+
+    #[test]
+    fn test_compact_observation_payload_samples_large_rows() {
+        let rows = (0..24)
+            .map(|idx| json!({ "employee_id": format!("E{idx:06}"), "eligible": "yes" }))
+            .collect::<Vec<_>>();
+        let mut payload = json!({
+            "tool": "extra_mcp@db_query",
+            "ok": true,
+            "data": {
+                "structured_content": {
+                    "ok": true,
+                    "row_count": 24,
+                    "rows": rows
+                }
+            }
+        });
+
+        compact_observation_payload(&mut payload);
+
+        let data = payload.get("data").cloned().unwrap_or(Value::Null);
+        let rows = data
+            .get("rows")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(rows.len(), OBSERVATION_TABLE_SAMPLE_ROWS);
+        assert_eq!(
+            data.get("rows_sampled").and_then(Value::as_u64),
+            Some(OBSERVATION_TABLE_SAMPLE_ROWS as u64)
+        );
+        assert_eq!(data.get("rows_omitted").and_then(Value::as_u64), Some(20));
+    }
+
+    #[test]
+    fn test_compact_observation_payload_compacts_truncated_wrapper_preview() {
+        let preview = format!(
+            "{{\"rows\":[{}]}}",
+            (0..16)
+                .map(|idx| format!("{{\"id\":{idx},\"text\":\"{}\"}}", "x".repeat(72)))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let mut payload = json!({
+            "tool": "extra_mcp@db_query",
+            "ok": true,
+            "data": {
+                "truncated": true,
+                "original_chars": 4096,
+                "preview": preview,
+                "continuation_required": true,
+                "continuation_hint": TRUNCATION_CONTINUATION_HINT
+            }
+        });
+
+        compact_observation_payload(&mut payload);
+
+        let data = payload.get("data").cloned().unwrap_or(Value::Null);
+        let preview = data.get("preview").and_then(Value::as_str).unwrap_or("");
+        assert!(preview.contains(TOOL_RESULT_TRUNCATION_MARKER));
+        assert!(preview.chars().count() < 500);
+        assert_eq!(
+            data.get("continuation_required").and_then(Value::as_bool),
+            Some(true)
         );
     }
 

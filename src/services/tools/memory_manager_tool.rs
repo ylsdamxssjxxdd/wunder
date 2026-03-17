@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-const MAX_MEMORY_RECALL_LIMIT: usize = 12;
+const MAX_MEMORY_RECALL_LIMIT: usize = 30;
 
 #[derive(Debug, Deserialize)]
 struct MemoryManagerArgs {
@@ -625,7 +625,7 @@ mod tests {
     fn normalize_recall_limit_clamps_range() {
         assert_eq!(normalize_memory_recall_limit(None), 6);
         assert_eq!(normalize_memory_recall_limit(Some(0)), 1);
-        assert_eq!(normalize_memory_recall_limit(Some(99)), 12);
+        assert_eq!(normalize_memory_recall_limit(Some(99)), 30);
     }
 
     #[test]

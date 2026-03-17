@@ -1,6 +1,7 @@
 use super::*;
 
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
+const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
 
 #[derive(Debug, Default)]
 struct RebuiltContextGuardStats {
@@ -475,7 +476,6 @@ impl Orchestrator {
                 agent_id,
                 session_id,
                 question_candidates.first().map(String::as_str),
-                is_admin,
             )
             .await;
         let (summary_text, fresh_memory_injected) =
@@ -664,7 +664,6 @@ impl Orchestrator {
         agent_id: Option<&str>,
         session_id: &str,
         query_text: Option<&str>,
-        is_admin: bool,
     ) -> (String, usize) {
         let fragment_store =
             crate::services::memory_fragments::MemoryFragmentStore::new(self.storage.clone());
@@ -676,7 +675,7 @@ impl Orchestrator {
                 Some(session_id),
                 None,
                 query_text,
-                Some(if is_admin { 10 } else { 6 }),
+                Some(PROMPT_MEMORY_RECALL_LIMIT),
             )
             .await;
         let hit_count = hits.len();
@@ -798,7 +797,6 @@ impl Orchestrator {
         user_id: &str,
         agent_id: Option<&str>,
         prompt: String,
-        is_admin: bool,
         session_id: Option<&str>,
         round_id: Option<&str>,
         query_text: Option<&str>,
@@ -838,7 +836,7 @@ impl Orchestrator {
                 session_id,
                 round_id,
                 query_text,
-                Some(if is_admin { 10 } else { 6 }),
+                Some(PROMPT_MEMORY_RECALL_LIMIT),
             )
             .await;
         let block = fragment_store.build_prompt_block(&hits);

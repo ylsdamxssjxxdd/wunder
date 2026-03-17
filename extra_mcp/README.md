@@ -27,6 +27,8 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - 默认读取 `extra_mcp/mcp_config.json`
 - 可用 `MCP_CONFIG_PATH` 指定配置路径
 - 运行参数优先级：环境变量 > `mcp_config.json` 的 `mcp.transport/host/port` > 默认值
+- 当 `extra_mcp` 运行在 Docker 容器内且数据库主机配置为 `127.0.0.1` / `localhost` 时，会先直连本机回环地址；若失败，再自动回退到 `host.docker.internal`，以兼容“宿主机数据库 + 容器内 MCP”场景
+- 如需覆盖回退主机名，可设置环境变量 `EXTRA_MCP_LOOPBACK_FALLBACK_HOST`
 
 ## 2. `mcp_config.json` 最小示例
 
@@ -136,3 +138,4 @@ mcp:
 3. Docker Compose 内 `wunder-server` 访问独立 MCP 请用 `extra-mcp:9010`，不要写 `127.0.0.1:9010`
 4. 401/403 时补齐 `headers` 或 `auth`
 5. 工具不可见时先检查 `enabled`、`allow_tools`、`tool_specs`
+6. 如果 `extra_mcp` 容器要访问宿主机数据库，可继续使用 `127.0.0.1` / `localhost` 配置；连接失败时会自动回退到 `host.docker.internal`

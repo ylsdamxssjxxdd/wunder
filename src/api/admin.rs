@@ -7418,7 +7418,8 @@ async fn admin_channel_accounts_batch(
                 }
             }
             ChannelAccountBatchAction::Delete => {
-                match delete_channel_account_records(state.storage.as_ref(), &channel, &account_id) {
+                match delete_channel_account_records(state.storage.as_ref(), &channel, &account_id)
+                {
                     Ok((
                         removed_account,
                         removed_bindings,

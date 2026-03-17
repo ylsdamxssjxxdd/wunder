@@ -150,7 +150,7 @@
 - `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并新增 `timeout_ms`、`max_matches`、`max_candidates` 入参；返回保留兼容字段 `matches`，同时提供结构化 `hits` 与 `meta.search`（包含 `requested_engine/resolved_engine/fallback/elapsed_ms/timeout_hit` 等），便于前端与调度层做可观测优化。
 - `读取文件`（`read_file`）支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。
 - `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
-- 工具结果若因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview` 或数组级 `truncated_items` 标记，表示当前结果为片段而非全量。
+- 工具结果若因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview`、表格结果级 `rows_sampled/rows_omitted`，或数组级 `truncated_items` 标记，表示当前结果为片段/样本而非全量。
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
 - `写入文件` 与 `应用补丁` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
@@ -206,6 +206,7 @@
 - 方法：`GET`
 - 入参（Query，可选）：`user_id`、`hive_id`
 - 返回（JSON）：`data.items[]`（智能体列表）
+- 预设补齐：仅在用户首次访问该列表时执行一次默认预设智能体补齐；后续用户对预设实例的重命名或删除不会在列表读取时自动生成重复副本，如需补回由管理员预设同步触发。
 - 与模型选择相关字段：
   - `configured_model_name`：该智能体显式配置的模型；为空表示跟随默认模型
   - `model_name`：当前生效模型（优先取 `configured_model_name`，否则回退到默认模型）
@@ -226,6 +227,7 @@
 - 入参（JSON）：
   - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示清除显式配置并回退默认模型）
   - 其余字段按需增量更新
+- 说明：预设智能体实例使用稳定 `preset_binding` 跟踪模板关系；用户侧重命名不会丢失绑定，也不会触发同名预设副本再次自动补种。
 
 #### `POST /wunder/admin/preset_agents`
 

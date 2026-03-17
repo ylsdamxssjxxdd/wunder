@@ -249,6 +249,71 @@ async fn sync_preset(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_agent_rename_does_not_spawn_duplicate_bootstrap_copy() {
+    let context = build_test_context_with_config("preset_rename_user", |config| {
+        config.user_agents.presets = vec![build_preset_config("preset_bootstrap_rename", None)];
+    })
+    .await;
+
+    let agents_v1 = list_user_agents(&context.app, &context.token).await;
+    assert_eq!(agents_v1.len(), 1);
+    let agent_id = find_agent_id_by_name(&agents_v1, PRESET_NAME);
+
+    let renamed_name = "Renamed Preset Agent";
+    let (status, updated_payload) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::PUT,
+        &format!("/wunder/agents/{agent_id}"),
+        Some(json!({ "name": renamed_name })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated_payload["data"]["name"], json!(renamed_name));
+
+    let agents_v2 = list_user_agents(&context.app, &context.token).await;
+    assert_eq!(agents_v2.len(), 1);
+    assert_eq!(agents_v2[0]["name"], json!(renamed_name));
+    assert!(
+        agents_v2
+            .iter()
+            .all(|item| item["name"] != json!(PRESET_NAME)),
+        "renamed preset agent should not respawn the original preset name"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_agent_delete_does_not_respawn_on_next_list_request() {
+    let context = build_test_context_with_config("preset_delete_user", |config| {
+        config.user_agents.presets = vec![build_preset_config("preset_bootstrap_delete", None)];
+    })
+    .await;
+
+    let agents_v1 = list_user_agents(&context.app, &context.token).await;
+    assert_eq!(agents_v1.len(), 1);
+    let agent_id = find_agent_id_by_name(&agents_v1, PRESET_NAME);
+
+    let (status, delete_payload) = send_json(
+        &context.app,
+        Some(&context.token),
+        Method::DELETE,
+        &format!("/wunder/agents/{agent_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(delete_payload["data"]["id"], json!(agent_id));
+
+    let agents_v2 = list_user_agents(&context.app, &context.token).await;
+    assert!(
+        agents_v2.is_empty(),
+        "deleted preset agent should stay deleted until an explicit preset sync recreates it"
+    );
+    let agents_v3 = list_user_agents(&context.app, &context.token).await;
+    assert!(agents_v3.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preset_agent_bootstrap_uses_preset_model_name() {
     let context = build_test_context_with_config("preset_model_bootstrap_user", |config| {
         config.llm.default = "model-default".to_string();

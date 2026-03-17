@@ -1741,54 +1741,30 @@ async fn ensure_preset_agents(
     let meta_key = format!("{PRESET_META_PREFIX}{}", user.user_id);
     let container_meta_key = format!("{PRESET_CONTAINER_META_PREFIX}{}", user.user_id);
     let preset_agents = configured_preset_agents(state).await;
-    let preset_name_set = preset_agents
+    let bootstrap_completed = state
+        .user_store
+        .get_meta(&meta_key)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
+    let configured_preset_ids = preset_agents
         .iter()
-        .map(|preset| preset.name.trim().to_string())
+        .map(|preset| preset.preset_id.clone())
         .collect::<HashSet<_>>();
     let mut existing = state
         .user_store
         .list_user_agents(&user.user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
 
-    if !preset_name_set.is_empty() {
-        let mut duplicates_by_name: HashMap<String, Vec<crate::storage::UserAgentRecord>> =
-            HashMap::new();
-        for record in &existing {
-            if normalize_hive_id(&record.hive_id) != DEFAULT_HIVE_ID {
-                continue;
-            }
-            let trimmed_name = record.name.trim();
-            if trimmed_name.is_empty() || !preset_name_set.contains(trimmed_name) {
-                continue;
-            }
-            duplicates_by_name
-                .entry(trimmed_name.to_string())
-                .or_default()
-                .push(record.clone());
+    let duplicate_ids = duplicate_preset_bound_agent_ids(&existing, &configured_preset_ids);
+    if !duplicate_ids.is_empty() {
+        for duplicate_id in &duplicate_ids {
+            let _ = state
+                .user_store
+                .delete_user_agent(&user.user_id, duplicate_id);
         }
-
-        let mut duplicate_ids = HashSet::new();
-        for records in duplicates_by_name.values_mut() {
-            if records.len() <= 1 {
-                continue;
-            }
-            records.sort_by(|left, right| right.updated_at.total_cmp(&left.updated_at));
-            for duplicate in records.iter().skip(1) {
-                duplicate_ids.insert(duplicate.agent_id.clone());
-                let _ = state
-                    .user_store
-                    .delete_user_agent(&user.user_id, &duplicate.agent_id);
-            }
-        }
-        if !duplicate_ids.is_empty() {
-            existing.retain(|record| !duplicate_ids.contains(&record.agent_id));
-        }
+        existing.retain(|record| !duplicate_ids.contains(&record.agent_id));
     }
 
-    let mut existing_names: HashSet<String> = existing
-        .iter()
-        .map(|record| record.name.trim().to_string())
-        .collect();
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
     let required_preset_skill_names: Vec<String> = {
@@ -1807,45 +1783,60 @@ async fn ensure_preset_agents(
         .get_meta(&container_meta_key)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .is_some();
+    let mut target_by_preset_id = HashMap::new();
+    let mut matched_preset_by_agent_id = HashMap::new();
+    for preset in &preset_agents {
+        if let Some(record) =
+            crate::services::user_agent_presets::find_preset_agent(&existing, preset)
+        {
+            matched_preset_by_agent_id.insert(record.agent_id.clone(), preset.clone());
+            target_by_preset_id.insert(
+                preset.preset_id.clone(),
+                crate::services::user_agent_presets::build_target_snapshot(state, user, preset)
+                    .await,
+            );
+        }
+    }
+    let mut existing_mutated = false;
     for record in &existing {
         let trimmed_name = record.name.trim();
         let mut updated = record.clone();
         let mut changed = false;
+        let mut matched_preset = matched_preset_by_agent_id.get(&record.agent_id).cloned();
         if trimmed_name == LEGACY_EMAIL_PRESET_NAME {
             changed = apply_legacy_preset_upgrade(
                 &mut updated,
                 &preset_agents,
                 PRESET_CONTAINER_ID_OFFICIAL_WRITING,
             );
-            if changed {
-                existing_names.remove(LEGACY_EMAIL_PRESET_NAME);
-                existing_names.insert(updated.name.trim().to_string());
-            }
+            matched_preset =
+                preset_by_container_id(&preset_agents, PRESET_CONTAINER_ID_OFFICIAL_WRITING);
         } else if trimmed_name == LEGACY_MEETING_NAME {
             changed = apply_legacy_preset_upgrade(
                 &mut updated,
                 &preset_agents,
                 PRESET_CONTAINER_ID_SCI_DRAW,
             );
-            if changed {
-                existing_names.remove(LEGACY_MEETING_NAME);
-                existing_names.insert(updated.name.trim().to_string());
-            }
+            matched_preset = preset_by_container_id(&preset_agents, PRESET_CONTAINER_ID_SCI_DRAW);
         } else if trimmed_name == LEGACY_PLAN_NAME {
             changed = apply_legacy_preset_upgrade(
                 &mut updated,
                 &preset_agents,
                 PRESET_CONTAINER_ID_POLICY_ANALYSIS,
             );
-            if changed {
-                existing_names.remove(LEGACY_PLAN_NAME);
-                existing_names.insert(updated.name.trim().to_string());
-            }
+            matched_preset =
+                preset_by_container_id(&preset_agents, PRESET_CONTAINER_ID_POLICY_ANALYSIS);
+        }
+
+        if matched_preset.is_none() {
+            matched_preset = preset_by_name(&preset_agents, updated.name.trim());
         }
 
         if !container_layout_seeded {
-            if let Some(container_id) =
-                preset_sandbox_container_id(updated.name.trim(), &preset_agents)
+            if let Some(container_id) = matched_preset
+                .as_ref()
+                .map(|preset| preset.sandbox_container_id)
+                .or_else(|| preset_sandbox_container_id(updated.name.trim(), &preset_agents))
             {
                 if updated.sandbox_container_id == DEFAULT_SANDBOX_CONTAINER_ID
                     && updated.sandbox_container_id != container_id
@@ -1855,8 +1846,7 @@ async fn ensure_preset_agents(
                 }
             }
         }
-        if preset_name_set.contains(updated.name.trim()) && !required_preset_skill_names.is_empty()
-        {
+        if matched_preset.is_some() && !required_preset_skill_names.is_empty() {
             let mut merged_tools = updated.tool_names.clone();
             merged_tools.extend(required_preset_skill_names.iter().cloned());
             merged_tools = normalize_tool_list(merged_tools);
@@ -1866,51 +1856,57 @@ async fn ensure_preset_agents(
                 changed = true;
             }
         }
+        if let Some(preset) = matched_preset.as_ref() {
+            // Keep preset identity stable even if the user later renames the agent.
+            if updated.preset_binding.is_none() {
+                let target = match target_by_preset_id.get(&preset.preset_id) {
+                    Some(snapshot) => snapshot.clone(),
+                    None => {
+                        let snapshot = crate::services::user_agent_presets::build_target_snapshot(
+                            state, user, preset,
+                        )
+                        .await;
+                        target_by_preset_id.insert(preset.preset_id.clone(), snapshot.clone());
+                        snapshot
+                    }
+                };
+                updated.preset_binding = Some(crate::services::user_agent_presets::build_binding(
+                    preset, &target,
+                ));
+                changed = true;
+            }
+        }
 
         if changed {
             updated.updated_at = now;
             let _ = state.user_store.upsert_user_agent(&updated);
+            existing_mutated = true;
         }
     }
     if !container_layout_seeded {
         let _ = state.user_store.set_meta(&container_meta_key, "1");
     }
-    let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
-    for preset in &preset_agents {
-        let preset_name = preset.name.trim();
-        if existing_names.contains(preset_name) {
-            continue;
-        }
-        let target =
-            crate::services::user_agent_presets::build_target_snapshot(state, user, preset).await;
-        let record = crate::storage::UserAgentRecord {
-            agent_id: format!("agent_{}", Uuid::new_v4().simple()),
-            user_id: user.user_id.clone(),
-            hive_id: DEFAULT_HIVE_ID.to_string(),
-            name: target.name.clone(),
-            description: target.description.clone(),
-            system_prompt: target.system_prompt.clone(),
-            model_name: target.model_name.clone(),
-            tool_names: target.tool_names.clone(),
-            declared_tool_names: target.declared_tool_names.clone(),
-            declared_skill_names: target.declared_skill_names.clone(),
-            preset_questions: target.preset_questions.clone(),
-            access_level: access_level.clone(),
-            approval_mode: target.approval_mode.clone(),
-            is_shared: false,
-            status: target.status.clone(),
-            icon: target.icon.clone(),
-            sandbox_container_id: target.sandbox_container_id,
-            created_at: now,
-            updated_at: now,
-            preset_binding: Some(crate::services::user_agent_presets::build_binding(
-                preset, &target,
-            )),
-        };
-        let _ = state.user_store.upsert_user_agent(&record);
-        existing_names.insert(preset_name.to_string());
+    if existing_mutated {
+        existing = state
+            .user_store
+            .list_user_agents(&user.user_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     }
-    let _ = state.user_store.set_meta(&meta_key, "1");
+    if !bootstrap_completed {
+        // Bootstrap only once for each user. Later re-creation should be explicit via preset sync,
+        // otherwise a user rename/delete would silently respawn another preset copy.
+        for preset in &preset_agents {
+            if crate::services::user_agent_presets::find_preset_agent(&existing, preset).is_some() {
+                continue;
+            }
+            let record = crate::services::user_agent_presets::create_preset_agent_record(
+                state, user, preset, now,
+            )
+            .await;
+            let _ = state.user_store.upsert_user_agent(&record);
+        }
+        let _ = state.user_store.set_meta(&meta_key, "1");
+    }
     Ok(())
 }
 
@@ -1959,6 +1955,62 @@ fn preset_sandbox_container_id(name: &str, preset_agents: &[PresetAgent]) -> Opt
         .iter()
         .find(|preset| preset.name == cleaned)
         .map(|preset| preset.sandbox_container_id)
+}
+
+fn preset_by_container_id(
+    preset_agents: &[PresetAgent],
+    sandbox_container_id: i32,
+) -> Option<PresetAgent> {
+    preset_agents
+        .iter()
+        .find(|preset| preset.sandbox_container_id == sandbox_container_id)
+        .cloned()
+}
+
+fn preset_by_name(preset_agents: &[PresetAgent], name: &str) -> Option<PresetAgent> {
+    let cleaned = name.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    preset_agents
+        .iter()
+        .find(|preset| preset.name == cleaned)
+        .cloned()
+}
+
+fn duplicate_preset_bound_agent_ids(
+    records: &[crate::storage::UserAgentRecord],
+    configured_preset_ids: &HashSet<String>,
+) -> HashSet<String> {
+    let mut duplicates_by_preset_id: HashMap<String, Vec<&crate::storage::UserAgentRecord>> =
+        HashMap::new();
+    for record in records {
+        if normalize_hive_id(&record.hive_id) != DEFAULT_HIVE_ID {
+            continue;
+        }
+        let Some(binding) = record.preset_binding.as_ref() else {
+            continue;
+        };
+        if !configured_preset_ids.contains(&binding.preset_id) {
+            continue;
+        }
+        duplicates_by_preset_id
+            .entry(binding.preset_id.clone())
+            .or_default()
+            .push(record);
+    }
+
+    let mut duplicate_ids = HashSet::new();
+    for records in duplicates_by_preset_id.values_mut() {
+        if records.len() <= 1 {
+            continue;
+        }
+        records.sort_by(|left, right| right.updated_at.total_cmp(&left.updated_at));
+        for duplicate in records.iter().skip(1) {
+            duplicate_ids.insert(duplicate.agent_id.clone());
+        }
+    }
+    duplicate_ids
 }
 
 fn normalize_agent_id(raw: &str) -> String {

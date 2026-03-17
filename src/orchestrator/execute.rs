@@ -344,6 +344,22 @@ impl Orchestrator {
                 }
                 emitter.emit("progress", llm_call_payload).await;
 
+                if !user_message_appended {
+                    let user_content = resolve_user_content_for_persist(&messages, &user_message);
+                    self.append_chat(
+                        &user_id,
+                        &session_id,
+                        "user",
+                        user_content.as_ref(),
+                        prepared.attachments.as_deref(),
+                        None,
+                        None,
+                        None,
+                        None,
+                    );
+                    user_message_appended = true;
+                }
+
                 let tools_payload = function_tooling
                     .as_ref()
                     .map(|tooling| tooling.tools.as_slice());
@@ -426,21 +442,6 @@ impl Orchestrator {
                         Err(err) => return Err(err),
                     }
                 };
-                if !user_message_appended {
-                    let user_content = resolve_user_content_for_persist(&messages, &user_message);
-                    self.append_chat(
-                        &user_id,
-                        &session_id,
-                        "user",
-                        user_content.as_ref(),
-                        prepared.attachments.as_deref(),
-                        None,
-                        None,
-                        None,
-                        None,
-                    );
-                    user_message_appended = true;
-                }
                 last_response = Some((content.clone(), reasoning.clone()));
                 accumulate_usage(&mut round_usage, &usage);
 

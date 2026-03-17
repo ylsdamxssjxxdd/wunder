@@ -53,21 +53,42 @@ def _build_tool_names(targets: Sequence[DbQueryTarget]) -> list[str]:
     return names
 
 
-def _build_schema_hint(columns: Sequence[dict[str, str]]) -> str:
+def _build_schema_hint(columns: Sequence[dict[str, Any]]) -> str:
     if not columns:
         return ""
-    parts = [
-        f"{column['name']}:{column['type']}"
-        for column in columns
-        if column.get("name") and column.get("type")
-    ]
-    if not parts:
+    column_parts: list[str] = []
+    example_parts: list[str] = []
+    note_parts: list[str] = []
+    for column in columns:
+        name = str(column.get("name") or "").strip()
+        column_type = str(column.get("full_type") or column.get("type") or "").strip()
+        if not name or not column_type:
+            continue
+        column_parts.append(f"{name}:{column_type}")
+        examples = column.get("examples")
+        if isinstance(examples, list):
+            cleaned_examples = [
+                repr(str(item).strip())
+                for item in examples
+                if str(item).strip()
+            ]
+            if cleaned_examples:
+                example_parts.append(f"{name}={{{', '.join(cleaned_examples[:3])}}}")
+        comment = str(column.get("comment") or "").strip()
+        if comment:
+            note_parts.append(f"{name}: {comment}")
+    if not column_parts:
         return ""
-    truncated = len(parts) > 24
+    truncated = len(column_parts) > 24
     if truncated:
-        parts = parts[:24]
+        column_parts = column_parts[:24]
     tail = ", ..." if truncated else ""
-    return "Columns: " + ", ".join(parts) + tail
+    parts = ["Columns: " + ", ".join(column_parts) + tail]
+    if example_parts:
+        parts.append("Known values/examples: " + "; ".join(example_parts[:6]))
+    if note_parts:
+        parts.append("Notes: " + "; ".join(note_parts[:4]))
+    return ". ".join(parts)
 
 
 def _resolve_schema_hint(target: DbQueryTarget) -> str:
@@ -81,7 +102,7 @@ def _resolve_schema_hint(target: DbQueryTarget) -> str:
     columns = schema.get("columns")
     if not isinstance(columns, list):
         return ""
-    compact_columns: list[dict[str, str]] = []
+    compact_columns: list[dict[str, Any]] = []
     for column in columns:
         if not isinstance(column, dict):
             continue
@@ -89,7 +110,17 @@ def _resolve_schema_hint(target: DbQueryTarget) -> str:
         column_type = str(column.get("type") or "").strip()
         if not name or not column_type:
             continue
-        compact_columns.append({"name": name, "type": column_type})
+        entry: dict[str, Any] = {"name": name, "type": column_type}
+        full_type = str(column.get("full_type") or "").strip()
+        if full_type:
+            entry["full_type"] = full_type
+        examples = column.get("examples")
+        if isinstance(examples, list) and examples:
+            entry["examples"] = examples[:3]
+        comment = str(column.get("comment") or "").strip()
+        if comment:
+            entry["comment"] = comment
+        compact_columns.append(entry)
     return _build_schema_hint(compact_columns)
 
 
@@ -98,6 +129,7 @@ def _build_description(target: DbQueryTarget, schema_hint: str, include_db_key: 
         f"Run read-only SQL and return compact rows for table {target.table}. ",
         "Strong constraint: queries can only access this bound table. ",
         "For large datasets, prefer LIMIT/OFFSET pagination and narrower filters. ",
+        "Pagination queries must include a stable ORDER BY. ",
     ]
     if target.description:
         parts.append(f"Purpose: {target.description}. ")

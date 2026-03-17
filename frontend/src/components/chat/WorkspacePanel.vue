@@ -141,19 +141,19 @@
         <button class="workspace-menu-btn" @click="handleContextMenuUpload">
           {{ t('common.upload') }}
         </button>
-        <button class="workspace-menu-btn" :disabled="!canEdit" @click="handleEdit">
+        <button class="workspace-menu-btn" :disabled="!contextMenuCanEdit" @click="handleEdit">
           {{ t('common.edit') }}
         </button>
-        <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleRename">
+        <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleRename">
           {{ t('workspace.menu.rename') }}
         </button>
         <button class="workspace-menu-btn" @click="handleNewFolder">
           {{ t('workspace.menu.newFolder') }}
         </button>
-        <button class="workspace-menu-btn" :disabled="!singleSelectedEntry" @click="handleDownload">
+        <button class="workspace-menu-btn" :disabled="!contextMenuSingleEntry" @click="handleDownload">
           {{ resourceActionLabel }}
         </button>
-        <button class="workspace-menu-btn danger" :disabled="!hasSelection" @click="handleDelete">
+        <button class="workspace-menu-btn danger" :disabled="!contextMenuHasSelection" @click="handleDelete">
           {{ t('common.delete') }}
         </button>
       </div>
@@ -464,7 +464,9 @@ const state = reactive({
   contextMenu: {
     visible: false,
     x: 0,
-    y: 0
+    y: 0,
+    primaryPath: '',
+    selectionPaths: []
   }
 });
 
@@ -576,8 +578,26 @@ const singleSelectedEntry = computed(() => {
   const [path] = Array.from(state.selectedPaths);
   return findWorkspaceEntry(state.entries, path) || state.selected;
 });
-const hasSelection = computed(() => selectedCount.value > 0);
-const canEdit = computed(() => singleSelectedEntry.value && isWorkspaceTextEditable(singleSelectedEntry.value));
+const contextMenuSelectionPaths = computed(() => {
+  if (Array.isArray(state.contextMenu.selectionPaths) && state.contextMenu.selectionPaths.length) {
+    return state.contextMenu.selectionPaths.filter((path) => Boolean(path));
+  }
+  return Array.from(state.selectedPaths);
+});
+const contextMenuSingleEntry = computed(() => {
+  if (contextMenuSelectionPaths.value.length === 1) {
+    const [path] = contextMenuSelectionPaths.value;
+    return findWorkspaceEntry(state.entries, path) || state.selected;
+  }
+  if (state.contextMenu.primaryPath) {
+    return findWorkspaceEntry(state.entries, state.contextMenu.primaryPath) || state.selected;
+  }
+  return null;
+});
+const contextMenuHasSelection = computed(() => contextMenuSelectionPaths.value.length > 0);
+const contextMenuCanEdit = computed(
+  () => contextMenuSingleEntry.value && isWorkspaceTextEditable(contextMenuSingleEntry.value)
+);
 const menuStyle = computed(() => ({ left: `${state.contextMenu.x}px`, top: `${state.contextMenu.y}px` }));
 const uploadProgressText = computed(() => {
   if (!uploadProgress.active) return '';
@@ -1675,12 +1695,19 @@ const closeContextMenu = () => {
 };
 
 const openContextMenu = async (event, entry) => {
+  const nextSelectionPaths = entry?.path
+    ? state.selectedPaths.has(entry.path)
+      ? getWorkspaceSelectionPaths()
+      : [entry.path]
+    : getWorkspaceSelectionPaths();
   if (entry?.path && !state.selectedPaths.has(entry.path)) {
     setWorkspaceSelection([entry.path], entry.path);
   }
   if (entry?.path) {
     state.selected = entry;
   }
+  state.contextMenu.primaryPath = entry?.path || nextSelectionPaths[0] || '';
+  state.contextMenu.selectionPaths = nextSelectionPaths;
   state.contextMenu.visible = true;
   state.contextMenu.x = event.clientX;
   state.contextMenu.y = event.clientY;
@@ -1694,15 +1721,17 @@ const openContextMenu = async (event, entry) => {
 };
 
 const handleEdit = () => {
+  const targetEntry = contextMenuSingleEntry.value;
   closeContextMenu();
-  if (!singleSelectedEntry.value) return;
-  openEditor(singleSelectedEntry.value);
+  if (!targetEntry) return;
+  openEditor(targetEntry);
 };
 
 const handleRename = () => {
+  const targetEntry = contextMenuSingleEntry.value;
   closeContextMenu();
-  if (!singleSelectedEntry.value) return;
-  startWorkspaceRename(singleSelectedEntry.value);
+  if (!targetEntry) return;
+  startWorkspaceRename(targetEntry);
 };
 
 const handleNewFile = async () => {
@@ -1721,9 +1750,10 @@ const handleContextMenuUpload = () => {
 };
 
 const handleDownload = async () => {
+  const targetEntry = contextMenuSingleEntry.value;
   closeContextMenu();
-  if (!singleSelectedEntry.value) return;
-  await downloadEntry(singleSelectedEntry.value);
+  if (!targetEntry) return;
+  await downloadEntry(targetEntry);
 };
 
 const handleDelete = async () => {
@@ -1790,8 +1820,20 @@ const notifyBatchResult = (payload, actionLabel) => {
     }
   };
 
-const deleteWorkspaceSelection = async () => {
+const getActionSelectionPaths = () => {
   const selectedPaths = getWorkspaceSelectionPaths();
+  if (selectedPaths.length) {
+    return selectedPaths;
+  }
+  const menuSelectionPaths = contextMenuSelectionPaths.value;
+  if (menuSelectionPaths.length) {
+    return [...menuSelectionPaths];
+  }
+  return state.contextMenu.primaryPath ? [state.contextMenu.primaryPath] : [];
+};
+
+const deleteWorkspaceSelection = async () => {
+  const selectedPaths = getActionSelectionPaths();
   if (!selectedPaths.length) return;
   const singleName =
     selectedPaths.length === 1 ? resolveWorkspaceEntryName(selectedPaths[0]) : '';

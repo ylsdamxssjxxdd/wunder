@@ -779,7 +779,14 @@ async fn admin_channel_accounts_batch_delete_removes_records() {
     let (_, total_sessions) = context
         .state
         .storage
-        .list_channel_sessions(Some("feishu"), Some("acc_batch_delete_a"), None, None, 0, 10)
+        .list_channel_sessions(
+            Some("feishu"),
+            Some("acc_batch_delete_a"),
+            None,
+            None,
+            0,
+            10,
+        )
         .expect("list sessions");
     assert_eq!(total_sessions, 0);
 }

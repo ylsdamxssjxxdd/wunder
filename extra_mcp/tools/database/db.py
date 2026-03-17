@@ -1,32 +1,74 @@
 from __future__ import annotations
 
 import base64
+import os
 import re
+from dataclasses import replace
 from datetime import date, datetime, time as time_type, timedelta
+from pathlib import Path
 from decimal import Decimal
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from .config import DbConfig
 
 READ_ONLY_PREFIXES = ("select", "show", "describe", "explain", "with")
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
-def open_connection(cfg: DbConfig):
-    if cfg.engine == "postgres":
+def _is_container_runtime() -> bool:
+    return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
+
+
+def _build_connection_host_candidates(host: str) -> list[str]:
+    cleaned = host.strip()
+    if not cleaned:
+        return [host]
+    candidates = [cleaned]
+    normalized = cleaned.lower()
+    fallback = os.getenv("EXTRA_MCP_LOOPBACK_FALLBACK_HOST", "host.docker.internal").strip()
+    if not fallback or normalized not in LOOPBACK_HOSTS or not _is_container_runtime():
+        return candidates
+    if fallback.lower() != normalized:
+        candidates.append(fallback)
+    return candidates
+
+
+def _connect_with_fallback(
+    cfg: DbConfig,
+    connect_fn: Callable[[DbConfig], Any],
+):
+    last_error: Exception | None = None
+    for host in _build_connection_host_candidates(cfg.host):
+        effective_cfg = cfg if host == cfg.host else replace(cfg, host=host)
         try:
-            import psycopg
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("Missing dependency: pip install psycopg") from exc
-        return psycopg.connect(
-            host=cfg.host,
-            port=cfg.port,
-            user=cfg.user,
-            password=cfg.password,
-            dbname=cfg.database,
-            connect_timeout=cfg.connect_timeout,
-            autocommit=True,
-        )
+            # Preserve the familiar 127.0.0.1/localhost config in Docker by retrying
+            # against the host gateway only when loopback cannot be reached.
+            return connect_fn(effective_cfg)
+        except Exception as exc:  # pragma: no cover - depends on runtime network
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Failed to open database connection.")
 
+
+def _open_postgres_connection(cfg: DbConfig):
+    try:
+        import psycopg
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("Missing dependency: pip install psycopg") from exc
+
+    return psycopg.connect(
+        host=cfg.host,
+        port=cfg.port,
+        user=cfg.user,
+        password=cfg.password,
+        dbname=cfg.database,
+        connect_timeout=cfg.connect_timeout,
+        autocommit=True,
+    )
+
+
+def _open_mysql_connection(cfg: DbConfig):
     try:
         import pymysql
     except ImportError as exc:  # pragma: no cover
@@ -42,6 +84,13 @@ def open_connection(cfg: DbConfig):
         autocommit=True,
         connect_timeout=cfg.connect_timeout,
     )
+
+
+def open_connection(cfg: DbConfig):
+    if cfg.engine == "postgres":
+        return _connect_with_fallback(cfg, _open_postgres_connection)
+
+    return _connect_with_fallback(cfg, _open_mysql_connection)
 
 
 def _quote_identifier(cfg: DbConfig, name: str) -> str:
@@ -91,6 +140,15 @@ SYSTEM_SCHEMA_PATTERN = re.compile(
     r"\b(?:information_schema|pg_catalog|mysql\.|performance_schema)\b",
     re.IGNORECASE,
 )
+ORDER_BY_PATTERN = re.compile(r"\border\s+by\b", re.IGNORECASE)
+OFFSET_PATTERN = re.compile(r"\boffset\b", re.IGNORECASE)
+LIMIT_OFFSET_PATTERN = re.compile(r"\blimit\s+\d+\s*,\s*\d+\b", re.IGNORECASE)
+EXAMPLE_COLUMN_NAME_PATTERN = re.compile(
+    r"(?:status|state|type|level|kind|flag|date|time|mode|category|eligible)",
+    re.IGNORECASE,
+)
+MAX_SCHEMA_EXAMPLE_COLUMNS = 6
+MAX_SCHEMA_EXAMPLE_VALUES = 3
 
 
 def _strip_single_quoted_literals(sql: str) -> str:
@@ -159,6 +217,13 @@ def validate_sql_against_target_table(sql: str, cfg: DbConfig, table: str) -> st
         return "Only SELECT/EXPLAIN/WITH read-only SQL is allowed."
     if SYSTEM_SCHEMA_PATTERN.search(cleaned):
         return "System schema queries are blocked for table-bound db_query tools."
+    if (
+        OFFSET_PATTERN.search(cleaned) or LIMIT_OFFSET_PATTERN.search(cleaned)
+    ) and not ORDER_BY_PATTERN.search(cleaned):
+        return (
+            "Pagination queries on this tool must include a stable ORDER BY "
+            "(for example ORDER BY employee_id)."
+        )
 
     references = _extract_table_references(sql)
     if not references:
@@ -200,24 +265,121 @@ def _normalize_row(row: Sequence[Any], columns: Sequence[str]) -> dict[str, Any]
 
 
 def _compact_columns(columns: Sequence[dict[str, Any]]) -> list[dict[str, str]]:
-    compacted: list[dict[str, str]] = []
+    compacted: list[dict[str, Any]] = []
     for column in columns:
         name = str(column.get("name") or "").strip()
         column_type = str(column.get("type") or "").strip()
         if not name or not column_type:
             continue
-        compacted.append({"name": name, "type": column_type})
+        entry: dict[str, Any] = {"name": name, "type": column_type}
+        full_type = str(column.get("full_type") or "").strip()
+        if full_type:
+            entry["full_type"] = full_type
+        comment = str(column.get("comment") or "").strip()
+        if comment:
+            entry["comment"] = comment
+        examples = column.get("examples")
+        if isinstance(examples, list):
+            cleaned_examples = [
+                str(item).strip() for item in examples if str(item).strip()
+            ]
+            if cleaned_examples:
+                entry["examples"] = cleaned_examples[:MAX_SCHEMA_EXAMPLE_VALUES]
+        compacted.append(entry)
     return compacted
+
+
+def _extract_enum_examples(full_type: str) -> list[str]:
+    return [
+        match.replace("''", "'").strip()
+        for match in re.findall(r"'((?:''|[^'])*)'", full_type)
+        if match.strip()
+    ]
+
+
+def _should_collect_examples(column: dict[str, Any]) -> bool:
+    name = str(column.get("name") or "").strip()
+    column_type = str(column.get("type") or "").strip().lower()
+    full_type = str(column.get("full_type") or "").strip().lower()
+    if column_type in {"enum", "set", "bool", "boolean", "date", "datetime", "timestamp"}:
+        return True
+    if full_type.startswith("enum(") or full_type.startswith("set("):
+        return True
+    return bool(name and EXAMPLE_COLUMN_NAME_PATTERN.search(name))
+
+
+def _collect_column_examples_sync(
+    cfg: DbConfig,
+    table: str,
+    columns: Sequence[dict[str, Any]],
+) -> dict[str, list[str]]:
+    selected = [column for column in columns if _should_collect_examples(column)][
+        :MAX_SCHEMA_EXAMPLE_COLUMNS
+    ]
+    if not selected:
+        return {}
+
+    examples_map: dict[str, list[str]] = {}
+    connection = open_connection(cfg)
+    try:
+        with connection.cursor() as cursor:
+            quoted_table = _quote_identifier(cfg, table)
+            for column in selected:
+                column_name = str(column.get("name") or "").strip()
+                if not column_name:
+                    continue
+                full_type = str(column.get("full_type") or "").strip()
+                enum_examples = _extract_enum_examples(full_type)
+                if enum_examples:
+                    examples_map[column_name] = enum_examples[:MAX_SCHEMA_EXAMPLE_VALUES]
+                    continue
+
+                quoted_column = _quote_identifier(cfg, column_name)
+                sql = (
+                    f"SELECT DISTINCT {quoted_column} FROM {quoted_table} "
+                    f"WHERE {quoted_column} IS NOT NULL ORDER BY {quoted_column} LIMIT %s"
+                )
+                cursor.execute(sql, (MAX_SCHEMA_EXAMPLE_VALUES,))
+                values = []
+                for row in cursor.fetchall():
+                    if not row:
+                        continue
+                    value = str(_normalize_value(row[0])).strip()
+                    if not value or value in values:
+                        continue
+                    values.append(value)
+                if values:
+                    examples_map[column_name] = values
+        return examples_map
+    finally:
+        connection.close()
 
 
 def get_table_schema_compact_sync(cfg: DbConfig, table: str) -> dict[str, Any]:
     details = describe_table_sync(cfg, table)
     if not details.get("ok"):
         return details
+    columns = details.get("columns") or []
+    if not isinstance(columns, list):
+        columns = []
+    try:
+        examples_map = _collect_column_examples_sync(cfg, table, columns)
+    except Exception:
+        examples_map = {}
+    enriched_columns: list[dict[str, Any]] = []
+    for column in columns:
+        if not isinstance(column, dict):
+            continue
+        item = dict(column)
+        name = str(item.get("name") or "").strip()
+        examples = examples_map.get(name)
+        if examples:
+            item["examples"] = examples
+        enriched_columns.append(item)
     return {
         "ok": True,
         "table": table,
-        "columns": _compact_columns(details.get("columns") or []),
+        "columns": _compact_columns(enriched_columns),
     }
 
 
@@ -243,7 +405,7 @@ def fetch_schema_sync(cfg: DbConfig, tables: list[str] | None) -> dict[str, Any]
             table_rows = cursor.fetchall()
 
             column_query = (
-                "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, IS_NULLABLE, "
+                "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, "
                 "COLUMN_KEY, COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT "
                 "FROM information_schema.columns "
                 "WHERE table_schema = %s"
@@ -268,6 +430,7 @@ def fetch_schema_sync(cfg: DbConfig, tables: list[str] | None) -> dict[str, Any]
             table_name,
             column_name,
             data_type,
+            column_type,
             is_nullable,
             column_key,
             column_default,
@@ -282,6 +445,7 @@ def fetch_schema_sync(cfg: DbConfig, tables: list[str] | None) -> dict[str, Any]
                 {
                     "name": column_name,
                     "type": data_type,
+                    "full_type": column_type,
                     "nullable": is_nullable == "YES",
                     "key": column_key,
                     "default": _normalize_value(column_default),
@@ -489,7 +653,7 @@ def describe_table_sync(cfg: DbConfig, table: str) -> dict[str, Any]:
     try:
         with connection.cursor() as cursor:
             query = (
-                "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, COLUMN_KEY, "
+                "SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_KEY, "
                 "COLUMN_DEFAULT, EXTRA, COLUMN_COMMENT "
                 "FROM information_schema.columns "
                 "WHERE table_schema = %s AND table_name = %s "
@@ -502,11 +666,12 @@ def describe_table_sync(cfg: DbConfig, table: str) -> dict[str, Any]:
             {
                 "name": row[0],
                 "type": row[1],
-                "nullable": row[2] == "YES",
-                "key": row[3],
-                "default": _normalize_value(row[4]),
-                "extra": row[5],
-                "comment": row[6],
+                "full_type": row[2],
+                "nullable": row[3] == "YES",
+                "key": row[4],
+                "default": _normalize_value(row[5]),
+                "extra": row[6],
+                "comment": row[7],
             }
             for row in rows
         ]
@@ -572,6 +737,7 @@ def _describe_table_postgres(cfg: DbConfig, table: str) -> dict[str, Any]:
                 {
                     "name": row[0],
                     "type": row[1],
+                    "full_type": row[1],
                     "nullable": not row[2],
                     "key": "PRI" if row[0] in pk_set else "",
                     "default": _normalize_value(column_default),
