@@ -707,7 +707,7 @@
                     </select>
                   </div>
                   <div class="form-row">
-                    <label for="presetAgentFormContainerId" data-i18n="presetAgents.form.containerId">容器编号</label>
+                    <label for="presetAgentFormContainerId" data-i18n="presetAgents.form.containerId">智能体工作目录</label>
                     <input id="presetAgentFormContainerId" type="number" min="1" step="1" />
                   </div>
                   <div class="form-row">
@@ -1269,11 +1269,11 @@
                         for="workspaceContainerSelect"
                         data-i18n="workspace.container.label"
                       >
-                        容器
+                        智能体工作目录
                       </label>
                       <select
                         id="workspaceContainerSelect"
-                        aria-label="容器"
+                        aria-label="智能体工作目录"
                         data-i18n-aria-label="workspace.container.label"
                       ></select>
                     </div>
@@ -1980,20 +1980,82 @@
         <section id="channelsPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="channels.title">渠道监控</h1>
-            <div class="header-actions">
+            <div class="header-actions channels-header-actions">
+              <div class="header-input channels-filter-input">
+                <label for="channelsSearchInput" data-i18n="channels.filter.search">搜索</label>
+                <input
+                  id="channelsSearchInput"
+                  type="text"
+                  data-i18n-placeholder="channels.filter.searchPlaceholder"
+                  placeholder="渠道 / 账号 / 持有者"
+                />
+              </div>
+              <div class="header-input channels-filter-select">
+                <label for="channelsStatusFilter" data-i18n="channels.filter.status">状态</label>
+                <select id="channelsStatusFilter">
+                  <option value="" data-i18n="channels.filter.status.all">全部</option>
+                  <option value="active" data-i18n="channels.filter.status.active">已启用</option>
+                  <option value="disabled" data-i18n="channels.filter.status.disabled">已停用</option>
+                </select>
+              </div>
+              <div class="header-input channels-filter-select">
+                <label for="channelsActivityFilter" data-i18n="channels.filter.activity">活跃时间</label>
+                <select id="channelsActivityFilter">
+                  <option value="" data-i18n="channels.filter.activity.all">不限</option>
+                  <option value="1h" data-i18n="channels.filter.activity.1h">近 1 小时</option>
+                  <option value="24h" data-i18n="channels.filter.activity.24h">近 24 小时</option>
+                  <option value="7d" data-i18n="channels.filter.activity.7d">近 7 天</option>
+                  <option value="30d" data-i18n="channels.filter.activity.30d">近 30 天</option>
+                </select>
+              </div>
+              <label class="channels-issue-only">
+                <input id="channelsIssueOnly" type="checkbox" />
+                <span data-i18n="channels.filter.issueOnly">仅看异常</span>
+              </label>
+              <button id="channelsFilterApplyBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-filter"></i>
+                <span data-i18n="channels.action.applyFilters">筛选</span>
+              </button>
+              <button id="channelsFilterResetBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-rotate-left"></i>
+                <span data-i18n="channels.action.resetFilters">重置</span>
+              </button>
               <button id="channelsRefreshBtn" class="secondary btn-with-icon">
                 <i class="fa-solid fa-arrows-rotate"></i><span data-i18n="common.refresh">刷新</span>
               </button>
             </div>
           </div>
           <div class="tips" data-i18n="channels.tip">
-            集中查看渠道账号运行状态、持有者与通信统计，并支持删除失效渠道账号。
+            集中查看渠道账号运行状态、持有者与通信统计，支持批量启停、批量删除与 CSV 导出。
           </div>
           <div class="management-layout channels-management-layout">
             <div class="management-list channels-list-pane">
               <div class="list-header">
                 <label data-i18n="channels.list.title">渠道列表</label>
+                <label class="channels-select-all">
+                  <input id="channelsSelectAllVisible" type="checkbox" />
+                  <span data-i18n="channels.action.selectAllVisible">全选可见</span>
+                </label>
               </div>
+              <div class="channels-batch-actions">
+                <button id="channelsBatchEnableBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-circle-check"></i>
+                  <span data-i18n="channels.action.batchEnable">批量启用</span>
+                </button>
+                <button id="channelsBatchDisableBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-circle-minus"></i>
+                  <span data-i18n="channels.action.batchDisable">批量停用</span>
+                </button>
+                <button id="channelsBatchDeleteBtn" class="danger btn-with-icon" type="button">
+                  <i class="fa-solid fa-trash-can"></i>
+                  <span data-i18n="channels.action.batchDelete">批量删除</span>
+                </button>
+                <button id="channelsExportBtn" class="secondary btn-with-icon" type="button">
+                  <i class="fa-solid fa-file-export"></i>
+                  <span data-i18n="channels.action.exportCsv">导出 CSV</span>
+                </button>
+              </div>
+              <div id="channelsSelectionMeta" class="muted channels-selection-meta">已选 0 / 可见 0</div>
               <div id="channelAccountList" class="list-body"></div>
             </div>
             <div class="management-detail channels-detail-pane">
@@ -2022,8 +2084,32 @@
                   <div id="channelAccountOwnerExtra" class="channel-metric-extra muted"></div>
                 </div>
                 <div class="channel-metric-card">
-                  <div class="channel-metric-label" data-i18n="channels.field.messageCount">通信次数</div>
+                  <div class="channel-metric-label" data-i18n="channels.field.messageCount">通信总数</div>
                   <div id="channelAccountMessageCount" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.inboundCount">入站消息</div>
+                  <div id="channelAccountInboundCount" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.outboundTotal">出站总数</div>
+                  <div id="channelAccountOutboundTotal" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.outboundSent">出站成功</div>
+                  <div id="channelAccountOutboundSent" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.outboundFailed">出站失败</div>
+                  <div id="channelAccountOutboundFailed" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.outboundRetry">出站重试中</div>
+                  <div id="channelAccountOutboundRetry" class="channel-metric-value">0</div>
+                </div>
+                <div class="channel-metric-card">
+                  <div class="channel-metric-label" data-i18n="channels.field.successRate">成功率</div>
+                  <div id="channelAccountSuccessRate" class="channel-metric-value">0%</div>
                 </div>
                 <div class="channel-metric-card">
                   <div class="channel-metric-label" data-i18n="channels.field.sessionCount">会话数</div>
@@ -4785,4 +4871,5 @@
     <script type="module" src="./app.js?v=20260315-05"></script>
 </body>
 </html>
+
 

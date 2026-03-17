@@ -4,18 +4,18 @@ use crate::services::output_quality;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     BeeroomChatMessageRecord, ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord,
-    ChannelMessageStats, ChannelOutboxRecord, ChannelSessionRecord, ChannelUserBindingRecord,
-    ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord, GatewayClientRecord,
-    GatewayNodeRecord, GatewayNodeTokenRecord, HiveRecord, ListChannelUserBindingsQuery,
-    MediaAssetRecord, MemoryFragmentEmbeddingRecord, MemoryFragmentRecord, MemoryHitRecord,
-    MemoryJobRecord, OrgUnitRecord, SessionLockRecord, SessionLockStatus, SessionRunRecord,
-    SpeechJobRecord, StorageBackend, TeamRunRecord, TeamTaskRecord, UpdateAgentTaskStatusParams,
-    UpdateChannelOutboxStatusParams, UpsertMemoryTaskLogParams, UserAccountRecord,
-    UserAgentAccessRecord, UserAgentPresetBinding, UserAgentRecord, UserQuotaStatus,
-    UserTokenRecord, UserToolAccessRecord, UserWorldConversationRecord,
-    UserWorldConversationSummaryRecord, UserWorldEventRecord, UserWorldGroupRecord,
-    UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult, UserWorldSendMessageResult,
-    VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
+    ChannelMessageStats, ChannelOutboxRecord, ChannelOutboxStats, ChannelSessionRecord,
+    ChannelUserBindingRecord, ChatSessionRecord, CronJobRecord, CronRunRecord, ExternalLinkRecord,
+    GatewayClientRecord, GatewayNodeRecord, GatewayNodeTokenRecord, HiveRecord,
+    ListChannelUserBindingsQuery, MediaAssetRecord, MemoryFragmentEmbeddingRecord,
+    MemoryFragmentRecord, MemoryHitRecord, MemoryJobRecord, OrgUnitRecord, SessionLockRecord,
+    SessionLockStatus, SessionRunRecord, SpeechJobRecord, StorageBackend, TeamRunRecord,
+    TeamTaskRecord, UpdateAgentTaskStatusParams, UpdateChannelOutboxStatusParams,
+    UpsertMemoryTaskLogParams, UserAccountRecord, UserAgentAccessRecord, UserAgentPresetBinding,
+    UserAgentRecord, UserQuotaStatus, UserTokenRecord, UserToolAccessRecord,
+    UserWorldConversationRecord, UserWorldConversationSummaryRecord, UserWorldEventRecord,
+    UserWorldGroupRecord, UserWorldMemberRecord, UserWorldMessageRecord, UserWorldReadResult,
+    UserWorldSendMessageResult, VectorDocumentRecord, VectorDocumentSummaryRecord, DEFAULT_HIVE_ID,
 };
 use anyhow::Result;
 use chrono::Utc;
@@ -6324,6 +6324,118 @@ impl StorageBackend for SqliteStorage {
             total,
             last_message_at,
         })
+    }
+
+    fn get_channel_outbox_stats(
+        &self,
+        channel: &str,
+        account_id: &str,
+    ) -> Result<ChannelOutboxStats> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+            return Ok(ChannelOutboxStats::default());
+        }
+        let conn = self.open()?;
+        let (
+            total,
+            sent,
+            retry,
+            pending,
+            failed,
+            retry_attempts,
+            last_sent_at,
+            last_failed_at,
+        ): (
+            i64,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<i64>,
+            Option<f64>,
+            Option<f64>,
+        ) = conn.query_row(
+            "SELECT \
+                COUNT(*), \
+                SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), \
+                SUM(CASE WHEN status = 'retry' THEN 1 ELSE 0 END), \
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), \
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), \
+                SUM(COALESCE(retry_count, 0)), \
+                MAX(CASE WHEN status = 'sent' THEN COALESCE(delivered_at, updated_at, created_at) END), \
+                MAX(CASE WHEN status = 'failed' THEN COALESCE(updated_at, created_at) END) \
+             FROM channel_outbox WHERE channel = ? AND account_id = ?",
+            params![cleaned_channel, cleaned_account],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )?;
+        Ok(ChannelOutboxStats {
+            total,
+            sent: sent.unwrap_or(0),
+            retry: retry.unwrap_or(0),
+            pending: pending.unwrap_or(0),
+            failed: failed.unwrap_or(0),
+            retry_attempts: retry_attempts.unwrap_or(0),
+            last_sent_at,
+            last_failed_at,
+        })
+    }
+
+    fn delete_channel_sessions(&self, channel: &str, account_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM channel_sessions WHERE channel = ? AND account_id = ?",
+            params![cleaned_channel, cleaned_account],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_channel_messages(&self, channel: &str, account_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM channel_messages WHERE channel = ? AND account_id = ?",
+            params![cleaned_channel, cleaned_account],
+        )?;
+        Ok(affected as i64)
+    }
+
+    fn delete_channel_outbox(&self, channel: &str, account_id: &str) -> Result<i64> {
+        self.ensure_initialized()?;
+        let cleaned_channel = channel.trim();
+        let cleaned_account = account_id.trim();
+        if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.open()?;
+        let affected = conn.execute(
+            "DELETE FROM channel_outbox WHERE channel = ? AND account_id = ?",
+            params![cleaned_channel, cleaned_account],
+        )?;
+        Ok(affected as i64)
     }
 
     fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()> {

@@ -390,6 +390,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  modelJumpHint: {
+    type: String,
+    default: ''
+  },
   presetQuestions: {
     type: Array,
     default: () => []
@@ -541,6 +545,7 @@ const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
 const composerModelName = computed(() => String(props.modelName || '').trim());
+const composerModelJumpHint = computed(() => String(props.modelJumpHint || '').trim());
 const composerModelMissing = computed(() => {
   const name = composerModelName.value;
   if (!name) return true;
@@ -548,6 +553,9 @@ const composerModelMissing = computed(() => {
 });
 const composerModelDisplayName = computed(() => {
   if (composerModelMissing.value && props.modelJumpEnabled) {
+    if (composerModelJumpHint.value) {
+      return composerModelJumpHint.value;
+    }
     return t('desktop.system.modelSetupHint');
   }
   return composerModelName.value;
@@ -558,6 +566,9 @@ const composerModelActionable = computed(
 const composerModelAriaLabel = computed(() => {
   const label = composerModelDisplayName.value || composerModelName.value;
   if (!label) return '';
+  if (composerModelMissing.value && props.modelJumpEnabled && composerModelJumpHint.value) {
+    return composerModelJumpHint.value;
+  }
   return `${t('desktop.system.modelName')}: ${label}`;
 });
 const getDesktopScreenshotBridge = (): DesktopScreenshotBridge | null => {

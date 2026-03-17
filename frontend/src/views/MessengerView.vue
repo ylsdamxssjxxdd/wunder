@@ -1182,6 +1182,7 @@
             :approval-label="agentComposerApprovalHintLabel"
             :model-name="agentHeaderModelDisplayName"
             :model-jump-enabled="agentHeaderModelJumpEnabled"
+            :model-jump-hint="t('messenger.agent.openSettings')"
             @send="sendAgentMessage"
             @stop="stopAgentMessage"
             @toggle-voice-record="toggleAgentVoiceRecord"

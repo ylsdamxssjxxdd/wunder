@@ -81,6 +81,12 @@ export const state = {
   channels: {
     accounts: [],
     selectedIndex: -1,
+    filters: {
+      keyword: "",
+      status: "",
+      activity: "",
+      issueOnly: false,
+    },
   },
   a2aServiceModal: {
     index: null,

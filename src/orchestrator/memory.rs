@@ -115,6 +115,7 @@ impl Orchestrator {
         config: &Config,
         llm_config: &LlmModelConfig,
         user_id: &str,
+        agent_id: Option<&str>,
         session_id: &str,
         is_admin: bool,
         round_info: RoundInfo,
@@ -269,6 +270,8 @@ impl Orchestrator {
                 "reason": if should_compact_by_history { "history" } else { "overflow" },
                 "status": if guard_stats.applied { "guard_only" } else { "skipped" },
                 "skip_reason": if has_candidates { "no_candidates" } else { "no_history" },
+                "fresh_memory_injected": false,
+                "fresh_memory_count": 0,
                 "history_usage": history_usage,
                 "context_tokens": history_usage,
                 "history_threshold": history_threshold,
@@ -465,6 +468,19 @@ impl Orchestrator {
             };
             summary_text = HistoryManager::format_compaction_summary(&fallback_content);
         }
+        let (fresh_memory_block, fresh_memory_count) = self
+            .build_fresh_memory_block_for_compaction(
+                config,
+                user_id,
+                agent_id,
+                session_id,
+                question_candidates.first().map(String::as_str),
+                is_admin,
+            )
+            .await;
+        let (summary_text, fresh_memory_injected) =
+            merge_compaction_summary_with_fresh_memory(&summary_text, &fresh_memory_block);
+        let mut summary_text = summary_text;
         let mut base_messages: Vec<Value> = Vec::new();
         if let Some(system_message) = system_message.clone() {
             base_messages.push(system_message);
@@ -609,6 +625,8 @@ impl Orchestrator {
             "reason": if should_compact_by_history { "history" } else { "overflow" },
             "status": if summary_fallback { "fallback" } else { "done" },
             "summary_fallback": summary_fallback,
+            "fresh_memory_injected": fresh_memory_injected,
+            "fresh_memory_count": fresh_memory_count,
             "summary_tokens": approx_token_count(&summary_text),
             "total_tokens": total_tokens,
             "total_tokens_after": rebuilt_tokens,
@@ -637,6 +655,33 @@ impl Orchestrator {
         emitter.emit("compaction", compaction_payload).await;
 
         Ok(rebuilt)
+    }
+
+    async fn build_fresh_memory_block_for_compaction(
+        &self,
+        config: &Config,
+        user_id: &str,
+        agent_id: Option<&str>,
+        session_id: &str,
+        query_text: Option<&str>,
+        is_admin: bool,
+    ) -> (String, usize) {
+        let fragment_store =
+            crate::services::memory_fragments::MemoryFragmentStore::new(self.storage.clone());
+        let hits = fragment_store
+            .recall_for_prompt(
+                Some(config),
+                user_id,
+                agent_id,
+                Some(session_id),
+                None,
+                query_text,
+                Some(if is_admin { 10 } else { 6 }),
+            )
+            .await;
+        let hit_count = hits.len();
+        let block = fragment_store.build_prompt_block(&hits);
+        (block, hit_count)
     }
 
     pub(crate) async fn force_compact_session(
@@ -719,6 +764,7 @@ impl Orchestrator {
                 &config,
                 &llm_config,
                 user_id,
+                agent_id,
                 session_id,
                 is_admin,
                 RoundInfo::default(),
@@ -778,20 +824,7 @@ impl Orchestrator {
             }
             out.trim().to_string()
         }
-
-        fn strip_existing_memory_block(text: &str) -> String {
-            let prefix = crate::i18n::t("memory.block_prefix");
-            let cleaned = text.trim_end();
-            if prefix.trim().is_empty() {
-                return cleaned.to_string();
-            }
-            if let Some(index) = cleaned.find(prefix.trim()) {
-                return cleaned[..index].trim_end().to_string();
-            }
-            cleaned.to_string()
-        }
-
-        let prompt = strip_existing_memory_block(&prompt);
+        let prompt = strip_existing_memory_block_text(&prompt);
         let placeholder = crate::prompting::SYSTEM_PROMPT_MEMORY_PLACEHOLDER;
         let has_placeholder = prompt.contains(placeholder);
         let config = self.config_store.get().await;
@@ -1562,6 +1595,45 @@ fn extract_guard_content_text(content: &Value) -> String {
     }
 }
 
+fn strip_existing_memory_block_text(text: &str) -> String {
+    let cleaned = text.trim_end();
+    let mut prefixes = i18n::get_known_prefixes("memory.block_prefix");
+    if prefixes.is_empty() {
+        prefixes.push(i18n::t("memory.block_prefix"));
+    }
+    let mut cut_index: Option<usize> = None;
+    for prefix in prefixes {
+        let marker = prefix.trim();
+        if marker.is_empty() {
+            continue;
+        }
+        if let Some(index) = cleaned.find(marker) {
+            cut_index = Some(cut_index.map_or(index, |current| current.min(index)));
+        }
+    }
+    if let Some(index) = cut_index {
+        cleaned[..index].trim_end().to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+fn merge_compaction_summary_with_fresh_memory(
+    summary_text: &str,
+    memory_block: &str,
+) -> (String, bool) {
+    let summary_without_memory = strip_existing_memory_block_text(summary_text);
+    let memory_block = memory_block.trim();
+    if memory_block.is_empty() {
+        return (summary_without_memory, false);
+    }
+    let summary_without_memory = summary_without_memory.trim_end();
+    if summary_without_memory.is_empty() {
+        return (memory_block.to_string(), true);
+    }
+    (format!("{summary_without_memory}\n\n{memory_block}"), true)
+}
+
 fn is_empty_compaction_summary(summary: &str) -> bool {
     let cleaned = summary.trim();
     if cleaned.is_empty() {
@@ -1876,5 +1948,38 @@ mod tests {
         assert!(stats.applied);
         assert!(stats.summary_trimmed || stats.fallback_trim_applied);
         assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_merge_compaction_summary_with_fresh_memory_appends_block() {
+        let summary = format!(
+            "{}\nKeep this summary",
+            i18n::t("history.compaction_prefix")
+        );
+        let memory_block = format!(
+            "{}\n- Remember user prefers markdown",
+            i18n::t("memory.block_prefix")
+        );
+        let (merged, injected) =
+            merge_compaction_summary_with_fresh_memory(&summary, &memory_block);
+        assert!(injected);
+        assert!(merged.contains("Keep this summary"));
+        assert!(merged.contains("Remember user prefers markdown"));
+    }
+
+    #[test]
+    fn test_merge_compaction_summary_with_fresh_memory_replaces_old_block() {
+        let summary = format!(
+            "{}\nKeep this summary\n\n{}\n- stale memory",
+            i18n::t("history.compaction_prefix"),
+            i18n::t("memory.block_prefix"),
+        );
+        let memory_block = format!("{}\n- fresh memory", i18n::t("memory.block_prefix"));
+        let (merged, injected) =
+            merge_compaction_summary_with_fresh_memory(&summary, &memory_block);
+        assert!(injected);
+        assert!(merged.contains("Keep this summary"));
+        assert!(merged.contains("fresh memory"));
+        assert!(!merged.contains("stale memory"));
     }
 }

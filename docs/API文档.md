@@ -1289,7 +1289,7 @@
 - 用户管理：`/wunder/admin/user_accounts`、`/wunder/admin/user_accounts/test/seed`、`/wunder/admin/user_accounts/test/cleanup`、`/wunder/admin/user_accounts/{user_id}`、`/wunder/admin/user_accounts/{user_id}/password`、`/wunder/admin/user_accounts/{user_id}/tool_access`。
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
-- 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
+- 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
 - 吞吐量/性能/benchmark/模拟：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/benchmark/*`、`/wunder/admin/sim_lab/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
@@ -1309,6 +1309,11 @@
 - 入参（Query，可选）：
   - `channel`：渠道名过滤
   - `status`：账号状态过滤（如 `active`）
+  - `keyword`：模糊搜索关键字（匹配渠道/账号/持有者/状态）
+  - `owner_user_id`：按持有者用户 ID 过滤
+  - `issue_only`：是否仅返回异常账号（`true/false`）
+  - `last_active_after`：最近通信时间下限（秒级时间戳）
+  - `last_active_before`：最近通信时间上限（秒级时间戳）
 - 返回（JSON）：
   - `data.items[]`：渠道账号列表，字段包括：
     - `channel`、`account_id`、`status`、`config`、`created_at`、`updated_at`
@@ -1318,8 +1323,29 @@
     - `owner_count`：持有者数量
     - `binding_count`：绑定数量
     - `session_count`：渠道会话数量
-    - `message_count` / `communication_count`：通信消息数量
+    - `message_count` / `inbound_message_count`：入站消息数量
+    - `outbound_total_count` / `outbound_sent_count` / `outbound_failed_count` / `outbound_retry_count` / `outbound_pending_count`：出站分维统计
+    - `outbound_retry_attempts`：累计出站重试次数
+    - `outbound_success_rate`：出站成功率（`sent / (sent + failed)`）
+    - `communication_count`：通信总量（入站 + 出站）
     - `last_communication_at`：最近通信时间（秒级时间戳）
+    - `has_issue`：是否存在异常（账号停用、长连接异常或出站失败/重试）
+
+### 4.1.25.1.1 `/wunder/admin/channels/accounts/batch`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `action`：批量动作，支持 `enable` / `disable` / `delete`
+  - `items[]`：目标账号列表
+    - `channel`
+    - `account_id`
+- 返回（JSON）：
+  - `data.action`：执行动作
+  - `data.total`：请求中有效目标数（去重后）
+  - `data.success` / `data.failed` / `data.skipped`：批量执行汇总
+  - `data.deleted_accounts` / `data.deleted_bindings` / `data.deleted_user_bindings` / `data.deleted_sessions` / `data.deleted_messages` / `data.deleted_outbox`：当 `action=delete` 时的累计清理统计
+  - `data.items[]`：逐账号结果（`channel/account_id/ok/result`，并按动作附带 `status` 或删除统计字段）
+- 说明：用于管理员批量启用、停用或删除渠道账号；删除动作会复用单条删除链路并清理关联绑定、会话、消息与出站队列。
 
 ### 4.1.25.2 `/wunder/admin/channels/accounts/{channel}/{account_id}`
 
@@ -1329,7 +1355,22 @@
   - `data.deleted_accounts`：删除账号记录数
   - `data.deleted_bindings`：删除渠道绑定数
   - `data.deleted_user_bindings`：删除渠道用户绑定数
+  - `data.deleted_sessions`：删除渠道会话数
+  - `data.deleted_messages`：删除渠道消息数
+  - `data.deleted_outbox`：删除出站队列记录数
 - 说明：用于管理端快速移除失效渠道账号及其绑定关系。
+
+### 4.1.25.2.1 `/wunder/admin/channels/accounts/{channel}/{account_id}/impact`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.account_exists`：账号是否存在
+  - `data.bindings`：将受影响的渠道绑定数
+  - `data.user_bindings`：将受影响的渠道用户绑定数
+  - `data.sessions`：将受影响的渠道会话数
+  - `data.messages`：将受影响的渠道消息数
+  - `data.outbox_total` / `data.outbox_pending` / `data.outbox_retry` / `data.outbox_failed`：将受影响的出站队列统计
+- 说明：用于删除前影响预估提示。
 
 ### 4.1.25.3 `/wunder/admin/channels/bindings`
 
@@ -1600,7 +1641,9 @@
 - 原 `/wunder/admin/memory/*` 管理端接口已下线，不再提供管理员侧记忆面板能力。
 - 当前推荐方式：通过结构化记忆碎片系统 + 可选内置工具 `记忆管理`（`memory_manager`）协同维护长期记忆。
 - 作用域：按 `用户 + 智能体` 隔离；记忆只在线程首次建立时注入到系统提示词快照，同一线程后续不再自动改写系统提示词，如需读取最新记忆请通过 `memory_manager` 的 `recall` 动作主动检索。
+- `memory_manager` 建议主动触发时机：当模型置信度不足、信息疑似过期、用户指出“答错/记错”、或用户反馈导致偏好/约束变化时，先执行 `recall` 校验，再决定是否 `add/update`。
 - recall 目前仅保留轻量关键词召回，不再使用 embedding/语义 rerank；工具返回会收敛为更适合模型消费的精简结构（如 `matched_terms`、`why`），以降低上下文开销。
+- 会话发生 context compaction 后，调度器会基于 `用户 + 智能体 + 当前问题` 再次执行 fresh recall，并把记忆块拼接到压缩摘要消息继续执行（不改写线程冻结的 system prompt）；`compaction` 事件会附带 `fresh_memory_injected` 与 `fresh_memory_count` 字段。
 - 记忆碎片当前可见状态为 `active / superseded / invalidated`；其中 `superseded` 表示该碎片已被同 `fact_key` 的新版本替代，默认不会被 recall 返回，但仍会在列表接口与用户可视化卡片墙中展示。
 - recall 命中、碎片创建/编辑、列表读取时会惰性刷新 `tier(core/working/peripheral)` 与状态链路；因此接口返回的 `tier`、`status`、`supersedes_memory_id`、`superseded_by_memory_id` 字段可直接用于前端展示版本关系与生命周期信息。
 - `memory_manager` 的 `list/add/update/delete/clear/recall` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。

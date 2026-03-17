@@ -511,6 +511,18 @@ pub struct ChannelMessageStats {
     pub last_message_at: Option<f64>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct ChannelOutboxStats {
+    pub total: i64,
+    pub sent: i64,
+    pub retry: i64,
+    pub pending: i64,
+    pub failed: i64,
+    pub retry_attempts: i64,
+    pub last_sent_at: Option<f64>,
+    pub last_failed_at: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ChannelOutboxRecord {
     pub outbox_id: String,
@@ -1333,6 +1345,14 @@ pub trait StorageBackend: Send + Sync {
         channel: &str,
         account_id: &str,
     ) -> Result<ChannelMessageStats>;
+    fn get_channel_outbox_stats(
+        &self,
+        channel: &str,
+        account_id: &str,
+    ) -> Result<ChannelOutboxStats>;
+    fn delete_channel_sessions(&self, channel: &str, account_id: &str) -> Result<i64>;
+    fn delete_channel_messages(&self, channel: &str, account_id: &str) -> Result<i64>;
+    fn delete_channel_outbox(&self, channel: &str, account_id: &str) -> Result<i64>;
 
     fn enqueue_channel_outbox(&self, record: &ChannelOutboxRecord) -> Result<()>;
     fn get_channel_outbox(&self, outbox_id: &str) -> Result<Option<ChannelOutboxRecord>>;

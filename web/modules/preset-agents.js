@@ -618,10 +618,11 @@ const renderPresetDetail = () => {
     return;
   }
   elements.presetAgentDetailTitle.textContent = rawPreset.name;
+  const workspaceLabel = t("workspace.container.label");
   elements.presetAgentDetailMeta.textContent = [
     t("presetAgents.detail.templateUser", { user: TEMPLATE_USER_ID }),
     `v${Math.max(1, Number(rawPreset.revision) || 1)}`,
-    `container: ${preset.sandbox_container_id}`,
+    `${workspaceLabel}: ${preset.sandbox_container_id}`,
     `hive: ${DEFAULT_HIVE_ID}`,
   ].join(" | ");
   elements.presetAgentDeleteBtn.disabled = false;

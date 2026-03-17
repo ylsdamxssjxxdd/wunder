@@ -129,8 +129,16 @@ pub fn router() -> Router<Arc<AppState>> {
             get(admin_channel_accounts),
         )
         .route(
+            "/wunder/admin/channels/accounts/batch",
+            post(admin_channel_accounts_batch),
+        )
+        .route(
             "/wunder/admin/channels/accounts/{channel}/{account_id}",
             delete(admin_channel_account_delete),
+        )
+        .route(
+            "/wunder/admin/channels/accounts/{channel}/{account_id}/impact",
+            get(admin_channel_account_delete_impact),
         )
         .route(
             "/wunder/admin/channels/bindings",
@@ -6677,6 +6685,63 @@ struct ChannelAccountQuery {
     channel: Option<String>,
     #[serde(default)]
     status: Option<String>,
+    #[serde(default)]
+    keyword: Option<String>,
+    #[serde(default)]
+    owner_user_id: Option<String>,
+    #[serde(default)]
+    issue_only: Option<bool>,
+    #[serde(default)]
+    last_active_after: Option<f64>,
+    #[serde(default)]
+    last_active_before: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelAccountBatchItemRequest {
+    channel: String,
+    account_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelAccountBatchRequest {
+    action: String,
+    #[serde(default)]
+    items: Vec<ChannelAccountBatchItemRequest>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ChannelAccountBatchAction {
+    Enable,
+    Disable,
+    Delete,
+}
+
+impl ChannelAccountBatchAction {
+    fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "enable" => Some(Self::Enable),
+            "disable" => Some(Self::Disable),
+            "delete" => Some(Self::Delete),
+            _ => None,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Enable => "enable",
+            Self::Disable => "disable",
+            Self::Delete => "delete",
+        }
+    }
+
+    fn target_status(self) -> Option<&'static str> {
+        match self {
+            Self::Enable => Some("active"),
+            Self::Disable => Some("disabled"),
+            Self::Delete => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -6758,9 +6823,31 @@ fn resolve_channel_binding_count(
 }
 
 const ADMIN_CHANNEL_OWNER_PREVIEW_LIMIT: i64 = 200;
+const ADMIN_CHANNEL_BATCH_LIMIT: usize = 500;
 
 fn normalize_channel_event_ts(raw: Option<f64>) -> Option<f64> {
     raw.filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn contains_ignore_ascii_case(haystack: &str, needle_lower: &str) -> bool {
+    if needle_lower.is_empty() {
+        return true;
+    }
+    haystack.to_ascii_lowercase().contains(needle_lower)
+}
+
+fn runtime_connection_status_not_running(runtime: &Value, key: &str) -> bool {
+    runtime
+        .get(key)
+        .and_then(|item| item.get("status"))
+        .and_then(Value::as_str)
+        .map(|status| !status.eq_ignore_ascii_case("running"))
+        .unwrap_or(false)
+}
+
+fn runtime_has_issue(runtime: &Value) -> bool {
+    runtime_connection_status_not_running(runtime, "feishu_long_connection")
+        || runtime_connection_status_not_running(runtime, "xmpp_long_connection")
 }
 
 fn build_channel_account_runtime(
@@ -6774,8 +6861,9 @@ fn build_channel_account_runtime(
         .trim()
         .eq_ignore_ascii_case(feishu::FEISHU_CHANNEL)
     {
-        let resolved_binding_count = binding_count
-            .or_else(|| resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok());
+        let resolved_binding_count = binding_count.or_else(|| {
+            resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok()
+        });
         let Some(feishu_cfg) = account_cfg.feishu else {
             return json!({
                 "feishu_long_connection": {
@@ -6817,8 +6905,9 @@ fn build_channel_account_runtime(
         .trim()
         .eq_ignore_ascii_case(xmpp::XMPP_CHANNEL)
     {
-        let resolved_binding_count = binding_count
-            .or_else(|| resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok());
+        let resolved_binding_count = binding_count.or_else(|| {
+            resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok()
+        });
         let Some(xmpp_cfg) = account_cfg.xmpp else {
             return json!({
                 "xmpp_long_connection": {
@@ -6910,62 +6999,122 @@ fn resolve_channel_owner_preview(
     Ok((owners, binding_total))
 }
 
-fn admin_delete_channel_account_records(
+fn resolve_channel_account_delete_impact(
     state: &Arc<AppState>,
     channel: &str,
     account_id: &str,
-) -> Result<(i64, i64, i64), Response> {
+) -> Result<Value, Response> {
+    let account_exists = state
+        .storage
+        .get_channel_account(channel, account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .is_some();
     let bindings = state
         .storage
         .list_channel_bindings(Some(channel))
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .into_iter()
+        .filter(|binding| binding.account_id.eq_ignore_ascii_case(account_id))
+        .count() as i64;
+    let (_, user_bindings) = state
+        .storage
+        .list_channel_user_bindings(ListChannelUserBindingsQuery {
+            channel: Some(channel),
+            account_id: Some(account_id),
+            peer_kind: None,
+            peer_id: None,
+            user_id: None,
+            offset: 0,
+            limit: 1,
+        })
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (_, sessions) = state
+        .storage
+        .list_channel_sessions(Some(channel), Some(account_id), None, None, 0, 1)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let messages = state
+        .storage
+        .get_channel_message_stats(channel, account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+        .total;
+    let outbox = state
+        .storage
+        .get_channel_outbox_stats(channel, account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    Ok(json!({
+        "account_exists": account_exists,
+        "bindings": bindings,
+        "user_bindings": user_bindings,
+        "sessions": sessions,
+        "messages": messages,
+        "outbox_total": outbox.total,
+        "outbox_pending": outbox.pending,
+        "outbox_retry": outbox.retry,
+        "outbox_failed": outbox.failed,
+    }))
+}
+
+fn delete_channel_account_records(
+    storage: &dyn StorageBackend,
+    channel: &str,
+    account_id: &str,
+) -> Result<(i64, i64, i64, i64, i64, i64), anyhow::Error> {
+    let bindings = storage.list_channel_bindings(Some(channel))?;
     let mut deleted_bindings = 0_i64;
     for binding in bindings {
         if !binding.account_id.eq_ignore_ascii_case(account_id) {
             continue;
         }
-        deleted_bindings += state
-            .storage
-            .delete_channel_binding(&binding.binding_id)
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        deleted_bindings += storage.delete_channel_binding(&binding.binding_id)?;
     }
 
     let mut deleted_user_bindings = 0_i64;
     loop {
-        let (records, _) = state
-            .storage
-            .list_channel_user_bindings(ListChannelUserBindingsQuery {
-                channel: Some(channel),
-                account_id: Some(account_id),
-                peer_kind: None,
-                peer_id: None,
-                user_id: None,
-                offset: 0,
-                limit: 500,
-            })
-            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let (records, _) = storage.list_channel_user_bindings(ListChannelUserBindingsQuery {
+            channel: Some(channel),
+            account_id: Some(account_id),
+            peer_kind: None,
+            peer_id: None,
+            user_id: None,
+            offset: 0,
+            limit: 500,
+        })?;
         if records.is_empty() {
             break;
         }
         for record in records {
-            deleted_user_bindings += state
-                .storage
-                .delete_channel_user_binding(
-                    &record.channel,
-                    &record.account_id,
-                    &record.peer_kind,
-                    &record.peer_id,
-                )
-                .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+            deleted_user_bindings += storage.delete_channel_user_binding(
+                &record.channel,
+                &record.account_id,
+                &record.peer_kind,
+                &record.peer_id,
+            )?;
         }
     }
 
-    let deleted_account = state
-        .storage
-        .delete_channel_account(channel, account_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let deleted_sessions = storage.delete_channel_sessions(channel, account_id)?;
+    let deleted_messages = storage.delete_channel_messages(channel, account_id)?;
+    let deleted_outbox = storage.delete_channel_outbox(channel, account_id)?;
 
-    Ok((deleted_account, deleted_bindings, deleted_user_bindings))
+    let deleted_account = storage.delete_channel_account(channel, account_id)?;
+
+    Ok((
+        deleted_account,
+        deleted_bindings,
+        deleted_user_bindings,
+        deleted_sessions,
+        deleted_messages,
+        deleted_outbox,
+    ))
+}
+
+fn admin_delete_channel_account_records(
+    state: &Arc<AppState>,
+    channel: &str,
+    account_id: &str,
+) -> Result<(i64, i64, i64, i64, i64, i64), Response> {
+    delete_channel_account_records(state.storage.as_ref(), channel, account_id)
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))
 }
 
 async fn admin_channel_accounts(
@@ -6974,6 +7123,21 @@ async fn admin_channel_accounts(
 ) -> Result<Json<Value>, Response> {
     let channel = query.channel.as_deref().map(|value| value.trim());
     let status = query.status.as_deref().map(|value| value.trim());
+    let keyword = query
+        .keyword
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    let owner_user_filter = query
+        .owner_user_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase());
+    let issue_only = query.issue_only.unwrap_or(false);
+    let last_active_after = normalize_channel_event_ts(query.last_active_after);
+    let last_active_before = normalize_channel_event_ts(query.last_active_before);
     let records = state
         .storage
         .list_channel_accounts(channel, status)
@@ -7002,6 +7166,10 @@ async fn admin_channel_accounts(
             .storage
             .get_channel_message_stats(&record.channel, &record.account_id)
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        let outbox_stats = state
+            .storage
+            .get_channel_outbox_stats(&record.channel, &record.account_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         let runtime =
             build_channel_account_runtime(state.storage.as_ref(), &record, Some(binding_count));
         let owner_user_id = owners
@@ -7020,8 +7188,62 @@ async fn admin_channel_accounts(
         let session_last_message_at = sessions_preview
             .first()
             .and_then(|item| normalize_channel_event_ts(Some(item.last_message_at)));
-        let last_communication_at =
-            normalize_channel_event_ts(message_stats.last_message_at).or(session_last_message_at);
+        let last_communication_at = normalize_channel_event_ts(message_stats.last_message_at)
+            .or(normalize_channel_event_ts(outbox_stats.last_sent_at))
+            .or(normalize_channel_event_ts(outbox_stats.last_failed_at))
+            .or(session_last_message_at);
+        let inbound_message_count = message_stats.total.max(0);
+        let communication_count = inbound_message_count + outbox_stats.total.max(0);
+        let sent_or_failed = outbox_stats.sent.max(0) + outbox_stats.failed.max(0);
+        let outbound_success_rate = if sent_or_failed > 0 {
+            (outbox_stats.sent.max(0) as f64) / (sent_or_failed as f64)
+        } else {
+            0.0
+        };
+        let account_active = record.status.trim().eq_ignore_ascii_case("active");
+        let has_runtime_issue = runtime_has_issue(&runtime);
+        let has_delivery_issue = outbox_stats.failed > 0 || outbox_stats.retry > 0;
+        let has_issue = !account_active || has_runtime_issue || has_delivery_issue;
+        if issue_only && !has_issue {
+            continue;
+        }
+        if let Some(after) = last_active_after {
+            if last_communication_at.unwrap_or(0.0) < after {
+                continue;
+            }
+        }
+        if let Some(before) = last_active_before {
+            if last_communication_at.unwrap_or(f64::MAX) > before {
+                continue;
+            }
+        }
+        if let Some(owner_filter) = owner_user_filter.as_deref() {
+            let matched = owners.iter().any(|item| {
+                item.get("user_id")
+                    .and_then(Value::as_str)
+                    .map(|user_id| user_id.eq_ignore_ascii_case(owner_filter))
+                    .unwrap_or(false)
+            }) || owner_user_id.eq_ignore_ascii_case(owner_filter);
+            if !matched {
+                continue;
+            }
+        }
+        if let Some(keyword) = keyword.as_deref() {
+            let keyword_matched = contains_ignore_ascii_case(&record.channel, keyword)
+                || contains_ignore_ascii_case(&record.account_id, keyword)
+                || contains_ignore_ascii_case(&record.status, keyword)
+                || contains_ignore_ascii_case(&owner_user_id, keyword)
+                || contains_ignore_ascii_case(&owner_username, keyword)
+                || owners.iter().any(|item| {
+                    let user_id = item.get("user_id").and_then(Value::as_str).unwrap_or("");
+                    let username = item.get("username").and_then(Value::as_str).unwrap_or("");
+                    contains_ignore_ascii_case(user_id, keyword)
+                        || contains_ignore_ascii_case(username, keyword)
+                });
+            if !keyword_matched {
+                continue;
+            }
+        }
         items.push(json!({
             "channel": record.channel,
             "account_id": record.account_id,
@@ -7036,12 +7258,246 @@ async fn admin_channel_accounts(
             "owner_count": owner_count,
             "binding_count": binding_count,
             "session_count": session_count,
-            "message_count": message_stats.total,
-            "communication_count": message_stats.total,
+            "message_count": inbound_message_count,
+            "inbound_message_count": inbound_message_count,
+            "outbound_total_count": outbox_stats.total,
+            "outbound_sent_count": outbox_stats.sent,
+            "outbound_failed_count": outbox_stats.failed,
+            "outbound_retry_count": outbox_stats.retry,
+            "outbound_pending_count": outbox_stats.pending,
+            "outbound_retry_attempts": outbox_stats.retry_attempts,
+            "outbound_success_rate": outbound_success_rate,
+            "communication_count": communication_count,
             "last_communication_at": last_communication_at,
+            "has_issue": has_issue,
         }));
     }
     Ok(Json(json!({ "data": { "items": items } })))
+}
+
+async fn admin_channel_accounts_batch(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ChannelAccountBatchRequest>,
+) -> Result<Json<Value>, Response> {
+    let action = ChannelAccountBatchAction::parse(&payload.action).ok_or_else(|| {
+        error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid batch action, expected enable/disable/delete".to_string(),
+        )
+    })?;
+
+    if payload.items.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+
+    let mut dedup = HashSet::new();
+    let mut targets = Vec::new();
+    for item in payload.items {
+        let channel = item.channel.trim();
+        let account_id = item.account_id.trim();
+        if channel.is_empty() || account_id.is_empty() {
+            continue;
+        }
+        let dedup_key = format!(
+            "{}::{}",
+            channel.to_ascii_lowercase(),
+            account_id.to_ascii_lowercase()
+        );
+        if dedup.insert(dedup_key) {
+            targets.push((channel.to_string(), account_id.to_string()));
+        }
+    }
+
+    if targets.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    if targets.len() > ADMIN_CHANNEL_BATCH_LIMIT {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            format!("batch items exceed limit {ADMIN_CHANNEL_BATCH_LIMIT}"),
+        ));
+    }
+
+    let now = now_ts();
+    let target_status = action.target_status();
+    let mut success = 0_i64;
+    let mut failed = 0_i64;
+    let mut skipped = 0_i64;
+    let mut deleted_accounts = 0_i64;
+    let mut deleted_bindings = 0_i64;
+    let mut deleted_user_bindings = 0_i64;
+    let mut deleted_sessions = 0_i64;
+    let mut deleted_messages = 0_i64;
+    let mut deleted_outbox = 0_i64;
+    let mut items = Vec::with_capacity(targets.len());
+
+    for (channel, account_id) in targets {
+        match action {
+            ChannelAccountBatchAction::Enable | ChannelAccountBatchAction::Disable => {
+                match state.storage.get_channel_account(&channel, &account_id) {
+                    Ok(Some(mut record)) => {
+                        let Some(next_status) = target_status else {
+                            failed += 1;
+                            items.push(json!({
+                                "channel": channel,
+                                "account_id": account_id,
+                                "ok": false,
+                                "action": action.as_str(),
+                                "result": "failed",
+                                "error": "invalid target status",
+                            }));
+                            continue;
+                        };
+                        if record.status.eq_ignore_ascii_case(next_status) {
+                            skipped += 1;
+                            items.push(json!({
+                                "channel": channel,
+                                "account_id": account_id,
+                                "ok": true,
+                                "action": action.as_str(),
+                                "result": "noop",
+                                "status": record.status,
+                            }));
+                            continue;
+                        }
+                        record.status = next_status.to_string();
+                        record.updated_at = now;
+                        match state.storage.upsert_channel_account(&record) {
+                            Ok(()) => {
+                                success += 1;
+                                items.push(json!({
+                                    "channel": channel,
+                                    "account_id": account_id,
+                                    "ok": true,
+                                    "action": action.as_str(),
+                                    "result": "updated",
+                                    "status": record.status,
+                                    "updated_at": record.updated_at,
+                                }));
+                            }
+                            Err(err) => {
+                                failed += 1;
+                                items.push(json!({
+                                    "channel": channel,
+                                    "account_id": account_id,
+                                    "ok": false,
+                                    "action": action.as_str(),
+                                    "result": "failed",
+                                    "error": err.to_string(),
+                                }));
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        skipped += 1;
+                        items.push(json!({
+                            "channel": channel,
+                            "account_id": account_id,
+                            "ok": true,
+                            "action": action.as_str(),
+                            "result": "not_found",
+                        }));
+                    }
+                    Err(err) => {
+                        failed += 1;
+                        items.push(json!({
+                            "channel": channel,
+                            "account_id": account_id,
+                            "ok": false,
+                            "action": action.as_str(),
+                            "result": "failed",
+                            "error": err.to_string(),
+                        }));
+                    }
+                }
+            }
+            ChannelAccountBatchAction::Delete => {
+                match delete_channel_account_records(state.storage.as_ref(), &channel, &account_id) {
+                    Ok((
+                        removed_account,
+                        removed_bindings,
+                        removed_user_bindings,
+                        removed_sessions,
+                        removed_messages,
+                        removed_outbox,
+                    )) => {
+                        deleted_accounts += removed_account;
+                        deleted_bindings += removed_bindings;
+                        deleted_user_bindings += removed_user_bindings;
+                        deleted_sessions += removed_sessions;
+                        deleted_messages += removed_messages;
+                        deleted_outbox += removed_outbox;
+                        if removed_account > 0 {
+                            success += 1;
+                        } else {
+                            skipped += 1;
+                        }
+                        items.push(json!({
+                            "channel": channel,
+                            "account_id": account_id,
+                            "ok": true,
+                            "action": action.as_str(),
+                            "result": if removed_account > 0 { "deleted" } else { "not_found" },
+                            "deleted_accounts": removed_account,
+                            "deleted_bindings": removed_bindings,
+                            "deleted_user_bindings": removed_user_bindings,
+                            "deleted_sessions": removed_sessions,
+                            "deleted_messages": removed_messages,
+                            "deleted_outbox": removed_outbox,
+                        }));
+                    }
+                    Err(err) => {
+                        failed += 1;
+                        items.push(json!({
+                            "channel": channel,
+                            "account_id": account_id,
+                            "ok": false,
+                            "action": action.as_str(),
+                            "result": "failed",
+                            "error": err.to_string(),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Json(json!({ "data": {
+        "action": action.as_str(),
+        "total": items.len(),
+        "success": success,
+        "failed": failed,
+        "skipped": skipped,
+        "deleted_accounts": deleted_accounts,
+        "deleted_bindings": deleted_bindings,
+        "deleted_user_bindings": deleted_user_bindings,
+        "deleted_sessions": deleted_sessions,
+        "deleted_messages": deleted_messages,
+        "deleted_outbox": deleted_outbox,
+        "items": items,
+    }})))
+}
+
+async fn admin_channel_account_delete_impact(
+    State(state): State<Arc<AppState>>,
+    AxumPath((channel, account_id)): AxumPath<(String, String)>,
+) -> Result<Json<Value>, Response> {
+    let cleaned_channel = channel.trim().to_string();
+    let cleaned_account = account_id.trim().to_string();
+    if cleaned_channel.is_empty() || cleaned_account.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.content_required"),
+        ));
+    }
+    let impact = resolve_channel_account_delete_impact(&state, &cleaned_channel, &cleaned_account)?;
+    Ok(Json(json!({ "data": impact })))
 }
 
 async fn admin_channel_account_delete(
@@ -7057,8 +7513,14 @@ async fn admin_channel_account_delete(
         ));
     }
 
-    let (deleted_account, deleted_bindings, deleted_user_bindings) =
-        admin_delete_channel_account_records(&state, &cleaned_channel, &cleaned_account)?;
+    let (
+        deleted_account,
+        deleted_bindings,
+        deleted_user_bindings,
+        deleted_sessions,
+        deleted_messages,
+        deleted_outbox,
+    ) = admin_delete_channel_account_records(&state, &cleaned_channel, &cleaned_account)?;
 
     Ok(Json(json!({ "data": {
         "channel": cleaned_channel,
@@ -7066,6 +7528,9 @@ async fn admin_channel_account_delete(
         "deleted_accounts": deleted_account,
         "deleted_bindings": deleted_bindings,
         "deleted_user_bindings": deleted_user_bindings,
+        "deleted_sessions": deleted_sessions,
+        "deleted_messages": deleted_messages,
+        "deleted_outbox": deleted_outbox,
     }})))
 }
 

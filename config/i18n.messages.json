@@ -1000,12 +1000,12 @@
     "zh-CN": "记忆动作无效，可用 list/add/update/delete/clear/recall。"
   },
   "tool.memory_manager.note_new_sessions_only": {
-    "en-US": "Memory writes affect future sessions only; existing sessions keep their frozen prompt snapshot. Use recall to fetch the latest memory inside the current session.",
-    "zh-CN": "记忆写入仅对后续新会话生效；已有会话继续使用已冻结的提示词快照。当前会话如需最新记忆，请调用 recall 主动检索。"
+    "en-US": "Memory writes affect future sessions only; existing sessions keep their frozen prompt snapshot. In the current session, use recall first when the user corrects you, says the answer is wrong, or updates preferences/constraints, then decide whether add/update is needed.",
+    "zh-CN": "记忆写入仅对后续新会话生效；已有会话继续使用已冻结的提示词快照。当前会话里，当用户纠错、指出你答错，或更新偏好/约束时，先调用 recall 校验，再决定是否 add/update。"
   },
   "tool.memory_manager.note_recall_current_session": {
-    "en-US": "Recall reads the latest long-term memory in the current session without rewriting the thread's frozen system prompt.",
-    "zh-CN": "recall 会在当前会话中读取最新长期记忆，但不会改写该线程已冻结的系统提示词。"
+    "en-US": "Recall reads the latest long-term memory in the current session without rewriting the thread's frozen system prompt. Trigger it proactively when confidence is low, details may be stale, or user feedback indicates mismatch.",
+    "zh-CN": "recall 会在当前会话中读取最新长期记忆，但不会改写该线程已冻结的系统提示词。置信度不足、信息可能过期、或用户反馈与当前回答不一致时，应主动触发 recall。"
   },
   "tool.list.path_not_found": {
     "en-US": "Path not found.",
@@ -1892,8 +1892,8 @@
     "zh-CN": "等待超时秒数（1-30）。"
   },
   "tool.spec.memory_manager.description": {
-    "en-US": "Manage and recall the current agent's long-term memory entries (list/add/update/delete/clear/recall). Use recall when the current thread needs the latest memory without changing its frozen system prompt; use write actions only for stable facts, preferences, constraints, or persistent to-dos. For add/update, prefer structured writes: title = topic, summary = one-line conclusion, content = full detail, plus category/tags when helpful.",
-    "zh-CN": "管理并检索当前智能体的长期记忆条目（list/add/update/delete/clear/recall）。当当前线程需要读取最新记忆但又不能改写其已冻结的系统提示词时，优先调用 recall；只有在出现稳定事实、用户偏好、长期约束或持续待办时才使用写入类动作。对于 add/update，优先使用结构化写法：title 写主题，summary 写一句结论，content 写完整细节，必要时补充 category 和 tags。"
+    "en-US": "Manage and recall the current agent's long-term memory entries (list/add/update/delete/clear/recall). Use recall proactively when confidence is low, facts may be stale, you might have answered incorrectly, the user explicitly corrects you, or the user feedback changes preferences/constraints. After correction or conflict, recall first for verification, then add/update only if the new information is durable across future turns. Use write actions for stable facts, preferences, constraints, recurring workflows, or persistent to-dos; avoid storing transient tool outputs or one-off task states. For add/update, prefer structured writes: title = topic, summary = one-line conclusion, content = full detail, plus category/tags when helpful.",
+    "zh-CN": "管理并检索当前智能体的长期记忆条目（list/add/update/delete/clear/recall）。当置信度不足、事实可能过期、你可能答错、用户明确纠正你，或用户反馈导致偏好/约束变化时，应主动调用 recall。出现纠错或信息冲突时，先 recall 校验，再仅在信息可跨轮次复用时执行 add/update。写入动作仅用于稳定事实、长期偏好、约束、可复用流程或持续待办；避免写入临时工具输出与一次性任务状态。对 add/update，优先使用结构化写法：title 写主题，summary 写一句结论，content 写完整细节，必要时补充 category 与 tags。"
   },
   "tool.spec.memory_manager.args.action": {
     "en-US": "Action: list/add/update/delete/clear/recall.",
