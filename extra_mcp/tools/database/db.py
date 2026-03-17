@@ -854,6 +854,7 @@ def execute_sql_sync(
                 result_rows = [_normalize_row(row, columns) for row in rows]
                 return {
                     "ok": True,
+                    "columns": columns,
                     "rows": result_rows,
                     "row_count": len(result_rows),
                     "truncated": truncated,
@@ -861,6 +862,7 @@ def execute_sql_sync(
 
             return {
                 "ok": True,
+                "columns": [],
                 "rows": [],
                 "row_count": max(cursor.rowcount, 0),
                 "truncated": False,

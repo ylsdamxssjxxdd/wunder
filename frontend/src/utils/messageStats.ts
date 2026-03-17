@@ -1,3 +1,5 @@
+import { normalizeChatDurationSeconds } from '@/utils/chatTiming';
+
 export type MessageStatsEntry = {
   label: string;
   value: string;
@@ -40,9 +42,7 @@ const normalizeSpeed = (speed: number, durationSeconds: number | null): number |
 };
 
 const normalizeDurationSeconds = (value: unknown): number | null => {
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  return normalizeChatDurationSeconds(value);
 };
 
 const resolveDurationSeconds = (stats: Record<string, any>): number | null => {

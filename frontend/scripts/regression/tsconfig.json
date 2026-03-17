@@ -15,11 +15,13 @@
   },
   "include": [
     "../../src/utils/messageMarkdown.ts",
+    "../../src/utils/chatTiming.ts",
     "../../src/utils/messageWorkspacePath.ts",
     "../../src/utils/workspaceResources.ts",
     "../../src/stores/chatPendingMessage.ts",
     "../../src/views/messenger/realtimePulse.ts",
     "./message-render-regression.test.ts",
+    "./chat-timing-regression.test.ts",
     "./chat-pending-regression.test.ts",
     "./realtime-pulse-regression.test.ts"
   ]

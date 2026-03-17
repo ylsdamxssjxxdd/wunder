@@ -1375,7 +1375,13 @@ const isPtcTool = (toolName: string): boolean => {
   return normalized === 'ptc' || normalized === 'programmatic_tool_call';
 };
 
+const isSkillCallTool = (toolName: string): boolean => {
+  const normalized = toolName.trim().toLowerCase();
+  return normalized === 'skill_call' || normalized === 'skill_get' || toolName.includes('技能调用');
+};
+
 const resolveSummaryToolDisplay = (toolName: string, fallback: string): string => {
+  if (isSkillCallTool(toolName)) return t('chat.toolWorkflow.toolLabel.skillCall');
   if (isPtcTool(toolName)) return t('chat.toolWorkflow.toolLabel.ptc');
   if (isExecuteCommandTool(toolName)) return t('chat.toolWorkflow.toolLabel.executeCommand');
   if (isApplyPatchTool(toolName)) return t('chat.toolWorkflow.toolLabel.applyPatch');
@@ -1637,6 +1643,41 @@ const resolvePtcSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints:
   return truncateSingleLine(scriptName ? `${toolDisplay} ${scriptName}` : toolDisplay);
 };
 
+const resolveSkillPathName = (value: unknown): string => {
+  const normalized = normalizePathLikeText(value);
+  if (!normalized) return '';
+  const segments = normalized.split('/').filter(Boolean);
+  if (!segments.length) return '';
+  const last = segments[segments.length - 1];
+  if (!last) return '';
+  if (last.toLowerCase() !== 'skill.md') {
+    return basenameOfPathLike(last);
+  }
+  return segments.length >= 2 ? segments[segments.length - 2] : '';
+};
+
+const resolveSkillSummaryTitle = (entry: RawEntry, toolDisplay: string, pathHints: string[]): string => {
+  const args = extractCallArgs(entry.callItem);
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  // Prefer the declared skill name from tool args/result, then fall back to folder name instead of generic SKILL.md.
+  const skillName = pickString(
+    dataObject?.name,
+    resultObject?.name,
+    args?.name,
+    args?.skill_name,
+    args?.skillName,
+    resolveSkillPathName(dataObject?.root),
+    resolveSkillPathName(resultObject?.root),
+    resolveSkillPathName(dataObject?.path),
+    resolveSkillPathName(resultObject?.path),
+    ...pathHints.map((item) => resolveSkillPathName(item))
+  );
+  if (skillName) {
+    return truncateSingleLine(`${toolDisplay} ${skillName}`);
+  }
+  return composeSummaryTitle(toolDisplay, pathHints);
+};
+
 const composeEntryTitle = (
   entry: RawEntry,
   toolDisplay: string,
@@ -1645,6 +1686,9 @@ const composeEntryTitle = (
 ): string => {
   if (command) {
     return truncateSingleLine(`${toolDisplay} ${command}`);
+  }
+  if (isSkillCallTool(entry.toolName)) {
+    return resolveSkillSummaryTitle(entry, toolDisplay, pathHints);
   }
   return resolveFileToolSummaryTitle(entry, toolDisplay, pathHints);
 };

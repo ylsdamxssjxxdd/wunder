@@ -110,6 +110,7 @@ services:
     working_dir: /app
     volumes:
       - ./:/app
+      - wunder_workspaces:/workspaces
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -119,6 +120,7 @@ services:
       - MCP_TRANSPORT=streamable-http
       - MCP_HOST=0.0.0.0
       - MCP_PORT=${MCP_PORT:-9010}
+      - WUNDER_WORKSPACE_ROOT=${WUNDER_WORKSPACE_ROOT:-/workspaces}
     command: ["bash", "-lc", "python3 -m extra_mcp.main"]
     restart: always
 

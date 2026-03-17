@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import os
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -28,6 +30,16 @@ class DbQueryTarget:
     table: str
     description: str | None
     db_key: str | None
+
+
+@dataclass(frozen=True)
+class DbExportConfig:
+    root: Path
+    batch_size: int
+    csv_encoding: str
+    workspace_root: Path
+    workspace_public_root: str
+    workspace_single_root: bool
 
 
 def _normalize_engine(raw: str) -> str:
@@ -424,6 +436,74 @@ def summarize_db_targets(db_key: str | None) -> dict[str, Any]:
         "count": 1,
         "targets": summaries,
     }
+
+
+def get_db_export_config() -> DbExportConfig:
+    config = _get_db_section()
+    repo_root = Path(__file__).resolve().parents[3]
+
+    root_raw = os.getenv("EXTRA_MCP_EXPORT_ROOT", "").strip() or get_section_value(config, "export_root")
+    if isinstance(root_raw, str) and root_raw.strip():
+        root_path = Path(root_raw.strip())
+        if not root_path.is_absolute():
+            root_path = (repo_root / root_path).resolve()
+        else:
+            root_path = root_path.resolve()
+    else:
+        root_path = (repo_root / "exports" / "extra_mcp").resolve()
+
+    batch_size = parse_int(
+        os.getenv("EXTRA_MCP_EXPORT_BATCH_SIZE")
+        or str(get_section_value(config, "export_batch_size") or ""),
+        1000,
+    )
+    if batch_size <= 0:
+        batch_size = 1000
+
+    csv_encoding = (
+        os.getenv("EXTRA_MCP_EXPORT_CSV_ENCODING", "").strip()
+        or str(get_section_value(config, "export_csv_encoding") or "utf-8-sig").strip()
+        or "utf-8-sig"
+    )
+
+    workspace_root_raw = (
+        os.getenv("EXTRA_MCP_WORKSPACE_ROOT", "").strip()
+        or os.getenv("WUNDER_WORKSPACE_ROOT", "").strip()
+        or get_section_value(config, "workspace_root")
+    )
+    if isinstance(workspace_root_raw, str) and workspace_root_raw.strip():
+        workspace_root = Path(workspace_root_raw.strip())
+        if not workspace_root.is_absolute():
+            workspace_root = (repo_root / workspace_root).resolve()
+        else:
+            workspace_root = workspace_root.resolve()
+    else:
+        workspace_root = (repo_root / "workspaces").resolve()
+
+    workspace_public_root = (
+        os.getenv("EXTRA_MCP_WORKSPACE_PUBLIC_ROOT", "").strip()
+        or str(get_section_value(config, "workspace_public_root") or "/workspaces").strip()
+        or "/workspaces"
+    )
+    if not workspace_public_root.startswith("/"):
+        workspace_public_root = "/" + workspace_public_root.lstrip("/")
+    workspace_public_root = workspace_public_root.rstrip("/") or "/workspaces"
+
+    workspace_single_root_raw = (
+        os.getenv("EXTRA_MCP_WORKSPACE_SINGLE_ROOT", "").strip()
+        or os.getenv("WUNDER_WORKSPACE_SINGLE_ROOT", "").strip()
+        or str(get_section_value(config, "workspace_single_root") or "")
+    )
+    workspace_single_root = workspace_single_root_raw.lower() in {"1", "true", "yes", "on"}
+
+    return DbExportConfig(
+        root=root_path,
+        batch_size=batch_size,
+        csv_encoding=csv_encoding,
+        workspace_root=workspace_root,
+        workspace_public_root=workspace_public_root,
+        workspace_single_root=workspace_single_root,
+    )
 
 
 def build_db_description_hint() -> str:

@@ -22,6 +22,7 @@ import { t } from '@/i18n';
 import { setDefaultSession } from '@/api/agents';
 import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
+import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
 import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
@@ -299,9 +300,7 @@ const normalizeQuotaSnapshot = (value) => {
 const normalizeContextTokens = (value) => parseOptionalCount(value);
 
 const normalizeDurationValue = (value) => {
-  if (value === null || value === undefined) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+  return normalizeChatDurationSeconds(value);
 };
 
 const normalizeSpeedValue = (value) => {
@@ -502,27 +501,7 @@ const mergeMessageStats = (base, incoming) => {
 };
 
 const resolveTimestampMs = (value) => {
-  if (value === null || value === undefined) return null;
-  if (value instanceof Date) {
-    const time = value.getTime();
-    return Number.isNaN(time) ? null : time;
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) return null;
-    const millis = value < 1e12 ? value * 1000 : value;
-    return Number.isFinite(millis) ? millis : null;
-  }
-  const text = String(value).trim();
-  if (!text) return null;
-  if (/^\d+$/.test(text)) {
-    const numeric = Number.parseInt(text, 10);
-    if (!Number.isFinite(numeric)) return null;
-    const millis = numeric < 1e12 ? numeric * 1000 : numeric;
-    return Number.isFinite(millis) ? millis : null;
-  }
-  const parsed = new Date(text);
-  const time = parsed.getTime();
-  return Number.isNaN(time) ? null : time;
+  return normalizeChatTimestampMs(value);
 };
 
 const resolveTimestampIso = (value) => {

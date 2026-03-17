@@ -4,7 +4,7 @@
 和主服务内置 MCP 的关系如下：
 
 - 内置 `wunder` MCP（Rust，`src/services/mcp.rs`）：端点 `/wunder/mcp`，工具固定为 `excute`、`doc2md`
-- 独立 `extra_mcp`（本目录）：默认端点 `/mcp`，工具按 `mcp_config.json` 动态生成（`db_query*`、`kb_query*`）
+- 独立 `extra_mcp`（本目录）：默认端点 `/mcp`，工具按 `mcp_config.json` 动态生成（`db_query*`、`db_export*`、`kb_query*`）
 
 ## 1. 启动 `extra_mcp`
 
@@ -29,6 +29,10 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
 - 运行参数优先级：环境变量 > `mcp_config.json` 的 `mcp.transport/host/port` > 默认值
 - 当 `extra_mcp` 运行在 Docker 容器内且数据库主机配置为 `127.0.0.1` / `localhost` 时，会先直连本机回环地址；若失败，再自动回退到 `host.docker.internal`，以兼容“宿主机数据库 + 容器内 MCP”场景
 - 如需覆盖回退主机名，可设置环境变量 `EXTRA_MCP_LOOPBACK_FALLBACK_HOST`
+- 绑定表场景会同时注册 `db_query*` 与 `db_export*`：前者返回小样本与 `query_handle`，后者可直接把同一查询导出为 `xlsx/csv`
+- 若 `db_export*` 的 `path` 使用 `/workspaces/{user_id}/exports/...`（提示词里会自动替换成当前工作区根路径），导出文件会直接落到智能体当前工作区，并在结果中返回 `workspace_relative_path` 与 `public_path`
+- 可用 `database.export_root` 或环境变量 `EXTRA_MCP_EXPORT_ROOT` 配置导出根目录（默认 `exports/extra_mcp`）；`db_export*` 的 `path` 参数必须是相对该根目录的相对路径
+- 若希望 `db_export*` 直接写入 Wunder 工作区，`extra-mcp` 进程必须能看到与 `wunder-server` 相同的工作区根目录；Docker Compose 已通过共享 `wunder_workspaces:/workspaces` 卷打通该路径
 
 ## 2. `mcp_config.json` 最小示例
 
@@ -46,6 +50,7 @@ docker compose -f docker-compose-x86.yml up -d extra-mcp
     "user": "root",
     "password": "",
     "database": "personnel",
+    "export_root": "exports/extra_mcp",
     "tables": {
       "employees": {
         "table": "employees",
@@ -113,6 +118,13 @@ mcp:
 ```
 
 首次接入 `extra_mcp` 后，请在管理端 MCP 页面执行一次“连接/刷新工具”，把拉取到的 `tool_specs` 保存到配置中，避免模型侧无可用工具描述。
+
+### 导出型任务推荐流程
+
+1. 先用 `db_query*` 做 `COUNT(*)`、聚合或 `LIMIT 3~5` 小样本校验。
+2. 复用返回的 `query_handle` 调 `db_export*`，并把 `path` 设为 `/workspaces/{user_id}/exports/...`，直接生成 `xlsx/csv` 到当前工作区。
+3. 如需后续处理，优先使用返回的 `workspace_relative_path` 交给读文件/写文件/文档工具继续处理，而不是重新分页查询数据库。
+4. 回复里只保留导出文件路径、行数、字段与筛选口径，不要把分页明细继续贴进上下文。
 
 ## 4. `mcpServers` 导入示例（管理端/用户侧）
 

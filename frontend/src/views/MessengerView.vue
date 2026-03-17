@@ -855,7 +855,7 @@
                   />
                 </div>
                 <div
-                  v-if="item.message.role === 'user' || hasMessageContent(item.message.content)"
+                  v-if="item.message.role === 'user' || shouldShowAgentMessageBubble(item.message)"
                   class="messenger-message-bubble messenger-markdown"
                   :class="{ 'messenger-message-bubble--greeting': isGreetingMessage(item.message) }"
                 >
@@ -1413,6 +1413,10 @@ import { downloadWorkerCardBundle, parseWorkerCardText, workerCardToAgentPayload
 import { redirectToLoginAfterLogout } from '@/utils/authNavigation';
 import { copyText } from '@/utils/clipboard';
 import { confirmWithFallback } from '@/utils/confirm';
+import {
+  buildAssistantDisplayContent,
+  resolveAssistantFailureNotice
+} from '@/utils/assistantFailureNotice';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
 import {
   isAudioRecordingSupported,
@@ -5163,9 +5167,14 @@ const resolveMessageAgentAvatarState = (message: Record<string, unknown>): Agent
     return 'running';
   }
   const messageState = normalizeRuntimeState(message?.state, pendingQuestion);
+  if (messageState === 'error') return 'error';
+  if (resolveAssistantFailureNotice(message, t)) return 'error';
   if (messageState !== 'idle') return messageState;
   return 'done';
 };
+
+const shouldShowAgentMessageBubble = (message: Record<string, unknown>): boolean =>
+  hasMessageContent(buildAssistantDisplayContent(message, t));
 
 const buildMessageStatsEntries = (message: Record<string, unknown>) =>
   buildAssistantMessageStatsEntries(message as Record<string, any>, t);
@@ -5882,7 +5891,7 @@ const renderAgentMarkdown = (message: Record<string, unknown>, index: number): s
     Boolean(message?.stream_incomplete) ||
     Boolean(message?.workflowStreaming) ||
     Boolean(message?.reasoningStreaming);
-  return renderMessageMarkdown(cacheKey, message?.content, {
+  return renderMessageMarkdown(cacheKey, buildAssistantDisplayContent(message, t), {
     streaming,
     resolveWorkspacePath: resolveAgentMarkdownWorkspacePath,
     message
