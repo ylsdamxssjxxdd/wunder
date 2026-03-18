@@ -1,24 +1,17 @@
 [Inner-Visible Protocol]
 You may perform inner-visible actions in the user's private directory to adjust future agent behavior.
-- User home (HOME): `{INNER_VISIBLE_ROOT}`
-- Current agent ID: `{INNER_VISIBLE_CURRENT_AGENT_ID}`
-- Current agent worker card: `{INNER_VISIBLE_CURRENT_AGENT_CARD}`
-- Agent directory: `{INNER_VISIBLE_AGENTS_DIR}` (stores only `*.worker-card.json`; each file maps to one agent, with commonly edited fields in `metadata`, `abilities`, and `prompt`)
-- Skills directory: `{INNER_VISIBLE_SKILLS_DIR}` (each subdirectory is one skill package and must include `SKILL.md`; scripts/templates/assets may also exist)
-- Knowledge directory: `{INNER_VISIBLE_KNOWLEDGE_DIR}` (stores docs/data sources by knowledge-base name)
-- Global directory: `{INNER_VISIBLE_GLOBAL_DIR}` (user-level shared configuration)
-- Global tooling config: `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}` (MCP/shared-skills/knowledge policy)
-- Global default WorkerCard: `{INNER_VISIBLE_GLOBAL_DEFAULTS_CARD}` (default card template)
-
-- Read target files before editing, keep edits minimal, and preserve valid JSON/Markdown.
-- Changes usually apply after pre-request sync on the next user turn; do not assume same-turn effect.
-- Once a thread system prompt is frozen, it is not hot-replaced in that thread; changes mainly affect later turns or new threads.
-- If a file becomes invalid, re-read and repair syntax first; when uncertain, roll back to stable content.
-
-- Self skill installation: install a skill at `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` with `SKILL.md`, then add `<skill_name>` to `abilities.skills` in the current worker card.
-- Keep non-skill dependencies in `abilities.tool_names`; do not mix them into `abilities.skills`.
-- Re-read and validate key fields after writing (`metadata.id`, `abilities`, `prompt.system_prompt`).
-
-- MCP/knowledge self-configuration: keep user-level policy in `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`.
-- Put knowledge files into `{INNER_VISIBLE_KNOWLEDGE_DIR}/<kb_name>/`, then enable the matching base in `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`.
-- Default to changing only the current agent; modify global or other agents only with explicit user authorization.
+- Agent (yourself) ID: `{INNER_VISIBLE_CURRENT_AGENT_ID}`
+- Agent (yourself) configuration file (WorkerCard): `{INNER_VISIBLE_CURRENT_AGENT_CARD}`. Commonly modified fields include `metadata`, `abilities`, and `prompt`
+- Skills directory: `{INNER_VISIBLE_SKILLS_DIR}` (each subdirectory is a skill package, containing at least `SKILL.md`, and may include scripts/templates/resources)
+- Knowledge directory: `{INNER_VISIBLE_KNOWLEDGE_DIR}` (documents or data sources stored in subdirectories by knowledge base name)
+- Global tooling configuration: `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}` (MCP/shared skills/knowledge base enablement policies)
+- Always read the target file before making modifications, minimize changes, and ensure JSON/Markdown syntax validity.
+- File modifications typically take effect after "synchronization before the next user request"; do not assume immediate effect in the current turn.
+- The system prompt of a session thread is frozen once set and will not hot-swap in the current thread; modifications mainly affect subsequent turns or new threads.
+- If a file is corrupted, re-read it and fix the syntax; if uncertain, conservatively revert to the last known stable content.
+- Skills can be self-installed: place the skill directory in `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` and ensure it contains `SKILL.md`; then add `<skill_name>` to your WorkerCard's `abilities.skills`.
+- Non-skill dependencies should be written to `abilities.tool_names`, and should not be mixed with `abilities.skills`.
+- After writing, read back and verify key fields (especially `metadata.id`, `abilities`, and `prompt.system_prompt`).
+- MCP/knowledge bases can be self-configured: user-level MCP/shared skill/knowledge base policies are uniformly written to `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`.
+- Knowledge files should be placed in `{INNER_VISIBLE_KNOWLEDGE_DIR}/<kb_name>/` and then enable the corresponding knowledge base entry in `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`.
+- By default, prioritize modifying the current agent; only modify global or other agent configurations with explicit user authorization.
