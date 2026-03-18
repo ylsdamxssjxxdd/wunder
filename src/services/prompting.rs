@@ -3,8 +3,10 @@ use crate::config::Config;
 use crate::i18n;
 use crate::llm::ToolCallMode;
 use crate::schemas::ToolSpec;
+use crate::services::default_agent_sync::DEFAULT_AGENT_ID_ALIAS;
 use crate::services::user_prompt_templates;
 use crate::skills::{SkillRegistry, SkillSpec};
+use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::tools::{
     builtin_aliases, collect_available_tool_names, collect_prompt_tool_specs,
     render_prompt_tool_spec, resolve_tool_name,
@@ -30,6 +32,7 @@ const SYSTEM_PROMPT_ROLE_PATH: &str = "prompts/system/role.txt";
 const SYSTEM_PROMPT_ENGINEERING_PATH: &str = "prompts/system/engineering.txt";
 const SYSTEM_PROMPT_TOOLS_PROTOCOL_PATH: &str = "prompts/system/tools_protocol.txt";
 const SYSTEM_PROMPT_SKILLS_PROTOCOL_PATH: &str = "prompts/system/skills_protocol.txt";
+const SYSTEM_PROMPT_INNER_VISIBLE_PROTOCOL_PATH: &str = "prompts/system/inner_visible_protocol.txt";
 const SYSTEM_PROMPT_MEMORY_PATH: &str = "prompts/system/memory.txt";
 const SYSTEM_PROMPT_EXTRA_PATH: &str = "prompts/system/extra.txt";
 pub const SYSTEM_PROMPT_MEMORY_PLACEHOLDER: &str = "<<WUNDER_HISTORY_MEMORY>>";
@@ -291,6 +294,11 @@ impl PromptComposer {
                 &workspace_tree,
                 &skills_for_prompt,
                 agent_prompt,
+                &build_inner_visible_prompt_mapping(
+                    workspace,
+                    prompt_owner_user_id,
+                    is_local_runtime_mode(&config.server.mode),
+                ),
             );
 
             self.insert_cached_prompt(cache_key, prompt.clone(), now_ts());
@@ -501,6 +509,7 @@ fn build_system_prompt_skeleton(
     workspace_tree: &str,
     skills: &[SkillSpec],
     agent_prompt: Option<&str>,
+    inner_visible_mapping: &HashMap<String, String>,
 ) -> String {
     let os_name = system_name();
     let date_str = Local::now().format("%Y-%m-%d").to_string();
@@ -529,6 +538,13 @@ fn build_system_prompt_skeleton(
             ("WORKSPACE_TREE".to_string(), workspace_tree.to_string()),
         ]),
     );
+
+    let inner_visible_template = read_prompt_template_from_scope(
+        config,
+        template_scope,
+        Path::new(SYSTEM_PROMPT_INNER_VISIBLE_PROTOCOL_PATH),
+    );
+    let inner_visible_block = render_template(&inner_visible_template, inner_visible_mapping);
 
     // When `tool_call_mode=function_call`, tool specs and invocation protocol are
     // provided by the LLM API itself, so we omit the entire tools-protocol block
@@ -613,7 +629,14 @@ fn build_system_prompt_skeleton(
         )]),
     );
 
-    let mut blocks = vec![role, engineering, tools_block, skills_block, memory_block];
+    let mut blocks = vec![
+        role,
+        engineering,
+        inner_visible_block,
+        tools_block,
+        skills_block,
+        memory_block,
+    ];
     blocks.retain(|value| !value.trim().is_empty());
     if !blocks
         .iter()
@@ -641,6 +664,103 @@ fn build_system_prompt_skeleton(
     }
 
     blocks.join("\n\n")
+}
+
+fn build_inner_visible_prompt_mapping(
+    workspace: &WorkspaceManager,
+    prompt_owner_user_id: &str,
+    is_local_runtime: bool,
+) -> HashMap<String, String> {
+    let private_workspace_id =
+        workspace.scoped_user_id_by_container(prompt_owner_user_id, USER_PRIVATE_CONTAINER_ID);
+    let private_root = workspace.workspace_root(&private_workspace_id);
+    let global_dir = private_root.join("global");
+    let skills_dir = private_root.join("skills");
+    let knowledge_dir = private_root.join("knowledge");
+    let agents_dir = private_root.join("agents");
+    let default_agent_dir = agents_dir.join(DEFAULT_AGENT_ID_ALIAS);
+    let diagnostics_global = private_root.join(".wunder").join("diagnostics").join("global.json");
+    let effective_global = private_root.join(".wunder").join("effective").join("global.json");
+    let last_good_root = private_root.join(".wunder").join("last_good");
+
+    let display = |path: &Path| -> String {
+        resolve_inner_visible_display_path(
+            workspace,
+            &private_workspace_id,
+            path,
+            is_local_runtime,
+        )
+    };
+    let agent_template_dir = format!("{}/<agent_id>", display(&agents_dir).trim_end_matches('/'));
+
+    HashMap::from([
+        ("INNER_VISIBLE_ROOT".to_string(), display(&private_root)),
+        ("INNER_VISIBLE_GLOBAL_DIR".to_string(), display(&global_dir)),
+        (
+            "INNER_VISIBLE_GLOBAL_TOOLING".to_string(),
+            display(&global_dir.join("tooling.json")),
+        ),
+        (
+            "INNER_VISIBLE_GLOBAL_DEFAULTS".to_string(),
+            display(&global_dir.join("defaults.worker-card.json")),
+        ),
+        ("INNER_VISIBLE_SKILLS_DIR".to_string(), display(&skills_dir)),
+        (
+            "INNER_VISIBLE_KNOWLEDGE_DIR".to_string(),
+            display(&knowledge_dir),
+        ),
+        ("INNER_VISIBLE_AGENTS_DIR".to_string(), display(&agents_dir)),
+        (
+            "INNER_VISIBLE_AGENT_TEMPLATE_DIR".to_string(),
+            agent_template_dir.clone(),
+        ),
+        (
+            "INNER_VISIBLE_AGENT_TEMPLATE_CARD".to_string(),
+            format!("{agent_template_dir}/worker-card.json"),
+        ),
+        (
+            "INNER_VISIBLE_AGENT_TEMPLATE_PROMPT".to_string(),
+            format!("{agent_template_dir}/system_prompt.md"),
+        ),
+        (
+            "INNER_VISIBLE_DEFAULT_AGENT_DIR".to_string(),
+            display(&default_agent_dir),
+        ),
+        (
+            "INNER_VISIBLE_DEFAULT_AGENT_CARD".to_string(),
+            display(&default_agent_dir.join("worker-card.json")),
+        ),
+        (
+            "INNER_VISIBLE_DEFAULT_AGENT_PROMPT".to_string(),
+            display(&default_agent_dir.join("system_prompt.md")),
+        ),
+        (
+            "INNER_VISIBLE_DIAGNOSTICS_GLOBAL".to_string(),
+            display(&diagnostics_global),
+        ),
+        (
+            "INNER_VISIBLE_EFFECTIVE_GLOBAL".to_string(),
+            display(&effective_global),
+        ),
+        (
+            "INNER_VISIBLE_LAST_GOOD_ROOT".to_string(),
+            display(&last_good_root),
+        ),
+    ])
+}
+
+fn resolve_inner_visible_display_path(
+    workspace: &WorkspaceManager,
+    private_workspace_id: &str,
+    path: &Path,
+    is_local_runtime: bool,
+) -> String {
+    let raw = if is_local_runtime {
+        absolute_path_str(path)
+    } else {
+        workspace.display_path(private_workspace_id, path)
+    };
+    raw.replace('\\', "/")
 }
 
 fn is_local_runtime_mode(server_mode: &str) -> bool {
