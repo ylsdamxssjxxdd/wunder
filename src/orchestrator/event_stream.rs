@@ -140,6 +140,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "workspace_update"
             | "plan_update"
             | "question_panel"
+            | "thread_control"
             | "llm_output_delta"
             | "llm_output"
             | "context_usage"

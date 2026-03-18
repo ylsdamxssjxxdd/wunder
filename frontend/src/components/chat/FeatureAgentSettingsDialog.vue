@@ -38,19 +38,22 @@
           <div class="agent-tool-picker">
             <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
             <div v-else-if="toolError" class="agent-tool-loading">{{ toolError }}</div>
-            <div v-else-if="!toolGroups.length" class="agent-tool-loading">{{ t('portal.agent.tools.loadFailed') }}</div>
+            <div v-else-if="!toolSections.length" class="agent-tool-loading">{{ t('portal.agent.tools.loadFailed') }}</div>
             <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
-              <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
-                <div class="agent-tool-group-header">
-                  <div class="agent-tool-group-title">{{ t('chat.approval.kind') }} · {{ group.label }}</div>
-                  <button class="agent-tool-group-select" type="button" @click.stop="selectToolGroup(group)">
-                    {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
-                  </button>
-                </div>
-                <div class="agent-tool-options">
-                  <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
-                    <span :title="option.hint">{{ option.label }}</span>
-                  </el-checkbox>
+              <div v-for="section in toolSections" :key="section.key" class="agent-tool-section">
+                <div class="agent-tool-section-title">{{ section.label }}</div>
+                <div v-for="group in section.groups" :key="group.key" class="agent-tool-group">
+                  <div class="agent-tool-group-header">
+                    <div class="agent-tool-group-title">{{ t('chat.approval.kind') }} · {{ group.label }}</div>
+                    <button class="agent-tool-group-select" type="button" @click.stop="selectToolGroup(group)">
+                      {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
+                    </button>
+                  </div>
+                  <div class="agent-tool-options">
+                    <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
+                      <span :title="option.hint">{{ option.label }}</span>
+                    </el-checkbox>
+                  </div>
                 </div>
               </div>
             </el-checkbox-group>
@@ -132,7 +135,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listAgentModels } from '@/api/agents';
-import { fetchUserToolsSummary } from '@/api/userTools';
+import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
@@ -140,6 +143,11 @@ import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop'
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
+import {
+  buildAgentToolSections,
+  type AgentToolGroup,
+  type AgentToolSection
+} from '@/utils/agentToolCatalog';
 import {
   buildDeclaredDependencyPayload,
   buildWorkerCardDependencyPayload,
@@ -277,17 +285,9 @@ const normalizeToolOption = (item) => {
 const normalizeOptions = (list) =>
   Array.isArray(list) ? list.map((item) => normalizeToolOption(item)).filter(Boolean) : [];
 
-const toolGroups = computed(() => {
-  const summary = toolSummary.value || {};
-  return [
-    { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(summary.builtin_tools) },
-    { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(summary.mcp_tools) },
-    { label: t('portal.agent.tools.group.a2a'), options: normalizeOptions(summary.a2a_tools) },
-    { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(summary.skills) },
-    { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
-    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) }
-  ].filter((group) => group.options.length > 0);
-});
+const toolSections = computed(() =>
+  buildAgentToolSections(toolSummary.value, t, normalizeToolOption)
+);
 
 const defaultModelDisplayName = computed(() => {
   const fallback = t('portal.agent.model.defaultName');
@@ -315,13 +315,13 @@ const dependencyStatus = computed(() =>
   resolveAgentDependencyStatus(currentAgent.value, toolSummary.value, form.tool_names)
 );
 
-const isToolGroupFullySelected = (group) => {
+const isToolGroupFullySelected = (group: AgentToolGroup<any>) => {
   if (!group || !Array.isArray(group.options) || group.options.length === 0) return false;
   const current = new Set(form.tool_names);
   return group.options.every((option) => current.has(option.value));
 };
 
-const selectToolGroup = (group) => {
+const selectToolGroup = (group: AgentToolGroup<any>) => {
   if (!group || !Array.isArray(group.options) || group.options.length === 0) return;
   const next = new Set(form.tool_names);
   const fullySelected = group.options.every((option) => next.has(option.value));
@@ -338,7 +338,7 @@ const loadToolSummary = async () => {
   toolLoading.value = true;
   toolError.value = '';
   try {
-    const result = await fetchUserToolsSummary();
+    const result = await fetchUserToolsCatalog();
     toolSummary.value = result?.data?.data || null;
   } catch (error) {
     toolError.value = error?.response?.data?.detail || t('portal.agent.tools.loadFailed');

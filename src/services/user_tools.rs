@@ -233,7 +233,13 @@ impl UserToolStore {
         shared: Vec<String>,
     ) -> Result<UserToolsPayload> {
         let mut payload = self.load_user_tools(user_id);
-        payload.skills = normalize_skill_config(enabled, shared);
+        let discovered = self.resolve_default_skill_enabled(user_id);
+        let effective_enabled = if discovered.is_empty() {
+            enabled
+        } else {
+            discovered
+        };
+        payload.skills = normalize_skill_config(effective_enabled, shared);
         self.save_payload(user_id, payload)
     }
 
@@ -653,18 +659,9 @@ impl UserToolManager {
                         if server_name.is_empty() || server_name.contains('@') {
                             continue;
                         }
-                        if !server.enabled {
-                            continue;
-                        }
                         if server.tool_specs.is_empty() {
                             continue;
                         }
-                        let allow_tools: HashSet<String> = server
-                            .allow_tools
-                            .iter()
-                            .filter(|name| !name.trim().is_empty())
-                            .cloned()
-                            .collect();
                         let shared_tools: HashSet<String> = server
                             .shared_tools
                             .iter()
@@ -678,14 +675,14 @@ impl UserToolManager {
                             .map(|name| name.trim().to_string())
                             .filter(|name| !name.is_empty())
                             .collect();
-                        let mut enabled_names = if allow_tools.is_empty() {
+                        let enabled_names = if shared_only {
                             tool_pool
+                                .into_iter()
+                                .filter(|name| shared_tools.contains(name))
+                                .collect()
                         } else {
-                            allow_tools
+                            tool_pool
                         };
-                        if shared_only {
-                            enabled_names.retain(|name| shared_tools.contains(name));
-                        }
                         if enabled_names.is_empty() {
                             continue;
                         }
@@ -756,27 +753,33 @@ impl UserToolManager {
 
             let shared_tools_filter = shared_tools_filter.cloned();
             let mut collect_skill_tools = |owner_id: &str, names: &[String], shared_only: bool| {
-                if names.is_empty() {
-                    return;
-                }
                 let skill_root = self.store.get_skill_root(owner_id);
                 if !skill_root.exists() {
                     return;
                 }
-                let enabled: HashSet<String> = names
+                let shared_names: HashSet<String> = names
                     .iter()
                     .map(|name| name.trim().to_string())
                     .filter(|name| !name.is_empty())
                     .collect();
-                let mut enabled = enabled;
+                let specs = self.load_cached_skill_specs(
+                    config,
+                    owner_id,
+                    &skill_root,
+                    &HashSet::new(),
+                );
+                if specs.is_empty() {
+                    return;
+                }
+                let mut enabled: HashSet<String> =
+                    specs.iter().map(|spec| spec.name.clone()).collect();
                 if desktop_mode {
                     enabled.retain(|name| !skill_names.contains(name));
                 }
-                if enabled.is_empty() {
-                    return;
+                if shared_only {
+                    enabled.retain(|name| shared_names.contains(name));
                 }
-                let specs = self.load_cached_skill_specs(config, owner_id, &skill_root, &enabled);
-                if specs.is_empty() {
+                if enabled.is_empty() {
                     return;
                 }
                 register_skill_source(
@@ -858,9 +861,6 @@ impl UserToolManager {
                     for base in bases {
                         let base_name = base.name.trim();
                         if base_name.is_empty() {
-                            continue;
-                        }
-                        if !base.enabled {
                             continue;
                         }
                         if shared_only && !base.shared {
@@ -962,7 +962,7 @@ impl UserToolManager {
         root: &Path,
         names: &HashSet<String>,
     ) -> Vec<SkillSpec> {
-        if names.is_empty() || !root.exists() {
+        if !root.exists() {
             return Vec::new();
         }
         let signature = build_skill_signature(root, names.iter().cloned());
@@ -1191,11 +1191,20 @@ fn normalize_name_list(values: Vec<String>) -> Vec<String> {
 
 fn normalize_mcp_servers(mut servers: Vec<UserMcpServer>) -> Vec<UserMcpServer> {
     for server in &mut servers {
-        server.allow_tools = normalize_name_list(server.allow_tools.clone());
+        server.allow_tools = Vec::new();
         server.shared_tools = normalize_name_list(server.shared_tools.clone());
-        if !server.allow_tools.is_empty() {
-            let allow: HashSet<String> = server.allow_tools.iter().cloned().collect();
-            server.shared_tools.retain(|name| allow.contains(name));
+        server.enabled = true;
+        if !server.tool_specs.is_empty() {
+            let tool_names: HashSet<String> = server
+                .tool_specs
+                .iter()
+                .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .collect();
+            if !tool_names.is_empty() {
+                server.shared_tools.retain(|name| tool_names.contains(name));
+            }
         }
     }
     servers
@@ -1204,15 +1213,26 @@ fn normalize_mcp_servers(mut servers: Vec<UserMcpServer>) -> Vec<UserMcpServer> 
 fn normalize_skill_config(enabled: Vec<String>, shared: Vec<String>) -> UserSkillConfig {
     let enabled = normalize_name_list(enabled);
     let mut shared = normalize_name_list(shared);
-    let allow: HashSet<String> = enabled.iter().cloned().collect();
-    shared.retain(|name| allow.contains(name));
-    UserSkillConfig { enabled, shared }
+    let effective_enabled = if enabled.is_empty() {
+        shared.clone()
+    } else {
+        enabled
+    };
+    let allow: HashSet<String> = effective_enabled.iter().cloned().collect();
+    if !allow.is_empty() {
+        shared.retain(|name| allow.contains(name));
+    }
+    UserSkillConfig {
+        enabled: effective_enabled,
+        shared,
+    }
 }
 
 fn normalize_knowledge_bases(bases: Vec<UserKnowledgeBase>) -> Vec<UserKnowledgeBase> {
     let mut output = Vec::new();
     let mut seen = HashSet::new();
-    for base in bases {
+    for mut base in bases {
+        base.enabled = true;
         let name = base.name.trim().to_string();
         if !name.is_empty() {
             if seen.contains(&name) {
@@ -1360,8 +1380,8 @@ fn user_mcp_to_config(server: &UserMcpServer) -> McpServerConfig {
     McpServerConfig {
         name: server.name.clone(),
         endpoint: server.endpoint.clone(),
-        allow_tools: server.allow_tools.clone(),
-        enabled: server.enabled,
+        allow_tools: Vec::new(),
+        enabled: true,
         transport: if server.transport.trim().is_empty() {
             None
         } else {
@@ -1439,4 +1459,58 @@ fn build_skill_signature(
     let mut list: Vec<String> = names.into_iter().collect();
     list.sort();
     (mtime, list)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn normalize_mcp_servers_removes_self_enable_state() {
+        let servers = normalize_mcp_servers(vec![UserMcpServer {
+            name: "demo".to_string(),
+            endpoint: "http://127.0.0.1:9000/mcp".to_string(),
+            allow_tools: vec!["tool-a".to_string()],
+            shared_tools: vec!["tool-a".to_string(), "tool-b".to_string()],
+            enabled: false,
+            tool_specs: vec![json!({ "name": "tool-a" }), json!({ "name": "tool-c" })],
+            ..UserMcpServer::default()
+        }]);
+        assert_eq!(servers.len(), 1);
+        assert!(servers[0].enabled);
+        assert!(servers[0].allow_tools.is_empty());
+        assert_eq!(servers[0].shared_tools, vec!["tool-a".to_string()]);
+    }
+
+    #[test]
+    fn normalize_skill_config_preserves_shared_names_without_enabled_list() {
+        let config = normalize_skill_config(Vec::new(), vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(config.enabled, vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(config.shared, vec!["alpha".to_string(), "beta".to_string()]);
+    }
+
+    #[test]
+    fn normalize_knowledge_bases_forces_enabled_true() {
+        let bases = normalize_knowledge_bases(vec![UserKnowledgeBase {
+            name: "kb".to_string(),
+            enabled: false,
+            ..UserKnowledgeBase::default()
+        }]);
+        assert_eq!(bases.len(), 1);
+        assert!(bases[0].enabled);
+    }
+
+    #[test]
+    fn user_mcp_to_config_ignores_legacy_enable_and_allow_filters() {
+        let config = user_mcp_to_config(&UserMcpServer {
+            name: "demo".to_string(),
+            endpoint: "http://127.0.0.1:9000/mcp".to_string(),
+            allow_tools: vec!["tool-a".to_string()],
+            enabled: false,
+            ..UserMcpServer::default()
+        });
+        assert!(config.enabled);
+        assert!(config.allow_tools.is_empty());
+    }
 }

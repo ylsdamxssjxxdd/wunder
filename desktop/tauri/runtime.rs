@@ -61,8 +61,6 @@ pub struct DesktopSettings {
     #[serde(default)]
     pub language: String,
     #[serde(default)]
-    pub python_interpreter_path: String,
-    #[serde(default)]
     pub llm: Option<LlmConfig>,
     #[serde(default)]
     pub remote_gateway: DesktopRemoteGatewaySettings,
@@ -79,7 +77,6 @@ impl Default for DesktopSettings {
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
-            python_interpreter_path: String::new(),
             llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
             lan_mesh: DesktopLanMeshSettings::default(),
@@ -239,6 +236,9 @@ impl DesktopRuntime {
         set_env_path("WUNDER_DESKTOP_SETTINGS_PATH", &settings_path);
         set_env_path("WUNDER_DESKTOP_APP_DIR", &app_dir);
         prepend_embedded_tool_paths(&app_dir);
+        if let Some(python_bin) = resolve_embedded_python_bin(&app_dir) {
+            set_env_path_if_exists("WUNDER_PYTHON_BIN", &python_bin);
+        }
         set_env_path("WUNDER_DESKTOP_DEFAULT_WORKSPACE_ROOT", &workspace_root);
         set_env_path(BUILTIN_SKILLS_ROOT_ENV, &repo_root.join("skills"));
         std::env::set_var("WUNDER_DESKTOP_USER_ID", user_id.clone());
@@ -1010,6 +1010,23 @@ fn prepend_embedded_tool_paths(app_dir: &Path) {
     ] {
         prepend_path_entry_if_exists(&candidate);
     }
+}
+
+fn resolve_embedded_python_bin(app_dir: &Path) -> Option<PathBuf> {
+    let candidates = if cfg!(windows) {
+        vec![
+            app_dir.join("opt/python/python.exe"),
+            app_dir.join("opt/python/python3.exe"),
+            app_dir.join("opt/python/bin/python.exe"),
+            app_dir.join("opt/python/bin/python3.exe"),
+        ]
+    } else {
+        vec![
+            app_dir.join("opt/python/bin/python3"),
+            app_dir.join("opt/python/bin/python"),
+        ]
+    };
+    candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
 fn set_env_prompts_root_if_unset(repo_root: &Path) {

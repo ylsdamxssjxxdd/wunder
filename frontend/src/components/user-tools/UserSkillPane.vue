@@ -31,14 +31,6 @@
             :class="{ active: index === selectedIndex, 'has-delete': !isSkillReadonly(skill) }"
             @click="selectSkill(skill, index)"
           >
-            <label class="tool-check tool-check-icon" :title="t('userTools.action.enable')" @click.stop>
-              <input
-                type="checkbox"
-                :checked="skill.enabled"
-                @click.stop
-                @change="toggleEnable(skill, ($event.target as HTMLInputElement).checked)"
-              />
-            </label>
             <label class="tool-item-info">
               <div class="user-skill-title-line">
                 <strong>{{ skill.name }}</strong>
@@ -151,7 +143,6 @@ import {
   fetchUserSkillFiles,
   fetchUserSkills,
   saveUserSkillFile,
-  saveUserSkills,
   uploadUserSkillZip
 } from '@/api/userTools';
 import { showApiError } from '@/utils/apiError';
@@ -180,7 +171,6 @@ const selectedIndex = ref(-1);
 const loaded = ref(false);
 const loading = ref(false);
 const deleteLoading = ref(false);
-const saveTimer = ref(null);
 
 const fileEntries = ref([]);
 const activeFile = ref('');
@@ -492,39 +482,6 @@ const loadSkills = async ({ refreshDetail }: LoadSkillsOptions = {}) => {
   }
 };
 
-const saveSkills = async () => {
-  emitStatus(t('userTools.saving'));
-  try {
-    const enabled = skills.value.filter((skill) => skill.enabled).map((skill) => skill.name);
-    const shared = skills.value.filter((skill) => skill.shared).map((skill) => skill.name);
-    const { data } = await saveUserSkills({ enabled, shared });
-    const payload = data?.data || {};
-    skills.value = Array.isArray(payload.skills) ? payload.skills : skills.value;
-    emitStatus(t('userTools.autoSaved'));
-  } catch (error) {
-    emitStatus(t('userTools.saveFailed', { message: error.message || t('common.requestFailed') }));
-    showApiError(error, t('userTools.skills.saveFailed'));
-  }
-};
-
-const scheduleSave = () => {
-  if (saveTimer.value) {
-    clearTimeout(saveTimer.value);
-  }
-  saveTimer.value = setTimeout(() => {
-    saveTimer.value = null;
-    saveSkills();
-  }, 600);
-};
-
-const toggleEnable = (skill, checked) => {
-  skill.enabled = checked;
-  if (!skill.enabled) {
-    skill.shared = false;
-  }
-  scheduleSave();
-};
-
 const triggerUpload = () => {
   if (!uploadInputRef.value) return;
   uploadInputRef.value.value = '';
@@ -730,9 +687,6 @@ watch(fileContent, () => {
 });
 
 onBeforeUnmount(() => {
-  if (saveTimer.value) {
-    clearTimeout(saveTimer.value);
-  }
   if (highlightTimer) {
     cancelAnimationFrame(highlightTimer);
   }

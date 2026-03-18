@@ -68,7 +68,6 @@ export type DesktopSettingsData = {
   container_roots: DesktopContainerRoot[];
   container_mounts?: DesktopContainerMount[];
   language: string;
-  python_interpreter_path: string;
   supported_languages: string[];
   llm: DesktopLlmConfig;
   remote_gateway: DesktopRemoteGatewaySettings;
@@ -87,11 +86,6 @@ export type DesktopDirectoryListData = {
   parent_path: string | null;
   roots: string[];
   items: DesktopDirectoryEntry[];
-};
-
-export type DesktopPythonInterpreterItem = {
-  path: string;
-  source: string;
 };
 
 export type DesktopSeedJobProgress = {
@@ -175,11 +169,6 @@ export const listDesktopDirectories = (
       ...(options?.includeFiles ? { include_files: true } : {}),
       ...(options?.fileNames?.length ? { file_names: options.fileNames.join(',') } : {})
     }
-  });
-
-export const detectDesktopPythonInterpreters = () =>
-  desktopApi.get('/wunder/desktop/python/interpreters', {
-    headers: buildDesktopHeaders()
   });
 
 export const startDesktopSeedJob = (payload: DesktopSeedStartPayload) =>

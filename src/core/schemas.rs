@@ -99,6 +99,24 @@ pub struct AvailableToolsResponse {
     pub skills: Vec<ToolSpec>,
     pub knowledge_tools: Vec<ToolSpec>,
     pub user_tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_builtin_tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_mcp_tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_a2a_tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_skills: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_knowledge_tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_mcp_tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_skills: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub user_knowledge_tools: Vec<ToolSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_agent_tool_names: Vec<String>,
     pub shared_tools: Vec<SharedToolSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_tools_selected: Option<Vec<String>>,

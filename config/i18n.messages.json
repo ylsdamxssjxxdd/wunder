@@ -1064,12 +1064,12 @@
     "zh-CN": "文件不存在。"
   },
   "tool.read.binary_omitted": {
-    "en-US": "Binary file omitted because `read_file` only supports text content.",
-    "zh-CN": "已省略二进制文件内容，`读取文件` 仅支持文本内容。"
+    "en-US": "Binary file omitted because `read_file` only supports plain-text content.",
+    "zh-CN": "已省略二进制文件内容，`读取文件` 仅支持纯文本内容。"
   },
   "tool.read.binary_image_use_read_image": {
-    "en-US": "Binary image omitted. Use `read_image` to inspect this file.",
-    "zh-CN": "已省略二进制图片内容，请改用 `read_image` 查看该文件。"
+    "en-US": "Image bytes omitted because `read_file` only supports plain-text content.",
+    "zh-CN": "已省略图片二进制内容，`读取文件` 仅支持纯文本内容。"
   },
   "tool.skill_call.name_required": {
     "en-US": "Skill name is required.",
@@ -1976,16 +1976,16 @@
     "zh-CN": "可选的行号范围列表。"
   },
   "tool.spec.read.args.files.path": {
-    "en-US": "Path to read.",
-    "zh-CN": "要读取的路径。"
+    "en-US": "Path to a plain-text file to read. Do not pass images or other binary files here.",
+    "zh-CN": "要读取的纯文本文件路径。不要在这里传入图片或其他二进制文件。"
   },
   "tool.spec.read.args.files.start_line": {
     "en-US": "Optional start line (inclusive).",
     "zh-CN": "可选起始行（包含）。"
   },
   "tool.spec.read.description": {
-    "en-US": "Read file contents from specified paths, with batch and line-range support.",
-    "zh-CN": "读取指定路径的文件内容，支持批量读取并指定行号范围。"
+    "en-US": "Read plain-text file contents from specified paths, with batch and line-range support. Only use this for code/config/log/markdown/text files. Do not use it for images, PDFs, office documents, archives, audio/video, or other binary files.",
+    "zh-CN": "读取指定路径的纯文本文件内容，支持批量读取并指定行号范围。仅用于代码、配置、日志、Markdown 等文本文件；不要用于图片、PDF、Office 文档、压缩包、音视频或其他二进制文件。"
   },
   "tool.spec.read_image.args.path": {
     "en-US": "Local image path, relative to workspace or an allowed absolute path.",
@@ -2214,6 +2214,54 @@
   "tool.spec.sessions_spawn.args.cleanup": {
     "en-US": "Optional. Cleanup policy after completion (keep/delete).",
     "zh-CN": "可选。完成后的清理策略（keep/delete）。"
+  },
+  "tool.spec.thread_control.description": {
+    "en-US": "Control conversation threads for the current user: create, switch, inspect, archive, restore, or set the main thread.",
+    "zh-CN": "控制当前用户的会话线程，可创建、切换、查看、归档、恢复或设为主线程。"
+  },
+  "tool.spec.thread_control.args.action": {
+    "en-US": "Thread control action: list, info, create, switch, back, update_title, archive, restore, or set_main.",
+    "zh-CN": "线程控制动作：list、info、create、switch、back、update_title、archive、restore、set_main。"
+  },
+  "tool.spec.thread_control.args.session_id": {
+    "en-US": "Target session id for info/switch/update/archive/restore/set_main.",
+    "zh-CN": "用于 info/switch/update/archive/restore/set_main 的目标会话 id。"
+  },
+  "tool.spec.thread_control.args.parent_session_id": {
+    "en-US": "Optional parent session id when creating a new thread. Defaults to the current session.",
+    "zh-CN": "新建线程时可选的父会话 id，默认取当前会话。"
+  },
+  "tool.spec.thread_control.args.agent_id": {
+    "en-US": "Optional agent id scope. Defaults to the current or target session's agent.",
+    "zh-CN": "可选的 agent id 作用域，默认取当前或目标会话所属智能体。"
+  },
+  "tool.spec.thread_control.args.title": {
+    "en-US": "Title for create or update_title.",
+    "zh-CN": "create 或 update_title 时使用的标题。"
+  },
+  "tool.spec.thread_control.args.label": {
+    "en-US": "Optional display label stored on the spawned thread.",
+    "zh-CN": "可选的展示标签，会记录到派生线程。"
+  },
+  "tool.spec.thread_control.args.scope": {
+    "en-US": "Listing scope: branch, children, roots, or all.",
+    "zh-CN": "列表范围：branch、children、roots、all。"
+  },
+  "tool.spec.thread_control.args.status": {
+    "en-US": "Session status filter: active, archived, or all.",
+    "zh-CN": "会话状态过滤：active、archived、all。"
+  },
+  "tool.spec.thread_control.args.limit": {
+    "en-US": "Maximum number of sessions returned by list actions.",
+    "zh-CN": "list 动作返回的最大会话数量。"
+  },
+  "tool.spec.thread_control.args.switch": {
+    "en-US": "Whether the frontend should switch to the target thread after the action.",
+    "zh-CN": "动作后前端是否切换到目标线程。"
+  },
+  "tool.spec.thread_control.args.set_main": {
+    "en-US": "Whether to bind the target thread as the agent's main thread.",
+    "zh-CN": "是否将目标线程绑定为该智能体的主线程。"
   },
   "workspace.error.batch_action_unsupported": {
     "en-US": "Unsupported batch action",

@@ -315,25 +315,28 @@
             <div class="agent-tool-picker">
               <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
               <el-checkbox-group v-else v-model="form.tool_names" class="agent-tool-groups">
-                <div v-for="group in toolGroups" :key="group.label" class="agent-tool-group">
-                  <div class="agent-tool-group-header">
-                    <div class="agent-tool-group-title">{{ t('chat.approval.kind') }} · {{ group.label }}</div>
-                    <button
-                      class="agent-tool-group-select"
-                      type="button"
-                      @click.stop="selectToolGroup(group)"
-                    >
-                      {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
-                    </button>
-                  </div>
-                  <div class="agent-tool-options">
-                    <el-checkbox
-                      v-for="option in group.options"
-                      :key="option.value"
-                      :value="option.value"
-                    >
-                      <span :title="option.hint">{{ option.label }}</span>
-                    </el-checkbox>
+                <div v-for="section in toolSections" :key="section.key" class="agent-tool-section">
+                  <div class="agent-tool-section-title">{{ section.label }}</div>
+                  <div v-for="group in section.groups" :key="group.key" class="agent-tool-group">
+                    <div class="agent-tool-group-header">
+                      <div class="agent-tool-group-title">{{ t('chat.approval.kind') }} · {{ group.label }}</div>
+                      <button
+                        class="agent-tool-group-select"
+                        type="button"
+                        @click.stop="selectToolGroup(group)"
+                      >
+                        {{ isToolGroupFullySelected(group) ? t('portal.agent.tools.unselectAll') : t('portal.agent.tools.selectAll') }}
+                      </button>
+                    </div>
+                    <div class="agent-tool-options">
+                      <el-checkbox
+                        v-for="option in group.options"
+                        :key="option.value"
+                        :value="option.value"
+                      >
+                        <span :title="option.hint">{{ option.label }}</span>
+                      </el-checkbox>
+                    </div>
                   </div>
                 </div>
               </el-checkbox-group>
@@ -412,6 +415,11 @@ import { useBeeroomStore } from '@/stores/beeroom';
 import { useChatStore } from '@/stores/chat';
 import { showApiError } from '@/utils/apiError';
 import { DEFAULT_AGENT_AVATAR_IMAGE } from '@/utils/agentAvatar';
+import {
+  buildAgentToolSections,
+  collectToolValuesFromSections,
+  resolveDefaultAgentToolNames
+} from '@/utils/agentToolCatalog';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { resolveAgentDependencyStatus } from '@/utils/agentDependencyStatus';
 import { resolveToolUsageHint } from '@/utils/toolUsageHint';
@@ -1033,57 +1041,41 @@ const dialogTitle = computed(() =>
   editingId.value ? t('portal.agent.editTitle') : t('portal.agent.createTitle')
 );
 
-const normalizeOptions = (list) =>
-  (Array.isArray(list) ? list : [])
-    .map((item) => {
-      const label =
-        typeof item === 'string'
-          ? item.trim()
-          : String(item?.name || item?.tool_name || item?.toolName || item?.id || '').trim();
-      if (!label) return null;
-      const description =
-        typeof item === 'string' ? '' : String(item?.description || '').trim();
-      const option = {
-        label,
-        value: label,
-        description,
-        hint: ''
-      };
-      option.hint = resolveToolUsageHint({
-        name: option.value,
-        label: option.label,
-        description: option.description,
-        input_schema: typeof item === 'string' ? null : item?.input_schema,
-        inputSchema: typeof item === 'string' ? null : item?.inputSchema,
-        schema: typeof item === 'string' ? null : item?.schema
-      });
-      if (!option.hint) option.hint = option.label;
-      return option;
-    })
-    .filter(Boolean);
+const normalizeToolOption = (item) => {
+  const label =
+    typeof item === 'string'
+      ? item.trim()
+      : String(item?.name || item?.tool_name || item?.toolName || item?.id || '').trim();
+  if (!label) return null;
+  const description = typeof item === 'string' ? '' : String(item?.description || '').trim();
+  const option = {
+    label,
+    value: label,
+    description,
+    hint: ''
+  };
+  option.hint = resolveToolUsageHint({
+    name: option.value,
+    label: option.label,
+    description: option.description,
+    input_schema: typeof item === 'string' ? null : item?.input_schema,
+    inputSchema: typeof item === 'string' ? null : item?.inputSchema,
+    schema: typeof item === 'string' ? null : item?.schema
+  });
+  if (!option.hint) option.hint = option.label;
+  return option;
+};
 
-const toolGroups = computed(() => {
-  const payload = toolCatalog.value || {};
-  return [
-    { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(payload.builtin_tools) },
-    { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(payload.mcp_tools) },
-    { label: t('portal.agent.tools.group.a2a'), options: normalizeOptions(payload.a2a_tools) },
-    { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(payload.skills) },
-    { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(payload.knowledge_tools) },
-    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(payload.user_tools) }
-  ].filter((group) => group.options.length > 0);
-});
+const toolSections = computed(() =>
+  buildAgentToolSections(toolCatalog.value, t, normalizeToolOption)
+);
 
 const allToolValues = computed(() => {
-  const values = new Set();
-  toolGroups.value.forEach((group) => {
-    group.options.forEach((option) => values.add(option.value));
-  });
-  return Array.from(values);
+  return collectToolValuesFromSections(toolSections.value);
 });
 
 const applyDefaultTools = () => {
-  form.tool_names = allToolValues.value.length ? [...allToolValues.value] : [];
+  form.tool_names = resolveDefaultAgentToolNames(toolCatalog.value, toolSections.value);
 };
 
 const isToolGroupFullySelected = (group) => {

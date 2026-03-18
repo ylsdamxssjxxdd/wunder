@@ -841,7 +841,10 @@ fn parse_read_file_path_from_shell_block(body: &str) -> Option<String> {
             if matches!(cleaned, "|" | "||" | "&&" | ";") {
                 break;
             }
-            return Some(cleaned.to_string());
+            if should_fallback_to_read_file_path(cleaned) {
+                return Some(cleaned.to_string());
+            }
+            return None;
         }
         return None;
     }
@@ -855,12 +858,97 @@ fn parse_read_file_path_from_shell_block(body: &str) -> Option<String> {
             if matches!(cleaned, "|" | "||" | "&&" | ";") {
                 break;
             }
-            return Some(cleaned.to_string());
+            if should_fallback_to_read_file_path(cleaned) {
+                return Some(cleaned.to_string());
+            }
+            return None;
         }
         return None;
     }
 
     None
+}
+
+// Shell fenced-block fallback should stay conservative and only recover
+// obvious plain-text reads into read_file tool calls.
+fn should_fallback_to_read_file_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty()
+        || trimmed.ends_with('/')
+        || trimmed.ends_with('\\')
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("data:")
+    {
+        return false;
+    }
+
+    let extension = std::path::Path::new(trimmed)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim().to_ascii_lowercase());
+    !extension
+        .as_deref()
+        .map(is_obvious_non_text_extension)
+        .unwrap_or(false)
+}
+
+fn is_obvious_non_text_extension(extension: &str) -> bool {
+    matches!(
+        extension,
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "bmp"
+            | "tif"
+            | "tiff"
+            | "avif"
+            | "ico"
+            | "pdf"
+            | "doc"
+            | "docx"
+            | "ppt"
+            | "pptx"
+            | "xls"
+            | "xlsx"
+            | "zip"
+            | "gz"
+            | "tgz"
+            | "bz2"
+            | "xz"
+            | "7z"
+            | "rar"
+            | "tar"
+            | "jar"
+            | "war"
+            | "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "bin"
+            | "class"
+            | "pyc"
+            | "pyd"
+            | "wasm"
+            | "mp3"
+            | "wav"
+            | "ogg"
+            | "flac"
+            | "mp4"
+            | "mov"
+            | "avi"
+            | "mkv"
+            | "webm"
+            | "sqlite"
+            | "db"
+            | "parquet"
+            | "feather"
+            | "orc"
+            | "npy"
+            | "npz"
+    )
 }
 
 fn tool_call_name_args_signature(call: &ToolCall) -> String {
@@ -1390,5 +1478,12 @@ def fibonacci(n):
             calls[0].arguments.get("path").and_then(Value::as_str),
             Some("Cargo.toml")
         );
+    }
+
+    #[test]
+    fn test_parse_tool_call_shell_read_file_fallback_ignores_binary_image_path() {
+        let content = "```bash\ncat screenshot.png\n```";
+        let calls = parse_tool_calls_from_text(content);
+        assert!(calls.is_empty());
     }
 }

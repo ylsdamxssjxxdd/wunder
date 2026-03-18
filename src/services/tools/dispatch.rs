@@ -6,9 +6,9 @@ use super::{
     a2a_observe, a2a_wait, agent_swarm, compact_cron_tool_result, execute_a2a_service,
     execute_command, execute_knowledge_tool, execute_mcp_tool, execute_memory_manager_tool,
     execute_node_invoke, execute_plan_tool, execute_ptc, execute_question_panel_tool,
-    execute_skill_call, execute_user_tool, find_knowledge_base, is_a2a_service_tool,
-    is_mcp_tool_name, list_files, lsp_query, read_files, subagent_control, user_world_tool,
-    write_file,
+    execute_skill_call, execute_thread_control_tool, execute_user_tool, find_knowledge_base,
+    is_a2a_service_tool, is_mcp_tool_name, list_files, lsp_query, read_files, subagent_control,
+    user_world_tool, write_file,
 };
 use super::{apply_patch_tool, browser_tool, desktop_control, read_image_tool, sleep_tool};
 use crate::cron::{handle_cron_action, CronActionRequest};
@@ -67,6 +67,7 @@ pub async fn execute_builtin_tool(
         "应用补丁" => apply_patch_tool::apply_patch(context, args).await,
         "LSP查询" => lsp_query(context, args).await,
         "子智能体控制" => subagent_control(context, args).await,
+        "会话线程控制" => execute_thread_control_tool(context, args).await,
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}" => agent_swarm(context, args).await,
         "节点调用" => execute_node_invoke(context, args).await,
         browser_tool::TOOL_BROWSER => {

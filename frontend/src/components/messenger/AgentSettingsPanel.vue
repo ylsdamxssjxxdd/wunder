@@ -36,7 +36,7 @@
           <div class="messenger-tool-picker">
             <div v-if="toolLoading" class="messenger-list-empty">{{ t('portal.agent.tools.loading') }}</div>
             <div v-else-if="toolError" class="messenger-list-empty">{{ toolError }}</div>
-            <div v-else-if="!toolGroups.length" class="messenger-list-empty">
+            <div v-else-if="!toolSections.length" class="messenger-list-empty">
               {{ t('portal.agent.tools.loadFailed') }}
             </div>
             <el-checkbox-group
@@ -45,28 +45,31 @@
               class="messenger-tool-groups"
               :disabled="isReadonlyMode"
             >
-              <div v-for="group in toolGroups" :key="group.label" class="messenger-tool-group">
-                <div class="messenger-tool-group-head">
-                  <div class="messenger-tool-group-head-left">
-                    <span class="messenger-tool-group-title">{{ t('chat.approval.kind') }}：{{ group.label }}</span>
+              <div v-for="section in toolSections" :key="section.key" class="messenger-tool-section">
+                <div class="messenger-tool-section-title">{{ section.label }}</div>
+                <div v-for="group in section.groups" :key="group.key" class="messenger-tool-group">
+                  <div class="messenger-tool-group-head">
+                    <div class="messenger-tool-group-head-left">
+                      <span class="messenger-tool-group-title">{{ t('chat.approval.kind') }}：{{ group.label }}</span>
+                    </div>
+                    <button
+                      class="messenger-tool-group-toggle"
+                      type="button"
+                      :disabled="isReadonlyMode"
+                      @click.prevent="toggleGroup(group)"
+                    >
+                      {{
+                        isGroupFullSelected(group)
+                          ? t('portal.agent.tools.unselectAll')
+                          : t('portal.agent.tools.selectAll')
+                      }}
+                    </button>
                   </div>
-                  <button
-                    class="messenger-tool-group-toggle"
-                    type="button"
-                    :disabled="isReadonlyMode"
-                    @click.prevent="toggleGroup(group)"
-                  >
-                    {{
-                      isGroupFullSelected(group)
-                        ? t('portal.agent.tools.unselectAll')
-                        : t('portal.agent.tools.selectAll')
-                    }}
-                  </button>
-                </div>
-                <div class="messenger-tool-options">
-                  <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
-                    <span :title="option.hint">{{ option.label }}</span>
-                  </el-checkbox>
+                  <div class="messenger-tool-options">
+                    <el-checkbox v-for="option in group.options" :key="option.value" :value="option.value">
+                      <span :title="option.hint">{{ option.label }}</span>
+                    </el-checkbox>
+                  </div>
                 </div>
               </div>
             </el-checkbox-group>
@@ -189,7 +192,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listAgentModels } from '@/api/agents';
-import { fetchUserToolsSummary } from '@/api/userTools';
+import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentDependencyNotice from '@/components/agent/AgentDependencyNotice.vue';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
@@ -197,6 +200,11 @@ import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop'
 import { useI18n } from '@/i18n';
 import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
+import {
+  buildAgentToolSections,
+  type AgentToolGroup,
+  type AgentToolSection
+} from '@/utils/agentToolCatalog';
 import {
   buildDeclaredDependencyPayload,
   buildWorkerCardDependencyPayload,
@@ -223,6 +231,8 @@ type ToolGroup = {
   label: string;
   options: ToolOption[];
 };
+
+type ToolSection = AgentToolSection<ToolOption>;
 
 const props = defineProps({
   agentId: {
@@ -366,22 +376,9 @@ const normalizeOption = (item: unknown): ToolOption | null => {
   return option;
 };
 
-const normalizeOptions = (list: unknown): ToolOption[] => {
-  if (!Array.isArray(list)) return [];
-  return list.map((item) => normalizeOption(item)).filter(Boolean) as ToolOption[];
-};
-
-const toolGroups = computed<ToolGroup[]>(() => {
-  const summary = toolSummary.value || {};
-
-  return [
-    { label: t('portal.agent.tools.group.builtin'), options: normalizeOptions(summary.builtin_tools) },
-    { label: t('portal.agent.tools.group.mcp'), options: normalizeOptions(summary.mcp_tools) },
-    { label: t('portal.agent.tools.group.skills'), options: normalizeOptions(summary.skills) },
-    { label: t('portal.agent.tools.group.knowledge'), options: normalizeOptions(summary.knowledge_tools) },
-    { label: t('portal.agent.tools.group.user'), options: normalizeOptions(summary.user_tools) }
-  ].filter((group) => group.options.length > 0);
-});
+const toolSections = computed<ToolSection[]>(() =>
+  buildAgentToolSections(toolSummary.value, t, normalizeOption)
+);
 
 const defaultModelDisplayName = computed(() => {
   const fallback = t('portal.agent.model.defaultName');
@@ -409,13 +406,13 @@ const dependencyStatus = computed(() =>
   resolveAgentDependencyStatus(currentAgent.value, toolSummary.value, form.tool_names)
 );
 
-const isGroupFullSelected = (group: ToolGroup): boolean => {
+const isGroupFullSelected = (group: AgentToolGroup<ToolOption>): boolean => {
   if (!group.options.length) return false;
   const selected = new Set(form.tool_names);
   return group.options.every((option) => selected.has(option.value));
 };
 
-const toggleGroup = (group: ToolGroup) => {
+const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
   if (isReadonlyMode.value) return;
   const selected = new Set(form.tool_names);
   if (isGroupFullSelected(group)) {
@@ -431,7 +428,7 @@ const loadToolSummary = async () => {
   toolLoading.value = true;
   toolError.value = '';
   try {
-    const result = await fetchUserToolsSummary();
+    const result = await fetchUserToolsCatalog();
     toolSummary.value = (result?.data?.data as Record<string, unknown>) || {};
   } catch (error) {
     toolError.value =

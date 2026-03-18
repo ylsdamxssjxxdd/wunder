@@ -4,6 +4,9 @@ use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, UserAccountRecord, UserAgentPresetBinding,
     UserAgentPresetSnapshot, UserAgentRecord, DEFAULT_HIVE_ID,
 };
+use crate::services::default_tool_profile::{
+    curated_default_skill_names, curated_default_tool_names,
+};
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -206,30 +209,6 @@ pub fn snapshot_from_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot
     }
 }
 
-fn build_default_tool_names(
-    allowed_tool_names: &HashSet<String>,
-    required_skill_names: &[String],
-) -> Vec<String> {
-    let mut output = allowed_tool_names.iter().cloned().collect::<Vec<_>>();
-    output.sort();
-    output.extend(required_skill_names.iter().cloned());
-    normalize_tool_list(output)
-}
-
-async fn required_preset_skill_names(
-    state: &AppState,
-    allowed_tool_names: &HashSet<String>,
-) -> Vec<String> {
-    let config = state.config_store.get().await;
-    config
-        .skills
-        .enabled
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty() && allowed_tool_names.contains(name))
-        .collect()
-}
-
 pub async fn build_target_snapshot(
     state: &AppState,
     user: &UserAccountRecord,
@@ -237,9 +216,9 @@ pub async fn build_target_snapshot(
 ) -> UserAgentPresetSnapshot {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
-    let required_skill_names = required_preset_skill_names(state, &allowed_tool_names).await;
+    let required_skill_names = curated_default_skill_names(&allowed_tool_names);
     let requested_tool_names = if preset.tool_names.is_empty() {
-        build_default_tool_names(&allowed_tool_names, &required_skill_names)
+        curated_default_tool_names(&allowed_tool_names)
     } else {
         let mut merged = preset.tool_names.clone();
         merged.extend(required_skill_names);

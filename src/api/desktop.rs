@@ -1,5 +1,4 @@
 use crate::config::{Config, LlmConfig};
-use crate::core::python_runtime;
 use crate::services::desktop_lan;
 use crate::state::AppState;
 use crate::storage::{
@@ -51,10 +50,6 @@ pub fn router() -> Router<Arc<AppState>> {
             post(desktop_llm_context_window),
         )
         .route("/wunder/desktop/fs/list", get(desktop_fs_list))
-        .route(
-            "/wunder/desktop/python/interpreters",
-            get(desktop_python_interpreters_get),
-        )
         .route("/wunder/desktop/sync/seed/start", post(desktop_seed_start))
         .route("/wunder/desktop/sync/seed/jobs", get(desktop_seed_jobs))
         .route(
@@ -86,8 +81,6 @@ struct DesktopSettingsFile {
     #[serde(default)]
     language: String,
     #[serde(default)]
-    python_interpreter_path: String,
-    #[serde(default)]
     llm: Option<LlmConfig>,
     #[serde(default)]
     remote_gateway: DesktopRemoteGatewaySettings,
@@ -104,7 +97,6 @@ impl Default for DesktopSettingsFile {
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
-            python_interpreter_path: String::new(),
             llm: None,
             remote_gateway: DesktopRemoteGatewaySettings::default(),
             lan_mesh: desktop_lan::DesktopLanMeshSettings::default(),
@@ -153,8 +145,6 @@ struct DesktopSettingsUpdateRequest {
     #[serde(default)]
     language: Option<String>,
     #[serde(default)]
-    python_interpreter_path: Option<String>,
-    #[serde(default)]
     llm: Option<LlmConfig>,
     #[serde(default)]
     remote_gateway: Option<DesktopRemoteGatewaySettings>,
@@ -179,12 +169,6 @@ struct DesktopDirectoryItem {
     name: String,
     path: String,
     entry_type: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct DesktopPythonInterpreterItem {
-    path: String,
-    source: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -642,19 +626,6 @@ async fn desktop_fs_list(
     })))
 }
 
-async fn desktop_python_interpreters_get(
-    State(_state): State<Arc<AppState>>,
-) -> Result<Json<Value>, Response> {
-    let items = python_runtime::detect_python_interpreters()
-        .into_iter()
-        .map(|item| DesktopPythonInterpreterItem {
-            path: item.path.to_string_lossy().to_string(),
-            source: item.source,
-        })
-        .collect::<Vec<_>>();
-    Ok(Json(json!({ "data": { "items": items } })))
-}
-
 async fn desktop_settings_update(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<DesktopSettingsUpdateRequest>,
@@ -734,27 +705,6 @@ async fn desktop_settings_update(
     if let Some(language) = payload.language.as_deref().map(str::trim) {
         if !language.is_empty() {
             settings.language = language.to_string();
-        }
-    }
-    if let Some(raw_python_interpreter_path) = payload.python_interpreter_path.as_deref() {
-        let trimmed = raw_python_interpreter_path.trim();
-        if trimmed.is_empty() {
-            settings.python_interpreter_path.clear();
-        } else {
-            let resolved = resolve_workspace_path(trimmed, &app_dir);
-            if !resolved.exists() {
-                return Err(bad_request(format!(
-                    "desktop python interpreter not found: {}",
-                    resolved.display()
-                )));
-            }
-            if !resolved.is_file() {
-                return Err(bad_request(format!(
-                    "desktop python interpreter is not a file: {}",
-                    resolved.display()
-                )));
-            }
-            settings.python_interpreter_path = resolved.to_string_lossy().to_string();
         }
     }
     if let Some(llm) = payload.llm.clone() {
@@ -993,7 +943,6 @@ fn build_settings_payload(
         "container_roots": container_roots,
         "container_mounts": container_mounts,
         "language": language,
-        "python_interpreter_path": settings.python_interpreter_path,
         "supported_languages": config.i18n.supported_languages,
         "llm": llm,
         "remote_gateway": settings.remote_gateway,

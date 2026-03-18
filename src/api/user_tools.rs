@@ -11,10 +11,11 @@ use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
 use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
+use crate::services::default_tool_profile::curated_default_tool_candidates;
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
 use crate::storage::StorageBackend;
-use crate::tools::{a2a_service_schema, builtin_tool_specs};
+use crate::tools::{a2a_service_schema, builtin_tool_specs, resolve_tool_name};
 use crate::user_access::{
     build_user_tool_context, build_user_tool_context_for_catalog, compute_allowed_tool_names,
     UserToolContext,
@@ -777,7 +778,7 @@ fn user_skill_to_value(
             .map(|items| items.contains(&name))
             .unwrap_or_else(|| enabled_set.contains(&name))
     } else {
-        enabled_set.contains(&name)
+        true
     };
     let shared = if source.is_builtin() {
         false
@@ -2214,13 +2215,7 @@ async fn user_tools_catalog(
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context_for_catalog(&state, &user_id).await;
     let allowed = compute_allowed_tool_names(&resolved.user, &context);
-    let mut summary = build_user_tools_summary(&user_id, &allowed, &context);
-    if is_desktop_mode(&context.config) {
-        summary.mcp_tools.clear();
-        summary.a2a_tools.clear();
-        summary.skills.clear();
-        summary.knowledge_tools.clear();
-    }
+    let summary = build_user_tools_summary(&user_id, &allowed, &context);
     Ok(Json(json!({ "data": summary })))
 }
 
@@ -2419,6 +2414,9 @@ fn build_user_tools_summary(
     }
 
     let mut user_tools = Vec::new();
+    let mut user_mcp_tools = Vec::new();
+    let mut user_skills = Vec::new();
+    let mut user_knowledge_tools = Vec::new();
     let mut shared_tools = Vec::new();
     let mut alias_names: Vec<String> = context.bindings.alias_map.keys().cloned().collect();
     alias_names.sort();
@@ -2433,11 +2431,19 @@ fn build_user_tools_summary(
             continue;
         };
         if alias_info.owner_id == user_id {
-            user_tools.push(ToolSpec {
+            let tool = ToolSpec {
                 name: alias.clone(),
                 description: spec.description.clone(),
                 input_schema: spec.input_schema.clone(),
-            });
+            };
+            match alias_info.kind {
+                crate::user_tools::UserToolKind::Mcp => user_mcp_tools.push(tool.clone()),
+                crate::user_tools::UserToolKind::Skill => user_skills.push(tool.clone()),
+                crate::user_tools::UserToolKind::Knowledge => {
+                    user_knowledge_tools.push(tool.clone())
+                }
+            }
+            user_tools.push(tool);
         } else {
             shared_tools.push(SharedToolSpec {
                 name: alias.clone(),
@@ -2459,13 +2465,36 @@ fn build_user_tools_summary(
         .collect::<Vec<_>>();
     shared_tools_selected.sort();
 
+    let default_candidates: HashSet<String> =
+        curated_default_tool_candidates().into_iter().collect();
+    let mut default_agent_tool_names = Vec::new();
+    let mut default_seen = HashSet::new();
+    for spec in builtin_tools.iter().chain(skills.iter()) {
+        let canonical = resolve_tool_name(&spec.name);
+        if !(default_candidates.contains(&canonical) || default_candidates.contains(&spec.name)) {
+            continue;
+        }
+        if default_seen.insert(spec.name.clone()) {
+            default_agent_tool_names.push(spec.name.clone());
+        }
+    }
+
     AvailableToolsResponse {
-        builtin_tools,
-        mcp_tools,
-        a2a_tools,
-        skills,
-        knowledge_tools,
+        builtin_tools: builtin_tools.clone(),
+        mcp_tools: mcp_tools.clone(),
+        a2a_tools: a2a_tools.clone(),
+        skills: skills.clone(),
+        knowledge_tools: knowledge_tools.clone(),
         user_tools,
+        admin_builtin_tools: builtin_tools,
+        admin_mcp_tools: mcp_tools,
+        admin_a2a_tools: a2a_tools,
+        admin_skills: skills,
+        admin_knowledge_tools: knowledge_tools,
+        user_mcp_tools,
+        user_skills,
+        user_knowledge_tools,
+        default_agent_tool_names,
         shared_tools,
         shared_tools_selected: Some(shared_tools_selected),
     }

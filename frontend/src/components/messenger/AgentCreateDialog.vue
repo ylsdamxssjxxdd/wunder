@@ -66,21 +66,24 @@
             <div v-if="toolLoading" class="tool-picker-empty">{{ t('common.loading') }}</div>
             <div v-else-if="toolError" class="tool-picker-empty">{{ toolError }}</div>
             <el-checkbox-group v-else v-model="form.tool_names" class="tool-groups">
-              <div v-for="group in toolGroups" :key="group.label" class="tool-group">
-                <div class="tool-group-head">
-                  <div class="tool-group-title">{{ group.label }}</div>
-                  <button class="tool-group-toggle" type="button" @click.prevent="toggleGroup(group)">
-                    {{
-                      isGroupFullSelected(group)
-                        ? t('messenger.agentCreate.unselectAll')
-                        : t('messenger.agentCreate.selectAll')
-                    }}
-                  </button>
-                </div>
-                <div class="tool-options">
-                  <el-checkbox v-for="tool in group.options" :key="tool.value" :value="tool.value">
-                    <span :title="tool.hint">{{ tool.label }}</span>
-                  </el-checkbox>
+              <div v-for="section in toolSections" :key="section.key" class="tool-section">
+                <div class="tool-section-title">{{ section.label }}</div>
+                <div v-for="group in section.groups" :key="group.key" class="tool-group">
+                  <div class="tool-group-head">
+                    <div class="tool-group-title">{{ group.label }}</div>
+                    <button class="tool-group-toggle" type="button" @click.prevent="toggleGroup(group)">
+                      {{
+                        isGroupFullSelected(group)
+                          ? t('messenger.agentCreate.unselectAll')
+                          : t('messenger.agentCreate.selectAll')
+                      }}
+                    </button>
+                  </div>
+                  <div class="tool-options">
+                    <el-checkbox v-for="tool in group.options" :key="tool.value" :value="tool.value">
+                      <span :title="tool.hint">{{ tool.label }}</span>
+                    </el-checkbox>
+                  </div>
                 </div>
               </div>
             </el-checkbox-group>
@@ -142,11 +145,18 @@ import { computed, reactive, ref, watch } from 'vue';
 import { ElMessage } from 'element-plus';
 
 import { listAgentModels } from '@/api/agents';
-import { fetchUserToolsSummary } from '@/api/userTools';
+import { fetchUserToolsCatalog } from '@/api/userTools';
 import AgentPresetQuestionsField from '@/components/agent/AgentPresetQuestionsField.vue';
 import BeeroomGroupField from '@/components/beeroom/BeeroomGroupField.vue';
 import { isDesktopModeEnabled, isDesktopRemoteAuthMode } from '@/config/desktop';
 import { useI18n } from '@/i18n';
+import {
+  buildAgentToolSections,
+  collectToolValuesFromSections,
+  resolveDefaultAgentToolNames,
+  type AgentToolGroup,
+  type AgentToolSection
+} from '@/utils/agentToolCatalog';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import {
   buildBeeroomGroupPayload,
@@ -167,6 +177,8 @@ type ToolGroup = {
   label: string;
   options: ToolOption[];
 };
+
+type ToolSection = AgentToolSection<ToolOption>;
 
 type AgentLike = {
   id: string;
@@ -262,41 +274,9 @@ const normalizeOption = (item: unknown): ToolOption | null => {
   return option;
 };
 
-const normalizeOptions = (list: unknown): ToolOption[] => {
-  if (!Array.isArray(list)) return [];
-  return list.map((item) => normalizeOption(item)).filter(Boolean) as ToolOption[];
-};
-
-const toolGroups = computed<ToolGroup[]>(() => {
-  const summary = toolSummary.value || {};
-
-  return [
-    {
-      label: t('portal.agent.tools.group.builtin'),
-      options: normalizeOptions(summary.builtin_tools)
-    },
-    {
-      label: t('portal.agent.tools.group.mcp'),
-      options: normalizeOptions(summary.mcp_tools)
-    },
-    {
-      label: t('portal.agent.tools.group.a2a'),
-      options: normalizeOptions(summary.a2a_tools)
-    },
-    {
-      label: t('portal.agent.tools.group.skills'),
-      options: normalizeOptions(summary.skills)
-    },
-    {
-      label: t('portal.agent.tools.group.knowledge'),
-      options: normalizeOptions(summary.knowledge_tools)
-    },
-    {
-      label: t('portal.agent.tools.group.user'),
-      options: normalizeOptions(summary.user_tools)
-    }
-  ].filter((group) => group.options.length > 0);
-});
+const toolSections = computed<ToolSection[]>(() =>
+  buildAgentToolSections(toolSummary.value, t, normalizeOption)
+);
 
 const defaultModelDisplayName = computed(() => {
   const fallback = t('portal.agent.model.defaultName');
@@ -321,11 +301,7 @@ const modelSelectOptions = computed<string[]>(() => {
 });
 
 const allToolValues = computed(() => {
-  const values = new Set<string>();
-  toolGroups.value.forEach((group) => {
-    group.options.forEach((tool) => values.add(tool.value));
-  });
-  return Array.from(values);
+  return collectToolValuesFromSections(toolSections.value);
 });
 
 const resetForm = () => {
@@ -335,7 +311,7 @@ const resetForm = () => {
   form.group = createBeeroomGroupDraft(String(props.defaultBeeroomGroupId || '').trim()) as BeeroomGroupDraft;
   form.system_prompt = '';
   form.model_name = '';
-  form.tool_names = [...allToolValues.value];
+  form.tool_names = resolveDefaultAgentToolNames(toolSummary.value, toolSections.value);
   form.preset_questions = [];
   form.is_shared = false;
   form.sandbox_container_id = 1;
@@ -347,7 +323,7 @@ const loadToolSummary = async () => {
   toolLoading.value = true;
   toolError.value = '';
   try {
-    const result = await fetchUserToolsSummary();
+    const result = await fetchUserToolsCatalog();
     toolSummary.value = result?.data?.data || {};
   } catch (error: any) {
     toolError.value = String(error?.response?.data?.detail || error?.message || t('common.requestFailed'));
@@ -375,13 +351,13 @@ const loadModelOptions = async () => {
   }
 };
 
-const isGroupFullSelected = (group: ToolGroup) => {
+const isGroupFullSelected = (group: AgentToolGroup<ToolOption>) => {
   if (!group.options.length) return false;
   const selected = new Set(form.tool_names);
   return group.options.every((option) => selected.has(option.value));
 };
 
-const toggleGroup = (group: ToolGroup) => {
+const toggleGroup = (group: AgentToolGroup<ToolOption>) => {
   const selected = new Set(form.tool_names);
   if (isGroupFullSelected(group)) {
     group.options.forEach((option) => selected.delete(option.value));
@@ -456,7 +432,7 @@ watch(
   () => {
     if (!visible.value) return;
     if (form.tool_names.length === 0) {
-      form.tool_names = [...allToolValues.value];
+      form.tool_names = resolveDefaultAgentToolNames(toolSummary.value, toolSections.value);
     }
   }
 );

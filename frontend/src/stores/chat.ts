@@ -76,9 +76,16 @@ type WorkflowEventRawPayload = {
   timestamp?: unknown;
 };
 
+type ThreadControlSession = Record<string, unknown> & {
+  id: string;
+  status?: unknown;
+  agent_id?: unknown;
+};
+
 type WorkflowProcessorOptions = {
   finalizeWithNow?: boolean;
   streamFlushMs?: number;
+  onThreadControl?: (payload: unknown) => void | Promise<void>;
 };
 
 type UsageStatsOptions = {
@@ -2259,6 +2266,114 @@ const writeSessionListCache = (agentId, sessions) => {
   });
 };
 
+const normalizeThreadControlSession = (value) => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const session = value as Record<string, unknown>;
+  const id = resolveSessionKey(session.id ?? session.session_id ?? session.sessionId);
+  if (!id) return null;
+  return {
+    ...session,
+    id
+  } as ThreadControlSession;
+};
+
+const applyThreadControlSessionPatch = (store, session, options: { allowArchived?: boolean } = {}) => {
+  const normalized = normalizeThreadControlSession(session);
+  if (!normalized) return null;
+  const targetId = resolveSessionKey(normalized.id);
+  if (!targetId) return null;
+  const status = String(normalized.status || '').trim().toLowerCase();
+  const allowArchived = options.allowArchived === true;
+  const targetAgentId = String(normalized.agent_id || '').trim();
+  if (status === 'archived' && !allowArchived) {
+    store.sessions = (Array.isArray(store.sessions) ? store.sessions : []).filter(
+      (item) => resolveSessionKey(item?.id) !== targetId
+    );
+    if (resolvePersistedSessionId(targetAgentId) === targetId) {
+      persistAgentSession(targetAgentId, '');
+    }
+    return { ...normalized, id: targetId };
+  }
+  const index = (Array.isArray(store.sessions) ? store.sessions : []).findIndex(
+    (item) => resolveSessionKey(item?.id) === targetId
+  );
+  if (index >= 0) {
+    const current = store.sessions[index] || {};
+    store.sessions[index] = {
+      ...current,
+      ...normalized,
+      id: targetId
+    };
+    return store.sessions[index];
+  }
+  const merged = { ...normalized, id: targetId };
+  store.sessions.unshift(merged);
+  return merged;
+};
+
+const applyThreadControlCaches = (store, agentIds: Set<string>) => {
+  store.sessions = sortSessionsByActivity(store.sessions);
+  agentIds.forEach((agentId) => {
+    writeSessionListCache(agentId, filterSessionsByAgent(agentId, store.sessions));
+  });
+  syncDemoChatCache({ sessions: store.sessions });
+};
+
+const handleThreadControlWorkflowEvent = async (store, payloadRaw) => {
+  const payload =
+    payloadRaw && typeof payloadRaw === 'object' && !Array.isArray(payloadRaw)
+      ? (payloadRaw as Record<string, unknown>)
+      : {};
+  const primarySession = normalizeThreadControlSession(payload.session);
+  const mainSession = normalizeThreadControlSession(payload.main_session ?? payload.mainSession);
+  const switchSession = normalizeThreadControlSession(
+    payload.switch_session ?? payload.switchSession ?? payload.session
+  );
+  const activeSessionId = resolveSessionKey(store?.activeSessionId);
+  const retainIds = new Set(
+    [activeSessionId, resolveSessionKey(mainSession?.id), resolveSessionKey(switchSession?.id)].filter(Boolean)
+  );
+  const affectedAgentIds = new Set<string>();
+  const applyPatch = (session, options: { allowArchived?: boolean } = {}) => {
+    const patched = applyThreadControlSessionPatch(store, session, options);
+    if (!patched) return null;
+    affectedAgentIds.add(String(patched.agent_id || '').trim());
+    return patched;
+  };
+
+  const patchedPrimary = applyPatch(primarySession, {
+    allowArchived: retainIds.has(resolveSessionKey(primarySession?.id))
+  });
+  const patchedMain = applyPatch(mainSession, { allowArchived: true });
+  const patchedSwitch = applyPatch(switchSession, { allowArchived: true });
+
+  if (patchedMain?.id) {
+    const mainAgentId = String(patchedMain.agent_id || '').trim();
+    store.sessions = applyMainSession(store.sessions, mainAgentId, patchedMain.id);
+    persistAgentSession(mainAgentId, patchedMain.id);
+    affectedAgentIds.add(mainAgentId);
+  }
+
+  if (!patchedMain?.id && patchedPrimary?.status === 'archived') {
+    const archivedAgentId = String(patchedPrimary.agent_id || '').trim();
+    if (resolvePersistedSessionId(archivedAgentId) === patchedPrimary.id) {
+      persistAgentSession(archivedAgentId, '');
+    }
+  }
+
+  applyThreadControlCaches(store, affectedAgentIds);
+
+  const shouldSwitch = payload.switch === true;
+  const targetSwitchId = resolveSessionKey(
+    patchedSwitch?.id ?? payload.switch_session_id ?? payload.switchSessionId ?? ''
+  );
+  if (shouldSwitch && targetSwitchId && targetSwitchId !== activeSessionId) {
+    await store.loadSessionDetail(targetSwitchId);
+  }
+};
+
 const resolveChatHttpStatus = (error) => {
   const status = Number(error?.response?.status ?? error?.status ?? 0);
   return Number.isFinite(status) ? status : 0;
@@ -2755,7 +2870,10 @@ const startSessionWatcher = (store, sessionId) => {
           candidate,
           workflowState,
           () => notifySessionSnapshot(store, key, sessionMessagesRef),
-          { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
+          {
+            streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+            onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload)
+          }
         );
         const state = { message: candidate, processor, userInserted: false };
         roundStates.set(normalizedRound, state);
@@ -2779,7 +2897,10 @@ const startSessionWatcher = (store, sessionId) => {
       assistantMessage,
       workflowState,
       () => notifySessionSnapshot(store, key, sessionMessagesRef),
-      { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
+      {
+        streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+        onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload)
+      }
     );
     const state = { message: assistantMessage, processor, userInserted: false };
     roundStates.set(normalizedRound, state);
@@ -4215,6 +4336,43 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         break;
       }
+      case 'thread_control': {
+        const action = String(data?.action ?? payload?.action ?? '').trim().toLowerCase();
+        const target =
+          data?.switch_session ??
+          data?.switchSession ??
+          data?.session ??
+          payload?.switch_session ??
+          payload?.switchSession ??
+          payload?.session ??
+          null;
+        const targetTitle = String(target?.title ?? '').trim();
+        const titleMap = {
+          create: '已创建会话线程',
+          switch: '已切换会话线程',
+          back: '已返回父线程',
+          update_title: '已更新线程标题',
+          archive: '已归档会话线程',
+          restore: '已恢复会话线程',
+          set_main: '已设置主线程'
+        };
+        const baseTitle = titleMap[action] || '会话线程控制';
+        const title = targetTitle ? `${baseTitle}：${targetTitle}` : baseTitle;
+        assistantMessage.workflowItems.push(
+          buildWorkflowItem(title, buildDetail(data ?? payload), 'completed')
+        );
+        if (typeof options.onThreadControl === 'function') {
+          try {
+            const maybePromise = options.onThreadControl(data ?? payload);
+            if (maybePromise && typeof maybePromise === 'object' && 'catch' in maybePromise) {
+              Promise.resolve(maybePromise).catch(() => {});
+            }
+          } catch (error) {
+            // Ignore side-effect failures to avoid breaking stream rendering.
+          }
+        }
+        break;
+      }
       case 'workspace_update': {
         const sessionId = payload?.session_id ?? payload?.sessionId ?? null;
         const workspaceId =
@@ -5488,7 +5646,10 @@ export const useChatStore = defineStore('chat', {
         assistantMessage,
         workflowState,
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
-        { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
+        {
+          streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload)
+        }
       );
       let queued = false;
       let interruptedByStop = false;
@@ -5803,7 +5964,10 @@ export const useChatStore = defineStore('chat', {
         message,
         workflowState,
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
-        { streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef) }
+        {
+          streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
+          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload)
+        }
       );
       abortResumeStream(sessionId);
       const runtime = ensureRuntime(sessionId);

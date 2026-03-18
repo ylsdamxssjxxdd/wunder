@@ -7,6 +7,7 @@ pub mod chat_attachments;
 pub mod cron;
 pub mod cron_schedule;
 pub mod default_agent_sync;
+pub mod default_tool_profile;
 pub mod desktop_lan;
 pub mod doc2md;
 pub mod external_auth;

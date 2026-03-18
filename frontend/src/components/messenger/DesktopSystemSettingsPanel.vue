@@ -8,81 +8,14 @@
       <div class="desktop-system-settings-section-head">
         <div class="desktop-system-settings-section-title">
           <i class="fa-solid fa-terminal" aria-hidden="true"></i>
-          <span>{{ t('desktop.system.pythonInterpreterTitle') }}</span>
-        </div>
-        <div class="desktop-system-settings-actions">
-          <el-button
-            class="desktop-system-settings-btn"
-            size="small"
-            :disabled="!pythonInterpreterPath.trim()"
-            :loading="savingRuntime"
-            @click="resetPythonInterpreterPath"
-          >
-            {{ t('desktop.system.pythonInterpreterReset') }}
-          </el-button>
-          <el-button
-            class="desktop-system-settings-btn desktop-system-settings-btn--primary"
-            size="small"
-            :loading="savingRuntime"
-            @click="saveRuntimeSettings"
-          >
-            {{ t('desktop.common.save') }}
-          </el-button>
+          <span>{{ t('desktop.system.runtimeTitle') }}</span>
         </div>
       </div>
-      <label class="desktop-system-settings-field desktop-system-settings-field--full">
-        <span class="desktop-system-settings-field-label">
-          {{ t('desktop.system.pythonInterpreterPath') }}
-        </span>
-        <div class="desktop-system-settings-runtime-input">
-          <el-input
-            v-model="pythonInterpreterPath"
-            clearable
-            :placeholder="t('desktop.system.pythonInterpreterPathPlaceholder')"
-          />
-          <el-button class="desktop-system-settings-btn" @click="openPythonPathPicker">
-            {{ t('desktop.common.browse') }}
-          </el-button>
-          <el-button
-            class="desktop-system-settings-btn"
-            :loading="loadingPythonCandidates"
-            @click="loadPythonInterpreterCandidates(true)"
-          >
-            {{ t('desktop.system.pythonInterpreterDetect') }}
-          </el-button>
-        </div>
-      </label>
       <div class="desktop-system-settings-runtime-hint">
-        {{
-          pythonInterpreterPath.trim()
-            ? t('desktop.system.pythonInterpreterCustomHint')
-            : t('desktop.system.pythonInterpreterBundledHint')
-        }}
+        {{ t('desktop.system.pythonRuntimeBundledOnly') }}
       </div>
       <div class="desktop-system-settings-runtime-subhint">
-        {{ t('desktop.system.pythonInterpreterHint') }}
-      </div>
-      <div v-if="pythonInterpreterCandidates.length" class="desktop-system-settings-runtime-candidates">
-        <div class="desktop-system-settings-runtime-candidates-title">
-          {{ t('desktop.system.pythonInterpreterCandidates') }}
-        </div>
-        <div
-          v-for="item in pythonInterpreterCandidates"
-          :key="`python-candidate-${item.path}`"
-          class="desktop-system-settings-runtime-candidate"
-        >
-          <div class="desktop-system-settings-runtime-candidate-main">
-            <div class="desktop-system-settings-runtime-candidate-path" :title="item.path">
-              {{ item.path }}
-            </div>
-            <div class="desktop-system-settings-runtime-candidate-meta">
-              {{ formatPythonCandidateSource(item.source) }}
-            </div>
-          </div>
-          <el-button class="desktop-system-settings-btn" size="small" @click="useDetectedPythonInterpreter(item.path)">
-            {{ t('common.use') }}
-          </el-button>
-        </div>
+        {{ t('desktop.system.pythonRuntimeBundledOnlyHint') }}
       </div>
     </section>
   </section>
@@ -371,62 +304,6 @@
     </div>
   </section>
 
-  <el-dialog
-    v-model="pythonPathPickerVisible"
-    :title="t('desktop.system.pythonPathPickerTitle')"
-    width="720px"
-    append-to-body
-  >
-    <div class="desktop-system-settings-path-picker">
-      <div class="desktop-system-settings-path-picker-toolbar">
-        <el-button
-          size="small"
-          :disabled="!pythonPathPickerParentPath"
-          @click="loadPythonPickerDirectory(pythonPathPickerParentPath || undefined)"
-        >
-          {{ t('desktop.system.pythonPathPickerUp') }}
-        </el-button>
-      </div>
-      <div class="desktop-system-settings-path-picker-current" :title="pythonPathPickerCurrentPath">
-        {{ pythonPathPickerCurrentPath }}
-      </div>
-      <div class="desktop-system-settings-path-picker-roots">
-        <button
-          v-for="root in pythonPathPickerRoots"
-          :key="`python-path-root-${root}`"
-          class="desktop-system-settings-path-picker-root"
-          type="button"
-          @click="loadPythonPickerDirectory(root)"
-        >
-          {{ root }}
-        </button>
-      </div>
-      <div class="desktop-system-settings-path-picker-list" v-loading="pythonPathPickerLoading">
-        <button
-          v-for="item in pythonPathPickerItems"
-          :key="`python-path-item-${item.path}`"
-          class="desktop-system-settings-path-picker-item"
-          type="button"
-          @click="handlePythonPathPickerSelect(item)"
-        >
-          <i
-            :class="
-              item.entry_type === 'file' ? 'fa-brands fa-python' : 'fa-regular fa-folder'
-            "
-            aria-hidden="true"
-          ></i>
-          <span>{{ item.name }}</span>
-        </button>
-        <div
-          v-if="!pythonPathPickerLoading && !pythonPathPickerItems.length"
-          class="desktop-system-settings-path-picker-empty"
-        >
-          {{ t('desktop.system.pythonPathPickerEmpty') }}
-        </div>
-      </div>
-    </div>
-  </el-dialog>
-
   <section
     v-if="showRemotePanel"
     class="messenger-settings-card desktop-system-settings-panel desktop-system-settings-panel--stack"
@@ -570,16 +447,12 @@ import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 
 import {
-  detectDesktopPythonInterpreters,
   fetchDesktopSettings,
-  listDesktopDirectories,
   listDesktopLanPeers,
   probeDesktopLlmContextWindow,
   updateDesktopSettings,
-  type DesktopDirectoryEntry,
   type DesktopLanMeshSettings,
   type DesktopLanPeer,
-  type DesktopPythonInterpreterItem,
   type DesktopRemoteGatewaySettings
 } from '@/api/desktop';
 import {
@@ -590,7 +463,6 @@ import {
   setDesktopRemoteApiBaseOverride
 } from '@/config/desktop';
 import { useI18n } from '@/i18n';
-import { resolveApiError } from '@/utils/apiError';
 import {
   getProviderModelPresets,
   resolveProviderModelPresetMaxContext
@@ -626,8 +498,6 @@ type ModelRow = {
   raw: Record<string, unknown>;
 };
 
-const PYTHON_PICKER_FILE_NAMES = ['python.exe', 'python3.exe', 'python', 'python3'];
-
 const EMBEDDING_DEFAULT_MODEL_STORAGE_KEY = 'wunder_desktop_default_embedding_model';
 
 const props = withDefaults(
@@ -649,22 +519,12 @@ const loading = ref(false);
 const savingModel = ref(false);
 const probingContext = ref(false);
 const connectingRemote = ref(false);
-const savingRuntime = ref(false);
-const loadingPythonCandidates = ref(false);
 const defaultModel = ref('');
 const defaultEmbeddingModel = ref('');
 const modelRows = ref<ModelRow[]>([]);
 const selectedModelUid = ref('');
 const remoteServerBaseUrl = ref('');
 const remoteConnected = ref(false);
-const pythonInterpreterPath = ref('');
-const pythonInterpreterCandidates = ref<DesktopPythonInterpreterItem[]>([]);
-const pythonPathPickerVisible = ref(false);
-const pythonPathPickerLoading = ref(false);
-const pythonPathPickerCurrentPath = ref('');
-const pythonPathPickerParentPath = ref<string | null>(null);
-const pythonPathPickerRoots = ref<string[]>([]);
-const pythonPathPickerItems = ref<DesktopDirectoryEntry[]>([]);
 const savingLan = ref(false);
 const loadingLanPeers = ref(false);
 const lanMeshEnabled = ref(false);
@@ -1214,24 +1074,6 @@ const refreshRemoteConnected = () => {
   remoteConnected.value = isDesktopRemoteAuthMode() && Boolean(override);
 };
 
-const formatPythonCandidateSource = (source: string): string => {
-  const normalized = String(source || '').trim();
-  if (!normalized) return '-';
-  return t(`desktop.system.pythonInterpreterSource.${normalized}`);
-};
-
-const resolvePythonPickerInitialPath = (): string | undefined => {
-  const value = pythonInterpreterPath.value.trim();
-  if (!value) {
-    return undefined;
-  }
-  const separatorIndex = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
-  if (separatorIndex <= 0) {
-    return undefined;
-  }
-  return value.slice(0, separatorIndex);
-};
-
 const normalizeLineList = (value: string): string[] =>
   String(value || '')
     .split(/\r?\n/)
@@ -1288,107 +1130,9 @@ const applySettingsData = (
   );
 
   ensureSelectedModel(preferredSelection);
-  pythonInterpreterPath.value = String(data.python_interpreter_path || '').trim();
   remoteServerBaseUrl.value = String(data.remote_gateway?.server_base_url || '').trim();
   applyLanSettings(data.lan_mesh as DesktopLanMeshSettings | undefined);
   refreshRemoteConnected();
-};
-
-const loadPythonInterpreterCandidates = async (notifyWhenEmpty = false) => {
-  loadingPythonCandidates.value = true;
-  try {
-    const response = await detectDesktopPythonInterpreters();
-    const items = (response?.data?.data?.items || []) as DesktopPythonInterpreterItem[];
-    pythonInterpreterCandidates.value = Array.isArray(items)
-      ? items
-          .map((item) => ({
-            path: String(item.path || '').trim(),
-            source: String(item.source || '').trim()
-          }))
-          .filter((item) => item.path)
-      : [];
-    if (!pythonInterpreterCandidates.value.length && notifyWhenEmpty) {
-      ElMessage.info(t('desktop.system.pythonInterpreterDetectNone'));
-    }
-  } catch (error) {
-    console.error(error);
-    ElMessage.error(t('desktop.system.pythonInterpreterDetectFailed'));
-  } finally {
-    loadingPythonCandidates.value = false;
-  }
-};
-
-const useDetectedPythonInterpreter = (path: string) => {
-  pythonInterpreterPath.value = String(path || '').trim();
-  ElMessage.success(t('desktop.system.pythonInterpreterSelected'));
-};
-
-const loadPythonPickerDirectory = async (path?: string) => {
-  pythonPathPickerLoading.value = true;
-  try {
-    const response = await listDesktopDirectories(path, {
-      includeFiles: true,
-      fileNames: PYTHON_PICKER_FILE_NAMES
-    });
-    const data = (response?.data?.data || {}) as Record<string, unknown>;
-    pythonPathPickerCurrentPath.value = String(data.current_path || '').trim();
-    pythonPathPickerParentPath.value = data.parent_path ? String(data.parent_path) : null;
-    pythonPathPickerRoots.value = Array.isArray(data.roots)
-      ? data.roots.map((item) => String(item || '').trim()).filter(Boolean)
-      : [];
-    pythonPathPickerItems.value = Array.isArray(data.items)
-      ? (data.items as unknown[])
-          .map((item) => item as Record<string, unknown>)
-          .map((item) => ({
-            name: String(item.name || '').trim(),
-            path: String(item.path || '').trim(),
-            entry_type: (item.entry_type === 'file' ? 'file' : 'dir') as 'file' | 'dir'
-          }))
-          .filter((item) => item.name && item.path)
-      : [];
-  } catch (error) {
-    console.error(error);
-    ElMessage.error(t('desktop.system.pythonPathPickerLoadFailed'));
-  } finally {
-    pythonPathPickerLoading.value = false;
-  }
-};
-
-const openPythonPathPicker = async () => {
-  pythonPathPickerVisible.value = true;
-  await loadPythonPickerDirectory(resolvePythonPickerInitialPath());
-};
-
-const handlePythonPathPickerSelect = async (item: DesktopDirectoryEntry) => {
-  if (item.entry_type === 'file') {
-    pythonInterpreterPath.value = String(item.path || '').trim();
-    pythonPathPickerVisible.value = false;
-    return;
-  }
-  await loadPythonPickerDirectory(item.path);
-};
-
-const saveRuntimeSettings = async () => {
-  savingRuntime.value = true;
-  try {
-    const preferredSelection = buildSelectedModelPreference(selectedModel.value);
-    const response = await updateDesktopSettings({
-      python_interpreter_path: pythonInterpreterPath.value.trim()
-    });
-    const data = (response?.data?.data || {}) as Record<string, any>;
-    applySettingsData(data, preferredSelection);
-    ElMessage.success(t('desktop.common.saveSuccess'));
-  } catch (error) {
-    console.error(error);
-    ElMessage.error(resolveApiError(error, t('desktop.common.saveFailed')).message);
-  } finally {
-    savingRuntime.value = false;
-  }
-};
-
-const resetPythonInterpreterPath = async () => {
-  pythonInterpreterPath.value = '';
-  await saveRuntimeSettings();
 };
 
 const refreshLanPeers = async () => {
@@ -1610,7 +1354,6 @@ const disconnectRemoteServer = async () => {
 onMounted(() => {
   refreshRemoteConnected();
   void loadSettings();
-  void loadPythonInterpreterCandidates();
 });
 </script>
 

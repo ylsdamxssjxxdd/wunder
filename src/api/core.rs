@@ -417,6 +417,15 @@ async fn wunder_tools(
         skills,
         knowledge_tools,
         user_tools,
+        admin_builtin_tools: Vec::new(),
+        admin_mcp_tools: Vec::new(),
+        admin_a2a_tools: Vec::new(),
+        admin_skills: Vec::new(),
+        admin_knowledge_tools: Vec::new(),
+        user_mcp_tools: Vec::new(),
+        user_skills: Vec::new(),
+        user_knowledge_tools: Vec::new(),
+        default_agent_tool_names: Vec::new(),
         shared_tools,
         shared_tools_selected: None,
     };
@@ -436,18 +445,9 @@ fn collect_user_mcp_tools<F>(
         if server_name.is_empty() || server_name.contains('@') {
             continue;
         }
-        if !server.enabled {
-            continue;
-        }
         if server.tool_specs.is_empty() {
             continue;
         }
-        let allow_tools: HashSet<String> = server
-            .allow_tools
-            .iter()
-            .filter(|name| !name.trim().is_empty())
-            .cloned()
-            .collect();
         let shared_tools: HashSet<String> = server
             .shared_tools
             .iter()
@@ -461,14 +461,14 @@ fn collect_user_mcp_tools<F>(
             .map(|name| name.trim().to_string())
             .filter(|name| !name.is_empty())
             .collect();
-        let mut enabled_names = if allow_tools.is_empty() {
+        let enabled_names = if shared_only {
             tool_pool
+                .into_iter()
+                .filter(|name| shared_tools.contains(name))
+                .collect()
         } else {
-            allow_tools
+            tool_pool
         };
-        if shared_only {
-            enabled_names.retain(|name| shared_tools.contains(name));
-        }
         if enabled_names.is_empty() {
             continue;
         }
@@ -507,13 +507,6 @@ fn collect_user_skill_tools<F>(
     if !skill_root.exists() {
         return;
     }
-    let enabled_set: HashSet<String> = payload
-        .skills
-        .enabled
-        .iter()
-        .filter(|&name| !name.trim().is_empty())
-        .cloned()
-        .collect();
     let shared_set: HashSet<String> = payload
         .skills
         .shared
@@ -530,8 +523,6 @@ fn collect_user_skill_tools<F>(
             if !shared_set.contains(&spec.name) {
                 continue;
             }
-        } else if !enabled_set.contains(&spec.name) {
-            continue;
         }
         append(
             owner_id,
@@ -553,7 +544,7 @@ fn collect_user_knowledge_tools<F>(
     let schema = build_knowledge_schema();
     for base in &payload.knowledge_bases {
         let name = base.name.trim();
-        if name.is_empty() || !base.enabled {
+        if name.is_empty() {
             continue;
         }
         if shared_only && !base.shared {
@@ -634,6 +625,7 @@ fn select_english_alias(canonical: &str, aliases: &[String]) -> Option<String> {
     let preferred = match canonical {
         "问询面板" => Some("question_panel"),
         "技能调用" => Some("skill_call"),
+        "会话线程控制" => Some("thread_control"),
         "智能体蜂群" => Some("agent_swarm"),
         "节点调用" => Some("node_invoke"),
         _ => None,

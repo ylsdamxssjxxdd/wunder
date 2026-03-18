@@ -602,7 +602,10 @@ async fn session_prompt_preview_freezes_after_first_user_message() {
         json!("frozen")
     );
     assert_eq!(session_preview["data"]["memory_preview_count"], json!(1));
-    assert_eq!(session_preview["data"]["memory_preview_total_count"], json!(1));
+    assert_eq!(
+        session_preview["data"]["memory_preview_total_count"],
+        json!(1)
+    );
     let reused_prompt = session_preview["data"]["prompt"]
         .as_str()
         .expect("session system prompt");

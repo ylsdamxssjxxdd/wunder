@@ -19,12 +19,12 @@ use crate::path_utils::{
 use crate::performance::{
     run_sample as run_performance_sample, PerformanceSampleRequest, PerformanceSampleResponse,
 };
+use crate::services::default_agent_sync::{
+    self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
+};
 use crate::services::user_agent_presets::{
     self, find_preset_by_id, normalize_agent_approval_mode, normalize_agent_status,
     normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
-};
-use crate::services::default_agent_sync::{
-    self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
 };
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
@@ -5294,11 +5294,11 @@ fn normalize_preset_agents(
     let mut seen_ids = HashSet::new();
     let mut output = Vec::with_capacity(items.len());
     for item in items {
-        if item
-            .preset_id
-            .as_deref()
-            .is_some_and(|preset_id| preset_id.trim().eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS))
-        {
+        if item.preset_id.as_deref().is_some_and(|preset_id| {
+            preset_id
+                .trim()
+                .eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
+        }) {
             continue;
         }
         let cleaned_name = item.name.trim();

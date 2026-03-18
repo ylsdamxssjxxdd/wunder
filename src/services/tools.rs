@@ -22,6 +22,7 @@ mod search_content_tool;
 mod skill_call;
 mod sleep_tool;
 mod swarm_realtime;
+mod thread_control_tool;
 pub(crate) mod tool_error;
 
 #[cfg(test)]
@@ -45,6 +46,7 @@ pub(crate) use freeform::{
     render_prompt_tool_spec,
 };
 pub(crate) use memory_manager_tool::execute_memory_manager_tool;
+pub(crate) use thread_control_tool::execute_thread_control_tool;
 
 use crate::a2a_store::A2aTask;
 use crate::command_utils;

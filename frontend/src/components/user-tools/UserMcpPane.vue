@@ -74,22 +74,6 @@
               <i class="fa-solid fa-plug" aria-hidden="true"></i>
               <span>{{ connectLabel }}</span>
             </button>
-            <button
-              class="user-tools-btn secondary"
-              type="button"
-              :disabled="!activeServer || !activeTools.length || isActiveServerConnecting"
-              @click="enableAllTools"
-            >
-              {{ t('common.selectAll') }}
-            </button>
-            <button
-              class="user-tools-btn secondary"
-              type="button"
-              :disabled="!activeServer || isActiveServerConnecting"
-              @click="disableAllTools"
-            >
-              {{ t('common.unselectAll') }}
-            </button>
           </div>
           <div class="actions">
             <button
@@ -118,21 +102,13 @@
             v-for="tool in activeTools"
             :key="tool.name"
             class="tool-item"
-            :class="isLocalMode ? 'tool-item-single' : 'tool-item-dual'"
+            :class="!isLocalMode ? 'tool-item-single' : 'tool-item-info-only'"
             tabindex="0"
             role="button"
             @click="openToolDetail(tool)"
             @keydown.enter.prevent="handleToolItemKeydown(tool, $event)"
             @keydown.space.prevent="handleToolItemKeydown(tool, $event)"
             >
-              <label class="tool-check" @click.stop>
-                <input
-                  type="checkbox"
-                  :checked="isToolEnabled(tool)"
-                  @change="toggleToolEnable(tool, ($event.target as HTMLInputElement).checked)"
-                />
-                <span>{{ t('userTools.action.enable') }}</span>
-              </label>
               <label v-if="!isLocalMode" class="tool-check" @click.stop>
                 <input
                   type="checkbox"
@@ -213,11 +189,6 @@
             @input="handleHeadersInput"
           />
           <div class="error-text">{{ headersError }}</div>
-        </div>
-        <div class="form-row">
-          <el-checkbox v-model="activeServer.enabled" @change="scheduleSave">
-            {{ t('userTools.mcp.form.enabled') }}
-          </el-checkbox>
         </div>
         <div class="form-row">
           <label>{{ t('userTools.mcp.form.structPreview') }}</label>

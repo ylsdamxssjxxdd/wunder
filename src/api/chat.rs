@@ -2632,6 +2632,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "tool_result"
             | "plan_update"
             | "question_panel"
+            | "thread_control"
             | "llm_output_delta"
             | "llm_output"
             | "context_usage"

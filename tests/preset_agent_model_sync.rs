@@ -289,7 +289,9 @@ async fn admin_preset_list_includes_default_agent_item() {
 
     assert_eq!(default_item["is_default_agent"], json!(true));
     assert!(
-        default_item["name"].as_str().is_some_and(|name| !name.trim().is_empty()),
+        default_item["name"]
+            .as_str()
+            .is_some_and(|name| !name.trim().is_empty()),
         "default preset item should expose a visible name"
     );
 }
@@ -306,9 +308,19 @@ async fn admin_preset_update_ignores_default_agent_item() {
 
     let updated = update_admin_presets(&context.app, items).await;
     assert_eq!(updated.len(), 2);
-    assert_eq!(find_preset_item(&updated, DEFAULT_AGENT_ID_ALIAS)["is_default_agent"], json!(true));
     assert_eq!(
-        context.state.config_store.get().await.user_agents.presets.len(),
+        find_preset_item(&updated, DEFAULT_AGENT_ID_ALIAS)["is_default_agent"],
+        json!(true)
+    );
+    assert_eq!(
+        context
+            .state
+            .config_store
+            .get()
+            .await
+            .user_agents
+            .presets
+            .len(),
         1,
         "default agent item should not be persisted into ordinary preset config"
     );
@@ -378,13 +390,22 @@ async fn admin_default_agent_sync_safe_and_force_respects_user_override() {
     .await;
 
     let safe_summary = sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "safe", None).await;
-    assert_eq!(safe_summary["data"]["preset"]["preset_id"], json!(DEFAULT_AGENT_ID_ALIAS));
+    assert_eq!(
+        safe_summary["data"]["preset"]["preset_id"],
+        json!(DEFAULT_AGENT_ID_ALIAS)
+    );
 
     let user_a_after_safe =
         get_default_agent(&context.app, Some(&admin_token), "default_sync_user_a").await;
     assert_eq!(user_a_after_safe["name"], json!("Template Default Agent"));
-    assert_eq!(user_a_after_safe["description"], json!("template-description"));
-    assert_eq!(user_a_after_safe["system_prompt"], json!("template-system-prompt"));
+    assert_eq!(
+        user_a_after_safe["description"],
+        json!("template-description")
+    );
+    assert_eq!(
+        user_a_after_safe["system_prompt"],
+        json!("template-system-prompt")
+    );
 
     let user_b_after_safe =
         get_default_agent(&context.app, Some(&admin_token), "default_sync_user_b").await;
@@ -396,13 +417,22 @@ async fn admin_default_agent_sync_safe_and_force_respects_user_override() {
     assert_eq!(user_b_after_safe["approval_mode"], json!("suggest"));
 
     let force_summary = sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "force", None).await;
-    assert_eq!(force_summary["data"]["preset"]["preset_id"], json!(DEFAULT_AGENT_ID_ALIAS));
+    assert_eq!(
+        force_summary["data"]["preset"]["preset_id"],
+        json!(DEFAULT_AGENT_ID_ALIAS)
+    );
 
     let user_b_after_force =
         get_default_agent(&context.app, Some(&admin_token), "default_sync_user_b").await;
     assert_eq!(user_b_after_force["name"], json!("Template Default Agent"));
-    assert_eq!(user_b_after_force["description"], json!("template-description"));
-    assert_eq!(user_b_after_force["system_prompt"], json!("template-system-prompt"));
+    assert_eq!(
+        user_b_after_force["description"],
+        json!("template-description")
+    );
+    assert_eq!(
+        user_b_after_force["system_prompt"],
+        json!("template-system-prompt")
+    );
     assert_eq!(
         user_b_after_force["preset_questions"],
         json!(["What should I do next?"])

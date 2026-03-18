@@ -482,6 +482,7 @@ const DEBUG_RESTORE_EVENT_TYPES = new Set([
   "tool_result",
   "plan_update",
   "question_panel",
+  "thread_control",
   "llm_request",
   "llm_response",
   "knowledge_request",

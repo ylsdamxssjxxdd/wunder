@@ -1,4 +1,6 @@
-use super::{browser_tool, channel_tool, desktop_control, read_image_tool, sleep_tool};
+use super::{
+    browser_tool, channel_tool, desktop_control, read_image_tool, sleep_tool, thread_control_tool,
+};
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
@@ -553,6 +555,49 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
+            name: thread_control_tool::TOOL_THREAD_CONTROL.to_string(),
+            description: t("tool.spec.thread_control.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": t("tool.spec.thread_control.args.action"),
+                        "enum": [
+                            "list",
+                            "info",
+                            "create",
+                            "switch",
+                            "back",
+                            "update_title",
+                            "archive",
+                            "restore",
+                            "set_main"
+                        ]
+                    },
+                    "session_id": {"type": "string", "description": t("tool.spec.thread_control.args.session_id")},
+                    "parent_session_id": {"type": "string", "description": t("tool.spec.thread_control.args.parent_session_id")},
+                    "agentId": {"type": "string", "description": t("tool.spec.thread_control.args.agent_id")},
+                    "title": {"type": "string", "description": t("tool.spec.thread_control.args.title")},
+                    "label": {"type": "string", "description": t("tool.spec.thread_control.args.label")},
+                    "scope": {
+                        "type": "string",
+                        "description": t("tool.spec.thread_control.args.scope"),
+                        "enum": ["branch", "children", "roots", "all"]
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": t("tool.spec.thread_control.args.status"),
+                        "enum": ["active", "archived", "all"]
+                    },
+                    "limit": {"type": "integer", "description": t("tool.spec.thread_control.args.limit"), "minimum": 1, "maximum": 200},
+                    "switch": {"type": "boolean", "description": t("tool.spec.thread_control.args.switch")},
+                    "setMain": {"type": "boolean", "description": t("tool.spec.thread_control.args.set_main")}
+                },
+                "required": ["action"]
+            }),
+        },
+        ToolSpec {
             name: "智能体蜂群".to_string(),
             description: "智能体蜂群协作工具。推荐路径：list -> send/batch_send -> wait -> history/status。单目标用 send，多目标用 batch_send。".to_string(),
             input_schema: json!({
@@ -827,6 +872,14 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("lsp".to_string(), "LSP查询".to_string());
     map.insert("subagent_control".to_string(), "子智能体控制".to_string());
     map.insert(
+        thread_control_tool::TOOL_THREAD_CONTROL_ALIAS.to_string(),
+        thread_control_tool::TOOL_THREAD_CONTROL.to_string(),
+    );
+    map.insert(
+        thread_control_tool::TOOL_THREAD_CONTROL_ALIAS_ALT.to_string(),
+        thread_control_tool::TOOL_THREAD_CONTROL.to_string(),
+    );
+    map.insert(
         "agent_swarm".to_string(),
         "\u{667a}\u{80fd}\u{4f53}\u{8702}\u{7fa4}".to_string(),
     );
@@ -954,6 +1007,9 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
     match canonical {
         "问询面板" => Some("question_panel"),
         "技能调用" => Some("skill_call"),
+        thread_control_tool::TOOL_THREAD_CONTROL => {
+            Some(thread_control_tool::TOOL_THREAD_CONTROL_ALIAS)
+        }
         "智能体蜂群" => Some("agent_swarm"),
         "节点调用" => Some("node_invoke"),
         "用户世界工具" => Some("user_world"),
@@ -1244,4 +1300,41 @@ pub fn a2a_service_schema_with_language(language: &str) -> Value {
         },
         "required": ["content"]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::builtin_tool_specs_with_language;
+
+    #[test]
+    fn read_file_spec_clarifies_plain_text_only_in_english() {
+        let spec = builtin_tool_specs_with_language("en-US")
+            .into_iter()
+            .find(|spec| spec.name == "读取文件")
+            .expect("read_file spec");
+        assert!(spec.description.contains("plain-text"));
+        assert!(!spec.description.contains("read_image"));
+        let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
+            ["path"]["description"]
+            .as_str()
+            .expect("path description");
+        assert!(path_description.contains("plain-text"));
+        assert!(path_description.contains("binary"));
+    }
+
+    #[test]
+    fn read_file_spec_clarifies_plain_text_only_in_chinese() {
+        let spec = builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .find(|spec| spec.name == "读取文件")
+            .expect("read_file spec");
+        assert!(spec.description.contains("纯文本"));
+        assert!(!spec.description.contains("read_image"));
+        let path_description = spec.input_schema["properties"]["files"]["items"]["properties"]
+            ["path"]["description"]
+            .as_str()
+            .expect("path description");
+        assert!(path_description.contains("纯文本"));
+        assert!(path_description.contains("二进制"));
+    }
 }

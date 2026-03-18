@@ -650,6 +650,21 @@ const resolveDesktopAppDir = () => {
   return repoRoot
 }
 
+const resolveBundledPythonBin = (appDir) => {
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join(appDir, 'opt', 'python', 'python.exe'),
+        path.join(appDir, 'opt', 'python', 'python3.exe'),
+        path.join(appDir, 'opt', 'python', 'bin', 'python.exe'),
+        path.join(appDir, 'opt', 'python', 'bin', 'python3.exe')
+      ]
+    : [
+        path.join(appDir, 'opt', 'python', 'bin', 'python3'),
+        path.join(appDir, 'opt', 'python', 'bin', 'python')
+      ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || ''
+}
+
 const registerBundledToolPaths = () => {
   const appDir = resolveDesktopAppDir()
   if (!appDir || !fs.existsSync(appDir)) {
@@ -657,6 +672,10 @@ const registerBundledToolPaths = () => {
   }
 
   process.env.WUNDER_DESKTOP_APP_DIR = appDir
+  const bundledPythonBin = resolveBundledPythonBin(appDir)
+  if (bundledPythonBin) {
+    process.env.WUNDER_PYTHON_BIN = bundledPythonBin
+  }
 
   const candidates = [
     path.join(appDir, 'opt', 'python'),

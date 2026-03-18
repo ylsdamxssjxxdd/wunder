@@ -1740,17 +1740,20 @@ mod tests {
 
         let mut fragment = sample_fragment();
         fragment.updated_at = 1_700_000_000.0;
-        let block = store.build_prompt_block(&[MemoryRecallHit {
-            fragment,
-            reason_json: serde_json::json!({
-                "matched_terms": ["rust"]
-            }),
-            lexical_score: 0.8,
-            semantic_score: 0.0,
-            freshness_score: 0.9,
-            importance_score: 0.8,
-            final_score: 0.85,
-        }], 7);
+        let block = store.build_prompt_block(
+            &[MemoryRecallHit {
+                fragment,
+                reason_json: serde_json::json!({
+                    "matched_terms": ["rust"]
+                }),
+                lexical_score: 0.8,
+                semantic_score: 0.0,
+                freshness_score: 0.9,
+                importance_score: 0.8,
+                final_score: 0.85,
+            }],
+            7,
+        );
 
         assert!(block.contains("[长期记忆]"));
         assert!(block.contains("7"));

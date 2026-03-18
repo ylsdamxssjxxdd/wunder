@@ -1,3 +1,6 @@
+use crate::services::default_tool_profile::{
+    curated_default_skill_names, curated_default_tool_names,
+};
 use crate::services::user_agent_presets::{
     filter_allowed_tools, normalize_agent_approval_mode, normalize_agent_status,
     normalize_preset_questions, normalize_tool_list, PresetSyncMode, PresetSyncSummary,
@@ -157,7 +160,9 @@ async fn load_default_agent_config(
     state: &AppState,
     user_id: &str,
 ) -> Result<Option<DefaultAgentConfig>> {
-    let raw = state.user_store.get_meta(&default_agent_meta_key(user_id))?;
+    let raw = state
+        .user_store
+        .get_meta(&default_agent_meta_key(user_id))?;
     let Some(raw) = raw else {
         return Ok(None);
     };
@@ -179,8 +184,7 @@ async fn build_default_agent_config(
 ) -> DefaultAgentConfig {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed = compute_allowed_tool_names(user, &context);
-    let mut tool_names = allowed.into_iter().collect::<Vec<_>>();
-    tool_names.sort();
+    let tool_names = curated_default_tool_names(&allowed);
     let mut config = DefaultAgentConfig {
         name: DEFAULT_AGENT_NAME.to_string(),
         description: String::new(),
@@ -244,27 +248,6 @@ fn snapshot_from_default_record(record: &UserAgentRecord) -> UserAgentPresetSnap
     }
 }
 
-fn build_default_tool_names(allowed_tool_names: &std::collections::HashSet<String>, required_skill_names: &[String]) -> Vec<String> {
-    let mut output = allowed_tool_names.iter().cloned().collect::<Vec<_>>();
-    output.sort();
-    output.extend(required_skill_names.iter().cloned());
-    normalize_tool_list(output)
-}
-
-async fn required_default_skill_names(
-    state: &AppState,
-    allowed_tool_names: &std::collections::HashSet<String>,
-) -> Vec<String> {
-    let config = state.config_store.get().await;
-    config
-        .skills
-        .enabled
-        .iter()
-        .map(|name| name.trim().to_string())
-        .filter(|name| !name.is_empty() && allowed_tool_names.contains(name))
-        .collect()
-}
-
 async fn build_target_snapshot(
     state: &AppState,
     user: &UserAccountRecord,
@@ -272,9 +255,9 @@ async fn build_target_snapshot(
 ) -> UserAgentPresetSnapshot {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed_tool_names = compute_allowed_tool_names(user, &context);
-    let required_skill_names = required_default_skill_names(state, &allowed_tool_names).await;
+    let required_skill_names = curated_default_skill_names(&allowed_tool_names);
     let tool_names = if template.tool_names.is_empty() {
-        build_default_tool_names(&allowed_tool_names, &required_skill_names)
+        curated_default_tool_names(&allowed_tool_names)
     } else {
         let mut merged = template.tool_names.clone();
         merged.extend(required_skill_names);
@@ -367,7 +350,9 @@ fn apply_sync_mode(
 }
 
 fn load_sync_binding(state: &AppState, user_id: &str) -> Result<Option<UserAgentPresetBinding>> {
-    let raw = state.user_store.get_meta(&default_agent_sync_binding_key(user_id))?;
+    let raw = state
+        .user_store
+        .get_meta(&default_agent_sync_binding_key(user_id))?;
     let Some(raw) = raw else {
         return Ok(None);
     };
@@ -454,7 +439,8 @@ pub async fn sync_default_agent_across_users(
     unit_scope: Option<&[String]>,
     dry_run: bool,
 ) -> Result<PresetSyncSummary> {
-    let template_record = load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID).await?;
+    let template_record =
+        load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID).await?;
     let template_config = config_from_record(&template_record);
     let (users, _) = state.user_store.list_users(None, unit_scope, 0, 0)?;
     let mut summary = PresetSyncSummary {
@@ -537,4 +523,32 @@ pub async fn sync_default_agent_across_users(
     }
 
     Ok(summary)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::services::default_tool_profile::curated_default_tool_names;
+    use std::collections::HashSet;
+
+    #[test]
+    fn curated_default_agent_tools_follow_fixed_profile() {
+        let allowed = HashSet::from([
+            "最终回复".to_string(),
+            "定时任务".to_string(),
+            "休眠等待".to_string(),
+            "读取文件".to_string(),
+            "技能创建器".to_string(),
+            "其他工具".to_string(),
+        ]);
+        assert_eq!(
+            curated_default_tool_names(&allowed),
+            vec![
+                "最终回复".to_string(),
+                "定时任务".to_string(),
+                "休眠等待".to_string(),
+                "读取文件".to_string(),
+                "技能创建器".to_string(),
+            ]
+        );
+    }
 }
