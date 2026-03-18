@@ -5,8 +5,6 @@
     </div>
 
     <div class="tool-workflow-section-body">
-      <pre v-if="section.summary" class="tool-workflow-summary">{{ section.summary }}</pre>
-
       <div
         v-if="section.kind === 'command' && section.commandView"
         class="tool-workflow-main tool-workflow-main--command"
@@ -105,19 +103,6 @@ defineProps<{
 
 .tool-workflow-section-body {
   min-width: 0;
-}
-
-.tool-workflow-summary {
-  margin: 0 0 6px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: rgba(255, 255, 255, 0.03);
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .tool-workflow-main {

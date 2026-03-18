@@ -95,15 +95,6 @@
           <summary class="tool-workflow-entry-summary">
             <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
             <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
-            <span
-              v-if="entry.summaryNote"
-              :class="[
-                'tool-workflow-entry-note',
-                entry.summaryNoteTone ? `is-${entry.summaryNoteTone}` : ''
-              ]"
-            >
-              {{ entry.summaryNote }}
-            </span>
             <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
             <span :class="['tool-workflow-entry-status', `is-${entry.status}`]">{{ entry.statusLabel }}</span>
           </summary>
@@ -129,9 +120,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicIn
 import { useI18n } from '@/i18n';
 import {
   buildCommandCardView,
-  buildCommandResultNote,
   buildPatchCallView,
-  buildPatchResultNote,
   buildPatchResultView
 } from './toolWorkflowActionViews';
 import { buildToolResultPreview } from './toolWorkflowPreview';
@@ -141,7 +130,6 @@ import {
   type WorkflowItem
 } from './toolWorkflowRunModel';
 import {
-  buildStructuredToolResultNote,
   buildStructuredToolResultView
 } from './toolWorkflowStructuredView';
 import { chatPerf } from '@/utils/chatPerf';
@@ -2779,16 +2767,8 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const compactionDisplay = isCompactionTool(entry.toolName)
     ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
     : null;
-  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem) : '';
-  const patchCounts = isApplyPatchTool(entry.toolName) ? resolveApplyPatchCounts(entry, patchDiffBlocks) : null;
-  const commandNote = isExecuteCommandTool(entry.toolName)
-    ? buildCommandResultNote(buildExecuteCommandView(entry, command, status, errorText, false), t)
-    : '';
   const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
-  const structuredResultNote = compactionDisplay
-    ? ''
-    : buildStructuredToolResultNote(entry.toolName, resultObject, dataObject, t);
   const durationLabel = formatDurationLabel(extractDurationMs(entry));
   const shouldKeepModelCall = isWriteFileTool(entry.toolName) || isApplyPatchTool(entry.toolName);
   const modelCallSection = buildModelCallSection(entry, command, patchDiffBlocks);
@@ -2805,11 +2785,7 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   return {
     key: entry.key,
     summaryTitle,
-    summaryNote:
-      compactionDisplay?.summaryNote
-      || commandNote
-      || (patchCounts ? buildPatchResultNote(patchCounts, t) : '')
-      || structuredResultNote,
+    summaryNote: compactionDisplay?.summaryNote || '',
     summaryNoteTone: compactionDisplay?.summaryNoteTone || '',
     isCompaction: Boolean(compactionDisplay),
     compactionView: compactionDisplay?.view || null,
@@ -3408,41 +3384,6 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
-}
-
-.tool-workflow-entry-note {
-  flex: 0 1 auto;
-  min-width: 0;
-  border-radius: 999px;
-  padding: 2px 8px;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.2;
-  letter-spacing: 0.15px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  border: 1px solid rgba(148, 163, 184, 0.32);
-  color: #dbeafe;
-  background: rgba(71, 85, 105, 0.22);
-}
-
-.tool-workflow-entry-note.is-info {
-  color: #dbeafe;
-  background: rgba(37, 99, 235, 0.18);
-  border-color: rgba(96, 165, 250, 0.34);
-}
-
-.tool-workflow-entry-note.is-success {
-  color: #dcfce7;
-  background: rgba(22, 163, 74, 0.18);
-  border-color: rgba(134, 239, 172, 0.34);
-}
-
-.tool-workflow-entry-note.is-warning {
-  color: #fef3c7;
-  background: rgba(217, 119, 6, 0.18);
-  border-color: rgba(252, 211, 77, 0.34);
 }
 
 .tool-workflow-entry-status {

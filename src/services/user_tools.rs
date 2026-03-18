@@ -5,7 +5,9 @@ use crate::i18n;
 use crate::path_utils::{normalize_path_for_compare, normalize_target_path};
 use crate::schemas::ToolSpec;
 use crate::skills::{load_skills, SkillRegistry, SkillSpec};
+use crate::storage::USER_PRIVATE_CONTAINER_ID;
 use crate::vector_knowledge;
+use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -72,7 +74,7 @@ pub struct UserKnowledgeBase {
     pub score_threshold: Option<f32>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Serialize, Default)]
 pub struct UserToolsPayload {
     pub user_id: String,
     pub mcp_servers: Vec<UserMcpServer>,
@@ -143,7 +145,8 @@ struct SkillCache {
 
 /// 用户工具存储：读取/写入 data/user_tools 目录下的配置文件。
 pub struct UserToolStore {
-    root: PathBuf,
+    workspace: Arc<WorkspaceManager>,
+    legacy_root: PathBuf,
     cache: Mutex<HashMap<String, UserToolsCacheEntry>>,
     shared_cache: Mutex<Option<SharedToolsCache>>,
     shared_cache_ttl_s: f64,
@@ -151,11 +154,12 @@ pub struct UserToolStore {
 }
 
 impl UserToolStore {
-    pub fn new(_config: &Config) -> Result<Self> {
-        let base = resolve_user_tools_root();
-        std::fs::create_dir_all(&base)?;
+    pub fn new(_config: &Config, workspace: Arc<WorkspaceManager>) -> Result<Self> {
+        let legacy_root = resolve_user_tools_root();
+        std::fs::create_dir_all(&legacy_root)?;
         Ok(Self {
-            root: base,
+            workspace,
+            legacy_root,
             cache: Mutex::new(HashMap::new()),
             shared_cache: Mutex::new(None),
             shared_cache_ttl_s: 5.0,
@@ -180,8 +184,13 @@ impl UserToolStore {
     pub fn load_user_tools(&self, user_id: &str) -> UserToolsPayload {
         let safe_id = safe_user_id(user_id);
         let path = self.config_path(&safe_id);
+        let legacy_path = self.legacy_config_path(&safe_id);
         let config_exists = path.exists();
-        let version = file_modified_ts(&path);
+        let version = if config_exists {
+            file_modified_ts(&path)
+        } else {
+            file_modified_ts(&legacy_path)
+        };
         if let Some(cached) = self
             .cache
             .lock()
@@ -192,7 +201,35 @@ impl UserToolStore {
                 return cached.payload.clone();
             }
         }
-        let mut payload = self.read_payload(&path, user_id);
+        let cached_payload = self
+            .cache
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .get(&safe_id)
+            .map(|entry| entry.payload.clone());
+        let mut payload = if config_exists {
+            self.read_payload(&path, user_id).unwrap_or_else(|err| {
+                tracing::warn!(
+                    "failed to parse user tooling config {}; using fallback: {err}",
+                    path.display()
+                );
+                cached_payload.unwrap_or_else(|| UserToolsPayload {
+                    user_id: user_id.to_string(),
+                    ..UserToolsPayload::default()
+                })
+            })
+        } else if legacy_path.exists() {
+            self.read_payload(&legacy_path, user_id)
+                .unwrap_or_else(|_| UserToolsPayload {
+                    user_id: user_id.to_string(),
+                    ..UserToolsPayload::default()
+                })
+        } else {
+            UserToolsPayload {
+                user_id: user_id.to_string(),
+                ..UserToolsPayload::default()
+            }
+        };
         if !config_exists && payload.skills.enabled.is_empty() {
             let default_enabled = self.resolve_default_skill_enabled(user_id);
             if !default_enabled.is_empty() {
@@ -212,6 +249,25 @@ impl UserToolStore {
                 },
             );
         payload
+    }
+
+    pub fn ensure_materialized(&self, user_id: &str) -> Result<()> {
+        let safe_id = safe_user_id(user_id);
+        let path = self.config_path(&safe_id);
+        if path.exists() {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            return Ok(());
+        }
+        let legacy_path = self.legacy_config_path(&safe_id);
+        let payload = if legacy_path.exists() {
+            self.read_payload(&legacy_path, user_id)?
+        } else {
+            self.load_user_tools(user_id)
+        };
+        let _ = self.save_payload(user_id, payload)?;
+        Ok(())
     }
 
     /// 更新用户 MCP 服务器配置。
@@ -387,16 +443,28 @@ impl UserToolStore {
 
     fn scan_shared_payloads(&self) -> Vec<UserToolsPayload> {
         let mut payloads = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(&self.root) {
+        if let Ok(entries) = std::fs::read_dir(self.workspace.root()) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if !path.is_dir() {
                     continue;
                 }
-                let payload = self.read_payload(&path.join("config.json"), "");
+                let scoped_name = entry.file_name().to_string_lossy().to_string();
+                if scoped_name.contains("__c__")
+                    || scoped_name.contains("__a__")
+                    || scoped_name.contains("__agent__")
+                {
+                    continue;
+                }
+                let payload = self
+                    .read_payload(&path.join("global").join("tooling.json"), "")
+                    .or_else(|_| self.read_payload(&path.join("config.json"), ""));
+                let Ok(payload) = payload else {
+                    continue;
+                };
                 let mut payload = payload;
                 if payload.user_id.is_empty() {
-                    payload.user_id = entry.file_name().to_string_lossy().to_string();
+                    payload.user_id = scoped_name;
                 }
                 payloads.push(payload);
             }
@@ -404,15 +472,15 @@ impl UserToolStore {
         payloads
     }
 
-    fn read_payload(&self, path: &Path, fallback_user_id: &str) -> UserToolsPayload {
+    fn read_payload(&self, path: &Path, fallback_user_id: &str) -> Result<UserToolsPayload> {
         if !path.exists() {
-            return UserToolsPayload {
+            return Ok(UserToolsPayload {
                 user_id: fallback_user_id.to_string(),
                 ..UserToolsPayload::default()
-            };
+            });
         }
-        let content = std::fs::read_to_string(path).unwrap_or_default();
-        let value: Value = serde_json::from_str(&content).unwrap_or(Value::Null);
+        let content = std::fs::read_to_string(path)?;
+        let value: Value = serde_json::from_str(&content)?;
         let user_id = value
             .get("user_id")
             .and_then(Value::as_str)
@@ -426,14 +494,14 @@ impl UserToolStore {
         );
         let knowledge_bases = normalize_knowledge_bases(parse_knowledge_bases(&value));
         let shared_tools = normalize_name_list(parse_name_list(value.get("shared_tools")));
-        UserToolsPayload {
+        Ok(UserToolsPayload {
             user_id,
             mcp_servers,
             skills,
             knowledge_bases,
             shared_tools,
             version: 0.0,
-        }
+        })
     }
 
     fn save_payload(
@@ -442,7 +510,11 @@ impl UserToolStore {
         mut payload: UserToolsPayload,
     ) -> Result<UserToolsPayload> {
         let safe_id = safe_user_id(user_id);
-        let folder = self.user_dir(&safe_id);
+        let folder = self
+            .config_path(&safe_id)
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| anyhow!("invalid tooling config path"))?;
         std::fs::create_dir_all(&folder)?;
         let data = json!({
             "user_id": user_id,
@@ -478,11 +550,18 @@ impl UserToolStore {
     }
 
     fn user_dir(&self, safe_user_id: &str) -> PathBuf {
-        self.root.join(safe_user_id)
+        let scoped_user_id = self
+            .workspace
+            .scoped_user_id_by_container(safe_user_id, USER_PRIVATE_CONTAINER_ID);
+        self.workspace.workspace_root(&scoped_user_id)
     }
 
     fn config_path(&self, safe_user_id: &str) -> PathBuf {
-        self.user_dir(safe_user_id).join("config.json")
+        self.user_dir(safe_user_id).join("global").join("tooling.json")
+    }
+
+    fn legacy_config_path(&self, safe_user_id: &str) -> PathBuf {
+        self.legacy_root.join(safe_user_id).join("config.json")
     }
 
     fn resolve_default_skill_enabled(&self, user_id: &str) -> Vec<String> {

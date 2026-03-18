@@ -33,7 +33,7 @@
           >
             <label class="tool-item-info">
               <div class="user-skill-title-line">
-                <strong>{{ skill.name }}</strong>
+                <strong :title="skill.name">{{ skill.name }}</strong>
                 <span class="skill-source-tag" :class="`is-${resolveSkillSource(skill)}`">
                   {{ buildSkillSourceLabel(skill) }}
                 </span>
@@ -112,9 +112,7 @@
             </div>
           </div>
           <div class="skill-editor-body" :class="{ 'is-disabled': editorDisabled }">
-            <pre ref="highlightRef" class="skill-editor-highlight" v-html="highlightHtml"></pre>
             <textarea
-              ref="editorRef"
               v-model="fileContent"
               class="skill-editor-text"
               :placeholder="t('userTools.skills.file.placeholder')"
@@ -123,8 +121,6 @@
               autocorrect="off"
               autocomplete="off"
               autocapitalize="off"
-              @input="handleEditorInput"
-              @scroll="syncSkillEditorScroll"
             ></textarea>
           </div>
         </div>
@@ -134,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -163,7 +159,6 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['status']);
 const { t } = useI18n();
 
 const skills = ref([]);
@@ -179,60 +174,9 @@ const fileTreeMessage = ref('');
 const editorLocked = ref(true);
 
 const uploadInputRef = ref(null);
-const highlightRef = ref(null);
-const editorRef = ref(null);
 
 let detailVersion = 0;
 let fileVersion = 0;
-let highlightTimer = 0;
-
-const HIGHLIGHT_KEYWORDS = new Set([
-  'await',
-  'break',
-  'case',
-  'catch',
-  'class',
-  'const',
-  'continue',
-  'default',
-  'do',
-  'else',
-  'enum',
-  'export',
-  'extends',
-  'finally',
-  'for',
-  'fn',
-  'function',
-  'if',
-  'impl',
-  'import',
-  'in',
-  'interface',
-  'let',
-  'match',
-  'new',
-  'pub',
-  'return',
-  'self',
-  'static',
-  'struct',
-  'switch',
-  'throw',
-  'try',
-  'type',
-  'use',
-  'var',
-  'while',
-  'yield'
-]);
-
-const HIGHLIGHT_TOKEN_REGEX =
-  /(\"(?:\\.|[^\"\\])*\"|\'(?:\\.|[^'\\])*\'|`(?:\\.|[^`\\])*`|\/\/.*?$|\/\*[\s\S]*?\*\/|\b\d+(?:\.\d+)?\b|\b[A-Za-z_][A-Za-z0-9_]*\b)/gm;
-
-const emitStatus = (message) => {
-  emit('status', message || '');
-};
 
 const normalizeSkillDisplayPath = (value) => {
   let normalized = String(value || '').trim();
@@ -281,8 +225,6 @@ const editorDisabled = computed(
   () => editorLocked.value || !activeFile.value || activeSkillReadonly.value
 );
 
-const highlightHtml = ref('&nbsp;');
-
 const buildSkillDesc = (skill) => {
   const parts = [];
   if (skill.description) {
@@ -326,73 +268,6 @@ const resolveDefaultSkillFile = (entries) => {
   return fallback;
 };
 
-const escapeHtml = (text) =>
-  String(text ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/\"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-const highlightInlineCode = (text) => {
-  const raw = String(text ?? '');
-  if (!raw) {
-    return '&nbsp;';
-  }
-  let result = '';
-  let lastIndex = 0;
-  for (const match of raw.matchAll(HIGHLIGHT_TOKEN_REGEX)) {
-    const token = match[0];
-    const index = match.index ?? 0;
-    if (index > lastIndex) {
-      result += escapeHtml(raw.slice(lastIndex, index));
-    }
-    let className = '';
-    if (token.startsWith('//') || token.startsWith('/*')) {
-      className = 'code-token-comment';
-    } else if (token.startsWith('"') || token.startsWith("'") || token.startsWith('`')) {
-      className = 'code-token-string';
-    } else if (/^\d/.test(token)) {
-      className = 'code-token-number';
-    } else if (HIGHLIGHT_KEYWORDS.has(token)) {
-      className = 'code-token-keyword';
-    }
-    if (className) {
-      result += `<span class="${className}">${escapeHtml(token)}</span>`;
-    } else {
-      result += escapeHtml(token);
-    }
-    lastIndex = index + token.length;
-  }
-  if (lastIndex < raw.length) {
-    result += escapeHtml(raw.slice(lastIndex));
-  }
-  return result || '&nbsp;';
-};
-
-const updateSkillEditorHighlight = () => {
-  highlightHtml.value = highlightInlineCode(fileContent.value);
-  syncSkillEditorScroll();
-};
-
-const scheduleSkillEditorHighlight = () => {
-  if (highlightTimer) {
-    cancelAnimationFrame(highlightTimer);
-  }
-  highlightTimer = requestAnimationFrame(() => {
-    highlightTimer = 0;
-    updateSkillEditorHighlight();
-  });
-};
-
-const syncSkillEditorScroll = () => {
-  if (!highlightRef.value || !editorRef.value) {
-    return;
-  }
-  highlightRef.value.scrollTop = editorRef.value.scrollTop;
-  highlightRef.value.scrollLeft = editorRef.value.scrollLeft;
-};
-
 const setEditorDisabled = (disabled) => {
   editorLocked.value = disabled;
 };
@@ -400,7 +275,6 @@ const setEditorDisabled = (disabled) => {
 const showEditorMessage = (message) => {
   fileContent.value = message || '';
   setEditorDisabled(true);
-  scheduleSkillEditorHighlight();
 };
 
 const resolveErrorMessage = (error, fallback) => {
@@ -575,7 +449,6 @@ const selectSkillFile = async (filePath) => {
     }
     fileContent.value = payload.content || '';
     setEditorDisabled(false);
-    scheduleSkillEditorHighlight();
   } catch (error) {
     if (currentVersion !== fileVersion) {
       return;
@@ -657,10 +530,6 @@ const deleteSkill = async (skill) => {
   }
 };
 
-const handleEditorInput = () => {
-  scheduleSkillEditorHighlight();
-};
-
 watch(
   () => props.visible,
   (value) => {
@@ -675,20 +544,9 @@ watch(
   () => props.active,
   (value) => {
     if (value) {
-      scheduleSkillEditorHighlight();
       void loadSkills({ refreshDetail: false });
     }
   },
   { immediate: true }
 );
-
-watch(fileContent, () => {
-  scheduleSkillEditorHighlight();
-});
-
-onBeforeUnmount(() => {
-  if (highlightTimer) {
-    cancelAnimationFrame(highlightTimer);
-  }
-});
 </script>

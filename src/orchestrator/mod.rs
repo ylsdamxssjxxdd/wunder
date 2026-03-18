@@ -28,6 +28,7 @@ use crate::prompting::PromptComposer;
 use crate::sandbox;
 use crate::schemas::{AttachmentPayload, StreamEvent, TokenUsage, WunderRequest, WunderResponse};
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
+use crate::services::inner_visible::InnerVisibleService;
 use crate::skills::{load_skills, SkillRegistry};
 use crate::storage::{SessionLockStatus, StorageBackend, UserQuotaStatus};
 use crate::token_utils::{
@@ -98,6 +99,7 @@ pub struct Orchestrator {
     a2a_store: Arc<A2aStore>,
     gateway: Arc<GatewayHub>,
     skills: Arc<RwLock<SkillRegistry>>,
+    inner_visible: Arc<InnerVisibleService>,
     user_tool_manager: Arc<UserToolManager>,
     lsp_manager: Arc<LspManager>,
     prompt_composer: Arc<PromptComposer>,
@@ -117,6 +119,7 @@ impl Orchestrator {
         monitor: Arc<MonitorState>,
         a2a_store: Arc<A2aStore>,
         skills: Arc<RwLock<SkillRegistry>>,
+        inner_visible: Arc<InnerVisibleService>,
         user_tool_manager: Arc<UserToolManager>,
         lsp_manager: Arc<LspManager>,
         storage: Arc<dyn StorageBackend>,
@@ -132,6 +135,7 @@ impl Orchestrator {
             a2a_store,
             gateway,
             skills,
+            inner_visible,
             user_tool_manager,
             lsp_manager,
             prompt_composer: Arc::new(PromptComposer::new(60.0, 256)),

@@ -563,9 +563,19 @@
 
 - 方法：`GET`
 - 返回（JSON）：
-  - 字段同 `/wunder/user_tools/tools`
-- 说明：用于工具管理页面，返回所有共享工具（不按勾选过滤）。
-- 说明：desktop 本地模式下，该接口的“管理员开放工具”仅返回 `builtin_tools`，`mcp_tools/a2a_tools/skills/knowledge_tools` 统一置空；其余工具通过用户自建与共享入口管理。
+  - 兼容保留 `/wunder/user_tools/tools` 的扁平字段：`builtin_tools/mcp_tools/a2a_tools/skills/knowledge_tools/user_tools/shared_tools/shared_tools_selected`
+  - `admin_builtin_tools`：管理员开放给当前用户的内置工具
+  - `admin_mcp_tools`：管理员开放给当前用户的 MCP 工具
+  - `admin_a2a_tools`：管理员开放给当前用户的 A2A 工具
+  - `admin_skills`：管理员开放给当前用户的技能
+  - `admin_knowledge_tools`：管理员开放给当前用户的知识库工具
+  - `user_mcp_tools`：当前用户配置的自建 MCP 工具
+  - `user_skills`：当前用户配置的自建技能
+  - `user_knowledge_tools`：当前用户配置的自建知识库工具
+  - `default_agent_tool_names`：默认智能体/预制智能体新建时的默认勾选项
+- 说明：用于智能体设置与工具管理页面，返回所有共享工具（不按勾选过滤）。
+- 说明：管理员开放工具与用户自建工具已拆分为独立区域。管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
+- 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`最终回复/定时任务/休眠等待/记忆管理/执行命令/ptc/列出文件/搜索内容/读取文件/技能调用/写入文件/应用补丁`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。
 
 ### 4.1.2.21 `/wunder/user_tools/shared_tools`
 

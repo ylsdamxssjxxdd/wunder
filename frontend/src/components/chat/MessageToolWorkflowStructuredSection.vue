@@ -1,16 +1,5 @@
 <template>
   <div class="tool-workflow-structured" :class="`is-${view.variant}`">
-    <div v-if="view.metrics.length" class="tool-workflow-structured-metrics">
-      <div
-        v-for="metric in view.metrics"
-        :key="metric.key"
-        :class="['tool-workflow-structured-metric', metric.tone ? `is-${metric.tone}` : '']"
-      >
-        <span class="tool-workflow-structured-metric-label">{{ metric.label }}</span>
-        <span class="tool-workflow-structured-metric-value">{{ metric.value }}</span>
-      </div>
-    </div>
-
     <div class="tool-workflow-structured-groups">
       <section
         v-for="group in view.groups"
@@ -62,42 +51,6 @@ defineProps<{
   gap: 10px;
 }
 
-.tool-workflow-structured-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tool-workflow-structured-metric {
-  min-width: 0;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.tool-workflow-structured-metric.is-success {
-  border-color: rgba(74, 222, 128, 0.32);
-}
-
-.tool-workflow-structured-metric.is-warning {
-  border-color: rgba(251, 191, 36, 0.32);
-}
-
-.tool-workflow-structured-metric-label {
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-}
-
-.tool-workflow-structured-metric-value {
-  color: var(--workflow-term-text);
-  font-size: 12px;
-  font-weight: 700;
-}
-
 .tool-workflow-structured-groups {
   display: flex;
   flex-direction: column;
@@ -139,6 +92,29 @@ defineProps<{
   border-radius: 10px;
   border: 1px solid var(--workflow-term-border);
   background: var(--workflow-term-bg-soft);
+}
+
+.tool-workflow-structured.is-list {
+  gap: 6px;
+}
+
+.tool-workflow-structured.is-list .tool-workflow-structured-groups,
+.tool-workflow-structured.is-list .tool-workflow-structured-group,
+.tool-workflow-structured.is-list .tool-workflow-structured-rows {
+  gap: 2px;
+}
+
+.tool-workflow-structured.is-list .tool-workflow-structured-row {
+  gap: 0;
+  padding: 2px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.tool-workflow-structured.is-list .tool-workflow-structured-row-head {
+  gap: 0;
+  justify-content: flex-start;
 }
 
 .tool-workflow-structured-row.is-success {

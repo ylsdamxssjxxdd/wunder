@@ -85,7 +85,7 @@ pub async fn run_sample(
         state
             .user_tool_manager
             .build_bindings(&config, &skills_snapshot, PERF_USER_ID);
-    let tool_roots = build_tool_roots(&config, &skills_snapshot, Some(&user_tool_bindings));
+    let tool_roots = build_tool_roots(&config, &skills_snapshot, Some(&user_tool_bindings), &[]);
 
     let context = PerformanceContext {
         state: state.clone(),

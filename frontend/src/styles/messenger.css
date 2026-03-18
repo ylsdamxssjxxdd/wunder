@@ -3118,13 +3118,30 @@ button.messenger-chat-header-model {
 }
 
 .messenger-tool-groups {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
-  grid-auto-flow: dense;
-  gap: 12px;
-  align-items: start;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   width: 100%;
   min-width: 0;
+}
+
+.messenger-tool-section {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+  justify-content: start;
+  width: 100%;
+  max-width: 1156px;
+  min-width: 0;
+}
+
+.messenger-tool-section-title {
+  grid-column: 1 / -1;
+  padding: 0 2px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
 }
 
 .messenger-tool-group {
@@ -3137,6 +3154,7 @@ button.messenger-chat-header-model {
   gap: 8px;
   min-width: 0;
   min-height: 0;
+  width: 100%;
   align-self: stretch;
 }
 
@@ -3285,8 +3303,9 @@ button.messenger-chat-header-model {
 }
 
 @media (max-width: 1320px) {
-  .messenger-tool-groups {
-    grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
+  .messenger-tool-section {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: 100%;
   }
 
   .messenger-tool-options {
@@ -3295,13 +3314,23 @@ button.messenger-chat-header-model {
 }
 
 @media (max-width: 980px) {
-  .messenger-tool-groups,
+  .messenger-tool-section,
+  .messenger-agent-base {
+    max-width: 100%;
+  }
+
   .messenger-agent-base {
     grid-template-columns: 1fr;
   }
 
   .messenger-tool-options {
     max-height: 188px;
+  }
+}
+
+@media (max-width: 720px) {
+  .messenger-tool-section {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -5675,8 +5704,19 @@ button.messenger-chat-header-model {
 }
 
 .messenger-tools-pane-host.user-tools-dialog .management-detail.skill-detail {
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+  overflow: auto;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .management-detail.skill-detail > .skill-detail-pane:first-child {
+  flex: 0 0 auto;
+}
+
+.messenger-tools-pane-host.user-tools-dialog .management-detail.skill-detail > .skill-detail-pane:last-child {
+  flex: 0 0 auto;
+  min-height: 0;
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skill-detail-pane {
@@ -5708,36 +5748,13 @@ button.messenger-chat-header-model {
 }
 
 .messenger-tools-pane-host.user-tools-dialog .skill-editor-body {
+  min-height: 300px;
+  height: clamp(320px, 46vh, 640px);
   border-color: #e3e3e3;
   background: #fafafa;
 }
 
-.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight {
-  color: #2f2f2f;
-}
-
-.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-comment {
-  color: #7a7a7a;
-}
-
-.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-string {
-  color: var(--ui-accent-deep);
-}
-
-.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-number {
-  color: #a16207;
-}
-
-.messenger-tools-pane-host.user-tools-dialog .skill-editor-highlight .code-token-keyword {
-  color: #1d4ed8;
-}
-
 .messenger-tools-pane-host.user-tools-dialog .skill-editor-text {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-}
-
-.messenger-tools-pane-host.user-tools-dialog .skill-editor-body:focus-within .skill-editor-text {
   color: var(--user-tools-text, #2f2f2f);
   -webkit-text-fill-color: currentColor;
 }

@@ -1024,6 +1024,7 @@ async fn create_agent(
         .user_store
         .upsert_user_agent(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    sync_inner_visible_after_user_change(&state, &user_id).await;
     let app_config = state.config_store.get().await;
     let configured_model_name = resolve_default_model_name(&app_config);
     Ok(Json(
@@ -1091,6 +1092,7 @@ async fn update_agent(
             config.created_at = config.updated_at;
         }
         save_default_agent_config(&state, &user_id, &config)?;
+        sync_inner_visible_after_user_change(&state, &user_id).await;
         let app_config = state.config_store.get().await;
         let configured_model_name = resolve_default_model_name(&app_config);
         return Ok(Json(
@@ -1177,6 +1179,7 @@ async fn update_agent(
         .user_store
         .upsert_user_agent(&record)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    sync_inner_visible_after_user_change(&state, &user_id).await;
     let app_config = state.config_store.get().await;
     let configured_model_name = resolve_default_model_name(&app_config);
     Ok(Json(
@@ -1209,6 +1212,16 @@ async fn delete_agent(
         .user_store
         .delete_user_agent(&resolved.user.user_id, &normalized_agent_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    if let Err(err) = state
+        .inner_visible
+        .remove_agent_files(&resolved.user.user_id, &normalized_agent_id)
+    {
+        tracing::warn!(
+            "failed to remove inner-visible files for {}/{}: {err}",
+            resolved.user.user_id,
+            normalized_agent_id
+        );
+    }
     let mut workspace_ids = state
         .workspace
         .scoped_user_id_variants(&resolved.user.user_id, Some(cleaned));
@@ -1907,6 +1920,9 @@ async fn ensure_preset_agents(
         }
         let _ = state.user_store.set_meta(&meta_key, "1");
     }
+    if existing_mutated || !bootstrap_completed || !container_layout_seeded {
+        sync_inner_visible_after_user_change(state, &user.user_id).await;
+    }
     Ok(())
 }
 
@@ -2214,6 +2230,12 @@ fn save_default_agent_config(
         .set_meta(&key, &payload)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     Ok(())
+}
+
+async fn sync_inner_visible_after_user_change(state: &AppState, user_id: &str) {
+    if let Err(err) = state.inner_visible.sync_user_state(user_id).await {
+        tracing::warn!("failed to sync inner-visible state for {user_id}: {err}");
+    }
 }
 
 fn build_icon_payload(name: &str, color: &str) -> String {

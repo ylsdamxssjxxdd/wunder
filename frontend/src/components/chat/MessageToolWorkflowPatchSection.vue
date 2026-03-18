@@ -1,16 +1,5 @@
 <template>
   <div class="tool-workflow-patch-card">
-    <div v-if="view.metrics.length" class="tool-workflow-patch-metrics">
-      <div
-        v-for="metric in view.metrics"
-        :key="metric.key"
-        :class="['tool-workflow-patch-metric', metric.tone ? `is-${metric.tone}` : '']"
-      >
-        <span class="tool-workflow-patch-metric-label">{{ metric.label }}</span>
-        <span class="tool-workflow-patch-metric-value">{{ metric.value }}</span>
-      </div>
-    </div>
-
     <div class="tool-workflow-patch-files">
       <section
         v-for="file in view.files"
@@ -49,33 +38,6 @@ defineProps<{
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.tool-workflow-patch-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.tool-workflow-patch-metric {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 7px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--workflow-term-border);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.tool-workflow-patch-metric-label {
-  color: var(--workflow-term-muted);
-  font-size: 11px;
-}
-
-.tool-workflow-patch-metric-value {
-  color: var(--workflow-term-text);
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .tool-workflow-patch-files {

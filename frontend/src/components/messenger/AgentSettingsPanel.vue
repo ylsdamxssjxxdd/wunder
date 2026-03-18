@@ -94,7 +94,7 @@
                 :disabled="isReadonlyMode"
               />
             </div>
-            <div class="messenger-agent-base-item messenger-agent-base-item--select">
+            <div ref="modelSectionRef" class="messenger-agent-base-item messenger-agent-base-item--select">
               <div class="messenger-agent-base-meta">
                 <span class="messenger-agent-base-label">{{ t('portal.agent.model.title') }}</span>
                 <span class="messenger-inline-hint">{{ t('portal.agent.model.hint') }}</span>
@@ -188,7 +188,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import { listAgentModels } from '@/api/agents';
@@ -227,11 +227,6 @@ type ToolOption = {
   hint: string;
 };
 
-type ToolGroup = {
-  label: string;
-  options: ToolOption[];
-};
-
 type ToolSection = AgentToolSection<ToolOption>;
 
 const props = defineProps({
@@ -242,12 +237,21 @@ const props = defineProps({
   readonly: {
     type: Boolean,
     default: false
+  },
+  focusTarget: {
+    type: String,
+    default: ''
+  },
+  focusToken: {
+    type: Number,
+    default: 0
   }
 });
 
 const emit = defineEmits<{
   saved: [agentId: string];
   deleted: [agentId: string];
+  'focus-consumed': [target: string];
 }>();
 
 const { t } = useI18n();
@@ -310,9 +314,12 @@ const currentAgent = ref<Record<string, unknown> | null>(null);
 const modelLoading = ref(false);
 const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
+const modelSectionRef = ref<HTMLElement | null>(null);
 const panelMounted = ref(false);
 let panelDisposed = false;
 let latestAgentLoadRequestId = 0;
+let lastHandledFocusToken = 0;
+let focusAnimationFrame = 0;
 
 const nextAgentLoadRequestId = (): number => {
   latestAgentLoadRequestId += 1;
@@ -321,6 +328,57 @@ const nextAgentLoadRequestId = (): number => {
 
 const isAgentLoadRequestActive = (requestId: number): boolean =>
   !panelDisposed && requestId === latestAgentLoadRequestId;
+
+function clearFocusAnimationFrame(): void {
+  if (focusAnimationFrame && typeof window !== 'undefined') {
+    window.cancelAnimationFrame(focusAnimationFrame);
+  }
+  focusAnimationFrame = 0;
+}
+
+function consumeFocusTarget(target: string): void {
+  if (!target) return;
+  emit('focus-consumed', target);
+}
+
+function focusModelSection(attempt = 0): void {
+  if (panelDisposed) return;
+  const target = modelSectionRef.value;
+  if (!target) {
+    if (attempt < 2 && typeof window !== 'undefined') {
+      clearFocusAnimationFrame();
+      focusAnimationFrame = window.requestAnimationFrame(() => focusModelSection(attempt + 1));
+    } else {
+      consumeFocusTarget('model');
+    }
+    return;
+  }
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const focusTarget = target.querySelector('.el-select__wrapper, input, select, textarea, button') as
+    | HTMLElement
+    | null;
+  if (focusTarget && typeof focusTarget.focus === 'function') {
+    focusTarget.focus();
+  }
+  consumeFocusTarget('model');
+}
+
+function scheduleFocusTargetIfNeeded(): void {
+  if (!panelMounted.value || panelDisposed) return;
+  const target = String(props.focusTarget || '').trim();
+  const token = Number(props.focusToken || 0);
+  if (target !== 'model' || token <= 0 || token === lastHandledFocusToken) return;
+  lastHandledFocusToken = token;
+  clearFocusAnimationFrame();
+  void nextTick(() => {
+    if (panelDisposed) return;
+    if (typeof window !== 'undefined') {
+      focusAnimationFrame = window.requestAnimationFrame(() => focusModelSection());
+      return;
+    }
+    focusModelSection();
+  });
+}
 
 const normalizeSandboxContainerId = (value: unknown): number => {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -376,8 +434,31 @@ const normalizeOption = (item: unknown): ToolOption | null => {
   return option;
 };
 
+const resolveToolGroupDisplayOrder = (key: string): number => {
+  const normalized = String(key || '').trim().toLowerCase();
+  if (!normalized) return 999;
+  if (normalized === 'builtin' || normalized.endsWith('-builtin')) return 10;
+  if (normalized.includes('mcp')) return 20;
+  if (normalized.includes('skills')) return 30;
+  if (normalized.includes('knowledge')) return 40;
+  if (normalized.includes('a2a')) return 50;
+  if (normalized.includes('shared')) return 60;
+  if (normalized === 'user' || normalized.startsWith('user')) return 70;
+  return 999;
+};
+
 const toolSections = computed<ToolSection[]>(() =>
-  buildAgentToolSections(toolSummary.value, t, normalizeOption)
+  buildAgentToolSections(toolSummary.value, t, normalizeOption).map((section) => ({
+    ...section,
+    groups: section.groups
+      .map((group, index) => ({ group, index }))
+      .sort((left, right) => {
+        const orderDiff =
+          resolveToolGroupDisplayOrder(left.group.key) - resolveToolGroupDisplayOrder(right.group.key);
+        return orderDiff || left.index - right.index;
+      })
+      .map(({ group }) => group)
+  }))
 );
 
 const defaultModelDisplayName = computed(() => {
@@ -579,6 +660,7 @@ const deleteAgent = async () => {
 onMounted(() => {
   panelMounted.value = true;
   void reloadAgent();
+  scheduleFocusTargetIfNeeded();
 });
 
 watch(
@@ -589,9 +671,17 @@ watch(
   }
 );
 
+watch(
+  () => [props.focusTarget, props.focusToken, canView.value] as const,
+  () => {
+    scheduleFocusTargetIfNeeded();
+  }
+);
+
 onBeforeUnmount(() => {
   panelDisposed = true;
   latestAgentLoadRequestId += 1;
+  clearFocusAnimationFrame();
 });
 </script>
 

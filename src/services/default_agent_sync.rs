@@ -512,6 +512,14 @@ pub async fn sync_default_agent_across_users(
                 last_applied: target,
             },
         )?;
+        if write_config {
+            if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+                tracing::warn!(
+                    "failed to sync inner-visible default-agent state for {}: {err}",
+                    user.user_id
+                );
+            }
+        }
 
         if !has_explicit {
             summary.created_agents += 1;

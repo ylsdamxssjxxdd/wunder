@@ -741,6 +741,12 @@ async fn run_import_job_inner(
     }));
     job.updated_at = now_ts();
     persist_job(state, job)?;
+    if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+        tracing::warn!(
+            "failed to sync inner-visible hivepack state for {}: {err}",
+            user.user_id
+        );
+    }
 
     std::fs::remove_dir_all(&import_root).ok();
     Ok(())

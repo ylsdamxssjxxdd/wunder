@@ -173,11 +173,6 @@ type ToolOption = {
   hint: string;
 };
 
-type ToolGroup = {
-  label: string;
-  options: ToolOption[];
-};
-
 type ToolSection = AgentToolSection<ToolOption>;
 
 type AgentLike = {

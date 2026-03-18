@@ -15,6 +15,7 @@ use crate::org_units;
 use crate::services::agent_runtime::AgentRuntime;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
 use crate::services::external_auth::ExternalAuthCodeStore;
+use crate::services::inner_visible::InnerVisibleService;
 use crate::services::swarm::{SwarmService, TeamRunRunner};
 use crate::services::user_presence::UserPresenceService;
 use crate::services::user_world::UserWorldService;
@@ -92,6 +93,7 @@ pub struct AppState {
     pub lsp_manager: Arc<LspManager>,
     pub memory: Arc<MemoryStore>,
     pub skills: Arc<RwLock<SkillRegistry>>,
+    pub inner_visible: Arc<InnerVisibleService>,
     pub user_tool_store: Arc<UserToolStore>,
     pub user_tool_manager: Arc<UserToolManager>,
     pub user_store: Arc<UserStore>,
@@ -134,10 +136,19 @@ impl AppState {
         let a2a_store = Arc::new(A2aStore::new());
         let skills_registry = load_skills(&config, true, true, true);
         let skills = Arc::new(RwLock::new(skills_registry));
-        let user_tool_store =
-            Arc::new(UserToolStore::new(&config).context("初始化用户工具存储失败")?);
+        let user_tool_store = Arc::new(
+            UserToolStore::new(&config, workspace.clone()).context("初始化用户工具存储失败")?,
+        );
         let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store.clone()));
         let user_store = Arc::new(UserStore::new(storage.clone()));
+        let inner_visible = Arc::new(InnerVisibleService::new(
+            config_store.clone(),
+            workspace.clone(),
+            skills.clone(),
+            user_tool_store.clone(),
+            user_tool_manager.clone(),
+            user_store.clone(),
+        ));
         let user_presence = Arc::new(UserPresenceService::new());
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
         let beeroom_realtime = Arc::new(BeeroomRealtimeService::new());
@@ -166,6 +177,7 @@ impl AppState {
             monitor.clone(),
             a2a_store.clone(),
             skills.clone(),
+            inner_visible.clone(),
             user_tool_manager.clone(),
             lsp_manager.clone(),
             storage.clone(),
@@ -241,6 +253,7 @@ impl AppState {
             lsp_manager,
             memory,
             skills,
+            inner_visible,
             user_tool_store,
             user_tool_manager,
             user_store,

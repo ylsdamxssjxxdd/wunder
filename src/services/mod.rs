@@ -13,6 +13,7 @@ pub mod doc2md;
 pub mod external_auth;
 pub mod history;
 pub mod hive_pack;
+pub mod inner_visible;
 pub mod knowledge;
 pub mod llm;
 pub mod mcp;

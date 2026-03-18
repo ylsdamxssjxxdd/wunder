@@ -478,8 +478,11 @@
                   <AgentSettingsPanel
                     :agent-id="settingsAgentIdForPanel"
                     :readonly="isSettingsDefaultAgentReadonly"
+                    :focus-target="agentSettingsFocusTarget"
+                    :focus-token="agentSettingsFocusToken"
                     @saved="handleAgentSettingsSaved"
                     @deleted="handleAgentDeleted"
+                    @focus-consumed="handleAgentSettingsFocusConsumed"
                   />
                 </div>
 
@@ -1437,7 +1440,7 @@ import {
   isImagePath,
   parseWorkspaceResourceUrl
 } from '@/utils/workspaceResources';
-import { emitWorkspaceRefresh } from '@/utils/workspaceEvents';
+import { emitWorkspaceRefresh, onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import {
   normalizeAvatarColor,
   normalizeAvatarIcon,
@@ -1672,6 +1675,8 @@ const cronAgentIds = ref<Set<string>>(new Set());
 const channelBoundAgentIds = ref<Set<string>>(new Set());
 const cronPermissionDenied = ref(false);
 const agentSettingMode = ref<'agent' | 'cron' | 'channel' | 'runtime' | 'memory' | 'archived'>('agent');
+const agentSettingsFocusTarget = ref<'' | 'model'>('');
+const agentSettingsFocusToken = ref(0);
 type SettingsPanelMode =
   | 'general'
   | 'profile'
@@ -1841,6 +1846,7 @@ const workspaceResourceCache = new Map<string, WorkspaceResourceCacheEntry>();
 const userAttachmentResourceCache = ref(new Map<string, AttachmentResourceState>());
 let workspaceResourceHydrationFrame: number | null = null;
 let workspaceResourceHydrationPending = false;
+let stopWorkspaceRefreshListener: (() => void) | null = null;
 let pendingAssistantCenter = false;
 let pendingAssistantCenterCount = 0;
 const MESSENGER_PERF_TRACE_ENABLED = (() => {
@@ -5754,6 +5760,42 @@ const clearWorkspaceResourceCache = () => {
   userAttachmentResourceCache.value = new Map();
 };
 
+const parseWorkspaceRefreshContainerId = (value: unknown): number | null => {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const shouldHandleWorkspaceResourceRefresh = (detail: Record<string, unknown>) => {
+  const eventAgentId = normalizeAgentId(detail.agentId ?? detail.agent_id);
+  const eventContainerId = parseWorkspaceRefreshContainerId(
+    detail.containerId ?? detail.container_id
+  );
+  if (isWorldConversationActive.value) {
+    if (eventAgentId) return false;
+    return !Number.isFinite(eventContainerId) || eventContainerId === USER_CONTAINER_ID;
+  }
+  if (!isAgentConversationActive.value) {
+    return false;
+  }
+  const currentAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  if (eventAgentId && eventAgentId !== currentAgentId) {
+    return false;
+  }
+  return !Number.isFinite(eventContainerId) || eventContainerId === currentContainerId.value;
+};
+
+const handleWorkspaceResourceRefresh = (event?: Event) => {
+  const detail =
+    (event as CustomEvent<Record<string, unknown>> | undefined)?.detail &&
+    typeof (event as CustomEvent<Record<string, unknown>>).detail === 'object'
+      ? ((event as CustomEvent<Record<string, unknown>>).detail as Record<string, unknown>)
+      : {};
+  if (!shouldHandleWorkspaceResourceRefresh(detail)) {
+    return;
+  }
+  clearWorkspaceResourceCache();
+};
+
 const downloadWorkspaceResource = async (publicPath: string) => {
   const resource = resolveWorkspaceResource(publicPath);
   if (!resource || !resource.allowed) return;
@@ -6444,9 +6486,20 @@ const openSettingsPage = () => {
   activateSettingsPanel('general');
 };
 
+const requestAgentSettingsFocus = (target: '' | 'model') => {
+  if (!target) return;
+  agentSettingsFocusTarget.value = target;
+  agentSettingsFocusToken.value += 1;
+};
+
+const handleAgentSettingsFocusConsumed = (target: string) => {
+  if (String(target || '').trim() !== agentSettingsFocusTarget.value) return;
+  agentSettingsFocusTarget.value = '';
+};
+
 const openDesktopModelSettingsFromHeader = () => {
   if (!agentHeaderModelJumpEnabled.value) return;
-  openActiveAgentSettings();
+  openActiveAgentSettings({ focusSection: 'model' });
 };
 
 const openProfilePage = () => {
@@ -7090,8 +7143,17 @@ const enterSelectedAgentConversation = async () => {
 };
 
 
-const openActiveAgentSettings = () => {
+const openActiveAgentSettings = (
+  optionsOrEvent: { focusSection?: '' | 'model' } | Event = {}
+) => {
+  const options =
+    optionsOrEvent instanceof Event
+      ? {}
+      : optionsOrEvent;
   const targetAgentId = normalizeAgentId(activeAgentId.value || selectedAgentId.value);
+  if (options.focusSection === 'model') {
+    requestAgentSettingsFocus('model');
+  }
   agentOverviewMode.value = 'detail';
   selectedAgentId.value = targetAgentId;
   agentSettingMode.value = 'agent';
@@ -10284,6 +10346,7 @@ onMounted(async () => {
   syncMessageVirtualMetrics();
   scheduleMessageVirtualMeasure();
   scheduleWorkspaceResourceHydration();
+  stopWorkspaceRefreshListener = onWorkspaceRefresh(handleWorkspaceResourceRefresh);
   lifecycleTimer = window.setInterval(() => {
     fileLifecycleNowTick.value = Date.now();
   }, 60_000);
@@ -10383,6 +10446,10 @@ onBeforeUnmount(() => {
   }
   markdownCache.clear();
   messageVirtualHeightCache.clear();
+  if (stopWorkspaceRefreshListener) {
+    stopWorkspaceRefreshListener();
+    stopWorkspaceRefreshListener = null;
+  }
   clearWorkspaceResourceCache();
   timelinePreviewMap.value.clear();
   timelinePreviewLoadingSet.value.clear();

@@ -86,10 +86,15 @@ pub fn build_tool_roots(
     config: &Config,
     skills: &SkillRegistry,
     user_tool_bindings: Option<&UserToolBindings>,
+    extra_roots: &[PathBuf],
 ) -> ToolRoots {
     let allow_roots = build_allow_roots(config);
+    let mut allow_roots = allow_roots;
+    allow_roots.extend(extra_roots.iter().cloned());
+    let allow_roots = dedupe_roots(allow_roots);
     let mut read_roots = allow_roots.clone();
     read_roots.extend(build_skill_roots(skills, user_tool_bindings));
+    read_roots.extend(extra_roots.iter().cloned());
     let read_roots = dedupe_roots(read_roots);
     ToolRoots {
         allow_roots: Arc::new(allow_roots),
@@ -207,24 +212,32 @@ pub(crate) fn resolve_path_in_roots(raw_path: &str, roots: &[PathBuf]) -> Option
         return None;
     }
     let allow_any_path = allow_any_path_in_roots(roots);
-    let candidate = {
-        let path = PathBuf::from(trimmed);
-        if path.is_absolute() {
-            path
-        } else if allow_any_path {
-            // When local desktop mode exposes filesystem roots, keep relative traversal available
-            // so agent tools can follow user-provided local paths instead of failing on `..`.
-            let cwd = std::env::current_dir().ok()?;
-            normalize_target_path(&cwd.join(path))
-        } else {
-            let relative = sanitize_relative_path(trimmed)?;
-            let cwd = std::env::current_dir().ok()?;
-            cwd.join(relative)
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        for root in roots {
+            if is_within_root(root, &path) {
+                return Some(path.clone());
+            }
         }
-    };
+        return None;
+    }
+    if allow_any_path {
+        // When local desktop mode exposes filesystem roots, keep relative traversal available
+        // so agent tools can follow user-provided local paths instead of failing on `..`.
+        let cwd = std::env::current_dir().ok()?;
+        let candidate = normalize_target_path(&cwd.join(path));
+        for root in roots {
+            if is_within_root(root, &candidate) {
+                return Some(candidate.clone());
+            }
+        }
+        return None;
+    }
+    let relative = sanitize_relative_path(trimmed)?;
     for root in roots {
+        let candidate = normalize_target_path(&root.join(&relative));
         if is_within_root(root, &candidate) {
-            return Some(candidate.clone());
+            return Some(candidate);
         }
     }
     None
@@ -270,6 +283,7 @@ pub(crate) fn sanitize_relative_path(raw_path: &str) -> Option<PathBuf> {
 mod tests {
     use super::{build_allow_roots, resolve_path_in_roots};
     use crate::config::Config;
+    use crate::path_utils::normalize_existing_path;
     use std::fs;
     use std::path::{Path, PathBuf};
     use tempfile::tempdir;
@@ -302,5 +316,19 @@ mod tests {
         let resolved = resolve_path_in_roots(&target.to_string_lossy(), &roots).expect("resolved");
 
         assert_eq!(resolved, target);
+    }
+
+    #[test]
+    fn resolve_path_in_roots_resolves_relative_path_against_each_root() {
+        let temp = tempdir().expect("tempdir");
+        let root = temp.path().join("private");
+        let target = root.join("global").join("tooling.json");
+        fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+        fs::write(&target, "{}").expect("write target");
+        let roots = vec![root.clone()];
+
+        let resolved = resolve_path_in_roots("global/tooling.json", &roots).expect("resolved");
+
+        assert_eq!(normalize_existing_path(&resolved), normalize_existing_path(&target));
     }
 }

@@ -3912,12 +3912,6 @@
           </div>
           <div class="form-row">
             <label class="checkbox-row">
-              <input id="userKnowledgeModalEnabled" type="checkbox" checked />
-              <span data-i18n="common.enabled">启用</span>
-            </label>
-          </div>
-          <div class="form-row">
-            <label class="checkbox-row">
               <input id="userKnowledgeModalShared" type="checkbox" />
               <span data-i18n="common.shared">共享</span>
             </label>
@@ -3986,12 +3980,6 @@
                         <button id="userMcpConnectBtn" class="btn-with-icon">
                           <i class="fa-solid fa-link"></i>连接
                         </button>
-                        <button id="userMcpEnableAllBtn" class="secondary btn-with-icon">
-                          <i class="fa-solid fa-check-double"></i><span data-i18n="mcp.tools.enableAll">全选</span>
-                        </button>
-                        <button id="userMcpDisableAllBtn" class="secondary btn-with-icon">
-                          <i class="fa-solid fa-ban"></i><span data-i18n="mcp.tools.disableAll">全不选</span>
-                        </button>
                       </div>
                       <div class="actions">
                         <button id="userMcpEditBtn" class="secondary btn-with-icon">
@@ -4002,7 +3990,7 @@
                         </button>
                       </div>
                     </div>
-                    <div class="muted" data-i18n="userTools.mcp.tip.tools">勾选启用/共享后将出现在系统提示词工具列表中。</div>
+                    <div class="muted" data-i18n="userTools.mcp.tip.tools">连接后可查看工具列表，并按需设置共享。</div>
                     <div id="userMcpToolList" class="tool-list"></div>
                   </div>
                 </div>
@@ -4020,7 +4008,7 @@
                   </div>
                 </div>
                 <div class="tips" data-i18n="userTools.skills.tip">
-                  技能名称会以 user_id@技能名 展示，勾选共享即可让其他用户使用。
+                  技能名称会以 user_id@技能名 展示，上传后会自动进入可挂载工具目录。
                 </div>
                 <input id="userSkillUploadInput" type="file" accept=".zip,.skill" hidden />
                 <div id="userSkillsList" class="skills-list"></div>
@@ -4161,12 +4149,6 @@
             <label for="userMcpHeaders" data-i18n="mcp.form.headers">Headers JSON（可选）</label>
             <textarea id="userMcpHeaders" placeholder='{"Authorization":"Bearer ..."}'></textarea>
             <div id="userMcpHeadersError" class="error-text"></div>
-          </div>
-          <div class="form-row">
-            <label class="checkbox-row">
-              <input id="userMcpEnabled" type="checkbox" />
-              <span data-i18n="mcp.form.enabled">启用服务</span>
-            </label>
           </div>
           <div class="form-row">
             <label for="userMcpStructPreview" data-i18n="mcp.form.preview">JSON 结构体预览（可复制）</label>

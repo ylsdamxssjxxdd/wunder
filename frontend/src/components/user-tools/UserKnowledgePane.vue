@@ -166,14 +166,16 @@
                 </div>
                 <div class="knowledge-file-editor">
                   <div class="muted">{{ activeFile || t('knowledge.file.none') }}</div>
-                  <div ref="knowledgeEditorRef" class="knowledge-editor-wrapper">
-                    <div ref="knowledgeHighlightRef" class="knowledge-editor-highlight"></div>
-                    <el-input
+                  <div class="knowledge-editor-wrapper">
+                    <textarea
                       v-model="fileContent"
-                      type="textarea"
-                      :rows="14"
-                      @input="scheduleKnowledgeEditorUpdate"
-                    />
+                      class="knowledge-editor-textarea"
+                      :placeholder="t('knowledge.file.none')"
+                      spellcheck="false"
+                      autocorrect="off"
+                      autocomplete="off"
+                      autocapitalize="off"
+                    ></textarea>
                   </div>
                 </div>
               </div>
@@ -477,7 +479,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
 
 import {
@@ -550,30 +552,6 @@ const USER_KNOWLEDGE_UPLOAD_EXTENSIONS = [
 ];
 const uploadAccept = USER_KNOWLEDGE_UPLOAD_EXTENSIONS.join(',');
 
-// 转义 HTML，避免用户输入被浏览器当作标签解析
-const escapeHtml = (text) =>
-  String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
-// 将 Markdown 文本转换为高亮层 HTML，仅高亮一级标题（# 开头）
-const buildHeadingHighlightHtml = (text) => {
-  const raw = String(text ?? '');
-  const lines = raw.replace(/\r/g, '').split('\n');
-  return lines
-    .map((line) => {
-      const escaped = escapeHtml(line) || '&nbsp;';
-      const isHeading = /^\s*#(?!#)\s*\S/.test(line);
-      const classes = isHeading
-        ? 'knowledge-editor-line knowledge-heading-line'
-        : 'knowledge-editor-line';
-      return `<span class="${classes}">${escaped}</span>`;
-    })
-    .join('');
-};
 
 const normalizeBaseType = (value) => {
   const raw = String(value || '').trim().toLowerCase();
@@ -618,11 +596,6 @@ const uploadLoading = ref(false);
 const loaded = ref(false);
 const loading = ref(false);
 const fileUploadRef = ref(null);
-// 知识库文档编辑器需要同步滚动与高亮层，因此保留 DOM 引用
-const knowledgeEditorRef = ref(null);
-const knowledgeHighlightRef = ref(null);
-let knowledgeTextarea = null;
-let knowledgeResizeBound = false;
 
 const knowledgeModalVisible = ref(false);
 const knowledgeEditingIndex = ref(-1);
@@ -644,111 +617,6 @@ const knowledgeForm = reactive({
   score_threshold: ''
 });
 
-// 获取编辑器内部的 textarea DOM，便于对齐高亮层
-const getKnowledgeTextarea = () => {
-  if (knowledgeTextarea && document.contains(knowledgeTextarea)) {
-    return knowledgeTextarea;
-  }
-  const wrapper = knowledgeEditorRef.value;
-  if (!wrapper) {
-    return null;
-  }
-  const textarea = wrapper.querySelector('.el-textarea__inner');
-  if (textarea) {
-    knowledgeTextarea = textarea;
-  }
-  return textarea;
-};
-
-// 同步高亮层滚动位置，确保与文本滚动一致
-const syncKnowledgeEditorScroll = () => {
-  const textarea = getKnowledgeTextarea();
-  const highlight = knowledgeHighlightRef.value;
-  if (!textarea || !highlight) {
-    return;
-  }
-  highlight.scrollTop = textarea.scrollTop;
-  highlight.scrollLeft = textarea.scrollLeft;
-};
-
-// 根据 textarea 样式与内容刷新高亮层
-const updateKnowledgeEditorHighlight = () => {
-  const textarea = getKnowledgeTextarea();
-  const highlight = knowledgeHighlightRef.value;
-  if (!textarea || !highlight) {
-    return;
-  }
-  const styles = window.getComputedStyle(textarea);
-  highlight.style.font = styles.font;
-  highlight.style.letterSpacing = styles.letterSpacing;
-  highlight.style.wordSpacing = styles.wordSpacing;
-  highlight.style.textAlign = styles.textAlign;
-  highlight.style.textTransform = styles.textTransform;
-  highlight.style.textIndent = styles.textIndent;
-  highlight.style.textRendering = styles.textRendering;
-  highlight.style.whiteSpace = styles.whiteSpace;
-  highlight.style.wordBreak = styles.wordBreak;
-  highlight.style.overflowWrap = styles.overflowWrap;
-  highlight.style.tabSize = styles.tabSize;
-  highlight.style.direction = styles.direction;
-  highlight.style.setProperty('--knowledge-editor-padding-top', styles.paddingTop);
-  highlight.style.setProperty('--knowledge-editor-padding-right', styles.paddingRight);
-  highlight.style.setProperty('--knowledge-editor-padding-bottom', styles.paddingBottom);
-  highlight.style.setProperty('--knowledge-editor-padding-left', styles.paddingLeft);
-  const borderX = parseFloat(styles.borderLeftWidth) + parseFloat(styles.borderRightWidth);
-  const borderY = parseFloat(styles.borderTopWidth) + parseFloat(styles.borderBottomWidth);
-  const scrollbarWidth = Math.max(
-    0,
-    textarea.offsetWidth - textarea.clientWidth - borderX
-  );
-  const scrollbarHeight = Math.max(
-    0,
-    textarea.offsetHeight - textarea.clientHeight - borderY
-  );
-  // 同步滚动条占位，避免自动换行宽度不一致导致高亮错位
-  highlight.style.setProperty('--knowledge-scrollbar-width', `${scrollbarWidth}px`);
-  highlight.style.setProperty('--knowledge-scrollbar-height', `${scrollbarHeight}px`);
-  // 更新一级标题高亮层内容，便于快速识别知识条目
-  highlight.innerHTML = buildHeadingHighlightHtml(fileContent.value);
-  syncKnowledgeEditorScroll();
-};
-
-// 绑定滚动/尺寸监听，避免重复绑定造成开销
-const bindKnowledgeEditorEvents = () => {
-  const textarea = getKnowledgeTextarea();
-  if (!textarea) {
-    return;
-  }
-  if (knowledgeTextarea) {
-    knowledgeTextarea.removeEventListener('scroll', syncKnowledgeEditorScroll);
-  }
-  knowledgeTextarea = textarea;
-  knowledgeTextarea.addEventListener('scroll', syncKnowledgeEditorScroll);
-  if (!knowledgeResizeBound) {
-    window.addEventListener('resize', updateKnowledgeEditorHighlight);
-    knowledgeResizeBound = true;
-  }
-};
-
-// 清理监听，避免弹窗关闭后仍然占用资源
-const cleanupKnowledgeEditorEvents = () => {
-  if (knowledgeTextarea) {
-    knowledgeTextarea.removeEventListener('scroll', syncKnowledgeEditorScroll);
-    knowledgeTextarea = null;
-  }
-  if (knowledgeResizeBound) {
-    window.removeEventListener('resize', updateKnowledgeEditorHighlight);
-    knowledgeResizeBound = false;
-  }
-};
-
-// 在 DOM 更新后刷新高亮层，确保排版与滚动同步
-const scheduleKnowledgeEditorUpdate = () => {
-  nextTick(() => {
-    bindKnowledgeEditorEvents();
-    updateKnowledgeEditorHighlight();
-  });
-};
 
 const DOC_STATUS_KEYS = {
   ready: 'knowledge.doc.status.ready',
@@ -1795,63 +1663,18 @@ const refreshConfig = async () => {
   }
 };
 
-// 首次挂载时初始化高亮层，确保默认空文档也能对齐
-onMounted(() => {
-  scheduleKnowledgeEditorUpdate();
-});
-
-// 组件销毁时清理事件监听，避免内存泄漏
-onBeforeUnmount(() => {
-  cleanupKnowledgeEditorEvents();
-});
-
-// 文档内容变化时刷新高亮层
-watch(fileContent, () => {
-  if (!isVectorBase.value) {
-    scheduleKnowledgeEditorUpdate();
-  }
-});
-
-// 弹窗首次挂载即为可见时也触发加载，避免首次进入列表为空
-watch(
-  () => props.active,
-  (value) => {
-    if (value) {
-      scheduleKnowledgeEditorUpdate();
-    } else {
-      cleanupKnowledgeEditorEvents();
-    }
-  }
-);
-
 watch(
   () => props.visible,
   (value) => {
     if (value && !loaded.value) {
       loadConfig();
     }
-    if (value) {
-      scheduleKnowledgeEditorUpdate();
-    }
     if (!value) {
-      cleanupKnowledgeEditorEvents();
       closeKnowledgeModal();
       closeTestModal();
     }
   },
   { immediate: true }
-);
-
-watch(
-  isVectorBase,
-  (value) => {
-    if (value) {
-      cleanupKnowledgeEditorEvents();
-    } else {
-      scheduleKnowledgeEditorUpdate();
-    }
-  },
-  { immediate: false }
 );
 
 watch(

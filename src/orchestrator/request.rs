@@ -3,7 +3,7 @@ use crate::orchestrator_constants::MAX_USER_INPUT_TEXT_CHARS;
 use crate::request_limits::measure_request_text_input_chars;
 
 impl Orchestrator {
-    fn prepare_request(
+    async fn prepare_request(
         &self,
         request: WunderRequest,
     ) -> Result<PreparedRequest, OrchestratorError> {
@@ -11,6 +11,11 @@ impl Orchestrator {
         if user_id.is_empty() {
             return Err(OrchestratorError::invalid_request(i18n::t(
                 "error.user_id_required",
+            )));
+        }
+        if let Err(err) = self.inner_visible.sync_user_state(&user_id).await {
+            return Err(OrchestratorError::internal(format!(
+                "failed to sync inner-visible state: {err}"
             )));
         }
         let agent_id = request
@@ -92,7 +97,7 @@ impl Orchestrator {
     }
 
     pub async fn run(&self, request: WunderRequest) -> Result<WunderResponse> {
-        let prepared = self.prepare_request(request)?;
+        let prepared = self.prepare_request(request).await?;
         let language = prepared.language.clone();
         let emitter = EventEmitter::new(
             prepared.session_id.clone(),
@@ -114,7 +119,7 @@ impl Orchestrator {
         &self,
         request: WunderRequest,
     ) -> Result<impl Stream<Item = Result<StreamEvent, std::convert::Infallible>>> {
-        let prepared = self.prepare_request(request)?;
+        let prepared = self.prepare_request(request).await?;
         let language = prepared.language.clone();
         let (queue_tx, queue_rx) = mpsc::channel::<StreamSignal>(STREAM_EVENT_QUEUE_SIZE);
         let (event_tx, event_rx) = mpsc::channel::<StreamEvent>(STREAM_EVENT_QUEUE_SIZE);

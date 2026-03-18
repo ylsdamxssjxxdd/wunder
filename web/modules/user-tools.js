@@ -204,7 +204,6 @@ const buildUserMcpStructPreview = (server) => {
   const config = {
     type: server.transport || undefined,
     description: server.description || undefined,
-    isActive: server.enabled !== false,
     name: server.display_name || server.name,
     baseUrl: server.endpoint,
     headers: server.headers && Object.keys(server.headers).length ? server.headers : undefined,
@@ -233,9 +232,9 @@ const normalizeUserMcpServer = (server) => {
     description: server?.description || "",
     headers,
     auth: server?.auth || "",
-    allow_tools: Array.isArray(server?.allow_tools) ? server.allow_tools : [],
+    allow_tools: [],
     shared_tools: Array.isArray(server?.shared_tools) ? server.shared_tools : [],
-    enabled: server?.enabled !== false,
+    enabled: true,
     tool_specs: rawToolSpecs,
   };
 };
@@ -268,8 +267,8 @@ const buildUserMcpServerFromConfig = (serverId, rawConfig) => {
     description: config.description || "",
     headers,
     auth: config.auth || "",
-    allow_tools: config.allow_tools || config.allowTools || [],
-    enabled: config.isActive ?? config.enabled ?? true,
+    allow_tools: [],
+    enabled: true,
     tool_specs: [],
   });
 };
@@ -278,10 +277,6 @@ const upsertUserMcpServer = (incoming) => {
   const targetIndex = state.userTools.mcp.servers.findIndex((item) => item.name === incoming.name);
   if (targetIndex >= 0) {
     const previous = state.userTools.mcp.servers[targetIndex];
-    const allowTools =
-      Array.isArray(incoming.allow_tools) && incoming.allow_tools.length
-        ? incoming.allow_tools
-        : previous.allow_tools;
     const toolSpecs =
       Array.isArray(incoming.tool_specs) && incoming.tool_specs.length
         ? incoming.tool_specs
@@ -289,7 +284,8 @@ const upsertUserMcpServer = (incoming) => {
     state.userTools.mcp.servers[targetIndex] = {
       ...previous,
       ...incoming,
-      allow_tools: allowTools,
+      allow_tools: [],
+      enabled: true,
       tool_specs: toolSpecs,
     };
     state.userTools.mcp.toolsByIndex[targetIndex] = toolSpecs || [];
@@ -443,7 +439,6 @@ const toggleUserMcpDetailDisabled = (disabled) => {
     elements.userMcpTransport,
     elements.userMcpDescription,
     elements.userMcpHeaders,
-    elements.userMcpEnabled,
   ];
   fields.forEach((field) => {
     if (field) {
@@ -452,12 +447,6 @@ const toggleUserMcpDetailDisabled = (disabled) => {
   });
   if (elements.userMcpConnectBtn) {
     elements.userMcpConnectBtn.disabled = disabled;
-  }
-  if (elements.userMcpEnableAllBtn) {
-    elements.userMcpEnableAllBtn.disabled = disabled;
-  }
-  if (elements.userMcpDisableAllBtn) {
-    elements.userMcpDisableAllBtn.disabled = disabled;
   }
   if (elements.userMcpEditBtn) {
     elements.userMcpEditBtn.disabled = disabled;
@@ -484,7 +473,6 @@ const renderUserMcpDetail = () => {
     elements.userMcpDescription.value = "";
     elements.userMcpHeaders.value = "";
     elements.userMcpHeadersError.textContent = "";
-    elements.userMcpEnabled.checked = false;
     updateUserMcpStructPreview();
     toggleUserMcpDetailDisabled(true);
     updateUserMcpConnectButton();
@@ -501,9 +489,6 @@ const renderUserMcpDetail = () => {
   if (server.transport) {
     metaParts.push(`transport=${server.transport}`);
   }
-  metaParts.push(
-    server.enabled !== false ? t("mcp.status.enabled") : t("mcp.status.disabled")
-  );
   elements.userMcpDetailTitle.textContent = title;
   elements.userMcpDetailMeta.textContent = metaParts.join(" · ");
   elements.userMcpDetailDesc.textContent = server.description || "";
@@ -517,7 +502,6 @@ const renderUserMcpDetail = () => {
       ? JSON.stringify(server.headers, null, 2)
       : "";
   elements.userMcpHeadersError.textContent = "";
-  elements.userMcpEnabled.checked = server.enabled !== false;
   updateUserMcpStructPreview();
   toggleUserMcpDetailDisabled(false);
   renderUserMcpTools();
@@ -563,22 +547,10 @@ const renderUserMcpTools = () => {
     elements.userMcpToolList.textContent = t("mcp.tools.notLoaded");
     return;
   }
-  const allowList = Array.isArray(server.allow_tools) ? server.allow_tools : [];
   const sharedList = Array.isArray(server.shared_tools) ? server.shared_tools : [];
-  const implicitAll = server.enabled !== false && allowList.length === 0;
   tools.forEach((tool) => {
     const item = document.createElement("div");
-    item.className = "tool-item tool-item-dual";
-    const enableLabel = document.createElement("label");
-    enableLabel.className = "tool-check";
-    const enableCheckbox = document.createElement("input");
-    enableCheckbox.type = "checkbox";
-    const enabled = implicitAll || allowList.includes(tool.name);
-    enableCheckbox.checked = enabled;
-    const enableText = document.createElement("span");
-    enableText.textContent = t("userTools.action.enable");
-    enableLabel.appendChild(enableCheckbox);
-    enableLabel.appendChild(enableText);
+    item.className = "tool-item";
 
     const shareLabel = document.createElement("label");
     shareLabel.className = "tool-check";
@@ -596,7 +568,7 @@ const renderUserMcpTools = () => {
     info.innerHTML = `<strong>${tool.name}</strong>${desc}`;
 
     item.addEventListener("click", (event) => {
-      if (enableLabel.contains(event.target) || shareLabel.contains(event.target)) {
+      if (shareLabel.contains(event.target)) {
         return;
       }
       const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
@@ -604,12 +576,6 @@ const renderUserMcpTools = () => {
         t("userTools.mcp.tool.label"),
         t("mcp.tool.server", { name: serverTitle }),
       ];
-      metaParts.push(
-        server.enabled !== false ? t("mcp.tool.serverEnabled") : t("mcp.tool.serverDisabled")
-      );
-      metaParts.push(
-        enableCheckbox.checked ? t("mcp.status.enabled") : t("mcp.status.disabled")
-      );
       metaParts.push(
         shareCheckbox.checked ? t("userTools.shared.on") : t("userTools.shared.off")
       );
@@ -621,52 +587,12 @@ const renderUserMcpTools = () => {
       });
     });
 
-    enableCheckbox.addEventListener("change", (event) => {
-      const allTools = tools.map((entry) => entry.name);
-      let nextAllow = allowList.slice();
-      if (implicitAll) {
-        nextAllow = allTools.slice();
-      }
-      if (event.target.checked) {
-        if (!nextAllow.includes(tool.name)) {
-          nextAllow.push(tool.name);
-        }
-        server.enabled = true;
-      } else {
-        nextAllow = nextAllow.filter((name) => name !== tool.name);
-        server.shared_tools = (Array.isArray(server.shared_tools) ? server.shared_tools : []).filter(
-          (name) => name !== tool.name
-        );
-        if (nextAllow.length === 0) {
-          server.enabled = false;
-        }
-      }
-      const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
-      state.userTools.mcp.lastAction = {
-        type: event.target.checked ? "tool_enabled" : "tool_disabled",
-        name: tool.name,
-        server: serverTitle,
-      };
-      server.allow_tools = nextAllow;
-      scheduleUserMcpSave();
-      renderUserMcpDetail();
-    });
-
     shareCheckbox.addEventListener("change", (event) => {
-      const allTools = tools.map((entry) => entry.name);
-      let nextAllow = allowList.slice();
-      if (implicitAll) {
-        nextAllow = allTools.slice();
-      }
       let nextShared = Array.isArray(server.shared_tools) ? server.shared_tools.slice() : [];
       if (event.target.checked) {
         if (!nextShared.includes(tool.name)) {
           nextShared.push(tool.name);
         }
-        if (!nextAllow.includes(tool.name)) {
-          nextAllow.push(tool.name);
-        }
-        server.enabled = true;
       } else {
         nextShared = nextShared.filter((name) => name !== tool.name);
       }
@@ -676,13 +602,11 @@ const renderUserMcpTools = () => {
         name: tool.name,
         server: serverTitle,
       };
-      server.allow_tools = nextAllow;
       server.shared_tools = nextShared;
       scheduleUserMcpSave();
       renderUserMcpDetail();
     });
 
-    item.appendChild(enableLabel);
     item.appendChild(shareLabel);
     item.appendChild(info);
     elements.userMcpToolList.appendChild(item);
@@ -698,22 +622,10 @@ const resolveUserMcpActionMessage = () => {
   const name = action.name;
   const server = action.server || "";
   switch (action.type) {
-    case "tool_enabled":
-      return t("mcp.tool.enabled", { name, server });
-    case "tool_disabled":
-      return t("mcp.tool.disabled", { name, server });
     case "tool_shared":
       return t("userTools.mcp.tool.shared", { name, server });
     case "tool_unshared":
       return t("userTools.mcp.tool.unshared", { name, server });
-    case "tools_enabled_all":
-      return t("mcp.tools.enableAllSuccess");
-    case "tools_disabled_all":
-      return t("mcp.tools.disableAllSuccess");
-    case "server_enabled":
-      return t("userTools.mcp.server.enabled", { name });
-    case "server_disabled":
-      return t("userTools.mcp.server.disabled", { name });
     default:
       return "";
   }
@@ -761,9 +673,9 @@ const saveUserMcpServers = async () => {
       headers: server.headers || {},
       auth: server.auth || "",
       tool_specs: Array.isArray(server.tool_specs) ? server.tool_specs : [],
-      allow_tools: Array.isArray(server.allow_tools) ? server.allow_tools : [],
+      allow_tools: [],
       shared_tools: Array.isArray(server.shared_tools) ? server.shared_tools : [],
-      enabled: server.enabled !== false,
+      enabled: true,
     })),
   };
   try {
@@ -905,7 +817,6 @@ const addUserMcpServer = () => {
     headers: {},
     allow_tools: [],
     shared_tools: [],
-    enabled: true,
     tool_specs: [],
   });
   state.userTools.mcp.servers.push(next);
@@ -1003,21 +914,6 @@ const bindUserMcpInputs = () => {
     updateUserMcpStructPreview();
     scheduleUserMcpSave();
   });
-  elements.userMcpEnabled.addEventListener("change", (event) => {
-    const server = getActiveUserMcpServer();
-    if (!server) {
-      return;
-    }
-    server.enabled = event.target.checked;
-    const serverTitle = server.display_name || server.name || t("mcp.server.unnamed");
-    state.userTools.mcp.lastAction = {
-      type: server.enabled ? "server_enabled" : "server_disabled",
-      name: serverTitle,
-    };
-    renderUserMcpDetail();
-    updateUserMcpStructPreview();
-    scheduleUserMcpSave();
-  });
 };
 
 // 技能自建工具：上传、启用与共享
@@ -1100,13 +996,7 @@ const renderUserSkills = () => {
   }
   state.userTools.skills.skills.forEach((skill) => {
     const item = document.createElement("div");
-    item.className = "skill-item tool-item-dual";
-    const enableLabel = document.createElement("label");
-    enableLabel.className = "tool-check";
-    const enableCheckbox = document.createElement("input");
-    enableCheckbox.type = "checkbox";
-    enableCheckbox.checked = Boolean(skill.enabled);
-    enableLabel.appendChild(enableCheckbox);
+    item.className = "skill-item";
 
     const info = document.createElement("label");
     info.className = "tool-item-info";
@@ -1133,21 +1023,8 @@ const renderUserSkills = () => {
       info.append(desc);
     }
 
-    enableCheckbox.addEventListener("change", (event) => {
-      skill.enabled = event.target.checked;
-      if (!skill.enabled) {
-        skill.shared = false;
-      }
-      state.userTools.skills.lastAction = {
-        type: skill.enabled ? "enabled" : "disabled",
-        name: skill.name,
-      };
-      renderUserSkills();
-      scheduleUserSkillsSave();
-    });
     info.addEventListener("click", () => openUserSkillDetailModal(skill));
 
-    item.appendChild(enableLabel);
     item.appendChild(info);
     elements.userSkillsList.appendChild(item);
   });
@@ -1160,10 +1037,6 @@ const resolveUserSkillActionMessage = () => {
   }
   const name = action.name;
   switch (action.type) {
-    case "enabled":
-      return t("userTools.skills.enabled", { name });
-    case "disabled":
-      return t("userTools.skills.disabled", { name });
     case "shared":
       return t("userTools.skills.shared", { name });
     case "unshared":
@@ -1180,9 +1053,7 @@ const saveUserSkills = async () => {
     return;
   }
   updateModalStatus(t("userTools.saving"));
-  const enabled = state.userTools.skills.skills
-    .filter((skill) => skill.enabled)
-    .map((skill) => skill.name);
+  const enabled = state.userTools.skills.skills.map((skill) => skill.name);
   const shared = state.userTools.skills.skills
     .filter((skill) => skill.shared)
     .map((skill) => skill.name);
@@ -1268,7 +1139,7 @@ const normalizeUserKnowledgeConfig = (raw) => {
             name: base.name || "",
             description: base.description || "",
             root: base.root || "",
-            enabled: base.enabled !== false,
+            enabled: true,
             shared: Boolean(base.shared),
           }))
       : [],
@@ -1331,9 +1202,6 @@ const openUserKnowledgeModal = (base = null, index = -1) => {
   if (elements.userKnowledgeModalDesc) {
     elements.userKnowledgeModalDesc.value = payload.description || "";
   }
-  if (elements.userKnowledgeModalEnabled) {
-    elements.userKnowledgeModalEnabled.checked = payload.enabled !== false;
-  }
   if (elements.userKnowledgeModalShared) {
     elements.userKnowledgeModalShared.checked = payload.shared === true;
   }
@@ -1354,9 +1222,7 @@ const closeUserKnowledgeModal = () => {
 const getUserKnowledgeModalPayload = () => ({
   name: elements.userKnowledgeModalName?.value?.trim() || "",
   description: elements.userKnowledgeModalDesc?.value?.trim() || "",
-  enabled: elements.userKnowledgeModalEnabled
-    ? elements.userKnowledgeModalEnabled.checked
-    : true,
+  enabled: true,
   shared: elements.userKnowledgeModalShared?.checked === true,
 });
 
@@ -1422,9 +1288,6 @@ const renderUserKnowledgeDetailHeader = () => {
   }
   elements.userKnowledgeDetailTitle.textContent = base.name || t("knowledge.name.unnamed");
   const metaParts = [base.root || t("userTools.knowledge.root.uncreated")];
-  metaParts.push(
-    base.enabled !== false ? t("knowledge.status.enabled") : t("knowledge.status.disabled")
-  );
   if (base.shared) {
     metaParts.push(t("userTools.shared.on"));
   }
@@ -1488,7 +1351,7 @@ const buildUserKnowledgePayload = () => ({
     .map((base) => ({
       name: base.name.trim(),
       description: base.description || "",
-      enabled: base.enabled !== false,
+      enabled: true,
       shared: base.shared === true,
     }))
     .filter((base) => base.name),
@@ -1959,36 +1822,6 @@ export const initUserTools = () => {
       return;
     }
     openUserMcpModal(t("userTools.mcp.modal.editTitle"));
-  });
-  elements.userMcpEnableAllBtn.addEventListener("click", () => {
-    const server = getActiveUserMcpServer();
-    const tools = state.userTools.mcp.toolsByIndex[state.userTools.mcp.selectedIndex] || [];
-    if (!server || !tools.length) {
-      return;
-    }
-    server.enabled = true;
-    server.allow_tools = tools.map((tool) => tool.name);
-    state.userTools.mcp.lastAction = {
-      type: "tools_enabled_all",
-      name: server.display_name || server.name || t("mcp.server.unnamed"),
-    };
-    scheduleUserMcpSave();
-    renderUserMcpDetail();
-  });
-  elements.userMcpDisableAllBtn.addEventListener("click", () => {
-    const server = getActiveUserMcpServer();
-    if (!server) {
-      return;
-    }
-    server.allow_tools = [];
-    server.shared_tools = [];
-    server.enabled = false;
-    state.userTools.mcp.lastAction = {
-      type: "tools_disabled_all",
-      name: server.display_name || server.name || t("mcp.server.unnamed"),
-    };
-    scheduleUserMcpSave();
-    renderUserMcpDetail();
   });
   elements.userMcpDeleteBtn.addEventListener("click", deleteUserMcpServer);
   bindUserMcpInputs();

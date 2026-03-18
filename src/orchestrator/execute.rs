@@ -191,10 +191,12 @@ impl Orchestrator {
             let user_tool_bindings =
                 self.user_tool_manager
                     .build_bindings(&config, &skills_snapshot, &user_id);
+            let private_root = self.inner_visible.private_root(&user_id);
             let tool_roots = crate::tools::build_tool_roots(
                 &config,
                 &skills_snapshot,
                 Some(&user_tool_bindings),
+                &[private_root],
             );
             let allowed_tool_names = self.filter_tools_for_model_capability(
                 self.resolve_allowed_tool_names(

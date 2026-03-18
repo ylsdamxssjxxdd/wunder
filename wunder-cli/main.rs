@@ -4607,7 +4607,7 @@ async fn run_tool_direct(
             .state
             .user_tool_manager
             .build_bindings(&config, &skills_snapshot, &runtime.user_id);
-    let roots = build_tool_roots(&config, &skills_snapshot, Some(&bindings));
+    let roots = build_tool_roots(&config, &skills_snapshot, Some(&bindings), &[]);
     let session_id = runtime.resolve_session(global.session.as_deref());
     let a2a_store = A2aStore::new();
     let http = reqwest::Client::new();
