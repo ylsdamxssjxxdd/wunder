@@ -291,6 +291,22 @@ impl Orchestrator {
             let mut repeated_tool_failure_count = 0_u32;
             let repeated_tool_failure_threshold =
                 resolve_tool_failure_guard_threshold(&request_config);
+            let tools_payload = function_tooling
+                .as_ref()
+                .map(|tooling| tooling.tools.as_slice());
+            // Reserve prompt budget for native tool schema payloads; message-only estimates
+            // undercount the real request size and can miss preemptive compaction.
+            let request_overhead_tokens = estimate_request_overhead_tokens(tools_payload);
+            // If the previous turn died on context overflow, force a repair compaction before
+            // sampling again so the session can self-heal instead of requiring a new thread.
+            let mut force_compaction_on_entry = self
+                .workspace
+                .load_session_context_overflow_async(&user_id, &session_id)
+                .await;
+            let mut persisted_context_tokens = self
+                .workspace
+                .load_session_context_tokens_async(&user_id, &session_id)
+                .await;
             loop {
                 if let Some(max_rounds) = max_rounds {
                     if model_round >= max_rounds {
@@ -316,18 +332,33 @@ impl Orchestrator {
                         &emitter,
                         &question,
                         log_payload,
-                        false,
+                        persisted_context_tokens,
+                        request_overhead_tokens,
+                        force_compaction_on_entry,
                         true,
                     )
                     .await?;
+                if force_compaction_on_entry {
+                    let _ = self
+                        .workspace
+                        .delete_session_context_overflow_async(&user_id, &session_id)
+                        .await;
+                    force_compaction_on_entry = false;
+                }
                 self.ensure_not_cancelled(&session_id)?;
                 messages = context_manager.normalize_messages(messages);
                 let context_tokens = context_manager.estimate_context_tokens(&messages);
+                let projected_request_tokens =
+                    context_tokens.saturating_add(request_overhead_tokens);
                 self.workspace
                     .save_session_context_tokens_async(&user_id, &session_id, context_tokens)
                     .await;
+                persisted_context_tokens = context_tokens;
                 let mut context_payload = json!({
                     "context_tokens": context_tokens,
+                    "persisted_context_tokens": persisted_context_tokens,
+                    "projected_request_tokens": projected_request_tokens,
+                    "request_overhead_tokens": request_overhead_tokens,
                     "message_count": messages.len(),
                 });
                 if let Value::Object(ref mut map) = context_payload {
@@ -360,9 +391,6 @@ impl Orchestrator {
                     user_message_appended = true;
                 }
 
-                let tools_payload = function_tooling
-                    .as_ref()
-                    .map(|tooling| tooling.tools.as_slice());
                 let mut overflow_recovery_attempts = 0_u32;
                 let (content, reasoning, usage, tool_calls_payload) = loop {
                     match self
@@ -414,12 +442,20 @@ impl Orchestrator {
                                     &emitter,
                                     &question,
                                     log_payload,
+                                    persisted_context_tokens,
+                                    request_overhead_tokens,
                                     true,
                                     true,
                                 )
                                 .await?;
+                            let _ = self
+                                .workspace
+                                .delete_session_context_overflow_async(&user_id, &session_id)
+                                .await;
                             messages = context_manager.normalize_messages(messages);
                             let recovered_tokens = context_manager.estimate_context_tokens(&messages);
+                            let recovered_request_tokens =
+                                recovered_tokens.saturating_add(request_overhead_tokens);
                             self.workspace
                                 .save_session_context_tokens_async(
                                     &user_id,
@@ -433,13 +469,41 @@ impl Orchestrator {
                                 "attempt": overflow_recovery_attempts,
                                 "max_attempts": MAX_CONTEXT_OVERFLOW_RECOVERY_ATTEMPTS,
                                 "context_tokens_after": recovered_tokens,
+                                "projected_request_tokens_after": recovered_request_tokens,
+                                "request_overhead_tokens": request_overhead_tokens,
                             });
                             if let Value::Object(ref mut map) = compaction_payload {
                                 round_info.insert_into(map);
                             }
                             emitter.emit("compaction", compaction_payload).await;
                         }
-                        Err(err) => return Err(err),
+                        Err(err) => {
+                            if should_recover_from_context_overflow(&err) {
+                                self.workspace
+                                    .save_session_context_overflow_async(
+                                        &user_id,
+                                        &session_id,
+                                        true,
+                                    )
+                                    .await;
+                                let overflow_tokens = llm_config
+                                    .max_context
+                                    .map(i64::from)
+                                    .unwrap_or_else(|| {
+                                        context_manager
+                                            .estimate_context_tokens(&messages)
+                                            .saturating_add(request_overhead_tokens)
+                                    });
+                                self.workspace
+                                    .save_session_context_tokens_async(
+                                        &user_id,
+                                        &session_id,
+                                        overflow_tokens,
+                                    )
+                                    .await;
+                            }
+                            return Err(err);
+                        }
                     }
                 };
                 last_response = Some((content.clone(), reasoning.clone()));
@@ -1397,7 +1461,7 @@ impl Orchestrator {
                 if let Some(repair) = args_repair {
                     result.insert_meta("repair", repair);
                 }
-                result = orchestrator.finalize_tool_result(result, started_at, is_admin);
+                result = orchestrator.finalize_tool_result(&name, result, started_at, is_admin);
                 Ok(ToolExecutionOutcome { call, name, result })
             }
         }))
@@ -1469,6 +1533,17 @@ fn resolve_non_admin_max_rounds(llm_config: &LlmModelConfig, skip_tool_calls: bo
 fn should_recover_from_context_overflow(err: &OrchestratorError) -> bool {
     err.code() == "CONTEXT_WINDOW_EXCEEDED"
         || super::llm::is_context_window_error_text(err.message())
+}
+
+fn estimate_request_overhead_tokens(tools: Option<&[Value]>) -> i64 {
+    let Some(tools) = tools else {
+        return 0;
+    };
+    if tools.is_empty() {
+        return 0;
+    }
+    let payload = serde_json::to_string(tools).unwrap_or_default();
+    approx_token_count(&payload).max(0)
 }
 
 fn resolve_user_content_for_persist(
@@ -1806,6 +1881,29 @@ mod tests {
     fn skip_context_overflow_recovery_for_other_errors() {
         let err = OrchestratorError::internal("LLM call failed: invalid api key".to_string());
         assert!(!should_recover_from_context_overflow(&err));
+    }
+
+    #[test]
+    fn estimate_request_overhead_tokens_counts_tool_schema_payload() {
+        let tools = vec![json!({
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read a file from the workspace and return the content.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Path to the file"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            }
+        })];
+        assert!(estimate_request_overhead_tokens(Some(&tools)) > 0);
+        assert_eq!(estimate_request_overhead_tokens(None), 0);
     }
 
     #[test]

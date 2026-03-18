@@ -733,6 +733,32 @@ fn normalize_public_path(path: &Path) -> String {
     normalize_public_path_text(&path.to_string_lossy())
 }
 
+fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String, Response> {
+    // Require a dedicated top-level directory per uploaded skill package so a
+    // root-level SKILL.md can never shadow the whole user skill root.
+    let mut components = path.components();
+    let Some(top_dir) = components.next() else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_upload_top_dir_required"),
+        ));
+    };
+    if components.next().is_none() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_upload_top_dir_required"),
+        ));
+    }
+    let top_name = top_dir.as_os_str().to_string_lossy().trim().to_string();
+    if top_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_upload_top_dir_required"),
+        ));
+    }
+    Ok(top_name)
+}
+
 fn user_skill_to_value(
     spec: SkillSpec,
     enabled_set: &HashSet<String>,
@@ -1117,14 +1143,12 @@ async fn user_skills_upload(
                 i18n::t("error.zip_path_illegal"),
             ));
         }
-        if let Some(top_dir) = path.components().next() {
-            let top_name = top_dir.as_os_str().to_string_lossy().trim().to_string();
-            if !top_name.is_empty() && builtin_catalog.dir_names.contains(&top_name) {
-                return Err(error_response(
-                    StatusCode::FORBIDDEN,
-                    i18n::t("error.skill_builtin_upload_conflict"),
-                ));
-            }
+        let top_name = uploaded_skill_archive_top_dir(path)?;
+        if builtin_catalog.dir_names.contains(&top_name) {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                i18n::t("error.skill_builtin_upload_conflict"),
+            ));
         }
         let dest = skill_root.join(path);
         let dest = dest.canonicalize().unwrap_or(dest);
@@ -3185,5 +3209,26 @@ impl From<UserKnowledgeBasePayload> for UserKnowledgeBase {
             top_k: payload.top_k,
             score_threshold: payload.score_threshold,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::uploaded_skill_archive_top_dir;
+    use std::path::Path;
+
+    #[test]
+    fn uploaded_skill_archive_requires_top_level_directory() {
+        let nested = Path::new("demo-skill/SKILL.md");
+        assert_eq!(
+            uploaded_skill_archive_top_dir(nested).unwrap(),
+            "demo-skill"
+        );
+
+        let root_skill = Path::new("SKILL.md");
+        assert!(uploaded_skill_archive_top_dir(root_skill).is_err());
+
+        let root_script = Path::new("run.py");
+        assert!(uploaded_skill_archive_top_dir(root_script).is_err());
     }
 }

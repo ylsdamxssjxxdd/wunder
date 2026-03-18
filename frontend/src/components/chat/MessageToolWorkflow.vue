@@ -1,72 +1,162 @@
 <template>
-  <details
-    v-if="shouldRender"
-    ref="workflowRef"
-    class="message-tool-workflow"
-    @toggle="handleWorkflowToggle"
-  >
-    <summary>
-      <span class="tool-workflow-title">{{ t('chat.toolWorkflow.title') }}</span>
-      <span v-if="latestEntry" class="tool-workflow-latest" :title="latestEntry.summaryTitle">
-        {{ latestEntry.summaryTitle }}
+  <div v-if="shouldRender" class="message-tool-workflow-shell">
+    <button
+      v-if="compactionBanner"
+      type="button"
+      :class="[
+        'tool-workflow-banner',
+        `is-${compactionBanner.status}`,
+        compactionBanner.tone ? `tone-${compactionBanner.tone}` : ''
+      ]"
+      @click="handleCompactionBannerClick"
+    >
+      <span class="tool-workflow-banner-dot" aria-hidden="true"></span>
+      <span class="tool-workflow-banner-main">
+        <span class="tool-workflow-banner-row">
+          <span class="tool-workflow-banner-copy">
+            <span class="tool-workflow-banner-title">{{ compactionBanner.title }}</span>
+            <span class="tool-workflow-banner-description">{{ compactionBanner.description }}</span>
+          </span>
+          <span v-if="compactionBanner.stageLabel" class="tool-workflow-banner-stage">
+            {{ compactionBanner.stageLabel }}
+          </span>
+          <span
+            v-if="compactionBanner.note"
+            :class="['tool-workflow-banner-note', compactionBanner.tone ? `is-${compactionBanner.tone}` : '']"
+          >
+            {{ compactionBanner.note }}
+          </span>
+        </span>
+        <span v-if="compactionBanner.usageBar" :class="['tool-workflow-banner-usage', `is-${compactionBanner.usageBar.tone}`]">
+          <span class="tool-workflow-banner-usage-head">
+            <span class="tool-workflow-banner-usage-limit">{{ compactionBanner.usageBar.limitLabel }}</span>
+            <span class="tool-workflow-banner-usage-hint">{{ compactionBanner.usageBar.hint }}</span>
+          </span>
+          <span class="tool-workflow-banner-usage-track">
+            <span
+              v-if="compactionBanner.usageBar.beforeRatio !== null"
+              class="tool-workflow-banner-usage-fill is-before"
+              :style="{ width: `${Math.max(compactionBanner.usageBar.beforeRatio * 100, 6)}%` }"
+            ></span>
+            <span
+              v-if="compactionBanner.usageBar.afterRatio !== null"
+              class="tool-workflow-banner-usage-fill is-after"
+              :style="{ width: `${Math.max(compactionBanner.usageBar.afterRatio * 100, 6)}%` }"
+            ></span>
+          </span>
+          <span class="tool-workflow-banner-usage-legend">
+            <span v-if="compactionBanner.usageBar.beforeLabel" class="tool-workflow-banner-usage-label is-before">
+              {{ compactionBanner.usageBar.beforeLabel }}
+            </span>
+            <span v-if="compactionBanner.usageBar.afterLabel" class="tool-workflow-banner-usage-label is-after">
+              {{ compactionBanner.usageBar.afterLabel }}
+            </span>
+          </span>
+        </span>
+        <span v-if="compactionBanner.failure" class="tool-workflow-banner-failure">
+          <span class="tool-workflow-banner-failure-title">{{ compactionBanner.failure.title }}</span>
+          <span class="tool-workflow-banner-failure-description">{{ compactionBanner.failure.description }}</span>
+          <span class="tool-workflow-banner-failure-actions">
+            <span
+              v-for="(suggestion, index) in compactionBanner.failure.suggestions"
+              :key="`${index}-${suggestion}`"
+              class="tool-workflow-banner-failure-chip"
+            >
+              {{ suggestion }}
+            </span>
+          </span>
+        </span>
       </span>
-      <span v-else class="tool-workflow-spacer" />
-    </summary>
+    </button>
 
-    <div ref="workflowListRef" class="tool-workflow-list" @scroll="handleWorkflowScroll">
-      <div v-if="entries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
+    <details
+      ref="workflowRef"
+      class="message-tool-workflow"
+      @toggle="handleWorkflowToggle"
+    >
+      <summary>
+        <span class="tool-workflow-title">{{ t('chat.toolWorkflow.title') }}</span>
+        <span v-if="latestEntry" class="tool-workflow-latest" :title="latestEntry.summaryTitle">
+          {{ latestEntry.summaryTitle }}
+        </span>
+        <span v-else class="tool-workflow-spacer" />
+      </summary>
 
-      <details
-        v-for="entry in entries"
-        :key="entry.key"
-        class="tool-workflow-entry"
-        :open="expandedKeys.has(entry.key)"
-        @toggle="handleEntryToggle(entry.key, $event)"
-      >
-        <summary class="tool-workflow-entry-summary">
-          <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
-          <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
-          <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
-          <span :class="['tool-workflow-entry-status', `is-${entry.status}`]">{{ entry.statusLabel }}</span>
-        </summary>
+      <div ref="workflowListRef" class="tool-workflow-list" @scroll="handleWorkflowScroll">
+        <div v-if="entries.length === 0" class="tool-workflow-empty">{{ t('chat.toolWorkflow.empty') }}</div>
 
-        <div class="tool-workflow-entry-body">
-          <MessageToolWorkflowSection
-            v-for="section in entry.sections"
-            :key="section.key"
-            :section="section"
-            :bind-stream-body-ref="(stream, el) => bindStreamBodyRef(entry.key, stream, el)"
-            :on-stream-body-scroll="(stream, event) => handleStreamBodyScroll(entry.key, stream, event)"
-          />
-        </div>
-      </details>
-    </div>
-  </details>
+        <details
+          v-for="entry in entries"
+          :key="entry.key"
+          class="tool-workflow-entry"
+          :open="expandedKeys.has(entry.key)"
+          @toggle="handleEntryToggle(entry.key, $event)"
+        >
+          <summary class="tool-workflow-entry-summary">
+            <span :class="['tool-workflow-entry-lamp', `is-${entry.status}`]" aria-hidden="true"></span>
+            <span class="tool-workflow-entry-title">{{ entry.summaryTitle }}</span>
+            <span
+              v-if="entry.summaryNote"
+              :class="[
+                'tool-workflow-entry-note',
+                entry.summaryNoteTone ? `is-${entry.summaryNoteTone}` : ''
+              ]"
+            >
+              {{ entry.summaryNote }}
+            </span>
+            <span v-if="entry.durationLabel" class="tool-workflow-entry-duration">{{ entry.durationLabel }}</span>
+            <span :class="['tool-workflow-entry-status', `is-${entry.status}`]">{{ entry.statusLabel }}</span>
+          </summary>
+
+          <div class="tool-workflow-entry-body">
+            <MessageToolWorkflowSection
+              v-for="section in entry.sections"
+              :key="section.key"
+              :section="section"
+              :bind-stream-body-ref="(stream, el) => bindStreamBodyRef(entry.key, stream, el)"
+              :on-stream-body-scroll="(stream, event) => handleStreamBodyScroll(entry.key, stream, event)"
+            />
+          </div>
+        </details>
+      </div>
+    </details>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue';
 
 import { useI18n } from '@/i18n';
+import {
+  buildCommandCardView,
+  buildCommandResultNote,
+  buildPatchCallView,
+  buildPatchResultNote,
+  buildPatchResultView
+} from './toolWorkflowActionViews';
 import { buildToolResultPreview } from './toolWorkflowPreview';
+import {
+  buildWorkflowToolRuns,
+  type RawToolRun as RawEntry,
+  type WorkflowItem
+} from './toolWorkflowRunModel';
+import {
+  buildStructuredToolResultNote,
+  buildStructuredToolResultView
+} from './toolWorkflowStructuredView';
 import { chatPerf } from '@/utils/chatPerf';
+import {
+  buildCompactionDisplay,
+  type CompactionDisplay,
+  type CompactionView
+} from '@/utils/chatCompactionUi';
 import MessageToolWorkflowSection from './MessageToolWorkflowSection.vue';
 import type {
   ToolWorkflowCommandView as CommandView,
   ToolWorkflowDetailSection,
+  ToolWorkflowPatchFileView as PatchFileView,
   ToolWorkflowPatchLine as PatchLine
 } from './toolWorkflowTypes';
-
-type WorkflowItem = {
-  id?: string | number;
-  title?: string;
-  detail?: string;
-  status?: string;
-  isTool?: boolean;
-  eventType?: string;
-  toolName?: string;
-  toolCallId?: string | number;
-};
 
 type PatchEntry = {
   key: string;
@@ -91,6 +181,10 @@ type PatchDiffBlock = {
 type ToolEntryView = {
   key: string;
   summaryTitle: string;
+  summaryNote: string;
+  summaryNoteTone: '' | 'info' | 'success' | 'warning';
+  isCompaction: boolean;
+  compactionView: CompactionView | null;
   status: string;
   statusLabel: string;
   durationLabel: string;
@@ -102,14 +196,6 @@ type CommandRecord = {
   stdout: string;
   stderr: string;
   returncode: number | null;
-};
-
-type RawEntry = {
-  key: string;
-  toolName: string;
-  callItem: WorkflowItem | null;
-  outputItem: WorkflowItem | null;
-  resultItem: WorkflowItem | null;
 };
 
 type TerminalAutoStickMode = 'always' | 'smart' | 'off';
@@ -591,6 +677,7 @@ const resolveToolEventKind = (item: WorkflowItem): 'call' | 'output' | 'result' 
   const eventType = String(item.eventType || '').trim().toLowerCase();
   if (eventType === 'tool_call') return 'call';
   if (eventType === 'tool_output_delta') return 'output';
+  if (eventType === 'compaction_progress') return 'output';
   if (eventType === 'tool_result') return 'result';
   if (eventType === 'compaction') return 'result';
 
@@ -1292,6 +1379,96 @@ const buildApplyPatchResultSummary = (entry: RawEntry): string => {
   ]);
 };
 
+type ApplyPatchCounts = {
+  changedFiles: number;
+  hunks: number;
+  added: number;
+  updated: number;
+  deleted: number;
+  moved: number;
+};
+
+const resolveApplyPatchCounts = (entry: RawEntry, patchDiffBlocks: PatchDiffBlock[] = []): ApplyPatchCounts => {
+  if (!entry.resultItem || !isApplyPatchTool(entry.toolName)) {
+    const patchInput = resolvePatchInput(entry.callItem);
+    const fallbackHunks = patchDiffBlocks.reduce(
+      (count, block) => count + block.lines.filter((line) => line.text.startsWith('@@')).length,
+      0
+    );
+    return {
+      changedFiles: countApplyPatchFiles(patchInput, patchDiffBlocks.length),
+      hunks: countApplyPatchHunks(patchInput, fallbackHunks),
+      added: 0,
+      updated: 0,
+      deleted: 0,
+      moved: 0
+    };
+  }
+
+  const detailObject = parseDetailObject(entry.resultItem.detail);
+  const resultObject = extractToolResultObject(detailObject);
+  const dataObject = extractToolResultData(resultObject);
+  return {
+    changedFiles: toInt(dataObject?.changed_files, resultObject?.changed_files),
+    hunks: toInt(dataObject?.hunks_applied, resultObject?.hunks_applied),
+    added: toInt(dataObject?.added, resultObject?.added),
+    updated: toInt(dataObject?.updated, resultObject?.updated),
+    deleted: toInt(dataObject?.deleted, resultObject?.deleted),
+    moved: toInt(dataObject?.moved, resultObject?.moved)
+  };
+};
+
+const buildApplyPatchCallFiles = (patchDiffBlocks: PatchDiffBlock[]): PatchFileView[] =>
+  patchDiffBlocks.map((block) => ({
+    key: block.key,
+    title: block.title,
+    meta: block.pathHint && block.pathHint !== block.title ? block.pathHint : '',
+    lines: block.lines.map((line): PatchLine => {
+      const kind: PatchLine['kind'] = line.kind === 'omit' ? 'note' : line.kind;
+      return {
+        key: line.key,
+        kind,
+        text: line.text
+      };
+    })
+  }));
+
+const resolvePatchEntryMeta = (entry: PatchEntry): string => {
+  if (entry.kind === 'add') return t('chat.toolWorkflow.detail.added');
+  if (entry.kind === 'delete') return t('chat.toolWorkflow.detail.deleted');
+  if (entry.kind === 'move') return t('chat.toolWorkflow.detail.moved');
+  if (entry.kind === 'update') return t('chat.toolWorkflow.detail.updated');
+  return '';
+};
+
+const resolvePatchEntryTone = (
+  entry: PatchEntry
+): 'default' | 'success' | 'warning' | 'danger' => {
+  if (entry.kind === 'add') return 'success';
+  if (entry.kind === 'delete') return 'warning';
+  return 'default';
+};
+
+const buildApplyPatchResultFiles = (patchEntries: PatchEntry[], errorText: string): PatchFileView[] => {
+  const files: PatchFileView[] = patchEntries.map((entry) => ({
+    key: entry.key,
+    title: entry.text,
+    meta: resolvePatchEntryMeta(entry),
+    lines: [],
+    tone: resolvePatchEntryTone(entry)
+  }));
+  if (errorText) {
+    files.push({
+      key: 'patch-error',
+      title: 'error',
+      meta: '',
+      lines: [{ key: 'patch-error-line', kind: 'error', text: `error: ${errorText}` }],
+      tone: 'danger'
+    });
+  }
+  return files;
+};
+
 const extractDurationMs = (entry: RawEntry): number | null => {
   const detailObject = parseDetailObject(entry.resultItem?.detail);
   const resultObject = extractToolResultObject(detailObject);
@@ -1322,13 +1499,6 @@ const formatTokenTransition = (before: number | null, after: number | null): str
   if (before !== null && after !== null) return `${before} → ${after} tokens`;
   if (before !== null) return `${before} tokens`;
   return `${after} tokens`;
-};
-
-const resolveCompactionReasonLabel = (reason: string): string => {
-  if (reason === 'history') return '历史上下文超阈值';
-  if (reason === 'overflow') return '本轮上下文溢出';
-  if (reason === 'overflow_recovery') return '溢出恢复';
-  return reason || '上下文压缩';
 };
 
 const formatDurationLabel = (durationMs: number | null): string => {
@@ -1693,22 +1863,6 @@ const composeEntryTitle = (
   return resolveFileToolSummaryTitle(entry, toolDisplay, pathHints);
 };
 
-const buildCompactionSummaryTitle = (entry: RawEntry): string => {
-  const detailObject = parseDetailObject(entry.resultItem?.detail);
-  const before = toOptionalInt(
-    detailObject?.context_tokens,
-    detailObject?.total_tokens,
-    detailObject?.context_guard_tokens_before
-  );
-  const after = toOptionalInt(
-    detailObject?.context_tokens_after,
-    detailObject?.total_tokens_after,
-    detailObject?.context_guard_tokens_after
-  );
-  const transition = formatTokenTransition(before, after);
-  return transition ? `上下文压缩 ${transition}` : '上下文压缩';
-};
-
 const extractResultPayload = (
   resultItem: WorkflowItem | null
 ): { resultObject: UnknownObject | null; dataObject: UnknownObject | null } => {
@@ -1949,7 +2103,12 @@ const buildExecuteCommandView = (
   errorText: string,
   includeCommandLine = true
 ): CommandView => {
+  const args = extractCallArgs(entry.callItem);
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+  const resultMeta = asObject(resultObject?.meta);
+  const dataMeta = asObject(dataObject?.meta);
+  const outputGuard =
+    asObject(resultMeta?.output_guard) || asObject(dataMeta?.output_guard) || asObject(dataObject?.output_guard);
   const firstResult = Array.isArray(dataObject?.results)
     ? (dataObject.results.find((value) => asObject(value)) as UnknownObject | undefined)
     : undefined;
@@ -1989,6 +2148,15 @@ const buildExecuteCommandView = (
     structuredReturncode,
     compacted.returncode
   );
+  const commandPayload = pickString(
+    args?.content,
+    args?.input,
+    args?.raw,
+    args?.script,
+    args?.command,
+    args?.cmd,
+    resolvedCommand
+  );
   const stdoutRaw = pickString(
     outputStreams.stdout,
     firstResult?.stdout,
@@ -2020,10 +2188,45 @@ const buildExecuteCommandView = (
   const commandText = resolvedCommand || '(command)';
   const displayStdout = stripBackendTruncationMarkers(normalizedStdout);
   const displayStderr = stripBackendTruncationMarkers(normalizedStderr);
+  const workdir = pickString(args?.workdir, args?.cwd, args?.dir, args?.directory);
+  const timeout = formatTimeoutValue(
+    args?.timeout_s,
+    args?.timeout,
+    args?.timeoutSeconds,
+    args?.timeout_seconds
+  );
+  const commandCount = Math.max(
+    countNonEmptyCommandLines(commandPayload),
+    toOptionalInt(outputGuard?.commands) || 0,
+    firstResult ? 1 : 0,
+    commandText ? 1 : 0
+  );
+  const truncatedCommands = toOptionalInt(outputGuard?.truncated_commands);
+  const totalBytes = formatByteCountLabel(toOptionalInt(outputGuard?.total_bytes));
+  const omittedBytes = formatByteCountLabel(toOptionalInt(outputGuard?.omitted_bytes));
+
+  const commandView = buildCommandCardView(
+    {
+      command: includeCommandLine ? commandText : commandText,
+      shell: 'bash',
+      exitCode,
+      stdout: displayStdout,
+      stderr: displayStderr,
+      preview: previewRaw,
+      workdir,
+      timeout,
+      commandCount,
+      truncatedCommands,
+      totalBytes,
+      omittedBytes,
+      errorText,
+      showExitCode: false
+    },
+    t
+  );
 
   return {
-    command: commandText,
-    shell: 'bash',
+    ...commandView,
     terminalText: buildExecuteCommandTerminalText(
       commandText,
       displayStdout,
@@ -2032,8 +2235,7 @@ const buildExecuteCommandView = (
       errorText,
       status,
       includeCommandLine
-    ),
-    exitCode
+    )
   };
 };
 
@@ -2060,93 +2262,10 @@ const buildGenericResultBlock = (
   return blocks.join('\n\n');
 };
 
-const buildCompactionResultBlock = (entry: RawEntry): string => {
-  const detailObject = parseDetailObject(entry.resultItem?.detail);
-  if (!detailObject) return '';
-
-  const reason = pickString(detailObject.reason);
-  const status = pickString(detailObject.status);
-  const resetMode = pickString(detailObject.reset_mode, detailObject.resetMode);
-  const totalBefore = toOptionalInt(
-    detailObject.context_tokens,
-    detailObject.total_tokens,
-    detailObject.context_guard_tokens_before
-  );
-  const totalAfter = toOptionalInt(
-    detailObject.context_tokens_after,
-    detailObject.total_tokens_after,
-    detailObject.context_guard_tokens_after
-  );
-  const currentBefore = toOptionalInt(
-    detailObject.context_guard_current_user_tokens_before,
-    detailObject.current_user_tokens_before
-  );
-  const currentAfter = toOptionalInt(
-    detailObject.context_guard_current_user_tokens_after,
-    detailObject.current_user_tokens_after
-  );
-  const summaryBefore = toOptionalInt(
-    detailObject.context_guard_summary_tokens_before,
-    detailObject.summary_tokens
-  );
-  const summaryAfter = toOptionalInt(
-    detailObject.context_guard_summary_tokens_after
-  );
-  const currentTrimmed = toBool(
-    detailObject.context_guard_current_user_trimmed,
-    detailObject.current_user_trimmed
-  );
-  const summaryRemoved = toBool(
-    detailObject.context_guard_summary_removed,
-    detailObject.summary_removed
-  );
-  const summaryTrimmed = toBool(
-    detailObject.context_guard_summary_trimmed,
-    detailObject.summary_trimmed
-  );
-  const summaryFallback = toBool(detailObject.summary_fallback);
-
-  const lines: string[] = [];
-  lines.push(`原因：${resolveCompactionReasonLabel(reason)}`);
-
-  const totalLine = formatTokenTransition(totalBefore, totalAfter);
-  if (totalLine) lines.push(`总上下文：${totalLine}`);
-
-  const currentLine = formatTokenTransition(currentBefore, currentAfter);
-  if (currentLine) {
-    const currentSuffix =
-      currentTrimmed === true ? '（当前问题已裁剪）' : '（当前问题已保留）';
-    lines.push(`当前问题：${currentLine}${currentSuffix}`);
-  }
-
-  if (summaryRemoved === true) {
-    const summaryLine = formatTokenTransition(summaryBefore, null);
-    lines.push(`压缩摘要：${summaryLine || '已生成'} → 已移除`);
-  } else if (summaryTrimmed === true || summaryBefore !== null || summaryAfter !== null) {
-    const summaryLine = formatTokenTransition(summaryBefore, summaryAfter);
-    if (summaryLine) {
-      lines.push(`压缩摘要：${summaryLine}${summaryTrimmed === true ? '（已裁剪）' : ''}`);
-    }
-  }
-
-  if (resetMode) {
-    lines.push(`重置模式：${resetMode}`);
-  }
-  if (status === 'fallback' || summaryFallback === true) {
-    lines.push('结果：进入 fallback 压缩恢复');
-  }
-
-  return lines.join('\n');
-};
-
 const buildResultBlock = (entry: RawEntry): string => {
   if (!entry.resultItem) return '';
   if (isApplyPatchTool(entry.toolName)) return '';
   if (isExecuteCommandTool(entry.toolName)) return '';
-
-  if (isCompactionTool(entry.toolName)) {
-    return buildCompactionResultBlock(entry);
-  }
 
   const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
 
@@ -2420,6 +2539,27 @@ const buildModelCallSection = (
 
   if (isApplyPatchTool(entry.toolName)) {
     const summary = buildApplyPatchCallSummary(entry, patchDiffBlocks);
+    const patchFiles = buildApplyPatchCallFiles(patchDiffBlocks);
+    if (patchFiles.length > 0) {
+      const counts = resolveApplyPatchCounts(entry, patchDiffBlocks);
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'patch',
+        summary,
+        body: '',
+        commandView: null,
+        patchLines: [],
+        patchView: buildPatchCallView(
+          {
+            changedFiles: counts.changedFiles,
+            hunks: counts.hunks
+          },
+          patchFiles,
+          t
+        )
+      };
+    }
     const patchLines = buildApplyPatchCallLines(command, patchDiffBlocks);
     if (patchLines.length > 0) {
       return {
@@ -2490,13 +2630,28 @@ const buildToolResultSection = (
   command: string,
   status: string,
   errorText: string,
-  patchEntries: PatchEntry[]
+  patchEntries: PatchEntry[],
+  compactionDisplay: CompactionDisplay | null
 ): ToolWorkflowDetailSection => {
   const sectionKey = `${entry.key}-tool-result`;
   const sectionTitle = t('chat.toolWorkflow.toolResultSection');
 
   if (isApplyPatchTool(entry.toolName)) {
     const summary = buildApplyPatchResultSummary(entry);
+    const counts = resolveApplyPatchCounts(entry);
+    const patchFiles = buildApplyPatchResultFiles(patchEntries, errorText);
+    if (patchFiles.length > 0) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'patch',
+        summary,
+        body: '',
+        commandView: null,
+        patchLines: [],
+        patchView: buildPatchResultView(counts, patchFiles, t)
+      };
+    }
     const patchLines = buildApplyPatchResultLines(patchEntries, errorText);
     if (patchLines.length > 0) {
       return {
@@ -2538,7 +2693,34 @@ const buildToolResultSection = (
         patchLines: []
       };
     }
+  } else if (isCompactionTool(entry.toolName) && compactionDisplay) {
+    const body = [errorText ? `error: ${errorText}` : '']
+      .filter((item) => item.trim())
+      .join('\n');
+    return {
+      key: sectionKey,
+      title: sectionTitle,
+      kind: 'compaction',
+      summary: compactionDisplay.resultSummary,
+      body,
+      commandView: null,
+      patchLines: [],
+      compactionView: compactionDisplay.view
+    };
   } else {
+    const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
+    const structuredView = buildStructuredToolResultView(entry.toolName, resultObject, dataObject, t);
+    if (structuredView) {
+      return {
+        key: sectionKey,
+        title: sectionTitle,
+        kind: 'structured',
+        body: errorText ? `error: ${errorText}` : '',
+        commandView: null,
+        patchLines: [],
+        structuredView
+      };
+    }
     const body = buildToolResultTextBlock(entry, command, errorText);
     if (body) {
       return {
@@ -2574,6 +2756,11 @@ const buildErrorText = (resultItem: WorkflowItem | null): string => {
 const resolveEntryStatus = (entry: RawEntry): string =>
   normalizeStatus(entry.resultItem?.status || entry.outputItem?.status || entry.callItem?.status || 'completed');
 
+const resolveCompactionDetailObject = (entry: RawEntry): UnknownObject | null =>
+  parseDetailObject(entry.resultItem?.detail)
+  || parseDetailObject(entry.outputItem?.detail)
+  || parseDetailObject(entry.callItem?.detail);
+
 const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const rawCommand = pickString(
     resolveCommandFromCall(entry.callItem),
@@ -2588,20 +2775,44 @@ const buildEntryView = (entry: RawEntry): ToolEntryView => {
   const patchEntries = buildApplyPatchEntries(entry.resultItem, entry.toolName);
   const patchDiffBlocks = buildApplyPatchDiffBlocks(entry.callItem, entry.toolName);
   const pathHints = collectEntryPathHints(entry, patchEntries, patchDiffBlocks);
-  const summaryTitle = isCompactionTool(entry.toolName)
-    ? buildCompactionSummaryTitle(entry)
-    : composeEntryTitle(entry, toolDisplay, command, pathHints);
   const status = resolveEntryStatus(entry);
+  const compactionDisplay = isCompactionTool(entry.toolName)
+    ? buildCompactionDisplay(resolveCompactionDetailObject(entry), status, t)
+    : null;
+  const { resultObject, dataObject } = extractResultPayload(entry.resultItem);
   const errorText = status === 'failed' ? buildErrorText(entry.resultItem) : '';
+  const patchCounts = isApplyPatchTool(entry.toolName) ? resolveApplyPatchCounts(entry, patchDiffBlocks) : null;
+  const commandNote = isExecuteCommandTool(entry.toolName)
+    ? buildCommandResultNote(buildExecuteCommandView(entry, command, status, errorText, false), t)
+    : '';
+  const summaryTitle = compactionDisplay?.summaryTitle || composeEntryTitle(entry, toolDisplay, command, pathHints);
+  const structuredResultNote = compactionDisplay
+    ? ''
+    : buildStructuredToolResultNote(entry.toolName, resultObject, dataObject, t);
   const durationLabel = formatDurationLabel(extractDurationMs(entry));
   const shouldKeepModelCall = isWriteFileTool(entry.toolName) || isApplyPatchTool(entry.toolName);
   const modelCallSection = buildModelCallSection(entry, command, patchDiffBlocks);
-  const toolResultSection = buildToolResultSection(entry, command, status, errorText, patchEntries);
+  const toolResultSection = buildToolResultSection(
+    entry,
+    command,
+    status,
+    errorText,
+    patchEntries,
+    compactionDisplay
+  );
   const sections = shouldKeepModelCall ? [modelCallSection, toolResultSection] : [toolResultSection];
 
   return {
     key: entry.key,
     summaryTitle,
+    summaryNote:
+      compactionDisplay?.summaryNote
+      || commandNote
+      || (patchCounts ? buildPatchResultNote(patchCounts, t) : '')
+      || structuredResultNote,
+    summaryNoteTone: compactionDisplay?.summaryNoteTone || '',
+    isCompaction: Boolean(compactionDisplay),
+    compactionView: compactionDisplay?.view || null,
     status,
     statusLabel: statusLabel(status),
     durationLabel,
@@ -2646,146 +2857,7 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 };
 
 const buildEntries = (): ToolEntryView[] => {
-  const rows: RawEntry[] = [];
-  const pendingByTool = new Map<string, number[]>();
-  const rowIndexByCallId = new Map<string, number>();
-  const normalizedItems = dedupeAdjacentToolItems(props.items);
-
-  const enqueuePending = (toolKey: string, index: number) => {
-    if (!pendingByTool.has(toolKey)) pendingByTool.set(toolKey, []);
-    const queue = pendingByTool.get(toolKey);
-    if (!queue?.includes(index)) {
-      queue?.push(index);
-    }
-  };
-
-  const removePendingIndex = (toolKey: string, index: number) => {
-    const queue = pendingByTool.get(toolKey);
-    if (!queue?.length) return;
-    const nextQueue = queue.filter((item) => item !== index);
-    if (nextQueue.length > 0) {
-      pendingByTool.set(toolKey, nextQueue);
-    } else {
-      pendingByTool.delete(toolKey);
-    }
-  };
-
-  const pickPendingForOutput = (toolKey: string): number => {
-    const queue = pendingByTool.get(toolKey);
-    if (queue && queue.length > 0) return queue[queue.length - 1];
-    return findLastPendingIndex(rows);
-  };
-
-  const pickPendingForResult = (toolKey: string): number => {
-    const queue = pendingByTool.get(toolKey);
-    if (queue && queue.length > 0) {
-      const index = queue.shift();
-      return typeof index === 'number' ? index : findLastPendingIndex(rows);
-    }
-    return findLastPendingIndex(rows);
-  };
-
-  const ensureRowForCallRef = (callRef: string, toolName: string, fallbackKey: string): number => {
-    const normalizedRef = normalizeWorkflowRef(callRef);
-    if (normalizedRef) {
-      const existing = rowIndexByCallId.get(normalizedRef);
-      if (typeof existing === 'number') return existing;
-    }
-    rows.push({
-      key: normalizedRef || fallbackKey,
-      toolName,
-      callItem: null,
-      outputItem: null,
-      resultItem: null
-    });
-    const rowIndex = rows.length - 1;
-    if (normalizedRef) {
-      rowIndexByCallId.set(normalizedRef, rowIndex);
-    }
-    return rowIndex;
-  };
-
-  normalizedItems.forEach((item, index) => {
-    const kind = resolveToolEventKind(item);
-    if (!kind) return;
-
-    const toolName = resolveToolName(item);
-    const toolKey = toolName.trim().toLowerCase() || '__unknown__';
-    const itemId = normalizeWorkflowRef(item.id) || `tool-entry-${index}`;
-    const toolCallId = normalizeWorkflowRef(item.toolCallId);
-
-    if (kind === 'call') {
-      const existingIndex =
-        (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? rowIndexByCallId.get(itemId);
-      if (typeof existingIndex === 'number') {
-        rows[existingIndex].callItem = item;
-        if (!rows[existingIndex].toolName && toolName) rows[existingIndex].toolName = toolName;
-        rowIndexByCallId.set(itemId, existingIndex);
-        if (toolCallId) {
-          rowIndexByCallId.set(toolCallId, existingIndex);
-        }
-        if (!rows[existingIndex].resultItem) {
-          enqueuePending(toolKey, existingIndex);
-        }
-      } else {
-        rows.push({ key: itemId, toolName, callItem: item, outputItem: null, resultItem: null });
-        const rowIndex = rows.length - 1;
-        rowIndexByCallId.set(itemId, rowIndex);
-        if (toolCallId) {
-          rowIndexByCallId.set(toolCallId, rowIndex);
-        }
-        enqueuePending(toolKey, rowIndex);
-      }
-      return;
-    }
-
-    if (kind === 'output') {
-      let targetIndex =
-        (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? pickPendingForOutput(toolKey);
-      if (targetIndex < 0 && toolCallId) {
-        targetIndex = ensureRowForCallRef(toolCallId, toolName, itemId);
-      }
-      if (targetIndex >= 0) {
-        rows[targetIndex].outputItem = item;
-        if (!rows[targetIndex].toolName && toolName) rows[targetIndex].toolName = toolName;
-      } else {
-        rows.push({
-          key: itemId,
-          toolName,
-          callItem: null,
-          outputItem: item,
-          resultItem: null
-        });
-      }
-      return;
-    }
-
-    let targetIndex =
-      (toolCallId ? rowIndexByCallId.get(toolCallId) : undefined) ?? pickPendingForResult(toolKey);
-    if (typeof targetIndex === 'number' && targetIndex >= 0 && toolCallId) {
-      removePendingIndex(toolKey, targetIndex);
-    }
-    if (targetIndex < 0 && toolCallId) {
-      targetIndex = ensureRowForCallRef(toolCallId, toolName, itemId);
-    }
-    if (targetIndex >= 0) {
-      rows[targetIndex].resultItem = item;
-      if (!rows[targetIndex].toolName && toolName) rows[targetIndex].toolName = toolName;
-      if (toolCallId) {
-        rowIndexByCallId.set(toolCallId, targetIndex);
-      }
-    } else {
-      rows.push({
-        key: itemId,
-        toolName,
-        callItem: null,
-        outputItem: null,
-        resultItem: item
-      });
-    }
-  });
-
-  return rows.map(buildEntryView);
+  return buildWorkflowToolRuns(props.items).map(buildEntryView);
 };
 
 const entries = computed<ToolEntryView[]>(() => {
@@ -2837,6 +2909,55 @@ const handleEntryToggle = (key: string, event: Event) => {
   });
 };
 
+const resolveCompactionStageLabel = (view: CompactionView | null): string => {
+  if (!view) return '';
+  const activeStage = view.stages.find((stage) => stage.state === 'active');
+  if (activeStage) return activeStage.label;
+  const warningStage = [...view.stages].reverse().find((stage) => stage.state === 'warning');
+  if (warningStage) return warningStage.label;
+  const doneStage = [...view.stages].reverse().find((stage) => stage.state === 'done');
+  return doneStage?.label || '';
+};
+
+const compactionBanner = computed(() => {
+  for (let index = entries.value.length - 1; index >= 0; index -= 1) {
+    const entry = entries.value[index];
+    if (!entry.isCompaction || !entry.compactionView) continue;
+    const isLatest = index === entries.value.length - 1;
+    const isActive = entry.status === 'loading' || entry.status === 'pending';
+    if (!isActive && !isLatest) continue;
+    return {
+      entryKey: entry.key,
+      status: entry.status,
+      tone: entry.summaryNoteTone,
+      title: entry.compactionView.headline,
+      description: entry.compactionView.description,
+      note: entry.summaryNote,
+      stageLabel: resolveCompactionStageLabel(entry.compactionView),
+      usageBar: entry.compactionView.usageBar,
+      failure: entry.compactionView.failure
+    };
+  }
+  return null;
+});
+
+const handleCompactionBannerClick = () => {
+  const banner = compactionBanner.value;
+  if (!banner) return;
+  if (workflowRef.value && !workflowRef.value.open) {
+    workflowRef.value.open = true;
+  }
+  const nextExpanded = new Set(expandedKeys.value);
+  nextExpanded.add(banner.entryKey);
+  expandedKeys.value = nextExpanded;
+  void nextTick(() => {
+    if (shouldAutoScrollWorkflow()) {
+      scrollWorkflowToBottom();
+    }
+    scheduleWorkflowLayoutChange();
+  });
+};
+
 const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
 const shouldRender = computed(() => props.visible && (props.loading || entries.value.length > 0));
 
@@ -2849,6 +2970,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+.message-tool-workflow-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+
 .message-tool-workflow {
   --workflow-term-bg: #0f1622;
   --workflow-term-bg-soft: #141e2e;
@@ -2862,8 +2990,250 @@ onBeforeUnmount(() => {
   --workflow-term-scroll-thumb: #3b4b63;
   border: none;
   background: transparent;
-  padding: 6px 0 0;
+  padding: 0;
   color: var(--workflow-term-text);
+}
+
+.tool-workflow-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(59, 130, 246, 0.24);
+  background: linear-gradient(180deg, rgba(37, 99, 235, 0.16), rgba(15, 23, 42, 0.24));
+  color: var(--workflow-term-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-workflow-banner:hover {
+  border-color: rgba(96, 165, 250, 0.34);
+}
+
+.tool-workflow-banner-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  background: rgba(59, 130, 246, 0.98);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
+}
+
+.tool-workflow-banner.is-completed .tool-workflow-banner-dot {
+  background: rgba(34, 197, 94, 0.96);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.14);
+}
+
+.tool-workflow-banner.is-failed .tool-workflow-banner-dot {
+  background: rgba(248, 113, 113, 0.96);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.14);
+}
+
+.tool-workflow-banner.tone-warning {
+  border-color: rgba(245, 158, 11, 0.26);
+  background: linear-gradient(180deg, rgba(217, 119, 6, 0.16), rgba(15, 23, 42, 0.22));
+}
+
+.tool-workflow-banner.tone-warning .tool-workflow-banner-dot {
+  background: rgba(245, 158, 11, 0.96);
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.14);
+}
+
+.tool-workflow-banner-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-workflow-banner-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tool-workflow-banner-row,
+.tool-workflow-banner-usage-head,
+.tool-workflow-banner-usage-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tool-workflow-banner-row {
+  align-items: flex-start;
+}
+
+.tool-workflow-banner-title {
+  color: var(--workflow-term-text);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.tool-workflow-banner-description {
+  color: var(--workflow-term-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-workflow-banner-stage {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  background: rgba(15, 23, 42, 0.24);
+  color: var(--workflow-term-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tool-workflow-banner-note {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(37, 99, 235, 0.18);
+  color: #dbeafe;
+  border: 1px solid rgba(96, 165, 250, 0.3);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.tool-workflow-banner-note.is-success {
+  background: rgba(22, 163, 74, 0.18);
+  border-color: rgba(134, 239, 172, 0.3);
+  color: #dcfce7;
+}
+
+.tool-workflow-banner-note.is-warning {
+  background: rgba(217, 119, 6, 0.18);
+  border-color: rgba(252, 211, 77, 0.3);
+  color: #fef3c7;
+}
+
+.tool-workflow-banner-usage {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tool-workflow-banner-usage.is-success {
+  border-color: rgba(134, 239, 172, 0.26);
+  background: rgba(22, 163, 74, 0.08);
+}
+
+.tool-workflow-banner-usage.is-warning {
+  border-color: rgba(252, 211, 77, 0.26);
+  background: rgba(217, 119, 6, 0.08);
+}
+
+.tool-workflow-banner-usage.is-danger {
+  border-color: rgba(248, 113, 113, 0.26);
+  background: rgba(127, 29, 29, 0.18);
+}
+
+.tool-workflow-banner-usage-limit,
+.tool-workflow-banner-usage-hint,
+.tool-workflow-banner-usage-label {
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.tool-workflow-banner-usage-limit {
+  color: var(--workflow-term-muted);
+  font-weight: 700;
+}
+
+.tool-workflow-banner-usage-hint {
+  color: var(--workflow-term-text);
+  margin-left: auto;
+}
+
+.tool-workflow-banner-usage-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.tool-workflow-banner-usage-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  border-radius: 999px;
+}
+
+.tool-workflow-banner-usage-fill.is-before {
+  background: rgba(248, 113, 113, 0.5);
+}
+
+.tool-workflow-banner-usage-fill.is-after {
+  background: rgba(59, 130, 246, 0.8);
+}
+
+.tool-workflow-banner-usage-label {
+  color: var(--workflow-term-muted);
+}
+
+.tool-workflow-banner-usage-label.is-before {
+  color: #fecaca;
+}
+
+.tool-workflow-banner-usage-label.is-after {
+  color: #bfdbfe;
+  margin-left: auto;
+  text-align: right;
+}
+
+.tool-workflow-banner-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(248, 113, 113, 0.26);
+  background: rgba(127, 29, 29, 0.2);
+}
+
+.tool-workflow-banner-failure-title {
+  color: #fee2e2;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tool-workflow-banner-failure-description {
+  color: #fecaca;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.tool-workflow-banner-failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tool-workflow-banner-failure-chip {
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid rgba(254, 202, 202, 0.26);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fee2e2;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .message-tool-workflow > summary {
@@ -3038,6 +3408,41 @@ onBeforeUnmount(() => {
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono',
     'Courier New', monospace;
+}
+
+.tool-workflow-entry-note {
+  flex: 0 1 auto;
+  min-width: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  color: #dbeafe;
+  background: rgba(71, 85, 105, 0.22);
+}
+
+.tool-workflow-entry-note.is-info {
+  color: #dbeafe;
+  background: rgba(37, 99, 235, 0.18);
+  border-color: rgba(96, 165, 250, 0.34);
+}
+
+.tool-workflow-entry-note.is-success {
+  color: #dcfce7;
+  background: rgba(22, 163, 74, 0.18);
+  border-color: rgba(134, 239, 172, 0.34);
+}
+
+.tool-workflow-entry-note.is-warning {
+  color: #fef3c7;
+  background: rgba(217, 119, 6, 0.18);
+  border-color: rgba(252, 211, 77, 0.34);
 }
 
 .tool-workflow-entry-status {

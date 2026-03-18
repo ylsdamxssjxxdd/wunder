@@ -141,6 +141,9 @@
         <button class="workspace-menu-btn" @click="handleContextMenuUpload">
           {{ t('common.upload') }}
         </button>
+        <button class="workspace-menu-btn" @click="handleContextMenuRefresh">
+          {{ t('common.refresh') }}
+        </button>
         <button class="workspace-menu-btn" :disabled="!contextMenuCanEdit" @click="handleEdit">
           {{ t('common.edit') }}
         </button>
@@ -1747,6 +1750,11 @@ const handleNewFolder = async () => {
 const handleContextMenuUpload = () => {
   closeContextMenu();
   triggerUpload();
+};
+
+const handleContextMenuRefresh = async () => {
+  closeContextMenu();
+  await refreshWorkspace();
 };
 
 const handleDownload = async () => {

@@ -1506,6 +1506,9 @@ where
 
     match serde_json::from_str::<Value>(data) {
         Ok(payload) => {
+            if let Some(error_message) = extract_stream_error_message(&payload) {
+                return Err(anyhow!(error_message));
+            }
             if is_responses_stream_payload(&payload) {
                 return process_responses_stream_payload(
                     &payload,
@@ -1690,6 +1693,77 @@ where
     }
 
     Ok(false)
+}
+
+fn extract_stream_error_message(payload: &Value) -> Option<String> {
+    let payload_type = payload
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    // Responses API can report fatal failures mid-stream via structured SSE events rather than
+    // terminating the HTTP request with a non-2xx status, so surface them as regular errors.
+    let error_payload = if payload_type == "response.failed" {
+        payload
+            .get("response")
+            .and_then(|response| response.get("error"))
+            .or_else(|| payload.get("error"))
+    } else {
+        payload.get("error").or_else(|| {
+            payload
+                .get("response")
+                .and_then(|response| response.get("error"))
+        })
+    }?;
+    let prefix = if payload_type == "response.failed" {
+        "LLM stream response failed"
+    } else {
+        "LLM stream payload failed"
+    };
+    Some(format_stream_error_message(prefix, error_payload))
+}
+
+fn format_stream_error_message(prefix: &str, error_payload: &Value) -> String {
+    match error_payload {
+        Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                prefix.to_string()
+            } else {
+                format!("{prefix}: {text}")
+            }
+        }
+        Value::Object(map) => {
+            let code = map.get("code").and_then(Value::as_str).unwrap_or("").trim();
+            let message = map
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .trim();
+            if !code.is_empty() && !message.is_empty() {
+                format!("{prefix}: {code}: {message}")
+            } else if !message.is_empty() {
+                format!("{prefix}: {message}")
+            } else if !code.is_empty() {
+                format!("{prefix}: {code}")
+            } else {
+                let raw = serde_json::to_string(error_payload).unwrap_or_default();
+                if raw.is_empty() {
+                    prefix.to_string()
+                } else {
+                    format!("{prefix}: {}", truncate_text(&raw, 512))
+                }
+            }
+        }
+        _ => {
+            let raw = serde_json::to_string(error_payload).unwrap_or_default();
+            if raw.is_empty() {
+                prefix.to_string()
+            } else {
+                format!("{prefix}: {}", truncate_text(&raw, 512))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -2888,6 +2962,52 @@ mod tests {
         assert!(done);
         assert!(combined.is_empty());
         assert!(reasoning.is_empty());
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_returns_context_window_error_from_response_failed() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let err = process_sse_event_block(
+            "data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\"}}}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect_err("context window error should bubble up");
+
+        let message = err.to_string();
+        assert!(message.contains("context_length_exceeded"));
+        assert!(message.contains("context window"));
+    }
+
+    #[tokio::test]
+    async fn process_sse_event_block_returns_top_level_error_payload() {
+        let mut combined = String::new();
+        let mut reasoning = String::new();
+        let mut usage: Option<TokenUsage> = None;
+        let mut tool_calls = Vec::new();
+        let mut on_delta = |_content: String, _reasoning: String| async { Ok(()) };
+
+        let err = process_sse_event_block(
+            "data: {\"error\":{\"code\":\"context_length_exceeded\",\"message\":\"Prompt is too long.\"}}",
+            &mut combined,
+            &mut reasoning,
+            &mut usage,
+            &mut tool_calls,
+            &mut on_delta,
+        )
+        .await
+        .expect_err("top-level stream error should bubble up");
+
+        assert!(err.to_string().contains("Prompt is too long"));
     }
 
     #[test]

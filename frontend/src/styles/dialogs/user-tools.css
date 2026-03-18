@@ -1778,6 +1778,12 @@
   color: #b93449;
 }
 
+.user-tools-dialog .user-skill-delete:hover:not(:disabled),
+.user-tools-dialog .skill-item:hover .user-skill-delete:hover:not(:disabled),
+.user-tools-dialog .user-skill-delete:focus-visible:not(:disabled) {
+  transform: translateY(-50%) translateX(0);
+}
+
 .user-tools-dialog .user-tools-btn:disabled {
   opacity: 0.58;
 }

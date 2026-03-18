@@ -147,7 +147,7 @@ const navItems = computed(() => {
     items.push({
       key: 'desktop.system',
       label: t('desktop.settings.system'),
-      path: '/desktop/settings?section=more&panel=desktop',
+      path: '/desktop/settings?section=more',
       icon: 'fa-gear'
     });
   }

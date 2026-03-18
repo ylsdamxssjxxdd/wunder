@@ -94,6 +94,12 @@ pub struct MemoryRecallHit {
     pub final_score: f64,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PromptMemoryRecall {
+    pub hits: Vec<MemoryRecallHit>,
+    pub total_available: usize,
+}
+
 pub struct MemoryFragmentStore {
     storage: Arc<dyn StorageBackend>,
     legacy_store: MemoryStore,
@@ -487,27 +493,30 @@ impl MemoryFragmentStore {
         query_text: Option<&str>,
         limit: Option<usize>,
     ) -> Vec<MemoryRecallHit> {
+        self.recall_for_prompt_inventory(
+            config, user_id, agent_id, session_id, round_id, query_text, limit,
+        )
+        .await
+        .hits
+    }
+
+    pub async fn recall_for_prompt_inventory(
+        &self,
+        config: Option<&Config>,
+        user_id: &str,
+        agent_id: Option<&str>,
+        session_id: Option<&str>,
+        round_id: Option<&str>,
+        query_text: Option<&str>,
+        limit: Option<usize>,
+    ) -> PromptMemoryRecall {
         let scope = normalize_agent_memory_scope(agent_id);
         self.ensure_legacy_migrated(user_id, &scope);
         let now = now_ts();
         let query = query_text.unwrap_or("").trim().to_lowercase();
         let tokens = tokenize(&query);
-        let fragments = self
-            .storage
-            .list_memory_fragments(user_id, &scope)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|mut item| {
-                if refresh_fragment_lifecycle_record(&mut item, now) {
-                    let _ = self.storage.upsert_memory_fragment(&item);
-                }
-                item
-            })
-            .filter(|item| {
-                item.status == STATUS_ACTIVE && item.invalidated_at.unwrap_or(0.0) <= 0.0
-            })
-            .filter(|item| !is_superseded_fragment(item))
-            .collect::<Vec<_>>();
+        let fragments = self.load_active_fragments_for_prompt(user_id, &scope, now);
+        let total_available = fragments.len();
         let mut hits = fragments
             .iter()
             .cloned()
@@ -556,7 +565,10 @@ impl MemoryFragmentStore {
                 });
             }
         }
-        hits
+        PromptMemoryRecall {
+            hits,
+            total_available,
+        }
     }
 
     async fn apply_semantic_recall(
@@ -690,9 +702,25 @@ impl MemoryFragmentStore {
         cached
     }
 
-    pub fn build_prompt_block(&self, hits: &[MemoryRecallHit]) -> String {
-        if hits.is_empty() {
+    pub fn build_prompt_block(&self, hits: &[MemoryRecallHit], total_available: usize) -> String {
+        if hits.is_empty() && total_available == 0 {
             return String::new();
+        }
+        let injected_count = hits.len();
+        let mut meta_lines = Vec::with_capacity(2);
+        let meta = i18n::t_with_params(
+            "memory.prompt_meta.summary",
+            &HashMap::from([
+                ("total".to_string(), total_available.to_string()),
+                ("injected".to_string(), injected_count.to_string()),
+                ("limit".to_string(), MAX_RECALL_LIMIT.to_string()),
+            ]),
+        );
+        if !meta.trim().is_empty() {
+            meta_lines.push(meta);
+        }
+        if total_available > injected_count || injected_count == 0 {
+            meta_lines.push(i18n::t("memory.prompt_meta.more_hint"));
         }
         let lines = hits
             .iter()
@@ -707,7 +735,32 @@ impl MemoryFragmentStore {
                 }
             })
             .collect::<Vec<_>>();
+        meta_lines.extend(lines);
+        let lines = meta_lines;
         format!("{}\n{}", i18n::t("memory.block_prefix"), lines.join("\n"))
+    }
+
+    fn load_active_fragments_for_prompt(
+        &self,
+        user_id: &str,
+        agent_scope: &str,
+        now: f64,
+    ) -> Vec<MemoryFragmentRecord> {
+        self.storage
+            .list_memory_fragments(user_id, agent_scope)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut item| {
+                if refresh_fragment_lifecycle_record(&mut item, now) {
+                    let _ = self.storage.upsert_memory_fragment(&item);
+                }
+                item
+            })
+            .filter(|item| {
+                item.status == STATUS_ACTIVE && item.invalidated_at.unwrap_or(0.0) <= 0.0
+            })
+            .filter(|item| !is_superseded_fragment(item))
+            .collect()
     }
 
     fn ensure_legacy_migrated(&self, user_id: &str, agent_scope: &str) {
@@ -1697,9 +1750,11 @@ mod tests {
             freshness_score: 0.9,
             importance_score: 0.8,
             final_score: 0.85,
-        }]);
+        }], 7);
 
         assert!(block.contains("[长期记忆]"));
+        assert!(block.contains("7"));
+        assert!(block.contains("1"));
         let expected_timestamp = Local
             .timestamp_opt(1_700_000_000, 0)
             .single()
@@ -1710,6 +1765,21 @@ mod tests {
         assert!(block.contains("项目长期偏好 Rust、Axum、SQLite。"));
         assert!(!block.contains("preference"));
         assert!(!block.contains("matched"));
+    }
+
+    #[test]
+    fn build_prompt_block_keeps_inventory_hint_without_hits() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("memory-prompt-empty-hit.db");
+        let storage: Arc<dyn StorageBackend> =
+            Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        storage.ensure_initialized().expect("init storage");
+        let store = MemoryFragmentStore::new(storage);
+
+        let block = store.build_prompt_block(&[], 42);
+
+        assert!(block.contains("42"));
+        assert!(!block.contains("- ["));
     }
 
     #[test]

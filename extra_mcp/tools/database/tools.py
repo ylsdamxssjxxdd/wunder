@@ -151,9 +151,10 @@ def _build_export_description(
     parts = [
         f"Export read-only SQL results from table {target.table} directly to xlsx or csv files. ",
         "Strong constraint: queries can only access this bound table. ",
-        f"Prefer using query_handle returned by {query_tool_name} after validating counts or samples. ",
+        f"Prefer using query_handle returned by {query_tool_name} after validating counts or samples, but only reuse a full-detail query_handle without LIMIT/OFFSET for formal exports. ",
         "Use this for deliverables such as Excel exports instead of paging rows through model context. ",
-        "Use `/workspaces/{user_id}/exports/...` in path to save into the current workspace; the result returns `workspace_relative_path` and `public_path` for follow-up tools and final links. ",
+        "Use `/workspaces/{user_id}/exports/...` in path to save into the current workspace; the result returns canonical `path` plus `workspace_relative_path` for follow-up tools and final links. ",
+        "SQL/query_handle that still contains LIMIT/OFFSET is rejected by default; set allow_limited_export=true only when a partial export is intentional. ",
     ]
     if target.description:
         parts.append(f"Purpose: {target.description}. ")
@@ -187,9 +188,10 @@ def _build_generic_query_description() -> str:
 def _build_generic_export_description() -> str:
     return (
         "Export read-only SQL results directly to xlsx or csv files. "
-        "Prefer using query_handle returned by db_query after validating counts or samples. "
+        "Prefer using query_handle returned by db_query after validating counts or samples, but only reuse a full-detail query_handle without LIMIT/OFFSET for formal exports. "
         "Use this for deliverables such as Excel exports instead of paging rows through model context. "
-        "Use `/workspaces/{user_id}/exports/...` in path to save into the current workspace; the result returns `workspace_relative_path` and `public_path` for follow-up tools and final links."
+        "Use `/workspaces/{user_id}/exports/...` in path to save into the current workspace; the result returns canonical `path` plus `workspace_relative_path` for follow-up tools and final links. "
+        "SQL/query_handle that still contains LIMIT/OFFSET is rejected by default; set allow_limited_export=true only when a partial export is intentional."
     )
 
 
@@ -331,6 +333,13 @@ def _register_bound_db_export_tool(
                 title="Overwrite",
             ),
         ] = False,
+        allow_limited_export: Annotated[
+            bool,
+            Field(
+                description="Allow exporting SQL/query_handle that still contains LIMIT/OFFSET. Keep false for formal full exports; set true only when a partial export is intentional.",
+                title="Allow Limited Export",
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Export SQL query results directly to a file."""
         start = time.perf_counter()
@@ -355,6 +364,7 @@ def _register_bound_db_export_tool(
                 export_format=format,
                 sheet_name=sheet_name,
                 overwrite=overwrite,
+                allow_limited_export=allow_limited_export,
             )
             result["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 2)
             return result
@@ -487,6 +497,13 @@ def _register_generic_db_export_tool(mcp: FastMCP) -> None:
                 title="Overwrite",
             ),
         ] = False,
+        allow_limited_export: Annotated[
+            bool,
+            Field(
+                description="Allow exporting SQL/query_handle that still contains LIMIT/OFFSET. Keep false for formal full exports; set true only when a partial export is intentional.",
+                title="Allow Limited Export",
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Export SQL query results directly to a file."""
         start = time.perf_counter()
@@ -508,6 +525,7 @@ def _register_generic_db_export_tool(mcp: FastMCP) -> None:
                 export_format=format,
                 sheet_name=sheet_name,
                 overwrite=overwrite,
+                allow_limited_export=allow_limited_export,
             )
             result["elapsed_ms"] = round((time.perf_counter() - start) * 1000, 2)
             return result

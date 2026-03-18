@@ -32,12 +32,6 @@
             :disabled="isReadonlyMode"
           />
         </el-form-item>
-        <el-form-item
-          :label="t('portal.agent.form.presetQuestions')"
-          class="messenger-agent-form-item"
-        >
-          <AgentPresetQuestionsField v-model="form.preset_questions" :readonly="isReadonlyMode" />
-        </el-form-item>
         <el-form-item :label="t('portal.agent.form.tools')" class="messenger-agent-form-item messenger-agent-form-item--tools">
           <div class="messenger-tool-picker">
             <div v-if="toolLoading" class="messenger-list-empty">{{ t('portal.agent.tools.loading') }}</div>
@@ -156,6 +150,12 @@
               </el-select>
             </div>
           </div>
+        </el-form-item>
+        <el-form-item
+          :label="t('portal.agent.form.presetQuestions')"
+          class="messenger-agent-form-item"
+        >
+          <AgentPresetQuestionsField v-model="form.preset_questions" :readonly="isReadonlyMode" />
         </el-form-item>
       </el-form>
 

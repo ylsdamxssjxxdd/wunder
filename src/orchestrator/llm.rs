@@ -549,13 +549,18 @@ pub(super) fn is_context_window_error_text(message: &str) -> bool {
     }
     [
         "context_length_exceeded",
+        "context_window_exceeded",
         "context length",
         "context window",
+        "context window of this model",
         "maximum context",
         "maximum context length",
         "max context",
         "context size",
         "too many tokens",
+        "your input exceeds the context window",
+        "input exceeds the context window",
+        "input exceeds the model's context window",
         "prompt is too long",
         "input is too long",
         "input length should be",
@@ -593,6 +598,9 @@ mod tests {
         ));
         assert!(is_context_window_error_text(
             "input exceeds the available context size"
+        ));
+        assert!(is_context_window_error_text(
+            "Your input exceeds the context window of this model. Please adjust your input and try again."
         ));
         assert!(is_context_window_error_text(
             "InternalError.Algo.InvalidParameter: Range of input length should be [1, 258048]"

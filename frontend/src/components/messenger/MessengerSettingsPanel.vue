@@ -136,23 +136,6 @@
             <option value="none">{{ t('messenger.settings.sendKeyNone') }}</option>
           </select>
         </div>
-        <div v-if="desktopWindowCloseAvailable" class="messenger-settings-row">
-          <div>
-            <div class="messenger-settings-label">{{ t('messenger.settings.windowCloseBehavior') }}</div>
-            <div class="messenger-settings-hint">
-              {{ t('messenger.settings.windowCloseBehaviorHint') }}
-            </div>
-          </div>
-          <select
-            v-model="windowCloseBehavior"
-            class="messenger-settings-select"
-            :disabled="windowCloseBehaviorLoading"
-            @change="handleWindowCloseBehaviorChange"
-          >
-            <option value="tray">{{ t('messenger.settings.windowCloseBehaviorHide') }}</option>
-            <option value="quit">{{ t('messenger.settings.windowCloseBehaviorQuit') }}</option>
-          </select>
-        </div>
         <div class="messenger-settings-row">
           <div class="messenger-settings-label">{{ t('messenger.settings.language') }}</div>
           <button class="messenger-settings-select-like" type="button" @click="$emit('toggle-language')">
@@ -200,6 +183,7 @@
           </div>
         </div>
       </section>
+      <DesktopRuntimeSettingsPanel v-if="desktopLocalMode" :desktop-local-mode="desktopLocalMode" />
     </template>
 
     <el-dialog
@@ -351,11 +335,11 @@ import { APP_VERSION } from '@/config/appVersion';
 import { useI18n } from '@/i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useChatStore } from '@/stores/chat';
+import DesktopRuntimeSettingsPanel from '@/components/messenger/DesktopRuntimeSettingsPanel.vue';
 import UserAvatarGlyph from '@/components/messenger/UserAvatarGlyph.vue';
 import { normalizeThemePalette, type ThemePalette } from '@/utils/themeAppearance';
 
 type SendKeyMode = 'enter' | 'ctrl_enter' | 'none';
-type WindowCloseBehavior = 'tray' | 'quit';
 type ProfileAvatarOption = {
   key: string;
   label: string;
@@ -364,10 +348,6 @@ type ProfileAvatarOption = {
 type AvatarColorOption = {
   value: string;
   label: string;
-};
-type DesktopWindowCloseBridge = {
-  getWindowCloseBehavior?: () => Promise<string | null> | string | null;
-  setWindowCloseBehavior?: (behavior: string) => Promise<string | null> | string | null;
 };
 
 const DEFAULT_AVATAR_ICON = 'initial';
@@ -445,8 +425,6 @@ const appVersion = APP_VERSION;
 const sendKey = ref<SendKeyMode>('ctrl_enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const usernameDraft = ref('');
-const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
-const windowCloseBehaviorLoading = ref(false);
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
 const usernameDialogVisible = ref(false);
 const avatarDialogVisible = ref(false);
@@ -461,32 +439,6 @@ const normalizeSendKey = (value: unknown): SendKeyMode =>
     if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
     return 'ctrl_enter';
   })();
-
-const normalizeWindowCloseBehavior = (value: unknown): WindowCloseBehavior => {
-  const text = String(value || '')
-    .trim()
-    .toLowerCase();
-  if (text === 'quit') return 'quit';
-  return 'tray';
-};
-
-const getDesktopWindowCloseBridge = (): DesktopWindowCloseBridge | null => {
-  if (typeof window === 'undefined') return null;
-  const candidate = (window as Window & { wunderDesktop?: DesktopWindowCloseBridge }).wunderDesktop;
-  return candidate && typeof candidate === 'object' ? candidate : null;
-};
-
-const desktopWindowCloseAvailable = computed(() => {
-  if (!props.desktopLocalMode) {
-    return false;
-  }
-  const bridge = getDesktopWindowCloseBridge();
-  return Boolean(
-    bridge &&
-      typeof bridge.getWindowCloseBehavior === 'function' &&
-      typeof bridge.setWindowCloseBehavior === 'function'
-  );
-});
 const allowUsernameEdit = computed(() => true);
 const usernameSaving = computed(() => props.usernameSaving === true);
 const canSubmitUsername = computed(() => {
@@ -495,63 +447,6 @@ const canSubmitUsername = computed(() => {
   const current = String(props.username || '').trim();
   return Boolean(target) && target !== current;
 });
-
-const loadWindowCloseBehavior = async () => {
-  if (!desktopWindowCloseAvailable.value) {
-    return;
-  }
-  const bridge = getDesktopWindowCloseBridge();
-  if (!bridge || typeof bridge.getWindowCloseBehavior !== 'function') {
-    return;
-  }
-  windowCloseBehaviorLoading.value = true;
-  try {
-    const rawBehavior = await bridge.getWindowCloseBehavior();
-    const normalized = normalizeWindowCloseBehavior(rawBehavior);
-    windowCloseBehavior.value = normalized;
-    const source = String(rawBehavior || '')
-      .trim()
-      .toLowerCase();
-    if ((source === 'ask' || source === 'hide') && typeof bridge.setWindowCloseBehavior === 'function') {
-      await bridge.setWindowCloseBehavior(normalized);
-    }
-  } catch {
-    windowCloseBehavior.value = 'tray';
-  } finally {
-    windowCloseBehaviorLoading.value = false;
-  }
-};
-
-const handleWindowCloseBehaviorChange = async () => {
-  if (!desktopWindowCloseAvailable.value || windowCloseBehaviorLoading.value) {
-    return;
-  }
-  const bridge = getDesktopWindowCloseBridge();
-  if (!bridge || typeof bridge.setWindowCloseBehavior !== 'function') {
-    return;
-  }
-  const target = normalizeWindowCloseBehavior(windowCloseBehavior.value);
-  windowCloseBehaviorLoading.value = true;
-  try {
-    const next = await bridge.setWindowCloseBehavior(target);
-    windowCloseBehavior.value = normalizeWindowCloseBehavior(next || target);
-  } catch {
-    await loadWindowCloseBehavior();
-  } finally {
-    windowCloseBehaviorLoading.value = false;
-  }
-};
-
-watch(
-  () => props.desktopLocalMode,
-  (enabled) => {
-    if (!enabled) {
-      return;
-    }
-    void loadWindowCloseBehavior();
-  },
-  { immediate: true }
-);
 
 watch(
   () => props.username,

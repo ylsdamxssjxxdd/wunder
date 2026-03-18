@@ -382,6 +382,7 @@ async fn memory_routes_and_prompt_preview_work_end_to_end() {
         .expect("system prompt preview");
     assert!(prompt.contains("Prefer concise answers."));
     assert_eq!(preview["data"]["memory_preview_count"], json!(1));
+    assert_eq!(preview["data"]["memory_preview_total_count"], json!(1));
 
     let (status, updated) = send_json(
         &context.app,
@@ -524,6 +525,10 @@ async fn session_prompt_preview_freezes_after_first_user_message() {
         session_preview_before_first_message["data"]["memory_preview_mode"],
         json!("pending")
     );
+    assert_eq!(
+        session_preview_before_first_message["data"]["memory_preview_total_count"],
+        json!(1)
+    );
     let pending_prompt = session_preview_before_first_message["data"]["prompt"]
         .as_str()
         .expect("pending system prompt")
@@ -556,6 +561,10 @@ async fn session_prompt_preview_freezes_after_first_user_message() {
     assert_eq!(
         session_preview_after_first_message["data"]["memory_preview_mode"],
         json!("frozen")
+    );
+    assert_eq!(
+        session_preview_after_first_message["data"]["memory_preview_total_count"],
+        json!(1)
     );
     let frozen_prompt = session_preview_after_first_message["data"]["prompt"]
         .as_str()
@@ -593,6 +602,7 @@ async fn session_prompt_preview_freezes_after_first_user_message() {
         json!("frozen")
     );
     assert_eq!(session_preview["data"]["memory_preview_count"], json!(1));
+    assert_eq!(session_preview["data"]["memory_preview_total_count"], json!(1));
     let reused_prompt = session_preview["data"]["prompt"]
         .as_str()
         .expect("session system prompt");

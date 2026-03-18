@@ -459,6 +459,10 @@
     "en-US": "Invalid archive format",
     "zh-CN": "压缩包格式错误"
   },
+  "error.skill_upload_top_dir_required": {
+    "en-US": "Skill archive must place files under a top-level skill directory",
+    "zh-CN": "技能压缩包必须以技能目录作为顶层，不能直接在根目录放置文件"
+  },
   "error.zip_path_illegal": {
     "en-US": "Archive contains illegal paths",
     "zh-CN": "压缩包包含非法路径"
@@ -578,6 +582,14 @@
   "memory.block_prefix": {
     "en-US": "[Long-term Memory]",
     "zh-CN": "[长期记忆]"
+  },
+  "memory.prompt_meta.more_hint": {
+    "en-US": "- If the injected memory below is not enough, continue with the memory manager tool via recall/list to search the remaining long-term memory.",
+    "zh-CN": "- 濡傛灉涓嬫柟宸叉敞鍏ョ殑璁板繂涓嶈冻浠ユ敮鎸佸綋鍓嶅垽鏂紝鍙户缁皟鐢ㄨ蹇嗙鐞嗗伐鍏风殑 recall/list 妫€绱㈠叾浣欓暱鏈熻蹇嗐€?"
+  },
+  "memory.prompt_meta.summary": {
+    "en-US": "- Available long-term memories: {total}. Injected now: {injected} (limit {limit}).",
+    "zh-CN": "- 褰撳墠鍙敤闀挎湡璁板繂鎬绘潯鏁帮細{total}銆傛湰娆℃敞鍏ワ細{injected} 鏉★紙涓婇檺 {limit} 鏉★級銆?"
   },
   "memory.empty_summary": {
     "en-US": "No summary yet.",

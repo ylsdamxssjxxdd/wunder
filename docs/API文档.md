@@ -10,7 +10,7 @@
 - MCP 服务容器：`extra-mcp` 用于运行 `extra_mcp/` 下的 FastMCP 服务脚本，默认以 streamable-http 暴露端口，人员数据库连接通过 `extra_mcp/mcp_config.json` 的 `database` 配置。
 - MCP 配置文件：`extra_mcp/mcp_config.json` 支持集中管理人员数据库配置，可通过 `MCP_CONFIG_PATH` 指定路径，数据库配置以配置文件为准。
 - 多数据库支持：在 `mcp_config.json` 的 `database.targets` 中配置多个数据库（MySQL/PostgreSQL），默认使用 `default_key`，需要切换目标可调整 `default_key` 或部署多个 MCP 实例。
-- Database data tools: configure `database.tables` (or `database.query_tables`) to auto-register table-scoped `db_query` + `db_export` tools (`db_query`/`db_export` for single table, `db_query_<key>`/`db_export_<key>` for multiple). Each tool is hard-bound to its table; `db_query*` embeds compact schema hints (`column + type`) in description and returns `query_handle`, while `db_export*` writes xlsx/csv directly under the configured export root (`database.export_root`) or, when `path` points to `/workspaces/{user_id}/...`, directly into the current Wunder workspace and returns `workspace_relative_path/public_path` for follow-up tools.
+- Database data tools: configure `database.tables` (or `database.query_tables`) to auto-register table-scoped `db_query` + `db_export` tools (`db_query`/`db_export` for single table, `db_query_<key>`/`db_export_<key>` for multiple). Each tool is hard-bound to its table; `db_query*` embeds compact schema hints (`column + type`) in description and returns `query_handle`, while `db_export*` writes xlsx/csv directly under the configured export root (`database.export_root`) or, when `path` points to `/workspaces/{user_id}/...`, directly into the current Wunder workspace and returns a lean export payload centered on canonical `path` plus `workspace_relative_path` for follow-up tools. By default `db_export*` rejects SQL/query_handle that still contains `LIMIT/OFFSET`; set `allow_limited_export=true` only for intentional partial exports.
 - 单库类型切换：设置 `database.db_type=mysql|postgres`，或在多库配置中为每个目标指定 `type/engine` 或 DSN scheme。
 - 知识库 MCP：按 `knowledge.targets` 动态注册 `kb_query` 工具（单目标为 `kb_query`，多目标自动命名为 `kb_query_<key>`）；向量知识库检索不依赖 RAGFlow MCP。
 - 向量知识库使用 Weaviate，连接参数位于 `vector_store.weaviate`（url/api_key/timeout_s/batch_size）。
@@ -150,7 +150,7 @@
 - `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并新增 `timeout_ms`、`max_matches`、`max_candidates` 入参；返回保留兼容字段 `matches`，同时提供结构化 `hits` 与 `meta.search`（包含 `requested_engine/resolved_engine/fallback/elapsed_ms/timeout_hit` 等），便于前端与调度层做可观测优化。
 - `读取文件`（`read_file`）支持 `mode=slice|indentation`：`indentation` 模式可传 `indentation.anchor_line/max_levels/include_siblings/include_header/max_lines`，用于按缩进树读取代码块并降低上下文占用。
 - `执行命令`（`execute_command`）在本机与 sandbox 返回统一输出护栏元信息：`output_meta`（每条命令）与 `meta.output_guard`（聚合）；若 `content` 为纯补丁正文（`*** Begin Patch ... *** End Patch`），会自动路由到 `应用补丁` 并在结果追加 `intercepted_from=execute_command`。
-- 工具结果若因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview`、表格结果级 `rows_sampled/rows_omitted`，或数组级 `truncated_items` 标记，表示当前结果为片段/样本而非全量。
+- 工具结果默认允许约 `20000` 字符级别内容进入 `tool_result`/observation；若仍因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview`、表格结果级 `rows_sampled/rows_omitted`，或数组级 `truncated_items` 标记，表示当前结果为片段/样本而非全量。
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
 - `写入文件` 与 `应用补丁` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
@@ -161,6 +161,8 @@
 - 新增内置工具 `技能调用`（英文别名 `skill_call`/`skill_get`），传入技能名返回完整 SKILL.md 与技能目录结构。
   - 技能文档内建议使用占位符 `{{SKILL_ROOT}}` 引用技能资源（脚本/示例/工作流文件等）。
   - `skill_call` 返回时会将 `skill_md` 中的 `{{SKILL_ROOT}}` 自动替换为本次可见的技能根目录绝对路径（同返回字段 `root`）。
+  - `skill_call` 结果不再走通用长度裁剪，避免模型因拿不到完整技能正文而反复回读同一个 `SKILL.md`。
+- `读取文件` 的切片读取结果会在 `meta.files[]` 里补充 `hit_eof/range_reaches_eof`，帮助模型判断当前分段是否已触达文件末尾，避免继续请求越界范围。
 - 新增内置工具 `子智能体控制`（英文别名 `subagent_control`），通过 `action=list|history|send|spawn` 统一完成会话列表/历史/发送/派生。
 - 新增内置工具 `智能体蜂群`（英文别名 `agent_swarm`/`swarm_control`），通过 `action=list|status|send|history|spawn|batch_send|wait` 管理当前用户“当前智能体以外”的其他智能体。
 - `智能体蜂群` 的 `send` 支持按 `agent_id` 自动复用会话；无主会话时会自动创建后再发送指令。
@@ -229,6 +231,14 @@
   - 其余字段按需增量更新
 - 说明：预设智能体实例使用稳定 `preset_binding` 跟踪模板关系；用户侧重命名不会丢失绑定，也不会触发同名预设副本再次自动补种。
 
+#### `GET /wunder/admin/preset_agents`
+
+- 方法：`GET`
+- 返回：`data.items[]`
+- 说明：
+  - 列表会额外补充模板用户 `preset_template` 的默认智能体，返回项携带 `preset_id="__default__"` 与 `is_default_agent=true`。
+  - 该默认智能体项不会写入普通 `user_agents.presets`；管理端可直接编辑其默认模板，并可复用同一同步接口将默认智能体设置同步到存量用户。
+
 #### `POST /wunder/admin/preset_agents`
 
 - 方法：`POST`
@@ -238,6 +248,18 @@
 - 说明：
   - 管理端预设保存后，模板用户同名智能体会同步该 `model_name`。
   - 新注册用户或存量同步时，若该字段非空，会将该模型配置下发到用户智能体。
+  - 若提交项中包含 `preset_id="__default__"` 的默认智能体特殊项，服务端会忽略该项，避免将默认智能体误写成普通预设。
+
+#### `POST /wunder/admin/preset_agents/sync`
+
+- 方法：`POST`
+- 入参（JSON）：
+  - `preset_id`：预设 ID；当传入 `__default__` 时，表示同步模板用户默认智能体配置。
+  - `mode`：`safe` / `force`
+  - `dry_run`：是否仅预演
+- 说明：
+  - `preset_id="__default__"` 仅同步默认智能体的设置字段（名称、描述、提示词、工具、问题、审批模式、状态、工作目录与图标）。
+  - 默认智能体同步同样支持 `safe` / `force`：`safe` 只覆盖仍跟随模板的字段，`force` 强制覆盖模板管理字段。
 
 ### 4.1.2.1 `/wunder/user_tools/mcp`
 
@@ -344,6 +366,7 @@
   - `message`：提示信息
 - 说明：上传内容写入自定义技能目录（`source=custom`），不会覆盖内置 `skills/` 源码目录。
 - 说明：上传目录若与内置技能目录冲突会返回 `403`（避免覆盖内置技能）。
+- 说明：压缩包必须以“技能目录”为顶层，例如 `我的技能/SKILL.md`；不允许直接把 `SKILL.md`、脚本或其他文件放在压缩包根目录，否则会返回 `400`。
 
 ### 4.1.2.8 `/wunder/user_tools/knowledge`
 
@@ -1645,13 +1668,13 @@
 - 作用域：按 `用户 + 智能体` 隔离；记忆只在线程首次建立时注入到系统提示词快照，同一线程后续不再自动改写系统提示词，如需读取最新记忆请通过 `memory_manager` 的 `recall` 动作主动检索。
 - `memory_manager` 建议主动触发时机：当模型置信度不足、信息疑似过期、用户指出“答错/记错”、或用户反馈导致偏好/约束变化时，先执行 `recall` 校验，再决定是否 `add/update`。
 - recall 目前仅保留轻量关键词召回，不再使用 embedding/语义 rerank；工具返回会收敛为更适合模型消费的精简结构（如 `matched_terms`、`why`），以降低上下文开销。
-- 会话发生 context compaction 后，调度器会基于 `用户 + 智能体 + 当前问题` 再次执行 fresh recall，并把记忆块拼接到压缩摘要消息继续执行（不改写线程冻结的 system prompt）；`compaction` 事件会附带 `fresh_memory_injected` 与 `fresh_memory_count` 字段。
+- 会话发生 context compaction 后，调度器会基于 `用户 + 智能体 + 当前问题` 再次执行 fresh recall，并把记忆块拼接到压缩摘要消息继续执行（不改写线程冻结的 system prompt）；记忆块会额外带上“当前可用总条数 / 本次注入条数 / 注入上限”摘要，并在必要时提示模型可继续通过 `memory_manager recall/list` 检索剩余记忆；`compaction` 事件会附带 `fresh_memory_injected`、`fresh_memory_count` 与 `fresh_memory_total_count` 字段。
 - 记忆碎片当前可见状态为 `active / superseded / invalidated`；其中 `superseded` 表示该碎片已被同 `fact_key` 的新版本替代，默认不会被 recall 返回，但仍会在列表接口与用户可视化卡片墙中展示。
 - recall 命中、碎片创建/编辑、列表读取时会惰性刷新 `tier(core/working/peripheral)` 与状态链路；因此接口返回的 `tier`、`status`、`supersedes_memory_id`、`superseded_by_memory_id` 字段可直接用于前端展示版本关系与生命周期信息。
 - `memory_manager` 的 `list/add/update/delete/clear/recall` 已与结构化 `memory_fragments` 共用同一条主存储链路；模型经工具写入的新记忆会直接出现在用户侧“记忆碎片”卡片页，无需再等待旧摘要表懒迁移。
 - `confirmed_by_user` 字段当前仅作为兼容旧数据保留，不再作为用户侧记忆碎片页面的交互入口，也不再参与 recall 排序和提示词快照构建。
 - 自动记忆提炼改为按 `用户 + 智能体` 单独开关，默认关闭。只有在用户侧“记忆碎片 -> 最近提炼任务”弹窗中显式开启后，系统才会在每个用户轮次结束并发出 `final` 回复后异步尝试写入 `auto-turn` 记忆；提炼阶段走独立的大模型提示词 `prompts/{zh|en}/memory_auto_extract.txt`，而最终写入前仍由服务端执行去重、`fact_key` 版本替代与手工/置顶碎片保护。
-- 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照；其中新建线程在首条用户消息前应为 `pending`，首条用户消息发送后才转为 `frozen`。
+- 聊天页提示词预览接口 `/wunder/chat/system-prompt` 与 `/wunder/chat/sessions/{session_id}/system-prompt` 现会额外返回 `memory_preview`、`memory_preview_mode(frozen/pending/none)`、`memory_preview_count`、`memory_preview_total_count`，用于向用户明确展示“当前线程已冻结”或“新线程将注入”的记忆快照；其中 `memory_preview_count` 表示当前提示词里实际注入的记忆条数，`memory_preview_total_count` 表示该记忆块生成时可用的长期记忆总数；新建线程在首条用户消息前应为 `pending`，首条用户消息发送后才转为 `frozen`。
 
 #### `GET /wunder/agents/{agent_id}/memory-settings`
 

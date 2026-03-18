@@ -23,6 +23,9 @@ use crate::services::user_agent_presets::{
     self, find_preset_by_id, normalize_agent_approval_mode, normalize_agent_status,
     normalize_preset_questions, normalize_tool_list, resolve_preset_id, PresetSyncMode,
 };
+use crate::services::default_agent_sync::{
+    self, load_effective_default_agent_record, DEFAULT_AGENT_ID_ALIAS, PRESET_TEMPLATE_USER_ID,
+};
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
 use crate::throughput::{
@@ -63,7 +66,6 @@ const MAX_KNOWLEDGE_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
 const MAX_KNOWLEDGE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
 const BUILTIN_SKILLS_ROOT_ENV: &str = "WUNDER_BUILTIN_SKILLS_ROOT";
 const ADMIN_CUSTOM_SKILLS_ROOT_ENV: &str = "WUNDER_ADMIN_CUSTOM_SKILLS_ROOT";
-
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum AdminSkillSourceKind {
     Builtin,
@@ -1057,6 +1059,32 @@ fn normalize_admin_skill_paths(paths: Vec<String>) -> Vec<String> {
     output
 }
 
+fn uploaded_skill_archive_top_dir(path: &Path) -> Result<String, Response> {
+    // Require a dedicated top-level directory per uploaded skill package so a
+    // root-level SKILL.md can never shadow the whole custom skill root.
+    let mut components = path.components();
+    let Some(top_dir) = components.next() else {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_upload_top_dir_required"),
+        ));
+    };
+    if components.next().is_none() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_upload_top_dir_required"),
+        ));
+    }
+    let top_name = top_dir.as_os_str().to_string_lossy().trim().to_string();
+    if top_name.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            i18n::t("error.skill_upload_top_dir_required"),
+        ));
+    }
+    Ok(top_name)
+}
+
 fn resolve_admin_skill_source(
     spec: &SkillSpec,
     builtin_root: Option<&Path>,
@@ -1567,6 +1595,7 @@ async fn admin_skills_upload(
                 i18n::t("error.zip_path_illegal"),
             ));
         }
+        uploaded_skill_archive_top_dir(path)?;
         let dest = skill_root.join(path);
         let dest = dest.canonicalize().unwrap_or(dest);
         if dest != skill_root && !dest.starts_with(&skill_root) {
@@ -3998,13 +4027,7 @@ async fn admin_external_links_delete(
 async fn admin_preset_agents_list(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Value>, Response> {
-    let config = state.config_store.get().await;
-    let items = config
-        .user_agents
-        .presets
-        .iter()
-        .map(preset_agent_payload)
-        .collect::<Vec<_>>();
+    let items = admin_preset_agent_items(&state).await?;
     Ok(Json(json!({ "data": { "items": items } })))
 }
 
@@ -4015,20 +4038,49 @@ async fn admin_preset_agents_update(
     let current = state.config_store.get().await;
     let normalized = normalize_preset_agents(&current.user_agents.presets, payload.items)?;
     let next_presets = normalized.clone();
-    let updated = state
+    state
         .config_store
         .update(move |config| {
             config.user_agents.presets = next_presets;
         })
         .await
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let items = updated
-        .user_agents
-        .presets
-        .iter()
-        .map(preset_agent_payload)
-        .collect::<Vec<_>>();
+    let items = admin_preset_agent_items(&state).await?;
     Ok(Json(json!({ "data": { "items": items } })))
+}
+
+async fn admin_preset_agent_items(state: &AppState) -> Result<Vec<Value>, Response> {
+    let config = state.config_store.get().await;
+    let mut items = Vec::with_capacity(config.user_agents.presets.len() + 1);
+    items.push(admin_default_preset_agent_payload(state).await?);
+    items.extend(config.user_agents.presets.iter().map(preset_agent_payload));
+    Ok(items)
+}
+
+async fn admin_default_preset_agent_payload(state: &AppState) -> Result<Value, Response> {
+    // Expose the template user's default agent as a special preset item for admin UI editing.
+    let record = load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+    let (icon_name, icon_color) = normalize_preset_icon_parts(record.icon.as_deref());
+    Ok(json!({
+        "preset_id": DEFAULT_AGENT_ID_ALIAS,
+        "revision": 1,
+        "name": record.name.trim(),
+        "description": record.description.trim(),
+        "system_prompt": record.system_prompt.trim(),
+        "model_name": Value::Null,
+        "icon_name": icon_name,
+        "icon_color": icon_color,
+        "sandbox_container_id": crate::storage::normalize_sandbox_container_id(record.sandbox_container_id),
+        "tool_names": normalize_tool_list(record.tool_names),
+        "declared_tool_names": Vec::<String>::new(),
+        "declared_skill_names": Vec::<String>::new(),
+        "preset_questions": normalize_preset_questions(record.preset_questions),
+        "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
+        "status": normalize_agent_status(Some(&record.status)),
+        "is_default_agent": true,
+    }))
 }
 
 async fn admin_preset_agents_sync(
@@ -4052,14 +4104,56 @@ async fn admin_preset_agents_sync(
             items
         }),
     };
-    let preset = find_preset_by_id(&state, &payload.preset_id)
-        .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let mode = if payload.mode.as_deref() == Some("force") {
         PresetSyncMode::Force
     } else {
         PresetSyncMode::Safe
     };
+    if payload
+        .preset_id
+        .trim()
+        .eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS)
+    {
+        let template = admin_default_preset_agent_payload(&state).await?;
+        let summary = default_agent_sync::sync_default_agent_across_users(
+            &state,
+            mode,
+            unit_scope.as_deref(),
+            payload.dry_run.unwrap_or(false),
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        return Ok(Json(json!({
+            "data": {
+                "preset": {
+                    "preset_id": DEFAULT_AGENT_ID_ALIAS,
+                    "name": template.get("name").and_then(Value::as_str).unwrap_or(""),
+                    "revision": 1,
+                },
+                "mode": match mode {
+                    PresetSyncMode::Safe => "safe",
+                    PresetSyncMode::Force => "force",
+                },
+                "dry_run": payload.dry_run.unwrap_or(false),
+                "summary": {
+                    "total_users": summary.total_users,
+                    "linked_users": summary.linked_users,
+                    "missing_users": summary.missing_users,
+                    "up_to_date_agents": summary.up_to_date_agents,
+                    "stale_agents": summary.stale_agents,
+                    "safe_update_agents": summary.safe_update_agents,
+                    "overridden_agents": summary.overridden_agents,
+                    "force_update_agents": summary.force_update_agents,
+                    "created_agents": summary.created_agents,
+                    "updated_agents": summary.updated_agents,
+                    "rebound_agents": summary.rebound_agents,
+                }
+            }
+        })));
+    }
+    let preset = find_preset_by_id(&state, &payload.preset_id)
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let summary = user_agent_presets::sync_preset_across_users(
         &state,
         &preset,
@@ -5187,6 +5281,7 @@ fn preset_agent_payload(record: &UserAgentPresetConfig) -> Value {
         "preset_questions": normalize_preset_questions(record.preset_questions.clone()),
         "approval_mode": normalize_agent_approval_mode(Some(&record.approval_mode)),
         "status": normalize_agent_status(Some(&record.status)),
+        "is_default_agent": false,
     })
 }
 
@@ -5199,6 +5294,13 @@ fn normalize_preset_agents(
     let mut seen_ids = HashSet::new();
     let mut output = Vec::with_capacity(items.len());
     for item in items {
+        if item
+            .preset_id
+            .as_deref()
+            .is_some_and(|preset_id| preset_id.trim().eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS))
+        {
+            continue;
+        }
         let cleaned_name = item.name.trim();
         if cleaned_name.is_empty() {
             return Err(error_response(
@@ -5305,6 +5407,30 @@ fn normalize_preset_icon_name(raw: Option<&str>) -> String {
 fn normalize_preset_icon_color(raw: Option<&str>) -> String {
     raw.and_then(normalize_external_icon_color)
         .unwrap_or_else(|| "#94a3b8".to_string())
+}
+
+fn normalize_preset_icon_parts(raw: Option<&str>) -> (String, String) {
+    let cleaned = raw.unwrap_or_default().trim();
+    if cleaned.is_empty() {
+        return (
+            normalize_preset_icon_name(None),
+            normalize_preset_icon_color(None),
+        );
+    }
+    if cleaned.starts_with('{') {
+        if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
+            let icon_name = normalize_preset_icon_name(value.get("name").and_then(Value::as_str));
+            let icon_color = value.get("color").and_then(Value::as_str).map_or_else(
+                || normalize_preset_icon_color(None),
+                |color| normalize_preset_icon_color(Some(color)),
+            );
+            return (icon_name, icon_color);
+        }
+    }
+    (
+        normalize_preset_icon_name(Some(cleaned)),
+        normalize_preset_icon_color(None),
+    )
 }
 
 fn normalize_external_link_levels(levels: Vec<i32>) -> Vec<i32> {

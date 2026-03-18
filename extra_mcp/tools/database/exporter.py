@@ -19,6 +19,7 @@ INVALID_PATH_SEGMENT_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WINDOWS_DRIVE_PATTERN = re.compile(r"^[a-zA-Z]:")
 INVALID_SHEET_NAME_CHARS = re.compile(r"[:\\/?*\[\]]")
 MAX_SHEET_NAME_LENGTH = 31
+LIMIT_OR_OFFSET_PATTERN = re.compile(r"\b(?:limit|offset)\b", re.IGNORECASE)
 
 
 def _normalize_export_format(format_value: str | None, requested_path: str | None) -> str:
@@ -377,11 +378,15 @@ def _open_export_cursor(connection: Any, cfg: DbConfig):
     return connection.cursor()
 
 
-def _validate_export_sql(sql: str, allow_write: bool) -> None:
+def _validate_export_sql(sql: str, allow_write: bool, allow_limited_export: bool) -> None:
     if _has_multiple_statements(sql):
         raise ValueError("Only a single SQL statement is allowed.")
     if not allow_write and not _is_read_only_sql(sql):
         raise ValueError("Only read-only SQL is allowed (SELECT/SHOW/DESCRIBE/EXPLAIN/WITH).")
+    if not allow_limited_export and LIMIT_OR_OFFSET_PATTERN.search(sql):
+        raise ValueError(
+            "db_export rejects SQL/query_handle with LIMIT/OFFSET by default to avoid accidental partial exports. Remove LIMIT/OFFSET for formal full exports, or set allow_limited_export=true if you intentionally want a partial export."
+        )
 
 
 def export_sql_to_file_sync(
@@ -394,12 +399,13 @@ def export_sql_to_file_sync(
     export_format: str,
     sheet_name: str | None,
     overwrite: bool,
+    allow_limited_export: bool = False,
     allow_write: bool = False,
 ) -> dict[str, Any]:
     sql_text = sql.strip()
     if not sql_text:
         raise ValueError("SQL statement cannot be empty.")
-    _validate_export_sql(sql_text, allow_write)
+    _validate_export_sql(sql_text, allow_write, allow_limited_export)
     export_format = _normalize_export_format(export_format, path)
 
     export_cfg = get_db_export_config()
@@ -460,20 +466,16 @@ def export_sql_to_file_sync(
         result = {
             "ok": True,
             "format": export_format,
-            "file_path": str(destination),
-            "relative_path": output_metadata.get("relative_path"),
+            "path": str(output_metadata.get("public_path") or key_path),
             "row_count": row_count,
             "columns": columns,
             "bytes": destination.stat().st_size,
-            "sheet_name": actual_sheet_name,
-            "export_root": str(export_cfg.root),
-            "workspace_root": str(export_cfg.workspace_root),
         }
-        result.update({key: value for key, value in output_metadata.items() if value not in (None, "")})
-        if "public_path" in result:
-            result["path"] = result["public_path"]
-        else:
-            result["path"] = key_path
+        if actual_sheet_name:
+            result["sheet_name"] = actual_sheet_name
+        workspace_relative_path = output_metadata.get("workspace_relative_path")
+        if workspace_relative_path:
+            result["workspace_relative_path"] = workspace_relative_path
         return result
     except Exception:
         if tmp_path.exists():

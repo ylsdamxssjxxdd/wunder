@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
   getWindowCloseBehavior: () => ipcRenderer.invoke('wunder:window-close-behavior-get'),
   setWindowCloseBehavior: (behavior) =>
     ipcRenderer.invoke('wunder:window-close-behavior-set', { behavior }),
+  getLaunchAtLogin: () => ipcRenderer.invoke('wunder:launch-at-login-get'),
+  setLaunchAtLogin: (enabled) => ipcRenderer.invoke('wunder:launch-at-login-set', { enabled }),
   startWindowDrag: () => ipcRenderer.invoke('wunder:window-start-drag'),
   checkForUpdates: () => ipcRenderer.invoke('wunder:update-check'),
   getUpdateState: () => ipcRenderer.invoke('wunder:update-status'),

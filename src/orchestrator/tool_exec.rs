@@ -169,7 +169,7 @@ impl Orchestrator {
         result: &ToolResultPayload,
     ) -> String {
         let mut payload = result.to_observation_payload(tool_name);
-        compact_observation_payload(&mut payload);
+        compact_observation_payload(&mut payload, tool_name);
         serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string())
     }
 
@@ -213,13 +213,15 @@ impl Orchestrator {
 
     pub(super) fn finalize_tool_result(
         &self,
+        tool_name: &str,
         mut result: ToolResultPayload,
         started_at: Instant,
         is_admin: bool,
     ) -> ToolResultPayload {
+        let skip_truncation = should_skip_tool_truncation(tool_name);
         let duration_ms = started_at.elapsed().as_millis() as i64;
         let mut truncated = false;
-        if !is_admin {
+        if !is_admin && !skip_truncation {
             truncated = truncate_tool_result_data(
                 &mut result.data,
                 TOOL_RESULT_HEAD_CHARS,
@@ -237,7 +239,7 @@ impl Orchestrator {
             }
         }
         let mut output_chars = estimate_tool_result_chars(&result.data);
-        if !is_admin && output_chars > TOOL_RESULT_MAX_CHARS {
+        if !is_admin && !skip_truncation && output_chars > TOOL_RESULT_MAX_CHARS {
             result.data = compact_large_tool_result_data(
                 &result.data,
                 output_chars,
@@ -933,9 +935,9 @@ fn merge_tool_result_meta(meta: Option<Value>) -> Map<String, Value> {
     }
 }
 
-const OBSERVATION_MAX_CHARS: usize = 2200;
-const OBSERVATION_HEAD_CHARS: usize = 900;
-const OBSERVATION_TAIL_CHARS: usize = 240;
+const OBSERVATION_MAX_CHARS: usize = 20_000;
+const OBSERVATION_HEAD_CHARS: usize = 10_000;
+const OBSERVATION_TAIL_CHARS: usize = 10_000;
 const OBSERVATION_MAX_ARRAY_ITEMS: usize = 20;
 const OBSERVATION_ARRAY_HEAD_ITEMS: usize = 12;
 const OBSERVATION_ARRAY_TAIL_ITEMS: usize = 4;
@@ -945,7 +947,14 @@ const OBSERVATION_WRAPPER_PREVIEW_TAIL_CHARS: usize = 80;
 const TRUNCATION_CONTINUATION_HINT: &str =
     "result_truncated_continue_with_pagination_or_narrower_query";
 
-fn compact_observation_payload(payload: &mut Value) {
+fn should_skip_tool_truncation(tool_name: &str) -> bool {
+    matches!(tool_name, "技能调用" | "skill_call" | "skill_get")
+}
+
+fn compact_observation_payload(payload: &mut Value, tool_name: &str) {
+    if should_skip_tool_truncation(tool_name) {
+        return;
+    }
     let Some(map) = payload.as_object_mut() else {
         return;
     };
@@ -1467,7 +1476,7 @@ mod tests {
             }
         });
 
-        compact_observation_payload(&mut payload);
+        compact_observation_payload(&mut payload, "执行命令");
 
         assert_eq!(
             payload
@@ -1525,7 +1534,7 @@ mod tests {
             }
         });
 
-        compact_observation_payload(&mut payload);
+        compact_observation_payload(&mut payload, "extra_mcp@db_query");
 
         let data = payload.get("data").cloned().unwrap_or(Value::Null);
         let rows = data
@@ -1562,7 +1571,7 @@ mod tests {
             }
         });
 
-        compact_observation_payload(&mut payload);
+        compact_observation_payload(&mut payload, "extra_mcp@db_query");
 
         let data = payload.get("data").cloned().unwrap_or(Value::Null);
         let preview = data.get("preview").and_then(Value::as_str).unwrap_or("");
@@ -1571,6 +1580,38 @@ mod tests {
         assert_eq!(
             data.get("continuation_required").and_then(Value::as_bool),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn test_compact_observation_payload_skips_skill_call_truncation() {
+        let text = "x".repeat(OBSERVATION_MAX_CHARS + 500);
+        let mut payload = json!({
+            "tool": "技能调用",
+            "ok": true,
+            "data": {
+                "skill_md": text,
+            }
+        });
+
+        compact_observation_payload(&mut payload, "技能调用");
+
+        assert_eq!(
+            payload
+                .get("meta")
+                .and_then(|value| value.get("observation_truncated"))
+                .and_then(Value::as_bool),
+            None
+        );
+        assert!(
+            payload
+                .get("data")
+                .and_then(|value| value.get("skill_md"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .chars()
+                .count()
+                > OBSERVATION_MAX_CHARS
         );
     }
 

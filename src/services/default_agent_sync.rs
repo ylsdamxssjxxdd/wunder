@@ -1,0 +1,540 @@
+use crate::services::user_agent_presets::{
+    filter_allowed_tools, normalize_agent_approval_mode, normalize_agent_status,
+    normalize_preset_questions, normalize_tool_list, PresetSyncMode, PresetSyncSummary,
+};
+use crate::state::AppState;
+use crate::storage::{
+    normalize_sandbox_container_id, UserAccountRecord, UserAgentPresetBinding,
+    UserAgentPresetSnapshot, UserAgentRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
+};
+use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use anyhow::Result;
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
+
+const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
+pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
+const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
+const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
+pub const DEFAULT_AGENT_NAME: &str = "Default Agent";
+const DEFAULT_AGENT_STATUS: &str = "active";
+const DEFAULT_AGENT_SYNC_BINDING_PREFIX: &str = "default_agent_sync_binding_v1:";
+pub const PRESET_TEMPLATE_USER_ID: &str = "preset_template";
+
+fn now_ts() -> f64 {
+    Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct DefaultAgentConfig {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    system_prompt: String,
+    #[serde(default)]
+    tool_names: Vec<String>,
+    #[serde(default)]
+    preset_questions: Vec<String>,
+    #[serde(default)]
+    approval_mode: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    icon: Option<String>,
+    #[serde(default)]
+    sandbox_container_id: i32,
+    #[serde(default)]
+    created_at: f64,
+    #[serde(default)]
+    updated_at: f64,
+}
+
+#[derive(Debug, Default)]
+struct SyncDecision {
+    visible_diff: bool,
+    safe_updates: usize,
+    override_count: usize,
+}
+
+fn default_agent_meta_key(user_id: &str) -> String {
+    format!("{DEFAULT_AGENT_META_PREFIX}{}", user_id.trim())
+}
+
+fn default_agent_sync_binding_key(user_id: &str) -> String {
+    format!("{DEFAULT_AGENT_SYNC_BINDING_PREFIX}{}", user_id.trim())
+}
+
+fn synthetic_user(user_id: &str) -> UserAccountRecord {
+    let now = now_ts();
+    UserAccountRecord {
+        user_id: user_id.trim().to_string(),
+        username: user_id.trim().to_string(),
+        email: None,
+        password_hash: String::new(),
+        roles: vec!["user".to_string()],
+        status: "active".to_string(),
+        access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
+        unit_id: None,
+        daily_quota: 0,
+        daily_quota_used: 0,
+        daily_quota_date: None,
+        is_demo: false,
+        created_at: now,
+        updated_at: now,
+        last_login_at: None,
+    }
+}
+
+fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
+    if config.name.trim().is_empty() {
+        config.name = DEFAULT_AGENT_NAME.to_string();
+    } else {
+        config.name = config.name.trim().to_string();
+    }
+    config.description = config.description.trim().to_string();
+    config.system_prompt = config.system_prompt.trim().to_string();
+    config.tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
+    config.preset_questions =
+        normalize_preset_questions(std::mem::take(&mut config.preset_questions));
+    config.approval_mode = normalize_agent_approval_mode(Some(&config.approval_mode));
+    config.status = normalize_agent_status(Some(&config.status));
+    config.sandbox_container_id = normalize_sandbox_container_id(config.sandbox_container_id);
+    let now = now_ts();
+    if config.created_at <= 0.0 {
+        config.created_at = now;
+    }
+    if config.updated_at <= 0.0 {
+        config.updated_at = config.created_at;
+    }
+}
+
+fn config_from_record(record: &UserAgentRecord) -> DefaultAgentConfig {
+    let mut config = DefaultAgentConfig {
+        name: record.name.clone(),
+        description: record.description.clone(),
+        system_prompt: record.system_prompt.clone(),
+        tool_names: record.tool_names.clone(),
+        preset_questions: record.preset_questions.clone(),
+        approval_mode: record.approval_mode.clone(),
+        status: record.status.clone(),
+        icon: record.icon.clone(),
+        sandbox_container_id: record.sandbox_container_id,
+        created_at: record.created_at,
+        updated_at: record.updated_at,
+    };
+    normalize_default_agent_config(&mut config);
+    config
+}
+
+fn record_from_config(user_id: &str, config: &DefaultAgentConfig) -> UserAgentRecord {
+    UserAgentRecord {
+        agent_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
+        user_id: user_id.trim().to_string(),
+        hive_id: DEFAULT_HIVE_ID.to_string(),
+        name: config.name.clone(),
+        description: config.description.clone(),
+        system_prompt: config.system_prompt.clone(),
+        model_name: None,
+        tool_names: config.tool_names.clone(),
+        declared_tool_names: Vec::new(),
+        declared_skill_names: Vec::new(),
+        preset_questions: config.preset_questions.clone(),
+        access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
+        approval_mode: config.approval_mode.clone(),
+        is_shared: false,
+        status: config.status.clone(),
+        icon: config.icon.clone(),
+        sandbox_container_id: config.sandbox_container_id,
+        created_at: config.created_at,
+        updated_at: config.updated_at,
+        preset_binding: None,
+    }
+}
+
+async fn load_default_agent_config(
+    state: &AppState,
+    user_id: &str,
+) -> Result<Option<DefaultAgentConfig>> {
+    let raw = state.user_store.get_meta(&default_agent_meta_key(user_id))?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+    let mut parsed = match serde_json::from_str::<DefaultAgentConfig>(cleaned) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    normalize_default_agent_config(&mut parsed);
+    Ok(Some(parsed))
+}
+
+async fn build_default_agent_config(
+    state: &AppState,
+    user: &UserAccountRecord,
+) -> DefaultAgentConfig {
+    let context = build_user_tool_context(state, &user.user_id).await;
+    let allowed = compute_allowed_tool_names(user, &context);
+    let mut tool_names = allowed.into_iter().collect::<Vec<_>>();
+    tool_names.sort();
+    let mut config = DefaultAgentConfig {
+        name: DEFAULT_AGENT_NAME.to_string(),
+        description: String::new(),
+        system_prompt: String::new(),
+        tool_names,
+        preset_questions: Vec::new(),
+        approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+        status: DEFAULT_AGENT_STATUS.to_string(),
+        icon: None,
+        sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+        created_at: now_ts(),
+        updated_at: now_ts(),
+    };
+    normalize_default_agent_config(&mut config);
+    config
+}
+
+async fn resolve_default_agent_config(
+    state: &AppState,
+    user: &UserAccountRecord,
+) -> Result<DefaultAgentConfig> {
+    if let Some(config) = load_default_agent_config(state, &user.user_id).await? {
+        return Ok(config);
+    }
+    if let Some(record) = state
+        .user_store
+        .storage_backend()
+        .get_user_agent(&user.user_id, DEFAULT_AGENT_ID_ALIAS)?
+    {
+        return Ok(config_from_record(&record));
+    }
+    Ok(build_default_agent_config(state, user).await)
+}
+
+pub async fn load_effective_default_agent_record(
+    state: &AppState,
+    user_id: &str,
+) -> Result<UserAgentRecord> {
+    let owner = state
+        .user_store
+        .get_user_by_id(user_id)?
+        .unwrap_or_else(|| synthetic_user(user_id));
+    let config = resolve_default_agent_config(state, &owner).await?;
+    Ok(record_from_config(&owner.user_id, &config))
+}
+
+fn snapshot_from_default_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot {
+    UserAgentPresetSnapshot {
+        name: record.name.trim().to_string(),
+        description: record.description.trim().to_string(),
+        system_prompt: record.system_prompt.trim().to_string(),
+        model_name: None,
+        tool_names: normalize_tool_list(record.tool_names.clone()),
+        declared_tool_names: Vec::new(),
+        declared_skill_names: Vec::new(),
+        preset_questions: normalize_preset_questions(record.preset_questions.clone()),
+        approval_mode: normalize_agent_approval_mode(Some(&record.approval_mode)),
+        status: normalize_agent_status(Some(&record.status)),
+        icon: record.icon.clone(),
+        sandbox_container_id: normalize_sandbox_container_id(record.sandbox_container_id),
+    }
+}
+
+fn build_default_tool_names(allowed_tool_names: &std::collections::HashSet<String>, required_skill_names: &[String]) -> Vec<String> {
+    let mut output = allowed_tool_names.iter().cloned().collect::<Vec<_>>();
+    output.sort();
+    output.extend(required_skill_names.iter().cloned());
+    normalize_tool_list(output)
+}
+
+async fn required_default_skill_names(
+    state: &AppState,
+    allowed_tool_names: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    let config = state.config_store.get().await;
+    config
+        .skills
+        .enabled
+        .iter()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty() && allowed_tool_names.contains(name))
+        .collect()
+}
+
+async fn build_target_snapshot(
+    state: &AppState,
+    user: &UserAccountRecord,
+    template: &DefaultAgentConfig,
+) -> UserAgentPresetSnapshot {
+    let context = build_user_tool_context(state, &user.user_id).await;
+    let allowed_tool_names = compute_allowed_tool_names(user, &context);
+    let required_skill_names = required_default_skill_names(state, &allowed_tool_names).await;
+    let tool_names = if template.tool_names.is_empty() {
+        build_default_tool_names(&allowed_tool_names, &required_skill_names)
+    } else {
+        let mut merged = template.tool_names.clone();
+        merged.extend(required_skill_names);
+        filter_allowed_tools(&normalize_tool_list(merged), &allowed_tool_names)
+    };
+    UserAgentPresetSnapshot {
+        name: template.name.clone(),
+        description: template.description.clone(),
+        system_prompt: template.system_prompt.clone(),
+        model_name: None,
+        tool_names,
+        declared_tool_names: Vec::new(),
+        declared_skill_names: Vec::new(),
+        preset_questions: template.preset_questions.clone(),
+        approval_mode: template.approval_mode.clone(),
+        status: template.status.clone(),
+        icon: template.icon.clone(),
+        sandbox_container_id: template.sandbox_container_id,
+    }
+}
+
+fn plan_snapshot_sync(
+    current: &UserAgentPresetSnapshot,
+    baseline: &UserAgentPresetSnapshot,
+    target: &UserAgentPresetSnapshot,
+) -> SyncDecision {
+    let mut decision = SyncDecision::default();
+    macro_rules! compare_field {
+        ($field:ident) => {
+            if current.$field != target.$field {
+                decision.visible_diff = true;
+                if current.$field == baseline.$field {
+                    decision.safe_updates += 1;
+                } else {
+                    decision.override_count += 1;
+                }
+            }
+        };
+    }
+    compare_field!(name);
+    compare_field!(description);
+    compare_field!(system_prompt);
+    compare_field!(tool_names);
+    compare_field!(preset_questions);
+    compare_field!(approval_mode);
+    compare_field!(status);
+    compare_field!(icon);
+    compare_field!(sandbox_container_id);
+    decision
+}
+
+// Keep safe sync field-granular so user customizations on default-agent settings
+// are preserved until the admin explicitly chooses force sync.
+fn apply_sync_mode(
+    record: &mut UserAgentRecord,
+    baseline: &UserAgentPresetSnapshot,
+    target: &UserAgentPresetSnapshot,
+    mode: PresetSyncMode,
+) -> bool {
+    let mut changed = false;
+    macro_rules! sync_field {
+        ($field:ident) => {
+            if record.$field != target.$field {
+                let should_apply =
+                    matches!(mode, PresetSyncMode::Force) || record.$field == baseline.$field;
+                if should_apply {
+                    record.$field = target.$field.clone();
+                    changed = true;
+                }
+            }
+        };
+    }
+    sync_field!(name);
+    sync_field!(description);
+    sync_field!(system_prompt);
+    sync_field!(tool_names);
+    sync_field!(preset_questions);
+    sync_field!(approval_mode);
+    sync_field!(status);
+    sync_field!(icon);
+    if record.sandbox_container_id != target.sandbox_container_id {
+        let should_apply = matches!(mode, PresetSyncMode::Force)
+            || record.sandbox_container_id == baseline.sandbox_container_id;
+        if should_apply {
+            record.sandbox_container_id = target.sandbox_container_id;
+            changed = true;
+        }
+    }
+    changed
+}
+
+fn load_sync_binding(state: &AppState, user_id: &str) -> Result<Option<UserAgentPresetBinding>> {
+    let raw = state.user_store.get_meta(&default_agent_sync_binding_key(user_id))?;
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let cleaned = raw.trim();
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+    let parsed = serde_json::from_str::<UserAgentPresetBinding>(cleaned).ok();
+    Ok(parsed.filter(|binding| binding.preset_id == DEFAULT_AGENT_ID_ALIAS))
+}
+
+fn save_sync_binding(
+    state: &AppState,
+    user_id: &str,
+    binding: &UserAgentPresetBinding,
+) -> Result<()> {
+    let payload = serde_json::to_string(binding)?;
+    state
+        .user_store
+        .set_meta(&default_agent_sync_binding_key(user_id), &payload)?;
+    Ok(())
+}
+
+fn has_explicit_default_agent_state(state: &AppState, user_id: &str) -> Result<bool> {
+    if state
+        .user_store
+        .storage_backend()
+        .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    Ok(state
+        .user_store
+        .get_meta(&default_agent_meta_key(user_id))?
+        .is_some_and(|raw| !raw.trim().is_empty()))
+}
+
+fn persist_default_agent_state(
+    state: &AppState,
+    user_id: &str,
+    record: &UserAgentRecord,
+    sync_created: bool,
+) -> Result<()> {
+    let mut config = config_from_record(record);
+    if sync_created {
+        let now = now_ts();
+        config.created_at = now;
+        config.updated_at = now;
+    } else {
+        config.updated_at = now_ts();
+    }
+    let payload = serde_json::to_string(&config)?;
+    state
+        .user_store
+        .set_meta(&default_agent_meta_key(user_id), &payload)?;
+
+    if state
+        .user_store
+        .storage_backend()
+        .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)?
+        .is_some()
+    {
+        let mut legacy = record.clone();
+        legacy.user_id = user_id.trim().to_string();
+        legacy.agent_id = DEFAULT_AGENT_ID_ALIAS.to_string();
+        legacy.hive_id = DEFAULT_HIVE_ID.to_string();
+        legacy.model_name = None;
+        legacy.declared_tool_names = Vec::new();
+        legacy.declared_skill_names = Vec::new();
+        legacy.access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
+        legacy.is_shared = false;
+        legacy.preset_binding = None;
+        legacy.created_at = config.created_at;
+        legacy.updated_at = config.updated_at;
+        state.user_store.upsert_user_agent(&legacy)?;
+    }
+    Ok(())
+}
+
+pub async fn sync_default_agent_across_users(
+    state: &AppState,
+    mode: PresetSyncMode,
+    unit_scope: Option<&[String]>,
+    dry_run: bool,
+) -> Result<PresetSyncSummary> {
+    let template_record = load_effective_default_agent_record(state, PRESET_TEMPLATE_USER_ID).await?;
+    let template_config = config_from_record(&template_record);
+    let (users, _) = state.user_store.list_users(None, unit_scope, 0, 0)?;
+    let mut summary = PresetSyncSummary {
+        total_users: users.len(),
+        ..PresetSyncSummary::default()
+    };
+
+    for user in users {
+        state.user_store.ensure_default_hive(&user.user_id)?;
+        let current_record = load_effective_default_agent_record(state, &user.user_id).await?;
+        let current = snapshot_from_default_record(&current_record);
+        let target = build_target_snapshot(state, &user, &template_config).await;
+        let binding = load_sync_binding(state, &user.user_id)?;
+        let binding_matches = binding
+            .as_ref()
+            .map(|item| item.preset_id == DEFAULT_AGENT_ID_ALIAS)
+            .unwrap_or(false);
+        let has_explicit = has_explicit_default_agent_state(state, &user.user_id)?;
+        let baseline = binding
+            .as_ref()
+            .map(|item| item.last_applied.clone())
+            .unwrap_or_else(|| {
+                if has_explicit {
+                    target.clone()
+                } else {
+                    current.clone()
+                }
+            });
+        let decision = plan_snapshot_sync(&current, &baseline, &target);
+
+        if has_explicit {
+            summary.linked_users += 1;
+        } else {
+            summary.missing_users += 1;
+        }
+
+        if !decision.visible_diff && binding_matches && has_explicit {
+            summary.up_to_date_agents += 1;
+            continue;
+        }
+
+        summary.stale_agents += 1;
+        if decision.safe_updates > 0 || !binding_matches || !has_explicit {
+            summary.safe_update_agents += 1;
+        }
+        if decision.override_count > 0 {
+            summary.overridden_agents += 1;
+        }
+        if decision.visible_diff || !binding_matches || !has_explicit {
+            summary.force_update_agents += 1;
+        }
+
+        if dry_run {
+            continue;
+        }
+
+        let mut next_record = current_record.clone();
+        let applied = apply_sync_mode(&mut next_record, &baseline, &target, mode);
+        let write_config = !has_explicit || applied || !binding_matches;
+        if write_config {
+            persist_default_agent_state(state, &user.user_id, &next_record, !has_explicit)?;
+        }
+        save_sync_binding(
+            state,
+            &user.user_id,
+            &UserAgentPresetBinding {
+                preset_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
+                preset_revision: 1,
+                last_applied: target,
+            },
+        )?;
+
+        if !has_explicit {
+            summary.created_agents += 1;
+        } else if applied {
+            summary.updated_agents += 1;
+        } else if !binding_matches {
+            summary.rebound_agents += 1;
+        }
+    }
+
+    Ok(summary)
+}

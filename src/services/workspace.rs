@@ -545,6 +545,27 @@ impl WorkspaceManager {
         format!("session_context_tokens:{safe_user}:{safe_session}")
     }
 
+    fn session_context_overflow_key(&self, user_id: &str, session_id: &str) -> String {
+        let safe_user = self.safe_user_id(user_id);
+        let safe_session = session_id
+            .trim()
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>();
+        let safe_session = if safe_session.trim().is_empty() {
+            "default".to_string()
+        } else {
+            safe_session
+        };
+        format!("session_context_overflow:{safe_user}:{safe_session}")
+    }
+
     fn maybe_schedule_retention_cleanup(&self) {
         if self.retention_days <= 0 {
             return;
@@ -904,6 +925,51 @@ impl WorkspaceManager {
         .await;
     }
 
+    pub async fn load_session_context_overflow_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> bool {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.load_session_context_overflow(&user_id, &session_id)
+        })
+        .await
+        .unwrap_or(false)
+    }
+
+    pub async fn save_session_context_overflow_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+        overflowed: bool,
+    ) {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        let _ = tokio::task::spawn_blocking(move || {
+            workspace.save_session_context_overflow(&user_id, &session_id, overflowed);
+        })
+        .await;
+    }
+
+    pub async fn delete_session_context_overflow_async(
+        self: &Arc<Self>,
+        user_id: &str,
+        session_id: &str,
+    ) -> i64 {
+        let user_id = user_id.to_string();
+        let session_id = session_id.to_string();
+        let workspace = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            workspace.delete_session_context_overflow(&user_id, &session_id)
+        })
+        .await
+        .unwrap_or(0)
+    }
+
     pub fn append_chat(&self, user_id: &str, payload: &Value) -> Result<()> {
         self.write_queue.enqueue(StorageWrite::Chat {
             user_id: user_id.to_string(),
@@ -1003,8 +1069,33 @@ impl WorkspaceManager {
         let _ = self.storage.set_meta(&key, &value);
     }
 
+    pub fn load_session_context_overflow(&self, user_id: &str, session_id: &str) -> bool {
+        let key = self.session_context_overflow_key(user_id, session_id);
+        let Ok(value) = self.storage.get_meta(&key) else {
+            return false;
+        };
+        matches!(
+            value.as_deref().map(str::trim),
+            Some("1") | Some("true") | Some("yes")
+        )
+    }
+
+    pub fn save_session_context_overflow(&self, user_id: &str, session_id: &str, overflowed: bool) {
+        let key = self.session_context_overflow_key(user_id, session_id);
+        if overflowed {
+            let _ = self.storage.set_meta(&key, "1");
+        } else {
+            let _ = self.storage.delete_meta_prefix(&key);
+        }
+    }
+
     pub fn delete_session_context_tokens(&self, user_id: &str, session_id: &str) -> i64 {
         let key = self.session_context_tokens_key(user_id, session_id);
+        self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
+    }
+
+    pub fn delete_session_context_overflow(&self, user_id: &str, session_id: &str) -> i64 {
+        let key = self.session_context_overflow_key(user_id, session_id);
         self.storage.delete_meta_prefix(&key).unwrap_or(0) as i64
     }
 
@@ -1119,6 +1210,7 @@ impl WorkspaceManager {
             .delete_stream_events_by_session(cleaned_session);
         let _ = self.storage.release_session_lock(cleaned_session);
         let _ = self.delete_session_context_tokens(cleaned_user, cleaned_session);
+        let _ = self.delete_session_context_overflow(cleaned_user, cleaned_session);
     }
 
     pub fn purge_user_data(&self, user_id: &str) -> PurgeResult {
@@ -1162,6 +1254,9 @@ impl WorkspaceManager {
         let _ = self
             .storage
             .delete_meta_prefix(&format!("session_context_tokens:{safe_id}:"));
+        let _ = self
+            .storage
+            .delete_meta_prefix(&format!("session_context_overflow:{safe_id}:"));
         let _ = self.storage.delete_session_locks_by_user(cleaned);
         let _ = self.storage.delete_stream_events_by_user(cleaned);
         PurgeResult {

@@ -5462,6 +5462,25 @@ fn summarize_read_ranges(ranges: &[(usize, usize)], total_lines: usize) -> (usiz
     (read_lines, complete)
 }
 
+fn summarize_slice_eof(ranges: &[(usize, usize)], total_lines: usize) -> (bool, bool) {
+    if total_lines == 0 || ranges.is_empty() {
+        return (false, false);
+    }
+    let mut hit_eof = false;
+    let mut range_reaches_eof = false;
+    for (start, end) in ranges {
+        if *start > total_lines {
+            hit_eof = true;
+            continue;
+        }
+        if *end >= total_lines {
+            hit_eof = true;
+            range_reaches_eof = true;
+        }
+    }
+    (hit_eof, range_reaches_eof)
+}
+
 async fn read_files(context: &ToolContext<'_>, args: &Value) -> Result<Value> {
     let args = recover_tool_args_value(args);
     let dry_run = parse_dry_run(&args);
@@ -5639,11 +5658,17 @@ fn read_files_inner(
         match spec.mode {
             ReadFileMode::Slice => {
                 let (read_lines, complete) = summarize_read_ranges(&spec.ranges, total_lines);
+                let (hit_eof, range_reaches_eof) = summarize_slice_eof(&spec.ranges, total_lines);
                 if let Value::Object(ref mut map) = summary {
                     map.insert("mode".to_string(), Value::String("slice".to_string()));
                     map.insert("read_lines".to_string(), Value::from(read_lines as u64));
                     map.insert("total_lines".to_string(), Value::from(total_lines as u64));
                     map.insert("complete".to_string(), Value::Bool(complete));
+                    map.insert("hit_eof".to_string(), Value::Bool(hit_eof));
+                    map.insert(
+                        "range_reaches_eof".to_string(),
+                        Value::Bool(range_reaches_eof),
+                    );
                 }
                 let mut file_output = Vec::new();
                 for (start, end) in spec.ranges {
@@ -7108,6 +7133,21 @@ mod tests {
         assert_eq!(budget.time_budget_ms, Some(9000));
         assert_eq!(budget.output_budget_bytes, Some(4096));
         assert_eq!(budget.max_files, Some(3));
+    }
+
+    #[test]
+    fn summarize_slice_eof_marks_eof_ranges() {
+        let (hit_eof, range_reaches_eof) = summarize_slice_eof(&[(100, 200)], 178);
+        assert!(hit_eof);
+        assert!(range_reaches_eof);
+
+        let (hit_eof, range_reaches_eof) = summarize_slice_eof(&[(200, 300)], 178);
+        assert!(hit_eof);
+        assert!(!range_reaches_eof);
+
+        let (hit_eof, range_reaches_eof) = summarize_slice_eof(&[(1, 50)], 178);
+        assert!(!hit_eof);
+        assert!(!range_reaches_eof);
     }
 
     #[test]

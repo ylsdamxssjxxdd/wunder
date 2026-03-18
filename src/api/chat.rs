@@ -2283,9 +2283,23 @@ fn count_system_prompt_memory_items(memory_preview: &str) -> usize {
         .count()
 }
 
+fn extract_system_prompt_memory_total_count(memory_preview: &str) -> Option<usize> {
+    memory_preview
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with('-') && !line.starts_with("- ["))
+        .and_then(|line| {
+            line.split(|ch: char| !ch.is_ascii_digit())
+                .find(|segment| !segment.is_empty())
+        })
+        .and_then(|value| value.parse::<usize>().ok())
+}
+
 fn build_system_prompt_preview_payload(prompt: String, memory_mode_hint: &str) -> Value {
     let memory_preview = extract_system_prompt_memory_preview(&prompt);
     let memory_preview_count = count_system_prompt_memory_items(&memory_preview);
+    let memory_preview_total_count =
+        extract_system_prompt_memory_total_count(&memory_preview).unwrap_or(memory_preview_count);
     let memory_preview_mode = if memory_preview_count == 0 {
         "none"
     } else {
@@ -2296,6 +2310,7 @@ fn build_system_prompt_preview_payload(prompt: String, memory_mode_hint: &str) -
         "memory_preview": memory_preview,
         "memory_preview_mode": memory_preview_mode,
         "memory_preview_count": memory_preview_count,
+        "memory_preview_total_count": memory_preview_total_count,
     })
 }
 
@@ -2685,7 +2700,8 @@ fn error_response(status: StatusCode, message: String) -> Response {
 mod tests {
     use super::{
         collect_session_event_rounds, count_system_prompt_memory_items,
-        extract_system_prompt_memory_preview, should_merge_round_event,
+        extract_system_prompt_memory_preview, extract_system_prompt_memory_total_count,
+        should_merge_round_event,
     };
     use serde_json::json;
 
@@ -2767,11 +2783,12 @@ mod tests {
     fn extract_system_prompt_memory_preview_reads_tail_block() {
         let prefix = crate::i18n::t("memory.block_prefix");
         let prompt = format!(
-            "You are a helpful assistant.\n\n{}\n- [pref] Reply in Chinese\n- [project] Use Rust",
+            "You are a helpful assistant.\n\n{}\n- Available long-term memories: 7. Injected now: 2 (limit 30).\n- If the injected memory below is not enough, continue with the memory manager tool via recall/list to search the remaining long-term memory.\n- [pref] Reply in Chinese\n- [project] Use Rust",
             prefix
         );
         let memory = extract_system_prompt_memory_preview(&prompt);
         assert!(memory.contains(&prefix));
         assert_eq!(count_system_prompt_memory_items(&memory), 2);
+        assert_eq!(extract_system_prompt_memory_total_count(&memory), Some(7));
     }
 }

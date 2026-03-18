@@ -22,6 +22,7 @@ struct TestContext {
 }
 
 const PRESET_NAME: &str = "Preset Auto Model";
+const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 
 fn build_llm_model(base_url: &str, model: &str, model_type: &str) -> LlmModelConfig {
     LlmModelConfig {
@@ -207,6 +208,37 @@ async fn list_admin_presets(app: &Router) -> Vec<Value> {
         .clone()
 }
 
+async fn get_default_agent(app: &Router, token: Option<&str>, user_id: &str) -> Value {
+    let (status, payload) = send_json(
+        app,
+        token,
+        Method::GET,
+        &format!("/wunder/agents/{DEFAULT_AGENT_ID_ALIAS}?user_id={user_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    payload["data"].clone()
+}
+
+async fn update_default_agent(
+    app: &Router,
+    token: Option<&str>,
+    user_id: &str,
+    payload: Value,
+) -> Value {
+    let (status, body) = send_json(
+        app,
+        token,
+        Method::PUT,
+        &format!("/wunder/agents/{DEFAULT_AGENT_ID_ALIAS}?user_id={user_id}"),
+        Some(payload),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    body["data"].clone()
+}
+
 async fn update_admin_presets(app: &Router, items: Vec<Value>) -> Vec<Value> {
     let (status, payload) = send_json(
         app,
@@ -246,6 +278,137 @@ async fn sync_preset(
     .await;
     assert_eq!(status, StatusCode::OK);
     body
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_preset_list_includes_default_agent_item() {
+    let context = build_test_context_with_config("preset_admin_default_list", |_| {}).await;
+
+    let items = list_admin_presets(&context.app).await;
+    let default_item = find_preset_item(&items, DEFAULT_AGENT_ID_ALIAS);
+
+    assert_eq!(default_item["is_default_agent"], json!(true));
+    assert!(
+        default_item["name"].as_str().is_some_and(|name| !name.trim().is_empty()),
+        "default preset item should expose a visible name"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_preset_update_ignores_default_agent_item() {
+    let context = build_test_context_with_config("preset_admin_default_update", |config| {
+        config.user_agents.presets = vec![build_preset_config("preset_admin_default_keep", None)];
+    })
+    .await;
+
+    let items = list_admin_presets(&context.app).await;
+    assert_eq!(items.len(), 2);
+
+    let updated = update_admin_presets(&context.app, items).await;
+    assert_eq!(updated.len(), 2);
+    assert_eq!(find_preset_item(&updated, DEFAULT_AGENT_ID_ALIAS)["is_default_agent"], json!(true));
+    assert_eq!(
+        context.state.config_store.get().await.user_agents.presets.len(),
+        1,
+        "default agent item should not be persisted into ordinary preset config"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_default_agent_sync_safe_and_force_respects_user_override() {
+    let context = build_test_context_with_config("default_sync_user_a", |_| {}).await;
+    context
+        .state
+        .user_store
+        .ensure_default_admin()
+        .expect("ensure default admin");
+    let admin_token = context
+        .state
+        .user_store
+        .create_session_token("admin")
+        .expect("create admin token")
+        .token;
+    context
+        .state
+        .user_store
+        .create_user(
+            "default_sync_user_b",
+            Some("default_sync_user_b@example.test".to_string()),
+            "password-123",
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )
+        .expect("create second user");
+
+    update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "preset_template",
+        json!({
+            "name": "Template Default Agent",
+            "description": "template-description",
+            "system_prompt": "template-system-prompt",
+            "tool_names": [],
+            "preset_questions": ["What should I do next?"],
+            "approval_mode": "full_auto",
+            "status": "active",
+            "sandbox_container_id": 7
+        }),
+    )
+    .await;
+
+    update_default_agent(
+        &context.app,
+        Some(&admin_token),
+        "default_sync_user_b",
+        json!({
+            "name": "User Customized Default",
+            "description": "custom-description",
+            "system_prompt": "custom-system-prompt",
+            "tool_names": [],
+            "preset_questions": ["custom-question"],
+            "approval_mode": "suggest",
+            "status": "active",
+            "sandbox_container_id": 3
+        }),
+    )
+    .await;
+
+    let safe_summary = sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "safe", None).await;
+    assert_eq!(safe_summary["data"]["preset"]["preset_id"], json!(DEFAULT_AGENT_ID_ALIAS));
+
+    let user_a_after_safe =
+        get_default_agent(&context.app, Some(&admin_token), "default_sync_user_a").await;
+    assert_eq!(user_a_after_safe["name"], json!("Template Default Agent"));
+    assert_eq!(user_a_after_safe["description"], json!("template-description"));
+    assert_eq!(user_a_after_safe["system_prompt"], json!("template-system-prompt"));
+
+    let user_b_after_safe =
+        get_default_agent(&context.app, Some(&admin_token), "default_sync_user_b").await;
+    assert_eq!(
+        user_b_after_safe["description"],
+        json!("custom-description"),
+        "safe sync should keep customized default-agent fields"
+    );
+    assert_eq!(user_b_after_safe["approval_mode"], json!("suggest"));
+
+    let force_summary = sync_preset(&context.app, DEFAULT_AGENT_ID_ALIAS, "force", None).await;
+    assert_eq!(force_summary["data"]["preset"]["preset_id"], json!(DEFAULT_AGENT_ID_ALIAS));
+
+    let user_b_after_force =
+        get_default_agent(&context.app, Some(&admin_token), "default_sync_user_b").await;
+    assert_eq!(user_b_after_force["name"], json!("Template Default Agent"));
+    assert_eq!(user_b_after_force["description"], json!("template-description"));
+    assert_eq!(user_b_after_force["system_prompt"], json!("template-system-prompt"));
+    assert_eq!(
+        user_b_after_force["preset_questions"],
+        json!(["What should I do next?"])
+    );
+    assert_eq!(user_b_after_force["approval_mode"], json!("full_auto"));
+    assert_eq!(user_b_after_force["sandbox_container_id"], json!(7));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

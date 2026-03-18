@@ -46,18 +46,31 @@ description: "通用数据分析技能：当需要基于 `db_query`/`db_export` 
 # 数据库分析指南（当可见 `db_query` / `db_export` 工具）
 
 ## 导出优先工作流（当可见 `db_export`）
-- 产物型任务默认流程：先用 `db_query*` 做计数/样本校验，再复用返回的 `query_handle` 调 `db_export*` 直接生成 `xlsx/csv`。
+- 产物型任务默认流程：先用 `db_query*` 做计数/样本校验，再用“全量筛选 SQL”或“全量查询返回的 `query_handle`”调 `db_export*` 直接生成 `xlsx/csv`。
 - 若后续还要继续整理、改名、转 Markdown、压缩或二次分析，`db_export*` 的 `path` 优先写成 `/workspaces/{user_id}/exports/<文件名>.xlsx`（系统会替换成当前工作区根路径），这样产物会直接落到智能体当前工作区。
 - `db_export*` 成功后，优先使用返回的 `workspace_relative_path` 交给读文件/写文件/文档解析等工具继续处理；不要再回头分页搬明细。
 - 禁止为了导出而把分页明细一页页搬进上下文；正文只保留文件路径、行数、字段、筛选条件与必要样本。
 - 若用户目标是“保存为 Excel/CSV/报表”，优先把轮次预算留给口径确认与文件生成，而不是留给翻页抄数。
 
+### 导出安全规则（强约束）
+- `COUNT(*)` 查询、`LIMIT 3~5` 样本查询，只用于确认口径与字段，不可直接当作最终导出数据源。
+- 若某个 `query_handle` 对应的 SQL 含 `LIMIT/OFFSET`、样本字段缺失、或只是聚合结果，则该 `query_handle` 只能用于验证，不能用于正式导出全量明细。
+- 正式导出前，必须自检这三点：
+  1. 导出 SQL 与最终筛选口径一致；
+  2. 导出 SQL 不带 `LIMIT/OFFSET`；
+  3. 导出字段就是用户需要落盘的最终字段集。
+- 如果你先做了样本查询，再要导出全量数据，应该重新构造一条不带 `LIMIT/OFFSET` 的明细 SQL，或先执行一次不带 `LIMIT/OFFSET` 的全量明细查询，再复用其 `query_handle`。
+- 导出完成后，优先检查 `db_export*` 返回的 `row_count` 是否与前面的 `COUNT(*)` 一致；若不一致，先修正后重导，禁止直接宣布完成。
+- 只有在导出结果通过上述校验后，才能向用户报告“已保存为 Excel/CSV”。
+
 ### 产物型任务模板（数据库 → 工作区文件）
 1. 用 `db_query*` 做 `COUNT(*)` 或聚合确认口径。
 2. 用 `db_query*` 做 `LIMIT 3~5` 样本确认字段与筛选值。
-3. 用同一 `query_handle` 调 `db_export*`，路径写为 `/workspaces/{user_id}/exports/<文件名>.xlsx`。
-4. 若还需后处理，直接对返回的 `workspace_relative_path` 使用文件工具，不再重新查询数据库明细。
-5. 最终回复只保留：工作区文件链接/路径、行数、字段、筛选口径、必要样本。
+3. 为正式导出构造“不带 `LIMIT/OFFSET` 的最终明细 SQL”；只有当 `query_handle` 来自这条全量明细 SQL 时，才可以直接复用它。
+4. 用 `db_export*` 导出到 `/workspaces/{user_id}/exports/<文件名>.xlsx`，并记录返回的 `row_count / workspace_relative_path`。
+5. 对比 `db_export*.row_count` 与前面 `COUNT(*)` 的结果；不一致则修正 SQL 后重新导出。
+6. 若还需后处理，直接对返回的 `workspace_relative_path` 使用文件工具，不再重新查询数据库明细。
+7. 最终回复只保留：工作区文件链接/路径、行数、字段、筛选口径、必要样本。
 ## A. 轻量字段探测
 ```sql
 SELECT * FROM employees LIMIT 3;

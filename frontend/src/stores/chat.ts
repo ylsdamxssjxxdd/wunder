@@ -22,6 +22,7 @@ import { t } from '@/i18n';
 import { setDefaultSession } from '@/api/agents';
 import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
+import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -3188,6 +3189,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const toolOutputItemMap = new Map();
   const toolOutputBufferMap = new Map();
   const toolOutputFlushTimerMap = new Map();
+  const compactionProgressItemMap = new Map();
   const roundMetricsMap = new Map<
     number,
     { prefill: number | null; decode: number | null; usage: NormalizedUsagePayload | null }
@@ -3197,6 +3199,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
   const consumedQuotaRoundSet = new Set<number>();
   let toolFailureGuardNotified = false;
   let lastRound = null;
+  let activeCompactionWorkflowRef = null;
+  let compactionAnonymousRefSeq = 0;
   const initialRound = normalizeStreamRound(assistantMessage.stream_round);
   let visibleRound = initialRound;
   // 参照调试面板：记录模型输出轮次与内容，方便还原事件日志
@@ -3698,6 +3702,103 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     toolOutputBufferMap.delete(key);
   };
 
+  const isContextOverflowText = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (!normalized) return false;
+    return [
+      'context_window_exceeded',
+      'context length exceeded',
+      'context window',
+      'input exceeds the context window',
+      'exceeds the model',
+      'prompt is too long',
+      '上下文',
+      '超限',
+      '过长'
+    ].some((token) => normalized.includes(token));
+  };
+
+  const resolveLatestCompactionRef = () => {
+    if (activeCompactionWorkflowRef) {
+      return activeCompactionWorkflowRef;
+    }
+    const refs = Array.from(compactionProgressItemMap.keys());
+    return refs.length > 0 ? refs[refs.length - 1] : null;
+  };
+
+  const markCompactionProgressFailed = (detailPayload) => {
+    const workflowRef = resolveLatestCompactionRef();
+    if (!workflowRef) return false;
+    const itemId = compactionProgressItemMap.get(workflowRef);
+    if (!itemId) return false;
+    const existingItem = assistantMessage.workflowItems.find((item) => item.id === itemId) || null;
+    const existingDetail = safeJsonParse(existingItem?.detail);
+    const mergedDetail = {
+      ...(existingDetail && typeof existingDetail === 'object' ? existingDetail : {}),
+      ...(detailPayload && typeof detailPayload === 'object' ? detailPayload : {}),
+      status: 'failed',
+      stage:
+        detailPayload?.stage
+        ?? existingDetail?.stage
+        ?? 'context_overflow_recovery'
+    };
+    updateWorkflowItem(assistantMessage.workflowItems, itemId, {
+      status: 'failed',
+      detail: buildDetail(mergedDetail)
+    });
+    clearCompactionProgressRef(workflowRef);
+    return true;
+  };
+
+  const resolveCompactionWorkflowRef = (round) => {
+    if (Number.isFinite(round)) {
+      return `compaction:${round}`;
+    }
+    if (!activeCompactionWorkflowRef) {
+      compactionAnonymousRefSeq += 1;
+      activeCompactionWorkflowRef = `compaction:auto:${compactionAnonymousRefSeq}`;
+    }
+    return activeCompactionWorkflowRef;
+  };
+
+  const ensureCompactionProgressItem = (title, detail, workflowRef) => {
+    if (!workflowRef) return null;
+    const existing = compactionProgressItemMap.get(workflowRef);
+    if (existing) {
+      updateWorkflowItem(assistantMessage.workflowItems, existing, {
+        title,
+        detail,
+        status: 'loading',
+        isTool: true,
+        eventType: 'compaction_progress',
+        toolName: '上下文压缩',
+        toolCallId: workflowRef
+      });
+      return existing;
+    }
+    // Keep compaction progress and final result under the same workflow ref,
+    // so the UI can render them as a single evolving timeline entry.
+    const item = buildWorkflowItem(title, detail, 'loading', {
+      isTool: true,
+      eventType: 'compaction_progress',
+      toolName: '上下文压缩',
+      toolCallId: workflowRef
+    });
+    assistantMessage.workflowItems.push(item);
+    compactionProgressItemMap.set(workflowRef, item.id);
+    activeCompactionWorkflowRef = workflowRef;
+    return item.id;
+  };
+
+  const clearCompactionProgressRef = (workflowRef) => {
+    if (workflowRef) {
+      compactionProgressItemMap.delete(workflowRef);
+    }
+    if (!workflowRef || activeCompactionWorkflowRef === workflowRef) {
+      activeCompactionWorkflowRef = null;
+    }
+  };
+
   const updateRoundState = (roundNumber) => {
     if (!Number.isFinite(roundNumber)) {
       return;
@@ -3935,6 +4036,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'progress': {
         const stage = data?.stage ?? payload?.stage;
+        const normalizedStage = String(stage ?? '').trim().toLowerCase();
         let summary = data?.summary ?? payload?.summary;
         let detailSource = data;
         if (stage === 'llm_call') {
@@ -3950,6 +4052,21 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         }
         if (stage === 'tool_failure_guard') {
           appendToolFailureGuardWorkflowItem(data ?? payload);
+          break;
+        }
+        if (
+          normalizedStage === 'compacting'
+          || normalizedStage === 'context_overflow_recovery'
+          || normalizedStage === 'context_guard'
+        ) {
+          summary = resolveCompactionProgressTitle(stage, summary, t) ?? summary;
+          const round = resolveRound(payload, data);
+          const workflowRef = resolveCompactionWorkflowRef(round);
+          ensureCompactionProgressItem(
+            pickText(summary) || t('chat.workflow.progressUpdate'),
+            buildDetail(detailSource),
+            workflowRef
+          );
           break;
         }
         const showStage = stage && !['received', 'llm_call'].includes(stage);
@@ -4317,17 +4434,24 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         break;
       }
       case 'compaction': {
+        const round = resolveRound(payload, data);
+        const workflowRef = Number.isFinite(round)
+          ? resolveCompactionWorkflowRef(round)
+          : activeCompactionWorkflowRef;
+        const normalizedCompactionStatus = String(data?.status ?? payload?.status ?? '').trim().toLowerCase();
         const compactionStatus =
-          String(data?.status ?? payload?.status ?? '').trim().toLowerCase() === 'fallback'
+          normalizedCompactionStatus === 'failed' || normalizedCompactionStatus === 'error'
             ? 'failed'
             : 'completed';
         assistantMessage.workflowItems.push(
-          buildWorkflowItem('上下文压缩', buildDetail(data ?? payload), compactionStatus, {
+          buildWorkflowItem(t('chat.toolWorkflow.compaction.title'), buildDetail(data ?? payload), compactionStatus, {
             isTool: true,
             eventType: 'compaction',
-            toolName: '上下文压缩'
+            toolName: '上下文压缩',
+            toolCallId: workflowRef || undefined
           })
         );
+        clearCompactionProgressRef(workflowRef);
         break;
       }
       case 'quota_usage': {
@@ -4386,8 +4510,23 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       }
       case 'error': {
         const detail = data?.message ?? payload?.message ?? raw ?? t('chat.error.generic');
+        const errorPayload = data && typeof data === 'object'
+          ? data
+          : payload && typeof payload === 'object'
+            ? payload
+            : { message: detail };
+        const errorCode = String(data?.code ?? payload?.code ?? '').trim().toUpperCase();
+        if (errorCode === 'CONTEXT_WINDOW_EXCEEDED' || isContextOverflowText(detail)) {
+          markCompactionProgressFailed({
+            ...((errorPayload && typeof errorPayload === 'object') ? errorPayload : {}),
+            error_code: errorCode || 'CONTEXT_WINDOW_EXCEEDED',
+            error_message: String(detail || '')
+          });
+        }
         assistantMessage.workflowItems.push(
-          buildWorkflowItem(t('chat.workflow.error'), pickText(detail), 'failed')
+          buildWorkflowItem(t('chat.workflow.error'), pickText(detail), 'failed', {
+            eventType: 'error'
+          })
         );
         if (!assistantMessage.content) {
           assistantMessage.content = pickText(detail, t('chat.error.retry'));
@@ -5516,11 +5655,41 @@ export const useChatStore = defineStore('chat', {
           if (!transient) {
             const detail = error?.message || t('chat.workflow.requestFailedDetail');
             errorSeen = true;
+            const normalizedDetail = String(detail || '').trim().toLowerCase();
+            const looksLikeOverflow = [
+              'context_window_exceeded',
+              'context length exceeded',
+              'context window',
+              'input exceeds the context window',
+              'exceeds the model',
+              'prompt is too long',
+              '上下文',
+              '超限',
+              '过长'
+            ].some((token) => normalizedDetail.includes(token));
+            if (looksLikeOverflow) {
+              for (let cursor = assistantMessage.workflowItems.length - 1; cursor >= 0; cursor -= 1) {
+                const item = assistantMessage.workflowItems[cursor];
+                if (item?.eventType !== 'compaction_progress') continue;
+                if (item?.status !== 'loading' && item?.status !== 'pending') continue;
+                const existingDetail = safeJsonParse(item.detail);
+                item.status = 'failed';
+                item.detail = buildDetail({
+                  ...(existingDetail && typeof existingDetail === 'object' ? existingDetail : {}),
+                  status: 'failed',
+                  stage: 'context_overflow_recovery',
+                  error_code: 'CONTEXT_WINDOW_EXCEEDED',
+                  error_message: String(detail || '')
+                });
+                break;
+              }
+            }
             assistantMessage.workflowItems.push(
               buildWorkflowItem(
                 t('chat.workflow.requestFailed'),
                 detail,
-                'failed'
+                'failed',
+                { eventType: 'request_failed' }
               )
             );
             if (!assistantMessage.content) {

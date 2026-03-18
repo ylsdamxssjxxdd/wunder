@@ -12,33 +12,40 @@
         class="tool-workflow-main tool-workflow-main--command"
         :class="{ 'is-empty': section.empty }"
       >
-        <div class="tool-workflow-terminal-head">{{ section.commandView.shell }}</div>
-
-        <pre
-          class="tool-workflow-terminal-body"
-          :ref="(el) => bindStreamBodyRef?.('stdout', el)"
-          @scroll="(event) => onStreamBodyScroll?.('stdout', event)"
-        >{{ section.commandView.terminalText }}</pre>
-
-        <div
-          v-if="section.commandView.exitCode !== null && section.commandView.showExitCode !== false"
-          class="tool-workflow-terminal-footer"
-        >
-          <span class="tool-workflow-terminal-exit-code">
-            exit {{ section.commandView.exitCode }}
-          </span>
-        </div>
+        <MessageToolWorkflowCommandSection
+          :view="section.commandView"
+          :bind-stream-body-ref="bindStreamBodyRef"
+          :on-stream-body-scroll="onStreamBodyScroll"
+        />
       </div>
 
-      <div v-else-if="section.kind === 'patch' && section.patchLines.length" class="tool-workflow-main tool-workflow-main--patch">
-        <div
-          v-for="line in section.patchLines"
-          :key="line.key"
-          :class="['tool-workflow-patch-line', `is-${line.kind}`]"
-        >
-          {{ line.text }}
-        </div>
+      <div v-else-if="section.kind === 'patch'" class="tool-workflow-main tool-workflow-main--patch">
+        <MessageToolWorkflowPatchSection
+          v-if="section.patchView"
+          :view="section.patchView"
+        />
+        <template v-else-if="section.patchLines.length">
+          <div
+            v-for="line in section.patchLines"
+            :key="line.key"
+            :class="['tool-workflow-patch-line', `is-${line.kind}`]"
+          >
+            {{ line.text }}
+          </div>
+        </template>
       </div>
+
+      <MessageToolWorkflowCompactionSection
+        v-else-if="section.kind === 'compaction' && section.compactionView"
+        :view="section.compactionView"
+        :body="section.body"
+      />
+
+      <MessageToolWorkflowStructuredSection
+        v-else-if="section.kind === 'structured' && section.structuredView"
+        :view="section.structuredView"
+        :body="section.body"
+      />
 
       <pre
         v-else-if="section.body || !section.summary"
@@ -52,6 +59,10 @@
 <script setup lang="ts">
 import type { ComponentPublicInstance } from 'vue';
 
+import MessageToolWorkflowCommandSection from './MessageToolWorkflowCommandSection.vue';
+import MessageToolWorkflowCompactionSection from './MessageToolWorkflowCompactionSection.vue';
+import MessageToolWorkflowPatchSection from './MessageToolWorkflowPatchSection.vue';
+import MessageToolWorkflowStructuredSection from './MessageToolWorkflowStructuredSection.vue';
 import type { ToolWorkflowDetailSection } from './toolWorkflowTypes';
 
 type CommandStreamName = 'stdout' | 'stderr';

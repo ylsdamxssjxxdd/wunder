@@ -595,6 +595,41 @@ const desktopAppId = 'com.wunder.desktop'
 const closePreferenceFileName = 'window-close-preference.json'
 const closeBehaviorValues = new Set(['ask', 'tray', 'quit'])
 
+const supportsLaunchAtLogin = () => process.platform === 'win32' || process.platform === 'darwin'
+
+const resolveLaunchAtLoginArgs = () =>
+  process.argv
+    .slice(1)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+
+const resolveLaunchAtLoginQueryOptions = () => {
+  if (!supportsLaunchAtLogin() || app.isPackaged) {
+    return undefined
+  }
+  return {
+    path: process.execPath,
+    args: resolveLaunchAtLoginArgs()
+  }
+}
+
+const resolveLaunchAtLoginMutationOptions = (enabled) => {
+  if (!supportsLaunchAtLogin()) {
+    return null
+  }
+  const options = {
+    openAtLogin: enabled === true
+  }
+  if (app.isPackaged) {
+    return options
+  }
+  return {
+    ...options,
+    path: process.execPath,
+    args: resolveLaunchAtLoginArgs()
+  }
+}
+
 const prependProcessPathEntries = (entries) => {
   const existing = String(process.env.PATH || '')
     .split(path.delimiter)
@@ -773,6 +808,40 @@ const saveCloseBehavior = (value) => {
     console.warn('Failed to persist close preference:', error)
     return false
   }
+}
+
+const getLaunchAtLoginState = () => {
+  if (!supportsLaunchAtLogin()) {
+    return {
+      supported: false,
+      enabled: false
+    }
+  }
+  try {
+    const settings = app.getLoginItemSettings(resolveLaunchAtLoginQueryOptions())
+    return {
+      supported: true,
+      enabled: settings.openAtLogin === true
+    }
+  } catch (error) {
+    console.warn('Failed to read launch-at-login state:', error)
+    return {
+      supported: false,
+      enabled: false
+    }
+  }
+}
+
+const setLaunchAtLoginState = (value) => {
+  const options = resolveLaunchAtLoginMutationOptions(value)
+  if (!options) {
+    return {
+      supported: false,
+      enabled: false
+    }
+  }
+  app.setLoginItemSettings(options)
+  return getLaunchAtLoginState()
 }
 
 const writeFileIfChanged = (filePath, content, mode) => {
@@ -2346,6 +2415,12 @@ if (!gotLock) {
         const normalized = sanitizeCloseBehavior(requested)
         saveCloseBehavior(normalized)
         return sanitizeCloseBehavior(closeBehavior)
+      })
+      ipcMain.handle('wunder:launch-at-login-get', () => getLaunchAtLoginState())
+      ipcMain.handle('wunder:launch-at-login-set', (_event, payload) => {
+        const enabled =
+          payload && typeof payload === 'object' ? payload.enabled === true : payload === true
+        return setLaunchAtLoginState(enabled)
       })
       ipcMain.handle('wunder:window-start-drag', () => false)
       ipcMain.handle('wunder:clipboard-write-text', (_event, payload) => {

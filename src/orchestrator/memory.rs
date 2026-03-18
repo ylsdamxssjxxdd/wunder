@@ -124,16 +124,27 @@ impl Orchestrator {
         emitter: &EventEmitter,
         current_question: &str,
         log_payload: bool,
+        persisted_context_tokens: i64,
+        request_overhead_tokens: i64,
         force: bool,
         exclude_current_user: bool,
     ) -> Result<Vec<Value>, OrchestratorError> {
         if is_admin && !force {
             return Ok(messages);
         }
+        let request_overhead_tokens = request_overhead_tokens.max(0);
+        let persisted_context_tokens = persisted_context_tokens.max(0);
         let context_tokens = estimate_messages_tokens(&messages);
-        let Some(limit) = resolve_compaction_limit(llm_config, context_tokens, force) else {
+        let projected_request_tokens = resolve_projected_request_tokens(
+            context_tokens,
+            persisted_context_tokens,
+            request_overhead_tokens,
+        );
+        let Some(limit) = resolve_compaction_limit(llm_config, projected_request_tokens, force)
+        else {
             return Ok(messages);
         };
+        let message_budget = resolve_message_budget(limit, request_overhead_tokens);
         let max_context = llm_config.max_context.unwrap_or(0) as i64;
         let mut ratio = llm_config
             .history_compaction_ratio
@@ -149,14 +160,14 @@ impl Orchestrator {
             None
         };
         let (mut should_compact_by_history, mut should_compact) =
-            should_compact_by_context(context_tokens, limit, history_threshold);
+            should_compact_by_context(projected_request_tokens, limit, history_threshold);
         if force && !should_compact {
             should_compact = true;
             if !should_compact_by_history {
                 should_compact_by_history = true;
             }
         }
-        let total_tokens = context_tokens;
+        let total_tokens = projected_request_tokens;
         let history_usage = context_tokens;
         if !should_compact {
             return Ok(messages);
@@ -250,13 +261,15 @@ impl Orchestrator {
         let has_candidates = !source_messages.is_empty();
         if user_content.trim().is_empty() && (!force || !has_candidates) {
             let mut guarded_messages = messages.clone();
-            let guard_stats = apply_rebuilt_context_guard(&mut guarded_messages, limit);
+            let guard_stats = apply_rebuilt_context_guard(&mut guarded_messages, message_budget);
             if guard_stats.applied {
                 let mut guard_payload = json!({
                     "stage": "context_guard",
                     "summary": "Context guard trimmed oversized user input before model call.",
                     "tokens_before": guard_stats.tokens_before,
                     "tokens_after": guard_stats.tokens_after,
+                    "request_overhead_tokens": request_overhead_tokens,
+                    "message_budget": message_budget,
                     "current_user_trimmed": guard_stats.current_user_trimmed,
                     "summary_trimmed": guard_stats.summary_trimmed,
                     "summary_removed": guard_stats.summary_removed,
@@ -275,8 +288,12 @@ impl Orchestrator {
                 "fresh_memory_count": 0,
                 "history_usage": history_usage,
                 "context_tokens": history_usage,
+                "persisted_context_tokens": persisted_context_tokens,
+                "projected_request_tokens": projected_request_tokens,
+                "request_overhead_tokens": request_overhead_tokens,
                 "history_threshold": history_threshold,
                 "limit": limit,
+                "message_budget": message_budget,
                 "total_tokens": total_tokens,
                 "reset_mode": reset_mode,
                 "context_guard_applied": guard_stats.applied,
@@ -469,7 +486,7 @@ impl Orchestrator {
             };
             summary_text = HistoryManager::format_compaction_summary(&fallback_content);
         }
-        let (fresh_memory_block, fresh_memory_count) = self
+        let (fresh_memory_block, fresh_memory_count, fresh_memory_total_count) = self
             .build_fresh_memory_block_for_compaction(
                 config,
                 user_id,
@@ -493,7 +510,8 @@ impl Orchestrator {
         let base_tokens = estimate_messages_tokens(&base_messages);
         for _ in 0..3 {
             let summary_message = json!({ "role": "user", "content": summary_text });
-            let total_tokens = base_tokens + estimate_message_tokens(&summary_message);
+            let total_tokens =
+                base_tokens + estimate_message_tokens(&summary_message) + request_overhead_tokens;
             if total_tokens <= limit {
                 break;
             }
@@ -545,7 +563,7 @@ impl Orchestrator {
 
         let mut current_user_message_for_history_trimmed = false;
         let current_user_message_for_history = current_user_message.as_ref().map(|message| {
-            if let Some(trimmed) = trim_message_to_fit_tokens(message, limit) {
+            if let Some(trimmed) = trim_message_to_fit_tokens(message, message_budget) {
                 current_user_message_for_history_trimmed = true;
                 trimmed
             } else {
@@ -599,9 +617,10 @@ impl Orchestrator {
         } else if !question_text.is_empty() {
             rebuilt.push(json!({ "role": "user", "content": question_text }));
         }
-        let mut rebuilt = self.shrink_messages_to_limit(rebuilt, limit);
-        let guard_stats = apply_rebuilt_context_guard(&mut rebuilt, limit);
+        let mut rebuilt = self.shrink_messages_to_limit(rebuilt, message_budget);
+        let guard_stats = apply_rebuilt_context_guard(&mut rebuilt, message_budget);
         let rebuilt_tokens = estimate_messages_tokens(&rebuilt);
+        let rebuilt_request_tokens = rebuilt_tokens.saturating_add(request_overhead_tokens);
 
         if guard_stats.applied {
             let mut guard_payload = json!({
@@ -609,6 +628,8 @@ impl Orchestrator {
                 "summary": "Context guard trimmed oversized compaction payload.",
                 "tokens_before": guard_stats.tokens_before,
                 "tokens_after": guard_stats.tokens_after,
+                "request_overhead_tokens": request_overhead_tokens,
+                "message_budget": message_budget,
                 "current_user_replay_trimmed": current_user_message_for_history_trimmed,
                 "current_user_trimmed": guard_stats.current_user_trimmed,
                 "summary_trimmed": guard_stats.summary_trimmed,
@@ -627,14 +648,20 @@ impl Orchestrator {
             "summary_fallback": summary_fallback,
             "fresh_memory_injected": fresh_memory_injected,
             "fresh_memory_count": fresh_memory_count,
+            "fresh_memory_total_count": fresh_memory_total_count,
             "summary_tokens": approx_token_count(&summary_text),
             "total_tokens": total_tokens,
-            "total_tokens_after": rebuilt_tokens,
+            "total_tokens_after": rebuilt_request_tokens,
             "history_usage": history_usage,
             "context_tokens": history_usage,
             "context_tokens_after": rebuilt_tokens,
+            "persisted_context_tokens": persisted_context_tokens,
+            "projected_request_tokens": projected_request_tokens,
+            "projected_request_tokens_after": rebuilt_request_tokens,
+            "request_overhead_tokens": request_overhead_tokens,
             "history_threshold": history_threshold,
             "limit": limit,
+            "message_budget": message_budget,
             "reset_mode": reset_mode,
             "context_guard_applied": guard_stats.applied,
             "context_guard_tokens_before": guard_stats.tokens_before,
@@ -664,11 +691,11 @@ impl Orchestrator {
         agent_id: Option<&str>,
         session_id: &str,
         query_text: Option<&str>,
-    ) -> (String, usize) {
+    ) -> (String, usize, usize) {
         let fragment_store =
             crate::services::memory_fragments::MemoryFragmentStore::new(self.storage.clone());
-        let hits = fragment_store
-            .recall_for_prompt(
+        let inventory = fragment_store
+            .recall_for_prompt_inventory(
                 Some(config),
                 user_id,
                 agent_id,
@@ -678,9 +705,10 @@ impl Orchestrator {
                 Some(PROMPT_MEMORY_RECALL_LIMIT),
             )
             .await;
-        let hit_count = hits.len();
-        let block = fragment_store.build_prompt_block(&hits);
-        (block, hit_count)
+        let hit_count = inventory.hits.len();
+        let total_count = inventory.total_available;
+        let block = fragment_store.build_prompt_block(&inventory.hits, total_count);
+        (block, hit_count, total_count)
     }
 
     pub(crate) async fn force_compact_session(
@@ -771,6 +799,8 @@ impl Orchestrator {
                 &emitter,
                 "",
                 log_payload,
+                0,
+                0,
                 true,
                 false,
             )
@@ -828,8 +858,8 @@ impl Orchestrator {
         let config = self.config_store.get().await;
         let fragment_store =
             crate::services::memory_fragments::MemoryFragmentStore::new(self.storage.clone());
-        let hits = fragment_store
-            .recall_for_prompt(
+        let inventory = fragment_store
+            .recall_for_prompt_inventory(
                 Some(&config),
                 user_id,
                 agent_id,
@@ -839,7 +869,7 @@ impl Orchestrator {
                 Some(PROMPT_MEMORY_RECALL_LIMIT),
             )
             .await;
-        let block = fragment_store.build_prompt_block(&hits);
+        let block = fragment_store.build_prompt_block(&inventory.hits, inventory.total_available);
 
         if has_placeholder {
             let replacement = block.trim();
@@ -1671,6 +1701,20 @@ fn should_compact_by_context(
     )
 }
 
+fn resolve_message_budget(limit: i64, request_overhead_tokens: i64) -> i64 {
+    limit.saturating_sub(request_overhead_tokens.max(0)).max(1)
+}
+
+fn resolve_projected_request_tokens(
+    context_tokens: i64,
+    persisted_context_tokens: i64,
+    request_overhead_tokens: i64,
+) -> i64 {
+    context_tokens
+        .max(persisted_context_tokens)
+        .saturating_add(request_overhead_tokens.max(0))
+}
+
 fn resolve_compaction_limit(
     llm_config: &LlmModelConfig,
     context_tokens: i64,
@@ -1862,6 +1906,18 @@ mod tests {
         let limit = resolve_compaction_limit(&cfg, 48000, true).unwrap_or_default();
         assert!(limit >= COMPACTION_SUMMARY_MESSAGE_MAX_TOKENS);
         assert!(limit <= COMPACTION_FORCE_FALLBACK_LIMIT);
+    }
+
+    #[test]
+    fn test_resolve_message_budget_reserves_tool_overhead() {
+        assert_eq!(resolve_message_budget(4096, 512), 3584);
+        assert_eq!(resolve_message_budget(256, 4096), 1);
+    }
+
+    #[test]
+    fn test_resolve_projected_request_tokens_prefers_persisted_peak() {
+        assert_eq!(resolve_projected_request_tokens(2000, 3000, 400), 3400);
+        assert_eq!(resolve_projected_request_tokens(5000, 3000, 400), 5400);
     }
 
     #[test]

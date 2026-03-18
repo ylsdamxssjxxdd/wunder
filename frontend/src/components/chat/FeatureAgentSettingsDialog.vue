@@ -34,12 +34,6 @@
             :placeholder="t('portal.agent.form.placeholder.prompt')"
           />
         </el-form-item>
-        <el-form-item
-          class="agent-form-item agent-form-item--preset-questions"
-          :label="t('portal.agent.form.presetQuestions')"
-        >
-          <AgentPresetQuestionsField v-model="form.preset_questions" />
-        </el-form-item>
         <el-form-item class="agent-form-item agent-form-item--tools" :label="t('portal.agent.form.tools')">
           <div class="agent-tool-picker">
             <div v-if="toolLoading" class="agent-tool-loading">{{ t('portal.agent.tools.loading') }}</div>
@@ -111,6 +105,12 @@
               </div>
             </div>
           </div>
+        </el-form-item>
+        <el-form-item
+          class="agent-form-item agent-form-item--preset-questions"
+          :label="t('portal.agent.form.presetQuestions')"
+        >
+          <AgentPresetQuestionsField v-model="form.preset_questions" />
         </el-form-item>
       </el-form>
     </div>
