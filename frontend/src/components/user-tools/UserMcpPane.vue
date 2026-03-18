@@ -352,7 +352,6 @@ const detailMeta = computed(() => {
   if (server.transport) {
     metaParts.push(`transport=${server.transport}`);
   }
-  metaParts.push(server.enabled !== false ? t('common.enabled') : t('common.disabled'));
   return metaParts.join(' · ');
 });
 
@@ -442,9 +441,9 @@ const normalizeUserMcpServer = (server) => {
     description: server?.description || '',
     headers,
     auth: server?.auth || '',
-    allow_tools: Array.isArray(server?.allow_tools) ? server.allow_tools : [],
+    allow_tools: [],
     shared_tools: Array.isArray(server?.shared_tools) ? server.shared_tools : [],
-    enabled: server?.enabled !== false,
+    enabled: true,
     tool_specs: rawToolSpecs
   };
 };
@@ -456,7 +455,6 @@ const buildUserMcpStructPreview = (server) => {
   const config = {
     type: server.transport || undefined,
     description: server.description || undefined,
-    isActive: server.enabled !== false,
     name: server.display_name || server.name,
     baseUrl: server.endpoint,
     headers: server.headers && Object.keys(server.headers).length ? server.headers : undefined
@@ -498,8 +496,7 @@ const buildUserMcpServerFromConfig = (serverId, rawConfig) => {
     description: config.description || '',
     headers,
     auth: config.auth || '',
-    allow_tools: config.allow_tools || config.allowTools || [],
-    enabled: config.isActive ?? config.enabled ?? true,
+    allow_tools: [],
     tool_specs: []
   });
 };
@@ -508,15 +505,11 @@ const upsertUserMcpServer = (incoming) => {
   const targetIndex = servers.value.findIndex((item) => item.name === incoming.name);
   if (targetIndex >= 0) {
     const previous = servers.value[targetIndex];
-    const allowTools =
-      Array.isArray(incoming.allow_tools) && incoming.allow_tools.length
-        ? incoming.allow_tools
-        : previous.allow_tools;
     const toolSpecs =
       Array.isArray(incoming.tool_specs) && incoming.tool_specs.length
         ? incoming.tool_specs
         : previous.tool_specs;
-    servers.value[targetIndex] = { ...previous, ...incoming, allow_tools: allowTools, tool_specs: toolSpecs };
+    servers.value[targetIndex] = { ...previous, ...incoming, allow_tools: [], enabled: true, tool_specs: toolSpecs };
     toolsByIndex.value[targetIndex] = toolSpecs || [];
     return targetIndex;
   }
@@ -559,13 +552,13 @@ const saveServers = async () => {
         headers: server.headers || {},
         auth: server.auth || '',
         tool_specs: Array.isArray(server.tool_specs) ? server.tool_specs : [],
-        allow_tools: Array.isArray(server.allow_tools) ? server.allow_tools : [],
+        allow_tools: [],
         shared_tools: isLocalMode.value
           ? []
           : Array.isArray(server.shared_tools)
           ? server.shared_tools
           : [],
-        enabled: server.enabled !== false
+        enabled: true
       }))
     };
     const { data } = await saveUserMcpServers(payload);
@@ -730,7 +723,6 @@ const addServer = () => {
     headers: {},
     allow_tools: [],
     shared_tools: [],
-    enabled: true,
     tool_specs: []
   });
   servers.value.push(next);
@@ -841,14 +833,6 @@ const refreshAll = async () => {
   ElMessage.success(t('userTools.mcp.refreshAllSuccess'));
 };
 
-const isToolEnabled = (tool) => {
-  const server = activeServer.value;
-  if (!server) return false;
-  const allowList = Array.isArray(server.allow_tools) ? server.allow_tools : [];
-  const implicitAll = server.enabled !== false && allowList.length === 0;
-  return implicitAll || allowList.includes(tool.name);
-};
-
 const isToolShared = (tool) => {
   const server = activeServer.value;
   if (!server) return false;
@@ -856,69 +840,18 @@ const isToolShared = (tool) => {
   return sharedList.includes(tool.name);
 };
 
-const toggleToolEnable = (tool, checked) => {
-  const server = activeServer.value;
-  if (!server) return;
-  const tools = activeTools.value || [];
-  const allowList = Array.isArray(server.allow_tools) ? server.allow_tools : [];
-  const implicitAll = server.enabled !== false && allowList.length === 0;
-  let nextAllow = implicitAll ? tools.map((item) => item.name) : allowList.slice();
-  if (checked) {
-    if (!nextAllow.includes(tool.name)) {
-      nextAllow.push(tool.name);
-    }
-    server.enabled = true;
-  } else {
-    nextAllow = nextAllow.filter((name) => name !== tool.name);
-    server.shared_tools = (Array.isArray(server.shared_tools) ? server.shared_tools : []).filter(
-      (name) => name !== tool.name
-    );
-    if (nextAllow.length === 0) {
-      server.enabled = false;
-    }
-  }
-  server.allow_tools = nextAllow;
-  scheduleSave();
-};
-
 const toggleToolShare = (tool, checked) => {
   const server = activeServer.value;
   if (!server) return;
-  const tools = activeTools.value || [];
-  const allowList = Array.isArray(server.allow_tools) ? server.allow_tools : [];
-  const implicitAll = server.enabled !== false && allowList.length === 0;
-  let nextAllow = implicitAll ? tools.map((item) => item.name) : allowList.slice();
   let nextShared = Array.isArray(server.shared_tools) ? server.shared_tools.slice() : [];
   if (checked) {
     if (!nextShared.includes(tool.name)) {
       nextShared.push(tool.name);
     }
-    if (!nextAllow.includes(tool.name)) {
-      nextAllow.push(tool.name);
-    }
-    server.enabled = true;
   } else {
     nextShared = nextShared.filter((name) => name !== tool.name);
   }
-  server.allow_tools = nextAllow;
   server.shared_tools = nextShared;
-  scheduleSave();
-};
-
-const enableAllTools = () => {
-  const server = activeServer.value;
-  if (!server || !activeTools.value.length) return;
-  server.enabled = true;
-  server.allow_tools = activeTools.value.map((tool) => tool.name);
-  scheduleSave();
-};
-
-const disableAllTools = () => {
-  const server = activeServer.value;
-  if (!server) return;
-  server.allow_tools = [];
-  server.shared_tools = [];
-  server.enabled = false;
   scheduleSave();
 };
 
@@ -930,10 +863,6 @@ const openToolDetail = (tool) => {
     t('userTools.mcp.meta.title'),
     t('userTools.mcp.meta.server', { name: serverTitle })
   ];
-  metaParts.push(
-    server.enabled !== false ? t('userTools.mcp.meta.serverEnabled') : t('userTools.mcp.meta.serverDisabled')
-  );
-  metaParts.push(isToolEnabled(tool) ? t('common.enabled') : t('common.disabled'));
   if (!isLocalMode.value) {
     metaParts.push(isToolShared(tool) ? t('userTools.shared.on') : t('userTools.shared.off'));
   }

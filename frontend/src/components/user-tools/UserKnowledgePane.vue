@@ -374,12 +374,6 @@
             :placeholder="t('knowledge.modal.placeholder.description')"
           />
         </div>
-        <div class="form-row">
-          <label class="checkbox-row">
-            <input type="checkbox" v-model="knowledgeForm.enabled" />
-            <span>{{ t('common.enable') }}</span>
-          </label>
-        </div>
         <div v-if="!isLocalMode" class="form-row">
           <label class="checkbox-row">
             <input type="checkbox" v-model="knowledgeForm.shared" />
@@ -641,7 +635,6 @@ const knowledgeTestLoading = ref(false);
 const knowledgeForm = reactive({
   name: '',
   description: '',
-  enabled: true,
   shared: false,
   base_type: 'literal',
   embedding_model: '',
@@ -841,12 +834,7 @@ const detailMeta = computed(() => {
     return '';
   }
   const root = activeBase.value.root || t('userTools.knowledge.root.uncreated');
-  const parts = [
-    root,
-    activeBase.value.enabled !== false
-      ? t('knowledge.status.enabled')
-      : t('knowledge.status.disabled')
-  ];
+  const parts = [root];
   parts.push(isVectorBase.value ? t('knowledge.type.vector') : t('knowledge.type.literal'));
   if (isVectorBase.value && activeBase.value.embedding_model) {
     parts.push(
@@ -921,7 +909,6 @@ const normalizeKnowledgeConfig = (raw) => {
             name: base.name || '',
             description: base.description || '',
             root: base.root || '',
-            enabled: base.enabled !== false,
             shared: Boolean(base.shared),
             base_type: normalizeBaseType(base.base_type),
             embedding_model: base.embedding_model || '',
@@ -939,7 +926,6 @@ const buildConfigPayload = () => ({
     .map((base) => ({
       name: base.name.trim(),
       description: base.description || '',
-      enabled: base.enabled !== false,
       shared: isLocalMode.value ? false : base.shared === true,
       base_type: normalizeBaseType(base.base_type),
       embedding_model: base.embedding_model || '',
@@ -1094,7 +1080,6 @@ const selectBase = async (index) => {
 const resetKnowledgeForm = () => {
   knowledgeForm.name = '';
   knowledgeForm.description = '';
-  knowledgeForm.enabled = true;
   knowledgeForm.shared = false;
   knowledgeForm.base_type = 'literal';
   knowledgeForm.embedding_model = '';
@@ -1109,7 +1094,6 @@ const openKnowledgeModal = (base = null, index = -1) => {
   knowledgeEditingIndex.value = Number.isInteger(index) ? index : -1;
   knowledgeForm.name = base?.name || '';
   knowledgeForm.description = base?.description || '';
-  knowledgeForm.enabled = base?.enabled !== false;
   knowledgeForm.shared = !isLocalMode.value && base?.shared === true;
   knowledgeForm.base_type = normalizeBaseType(base?.base_type);
   knowledgeForm.embedding_model = base?.embedding_model || '';
@@ -1157,7 +1141,6 @@ const getKnowledgeFormPayload = () => {
   return {
     name: knowledgeForm.name.trim(),
     description: knowledgeForm.description.trim(),
-    enabled: knowledgeForm.enabled !== false,
     shared: !isLocalMode.value && knowledgeForm.shared === true,
     base_type: baseType,
     embedding_model: isVector ? knowledgeForm.embedding_model.trim() : '',

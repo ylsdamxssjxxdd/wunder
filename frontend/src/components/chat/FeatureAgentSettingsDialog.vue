@@ -145,8 +145,7 @@ import { useAgentStore } from '@/stores/agents';
 import { useBeeroomStore } from '@/stores/beeroom';
 import {
   buildAgentToolSections,
-  type AgentToolGroup,
-  type AgentToolSection
+  type AgentToolGroup
 } from '@/utils/agentToolCatalog';
 import {
   buildDeclaredDependencyPayload,
@@ -281,9 +280,6 @@ const normalizeToolOption = (item) => {
   if (!option.hint) option.hint = option.label;
   return option;
 };
-
-const normalizeOptions = (list) =>
-  Array.isArray(list) ? list.map((item) => normalizeToolOption(item)).filter(Boolean) : [];
 
 const toolSections = computed(() =>
   buildAgentToolSections(toolSummary.value, t, normalizeToolOption)
