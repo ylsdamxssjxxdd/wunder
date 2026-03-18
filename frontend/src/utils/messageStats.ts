@@ -60,7 +60,7 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
   return (prefill ?? 0) + (decode ?? 0);
 };
 
-const resolveTokenSpeed = (stats: Record<string, any>, durationSeconds: number | null): number | null => {
+const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   const averageSpeed = Number(
     stats?.avg_model_round_speed_tps ??
       stats?.avgModelRoundSpeedTps ??
@@ -91,14 +91,6 @@ const resolveTokenSpeed = (stats: Record<string, any>, durationSeconds: number |
     const speed = normalizeSpeed(outputTokens / decode, decode);
     if (speed !== null) return speed;
   }
-  if (Number.isFinite(outputTokens) && outputTokens > 0 && durationSeconds && durationSeconds > 0) {
-    const speed = normalizeSpeed(outputTokens / durationSeconds, durationSeconds);
-    if (speed !== null) return speed;
-  }
-  const totalTokens = Number(stats?.usage?.total);
-  if (Number.isFinite(totalTokens) && totalTokens > 0 && durationSeconds && durationSeconds > 0) {
-    return normalizeSpeed(totalTokens / durationSeconds, durationSeconds);
-  }
   return null;
 };
 
@@ -115,8 +107,12 @@ export const buildAssistantMessageStatsEntries = (
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return [];
   const durationSeconds = resolveDurationSeconds(stats);
-  const speed = resolveTokenSpeed(stats, durationSeconds);
+  const speed = resolveTokenSpeed(stats);
+  const usageTotalTokens = Number(stats?.usage?.total);
   const contextTokens =
+    (Number.isFinite(usageTotalTokens) && usageTotalTokens > 0
+      ? usageTotalTokens
+      : null) ??
     stats?.contextTokens ??
     stats?.context_tokens ??
     stats?.context_usage?.context_tokens ??

@@ -158,6 +158,7 @@ impl PromptComposer {
         workspace: &WorkspaceManager,
         workspace_id: &str,
         prompt_owner_user_id: &str,
+        current_agent_id: Option<&str>,
         workdir: &Path,
         overrides: Option<&Value>,
         allowed_tool_names: &HashSet<String>,
@@ -181,12 +182,13 @@ impl PromptComposer {
             .unwrap_or(0.0);
         let overrides_key = build_overrides_key(overrides);
         let agent_prompt_key = build_prompt_key(agent_prompt);
+        let current_agent_key = normalize_inner_visible_agent_id(current_agent_id);
         let prompt_template_scope = resolve_prompt_template_scope(config, prompt_owner_user_id);
         let prompt_template_key = build_prompt_template_cache_key(&prompt_template_scope);
         let templates_revision = system_prompt_templates_revision();
         let workdir_key = workdir.to_string_lossy();
         let base_key = format!(
-            "{workspace_id}|{config_version}|{prompt_template_key}|{templates_revision}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
+            "{workspace_id}|{current_agent_key}|{config_version}|{prompt_template_key}|{templates_revision}|{workdir_key}|{overrides_key}|{tool_key}|{tool_mode_key}|{user_tool_version}|{shared_tool_version}|{agent_prompt_key}|{language}"
         );
         let workspace_version = workspace.get_tree_cache_version(workspace_id);
         let cache_key = format!("{base_key}|{workspace_version}");
@@ -297,6 +299,7 @@ impl PromptComposer {
                 &build_inner_visible_prompt_mapping(
                     workspace,
                     prompt_owner_user_id,
+                    current_agent_id,
                     is_local_runtime_mode(&config.server.mode),
                 ),
             );
@@ -669,6 +672,7 @@ fn build_system_prompt_skeleton(
 fn build_inner_visible_prompt_mapping(
     workspace: &WorkspaceManager,
     prompt_owner_user_id: &str,
+    current_agent_id: Option<&str>,
     is_local_runtime: bool,
 ) -> HashMap<String, String> {
     let private_workspace_id =
@@ -678,32 +682,25 @@ fn build_inner_visible_prompt_mapping(
     let skills_dir = private_root.join("skills");
     let knowledge_dir = private_root.join("knowledge");
     let agents_dir = private_root.join("agents");
-    let default_agent_dir = agents_dir.join(DEFAULT_AGENT_ID_ALIAS);
-    let diagnostics_global = private_root.join(".wunder").join("diagnostics").join("global.json");
-    let effective_global = private_root.join(".wunder").join("effective").join("global.json");
-    let last_good_root = private_root.join(".wunder").join("last_good");
+    let global_tooling_file = global_dir.join("tooling.json");
+    let global_defaults_card = global_dir.join("defaults.worker-card.json");
+    let current_agent_id = normalize_inner_visible_agent_id(current_agent_id);
+    let current_agent_card = agents_dir.join(format!("{current_agent_id}.worker-card.json"));
+    let default_agent_only_note = if current_agent_id == DEFAULT_AGENT_ID_ALIAS {
+        "当前为默认智能体 / default agent in use: agents/__default__.worker-card.json"
+            .to_string()
+    } else {
+        "当前为普通智能体 / non-default agent: do not edit agents/__default__.worker-card.json unless user explicitly asks"
+            .to_string()
+    };
 
     let display = |path: &Path| -> String {
-        resolve_inner_visible_display_path(
-            workspace,
-            &private_workspace_id,
-            path,
-            is_local_runtime,
-        )
+        resolve_inner_visible_display_path(workspace, &private_workspace_id, path, is_local_runtime)
     };
-    let agent_template_dir = format!("{}/<agent_id>", display(&agents_dir).trim_end_matches('/'));
 
     HashMap::from([
         ("INNER_VISIBLE_ROOT".to_string(), display(&private_root)),
         ("INNER_VISIBLE_GLOBAL_DIR".to_string(), display(&global_dir)),
-        (
-            "INNER_VISIBLE_GLOBAL_TOOLING".to_string(),
-            display(&global_dir.join("tooling.json")),
-        ),
-        (
-            "INNER_VISIBLE_GLOBAL_DEFAULTS".to_string(),
-            display(&global_dir.join("defaults.worker-card.json")),
-        ),
         ("INNER_VISIBLE_SKILLS_DIR".to_string(), display(&skills_dir)),
         (
             "INNER_VISIBLE_KNOWLEDGE_DIR".to_string(),
@@ -711,42 +708,38 @@ fn build_inner_visible_prompt_mapping(
         ),
         ("INNER_VISIBLE_AGENTS_DIR".to_string(), display(&agents_dir)),
         (
-            "INNER_VISIBLE_AGENT_TEMPLATE_DIR".to_string(),
-            agent_template_dir.clone(),
+            "INNER_VISIBLE_GLOBAL_TOOLING_FILE".to_string(),
+            display(&global_tooling_file),
         ),
         (
-            "INNER_VISIBLE_AGENT_TEMPLATE_CARD".to_string(),
-            format!("{agent_template_dir}/worker-card.json"),
+            "INNER_VISIBLE_GLOBAL_DEFAULTS_CARD".to_string(),
+            display(&global_defaults_card),
         ),
         (
-            "INNER_VISIBLE_AGENT_TEMPLATE_PROMPT".to_string(),
-            format!("{agent_template_dir}/system_prompt.md"),
+            "INNER_VISIBLE_CURRENT_AGENT_ID".to_string(),
+            current_agent_id,
         ),
         (
-            "INNER_VISIBLE_DEFAULT_AGENT_DIR".to_string(),
-            display(&default_agent_dir),
+            "INNER_VISIBLE_CURRENT_AGENT_CARD".to_string(),
+            display(&current_agent_card),
         ),
         (
-            "INNER_VISIBLE_DEFAULT_AGENT_CARD".to_string(),
-            display(&default_agent_dir.join("worker-card.json")),
-        ),
-        (
-            "INNER_VISIBLE_DEFAULT_AGENT_PROMPT".to_string(),
-            display(&default_agent_dir.join("system_prompt.md")),
-        ),
-        (
-            "INNER_VISIBLE_DIAGNOSTICS_GLOBAL".to_string(),
-            display(&diagnostics_global),
-        ),
-        (
-            "INNER_VISIBLE_EFFECTIVE_GLOBAL".to_string(),
-            display(&effective_global),
-        ),
-        (
-            "INNER_VISIBLE_LAST_GOOD_ROOT".to_string(),
-            display(&last_good_root),
+            "INNER_VISIBLE_DEFAULT_AGENT_ONLY_NOTE".to_string(),
+            default_agent_only_note,
         ),
     ])
+}
+
+fn normalize_inner_visible_agent_id(agent_id: Option<&str>) -> String {
+    let cleaned = agent_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_AGENT_ID_ALIAS);
+    if cleaned.eq_ignore_ascii_case("default") {
+        DEFAULT_AGENT_ID_ALIAS.to_string()
+    } else {
+        cleaned.to_string()
+    }
 }
 
 fn resolve_inner_visible_display_path(

@@ -44,6 +44,9 @@ const QQBOT_EVENT_AT_MESSAGE_CREATE: &str = "AT_MESSAGE_CREATE";
 const QQBOT_EVENT_DIRECT_MESSAGE_CREATE: &str = "DIRECT_MESSAGE_CREATE";
 const QQBOT_EVENT_GROUP_AT_MESSAGE_CREATE: &str = "GROUP_AT_MESSAGE_CREATE";
 const ED25519_SEED_SIZE: usize = 32;
+const QQBOT_RICH_MEDIA_IMAGE: u64 = 1;
+const QQBOT_RICH_MEDIA_VIDEO: u64 = 2;
+const QQBOT_RICH_MEDIA_AUDIO: u64 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QqBotCredentials {
@@ -377,21 +380,221 @@ pub async fn send_outbound(
     let access_token = fetch_access_token(http, config).await?;
 
     let peer_kind = outbound.peer.kind.trim().to_ascii_lowercase();
-    let mut text = outbound
+    let text = outbound
         .text
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| value.to_string())
         .unwrap_or_default();
-    if text.is_empty() {
-        text = outbound
-            .attachments
-            .first()
-            .map(|attachment| format!("[{}] {}", attachment.kind, attachment.url))
-            .unwrap_or_else(|| "(empty message)".to_string());
+    let text_url = resolve_text_message_url(outbound.peer.id.as_str(), peer_kind.as_str());
+    let rich_url = resolve_rich_media_url(outbound.peer.id.as_str(), peer_kind.as_str());
+    let mut fallback_lines: Vec<String> = Vec::new();
+    let mut sent_anything = false;
+
+    if let Some(url) = rich_url.as_deref() {
+        for attachment in &outbound.attachments {
+            let Some(payload) = build_rich_media_payload(attachment) else {
+                if let Some(line) = outbound_attachment_line(attachment) {
+                    fallback_lines.push(line);
+                }
+                continue;
+            };
+            post_message(http, app_id, access_token.as_str(), url, payload).await?;
+            sent_anything = true;
+        }
+    } else {
+        for attachment in &outbound.attachments {
+            if let Some(line) = outbound_attachment_line(attachment) {
+                fallback_lines.push(line);
+            }
+        }
     }
-    let payload = if config.markdown_support.unwrap_or(false) {
+
+    let final_text = build_final_text(text.as_str(), &fallback_lines, sent_anything);
+    if let Some(url) = text_url.as_deref() {
+        if let Some(final_text) = final_text.as_deref() {
+            post_text_message(
+                http,
+                app_id,
+                access_token.as_str(),
+                url,
+                final_text,
+                config.markdown_support.unwrap_or(false),
+                peer_kind.as_str(),
+            )
+            .await?;
+            sent_anything = true;
+        }
+    }
+
+    if sent_anything {
+        return Ok(());
+    }
+    Err(anyhow!("qqbot outbound content is empty"))
+}
+
+fn resolve_text_message_url(peer_id: &str, peer_kind: &str) -> Option<String> {
+    let cleaned_peer_id = peer_id.trim();
+    if cleaned_peer_id.is_empty() {
+        return None;
+    }
+    if peer_kind == "group" {
+        return Some(format!(
+            "{QQ_API_BASE}/v2/groups/{cleaned_peer_id}/messages"
+        ));
+    }
+    if peer_kind == "channel" {
+        return Some(format!("{QQ_API_BASE}/channels/{cleaned_peer_id}/messages"));
+    }
+    Some(format!("{QQ_API_BASE}/v2/users/{cleaned_peer_id}/messages"))
+}
+
+fn resolve_rich_media_url(peer_id: &str, peer_kind: &str) -> Option<String> {
+    let cleaned_peer_id = peer_id.trim();
+    if cleaned_peer_id.is_empty() {
+        return None;
+    }
+    if peer_kind == "group" {
+        return Some(format!("{QQ_API_BASE}/v2/groups/{cleaned_peer_id}/files"));
+    }
+    if matches!(peer_kind, "user" | "dm" | "direct" | "single") {
+        return Some(format!("{QQ_API_BASE}/v2/users/{cleaned_peer_id}/files"));
+    }
+    None
+}
+
+fn build_rich_media_payload(attachment: &ChannelAttachment) -> Option<Value> {
+    let source_url = trimmed_non_empty(Some(attachment.url.as_str()))?;
+    if !is_http_url(source_url.as_str()) {
+        return None;
+    }
+    let file_type = qq_rich_media_type(attachment)?;
+    Some(json!({
+        "file_type": file_type,
+        "url": source_url,
+        "srv_send_msg": true,
+        "content": attachment.name.as_deref().unwrap_or(""),
+        "msg_seq": 1,
+    }))
+}
+
+fn qq_rich_media_type(attachment: &ChannelAttachment) -> Option<u64> {
+    let kind = attachment.kind.trim().to_ascii_lowercase();
+    if matches!(kind.as_str(), "image" | "photo" | "picture") {
+        return Some(QQBOT_RICH_MEDIA_IMAGE);
+    }
+    if kind == "video" {
+        return Some(QQBOT_RICH_MEDIA_VIDEO);
+    }
+    if kind == "audio" || kind == "voice" {
+        return Some(QQBOT_RICH_MEDIA_AUDIO);
+    }
+    let mime = attachment
+        .mime
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_ascii_lowercase);
+    if mime
+        .as_deref()
+        .is_some_and(|value| value.starts_with("image/"))
+    {
+        return Some(QQBOT_RICH_MEDIA_IMAGE);
+    }
+    if mime
+        .as_deref()
+        .is_some_and(|value| value.starts_with("video/"))
+    {
+        return Some(QQBOT_RICH_MEDIA_VIDEO);
+    }
+    if mime
+        .as_deref()
+        .is_some_and(|value| value.starts_with("audio/"))
+    {
+        return Some(QQBOT_RICH_MEDIA_AUDIO);
+    }
+    infer_rich_media_type_from_url(attachment.url.as_str())
+}
+
+fn infer_rich_media_type_from_url(value: &str) -> Option<u64> {
+    let lowered = value
+        .split('#')
+        .next()
+        .unwrap_or(value)
+        .split('?')
+        .next()
+        .unwrap_or(value)
+        .to_ascii_lowercase();
+    if lowered.ends_with(".png")
+        || lowered.ends_with(".jpg")
+        || lowered.ends_with(".jpeg")
+        || lowered.ends_with(".gif")
+        || lowered.ends_with(".webp")
+        || lowered.ends_with(".bmp")
+    {
+        return Some(QQBOT_RICH_MEDIA_IMAGE);
+    }
+    if lowered.ends_with(".mp4")
+        || lowered.ends_with(".mov")
+        || lowered.ends_with(".avi")
+        || lowered.ends_with(".mkv")
+        || lowered.ends_with(".webm")
+    {
+        return Some(QQBOT_RICH_MEDIA_VIDEO);
+    }
+    if lowered.ends_with(".silk")
+        || lowered.ends_with(".mp3")
+        || lowered.ends_with(".wav")
+        || lowered.ends_with(".ogg")
+        || lowered.ends_with(".opus")
+    {
+        return Some(QQBOT_RICH_MEDIA_AUDIO);
+    }
+    None
+}
+
+fn outbound_attachment_line(attachment: &ChannelAttachment) -> Option<String> {
+    let url = trimmed_non_empty(Some(attachment.url.as_str()))?;
+    let kind = attachment.kind.trim();
+    if kind.is_empty() {
+        return Some(url);
+    }
+    Some(format!("[{kind}] {url}"))
+}
+
+fn build_final_text(text: &str, fallback_lines: &[String], rich_sent: bool) -> Option<String> {
+    let cleaned = text.trim();
+    if !cleaned.is_empty() {
+        if fallback_lines.is_empty() {
+            return Some(cleaned.to_string());
+        }
+        let mut lines = Vec::with_capacity(fallback_lines.len() + 1);
+        lines.push(cleaned.to_string());
+        lines.extend(fallback_lines.iter().cloned());
+        return Some(lines.join("\n"));
+    }
+    if !fallback_lines.is_empty() {
+        return Some(fallback_lines.join("\n"));
+    }
+    if rich_sent {
+        return None;
+    }
+    Some("(empty message)".to_string())
+}
+
+async fn post_text_message(
+    http: &Client,
+    app_id: &str,
+    access_token: &str,
+    url: &str,
+    text: &str,
+    markdown_enabled: bool,
+    peer_kind: &str,
+) -> Result<()> {
+    let payload = if peer_kind == "channel" {
+        json!({ "content": text })
+    } else if markdown_enabled {
         json!({
             "msg_type": 2,
             "markdown": { "content": text },
@@ -404,35 +607,11 @@ pub async fn send_outbound(
             "msg_seq": 1,
         })
     };
+    post_message(http, app_id, access_token, url, payload).await
+}
 
-    if peer_kind == "group" {
-        post_message(
-            http,
-            app_id,
-            access_token.as_str(),
-            &format!("{QQ_API_BASE}/v2/groups/{}/messages", outbound.peer.id),
-            payload,
-        )
-        .await
-    } else if peer_kind == "channel" {
-        post_message(
-            http,
-            app_id,
-            access_token.as_str(),
-            &format!("{QQ_API_BASE}/channels/{}/messages", outbound.peer.id),
-            json!({ "content": text }),
-        )
-        .await
-    } else {
-        post_message(
-            http,
-            app_id,
-            access_token.as_str(),
-            &format!("{QQ_API_BASE}/v2/users/{}/messages", outbound.peer.id),
-            payload,
-        )
-        .await
-    }
+fn is_http_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
 }
 
 fn resolve_sender_id(message: &Value) -> Option<String> {
@@ -983,5 +1162,62 @@ mod tests {
         assert!(!should_try_lower_intent_after_error(
             "qqbot long connection connect failed: timeout"
         ));
+    }
+
+    #[test]
+    fn qq_rich_media_type_supports_kind_and_mime_fallbacks() {
+        let image = ChannelAttachment {
+            kind: "image".to_string(),
+            url: "https://example.com/a.bin".to_string(),
+            mime: None,
+            size: None,
+            name: None,
+        };
+        assert_eq!(qq_rich_media_type(&image), Some(QQBOT_RICH_MEDIA_IMAGE));
+
+        let by_mime = ChannelAttachment {
+            kind: "file".to_string(),
+            url: "https://example.com/a.bin".to_string(),
+            mime: Some("video/mp4".to_string()),
+            size: None,
+            name: None,
+        };
+        assert_eq!(qq_rich_media_type(&by_mime), Some(QQBOT_RICH_MEDIA_VIDEO));
+
+        let unsupported = ChannelAttachment {
+            kind: "file".to_string(),
+            url: "https://example.com/a.pdf".to_string(),
+            mime: Some("application/pdf".to_string()),
+            size: None,
+            name: None,
+        };
+        assert_eq!(qq_rich_media_type(&unsupported), None);
+    }
+
+    #[test]
+    fn build_rich_media_payload_requires_http_url() {
+        let attachment = ChannelAttachment {
+            kind: "image".to_string(),
+            url: "/workspaces/user/a.png".to_string(),
+            mime: None,
+            size: None,
+            name: Some("a.png".to_string()),
+        };
+        assert!(build_rich_media_payload(&attachment).is_none());
+    }
+
+    #[test]
+    fn build_final_text_merges_fallback_lines() {
+        let merged = build_final_text(
+            "hello",
+            &["[file] https://example.com/a.pdf".to_string()],
+            false,
+        )
+        .expect("merged text");
+        assert!(merged.contains("hello"));
+        assert!(merged.contains("[file] https://example.com/a.pdf"));
+
+        let none = build_final_text("", &[], true);
+        assert!(none.is_none());
     }
 }

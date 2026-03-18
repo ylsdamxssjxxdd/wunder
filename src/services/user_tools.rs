@@ -237,6 +237,7 @@ impl UserToolStore {
                     normalize_skill_config(default_enabled, payload.skills.shared.clone());
             }
         }
+        payload.user_id = user_id.to_string();
         payload.version = version;
         self.cache
             .lock()
@@ -557,7 +558,9 @@ impl UserToolStore {
     }
 
     fn config_path(&self, safe_user_id: &str) -> PathBuf {
-        self.user_dir(safe_user_id).join("global").join("tooling.json")
+        self.user_dir(safe_user_id)
+            .join("global")
+            .join("tooling.json")
     }
 
     fn legacy_config_path(&self, safe_user_id: &str) -> PathBuf {
@@ -841,12 +844,8 @@ impl UserToolManager {
                     .map(|name| name.trim().to_string())
                     .filter(|name| !name.is_empty())
                     .collect();
-                let specs = self.load_cached_skill_specs(
-                    config,
-                    owner_id,
-                    &skill_root,
-                    &HashSet::new(),
-                );
+                let specs =
+                    self.load_cached_skill_specs(config, owner_id, &skill_root, &HashSet::new());
                 if specs.is_empty() {
                     return;
                 }
@@ -1543,7 +1542,13 @@ fn build_skill_signature(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
+    use crate::storage::SqliteStorage;
+    use crate::workspace::WorkspaceManager;
     use serde_json::json;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     #[test]
     fn normalize_mcp_servers_removes_self_enable_state() {
@@ -1564,8 +1569,12 @@ mod tests {
 
     #[test]
     fn normalize_skill_config_preserves_shared_names_without_enabled_list() {
-        let config = normalize_skill_config(Vec::new(), vec!["alpha".to_string(), "beta".to_string()]);
-        assert_eq!(config.enabled, vec!["alpha".to_string(), "beta".to_string()]);
+        let config =
+            normalize_skill_config(Vec::new(), vec!["alpha".to_string(), "beta".to_string()]);
+        assert_eq!(
+            config.enabled,
+            vec!["alpha".to_string(), "beta".to_string()]
+        );
         assert_eq!(config.shared, vec!["alpha".to_string(), "beta".to_string()]);
     }
 
@@ -1591,5 +1600,36 @@ mod tests {
         });
         assert!(config.enabled);
         assert!(config.allow_tools.is_empty());
+    }
+
+    #[test]
+    fn load_user_tools_forces_runtime_user_id() {
+        let root = tempdir().expect("tempdir");
+        let db_path = root.path().join("user-tools.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = root.path().join("workspaces");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let store = UserToolStore::new(&Config::default(), workspace).expect("create store");
+        let user_id = "alice";
+        let safe_id = safe_user_id(user_id);
+        let path = store.config_path(&safe_id);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create config dir");
+        }
+        std::fs::write(
+            &path,
+            r#"{
+  "user_id": "legacy-id",
+  "skills": { "enabled": [], "shared": [] }
+}"#,
+        )
+        .expect("write config");
+        let payload = store.load_user_tools(user_id);
+        assert_eq!(payload.user_id, user_id);
     }
 }

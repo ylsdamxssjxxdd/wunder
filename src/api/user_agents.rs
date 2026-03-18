@@ -72,6 +72,7 @@ async fn list_agents(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
+    sync_inner_visible_before_user_read(&state, &user_id).await?;
     state
         .user_store
         .ensure_default_hive(&user_id)
@@ -105,6 +106,7 @@ async fn list_shared_agents(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
+    sync_inner_visible_before_user_read(&state, &user_id).await?;
     let agents = state
         .user_store
         .list_shared_user_agents(&user_id)
@@ -552,6 +554,7 @@ async fn get_agent(
 ) -> Result<Json<Value>, Response> {
     let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
     let user_id = resolved.user.user_id.clone();
+    sync_inner_visible_before_user_read(&state, &user_id).await?;
     let cleaned = agent_id.trim();
     if cleaned.is_empty() {
         return Err(error_response(
@@ -2236,6 +2239,23 @@ async fn sync_inner_visible_after_user_change(state: &AppState, user_id: &str) {
     if let Err(err) = state.inner_visible.sync_user_state(user_id).await {
         tracing::warn!("failed to sync inner-visible state for {user_id}: {err}");
     }
+}
+
+async fn sync_inner_visible_before_user_read(
+    state: &AppState,
+    user_id: &str,
+) -> Result<(), Response> {
+    state
+        .inner_visible
+        .sync_user_state(user_id)
+        .await
+        .map_err(|err| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                format!("failed to sync inner-visible state for user read: {err}"),
+            )
+        })?;
+    Ok(())
 }
 
 fn build_icon_payload(name: &str, color: &str) -> String {

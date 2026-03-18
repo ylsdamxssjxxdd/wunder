@@ -9,14 +9,18 @@ use aes::Aes256;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use base64::Engine;
+use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use prost::Message as ProstMessage;
+use reqwest::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
+use reqwest::multipart::{Form, Part};
 use reqwest::Client;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio::time::{interval, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
@@ -43,6 +47,7 @@ const FEISHU_WS_HEADER_SUM: &str = "sum";
 const FEISHU_WS_HEADER_SEQ: &str = "seq";
 const FEISHU_WS_HEADER_BIZ_RT: &str = "biz_rt";
 const FEISHU_WS_SERVICE_ID_QUERY: &str = "service_id";
+const FEISHU_OUTBOUND_MAX_ATTACHMENT_BYTES: usize = 20 * 1024 * 1024;
 
 #[derive(Debug, Default)]
 pub struct FeishuAdapter;
@@ -795,36 +800,137 @@ pub async fn send_outbound(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("chat_id");
-    let text = outbound
+    let send_url = format!("{base_url}/open-apis/im/v1/messages?receive_id_type={receive_id_type}");
+    let mut last_message_id: Option<String> = None;
+    if let Some(text) = outbound
         .text
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(|value| value.to_string())
-        .or_else(|| {
-            outbound
-                .attachments
-                .first()
-                .map(|attachment| format!("[{}] {}", attachment.kind, attachment.url))
-        })
-        .unwrap_or_else(|| "(empty message)".to_string());
-    let send_url = format!("{base_url}/open-apis/im/v1/messages?receive_id_type={receive_id_type}");
-    let send_resp = http
+    {
+        let result = post_text_message(
+            http,
+            send_url.as_str(),
+            tenant_token.as_str(),
+            outbound.peer.id.as_str(),
+            text,
+        )
+        .await?;
+        if result.message_id.is_some() {
+            last_message_id = result.message_id;
+        }
+    }
+
+    let mut fallback_lines: Vec<String> = Vec::new();
+    for attachment in &outbound.attachments {
+        let cleaned_url = attachment.url.trim();
+        if cleaned_url.is_empty() {
+            continue;
+        }
+        match upload_outbound_attachment(http, base_url.as_str(), tenant_token.as_str(), attachment)
+            .await?
+        {
+            Some(uploaded) => {
+                let result = post_message(
+                    http,
+                    send_url.as_str(),
+                    tenant_token.as_str(),
+                    outbound.peer.id.as_str(),
+                    uploaded.msg_type,
+                    uploaded.content,
+                )
+                .await?;
+                if result.message_id.is_some() {
+                    last_message_id = result.message_id;
+                }
+            }
+            None => fallback_lines.push(attachment_fallback_line(attachment)),
+        }
+    }
+
+    if !fallback_lines.is_empty() || last_message_id.is_none() {
+        let text = if !fallback_lines.is_empty() {
+            fallback_lines.join("\n")
+        } else {
+            "(empty message)".to_string()
+        };
+        let result = post_text_message(
+            http,
+            send_url.as_str(),
+            tenant_token.as_str(),
+            outbound.peer.id.as_str(),
+            text.as_str(),
+        )
+        .await?;
+        if result.message_id.is_some() {
+            last_message_id = result.message_id;
+        }
+    }
+
+    Ok(FeishuSendResult {
+        message_id: last_message_id,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct FeishuUploadedAttachment {
+    msg_type: &'static str,
+    content: Value,
+}
+
+#[derive(Debug)]
+struct OutboundAttachmentDownload {
+    bytes: Bytes,
+    filename: Option<String>,
+    content_type: Option<String>,
+}
+
+async fn post_text_message(
+    http: &Client,
+    send_url: &str,
+    tenant_token: &str,
+    receive_id: &str,
+    text: &str,
+) -> Result<FeishuSendResult> {
+    post_message(
+        http,
+        send_url,
+        tenant_token,
+        receive_id,
+        "text",
+        json!({ "text": text }),
+    )
+    .await
+}
+
+async fn post_message(
+    http: &Client,
+    send_url: &str,
+    tenant_token: &str,
+    receive_id: &str,
+    msg_type: &str,
+    content: Value,
+) -> Result<FeishuSendResult> {
+    let response = http
         .post(send_url)
         .bearer_auth(tenant_token)
         .json(&json!({
-            "receive_id": outbound.peer.id,
-            "msg_type": "text",
-            "content": json!({ "text": text }).to_string(),
+            "receive_id": receive_id,
+            "msg_type": msg_type,
+            "content": content.to_string(),
         }))
         .send()
         .await?;
-    if !send_resp.status().is_success() {
-        let status = send_resp.status();
-        let body = send_resp.text().await.unwrap_or_default();
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
         return Err(anyhow!("feishu outbound failed: {status} {body}"));
     }
-    let payload: Value = send_resp.json().await?;
+    parse_feishu_send_response(response).await
+}
+
+async fn parse_feishu_send_response(response: reqwest::Response) -> Result<FeishuSendResult> {
+    let payload: Value = response.json().await?;
     let code = payload.get("code").and_then(Value::as_i64).unwrap_or(-1);
     if code != 0 {
         let message = payload
@@ -833,15 +939,324 @@ pub async fn send_outbound(
             .unwrap_or("unknown");
         return Err(anyhow!("feishu outbound failed: {message}"));
     }
-    let message_id = payload
+    Ok(FeishuSendResult {
+        message_id: payload
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("message_id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    })
+}
+
+async fn upload_outbound_attachment(
+    http: &Client,
+    base_url: &str,
+    tenant_token: &str,
+    attachment: &ChannelAttachment,
+) -> Result<Option<FeishuUploadedAttachment>> {
+    let source_url = attachment.url.trim();
+    if !is_http_url(source_url) {
+        return Ok(None);
+    }
+    let download = fetch_remote_attachment(http, source_url).await?;
+    let filename = pick_outbound_filename(attachment, &download, source_url);
+    let content_type = attachment
+        .mime
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or(download.content_type.clone());
+    if should_upload_as_image(attachment, content_type.as_deref(), filename.as_str()) {
+        let image_key = upload_attachment_image(
+            http,
+            base_url,
+            tenant_token,
+            &download.bytes,
+            filename.as_str(),
+            content_type.as_deref(),
+        )
+        .await?;
+        return Ok(Some(FeishuUploadedAttachment {
+            msg_type: "image",
+            content: json!({ "image_key": image_key }),
+        }));
+    }
+
+    let file_key = upload_attachment_file(
+        http,
+        base_url,
+        tenant_token,
+        &download.bytes,
+        filename.as_str(),
+        content_type.as_deref(),
+    )
+    .await?;
+    Ok(Some(FeishuUploadedAttachment {
+        msg_type: "file",
+        content: json!({ "file_key": file_key }),
+    }))
+}
+
+async fn upload_attachment_image(
+    http: &Client,
+    base_url: &str,
+    tenant_token: &str,
+    bytes: &Bytes,
+    filename: &str,
+    content_type: Option<&str>,
+) -> Result<String> {
+    let upload_url = format!("{base_url}/open-apis/im/v1/images");
+    let form = Form::new().text("image_type", "message").part(
+        "image",
+        build_multipart_file_part(bytes, filename, content_type),
+    );
+    let response = http
+        .post(upload_url)
+        .bearer_auth(tenant_token)
+        .multipart(form)
+        .send()
+        .await?;
+    parse_uploaded_key(response, "image_key", "feishu image upload failed").await
+}
+
+async fn upload_attachment_file(
+    http: &Client,
+    base_url: &str,
+    tenant_token: &str,
+    bytes: &Bytes,
+    filename: &str,
+    content_type: Option<&str>,
+) -> Result<String> {
+    let upload_url = format!("{base_url}/open-apis/im/v1/files");
+    let form = Form::new()
+        .text("file_type", "stream")
+        .text("file_name", filename.to_string())
+        .part(
+            "file",
+            build_multipart_file_part(bytes, filename, content_type),
+        );
+    let response = http
+        .post(upload_url)
+        .bearer_auth(tenant_token)
+        .multipart(form)
+        .send()
+        .await?;
+    parse_uploaded_key(response, "file_key", "feishu file upload failed").await
+}
+
+fn build_multipart_file_part(bytes: &Bytes, filename: &str, content_type: Option<&str>) -> Part {
+    let filename = filename.to_string();
+    let normalized_mime = content_type
+        .and_then(split_content_type)
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty());
+    if let Some(value) = normalized_mime.as_deref() {
+        if let Ok(part) = Part::bytes(bytes.to_vec())
+            .file_name(filename.clone())
+            .mime_str(value)
+        {
+            return part;
+        }
+    }
+    Part::bytes(bytes.to_vec()).file_name(filename)
+}
+
+async fn parse_uploaded_key(
+    response: reqwest::Response,
+    key_name: &str,
+    action: &str,
+) -> Result<String> {
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(anyhow!("{action}: {status} {body}"));
+    }
+    let payload: Value = response.json().await?;
+    let code = payload.get("code").and_then(Value::as_i64).unwrap_or(-1);
+    if code != 0 {
+        let message = payload
+            .get("msg")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        return Err(anyhow!("{action}: {message}"));
+    }
+    payload
         .get("data")
         .and_then(Value::as_object)
-        .and_then(|data| data.get("message_id"))
+        .and_then(|data| data.get(key_name))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    Ok(FeishuSendResult { message_id })
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("{action}: missing {key_name}"))
+}
+
+async fn fetch_remote_attachment(http: &Client, url: &str) -> Result<OutboundAttachmentDownload> {
+    let response = http.get(url).send().await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        return Err(anyhow!("feishu attachment download failed: {status}"));
+    }
+    if response.content_length().unwrap_or(0) > FEISHU_OUTBOUND_MAX_ATTACHMENT_BYTES as u64 {
+        return Err(anyhow!(
+            "feishu attachment exceeds max bytes: {}",
+            FEISHU_OUTBOUND_MAX_ATTACHMENT_BYTES
+        ));
+    }
+    let headers = response.headers().clone();
+    let bytes = response.bytes().await?;
+    if bytes.len() > FEISHU_OUTBOUND_MAX_ATTACHMENT_BYTES {
+        return Err(anyhow!(
+            "feishu attachment exceeds max bytes: {}",
+            FEISHU_OUTBOUND_MAX_ATTACHMENT_BYTES
+        ));
+    }
+    Ok(OutboundAttachmentDownload {
+        bytes,
+        filename: headers
+            .get(CONTENT_DISPOSITION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(parse_content_disposition_filename)
+            .or_else(|| filename_from_url(url)),
+        content_type: headers
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(split_content_type)
+            .map(str::to_string),
+    })
+}
+
+fn pick_outbound_filename(
+    attachment: &ChannelAttachment,
+    download: &OutboundAttachmentDownload,
+    source_url: &str,
+) -> String {
+    attachment
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| download.filename.clone())
+        .or_else(|| filename_from_url(source_url))
+        .map(|value| sanitize_filename(value.as_str()))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "attachment.bin".to_string())
+}
+
+fn should_upload_as_image(
+    attachment: &ChannelAttachment,
+    content_type: Option<&str>,
+    filename: &str,
+) -> bool {
+    if attachment.kind.eq_ignore_ascii_case("image")
+        || attachment.kind.eq_ignore_ascii_case("photo")
+        || attachment.kind.eq_ignore_ascii_case("picture")
+    {
+        return true;
+    }
+    if attachment.kind.eq_ignore_ascii_case("video")
+        || attachment.kind.eq_ignore_ascii_case("audio")
+        || attachment.kind.eq_ignore_ascii_case("voice")
+    {
+        return false;
+    }
+    if content_type
+        .map(str::trim)
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("image/"))
+    {
+        return true;
+    }
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    matches!(
+        ext.as_deref(),
+        Some("png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg")
+    )
+}
+
+fn attachment_fallback_line(attachment: &ChannelAttachment) -> String {
+    let kind = attachment.kind.trim();
+    let url = attachment.url.trim();
+    if kind.is_empty() {
+        return url.to_string();
+    }
+    format!("[{kind}] {url}")
+}
+
+fn split_content_type(raw: &str) -> Option<&str> {
+    raw.split(';')
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_content_disposition_filename(value: &str) -> Option<String> {
+    for raw in value.split(';') {
+        let part = raw.trim();
+        if let Some(rest) = part.strip_prefix("filename*=") {
+            let cleaned = rest.trim_matches('"');
+            if let Some(encoded) = cleaned.split("''").nth(1) {
+                return Some(percent_decode(encoded));
+            }
+            return Some(percent_decode(cleaned));
+        }
+        if let Some(rest) = part.strip_prefix("filename=") {
+            return Some(rest.trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+fn percent_decode(value: &str) -> String {
+    let mut output = String::new();
+    let bytes = value.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            if let Ok(hex) = std::str::from_utf8(&bytes[index + 1..index + 3]) {
+                if let Ok(decoded) = u8::from_str_radix(hex, 16) {
+                    output.push(decoded as char);
+                    index += 3;
+                    continue;
+                }
+            }
+        }
+        output.push(bytes[index] as char);
+        index += 1;
+    }
+    output
+}
+
+fn filename_from_url(value: &str) -> Option<String> {
+    let parsed = Url::parse(value).ok()?;
+    let filename = parsed.path_segments()?.next_back()?.trim();
+    if filename.is_empty() {
+        return None;
+    }
+    Some(filename.to_string())
+}
+
+fn sanitize_filename(value: &str) -> String {
+    let mut output = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    output
+}
+
+fn is_http_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
 }
 
 pub async fn delete_message(http: &Client, message_id: &str, config: &FeishuConfig) -> Result<()> {
@@ -954,5 +1369,43 @@ mod tests {
         assert!(is_message_event(&payload));
         let payload = json!({ "event": { "sender": { "id": "u_1" } } });
         assert!(!is_message_event(&payload));
+    }
+
+    #[test]
+    fn should_upload_as_image_supports_kind_and_extension() {
+        let image = ChannelAttachment {
+            kind: "image".to_string(),
+            url: "https://example.com/a.bin".to_string(),
+            mime: None,
+            size: None,
+            name: None,
+        };
+        assert!(should_upload_as_image(&image, None, "file.bin"));
+
+        let by_ext = ChannelAttachment {
+            kind: "file".to_string(),
+            url: "https://example.com/a.png".to_string(),
+            mime: None,
+            size: None,
+            name: None,
+        };
+        assert!(should_upload_as_image(&by_ext, None, "a.png"));
+
+        let video = ChannelAttachment {
+            kind: "video".to_string(),
+            url: "https://example.com/a.mp4".to_string(),
+            mime: None,
+            size: None,
+            name: None,
+        };
+        assert!(!should_upload_as_image(&video, None, "a.png"));
+    }
+
+    #[test]
+    fn split_content_type_ignores_charset_suffix() {
+        assert_eq!(
+            split_content_type("application/json; charset=utf-8"),
+            Some("application/json")
+        );
     }
 }

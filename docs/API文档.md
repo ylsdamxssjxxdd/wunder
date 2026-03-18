@@ -32,9 +32,13 @@
 - 当使用 API Key/管理员 Token 访问 `/wunder`、`/wunder/chat`、`/wunder/workspace`、`/wunder/user_tools` 时，`user_id` 允许为“虚拟用户”，无需在 `user_accounts` 注册，仅用于线程/工作区/工具隔离。
 - 渠道 webhook 入站默认采用“快速 ACK + 后台队列分发”：`/wunder/channel/*/webhook` 完成验签与标准化后立即入队，模型/工具链路在后台执行；当入站队列短时拥塞时接口返回 `503` 以触发渠道侧重试。
 - QQ Bot 渠道支持两种入站模式：`/wunder/channel/qqbot/webhook` 回调模式，以及账号级长连接模式（`qqbot.long_connection_enabled=true`，默认开启）；凭证可使用 `qqbot.app_id + qqbot.client_secret` 或 `qqbot.token=appId:clientSecret`；未显式配置 `qqbot.intents` 时长连接会按 `full -> group+channel -> channel-only` 自动降级重试，并写入渠道运行日志事件。
+- 渠道附件出站（2026-03-18）：Feishu 支持上传后发送原生 `image/file` 消息；XMPP 出站会附带 `jabber:x:oob` 与 `urn:xmpp:reference:0` 节点；QQBot 在 group/user 目标支持通过 `/v2/*/files` 发送富媒体 URL（image/video/audio）。
+- 渠道附件入站（2026-03-18）：QQBot URL 附件会在入站阶段下载到会话作用域工作区；Feishu/XMPP 保持既有落盘能力。
+- 渠道链接改写（2026-03-18）：`channel_outbox` 不仅会改写正文中的 `/workspaces/...`，也会改写 `attachments[].url` 中的工作区路径为 `/wunder/temp_dir/download`。
 - 工作区容器约定：用户私有容器固定为 `container_id=0`，智能体容器范围为 `1~10`；`/wunder/workspace*` 全部接口（含 upload）支持显式 `container_id`，且优先级高于 `agent_id` 推导。
 - Desktop 本地模式下，这些容器默认映射到本地持久目录，不执行“24 小时自动清理”策略；用户文件需显式删除。内置文件工具在本地模式下还支持直接访问本机绝对路径，不再强制限制在工作区内。
 - Desktop 本地模式固定优先使用安装包附带的 Python 运行时，不再通过 `/wunder/desktop/settings` 配置自定义解释器，也不再提供 `/wunder/desktop/python/interpreters` 本机探测接口；`GET /wunder/desktop/fs/list` 仍保留用于本地目录浏览等通用场景。
+- Desktop 本地模式默认开启 `channels.outbox.worker_enabled=true`，保障 `channel_tool.send_message` 入队后自动投递，无需管理员侧手工启用出站 worker。
 - 注册用户按单位层级分配默认每日额度（一级/二级/三级/四级 = 10000/5000/1000/100），每日 0 点重置；额度按每次模型调用消耗，超额返回 429，虚拟用户不受限制。
 - 管理员用户执行请求不受额度、会话锁、历史裁剪、监控裁剪、模型/工具超时与历史清理限制，适合长期运行任务。
 - A2A 接口：`/a2a` 提供 JSON-RPC 2.0 绑定，`SendStreamingMessage` 以 SSE 形式返回流式事件，AgentCard 通过 `/.well-known/agent-card.json` 暴露。
@@ -153,6 +157,8 @@
 - 工具结果默认允许约 `20000` 字符级别内容进入 `tool_result`/observation；若仍因上下文预算被裁剪，会在 `tool_result` 的 `meta` 中返回 `truncated/output_chars`，并在 observation 二次压缩后补充 `observation_truncated/observation_output_chars/continuation_required/continuation_hint`；数据体中可能出现 `data.truncated/original_chars/preview`、表格结果级 `rows_sampled/rows_omitted`，或数组级 `truncated_items` 标记，表示当前结果为片段/样本而非全量。
 - `执行命令` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_commands`（也可放入 `budget` 对象）；`dry_run=true` 时仅返回执行计划与预算，不落地执行。
 - `写入文件` 与 `应用补丁` 支持 `dry_run` 预演：返回目标文件与变更摘要，不写磁盘。
+- `应用补丁` 的 `input` 现支持多层 JSON 包裹自动解包（如 `{"input":"{\"input\":\"*** Begin Patch ... *** End Patch\"}"}`），降低模型重复封装导致的格式失败。
+- 当 `应用补丁` 返回 `PATCH_CONTEXT_NOT_FOUND` 时，`error_meta.hint` 会包含“期望旧片段 + 邻近源码 + 最相似窗口差异示例”，便于模型按上下文重新生成补丁。
 - `搜索内容` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`（也可放入 `budget`，并支持 `budget.max_files/max_matches/max_candidates`）；超预算时会在 `meta.search.output_budget_hit` 标记结果裁剪。
 - `读取文件` 支持预算与预演参数：`dry_run`、`time_budget_ms`、`output_budget_bytes`、`max_files`（也可放入 `budget`）；结果在 `meta.read` 返回 `timeout_hit/output_budget_hit/budget_file_limit_hit`。
 - 基础工具失败结果统一补充 `error_meta`：`code/hint/retryable/retry_after_ms`，便于前端与模型按错误码做自动恢复。
@@ -178,6 +184,7 @@
 - 新增内置工具 `渠道工具`（英文别名 `channel_tool`），通过 `action=list_contacts|send_message` 查询渠道可联系对象并向指定渠道对象发送消息（支持工作区文件引用转下载链接后发送）。
 - `渠道工具.list_contacts` 默认融合会话历史与 XMPP roster（若可用），返回 `source=session_history|roster|session_history+roster`；可传 `refresh=true` 强制刷新 roster 缓存。
 - `渠道工具.send_message` 参数已简化：不再强制 `channel/account_id/to` 同时必填；可直接传 `text`（或 `content`/`attachments`）并由系统从会话/默认账号自动补全。`list_contacts` 返回 `contact` 对象，可直接回传给 `send_message`。
+- `渠道工具.send_message` 附件投递能力（2026-03-18）：Feishu/XMPP/QQBot 优先走渠道原生附件链路；若目标渠道不支持对应类型则自动回退为文本链接，不阻断投递。
 - 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
 - 新增内置工具 `浏览器`（英文别名 `browser`），通过 `action=navigate|click|type|screenshot|read_page|close` 统一操作，仅 desktop 模式可用。
 - 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
@@ -574,7 +581,8 @@
   - `user_knowledge_tools`：当前用户配置的自建知识库工具
   - `default_agent_tool_names`：默认智能体/预制智能体新建时的默认勾选项
 - 说明：用于智能体设置与工具管理页面，返回所有共享工具（不按勾选过滤）。
-- 说明：管理员开放工具与用户自建工具已拆分为独立区域。管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
+- 说明：管理员开放工具与用户自建工具已拆分为独立区域。服务端/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
+- 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
 - 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`最终回复/定时任务/休眠等待/记忆管理/执行命令/ptc/列出文件/搜索内容/读取文件/技能调用/写入文件/应用补丁`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。
 
 ### 4.1.2.21 `/wunder/user_tools/shared_tools`

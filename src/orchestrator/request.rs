@@ -213,6 +213,7 @@ impl Orchestrator {
                 user_tool_bindings,
                 user_id,
                 workspace_id,
+                agent_id,
                 agent_prompt,
             )
             .await;

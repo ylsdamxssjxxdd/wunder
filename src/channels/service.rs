@@ -847,6 +847,28 @@ impl ChannelHub {
                 );
             }
         }
+        if message
+            .channel
+            .trim()
+            .eq_ignore_ascii_case(qqbot::QQBOT_CHANNEL)
+        {
+            if let Err(err) = feishu_files::download_remote_attachments_to_workspace(
+                &self.http,
+                &self.workspace,
+                &self.user_store,
+                &session_info.user_id,
+                resolved_agent_id.as_deref(),
+                qqbot::QQBOT_CHANNEL,
+                &mut message,
+            )
+            .await
+            {
+                warn!(
+                    "download qqbot attachments failed: channel={}, account_id={}, session_id={}, error={err}",
+                    message.channel, message.account_id, session_info.session_id
+                );
+            }
+        }
 
         let media_processor = MediaProcessor::new(config.channels.media.clone());
         let allow_vision = resolve_allow_vision(&config, None);

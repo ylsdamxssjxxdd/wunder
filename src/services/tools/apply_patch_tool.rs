@@ -12,6 +12,7 @@ const END_OF_FILE_MARKER: &str = "*** End of File";
 const PATCH_INPUT_MAX_BYTES: usize = 512 * 1024;
 const PATCH_MAX_FILE_OPS: usize = 200;
 const PATCH_MAX_UPDATE_CHUNKS: usize = 1000;
+const PATCH_INPUT_UNWRAP_MAX_DEPTH: usize = 8;
 
 #[derive(Debug, Clone)]
 enum ParsedPatchOp {
@@ -429,13 +430,9 @@ fn summarize_patch_ops(ops: &[ResolvedPatchOp]) -> ApplyPatchSummary {
 
 fn extract_patch_input(args: &Value) -> Result<String> {
     for key in ["input", "patch", "content", "raw"] {
-        if let Some(value) = args.get(key).and_then(Value::as_str) {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                if let Some(unwrapped) = unwrap_nested_patch_input(trimmed) {
-                    return Ok(unwrapped);
-                }
-                return Ok(trimmed.to_string());
+        if let Some(value) = args.get(key) {
+            if let Some(extracted) = extract_patch_input_candidate(value) {
+                return Ok(extracted);
             }
         }
     }
@@ -448,33 +445,77 @@ fn extract_patch_input(args: &Value) -> Result<String> {
     ))
 }
 
-fn unwrap_nested_patch_input(raw: &str) -> Option<String> {
-    let mut current = raw.trim().to_string();
-    for _ in 0..2 {
-        let parsed = serde_json::from_str::<Value>(&current).ok()?;
-        match parsed {
-            Value::String(inner) => {
-                let trimmed = inner.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-                current = trimmed.to_string();
-            }
-            Value::Object(map) => {
-                for key in ["input", "patch", "content", "raw"] {
-                    if let Some(value) = map.get(key).and_then(Value::as_str) {
-                        let trimmed = value.trim();
-                        if !trimmed.is_empty() {
-                            return Some(trimmed.to_string());
-                        }
-                    }
-                }
+fn extract_patch_input_candidate(value: &Value) -> Option<String> {
+    match value {
+        Value::String(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
                 return None;
             }
-            _ => return None,
+            if let Some(unwrapped) = unwrap_nested_patch_input(trimmed) {
+                return Some(unwrapped);
+            }
+            Some(trimmed.to_string())
         }
+        Value::Object(_) => {
+            let raw = value.to_string();
+            unwrap_nested_patch_input(&raw)
+        }
+        _ => None,
     }
-    current.starts_with(BEGIN_PATCH_MARKER).then_some(current)
+}
+
+fn unwrap_nested_patch_input(raw: &str) -> Option<String> {
+    let mut current = raw.trim().to_string();
+    for _ in 0..PATCH_INPUT_UNWRAP_MAX_DEPTH {
+        let trimmed = current.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if trimmed.starts_with(BEGIN_PATCH_MARKER) {
+            return Some(trimmed.to_string());
+        }
+        let parsed = serde_json::from_str::<Value>(trimmed).ok()?;
+        if let Some(next) = extract_nested_patch_value(parsed) {
+            current = next;
+            continue;
+        }
+        return None;
+    }
+    let trimmed = current.trim();
+    if trimmed.starts_with(BEGIN_PATCH_MARKER) {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
+fn extract_nested_patch_value(value: Value) -> Option<String> {
+    match value {
+        Value::String(inner) => {
+            let trimmed = inner.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        Value::Object(map) => {
+            for key in ["input", "patch", "content", "raw"] {
+                if let Some(next) = map.get(key).and_then(value_to_patch_candidate) {
+                    return Some(next);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn value_to_patch_candidate(value: &Value) -> Option<String> {
+    match value {
+        Value::String(inner) => {
+            let trimmed = inner.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        Value::Object(_) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn normalize_patch_text(input: &str) -> String {
@@ -1231,6 +1272,8 @@ fn apply_update_chunks(source: &str, chunks: &[UpdateChunk], path: &str) -> Resu
         let (start, end) = match find_chunk_range(&lines, cursor, chunk, &old_lines) {
             ChunkRangeSearchResult::Found(range) => range,
             ChunkRangeSearchResult::NotFound => {
+                let (hint_zh, hint_en) =
+                    build_context_not_found_hint(&lines, &old_lines, cursor, chunk);
                 return Err(patch_error_with_hint(
                     "PATCH_CONTEXT_NOT_FOUND",
                     format!(
@@ -1243,8 +1286,8 @@ fn apply_update_chunks(source: &str, chunks: &[UpdateChunk], path: &str) -> Resu
                         index + 1,
                         path
                     ),
-                    "请先读取最新文件内容并重新生成补丁，或补充更稳定的 @@ 上下文。",
-                    "Read the latest file and regenerate the patch, or add more stable @@ context.",
+                    hint_zh,
+                    hint_en,
                 ));
             }
             ChunkRangeSearchResult::Ambiguous { matches } => {
@@ -1279,6 +1322,21 @@ enum ChunkRangeSearchResult {
     Ambiguous { matches: usize },
 }
 
+#[derive(Debug, Clone)]
+struct ChunkSearchPlan {
+    search_start: usize,
+    anchor: Option<String>,
+    anchor_found: bool,
+}
+
+#[derive(Debug, Clone)]
+struct PartialMatchWindow {
+    start: usize,
+    matched_lines: usize,
+    total_lines: usize,
+    diffs: Vec<(usize, String, String)>,
+}
+
 fn find_chunk_range(
     source_lines: &[String],
     cursor: usize,
@@ -1286,22 +1344,8 @@ fn find_chunk_range(
     old_lines: &[String],
 ) -> ChunkRangeSearchResult {
     let len = source_lines.len();
-    let mut search_start = cursor.min(len);
-    if let Some(anchor) = chunk
-        .change_context
-        .as_deref()
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-    {
-        if let Some(anchor_index) = source_lines
-            .iter()
-            .enumerate()
-            .skip(search_start)
-            .find_map(|(idx, line)| line.contains(anchor).then_some(idx))
-        {
-            search_start = anchor_index;
-        }
-    }
+    let search_plan = derive_chunk_search_plan(source_lines, cursor, chunk);
+    let search_start = search_plan.search_start;
 
     if old_lines.is_empty() {
         let start = if chunk.end_of_file { len } else { search_start };
@@ -1340,6 +1384,212 @@ fn find_chunk_range(
         }
         matches => ChunkRangeSearchResult::Ambiguous { matches },
     }
+}
+
+fn derive_chunk_search_plan(
+    source_lines: &[String],
+    cursor: usize,
+    chunk: &UpdateChunk,
+) -> ChunkSearchPlan {
+    let len = source_lines.len();
+    let mut search_start = cursor.min(len);
+    let mut anchor = None;
+    let mut anchor_found = false;
+
+    if let Some(raw_anchor) = chunk
+        .change_context
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        anchor = Some(raw_anchor.to_string());
+        if let Some(anchor_index) = source_lines
+            .iter()
+            .enumerate()
+            .skip(search_start)
+            .find_map(|(idx, line)| line.contains(raw_anchor).then_some(idx))
+        {
+            search_start = anchor_index;
+            anchor_found = true;
+        }
+    }
+
+    ChunkSearchPlan {
+        search_start,
+        anchor,
+        anchor_found,
+    }
+}
+
+fn build_context_not_found_hint(
+    source_lines: &[String],
+    old_lines: &[String],
+    cursor: usize,
+    chunk: &UpdateChunk,
+) -> (String, String) {
+    let search_plan = derive_chunk_search_plan(source_lines, cursor, chunk);
+    let expected_preview = format_numbered_preview(old_lines, 0, 4);
+    let nearby_start = search_plan.search_start.saturating_sub(2);
+    let nearby_preview = format_numbered_preview(source_lines, nearby_start, 6);
+    let best_partial =
+        find_best_partial_match_window(source_lines, old_lines, search_plan.search_start);
+
+    let zh_anchor = match search_plan.anchor.as_deref() {
+        Some(anchor) if search_plan.anchor_found => {
+            format!(
+                "@@ 锚点“{anchor}”命中第 {} 行。",
+                search_plan.search_start + 1
+            )
+        }
+        Some(anchor) => format!(
+            "@@ 锚点“{anchor}”未命中，已从第 {} 行附近继续搜索。",
+            search_plan.search_start + 1
+        ),
+        None => format!(
+            "未提供 @@ 锚点，从第 {} 行附近开始搜索。",
+            search_plan.search_start + 1
+        ),
+    };
+    let en_anchor = match search_plan.anchor.as_deref() {
+        Some(anchor) if search_plan.anchor_found => {
+            format!(
+                "@@ anchor \"{anchor}\" matched at line {}.",
+                search_plan.search_start + 1
+            )
+        }
+        Some(anchor) => format!(
+            "@@ anchor \"{anchor}\" was not found; continued searching near line {}.",
+            search_plan.search_start + 1
+        ),
+        None => format!(
+            "No @@ anchor was provided; started searching near line {}.",
+            search_plan.search_start + 1
+        ),
+    };
+
+    let zh_partial = if let Some(window) = best_partial.as_ref() {
+        format!(
+            "最接近片段位于第 {} 行，匹配 {}/{} 行。差异示例：\n{}",
+            window.start + 1,
+            window.matched_lines,
+            window.total_lines,
+            format_partial_mismatch_examples(window)
+        )
+    } else {
+        "全文件中未找到可部分匹配的片段。".to_string()
+    };
+    let en_partial = if let Some(window) = best_partial.as_ref() {
+        format!(
+            "Nearest window starts at line {} with {}/{} lines matched. Mismatch samples:\n{}",
+            window.start + 1,
+            window.matched_lines,
+            window.total_lines,
+            format_partial_mismatch_examples(window)
+        )
+    } else {
+        "No partially matching window was found in the file.".to_string()
+    };
+
+    let zh_hint = format!(
+        "请先读取最新文件并重试，或补充更稳定的 @@ 上下文。\n{zh_anchor}\n期望旧片段（前 4 行）：\n{expected_preview}\n邻近源码（从第 {} 行起）：\n{nearby_preview}\n{zh_partial}",
+        nearby_start + 1
+    );
+    let en_hint = format!(
+        "Read the latest file and retry, or add more stable @@ context.\n{en_anchor}\nExpected old snippet (first 4 lines):\n{expected_preview}\nNearby source (starting at line {}):\n{nearby_preview}\n{en_partial}",
+        nearby_start + 1
+    );
+    (zh_hint, en_hint)
+}
+
+fn find_best_partial_match_window(
+    source_lines: &[String],
+    old_lines: &[String],
+    preferred_start: usize,
+) -> Option<PartialMatchWindow> {
+    if old_lines.is_empty() || source_lines.len() < old_lines.len() {
+        return None;
+    }
+    let max_start = source_lines.len() - old_lines.len();
+    let mut best: Option<PartialMatchWindow> = None;
+    let mut best_distance = usize::MAX;
+    for start in 0..=max_start {
+        let mut matched_lines = 0usize;
+        let mut diffs = Vec::new();
+        for (offset, expected) in old_lines.iter().enumerate() {
+            let actual = &source_lines[start + offset];
+            if expected == actual {
+                matched_lines += 1;
+                continue;
+            }
+            if diffs.len() < 3 {
+                diffs.push((
+                    offset,
+                    truncate_for_hint(expected, 120),
+                    truncate_for_hint(actual, 120),
+                ));
+            }
+        }
+        if matched_lines == 0 {
+            continue;
+        }
+        let distance = start.abs_diff(preferred_start);
+        let should_replace = match best.as_ref() {
+            Some(existing) => {
+                matched_lines > existing.matched_lines
+                    || (matched_lines == existing.matched_lines && distance < best_distance)
+            }
+            None => true,
+        };
+        if should_replace {
+            best_distance = distance;
+            best = Some(PartialMatchWindow {
+                start,
+                matched_lines,
+                total_lines: old_lines.len(),
+                diffs,
+            });
+        }
+    }
+    best
+}
+
+fn format_partial_mismatch_examples(window: &PartialMatchWindow) -> String {
+    if window.diffs.is_empty() {
+        return "- (all lines matched)".to_string();
+    }
+    window
+        .diffs
+        .iter()
+        .map(|(offset, expected, actual)| {
+            let line_no = window.start + offset + 1;
+            format!("L{line_no}\n  expected: {expected}\n  actual:   {actual}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn format_numbered_preview(lines: &[String], start: usize, max_lines: usize) -> String {
+    if lines.is_empty() || start >= lines.len() {
+        return "(empty)".to_string();
+    }
+    let end = (start + max_lines).min(lines.len());
+    lines[start..end]
+        .iter()
+        .enumerate()
+        .map(|(idx, line)| {
+            let line_no = start + idx + 1;
+            format!("{line_no:>4}: {}", truncate_for_hint(line, 120))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn truncate_for_hint(line: &str, max_chars: usize) -> String {
+    if line.chars().count() <= max_chars {
+        return line.to_string();
+    }
+    let truncated = line.chars().take(max_chars).collect::<String>();
+    format!("{truncated}...")
 }
 
 fn collect_chunk_match_starts(
@@ -1668,6 +1918,18 @@ mod tests {
     }
 
     #[test]
+    fn extract_patch_input_unwraps_double_nested_json_string() {
+        let args = json!({
+            "input": "{\"input\":\"{\\\"input\\\":\\\"*** Begin Patch\\\\n*** Add File: demo.txt\\\\n+ok\\\\n*** End Patch\\\"}\"}"
+        });
+        let extracted = extract_patch_input(&args).expect("double nested input should unwrap");
+        assert_eq!(
+            extracted,
+            "*** Begin Patch\n*** Add File: demo.txt\n+ok\n*** End Patch"
+        );
+    }
+
+    #[test]
     fn parse_patch_repairs_display_separator_in_update_chunk() {
         let patch = r#"*** Begin Patch
 *** Update File: demo.txt
@@ -1756,6 +2018,51 @@ mod tests {
             hint.contains("blank lines also require a prefix")
                 || hint.contains("空白行也必须带前缀"),
             "unexpected hint: {hint}"
+        );
+    }
+
+    #[test]
+    fn apply_update_chunks_not_found_hint_includes_nearby_context_details() {
+        let chunk = UpdateChunk {
+            change_context: Some("missing-anchor".to_string()),
+            lines: vec![
+                ChunkLine {
+                    kind: ChunkLineKind::Delete,
+                    text: "line-2".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Delete,
+                    text: "line-4".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Add,
+                    text: "line-2-updated".to_string(),
+                },
+                ChunkLine {
+                    kind: ChunkLineKind::Add,
+                    text: "line-4-updated".to_string(),
+                },
+            ],
+            end_of_file: false,
+        };
+        let error = apply_update_chunks("line-1\nline-2\nline-3\nline-x\n", &[chunk], "demo.txt")
+            .expect_err("should fail when context is missing");
+        let result = build_patch_error_result(error);
+        let hint = result
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("hint"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            hint.contains("邻近源码")
+                || hint.contains("Nearby source")
+                || hint.contains("Expected old snippet"),
+            "unexpected hint: {hint}"
+        );
+        assert!(
+            hint.contains("line-4") || hint.contains("line-x") || hint.contains("Mismatch samples"),
+            "hint should include concrete line diff context: {hint}"
         );
     }
 }

@@ -3520,8 +3520,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         decodeTotal += item.decode;
         hasDecode = true;
       }
-      if (item.usage && item.usage.output > 0 && item.decode !== null && item.decode > 0) {
-        speedSum += item.usage.output / item.decode;
+      const decode = item.decode !== null && item.decode > 0 ? item.decode : null;
+      // Speed definition: model output phase only (from first generated token to end),
+      // so prefill/tool time is excluded and decode duration is the only denominator.
+      if (item.usage && item.usage.output > 0 && decode !== null && decode > 0) {
+        speedSum += item.usage.output / decode;
         speedCount += 1;
       }
     });
@@ -4582,7 +4585,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           data?.usage ?? payload?.usage ?? data ?? payload,
           null,
           null,
-          { round, updateUsage: true }
+          { round, updateUsage: true, includeInRoundAverage: true }
         );
         fallbackQuotaUsageFromRound(round);
         break;

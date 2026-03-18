@@ -1169,6 +1169,16 @@ async fn user_skills_upload(
             .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
         extracted += 1;
     }
+    if extracted > 0 {
+        let payload = state.user_tool_store.load_user_tools(&user_id);
+        if let Err(err) = state.user_tool_store.update_skills(
+            &user_id,
+            payload.skills.enabled.clone(),
+            payload.skills.shared.clone(),
+        ) {
+            tracing::warn!("failed to sync user skill config after upload for {user_id}: {err}");
+        }
+    }
     state.user_tool_manager.clear_skill_cache(Some(&user_id));
     Ok(Json(json!({
         "data": {

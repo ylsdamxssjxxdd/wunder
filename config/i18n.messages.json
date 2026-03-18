@@ -1428,8 +1428,8 @@
     "zh-CN": "仅填写原始 apply_patch 补丁文本，不要再包一层 JSON，也不要放进 Markdown 代码块。内容必须从 *** Begin Patch 开始，到 *** End Patch 结束。@@ 之后的 Update File 内容行都必须以空格/+/- 开头。不要带 123: 这类编辑器行号，也不要在 hunk 内用 *** 分隔旧内容和新内容。示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch"
   },
   "tool.spec.apply_patch.description": {
-    "en-US": "Apply precise, reviewable edits with apply_patch grammar. Best for small targeted multi-file changes after reading the latest file content. Keep hunks small, preserve exact context lines, and switch to write_file for full rewrites.",
-    "zh-CN": "使用 apply_patch 语法做精确、可审查的修改。适合在先读取最新文件内容后，执行小范围、可定位的多文件编辑。请保持 hunk 尽量小、上下文行精确；整文件重写请改用 write_file。"
+    "en-US": "Apply precise, reviewable edits with apply_patch grammar. Best for small targeted multi-file changes after reading the latest file content. Keep hunks small, preserve exact context lines, and switch to write_file for full rewrites. Example call args: {\"input\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}.",
+    "zh-CN": "使用 apply_patch 语法做精确、可审查的修改。适合在先读取最新文件内容后，执行小范围、可定位的多文件编辑。请保持 hunk 尽量小、上下文行精确；整文件重写请改用 write_file。示例入参：{\"input\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}。"
   },
   "tool.spec.edit.args.edits": {
     "en-US": "List of edits to apply in order.",

@@ -129,6 +129,7 @@ impl Orchestrator {
         user_tool_bindings: Option<&UserToolBindings>,
         user_id: &str,
         workspace_id: &str,
+        agent_id: Option<&str>,
         agent_prompt: Option<&str>,
     ) -> String {
         let workdir = self
@@ -143,6 +144,7 @@ impl Orchestrator {
                 &self.workspace,
                 workspace_id,
                 user_id,
+                agent_id,
                 &workdir,
                 config_overrides,
                 allowed_tool_names,
@@ -222,6 +224,7 @@ impl Orchestrator {
                 user_tool_bindings,
                 user_id,
                 workspace_id,
+                resolved_agent_id.as_deref(),
                 effective_agent_prompt.as_deref(),
             )
             .await;

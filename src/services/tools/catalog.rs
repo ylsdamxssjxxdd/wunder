@@ -11,6 +11,7 @@ use anyhow::Result;
 use serde_json::{json, Value};
 use serde_yaml::Value as YamlValue;
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> {
     let t = |key: &str| i18n::t_in_language(key, language);
@@ -976,6 +977,34 @@ pub fn extract_sleep_seconds(args: &Value) -> Option<f64> {
     sleep_tool::extract_sleep_seconds(args)
 }
 
+fn is_desktop_mode(config: &Config) -> bool {
+    config.server.mode.trim().eq_ignore_ascii_case("desktop")
+}
+
+fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
+    if browser_tool::is_browser_tool_name(canonical) && !browser_tool::browser_tools_enabled(config)
+    {
+        return false;
+    }
+    if desktop_control::is_desktop_control_tool_name(canonical)
+        && !desktop_control::desktop_tools_enabled(config)
+    {
+        return false;
+    }
+    true
+}
+
+fn desktop_builtin_tool_names() -> &'static HashSet<String> {
+    static BUILTIN_NAMES: OnceLock<HashSet<String>> = OnceLock::new();
+    BUILTIN_NAMES.get_or_init(|| {
+        builtin_tool_specs_with_language("zh-CN")
+            .into_iter()
+            .map(|spec| spec.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect()
+    })
+}
+
 pub fn filter_tool_names_by_model_capability(
     allowed_tool_names: HashSet<String>,
     support_vision: bool,
@@ -1051,23 +1080,23 @@ pub fn collect_available_tool_names(
 ) -> HashSet<String> {
     let mut names = HashSet::new();
     let mut enabled_builtin = HashSet::new();
-    for name in &config.tools.builtin.enabled {
-        let canonical = resolve_tool_name(name);
-        if canonical.is_empty() {
-            continue;
+    if is_desktop_mode(config) {
+        for canonical in desktop_builtin_tool_names() {
+            if !runtime_builtin_tool_allowed(config, canonical) {
+                continue;
+            }
+            enabled_builtin.insert(canonical.clone());
+            names.insert(canonical.clone());
         }
-        if browser_tool::is_browser_tool_name(&canonical)
-            && !browser_tool::browser_tools_enabled(config)
-        {
-            continue;
+    } else {
+        for name in &config.tools.builtin.enabled {
+            let canonical = resolve_tool_name(name);
+            if canonical.is_empty() || !runtime_builtin_tool_allowed(config, &canonical) {
+                continue;
+            }
+            enabled_builtin.insert(canonical.clone());
+            names.insert(canonical);
         }
-        if desktop_control::is_desktop_control_tool_name(&canonical)
-            && !desktop_control::desktop_tools_enabled(config)
-        {
-            continue;
-        }
-        enabled_builtin.insert(canonical.clone());
-        names.insert(canonical);
     }
     for server in &config.mcp.servers {
         if !server.enabled {
@@ -1304,7 +1333,9 @@ pub fn a2a_service_schema_with_language(language: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::builtin_tool_specs_with_language;
+    use super::{builtin_tool_specs_with_language, collect_available_tool_names};
+    use crate::config::Config;
+    use crate::skills::SkillRegistry;
 
     #[test]
     fn read_file_spec_clarifies_plain_text_only_in_english() {
@@ -1336,5 +1367,38 @@ mod tests {
             .expect("path description");
         assert!(path_description.contains("纯文本"));
         assert!(path_description.contains("二进制"));
+    }
+
+    #[test]
+    fn desktop_mode_exposes_all_builtin_tools_even_with_partial_whitelist() {
+        let mut config = Config::default();
+        config.server.mode = "desktop".to_string();
+        config.tools.builtin.enabled = vec!["最终回复".to_string()];
+        config.tools.browser.enabled = true;
+        config.tools.desktop_controller.enabled = true;
+
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+        for spec in builtin_tool_specs_with_language("zh-CN") {
+            assert!(
+                available.contains(&spec.name),
+                "desktop mode should include builtin tool {}",
+                spec.name
+            );
+        }
+        assert!(available.contains("read_file"));
+        assert!(available.contains("update_plan"));
+    }
+
+    #[test]
+    fn non_desktop_mode_still_follows_builtin_whitelist() {
+        let mut config = Config::default();
+        config.server.mode = "api".to_string();
+        config.tools.builtin.enabled = vec!["读取文件".to_string()];
+
+        let available = collect_available_tool_names(&config, &SkillRegistry::default(), None);
+        assert!(available.contains("读取文件"));
+        assert!(available.contains("read_file"));
+        assert!(!available.contains("写入文件"));
+        assert!(!available.contains("write_file"));
     }
 }

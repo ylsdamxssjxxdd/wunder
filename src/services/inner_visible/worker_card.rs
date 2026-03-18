@@ -1,4 +1,4 @@
-use crate::storage::{DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID, UserAgentRecord};
+use crate::storage::{UserAgentRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -100,7 +100,11 @@ pub struct WorkerCardRecordUpdate {
     pub sandbox_container_id: i32,
 }
 
-pub fn build_worker_card(record: &UserAgentRecord, hive_name: Option<&str>, hive_description: Option<&str>) -> WorkerCardDocument {
+pub fn build_worker_card(
+    record: &UserAgentRecord,
+    hive_name: Option<&str>,
+    hive_description: Option<&str>,
+) -> WorkerCardDocument {
     WorkerCardDocument {
         schema_version: "wunder/worker-card@1".to_string(),
         kind: "WorkerCard".to_string(),
@@ -127,7 +131,10 @@ pub fn build_worker_card(record: &UserAgentRecord, hive_name: Option<&str>, hive
             preset_questions: normalize_names(record.preset_questions.clone()),
         },
         runtime: WorkerCardRuntime {
-            model_name: record.model_name.clone().filter(|value| !value.trim().is_empty()),
+            model_name: record
+                .model_name
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
             approval_mode: record.approval_mode.clone(),
             sandbox_container_id: record.sandbox_container_id,
             is_shared: record.is_shared,
@@ -141,7 +148,10 @@ pub fn build_worker_card(record: &UserAgentRecord, hive_name: Option<&str>, hive
     }
 }
 
-pub fn parse_worker_card(document: WorkerCardDocument, system_prompt_override: Option<String>) -> WorkerCardRecordUpdate {
+pub fn parse_worker_card(
+    document: WorkerCardDocument,
+    system_prompt_override: Option<String>,
+) -> WorkerCardRecordUpdate {
     let declared_tool_names = normalize_names(document.abilities.tool_names);
     let declared_skill_names = normalize_names(document.abilities.skills);
     let mut tool_names = declared_tool_names.clone();

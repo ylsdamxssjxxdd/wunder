@@ -329,6 +329,9 @@ mod tests {
 
         let resolved = resolve_path_in_roots("global/tooling.json", &roots).expect("resolved");
 
-        assert_eq!(normalize_existing_path(&resolved), normalize_existing_path(&target));
+        assert_eq!(
+            normalize_existing_path(&resolved),
+            normalize_existing_path(&target)
+        );
     }
 }

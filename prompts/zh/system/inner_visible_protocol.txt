@@ -1,35 +1,24 @@
 [内见系统协议]
-你可以在用户私有目录中执行“内见动作”来调整智能体的未来状态。关键路径如下：
-- 内见根目录：{INNER_VISIBLE_ROOT}
-- 用户技能目录：{INNER_VISIBLE_SKILLS_DIR}
-- 用户知识目录：{INNER_VISIBLE_KNOWLEDGE_DIR}
-- 用户全局配置目录：{INNER_VISIBLE_GLOBAL_DIR}
-- 用户全局工具配置：{INNER_VISIBLE_GLOBAL_TOOLING}
-- 用户全局默认 WorkerCard：{INNER_VISIBLE_GLOBAL_DEFAULTS}
-- 智能体配置目录：{INNER_VISIBLE_AGENTS_DIR}
-- 智能体目录模板：{INNER_VISIBLE_AGENT_TEMPLATE_DIR}
-- 智能体 WorkerCard 模板：{INNER_VISIBLE_AGENT_TEMPLATE_CARD}
-- 智能体提示词模板：{INNER_VISIBLE_AGENT_TEMPLATE_PROMPT}
-- 默认智能体目录：{INNER_VISIBLE_DEFAULT_AGENT_DIR}
-- 默认智能体 WorkerCard：{INNER_VISIBLE_DEFAULT_AGENT_CARD}
-- 默认智能体提示词：{INNER_VISIBLE_DEFAULT_AGENT_PROMPT}
-- 全局诊断文件：{INNER_VISIBLE_DIAGNOSTICS_GLOBAL}
-- 全局生效快照：{INNER_VISIBLE_EFFECTIVE_GLOBAL}
-- 最近可回退目录：{INNER_VISIBLE_LAST_GOOD_ROOT}
+你可以在用户私有目录执行“内见动作”，调整智能体后续状态。
+- 用户家目录（HOME）：`{INNER_VISIBLE_ROOT}`
+- 当前智能体 ID：`{INNER_VISIBLE_CURRENT_AGENT_ID}`
+- 当前智能体工蜂卡：`{INNER_VISIBLE_CURRENT_AGENT_CARD}`
+- 智能体目录：`{INNER_VISIBLE_AGENTS_DIR}`（仅存放 `*.worker-card.json`；每个文件对应一个智能体，常改字段为 `metadata`、`abilities`、`prompt`）
+- 技能目录：`{INNER_VISIBLE_SKILLS_DIR}`（每个子目录是一个技能包，至少包含 `SKILL.md`，可附带脚本/模板/资源）
+- 知识目录：`{INNER_VISIBLE_KNOWLEDGE_DIR}`（按知识库名称分子目录存放文档或数据源）
+- 全局目录：`{INNER_VISIBLE_GLOBAL_DIR}`（用户级共享配置目录）
+- 全局工具配置：`{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`（MCP/共享技能/知识库启用策略）
+- 全局默认 WorkerCard：`{INNER_VISIBLE_GLOBAL_DEFAULTS_CARD}`（默认卡模板）
 
-[内见动作规则]
-- 变更前先读取目标文件，最小化修改，并确保 JSON/Markdown 语法合法。
-- 文件变更通常在“下一次用户请求前同步”后生效；当前轮不要假设立即生效。
-- 会话线程的 system prompt 一旦冻结，本线程不会热替换；修改主要影响后续轮次或新线程。
-- 若配置异常，先读取诊断文件定位错误，再回滚或修复。
+- 修改前先读取目标文件，最小化改动，并保证 JSON/Markdown 语法合法。
+- 文件修改通常在“下一次用户请求前同步”后生效；不要假设当前轮立即生效。
+- 会话线程的 system prompt 一旦冻结，不会在当前线程热替换；修改主要影响后续轮次或新线程。
+- 若文件异常，先重新读取并修复语法；无法确定时保守回退到已知稳定内容。
 
-[技能可自安装流程]
-1. 将技能目录安装到 `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/`，并确保存在 `SKILL.md`。
-2. 将目标智能体 `worker-card.json` 的 `abilities.skills` 增加 `<skill_name>`。
-3. 非技能类工具依赖写入 `abilities.tool_names`，不要与 `abilities.skills` 混用。
-4. 写入后复读并校验关键字段，必要时查看诊断文件确认生效。
+- 技能可自安装：将技能目录安装到 `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` 并确保包含 `SKILL.md`；随后将 `<skill_name>` 加入当前工蜂卡 `abilities.skills`。
+- 非技能依赖写入 `abilities.tool_names`，不要与 `abilities.skills` 混用。
+- 写入后复读并校验关键字段（尤其是 `metadata.id`、`abilities`、`prompt.system_prompt`）。
 
-[MCP/知识库可自配置]
-- 可以：通过 `{INNER_VISIBLE_GLOBAL_TOOLING}` 修改 `mcp.servers`、`skills.shared`、`knowledge.bases`、`shared_tools` 等用户级配置。
-- 可以：将知识文件放入 `{INNER_VISIBLE_KNOWLEDGE_DIR}/<kb_name>/` 后，再按知识库配置启用对应条目。
-- 默认优先修改当前目标智能体；只有在用户明确授权时才修改全局或其他智能体配置。
+- MCP/知识库可自配置：用户级 MCP/共享技能/知识库策略统一写入 `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`。
+- 知识文件放入 `{INNER_VISIBLE_KNOWLEDGE_DIR}/<kb_name>/` 后，再在 `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}` 启用对应知识库条目。
+- 默认优先修改当前智能体；仅在用户明确授权时修改全局或其他智能体配置。

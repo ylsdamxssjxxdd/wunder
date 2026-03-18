@@ -20,7 +20,7 @@ use tokio::time::{interval, timeout, Duration, Instant, MissedTickBehavior};
 use tokio_xmpp::minidom::Element;
 use tokio_xmpp::parsers::iq::{Iq, IqType};
 use tokio_xmpp::parsers::jid::Jid;
-use tokio_xmpp::parsers::message::{Body, Message, MessageType, Thread};
+use tokio_xmpp::parsers::message::{Body, Message, MessageType};
 use tokio_xmpp::parsers::ns;
 use tokio_xmpp::parsers::ping::Ping;
 use tokio_xmpp::parsers::presence::{Presence, Type as PresenceType};
@@ -676,30 +676,65 @@ async fn send_outbound_stanza(
     settings: &XmppRuntimeSettings,
     outbound: &ChannelOutboundMessage,
 ) -> Result<()> {
+    let stanza = build_outbound_stanza(settings, outbound)?;
+
+    client
+        .send_stanza(stanza)
+        .await
+        .map_err(|err| anyhow!("xmpp send stanza failed: {err}"))
+}
+
+fn build_outbound_stanza(
+    settings: &XmppRuntimeSettings,
+    outbound: &ChannelOutboundMessage,
+) -> Result<Element> {
     let target = resolve_outbound_target(outbound);
     let to_jid = resolve_outbound_target_jid(&target, &settings.login_domain)?;
-
-    let mut message = if is_group_peer_kind(&outbound.peer.kind) {
-        Message::groupchat(Some(to_jid))
+    let message_type = if is_group_peer_kind(&outbound.peer.kind) {
+        "groupchat"
     } else {
-        Message::chat(Some(to_jid))
+        "chat"
     };
-
-    let text = outbound_text(outbound)?;
-    message.bodies.insert(String::new(), Body(text));
-
+    let mut builder = Element::builder("message", ns::DEFAULT_NS)
+        .attr("to", to_jid.to_string())
+        .attr("type", message_type)
+        .append(
+            Element::builder("body", ns::DEFAULT_NS)
+                .append(outbound_text(outbound)?)
+                .build(),
+        );
     if let Some(thread_id) = outbound
         .thread
         .as_ref()
         .and_then(|thread| optional_trimmed(Some(&thread.id)).map(str::to_string))
     {
-        message.thread = Some(Thread(thread_id));
+        builder = builder.append(
+            Element::builder("thread", ns::DEFAULT_NS)
+                .append(thread_id)
+                .build(),
+        );
     }
-
-    client
-        .send_stanza(message.into())
-        .await
-        .map_err(|err| anyhow!("xmpp send stanza failed: {err}"))
+    for attachment in &outbound.attachments {
+        let Some(url) = optional_trimmed(Some(attachment.url.as_str())) else {
+            continue;
+        };
+        if !is_attachment_url(url) {
+            continue;
+        }
+        let mut oob_builder = Element::builder("x", XMPP_NS_OOB)
+            .append(Element::builder("url", XMPP_NS_OOB).append(url).build());
+        if let Some(desc) = outbound_attachment_desc(attachment) {
+            oob_builder =
+                oob_builder.append(Element::builder("desc", XMPP_NS_OOB).append(desc).build());
+        }
+        builder = builder.append(oob_builder.build()).append(
+            Element::builder("reference", XMPP_NS_REFERENCE)
+                .attr("type", "data")
+                .attr("uri", url)
+                .build(),
+        );
+    }
+    Ok(builder.build())
 }
 
 async fn send_heartbeat_ping(
@@ -838,18 +873,37 @@ fn outbound_text(outbound: &ChannelOutboundMessage) -> Result<String> {
         return Ok(text);
     }
 
-    if let Some(item) = outbound.attachments.first() {
-        let kind = item.kind.trim();
-        let url = item.url.trim();
-        if !kind.is_empty() && !url.is_empty() {
-            return Ok(format!("[{kind}] {url}"));
+    let mut lines: Vec<String> = Vec::new();
+    for item in &outbound.attachments {
+        if let Some(line) = outbound_attachment_fallback_line(item) {
+            lines.push(line);
         }
-        if !url.is_empty() {
-            return Ok(url.to_string());
-        }
+    }
+    if !lines.is_empty() {
+        return Ok(lines.join("\n"));
     }
 
     Err(anyhow!("xmpp outbound text is empty"))
+}
+
+fn outbound_attachment_fallback_line(attachment: &ChannelAttachment) -> Option<String> {
+    let url = optional_trimmed(Some(attachment.url.as_str()))?;
+    let kind = optional_trimmed(Some(attachment.kind.as_str()));
+    Some(match kind {
+        Some(kind) => format!("[{kind}] {url}"),
+        None => url.to_string(),
+    })
+}
+
+fn outbound_attachment_desc(attachment: &ChannelAttachment) -> Option<String> {
+    attachment
+        .name
+        .as_deref()
+        .and_then(|value| optional_trimmed(Some(value)).map(str::to_string))
+        .or_else(|| {
+            optional_trimmed(Some(attachment.kind.as_str()))
+                .map(|value| format!("{value} attachment"))
+        })
 }
 
 fn parse_stanza_message(
@@ -1387,6 +1441,39 @@ mod tests {
         assert_eq!(parsed.message_type, "mixed");
         assert_eq!(parsed.attachments.len(), 1);
         assert_eq!(parsed.attachments[0].kind, "image");
+    }
+
+    #[test]
+    fn build_outbound_stanza_appends_oob_and_reference_nodes() {
+        let settings = build_test_runtime_settings();
+        let outbound = ChannelOutboundMessage {
+            channel: XMPP_CHANNEL.to_string(),
+            account_id: "acc1".to_string(),
+            peer: ChannelPeer {
+                kind: "user".to_string(),
+                id: "alice@example.com".to_string(),
+                name: None,
+            },
+            thread: Some(ChannelThread {
+                id: "thread-1".to_string(),
+                topic: None,
+            }),
+            text: Some("see attachment".to_string()),
+            attachments: vec![ChannelAttachment {
+                kind: "image".to_string(),
+                url: "https://example.com/image.png".to_string(),
+                mime: None,
+                size: None,
+                name: Some("image.png".to_string()),
+            }],
+            meta: None,
+        };
+
+        let stanza = build_outbound_stanza(&settings, &outbound).expect("build stanza");
+        let attachments = extract_stanza_attachments(&stanza);
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].url, "https://example.com/image.png");
+        assert_eq!(attachments[0].name.as_deref(), Some("image.png"));
     }
 
     #[test]

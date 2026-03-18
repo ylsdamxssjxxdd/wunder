@@ -1208,6 +1208,9 @@ fn apply_desktop_defaults(
 
     // Keep per-agent channel settings available in desktop local mode.
     config.channels.enabled = true;
+    // Desktop local mode has no admin panel to toggle outbox worker, so keep
+    // channel outbound delivery worker enabled by default.
+    config.channels.outbox.worker_enabled = true;
     config.gateway.enabled = false;
     config.agent_queue.enabled = false;
     config.cron.enabled = true;
@@ -1524,6 +1527,7 @@ mod tests {
         );
 
         assert!(config.channels.enabled);
+        assert!(config.channels.outbox.worker_enabled);
         assert!(!config.gateway.enabled);
         assert!(config.cron.enabled);
     }

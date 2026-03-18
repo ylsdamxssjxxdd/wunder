@@ -140,12 +140,6 @@ pub async fn append_temp_dir_links_for_outbound(
     channel: &str,
     outbound: &mut ChannelOutboundMessage,
 ) -> Result<bool> {
-    let Some(text) = outbound.text.as_deref() else {
-        return Ok(false);
-    };
-    if text.trim().is_empty() {
-        return Ok(false);
-    }
     let user_id = extract_meta_string(outbound.meta.as_ref(), "user_id");
     let Some(user_id) = user_id.as_deref() else {
         return Ok(false);
@@ -156,7 +150,17 @@ pub async fn append_temp_dir_links_for_outbound(
         .unwrap_or_else(|| default_public_base_url(config));
 
     let workspace_id = resolve_workspace_id(workspace, user_store, user_id, agent_id.as_deref());
-    let candidates = extract_workspace_paths(text);
+    let mut candidates: Vec<String> = outbound
+        .text
+        .as_deref()
+        .map(extract_workspace_paths)
+        .unwrap_or_default();
+    for attachment in &outbound.attachments {
+        let candidate = normalize_public_path(&attachment.url);
+        if is_workspace_public_path(&candidate) {
+            candidates.push(candidate);
+        }
+    }
     if candidates.is_empty() {
         return Ok(false);
     }
@@ -189,20 +193,35 @@ pub async fn append_temp_dir_links_for_outbound(
         return Ok(false);
     }
 
-    let mut rewritten = text.to_string();
     let mut changed = false;
-    for (path, url) in replacements {
-        if path.is_empty() || url.is_empty() || !rewritten.contains(&path) {
+    if let Some(text) = outbound.text.as_ref() {
+        let mut rewritten = text.to_string();
+        for (path, url) in &replacements {
+            if path.is_empty() || url.is_empty() || !rewritten.contains(path) {
+                continue;
+            }
+            rewritten = rewritten.replace(path, url);
+            changed = true;
+        }
+        if changed {
+            outbound.text = Some(rewritten);
+        }
+    }
+
+    for attachment in &mut outbound.attachments {
+        let candidate = normalize_public_path(&attachment.url);
+        if candidate.is_empty() {
             continue;
         }
-        rewritten = rewritten.replace(&path, &url);
-        changed = true;
+        if let Some((_, url)) = replacements.iter().find(|(path, _)| path == &candidate) {
+            if !url.trim().is_empty() && attachment.url != *url {
+                attachment.url = url.clone();
+                changed = true;
+            }
+        }
     }
-    if !changed {
-        return Ok(false);
-    }
-    outbound.text = Some(rewritten);
-    Ok(true)
+
+    Ok(changed)
 }
 
 pub async fn download_remote_attachments_to_workspace(
@@ -569,6 +588,10 @@ fn normalize_public_path(raw: &str) -> String {
     }
     text.trim_matches(|ch: char| ch == '.' || ch == ',' || ch == ';' || ch == ':')
         .to_string()
+}
+
+fn is_workspace_public_path(value: &str) -> bool {
+    value.starts_with("/workspaces/")
 }
 
 fn extract_workspace_paths(text: &str) -> Vec<String> {

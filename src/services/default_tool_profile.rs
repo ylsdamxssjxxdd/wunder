@@ -49,7 +49,11 @@ pub fn curated_default_skill_names(allowed_tool_names: &HashSet<String>) -> Vec<
 }
 
 pub fn curated_default_tool_names(allowed_tool_names: &HashSet<String>) -> Vec<String> {
-    let mut output = dedup_names(DEFAULT_BUILTIN_TOOL_NAMES.iter().map(|name| (*name).to_string()));
+    let mut output = dedup_names(
+        DEFAULT_BUILTIN_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_string()),
+    );
     output.extend(curated_default_skill_names(allowed_tool_names));
     dedup_names(output)
         .into_iter()
