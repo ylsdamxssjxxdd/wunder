@@ -11,6 +11,7 @@ use crate::path_utils::{
     is_within_root, normalize_existing_path, normalize_path_for_compare, normalize_target_path,
 };
 use crate::schemas::{AvailableToolsResponse, SharedToolSpec, ToolSpec};
+use crate::services::abilities::populate_ability_items;
 use crate::services::default_tool_profile::curated_default_tool_candidates;
 use crate::skills::{load_skills, SkillSpec};
 use crate::state::AppState;
@@ -2494,7 +2495,7 @@ fn build_user_tools_summary(
         }
     }
 
-    AvailableToolsResponse {
+    let mut response = AvailableToolsResponse {
         builtin_tools: builtin_tools.clone(),
         mcp_tools: mcp_tools.clone(),
         a2a_tools: a2a_tools.clone(),
@@ -2512,7 +2513,10 @@ fn build_user_tools_summary(
         default_agent_tool_names,
         shared_tools,
         shared_tools_selected: Some(shared_tools_selected),
-    }
+        items: Vec::new(),
+    };
+    populate_ability_items(&mut response);
+    response
 }
 
 fn build_user_knowledge_payload(

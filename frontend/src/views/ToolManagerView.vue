@@ -114,7 +114,6 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { ElMessage } from 'element-plus';
 
 import { fetchUserToolsCatalog } from '@/api/userTools';
 import UserKnowledgePane from '@/components/user-tools/UserKnowledgePane.vue';
@@ -122,6 +121,7 @@ import UserMcpPane from '@/components/user-tools/UserMcpPane.vue';
 import UserSkillPane from '@/components/user-tools/UserSkillPane.vue';
 import UserTopbar from '@/components/user/UserTopbar.vue';
 import { useI18n } from '@/i18n';
+import { collectAbilityGroupDetails } from '@/utils/toolSummary';
 import { resolveToolUsageHint } from '@/utils/toolUsageHint';
 import { showApiError } from '@/utils/apiError';
 
@@ -135,28 +135,27 @@ const updateStatus = (message) => {
 };
 
 const systemToolGroups = computed(() => {
-  const payload = toolCatalog.value || {};
-  const normalizeList = (list) => (Array.isArray(list) ? list : []);
+  const groups = collectAbilityGroupDetails((toolCatalog.value || {}) as Record<string, unknown>);
   return [
     {
       key: 'builtin',
       title: t('toolManager.system.builtin'),
-      items: normalizeList(payload.builtin_tools)
+      items: groups.builtin
     },
     {
       key: 'mcp',
       title: t('toolManager.system.mcp'),
-      items: normalizeList(payload.mcp_tools)
+      items: groups.mcp
     },
     {
       key: 'skills',
       title: t('toolManager.system.skills'),
-      items: normalizeList(payload.skills)
+      items: groups.skills
     },
     {
       key: 'knowledge',
       title: t('toolManager.system.knowledge'),
-      items: normalizeList(payload.knowledge_tools)
+      items: groups.knowledge
     }
   ];
 });

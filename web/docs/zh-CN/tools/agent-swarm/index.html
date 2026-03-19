@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>智能体蜂群 | wunder 文档</title>
+  <meta name="description" content="`智能体蜂群` 面向多智能体协作，支持单目标发送、批量派发、等待聚合结果和按会话回看历史。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/agent-swarm","language":"zh-CN","title":"智能体蜂群","summary":"`智能体蜂群` 面向多智能体协作，支持单目标发送、批量派发、等待聚合结果和按会话回看历史。","read_when":["你要同时调度多个智能体","你要查 `batch_send -> wait` 这条典型协作路径"],"source_docs":["src/services/tools/catalog.rs","src/services/tools.rs","docs/API文档.md"],"tab":"工具","group":"会话与协作","group_path":["会话与协作"],"url":"/docs/zh-CN/tools/agent-swarm/","headings":[{"id":"section-1","level":1,"text":"智能体蜂群"},{"id":"section-2","level":2,"text":"核心动作"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"推荐路径"},{"id":"section-5","level":2,"text":"它适合什么"},{"id":"section-6","level":2,"text":"和子智能体控制的区别"},{"id":"section-7","level":2,"text":"你最需要记住的点"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/subagent-control","next_slug":"zh-CN/tools/memory-manager","markdown":"# 智能体蜂群\n\n`智能体蜂群` 是 Wunder 里最接近“多智能体协作总线”的内置工具。\n\n## 核心动作\n\n- `list`\n- `status`\n- `send`\n- `history`\n- `spawn`\n- `batch_send`\n- `wait`\n\n## 常用参数\n\n- `agentId`\n- `sessionKey`\n- `message`\n- `task`\n- `tasks`\n- `runIds`\n\n其中：\n\n- 单目标协作通常用 `send`\n- 多目标并发派发通常用 `batch_send`\n- 等待结果通常用 `wait`\n\n## 推荐路径\n\n最常见的路径是：\n\n- `list`\n- `send` 或 `batch_send`\n- `wait`\n- `history` 或 `status`\n\n这条路径和 OpenClaw 文档里的“先派发，再等待，再取结果”很接近。\n\n## 它适合什么\n\n- 让不同智能体分别做研究、法务、财务、写作\n- 把同一任务拆给多个角色并行处理\n- 在主线程之外做批量协作\n\n## 和子智能体控制的区别\n\n- [子智能体控制](/docs/zh-CN/tools/subagent-control/) 偏单个子会话。\n- `智能体蜂群` 偏多目标、多智能体并发协作。\n\n如果你只盯一个子运行，不必上蜂群。\n\n## 你最需要记住的点\n\n- `智能体蜂群` 最核心的路径是 `list -> send/batch_send -> wait -> history/status`。\n- `send` 适合单目标，`batch_send` 适合多目标。\n- `wait` 的输入是运行 ID，不是普通会话标题。\n\n## 相关文档\n\n- [子智能体控制](/docs/zh-CN/tools/subagent-control/)\n- [会话线程控制](/docs/zh-CN/tools/thread-control/)\n- [蜂群协作](/docs/zh-CN/concepts/swarm/)\n","source_path":"静态站文档/zh-CN/tools/agent-swarm.md"}</script>
+</body>
+</html>

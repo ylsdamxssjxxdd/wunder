@@ -120,6 +120,7 @@ export const elements = {
   navIntro: document.getElementById("navIntro"),
   navPaper: document.getElementById("navPaper"),
   navApiDocs: document.getElementById("navApiDocs"),
+  navDocsSite: document.getElementById("navDocsSite"),
   monitorPanel: document.getElementById("monitorPanel"),
   usersPanel: document.getElementById("usersPanel"),
   userAccountsPanel: document.getElementById("userAccountsPanel"),

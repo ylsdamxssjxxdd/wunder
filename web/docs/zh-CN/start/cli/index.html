@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI 使用 | wunder 文档</title>
+  <meta name="description" content="wunder-cli 面向开发者、终端任务与自动化场景。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/cli","language":"zh-CN","title":"CLI 使用","summary":"wunder-cli 面向开发者、终端任务与自动化场景。","read_when":["你想在终端中直接使用 wunder","你更关注开发调试、脚本任务和工作区驱动执行"],"source_docs":["docs/系统介绍.md","docs/设计方案.md"],"tab":"开始","group":"入门","group_path":["入门"],"url":"/docs/zh-CN/start/cli/","headings":[{"id":"section-1","level":1,"text":"CLI 使用"},{"id":"section-2","level":2,"text":"CLI 的特点"},{"id":"section-3","level":2,"text":"适合的任务"},{"id":"section-4","level":2,"text":"CLI 与 Desktop 的区别"},{"id":"section-5","level":2,"text":"CLI 与 Server 的区别"},{"id":"section-6","level":2,"text":"推荐先理解的概念"},{"id":"section-7","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/start/server","next_slug":"zh-CN/start/hubs","markdown":"# CLI 使用\n\n`wunder-cli` 是 wunder 的终端形态。\n\n它适合开发者、本地任务、脚本化调用和工作区驱动执行。\n\n## CLI 的特点\n\n- 更适合调试和自动化\n- 使用当前目录或指定目录作为工作空间\n- 能更直接地观察会话、工具与产物\n- 与 server、desktop 复用同一套调度内核\n\n## 适合的任务\n\n- 编程类任务\n- 文件处理任务\n- 自动化流程\n- 需要终端输出、JSONL 事件或 TUI 交互的任务\n\n## CLI 与 Desktop 的区别\n\n- Desktop 更适合日常使用和图形化工作台\n- CLI 更适合开发、脚本与终端协作\n- 两者底层能力一致，但交互壳不同\n\n## CLI 与 Server 的区别\n\n- Server 面向多用户与治理\n- CLI 面向单用户本地执行\n- Server 要求更多部署与运行环境\n- CLI 更适合快速启动和局部任务\n\n## 推荐先理解的概念\n\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n\n## 相关文档\n\n- [快速开始](/docs/zh-CN/start/quickstart/)\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"静态站文档/zh-CN/start/cli.md"}</script>
+</body>
+</html>

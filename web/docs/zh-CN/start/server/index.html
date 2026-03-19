@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Server 部署 | wunder 文档</title>
+  <meta name="description" content="`wunder-server` 是系统核心，负责多租户治理、智能体调度，以及 `/wunder`、`/wunder/chat/*`、`/a2a` 等对外接口。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/server","language":"zh-CN","title":"Server 部署","summary":"`wunder-server` 是系统核心，负责多租户治理、智能体调度，以及 `/wunder`、`/wunder/chat/*`、`/a2a` 等对外接口。","read_when":["你要部署 server 形态","你需要多用户、组织治理和对外接入能力"],"source_docs":["docs/系统介绍.md","docs/设计方案.md","docs/API文档.md"],"tab":"开始","group":"入门","group_path":["入门"],"url":"/docs/zh-CN/start/server/","headings":[{"id":"section-1","level":1,"text":"Server 部署"},{"id":"section-2","level":2,"text":"Server 提供什么"},{"id":"section-3","level":2,"text":"适合什么场景"},{"id":"section-4","level":2,"text":"对外访问的关键点"},{"id":"section-5","level":2,"text":"数据与存储约定"},{"id":"section-6","level":2,"text":"部署前建议先看"},{"id":"section-7","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/start/desktop","next_slug":"zh-CN/start/cli","markdown":"# Server 部署\n\n`wunder-server` 是 Wunder 的核心运行形态。\n\n它面向多用户、多单位、多租户、管理员治理，以及对外开放接口。\n\n## Server 提供什么\n\n- `/wunder` 底层执行入口\n- `/wunder/chat/*` 完整智能体会话入口\n- `/a2a` 系统级 A2A 接口\n- WebSocket 和 SSE 流式能力\n- 用户与管理员接口\n- 智能体调度与工具编排\n- 用户、单位、权限与治理能力\n\n## 适合什么场景\n\n- 团队或组织内部部署\n- 需要统一接入层和管理员后台\n- 需要多用户并发与长期持久化工作区\n- 需要把 Wunder 作为平台能力开放给其他系统\n\n## 对外访问的关键点\n\n- 业务方可以把 `/wunder` 当成底层执行入口\n- 如果要稳定调用某个独立人格智能体，优先走 `/wunder/chat/*`\n- `user_id` 不要求一定是注册用户\n- A2A 当前暴露的是系统级路由卡，不是每个智能体一张独立卡\n\n## 数据与存储约定\n\n- 网页端 server 形态使用 PostgreSQL\n- desktop 本地形态使用 SQLite\n- 用户工作区应持久化保存\n- `data/` 目录视为运行时临时目录，不用于长期业务资料沉淀\n\n## 部署前建议先看\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n\n## 相关文档\n\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n","source_path":"静态站文档/zh-CN/start/server.md"}</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>执行命令 | wunder 文档</title>
+  <meta name="description" content="`执行命令` 负责真实命令执行、编译测试和预算化运行，是 Wunder 运行态工具链里最直接的执行入口。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/exec","language":"zh-CN","title":"执行命令","summary":"`执行命令` 负责真实命令执行、编译测试和预算化运行，是 Wunder 运行态工具链里最直接的执行入口。","read_when":["你要理解 Wunder 的命令执行边界","你要区分 `执行命令` 和 `ptc`"],"source_docs":["docs/API文档.md","docs/设计方案.md","config/wunder-example.yaml","src/services/tools/catalog.rs"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/exec/","headings":[{"id":"section-1","level":1,"text":"执行命令"},{"id":"section-2","level":2,"text":"执行命令 解决什么"},{"id":"section-3","level":2,"text":"为什么它不是完全自由执行"},{"id":"section-4","level":2,"text":"和 ptc 怎么选"},{"id":"section-5","level":2,"text":"最容易犯的错"},{"id":"section-6","level":3,"text":"把它当成唯一编辑方式"},{"id":"section-7","level":3,"text":"忽视预算"},{"id":"section-8","level":2,"text":"你最需要记住的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/workspace-files","next_slug":"zh-CN/tools/ptc","markdown":"# 执行命令\n\n如果文件工具解决的是“看和改”，那么 `执行命令` 解决的就是“在环境里跑起来”。\n\n## `执行命令` 解决什么\n\n它用于在当前工作区里执行系统命令。\n\n常见场景：\n\n- 编译\n- 测试\n- 运行脚本\n- 做产物检查\n\n常用参数：\n\n- `content`\n- `workdir`\n- `timeout_s`\n- `dry_run`\n- `time_budget_ms`\n- `output_budget_bytes`\n- `max_commands`\n\n## 为什么它不是完全自由执行\n\n因为 Wunder 会同时考虑：\n\n- `allow_commands`\n- `allow_paths`\n- `deny_globs`\n- 本机执行或沙盒执行\n\n所以它不是无边界 shell，而是受系统治理约束的命令执行工具。\n\n## 和 `ptc` 怎么选\n\n可以这样记：\n\n- `执行命令`：运行已有命令、脚本和构建链路\n- [`ptc`](/docs/zh-CN/tools/ptc/)：把内容组织成脚本产物再执行\n\n如果你的目标是“在环境里执行一个已有命令”，优先用 `执行命令`。\n\n如果你的目标是“先形成一个程序化文件或脚本产物，再继续走链路”，优先看 `ptc`。\n\n## 最容易犯的错\n\n### 把它当成唯一编辑方式\n\n不对。\n\n文件编辑优先仍然是：\n\n- `写入文件`\n- `应用补丁`\n\n### 忽视预算\n\n长命令和海量输出都可能把上下文拖爆，所以预算参数不是摆设。\n\n## 你最需要记住的点\n\n- `执行命令` 用于真实命令执行，并受安全与沙盒策略约束。\n- 文件改动和命令执行应分层处理，不要混在一个工具里强行完成。\n- `ptc` 是并列工具，但它解决的是“脚本产物生成”，不是同一件事。\n\n## 相关文档\n\n- [ptc](/docs/zh-CN/tools/ptc/)\n- [应用补丁](/docs/zh-CN/tools/apply-patch/)\n- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n","source_path":"静态站文档/zh-CN/tools/exec.md"}</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ptc | wunder 文档</title>
+  <meta name="description" content="`ptc` 会把 Python 脚本内容写入工作区临时目录并执行，适合图表、表格、程序化中间产物这类“先生成再运行”的场景。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/ptc","language":"zh-CN","title":"ptc","summary":"`ptc` 会把 Python 脚本内容写入工作区临时目录并执行，适合图表、表格、程序化中间产物这类“先生成再运行”的场景。","read_when":["你要理解 `ptc` 和 `执行命令` 的分工","你要生成脚本产物而不是直接跑已有命令"],"source_docs":["src/services/tools/catalog.rs","src/services/tools.rs","src/sandbox/server.rs"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/ptc/","headings":[{"id":"section-1","level":1,"text":"ptc"},{"id":"section-2","level":2,"text":"常用参数"},{"id":"section-3","level":2,"text":"它适合什么"},{"id":"section-4","level":2,"text":"它实际怎么落地"},{"id":"section-5","level":2,"text":"最容易混淆的点"},{"id":"section-6","level":3,"text":"它不是普通文件编辑"},{"id":"section-7","level":3,"text":"它也不是普通 shell"},{"id":"section-8","level":2,"text":"你最需要记住的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/exec","next_slug":"zh-CN/tools/apply-patch","markdown":"# ptc\n\n`ptc` 可以理解成 Wunder 的“程序化工具调用”。\n\n它不是让模型自由拼 shell，而是让模型先给出一段 Python 脚本内容，再由系统把脚本写入临时目录并执行。\n\n## 常用参数\n\n- `filename`\n- `workdir`\n- `content`\n\n其中：\n\n- `filename` 只接受简单文件名，不允许路径段。\n- 没写扩展名时，系统会按 Python 脚本处理。\n- 非 Python 扩展会被拒绝。\n\n## 它适合什么\n\n- 生成图表\n- 做临时数据清洗\n- 输出结构化中间文件\n- 先形成脚本再继续执行链路\n\n如果你的目标是“跑一个已经存在的命令”，优先用 [执行命令](/docs/zh-CN/tools/exec/)。\n\n如果你的目标是“先生成一段脚本内容，再把结果产出来”，`ptc` 更合适。\n\n## 它实际怎么落地\n\n系统会把脚本写到工作区下的 `ptc_temp` 一类临时目录中，再调用 Python 执行。\n\n所以它的重点不是编辑仓库源码，而是快速产生一次性的程序化产物。\n\n## 最容易混淆的点\n\n### 它不是普通文件编辑\n\n真正要改仓库文件，优先还是：\n\n- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)\n- [应用补丁](/docs/zh-CN/tools/apply-patch/)\n\n### 它也不是普通 shell\n\n`ptc` 的输入核心是脚本内容，不是 shell 命令串。\n\n所以它比 `执行命令` 更适合“生成式脚本”，但不适合把很多系统命令混成一团去跑。\n\n## 你最需要记住的点\n\n- `ptc` 面向“生成脚本并执行”，不是面向“执行已有命令”。\n- 它只接受受限文件名和 Python 脚本内容。\n- 它更适合图表、转换、程序化中间结果，不适合作为仓库编辑主入口。\n\n## 相关文档\n\n- [执行命令](/docs/zh-CN/tools/exec/)\n- [应用补丁](/docs/zh-CN/tools/apply-patch/)\n- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)\n","source_path":"静态站文档/zh-CN/tools/ptc.md"}</script>
+</body>
+</html>

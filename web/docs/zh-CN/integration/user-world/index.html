@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>用户世界接口 | wunder 文档</title>
+  <meta name="description" content="`/wunder/user_world/*` 是 Wunder 里的用户到用户通信域，与用户到智能体会话域并行存在。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/integration/user-world","language":"zh-CN","title":"用户世界接口","summary":"`/wunder/user_world/*` 是 Wunder 里的用户到用户通信域，与用户到智能体会话域并行存在。","read_when":["你要接用户之间的单聊或群聊","你想分清 user_world 和 chat 两套接口的边界"],"source_docs":["docs/API文档.md","docs/设计方案.md","docs/系统介绍.md","src/api/user_world.rs","src/api/user_world_ws.rs"],"tab":"接入","group":"扩展接入","group_path":["扩展接入"],"url":"/docs/zh-CN/integration/user-world/","headings":[{"id":"section-1","level":1,"text":"用户世界接口"},{"id":"section-2","level":2,"text":"这套接口解决什么问题"},{"id":"section-3","level":2,"text":"它和 /wunder/chat/ 有什么不同"},{"id":"section-4","level":2,"text":"你通常会用到哪些接口"},{"id":"section-5","level":3,"text":"联系人与群聊"},{"id":"section-6","level":3,"text":"会话"},{"id":"section-7","level":3,"text":"消息"},{"id":"section-8","level":3,"text":"实时流"},{"id":"section-9","level":2,"text":"为什么仍然优先推荐 WebSocket"},{"id":"section-10","level":2,"text":"事件是什么"},{"id":"section-11","level":2,"text":"群聊和单聊怎么区分"},{"id":"section-12","level":2,"text":"文件和语音怎么处理"},{"id":"section-13","level":2,"text":"什么时候你不该用它"},{"id":"section-14","level":2,"text":"典型接入顺序"},{"id":"section-15","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/integration/temp-dir","next_slug":"zh-CN/integration/channel-webhook","markdown":"# 用户世界接口\n\nWunder 不只有“用户和智能体聊天”这一种通信。\n\n它还单独维护了一套“用户和用户通信域”，也就是：\n\n- `/wunder/user_world/*`\n\n## 这套接口解决什么问题\n\n它解决的是这些场景：\n\n- 联系人列表\n- 用户间单聊\n- 群聊\n- 已读状态\n- 用户世界消息事件流\n\n也就是说，`user_world` 不是聊天接口的附属能力，而是并行的另一套消息域。\n\n## 它和 `/wunder/chat/*` 有什么不同\n\n最核心的区别只有一句话：\n\n- `/wunder/chat/*` 面向用户和智能体\n- `/wunder/user_world/*` 面向用户和用户\n\n如果你把这两个域混在一起理解，前端状态、会话模型和鉴权都会变乱。\n\n## 你通常会用到哪些接口\n\n### 联系人与群聊\n\n- `GET /wunder/user_world/contacts`\n- `GET /wunder/user_world/groups`\n- `POST /wunder/user_world/groups`\n\n### 会话\n\n- `POST /wunder/user_world/conversations`\n- `GET /wunder/user_world/conversations`\n- `GET /wunder/user_world/conversations/{conversation_id}`\n\n### 消息\n\n- `GET /wunder/user_world/conversations/{conversation_id}/messages`\n- `POST /wunder/user_world/conversations/{conversation_id}/messages`\n- `POST /wunder/user_world/conversations/{conversation_id}/read`\n\n### 实时流\n\n- `GET /wunder/user_world/conversations/{conversation_id}/events`\n- `GET /wunder/user_world/ws`\n\n## 为什么仍然优先推荐 WebSocket\n\n和主聊天域一样，用户世界也优先 WebSocket。\n\n原因很简单：\n\n- 联系人、会话和已读变化都更适合实时推送\n- 群聊场景下 SSE 只适合作为兼容或兜底\n\n所以如果你在做完整客户端，优先接：\n\n- `/wunder/user_world/ws`\n\n## 事件是什么\n\n当前最核心的事件有两个：\n\n- `uw.message`\n- `uw.read`\n\n你可以把它们理解成：\n\n- 新消息\n- 已读更新\n\n这已经足够驱动大多数聊天 UI。\n\n## 群聊和单聊怎么区分\n\n这套模型本身支持两种会话：\n\n- `direct`\n- `group`\n\n群聊对象会额外带：\n\n- `group_id`\n- `group_name`\n- `member_count`\n- `announcement`\n\n因此前端不需要再自己猜“这是不是群聊”。\n\n## 文件和语音怎么处理\n\n用户世界不是只能传纯文本。\n\n当前还支持：\n\n- 会话内文件下载\n- 语音消息\n\n语音场景下，`content_type` 可以是：\n\n- `voice`\n- `audio/*`\n\n而 `content` 通常用 JSON 字符串承载 `path`、`duration_ms` 等元数据。\n\n## 什么时候你不该用它\n\n如果你的目标是：\n\n- 给模型发任务\n- 管理智能体会话\n- 看工具调用和中间过程\n\n那你应该接的是 `/wunder` 或 `/wunder/chat/*`，不是 `user_world`。\n\n## 典型接入顺序\n\n如果你在做完整客户端，推荐顺序是：\n\n1. 拉联系人和会话列表\n2. 进入会话后拉历史消息\n3. 建立 `/wunder/user_world/ws`\n4. 收到 `uw.message` 和 `uw.read` 后增量更新界面\n\n## 相关文档\n\n- [用户侧前端](/docs/zh-CN/surfaces/frontend/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [外部登录与免登嵌入](/docs/zh-CN/integration/external-login/)\n","source_path":"静态站文档/zh-CN/integration/user-world.md"}</script>
+</body>
+</html>

@@ -149,10 +149,15 @@
   - `skills`：技能列表（name/description/input_schema）
   - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
+  - `user_mcp_tools`：当前用户自建 MCP 工具列表（仅传入 `user_id` 时返回）
+  - `user_skills`：当前用户自建技能列表（仅传入 `user_id` 时返回）
+  - `user_knowledge_tools`：当前用户自建知识库工具列表（仅传入 `user_id` 时返回）
   - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
   - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空或 `null`）
+  - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
 - 说明：
   - 用户自建工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
+  - `items[]` 为新的统一能力输出；旧的分组字段继续保留，便于前端与旧调用方平滑迁移。
   - 共享工具能力已停用；服务端不再扫描其他用户工作区，也不再把共享字段纳入运行时编排。
   - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
@@ -572,12 +577,14 @@
   - `mcp_tools`：MCP 工具列表（name/description/input_schema）
   - `a2a_tools`：A2A 服务工具列表（name/description/input_schema）
   - `skills`：技能列表（name/description/input_schema）
-- `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
+  - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
   - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
   - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空数组）
+  - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
 - 说明：返回的是当前用户实际可用工具（已按等级与用户自身配置过滤）。
 - 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
+- 说明：`items[]` 与旧分组字段同时返回；推荐新前端与新工具目录逻辑优先消费 `items[]`。
 
 ### 4.1.2.20 `/wunder/user_tools/catalog`
 
@@ -593,8 +600,10 @@
   - `user_skills`：当前用户配置的自建技能
   - `user_knowledge_tools`：当前用户配置的自建知识库工具
   - `default_agent_tool_names`：默认智能体/预制智能体新建时的默认勾选项
+  - `items`：统一能力目录列表；字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
 - 说明：用于智能体设置与工具管理页面；`shared_tools/shared_tools_selected` 仅为兼容字段，当前恒为空。
 - 说明：管理员开放工具与用户自建工具已拆分为独立区域。服务端/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
+- 说明：`items[]` 是目录接口的统一能力视图：`group` 用于前端分组展示，`kind` 用于区分工具/技能；旧字段继续保留用于兼容。
 - 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
 - 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`最终回复/定时任务/休眠等待/记忆管理/执行命令/ptc/列出文件/搜索内容/读取文件/技能调用/写入文件/应用补丁`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。
 

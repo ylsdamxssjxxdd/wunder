@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>应用补丁 | wunder 文档</title>
+  <meta name="description" content="`应用补丁` 是 Wunder 做多文件、多位置结构化编辑的主力工具，比多次零碎写文件更稳定。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/apply-patch","language":"zh-CN","title":"应用补丁","summary":"`应用补丁` 是 Wunder 做多文件、多位置结构化编辑的主力工具，比多次零碎写文件更稳定。","read_when":["你要跨多个文件做精确编辑","你在调试补丁格式为什么没被正确应用"],"source_docs":["docs/API文档.md","src/services/tools/apply_patch_tool.rs","docs/功能迭代.md"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/apply-patch/","headings":[{"id":"section-1","level":1,"text":"应用补丁"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"什么时候优先用它"},{"id":"section-4","level":2,"text":"输入核心只有两个字段"},{"id":"section-5","level":2,"text":"它为什么更稳定"},{"id":"section-6","level":2,"text":"dryrun 什么时候有用"},{"id":"section-7","level":2,"text":"最容易犯的错"},{"id":"section-8","level":3,"text":"把它当普通文本替换"},{"id":"section-9","level":3,"text":"补丁写得太松"},{"id":"section-10","level":3,"text":"明明是单文件全量生成，还强行用补丁"},{"id":"section-11","level":2,"text":"你最需要记住的点"},{"id":"section-12","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/ptc","next_slug":"zh-CN/tools/read-image","markdown":"# 应用补丁\n\n`应用补丁` 适合多文件和多位置修改场景。\n\n## 这页解决什么\n\n这页只回答这些问题：\n\n- 为什么多段编辑优先用补丁\n- 补丁输入格式大致长什么样\n- `dry_run` 能帮你做什么\n\n## 什么时候优先用它\n\n- 同时改多个文件\n- 同一文件里改多个位置\n- 你不想用多次 `写入文件` 把上下文搞乱\n\n## 输入核心只有两个字段\n\n- `input`\n- `dry_run`\n\n其中 `input` 是完整补丁文本。\n\n典型骨架是：\n\n```text\n*** Begin Patch\n*** Update File: src/index.ts\n@@\n-old line\n+new line\n*** End Patch\n```\n\n## 它为什么更稳定\n\n因为它表达的是：\n\n- 改哪个文件\n- 改哪个上下文块\n- 是新增、删除还是更新\n\n这比“把整文件重新写一遍”更容易做精确控制，也更适合代码审查。\n\n## `dry_run` 什么时候有用\n\n在这两类场景里特别有用：\n\n- 先验证补丁语法和目标文件解析是否正确\n- 先预览会动哪些文件，再决定是否真正落盘\n\n## 最容易犯的错\n\n### 把它当普通文本替换\n\n不对。\n\n补丁依赖上下文定位，不是单纯的“全局替换字符串”。\n\n### 补丁写得太松\n\n上下文过少时，命中位置会更脆弱。\n\n### 明明是单文件全量生成，还强行用补丁\n\n如果是一个简单新文件，直接用 `写入文件` 更干净。\n\n## 你最需要记住的点\n\n- 多位置、多文件修改优先用 `应用补丁`。\n- `dry_run` 适合先做语法和目标验证。\n- 单文件全量覆盖不一定要上补丁。\n\n## 相关文档\n\n- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)\n- [执行命令与 ptc](/docs/zh-CN/tools/exec/)\n","source_path":"静态站文档/zh-CN/tools/apply-patch.md"}</script>
+</body>
+</html>

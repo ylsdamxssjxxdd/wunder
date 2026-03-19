@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>流式事件参考 | wunder 文档</title>
+  <meta name="description" content="接 Wunder 的流式链路时，最重要的不是把每个事件都背下来，而是知道哪些事件承担真正的生命周期语义。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/reference/stream-events","language":"zh-CN","title":"流式事件参考","summary":"接 Wunder 的流式链路时，最重要的不是把每个事件都背下来，而是知道哪些事件承担真正的生命周期语义。","read_when":["你在接 SSE 或 WebSocket","你想知道 turn_terminal、approval_resolved、thread_status 为什么重要"],"source_docs":["docs/API文档.md","docs/设计方案.md","src/orchestrator/execute.rs","src/api/chat.rs"],"tab":"参考","group":"系统参考","group_path":["系统参考"],"url":"/docs/zh-CN/reference/stream-events/","headings":[{"id":"section-1","level":1,"text":"流式事件参考"},{"id":"section-2","level":2,"text":"最先记住这三个"},{"id":"section-3","level":2,"text":"一类：过程事件"},{"id":"section-4","level":2,"text":"二类：排队与等待事件"},{"id":"section-5","level":2,"text":"三类：闭环事件"},{"id":"section-6","level":3,"text":"approvalresolved"},{"id":"section-7","level":3,"text":"turnterminal"},{"id":"section-8","level":3,"text":"threadstatus"},{"id":"section-9","level":2,"text":"为什么不能只看 final"},{"id":"section-10","level":2,"text":"接入时的最低处理建议"},{"id":"section-11","level":2,"text":"SSE 和 WS 的区别要点"},{"id":"section-12","level":2,"text":"一个简单判断法"},{"id":"section-13","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/reference/config","next_slug":"zh-CN/reference/workspace-routing","markdown":"# 流式事件参考\n\nWunder 的流式事件很多，但真正关键的不是“数量”，而是“哪几个事件承担状态语义”。\n\n## 最先记住这三个\n\n- `thread_status`\n- `approval_resolved`\n- `turn_terminal`\n\n如果你只消费旧的 `final` 或 `error`，很容易把线程状态判断错。\n\n## 一类：过程事件\n\n这些事件主要用于把执行过程可视化：\n\n- `progress`\n- `llm_output_delta`\n- `tool_call`\n- `tool_output_delta`\n- `tool_result`\n\n它们负责告诉你模型和工具在干什么，但不负责判定“一轮是否结束”。\n\n## 二类：排队与等待事件\n\n典型有：\n\n- `queued`\n- `approval_request`\n\n它们表达的是：\n\n- 请求已进入排队\n- 当前轮次在等审批\n\n## 三类：闭环事件\n\n### `approval_resolved`\n\n它表示审批已经进入终态。\n\n不论是批准、拒绝还是取消，都应该由这个事件承担“审批闭环完成”的语义。\n\n### `turn_terminal`\n\n这是当前一轮执行的唯一终结语义。\n\n它的 `status` 可能包括：\n\n- `completed`\n- `failed`\n- `cancelled`\n- `rejected`\n\n如果你在做状态机，请优先以它作为“一轮结束”的依据。\n\n### `thread_status`\n\n它描述的是线程当前运行态。\n\n典型状态包括：\n\n- `running`\n- `waiting_approval`\n- `waiting_user_input`\n- `interrupting`\n- `idle`\n- `not_loaded`\n\n它解决的是“线程现在活着吗、卡在哪”。\n\n## 为什么不能只看 `final`\n\n因为 `final` 更像“有最终回答文本”。\n\n但真实运行里还会遇到：\n\n- 被拒绝\n- 被取消\n- 等审批\n- 中途失败\n\n这些场景下，只看 `final` 根本不够。\n\n## 接入时的最低处理建议\n\n如果你在做一个新的客户端，至少正确处理：\n\n- `queued`\n- `thread_status`\n- `approval_request`\n- `approval_resolved`\n- `turn_terminal`\n- `error`\n\n这样你的状态机才不会只在“最顺的路径”里成立。\n\n## SSE 和 WS 的区别要点\n\n两者语义尽量保持一致，但体验侧仍有差别：\n\n- WebSocket 更适合长会话和实时控制\n- SSE 更适合作为兼容兜底\n\n所以“默认 WebSocket，SSE 兜底”不是一句宣传语，而是接入策略。\n\n## 一个简单判断法\n\n如果你只想知道这轮是不是结束：\n\n- 看 `turn_terminal`\n\n如果你想知道线程现在是什么状态：\n\n- 看 `thread_status`\n\n如果你想知道审批流程有没有彻底收口：\n\n- 看 `approval_resolved`\n\n## 相关文档\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [API 索引](/docs/zh-CN/reference/api-index/)\n","source_path":"静态站文档/zh-CN/reference/stream-events.md"}</script>
+</body>
+</html>

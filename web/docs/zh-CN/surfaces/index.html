@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>界面概览 | wunder 文档</title>
+  <meta name="description" content="Wunder 当前同时维护用户侧前端、管理端前端和桌面端三块界面表面，它们共享同一套后端能力，但职责不同。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/surfaces/index","language":"zh-CN","title":"界面概览","summary":"Wunder 当前同时维护用户侧前端、管理端前端和桌面端三块界面表面，它们共享同一套后端能力，但职责不同。","read_when":["你想快速分清用户端、管理端和 desktop 各自做什么","你在找某个功能应该去哪个界面看"],"source_docs":["docs/系统介绍.md","docs/API文档.md","docs/设计方案.md"],"tab":"界面","group":"概览","group_path":["概览"],"url":"/docs/zh-CN/surfaces/","headings":[{"id":"section-1","level":1,"text":"界面概览"},{"id":"section-2","level":2,"text":"先看这些"},{"id":"section-3","level":2,"text":"按角色看"},{"id":"section-4","level":3,"text":"普通用户"},{"id":"section-5","level":3,"text":"管理员"},{"id":"section-6","level":3,"text":"集成开发者"},{"id":"section-7","level":2,"text":"你最需要记住的点"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/integration/mcp-endpoint","next_slug":"zh-CN/surfaces/frontend","markdown":"# 界面概览\n\nWunder 不是一个单页聊天产品，而是三块界面一起工作。\n\n## 先看这些\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/surfaces/frontend/\">\n    <strong>用户侧前端<\/strong>\n    <span>聊天、用户世界、工作区、工具和设置的统一工作台。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/surfaces/web-admin/\">\n    <strong>管理端界面<\/strong>\n    <span>模型、用户、渠道、工具、监控与 benchmark 治理入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/surfaces/desktop-ui/\">\n    <strong>Desktop 界面<\/strong>\n    <span>本地主交付形态，强调端云协同和桌面工作台体验。<\/span>\n  <\/a>\n<\/div>\n\n## 按角色看\n\n### 普通用户\n\n优先看：\n\n- [用户侧前端](/docs/zh-CN/surfaces/frontend/)\n- [Desktop 界面](/docs/zh-CN/surfaces/desktop-ui/)\n\n### 管理员\n\n优先看：\n\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n\n### 集成开发者\n\n除了界面页，还应该一起看：\n\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n- [工作区 API](/docs/zh-CN/integration/workspace-api/)\n\n## 你最需要记住的点\n\n- 用户端强调会话体验和文件工作流。\n- 管理端强调治理、监控、配置和评估。\n- Desktop 是当前主交付形态，但底层仍复用 Wunder 同一套主链路。\n\n## 相关文档\n\n- [开始](/docs/zh-CN/start/desktop/)\n- [运维概览](/docs/zh-CN/ops/)\n- [帮助](/docs/zh-CN/help/)\n","source_path":"静态站文档/zh-CN/surfaces/index.md"}</script>
+</body>
+</html>

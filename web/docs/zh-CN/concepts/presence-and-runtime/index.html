@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>运行时与在线状态 | wunder 文档</title>
+  <meta name="description" content="Wunder 不只返回消息内容，还持续维护线程和会话的运行时投影，用于表达 loaded、waiting、streaming、idle 等状态。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/presence-and-runtime","language":"zh-CN","title":"运行时与在线状态","summary":"Wunder 不只返回消息内容，还持续维护线程和会话的运行时投影，用于表达 loaded、waiting、streaming、idle 等状态。","read_when":["你在做会话列表、状态徽标或运行面板","你在排查线程到底是卡住了还是已经结束"],"source_docs":["docs/API文档.md","src/api/chat.rs","src/core/session_runtime.rs"],"tab":"概念","group":"核心概念","group_path":["核心概念"],"url":"/docs/zh-CN/concepts/presence-and-runtime/","headings":[{"id":"section-1","level":1,"text":"运行时与在线状态"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"两层状态不要混"},{"id":"section-4","level":3,"text":"线程事件状态"},{"id":"section-5","level":3,"text":"会话运行时投影"},{"id":"section-6","level":2,"text":"为什么不能只保留一个 running"},{"id":"section-7","level":2,"text":"会话页最常见的状态判断"},{"id":"section-8","level":2,"text":"什么时候最容易用错"},{"id":"section-9","level":3,"text":"把“等待审批”当成“已经结束”"},{"id":"section-10","level":3,"text":"只在详情页读状态"},{"id":"section-11","level":3,"text":"把事件流和摘要状态混成一层"},{"id":"section-12","level":2,"text":"你最需要记住的点"},{"id":"section-13","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/concepts/streaming","next_slug":"zh-CN/concepts/tools","markdown":"# 运行时与在线状态\n\nWunder 的会话不是一条静态历史记录，它始终带着一层运行时状态。\n\n## 这页解决什么\n\n如果你想知道：\n\n- 线程现在是不是还活着\n- 为什么会话列表需要 `runtime`\n- `running`、`thread_status`、`terminal_status` 分别表达什么\n\n这页就是给这些问题用的。\n\n## 两层状态不要混\n\n### 线程事件状态\n\n事件流里的 `thread_status` 更像“线程现在在干什么”。\n\n常见值包括：\n\n- `running`\n- `waiting_approval`\n- `waiting_user_input`\n- `interrupting`\n- `idle`\n- `not_loaded`\n\n### 会话运行时投影\n\n聊天域会把状态再汇总成 `runtime` 对象，给列表页和详情页直接消费。\n\n当前重点字段包括：\n\n- `status`\n- `loaded`\n- `active`\n- `streaming`\n- `waiting`\n- `watcher_count`\n- `pending_approval_count`\n- `monitor_status`\n- `monitor_stage`\n- `terminal_status`\n\n## 为什么不能只保留一个 `running`\n\n因为 `running=true/false` 太粗了。\n\n它回答不了这些问题：\n\n- 是在持续输出，还是在等审批\n- 会话是否已经加载到内存\n- 有没有观察者挂在这个线程上\n- 这轮是不是已经进入 `completed/failed/cancelled/rejected`\n\n所以 Wunder 现在保留 `running` 兼容字段，但真正稳定的接入应该看 `runtime`。\n\n## 会话页最常见的状态判断\n\n如果你在做列表或详情页，通常按这个思路就够了：\n\n- 是否还在持续执行：看 `runtime.streaming`\n- 是否处于等待态：看 `runtime.waiting`\n- 是否已经有终态：看 `runtime.terminal_status`\n- 是否还能被继续观察：看 `runtime.loaded` 和 `runtime.active`\n\n## 什么时候最容易用错\n\n### 把“等待审批”当成“已经结束”\n\n这会导致前端错误地恢复输入框或隐藏审批区。\n\n### 只在详情页读状态\n\n会话列表、事件页和线程面板都应该复用同一套运行时语义。\n\n### 把事件流和摘要状态混成一层\n\n事件负责时间线，`runtime` 负责当前快照。\n\n## 你最需要记住的点\n\n- `thread_status` 适合表达过程中的线程状态。\n- `runtime` 适合给会话列表、详情页和控制面板直接消费。\n- `running` 只是兼容字段，不应该再承担完整状态机。\n\n## 相关文档\n\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [流式执行](/docs/zh-CN/concepts/streaming/)\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n","source_path":"静态站文档/zh-CN/concepts/presence-and-runtime.md"}</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>帮助 | wunder 文档</title>
+  <meta name="description" content="如果你想更快地修问题，先从这里选正确的排障入口，而不是到处翻整站文档。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/help/index","language":"zh-CN","title":"帮助","summary":"如果你想更快地修问题，先从这里选正确的排障入口，而不是到处翻整站文档。","read_when":["你想知道出问题时先看哪一页","你想快速找到 FAQ、术语和常见修复路径"],"source_docs":["docs/API文档.md","docs/系统介绍.md","docs/静态站文档/zh-CN/help/troubleshooting.md"],"tab":"帮助","group":"概览","group_path":["概览"],"url":"/docs/zh-CN/help/","headings":[{"id":"section-1","level":1,"text":"帮助"},{"id":"section-2","level":2,"text":"先看这些"},{"id":"section-3","level":2,"text":"按问题找入口"},{"id":"section-4","level":3,"text":"接口或状态机异常"},{"id":"section-5","level":3,"text":"文件或下载链路异常"},{"id":"section-6","level":3,"text":"渠道接入异常"},{"id":"section-7","level":3,"text":"配置或治理问题"},{"id":"section-8","level":2,"text":"你最需要记住的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/reference/admin-panels","next_slug":"zh-CN/help/troubleshooting","markdown":"# 帮助\n\n如果你的目标是“尽快定位问题”，从这里开始。\n\n## 先看这些\n\n- **故障排查：**[从这里开始](/docs/zh-CN/help/troubleshooting/)\n- **常见问题：**[FAQ](/docs/zh-CN/help/faq/)\n- **术语说明：**[术语表](/docs/zh-CN/help/glossary/)\n\n## 按问题找入口\n\n### 接口或状态机异常\n\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n\n### 文件或下载链路异常\n\n- [工作区 API](/docs/zh-CN/integration/workspace-api/)\n- [临时目录与文档转换](/docs/zh-CN/integration/temp-dir/)\n\n### 渠道接入异常\n\n- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n\n### 配置或治理问题\n\n- [配置说明](/docs/zh-CN/reference/config/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n\n## 你最需要记住的点\n\n- 先判断问题属于概念问题、接入问题还是运行问题。\n- 很多“模型异常”其实是渠道、工作区或状态机问题。\n- FAQ 适合快速判断，troubleshooting 适合按链路排查。\n\n## 相关文档\n\n- [文档总览](/docs/zh-CN/start/hubs/)\n- [参考概览](/docs/zh-CN/reference/)\n","source_path":"静态站文档/zh-CN/help/index.md"}</script>
+</body>
+</html>

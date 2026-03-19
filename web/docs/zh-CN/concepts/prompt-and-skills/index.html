@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>提示词与技能 | wunder 文档</title>
+  <meta name="description" content="Wunder 把系统提示词和技能都当成正式治理对象，而不是散落在代码里的临时文本。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/prompt-and-skills","language":"zh-CN","title":"提示词与技能","summary":"Wunder 把系统提示词和技能都当成正式治理对象，而不是散落在代码里的临时文本。","read_when":["你要理解线程 system prompt 为什么会冻结","你要搞清楚技能、模板包和 skill_call 的关系"],"source_docs":["docs/系统介绍.md","docs/设计方案.md","docs/API文档.md","config/wunder-example.yaml"],"tab":"概念","group":"核心概念","group_path":["核心概念"],"url":"/docs/zh-CN/concepts/prompt-and-skills/","headings":[{"id":"section-1","level":1,"text":"提示词与技能"},{"id":"section-2","level":2,"text":"先分清两类东西"},{"id":"section-3","level":3,"text":"系统提示词"},{"id":"section-4","level":3,"text":"技能"},{"id":"section-5","level":2,"text":"为什么线程提示词必须冻结"},{"id":"section-6","level":2,"text":"提示词模板包怎么组织"},{"id":"section-7","level":2,"text":"改模板后什么时候生效"},{"id":"section-8","level":2,"text":"技能是什么"},{"id":"section-9","level":2,"text":"技能分层"},{"id":"section-10","level":2,"text":"skillcall 为什么重要"},{"id":"section-11","level":2,"text":"{{SKILLROOT}} 是干什么的"},{"id":"section-12","level":2,"text":"提示词、技能、记忆三者怎么配合"},{"id":"section-13","level":2,"text":"常见误解"},{"id":"section-14","level":3,"text":"误解一：改提示词模板会立即改变当前线程"},{"id":"section-15","level":3,"text":"误解二：技能只是一个说明文档"},{"id":"section-16","level":3,"text":"误解三：记忆会每轮自动重写 system prompt"},{"id":"section-17","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/concepts/tools","next_slug":"zh-CN/concepts/memory","markdown":"# 提示词与技能\n\n在 Wunder 里，提示词和技能都不是“补充说明”，而是系统主链路的一部分。\n\n## 先分清两类东西\n\n### 系统提示词\n\n决定模型在当前线程里怎么理解自己、工具协议、工程约束和记忆上下文。\n\n### 技能\n\n决定模型在当前会话里还能额外读到什么操作手册、资源路径和执行约定。\n\n两者都会影响模型行为，但职责不同。\n\n## 为什么线程提示词必须冻结\n\nWunder 当前有一条非常重要的约束：\n\n- 线程的 system prompt 在首次确定后必须冻结\n\n这样做不是保守，而是为了稳定性：\n\n- 避免同一线程越聊越漂\n- 避免长期记忆反复改写缓存命中\n- 降低多轮会话里“前后人格不一致”的问题\n- 让问题定位更可重复\n\n所以你要理解：\n\n- 新线程会重新构造 system prompt\n- 老线程不会因为你改了模板包就被重写\n\n## 提示词模板包怎么组织\n\n当前提示词按分段文件组织，例如：\n\n- `role`\n- `engineering`\n- `tools_protocol`\n- `skills_protocol`\n- `memory`\n- `extra`\n\n系统支持多套模板包，由 `prompt_templates.active` 指定当前启用包。\n\n## 改模板后什么时候生效\n\n提示词模板不是热改当前线程，而是优先影响：\n\n- 新建线程\n- 新会话\n- 新的系统提示词预览结果\n\n已经建立的线程不追写。\n\n如果你改了模板包却发现当前对话没变化，先不要怀疑系统没保存，先确认是不是还在旧线程里。\n\n## 技能是什么\n\n技能可以理解成“面向模型的结构化操作说明包”。\n\n它通常包含：\n\n- `SKILL.md`\n- 脚本\n- 示例文件\n- 资源目录\n\n技能被启用后，模型会拿到技能协议和技能入口信息，需要时还可以通过 `skill_call` 读取完整技能内容。\n\n## 技能分层\n\nWunder 当前把技能分成三层：\n\n- `builtin`\n- `custom`\n- `external`\n\n这背后的意义是治理边界：\n\n- 内置技能默认只读\n- 用户和管理员上传的内容写入 custom 目录\n- external 更像外部引入能力\n\n所以“技能能不能改”并不是统一答案，要看它属于哪一层。\n\n## `skill_call` 为什么重要\n\n很多系统只给模型一个技能名，但不给完整技能文档，这会导致模型反复猜。\n\nWunder 内置的 `skill_call` 则是显式能力：\n\n- 按技能名返回完整 `SKILL.md`\n- 返回技能目录结构\n- 不对结果做过度裁剪\n\n这使得技能从“提示词里的一个名字”变成“模型可以主动读取的操作手册”。\n\n## `{{SKILL_ROOT}}` 是干什么的\n\n技能文档里的资源路径统一建议写成：\n\n- `{{SKILL_ROOT}}`\n\n原因很实际：\n\n- 技能可能在 server、desktop、cli 下落在不同真实路径\n- 如果直接写死本地路径，迁移后就会失效\n\n`skill_call` 返回技能内容时，会把这个占位符替换成模型当前可见的绝对路径。\n\n## 提示词、技能、记忆三者怎么配合\n\n可以这样理解：\n\n- 系统提示词定义长期稳定边界\n- 技能定义某类任务的附加执行协议\n- 记忆定义当前线程初始化时带入的长期事实快照\n\n三者都重要，但不要混用职责。\n\n## 常见误解\n\n### 误解一：改提示词模板会立即改变当前线程\n\n不会。\n\n它优先影响的是新线程。\n\n### 误解二：技能只是一个说明文档\n\n不准确。\n\n在 Wunder 里，技能是模型可以显式读取的运行资源。\n\n### 误解三：记忆会每轮自动重写 system prompt\n\n不会。\n\n当前约定是初始化注入一次，之后线程提示词保持冻结。\n\n## 相关文档\n\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n- [配置说明](/docs/zh-CN/reference/config/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n","source_path":"静态站文档/zh-CN/concepts/prompt-and-skills.md"}</script>
+</body>
+</html>

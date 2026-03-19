@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>接入概览 | wunder 文档</title>
+  <meta name="description" content="Wunder 的接入面不是只有 `/wunder`，还包括聊天域、工作区、渠道、A2A、MCP 和临时文件入口。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/integration/index","language":"zh-CN","title":"接入概览","summary":"Wunder 的接入面不是只有 `/wunder`，还包括聊天域、工作区、渠道、A2A、MCP 和临时文件入口。","read_when":["你准备把 Wunder 接到自己的系统里","你不确定该从 `/wunder`、聊天域还是工作区接口开始"],"source_docs":["docs/API文档.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"接入","group":"概览","group_path":["概览"],"url":"/docs/zh-CN/integration/","headings":[{"id":"section-1","level":1,"text":"接入概览"},{"id":"section-2","level":2,"text":"先看这些"},{"id":"section-3","level":2,"text":"按目标找页面"},{"id":"section-4","level":3,"text":"你要接一个通用调用方"},{"id":"section-5","level":3,"text":"你要做聊天界面"},{"id":"section-6","level":3,"text":"你要做文件与产物流转"},{"id":"section-7","level":3,"text":"你要接外部系统或平台"},{"id":"section-8","level":2,"text":"你最需要记住的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/node-invoke","next_slug":"zh-CN/integration/wunder-api","markdown":"# 接入概览\n\n如果你把 Wunder 当成外部能力服务接入，先不要急着翻完整 API 文档，先从这个入口页确定“你要接哪一层”。\n\n## 先看这些\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/wunder-api/\">\n    <strong>wunder API<\/strong>\n    <span>统一执行入口，最短路径接入。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/chat-ws/\">\n    <strong>聊天 WebSocket<\/strong>\n    <span>聊天主实时通道，适合工作台和桌面会话。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/chat-sessions/\">\n    <strong>聊天会话<\/strong>\n    <span>会话创建、消息发送、事件、恢复、取消都在这里。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/workspace-api/\">\n    <strong>工作区 API<\/strong>\n    <span>文件浏览、上传、写入、归档和容器路由入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/channel-webhook/\">\n    <strong>渠道 Webhook<\/strong>\n    <span>飞书、微信、QQBot、WhatsApp、XMPP 等入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/mcp-endpoint/\">\n    <strong>MCP 入口<\/strong>\n    <span>自托管 MCP 与外部工具接入方式。<\/span>\n  <\/a>\n<\/div>\n\n## 按目标找页面\n\n### 你要接一个通用调用方\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [流式执行](/docs/zh-CN/concepts/streaming/)\n\n### 你要做聊天界面\n\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n\n### 你要做文件与产物流转\n\n- [工作区 API](/docs/zh-CN/integration/workspace-api/)\n- [临时目录与文档转换](/docs/zh-CN/integration/temp-dir/)\n\n### 你要接外部系统或平台\n\n- [用户世界接口](/docs/zh-CN/integration/user-world/)\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [外部登录与免登嵌入](/docs/zh-CN/integration/external-login/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n\n## 你最需要记住的点\n\n- `/wunder` 是统一执行入口，但不是完整聊天域。\n- 真正做聊天 UI 时，通常要一起使用聊天会话接口和 WebSocket。\n- 文件路径治理要先分清工作区和 `temp_dir`。\n- 渠道接入、A2A、MCP 都是正式接入面，不是附属功能。\n\n## 相关文档\n\n- [参考概览](/docs/zh-CN/reference/)\n- [API 索引](/docs/zh-CN/reference/api-index/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"静态站文档/zh-CN/integration/index.md"}</script>
+</body>
+</html>

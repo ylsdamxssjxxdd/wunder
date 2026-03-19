@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工作区路由参考 | wunder 文档</title>
+  <meta name="description" content="Wunder 的工作区路由不是单纯按 user_id 取目录，而是由 `container_id`、智能体容器配置和 scoped user_id 共同决定。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/reference/workspace-routing","language":"zh-CN","title":"工作区路由参考","summary":"Wunder 的工作区路由不是单纯按 user_id 取目录，而是由 `container_id`、智能体容器配置和 scoped user_id 共同决定。","read_when":["你在排查文件为什么落到了“另一个工作区”","你要准确理解工作区接口的路由优先级"],"source_docs":["docs/API文档.md","src/api/workspace.rs","docs/设计方案.md"],"tab":"参考","group":"系统参考","group_path":["系统参考"],"url":"/docs/zh-CN/reference/workspace-routing/","headings":[{"id":"section-1","level":1,"text":"工作区路由参考"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"路由优先级"},{"id":"section-4","level":2,"text":"容器约定"},{"id":"section-5","level":2,"text":"底层路径和公共路径不要混"},{"id":"section-6","level":2,"text":"scoped userid 是什么"},{"id":"section-7","level":2,"text":"什么时候最容易踩坑"},{"id":"section-8","level":3,"text":"以为 agentid 一定决定工作区"},{"id":"section-9","level":3,"text":"以为下载和上传才需要考虑容器"},{"id":"section-10","level":3,"text":"以为本地模式就没有容器"},{"id":"section-11","level":2,"text":"你最需要记住的点"},{"id":"section-12","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/reference/stream-events","next_slug":"zh-CN/reference/prompt-templates","markdown":"# 工作区路由参考\n\n这页不是讲“工作区是什么”，而是讲“请求最后会路由到哪一块工作区”。\n\n## 这页解决什么\n\n这页只回答这些问题：\n\n- `container_id` 和 `agent_id` 谁优先\n- 为什么同一个 `user_id` 可能对应多块持久工作区\n- scoped user_id 为什么还能直接访问容器工作区\n\n## 路由优先级\n\n当前 `/wunder/workspace*` 的路由优先级很明确：\n\n1. 如果显式传了 `container_id`，优先按它路由\n2. 否则如果智能体配置了 `sandbox_container_id`，按该容器路由\n3. 再回退到默认 scoped user workspace 兼容策略\n\n这意味着：\n\n- 显式 `container_id` 高于 `agent_id`\n\n## 容器约定\n\n当前约定是：\n\n- `container_id=0`：用户私有容器\n- `container_id=1~10`：智能体运行容器\n\n所以你看到“同一个用户为什么会有多块空间”，本质是容器语义在生效。\n\n## 底层路径和公共路径不要混\n\n公共视角里，你通常会看到：\n\n- `/workspaces/{user_id}/...`\n\n但实现层会把不同容器拆到不同真实目录。\n\n所以：\n\n- 公共路径更适合给模型和接口理解\n- 真实目录更适合服务端内部隔离\n\n## scoped user_id 是什么\n\n当前已登录用户也可以显式传 scoped `user_id`，例如容器或智能体作用域 ID。\n\n这让某些高级场景下，前端或调试工具可以直接访问对应隔离空间，而不必总是重新推导。\n\n但如果你是新接入方，默认仍建议优先用：\n\n- `user_id + container_id`\n\n而不是自己拼 scoped ID。\n\n## 什么时候最容易踩坑\n\n### 以为 `agent_id` 一定决定工作区\n\n不对。\n\n只要显式传了 `container_id`，它就优先。\n\n### 以为下载和上传才需要考虑容器\n\n不对。\n\n浏览、内容读取、搜索、上传、写文件、移动复制、归档下载都在同一套路由逻辑下。\n\n### 以为本地模式就没有容器\n\n也不对。\n\n本地模式只是把容器映射到真实目录，不会取消容器语义。\n\n## 你最需要记住的点\n\n- 显式 `container_id` 优先级最高。\n- `container_id=0` 和 `1~10` 的职责不同。\n- 公共路径和真实目录名不是同一个概念。\n\n## 相关文档\n\n- [工作区与容器](/docs/zh-CN/concepts/workspaces/)\n- [工作区 API](/docs/zh-CN/integration/workspace-api/)\n- [数据与存储](/docs/zh-CN/ops/data-and-storage/)\n","source_path":"静态站文档/zh-CN/reference/workspace-routing.md"}</script>
+</body>
+</html>

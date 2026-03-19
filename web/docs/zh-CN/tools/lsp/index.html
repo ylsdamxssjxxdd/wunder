@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LSP 查询 | wunder 文档</title>
+  <meta name="description" content="`LSP查询` 把定义跳转、引用搜索、悬停说明、符号树和调用层级做成正式工具，适合代码导航而不是全文模糊搜索。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/lsp","language":"zh-CN","title":"LSP 查询","summary":"`LSP查询` 把定义跳转、引用搜索、悬停说明、符号树和调用层级做成正式工具，适合代码导航而不是全文模糊搜索。","read_when":["你要查定义、引用或调用关系","你要区分 LSP 查询和文本搜索的边界"],"source_docs":["src/services/tools/catalog.rs","src/services/tools.rs"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/lsp/","headings":[{"id":"section-1","level":1,"text":"LSP 查询"},{"id":"section-2","level":2,"text":"核心操作"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"它怎么工作"},{"id":"section-5","level":2,"text":"它和搜索内容的区别"},{"id":"section-6","level":2,"text":"最容易犯的错"},{"id":"section-7","level":3,"text":"把它当成全文检索"},{"id":"section-8","level":3,"text":"忽视 1-based 位置"},{"id":"section-9","level":2,"text":"你最需要记住的点"},{"id":"section-10","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/read-image","next_slug":"zh-CN/tools/skill-call","markdown":"# LSP 查询\n\n`LSP查询` 面向“代码语义导航”，不是面向普通字符串搜索。\n\n## 核心操作\n\n- `definition`\n- `references`\n- `hover`\n- `documentSymbol`\n- `workspaceSymbol`\n- `implementation`\n- `callHierarchy`\n\n## 常用参数\n\n- `operation`\n- `path`\n- `line`\n- `character`\n- `query`\n- `call_hierarchy_direction`\n\n其中：\n\n- `definition`、`references`、`hover`、`implementation`、`callHierarchy` 需要 `line` 和 `character`。\n- `workspaceSymbol` 需要 `query`。\n- `call_hierarchy_direction` 支持 `incoming` 和 `outgoing`。\n\n## 它怎么工作\n\n在执行查询前，系统会先：\n\n- 校验 `lsp.enabled`\n- 校验目标文件存在\n- 让对应文件进入 LSP 管理器的观察范围\n\n随后再把请求分发给当前命中的 LSP 客户端，所以返回结果可能来自多个语言服务器。\n\n## 它和搜索内容的区别\n\n- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/) 更适合模糊文本搜索。\n- `LSP查询` 更适合语义级导航。\n\n比如：\n\n- 想找某个函数在哪定义，用 `definition`\n- 想找所有调用点，用 `references`\n- 想看文件结构，用 `documentSymbol`\n\n## 最容易犯的错\n\n### 把它当成全文检索\n\n如果你只有关键词，没有明确代码位置，先用文本搜索通常更快。\n\n### 忽视 1-based 位置\n\n这个工具的 `line` 和 `character` 都是从 1 开始计。\n\n## 你最需要记住的点\n\n- `LSP查询` 是语义导航，不是字符串搜索。\n- 不同操作对位置参数的要求不同。\n- 返回结果可能来自多个 LSP 服务端，不一定只有一份。\n\n## 相关文档\n\n- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)\n- [应用补丁](/docs/zh-CN/tools/apply-patch/)\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n","source_path":"静态站文档/zh-CN/tools/lsp.md"}</script>
+</body>
+</html>

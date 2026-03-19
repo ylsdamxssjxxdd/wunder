@@ -1,3 +1,4 @@
+use crate::schemas::AbilityKind;
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_tools::{UserToolBindings, UserToolKind};
 use crate::skills::SkillSpec;
@@ -7,7 +8,7 @@ use crate::storage::{
     UserAgentRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -158,11 +159,66 @@ struct WorkerCardPrompt {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct WorkerCardAbilityItem {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    runtime_name: String,
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    kind: AbilityKind,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
 struct WorkerCardAbilities {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    items: Vec<WorkerCardAbilityItem>,
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
     skills: Vec<String>,
+    #[serde(skip)]
+    tool_names_present: bool,
+    #[serde(skip)]
+    skills_present: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct WorkerCardAbilitiesRaw {
+    #[serde(default)]
+    items: Vec<WorkerCardAbilityItem>,
+    #[serde(default)]
+    tool_names: Vec<String>,
+    #[serde(default)]
+    skills: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for WorkerCardAbilities {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let Some(object) = value.as_object() else {
+            return Ok(Self::default());
+        };
+        let tool_names_present = object.contains_key("tool_names");
+        let skills_present = object.contains_key("skills");
+        let raw: WorkerCardAbilitiesRaw =
+            serde_json::from_value(value).map_err(serde::de::Error::custom)?;
+        Ok(Self {
+            items: raw.items,
+            tool_names: raw.tool_names,
+            skills: raw.skills,
+            tool_names_present,
+            skills_present,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1000,8 +1056,8 @@ fn install_worker_snapshot(
         .icon
         .clone()
         .or_else(|| worker_ref.icon.clone());
-    let declared_tool_names = normalize_string_items(&worker_card.abilities.tool_names);
-    let declared_skill_names = normalize_string_items(&worker_card.abilities.skills);
+    let (declared_tool_names, declared_skill_names) =
+        collect_worker_card_declared_abilities(&worker_card.abilities);
     let preset_questions = normalize_string_items(&worker_card.interaction.preset_questions);
     let sandbox_container_id = normalize_sandbox_container_id(
         worker_card
@@ -1148,6 +1204,66 @@ fn normalize_string_items(values: &[String]) -> Vec<String> {
     items
 }
 
+fn build_worker_card_ability_items(
+    declared_tool_names: &[String],
+    declared_skill_names: &[String],
+) -> Vec<WorkerCardAbilityItem> {
+    let mut items = Vec::new();
+    for name in normalize_string_items(declared_tool_names) {
+        items.push(WorkerCardAbilityItem {
+            id: format!("tool:{name}"),
+            name: name.clone(),
+            runtime_name: name.clone(),
+            display_name: name,
+            description: String::new(),
+            kind: AbilityKind::Tool,
+        });
+    }
+    for name in normalize_string_items(declared_skill_names) {
+        items.push(WorkerCardAbilityItem {
+            id: format!("skill:{name}"),
+            name: name.clone(),
+            runtime_name: name.clone(),
+            display_name: name,
+            description: String::new(),
+            kind: AbilityKind::Skill,
+        });
+    }
+    items
+}
+
+fn collect_worker_card_declared_abilities(abilities: &WorkerCardAbilities) -> (Vec<String>, Vec<String>) {
+    if abilities.tool_names_present || abilities.skills_present {
+        return (
+            normalize_string_items(&abilities.tool_names),
+            normalize_string_items(&abilities.skills),
+        );
+    }
+
+    let mut tool_names = Vec::new();
+    let mut skill_names = Vec::new();
+    for item in &abilities.items {
+        let runtime_name = item.runtime_name.trim();
+        let fallback_name = item.name.trim();
+        let name = if runtime_name.is_empty() {
+            fallback_name
+        } else {
+            runtime_name
+        };
+        if name.is_empty() {
+            continue;
+        }
+        match item.kind {
+            AbilityKind::Skill => skill_names.push(name.to_string()),
+            AbilityKind::Tool => tool_names.push(name.to_string()),
+        }
+    }
+    (
+        normalize_string_items(&tool_names),
+        normalize_string_items(&skill_names),
+    )
+}
+
 fn load_worker_card_manifest(worker_root: &Path) -> Result<Option<WorkerCardManifest>> {
     for candidate in ["worker-card.json", "worker-card.yaml", "worker-card.yml"] {
         let path = worker_root.join(candidate);
@@ -1220,7 +1336,7 @@ fn build_worker_card_manifest(
     attached_skill_names: &[String],
 ) -> WorkerCardManifest {
     WorkerCardManifest {
-        schema_version: Some("wunder/worker-card@1".to_string()),
+        schema_version: Some("wunder/worker-card@2".to_string()),
         kind: Some("WorkerCard".to_string()),
         metadata: WorkerCardMetadata {
             id: Some(worker_id.to_string()),
@@ -1235,8 +1351,11 @@ fn build_worker_card_manifest(
                 .filter(|value| !value.is_empty()),
         },
         abilities: WorkerCardAbilities {
+            items: build_worker_card_ability_items(declared_tool_names, attached_skill_names),
             tool_names: normalize_string_items(declared_tool_names),
             skills: normalize_string_items(attached_skill_names),
+            tool_names_present: true,
+            skills_present: true,
         },
         interaction: WorkerCardInteraction {
             preset_questions: normalize_string_items(&agent.preset_questions),
@@ -1268,7 +1387,7 @@ fn resolve_worker_skill_sources(
     worker_root: &Path,
     worker_card: &WorkerCardManifest,
 ) -> Result<Vec<WorkerSkillSource>> {
-    let skill_names = normalize_string_items(&worker_card.abilities.skills);
+    let (_, skill_names) = collect_worker_card_declared_abilities(&worker_card.abilities);
     let mut sources = Vec::new();
     for name in skill_names {
         let Some(source_dir) = resolve_declared_skill_source_dir(package_root, worker_root, &name)?
@@ -2444,6 +2563,41 @@ mod tests {
         let skill_root = root.path().join("skills").join("requirement_analyzer");
         std::fs::create_dir_all(&skill_root).expect("skill dir");
         std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
+        let worker_card = load_worker_card_manifest(worker_root.as_path())
+            .expect("load worker card")
+            .expect("worker card exists");
+        let skill_refs =
+            resolve_worker_skill_sources(root.path(), worker_root.as_path(), &worker_card)
+                .expect("resolve worker skills");
+        assert_eq!(skill_refs.len(), 1);
+        assert_eq!(skill_refs[0].preferred_name, "requirement_analyzer");
+        assert_eq!(skill_refs[0].source_dir, skill_root);
+    }
+
+    #[test]
+    fn resolve_worker_skill_sources_supports_worker_card_ability_items() {
+        let root = tempdir().expect("tempdir");
+        let worker_root = root.path().join("workers").join("planner");
+        std::fs::create_dir_all(&worker_root).expect("worker dir");
+        std::fs::write(
+            worker_root.join("worker-card.json"),
+            r#"{
+  "schema_version": "wunder/worker-card@2",
+  "kind": "WorkerCard",
+  "metadata": { "name": "Planner" },
+  "prompt": { "system_prompt": "plan first" },
+  "abilities": {
+    "items": [
+      { "runtime_name": "requirement_analyzer", "kind": "skill" }
+    ]
+  }
+}"#,
+        )
+        .expect("worker card");
+        let skill_root = root.path().join("skills").join("requirement_analyzer");
+        std::fs::create_dir_all(&skill_root).expect("skill dir");
+        std::fs::write(skill_root.join("SKILL.md"), "# demo").expect("skill file");
+
         let worker_card = load_worker_card_manifest(worker_root.as_path())
             .expect("load worker card")
             .expect("worker card exists");

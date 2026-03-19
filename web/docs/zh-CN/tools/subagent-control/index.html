@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>子智能体控制 | wunder 文档</title>
+  <meta name="description" content="`子智能体控制` 面向单个子会话运行的发现、历史查看、发消息和派生，适合“盯住一个子运行”而不是大范围并发派发。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/subagent-control","language":"zh-CN","title":"子智能体控制","summary":"`子智能体控制` 面向单个子会话运行的发现、历史查看、发消息和派生，适合“盯住一个子运行”而不是大范围并发派发。","read_when":["你要查看或操作某个子会话","你要区分子智能体控制和智能体蜂群"],"source_docs":["src/services/tools/catalog.rs","src/services/tools.rs"],"tab":"工具","group":"会话与协作","group_path":["会话与协作"],"url":"/docs/zh-CN/tools/subagent-control/","headings":[{"id":"section-1","level":1,"text":"子智能体控制"},{"id":"section-2","level":2,"text":"核心动作"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"它适合什么"},{"id":"section-5","level":2,"text":"和其他协作工具的区别"},{"id":"section-6","level":2,"text":"推荐路径"},{"id":"section-7","level":2,"text":"你最需要记住的点"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/thread-control","next_slug":"zh-CN/tools/agent-swarm","markdown":"# 子智能体控制\n\n如果 `会话线程控制` 解决的是线程树，`子智能体控制` 解决的就是单个子运行本身。\n\n## 核心动作\n\n- `list`\n- `history`\n- `send`\n- `spawn`\n\n## 常用参数\n\n- `action`\n- `limit`\n- `activeMinutes`\n- `messageLimit`\n- `parentId`\n- `session_id`\n- `sessionKey`\n- `includeTools`\n- `message`\n- `timeoutSeconds`\n- `task`\n- `label`\n- `agentId`\n- `model`\n- `runTimeoutSeconds`\n- `cleanup`\n\n## 它适合什么\n\n- 列出某个父会话下的子运行\n- 查看某个子会话历史\n- 给指定子会话继续发消息\n- 派生一个新的子运行\n\n## 和其他协作工具的区别\n\n- [会话线程控制](/docs/zh-CN/tools/thread-control/) 偏线程树结构。\n- `子智能体控制` 偏单个子运行管理。\n- [智能体蜂群](/docs/zh-CN/tools/agent-swarm/) 偏多目标、多智能体并发协作。\n\n如果你已经知道要操作哪一个子会话，这页对应的工具最直接。\n\n## 推荐路径\n\n- 看子运行列表：`list`\n- 查某个子运行内容：`history`\n- 派生新子运行：`spawn`\n- 继续追问已有子运行：`send`\n\n## 你最需要记住的点\n\n- `子智能体控制` 面向单个子会话，不是面向整个线程树。\n- `spawn` 更像派生一次后台运行，`send` 更像继续驱动已有子会话。\n- 它是单目标工具；多目标并发优先看智能体蜂群。\n\n## 相关文档\n\n- [会话线程控制](/docs/zh-CN/tools/thread-control/)\n- [智能体蜂群](/docs/zh-CN/tools/agent-swarm/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n","source_path":"静态站文档/zh-CN/tools/subagent-control.md"}</script>
+</body>
+</html>

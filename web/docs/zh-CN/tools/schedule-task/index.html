@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>定时任务 | wunder 文档</title>
+  <meta name="description" content="`定时任务` 把 cron 能力做成正式工具，支持新增、更新、禁用、运行、查看状态，并把任务持久化到系统存储里。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/schedule-task","language":"zh-CN","title":"定时任务","summary":"`定时任务` 把 cron 能力做成正式工具，支持新增、更新、禁用、运行、查看状态，并把任务持久化到系统存储里。","read_when":["你要让 Wunder 延迟执行或周期执行任务","你要查 `定时任务` 工具和 `/wunder/cron/*` 接口的对应关系"],"source_docs":["src/services/tools/catalog.rs","src/services/tools/dispatch.rs","src/services/cron.rs","docs/API文档.md"],"tab":"工具","group":"界面与自动化","group_path":["界面与自动化"],"url":"/docs/zh-CN/tools/schedule-task/","headings":[{"id":"section-1","level":1,"text":"定时任务"},{"id":"section-2","level":2,"text":"核心动作"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"它怎么运行"},{"id":"section-5","level":2,"text":"什么时候该用它"},{"id":"section-6","level":2,"text":"最容易混淆的点"},{"id":"section-7","level":3,"text":"它不是 休眠等待"},{"id":"section-8","level":3,"text":"scheduletext 和结构化 schedule"},{"id":"section-9","level":2,"text":"你最需要记住的点"},{"id":"section-10","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/panels-and-a2ui","next_slug":"zh-CN/tools/thread-control","markdown":"# 定时任务\n\n`定时任务` 是 Wunder 的内置 cron 工具。\n\n它不是简单的前端提醒，而是会落到系统存储、由调度器持续执行的正式任务。\n\n## 核心动作\n\n- `add`\n- `update`\n- `remove`\n- `enable`\n- `disable`\n- `get`\n- `list`\n- `run`\n- `status`\n\n## 常用参数\n\n- `action`\n- `job.job_id`\n- `job.name`\n- `job.schedule`\n- `job.schedule_text`\n- `job.session`\n- `job.payload.message`\n- `job.deliver`\n- `job.enabled`\n- `job.delete_after_run`\n- `job.dedupe_key`\n\n其中：\n\n- `schedule.kind` 支持 `at`、`every`、`cron`\n- `session` 支持 `main`、`isolated`\n- `payload.message` 是最关键的执行载荷\n\n## 它怎么运行\n\n任务会被持久化到 cron 任务表中，由调度器按时间领取并执行。\n\n如果 `session` 设为：\n\n- `main`：沿用主会话语境\n- `isolated`：新开隔离会话执行\n\n如果 `delete_after_run=true`，任务成功后会自动删除。\n\n## 什么时候该用它\n\n- 固定时间提醒\n- 周期性巡检\n- 延迟触发某段消息或任务\n- 后台定时执行用户任务\n\n## 最容易混淆的点\n\n### 它不是 `休眠等待`\n\n`休眠等待` 只是在当前链路里短暂停顿。\n\n`定时任务` 是持久化调度。\n\n### `schedule_text` 和结构化 `schedule`\n\n这两个字段都在描述调度规则，但真正落地时最终都会归一到系统的调度结构中。\n\n如果你已经能明确表达 `at/every/cron`，直接给结构化 `schedule` 通常更稳。\n\n## 你最需要记住的点\n\n- `定时任务` 是持久化的系统调度工具，不是一次性等待。\n- 最重要的载荷是 `payload.message`。\n- `isolated` 会新开运行语境，`delete_after_run` 会在成功后自动清理任务。\n\n## 相关文档\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n","source_path":"静态站文档/zh-CN/tools/schedule-task.md"}</script>
+</body>
+</html>

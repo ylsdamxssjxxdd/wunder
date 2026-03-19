@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>聊天会话 | wunder 文档</title>
+  <meta name="description" content="`/wunder/chat/sessions/*` 是 Wunder 的聊天域，不只是“会话列表接口”，而是一整套会话控制面。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/integration/chat-sessions","language":"zh-CN","title":"聊天会话","summary":"`/wunder/chat/sessions/*` 是 Wunder 的聊天域，不只是“会话列表接口”，而是一整套会话控制面。","read_when":["你在做聊天 UI、桌面会话或消息工作台","你想知道什么时候该用聊天域，而不是直接只调 `/wunder`"],"source_docs":["docs/API文档.md","src/api/chat.rs"],"tab":"接入","group":"核心接口","group_path":["核心接口"],"url":"/docs/zh-CN/integration/chat-sessions/","headings":[{"id":"section-1","level":1,"text":"聊天会话"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"最常用的接口"},{"id":"section-4","level":2,"text":"什么时候优先看这组接口"},{"id":"section-5","level":2,"text":"一条典型链路"},{"id":"section-6","level":2,"text":"它和 /wunder 的区别"},{"id":"section-7","level":2,"text":"你最容易忽略的两个点"},{"id":"section-8","level":3,"text":"消息接口的文本字段是 content"},{"id":"section-9","level":3,"text":"会话状态应该看 runtime"},{"id":"section-10","level":2,"text":"提示词预览为什么重要"},{"id":"section-11","level":2,"text":"你最需要记住的点"},{"id":"section-12","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/integration/chat-ws","next_slug":"zh-CN/integration/workspace-api","markdown":"# 聊天会话\n\n如果你要做真正的聊天产品，不要只盯着 `/wunder`，应该把 `/wunder/chat/sessions/*` 当成主域。\n\n## 这页解决什么\n\n这页回答三件事：\n\n- 如何创建、列出和切换一个聊天会话\n- 如何向指定 `session_id` 发送消息、续传历史和取消执行\n- 如何获取会话级 `runtime`、事件和系统提示词快照\n\n## 最常用的接口\n\n- `GET/POST /wunder/chat/sessions`\n- `GET/DELETE /wunder/chat/sessions/{session_id}`\n- `POST /wunder/chat/sessions/{session_id}/messages`\n- `GET /wunder/chat/sessions/{session_id}/events`\n- `GET /wunder/chat/sessions/{session_id}/history`\n- `GET /wunder/chat/sessions/{session_id}/resume`\n- `POST /wunder/chat/sessions/{session_id}/cancel`\n- `POST /wunder/chat/sessions/{session_id}/compaction`\n- `POST /wunder/chat/system-prompt`\n- `POST /wunder/chat/sessions/{session_id}/system-prompt`\n\n另外还有会话治理接口：\n\n- `POST /wunder/chat/sessions/{session_id}/archive`\n- `POST /wunder/chat/sessions/{session_id}/restore`\n- `POST /wunder/chat/sessions/{session_id}/title`\n- `POST /wunder/chat/sessions/{session_id}/tools`\n\n## 什么时候优先看这组接口\n\n- 你要做会话列表、详情页、历史分页\n- 你要在同一个用户下管理多条对话\n- 你要在聊天 UI 里支持取消、恢复、观察和压缩\n- 你要给用户预览当前线程的冻结提示词\n\n## 一条典型链路\n\n1. `POST /wunder/chat/sessions` 创建会话\n2. `POST /wunder/chat/sessions/{session_id}/messages` 发送消息\n3. 用 [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/) 或 `resume` 消费流式事件\n4. 用 `GET /wunder/chat/sessions/{session_id}` 和 `events` 渲染详情页\n5. 需要时调用 `cancel`、`compaction`、`system-prompt`\n\n## 它和 `/wunder` 的区别\n\n可以这样记：\n\n- `/wunder`：统一执行入口\n- `/wunder/chat/*`：聊天会话控制面\n\n前者适合“把 Wunder 当能力服务调用”，后者适合“把 Wunder 当聊天系统接入”。\n\n## 你最容易忽略的两个点\n\n### 消息接口的文本字段是 `content`\n\n聊天域消息提交不是传 `question`，而是传 `content`。\n\n### 会话状态应该看 `runtime`\n\n会话详情和事件接口都会返回 `runtime`。\n\n这比只看兼容字段 `running` 更稳定，因为它还能表达：\n\n- `loaded`\n- `active`\n- `streaming`\n- `waiting`\n- `pending_approval_count`\n- `terminal_status`\n\n## 提示词预览为什么重要\n\n聊天域单独提供：\n\n- `/wunder/chat/system-prompt`\n- `/wunder/chat/sessions/{session_id}/system-prompt`\n\n它不仅返回 prompt 文本，还会返回：\n\n- `memory_preview`\n- `memory_preview_mode`\n- `memory_preview_count`\n- `memory_preview_total_count`\n\n所以前端可以明确告诉用户：\n\n- 这是新线程待冻结的提示词\n- 还是当前线程已经冻结的提示词\n\n## 你最需要记住的点\n\n- 做聊天产品时，聊天会话接口应该是主入口，不是补充接口。\n- 会话详情、事件和 WebSocket 应共享同一套运行时语义。\n- 当前线程的 system prompt 预览可能是 `pending`，也可能已经 `frozen`。\n\n## 相关文档\n\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [运行时与在线状态](/docs/zh-CN/concepts/presence-and-runtime/)\n","source_path":"静态站文档/zh-CN/integration/chat-sessions.md"}</script>
+</body>
+</html>

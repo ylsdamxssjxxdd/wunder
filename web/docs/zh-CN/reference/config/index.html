@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>配置说明 | wunder 文档</title>
+  <meta name="description" content="Wunder 的稳定配置入口主要集中在 `config/wunder.yaml`、override 文件和 extra_mcp 配置。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/reference/config","language":"zh-CN","title":"配置说明","summary":"Wunder 的稳定配置入口主要集中在 `config/wunder.yaml`、override 文件和 extra_mcp 配置。","read_when":["你在查具体配置应该写到哪里","你要分清基础配置、运行时覆盖和外部 MCP 配置"],"source_docs":["config/wunder-example.yaml","docs/API文档.md","docs/系统介绍.md"],"tab":"参考","group":"系统参考","group_path":["系统参考"],"url":"/docs/zh-CN/reference/config/","headings":[{"id":"section-1","level":1,"text":"配置说明"},{"id":"section-2","level":2,"text":"先看这几个文件"},{"id":"section-3","level":2,"text":"它们分别负责什么"},{"id":"section-4","level":3,"text":"config/wunder.yaml"},{"id":"section-5","level":3,"text":"config/wunder-example.yaml"},{"id":"section-6","level":3,"text":"data/config/wunder.override.yaml"},{"id":"section-7","level":3,"text":"extramcp/mcpconfig.json"},{"id":"section-8","level":2,"text":"最常见的配置块"},{"id":"section-9","level":2,"text":"你最可能先改哪些项"},{"id":"section-10","level":3,"text":"服务基础"},{"id":"section-11","level":3,"text":"安全"},{"id":"section-12","level":3,"text":"MCP"},{"id":"section-13","level":3,"text":"A2A"},{"id":"section-14","level":2,"text":"一个实际建议"},{"id":"section-15","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/reference/api-index","next_slug":"zh-CN/reference/stream-events","markdown":"# 配置说明\n\nWunder 的配置不是一个文件包打天下，而是分层组织的。\n\n## 先看这几个文件\n\n- `config/wunder.yaml`\n- `config/wunder-example.yaml`\n- `data/config/wunder.override.yaml`\n- `extra_mcp/mcp_config.json`\n\n## 它们分别负责什么\n\n### `config/wunder.yaml`\n\n正式基础配置。\n\n如果你在部署 server，这通常是第一入口。\n\n### `config/wunder-example.yaml`\n\n示例配置和兜底模板。\n\n如果正式配置缺失，系统会按当前逻辑回退到这里。\n\n### `data/config/wunder.override.yaml`\n\n运行时覆盖配置。\n\n这通常对应管理端保存后的内容，不建议手工和基础配置混着改。\n\n### `extra_mcp/mcp_config.json`\n\n独立 MCP 服务配置，尤其是数据库和知识库相关工具。\n\n## 最常见的配置块\n\n- `server`\n- `security`\n- `mcp`\n- `a2a`\n- `channels`\n- `storage`\n- `vector_store`\n\n## 你最可能先改哪些项\n\n### 服务基础\n\n- `server.host`\n- `server.port`\n- `server.chat_stream_channel`\n- `server.max_active_sessions`\n\n### 安全\n\n- `security.api_key`\n- `security.external_auth_key`\n- `security.allow_commands`\n- `security.allow_paths`\n- `security.deny_globs`\n\n### MCP\n\n- `mcp.timeout_s`\n- `mcp.servers[]`\n\n### A2A\n\n- `a2a.timeout_s`\n- `a2a.services[]`\n\n## 一个实际建议\n\n如果你在排查“配置改了怎么没生效”，优先确认三件事：\n\n1. 你改的是基础配置还是 override 配置\n2. 当前运行实例实际读取的是哪个路径\n3. 这个配置到底是 server、desktop 还是 extra_mcp 在消费\n\n## 相关文档\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n","source_path":"静态站文档/zh-CN/reference/config.md"}</script>
+</body>
+</html>

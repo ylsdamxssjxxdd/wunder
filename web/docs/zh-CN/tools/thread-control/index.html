@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>会话线程控制 | wunder 文档</title>
+  <meta name="description" content="`会话线程控制` 负责线程树、主线程和派生会话管理，是 Wunder 会话结构层的正式工具，而不是前端私有状态。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/thread-control","language":"zh-CN","title":"会话线程控制","summary":"`会话线程控制` 负责线程树、主线程和派生会话管理，是 Wunder 会话结构层的正式工具，而不是前端私有状态。","read_when":["你要管理线程树、主线程和派生会话","你要区分线程结构控制和多智能体协作"],"source_docs":["docs/API文档.md","docs/设计方案.md","src/services/tools/thread_control_tool.rs","src/services/tools/catalog.rs"],"tab":"工具","group":"会话与协作","group_path":["会话与协作"],"url":"/docs/zh-CN/tools/thread-control/","headings":[{"id":"section-1","level":1,"text":"会话线程控制"},{"id":"section-2","level":2,"text":"会话线程控制"},{"id":"section-3","level":2,"text":"它真正改变什么"},{"id":"section-4","level":2,"text":"和其他协作工具的区别"},{"id":"section-5","level":2,"text":"你最需要记住的点"},{"id":"section-6","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/schedule-task","next_slug":"zh-CN/tools/subagent-control","markdown":"# 会话线程控制\n\n在 Wunder 里，会话树不是“前端自己记一下当前对话是哪个”，而是正式工具能力。\n\n## `会话线程控制`\n\n这是线程树的主工具。\n\n当前核心动作包括：\n\n- `list`\n- `info`\n- `create`\n- `switch`\n- `back`\n- `update_title`\n- `archive`\n- `restore`\n- `set_main`\n\n它解决的是：\n\n- 新建子线程\n- 在线程树里切换\n- 返回父线程\n- 归档或恢复线程\n- 把某条线程设为主线程\n\n## 它真正改变什么\n\n它不是简单的聊天接口包装，而是直接改变：\n\n- 线程结构\n- 会话归属\n- 主线程映射\n\n## 和其他协作工具的区别\n\n- 这页只讲线程树和主线程。\n- [子智能体控制](/docs/zh-CN/tools/subagent-control/) 讲单个子会话运行。\n- [智能体蜂群](/docs/zh-CN/tools/agent-swarm/) 讲多智能体并发协作。\n\n如果你的目标是“把哪条线程设为当前主线”，看这页。\n\n如果你的目标是“把任务扔给另一个智能体去跑”，看后两页。\n\n## 你最需要记住的点\n\n- 线程控制是会话树工具，不只是“切对话”。\n- `set_main` 会影响系统对主线程的映射。\n- 子会话和蜂群协作是相关但独立的另外两类工具。\n\n## 相关文档\n\n- [子智能体控制](/docs/zh-CN/tools/subagent-control/)\n- [智能体蜂群](/docs/zh-CN/tools/agent-swarm/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [蜂群协作](/docs/zh-CN/concepts/swarm/)\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n","source_path":"静态站文档/zh-CN/tools/thread-control.md"}</script>
+</body>
+</html>

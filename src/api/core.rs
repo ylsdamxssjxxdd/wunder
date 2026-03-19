@@ -9,6 +9,7 @@ use crate::schemas::{
     WunderPromptResponse, WunderRequest,
 };
 use crate::services::agent_runtime::AgentSubmitOutcome;
+use crate::services::abilities::populate_ability_items;
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
@@ -330,19 +331,25 @@ async fn wunder_tools(
     }
 
     let mut user_tools = Vec::new();
+    let mut user_mcp_tools = Vec::new();
+    let mut user_skills = Vec::new();
+    let mut user_knowledge_tools = Vec::new();
     if !user_id.is_empty() {
         let payload = state.user_tool_store.load_user_tools(user_id);
         let mut used_names = blocked_names.clone();
 
         {
-            let mut append_user_tool =
-                |owner_id: &str, tool_name: &str, description: String, input_schema: Value| {
+            let mut append_user_tool = |bucket: &mut Vec<ToolSpec>,
+                                        owner_id: &str,
+                                        tool_name: &str,
+                                        description: String,
+                                        input_schema: Value| {
                     let alias = state.user_tool_store.build_alias_name(owner_id, tool_name);
                     if used_names.contains(&alias) {
                         return;
                     }
                     used_names.insert(alias.clone());
-                    user_tools.push(ToolSpec {
+                    bucket.push(ToolSpec {
                         name: alias,
                         description,
                         input_schema,
@@ -354,20 +361,58 @@ async fn wunder_tools(
             } else {
                 payload.user_id.clone()
             };
-            collect_user_mcp_tools(&payload, &owner_id, false, &mut append_user_tool);
+            collect_user_mcp_tools(
+                &payload,
+                &owner_id,
+                false,
+                &mut |owner_id, tool_name, description, input_schema| {
+                    append_user_tool(
+                        &mut user_mcp_tools,
+                        owner_id,
+                        tool_name,
+                        description,
+                        input_schema,
+                    );
+                },
+            );
             collect_user_skill_tools(
                 &payload,
                 &owner_id,
                 false,
-                &mut append_user_tool,
+                &mut |owner_id, tool_name, description, input_schema| {
+                    append_user_tool(
+                        &mut user_skills,
+                        owner_id,
+                        tool_name,
+                        description,
+                        input_schema,
+                    );
+                },
                 &config,
                 state.user_tool_store.as_ref(),
             );
-            collect_user_knowledge_tools(&payload, &owner_id, false, &mut append_user_tool);
+            collect_user_knowledge_tools(
+                &payload,
+                &owner_id,
+                false,
+                &mut |owner_id, tool_name, description, input_schema| {
+                    append_user_tool(
+                        &mut user_knowledge_tools,
+                        owner_id,
+                        tool_name,
+                        description,
+                        input_schema,
+                    );
+                },
+            );
         }
+
+        user_tools.extend(user_mcp_tools.iter().cloned());
+        user_tools.extend(user_skills.iter().cloned());
+        user_tools.extend(user_knowledge_tools.iter().cloned());
     }
 
-    let response = AvailableToolsResponse {
+    let mut response = AvailableToolsResponse {
         builtin_tools,
         mcp_tools,
         a2a_tools,
@@ -379,13 +424,15 @@ async fn wunder_tools(
         admin_a2a_tools: Vec::new(),
         admin_skills: Vec::new(),
         admin_knowledge_tools: Vec::new(),
-        user_mcp_tools: Vec::new(),
-        user_skills: Vec::new(),
-        user_knowledge_tools: Vec::new(),
+        user_mcp_tools,
+        user_skills,
+        user_knowledge_tools,
         default_agent_tool_names: Vec::new(),
         shared_tools: Vec::new(),
         shared_tools_selected: None,
+        items: Vec::new(),
     };
+    populate_ability_items(&mut response);
     Ok(Json(response))
 }
 

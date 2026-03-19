@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>参考概览 | wunder 文档</title>
+  <meta name="description" content="参考页不是再讲一遍产品故事，而是给你稳定的接口、配置、事件和面板索引。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/reference/index","language":"zh-CN","title":"参考概览","summary":"参考页不是再讲一遍产品故事，而是给你稳定的接口、配置、事件和面板索引。","read_when":["你要快速定位稳定参考文档","你不想直接翻完整 API 文档"],"source_docs":["docs/API文档.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"参考","group":"概览","group_path":["概览"],"url":"/docs/zh-CN/reference/","headings":[{"id":"section-1","level":1,"text":"参考概览"},{"id":"section-2","level":2,"text":"先看这些"},{"id":"section-3","level":2,"text":"按问题找页面"},{"id":"section-4","level":3,"text":"你在找接口"},{"id":"section-5","level":3,"text":"你在找配置或模板"},{"id":"section-6","level":3,"text":"你在找管理入口"},{"id":"section-7","level":2,"text":"你最需要记住的点"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/ops/channel-runtime","next_slug":"zh-CN/reference/api-index","markdown":"# 参考概览\n\n如果你已经知道 Wunder 是什么，现在需要的是“稳定查表页”，从这里开始。\n\n## 先看这些\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/reference/api-index/\">\n    <strong>API 索引<\/strong>\n    <span>先按接口族找入口，再决定是否翻完整 API 手册。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/reference/config/\">\n    <strong>配置说明<\/strong>\n    <span>运行配置、模型、存储和安全项的总入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/reference/stream-events/\">\n    <strong>流式事件参考<\/strong>\n    <span>流式状态机最容易依赖的一页。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/reference/workspace-routing/\">\n    <strong>工作区路由<\/strong>\n    <span>明确 `container_id`、`agent_id` 和 scoped user_id 的优先级。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/reference/prompt-templates/\">\n    <strong>提示词模板<\/strong>\n    <span>模板包、分段文件和生效时机的参考页。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/reference/admin-panels/\">\n    <strong>管理端面板索引<\/strong>\n    <span>按面板快速找管理端能力。<\/span>\n  <\/a>\n<\/div>\n\n## 按问题找页面\n\n### 你在找接口\n\n- [API 索引](/docs/zh-CN/reference/api-index/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n\n### 你在找配置或模板\n\n- [配置说明](/docs/zh-CN/reference/config/)\n- [提示词模板参考](/docs/zh-CN/reference/prompt-templates/)\n\n### 你在找管理入口\n\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n- [工作区路由参考](/docs/zh-CN/reference/workspace-routing/)\n\n## 你最需要记住的点\n\n- 参考页偏“稳定查表”，不是概念页。\n- 接入状态机优先配合流式事件参考阅读。\n- 工作区路由和提示词模板都值得单独看，不要只靠概念页理解。\n\n## 相关文档\n\n- [概念概览](/docs/zh-CN/concepts/)\n- [接入概览](/docs/zh-CN/integration/)\n- [帮助](/docs/zh-CN/help/)\n","source_path":"静态站文档/zh-CN/reference/index.md"}</script>
+</body>
+</html>

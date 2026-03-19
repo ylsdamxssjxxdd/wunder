@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desktop 本地模式 | wunder 文档</title>
+  <meta name="description" content="Desktop 本地模式不是缩小版 server，而是一套本地优先、持久目录优先的运行形态。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/ops/desktop-local-mode","language":"zh-CN","title":"Desktop 本地模式","summary":"Desktop 本地模式不是缩小版 server，而是一套本地优先、持久目录优先的运行形态。","read_when":["你主要使用 wunder-desktop","你要判断本地模式和远端 server 模式分别适合什么"],"source_docs":["docs/系统介绍.md","docs/API文档.md","docs/设计方案.md","src/api/desktop.rs"],"tab":"运维","group":"部署与治理","group_path":["部署与治理"],"url":"/docs/zh-CN/ops/desktop-local-mode/","headings":[{"id":"section-1","level":1,"text":"Desktop 本地模式"},{"id":"section-2","level":2,"text":"先不要把它理解成什么"},{"id":"section-3","level":2,"text":"本地模式最核心的特点"},{"id":"section-4","level":3,"text":"工作目录是持久的"},{"id":"section-5","level":3,"text":"仍然保留容器语义"},{"id":"section-6","level":3,"text":"优先使用附带运行时"},{"id":"section-7","level":2,"text":"本地模式为什么适合作为第一入口"},{"id":"section-8","level":2,"text":"本地模式下文件能力有什么特殊点"},{"id":"section-9","level":2,"text":"什么时候该切远端"},{"id":"section-10","level":2,"text":"渠道能力在本地模式下会怎样"},{"id":"section-11","level":2,"text":"最适合本地模式的使用者"},{"id":"section-12","level":2,"text":"你最容易踩到的坑"},{"id":"section-13","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/ops/data-and-storage","next_slug":"zh-CN/ops/auth-and-security","markdown":"# Desktop 本地模式\n\nDesktop 本地模式是 Wunder 当前最贴近真实个人使用的形态。\n\n## 先不要把它理解成什么\n\n不要把它理解成：\n\n- 小号 server\n- 只少了管理员后台的 server\n- 临时试玩模式\n\n它更准确的定位是：\n\n- 本地优先运行形态\n- 桌面工作台\n- 端云协同的前半段\n\n## 本地模式最核心的特点\n\n### 工作目录是持久的\n\n本地模式下，工作目录不是临时 sandbox。\n\n它按持久目录处理，不再依赖“24 小时自动清理”这种策略。\n\n### 仍然保留容器语义\n\n虽然是本地模式，但仍然区分：\n\n- 用户私有容器\n- 智能体运行容器\n\n只是这些容器会映射到真实本地目录。\n\n### 优先使用附带运行时\n\n当前 desktop 本地模式优先使用安装包附带的 Python 运行时，而不是让用户先配置一套解释器。\n\n这能显著降低初次使用门槛。\n\n## 本地模式为什么适合作为第一入口\n\n因为它一次性验证了几条主链路：\n\n- 用户侧界面\n- 对话执行\n- 工具调用\n- 工作区文件\n- 智能体设置\n\n也就是说，它比单纯的 demo 更接近真实产品形态。\n\n## 本地模式下文件能力有什么特殊点\n\n当前一个非常重要的约定是：\n\n- 本地模式下，内置文件工具已放开本机绝对路径访问\n\n这意味着它不再强制把所有操作限制在工作区内部。\n\n但这也意味着你要更清楚自己的本地目录边界。\n\n## 什么时候该切远端\n\n如果你只是个人使用，本地模式通常已经够用。\n\n当你开始需要这些能力时，再考虑接远端 server：\n\n- 多用户治理\n- 管理员后台\n- 单位/组织控制\n- 统一渠道与服务接入\n\n## 渠道能力在本地模式下会怎样\n\n本地模式不会自动失去渠道能力。\n\n当前还会默认开启：\n\n- `channels.outbox.worker_enabled=true`\n\n这保证了即使没有管理员侧前端，`channel_tool.send_message` 也能正常投递。\n\n## 最适合本地模式的使用者\n\n- 个人用户\n- 需要桌面工作台的人\n- 本地文件工作流很重的人\n- 先本地跑通，再考虑接远端的人\n\n## 你最容易踩到的坑\n\n- 把本地模式当作无状态运行\n- 忘了本地目录也区分容器\n- 以为改系统提示词会回写当前老线程\n- 把它和远端治理能力混成一个概念\n\n## 相关文档\n\n- [Desktop 入门](/docs/zh-CN/start/desktop/)\n- [工作区与容器](/docs/zh-CN/concepts/workspaces/)\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n","source_path":"静态站文档/zh-CN/ops/desktop-local-mode.md"}</script>
+</body>
+</html>

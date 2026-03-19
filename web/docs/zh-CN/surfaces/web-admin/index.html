@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>管理端界面 | wunder 文档</title>
+  <meta name="description" content="管理端前端位于 `web/`，承担模型、工具、用户、渠道与运行治理。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/surfaces/web-admin","language":"zh-CN","title":"管理端界面","summary":"管理端前端位于 `web/`，承担模型、工具、用户、渠道与运行治理。","read_when":["你要理解管理员和系统维护者看到的界面","你要知道管理端和用户前端的职责边界"],"source_docs":["docs/系统介绍.md","docs/设计方案.md","docs/API文档.md"],"tab":"界面","group":"前端与桌面","group_path":["前端与桌面"],"url":"/docs/zh-CN/surfaces/web-admin/","headings":[{"id":"section-1","level":1,"text":"管理端界面"},{"id":"section-2","level":2,"text":"代码位置"},{"id":"section-3","level":2,"text":"默认职责"},{"id":"section-4","level":2,"text":"为什么它和用户前端必须分开"},{"id":"section-5","level":2,"text":"当前你会在管理端看到什么"},{"id":"section-6","level":2,"text":"文档站和管理端的关系"},{"id":"section-7","level":2,"text":"什么时候优先看管理端文档"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/surfaces/frontend","next_slug":"zh-CN/surfaces/desktop-ui","markdown":"# 管理端界面\n\nWunder 的管理端不是普通用户入口。\n\n它更像治理和调试控制台，服务对象是：\n\n- 管理员\n- 平台维护者\n- 联调开发者\n\n## 代码位置\n\n- `web/`\n\n## 默认职责\n\n管理端主要负责这些事情：\n\n- 模型配置\n- 工具管理\n- MCP 与 A2A 服务管理\n- 用户与组织治理\n- 渠道接入与运行监控\n- 预设智能体治理\n- benchmark 与性能观测\n\n## 为什么它和用户前端必须分开\n\n用户前端追求的是“工作台体验”。\n\n管理端追求的是：\n\n- 看全局状态\n- 改配置\n- 做审计和排障\n- 做平台治理\n\n这两种目标天然不同，所以 Wunder 明确把它们拆成两套界面。\n\n## 当前你会在管理端看到什么\n\n- 系统和模型配置页\n- 工具与 MCP/A2A 调试面板\n- 渠道账号与运行监控\n- 预设智能体和同步面板\n- 文档分组中的静态文档、幻灯片、论文与接口入口\n- benchmark、吞吐、性能采样等运维能力\n\n## 文档站和管理端的关系\n\n当前文档站产物也发布在 `web/docs/` 下，并通过 `/docs/` 对外提供静态访问。\n\n这意味着管理端和文档站共享同一套静态资源发布方式，但两者职责不同：\n\n- 管理端用于治理和调试\n- 文档站用于说明和导航\n\n当前管理员侧文档分组里已经直接嵌入：\n\n- [静态文档](/docs/)\n\n## 什么时候优先看管理端文档\n\n适合这些场景：\n\n- 你要接入或排查 MCP/A2A\n- 你要调整模型、鉴权、组织和配额\n- 你要看渠道账号状态、错误和批量治理能力\n\n## 相关文档\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n","source_path":"静态站文档/zh-CN/surfaces/web-admin.md"}</script>
+</body>
+</html>

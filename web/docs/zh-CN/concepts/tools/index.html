@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工具体系 | wunder 文档</title>
+  <meta name="description" content="wunder 把内置工具、MCP、Skills、知识库与用户工具统一放进同一调度体系。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/concepts/tools","language":"zh-CN","title":"工具体系","summary":"wunder 把内置工具、MCP、Skills、知识库与用户工具统一放进同一调度体系。","read_when":["你要理解 wunder 的能力为什么不只是聊天","你要知道工具来源、边界与编排方式"],"source_docs":["docs/系统介绍.md","docs/API文档.md","docs/工具调用.md"],"tab":"概念","group":"核心概念","group_path":["核心概念"],"url":"/docs/zh-CN/concepts/tools/","headings":[{"id":"section-1","level":1,"text":"工具体系"},{"id":"section-2","level":2,"text":"工具来源"},{"id":"section-3","level":2,"text":"内置工具"},{"id":"section-4","level":2,"text":"MCP"},{"id":"section-5","level":2,"text":"Skills"},{"id":"section-6","level":2,"text":"知识库"},{"id":"section-7","level":2,"text":"用户工具"},{"id":"section-8","level":2,"text":"为什么要统一工具体系"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/concepts/presence-and-runtime","next_slug":"zh-CN/concepts/prompt-and-skills","markdown":"# 工具体系\n\nwunder 的核心不是“模型回答”，而是“模型调度工具完成任务”。\n\n## 工具来源\n\n当前工具来源至少包括：\n\n- 内置工具\n- MCP 工具\n- Skills\n- 知识库工具\n- 用户工具\n\n它们在能力来源上不同，但在调度层会被统一编排。\n\n## 内置工具\n\n内置工具用于最基础、最稳定的系统能力，例如：\n\n- 读取文件\n- 写入文件\n- 应用补丁\n- 搜索内容\n- 列出文件\n- 执行命令\n- 线程控制\n- 睡眠\n- 图像读取\n\n内置工具是 wunder 最基础的执行面。\n\n## MCP\n\nMCP 用于接入外部能力或额外服务。\n\n它的作用不是替代内置工具，而是把 wunder 之外的系统能力纳入统一调度。\n\n## Skills\n\nSkill 更像流程化经验包。\n\n它可以把：\n\n- 一套方法\n- 一组步骤\n- 一批约束\n- 某类任务最佳实践\n\n封装成模型可调用的能力块。\n\n## 知识库\n\n知识库提供的是“受控上下文来源”，不是直接替代模型记忆。\n\n它更适合：\n\n- 固定制度\n- 长文档\n- 领域资料\n- 本地知识沉淀\n\n## 用户工具\n\n用户工具允许不同用户按自己的工作场景扩展能力，但依然在系统治理边界内运行。\n\n## 为什么要统一工具体系\n\n如果不同来源的工具各自为政，会出现几个问题：\n\n- 模型不知道该用哪类能力\n- 前端无法统一展示\n- 权限和治理无法统一\n- 监控和排障会被打散\n\nwunder 的做法是：来源不同，但调度和展示尽量统一。\n\n## 相关文档\n\n- [工具总览](/docs/zh-CN/tools/)\n- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n","source_path":"静态站文档/zh-CN/concepts/tools.md"}</script>
+</body>
+</html>

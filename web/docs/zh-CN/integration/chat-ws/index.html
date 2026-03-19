@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>聊天 WebSocket | wunder 文档</title>
+  <meta name="description" content="`/wunder/chat/ws` 是 Wunder 对话态的主实时通道，支持 start、resume、watch、cancel 与审批回传。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/integration/chat-ws","language":"zh-CN","title":"聊天 WebSocket","summary":"`/wunder/chat/ws` 是 Wunder 对话态的主实时通道，支持 start、resume、watch、cancel 与审批回传。","read_when":["你要做聊天界面或桌面实时会话","你要优先使用 WebSocket，而不是只接 SSE"],"source_docs":["docs/API文档.md","docs/系统介绍.md","src/api/chat_ws.rs"],"tab":"接入","group":"核心接口","group_path":["核心接口"],"url":"/docs/zh-CN/integration/chat-ws/","headings":[{"id":"section-1","level":1,"text":"聊天 WebSocket"},{"id":"section-2","level":2,"text":"端点"},{"id":"section-3","level":2,"text":"为什么这条链路比直接 SSE 更适合聊天"},{"id":"section-4","level":2,"text":"典型接入顺序"},{"id":"section-5","level":2,"text":"客户端消息类型"},{"id":"section-6","level":2,"text":"服务端消息类型"},{"id":"section-7","level":2,"text":"最小握手示例"},{"id":"section-8","level":2,"text":"启动一次执行"},{"id":"section-9","level":2,"text":"续传与观察"},{"id":"section-10","level":3,"text":"resume"},{"id":"section-11","level":3,"text":"watch"},{"id":"section-12","level":2,"text":"取消与审批"},{"id":"section-13","level":3,"text":"cancel"},{"id":"section-14","level":3,"text":"approval"},{"id":"section-15","level":2,"text":"建议你重点消费的事件"},{"id":"section-16","level":2,"text":"失败回退"},{"id":"section-17","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/integration/wunder-api","next_slug":"zh-CN/integration/chat-sessions","markdown":"# 聊天 WebSocket\n\nWunder 的实时对话链路默认优先走 WebSocket，SSE 作为兜底。\n\n如果你在做：\n\n- 聊天页\n- 桌面端会话\n- 需要 resume/watch/cancel 的长任务面板\n\n那你应该优先接 `/wunder/chat/ws`。\n\n## 端点\n\n- `GET /wunder/chat/ws`\n\n## 为什么这条链路比直接 SSE 更适合聊天\n\n它不只是把事件推给你，还把“会话控制”也放进了同一条连接：\n\n- 启动会话执行\n- 续传历史事件\n- 只观察某个会话\n- 取消当前执行\n- 回传审批决策\n- 心跳保活\n\n这比纯 SSE 更适合消息工作台。\n\n## 典型接入顺序\n\n1. 先通过 `/wunder/chat/sessions` 创建或拿到 `session_id`\n2. 建立 `WebSocket /wunder/chat/ws`\n3. 发送 `connect`\n4. 收到 `ready`\n5. 发送 `start`\n6. 处理后续 `event / error / pong`\n\n## 客户端消息类型\n\n- `connect`\n- `start`\n- `resume`\n- `watch`\n- `cancel`\n- `approval`\n- `ping`\n\n## 服务端消息类型\n\n- `ready`\n- `event`\n- `error`\n- `pong`\n\n## 最小握手示例\n\n```json\n{\n  \"kind\": \"connect\",\n  \"request_id\": \"req_connect_01\",\n  \"payload\": {\n    \"protocol_version\": \"1.0\",\n    \"client_name\": \"my-chat-ui\"\n  }\n}\n```\n\n收到 `ready` 后，可以开始发送业务消息。\n\n## 启动一次执行\n\n```json\n{\n  \"kind\": \"start\",\n  \"request_id\": \"req_start_01\",\n  \"session_id\": \"sess_xxx\",\n  \"payload\": {\n    \"content\": \"继续帮我整理刚才那份周报\",\n    \"stream\": true\n  }\n}\n```\n\n这里有两个关键点：\n\n- `start` 需要明确 `session_id`\n- payload 里的文本字段是 `content`，不是 `/wunder` 里的 `question`\n\n## 续传与观察\n\n### resume\n\n用于“我之前断线了，现在从某个事件之后继续补回”。\n\n最常用字段：\n\n- `session_id`\n- `after_event_id`\n\n### watch\n\n用于“我当前只观察某个会话的事件流，不一定要主动 start 一次新执行”。\n\n这在多面板、多会话切换时很有用。\n\n## 取消与审批\n\n### cancel\n\n可以取消当前 request，也可以按 `session_id` 取消会话中的正在执行任务。\n\n### approval\n\n当工具链进入审批等待态时，前端可以通过 WebSocket 把审批结果回传。\n\n当前实现里，WebSocket 只会处理 `source=chat_ws` 的审批项，不会误操作渠道侧审批。\n\n## 建议你重点消费的事件\n\n虽然 `event.data` 里会有很多业务事件，但对实时会话面板来说，这几个最关键：\n\n- `queued`\n- `approval_resolved`\n- `error`\n- `turn_terminal`\n\n尤其是 `turn_terminal`，它是单轮执行的最终终态信号。\n\n## 失败回退\n\n如果 WebSocket 不可用：\n\n- 聊天链路可以回退到 `/wunder` SSE\n- 或回退到 `/wunder/chat/sessions/{session_id}/resume`\n\nWunder 的设计不是“只有 WS 能用”，而是“WS 优先，SSE 保底”。\n\n## 相关文档\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"静态站文档/zh-CN/integration/chat-ws.md"}</script>
+</body>
+</html>

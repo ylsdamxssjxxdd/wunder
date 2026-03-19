@@ -945,6 +945,15 @@ const bindNavigation = () => {
     elements.navApiDocs.addEventListener("click", () => switchPanel("apiDocs"));
   }
 
+  if (elements.navDocsSite) {
+    elements.navDocsSite.addEventListener("click", () => {
+      const opened = window.open("/docs/", "_blank", "noopener");
+      if (!opened) {
+        window.location.assign("/docs/");
+      }
+    });
+  }
+
 };
 
 const applyAuthScopeVisibility = () => {

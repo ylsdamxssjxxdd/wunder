@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>故障排查 | wunder 文档</title>
+  <meta name="description" content="排查 Wunder 问题时，优先从入口、鉴权、配置、依赖服务和实时通道五个方向切。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/help/troubleshooting","language":"zh-CN","title":"故障排查","summary":"排查 Wunder 问题时，优先从入口、鉴权、配置、依赖服务和实时通道五个方向切。","read_when":["Wunder 跑不起来","你已经确定不是简单使用疑问，而是真故障"],"source_docs":["docs/API文档.md","docs/系统介绍.md","config/wunder-example.yaml"],"tab":"帮助","group":"帮助","group_path":["帮助"],"url":"/docs/zh-CN/help/troubleshooting/","headings":[{"id":"section-1","level":1,"text":"故障排查"},{"id":"section-2","level":2,"text":"1. 入口是否通"},{"id":"section-3","level":2,"text":"2. 鉴权是否对"},{"id":"section-4","level":2,"text":"3. 配置是否生效"},{"id":"section-5","level":2,"text":"4. 依赖服务是否就绪"},{"id":"section-6","level":2,"text":"5. 实时通道是否异常"},{"id":"section-7","level":2,"text":"6. 工具为什么没出现"},{"id":"section-8","level":2,"text":"7. 为什么模型一直报权限或审批"},{"id":"section-9","level":2,"text":"8. Desktop 本地模式常见问题"},{"id":"section-10","level":2,"text":"什么时候该回完整文档"}],"prev_slug":"zh-CN/help/index","next_slug":"zh-CN/help/faq","markdown":"# 故障排查\n\n排查 Wunder，不要一上来翻所有日志。\n\n先按下面顺序切问题。\n\n## 1. 入口是否通\n\n先检查这些入口：\n\n- `/wunder`\n- `/wunder/chat/ws`\n- `/a2a/agentCard`\n- `/wunder/mcp`\n- `/docs/`\n\n如果入口都不通，先不要继续查上层逻辑。\n\n## 2. 鉴权是否对\n\n常见问题：\n\n- 管理端接口却用了用户 Token\n- 用户侧接口却用了 API Key\n- `/a2a` 或 `/wunder/mcp` 没带 API Key\n- 外链嵌入没有配置 `external_auth_key`\n\n## 3. 配置是否生效\n\n优先确认：\n\n- 实际读取的是 `config/wunder.yaml` 还是 example\n- 管理端是否写入了 `data/config/wunder.override.yaml`\n- 你改的是 server 配置还是 extra_mcp 配置\n\n## 4. 依赖服务是否就绪\n\n服务端部署最常见的问题是依赖没起来：\n\n- PostgreSQL 未就绪\n- sandbox 不可达\n- `extra_mcp` 未启动\n- 外部 MCP/A2A 目标不可达\n\n## 5. 实时通道是否异常\n\n如果聊天收不到过程：\n\n1. 先看 `/wunder/chat/ws` 是否能建连\n2. 再看是否已自动回退 SSE\n3. 再看 `resume/watch` 是否传错 `session_id` 或 `after_event_id`\n\n## 6. 工具为什么没出现\n\n优先检查：\n\n- 工具是否在配置里启用\n- MCP server 是否 enabled\n- A2A 服务是否 enabled\n- 当前智能体或会话是否真的挂载了目标工具\n\n## 7. 为什么模型一直报权限或审批\n\n排查这几个方向：\n\n- 当前 `approval_mode`\n- 命令与路径白名单\n- sandbox 是否开启\n- 工具是否进入了等待审批态但前端没正确回传\n\n## 8. Desktop 本地模式常见问题\n\n最常见的是这几类：\n\n- 误以为必须先部署 server\n- 本地工作目录没持久化\n- 远端接入配置错误后以为本地模式也坏了\n- 以为可以自定义 Python 路径，但当前默认是附带运行时优先\n\n## 什么时候该回完整文档\n\n如果你排查到这里还没定位，下一步通常回这几类文档：\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"静态站文档/zh-CN/help/troubleshooting.md"}</script>
+</body>
+</html>

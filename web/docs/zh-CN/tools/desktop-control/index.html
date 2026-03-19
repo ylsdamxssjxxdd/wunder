@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>桌面控制 | wunder 文档</title>
+  <meta name="description" content="`桌面控制器` 和 `桌面监视器` 让 Wunder 能在 desktop 场景下基于坐标框执行桌面动作和截图观察。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/desktop-control","language":"zh-CN","title":"桌面控制","summary":"`桌面控制器` 和 `桌面监视器` 让 Wunder 能在 desktop 场景下基于坐标框执行桌面动作和截图观察。","read_when":["你要理解 bbox 驱动的桌面操作","你在看 desktop 自动化链路"],"source_docs":["docs/API文档.md","src/services/tools/desktop_control.rs","docs/设计方案.md"],"tab":"工具","group":"网页与桌面","group_path":["网页与桌面"],"url":"/docs/zh-CN/tools/desktop-control/","headings":[{"id":"section-1","level":1,"text":"桌面控制"},{"id":"section-2","level":2,"text":"桌面控制器 解决什么"},{"id":"section-3","level":2,"text":"为什么一定要有 description"},{"id":"section-4","level":2,"text":"桌面监视器 解决什么"},{"id":"section-5","level":2,"text":"两者怎么配合"},{"id":"section-6","level":2,"text":"你最需要记住的点"},{"id":"section-7","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/browser","next_slug":"zh-CN/tools/panels-and-a2ui","markdown":"# 桌面控制\n\nWunder 的桌面自动化主要由两个工具组成：\n\n- `桌面控制器`\n- `桌面监视器`\n\n## `桌面控制器` 解决什么\n\n它基于 `bbox + action` 执行桌面操作。\n\n常见动作包括：\n\n- `left_click`\n- `left_double_click`\n- `right_click`\n- `scroll_down`\n- `scroll_up`\n- `press_key`\n- `type_text`\n- `move_mouse`\n- `drag_drop`\n- `delay`\n\n常用参数：\n\n- `bbox`\n- `action`\n- `description`\n- `key`\n- `text`\n- `delay_ms`\n- `duration_ms`\n- `scroll_steps`\n- `to_bbox`\n\n## 为什么一定要有 `description`\n\n因为桌面动作比文件工具更危险，执行时需要把目标动作说明清楚，便于日志、审计和后续排障。\n\n## `桌面监视器` 解决什么\n\n它更偏观察。\n\n最常见参数是：\n\n- `wait_ms`\n- `note`\n\n它会等待一段时间后返回桌面截图，用来观察界面有没有变化。\n\n## 两者怎么配合\n\n常见路径是：\n\n1. 先监视或截图确认当前状态\n2. 再用控制器点击、输入或拖拽\n3. 再次监视确认结果\n\n## 你最需要记住的点\n\n- 桌面控制器负责动作，桌面监视器负责观察。\n- `bbox` 是桌面操作的核心定位信息。\n- 这组工具属于 desktop 场景，不应按普通 server 内置工具理解。\n\n## 相关文档\n\n- [浏览器](/docs/zh-CN/tools/browser/)\n- [Desktop 界面](/docs/zh-CN/surfaces/desktop-ui/)\n","source_path":"静态站文档/zh-CN/tools/desktop-control.md"}</script>
+</body>
+</html>

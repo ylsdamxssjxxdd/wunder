@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>运维概览 | wunder 文档</title>
+  <meta name="description" content="Wunder 的运维面要同时处理部署、存储、安全、渠道运行态、观测和 benchmark，不只是把服务启动起来。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/ops/index","language":"zh-CN","title":"运维概览","summary":"Wunder 的运维面要同时处理部署、存储、安全、渠道运行态、观测和 benchmark，不只是把服务启动起来。","read_when":["你在部署或接手 Wunder 运行环境","你要快速找到监控、性能、渠道和数据治理入口"],"source_docs":["docs/系统介绍.md","docs/设计方案.md","docs/API文档.md"],"tab":"运维","group":"概览","group_path":["概览"],"url":"/docs/zh-CN/ops/","headings":[{"id":"section-1","level":1,"text":"运维概览"},{"id":"section-2","level":2,"text":"先看这些"},{"id":"section-3","level":2,"text":"按问题找页面"},{"id":"section-4","level":3,"text":"你在做上线"},{"id":"section-5","level":3,"text":"你在做权限和治理"},{"id":"section-6","level":3,"text":"你在做可观测"},{"id":"section-7","level":3,"text":"你在排查渠道"},{"id":"section-8","level":2,"text":"你最需要记住的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/surfaces/desktop-ui","next_slug":"zh-CN/ops/deployment","markdown":"# 运维概览\n\n如果你在做 Wunder 的上线、观测和治理，这里是总入口。\n\n## 先看这些\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/deployment/\">\n    <strong>部署与运行<\/strong>\n    <span>先把 server、desktop、本地开发三条运行路径分清。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/data-and-storage/\">\n    <strong>数据与存储<\/strong>\n    <span>区分 PostgreSQL、SQLite、Weaviate、workspaces 和 temp_dir。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/auth-and-security/\">\n    <strong>认证与安全<\/strong>\n    <span>API Key、用户 Token、外链鉴权和沙盒边界。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/benchmark-and-observability/\">\n    <strong>监控与 Benchmark<\/strong>\n    <span>会话监控、工具统计、性能采样和能力评估入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/channel-runtime/\">\n    <strong>渠道运行态<\/strong>\n    <span>账号状态、长连接、入出站和运行日志的排障入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/desktop-local-mode/\">\n    <strong>Desktop 本地模式<\/strong>\n    <span>本地运行时的存储、工作区和能力边界。<\/span>\n  <\/a>\n<\/div>\n\n## 按问题找页面\n\n### 你在做上线\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [数据与存储](/docs/zh-CN/ops/data-and-storage/)\n\n### 你在做权限和治理\n\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [提示词模板参考](/docs/zh-CN/reference/prompt-templates/)\n\n### 你在做可观测\n\n- [监控与 Benchmark](/docs/zh-CN/ops/benchmark-and-observability/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n\n### 你在排查渠道\n\n- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n\n## 你最需要记住的点\n\n- Wunder 的运维不只是进程运维，还包括会话治理、渠道运行态和模型链路观测。\n- 工作区、数据库、向量库和临时目录必须分开治理。\n- 监控、吞吐、性能采样和 benchmark 各自解决的问题不同，不要混用。\n\n## 相关文档\n\n- [参考概览](/docs/zh-CN/reference/)\n- [帮助](/docs/zh-CN/help/)\n","source_path":"静态站文档/zh-CN/ops/index.md"}</script>
+</body>
+</html>

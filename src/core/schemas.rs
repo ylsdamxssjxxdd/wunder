@@ -120,6 +120,61 @@ pub struct AvailableToolsResponse {
     pub shared_tools: Vec<SharedToolSpec>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shared_tools_selected: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<AbilityDescriptor>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AbilityKind {
+    #[default]
+    Tool,
+    Skill,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AbilityGroupKey {
+    Skills,
+    Mcp,
+    Knowledge,
+    A2a,
+    User,
+    Shared,
+    Builtin,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AbilitySourceKey {
+    Builtin,
+    Mcp,
+    A2a,
+    Skill,
+    Knowledge,
+    UserMcp,
+    UserSkill,
+    UserKnowledge,
+    Shared,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AbilityDescriptor {
+    pub id: String,
+    pub name: String,
+    pub runtime_name: String,
+    pub display_name: String,
+    pub description: String,
+    pub input_schema: Value,
+    pub group: AbilityGroupKey,
+    pub source: AbilitySourceKey,
+    pub kind: AbilityKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub selected: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -1,8 +1,21 @@
-﻿import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
 import { normalizeDependencyNames } from '@/utils/agentDependencyStatus';
 
+type WorkerCardSchemaVersion = 'wunder/worker-card@1' | 'wunder/worker-card@2';
+type WorkerCardAbilityKind = 'tool' | 'skill';
+type UnknownRecord = Record<string, unknown>;
+
+export type WorkerCardAbilityItem = {
+  id: string;
+  name: string;
+  runtime_name: string;
+  display_name: string;
+  description: string;
+  kind: WorkerCardAbilityKind;
+};
+
 export type WorkerCardDocument = {
-  schema_version: 'wunder/worker-card@1';
+  schema_version: WorkerCardSchemaVersion;
   kind: 'WorkerCard';
   metadata: {
     id: string;
@@ -16,6 +29,7 @@ export type WorkerCardDocument = {
     system_prompt?: string;
   };
   abilities: {
+    items: WorkerCardAbilityItem[];
     tool_names: string[];
     skills: string[];
   };
@@ -42,11 +56,21 @@ export type WorkerCardBundleDocument = {
   items: WorkerCardDocument[];
 };
 
-const WORKER_CARD_SCHEMA_VERSION = 'wunder/worker-card@1' as const;
+const WORKER_CARD_SCHEMA_VERSION = 'wunder/worker-card@2' as const;
 const WORKER_CARD_BUNDLE_SCHEMA_VERSION = 'wunder/worker-card-bundle@1' as const;
+const WORKER_CARD_SCHEMA_VERSIONS = new Set<WorkerCardSchemaVersion>([
+  'wunder/worker-card@1',
+  'wunder/worker-card@2'
+]);
 const APPROVAL_MODES = new Set(['suggest', 'auto_edit', 'full_auto']);
 
 const trimString = (value: unknown) => String(value || '').trim();
+
+const asRecord = (value: unknown): UnknownRecord =>
+  value && typeof value === 'object' ? (value as UnknownRecord) : {};
+
+const hasOwn = (value: unknown, key: string) =>
+  Object.prototype.hasOwnProperty.call(asRecord(value), key);
 
 const normalizeStringList = (value: unknown): string[] => normalizeDependencyNames(value);
 
@@ -92,16 +116,107 @@ const createDownload = (filename: string, payload: string) => {
   window.URL.revokeObjectURL(url);
 };
 
-export const buildWorkerCardDocument = (value: Record<string, unknown> | null | undefined): WorkerCardDocument => {
+const normalizeAbilityKind = (value: unknown): WorkerCardAbilityKind =>
+  trimString(value).toLowerCase() === 'skill' ? 'skill' : 'tool';
+
+const normalizeWorkerCardAbilityItems = (value: unknown): WorkerCardAbilityItem[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const items: WorkerCardAbilityItem[] = [];
+  const seen = new Set<string>();
+  value.forEach((item) => {
+    if (!item || typeof item !== 'object') return;
+    const source = asRecord(item);
+    const kind = normalizeAbilityKind(source.kind);
+    const runtimeName = trimString(
+      source.runtime_name ?? source.runtimeName ?? source.name ?? source.id
+    );
+    if (!runtimeName) return;
+    const key = `${kind}:${runtimeName}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const displayName = trimString(source.display_name ?? source.displayName ?? runtimeName);
+    const description = trimString(source.description);
+    items.push({
+      id: trimString(source.id) || key,
+      name: trimString(source.name) || runtimeName,
+      runtime_name: runtimeName,
+      display_name: displayName || runtimeName,
+      description,
+      kind
+    });
+  });
+  return items;
+};
+
+const buildWorkerCardAbilityItems = (
+  toolNames: string[],
+  skillNames: string[]
+): WorkerCardAbilityItem[] => [
+  ...toolNames.map((name) => ({
+    id: `tool:${name}`,
+    name,
+    runtime_name: name,
+    display_name: name,
+    description: '',
+    kind: 'tool' as const
+  })),
+  ...skillNames.map((name) => ({
+    id: `skill:${name}`,
+    name,
+    runtime_name: name,
+    display_name: name,
+    description: '',
+    kind: 'skill' as const
+  }))
+];
+
+const normalizeWorkerCardAbilities = (value: unknown) => {
+  const source = asRecord(value);
+  const hasLegacyToolNames = hasOwn(source, 'tool_names') || hasOwn(source, 'toolNames');
+  const hasLegacySkills = hasOwn(source, 'skills');
+  const toolNames = normalizeStringList(source.tool_names ?? source.toolNames);
+  const skillNames = normalizeStringList(source.skills);
+  if (hasLegacyToolNames || hasLegacySkills) {
+    return {
+      tool_names: toolNames,
+      skills: skillNames,
+      items: buildWorkerCardAbilityItems(toolNames, skillNames)
+    };
+  }
+  const items = normalizeWorkerCardAbilityItems(source.items);
+  return {
+    tool_names: items.filter((item) => item.kind !== 'skill').map((item) => item.runtime_name),
+    skills: items.filter((item) => item.kind === 'skill').map((item) => item.runtime_name),
+    items
+  };
+};
+
+export const buildWorkerCardDocument = (
+  value: Record<string, unknown> | null | undefined
+): WorkerCardDocument => {
   const source = value || {};
-  const explicitDeclaredToolNames = normalizeStringList(source.declared_tool_names);
-  const explicitDeclaredSkillNames = normalizeStringList(source.declared_skill_names ?? source.skills);
+  const explicitDeclaredToolNames = normalizeStringList(source.declared_tool_names ?? source.declaredToolNames);
+  const explicitDeclaredSkillNames = normalizeStringList(
+    source.declared_skill_names ?? source.declaredSkillNames ?? source.skills
+  );
+  const sourceAbilities = normalizeWorkerCardAbilities(source.abilities);
   const hasExplicitDeclaredDependencies =
-    explicitDeclaredToolNames.length > 0 || explicitDeclaredSkillNames.length > 0;
+    explicitDeclaredToolNames.length > 0 ||
+    explicitDeclaredSkillNames.length > 0 ||
+    hasOwn(source, 'declared_tool_names') ||
+    hasOwn(source, 'declaredToolNames') ||
+    hasOwn(source, 'declared_skill_names') ||
+    hasOwn(source, 'declaredSkillNames');
   const declaredToolNames = hasExplicitDeclaredDependencies
     ? explicitDeclaredToolNames
-    : normalizeStringList(source.tool_names);
-  const declaredSkillNames = hasExplicitDeclaredDependencies ? explicitDeclaredSkillNames : [];
+    : sourceAbilities.tool_names.length > 0
+      ? sourceAbilities.tool_names
+      : normalizeStringList(source.tool_names);
+  const declaredSkillNames = hasExplicitDeclaredDependencies
+    ? explicitDeclaredSkillNames
+    : sourceAbilities.skills;
   return {
     schema_version: WORKER_CARD_SCHEMA_VERSION,
     kind: 'WorkerCard',
@@ -116,6 +231,7 @@ export const buildWorkerCardDocument = (value: Record<string, unknown> | null | 
       extra_prompt: joinPromptSections(source.system_prompt, source.extra_prompt)
     },
     abilities: {
+      items: buildWorkerCardAbilityItems(declaredToolNames, declaredSkillNames),
       tool_names: declaredToolNames,
       skills: declaredSkillNames
     },
@@ -166,32 +282,56 @@ export const downloadWorkerCardBundle = (items: Array<Record<string, unknown> | 
   return filename;
 };
 
-const normalizeWorkerCardDocument = (value: Record<string, unknown> | null | undefined): WorkerCardDocument => {
+const normalizeWorkerCardDocument = (
+  value: Record<string, unknown> | null | undefined
+): WorkerCardDocument => {
   const source = value || {};
-  const metadata = (source.metadata || {}) as Record<string, unknown>;
-  const prompt = (source.prompt || {}) as Record<string, unknown>;
-  const abilities = (source.abilities || {}) as Record<string, unknown>;
-  const interaction = (source.interaction || {}) as Record<string, unknown>;
-  const runtime = (source.runtime || {}) as Record<string, unknown>;
-  const hive = (source.hive || {}) as Record<string, unknown>;
-  const normalized = buildWorkerCardDocument({
-    id: metadata.id,
-    name: metadata.name,
-    description: metadata.description,
-    icon: metadata.icon,
-    system_prompt: prompt.system_prompt,
-    extra_prompt: prompt.extra_prompt,
-    tool_names: abilities.tool_names,
-    skills: abilities.skills,
-    preset_questions: interaction.preset_questions,
-    model_name: runtime.model_name,
-    approval_mode: runtime.approval_mode,
-    sandbox_container_id: runtime.sandbox_container_id,
-    is_shared: runtime.is_shared,
-    hive_id: hive.id,
-    hive_name: hive.name,
-    hive_description: hive.description
-  });
+  const metadata = asRecord(source.metadata);
+  const prompt = asRecord(source.prompt);
+  const abilities = normalizeWorkerCardAbilities(source.abilities);
+  const interaction = asRecord(source.interaction);
+  const runtime = asRecord(source.runtime);
+  const hive = asRecord(source.hive);
+  const schemaVersion = trimString(source.schema_version || source.schemaVersion);
+  if (schemaVersion && !WORKER_CARD_SCHEMA_VERSIONS.has(schemaVersion as WorkerCardSchemaVersion)) {
+    throw new Error('unsupported worker card schema version');
+  }
+  const normalized: WorkerCardDocument = {
+    schema_version: WORKER_CARD_SCHEMA_VERSION,
+    kind: 'WorkerCard',
+    metadata: {
+      id: trimString(metadata.id),
+      name: trimString(metadata.name),
+      description: trimString(metadata.description),
+      icon: trimString(metadata.icon),
+      exported_at: trimString(metadata.exported_at) || new Date().toISOString()
+    },
+    prompt: {
+      extra_prompt: joinPromptSections(prompt.system_prompt, prompt.extra_prompt)
+    },
+    abilities: {
+      items: abilities.items.length
+        ? abilities.items
+        : buildWorkerCardAbilityItems(abilities.tool_names, abilities.skills),
+      tool_names: abilities.tool_names,
+      skills: abilities.skills
+    },
+    interaction: {
+      preset_questions: normalizeAgentPresetQuestions(interaction.preset_questions)
+    },
+    runtime: {
+      model_name: normalizeOptionalModelName(runtime.model_name),
+      approval_mode: normalizeApprovalMode(runtime.approval_mode),
+      sandbox_container_id: normalizeSandboxContainerId(runtime.sandbox_container_id),
+      is_shared: Boolean(runtime.is_shared)
+    },
+    hive: {
+      id: trimString(hive.id),
+      name: trimString(hive.name),
+      description: trimString(hive.description)
+    },
+    extensions: asRecord(source.extensions)
+  };
   if (!normalized.metadata.name) {
     throw new Error('worker card name is required');
   }
@@ -224,8 +364,9 @@ export const parseWorkerCardText = (raw: string): WorkerCardDocument[] => {
 };
 
 export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<string, unknown> => {
-  const declaredToolNames = normalizeStringList(document.abilities.tool_names);
-  const declaredSkillNames = normalizeStringList(document.abilities.skills);
+  const abilities = normalizeWorkerCardAbilities(document.abilities);
+  const declaredToolNames = normalizeStringList(abilities.tool_names);
+  const declaredSkillNames = normalizeStringList(abilities.skills);
   const payload: Record<string, unknown> = {
     name: trimString(document.metadata.name),
     description: trimString(document.metadata.description),
@@ -253,5 +394,3 @@ export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<s
   }
   return payload;
 };
-
-

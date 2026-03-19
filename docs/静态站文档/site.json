@@ -1,0 +1,240 @@
+{
+  "site": {
+    "name": "wunder 文档",
+    "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
+    "default_language": "zh-CN",
+    "home_page": "zh-CN/index"
+  },
+  "navigation": {
+    "languages": [
+      {
+        "language": "zh-CN",
+        "label": "简体中文",
+        "tabs": [
+          {
+            "tab": "开始",
+            "groups": [
+              {
+                "group": "首页",
+                "pages": [
+                  "zh-CN/index"
+                ]
+              },
+              {
+                "group": "入门",
+                "pages": [
+                  "zh-CN/start/quickstart",
+                  "zh-CN/start/desktop",
+                  "zh-CN/start/server",
+                  "zh-CN/start/cli"
+                ]
+              },
+              {
+                "group": "导航",
+                "pages": [
+                  "zh-CN/start/hubs",
+                  "zh-CN/start/docs-directory"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "概念",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/concepts/index"
+                ]
+              },
+              {
+                "group": "核心概念",
+                "pages": [
+                  "zh-CN/concepts/architecture",
+                  "zh-CN/concepts/workspaces",
+                  "zh-CN/concepts/sessions-and-rounds",
+                  "zh-CN/concepts/streaming",
+                  "zh-CN/concepts/presence-and-runtime",
+                  "zh-CN/concepts/tools",
+                  "zh-CN/concepts/prompt-and-skills",
+                  "zh-CN/concepts/memory",
+                  "zh-CN/concepts/quota-and-token-usage",
+                  "zh-CN/concepts/swarm"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "工具",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/tools/index"
+                ]
+              },
+              {
+                "group": "文件与代码",
+                "pages": [
+                  "zh-CN/tools/workspace-files",
+                  "zh-CN/tools/exec",
+                  "zh-CN/tools/ptc",
+                  "zh-CN/tools/apply-patch",
+                  "zh-CN/tools/read-image",
+                  "zh-CN/tools/lsp",
+                  "zh-CN/tools/skill-call"
+                ]
+              },
+              {
+                "group": "网页与桌面",
+                "pages": [
+                  "zh-CN/tools/web-fetch",
+                  "zh-CN/tools/browser",
+                  "zh-CN/tools/desktop-control"
+                ]
+              },
+              {
+                "group": "界面与自动化",
+                "pages": [
+                  "zh-CN/tools/panels-and-a2ui",
+                  "zh-CN/tools/schedule-task"
+                ]
+              },
+              {
+                "group": "会话与协作",
+                "pages": [
+                  "zh-CN/tools/thread-control",
+                  "zh-CN/tools/subagent-control",
+                  "zh-CN/tools/agent-swarm",
+                  "zh-CN/tools/memory-manager",
+                  "zh-CN/tools/channel"
+                ]
+              },
+              {
+                "group": "系统桥接",
+                "pages": [
+                  "zh-CN/tools/user-world",
+                  "zh-CN/tools/a2a-tools",
+                  "zh-CN/tools/node-invoke"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "接入",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/integration/index"
+                ]
+              },
+              {
+                "group": "核心接口",
+                "pages": [
+                  "zh-CN/integration/wunder-api",
+                  "zh-CN/integration/chat-ws",
+                  "zh-CN/integration/chat-sessions",
+                  "zh-CN/integration/workspace-api",
+                  "zh-CN/integration/temp-dir"
+                ]
+              },
+              {
+                "group": "扩展接入",
+                "pages": [
+                  "zh-CN/integration/user-world",
+                  "zh-CN/integration/channel-webhook",
+                  "zh-CN/integration/external-login",
+                  "zh-CN/integration/a2a",
+                  "zh-CN/integration/mcp-endpoint"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "界面",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/surfaces/index"
+                ]
+              },
+              {
+                "group": "前端与桌面",
+                "pages": [
+                  "zh-CN/surfaces/frontend",
+                  "zh-CN/surfaces/web-admin",
+                  "zh-CN/surfaces/desktop-ui"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "运维",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/ops/index"
+                ]
+              },
+              {
+                "group": "部署与治理",
+                "pages": [
+                  "zh-CN/ops/deployment",
+                  "zh-CN/ops/data-and-storage",
+                  "zh-CN/ops/desktop-local-mode",
+                  "zh-CN/ops/auth-and-security",
+                  "zh-CN/ops/benchmark-and-observability",
+                  "zh-CN/ops/channel-runtime"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "参考",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/reference/index"
+                ]
+              },
+              {
+                "group": "系统参考",
+                "pages": [
+                  "zh-CN/reference/api-index",
+                  "zh-CN/reference/config",
+                  "zh-CN/reference/stream-events",
+                  "zh-CN/reference/workspace-routing",
+                  "zh-CN/reference/prompt-templates",
+                  "zh-CN/reference/admin-panels"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "帮助",
+            "groups": [
+              {
+                "group": "概览",
+                "pages": [
+                  "zh-CN/help/index"
+                ]
+              },
+              {
+                "group": "帮助",
+                "pages": [
+                  "zh-CN/help/troubleshooting",
+                  "zh-CN/help/faq",
+                  "zh-CN/help/glossary"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

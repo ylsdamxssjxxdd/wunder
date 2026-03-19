@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>用户侧前端 | wunder 文档</title>
+  <meta name="description" content="用户侧前端位于 `frontend/`，已经收敛为统一 Messenger 工作台。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/surfaces/frontend","language":"zh-CN","title":"用户侧前端","summary":"用户侧前端位于 `frontend/`，已经收敛为统一 Messenger 工作台。","read_when":["你要理解 Wunder 面向普通用户的主要界面","你要知道聊天、用户世界、工具、文件和设置如何组织"],"source_docs":["docs/系统介绍.md","docs/设计方案.md","README.md"],"tab":"界面","group":"前端与桌面","group_path":["前端与桌面"],"url":"/docs/zh-CN/surfaces/frontend/","headings":[{"id":"section-1","level":1,"text":"用户侧前端"},{"id":"section-2","level":2,"text":"代码位置"},{"id":"section-3","level":2,"text":"当前的主要入口"},{"id":"section-4","level":2,"text":"界面组织方式"},{"id":"section-5","level":2,"text":"这套前端承载什么能力"},{"id":"section-6","level":2,"text":"它和 Desktop 的关系"},{"id":"section-7","level":2,"text":"什么时候你应该先看这部分文档"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/surfaces/index","next_slug":"zh-CN/surfaces/web-admin","markdown":"# 用户侧前端\n\nWunder 的用户侧前端不是“一个聊天页”，而是一个统一消息工作台。\n\n它当前已经按 Messenger 形态组织，核心目标是把这些东西放进同一套壳里：\n\n- 智能体聊天\n- 用户世界通信\n- 文件与工作区\n- 工具与知识配置\n- 系统设置与个人资料\n\n## 代码位置\n\n- `frontend/`\n\n## 当前的主要入口\n\n- `/app/home`\n- `/app/chat`\n- `/app/user-world`\n- `/app/workspace`\n- `/app/tools`\n- `/app/settings`\n- `/app/profile`\n- `/app/channels`\n- `/app/cron`\n\n这些页面不是彼此割裂的，它们共享同一套 Messenger 壳。\n\n## 界面组织方式\n\n用户侧当前采用三栏结构：\n\n- 左栏：导航与一级入口\n- 中栏：会话、联系人、群聊、智能体或资源列表\n- 右栏：聊天主区与扩展面板\n\n这意味着 Wunder 的“用户侧前端”已经不是传统控制台，而是面向持续协作的工作台。\n\n## 这套前端承载什么能力\n\n- 普通对话\n- 长任务流式回放\n- 工具调用工作流\n- 用户世界实时通信\n- 文件预览和工作区操作\n- 智能体设置\n- 记忆碎片管理\n- 渠道与定时任务入口\n\n## 它和 Desktop 的关系\n\nDesktop 并没有重新发明一套页面，而是尽量复用这套用户侧前端壳。\n\n所以可以把关系理解成：\n\n- `frontend/` 是核心交互壳\n- `desktop/` 是把这套壳带到本地桌面并加上本地桥接能力\n\n## 什么时候你应该先看这部分文档\n\n适合这些场景：\n\n- 你要改用户体验或页面结构\n- 你要理解普通用户究竟看到什么\n- 你要判断某个能力应该落在聊天区、工作区还是设置区\n\n## 相关文档\n\n- [Desktop 界面](/docs/zh-CN/surfaces/desktop-ui/)\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n","source_path":"静态站文档/zh-CN/surfaces/frontend.md"}</script>
+</body>
+</html>

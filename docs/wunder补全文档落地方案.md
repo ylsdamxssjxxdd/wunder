@@ -293,27 +293,23 @@ docs/静态站文档/en-US/
 ```text
 web/docs/
   index.html
-  app.js
-  app.css
+  site.js
+  site.css
   manifest.json
   search.json
-  content/
-    zh-CN/
-      index.md
-      start/
-      concepts/
-      ...
-  assets/
-    diagrams/
-    images/
+  zh-CN/
+    index.html
+    start/
+    concepts/
+    ...
 ```
 
 其中：
 
 - `manifest.json`：导航树、页面标题、slug、顺序、上一页/下一页关系
 - `search.json`：站内搜索索引
-- `content/**/*.md`：发布后的 Markdown 内容
-- `assets/`：文档图示与附图
+- `site.js` / `site.css`：文档站运行时与样式壳
+- `zh-CN/**/index.html`：按导航生成的静态页面
 
 ### 7.3 路由建议
 
@@ -348,7 +344,7 @@ web/docs/
 4. 同页目录（On this page）
 5. 上一篇 / 下一篇
 6. 站内关键字搜索
-7. 代码块复制
+7. 主题切换
 8. 图片与 SVG 正常显示
 9. 中英文入口预留
 
@@ -374,11 +370,11 @@ scripts/build_docs_site.py
 
 1. 扫描 `docs/静态站文档/zh-CN/**/*.md`
 2. 读取 frontmatter
-3. 生成 `web/docs/manifest.json`
-4. 生成 `web/docs/search.json`
-5. 复制 Markdown 到 `web/docs/content/`
-6. 复制引用的图示资源到 `web/docs/assets/`
-7. 做基础链接校验
+3. 按 `site.json` 解析导航顺序与上一页/下一页关系
+4. 生成 `web/docs/index.html` 与各页面 `index.html`
+5. 生成 `web/docs/manifest.json`
+6. 生成 `web/docs/search.json`
+7. 复制 `site.js` 与 `site.css` 到 `web/docs/`
 
 ### 8.2 frontmatter 规范
 
@@ -416,8 +412,8 @@ source_docs:
 
 ```text
 web/docs/index.html
-web/docs/app.js
-web/docs/app.css
+web/docs/site.js
+web/docs/site.css
 ```
 
 并复用现有能力：
@@ -439,8 +435,9 @@ web/docs/app.css
 
 必要调整只有两类：
 
-1. 如需将管理端旧文档资源与新文档站分离，可把现有 `web/docs/api-docs.json`、`web/docs/paper.md` 迁移到 `web/docs/admin/`。
-2. 如未来坚持把文档挂到 `/wunder/docs/`，则必须同步调整 `src/core/auth.rs` 的放行规则。
+1. 当前可直接保留 `web/docs/api-docs.json`、`web/docs/paper.md` 与 `web/docs/diagrams/`，与新文档站并存。
+2. 管理端补一个“文档站”入口，直接打开 `/docs/`。
+3. 如未来坚持把文档挂到 `/wunder/docs/`，则必须同步调整 `src/core/auth.rs` 的放行规则。
 
 ## 9. 内容编写规范
 
@@ -512,8 +509,8 @@ web/docs/app.css
 
 - `scripts/build_docs_site.py`
 - `web/docs/index.html`
-- `web/docs/app.js`
-- `web/docs/app.css`
+- `web/docs/site.js`
+- `web/docs/site.css`
 - `web/docs/manifest.json`
 
 ### 阶段 3：增强与外部发布

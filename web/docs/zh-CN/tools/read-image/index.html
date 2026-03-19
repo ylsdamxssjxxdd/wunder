@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>读图工具 | wunder 文档</title>
+  <meta name="description" content="`读图工具` 不按文本读取图片，而是校验本地图片路径后，把图片以多模态消息形式注入到后续模型调用里。">
+  <link rel="stylesheet" href="/docs/site.css">
+  <script defer src="/third/marked.min.js"></script>
+  <script type="module" src="/docs/site.js"></script>
+</head>
+<body>
+  <div class="docs-app">
+    <header class="docs-header">
+      <div class="docs-header-row">
+        <div class="docs-brand-wrap">
+          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+          <a class="docs-brand" href="/docs/">
+            <span class="docs-brand-mark"></span>
+            <span class="docs-brand-text">wunder 文档</span>
+          </a>
+        </div>
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
+        <div class="docs-header-actions">
+          <label class="docs-search">
+            <span class="docs-search-label">搜索</span>
+            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <div class="docs-search-results" id="docs-search-results" hidden></div>
+          </label>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
+        </div>
+      </div>
+    </header>
+    <div class="docs-layout">
+      <aside class="docs-sidebar" id="docs-sidebar"></aside>
+      <main class="docs-main">
+        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
+        <section class="docs-page-header" id="docs-page-header"></section>
+        <article class="docs-content" id="docs-content"></article>
+        <section class="docs-page-footer" id="docs-page-footer"></section>
+      </main>
+      <aside class="docs-toc" id="docs-toc-wrap">
+        <div class="docs-toc-card">
+          <div class="docs-toc-title">本页目录</div>
+          <nav id="docs-toc"></nav>
+        </div>
+      </aside>
+    </div>
+  </div>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/read-image","language":"zh-CN","title":"读图工具","summary":"`读图工具` 不按文本读取图片，而是校验本地图片路径后，把图片以多模态消息形式注入到后续模型调用里。","read_when":["你要让模型看本地图片","你要区分 `读取文件` 和 `读图工具` 的边界"],"source_docs":["src/services/tools/catalog.rs","src/services/tools/read_image_tool.rs"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/read-image/","headings":[{"id":"section-1","level":1,"text":"读图工具"},{"id":"section-2","level":2,"text":"常用参数"},{"id":"section-3","level":2,"text":"它会做什么"},{"id":"section-4","level":2,"text":"适合哪些格式"},{"id":"section-5","level":2,"text":"和 读取文件 的区别"},{"id":"section-6","level":2,"text":"什么时候该用它"},{"id":"section-7","level":2,"text":"你最需要记住的点"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/apply-patch","next_slug":"zh-CN/tools/lsp","markdown":"# 读图工具\n\n`读图工具` 解决的是“把本地图片交给模型看”，不是“把图片文件当文本读出来”。\n\n## 常用参数\n\n- `path`\n- `prompt`\n\n其中：\n\n- `path` 指向工作区或允许读取根目录里的图片文件。\n- `prompt` 是附带给多模态模型的说明文字，可选。\n\n## 它会做什么\n\n在真正发给模型前，系统会先做几件事：\n\n- 解析并校验路径\n- 校验文件存在且是文件\n- 校验大小上限\n- 识别图片 MIME 类型\n- 生成后续消息里的 `image_url`\n\n当前实现会限制图片大小，避免把超大二进制直接塞进上下文。\n\n## 适合哪些格式\n\n当前内置检测会覆盖常见图片格式，例如：\n\n- PNG\n- JPEG\n- GIF\n- WebP\n- BMP\n- TIFF\n- AVIF\n\n## 和 `读取文件` 的区别\n\n- `读取文件` 面向纯文本文件。\n- `读图工具` 面向图片与多模态输入。\n\n如果你把二进制图片路径交给 `读取文件`，通常不是正确路径。\n\n## 什么时候该用它\n\n- 让模型解释截图\n- 让模型分析设计图或错误弹窗\n- 让模型看本地生成的图片产物\n\n这类场景都比直接贴文字描述更稳定。\n\n## 你最需要记住的点\n\n- `读图工具` 的核心不是返回像素内容，而是构造后续多模态消息。\n- 它只适合图片，不适合一般二进制文件。\n- 真正的文本文件仍然应该走 [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)。\n\n## 相关文档\n\n- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)\n- [浏览器](/docs/zh-CN/tools/browser/)\n- [桌面控制](/docs/zh-CN/tools/desktop-control/)\n","source_path":"静态站文档/zh-CN/tools/read-image.md"}</script>
+</body>
+</html>
