@@ -710,6 +710,7 @@ impl Orchestrator {
                             is_admin,
                             &emitter,
                             prepared.approval_tx.clone(),
+                            round_info,
                         )
                         .await?;
                     for (index, outcome) in outcomes.into_iter().enumerate() {
@@ -1143,6 +1144,19 @@ impl Orchestrator {
                 last_round_info.insert_into(map);
             }
             emitter.emit("final", final_payload).await;
+            emit_turn_terminal_event(
+                &emitter,
+                last_round_info,
+                TurnTerminalEvent {
+                    status: "completed",
+                    stop_reason: Some(stop_reason.as_str()),
+                    round_usage: has_round_usage.then_some(&round_usage),
+                    error: None,
+                    waiting_for_user_input: waiting_question_panel,
+                    stop_meta: stop_meta.as_ref(),
+                },
+            )
+            .await;
             if !waiting_question_panel && !answer.trim().is_empty() {
                 self.spawn_auto_memory_extraction(
                     &user_id,
@@ -1176,6 +1190,19 @@ impl Orchestrator {
             }
             Err(err) => {
                 emitter.emit("error", err.to_payload()).await;
+                emit_turn_terminal_event(
+                    &emitter,
+                    RoundInfo::default(),
+                    TurnTerminalEvent {
+                        status: turn_terminal_status_for_error(&err),
+                        stop_reason: Some(err.code()),
+                        round_usage: None,
+                        error: Some(&err),
+                        waiting_for_user_input: false,
+                        stop_meta: None,
+                    },
+                )
+                .await;
                 if !matches!(err.code(), "USER_BUSY" | "CANCELLED") {
                     self.append_chat(
                         &user_id,
@@ -1216,6 +1243,7 @@ impl Orchestrator {
         is_admin: bool,
         emitter: &EventEmitter,
         approval_tx: Option<ApprovalRequestTx>,
+        round_info: RoundInfo,
     ) -> Result<Vec<ToolExecutionOutcome>, OrchestratorError> {
         if calls.is_empty() {
             return Ok(Vec::new());
@@ -1294,11 +1322,28 @@ impl Orchestrator {
                                         if let Some(meta) = policy_meta.clone() {
                                             map.insert("policy".to_string(), meta);
                                         }
+                                        round_info.insert_into(map);
                                     }
                                     emitter.emit("approval_request", event_payload).await;
                                     approved = tokio::select! {
                                         res = response_rx => res.ok(),
                                         err = orchestrator.wait_for_cancelled(session_id) => {
+                                            if let Some(id) = approval_id.as_deref() {
+                                                emit_approval_resolved_event(
+                                                    &emitter,
+                                                    round_info,
+                                                    ApprovalResolvedEvent {
+                                                        approval_id: id,
+                                                        status: "cancelled",
+                                                        scope: "none",
+                                                        kind: approval_kind,
+                                                        tool_name: &name,
+                                                        summary: approval_summary.as_deref(),
+                                                        resolved_by: Some("session_cancelled"),
+                                                    },
+                                                )
+                                                .await;
+                                            }
                                             return Err(err);
                                         }
                                     };
@@ -1309,30 +1354,34 @@ impl Orchestrator {
 
                         let approval_response = approved.unwrap_or(ApprovalResponse::Deny);
                         if let Some(id) = approval_id {
-                            let status = match approval_response {
-                                ApprovalResponse::ApproveOnce | ApprovalResponse::ApproveSession => {
-                                    "approved"
-                                }
-                                ApprovalResponse::Deny => "denied",
-                            };
-                            let scope = match approval_response {
-                                ApprovalResponse::ApproveSession => "session",
-                                ApprovalResponse::ApproveOnce => "once",
-                                ApprovalResponse::Deny => "none",
-                            };
-                            emitter
-                                .emit(
-                                    "approval_result",
-                                    json!({
-                                        "approval_id": id,
-                                        "status": status,
-                                        "scope": scope,
-                                        "kind": approval_kind,
-                                        "tool": name.clone(),
-                                        "summary": approval_summary.clone().unwrap_or_default(),
-                                    }),
-                                )
-                                .await;
+                            let (status, scope) =
+                                approval_resolution_status_and_scope(approval_response);
+                            let mut event_payload = json!({
+                                "approval_id": id.clone(),
+                                "status": status,
+                                "scope": scope,
+                                "kind": approval_kind,
+                                "tool": name.clone(),
+                                "summary": approval_summary.clone().unwrap_or_default(),
+                            });
+                            if let Value::Object(ref mut map) = event_payload {
+                                round_info.insert_into(map);
+                            }
+                            emitter.emit("approval_result", event_payload).await;
+                            emit_approval_resolved_event(
+                                &emitter,
+                                round_info,
+                                ApprovalResolvedEvent {
+                                    approval_id: &id,
+                                    status,
+                                    scope,
+                                    kind: approval_kind,
+                                    tool_name: &name,
+                                    summary: approval_summary.as_deref(),
+                                    resolved_by: Some("approval_response"),
+                                },
+                            )
+                            .await;
                         }
 
                         let approved = match approval_response {
@@ -1796,6 +1845,114 @@ fn approval_summary_for_tool(tool_name: &str, args: &Value, kind: ApprovalReques
     }
 }
 
+fn approval_resolution_status_and_scope(
+    approval_response: ApprovalResponse,
+) -> (&'static str, &'static str) {
+    match approval_response {
+        ApprovalResponse::ApproveSession => ("approved", "session"),
+        ApprovalResponse::ApproveOnce => ("approved", "once"),
+        ApprovalResponse::Deny => ("denied", "none"),
+    }
+}
+
+async fn emit_approval_resolved_event(
+    emitter: &EventEmitter,
+    round_info: RoundInfo,
+    event: ApprovalResolvedEvent<'_>,
+) {
+    let mut payload = json!({
+        "approval_id": event.approval_id,
+        "status": event.status,
+        "scope": event.scope,
+        "kind": event.kind,
+        "tool": event.tool_name,
+        "summary": event.summary.unwrap_or_default(),
+    });
+    if let Value::Object(ref mut map) = payload {
+        if let Some(resolved_by) = event
+            .resolved_by
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            map.insert(
+                "resolved_by".to_string(),
+                Value::String(resolved_by.to_string()),
+            );
+        }
+        round_info.insert_into(map);
+    }
+    emitter.emit("approval_resolved", payload).await;
+}
+
+fn turn_terminal_status_for_error(err: &OrchestratorError) -> &'static str {
+    match err.code() {
+        "CANCELLED" => "cancelled",
+        "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "INVALID_REQUEST" => "rejected",
+        _ => "failed",
+    }
+}
+
+async fn emit_turn_terminal_event(
+    emitter: &EventEmitter,
+    round_info: RoundInfo,
+    event: TurnTerminalEvent<'_>,
+) {
+    let mut payload = json!({
+        "status": event.status,
+        "retryable": event.error.map(OrchestratorError::retryable).unwrap_or(false),
+        "waiting_for_user_input": event.waiting_for_user_input,
+    });
+    if let Value::Object(ref mut map) = payload {
+        if let Some(stop_reason) = event
+            .stop_reason
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            map.insert(
+                "stop_reason".to_string(),
+                Value::String(stop_reason.to_string()),
+            );
+        }
+        if let Some(round_usage) = event.round_usage {
+            map.insert("round_usage".to_string(), json!(round_usage));
+        }
+        if let Some(error) = event.error {
+            map.insert("error".to_string(), error.to_payload());
+            map.insert(
+                "recovery_action".to_string(),
+                Value::String(error.recovery_action().to_string()),
+            );
+            if let Some(retry_after_ms) = error.retry_after_ms() {
+                map.insert("retry_after_ms".to_string(), json!(retry_after_ms));
+            }
+        }
+        if let Some(stop_meta) = event.stop_meta {
+            map.insert("stop_meta".to_string(), stop_meta.clone());
+        }
+        round_info.insert_into(map);
+    }
+    emitter.emit("turn_terminal", payload).await;
+}
+
+struct ApprovalResolvedEvent<'a> {
+    approval_id: &'a str,
+    status: &'a str,
+    scope: &'a str,
+    kind: Option<ApprovalRequestKind>,
+    tool_name: &'a str,
+    summary: Option<&'a str>,
+    resolved_by: Option<&'a str>,
+}
+
+struct TurnTerminalEvent<'a> {
+    status: &'a str,
+    stop_reason: Option<&'a str>,
+    round_usage: Option<&'a TokenUsage>,
+    error: Option<&'a OrchestratorError>,
+    waiting_for_user_input: bool,
+    stop_meta: Option<&'a Value>,
+}
+
 fn extract_control_summary(args: &Value) -> Option<String> {
     let obj = args.as_object()?;
     let action = obj
@@ -1877,6 +2034,28 @@ mod tests {
         let err =
             OrchestratorError::internal("LLM call failed: context_length_exceeded".to_string());
         assert!(should_recover_from_context_overflow(&err));
+    }
+
+    #[test]
+    fn exception_turn_terminal_status_maps_user_busy_to_rejected() {
+        let err = OrchestratorError::user_busy("busy".to_string());
+        assert_eq!(turn_terminal_status_for_error(&err), "rejected");
+    }
+
+    #[test]
+    fn exception_approval_resolution_status_distinguishes_scope() {
+        assert_eq!(
+            approval_resolution_status_and_scope(ApprovalResponse::ApproveOnce),
+            ("approved", "once")
+        );
+        assert_eq!(
+            approval_resolution_status_and_scope(ApprovalResponse::ApproveSession),
+            ("approved", "session")
+        );
+        assert_eq!(
+            approval_resolution_status_and_scope(ApprovalResponse::Deny),
+            ("denied", "none")
+        );
     }
 
     #[test]

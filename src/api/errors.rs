@@ -66,8 +66,10 @@ pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
         "FORBIDDEN" | "PERMISSION_DENIED" => StatusCode::FORBIDDEN,
         "NOT_FOUND" | "SESSION_NOT_FOUND" | "TASK_NOT_FOUND" => StatusCode::NOT_FOUND,
         "CONFLICT" | "TASK_NOT_CANCELABLE" => StatusCode::CONFLICT,
+        "CANCELLED" => StatusCode::CONFLICT,
         "CONTENT_TYPE_NOT_SUPPORTED" => StatusCode::UNSUPPORTED_MEDIA_TYPE,
         "HANDSHAKE_TIMEOUT" | "REQUEST_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
+        "CONTEXT_WINDOW_EXCEEDED" => StatusCode::PAYLOAD_TOO_LARGE,
         "PAYLOAD_TOO_LARGE" => StatusCode::PAYLOAD_TOO_LARGE,
         "RATE_LIMITED" | "USER_BUSY" | "USER_QUOTA_EXCEEDED" => StatusCode::TOO_MANY_REQUESTS,
         "PUSH_NOT_SUPPORTED" => StatusCode::NOT_IMPLEMENTED,
@@ -75,6 +77,7 @@ pub(crate) fn status_for_error_code(code: &str) -> StatusCode {
         "SWARM_HIVE_DENIED" => StatusCode::FORBIDDEN,
         "SWARM_POLICY_BLOCKED" => StatusCode::TOO_MANY_REQUESTS,
         "SWARM_RUN_TIMEOUT" => StatusCode::REQUEST_TIMEOUT,
+        "LLM_UNAVAILABLE" => StatusCode::SERVICE_UNAVAILABLE,
         "SERVICE_UNAVAILABLE" | "CONNECTION_CLOSED" => StatusCode::SERVICE_UNAVAILABLE,
         "UPSTREAM_TIMEOUT" => StatusCode::GATEWAY_TIMEOUT,
         "INTERNAL_ERROR" => StatusCode::INTERNAL_SERVER_ERROR,
@@ -103,6 +106,11 @@ pub(crate) fn hint_for_error_code(code: &str) -> Option<&'static str> {
         }
         "USER_BUSY" | "USER_QUOTA_EXCEEDED" | "RATE_LIMITED" => {
             Some("Retry later or reduce request frequency.")
+        }
+        "CANCELLED" => Some("Start a new turn if you still want the task to continue."),
+        "LLM_UNAVAILABLE" => Some("Retry later or switch to another available model/provider."),
+        "CONTEXT_WINDOW_EXCEEDED" => {
+            Some("Reduce context size or let the session compact history before retrying.")
         }
         "UNSUPPORTED_METHOD" | "METHOD_NOT_FOUND" | "UNSUPPORTED_TYPE" => {
             Some("Verify method/type against the protocol documentation.")

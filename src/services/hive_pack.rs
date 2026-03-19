@@ -151,9 +151,9 @@ struct WorkerCardMetadata {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct WorkerCardPrompt {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     system_prompt: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     extra_prompt: Option<String>,
 }
 
@@ -1230,8 +1230,9 @@ fn build_worker_card_manifest(
             exported_at: Some(chrono::Utc::now().to_rfc3339()),
         },
         prompt: WorkerCardPrompt {
-            system_prompt: Some(agent.system_prompt.clone()),
-            extra_prompt: None,
+            system_prompt: None,
+            extra_prompt: Some(agent.system_prompt.trim().to_string())
+                .filter(|value| !value.is_empty()),
         },
         abilities: WorkerCardAbilities {
             tool_names: normalize_string_items(declared_tool_names),

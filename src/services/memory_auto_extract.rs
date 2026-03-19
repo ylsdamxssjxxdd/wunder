@@ -1474,7 +1474,7 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::build_desktop_router;
+    use crate::api::build_desktop_router;
     use crate::config::{Config, LlmModelConfig};
     use crate::config_store::ConfigStore;
     use crate::services::memory_fragments::{MemoryFragmentInput, MemoryFragmentStore};

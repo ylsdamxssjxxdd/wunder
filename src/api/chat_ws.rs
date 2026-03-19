@@ -14,6 +14,9 @@ use crate::api::ws_log::{
 use crate::core::approval::{
     new_channel as new_approval_channel, ApprovalRequestRx, ApprovalResponse,
 };
+use crate::core::approval_registry::{
+    ApprovalSource, PendingApprovalEntry, PendingApprovalRegistry,
+};
 use crate::i18n;
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
@@ -99,12 +102,6 @@ struct WsStreamEntry {
     cancel_session: bool,
 }
 
-struct PendingApprovalEntry {
-    request_id: String,
-    session_id: String,
-    respond_to: tokio::sync::oneshot::Sender<ApprovalResponse>,
-}
-
 async fn chat_ws(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -137,8 +134,7 @@ async fn handle_ws(
     let ws_tx = WsSender::new(out_tx.clone());
     let started_at = std::time::Instant::now();
     let tasks: Arc<Mutex<HashMap<String, WsStreamEntry>>> = Arc::new(Mutex::new(HashMap::new()));
-    let pending_approvals: Arc<Mutex<HashMap<String, PendingApprovalEntry>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let approval_registry = state.approval_registry.clone();
 
     let writer = tokio::spawn(async move {
         while let Some(message) = out_rx.recv().await {
@@ -406,7 +402,7 @@ async fn handle_ws(
 
                         let ws_tx_snapshot = ws_tx.clone();
                         let state_snapshot = state.clone();
-                        let pending_approvals_snapshot = pending_approvals.clone();
+                        let approval_registry_snapshot = approval_registry.clone();
                         let (cancel, task_id) =
                             register_ws_task(&tasks, &request_id, Some(session_id.clone()), true)
                                 .await;
@@ -416,7 +412,7 @@ async fn handle_ws(
                         let session_id_cleanup = session_id.clone();
                         let approval_forward = tokio::spawn(forward_approval_requests(
                             approval_rx,
-                            pending_approvals_snapshot.clone(),
+                            approval_registry_snapshot.clone(),
                             request_id_cleanup.clone(),
                             session_id_cleanup.clone(),
                         ));
@@ -465,7 +461,7 @@ async fn handle_ws(
                             }
                             approval_forward.abort();
                             clear_pending_approvals(
-                                &pending_approvals_snapshot,
+                                &approval_registry_snapshot,
                                 Some(&request_id_cleanup),
                                 Some(&session_id_cleanup),
                                 ApprovalResponse::Deny,
@@ -684,7 +680,7 @@ async fn handle_ws(
                             }
                         }
                         clear_pending_approvals(
-                            &pending_approvals,
+                            &approval_registry,
                             request_id.as_deref(),
                             session_id.as_deref(),
                             ApprovalResponse::Deny,
@@ -746,43 +742,38 @@ async fn handle_ws(
                                 .filter(|value| !value.is_empty());
                         let mut error_code = "APPROVAL_NOT_FOUND";
                         let mut error_message = "approval request not found".to_string();
-                        let entry = {
-                            let mut guard = pending_approvals.lock().await;
-                            if let Some((entry_request_id, entry_session_id)) = guard
-                                .get(&approval_id)
-                                .map(|entry| (entry.request_id.clone(), entry.session_id.clone()))
-                            {
+                        let entry = match approval_registry.get_snapshot(&approval_id).await {
+                            Some(snapshot) if snapshot.source == ApprovalSource::ChatWs => {
                                 if let Some(request_id_value) = request_id.as_deref() {
-                                    if entry_request_id != request_id_value {
+                                    if snapshot.request_id.as_deref() != Some(request_id_value) {
                                         error_code = "APPROVAL_REQUEST_MISMATCH";
                                         error_message = "approval request mismatch".to_string();
                                         None
                                     } else if let Some(session_id_value) = session_scope.as_deref()
                                     {
-                                        if entry_session_id != session_id_value {
+                                        if snapshot.session_id != session_id_value {
                                             error_code = "APPROVAL_SESSION_MISMATCH";
                                             error_message = "approval session mismatch".to_string();
                                             None
                                         } else {
-                                            guard.remove(&approval_id)
+                                            approval_registry.remove(&approval_id).await
                                         }
                                     } else {
-                                        guard.remove(&approval_id)
+                                        approval_registry.remove(&approval_id).await
                                     }
                                 } else if let Some(session_id_value) = session_scope.as_deref() {
-                                    if entry_session_id != session_id_value {
+                                    if snapshot.session_id != session_id_value {
                                         error_code = "APPROVAL_SESSION_MISMATCH";
                                         error_message = "approval session mismatch".to_string();
                                         None
                                     } else {
-                                        guard.remove(&approval_id)
+                                        approval_registry.remove(&approval_id).await
                                     }
                                 } else {
-                                    guard.remove(&approval_id)
+                                    approval_registry.remove(&approval_id).await
                                 }
-                            } else {
-                                None
                             }
+                            _ => None,
                         };
                         let Some(entry) = entry else {
                             let _ = send_ws_error(
@@ -833,7 +824,7 @@ async fn handle_ws(
 
     drop(out_tx);
     let _ = writer.await;
-    clear_pending_approvals(&pending_approvals, None, None, ApprovalResponse::Deny).await;
+    clear_pending_approvals(&approval_registry, None, None, ApprovalResponse::Deny).await;
     state
         .user_presence
         .disconnect(&user.user_id, Utc::now().timestamp_millis() as f64 / 1000.0);
@@ -851,7 +842,7 @@ async fn handle_ws(
 
 async fn forward_approval_requests(
     mut approval_rx: ApprovalRequestRx,
-    pending_approvals: Arc<Mutex<HashMap<String, PendingApprovalEntry>>>,
+    approval_registry: Arc<PendingApprovalRegistry>,
     request_id: String,
     session_id: String,
 ) {
@@ -861,20 +852,26 @@ async fn forward_approval_requests(
             let _ = request.respond_to.send(ApprovalResponse::Deny);
             continue;
         }
-        let respond_to = request.respond_to;
-        {
-            let mut guard = pending_approvals.lock().await;
-            if let Some(previous) = guard.remove(&approval_id) {
-                let _ = previous.respond_to.send(ApprovalResponse::Deny);
-            }
-            guard.insert(
+        let previous = approval_registry
+            .upsert(PendingApprovalEntry {
                 approval_id,
-                PendingApprovalEntry {
-                    request_id: request_id.clone(),
-                    session_id: session_id.clone(),
-                    respond_to,
-                },
-            );
+                source: ApprovalSource::ChatWs,
+                session_id: session_id.clone(),
+                request_id: Some(request_id.clone()),
+                channel: None,
+                account_id: None,
+                peer_id: None,
+                thread_id: None,
+                actor_id: None,
+                tool: request.tool,
+                summary: request.summary,
+                kind: request.kind,
+                created_at: Utc::now().timestamp_millis() as f64 / 1000.0,
+                respond_to: request.respond_to,
+            })
+            .await;
+        if let Some(previous) = previous {
+            let _ = previous.respond_to.send(ApprovalResponse::Deny);
         }
     }
 }
@@ -890,43 +887,27 @@ fn parse_approval_decision(raw: &str) -> Option<ApprovalResponse> {
 }
 
 async fn clear_pending_approvals(
-    pending_approvals: &Arc<Mutex<HashMap<String, PendingApprovalEntry>>>,
+    approval_registry: &Arc<PendingApprovalRegistry>,
     request_id: Option<&str>,
     session_id: Option<&str>,
     response: ApprovalResponse,
 ) {
-    let mut entries = Vec::new();
-    {
-        let mut guard = pending_approvals.lock().await;
-        let matches_scope = |entry: &PendingApprovalEntry| {
-            let request_match = request_id
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(|value| entry.request_id == value)
+    let normalized_request_id = request_id.map(str::trim).filter(|value| !value.is_empty());
+    let normalized_session_id = session_id.map(str::trim).filter(|value| !value.is_empty());
+    let entries = approval_registry
+        .remove_matching(|entry| {
+            if entry.source != ApprovalSource::ChatWs {
+                return false;
+            }
+            let request_match = normalized_request_id
+                .map(|value| entry.request_id.as_deref() == Some(value))
                 .unwrap_or(true);
-            let session_match = session_id
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
+            let session_match = normalized_session_id
                 .map(|value| entry.session_id == value)
                 .unwrap_or(true);
             request_match && session_match
-        };
-        let ids = guard
-            .iter()
-            .filter_map(|(key, entry)| {
-                if matches_scope(entry) {
-                    Some(key.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        for id in ids {
-            if let Some(entry) = guard.remove(&id) {
-                entries.push(entry);
-            }
-        }
-    }
+        })
+        .await;
     for entry in entries {
         let _ = entry.respond_to.send(response);
     }

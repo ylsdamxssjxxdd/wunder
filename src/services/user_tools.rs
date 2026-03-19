@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 const USER_TOOLS_ROOT_ENV: &str = "WUNDER_USER_TOOLS_ROOT";
 
@@ -121,11 +121,6 @@ struct UserToolsCacheEntry {
     payload: UserToolsPayload,
 }
 
-struct SharedToolsCache {
-    timestamp: f64,
-    payloads: Vec<UserToolsPayload>,
-}
-
 struct SkillSpecCacheEntry {
     signature: (f64, Vec<String>),
     specs: Vec<SkillSpec>,
@@ -148,9 +143,6 @@ pub struct UserToolStore {
     workspace: Arc<WorkspaceManager>,
     legacy_root: PathBuf,
     cache: Mutex<HashMap<String, UserToolsCacheEntry>>,
-    shared_cache: Mutex<Option<SharedToolsCache>>,
-    shared_cache_ttl_s: f64,
-    shared_version: Mutex<f64>,
 }
 
 impl UserToolStore {
@@ -161,9 +153,6 @@ impl UserToolStore {
             workspace,
             legacy_root,
             cache: Mutex::new(HashMap::new()),
-            shared_cache: Mutex::new(None),
-            shared_cache_ttl_s: 5.0,
-            shared_version: Mutex::new(now_ts()),
         })
     }
 
@@ -174,10 +163,7 @@ impl UserToolStore {
 
     /// 获取共享工具版本号，用于提示词缓存判断。
     pub fn shared_version(&self) -> f64 {
-        *self
-            .shared_version
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
+        0.0
     }
 
     /// 读取指定用户的工具配置并做字段清洗。
@@ -331,43 +317,17 @@ impl UserToolStore {
     pub fn update_shared_tools(
         &self,
         user_id: &str,
-        shared_tools: Vec<String>,
+        _shared_tools: Vec<String>,
     ) -> Result<UserToolsPayload> {
         let mut payload = self.load_user_tools(user_id);
-        payload.shared_tools = normalize_name_list(shared_tools);
+        payload.shared_tools.clear();
         self.save_payload(user_id, payload)
     }
 
     /// 列出所有共享配置（排除当前用户）。
     pub fn list_shared_payloads(&self, exclude_user_id: &str) -> Vec<UserToolsPayload> {
-        let now = now_ts();
-        if let Some(cache) = self
-            .shared_cache
-            .lock()
-            .unwrap_or_else(|err| err.into_inner())
-            .as_ref()
-        {
-            if now - cache.timestamp < self.shared_cache_ttl_s {
-                return cache
-                    .payloads
-                    .iter()
-                    .filter(|&item| item.user_id != exclude_user_id)
-                    .cloned()
-                    .collect();
-            }
-        }
-        let payloads = self.scan_shared_payloads();
-        *self
-            .shared_cache
-            .lock()
-            .unwrap_or_else(|err| err.into_inner()) = Some(SharedToolsCache {
-            timestamp: now,
-            payloads: payloads.clone(),
-        });
-        payloads
-            .into_iter()
-            .filter(|item| item.user_id != exclude_user_id)
-            .collect()
+        let _ = exclude_user_id;
+        Vec::new()
     }
 
     /// 获取用户工具目录。
@@ -442,37 +402,6 @@ impl UserToolStore {
         }
     }
 
-    fn scan_shared_payloads(&self) -> Vec<UserToolsPayload> {
-        let mut payloads = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(self.workspace.root()) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let scoped_name = entry.file_name().to_string_lossy().to_string();
-                if scoped_name.contains("__c__")
-                    || scoped_name.contains("__a__")
-                    || scoped_name.contains("__agent__")
-                {
-                    continue;
-                }
-                let payload = self
-                    .read_payload(&path.join("global").join("tooling.json"), "")
-                    .or_else(|_| self.read_payload(&path.join("config.json"), ""));
-                let Ok(payload) = payload else {
-                    continue;
-                };
-                let mut payload = payload;
-                if payload.user_id.is_empty() {
-                    payload.user_id = scoped_name;
-                }
-                payloads.push(payload);
-            }
-        }
-        payloads
-    }
-
     fn read_payload(&self, path: &Path, fallback_user_id: &str) -> Result<UserToolsPayload> {
         if !path.exists() {
             return Ok(UserToolsPayload {
@@ -494,13 +423,12 @@ impl UserToolStore {
             parse_name_list(value.get("skills").and_then(|item| item.get("shared"))),
         );
         let knowledge_bases = normalize_knowledge_bases(parse_knowledge_bases(&value));
-        let shared_tools = normalize_name_list(parse_name_list(value.get("shared_tools")));
         Ok(UserToolsPayload {
             user_id,
             mcp_servers,
             skills,
             knowledge_bases,
-            shared_tools,
+            shared_tools: Vec::new(),
             version: 0.0,
         })
     }
@@ -510,6 +438,7 @@ impl UserToolStore {
         user_id: &str,
         mut payload: UserToolsPayload,
     ) -> Result<UserToolsPayload> {
+        payload.shared_tools.clear();
         let safe_id = safe_user_id(user_id);
         let folder = self
             .config_path(&safe_id)
@@ -539,14 +468,6 @@ impl UserToolStore {
                     payload: payload.clone(),
                 },
             );
-        *self
-            .shared_cache
-            .lock()
-            .unwrap_or_else(|err| err.into_inner()) = None;
-        *self
-            .shared_version
-            .lock()
-            .unwrap_or_else(|err| err.into_inner()) = now_ts();
         Ok(payload)
     }
 
@@ -690,7 +611,6 @@ impl UserToolManager {
             .into_iter()
             .map(|spec| spec.name)
             .collect();
-        let desktop_mode = config.server.mode.trim().eq_ignore_ascii_case("desktop");
         let knowledge_names = collect_knowledge_tool_names(config, &skill_names);
 
         let mut blocked_names: HashSet<String> = HashSet::new();
@@ -839,23 +759,23 @@ impl UserToolManager {
                 if !skill_root.exists() {
                     return;
                 }
-                let shared_names: HashSet<String> = names
+                let requested_names: HashSet<String> = names
                     .iter()
                     .map(|name| name.trim().to_string())
                     .filter(|name| !name.is_empty())
                     .collect();
                 let specs =
-                    self.load_cached_skill_specs(config, owner_id, &skill_root, &HashSet::new());
+                    self.load_cached_skill_specs(config, owner_id, &skill_root, &requested_names);
                 if specs.is_empty() {
                     return;
                 }
+                // Keep user skill aliases even when the underlying skill name matches a
+                // global skill. The alias is namespaced by owner_id, so it remains distinct
+                // and must stay visible in the agent mount catalog.
                 let mut enabled: HashSet<String> =
                     specs.iter().map(|spec| spec.name.clone()).collect();
-                if desktop_mode {
-                    enabled.retain(|name| !skill_names.contains(name));
-                }
                 if shared_only {
-                    enabled.retain(|name| shared_names.contains(name));
+                    enabled.retain(|name| requested_names.contains(name));
                 }
                 if enabled.is_empty() {
                     return;
@@ -1270,39 +1190,22 @@ fn normalize_name_list(values: Vec<String>) -> Vec<String> {
 fn normalize_mcp_servers(mut servers: Vec<UserMcpServer>) -> Vec<UserMcpServer> {
     for server in &mut servers {
         server.allow_tools = Vec::new();
-        server.shared_tools = normalize_name_list(server.shared_tools.clone());
+        server.shared_tools.clear();
         server.enabled = true;
-        if !server.tool_specs.is_empty() {
-            let tool_names: HashSet<String> = server
-                .tool_specs
-                .iter()
-                .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-                .map(|name| name.trim().to_string())
-                .filter(|name| !name.is_empty())
-                .collect();
-            if !tool_names.is_empty() {
-                server.shared_tools.retain(|name| tool_names.contains(name));
-            }
-        }
     }
     servers
 }
 
 fn normalize_skill_config(enabled: Vec<String>, shared: Vec<String>) -> UserSkillConfig {
     let enabled = normalize_name_list(enabled);
-    let mut shared = normalize_name_list(shared);
     let effective_enabled = if enabled.is_empty() {
-        shared.clone()
+        normalize_name_list(shared)
     } else {
         enabled
     };
-    let allow: HashSet<String> = effective_enabled.iter().cloned().collect();
-    if !allow.is_empty() {
-        shared.retain(|name| allow.contains(name));
-    }
     UserSkillConfig {
         enabled: effective_enabled,
-        shared,
+        shared: Vec::new(),
     }
 }
 
@@ -1311,6 +1214,7 @@ fn normalize_knowledge_bases(bases: Vec<UserKnowledgeBase>) -> Vec<UserKnowledge
     let mut seen = HashSet::new();
     for mut base in bases {
         base.enabled = true;
+        base.shared = false;
         let name = base.name.trim().to_string();
         if !name.is_empty() {
             if seen.contains(&name) {
@@ -1497,13 +1401,6 @@ fn file_modified_ts(path: &Path) -> f64 {
         .unwrap_or(0.0)
 }
 
-fn now_ts() -> f64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs_f64())
-        .unwrap_or(0.0)
-}
-
 fn resolve_user_tools_root() -> PathBuf {
     std::env::var(USER_TOOLS_ROOT_ENV)
         .ok()
@@ -1564,7 +1461,7 @@ mod tests {
         assert_eq!(servers.len(), 1);
         assert!(servers[0].enabled);
         assert!(servers[0].allow_tools.is_empty());
-        assert_eq!(servers[0].shared_tools, vec!["tool-a".to_string()]);
+        assert!(servers[0].shared_tools.is_empty());
     }
 
     #[test]
@@ -1575,7 +1472,7 @@ mod tests {
             config.enabled,
             vec!["alpha".to_string(), "beta".to_string()]
         );
-        assert_eq!(config.shared, vec!["alpha".to_string(), "beta".to_string()]);
+        assert!(config.shared.is_empty());
     }
 
     #[test]
@@ -1583,10 +1480,12 @@ mod tests {
         let bases = normalize_knowledge_bases(vec![UserKnowledgeBase {
             name: "kb".to_string(),
             enabled: false,
+            shared: true,
             ..UserKnowledgeBase::default()
         }]);
         assert_eq!(bases.len(), 1);
         assert!(bases[0].enabled);
+        assert!(!bases[0].shared);
     }
 
     #[test]
@@ -1631,5 +1530,51 @@ mod tests {
         .expect("write config");
         let payload = store.load_user_tools(user_id);
         assert_eq!(payload.user_id, user_id);
+    }
+
+    #[test]
+    fn build_bindings_for_catalog_keeps_user_skill_alias_when_name_matches_global_skill() {
+        let root = tempdir().expect("tempdir");
+        let db_path = root.path().join("user-tools.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let workspace_root = root.path().join("workspaces");
+        let workspace = Arc::new(WorkspaceManager::new(
+            workspace_root.to_string_lossy().as_ref(),
+            storage,
+            0,
+            &HashMap::new(),
+        ));
+        let mut config = Config::default();
+        config.server.mode = "desktop".to_string();
+        let global_root = root.path().join("global-skills");
+        let global_skill_dir = global_root.join("builtin-demo");
+        std::fs::create_dir_all(&global_skill_dir).expect("create global skill dir");
+        std::fs::write(
+            global_skill_dir.join("SKILL.md"),
+            "---\nname: summary_skill\ndescription: global\n---\n# global\n",
+        )
+        .expect("write global skill");
+        config.skills.paths = vec![global_root.to_string_lossy().to_string()];
+
+        let store = UserToolStore::new(&config, workspace).expect("create store");
+        let user_skill_dir = store.get_skill_root("alice").join("upload-demo");
+        std::fs::create_dir_all(&user_skill_dir).expect("create user skill dir");
+        std::fs::write(
+            user_skill_dir.join("SKILL.md"),
+            "---\nname: summary_skill\ndescription: custom\n---\n# custom\n",
+        )
+        .expect("write user skill");
+        store
+            .update_skills("alice", vec!["summary_skill".to_string()], Vec::new())
+            .expect("update user skills");
+
+        let manager = UserToolManager::new(Arc::new(store));
+        let global_skills = load_skills(&config, false, false, false);
+        let bindings = manager.build_bindings_for_catalog(&config, &global_skills, "alice");
+
+        assert!(
+            bindings.alias_map.contains_key("alice@summary_skill"),
+            "custom user skills should stay mountable even if they share a name with a global skill"
+        );
     }
 }

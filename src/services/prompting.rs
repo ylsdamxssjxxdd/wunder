@@ -687,8 +687,7 @@ fn build_inner_visible_prompt_mapping(
     let current_agent_id = normalize_inner_visible_agent_id(current_agent_id);
     let current_agent_card = agents_dir.join(format!("{current_agent_id}.worker-card.json"));
     let default_agent_only_note = if current_agent_id == DEFAULT_AGENT_ID_ALIAS {
-        "当前为默认智能体 / default agent in use: agents/__default__.worker-card.json"
-            .to_string()
+        "当前为默认智能体 / default agent in use: agents/__default__.worker-card.json".to_string()
     } else {
         "当前为普通智能体 / non-default agent: do not edit agents/__default__.worker-card.json unless user explicitly asks"
             .to_string()

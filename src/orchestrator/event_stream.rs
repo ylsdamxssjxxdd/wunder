@@ -137,6 +137,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "tool_result"
             | "approval_request"
             | "approval_result"
+            | "approval_resolved"
             | "workspace_update"
             | "plan_update"
             | "question_panel"
@@ -154,6 +155,7 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "team_finish"
             | "team_error"
             | "final"
+            | "turn_terminal"
             | "error"
     )
 }
@@ -843,5 +845,11 @@ mod tests {
 
         assert!(poll_interval.as_secs_f64() <= STREAM_EVENT_RESUME_POLL_MAX_INTERVAL_S);
         assert!(poll_interval.as_secs_f64() >= base_interval.as_secs_f64());
+    }
+
+    #[test]
+    fn exception_persists_turn_terminal_and_approval_resolved_events() {
+        assert!(should_persist_stream_event("turn_terminal"));
+        assert!(should_persist_stream_event("approval_resolved"));
     }
 }

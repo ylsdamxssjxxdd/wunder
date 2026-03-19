@@ -1,4 +1,5 @@
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wunder_server::config::Config;
@@ -9,6 +10,7 @@ use wunder_server::skills::SkillRegistry;
 use wunder_server::storage::{SqliteStorage, StorageBackend};
 use wunder_server::user_store::UserStore;
 use wunder_server::user_tools::{UserToolManager, UserToolStore};
+use wunder_server::workspace::WorkspaceManager;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cron_action_add_update_remove() {
@@ -19,9 +21,19 @@ async fn cron_action_add_update_remove() {
     ));
     let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
     storage.ensure_initialized().unwrap();
+    let workspace_root = std::env::temp_dir().join(format!(
+        "wunder_cron_workspace_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let workspace = Arc::new(WorkspaceManager::new(
+        workspace_root.to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
 
     let user_store = Arc::new(UserStore::new(storage.clone()));
-    let user_tool_store = Arc::new(UserToolStore::new(&config).unwrap());
+    let user_tool_store = Arc::new(UserToolStore::new(&config, workspace).unwrap());
     let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store));
     let skills = Arc::new(RwLock::new(SkillRegistry::default()));
 
@@ -347,9 +359,19 @@ async fn cron_action_respects_agent_scope() {
     ));
     let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
     storage.ensure_initialized().unwrap();
+    let workspace_root = std::env::temp_dir().join(format!(
+        "wunder_cron_scope_workspace_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let workspace = Arc::new(WorkspaceManager::new(
+        workspace_root.to_string_lossy().as_ref(),
+        storage.clone(),
+        0,
+        &HashMap::new(),
+    ));
 
     let user_store = Arc::new(UserStore::new(storage.clone()));
-    let user_tool_store = Arc::new(UserToolStore::new(&config).unwrap());
+    let user_tool_store = Arc::new(UserToolStore::new(&config, workspace).unwrap());
     let user_tool_manager = Arc::new(UserToolManager::new(user_tool_store));
     let skills = Arc::new(RwLock::new(SkillRegistry::default()));
 

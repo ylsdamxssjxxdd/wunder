@@ -122,13 +122,13 @@ use command_output_guard::{
 use tool_error::{build_failed_tool_result, ToolErrorMeta};
 
 const MAX_READ_BYTES: usize = 1024 * 1024;
-const MAX_READ_LINES: usize = 1000;
+const MAX_READ_LINES: usize = 2000;
 const MAX_READ_FILES: usize = 5;
 const MAX_READ_BUDGET_FILES: usize = 20;
 const MIN_READ_OUTPUT_BUDGET_BYTES: usize = 1024;
 const MAX_READ_OUTPUT_BUDGET_BYTES: usize = 2 * 1024 * 1024;
 const MAX_READ_TIME_BUDGET_MS: u64 = 10 * 60 * 1000;
-const MAX_RANGE_SPAN: usize = 1000;
+const MAX_RANGE_SPAN: usize = 2000;
 const DEFAULT_LIST_DEPTH: usize = 2;
 const MAX_LIST_ITEMS: usize = 200;
 const MAX_SEARCH_MATCHES: usize = 200;
@@ -7086,6 +7086,19 @@ mod tests {
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].path, "README.md");
         assert_eq!(specs[0].ranges, vec![(1, MAX_READ_LINES)]);
+    }
+
+    #[test]
+    fn parse_read_file_specs_clamps_explicit_range_to_max_span() {
+        let specs = parse_read_file_specs(&json!({
+            "path": "README.md",
+            "start_line": 10,
+            "end_line": 10000,
+        }))
+        .expect("explicit range should parse");
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].ranges, vec![(10, 10 + MAX_RANGE_SPAN - 1)]);
     }
 
     #[test]

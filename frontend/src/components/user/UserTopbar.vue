@@ -180,16 +180,11 @@ const handleOpenProfile = () => {
 };
 
 const handleLogout = () => {
-  if (basePath.value === '/desktop') {
-    authStore.logout();
-    redirectToLoginAfterLogout((to) => router.replace(to));
-    return;
-  }
   if (demoMode.value) {
-    router.push('/login');
+    router.replace('/login');
     return;
   }
   authStore.logout();
-  router.push('/login');
+  redirectToLoginAfterLogout((to) => router.replace(to));
 };
 </script>

@@ -5,7 +5,7 @@ use crate::core::json_schema::normalize_tool_input_schema;
 use crate::i18n;
 use crate::orchestrator::OrchestratorError;
 use crate::schemas::{
-    AvailableToolsResponse, I18nConfigResponse, SharedToolSpec, ToolSpec, WunderPromptRequest,
+    AvailableToolsResponse, I18nConfigResponse, ToolSpec, WunderPromptRequest,
     WunderPromptResponse, WunderRequest,
 };
 use crate::services::agent_runtime::AgentSubmitOutcome;
@@ -330,7 +330,6 @@ async fn wunder_tools(
     }
 
     let mut user_tools = Vec::new();
-    let mut shared_tools = Vec::new();
     if !user_id.is_empty() {
         let payload = state.user_tool_store.load_user_tools(user_id);
         let mut used_names = blocked_names.clone();
@@ -366,48 +365,6 @@ async fn wunder_tools(
             );
             collect_user_knowledge_tools(&payload, &owner_id, false, &mut append_user_tool);
         }
-
-        for shared_payload in state.user_tool_store.list_shared_payloads(user_id) {
-            let shared_owner = if shared_payload.user_id.trim().is_empty() {
-                user_id.to_string()
-            } else {
-                shared_payload.user_id.clone()
-            };
-            let mut append_shared_tool =
-                |owner_id: &str, tool_name: &str, description: String, input_schema: Value| {
-                    let alias = state.user_tool_store.build_alias_name(owner_id, tool_name);
-                    if used_names.contains(&alias) {
-                        return;
-                    }
-                    used_names.insert(alias.clone());
-                    shared_tools.push(SharedToolSpec {
-                        name: alias,
-                        description,
-                        input_schema,
-                        owner_id: owner_id.to_string(),
-                    });
-                };
-            collect_user_mcp_tools(
-                &shared_payload,
-                &shared_owner,
-                true,
-                &mut append_shared_tool,
-            );
-            collect_user_skill_tools(
-                &shared_payload,
-                &shared_owner,
-                true,
-                &mut append_shared_tool,
-                &config,
-                state.user_tool_store.as_ref(),
-            );
-            collect_user_knowledge_tools(
-                &shared_payload,
-                &shared_owner,
-                true,
-                &mut append_shared_tool,
-            );
-        }
     }
 
     let response = AvailableToolsResponse {
@@ -426,7 +383,7 @@ async fn wunder_tools(
         user_skills: Vec::new(),
         user_knowledge_tools: Vec::new(),
         default_agent_tool_names: Vec::new(),
-        shared_tools,
+        shared_tools: Vec::new(),
         shared_tools_selected: None,
     };
     Ok(Json(response))
@@ -519,10 +476,8 @@ fn collect_user_skill_tools<F>(
     scan_config.skills.enabled = Vec::new();
     let registry = load_skills(&scan_config, false, false, false);
     for spec in registry.list_specs() {
-        if shared_only {
-            if !shared_set.contains(&spec.name) {
-                continue;
-            }
+        if shared_only && !shared_set.contains(&spec.name) {
+            continue;
         }
         append(
             owner_id,
@@ -638,10 +593,7 @@ fn select_english_alias(canonical: &str, aliases: &[String]) -> Option<String> {
 
 fn map_orchestrator_error(err: Error) -> Response {
     if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
-        let status = match orchestrator_err.code() {
-            "USER_BUSY" | "USER_QUOTA_EXCEEDED" => StatusCode::TOO_MANY_REQUESTS,
-            _ => StatusCode::BAD_REQUEST,
-        };
+        let status = crate::api::errors::status_for_error_code(orchestrator_err.code());
         return orchestrator_error_response(status, orchestrator_err.to_payload());
     }
     orchestrator_error_response(
@@ -663,11 +615,14 @@ fn orchestrator_error_response(status: StatusCode, payload: Value) -> Response {
         .and_then(Value::as_str)
         .unwrap_or("request failed")
         .to_string();
+    let hint = code
+        .as_deref()
+        .and_then(crate::api::errors::hint_for_error_code);
     crate::api::errors::error_response_with_detail(
         status,
         code.as_deref(),
         message,
-        None,
+        hint,
         Some(payload),
     )
 }

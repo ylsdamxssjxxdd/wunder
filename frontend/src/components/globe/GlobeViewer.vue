@@ -93,7 +93,8 @@ type CountryShape = {
 
 type HitShape = {
   name: string;
-  polygon: PolygonShape;
+  polygons: PolygonShape[];
+  key: string;
   kind: 'country' | 'province';
 };
 
@@ -123,6 +124,7 @@ let activeHighlight: HitShape | null = null;
 let cachedBoundaryPositionsLow: Float32Array | null = null;
 let cachedBoundaryPositionsMid: Float32Array | null = null;
 let cachedCountryShapes: CountryShape[] | null = null;
+let cachedCountryPolygonGroups: Map<string, PolygonShape[]> | null = null;
 let cachedProvincePositions: Float32Array | null = null;
 let cachedProvinceShapes: CountryShape[] | null = null;
 let currentDetailLevel: 'low' | 'mid' = 'low';
@@ -140,6 +142,7 @@ const tooltipText = ref('');
 const tooltipVisible = ref(false);
 const tooltipStyle = ref<Record<string, string>>({ left: '0px', top: '0px' });
 const latLonText = ref('--, --');
+const CHINA_COUNTRY_NAME = '中国';
 
 const toRadians = (value: number): number => (value * Math.PI) / 180;
 
@@ -211,10 +214,13 @@ const normalizeCountryName = (value: unknown, numericId?: unknown): string => {
   const rawNumeric = String(numericId || '').trim();
   const numeric = /^\d+$/.test(rawNumeric) ? rawNumeric.padStart(3, '0') : '';
   const mapped = numeric ? (countryNamesZh as Record<string, string>)[numeric] : '';
-  if (mapped) return mapped;
-  const text = normalizeName(value);
-  if (text.toLowerCase() === 'taiwan' || text.toLowerCase().includes('taiwan province')) {
-    return '台湾省';
+  const text = mapped || normalizeName(value);
+  if (text.includes('台湾')) {
+    return CHINA_COUNTRY_NAME;
+  }
+  const lowerText = text.toLowerCase();
+  if (lowerText === 'taiwan' || lowerText.includes('taiwan province')) {
+    return CHINA_COUNTRY_NAME;
   }
   return text;
 };
@@ -284,6 +290,21 @@ const buildCountryShapes = (): CountryShape[] => {
   });
   cachedCountryShapes = shapes;
   return shapes;
+};
+
+const buildCountryPolygonGroups = (): Map<string, PolygonShape[]> => {
+  if (cachedCountryPolygonGroups) return cachedCountryPolygonGroups;
+  const groups = new Map<string, PolygonShape[]>();
+  buildCountryShapes().forEach((country) => {
+    const current = groups.get(country.name);
+    if (current) {
+      current.push(...country.polygons);
+      return;
+    }
+    groups.set(country.name, [...country.polygons]);
+  });
+  cachedCountryPolygonGroups = groups;
+  return groups;
 };
 
 const buildProvincePositions = (): Float32Array => {
@@ -420,6 +441,7 @@ const CHINA_BOUNDS: Bounds = {
 
 const resolveCountryHit = (lon: number, lat: number): HitShape | null => {
   const shapes = buildCountryShapes();
+  const polygonGroups = buildCountryPolygonGroups();
   const normalizedLon = normalizeLon(lon);
   for (const country of shapes) {
     for (const polygon of country.polygons) {
@@ -427,7 +449,12 @@ const resolveCountryHit = (lon: number, lat: number): HitShape | null => {
       if (testLon < polygon.bounds.minLon || testLon > polygon.bounds.maxLon) continue;
       if (lat < polygon.bounds.minLat || lat > polygon.bounds.maxLat) continue;
       if (pointInPolygon(testLon, lat, polygon)) {
-        return { name: country.name, polygon, kind: 'country' };
+        return {
+          name: country.name,
+          polygons: polygonGroups.get(country.name) || [polygon],
+          key: `country:${country.name}`,
+          kind: 'country'
+        };
       }
     }
   }
@@ -445,7 +472,12 @@ const resolveProvinceHit = (lon: number, lat: number): HitShape | null => {
       if (testLon < polygon.bounds.minLon || testLon > polygon.bounds.maxLon) continue;
       if (lat < polygon.bounds.minLat || lat > polygon.bounds.maxLat) continue;
       if (pointInPolygon(testLon, lat, polygon)) {
-        return { name: province.name, polygon, kind: 'province' };
+        return {
+          name: province.name,
+          polygons: province.polygons,
+          key: `province:${province.name}`,
+          kind: 'province'
+        };
       }
     }
   }
@@ -663,11 +695,13 @@ const updateHighlight = (hit: HitShape | null) => {
     activeHighlight = null;
     return;
   }
-  if (activeHighlight?.kind === hit.kind && activeHighlight?.polygon === hit.polygon) {
+  if (activeHighlight?.key === hit.key) {
     return;
   }
   const positions: number[] = [];
-  addRingSegments(hit.polygon.outer, positions, HIGHLIGHT_RADIUS);
+  hit.polygons.forEach((polygon) => {
+    addRingSegments(polygon.outer, positions, HIGHLIGHT_RADIUS);
+  });
   if (!positions.length) {
     highlightMesh.visible = false;
     activeHighlight = null;

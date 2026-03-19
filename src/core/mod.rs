@@ -1,4 +1,5 @@
 pub mod approval;
+pub mod approval_registry;
 pub mod atomic_write;
 pub mod auth;
 pub mod command_utils;

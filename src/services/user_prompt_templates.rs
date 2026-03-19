@@ -1,12 +1,15 @@
 use crate::config::Config;
 use crate::i18n;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_SYSTEM_PACKS_ROOT: &str = "./data/prompt_templates";
 const DEFAULT_USER_PROMPT_ROOT: &str = "./data/user_prompt_templates";
 const PROMPTS_ROOT_ENV: &str = "WUNDER_PROMPTS_ROOT";
+const USER_ACTIVE_PACK_CACHE_MAX_ITEMS: usize = 512;
 
 pub const DEFAULT_PACK_ID: &str = "default";
 
@@ -34,6 +37,17 @@ impl Default for UserPromptTemplateSettingsFile {
             updated_at: Some(now_ts()),
         }
     }
+}
+
+#[derive(Clone)]
+struct UserActivePackCacheEntry {
+    revision: u64,
+    active_pack_id: String,
+}
+
+fn user_active_pack_cache() -> &'static Mutex<HashMap<String, UserActivePackCacheEntry>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, UserActivePackCacheEntry>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 pub fn normalize_pack_id(raw: Option<&str>) -> String {
@@ -143,22 +157,39 @@ pub fn safe_user_prompt_key(user_id: &str) -> String {
 }
 
 pub fn load_user_active_pack_id(config: &Config, user_id: &str) -> String {
+    let cache_key = safe_user_prompt_key(user_id);
+    let revision = crate::prompting::system_prompt_templates_revision();
+    if let Some(entry) = user_active_pack_cache()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .get(&cache_key)
+        .cloned()
+    {
+        if entry.revision == revision {
+            return entry.active_pack_id;
+        }
+    }
+
     let settings_path = resolve_user_settings_path(config, user_id);
     let text = match std::fs::read_to_string(&settings_path) {
         Ok(value) => value,
-        Err(_) => return DEFAULT_PACK_ID.to_string(),
+        Err(_) => {
+            store_cached_user_active_pack_id(&cache_key, revision, DEFAULT_PACK_ID);
+            return DEFAULT_PACK_ID.to_string();
+        }
     };
     let parsed = serde_json::from_str::<UserPromptTemplateSettingsFile>(&text)
         .unwrap_or_else(|_| UserPromptTemplateSettingsFile::default());
     let active = normalize_pack_id(parsed.active.as_deref());
-    if active.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
-        return DEFAULT_PACK_ID.to_string();
-    }
-    if resolve_user_pack_root(config, user_id, &active).is_dir() {
+    let resolved = if active.eq_ignore_ascii_case(DEFAULT_PACK_ID) {
+        DEFAULT_PACK_ID.to_string()
+    } else if resolve_user_pack_root(config, user_id, &active).is_dir() {
         active
     } else {
         DEFAULT_PACK_ID.to_string()
-    }
+    };
+    store_cached_user_active_pack_id(&cache_key, revision, &resolved);
+    resolved
 }
 
 pub fn save_user_active_pack_id(
@@ -174,11 +205,37 @@ pub fn save_user_active_pack_id(
         updated_at: Some(now_ts()),
     };
     let text = serde_json::to_string_pretty(&settings).map_err(|err| err.to_string())?;
-    std::fs::write(resolve_user_settings_path(config, user_id), text).map_err(|err| err.to_string())
+    std::fs::write(resolve_user_settings_path(config, user_id), text)
+        .map_err(|err| err.to_string())?;
+    clear_cached_user_active_pack_id(user_id);
+    Ok(())
 }
 
 fn resolve_user_settings_path(config: &Config, user_id: &str) -> PathBuf {
     resolve_user_prompt_root(config, user_id).join("settings.json")
+}
+
+fn clear_cached_user_active_pack_id(user_id: &str) {
+    user_active_pack_cache()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .remove(&safe_user_prompt_key(user_id));
+}
+
+fn store_cached_user_active_pack_id(cache_key: &str, revision: u64, active_pack_id: &str) {
+    let mut cache = user_active_pack_cache()
+        .lock()
+        .unwrap_or_else(|err| err.into_inner());
+    if cache.len() >= USER_ACTIVE_PACK_CACHE_MAX_ITEMS && !cache.contains_key(cache_key) {
+        cache.clear();
+    }
+    cache.insert(
+        cache_key.to_string(),
+        UserActivePackCacheEntry {
+            revision,
+            active_pack_id: active_pack_id.to_string(),
+        },
+    );
 }
 
 fn resolve_system_packs_root(config: &Config) -> PathBuf {

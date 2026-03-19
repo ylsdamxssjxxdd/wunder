@@ -118,6 +118,10 @@
 - 约束：同一轮同类工具连续失败达到 `server.tool_failure_guard_threshold`（默认 5）会触发 `tool_failure_guard` 并停止自动重试。
 - 说明：管理员会话跳过上述限制（会话锁/额度/并发上限）。
 - 说明：当 `tool_names` 显式包含 `a2ui` 时，系统会剔除“最终回复”工具并改为输出 A2UI 消息；SSE 将追加 `a2ui` 事件，非流式响应会携带 `uid`/`a2ui` 字段。
+- 流式异常事件：`error` 事件现在会统一附带 `error_meta`（`category/severity/retryable/retry_after_ms/source_stage/recovery_action`），便于前端与调用方区分“可重试失败”和“需人工修正失败”。
+- 流式终结事件：新增 `turn_terminal`，作为每轮执行的唯一终结语义，`status` 取值包括 `completed/failed/cancelled/rejected`；调用方不应再仅靠 `final/error` 自行猜测一轮是否已结束。
+- 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
+- 审批作用域：待审批请求现在由共享注册表统一管理，但 `chat/ws` 的 `approval` 与 `cancel` 只会消费 `source=chat_ws` 的待审批项，不会误清理渠道侧审批；渠道内回复 `1/2/3` 也只会作用于 `source=channel` 的审批上下文。
 - 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
 
 ### 4.1.1 `/wunder/system_prompt`
@@ -137,7 +141,7 @@
 
 - 方法：`GET`
 - 入参（Query）：
-- `user_id`：字符串，可选，用户唯一标识（传入后返回自建/共享工具）
+- `user_id`：字符串，可选，用户唯一标识（传入后返回用户自建工具；共享工具字段兼容保留但固定为空）
 - 返回（JSON）：
   - `builtin_tools`：内置工具列表（name/description/input_schema）
   - `mcp_tools`：MCP 工具列表（name/description/input_schema）
@@ -145,10 +149,11 @@
   - `skills`：技能列表（name/description/input_schema）
   - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
-  - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
-  - `shared_tools_selected`：共享工具勾选列表（可选）
+  - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
+  - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空或 `null`）
 - 说明：
-  - 自建/共享工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
+  - 用户自建工具名称统一为 `user_id@工具名`（MCP 为 `user_id@server@tool`）。
+  - 共享工具能力已停用；服务端不再扫描其他用户工作区，也不再把共享字段纳入运行时编排。
   - 知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选；向量知识库会按关键词逐一检索并在结果中返回 `queries` 分组（多关键词时 `documents` 追加 `keyword`）。
 - 内置工具名称同时提供英文别名（如 `read_file`、`write_file`），可用于接口选择与工具调用。
 - `搜索内容`（`search_content`）支持双引擎：`engine=auto|rg|rust`（`auto` 优先 `rg`，失败自动回退 `rust`），并新增 `timeout_ms`、`max_matches`、`max_candidates` 入参；返回保留兼容字段 `matches`，同时提供结构化 `hits` 与 `meta.search`（包含 `requested_engine/resolved_engine/fallback/elapsed_ms/timeout_hit` 等），便于前端与调度层做可观测优化。
@@ -229,7 +234,11 @@
 - 入参（JSON）：
   - `name`：智能体名称（必填）
   - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示使用默认模型）
+  - `declared_tool_names`：工蜂卡声明的非技能工具依赖（可选）
+  - `declared_skill_names`：工蜂卡声明的技能依赖（可选）
   - 其余字段同现有智能体创建接口（如 `description/system_prompt/tool_names/...`）
+- 说明：
+  - 工蜂卡导入/导出时，技能声明应落在 `declared_skill_names`，不要混入 `declared_tool_names`
 
 #### `PUT /wunder/agents/{agent_id}`
 
@@ -239,6 +248,9 @@
   - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示清除显式配置并回退默认模型）
   - 其余字段按需增量更新
 - 说明：预设智能体实例使用稳定 `preset_binding` 跟踪模板关系；用户侧重命名不会丢失绑定，也不会触发同名预设副本再次自动补种。
+- 工蜂卡相关说明：
+  - 更新时可同时提交 `declared_tool_names` 与 `declared_skill_names`
+  - 技能依赖应写入 `declared_skill_names`
 
 #### `GET /wunder/admin/preset_agents`
 
@@ -281,6 +293,7 @@
   - `user_id`：用户唯一标识
   - `servers`：用户 MCP 服务列表（字段同上）
 - `POST` 返回：同 `GET`
+- 说明：`shared_tools` 为兼容字段，当前保存与返回时固定为空数组。
 
 ### 4.1.2.2 `/wunder/user_tools/mcp/tools`
 
@@ -301,14 +314,14 @@
   - `user_id`：字符串，用户唯一标识
 - `GET` 返回（JSON）：
   - `enabled`：已启用技能名列表
-  - `shared`：已共享技能名列表
+  - `shared`：已共享技能名列表（兼容字段，当前固定为空）
   - `skills`：技能列表（name/description/path/input_schema/enabled/shared/builtin/source/readonly）
     - `source`：`builtin` 或 `custom`
     - `builtin=true`/`readonly=true` 表示内置技能（只读）
 - `POST` 入参（JSON）：
   - `user_id`：用户唯一标识
   - `enabled`：启用技能名列表
-  - `shared`：共享技能名列表
+  - `shared`：共享技能名列表（兼容字段，当前会被服务端清空）
 - `POST` 返回：同 `GET`
 - 说明：desktop 本地模式下，内置技能启用状态会同步写入全局 `skills.enabled`，不再作为 `user_id@技能名` 自建工具注入。
 - `DELETE` 入参（Query）：
@@ -561,9 +574,9 @@
   - `skills`：技能列表（name/description/input_schema）
 - `knowledge_tools`：知识库工具列表（字面/向量，name/description/input_schema）
   - `user_tools`：自建工具列表（name/description/input_schema）
-  - `shared_tools`：共享工具列表（name/description/input_schema/owner_id）
-  - `shared_tools_selected`：共享工具勾选列表（字符串数组）
-- 说明：返回的是当前用户实际可用工具（已按等级与共享勾选过滤）。
+  - `shared_tools`：共享工具列表（兼容字段，当前固定为空）
+  - `shared_tools_selected`：共享工具勾选列表（兼容字段，当前固定为空数组）
+- 说明：返回的是当前用户实际可用工具（已按等级与用户自身配置过滤）。
 - 说明：知识库工具入参支持 `query` 或 `keywords` 列表（二选一），`limit` 可选。
 
 ### 4.1.2.20 `/wunder/user_tools/catalog`
@@ -580,7 +593,7 @@
   - `user_skills`：当前用户配置的自建技能
   - `user_knowledge_tools`：当前用户配置的自建知识库工具
   - `default_agent_tool_names`：默认智能体/预制智能体新建时的默认勾选项
-- 说明：用于智能体设置与工具管理页面，返回所有共享工具（不按勾选过滤）。
+- 说明：用于智能体设置与工具管理页面；`shared_tools/shared_tools_selected` 仅为兼容字段，当前恒为空。
 - 说明：管理员开放工具与用户自建工具已拆分为独立区域。服务端/云端模式下管理员开放工具是否可见由管理员配置决定；用户自建 MCP/技能/知识库只要已配置就会进入对应区域，不再依赖用户侧额外“启用”开关。
 - 说明：desktop 本地模式下，`builtin_tools/admin_builtin_tools` 默认返回全部内置工具（按运行能力过滤），不再依赖 `tools.builtin.enabled` 白名单。
 - 说明：`default_agent_tool_names` 当前固定收敛为默认画像：`最终回复/定时任务/休眠等待/记忆管理/执行命令/ptc/列出文件/搜索内容/读取文件/技能调用/写入文件/应用补丁`，以及默认技能 `技能创建器`；MCP/知识库默认不勾选。
@@ -590,10 +603,10 @@
 - 方法：`POST`
 - 入参（JSON）：
   - `user_id`：用户唯一标识（可选）
-  - `shared_tools`：共享工具勾选列表（字符串数组）
+  - `shared_tools`：共享工具勾选列表（兼容字段，当前会被忽略）
 - 返回（JSON）：
   - `user_id`：用户唯一标识
-  - `shared_tools`：共享工具勾选列表
+  - `shared_tools`：共享工具勾选列表（当前固定为空数组）
 
 ### 4.1.2.22 `/wunder/doc2md/convert`
 

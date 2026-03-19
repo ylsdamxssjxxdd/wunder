@@ -478,9 +478,11 @@ fn finalize_ws_error_payload(payload: Value) -> Value {
         .and_then(Value::as_str)
         .or_else(|| code.and_then(crate::api::errors::hint_for_error_code));
     let mut merged = crate::api::errors::build_error_meta(status, code, message, hint).to_value();
-    if let Some(detail) = payload.get("detail") {
-        if let Value::Object(map) = &mut merged {
-            map.insert("detail".to_string(), detail.clone());
+    if let (Value::Object(target), Value::Object(source)) = (&mut merged, &payload) {
+        for key in ["detail", "error_meta", "trace_id", "timestamp"] {
+            if let Some(value) = source.get(key) {
+                target.insert(key.to_string(), value.clone());
+            }
         }
     }
     merged
@@ -743,5 +745,45 @@ mod tests {
         assert_eq!(payload["payload"]["status"], json!(400));
         assert_eq!(payload["payload"]["detail"]["field"], json!("input_text"));
         assert_eq!(payload["payload"]["detail"]["actual_chars"], json!(12));
+    }
+
+    #[tokio::test]
+    async fn exception_structured_error_payload_preserves_error_meta() {
+        let (tx, mut rx) = mpsc::channel::<Message>(4);
+        let sender = WsSender::new(tx);
+        send_ws_error_payload(
+            &sender,
+            Some("req-meta"),
+            json!({
+                "code": "LLM_UNAVAILABLE",
+                "message": "provider unavailable",
+                "error_meta": {
+                    "category": "provider",
+                    "severity": "error",
+                    "retryable": true,
+                    "retry_after_ms": 500,
+                    "source_stage": "llm",
+                    "recovery_action": "retry_later"
+                }
+            }),
+        )
+        .await
+        .expect("send error payload");
+
+        let Some(Message::Text(raw)) = rx.recv().await else {
+            panic!("expected ws text message");
+        };
+        let payload: Value = serde_json::from_str(raw.as_str()).expect("parse ws envelope");
+        assert_eq!(payload["payload"]["code"], json!("LLM_UNAVAILABLE"));
+        assert_eq!(payload["payload"]["status"], json!(503));
+        assert_eq!(
+            payload["payload"]["error_meta"]["category"],
+            json!("provider")
+        );
+        assert_eq!(payload["payload"]["error_meta"]["retryable"], json!(true));
+        assert_eq!(
+            payload["payload"]["error_meta"]["retry_after_ms"],
+            json!(500)
+        );
     }
 }

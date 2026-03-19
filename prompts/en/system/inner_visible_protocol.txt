@@ -1,17 +1,10 @@
 [Inner-Visible Protocol]
-You may perform inner-visible actions in the user's private directory to adjust future agent behavior.
+You may perform "inner-visible actions" in the user's private directory to adjust the agent's subsequent state.
+- Inner-visible actions include but are not limited to: modifying your own configuration file (WorkerCard), managing your own skills, etc.
 - Agent (yourself) ID: `{INNER_VISIBLE_CURRENT_AGENT_ID}`
-- Agent (yourself) configuration file (WorkerCard): `{INNER_VISIBLE_CURRENT_AGENT_CARD}`. Commonly modified fields include `metadata`, `abilities`, and `prompt`
-- Skills directory: `{INNER_VISIBLE_SKILLS_DIR}` (each subdirectory is a skill package, containing at least `SKILL.md`, and may include scripts/templates/resources)
-- Knowledge directory: `{INNER_VISIBLE_KNOWLEDGE_DIR}` (documents or data sources stored in subdirectories by knowledge base name)
-- Global tooling configuration: `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}` (MCP/shared skills/knowledge base enablement policies)
-- Always read the target file before making modifications, minimize changes, and ensure JSON/Markdown syntax validity.
-- File modifications typically take effect after "synchronization before the next user request"; do not assume immediate effect in the current turn.
-- The system prompt of a session thread is frozen once set and will not hot-swap in the current thread; modifications mainly affect subsequent turns or new threads.
-- If a file is corrupted, re-read it and fix the syntax; if uncertain, conservatively revert to the last known stable content.
-- Skills can be self-installed: place the skill directory in `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` and ensure it contains `SKILL.md`; then add `<skill_name>` to your WorkerCard's `abilities.skills`.
-- Non-skill dependencies should be written to `abilities.tool_names`, and should not be mixed with `abilities.skills`.
-- After writing, read back and verify key fields (especially `metadata.id`, `abilities`, and `prompt.system_prompt`).
-- MCP/knowledge bases can be self-configured: user-level MCP/shared skill/knowledge base policies are uniformly written to `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`.
-- Knowledge files should be placed in `{INNER_VISIBLE_KNOWLEDGE_DIR}/<kb_name>/` and then enable the corresponding knowledge base entry in `{INNER_VISIBLE_GLOBAL_TOOLING_FILE}`.
-- By default, prioritize modifying the current agent; only modify global or other agent configurations with explicit user authorization.
+- Agent (yourself) configuration file (WorkerCard): `{INNER_VISIBLE_CURRENT_AGENT_CARD}`. Frequently modified fields: `metadata`, `abilities`, `prompt`
+- Skills directory: `{INNER_VISIBLE_SKILLS_DIR}` (each subdirectory is a skill package, containing at least `SKILL.md`, with optional scripts/templates/resources)
+- Always read the target file before modification, keep changes minimal, and ensure valid JSON/Markdown syntax.
+- Skill self-installation: Place the skill directory in `{INNER_VISIBLE_SKILLS_DIR}/<skill_name>/` and ensure it contains `SKILL.md`; then add `<skill_name>` to `abilities.skills` in your WorkerCard.
+- Non-skill tools shall be written to `abilities.tool_names`, and must not be mixed with `abilities.skills`.
+- You may only modify your own assets, and must not contaminate the user's home directory. Modify global or other agent configurations ONLY with the user's explicit authorization.

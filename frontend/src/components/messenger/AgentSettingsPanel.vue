@@ -219,6 +219,7 @@ import {
   resolveBeeroomGroupDraftForAgent
 } from '@/utils/beeroomGroupDraft';
 import { showApiError } from '@/utils/apiError';
+import { onUserToolsUpdated } from '@/utils/userToolsEvents';
 
 type ToolOption = {
   label: string;
@@ -320,6 +321,7 @@ let panelDisposed = false;
 let latestAgentLoadRequestId = 0;
 let lastHandledFocusToken = 0;
 let focusAnimationFrame = 0;
+let stopUserToolsUpdatedListener: (() => void) | null = null;
 
 const nextAgentLoadRequestId = (): number => {
   latestAgentLoadRequestId += 1;
@@ -659,6 +661,14 @@ const deleteAgent = async () => {
 
 onMounted(() => {
   panelMounted.value = true;
+  stopUserToolsUpdatedListener = onUserToolsUpdated((event) => {
+    const detail = event?.detail || {};
+    const scope = String((detail as Record<string, unknown>).scope || '').trim().toLowerCase();
+    if (scope && scope !== 'all' && scope !== 'skills' && scope !== 'mcp' && scope !== 'knowledge') {
+      return;
+    }
+    void loadToolSummary();
+  });
   void reloadAgent();
   scheduleFocusTargetIfNeeded();
 });
@@ -681,6 +691,10 @@ watch(
 onBeforeUnmount(() => {
   panelDisposed = true;
   latestAgentLoadRequestId += 1;
+  if (stopUserToolsUpdatedListener) {
+    stopUserToolsUpdatedListener();
+    stopUserToolsUpdatedListener = null;
+  }
   clearFocusAnimationFrame();
 });
 </script>

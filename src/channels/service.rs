@@ -24,6 +24,9 @@ use crate::config::{ChannelRateLimitConfig, Config};
 use crate::core::approval::{
     new_channel as new_approval_channel, ApprovalRequest, ApprovalRequestRx, ApprovalResponse,
 };
+use crate::core::approval_registry::{
+    ApprovalSource, PendingApprovalEntry, PendingApprovalRegistry,
+};
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
@@ -44,7 +47,7 @@ use reqwest::header::{HeaderMap as ReqHeaderMap, HeaderName, HeaderValue, AUTHOR
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::sync::{mpsc::Sender as TokioSender, Mutex as AsyncMutex};
+use tokio::sync::mpsc::Sender as TokioSender;
 use tokio::time::{sleep, Duration};
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
@@ -70,20 +73,6 @@ const CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S: f64 = 20.0;
 const CHANNEL_OPEN_APPROVAL_FOR_TEST: bool = true;
 const CHANNEL_APPROVAL_PROMPT: &str =
     "请回复数字：1 同意一次，2 同意本会话，3 拒绝（也可发送 /stop 取消当前任务）。";
-
-struct PendingChannelApprovalEntry {
-    approval_id: String,
-    session_id: String,
-    channel: String,
-    account_id: String,
-    peer_id: String,
-    thread_id: Option<String>,
-    actor_id: String,
-    summary: String,
-    tool: String,
-    created_at: f64,
-    respond_to: tokio::sync::oneshot::Sender<ApprovalResponse>,
-}
 
 #[derive(Debug, Clone)]
 struct ChannelApprovalContext {
@@ -217,6 +206,12 @@ pub struct ChannelHandleResult {
 }
 
 #[derive(Clone)]
+pub struct ChannelHubSharedState {
+    pub monitor: Arc<MonitorState>,
+    pub approval_registry: Arc<PendingApprovalRegistry>,
+}
+
+#[derive(Clone)]
 pub struct ChannelHub {
     config_store: crate::config_store::ConfigStore,
     storage: Arc<dyn StorageBackend>,
@@ -229,7 +224,7 @@ pub struct ChannelHub {
     adapter_registry: ChannelAdapterRegistry,
     http: reqwest::Client,
     recent_inbound: Arc<Mutex<HashMap<String, f64>>>,
-    pending_approvals: Arc<AsyncMutex<HashMap<String, PendingChannelApprovalEntry>>>,
+    approval_registry: Arc<PendingApprovalRegistry>,
     runtime_logs: Arc<Mutex<ChannelRuntimeLogBuffer>>,
     inbound_queue_tx: TokioSender<ChannelInboundEnvelope>,
 }
@@ -242,7 +237,7 @@ impl ChannelHub {
         agent_runtime: Arc<AgentRuntime>,
         user_store: Arc<UserStore>,
         workspace: Arc<WorkspaceManager>,
-        monitor: Arc<MonitorState>,
+        shared_state: ChannelHubSharedState,
     ) -> Self {
         let (inbound_queue_tx, inbound_queue_rx) =
             new_inbound_channel(CHANNEL_INBOUND_QUEUE_CAPACITY);
@@ -253,12 +248,12 @@ impl ChannelHub {
             agent_runtime,
             user_store,
             workspace,
-            monitor,
+            monitor: shared_state.monitor,
             rate_limiter: ChannelRateLimiter::new(),
             adapter_registry: build_default_channel_adapter_registry(),
             http: reqwest::Client::new(),
             recent_inbound: Arc::new(Mutex::new(HashMap::new())),
-            pending_approvals: Arc::new(AsyncMutex::new(HashMap::new())),
+            approval_registry: shared_state.approval_registry,
             runtime_logs: Arc::new(Mutex::new(ChannelRuntimeLogBuffer::new(
                 CHANNEL_RUNTIME_LOG_CAPACITY,
                 CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S,
@@ -1334,48 +1329,45 @@ impl ChannelHub {
             return Ok(());
         }
 
-        let mut replaced = Vec::new();
+        let mut replaced = self
+            .approval_registry
+            .remove_matching(|entry| {
+                entry.source == ApprovalSource::Channel
+                    && entry.session_id == context.session_id
+                    && entry
+                        .channel
+                        .as_deref()
+                        .map(|channel| channel.eq_ignore_ascii_case(context.channel.as_str()))
+                        .unwrap_or(false)
+                    && entry.account_id.as_deref() == Some(context.account_id.as_str())
+                    && entry.peer_id.as_deref() == Some(context.peer.id.as_str())
+                    && normalize_optional_key(entry.thread_id.as_deref())
+                        == normalize_optional_key(
+                            context.thread.as_ref().map(|item| item.id.as_str()),
+                        )
+            })
+            .await;
+        if let Some(previous) = self
+            .approval_registry
+            .upsert(PendingApprovalEntry {
+                approval_id: approval_id.clone(),
+                source: ApprovalSource::Channel,
+                session_id: context.session_id.clone(),
+                request_id: None,
+                channel: Some(context.channel.clone()),
+                account_id: Some(context.account_id.clone()),
+                peer_id: Some(context.peer.id.clone()),
+                thread_id: context.thread.as_ref().map(|item| item.id.clone()),
+                actor_id: Some(context.actor_id.clone()).filter(|value| !value.trim().is_empty()),
+                tool: tool.clone(),
+                summary: summary.clone(),
+                kind,
+                created_at: now_ts(),
+                respond_to,
+            })
+            .await
         {
-            let mut guard = self.pending_approvals.lock().await;
-            let replaced_ids = guard
-                .iter()
-                .filter_map(|(id, entry)| {
-                    if entry.session_id == context.session_id
-                        && entry.channel.eq_ignore_ascii_case(context.channel.as_str())
-                        && entry.account_id == context.account_id
-                        && entry.peer_id == context.peer.id
-                        && normalize_optional_key(entry.thread_id.as_deref())
-                            == normalize_optional_key(
-                                context.thread.as_ref().map(|item| item.id.as_str()),
-                            )
-                    {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            for id in replaced_ids {
-                if let Some(entry) = guard.remove(&id) {
-                    replaced.push(entry);
-                }
-            }
-            guard.insert(
-                approval_id.clone(),
-                PendingChannelApprovalEntry {
-                    approval_id: approval_id.clone(),
-                    session_id: context.session_id.clone(),
-                    channel: context.channel.clone(),
-                    account_id: context.account_id.clone(),
-                    peer_id: context.peer.id.clone(),
-                    thread_id: context.thread.as_ref().map(|item| item.id.clone()),
-                    actor_id: context.actor_id.clone(),
-                    summary: summary.clone(),
-                    tool: tool.clone(),
-                    created_at: now_ts(),
-                    respond_to,
-                },
-            );
+            replaced.push(previous);
         }
         for stale in replaced {
             let _ = stale.respond_to.send(ApprovalResponse::Deny);
@@ -1427,51 +1419,44 @@ impl ChannelHub {
         resolved_binding: Option<&BindingResolution>,
     ) -> Result<Option<ChannelInboundResult>> {
         let actor_id = resolve_channel_actor_id(message);
-        let matched_ids = {
-            let guard = self.pending_approvals.lock().await;
-            guard
-                .iter()
-                .filter_map(|(id, entry)| {
-                    if entry.session_id == session_info.session_id
-                        && entry.channel.eq_ignore_ascii_case(message.channel.trim())
-                        && entry.account_id == message.account_id
-                        && entry.peer_id == message.peer.id
-                        && normalize_optional_key(entry.thread_id.as_deref())
-                            == normalize_optional_key(
-                                message.thread.as_ref().map(|item| item.id.as_str()),
-                            )
-                    {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-        };
+        let matched_entries = self
+            .approval_registry
+            .find_snapshots(|entry| {
+                entry.source == ApprovalSource::Channel
+                    && entry.session_id == session_info.session_id
+                    && entry
+                        .channel
+                        .as_deref()
+                        .map(|channel| channel.eq_ignore_ascii_case(message.channel.trim()))
+                        .unwrap_or(false)
+                    && entry.account_id.as_deref() == Some(message.account_id.as_str())
+                    && entry.peer_id.as_deref() == Some(message.peer.id.as_str())
+                    && normalize_optional_key(entry.thread_id.as_deref())
+                        == normalize_optional_key(
+                            message.thread.as_ref().map(|item| item.id.as_str()),
+                        )
+            })
+            .await;
 
-        if matched_ids.is_empty() {
+        if matched_entries.is_empty() {
             return Ok(None);
         }
 
-        let selected_id = {
-            let guard = self.pending_approvals.lock().await;
-            matched_ids
-                .iter()
-                .filter_map(|id| {
-                    guard.get(id).and_then(|entry| {
-                        if actor_id.is_empty()
-                            || entry.actor_id.is_empty()
-                            || entry.actor_id == actor_id
-                        {
-                            Some((id.clone(), entry.created_at))
-                        } else {
-                            None
-                        }
-                    })
-                })
-                .min_by(|left, right| left.1.total_cmp(&right.1))
-                .map(|item| item.0)
-        };
+        let selected_id = matched_entries
+            .iter()
+            .filter_map(|entry| {
+                let actor_matches = actor_id.is_empty()
+                    || entry
+                        .actor_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .is_none()
+                    || entry.actor_id.as_deref() == Some(actor_id.as_str());
+                actor_matches.then_some((entry.approval_id.clone(), entry.created_at))
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1))
+            .map(|item| item.0);
 
         if selected_id.is_none() {
             let reply = "当前审批仅允许消息发起人处理，请联系发起人回复 1/2/3。".to_string();
@@ -1488,13 +1473,12 @@ impl ChannelHub {
             return Ok(None);
         };
         let Some(decision) = parse_channel_approval_decision(message.text.as_deref()) else {
-            let summary = {
-                let guard = self.pending_approvals.lock().await;
-                guard
-                    .get(&approval_id)
-                    .map(|entry| truncate_text(entry.summary.trim(), 120))
-                    .unwrap_or_default()
-            };
+            let summary = self
+                .approval_registry
+                .get_snapshot(&approval_id)
+                .await
+                .map(|entry| truncate_text(entry.summary.trim(), 120))
+                .unwrap_or_default();
             let reply = if summary.trim().is_empty() {
                 CHANNEL_APPROVAL_PROMPT.to_string()
             } else {
@@ -1509,10 +1493,7 @@ impl ChannelHub {
             }));
         };
 
-        let entry = {
-            let mut guard = self.pending_approvals.lock().await;
-            guard.remove(&approval_id)
-        };
+        let entry = self.approval_registry.remove(&approval_id).await;
         if let Some(item) = entry {
             let _ = item.respond_to.send(decision);
             let reply = match decision {
@@ -1558,33 +1539,23 @@ impl ChannelHub {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        let mut removed = Vec::new();
-        {
-            let mut guard = self.pending_approvals.lock().await;
-            let ids = guard
-                .iter()
-                .filter_map(|(id, entry)| {
-                    let session_match = match target_session.as_deref() {
-                        Some(session) => entry.session_id == session,
-                        None => true,
-                    };
-                    let approval_match = match target_approval.as_deref() {
-                        Some(approval) => entry.approval_id == approval || id == approval,
-                        None => true,
-                    };
-                    if session_match && approval_match {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-            for id in ids {
-                if let Some(entry) = guard.remove(&id) {
-                    removed.push(entry);
+        let removed = self
+            .approval_registry
+            .remove_matching(|entry| {
+                if entry.source != ApprovalSource::Channel {
+                    return false;
                 }
-            }
-        }
+                let session_match = match target_session.as_deref() {
+                    Some(session) => entry.session_id == session,
+                    None => true,
+                };
+                let approval_match = match target_approval.as_deref() {
+                    Some(approval) => entry.approval_id == approval,
+                    None => true,
+                };
+                session_match && approval_match
+            })
+            .await;
         for entry in removed {
             let _ = entry.respond_to.send(decision);
         }

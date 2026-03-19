@@ -21,7 +21,7 @@ use crate::storage::{
     DEFAULT_SANDBOX_CONTAINER_ID,
 };
 use crate::user_store::UserStore;
-use crate::user_tools::{UserToolManager, UserToolStore};
+use crate::user_tools::{UserToolBindings, UserToolKind, UserToolManager, UserToolStore};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -115,9 +115,25 @@ impl InnerVisibleService {
         let config = self.config_store.get().await;
         let skills = self.skills.read().await.clone();
         let allowed_tool_names = self.allowed_tool_names(user_id, &config, &skills)?;
+        let worker_card_skill_names = collect_worker_card_skill_names(
+            &skills,
+            &self
+                .user_tool_manager
+                .build_bindings(&config, &skills, user_id),
+        );
 
-        self.sync_default_agent(user_id, &paths, &allowed_tool_names)?;
-        self.sync_regular_agents(user_id, &paths, &allowed_tool_names)?;
+        self.sync_default_agent(
+            user_id,
+            &paths,
+            &allowed_tool_names,
+            &worker_card_skill_names,
+        )?;
+        self.sync_regular_agents(
+            user_id,
+            &paths,
+            &allowed_tool_names,
+            &worker_card_skill_names,
+        )?;
         Ok(())
     }
 
@@ -148,6 +164,7 @@ impl InnerVisibleService {
         user_id: &str,
         paths: &InnerVisiblePaths,
         allowed_tool_names: &HashSet<String>,
+        worker_card_skill_names: &HashSet<String>,
     ) -> Result<()> {
         let mut config = self.load_default_agent_config(user_id, allowed_tool_names)?;
         let worker_card_file = resolve_latest_worker_card_file(paths, Some(DEFAULT_AGENT_ID_ALIAS));
@@ -175,7 +192,7 @@ impl InnerVisibleService {
             }
         }
 
-        self.write_default_agent_files(user_id, paths, &config)?;
+        self.write_default_agent_files(user_id, paths, &config, worker_card_skill_names)?;
         Ok(())
     }
 
@@ -184,6 +201,7 @@ impl InnerVisibleService {
         user_id: &str,
         paths: &InnerVisiblePaths,
         allowed_tool_names: &HashSet<String>,
+        worker_card_skill_names: &HashSet<String>,
     ) -> Result<()> {
         let mut by_id: HashMap<String, UserAgentRecord> = self
             .user_store
@@ -235,7 +253,7 @@ impl InnerVisibleService {
                 continue;
             };
 
-            self.write_agent_files(paths, &final_record)?;
+            self.write_agent_files(paths, &final_record, worker_card_skill_names)?;
         }
         Ok(())
     }
@@ -302,12 +320,18 @@ impl InnerVisibleService {
         Ok(record)
     }
 
-    fn write_agent_files(&self, paths: &InnerVisiblePaths, record: &UserAgentRecord) -> Result<()> {
+    fn write_agent_files(
+        &self,
+        paths: &InnerVisiblePaths,
+        record: &UserAgentRecord,
+        worker_card_skill_names: &HashSet<String>,
+    ) -> Result<()> {
         let hive = self.user_store.get_hive(&record.user_id, &record.hive_id)?;
         let document = build_worker_card(
             record,
             hive.as_ref().map(|item| item.name.as_str()),
             hive.as_ref().map(|item| item.description.as_str()),
+            worker_card_skill_names,
         );
         let worker_card_file = worker_card_path(paths, Some(&record.agent_id));
         atomic_write_text(
@@ -424,10 +448,16 @@ impl InnerVisibleService {
         user_id: &str,
         paths: &InnerVisiblePaths,
         config: &DefaultAgentConfigMirror,
+        worker_card_skill_names: &HashSet<String>,
     ) -> Result<()> {
         let record = record_from_default_config(user_id, config);
-        self.write_agent_files(paths, &record)?;
-        let defaults_document = build_worker_card(&record, Some("Default Hive"), Some(""));
+        self.write_agent_files(paths, &record, worker_card_skill_names)?;
+        let defaults_document = build_worker_card(
+            &record,
+            Some("Default Hive"),
+            Some(""),
+            worker_card_skill_names,
+        );
         let defaults_content = serde_json::to_string_pretty(&defaults_document)?;
         atomic_write_text(&defaults_worker_card_path(paths), &defaults_content)?;
         Ok(())
@@ -585,7 +615,10 @@ fn legacy_worker_card_dir(paths: &InnerVisiblePaths, agent_id: Option<&str>) -> 
     paths.agents_dir.join(normalize_agent_file_stem(agent_id))
 }
 
-fn legacy_worker_card_path(paths: &InnerVisiblePaths, agent_id: Option<&str>) -> std::path::PathBuf {
+fn legacy_worker_card_path(
+    paths: &InnerVisiblePaths,
+    agent_id: Option<&str>,
+) -> std::path::PathBuf {
     legacy_worker_card_dir(paths, agent_id).join("worker-card.json")
 }
 
@@ -618,9 +651,9 @@ fn discover_agent_ids(root: &Path) -> Result<Vec<String>> {
         let entry = entry?;
         let file_type = entry.file_type()?;
         if file_type.is_file() {
-            if let Some(agent_id) = agent_id_from_worker_card_file_name(
-                entry.file_name().to_string_lossy().as_ref(),
-            ) {
+            if let Some(agent_id) =
+                agent_id_from_worker_card_file_name(entry.file_name().to_string_lossy().as_ref())
+            {
                 output.push(agent_id);
             }
             continue;
@@ -637,6 +670,39 @@ fn discover_agent_ids(root: &Path) -> Result<Vec<String>> {
         }
     }
     Ok(output)
+}
+
+fn collect_worker_card_skill_names(
+    skills: &SkillRegistry,
+    bindings: &UserToolBindings,
+) -> HashSet<String> {
+    let mut output = HashSet::new();
+    for spec in skills.list_specs() {
+        let cleaned = spec.name.trim();
+        if !cleaned.is_empty() {
+            output.insert(cleaned.to_string());
+        }
+    }
+    for spec in &bindings.skill_specs {
+        let cleaned = spec.name.trim();
+        if !cleaned.is_empty() {
+            output.insert(cleaned.to_string());
+        }
+    }
+    for (alias, info) in &bindings.alias_map {
+        if !matches!(info.kind, UserToolKind::Skill) {
+            continue;
+        }
+        let cleaned_alias = alias.trim();
+        if !cleaned_alias.is_empty() {
+            output.insert(cleaned_alias.to_string());
+        }
+        let cleaned_target = info.target.trim();
+        if !cleaned_target.is_empty() {
+            output.insert(cleaned_target.to_string());
+        }
+    }
+    output
 }
 
 fn file_modified_ts(path: &Path) -> f64 {
@@ -699,7 +765,8 @@ mod tests {
     use crate::skills::load_skills;
     use crate::storage::{SqliteStorage, StorageBackend};
     use crate::workspace::WorkspaceManager;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
+    use std::path::Path;
     use std::sync::Arc;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -738,6 +805,44 @@ mod tests {
             user_store.clone(),
         ));
         (temp, user_store, service, workspace)
+    }
+
+    fn write_test_skill(skill_root: &Path, skill_name: &str) {
+        let dir = skill_root.join(skill_name);
+        fs::create_dir_all(&dir).expect("create skill dir");
+        let content =
+            format!("---\nname: {skill_name}\ndescription: test skill\n---\n# {skill_name}\n");
+        atomic_write_text(&dir.join("SKILL.md"), &content).expect("write SKILL.md");
+    }
+
+    fn pick_stable_allowed_tool(allowed: &HashSet<String>, exclude: Option<&str>) -> String {
+        let exclude = exclude.unwrap_or_default().trim().to_string();
+        let mut candidates = allowed
+            .iter()
+            .filter(|name| {
+                let trimmed = name.trim();
+                !trimmed.is_empty()
+                    && trimmed != exclude
+                    && !trimmed.contains('@')
+                    && !trimmed.contains("://")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if candidates.is_empty() {
+            candidates = allowed
+                .iter()
+                .filter(|name| {
+                    let trimmed = name.trim();
+                    !trimmed.is_empty() && trimmed != exclude
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+        }
+        candidates.sort();
+        candidates
+            .into_iter()
+            .next()
+            .expect("at least one allowed tool")
     }
 
     #[tokio::test]
@@ -783,7 +888,8 @@ mod tests {
             serde_json::from_str(&fs::read_to_string(&worker_card_file).expect("read card"))
                 .expect("parse card");
         document.metadata.name = "Edited".to_string();
-        document.prompt.system_prompt = "edited prompt".to_string();
+        document.prompt.system_prompt = None;
+        document.prompt.extra_prompt = Some("edited prompt".to_string());
         atomic_write_text(
             &worker_card_file,
             &serde_json::to_string_pretty(&document).expect("serialize card"),
@@ -817,5 +923,257 @@ mod tests {
         assert!(private_root.join("skills").exists());
         assert!(private_root.join("knowledge").exists());
         assert!(!private_root.join(".wunder").exists());
+    }
+
+    #[tokio::test]
+    async fn sync_user_state_applies_worker_card_self_updates_for_prompt_tools_and_skills() {
+        let (_temp, user_store, service, _workspace) = build_service();
+        let user_id = "alice";
+        let agent_id = "agent_self_update";
+        let now = now_ts();
+        user_store
+            .upsert_user_agent(&UserAgentRecord {
+                agent_id: agent_id.to_string(),
+                user_id: user_id.to_string(),
+                hive_id: DEFAULT_HIVE_ID.to_string(),
+                name: "Initial".to_string(),
+                description: "desc".to_string(),
+                system_prompt: "initial prompt".to_string(),
+                model_name: None,
+                tool_names: Vec::new(),
+                declared_tool_names: Vec::new(),
+                declared_skill_names: Vec::new(),
+                preset_questions: Vec::new(),
+                access_level: "A".to_string(),
+                approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+                is_shared: false,
+                status: DEFAULT_AGENT_STATUS.to_string(),
+                icon: None,
+                sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+                created_at: now,
+                updated_at: now,
+                preset_binding: None,
+            })
+            .expect("seed agent");
+
+        let private_root = service.private_root(user_id);
+        let skill_name = "self_patch";
+        let skill_alias = format!("{user_id}@{skill_name}");
+        write_test_skill(&private_root.join("skills"), skill_name);
+        service
+            .user_tool_store
+            .update_skills(user_id, vec![skill_name.to_string()], Vec::new())
+            .expect("enable test skill");
+        service.user_tool_manager.clear_skill_cache(Some(user_id));
+
+        let config = service.config_store.get().await;
+        let skills = service.skills.read().await.clone();
+        let allowed = service
+            .allowed_tool_names(user_id, &config, &skills)
+            .expect("allowed tools");
+        let selected_tool = pick_stable_allowed_tool(&allowed, Some(&skill_alias));
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("initial sync");
+        let worker_card_file = private_root
+            .join("agents")
+            .join(format!("{agent_id}.worker-card.json"));
+        let mut document: WorkerCardDocument =
+            serde_json::from_str(&fs::read_to_string(&worker_card_file).expect("read worker card"))
+                .expect("parse worker card");
+        std::thread::sleep(Duration::from_millis(30));
+        document.metadata.name = "Self Updated".to_string();
+        document.prompt.system_prompt = None;
+        document.prompt.extra_prompt = Some("updated prompt by self".to_string());
+        document.abilities.tool_names = vec![selected_tool.clone()];
+        document.abilities.skills = vec![skill_alias.clone()];
+        document.interaction.preset_questions = vec!["Q1".to_string(), "Q2".to_string()];
+        document.runtime.approval_mode = "suggest".to_string();
+        document.runtime.sandbox_container_id = 4;
+        atomic_write_text(
+            &worker_card_file,
+            &serde_json::to_string_pretty(&document).expect("serialize worker card"),
+        )
+        .expect("write worker card");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("sync updates");
+        let updated = user_store
+            .get_user_agent(user_id, agent_id)
+            .expect("query agent")
+            .expect("agent exists");
+        assert_eq!(updated.name, "Self Updated");
+        assert_eq!(updated.system_prompt, "updated prompt by self");
+        assert_eq!(updated.declared_tool_names, vec![selected_tool.clone()]);
+        assert_eq!(updated.declared_skill_names, vec![skill_alias.clone()]);
+        assert!(updated.tool_names.contains(&selected_tool));
+        if allowed.contains(&skill_alias) {
+            assert!(updated.tool_names.contains(&skill_alias));
+        } else {
+            assert!(!updated.tool_names.contains(&skill_alias));
+        }
+        assert_eq!(
+            updated.preset_questions,
+            vec!["Q1".to_string(), "Q2".to_string()]
+        );
+        assert_eq!(updated.approval_mode, "suggest");
+        assert_eq!(updated.sandbox_container_id, 4);
+    }
+
+    #[tokio::test]
+    async fn sync_user_state_keeps_last_good_when_worker_card_becomes_invalid() {
+        let (_temp, user_store, service, _workspace) = build_service();
+        let user_id = "alice";
+        let agent_id = "agent_invalid_card";
+        let now = now_ts();
+        user_store
+            .upsert_user_agent(&UserAgentRecord {
+                agent_id: agent_id.to_string(),
+                user_id: user_id.to_string(),
+                hive_id: DEFAULT_HIVE_ID.to_string(),
+                name: "Stable".to_string(),
+                description: "desc".to_string(),
+                system_prompt: "stable prompt".to_string(),
+                model_name: None,
+                tool_names: Vec::new(),
+                declared_tool_names: Vec::new(),
+                declared_skill_names: Vec::new(),
+                preset_questions: Vec::new(),
+                access_level: "A".to_string(),
+                approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+                is_shared: false,
+                status: DEFAULT_AGENT_STATUS.to_string(),
+                icon: None,
+                sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+                created_at: now,
+                updated_at: now,
+                preset_binding: None,
+            })
+            .expect("seed agent");
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("sync to files");
+
+        let worker_card_file = service
+            .private_root(user_id)
+            .join("agents")
+            .join(format!("{agent_id}.worker-card.json"));
+        std::thread::sleep(Duration::from_millis(30));
+        atomic_write_text(
+            &worker_card_file,
+            "{ \"schema_version\": \"wunder/worker-card@1\", \"prompt\": ",
+        )
+        .expect("write broken worker card");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("sync should survive invalid file");
+        let updated = user_store
+            .get_user_agent(user_id, agent_id)
+            .expect("query agent")
+            .expect("agent exists");
+        assert_eq!(updated.name, "Stable");
+        assert_eq!(updated.system_prompt, "stable prompt");
+
+        let repaired: WorkerCardDocument =
+            serde_json::from_str(&fs::read_to_string(&worker_card_file).expect("read repaired"))
+                .expect("repaired worker card should be valid json");
+        assert_eq!(
+            repaired.prompt.extra_prompt,
+            Some("stable prompt".to_string())
+        );
+        assert_eq!(repaired.metadata.name, "Stable");
+    }
+
+    #[tokio::test]
+    async fn sync_user_state_applies_default_agent_worker_card_updates() {
+        let (_temp, user_store, service, _workspace) = build_service();
+        let user_id = "alice";
+        let now = now_ts();
+        user_store
+            .upsert_user_agent(&UserAgentRecord {
+                agent_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
+                user_id: user_id.to_string(),
+                hive_id: DEFAULT_HIVE_ID.to_string(),
+                name: "Default Initial".to_string(),
+                description: "default desc".to_string(),
+                system_prompt: "default prompt".to_string(),
+                model_name: None,
+                tool_names: Vec::new(),
+                declared_tool_names: Vec::new(),
+                declared_skill_names: Vec::new(),
+                preset_questions: Vec::new(),
+                access_level: "A".to_string(),
+                approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
+                is_shared: false,
+                status: DEFAULT_AGENT_STATUS.to_string(),
+                icon: None,
+                sandbox_container_id: DEFAULT_SANDBOX_CONTAINER_ID,
+                created_at: now,
+                updated_at: now,
+                preset_binding: None,
+            })
+            .expect("seed default agent");
+
+        let config = service.config_store.get().await;
+        let skills = service.skills.read().await.clone();
+        let allowed = service
+            .allowed_tool_names(user_id, &config, &skills)
+            .expect("allowed tools");
+        let selected_tool = pick_stable_allowed_tool(&allowed, None);
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("initial sync");
+        let private_root = service.private_root(user_id);
+        let default_card = private_root
+            .join("agents")
+            .join("__default__.worker-card.json");
+        let mut document: WorkerCardDocument =
+            serde_json::from_str(&fs::read_to_string(&default_card).expect("read default card"))
+                .expect("parse default card");
+        std::thread::sleep(Duration::from_millis(30));
+        document.metadata.name = "Default Updated".to_string();
+        document.prompt.system_prompt = None;
+        document.prompt.extra_prompt = Some("default prompt updated".to_string());
+        document.abilities.tool_names = vec![selected_tool.clone()];
+        document.runtime.approval_mode = "auto_edit".to_string();
+        document.runtime.sandbox_container_id = 3;
+        atomic_write_text(
+            &default_card,
+            &serde_json::to_string_pretty(&document).expect("serialize default card"),
+        )
+        .expect("write default card");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("apply default update");
+        let updated = user_store
+            .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)
+            .expect("query default agent")
+            .expect("default agent exists");
+        assert_eq!(updated.name, "Default Updated");
+        assert_eq!(updated.system_prompt, "default prompt updated");
+        assert_eq!(updated.tool_names, vec![selected_tool.clone()]);
+        assert_eq!(updated.approval_mode, "auto_edit");
+        assert_eq!(updated.sandbox_container_id, 3);
+
+        let meta = user_store
+            .get_meta(&default_agent_meta_key(user_id))
+            .expect("read default meta")
+            .expect("meta exists");
+        let mirror: DefaultAgentConfigMirror =
+            serde_json::from_str(&meta).expect("parse default meta");
+        assert_eq!(mirror.name, "Default Updated");
+        assert_eq!(mirror.system_prompt, "default prompt updated");
+        assert_eq!(mirror.tool_names, vec![selected_tool]);
     }
 }

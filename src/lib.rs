@@ -16,8 +16,8 @@ pub mod storage;
 pub use api::{build_desktop_router, build_router};
 pub use channels::ChannelHub;
 pub use core::{
-    approval, auth, command_utils, config, config_store, dpi, exec_policy, i18n, path_utils,
-    rustls_provider, schemas, shutdown, state, token_utils,
+    approval, approval_registry, auth, command_utils, config, config_store, dpi, exec_policy, i18n,
+    path_utils, rustls_provider, schemas, shutdown, state, token_utils,
 };
 pub use ops::{benchmark, monitor, performance, throughput};
 pub use orchestrator::constants as orchestrator_constants;

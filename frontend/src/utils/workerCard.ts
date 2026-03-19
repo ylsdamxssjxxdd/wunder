@@ -12,8 +12,8 @@ export type WorkerCardDocument = {
     exported_at: string;
   };
   prompt: {
-    system_prompt: string;
     extra_prompt: string;
+    system_prompt?: string;
   };
   abilities: {
     tool_names: string[];
@@ -113,8 +113,7 @@ export const buildWorkerCardDocument = (value: Record<string, unknown> | null | 
       exported_at: new Date().toISOString()
     },
     prompt: {
-      system_prompt: trimString(source.system_prompt),
-      extra_prompt: trimString(source.extra_prompt)
+      extra_prompt: joinPromptSections(source.system_prompt, source.extra_prompt)
     },
     abilities: {
       tool_names: declaredToolNames,

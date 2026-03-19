@@ -1,4 +1,4 @@
-import type { LocationQuery } from 'vue-router';
+import { isNavigationFailure, type LocationQuery } from 'vue-router';
 
 export const FORCE_LOGOUT_QUERY_KEY = 'force_logout';
 export const FORCE_LOGOUT_QUERY_VALUE = '1';
@@ -23,11 +23,17 @@ export const redirectToLoginAfterLogout = (
 ): void => {
   const target = FORCE_LOGOUT_LOGIN_PATH;
   if (replace) {
-    Promise.resolve(replace(target)).catch(() => {
-      if (typeof window !== 'undefined') {
-        window.location.replace(target);
-      }
-    });
+    Promise.resolve(replace(target))
+      .then((result) => {
+        if (typeof window !== 'undefined' && isNavigationFailure(result)) {
+          window.location.replace(target);
+        }
+      })
+      .catch(() => {
+        if (typeof window !== 'undefined') {
+          window.location.replace(target);
+        }
+      });
     return;
   }
   if (typeof window !== 'undefined') {

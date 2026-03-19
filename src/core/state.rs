@@ -2,9 +2,10 @@
 
 use crate::a2a_store::A2aStore;
 use crate::benchmark::BenchmarkManager;
-use crate::channels::ChannelHub;
+use crate::channels::{ChannelHub, ChannelHubSharedState};
 use crate::config::Config;
 use crate::config_store::ConfigStore;
+use crate::core::approval_registry::PendingApprovalRegistry;
 use crate::cron::{CronScheduler, CronWakeSignal};
 use crate::gateway::GatewayHub;
 use crate::lsp::LspManager;
@@ -107,6 +108,7 @@ pub struct AppState {
     pub channels: Arc<ChannelHub>,
     pub gateway: Arc<GatewayHub>,
     pub cron: Arc<CronScheduler>,
+    pub approval_registry: Arc<PendingApprovalRegistry>,
 }
 
 impl AppState {
@@ -153,6 +155,7 @@ impl AppState {
         let user_world = Arc::new(UserWorldService::new(storage.clone()));
         let beeroom_realtime = Arc::new(BeeroomRealtimeService::new());
         let external_auth_codes = Arc::new(ExternalAuthCodeStore::new());
+        let approval_registry = Arc::new(PendingApprovalRegistry::new());
 
         if options.seed_org_units {
             org_units::seed_org_units_if_empty(user_store.as_ref())
@@ -217,7 +220,10 @@ impl AppState {
             agent_runtime.clone(),
             user_store.clone(),
             workspace.clone(),
-            monitor.clone(),
+            ChannelHubSharedState {
+                monitor: monitor.clone(),
+                approval_registry: approval_registry.clone(),
+            },
         ));
         let cron = CronScheduler::new(
             config_store.clone(),
@@ -267,6 +273,7 @@ impl AppState {
             channels,
             gateway,
             cron,
+            approval_registry,
         })
     }
 

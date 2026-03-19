@@ -12,11 +12,14 @@ use argon2::password_hash::{
 };
 use argon2::Argon2;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use tracing::warn;
 use uuid::Uuid;
 
 const DEFAULT_TOKEN_TTL_S: i64 = 7 * 24 * 3600;
+const TOKEN_TOUCH_MIN_INTERVAL_S: f64 = 30.0;
+const TOKEN_TOUCH_CACHE_MAX_ITEMS: usize = 4096;
 const DEFAULT_ADMIN_USER_ID: &str = "admin";
 const DEFAULT_ADMIN_PASSWORD: &str = "admin";
 const DEFAULT_DAILY_QUOTA_L1: i64 = 10_000;
@@ -94,11 +97,15 @@ pub struct UserSession {
 
 pub struct UserStore {
     storage: Arc<dyn StorageBackend>,
+    recent_token_touches: Mutex<HashMap<String, f64>>,
 }
 
 impl UserStore {
     pub fn new(storage: Arc<dyn StorageBackend>) -> Self {
-        Self { storage }
+        Self {
+            storage,
+            recent_token_touches: Mutex::new(HashMap::new()),
+        }
     }
 
     pub fn storage_backend(&self) -> Arc<dyn StorageBackend> {
@@ -457,8 +464,30 @@ impl UserStore {
         if user.status.trim().to_lowercase() != "active" {
             return Ok(None);
         }
-        let _ = self.storage.touch_user_token(&record.token, now);
+        if self.should_touch_token_at(&record.token, record.last_used_at, now) {
+            let _ = self.storage.touch_user_token(&record.token, now);
+        }
         Ok(Some(user))
+    }
+
+    fn should_touch_token_at(&self, token: &str, last_used_at: f64, now: f64) -> bool {
+        if token.trim().is_empty() || now - last_used_at < TOKEN_TOUCH_MIN_INTERVAL_S {
+            return false;
+        }
+        let mut recent = self
+            .recent_token_touches
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        if let Some(previous) = recent.get(token) {
+            if now - *previous < TOKEN_TOUCH_MIN_INTERVAL_S {
+                return false;
+            }
+        }
+        recent.insert(token.to_string(), now);
+        if recent.len() > TOKEN_TOUCH_CACHE_MAX_ITEMS {
+            recent.retain(|_, touched_at| now - *touched_at < TOKEN_TOUCH_MIN_INTERVAL_S);
+        }
+        true
     }
 
     pub fn login(&self, username: &str, password: &str) -> Result<UserSession> {
@@ -1039,6 +1068,19 @@ mod tests {
         let hash = UserStore::hash_password("secret").expect("hash password");
         assert!(UserStore::verify_password(&hash, "secret"));
         assert!(!UserStore::verify_password(&hash, "wrong"));
+    }
+
+    #[test]
+    fn should_touch_token_at_throttles_recent_updates() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("user-store-token-touch.db");
+        let storage = Arc::new(SqliteStorage::new(db_path.to_string_lossy().to_string()));
+        let store = UserStore::new(storage);
+
+        assert!(!store.should_touch_token_at("token-a", 95.0, 100.0));
+        assert!(store.should_touch_token_at("token-a", 0.0, 100.0));
+        assert!(!store.should_touch_token_at("token-a", 0.0, 110.0));
+        assert!(store.should_touch_token_at("token-a", 0.0, 131.0));
     }
 
     #[test]

@@ -2213,7 +2213,7 @@ async fn user_tools_summary(
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context(&state, &user_id).await;
     let allowed = compute_allowed_tool_names(&resolved.user, &context);
-    let summary = build_user_tools_summary(&user_id, &allowed, &context);
+    let summary = build_user_tools_summary(&user_id, &allowed, &context, false);
     Ok(Json(json!({ "data": summary })))
 }
 
@@ -2225,7 +2225,7 @@ async fn user_tools_catalog(
     let user_id = resolved.user.user_id.clone();
     let context = build_user_tool_context_for_catalog(&state, &user_id).await;
     let allowed = compute_allowed_tool_names(&resolved.user, &context);
-    let summary = build_user_tools_summary(&user_id, &allowed, &context);
+    let summary = build_user_tools_summary(&user_id, &allowed, &context, true);
     Ok(Json(json!({ "data": summary })))
 }
 
@@ -2252,6 +2252,7 @@ fn build_user_tools_summary(
     user_id: &str,
     allowed: &HashSet<String>,
     context: &UserToolContext,
+    include_unavailable_user_skills: bool,
 ) -> AvailableToolsResponse {
     let config = &context.config;
     let language = i18n::get_language().to_lowercase();
@@ -2431,13 +2432,17 @@ fn build_user_tools_summary(
     let mut alias_names: Vec<String> = context.bindings.alias_map.keys().cloned().collect();
     alias_names.sort();
     for alias in alias_names {
-        if !allowed.contains(&alias) {
+        let Some(alias_info) = context.bindings.alias_map.get(&alias) else {
+            continue;
+        };
+        let is_allowed = allowed.contains(&alias);
+        let is_current_user_skill =
+            matches!(alias_info.kind, crate::user_tools::UserToolKind::Skill)
+                && alias_info.owner_id == user_id;
+        if !is_allowed && !(include_unavailable_user_skills && is_current_user_skill) {
             continue;
         }
         let Some(spec) = alias_specs.get(&alias) else {
-            continue;
-        };
-        let Some(alias_info) = context.bindings.alias_map.get(&alias) else {
             continue;
         };
         if alias_info.owner_id == user_id {
@@ -3253,7 +3258,13 @@ impl From<UserKnowledgeBasePayload> for UserKnowledgeBase {
 
 #[cfg(test)]
 mod tests {
-    use super::uploaded_skill_archive_top_dir;
+    use super::{build_user_tools_summary, uploaded_skill_archive_top_dir};
+    use crate::core::schemas::ToolSpec;
+    use crate::services::user_access::UserToolContext;
+    use crate::services::user_tools::{UserToolAlias, UserToolBindings, UserToolKind};
+    use crate::skills::SkillRegistry;
+    use serde_json::json;
+    use std::collections::HashSet;
     use std::path::Path;
 
     #[test]
@@ -3269,5 +3280,69 @@ mod tests {
 
         let root_script = Path::new("run.py");
         assert!(uploaded_skill_archive_top_dir(root_script).is_err());
+    }
+
+    #[test]
+    fn catalog_can_expose_user_custom_skills_even_when_not_allowed() {
+        let mut bindings = UserToolBindings::default();
+        bindings.alias_specs.insert(
+            "alice@custom_skill".to_string(),
+            ToolSpec {
+                name: "alice@custom_skill".to_string(),
+                description: "custom skill".to_string(),
+                input_schema: json!({ "type": "object" }),
+            },
+        );
+        bindings.alias_map.insert(
+            "alice@custom_skill".to_string(),
+            UserToolAlias {
+                kind: UserToolKind::Skill,
+                owner_id: "alice".to_string(),
+                target: "custom_skill".to_string(),
+            },
+        );
+        bindings.alias_specs.insert(
+            "alice@mcp_demo@tool".to_string(),
+            ToolSpec {
+                name: "alice@mcp_demo@tool".to_string(),
+                description: "mcp tool".to_string(),
+                input_schema: json!({ "type": "object" }),
+            },
+        );
+        bindings.alias_map.insert(
+            "alice@mcp_demo@tool".to_string(),
+            UserToolAlias {
+                kind: UserToolKind::Mcp,
+                owner_id: "alice".to_string(),
+                target: "mcp_demo@tool".to_string(),
+            },
+        );
+        let context = UserToolContext {
+            config: crate::config::Config::default(),
+            skills: SkillRegistry::default(),
+            bindings,
+            tool_access: None,
+        };
+        let allowed = HashSet::new();
+
+        let summary_without_catalog = build_user_tools_summary("alice", &allowed, &context, false);
+        assert!(
+            summary_without_catalog.user_skills.is_empty(),
+            "non-catalog summary should keep allow-list filtering"
+        );
+
+        let summary_with_catalog = build_user_tools_summary("alice", &allowed, &context, true);
+        assert_eq!(summary_with_catalog.user_skills.len(), 1);
+        assert_eq!(
+            summary_with_catalog.user_skills[0].name,
+            "alice@custom_skill"
+        );
+        assert!(
+            summary_with_catalog
+                .user_mcp_tools
+                .iter()
+                .all(|tool| tool.name != "alice@mcp_demo@tool"),
+            "catalog fallback should only relax user skill visibility"
+        );
     }
 }

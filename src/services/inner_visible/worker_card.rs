@@ -41,10 +41,10 @@ pub struct WorkerCardMetadata {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkerCardPrompt {
-    #[serde(default)]
-    pub system_prompt: String,
-    #[serde(default)]
-    pub extra_prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -104,7 +104,10 @@ pub fn build_worker_card(
     record: &UserAgentRecord,
     hive_name: Option<&str>,
     hive_description: Option<&str>,
+    skill_name_keys: &HashSet<String>,
 ) -> WorkerCardDocument {
+    let (declared_tool_names, declared_skill_names) =
+        split_worker_card_abilities(record, skill_name_keys);
     WorkerCardDocument {
         schema_version: "wunder/worker-card@1".to_string(),
         kind: "WorkerCard".to_string(),
@@ -116,16 +119,13 @@ pub fn build_worker_card(
             exported_at: Utc::now().to_rfc3339(),
         },
         prompt: WorkerCardPrompt {
-            system_prompt: record.system_prompt.clone(),
-            extra_prompt: String::new(),
+            system_prompt: None,
+            extra_prompt: Some(record.system_prompt.trim().to_string())
+                .filter(|value| !value.is_empty()),
         },
         abilities: WorkerCardAbilities {
-            tool_names: normalize_names(if record.declared_tool_names.is_empty() {
-                record.tool_names.clone()
-            } else {
-                record.declared_tool_names.clone()
-            }),
-            skills: normalize_names(record.declared_skill_names.clone()),
+            tool_names: declared_tool_names,
+            skills: declared_skill_names,
         },
         interaction: WorkerCardInteraction {
             preset_questions: normalize_names(record.preset_questions.clone()),
@@ -160,7 +160,7 @@ pub fn parse_worker_card(
         name: document.metadata.name.trim().to_string(),
         description: document.metadata.description.trim().to_string(),
         system_prompt: system_prompt_override
-            .unwrap_or(document.prompt.system_prompt)
+            .unwrap_or_else(|| worker_card_prompt_text(&document.prompt))
             .trim()
             .to_string(),
         model_name: document
@@ -178,6 +178,43 @@ pub fn parse_worker_card(
         hive_id: normalize_hive_id(&document.hive.id),
         sandbox_container_id: normalize_container_id(document.runtime.sandbox_container_id),
     }
+}
+
+fn split_worker_card_abilities(
+    record: &UserAgentRecord,
+    skill_name_keys: &HashSet<String>,
+) -> (Vec<String>, Vec<String>) {
+    if !record.declared_tool_names.is_empty() || !record.declared_skill_names.is_empty() {
+        return (
+            normalize_names(record.declared_tool_names.clone()),
+            normalize_names(record.declared_skill_names.clone()),
+        );
+    }
+
+    let mut tool_names = Vec::new();
+    let mut skill_names = Vec::new();
+    for name in normalize_names(record.tool_names.clone()) {
+        if skill_name_keys.contains(&name) {
+            skill_names.push(name);
+        } else {
+            tool_names.push(name);
+        }
+    }
+    (tool_names, skill_names)
+}
+
+fn worker_card_prompt_text(prompt: &WorkerCardPrompt) -> String {
+    [
+        prompt.system_prompt.as_deref(),
+        prompt.extra_prompt.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned)
+    .collect::<Vec<_>>()
+    .join("\n\n")
 }
 
 pub fn normalize_names(values: Vec<String>) -> Vec<String> {
@@ -222,6 +259,7 @@ pub fn normalize_hive_id(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{build_worker_card, parse_worker_card, UserAgentRecord};
+    use std::collections::HashSet;
 
     #[test]
     fn parse_worker_card_merges_declared_dependencies_into_runtime_tools() {
@@ -229,6 +267,10 @@ mod tests {
             serde_json::from_str(
                 r#"{
                   "metadata": { "name": "demo" },
+                  "prompt": {
+                    "system_prompt": "legacy",
+                    "extra_prompt": "extra"
+                  },
                   "abilities": {
                     "tool_names": ["read_file", "read_file"],
                     "skills": ["planner"]
@@ -245,6 +287,7 @@ mod tests {
             payload.tool_names,
             vec!["read_file".to_string(), "planner".to_string()]
         );
+        assert_eq!(payload.system_prompt, "legacy\n\nextra".to_string());
         assert_eq!(payload.approval_mode, "auto_edit".to_string());
         assert_eq!(payload.sandbox_container_id, 2);
     }
@@ -273,9 +316,57 @@ mod tests {
             updated_at: 2.0,
             preset_binding: None,
         };
-        let document = build_worker_card(&record, Some("Default"), Some("Hive"));
+        let document = build_worker_card(
+            &record,
+            Some("Default"),
+            Some("Hive"),
+            &HashSet::from(["planner".to_string()]),
+        );
         assert_eq!(document.abilities.tool_names, vec!["read_file".to_string()]);
         assert_eq!(document.abilities.skills, vec!["planner".to_string()]);
+        assert_eq!(document.prompt.system_prompt, None);
+        assert_eq!(document.prompt.extra_prompt, Some("prompt".to_string()));
         assert_eq!(document.runtime.model_name, Some("gpt".to_string()));
+    }
+
+    #[test]
+    fn build_worker_card_infers_skills_from_runtime_tool_names_when_declared_empty() {
+        let record = UserAgentRecord {
+            agent_id: "agent-1".to_string(),
+            user_id: "u1".to_string(),
+            hive_id: "default".to_string(),
+            name: "Agent".to_string(),
+            description: "desc".to_string(),
+            system_prompt: String::new(),
+            model_name: None,
+            tool_names: vec![
+                "read_file".to_string(),
+                "技能创建器".to_string(),
+                "write_file".to_string(),
+            ],
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 1.0,
+            updated_at: 2.0,
+            preset_binding: None,
+        };
+        let document = build_worker_card(
+            &record,
+            Some("Default"),
+            Some("Hive"),
+            &HashSet::from(["技能创建器".to_string()]),
+        );
+        assert_eq!(
+            document.abilities.tool_names,
+            vec!["read_file".to_string(), "write_file".to_string()]
+        );
+        assert_eq!(document.abilities.skills, vec!["技能创建器".to_string()]);
     }
 }

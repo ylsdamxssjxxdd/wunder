@@ -2630,6 +2630,9 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "compaction"
             | "tool_call"
             | "tool_result"
+            | "approval_request"
+            | "approval_result"
+            | "approval_resolved"
             | "plan_update"
             | "question_panel"
             | "thread_control"
@@ -2646,6 +2649,7 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "team_finish"
             | "team_error"
             | "final"
+            | "turn_terminal"
             | "error"
     )
 }
@@ -2659,10 +2663,7 @@ fn now_ts() -> f64 {
 
 fn map_orchestrator_error(err: Error) -> Response {
     if let Some(orchestrator_err) = err.downcast_ref::<OrchestratorError>() {
-        let status = match orchestrator_err.code() {
-            "USER_BUSY" | "USER_QUOTA_EXCEEDED" => StatusCode::TOO_MANY_REQUESTS,
-            _ => StatusCode::BAD_REQUEST,
-        };
+        let status = crate::api::errors::status_for_error_code(orchestrator_err.code());
         return orchestrator_error_response(status, orchestrator_err.to_payload());
     }
     orchestrator_error_response(
@@ -2684,11 +2685,14 @@ fn orchestrator_error_response(status: StatusCode, payload: Value) -> Response {
         .and_then(Value::as_str)
         .unwrap_or("request failed")
         .to_string();
+    let hint = code
+        .as_deref()
+        .and_then(crate::api::errors::hint_for_error_code);
     crate::api::errors::error_response_with_detail(
         status,
         code.as_deref(),
         message,
-        None,
+        hint,
         Some(payload),
     )
 }

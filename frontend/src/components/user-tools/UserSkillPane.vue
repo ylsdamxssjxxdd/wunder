@@ -142,6 +142,7 @@ import {
   uploadUserSkillZip
 } from '@/api/userTools';
 import { showApiError } from '@/utils/apiError';
+import { emitUserToolsUpdated } from '@/utils/userToolsEvents';
 import { useI18n } from '@/i18n';
 
 const props = defineProps({
@@ -375,6 +376,7 @@ const handleUpload = async () => {
   try {
     await uploadUserSkillZip(file);
     await loadSkills({ refreshDetail: true });
+    emitUserToolsUpdated({ scope: 'skills', action: 'upload' });
     ElMessage.success(t('userTools.skills.upload.success'));
   } catch (error) {
     showApiError(error, t('userTools.skills.upload.failed'));
@@ -484,6 +486,7 @@ const saveSkillFile = async () => {
     const payload = data?.data || {};
     if (payload.reloaded) {
       await loadSkills({ refreshDetail: true });
+      emitUserToolsUpdated({ scope: 'skills', action: 'save' });
     }
     ElMessage.success(t('userTools.skills.file.saveSuccess'));
   } catch (error) {
@@ -518,6 +521,7 @@ const deleteSkill = async (skill) => {
   try {
     await deleteUserSkill(skill.name);
     await loadSkills({ refreshDetail: true });
+    emitUserToolsUpdated({ scope: 'skills', action: 'delete' });
     ElMessage.success(t('userTools.skills.deleted', { name: skill.name }));
   } catch (error) {
     ElMessage.error(
