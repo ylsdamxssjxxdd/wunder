@@ -47,20 +47,63 @@ const run = (command, args, options = {}) =>
     });
   });
 
+const resolveLinuxRollupNativePackageName = () => {
+  if (process.platform !== 'linux') return '';
+  const isMusl = !process.report?.getReport?.()?.header?.glibcVersionRuntime;
+  if (process.arch === 'x64') {
+    return isMusl ? '@rollup/rollup-linux-x64-musl' : '@rollup/rollup-linux-x64-gnu';
+  }
+  if (process.arch === 'arm64') {
+    return isMusl ? '@rollup/rollup-linux-arm64-musl' : '@rollup/rollup-linux-arm64-gnu';
+  }
+  if (process.arch === 'arm') {
+    return '@rollup/rollup-linux-arm-gnueabihf';
+  }
+  return '';
+};
+
+const hasLinuxRollupNativeDependency = async () => {
+  const packageName = resolveLinuxRollupNativePackageName();
+  if (!packageName) {
+    return true;
+  }
+  const packageSegments = packageName.split('/');
+  const candidates = [
+    path.join(repoRoot, 'node_modules', ...packageSegments),
+    path.join(frontendRoot, 'node_modules', ...packageSegments)
+  ];
+  const checks = await Promise.all(candidates.map((candidate) => hasPath(candidate)));
+  return checks.some(Boolean);
+};
+
 const ensureDependencies = async () => {
   const viteBins = [
     path.join(repoRoot, 'node_modules', '.bin', 'vite'),
     path.join(frontendRoot, 'node_modules', '.bin', 'vite')
   ];
   const viteReady = (await Promise.all(viteBins.map((candidate) => hasPath(candidate)))).some(Boolean);
-  if (viteReady) {
+  const rollupNativeReady = await hasLinuxRollupNativeDependency();
+  if (viteReady && rollupNativeReady) {
     return;
   }
 
-  log('installing workspace dependencies');
-  await run('npm', ['ci', '--workspace', 'wunder-frontend', '--include-workspace-root=false'], {
-    cwd: repoRoot
-  });
+  if (!viteReady) {
+    log('vite binary is missing, reinstalling workspace dependencies');
+  } else {
+    log('rollup native dependency is missing, reinstalling workspace dependencies');
+  }
+  await run(
+    'npm',
+    ['ci', '--workspace', 'wunder-frontend', '--include-workspace-root=false', '--include=optional'],
+    {
+      cwd: repoRoot
+    }
+  );
+  if (!(await hasLinuxRollupNativeDependency())) {
+    throw new Error(
+      'rollup native dependency is unavailable after npm ci; check npm optional dependency settings'
+    );
+  }
 };
 
 const clearCaches = async () => {
