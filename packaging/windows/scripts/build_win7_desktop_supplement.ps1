@@ -3,7 +3,7 @@ param(
   [string]$Arch = 'x64',
   [string]$BuildRoot = '',
   [ValidateSet('minimal', 'common')]
-  [string]$PythonProfile = 'minimal',
+  [string]$PythonProfile = 'common',
   [string]$PythonRequirementsPath = '',
   [string]$PythonPackageIndexUrl = '',
   [string]$PythonArchivePath = '',

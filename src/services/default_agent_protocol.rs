@@ -96,6 +96,7 @@ mod tests {
         default_agent_config_from_record, default_agent_meta_key, record_from_default_agent_config,
         DefaultAgentConfig,
     };
+    use crate::storage::DEFAULT_HIVE_ID;
 
     #[test]
     fn builds_trimmed_default_agent_meta_key() {
@@ -117,8 +118,7 @@ mod tests {
             updated_at: 2.0,
             ..Default::default()
         };
-        let record =
-            record_from_default_agent_config("__default__", "user-a", "A", &config);
+        let record = record_from_default_agent_config("__default__", "user-a", "A", &config);
         let restored = default_agent_config_from_record(&record);
         assert_eq!(record.agent_id, "__default__");
         assert_eq!(record.user_id, "user-a");

@@ -7,6 +7,9 @@ use crate::services::agent_abilities::{
     normalize_ability_items, resolve_agent_ability_selection, resolve_record_ability_items,
     resolve_record_declared_names,
 };
+use crate::services::default_agent_protocol::{
+    default_agent_config_from_record, default_agent_meta_key, DefaultAgentConfig,
+};
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::llm::is_llm_model;
 use crate::state::AppState;
@@ -27,7 +30,7 @@ use axum::{routing::get, Json, Router};
 use chrono::{
     DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Timelike, Utc,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -36,7 +39,6 @@ use uuid::Uuid;
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
-const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_RUNTIME_WINDOW_DAYS: i64 = 14;
@@ -2107,10 +2109,6 @@ fn is_default_agent_alias_value(raw: &str) -> bool {
     cleaned.eq_ignore_ascii_case(DEFAULT_AGENT_ID_ALIAS) || cleaned.eq_ignore_ascii_case("default")
 }
 
-fn default_agent_meta_key(user_id: &str) -> String {
-    format!("{DEFAULT_AGENT_META_PREFIX}{user_id}")
-}
-
 fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     if config.name.trim().is_empty() {
         config.name = DEFAULT_AGENT_NAME.to_string();
@@ -2219,22 +2217,7 @@ async fn resolve_default_agent_config(
         .get_user_agent(&user.user_id, DEFAULT_AGENT_ID_ALIAS)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     if let Some(record) = record {
-        let mut config = DefaultAgentConfig {
-            name: record.name,
-            description: record.description,
-            system_prompt: record.system_prompt,
-            ability_items: record.ability_items,
-            tool_names: record.tool_names,
-            declared_tool_names: record.declared_tool_names,
-            declared_skill_names: record.declared_skill_names,
-            preset_questions: record.preset_questions,
-            approval_mode: record.approval_mode,
-            status: record.status,
-            icon: record.icon,
-            sandbox_container_id: record.sandbox_container_id,
-            created_at: record.created_at,
-            updated_at: record.updated_at,
-        };
+        let mut config = default_agent_config_from_record(&record);
         normalize_default_agent_config(&mut config);
         return Ok(config);
     }
@@ -2504,38 +2487,6 @@ struct AgentUpdateRequest {
         alias = "beeroom_group_description"
     )]
     hive_description: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DefaultAgentConfig {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    system_prompt: String,
-    #[serde(default)]
-    ability_items: Vec<AbilityDescriptor>,
-    #[serde(default)]
-    tool_names: Vec<String>,
-    #[serde(default)]
-    declared_tool_names: Vec<String>,
-    #[serde(default)]
-    declared_skill_names: Vec<String>,
-    #[serde(default)]
-    preset_questions: Vec<String>,
-    #[serde(default)]
-    approval_mode: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    sandbox_container_id: i32,
-    #[serde(default)]
-    created_at: f64,
-    #[serde(default)]
-    updated_at: f64,
 }
 
 #[cfg(test)]

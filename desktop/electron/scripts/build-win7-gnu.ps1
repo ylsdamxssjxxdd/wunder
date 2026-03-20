@@ -6,7 +6,7 @@ param(
   [switch]$BuildSupplement,
   [switch]$WithSupplement,
   [ValidateSet('minimal', 'common')]
-  [string]$SupplementPythonProfile = 'minimal',
+  [string]$SupplementPythonProfile = 'common',
   [string]$SupplementPythonRequirementsPath = '',
   [string]$SupplementPythonPackageIndexUrl = '',
   [string]$SupplementPythonArchivePath = '',

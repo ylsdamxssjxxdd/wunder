@@ -5,6 +5,10 @@ use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::core::atomic_write::atomic_write_text;
 use crate::services::agent_abilities::normalize_ability_items;
+use crate::services::default_agent_protocol::{
+    default_agent_meta_key, record_from_default_agent_config,
+    DefaultAgentConfig as DefaultAgentConfigMirror,
+};
 use crate::services::default_agent_sync::{DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME};
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::inner_visible::layout::{
@@ -25,7 +29,6 @@ use crate::user_store::UserStore;
 use crate::user_tools::{UserToolBindings, UserToolKind, UserToolManager, UserToolStore};
 use crate::workspace::WorkspaceManager;
 use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -35,7 +38,6 @@ use tracing::warn;
 
 use self::worker_card::{build_worker_card, parse_worker_card, WorkerCardDocument};
 
-const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const FILE_TIME_EPSILON_S: f64 = 0.001;
@@ -547,42 +549,6 @@ impl InnerVisibleService {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DefaultAgentConfigMirror {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    system_prompt: String,
-    #[serde(default)]
-    ability_items: Vec<crate::schemas::AbilityDescriptor>,
-    #[serde(default)]
-    tool_names: Vec<String>,
-    #[serde(default)]
-    declared_tool_names: Vec<String>,
-    #[serde(default)]
-    declared_skill_names: Vec<String>,
-    #[serde(default)]
-    preset_questions: Vec<String>,
-    #[serde(default)]
-    approval_mode: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    sandbox_container_id: i32,
-    #[serde(default)]
-    created_at: f64,
-    #[serde(default)]
-    updated_at: f64,
-}
-
-fn default_agent_meta_key(user_id: &str) -> String {
-    format!("{DEFAULT_AGENT_META_PREFIX}{}", user_id.trim())
-}
-
 fn normalize_default_agent_config(
     config: &mut DefaultAgentConfigMirror,
     allowed_tool_names: &HashSet<String>,
@@ -635,29 +601,7 @@ fn normalize_default_agent_config(
 }
 
 fn record_from_default_config(user_id: &str, config: &DefaultAgentConfigMirror) -> UserAgentRecord {
-    UserAgentRecord {
-        agent_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
-        user_id: user_id.trim().to_string(),
-        hive_id: DEFAULT_HIVE_ID.to_string(),
-        name: config.name.clone(),
-        description: config.description.clone(),
-        system_prompt: config.system_prompt.clone(),
-        model_name: None,
-        ability_items: config.ability_items.clone(),
-        tool_names: config.tool_names.clone(),
-        declared_tool_names: config.declared_tool_names.clone(),
-        declared_skill_names: config.declared_skill_names.clone(),
-        preset_questions: config.preset_questions.clone(),
-        access_level: "A".to_string(),
-        approval_mode: config.approval_mode.clone(),
-        is_shared: false,
-        status: config.status.clone(),
-        icon: config.icon.clone(),
-        sandbox_container_id: config.sandbox_container_id,
-        created_at: config.created_at,
-        updated_at: config.updated_at,
-        preset_binding: None,
-    }
+    record_from_default_agent_config(DEFAULT_AGENT_ID_ALIAS, user_id, "A", config)
 }
 
 fn load_worker_card_document(path: &Path) -> Result<WorkerCardDocument> {

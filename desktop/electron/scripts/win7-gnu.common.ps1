@@ -253,8 +253,8 @@ function Write-Win7GnuToolchainManifest {
     tokioRustlsPatchDir = $Context.TokioRustlsPatchDir
     quickStart = [ordered]@{
       setup = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/setup-win7-gnu-toolchain.ps1 -Arch $($Context.Arch)"
-      build = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch)"
-      fastBuild = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch) -SkipBootstrap"
+      build = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch) -BuildSupplement -SupplementPythonProfile common"
+      fastBuild = "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $($Context.Arch) -BuildSupplement -SupplementPythonProfile common -SkipBootstrap"
     }
   }
 

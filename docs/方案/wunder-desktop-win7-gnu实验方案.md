@@ -10,7 +10,7 @@
 ## 1. 当前结论
 
 - `x86_64-win7-windows-gnu` 的 `wunder-desktop-bridge` 已成功构建并完成 Electron 22 x64 安装包产出。
-- 当前 Win7 方向的默认正式出包流程，固定为 `npm run build:desktop:win7:gnu:x64:release:common`。
+- 当前 Win7 方向的默认正式出包流程，固定为 `npm run build:desktop:win7:gnu:x64`。
 - 当前 Win7 方向的最终交付物，固定为 **安装包 + 补充包 zip** 两个文件；安装包本体不再内置 Python/Git。
 - 新 bridge 已移除对 `GetSystemTimePreciseAsFileTime` 的导入，改走 Win7 可用的时间 API 路径。
 - 新 bridge 已移除 `api-ms-win-core-winrt-error-l1-1-0.dll` / `RoOriginateErrorW` 相关依赖链。
@@ -24,12 +24,13 @@
 
 ```powershell
 npm run setup:desktop:win7:gnu:x64
-npm run build:desktop:win7:gnu:x64:release:common
+npm run build:desktop:win7:gnu:x64
 ```
 
 - 以后 Win7 版本默认优先走这条链路。
 - 该入口会同时完成：Win7 GNU bridge 构建、Win7 `common` Python/Git 补充运行时构建、Electron NSIS 安装包产出。
 - 该入口会把补充包 zip 复制到安装包输出目录旁边，但不会把 Python/Git 并入安装包。
+- Win7 `common` 补充包默认使用清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖。
 
 ### 快速重建入口
 
@@ -40,10 +41,10 @@ npm run build:desktop:win7:gnu:x64:fast
 ### 同时产出补充包
 
 ```powershell
-npm run build:desktop:win7:gnu:x64:with-supplement
+npm run build:desktop:win7:gnu:x64
 
-# Win7 正式推荐的分离交付入口
-npm run build:desktop:win7:gnu:x64:release:common
+# 如需显式切到 minimal 补充包
+npm run build:desktop:win7:gnu:x64:release:minimal
 ```
 
 ### 静态 CRT 试探入口
@@ -75,7 +76,7 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - `desktop/electron/scripts/win7-gnu-toolchain.json`：统一固化 Win7 GNU 目标、nightly 工具链、Electron 版本与 MinGW 路径。
 - `desktop/electron/scripts/setup-win7-gnu-toolchain.ps1`：首次初始化入口，负责检查 MinGW、安装 Rust nightly、预拉取 Cargo 依赖并生成工具链快照。
 - `desktop/electron/scripts/build-win7-gnu.ps1`：Win7 GNU bridge + Electron 22 Win7 打包脚本，可选同时构建独立补充包。
-- `package.json`：新增 `setup:desktop:win7:gnu:x64`、`doctor:desktop:win7:gnu:x64`、`build:desktop:win7:gnu:x64:fast` 等根命令，便于下次直接重建。
+- `package.json`：新增 `setup:desktop:win7:gnu:x64`、`doctor:desktop:win7:gnu:x64`、`build:desktop:win7:gnu:x64`、`build:desktop:win7:gnu:x64:fast` 等根命令，便于下次直接重建。
 - `patches/win7/tokio-rustls-0.26.4-win7/`：Win7 GNU 试包专用补丁，将 `tokio-rustls` 默认后端切到 `ring`，避免重新拉入 `aws-lc-sys`。
 - `Cargo.toml`：对 `target_vendor = "win7"` 单独分流 `reqwest` / `sysinfo` 依赖，降低 Win7 运行时阻塞点。
 - `src/core/dpi.rs`：将 DPI API 改为运行时动态加载，避免在 Win7 上因静态导入高版本入口点而提前失败。
@@ -138,14 +139,15 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 - 为 Win7 Electron 试包额外提供一个可直接解压到安装目录根部的 `wunder补充包`，内含 `opt/python` 与 `opt/git`。
 - 构建入口：`npm run build:desktop:win7:supplement:x64`
-- 常用 Python 依赖档位：`npm run build:desktop:win7:supplement:x64:common`
-- 同时产出安装包与补充包入口：`npm run build:desktop:win7:gnu:x64:release`
-- 带常用 Python 依赖的分离交付入口：`npm run build:desktop:win7:gnu:x64:release:common`
+- 基础运行时档位：`npm run build:desktop:win7:supplement:x64:minimal`
+- 同时产出安装包与 `common` 补充包入口：`npm run build:desktop:win7:gnu:x64`
+- 显式指定 `common` 补充包入口：`npm run build:desktop:win7:gnu:x64:release:common`
+- 显式指定 `minimal` 补充包入口：`npm run build:desktop:win7:gnu:x64:release:minimal`
 - 构建脚本：`packaging/windows/scripts/build_win7_desktop_supplement.ps1`
 - 配置清单：`packaging/windows/scripts/win7-supplement-manifest.json`
 - 说明文档：`packaging/windows/README.md`
-- 默认产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64.zip`
-- `common` 档位产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
+- 默认产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
+- `minimal` 档位产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64.zip`
 
 当前补充包版本固定为：
 
@@ -162,6 +164,8 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - `matplotlib / seaborn / plotly / pyecharts / Pillow`
 - `folium / pyproj / shapely / netcdf4 / cftime / h5py / arm-pyart / metpy`
 - `sqlalchemy / pymysql / aiosqlite`
+
+默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`。如需切回官方源，可在脚本层传 `-PythonPackageIndexUrl https://pypi.org/simple`。
 
 另外会参考 ARM sidecar 的做法，在打包阶段将仓库 `fonts/` 中的常用中英文字体注入到 matplotlib 字体目录，提升 Win7 离线绘图与图表导出时的中文渲染稳定性。
 

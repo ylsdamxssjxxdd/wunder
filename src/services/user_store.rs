@@ -1,4 +1,8 @@
 use crate::org_units;
+use crate::services::default_agent_protocol::{
+    default_agent_meta_key, record_from_default_agent_config,
+    DefaultAgentConfig as DefaultAgentConfigSnapshot,
+};
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
     BeeroomChatMessageRecord, ChatSessionRecord, HiveRecord, OrgUnitRecord, SessionLockRecord,
@@ -11,7 +15,7 @@ use argon2::password_hash::{
     rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
 };
 use argon2::Argon2;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tracing::warn;
@@ -29,43 +33,10 @@ const DEFAULT_DAILY_QUOTA_L4: i64 = 100;
 const DEFAULT_HIVE_NAME: &str = "默认蜂群";
 const DEFAULT_HIVE_DESCRIPTION: &str = "系统默认蜂群，用于承载初始智能体应用。";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
-const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
-
-#[derive(Debug, Clone, Deserialize, Default)]
-struct DefaultAgentConfigSnapshot {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    system_prompt: String,
-    #[serde(default)]
-    ability_items: Vec<crate::schemas::AbilityDescriptor>,
-    #[serde(default)]
-    tool_names: Vec<String>,
-    #[serde(default)]
-    declared_tool_names: Vec<String>,
-    #[serde(default)]
-    declared_skill_names: Vec<String>,
-    #[serde(default)]
-    preset_questions: Vec<String>,
-    #[serde(default)]
-    approval_mode: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    sandbox_container_id: i32,
-    #[serde(default)]
-    created_at: f64,
-    #[serde(default)]
-    updated_at: f64,
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UserUnitProfile {
@@ -958,10 +929,6 @@ fn normalize_demo_seed(value: Option<&str>) -> String {
     cleaned.chars().take(24).collect()
 }
 
-fn default_agent_meta_key(user_id: &str) -> String {
-    format!("{DEFAULT_AGENT_META_PREFIX}{}", user_id.trim())
-}
-
 pub(crate) fn list_user_agents_by_hive_with_default(
     storage: &dyn StorageBackend,
     user_id: &str,
@@ -1012,29 +979,12 @@ pub(crate) fn build_default_agent_record_from_storage(
         .unwrap_or_default();
     normalize_default_agent_snapshot(&mut snapshot);
 
-    Ok(UserAgentRecord {
-        agent_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
-        user_id: user_id.trim().to_string(),
-        hive_id: DEFAULT_HIVE_ID.to_string(),
-        name: snapshot.name,
-        description: snapshot.description,
-        system_prompt: snapshot.system_prompt,
-        model_name: None,
-        ability_items: snapshot.ability_items,
-        tool_names: snapshot.tool_names.clone(),
-        declared_tool_names: snapshot.declared_tool_names,
-        declared_skill_names: snapshot.declared_skill_names,
-        preset_questions: snapshot.preset_questions,
-        access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
-        approval_mode: snapshot.approval_mode,
-        is_shared: false,
-        status: snapshot.status,
-        icon: snapshot.icon,
-        sandbox_container_id: snapshot.sandbox_container_id,
-        created_at: snapshot.created_at,
-        updated_at: snapshot.updated_at,
-        preset_binding: None,
-    })
+    Ok(record_from_default_agent_config(
+        DEFAULT_AGENT_ID_ALIAS,
+        user_id,
+        DEFAULT_AGENT_ACCESS_LEVEL,
+        &snapshot,
+    ))
 }
 
 fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {

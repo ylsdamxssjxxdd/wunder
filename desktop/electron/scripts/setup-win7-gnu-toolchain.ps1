@@ -27,4 +27,4 @@ if ($Doctor) {
 
 Initialize-Win7GnuToolchain -Context $context -StaticRuntime:$StaticRuntime
 Write-Win7GnuStep "toolchain manifest: $($context.ToolchainManifestPath)"
-Write-Win7GnuStep "next build: powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $Arch -SkipBootstrap"
+Write-Win7GnuStep "next build: powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch $Arch -BuildSupplement -SupplementPythonProfile common -SkipBootstrap"

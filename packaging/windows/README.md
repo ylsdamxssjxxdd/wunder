@@ -30,16 +30,25 @@
 powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64
 ```
 
-如果希望补充包内直接包含一组 Win7 友好的常用 Python 依赖（含绘图）：
+- 该默认入口会产出 `common` 档位补充包，并默认通过清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖。
+- 如果只想保留基础 Python + Git，不安装第三方 Python 依赖，请显式切到 `minimal`：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -PythonProfile common
+powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -PythonProfile minimal
 ```
 
 如需重新下载官方压缩包：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -RefreshDownloads
+```
+
+如需切回官方 PyPI：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 `
+  -Arch x64 `
+  -PythonPackageIndexUrl https://pypi.org/simple
 ```
 
 如果外网波动导致官方包下载不稳定，也可以先手工准备两个压缩包，再直接喂给脚本：
@@ -55,8 +64,8 @@ powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_de
 
 - 下载缓存：`temp_dir/win7-gnu-lab/win7-supplement/downloads/`
 - 展开目录：`temp_dir/win7-gnu-lab/win7-supplement/stage/package-root/`
-- 最终压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64.zip`
-- `common` 档位压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
+- 默认压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
+- `minimal` 档位压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64.zip`
 
 压缩包内部目录结构是：
 
@@ -71,7 +80,7 @@ wunder-win7-supplement.json
 ## 使用方式
 
 1. 关闭已运行的 Wunder Desktop。
-2. 将 `wunder补充包-win7-x64.zip` 解压到桌面安装目录根部。
+2. 将 `wunder补充包-win7-x64-common.zip` 解压到桌面安装目录根部。
 3. 解压后确认安装目录下出现：
    - `opt/python`
    - `opt/git`
@@ -87,6 +96,7 @@ Electron Win7 包启动时会自动：
 ## 兼容性提示
 
 - Python 3.8 embeddable package 在 Win7 上建议配合 `KB2533623` 与 Universal CRT 更新使用。
-- 默认 `minimal` 档位提供的是 **基础 Python + 基础 Git**，尽量控制体积。
-- `common` 档位会额外内置 `pip / setuptools / wheel`，并预装一组精简常用依赖：`requests`、`numpy`、`pandas`、`openpyxl`、`matplotlib`、`Pillow`、`tabulate`。
+- 默认 `common` 档位会额外内置 `pip / setuptools / wheel`，并按 `packaging/python/requirements-win7-common.txt` 预装办公文档、数据库、轻量视频、地图/雷达与绘图库。
+- `minimal` 档位提供的是 **基础 Python + 基础 Git**，尽量控制体积。
+- 默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`；如需切回官方源，可使用 `-PythonPackageIndexUrl https://pypi.org/simple`。
 - 两个档位都保持 Win7 友好，优先使用二进制 wheel，避免现场编译依赖。

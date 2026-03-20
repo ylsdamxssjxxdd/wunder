@@ -11,14 +11,17 @@
 
 ```powershell
 npm run setup:desktop:win7:gnu:x64
-npm run build:desktop:win7:gnu:x64:release:common
+npm run build:desktop:win7:gnu:x64
 ```
 
 如果工具链已经初始化过，日常重建直接执行：
 
 ```powershell
-npm run build:desktop:win7:gnu:x64:release:common
+npm run build:desktop:win7:gnu:x64:fast
 ```
+
+- 上述默认入口会产出 `setup.exe + wunder补充包-win7-x64-common.zip`。
+- Win7 `common` 补充包默认通过清华 Tuna 简单索引拉取 `packaging/python/requirements-win7-common.txt` 中的依赖；如需切回官方源，可显式传 `-SupplementPythonPackageIndexUrl https://pypi.org/simple`。
 
 ## 3. 产物
 
@@ -30,7 +33,7 @@ npm run build:desktop:win7:gnu:x64:release:common
 - Nightly 自动发布链路已接入 Win7 兼容版构建。
 - 自动发布产物名统一为：`Wunder-Desktop-win7-compat-x64-<date>-setup.exe`。
 - 该资产在自动发布说明中会明确标注为 **Windows 7 兼容性安装包**，并说明其默认不内置 `Python + Git`。
-- 若补充包也一并上传，则命名为：`Wunder-Desktop-win7-compat-x64-<date>-python-supplement.zip`，用于用户按需手工解压到安装目录。
+- 若补充包也一并上传，则命名为：`Wunder-Desktop-win7-compat-x64-<date>-supplement-common.zip`，用于用户按需手工解压到安装目录。
 
 默认对外分发时，安装包与补充包建议一起提供；补充包按需使用，不再嵌入安装包。
 

@@ -11,7 +11,7 @@
   "python": {
     "version": "3.8.10",
     "source": "python.org embeddable package",
-    "defaultPackageIndexUrl": "https://pypi.org/simple",
+    "defaultPackageIndexUrl": "https://pypi.tuna.tsinghua.edu.cn/simple",
     "bootstrap": {
       "getPipUrl": "https://bootstrap.pypa.io/pip/3.8/get-pip.py",
       "pipSpec": "pip<25",
@@ -66,7 +66,8 @@
     "notes": [
       "Python 3.8 is the last official CPython line that still supports Windows 7.",
       "The embeddable package is used so the supplement archive can be extracted directly into the desktop install directory.",
-      "Windows 7 should include KB2533623 and the Universal CRT update for best compatibility."
+      "Windows 7 should include KB2533623 and the Universal CRT update for best compatibility.",
+      "The default Python package index is the Tsinghua Tuna mirror for more stable Win7 supplement builds in domestic networks; override it with -PythonPackageIndexUrl when needed."
     ],
     "archives": {
       "x64": {
