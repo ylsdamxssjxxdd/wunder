@@ -2931,6 +2931,9 @@ const fileContainerCloudLocation = computed(() => {
 });
 
 const fileContainerLocalLocation = computed(() => {
+  if (!desktopMode.value) {
+    return '';
+  }
   const containerId =
     fileScope.value === 'user' || selectedFileContainerId.value === USER_CONTAINER_ID
       ? USER_CONTAINER_ID
