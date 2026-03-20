@@ -614,6 +614,7 @@
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-action.danger,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-settings-btn.danger,
+:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-header-action-text--danger,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-archived-thread-delete-btn:hover {
   border-color: rgba(248, 113, 113, 0.42);
   background: rgba(127, 29, 29, 0.32);
@@ -623,11 +624,6 @@
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-grid-card:hover,
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-grid-card.active {
   box-shadow: 0 10px 24px rgba(2, 8, 20, 0.32);
-}
-
-:root[data-user-theme='dark'][data-user-accent='tech-blue'] .messenger-agent-settings .messenger-inline-actions {
-  border-color: var(--tech-blue-border);
-  background: linear-gradient(180deg, rgba(13, 23, 40, 0.82), #0d1728 56%);
 }
 
 :root[data-user-theme='dark'][data-user-accent='tech-blue'] .user-tools-dialog {

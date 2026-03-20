@@ -1518,6 +1518,7 @@
                       <option value="lsp" data-i18n="panel.lsp">LSP</option>
                       <option value="intro" data-i18n="panel.intro">Intro</option>
                       <option value="apiDocs" data-i18n="panel.apiDocs">API Docs</option>
+                      <option value="docsSite" data-i18n="panel.docsSite">Docs Site</option>
                     </select>
                   </div>
                   <div class="form-row">
@@ -3351,6 +3352,27 @@
                 <article id="paperContent" class="paper-content"></article>
               </div>
             </div>
+          </div>
+        </section>
+        <section id="docsSitePanel" class="panel" data-docs-site-src="/docs/">
+          <div class="list-header">
+            <h1 data-i18n="panel.docsSite">文档站</h1>
+            <div class="header-actions">
+              <button id="docsSiteRefreshBtn" class="secondary btn-with-icon" type="button">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span data-i18n="common.refresh">刷新</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips">在管理员侧前端内嵌展示文档站，避免跳转到外部页面。</div>
+          <div id="docsSiteFrameWrap" class="docs-site-frame-wrap">
+            <iframe
+              id="docsSiteFrame"
+              class="docs-site-frame"
+              title="wunder 文档站"
+              loading="lazy"
+              referrerpolicy="same-origin"
+            ></iframe>
           </div>
         </section>
       </main>

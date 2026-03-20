@@ -195,6 +195,8 @@ const panelMap = {
 
   apiDocs: { panel: elements.apiDocsPanel, nav: elements.navApiDocs },
 
+  docsSite: { panel: elements.docsSitePanel, nav: elements.navDocsSite },
+
 };
 
 const TOOL_MANAGER_PANELS = new Set(["builtin", "mcp", "knowledge", "a2aServices", "skills"]);
@@ -394,6 +396,30 @@ const syncIntroFrameLanguage = (language) => {
 
   }
 
+};
+
+const DOCS_SITE_DEFAULT_SRC = "/docs/";
+
+const resolveDocsSiteSrc = () =>
+  String(elements.docsSitePanel?.dataset?.docsSiteSrc || DOCS_SITE_DEFAULT_SRC).trim() ||
+  DOCS_SITE_DEFAULT_SRC;
+
+const ensureDocsSiteFrameLoaded = ({ forceReload = false } = {}) => {
+  if (!elements.docsSiteFrame) {
+    return;
+  }
+  const baseSrc = resolveDocsSiteSrc();
+  if (forceReload) {
+    const separator = baseSrc.includes("?") ? "&" : "?";
+    const reloadedSrc = `${baseSrc}${separator}_ts=${Date.now()}`;
+    elements.docsSiteFrame.setAttribute("src", reloadedSrc);
+    state.panelLoaded.docsSite = true;
+    return;
+  }
+  if (!state.panelLoaded.docsSite || !elements.docsSiteFrame.getAttribute("src")) {
+    elements.docsSiteFrame.setAttribute("src", baseSrc);
+    state.panelLoaded.docsSite = true;
+  }
 };
 
 
@@ -947,10 +973,15 @@ const bindNavigation = () => {
 
   if (elements.navDocsSite) {
     elements.navDocsSite.addEventListener("click", () => {
-      const opened = window.open("/docs/", "_blank", "noopener");
-      if (!opened) {
-        window.location.assign("/docs/");
-      }
+      switchPanel("docsSite");
+      ensureDocsSiteFrameLoaded();
+    });
+  }
+
+  if (elements.docsSiteRefreshBtn && elements.docsSiteRefreshBtn.dataset.bound !== "1") {
+    elements.docsSiteRefreshBtn.dataset.bound = "1";
+    elements.docsSiteRefreshBtn.addEventListener("click", () => {
+      ensureDocsSiteFrameLoaded({ forceReload: true });
     });
   }
 
@@ -1311,6 +1342,10 @@ const bootstrap = async () => {
         state.panelLoaded.paper = loaded;
       })
       .catch(() => {});
+  }
+
+  if (initialPanel === "docsSite") {
+    ensureDocsSiteFrameLoaded();
   }
 
   if (initialPanel === "performance" && !state.panelLoaded.performance) {

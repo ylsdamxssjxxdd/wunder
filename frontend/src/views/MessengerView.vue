@@ -228,6 +228,50 @@
             {{ t('messenger.action.openConversation') }}
           </button>
           <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview && agentSettingMode === 'agent'"
+            class="messenger-header-action-text"
+            type="button"
+            @click="triggerAgentSettingsReload"
+          >
+            {{ t('common.refresh') }}
+          </button>
+          <button
+            v-if="
+              showChatSettingsView &&
+              sessionHub.activeSection === 'agents' &&
+              !showAgentGridOverview &&
+              agentSettingMode === 'agent' &&
+              !isSettingsDefaultAgentReadonly
+            "
+            class="messenger-header-action-text messenger-header-action-text--danger"
+            type="button"
+            @click="triggerAgentSettingsDelete"
+          >
+            {{ t('portal.agent.delete') }}
+          </button>
+          <button
+            v-if="
+              showChatSettingsView &&
+              sessionHub.activeSection === 'agents' &&
+              !showAgentGridOverview &&
+              agentSettingMode === 'agent' &&
+              !isSettingsDefaultAgentReadonly
+            "
+            class="messenger-header-action-text"
+            type="button"
+            @click="triggerAgentSettingsSave"
+          >
+            {{ t('portal.agent.save') }}
+          </button>
+          <button
+            v-if="showChatSettingsView && sessionHub.activeSection === 'agents' && !showAgentGridOverview && agentSettingMode === 'agent'"
+            class="messenger-header-action-text"
+            type="button"
+            @click="triggerAgentSettingsExport"
+          >
+            {{ t('portal.agent.exportWorkerCard') }}
+          </button>
+          <button
             v-if="showChatSettingsView && sessionHub.activeSection === 'users' && selectedContact"
             class="messenger-header-action-text"
             type="button"
@@ -476,6 +520,7 @@
 
                 <div v-if="agentSettingMode === 'agent'" class="messenger-chat-settings-block">
                   <AgentSettingsPanel
+                    ref="agentSettingsPanelRef"
                     :agent-id="settingsAgentIdForPanel"
                     :readonly="isSettingsDefaultAgentReadonly"
                     :focus-target="agentSettingsFocusTarget"
@@ -1709,6 +1754,12 @@ const fileLifecycleNowTick = ref(Date.now());
 const fileContainerMenuViewRef = ref<{ getMenuElement: () => HTMLElement | null } | null>(null);
 const desktopContainerManagerPanelRef = ref<{
   openManager: (containerId?: number) => Promise<void> | void;
+} | null>(null);
+const agentSettingsPanelRef = ref<{
+  triggerReload: () => Promise<void> | void;
+  triggerSave: () => Promise<void> | void;
+  triggerDelete: () => Promise<void> | void;
+  triggerExportWorkerCard: () => Promise<void> | void;
 } | null>(null);
 const fileContainerContextMenu = ref<{
   visible: boolean;
@@ -7143,6 +7194,22 @@ const toggleAgentOverviewMode = () => {
 const enterSelectedAgentConversation = async () => {
   const target = settingsAgentId.value || DEFAULT_AGENT_KEY;
   await openAgentById(target);
+};
+
+const triggerAgentSettingsReload = () => {
+  void agentSettingsPanelRef.value?.triggerReload();
+};
+
+const triggerAgentSettingsDelete = () => {
+  void agentSettingsPanelRef.value?.triggerDelete();
+};
+
+const triggerAgentSettingsSave = () => {
+  void agentSettingsPanelRef.value?.triggerSave();
+};
+
+const triggerAgentSettingsExport = () => {
+  void agentSettingsPanelRef.value?.triggerExportWorkerCard();
 };
 
 

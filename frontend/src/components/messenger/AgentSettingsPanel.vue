@@ -162,27 +162,6 @@
         </el-form-item>
       </el-form>
 
-      <div class="messenger-inline-actions">
-        <button class="messenger-inline-btn" type="button" :disabled="saving" @click="reloadAgent">
-          {{ t('common.refresh') }}
-        </button>
-        <template v-if="!isReadonlyMode">
-          <button
-            class="messenger-inline-btn danger"
-            type="button"
-            :disabled="saving || isDefaultAgent"
-            @click="deleteAgent"
-          >
-            {{ t('portal.agent.delete') }}
-          </button>
-          <button class="messenger-inline-btn primary" type="button" :disabled="saving" @click="saveAgent">
-            {{ saving ? t('common.saving') : t('portal.agent.save') }}
-          </button>
-        </template>
-        <button class="messenger-inline-btn" type="button" :disabled="saving" @click="exportWorkerCard">
-          {{ t('portal.agent.exportWorkerCard') }}
-        </button>
-      </div>
     </template>
   </div>
 </template>
@@ -669,6 +648,13 @@ const deleteAgent = async () => {
     showApiError(error, t('portal.agent.deleteFailed'));
   }
 };
+
+defineExpose({
+  triggerReload: reloadAgent,
+  triggerSave: saveAgent,
+  triggerDelete: deleteAgent,
+  triggerExportWorkerCard: exportWorkerCard
+});
 
 onMounted(() => {
   panelMounted.value = true;

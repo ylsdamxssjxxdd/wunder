@@ -1404,6 +1404,17 @@ button.messenger-chat-header-model {
   transform: translateY(var(--messenger-hover-lift));
 }
 
+.messenger-header-action-text--danger {
+  border-color: #f2c8ce;
+  background: #fbeff1;
+  color: var(--hula-danger);
+}
+
+.messenger-header-action-text--danger:hover {
+  border-color: #e2aeb8;
+  background: #f9e2e7;
+}
+
 .messenger-chat-body {
   flex: 1;
   min-height: 0;
@@ -3350,15 +3361,6 @@ button.messenger-chat-header-model {
   .messenger-tool-section {
     grid-template-columns: 1fr;
   }
-}
-
-.messenger-agent-settings .messenger-inline-actions {
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid #ececec;
-  position: sticky;
-  bottom: 0;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), #ffffff 52%);
 }
 
 .messenger-entity-panel {
