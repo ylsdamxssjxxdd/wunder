@@ -60,7 +60,10 @@ const resolveDurationSeconds = (stats: Record<string, any>): number | null => {
   return (prefill ?? 0) + (decode ?? 0);
 };
 
-const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
+const resolveTokenSpeed = (
+  stats: Record<string, any>,
+  interactionDurationSeconds: number | null
+): number | null => {
   const averageSpeed = Number(
     stats?.avg_model_round_speed_tps ??
       stats?.avgModelRoundSpeedTps ??
@@ -81,7 +84,26 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
     const speed = normalizeSpeed(averageSpeed, null);
     if (speed !== null) return speed;
   }
-  const outputTokens = Number(stats?.usage?.output);
+  const usageOutputTokens = Number(
+    stats?.usage?.output ?? stats?.usage?.output_tokens ?? stats?.usage?.outputTokens
+  );
+  const usageTotalTokens = Number(
+    stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
+  );
+  const usageInputTokens = Number(
+    stats?.usage?.input ?? stats?.usage?.input_tokens ?? stats?.usage?.inputTokens
+  );
+  const derivedOutputTokens =
+    Number.isFinite(usageTotalTokens) &&
+    usageTotalTokens > 0 &&
+    Number.isFinite(usageInputTokens) &&
+    usageInputTokens >= 0
+      ? Math.max(0, usageTotalTokens - usageInputTokens)
+      : NaN;
+  const outputTokens =
+    Number.isFinite(usageOutputTokens) && usageOutputTokens > 0
+      ? usageOutputTokens
+      : derivedOutputTokens;
   const decode = normalizeDurationSeconds(
     stats?.decode_duration_total_s ??
       stats?.decodeDurationTotalS ??
@@ -89,6 +111,17 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
   );
   if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
     const speed = normalizeSpeed(outputTokens / decode, decode);
+    if (speed !== null) return speed;
+  }
+  // Fallback: when decode timing is unavailable, degrade to whole-turn duration
+  // so UI still shows a conservative speed estimate instead of blank.
+  if (
+    Number.isFinite(outputTokens) &&
+    outputTokens > 0 &&
+    interactionDurationSeconds !== null &&
+    interactionDurationSeconds > 0
+  ) {
+    const speed = normalizeSpeed(outputTokens / interactionDurationSeconds, interactionDurationSeconds);
     if (speed !== null) return speed;
   }
   return null;
@@ -107,14 +140,17 @@ export const buildAssistantMessageStatsEntries = (
   const stats = (message.stats || null) as Record<string, any> | null;
   if (!stats) return [];
   const durationSeconds = resolveDurationSeconds(stats);
-  const speed = resolveTokenSpeed(stats);
-  const usageTotalTokens = Number(stats?.usage?.total);
+  const speed = resolveTokenSpeed(stats, durationSeconds);
+  const usageTotalTokens = Number(
+    stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
+  );
   const contextTokens =
     (Number.isFinite(usageTotalTokens) && usageTotalTokens > 0
       ? usageTotalTokens
       : null) ??
     stats?.contextTokens ??
     stats?.context_tokens ??
+    stats?.context_tokens_total ??
     stats?.context_usage?.context_tokens ??
     stats?.context_usage?.contextTokens ??
     null;

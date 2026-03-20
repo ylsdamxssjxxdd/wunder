@@ -1,6 +1,9 @@
 use crate::schemas::AbilityKind;
 use crate::services::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use crate::services::user_tools::{UserToolBindings, UserToolKind};
+use crate::services::worker_card_protocol::{
+    build_worker_card_prompt_envelope, resolve_worker_card_prompt_text, WorkerCardPrompt,
+};
 use crate::skills::SkillSpec;
 use crate::state::AppState;
 use crate::storage::{
@@ -152,26 +155,6 @@ struct WorkerCardMetadata {
     icon: Option<String>,
     #[serde(default)]
     exported_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct WorkerCardPrompt {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    extra_prompt: Option<String>,
-}
-
-impl WorkerCardPrompt {
-    fn is_empty(&self) -> bool {
-        self.system_prompt
-            .as_deref()
-            .is_none_or(|value| value.trim().is_empty())
-            && self
-                .extra_prompt
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty())
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1297,28 +1280,12 @@ fn validate_worker_card_manifest(manifest: &WorkerCardManifest) -> Result<()> {
     Ok(())
 }
 
-fn worker_card_prompt_text(worker_card: &WorkerCardManifest) -> String {
-    [
-        worker_card
-            .system_prompt
-            .as_deref()
-            .or(worker_card.prompt.system_prompt.as_deref()),
-        worker_card
-            .extra_prompt
-            .as_deref()
-            .or(worker_card.prompt.extra_prompt.as_deref()),
-    ]
-    .into_iter()
-    .flatten()
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .map(ToOwned::to_owned)
-    .collect::<Vec<_>>()
-    .join("\n\n")
-}
-
 fn resolve_worker_role_prompt(worker_card: &WorkerCardManifest) -> Result<String> {
-    let prompt = worker_card_prompt_text(worker_card);
+    let prompt = resolve_worker_card_prompt_text(
+        worker_card.system_prompt.as_deref(),
+        worker_card.extra_prompt.as_deref(),
+        &worker_card.prompt,
+    );
     if !prompt.is_empty() {
         return Ok(prompt);
     }
@@ -1332,6 +1299,7 @@ fn build_worker_card_manifest(
     declared_tool_names: &[String],
     attached_skill_names: &[String],
 ) -> WorkerCardManifest {
+    let prompt_fields = build_worker_card_prompt_envelope(&agent.system_prompt);
     WorkerCardManifest {
         schema_version: Some("wunder/worker-card@2".to_string()),
         kind: Some("WorkerCard".to_string()),
@@ -1342,10 +1310,9 @@ fn build_worker_card_manifest(
             icon: agent.icon.clone(),
             exported_at: Some(chrono::Utc::now().to_rfc3339()),
         },
-        prompt: WorkerCardPrompt::default(),
-        system_prompt: None,
-        extra_prompt: Some(agent.system_prompt.trim().to_string())
-            .filter(|value| !value.is_empty()),
+        prompt: prompt_fields.prompt,
+        system_prompt: prompt_fields.system_prompt,
+        extra_prompt: prompt_fields.extra_prompt,
         abilities: WorkerCardAbilities {
             items: Vec::new(),
             tool_names: normalize_string_items(declared_tool_names),
@@ -2638,8 +2605,8 @@ mod tests {
     #[test]
     fn normalize_export_filename_stem_keeps_chinese_hive_name() {
         assert_eq!(
-            normalize_export_filename_stem("浜哄姏璧勬簮铚傜兢", "hive_123"),
-            "浜哄姏璧勬簮铚傜兢"
+            normalize_export_filename_stem("人力资源蜂群", "hive_123"),
+            "人力资源蜂群"
         );
         assert_eq!(normalize_export_filename_stem("  ", "hive_123"), "hive_123");
     }

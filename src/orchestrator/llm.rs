@@ -266,11 +266,14 @@ impl Orchestrator {
         reasoning: &str,
     ) -> TokenUsage {
         let input = estimate_messages_tokens(messages).max(0) as u64;
-        let output = (approx_token_count(content) + approx_token_count(reasoning)).max(0) as u64;
+        let output = approx_token_count(content).max(0) as u64;
+        let reasoning_tokens = approx_token_count(reasoning).max(0) as u64;
         TokenUsage {
             input,
             output,
-            total: input + output,
+            total: input
+                .saturating_add(output)
+                .saturating_add(reasoning_tokens),
         }
     }
 
@@ -396,7 +399,7 @@ impl Orchestrator {
                     let emitter = emitter_snapshot.clone();
                     let timing = Arc::clone(&timing_snapshot);
                     async move {
-                        if !delta.is_empty() || !reasoning_delta.is_empty() {
+                        if !delta.is_empty() {
                             timing.lock().mark_output(Instant::now());
                         }
                         if emit_events {

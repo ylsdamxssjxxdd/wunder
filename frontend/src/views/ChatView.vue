@@ -1801,7 +1801,7 @@ const isWorkspaceResourceMissing = (error) => {
     error?.message ??
     '';
   const message = typeof raw === 'string' ? raw : String(raw || '');
-  return /not found|no such|涓嶅瓨鍦▅鎵句笉鍒皘宸插垹闄宸茬Щ闄removed/i.test(message);
+  return /not found|no such|不存在|找不到|已删除|已移除|removed/i.test(message);
 };
 
 const hydrateWorkspaceResourceCard = async (card) => {
@@ -2893,7 +2893,26 @@ const resolveTokenSpeed = (stats, durationSeconds) => {
     const speed = normalizeSpeed(averageSpeed, null);
     if (speed !== null) return speed;
   }
-  const outputTokens = Number(stats?.usage?.output);
+  const usageOutputTokens = Number(
+    stats?.usage?.output ?? stats?.usage?.output_tokens ?? stats?.usage?.outputTokens
+  );
+  const usageTotalTokens = Number(
+    stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
+  );
+  const usageInputTokens = Number(
+    stats?.usage?.input ?? stats?.usage?.input_tokens ?? stats?.usage?.inputTokens
+  );
+  const derivedOutputTokens =
+    Number.isFinite(usageTotalTokens) &&
+    usageTotalTokens > 0 &&
+    Number.isFinite(usageInputTokens) &&
+    usageInputTokens >= 0
+      ? Math.max(0, usageTotalTokens - usageInputTokens)
+      : NaN;
+  const outputTokens =
+    Number.isFinite(usageOutputTokens) && usageOutputTokens > 0
+      ? usageOutputTokens
+      : derivedOutputTokens;
   const decode = normalizeDurationSeconds(
     stats?.decode_duration_total_s ??
       stats?.decodeDurationTotalS ??
@@ -2907,10 +2926,6 @@ const resolveTokenSpeed = (stats, durationSeconds) => {
     const speed = normalizeSpeed(outputTokens / durationSeconds, durationSeconds);
     if (speed !== null) return speed;
   }
-  const totalTokens = Number(stats?.usage?.total);
-  if (Number.isFinite(totalTokens) && totalTokens > 0 && durationSeconds && durationSeconds > 0) {
-    return normalizeSpeed(totalTokens / durationSeconds, durationSeconds);
-  }
   return null;
 };
 
@@ -2921,9 +2936,14 @@ const buildMessageStatsEntries = (message) => {
   if (!stats) return [];
   const durationSeconds = resolveDurationSeconds(stats);
   const speed = resolveTokenSpeed(stats, durationSeconds);
+  const usageTotalTokens = Number(
+    stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
+  );
   const contextTokens =
+    (Number.isFinite(usageTotalTokens) && usageTotalTokens > 0 ? usageTotalTokens : null) ??
     stats?.contextTokens ??
     stats?.context_tokens ??
+    stats?.context_tokens_total ??
     stats?.context_usage?.context_tokens ??
     stats?.context_usage?.contextTokens ??
     null;

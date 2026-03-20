@@ -202,6 +202,8 @@
             <span
               v-if="composerContextUsageDisplay"
               class="chat-composer-world-context-usage"
+              :class="composerContextUsageClass"
+              :style="composerContextUsageStyle"
               :title="composerContextUsageTooltip"
               :aria-label="composerContextUsageTooltip"
             >
@@ -218,6 +220,8 @@
             <span
               v-if="composerContextUsageDisplay"
               class="chat-composer-world-context-usage"
+              :class="composerContextUsageClass"
+              :style="composerContextUsageStyle"
               :title="composerContextUsageTooltip"
               :aria-label="composerContextUsageTooltip"
             >
@@ -589,6 +593,16 @@ const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | n
         ? (current.stats as Record<string, unknown>)
         : null;
     if (!stats) continue;
+    const usage =
+      stats.usage && typeof stats.usage === 'object'
+        ? (stats.usage as Record<string, unknown>)
+        : null;
+    const providerTotalTokens = normalizeTokenCount(
+      usage?.total ?? usage?.total_tokens ?? usage?.totalTokens
+    );
+    if (providerTotalTokens !== null && providerTotalTokens > 0) {
+      return providerTotalTokens;
+    }
     const normalized = normalizeTokenCount(
       stats.contextTokens ??
         stats.context_tokens ??
@@ -596,7 +610,7 @@ const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | n
         (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
         (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
     );
-    if (normalized !== null) {
+    if (normalized !== null && normalized > 0) {
       return normalized;
     }
   }
@@ -662,18 +676,51 @@ const composerContextTotalTokens = computed(() => {
   const normalizedPreset = normalizeTokenCount(fromPreset);
   return normalizedPreset !== null && normalizedPreset > 0 ? normalizedPreset : null;
 });
+const CONTEXT_WARNING_RATIO = 0.7;
+const CONTEXT_DANGER_RATIO = 0.9;
+const composerContextUsageRatio = computed(() => {
+  const used = composerContextUsedTokens.value;
+  const total = composerContextTotalTokens.value;
+  if (used === null || total === null || total <= 0) return null;
+  return Math.max(0, used) / total;
+});
+const composerContextUsageClass = computed(() => {
+  const ratio = composerContextUsageRatio.value;
+  if (ratio === null) return '';
+  if (ratio >= CONTEXT_DANGER_RATIO) return 'is-danger';
+  if (ratio >= CONTEXT_WARNING_RATIO) return 'is-warning';
+  return '';
+});
+const composerContextUsageStyle = computed<Record<string, string>>(() => {
+  const ratio = composerContextUsageRatio.value;
+  if (ratio === null || ratio < CONTEXT_WARNING_RATIO) {
+    return {};
+  }
+  // Lerp from amber to red as context usage approaches the hard limit.
+  const ratioSpan = Math.max(0.01, CONTEXT_DANGER_RATIO - CONTEXT_WARNING_RATIO);
+  const progress = Math.min(Math.max((ratio - CONTEXT_WARNING_RATIO) / ratioSpan, 0), 1);
+  const red = Math.round(217 + (220 - 217) * progress);
+  const green = Math.round(119 + (38 - 119) * progress);
+  const blue = Math.round(6 + (38 - 6) * progress);
+  return { color: `rgb(${red}, ${green}, ${blue})` };
+});
 const composerContextUsageDisplay = computed(() => {
   if (!props.worldStyle) return '';
   const used = composerContextUsedTokens.value;
   const total = composerContextTotalTokens.value;
   if (used === null && total === null) return '';
-  const usedText = formatContextTokenCount(used ?? 0);
+  const usedText = formatContextTokenCount(used);
   const totalText = formatContextTokenCount(total);
   return `${usedText}/${totalText}`;
 });
 const composerContextUsageTooltip = computed(() => {
   const usage = composerContextUsageDisplay.value;
   if (!usage) return '';
+  const ratio = composerContextUsageRatio.value;
+  if (ratio !== null) {
+    const percent = Math.min(999, Math.round(ratio * 100));
+    return `${t('profile.stats.contextTokens')}: ${usage} (${percent}%)`;
+  }
   return `${t('profile.stats.contextTokens')}: ${usage}`;
 });
 const composerModelWithContextTooltip = computed(() => {

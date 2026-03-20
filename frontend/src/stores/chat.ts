@@ -349,9 +349,14 @@ const normalizeUsagePayload = (payload) => {
   if (!hasInput && !hasOutput && total === null) {
     return null;
   }
+  const normalizedInput = hasInput ? input : 0;
+  let normalizedOutput = hasOutput ? output : 0;
+  if (normalizedOutput <= 0 && Number.isFinite(total) && (total ?? 0) > normalizedInput) {
+    normalizedOutput = Math.max(0, (total ?? 0) - normalizedInput);
+  }
   return {
-    input: hasInput ? input : 0,
-    output: hasOutput ? output : 0,
+    input: normalizedInput,
+    output: normalizedOutput,
     total: total ?? 0
   } satisfies NormalizedUsagePayload;
 };
@@ -3508,7 +3513,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     let decodeTotal = 0;
     let hasPrefill = false;
     let hasDecode = false;
-    let speedSum = 0;
+    let speedOutputTotal = 0;
+    let speedDecodeTotal = 0;
     let speedCount = 0;
     // Keep model-round speed separate from whole-turn usage totals.
     roundMetricsMap.forEach((item) => {
@@ -3524,13 +3530,17 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       // Speed definition: model output phase only (from first generated token to end),
       // so prefill/tool time is excluded and decode duration is the only denominator.
       if (item.usage && item.usage.output > 0 && decode !== null && decode > 0) {
-        speedSum += item.usage.output / decode;
+        speedOutputTotal += item.usage.output;
+        speedDecodeTotal += decode;
         speedCount += 1;
       }
     });
     stats.prefill_duration_s = hasPrefill ? prefillTotal : null;
     stats.decode_duration_s = hasDecode ? decodeTotal : null;
-    stats.avg_model_round_speed_tps = speedCount > 0 ? speedSum / speedCount : null;
+    stats.avg_model_round_speed_tps =
+      speedCount > 0 && speedDecodeTotal > 0
+        ? speedOutputTotal / speedDecodeTotal
+        : null;
     stats.avg_model_round_speed_rounds = speedCount;
   };
 
@@ -4585,7 +4595,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           data?.usage ?? payload?.usage ?? data ?? payload,
           null,
           null,
-          { round, updateUsage: true, includeInRoundAverage: true }
+          // round_usage is whole-turn aggregate; do not inject it into per-round speed map.
+          { round, updateUsage: true, includeInRoundAverage: false }
         );
         fallbackQuotaUsageFromRound(round);
         break;

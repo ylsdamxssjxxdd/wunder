@@ -1,4 +1,8 @@
 use crate::services::agent_abilities::{build_ability_items_from_legacy, normalize_ability_items};
+use crate::services::default_agent_protocol::{
+    default_agent_config_from_record, default_agent_meta_key, record_from_default_agent_config,
+    DefaultAgentConfig,
+};
 use crate::services::default_tool_profile::{
     curated_default_skill_names, curated_default_tool_names,
 };
@@ -14,12 +18,10 @@ use crate::storage::{
 use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
 use anyhow::Result;
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 
 const DEFAULT_AGENT_ACCESS_LEVEL: &str = "A";
 pub const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 const DEFAULT_AGENT_APPROVAL_MODE: &str = "full_auto";
-const DEFAULT_AGENT_META_PREFIX: &str = "default_agent:";
 pub const DEFAULT_AGENT_NAME: &str = "Default Agent";
 const DEFAULT_AGENT_STATUS: &str = "active";
 const DEFAULT_AGENT_SYNC_BINDING_PREFIX: &str = "default_agent_sync_binding_v1:";
@@ -29,47 +31,11 @@ fn now_ts() -> f64 {
     Utc::now().timestamp_millis() as f64 / 1000.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct DefaultAgentConfig {
-    #[serde(default)]
-    name: String,
-    #[serde(default)]
-    description: String,
-    #[serde(default)]
-    system_prompt: String,
-    #[serde(default)]
-    ability_items: Vec<crate::schemas::AbilityDescriptor>,
-    #[serde(default)]
-    tool_names: Vec<String>,
-    #[serde(default)]
-    declared_tool_names: Vec<String>,
-    #[serde(default)]
-    declared_skill_names: Vec<String>,
-    #[serde(default)]
-    preset_questions: Vec<String>,
-    #[serde(default)]
-    approval_mode: String,
-    #[serde(default)]
-    status: String,
-    #[serde(default)]
-    icon: Option<String>,
-    #[serde(default)]
-    sandbox_container_id: i32,
-    #[serde(default)]
-    created_at: f64,
-    #[serde(default)]
-    updated_at: f64,
-}
-
 #[derive(Debug, Default)]
 struct SyncDecision {
     visible_diff: bool,
     safe_updates: usize,
     override_count: usize,
-}
-
-fn default_agent_meta_key(user_id: &str) -> String {
-    format!("{DEFAULT_AGENT_META_PREFIX}{}", user_id.trim())
 }
 
 fn default_agent_sync_binding_key(user_id: &str) -> String {
@@ -126,50 +92,18 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
 }
 
 fn config_from_record(record: &UserAgentRecord) -> DefaultAgentConfig {
-    let mut config = DefaultAgentConfig {
-        name: record.name.clone(),
-        description: record.description.clone(),
-        system_prompt: record.system_prompt.clone(),
-        ability_items: normalize_ability_items(record.ability_items.clone()),
-        tool_names: record.tool_names.clone(),
-        declared_tool_names: record.declared_tool_names.clone(),
-        declared_skill_names: record.declared_skill_names.clone(),
-        preset_questions: record.preset_questions.clone(),
-        approval_mode: record.approval_mode.clone(),
-        status: record.status.clone(),
-        icon: record.icon.clone(),
-        sandbox_container_id: record.sandbox_container_id,
-        created_at: record.created_at,
-        updated_at: record.updated_at,
-    };
+    let mut config = default_agent_config_from_record(record);
     normalize_default_agent_config(&mut config);
     config
 }
 
 fn record_from_config(user_id: &str, config: &DefaultAgentConfig) -> UserAgentRecord {
-    UserAgentRecord {
-        agent_id: DEFAULT_AGENT_ID_ALIAS.to_string(),
-        user_id: user_id.trim().to_string(),
-        hive_id: DEFAULT_HIVE_ID.to_string(),
-        name: config.name.clone(),
-        description: config.description.clone(),
-        system_prompt: config.system_prompt.clone(),
-        model_name: None,
-        ability_items: config.ability_items.clone(),
-        tool_names: config.tool_names.clone(),
-        declared_tool_names: config.declared_tool_names.clone(),
-        declared_skill_names: config.declared_skill_names.clone(),
-        preset_questions: config.preset_questions.clone(),
-        access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
-        approval_mode: config.approval_mode.clone(),
-        is_shared: false,
-        status: config.status.clone(),
-        icon: config.icon.clone(),
-        sandbox_container_id: config.sandbox_container_id,
-        created_at: config.created_at,
-        updated_at: config.updated_at,
-        preset_binding: None,
-    }
+    record_from_default_agent_config(
+        DEFAULT_AGENT_ID_ALIAS,
+        user_id,
+        DEFAULT_AGENT_ACCESS_LEVEL,
+        config,
+    )
 }
 
 async fn load_default_agent_config(

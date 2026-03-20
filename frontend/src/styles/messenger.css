@@ -2358,6 +2358,15 @@ button.messenger-chat-header-model {
   color: var(--hula-muted);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
+  transition: color 0.15s ease;
+}
+
+.chat-composer-world-context-usage.is-warning {
+  font-weight: 700;
+}
+
+.chat-composer-world-context-usage.is-danger {
+  font-weight: 800;
 }
 
 .chat-composer-world-model--action {

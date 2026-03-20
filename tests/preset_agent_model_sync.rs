@@ -909,16 +909,16 @@ async fn preset_tool_sync_safe_and_force_respects_user_override() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn preset_duplicate_bound_agents_are_compacted_on_list() {
     let context = build_test_context_with_config("preset_duplicate_compact_user", |config| {
-        config.user_agents.presets = vec![build_preset_config(
-            "preset_duplicate_compact",
-            None,
-        )];
+        config.user_agents.presets = vec![build_preset_config("preset_duplicate_compact", None)];
     })
     .await;
 
     let agents_v1 = list_user_agents(&context.app, &context.token).await;
     assert_eq!(agents_v1.len(), 1);
-    let base_agent_id = agents_v1[0]["id"].as_str().expect("base agent id").to_string();
+    let base_agent_id = agents_v1[0]["id"]
+        .as_str()
+        .expect("base agent id")
+        .to_string();
 
     let mut stored_agents = context
         .state
@@ -941,10 +941,18 @@ async fn preset_duplicate_bound_agents_are_compacted_on_list() {
         .user_store
         .list_user_agents("preset_duplicate_compact_user")
         .expect("list duplicated agents");
-    assert_eq!(duplicated.len(), 2, "test precondition: two duplicate agents");
+    assert_eq!(
+        duplicated.len(),
+        2,
+        "test precondition: two duplicate agents"
+    );
 
     let agents_v2 = list_user_agents(&context.app, &context.token).await;
-    assert_eq!(agents_v2.len(), 1, "duplicate bound agents should be compacted");
+    assert_eq!(
+        agents_v2.len(),
+        1,
+        "duplicate bound agents should be compacted"
+    );
     assert_ne!(
         agents_v2[0]["id"],
         json!(base_agent_id),

@@ -1147,13 +1147,37 @@ fn normalize_usage(raw: Option<&Value>) -> Option<TokenUsage> {
             _ => None,
         }
     };
+    let parse_reasoning_tokens = |value: Option<&Value>| -> Option<u64> {
+        let Value::Object(details) = value? else {
+            return None;
+        };
+        to_u64(details.get("reasoning_tokens"))
+            .or_else(|| to_u64(details.get("reasoningTokens")))
+            .or_else(|| {
+                details
+                    .get("reasoning")
+                    .and_then(Value::as_object)
+                    .and_then(|reasoning| {
+                        to_u64(reasoning.get("tokens"))
+                            .or_else(|| to_u64(reasoning.get("token_count")))
+                    })
+            })
+    };
     let input = to_u64(map.get("input_tokens"))
         .or_else(|| to_u64(map.get("prompt_tokens")))
         .unwrap_or(0);
-    let output = to_u64(map.get("output_tokens"))
+    let raw_output = to_u64(map.get("output_tokens"))
         .or_else(|| to_u64(map.get("completion_tokens")))
         .unwrap_or(0);
-    let total = to_u64(map.get("total_tokens")).unwrap_or(input + output);
+    let reasoning_tokens = to_u64(map.get("reasoning_tokens"))
+        .or_else(|| to_u64(map.get("reasoningTokens")))
+        .or_else(|| parse_reasoning_tokens(map.get("output_tokens_details")))
+        .or_else(|| parse_reasoning_tokens(map.get("outputTokensDetails")))
+        .or_else(|| parse_reasoning_tokens(map.get("completion_tokens_details")))
+        .or_else(|| parse_reasoning_tokens(map.get("completionTokensDetails")))
+        .unwrap_or(0);
+    let output = raw_output.saturating_sub(reasoning_tokens);
+    let total = to_u64(map.get("total_tokens")).unwrap_or(input.saturating_add(raw_output));
     if input == 0 && output == 0 && total == 0 {
         return None;
     }
@@ -3189,5 +3213,36 @@ mod tests {
         assert!(should_strip_openai_tool_schema(Some("openai")));
         assert!(!should_strip_openai_tool_schema(Some("openai_compatible")));
         assert!(!should_strip_openai_tool_schema(Some("groq")));
+    }
+
+    #[test]
+    fn normalize_usage_excludes_reasoning_tokens_from_output() {
+        let usage = normalize_usage(Some(&json!({
+            "input_tokens": 120,
+            "output_tokens": 80,
+            "total_tokens": 200,
+            "output_tokens_details": {
+                "reasoning_tokens": 30
+            }
+        })))
+        .expect("usage should be parsed");
+        assert_eq!(usage.input, 120);
+        assert_eq!(usage.output, 50);
+        assert_eq!(usage.total, 200);
+    }
+
+    #[test]
+    fn normalize_usage_estimates_total_with_raw_output_when_missing_total() {
+        let usage = normalize_usage(Some(&json!({
+            "prompt_tokens": 20,
+            "completion_tokens": 14,
+            "completion_tokens_details": {
+                "reasoning_tokens": 4
+            }
+        })))
+        .expect("usage should be parsed");
+        assert_eq!(usage.input, 20);
+        assert_eq!(usage.output, 10);
+        assert_eq!(usage.total, 34);
     }
 }

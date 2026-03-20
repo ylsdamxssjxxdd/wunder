@@ -3,6 +3,9 @@ use crate::services::agent_abilities::{
     build_ability_items_from_names, normalize_ability_items, resolve_record_ability_items,
     resolve_record_declared_names,
 };
+use crate::services::worker_card_protocol::{
+    build_worker_card_prompt_envelope, resolve_worker_card_prompt_text, WorkerCardPrompt,
+};
 use crate::storage::{UserAgentRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID};
 use chrono::Utc;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -47,26 +50,6 @@ pub struct WorkerCardMetadata {
     pub icon: String,
     #[serde(default)]
     pub exported_at: String,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkerCardPrompt {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub system_prompt: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub extra_prompt: Option<String>,
-}
-
-impl WorkerCardPrompt {
-    fn is_empty(&self) -> bool {
-        self.system_prompt
-            .as_deref()
-            .is_none_or(|value| value.trim().is_empty())
-            && self
-                .extra_prompt
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty())
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -184,6 +167,7 @@ pub fn build_worker_card(
     hive_description: Option<&str>,
     skill_name_keys: &HashSet<String>,
 ) -> WorkerCardDocument {
+    let prompt_fields = build_worker_card_prompt_envelope(&record.system_prompt);
     let ability_items = resolve_record_ability_items(
         &record.ability_items,
         &record.tool_names,
@@ -213,10 +197,9 @@ pub fn build_worker_card(
             icon: record.icon.clone().unwrap_or_default(),
             exported_at: Utc::now().to_rfc3339(),
         },
-        prompt: WorkerCardPrompt::default(),
-        system_prompt: None,
-        extra_prompt: Some(record.system_prompt.trim().to_string())
-            .filter(|value| !value.is_empty()),
+        prompt: prompt_fields.prompt,
+        system_prompt: prompt_fields.system_prompt,
+        extra_prompt: prompt_fields.extra_prompt,
         abilities: WorkerCardAbilities {
             items: worker_card_items,
             tool_names: declared_tool_names,
@@ -258,7 +241,13 @@ pub fn parse_worker_card(
         name: document.metadata.name.trim().to_string(),
         description: document.metadata.description.trim().to_string(),
         system_prompt: system_prompt_override
-            .unwrap_or_else(|| worker_card_prompt_text(&document))
+            .unwrap_or_else(|| {
+                resolve_worker_card_prompt_text(
+                    document.system_prompt.as_deref(),
+                    document.extra_prompt.as_deref(),
+                    &document.prompt,
+                )
+            })
             .trim()
             .to_string(),
         model_name: document
@@ -497,26 +486,6 @@ fn split_document_worker_card_abilities(
         }
     }
     (normalize_names(tool_names), normalize_names(skill_names))
-}
-
-fn worker_card_prompt_text(document: &WorkerCardDocument) -> String {
-    [
-        document
-            .system_prompt
-            .as_deref()
-            .or(document.prompt.system_prompt.as_deref()),
-        document
-            .extra_prompt
-            .as_deref()
-            .or(document.prompt.extra_prompt.as_deref()),
-    ]
-    .into_iter()
-    .flatten()
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .map(ToOwned::to_owned)
-    .collect::<Vec<_>>()
-    .join("\n\n")
 }
 
 pub fn normalize_names(values: Vec<String>) -> Vec<String> {
