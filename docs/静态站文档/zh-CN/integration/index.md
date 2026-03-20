@@ -12,14 +12,16 @@ source_docs:
 
 # 接入概览
 
-如果你把 Wunder 当成外部能力服务接入，先不要急着翻完整 API 文档，先从这个入口页确定“你要接哪一层”。
+如果你把 wunder 当成外部能力服务接入，先不要急着翻完整 API 文档。
+
+先在这页判断：你要接的是哪一层。
 
 ## 先看这些
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/integration/wunder-api/">
     <strong>wunder API</strong>
-    <span>统一执行入口，最短路径接入。</span>
+    <span>统一执行入口，适合最短路径接入。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/chat-ws/">
     <strong>聊天 WebSocket</strong>
@@ -27,7 +29,7 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/chat-sessions/">
     <strong>聊天会话</strong>
-    <span>会话创建、消息发送、事件、恢复、取消都在这里。</span>
+    <span>会话创建、消息发送、恢复和取消都在这里。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/workspace-api/">
     <strong>工作区 API</strong>
@@ -39,9 +41,16 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/mcp-endpoint/">
     <strong>MCP 入口</strong>
-    <span>自托管 MCP 与外部工具接入方式。</span>
+    <span>自托管 MCP 和外部工具接入方式。</span>
   </a>
 </div>
+
+## 先判断你要接哪一层
+
+- 只想发起一次执行请求：看 [wunder API](/docs/zh-CN/integration/wunder-api/)
+- 要做完整聊天界面：看 [聊天会话](/docs/zh-CN/integration/chat-sessions/) 和 [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
+- 要操作文件和产物：看 [工作区 API](/docs/zh-CN/integration/workspace-api/)
+- 要接渠道、用户体系或外部系统：看 [用户世界接口](/docs/zh-CN/integration/user-world/)、[渠道 Webhook](/docs/zh-CN/integration/channel-webhook/) 和 [A2A 接口](/docs/zh-CN/integration/a2a/)
 
 ## 按目标找页面
 
@@ -67,12 +76,12 @@ source_docs:
 - [外部登录与免登嵌入](/docs/zh-CN/integration/external-login/)
 - [A2A 接口](/docs/zh-CN/integration/a2a/)
 
-## 你最需要记住的点
+## 最容易搞错的点
 
 - `/wunder` 是统一执行入口，但不是完整聊天域。
-- 真正做聊天 UI 时，通常要一起使用聊天会话接口和 WebSocket。
-- 文件路径治理要先分清工作区和 `temp_dir`。
-- 渠道接入、A2A、MCP 都是正式接入面，不是附属功能。
+- 真正做聊天 UI 时，通常要一起使用会话接口和 WebSocket。
+- 文件链路要先分清工作区和 `temp_dir`。
+- 渠道接入、A2A、MCP 都是正式接入面，不是附属能力。
 
 ## 相关文档
 

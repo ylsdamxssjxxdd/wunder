@@ -1,6 +1,6 @@
 ---
 title: CLI 使用
-summary: wunder-cli 面向开发者、终端任务与自动化场景。
+summary: 需要终端执行、脚本化接入或开发调试时，再看 `wunder-cli`。
 read_when:
   - 你想在终端中直接使用 wunder
   - 你更关注开发调试、脚本任务和工作区驱动执行
@@ -11,45 +11,51 @@ source_docs:
 
 # CLI 使用
 
-`wunder-cli` 是 wunder 的终端形态。
+如果你主要在终端里工作，这页先看。
 
-它适合开发者、本地任务、脚本化调用和工作区驱动执行。
+`wunder-cli` 是 Wunder 的命令行形态，适合开发者、本地任务、脚本化调用和工作区驱动执行。
 
-## CLI 的特点
+## 这页解决什么
 
-- 更适合调试和自动化
-- 使用当前目录或指定目录作为工作空间
-- 能更直接地观察会话、工具与产物
-- 与 server、desktop 复用同一套调度内核
+- 什么时候优先用 CLI
+- CLI 最适合哪些任务
+- CLI 和 desktop、server 的分工差别
 
-## 适合的任务
+## 先看这几条
 
-- 编程类任务
-- 文件处理任务
-- 自动化流程
-- 需要终端输出、JSONL 事件或 TUI 交互的任务
+- CLI 适合开发调试、批处理、脚本自动化和工作区驱动执行。
+- 它通常直接使用当前目录或指定目录作为工作空间。
+- 它和 desktop、server 复用同一套调度内核，差别主要在交互壳。
 
-## CLI 与 Desktop 的区别
+## 什么时候先用 CLI
 
-- Desktop 更适合日常使用和图形化工作台
-- CLI 更适合开发、脚本与终端协作
-- 两者底层能力一致，但交互壳不同
+- 你要做编程类任务或文件处理
+- 你要在终端里观察事件、工具调用和产物
+- 你要接脚本、CI、批处理或自动化流程
+- 你需要 JSONL 事件流或 TUI 交互
 
-## CLI 与 Server 的区别
+## CLI 最适合的场景
 
-- Server 面向多用户与治理
-- CLI 面向单用户本地执行
-- Server 要求更多部署与运行环境
-- CLI 更适合快速启动和局部任务
+- 一次性的本地任务
+- 以目录为中心的工作区操作
+- 调模型、调工具、看运行细节
+- 不需要完整图形界面的开发工作流
 
-## 推荐先理解的概念
+## 什么时候不要先看这页
 
-- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
-- [工具体系](/docs/zh-CN/concepts/tools/)
-- [长期记忆](/docs/zh-CN/concepts/memory/)
+- 你只是想直接日常使用 Wunder，不想碰终端
+- 你在做团队部署、管理员后台或统一对外接口
+- 你需要桌面窗口、本地 GUI 和消息工作台
+
+## 最容易搞错的点
+
+- CLI 不是“功能更少的 desktop”，它更适合开发和自动化。
+- CLI 适合单用户本地执行，不负责多用户治理。
+- 工作目录就是上下文的一部分，换目录往往就换了任务作用域。
 
 ## 相关文档
 
 - [快速开始](/docs/zh-CN/start/quickstart/)
 - [系统架构](/docs/zh-CN/concepts/architecture/)
+- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
 - [故障排查](/docs/zh-CN/help/troubleshooting/)

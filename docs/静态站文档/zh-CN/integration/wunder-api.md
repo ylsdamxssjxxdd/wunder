@@ -1,6 +1,6 @@
 ---
 title: "wunder API"
-summary: "`/wunder` 是 Wunder 的底层执行入口；如果你要稳定调用独立人格智能体，优先走 `/wunder/chat/*`。"
+summary: "`/wunder` 是底层执行入口；如果你要稳定绑定某个智能体或做完整聊天产品，优先走 `/wunder/chat/*`。"
 read_when:
   - "你要从业务系统接入 Wunder"
   - "你需要判断该走 `/wunder` 还是 `/wunder/chat/*`"
@@ -12,27 +12,41 @@ source_docs:
 
 # wunder API
 
-`POST /wunder` 现在更适合作为底层执行内核和调试入口，不应再把它理解为“调用任意独立人格智能体的唯一公开接口”。
+如果你只是想把 Wunder 当能力服务接进去，这页先看。
 
-> 推荐链路：
-> `GET /wunder/agents` -> `POST /wunder/chat/sessions` -> `POST /wunder/chat/sessions/{session_id}/messages`
+先记一条：`/wunder` 是底层执行入口；如果你要稳定绑定某个智能体人格，或者你在做完整聊天产品，优先走 `/wunder/chat/*`。
 
-## `/wunder` 负责什么
+## 这页解决什么
+
+- 什么时候直接调 `/wunder`
+- 什么时候不要先调 `/wunder`
+- 一条更稳的智能体接入链路是什么
+
+## 先做这个判断
+
+- 你要“把 Wunder 当能力服务调用”，可以先看 `/wunder`
+- 你要“把 Wunder 当聊天系统接入”，先看 `/wunder/chat/*`
+- 你要稳定绑定某个独立人格智能体，也优先走聊天域
+
+## 什么时候直接调 `/wunder`
 
 - 承接 `user_id + question` 形式的直接执行请求
 - 支持 SSE 流式输出和非流式 JSON 返回
 - 允许调用方显式覆盖 `tool_names`、`model_name`、`config_overrides`
 - 可接受 `agent_id`，但当前主要用于主会话绑定和工作区/容器路由
 
-## `/wunder` 当前不负责什么
+## 什么时候不要先调 `/wunder`
 
-- 不会像 `/wunder/chat/*` 一样按 `agent_id` 自动补齐完整智能体快照
-- 不会自动解析目标智能体当前的 `system_prompt`、模型、工具默认集和审批模式
-- 不应被当成“对外发布单个智能体人格”的稳定调用协议
+- 你要按 `agent_id` 自动补齐完整智能体快照
+- 你要读取该会话当前实际冻结的 `system_prompt`
+- 你要会话列表、取消、恢复、事件回放和聊天工作台能力
+- 你要把某个独立人格智能体作为稳定产品接口发布
 
-如果你必须直调 `/wunder`，又想尽量贴近某个智能体当前行为，需要自己传入 `agent_prompt` 等覆盖字段；更稳妥的方式仍然是改走聊天域。
+## 一条更稳的接入链路
 
-## 推荐的开发者接入流程
+推荐链路：
+
+`GET /wunder/agents` -> `POST /wunder/chat/sessions` -> `POST /wunder/chat/sessions/{session_id}/messages`
 
 1. `GET /wunder/agents`
 2. 从返回的 `data.items[].id` 里选出目标 `agent_id`
@@ -67,6 +81,12 @@ source_docs:
 - `agent_prompt`：仅适合高级集成的低层提示词覆盖
 - `attachments`：附件列表
 
+## 最容易搞错的点
+
+- `/wunder` 能传 `agent_id`，不等于它就是最稳的智能体发布协议。
+- 直调 `/wunder` 时，如果想贴近某个智能体当前配置，很多默认项要你自己补。
+- `user_id` 用来表示调用者和隔离空间，不要求一定是已注册用户。
+
 ## 相关接口
 
 - `POST /wunder`
@@ -75,17 +95,6 @@ source_docs:
 - `GET /wunder/agents`
 - `POST /wunder/chat/sessions`
 - `POST /wunder/chat/sessions/{session_id}/messages`
-
-## 什么时候优先不用 `/wunder`
-
-如果你的目标是下面这些场景，优先使用 `/wunder/chat/*`：
-
-- 完整聊天 UI
-- 需要稳定复用某个独立人格智能体
-- 需要会话列表、取消、恢复、事件回放
-- 需要读取“该会话当前实际使用的系统提示词”
-
-`/wunder` 更像底层执行入口；`/wunder/chat/*` 更像完整聊天域和智能体会话控制面。
 
 ## 相关文档
 

@@ -218,7 +218,7 @@ fn python_home_candidates(bin: &Path) -> Vec<PathBuf> {
 }
 
 fn resolve_python_lib_dir(home: &Path) -> Option<PathBuf> {
-    [home.join("lib"), home.join("Lib")]
+    [home.join("Lib"), home.join("lib")]
         .into_iter()
         .find(|candidate| candidate.is_dir())
 }

@@ -12,7 +12,11 @@ source_docs:
 
 # 快速开始
 
-这篇文档给你一条最短路径，帮助你先把 wunder 跑起来。
+这页只解决一件事：
+
+- 用最短路径把 wunder 跑起来
+
+如果你不想先研究架构，直接按这里走。
 
 ## 推荐顺序
 
@@ -22,7 +26,7 @@ source_docs:
 
 ## 最短可用路径：Desktop
 
-如果你的目标是尽快实际使用 wunder，而不是先研究架构，建议走这条路径：
+如果你只是想尽快用起来，建议走这条路径：
 
 1. 启动 `wunder-desktop`
 2. 确认本地模式可以打开聊天界面
@@ -30,7 +34,7 @@ source_docs:
 4. 在输入框里直接提出任务
 5. 观察模型回复、工具调用、工作区产物与会话状态
 
-Desktop 是当前主推形态，因为它同时验证了：
+为什么优先推荐 desktop：
 
 - 模型调用链路
 - 用户侧前端交互
@@ -39,7 +43,7 @@ Desktop 是当前主推形态，因为它同时验证了：
 
 ## 如果你要部署 Server
 
-Server 适合这些场景：
+Server 更适合这些场景：
 
 - 多用户、多单位、多租户
 - 网页端统一访问
@@ -67,7 +71,7 @@ CLI 适合这些场景：
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
 - [工具体系](/docs/zh-CN/concepts/tools/)
 
-## 运行前你至少需要知道的事
+## 运行前你最需要知道的点
 
 - wunder 有三种运行形态：`server / cli / desktop`
 - `server` 是核心能力底座
@@ -75,7 +79,7 @@ CLI 适合这些场景：
 - `cli` 适合开发与自动化
 - 用户请求优先走 WebSocket，SSE 作为兜底
 
-## 推荐阅读顺序
+## 跑起来之后看什么
 
 - [Desktop 入门](/docs/zh-CN/start/desktop/)
 - [系统架构](/docs/zh-CN/concepts/architecture/)

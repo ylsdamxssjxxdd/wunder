@@ -12,42 +12,51 @@
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
             <span class="docs-brand-text">wunder 文档</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links"><a class="docs-header-link" href="/">控制台</a><a class="docs-header-link" href="/wunder/ppt/">PPT</a></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/index","language":"zh-CN","title":"wunder","summary":"wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；当前对外调用分为底层执行入口和完整智能体会话入口两层。","read_when":["你第一次了解 wunder","你要快速找到 desktop、server、cli、接入和运维入口"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"开始","group":"首页","group_path":["首页"],"url":"/docs/","headings":[{"id":"section-1","level":1,"text":"wunder"},{"id":"section-2","level":2,"text":"wunder 能做什么"},{"id":"section-3","level":2,"text":"从哪里开始"},{"id":"section-4","level":2,"text":"wunder 的关键约定"},{"id":"section-5","level":2,"text":"相关文档"}],"prev_slug":null,"next_slug":"zh-CN/start/quickstart","markdown":"# wunder\n\n<p class=\"docs-eyebrow\">统一调度内核 | server / cli / desktop<\/p>\n\nwunder 是一个智能体调度系统。\n当前产品重心是 `desktop`，但底层能力同时服务于 `server` 和 `cli`。\n\n> 对开发者，一切皆接口。对模型，一切皆工具。\n\n> 接入层当前分为两层：\n> `POST /wunder` 是底层执行入口；\n> `/wunder/chat/*` 是完整智能体会话入口。\n\n<div class=\"docs-card-grid\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/quickstart/\">\n    <strong>快速开始<\/strong>\n    <span>先把 Wunder 跑起来，优先体验 desktop。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/concepts/architecture/\">\n    <strong>系统架构<\/strong>\n    <span>理解 server、调度层、工具层、工作区和多界面的协作关系。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/wunder-api/\">\n    <strong>wunder API<\/strong>\n    <span>理解 `/wunder` 和 `/wunder/chat/*` 的职责边界与推荐接入路径。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/tools/\">\n    <strong>工具总览<\/strong>\n    <span>查看 Wunder 内置工具、MCP、Skills 和知识能力。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/deployment/\">\n    <strong>部署与运行<\/strong>\n    <span>按桌面、本地开发、服务端部署三条路径落地。<\/span>\n  <\/a>\n<\/div>\n\n## wunder 能做什么\n\n- 统一承载 `server / cli / desktop` 三种运行形态\n- 提供底层执行入口 `/wunder` 和完整会话入口 `/wunder/chat/*`\n- 支持 WebSocket 优先、SSE 兜底的流式执行链路\n- 提供内置工具、MCP、Skills、知识库与 A2A 能力\n- 支持多用户并发、工作区隔离、长期记忆与蜂群协作\n- 同时提供用户侧前端、管理端前端和桌面端界面\n\n## 从哪里开始\n\n如果你是第一次使用 wunder，建议先从这些页面开始：\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/quickstart/\">\n    <strong>快速开始<\/strong>\n    <span>先跑起来，再回头看原理。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/desktop/\">\n    <strong>Desktop 入门<\/strong>\n    <span>当前主推形态，本地优先。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/server/\">\n    <strong>Server 部署<\/strong>\n    <span>多用户、多租户与治理能力入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/cli/\">\n    <strong>CLI 使用<\/strong>\n    <span>开发、调试与自动化场景入口。<\/span>\n  <\/a>\n<\/div>\n\n如果你要理解系统结构：\n\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [工作区与容器](/docs/zh-CN/concepts/workspaces/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n\n如果你要做接入：\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [用户世界接口](/docs/zh-CN/integration/user-world/)\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)\n\n如果你要查稳定参考：\n\n- [配置说明](/docs/zh-CN/reference/config/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [API 索引](/docs/zh-CN/reference/api-index/)\n\n## wunder 的关键约定\n\n- `/wunder` 的 `user_id` 不要求是注册用户\n- 会话轮次分为“用户轮次 / 模型轮次”\n- token 统计记录的是上下文占用量，不是账单总消耗量\n- 线程首次确定的 system prompt 会冻结\n- 长期记忆只在线程初始化时注入一次\n\n## 相关文档\n\n- [文档总览](/docs/zh-CN/start/hubs/)\n- [FAQ](/docs/zh-CN/help/faq/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"静态站文档/zh-CN/index.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/index","language":"zh-CN","title":"wunder","summary":"wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；当前对外调用分为底层执行入口和完整智能体会话入口两层。","updated_at":"2026-03-20","read_when":["你第一次了解 wunder","你要快速找到 desktop、server、cli、接入和运维入口"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"开始","group":"首页","group_path":["首页"],"url":"/docs/","headings":[{"id":"section-1","level":1,"text":"wunder"},{"id":"section-2","level":2,"text":"是什么"},{"id":"section-3","level":2,"text":"先从哪里开始"},{"id":"section-4","level":2,"text":"不同人下一步看什么"},{"id":"section-5","level":3,"text":"你是普通用户"},{"id":"section-6","level":3,"text":"你是管理员或交付人员"},{"id":"section-7","level":3,"text":"你是开发者或集成人员"},{"id":"section-8","level":2,"text":"如果你要理解结构"},{"id":"section-9","level":2,"text":"如果你要做接入"},{"id":"section-10","level":2,"text":"你最需要记住的点"},{"id":"section-11","level":2,"text":"相关文档"}],"prev_slug":null,"next_slug":"zh-CN/start/quickstart","markdown":"# wunder\n\n<p class=\"docs-eyebrow\">统一调度内核 | server / cli / desktop<\/p>\n\nwunder 是一个智能体调度系统。\n\n它现在主推 `desktop`，但底层内核同时服务于 `server` 和 `cli`。\n\n如果你是第一次打开文档站，这一页只解决两件事：\n\n- wunder 到底是什么\n- 你下一步应该点哪一页\n\n<div class=\"docs-card-grid\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/quickstart/\">\n    <strong>快速开始<\/strong>\n    <span>先把 wunder 跑起来，优先体验 desktop。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/concepts/architecture/\">\n    <strong>系统架构<\/strong>\n    <span>先分清 server、调度层、工具层和工作区。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/integration/wunder-api/\">\n    <strong>wunder API<\/strong>\n    <span>统一执行入口，适合最短路径接入。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/tools/\">\n    <strong>工具总览<\/strong>\n    <span>看内置工具、MCP、Skills 和知识库从哪里挂进来。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/ops/deployment/\">\n    <strong>部署与运行<\/strong>\n    <span>按桌面、本地开发、服务端部署三条路径看。<\/span>\n  <\/a>\n<\/div>\n\n## 是什么\n\n- 同一套调度内核同时支撑 `server / cli / desktop`\n- 对外统一暴露 `/wunder`，并提供完整聊天域 `/wunder/chat/*`\n- 模型可以调用内置工具、MCP、Skills、知识库和 A2A 能力\n- 系统支持多用户并发、工作区隔离、长期记忆和蜂群协作\n- 前端分为用户侧前端、管理端前端和桌面端三块界面\n\n可以把 wunder 理解成一句话：\n\n- 对开发者，一切是接口。\n- 对模型，一切是工具。\n\n## 先从哪里开始\n\n如果你只想尽快看见可用结果，先从这些页面开始：\n\n<div class=\"docs-card-grid docs-card-grid-compact\">\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/quickstart/\">\n    <strong>快速开始<\/strong>\n    <span>最短路径把 wunder 跑起来。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/desktop/\">\n    <strong>Desktop 入门<\/strong>\n    <span>当前主推形态，本地优先。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/server/\">\n    <strong>Server 部署<\/strong>\n    <span>组织级部署、多用户和治理入口。<\/span>\n  <\/a>\n  <a class=\"docs-card\" href=\"/docs/zh-CN/start/cli/\">\n    <strong>CLI 使用<\/strong>\n    <span>开发、调试和自动化任务入口。<\/span>\n  <\/a>\n<\/div>\n\n## 不同人下一步看什么\n\n### 你是普通用户\n\n- [快速开始](/docs/zh-CN/start/quickstart/)\n- [Desktop 入门](/docs/zh-CN/start/desktop/)\n- [用户侧前端](/docs/zh-CN/surfaces/frontend/)\n\n### 你是管理员或交付人员\n\n- [Server 部署](/docs/zh-CN/start/server/)\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n\n### 你是开发者或集成人员\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [工具总览](/docs/zh-CN/tools/)\n\n## 如果你要理解结构\n\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [工作区与容器](/docs/zh-CN/concepts/workspaces/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n\n## 如果你要做接入\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [聊天会话](/docs/zh-CN/integration/chat-sessions/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [用户世界接口](/docs/zh-CN/integration/user-world/)\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)\n\n## 你最需要记住的点\n\n- `/wunder` 的 `user_id` 不要求是注册用户\n- 会话轮次分为“用户轮次 / 模型轮次”\n- token 统计记录的是上下文占用量，不是账单总消耗量\n- 线程首次确定的 system prompt 会冻结\n- 长期记忆只在线程初始化时注入一次\n\n## 相关文档\n\n- [文档总览](/docs/zh-CN/start/hubs/)\n- [FAQ](/docs/zh-CN/help/faq/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"静态站文档/zh-CN/index.md"}</script>
 </body>
 </html>

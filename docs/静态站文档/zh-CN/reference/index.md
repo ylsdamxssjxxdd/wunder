@@ -12,7 +12,7 @@ source_docs:
 
 # 参考概览
 
-如果你已经知道 Wunder 是什么，现在需要的是“稳定查表页”，从这里开始。
+如果你已经知道 wunder 是什么，现在需要的是“稳定查表页”，从这里开始。
 
 ## 先看这些
 
@@ -27,7 +27,7 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/reference/stream-events/">
     <strong>流式事件参考</strong>
-    <span>流式状态机最容易依赖的一页。</span>
+    <span>做流式状态机时最容易依赖的一页。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/reference/workspace-routing/">
     <strong>工作区路由</strong>
@@ -42,6 +42,12 @@ source_docs:
     <span>按面板快速找管理端能力。</span>
   </a>
 </div>
+
+## 这组页面适合什么时候看
+
+- 你已经知道问题大概在哪一层
+- 你现在缺的是字段、事件、配置项或路由规则
+- 你不想直接翻整份长文档
 
 ## 按问题找页面
 
@@ -60,7 +66,7 @@ source_docs:
 - [管理端面板索引](/docs/zh-CN/reference/admin-panels/)
 - [工作区路由参考](/docs/zh-CN/reference/workspace-routing/)
 
-## 你最需要记住的点
+## 最容易搞错的点
 
 - 参考页偏“稳定查表”，不是概念页。
 - 接入状态机优先配合流式事件参考阅读。

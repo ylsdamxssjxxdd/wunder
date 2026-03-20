@@ -290,7 +290,9 @@ fn build_worker_card_ability_items(
     items
 }
 
-fn split_document_worker_card_abilities(abilities: &WorkerCardAbilities) -> (Vec<String>, Vec<String>) {
+fn split_document_worker_card_abilities(
+    abilities: &WorkerCardAbilities,
+) -> (Vec<String>, Vec<String>) {
     if abilities.tool_names_present || abilities.skills_present {
         return (
             normalize_names(abilities.tool_names.clone()),
@@ -442,9 +444,11 @@ mod tests {
         assert_eq!(document.abilities.tool_names, vec!["read_file".to_string()]);
         assert_eq!(document.abilities.skills, vec!["planner".to_string()]);
         assert_eq!(document.abilities.items.len(), 2);
-        assert!(document.abilities.items.iter().any(|item| {
-            item.runtime_name == "planner" && item.kind == AbilityKind::Skill
-        }));
+        assert!(document
+            .abilities
+            .items
+            .iter()
+            .any(|item| { item.runtime_name == "planner" && item.kind == AbilityKind::Skill }));
         assert_eq!(document.prompt.system_prompt, None);
         assert_eq!(document.prompt.extra_prompt, Some("prompt".to_string()));
         assert_eq!(document.runtime.model_name, Some("gpt".to_string()));

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>部署与运行 | wunder 文档</title>
-  <meta name="description" content="Wunder 的部署要先分清 desktop、本地开发和 server 三条路径。">
+  <meta name="description" content="部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。">
   <link rel="stylesheet" href="/docs/site.css">
   <script defer src="/third/marked.min.js"></script>
   <script type="module" src="/docs/site.js"></script>
@@ -12,42 +12,51 @@
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
             <span class="docs-brand-text">wunder 文档</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links"><a class="docs-header-link" href="/">控制台</a><a class="docs-header-link" href="/wunder/ppt/">PPT</a></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/ops/deployment","language":"zh-CN","title":"部署与运行","summary":"Wunder 的部署要先分清 desktop、本地开发和 server 三条路径。","read_when":["你要部署 Wunder","你要确认数据库、MCP、sandbox 和工作区怎么放"],"source_docs":["README.md","docs/API文档.md","docs/系统介绍.md","config/wunder-example.yaml"],"tab":"运维","group":"部署与治理","group_path":["部署与治理"],"url":"/docs/zh-CN/ops/deployment/","headings":[{"id":"section-1","level":1,"text":"部署与运行"},{"id":"section-2","level":2,"text":"三条部署路径"},{"id":"section-3","level":3,"text":"Desktop"},{"id":"section-4","level":3,"text":"Server"},{"id":"section-5","level":3,"text":"本地开发"},{"id":"section-6","level":2,"text":"Server 侧推荐组成"},{"id":"section-7","level":2,"text":"数据与存储要点"},{"id":"section-8","level":2,"text":"关键配置文件"},{"id":"section-9","level":2,"text":"常见环境变量"},{"id":"section-10","level":2,"text":"单端口与路径规划"},{"id":"section-11","level":2,"text":"启动后至少检查什么"},{"id":"section-12","level":2,"text":"最容易忽略的部署问题"},{"id":"section-13","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/ops/index","next_slug":"zh-CN/ops/data-and-storage","markdown":"# 部署与运行\n\n部署 Wunder 之前，先不要问“怎么启动”，先问“我要哪种运行形态”。\n\n## 三条部署路径\n\n### Desktop\n\n适合个人直接使用。\n\n特点：\n\n- 本地优先\n- 自带桌面壳\n- 不要求先搭完整 server\n\n### Server\n\n适合团队、组织与统一治理。\n\n特点：\n\n- 多用户\n- 多租户\n- 管理端与用户端协同\n- 可接 sandbox、MCP、A2A、渠道\n\n### 本地开发\n\n适合开发者联调。\n\n特点：\n\n- Rust 后端\n- 前端 dev server\n- 可单独调某一层\n\n## Server 侧推荐组成\n\n典型部署里，至少会涉及这些组件：\n\n- `wunder-server`\n- `wunder-sandbox`\n- `extra-mcp`\n- PostgreSQL\n\n如果需要用户侧生产前端，通常还会有静态资源服务。\n\n## 数据与存储要点\n\n- 网页端 server 使用 PostgreSQL\n- desktop 本地模式使用 SQLite\n- 用户工作区需要持久化\n- `data/` 是临时目录，不要把长期业务资料沉进去\n\n## 关键配置文件\n\n- `config/wunder.yaml`\n- `config/wunder-example.yaml`\n- `data/config/wunder.override.yaml`\n- `extra_mcp/mcp_config.json`\n\n## 常见环境变量\n\n- `WUNDER_HOST`\n- `WUNDER_PORT`\n- `WUNDER_API_KEY`\n- `WUNDER_POSTGRES_DSN`\n- `WUNDER_SANDBOX_ENDPOINT`\n- `WUNDER_MCP_HOST`\n- `WUNDER_CONFIG_PATH`\n- `WUNDER_CONFIG_OVERRIDE_PATH`\n\n## 单端口与路径规划\n\n当前系统已经支持把这些对外入口收口：\n\n- `/wunder`\n- `/a2a`\n- `/.well-known/agent-card.json`\n- `/docs/`\n\n这意味着你可以把业务 API、协议入口和文档站统一挂在同一服务域名下。\n\n## 启动后至少检查什么\n\n建议按这个顺序检查：\n\n1. `/wunder` 是否可返回\n2. `/wunder/chat/ws` 是否可建连\n3. `/a2a/agentCard` 是否可读\n4. `/wunder/mcp` 是否可达\n5. `/docs/` 是否能打开文档站\n\n## 最容易忽略的部署问题\n\n- 只启动了 server，但没准备好 Postgres\n- 开启了 MCP 配置，但目标服务没通\n- 工作区没有持久化，导致产物丢失\n- 把长期业务数据放进了 `data/`\n- 误把 desktop 本地模式当成 server 部署方式\n\n## 相关文档\n\n- [Server 部署](/docs/zh-CN/start/server/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"静态站文档/zh-CN/ops/deployment.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/ops/deployment","language":"zh-CN","title":"部署与运行","summary":"部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。","updated_at":"2026-03-20","read_when":["你要部署 Wunder","你要确认数据库、MCP、sandbox 和工作区怎么放"],"source_docs":["README.md","docs/API文档.md","docs/系统介绍.md","config/wunder-example.yaml"],"tab":"运维","group":"部署与治理","group_path":["部署与治理"],"url":"/docs/zh-CN/ops/deployment/","headings":[{"id":"section-1","level":1,"text":"部署与运行"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"先定这四件事"},{"id":"section-4","level":2,"text":"按目标选部署路径"},{"id":"section-5","level":3,"text":"Desktop"},{"id":"section-6","level":3,"text":"Server"},{"id":"section-7","level":3,"text":"本地开发"},{"id":"section-8","level":2,"text":"如果你部署 Server，最少要准备什么"},{"id":"section-9","level":2,"text":"对外路径怎么规划"},{"id":"section-10","level":2,"text":"启动后先查这几项"},{"id":"section-11","level":2,"text":"关键配置文件"},{"id":"section-12","level":2,"text":"常见环境变量"},{"id":"section-13","level":2,"text":"最容易忽略的部署问题"},{"id":"section-14","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/ops/index","next_slug":"zh-CN/ops/data-and-storage","markdown":"# 部署与运行\n\n部署 Wunder 之前，先不要急着问“怎么启动”，先问“我要哪种运行形态”。\n\n## 这页解决什么\n\n- 怎么先选对部署路径\n- server 侧最少要准备哪些东西\n- 启动后应该先查哪些入口\n\n## 先定这四件事\n\n- 你是个人本地使用，还是团队上线\n- 数据库该用 PostgreSQL 还是 SQLite\n- 工作区放在哪，是否持久化\n- sandbox、MCP、静态前端要不要一起上线\n\n## 按目标选部署路径\n\n### Desktop\n\n- 适合个人直接使用\n- 本地优先\n- 自带桌面壳\n- 不要求先搭完整 server\n\n### Server\n\n- 适合团队、组织和统一治理\n- 多用户、多租户\n- 管理端与用户端协同\n- 可接 sandbox、MCP、A2A 和外部渠道\n\n### 本地开发\n\n- 适合开发者联调\n- Rust 后端和前端 dev server 分层调试\n- 可以只启动某一层做局部验证\n\n## 如果你部署 Server，最少要准备什么\n\n典型部署里，至少会涉及这些组件：\n\n- `wunder-server`\n- PostgreSQL\n- 持久化用户工作区\n\n如果你需要更完整的能力，再按需接入：\n\n- `wunder-sandbox`\n- `extra-mcp`\n- 用户侧或管理侧静态资源服务\n\n## 对外路径怎么规划\n\n- `/wunder`\n- `/wunder/chat/*`\n- `/a2a`\n- `/.well-known/agent-card.json`\n- `/docs/`\n\n这些入口可以统一挂到同一服务域名下，别等上线前再临时拼接。\n\n## 启动后先查这几项\n\n1. `/wunder` 是否可返回\n2. `/wunder/chat/ws` 是否可建连\n3. `/a2a/agentCard` 是否可读\n4. `/wunder/mcp` 是否可达\n5. `/docs/` 是否能正常打开\n\n## 关键配置文件\n\n- `config/wunder.yaml`\n- `config/wunder-example.yaml`\n- `data/config/wunder.override.yaml`\n- `extra_mcp/mcp_config.json`\n\n## 常见环境变量\n\n- `WUNDER_HOST`\n- `WUNDER_PORT`\n- `WUNDER_API_KEY`\n- `WUNDER_POSTGRES_DSN`\n- `WUNDER_SANDBOX_ENDPOINT`\n- `WUNDER_MCP_HOST`\n- `WUNDER_CONFIG_PATH`\n- `WUNDER_CONFIG_OVERRIDE_PATH`\n\n## 最容易忽略的部署问题\n\n- 只启动了 server，但没准备好 Postgres\n- 开启了 MCP 配置，但目标服务没通\n- 工作区没有持久化，导致产物丢失\n- 把长期业务数据放进了 `data/`\n- 误把 desktop 本地模式当成 server 部署方式\n\n## 相关文档\n\n- [Server 部署](/docs/zh-CN/start/server/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"静态站文档/zh-CN/ops/deployment.md"}</script>
 </body>
 </html>

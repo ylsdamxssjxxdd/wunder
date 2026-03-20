@@ -12,42 +12,51 @@
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
             <span class="docs-brand-text">wunder 文档</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links"><a class="docs-header-link" href="/">控制台</a><a class="docs-header-link" href="/wunder/ppt/">PPT</a></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/web-fetch","language":"zh-CN","title":"网页抓取","summary":"`网页抓取` 直接获取网页正文内容，适合读文本，不适合代替真正的浏览器自动化。","read_when":["你要让模型读取网页正文","你不确定该用网页抓取还是浏览器"],"source_docs":["config/wunder-example.yaml","src/services/tools/web_fetch_tool.rs","docs/系统介绍.md"],"tab":"工具","group":"网页与桌面","group_path":["网页与桌面"],"url":"/docs/zh-CN/tools/web-fetch/","headings":[{"id":"section-1","level":1,"text":"网页抓取"},{"id":"section-2","level":2,"text":"它解决什么"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"什么时候优先用它"},{"id":"section-5","level":2,"text":"什么时候不要用它"},{"id":"section-6","level":2,"text":"为什么它不等于浏览器"},{"id":"section-7","level":2,"text":"开关在哪里"},{"id":"section-8","level":2,"text":"你最需要记住的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/skill-call","next_slug":"zh-CN/tools/browser","markdown":"# 网页抓取\n\n`网页抓取` 是 Wunder 当前的轻量网页读取工具。\n\n## 它解决什么\n\n它用于：\n\n- 抓取一个 URL\n- 提取网页正文\n- 以更适合模型消费的文本返回\n\n## 常用参数\n\n- `url`\n- `extract_mode`\n- `max_chars`\n\n其中 `extract_mode` 当前主要是：\n\n- `markdown`\n- `text`\n\n## 什么时候优先用它\n\n- 你只想读文章、帮助页、说明页正文\n- 你不需要点击、输入和交互\n- 目标页面主要是静态内容\n\n## 什么时候不要用它\n\n如果你要：\n\n- 点按钮\n- 填表单\n- 登录\n- 处理强交互页面\n\n那应该看：\n\n- [浏览器](/docs/zh-CN/tools/browser/)\n\n## 为什么它不等于浏览器\n\n因为它不维护真实交互状态，只做页面抓取和正文提取。\n\n所以它更轻，也更快，但能力边界更窄。\n\n## 开关在哪里\n\n当前它受：\n\n- `tools.web_fetch.enabled`\n\n控制。\n\n## 你最需要记住的点\n\n- `网页抓取` 适合读网页，不适合操控网页。\n- 静态正文优先用它，交互页面优先用浏览器。\n- 抓取结果仍会受正文提取和字符预算限制。\n\n## 相关文档\n\n- [浏览器](/docs/zh-CN/tools/browser/)\n- [接入概览](/docs/zh-CN/integration/)\n","source_path":"静态站文档/zh-CN/tools/web-fetch.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/web-fetch","language":"zh-CN","title":"网页抓取","summary":"`网页抓取` 直接获取网页正文内容，适合读文本，不适合代替真正的浏览器自动化。","updated_at":"2026-03-20","read_when":["你要让模型读取网页正文","你不确定该用网页抓取还是浏览器"],"source_docs":["config/wunder-example.yaml","src/services/tools/web_fetch_tool.rs","docs/系统介绍.md"],"tab":"工具","group":"网页与桌面","group_path":["网页与桌面"],"url":"/docs/zh-CN/tools/web-fetch/","headings":[{"id":"section-1","level":1,"text":"网页抓取"},{"id":"section-2","level":2,"text":"它解决什么"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"什么时候优先用它"},{"id":"section-5","level":2,"text":"什么时候不要用它"},{"id":"section-6","level":2,"text":"为什么它不等于浏览器"},{"id":"section-7","level":2,"text":"开关在哪里"},{"id":"section-8","level":2,"text":"你最需要记住的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/skill-call","next_slug":"zh-CN/tools/browser","markdown":"# 网页抓取\n\n`网页抓取` 是 Wunder 当前的轻量网页读取工具。\n\n## 它解决什么\n\n它用于：\n\n- 抓取一个 URL\n- 提取网页正文\n- 以更适合模型消费的文本返回\n\n## 常用参数\n\n- `url`\n- `extract_mode`\n- `max_chars`\n\n其中 `extract_mode` 当前主要是：\n\n- `markdown`\n- `text`\n\n## 什么时候优先用它\n\n- 你只想读文章、帮助页、说明页正文\n- 你不需要点击、输入和交互\n- 目标页面主要是静态内容\n\n## 什么时候不要用它\n\n如果你要：\n\n- 点按钮\n- 填表单\n- 登录\n- 处理强交互页面\n\n那应该看：\n\n- [浏览器](/docs/zh-CN/tools/browser/)\n\n## 为什么它不等于浏览器\n\n因为它不维护真实交互状态，只做页面抓取和正文提取。\n\n所以它更轻，也更快，但能力边界更窄。\n\n## 开关在哪里\n\n当前它受：\n\n- `tools.web.fetch.enabled`\n\n控制。\n\n## 你最需要记住的点\n\n- `网页抓取` 适合读网页，不适合操控网页。\n- 静态正文优先用它，交互页面优先用浏览器。\n- 抓取结果仍会受正文提取和字符预算限制。\n\n## 相关文档\n\n- [浏览器](/docs/zh-CN/tools/browser/)\n- [接入概览](/docs/zh-CN/integration/)\n","source_path":"静态站文档/zh-CN/tools/web-fetch.md"}</script>
 </body>
 </html>

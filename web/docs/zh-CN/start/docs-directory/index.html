@@ -12,42 +12,51 @@
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
             <span class="docs-brand-text">wunder 文档</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links"><a class="docs-header-link" href="/">控制台</a><a class="docs-header-link" href="/wunder/ppt/">PPT</a></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/docs-directory","language":"zh-CN","title":"常用文档目录","summary":"这是 wunder 最常用页面的精选目录。","read_when":["你不想从左侧导航慢慢翻","你只想先找到最常用的几篇文档"],"source_docs":["docs/wunder补全文档落地方案.md"],"tab":"开始","group":"导航","group_path":["导航"],"url":"/docs/zh-CN/start/docs-directory/","headings":[{"id":"section-1","level":1,"text":"常用文档目录"},{"id":"section-2","level":2,"text":"第一次使用"},{"id":"section-3","level":2,"text":"理解系统"},{"id":"section-4","level":2,"text":"做接入"},{"id":"section-5","level":2,"text":"看界面"},{"id":"section-6","level":2,"text":"部署与治理"},{"id":"section-7","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/start/hubs","next_slug":"zh-CN/concepts/index","markdown":"# 常用文档目录\n\n## 第一次使用\n\n- [快速开始](/docs/zh-CN/start/quickstart/)\n- [Desktop 入门](/docs/zh-CN/start/desktop/)\n- [Server 部署](/docs/zh-CN/start/server/)\n- [CLI 使用](/docs/zh-CN/start/cli/)\n\n## 理解系统\n\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [工作区与容器](/docs/zh-CN/concepts/workspaces/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n- [蜂群协作](/docs/zh-CN/concepts/swarm/)\n\n## 做接入\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [用户世界接口](/docs/zh-CN/integration/user-world/)\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [外部登录与免登嵌入](/docs/zh-CN/integration/external-login/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)\n\n## 看界面\n\n- [用户侧前端](/docs/zh-CN/surfaces/frontend/)\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n- [桌面端界面](/docs/zh-CN/surfaces/desktop-ui/)\n\n## 部署与治理\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [数据与存储](/docs/zh-CN/ops/data-and-storage/)\n- [Desktop 本地模式](/docs/zh-CN/ops/desktop-local-mode/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [配置说明](/docs/zh-CN/reference/config/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n- [API 索引](/docs/zh-CN/reference/api-index/)\n- [FAQ](/docs/zh-CN/help/faq/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n- [术语表](/docs/zh-CN/help/glossary/)\n\n## 相关文档\n\n- [文档总览](/docs/zh-CN/start/hubs/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"静态站文档/zh-CN/start/docs-directory.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/docs-directory","language":"zh-CN","title":"常用文档目录","summary":"这是 wunder 最常用页面的精选目录。","updated_at":"2026-03-20","read_when":["你不想从左侧导航慢慢翻","你只想先找到最常用的几篇文档"],"source_docs":["docs/wunder补全文档落地方案.md"],"tab":"开始","group":"导航","group_path":["导航"],"url":"/docs/zh-CN/start/docs-directory/","headings":[{"id":"section-1","level":1,"text":"常用文档目录"},{"id":"section-2","level":2,"text":"如果你只看三页"},{"id":"section-3","level":2,"text":"第一次使用"},{"id":"section-4","level":2,"text":"理解系统"},{"id":"section-5","level":2,"text":"做接入"},{"id":"section-6","level":2,"text":"看界面"},{"id":"section-7","level":2,"text":"部署、治理与排障"},{"id":"section-8","level":2,"text":"一个实用建议"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/start/hubs","next_slug":"zh-CN/concepts/index","markdown":"# 常用文档目录\n\n这页适合两种人：\n\n- 你不想慢慢翻左侧导航\n- 你只想先找到最常用的几篇文档\n\n## 如果你只看三页\n\n- [快速开始](/docs/zh-CN/start/quickstart/)\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n\n## 第一次使用\n\n- [快速开始](/docs/zh-CN/start/quickstart/)\n- [Desktop 入门](/docs/zh-CN/start/desktop/)\n- [Server 部署](/docs/zh-CN/start/server/)\n- [CLI 使用](/docs/zh-CN/start/cli/)\n\n## 理解系统\n\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [工作区与容器](/docs/zh-CN/concepts/workspaces/)\n- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)\n- [长期记忆](/docs/zh-CN/concepts/memory/)\n- [蜂群协作](/docs/zh-CN/concepts/swarm/)\n\n## 做接入\n\n- [wunder API](/docs/zh-CN/integration/wunder-api/)\n- [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)\n- [用户世界接口](/docs/zh-CN/integration/user-world/)\n- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)\n- [外部登录与免登嵌入](/docs/zh-CN/integration/external-login/)\n- [A2A 接口](/docs/zh-CN/integration/a2a/)\n- [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)\n\n## 看界面\n\n- [用户侧前端](/docs/zh-CN/surfaces/frontend/)\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n- [桌面端界面](/docs/zh-CN/surfaces/desktop-ui/)\n\n## 部署、治理与排障\n\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [数据与存储](/docs/zh-CN/ops/data-and-storage/)\n- [Desktop 本地模式](/docs/zh-CN/ops/desktop-local-mode/)\n- [认证与安全](/docs/zh-CN/ops/auth-and-security/)\n- [配置说明](/docs/zh-CN/reference/config/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n- [API 索引](/docs/zh-CN/reference/api-index/)\n- [FAQ](/docs/zh-CN/help/faq/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n- [术语表](/docs/zh-CN/help/glossary/)\n\n## 一个实用建议\n\n如果你不知道某个问题应该先从哪一层看，按这个顺序：\n\n1. 先看开始页或概念页，确认问题属于哪一层。\n2. 再看接入页、工具页或界面页，确认具体入口。\n3. 最后再回参考页或故障排查页查字段、事件和异常路径。\n\n## 相关文档\n\n- [文档总览](/docs/zh-CN/start/hubs/)\n- [配置说明](/docs/zh-CN/reference/config/)\n","source_path":"静态站文档/zh-CN/start/docs-directory.md"}</script>
 </body>
 </html>

@@ -9,12 +9,18 @@
     "url": "/docs/",
     "headings": [
       "wunder",
-      "wunder 能做什么",
-      "从哪里开始",
-      "wunder 的关键约定",
+      "是什么",
+      "先从哪里开始",
+      "不同人下一步看什么",
+      "你是普通用户",
+      "你是管理员或交付人员",
+      "你是开发者或集成人员",
+      "如果你要理解结构",
+      "如果你要做接入",
+      "你最需要记住的点",
       "相关文档"
     ],
-    "text": "wunder wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；当前对外调用分为底层执行入口和完整智能体会话入口两层。 # wunder 统一调度内核 | server / cli / desktop wunder 是一个智能体调度系统。 当前产品重心是 desktop，但底层能力同时服务于 server 和 cli。 对开发者，一切皆接口。对模型，一切皆工具。 接入层当前分为两层： POST /wunder 是底层执行入口； /wunder/chat/ 是完整智能体会话入口。 快速开始 先把 Wunder 跑起来，优先体验 desktop。 系统架构 理解 server、调度层、工具层、工作区和多界面的协作关系。 wunder API 理解 /wunder 和 /wunder/chat/ 的职责边界与推荐接入路径。 工具总览 查看 Wunder 内置工具、MCP、Skills 和知识能力。 部署与运行 按桌面、本地开发、服务端部署三条路径落地。 wunder 能做什么 统一承载 server / cli / desktop 三种运行形态 提供底层执行入口 /wunder 和完整会话入口 /wunder/chat/ 支持 WebSocket 优先、SSE 兜底的流式执行链路 提供内置工具、MCP、Skills、知识库与 A2A 能力 支持多用户并发、工作区隔离、长期记忆与蜂群协作 同时提供用户侧前端、管理端前端和桌面端界面 从哪里开始 如果你是第一次使用 wunder，建议先从这些页面开始： 快速开始 先跑起来，再回头看原理。 Desktop 入门 当前主推形态，本地优先。 Server 部署 多用户、多租户与治理能力入口。 CLI 使用 开发、调试与自动化场景入口。 如果你要理解系统结构： 系统架构 工作区与容器 会话与轮次 工具体系 长期记忆 如果你要做接入： wunder API 聊天会话 聊天 WebSocket 用户世界接口 渠道 Webhook A2A 接口 MCP 入口 如果你要查稳定参考： 配置说明 流式事件参考 API 索引 wunder 的关键约定 /wunder 的 userid 不要求是注册用户 会话轮次分为“用户轮次 / 模型轮次” token 统计记录的是上下文占用量，不是账单总消耗量 线程首次确定的 system prompt 会冻结 长期记忆只在线程初始化时注入一次 相关文档 文档总览 FAQ 故障排查 wunder wunder 能做什么 从哪里开始 wunder 的关键约定 相关文档"
+    "text": "wunder wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；当前对外调用分为底层执行入口和完整智能体会话入口两层。 # wunder 统一调度内核 | server / cli / desktop wunder 是一个智能体调度系统。 它现在主推 desktop，但底层内核同时服务于 server 和 cli。 如果你是第一次打开文档站，这一页只解决两件事： wunder 到底是什么 你下一步应该点哪一页 快速开始 先把 wunder 跑起来，优先体验 desktop。 系统架构 先分清 server、调度层、工具层和工作区。 wunder API 统一执行入口，适合最短路径接入。 工具总览 看内置工具、MCP、Skills 和知识库从哪里挂进来。 部署与运行 按桌面、本地开发、服务端部署三条路径看。 是什么 同一套调度内核同时支撑 server / cli / desktop 对外统一暴露 /wunder，并提供完整聊天域 /wunder/chat/ 模型可以调用内置工具、MCP、Skills、知识库和 A2A 能力 系统支持多用户并发、工作区隔离、长期记忆和蜂群协作 前端分为用户侧前端、管理端前端和桌面端三块界面 可以把 wunder 理解成一句话： 对开发者，一切是接口。 对模型，一切是工具。 先从哪里开始 如果你只想尽快看见可用结果，先从这些页面开始： 快速开始 最短路径把 wunder 跑起来。 Desktop 入门 当前主推形态，本地优先。 Server 部署 组织级部署、多用户和治理入口。 CLI 使用 开发、调试和自动化任务入口。 不同人下一步看什么 你是普通用户 快速开始 Desktop 入门 用户侧前端 你是管理员或交付人员 Server 部署 部署与运行 管理端界面 你是开发者或集成人员 wunder API 聊天 WebSocket 工具总览 如果你要理解结构 系统架构 工作区与容器 会话与轮次 工具体系 长期记忆 如果你要做接入 wunder API 聊天会话 聊天 WebSocket 用户世界接口 渠道 Webhook A2A 接口 MCP 入口 你最需要记住的点 /wunder 的 userid 不要求是注册用户 会话轮次分为“用户轮次 / 模型轮次” token 统计记录的是上下文占用量，不是账单总消耗量 线程首次确定的 system prompt 会冻结 长期记忆只在线程初始化时注入一次 相关文档 文档总览 FAQ 故障排查 wunder 是什么 先从哪里开始 不同人下一步看什么 你是普通用户 你是管理员或交付人员 你是开发者或集成人员 如果你要理解结构 如果你要做接入 你最需要记住的点 相关文档"
   },
   {
     "slug": "zh-CN/start/quickstart",
@@ -30,11 +36,11 @@
       "最短可用路径：Desktop",
       "如果你要部署 Server",
       "如果你要用 CLI",
-      "运行前你至少需要知道的事",
-      "推荐阅读顺序",
+      "运行前你最需要知道的点",
+      "跑起来之后看什么",
       "相关文档"
     ],
-    "text": "快速开始 用最短路径跑通 wunder 的第一条主链路，优先推荐 desktop。 # 快速开始 这篇文档给你一条最短路径，帮助你先把 wunder 跑起来。 推荐顺序 1. 普通用户优先从 Desktop 入门 开始 2. 团队部署或接口接入从 Server 部署 开始 3. 开发者调试或脚本任务从 CLI 使用 开始 最短可用路径：Desktop 如果你的目标是尽快实际使用 wunder，而不是先研究架构，建议走这条路径： 1. 启动 wunder-desktop 2. 确认本地模式可以打开聊天界面 3. 选择或配置一个可用模型 4. 在输入框里直接提出任务 5. 观察模型回复、工具调用、工作区产物与会话状态 Desktop 是当前主推形态，因为它同时验证了： 模型调用链路 用户侧前端交互 工作区与本地文件能力 智能体设置与对话执行主链路 如果你要部署 Server Server 适合这些场景： 多用户、多单位、多租户 网页端统一访问 需要管理员侧治理能力 需要渠道、蜂群、用户管理、MCP 统一接入 直接阅读： Server 部署 部署与运行 认证与安全 如果你要用 CLI CLI 适合这些场景： 本地终端任务 脚本化调用 开发者调试 工作区驱动任务执行 直接阅读： CLI 使用 会话与轮次 工具体系 运行前你至少需要知道的事 wunder 有三种运行形态：server / cli / desktop server 是核心能力底座 desktop 是当前主交付产品 cli 适合开发与自动化 用户请求优先走 WebSocket，SSE 作为兜底 推荐阅读顺序 Desktop 入门 系统架构 wunder API 故障排查 相关文档 Desktop 入门 Server 部署 CLI 使用 快速开始 推荐顺序 最短可用路径：Desktop 如果你要部署 Server 如果你要用 CLI 运行前你至少需要知道的事 推荐阅读顺序 相关文档"
+    "text": "快速开始 用最短路径跑通 wunder 的第一条主链路，优先推荐 desktop。 # 快速开始 这页只解决一件事： 用最短路径把 wunder 跑起来 如果你不想先研究架构，直接按这里走。 推荐顺序 1. 普通用户优先从 Desktop 入门 开始 2. 团队部署或接口接入从 Server 部署 开始 3. 开发者调试或脚本任务从 CLI 使用 开始 最短可用路径：Desktop 如果你只是想尽快用起来，建议走这条路径： 1. 启动 wunder-desktop 2. 确认本地模式可以打开聊天界面 3. 选择或配置一个可用模型 4. 在输入框里直接提出任务 5. 观察模型回复、工具调用、工作区产物与会话状态 为什么优先推荐 desktop： 模型调用链路 用户侧前端交互 工作区与本地文件能力 智能体设置与对话执行主链路 如果你要部署 Server Server 更适合这些场景： 多用户、多单位、多租户 网页端统一访问 需要管理员侧治理能力 需要渠道、蜂群、用户管理、MCP 统一接入 直接阅读： Server 部署 部署与运行 认证与安全 如果你要用 CLI CLI 适合这些场景： 本地终端任务 脚本化调用 开发者调试 工作区驱动任务执行 直接阅读： CLI 使用 会话与轮次 工具体系 运行前你最需要知道的点 wunder 有三种运行形态：server / cli / desktop server 是核心能力底座 desktop 是当前主交付产品 cli 适合开发与自动化 用户请求优先走 WebSocket，SSE 作为兜底 跑起来之后看什么 Desktop 入门 系统架构 wunder API 故障排查 相关文档 Desktop 入门 Server 部署 CLI 使用 快速开始 推荐顺序 最短可用路径：Desktop 如果你要部署 Server 如果你要用 CLI 运行前你最需要知道的点 跑起来之后看什么 相关文档"
   },
   {
     "slug": "zh-CN/start/desktop",
@@ -42,19 +48,20 @@
     "tab": "开始",
     "group": "入门",
     "title": "Desktop 入门",
-    "summary": "wunder-desktop 是当前主推形态，适合个人用户与本地优先使用。",
+    "summary": "先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。",
     "url": "/docs/zh-CN/start/desktop/",
     "headings": [
       "Desktop 入门",
-      "适合谁",
-      "Desktop 的核心特点",
-      "你会看到什么",
-      "Desktop 模式下的重要约定",
-      "什么时候切远端",
-      "推荐下一步",
+      "这页解决什么",
+      "先看这几条",
+      "什么时候先选 Desktop",
+      "你会在 Desktop 里看到什么",
+      "本地模式下要记住什么",
+      "什么时候不要先看这页",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "Desktop 入门 wunder-desktop 是当前主推形态，适合个人用户与本地优先使用。 # Desktop 入门 wunder-desktop 是当前 wunder 的主交付形态。 它强调本地优先、桌面工作台、低门槛启动，以及在需要时接入远端 server。 适合谁 想直接使用智能体而不是先部署整套服务的人 需要本地文件、桌面窗口和聊天工作台的人 希望未来再接远端网关的人 Desktop 的核心特点 默认优先本地运行 提供完整用户侧界面 支持工作区与本地目录映射 支持在本地模式与远端 gateway 之间切换 桌面端依旧复用统一的 /wunder 调度内核 你会看到什么 Desktop 打开后，主要是一个统一消息工作台： 左侧：导航与功能入口 中间：会话、联系人、智能体或列表视图 右侧：聊天主区域、工作流、设置与扩展面板 这套界面不是单纯聊天，而是承载： 用户与智能体会话 用户世界通信 工作区与文件 智能体设置 本地模式与远端接入设置 Desktop 模式下的重要约定 本地模式优先使用附带的 Python 运行时 本地工作目录与容器目录默认按持久目录处理，不做 24 小时自动清理 用户私有工作目录与智能体容器目录是不同的作用域 工作区文件能力会直接影响聊天中的智能体可操作范围 什么时候切远端 如果你只是个人使用，本地模式通常已经够用。 如果你遇到这些需求，再考虑接远端： 需要组织级用户管理 需要统一管理员后台 需要团队协作和多租户治理 需要把桌面端作为 server 的一个接入端 推荐下一步 系统架构 管理端界面 部署与运行 相关文档 快速开始 桌面界面 故障排查 Desktop 入门 适合谁 Desktop 的核心特点 你会看到什么 Desktop 模式下的重要约定 什么时候切远端 推荐下一步 相关文档"
+    "text": "Desktop 入门 先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。 # Desktop 入门 如果你现在只是想先把 Wunder 用起来，不要先去搭 server，先看 wunder-desktop。 它是面向个人用户和本地优先场景的主入口，打开就能进入消息工作台、文件工作区和桌面交互壳。 这页解决什么 什么时候应该先用 desktop desktop 和 cli、server 的分工差别 本地模式下有哪些关键约定 先看这几条 desktop 适合个人使用、演示、桌面工作台和本地文件协作。 它默认优先本地运行，但需要时也能接远端 gateway 或 server。 你看到的不只是聊天窗口，而是一整套工作台。 什么时候先选 Desktop 你想直接开始用，而不是先部署一套服务 你需要本地文件、窗口和工作区 你更习惯图形界面，不想从命令行开始 你后面可能会接远端，但今天先想跑起来 你会在 Desktop 里看到什么 Desktop 打开后，主要是一个统一消息工作台： 左侧：导航与功能入口 中间：会话、联系人、智能体或列表视图 右侧：聊天主区域、工作流、设置与扩展面板 这意味着 desktop 不只是“聊一句回一句”，它还承载： 用户与智能体会话 工作区与文件 桌面能力和本地目录映射 本地模式与远端接入切换 本地模式下要记住什么 本地模式优先使用附带的 Python 运行时 本地工作目录与容器目录默认按持久目录处理，不做 24 小时自动清理 用户私有工作目录与智能体容器目录是不同的作用域 工作区文件能力会直接影响聊天中的智能体可操作范围 什么时候不要先看这页 你在做团队部署、多用户治理或管理员后台 你要统一对外提供 /wunder、/a2a 和聊天接口 你主要做脚本、终端自动化和开发调试 最容易搞错的点 desktop 不是“简化版 server”，它是本地优先的独立运行形态。 本地模式够个人使用，但不等于适合团队治理。 工作区文件会影响工具可见范围，所以不要把它当纯展示目录。 相关文档 系统架构 部署与运行 快速开始 桌面界面 故障排查 Desktop 入门 这页解决什么 先看这几条 什么时候先选 Desktop 你会在 Desktop 里看到什么 本地模式下要记住什么 什么时候不要先看这页 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/start/server",
@@ -62,18 +69,20 @@
     "tab": "开始",
     "group": "入门",
     "title": "Server 部署",
-    "summary": "`wunder-server` 是系统核心，负责多租户治理、智能体调度，以及 `/wunder`、`/wunder/chat/*`、`/a2a` 等对外接口。",
+    "summary": "需要多用户治理、统一接入层和管理员后台时，再看 `wunder-server` 这条线。",
     "url": "/docs/zh-CN/start/server/",
     "headings": [
       "Server 部署",
-      "Server 提供什么",
-      "适合什么场景",
-      "对外访问的关键点",
-      "数据与存储约定",
-      "部署前建议先看",
+      "这页解决什么",
+      "先记这几条",
+      "什么时候必须上 Server",
+      "Server 负责什么",
+      "部署前先定这些事",
+      "对外访问先记住这些",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "Server 部署 wunder-server 是系统核心，负责多租户治理、智能体调度，以及 /wunder、/wunder/chat/、/a2a 等对外接口。 # Server 部署 wunder-server 是 Wunder 的核心运行形态。 它面向多用户、多单位、多租户、管理员治理，以及对外开放接口。 Server 提供什么 /wunder 底层执行入口 /wunder/chat/ 完整智能体会话入口 /a2a 系统级 A2A 接口 WebSocket 和 SSE 流式能力 用户与管理员接口 智能体调度与工具编排 用户、单位、权限与治理能力 适合什么场景 团队或组织内部部署 需要统一接入层和管理员后台 需要多用户并发与长期持久化工作区 需要把 Wunder 作为平台能力开放给其他系统 对外访问的关键点 业务方可以把 /wunder 当成底层执行入口 如果要稳定调用某个独立人格智能体，优先走 /wunder/chat/ userid 不要求一定是注册用户 A2A 当前暴露的是系统级路由卡，不是每个智能体一张独立卡 数据与存储约定 网页端 server 形态使用 PostgreSQL desktop 本地形态使用 SQLite 用户工作区应持久化保存 data/ 目录视为运行时临时目录，不用于长期业务资料沉淀 部署前建议先看 部署与运行 认证与安全 wunder API 相关文档 系统架构 管理端界面 聊天 WebSocket Server 部署 Server 提供什么 适合什么场景 对外访问的关键点 数据与存储约定 部署前建议先看 相关文档"
+    "text": "Server 部署 需要多用户治理、统一接入层和管理员后台时，再看 wunder-server 这条线。 # Server 部署 如果你已经确定要做团队部署、管理员后台或统一对外接口，这页再看。 wunder-server 是 Wunder 的核心运行形态，负责多用户、多单位、多租户治理，以及 /wunder、/wunder/chat/、/a2a 等公开入口。 这页解决什么 什么时候必须上 server server 负责哪些能力 部署前要先定哪些关键项 先记这几条 server 是团队和组织场景的主入口，不是个人本地模式的替代叫法。 网页端 server 形态使用 PostgreSQL，不是 SQLite。 userid 不要求一定是已注册用户，外部调用也可以传虚拟用户标识。 实时链路优先 WebSocket，SSE 作为兜底。 什么时候必须上 Server 你要多用户并发访问 你要组织、单位、租户和管理员治理 你要统一暴露 /wunder、聊天接口和 A2A 你要把 Wunder 当平台能力接给别的系统 Server 负责什么 /wunder 底层执行入口 /wunder/chat/ 完整智能体会话入口 /a2a 系统级 A2A 接口 WebSocket 和 SSE 流式能力 用户与管理员接口 智能体调度与工具编排 用户、单位、权限与治理能力 部署前先定这些事 数据库放 PostgreSQL，连通性和备份方案先定好 用户工作区要持久化，不要落到临时目录 需不需要同时部署 sandbox、MCP、A2A 和静态文档站 对外域名下准备暴露哪些路径 对外访问先记住这些 业务方可以把 /wunder 当成底层执行入口 如果要稳定调用某个独立人格智能体，优先走 /wunder/chat/ userid 不要求一定是注册用户 A2A 当前暴露的是系统级路由卡，不是每个智能体一张独立卡 最容易搞错的点 把 desktop 当成 server 的部署方式，这是两条线。 只暴露了 /wunder，却没规划聊天域和 WebSocket。 误以为 userid 必须先在用户管理里注册。 把长期业务数据放进 data/，后面很容易被清理或覆盖。 相关文档 部署与运行 认证与安全 系统架构 管理端界面 wunder API 聊天 WebSocket Server 部署 这页解决什么 先记这几条 什么时候必须上 Server Server 负责什么 部署前先定这些事 对外访问先记住这些 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/start/cli",
@@ -81,18 +90,19 @@
     "tab": "开始",
     "group": "入门",
     "title": "CLI 使用",
-    "summary": "wunder-cli 面向开发者、终端任务与自动化场景。",
+    "summary": "需要终端执行、脚本化接入或开发调试时，再看 `wunder-cli`。",
     "url": "/docs/zh-CN/start/cli/",
     "headings": [
       "CLI 使用",
-      "CLI 的特点",
-      "适合的任务",
-      "CLI 与 Desktop 的区别",
-      "CLI 与 Server 的区别",
-      "推荐先理解的概念",
+      "这页解决什么",
+      "先看这几条",
+      "什么时候先用 CLI",
+      "CLI 最适合的场景",
+      "什么时候不要先看这页",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "CLI 使用 wunder-cli 面向开发者、终端任务与自动化场景。 # CLI 使用 wunder-cli 是 wunder 的终端形态。 它适合开发者、本地任务、脚本化调用和工作区驱动执行。 CLI 的特点 更适合调试和自动化 使用当前目录或指定目录作为工作空间 能更直接地观察会话、工具与产物 与 server、desktop 复用同一套调度内核 适合的任务 编程类任务 文件处理任务 自动化流程 需要终端输出、JSONL 事件或 TUI 交互的任务 CLI 与 Desktop 的区别 Desktop 更适合日常使用和图形化工作台 CLI 更适合开发、脚本与终端协作 两者底层能力一致，但交互壳不同 CLI 与 Server 的区别 Server 面向多用户与治理 CLI 面向单用户本地执行 Server 要求更多部署与运行环境 CLI 更适合快速启动和局部任务 推荐先理解的概念 会话与轮次 工具体系 长期记忆 相关文档 快速开始 系统架构 故障排查 CLI 使用 CLI 的特点 适合的任务 CLI 与 Desktop 的区别 CLI 与 Server 的区别 推荐先理解的概念 相关文档"
+    "text": "CLI 使用 需要终端执行、脚本化接入或开发调试时，再看 wunder-cli。 # CLI 使用 如果你主要在终端里工作，这页先看。 wunder-cli 是 Wunder 的命令行形态，适合开发者、本地任务、脚本化调用和工作区驱动执行。 这页解决什么 什么时候优先用 CLI CLI 最适合哪些任务 CLI 和 desktop、server 的分工差别 先看这几条 CLI 适合开发调试、批处理、脚本自动化和工作区驱动执行。 它通常直接使用当前目录或指定目录作为工作空间。 它和 desktop、server 复用同一套调度内核，差别主要在交互壳。 什么时候先用 CLI 你要做编程类任务或文件处理 你要在终端里观察事件、工具调用和产物 你要接脚本、CI、批处理或自动化流程 你需要 JSONL 事件流或 TUI 交互 CLI 最适合的场景 一次性的本地任务 以目录为中心的工作区操作 调模型、调工具、看运行细节 不需要完整图形界面的开发工作流 什么时候不要先看这页 你只是想直接日常使用 Wunder，不想碰终端 你在做团队部署、管理员后台或统一对外接口 你需要桌面窗口、本地 GUI 和消息工作台 最容易搞错的点 CLI 不是“功能更少的 desktop”，它更适合开发和自动化。 CLI 适合单用户本地执行，不负责多用户治理。 工作目录就是上下文的一部分，换目录往往就换了任务作用域。 相关文档 快速开始 系统架构 会话与轮次 故障排查 CLI 使用 这页解决什么 先看这几条 什么时候先用 CLI CLI 最适合的场景 什么时候不要先看这页 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/start/hubs",
@@ -107,11 +117,12 @@
       "如果你是普通用户",
       "如果你是管理员",
       "如果你是开发者",
-      "如果你在做模型与工具编排",
+      "如果你在做集成或平台化",
       "如果你在排障",
+      "你最需要记住的点",
       "相关文档"
     ],
-    "text": "文档总览 这是 wunder 文档的角色化与主题化导航入口。 # 文档总览 用这个页面快速找到适合你的入口。 如果你是普通用户 快速开始 优先跑通 Wunder，而不是先研究所有模块。 Desktop 入门 最贴近当前 Wunder 主产品形态的入口。 用户侧前端 理解聊天工作台、用户世界和工具页的关系。 FAQ 先看常见问题，再决定是否深入排障。 如果你是管理员 Server 部署 了解多租户服务形态、数据库和运行入口。 管理端界面 模型、工具、渠道、用户与预设智能体治理入口。 部署与运行 按 compose、本地开发和桌面模式划分部署路径。 认证与安全 区分 API Key、用户 Token、外链鉴权与沙盒边界。 如果你是开发者 CLI 使用 终端和脚本自动化入口。 系统架构 先理解模块边界，再看具体接口。 wunder API 统一入口与流式返回的最短接入说明。 聊天 WebSocket 对话态主实时通道，支持 resume/watch/cancel。 工具总览 按工具类别查内置工具详情，而不是只看概念描述。 MCP 入口 自托管 MCP 与外部 MCP 统一接入方式。 如果你在做模型与工具编排 工具体系 工具总览 长期记忆 蜂群协作 A2A 接口 如果你在排障 FAQ 故障排查 配置说明 相关文档 常用文档目录 文档总览 如果你是普通用户 如果你是管理员 如果你是开发者 如果你在做模型与工具编排 如果你在排障 相关文档"
+    "text": "文档总览 这是 wunder 文档的角色化与主题化导航入口。 # 文档总览 这页不是再讲一遍 wunder 是什么。 它只做一件事：按角色和任务把入口分给你。 如果你是普通用户 快速开始 先用起来，不要一开始就看整套架构。 Desktop 入门 当前主推形态，也是最符合真实使用路径的入口。 用户侧前端 看聊天工作台、用户世界和工具区各自在哪里。 FAQ 先排掉常见误解，再决定是否深入排障。 如果你是管理员 Server 部署 看服务形态、数据库和运行入口。 管理端界面 模型、工具、渠道、用户和预设智能体的治理入口。 部署与运行 部署、依赖服务和运维入口从这里分流。 认证与安全 分清 API Key、用户 Token、外链鉴权和沙盒边界。 如果你是开发者 CLI 使用 终端、脚本和自动化任务入口。 系统架构 先把模块边界分清，再看具体接口。 wunder API 统一入口和流式返回的最短接入说明。 聊天 WebSocket 对话主实时通道，支持 resume/watch/cancel。 工具总览 按工具类别查详情，而不是只看概念页。 MCP 入口 自托管 MCP 和外部 MCP 的统一接入方式。 如果你在做集成或平台化 接入概览 wunder API 聊天会话 MCP 入口 如果你在排障 FAQ 故障排查 配置说明 你最需要记住的点 普通用户优先从 desktop 和用户侧前端开始。 管理员优先看 server、部署、安全和管理端。 开发者优先看 CLI、架构、接入和工具页。 如果你只是想找一篇具体文档，继续看 常用文档目录 会更快。 相关文档 常用文档目录 文档总览 如果你是普通用户 如果你是管理员 如果你是开发者 如果你在做集成或平台化 如果你在排障 你最需要记住的点 相关文档"
   },
   {
     "slug": "zh-CN/start/docs-directory",
@@ -123,14 +134,16 @@
     "url": "/docs/zh-CN/start/docs-directory/",
     "headings": [
       "常用文档目录",
+      "如果你只看三页",
       "第一次使用",
       "理解系统",
       "做接入",
       "看界面",
-      "部署与治理",
+      "部署、治理与排障",
+      "一个实用建议",
       "相关文档"
     ],
-    "text": "常用文档目录 这是 wunder 最常用页面的精选目录。 # 常用文档目录 第一次使用 快速开始 Desktop 入门 Server 部署 CLI 使用 理解系统 系统架构 工作区与容器 会话与轮次 工具体系 提示词与技能 长期记忆 蜂群协作 做接入 wunder API 聊天 WebSocket 用户世界接口 渠道 Webhook 外部登录与免登嵌入 A2A 接口 MCP 入口 看界面 用户侧前端 管理端界面 桌面端界面 部署与治理 部署与运行 数据与存储 Desktop 本地模式 认证与安全 配置说明 流式事件参考 管理端面板索引 API 索引 FAQ 故障排查 术语表 相关文档 文档总览 配置说明 常用文档目录 第一次使用 理解系统 做接入 看界面 部署与治理 相关文档"
+    "text": "常用文档目录 这是 wunder 最常用页面的精选目录。 # 常用文档目录 这页适合两种人： 你不想慢慢翻左侧导航 你只想先找到最常用的几篇文档 如果你只看三页 快速开始 系统架构 wunder API 第一次使用 快速开始 Desktop 入门 Server 部署 CLI 使用 理解系统 系统架构 工作区与容器 会话与轮次 工具体系 提示词与技能 长期记忆 蜂群协作 做接入 wunder API 聊天 WebSocket 用户世界接口 渠道 Webhook 外部登录与免登嵌入 A2A 接口 MCP 入口 看界面 用户侧前端 管理端界面 桌面端界面 部署、治理与排障 部署与运行 数据与存储 Desktop 本地模式 认证与安全 配置说明 流式事件参考 管理端面板索引 API 索引 FAQ 故障排查 术语表 一个实用建议 如果你不知道某个问题应该先从哪一层看，按这个顺序： 1. 先看开始页或概念页，确认问题属于哪一层。 2. 再看接入页、工具页或界面页，确认具体入口。 3. 最后再回参考页或故障排查页查字段、事件和异常路径。 相关文档 文档总览 配置说明 常用文档目录 如果你只看三页 第一次使用 理解系统 做接入 看界面 部署、治理与排障 一个实用建议 相关文档"
   },
   {
     "slug": "zh-CN/concepts/index",
@@ -143,6 +156,7 @@
     "headings": [
       "概念概览",
       "先看这些",
+      "最容易混淆的几个概念",
       "按问题找页面",
       "你在做接入",
       "你在做文件与产物",
@@ -151,7 +165,7 @@
       "你最需要记住的点",
       "相关文档"
     ],
-    "text": "概念概览 如果你还没分清线程、工作区、工具、提示词和运行时状态，先从这里建立 Wunder 的基础模型。 # 概念概览 如果你只想先看一页概念入口，就看这里。 先看这些 系统架构 先分清 server、调度层、工具层和多端界面。 工作区与容器 理解 userid、containerid 和文件隔离。 会话与轮次 分清用户轮次和模型轮次，不要把长执行看成一步。 流式执行 理解事件流不是“边打字”，而是整个运行态投影。 工具体系 内置工具、MCP、技能和用户工具如何共同挂载。 提示词与技能 线程冻结、模板包和 skillcall 的最短入口。 按问题找页面 你在做接入 流式执行 运行时与在线状态 会话与轮次 你在做文件与产物 工作区与容器 工具体系 你在做治理与稳定性 提示词与技能 长期记忆 额度与 Token 占用 你在看多智能体 蜂群协作 系统架构 你最需要记住的点 工作区、会话、线程和智能体不是同一个概念。 线程 system prompt 一旦在首次确定后冻结，就不会在后续轮次被重写。 流式接入时，终结语义看 turnterminal，运行态看 threadstatus 或会话 runtime。 Token 统计记录的是上下文占用，不是账单总消耗量。 相关文档 接入概览 运维概览 参考概览 概念概览 先看这些 按问题找页面 你在做接入 你在做文件与产物 你在做治理与稳定性 你在看多智能体 你最需要记住的点 相关文档"
+    "text": "概念概览 如果你还没分清线程、工作区、工具、提示词和运行时状态，先从这里建立 Wunder 的基础模型。 # 概念概览 如果你还没分清线程、会话、工作区、工具和运行时状态，先看这页。 先看这些 系统架构 先分清 server、调度层、工具层和多端界面。 工作区与容器 理解 userid、containerid 和文件隔离。 会话与轮次 分清用户轮次和模型轮次，不要把长执行看成一步。 流式执行 理解事件流不是“边打字”，而是整个运行态投影。 工具体系 看内置工具、MCP、技能和用户工具如何共同挂载。 提示词与技能 看线程冻结、模板包和 skillcall 的边界。 最容易混淆的几个概念 工作区不是会话。 会话不是线程。 线程不是智能体。 流式事件不是最终结果。 Token 统计不是账单总消耗。 按问题找页面 你在做接入 流式执行 运行时与在线状态 会话与轮次 你在做文件与产物 工作区与容器 工具体系 你在做治理与稳定性 提示词与技能 长期记忆 额度与 Token 占用 你在看多智能体 蜂群协作 系统架构 你最需要记住的点 工作区、会话、线程和智能体不是同一个概念。 线程 system prompt 一旦在首次确定后冻结，就不会在后续轮次被重写。 流式接入时，终结语义看 turnterminal，运行态看 threadstatus 或会话 runtime。 Token 统计记录的是上下文占用，不是账单总消耗量。 相关文档 接入概览 运维概览 参考概览 概念概览 先看这些 最容易混淆的几个概念 按问题找页面 你在做接入 你在做文件与产物 你在做治理与稳定性 你在看多智能体 你最需要记住的点 相关文档"
   },
   {
     "slug": "zh-CN/concepts/architecture",
@@ -390,22 +404,19 @@
     "url": "/docs/zh-CN/tools/",
     "headings": [
       "工具",
-      "内置工具和概念页的区别",
+      "这组页面解决什么",
       "工具从哪里来",
-      "内置工具的启用方式",
-      "server / 网页端",
-      "desktop 本地模式",
-      "工具怎么收窄到某个会话",
+      "工具页怎么读",
       "先看这些",
       "文件与代码",
       "网页与桌面",
       "界面与自动化",
       "会话、协作与系统桥接",
-      "其他轻量内置工具",
-      "你最需要记住的点",
+      "最容易搞错的点",
+      "其他常见轻量工具",
       "相关文档"
     ],
-    "text": "工具 Wunder 的工具页专门讲“具体工具怎么用”，尽量按 OpenClaw 的短页方式拆开，而不是把所有工具堆在一个总表里。 # 工具 这组页面只讲 Wunder 的工具本身，不再重复概念页里的编排原理。 内置工具和概念页的区别 工具体系 讲的是来源、边界和调度关系。 这一组页面讲的是某个工具具体能做什么、什么时候用、参数大概长什么样。 工具从哪里来 Wunder 当前会把这些能力统一暴露给模型： 内置工具 MCP 工具 Skills 知识库工具 用户自建工具 但这组页面主要聚焦内置工具，因为它们最稳定、最常用，也最接近 OpenClaw 的工具文档结构。 内置工具的启用方式 server / 网页端 常规模式下，内置工具由： tools.builtin.enabled 控制白名单。 desktop 本地模式 desktop 本地模式下，内置工具默认会尽量全量暴露，再按运行能力过滤。 这也是为什么： 浏览器 桌面控制器 桌面监视器 这类工具通常只在 desktop 语境里可见。 工具怎么收窄到某个会话 Wunder 不只支持“系统当前有哪些工具”，还支持： 请求级 toolnames 智能体级默认挂载 用户级 MCP / Skills / 知识库配置 所以同一个系统里的两个会话，工具可见集合未必相同。 先看这些 文件与代码 文件与工作区工具 列出文件、搜索内容、读取文件、写入文件的高频入口。 执行命令 运行已有命令、编译测试和预算化执行。 ptc 把 Python 脚本内容写成程序化产物再执行。 应用补丁 多文件结构化编辑的主力工具。 读图工具 把本地图片注入到多模态后续消息里，而不是按文本读取。 LSP 查询 定义跳转、引用搜索、符号树与调用层级。 技能调用 按技能名读取完整 SKILL.md 和技能目录结构。 网页与桌面 网页抓取 直接抓网页正文，不等于浏览器自动化。 浏览器 desktop 下的页面导航、点击、输入、截图和读页。 桌面控制 桌面控制器和桌面监视器的动作说明。 界面与自动化 界面协同工具 a2ui、计划面板和问询面板如何驱动前端界面。 定时任务 把延迟执行、周期执行和唤醒式任务做成正式工具。 会话、协作与系统桥接 会话线程控制 管理线程树、主线程和派生会话，不只是“切换对话”。 子智能体控制 查看、发送和派生单个子会话运行。 智能体蜂群 单目标发送、多目标并发派发和等待聚合结果。 记忆管理 结构化记忆碎片的 list/add/update/delete/recall。 渠道工具 联系人发现与渠道消息发送。 用户世界工具 系统内用户目录查询与站内消息发送。 A2A 工具 调用 a2a@服务名，并用观察/等待工具跟踪任务。 节点调用 列出可用节点并向指定节点发送命令。 其他轻量内置工具 还有几类工具目前不值得拆成更长页面，但你会在系统里经常看到： 最终回复 休眠等待 可以这样理解： 最终回复 负责把最终文本答案落回用户轮次。 休眠等待 负责在当前链路里短暂等待，不等于 cron 或 A2A 轮询。 你最需要记住的点 工具页讲“怎么用”，概念页讲“为什么这样设计”。 server 和 desktop 下的工具可见性不完全一样。 toolnames、智能体挂载和用户自建工具会共同决定最终可见工具集。 相关文档 工具体系 MCP 入口 API 索引 工具 内置工具和概念页的区别 工具从哪里来 内置工具的启用方式 server / 网页端 desktop 本地模式 工具怎么收窄到某个会话 先看这些 文件与代码 网页与桌面 界面与自动化 会话、协作与系统桥接 其他轻量内置工具 你最需要记住的点 相关文档"
+    "text": "工具 Wunder 的工具页专门讲“具体工具怎么用”，尽量按 OpenClaw 的短页方式拆开，而不是把所有工具堆在一个总表里。 # 工具 这组页面只讲工具本身。 如果你想知道调度关系、来源边界和提示词挂载方式，先看 工具体系。 这组页面解决什么 某个工具具体能做什么 什么情况下该用它 它大概会处理什么参数或输入 工具从哪里来 Wunder 当前会把这些能力统一暴露给模型： 内置工具 MCP 工具 Skills 知识库工具 用户自建工具 但这组页面主要聚焦内置工具，因为它们最稳定、最常用，也最适合按 OpenClaw 的短页结构来写。 工具页怎么读 先看这页判断你要找的是哪一类工具。 再进具体页面看动作、输入和典型场景。 如果你想知道为什么这个工具会出现或消失，再回概念页。 先看这些 文件与代码 文件与工作区工具 列文件、搜内容、读写文件的高频入口。 执行命令 运行命令、编译测试和预算化执行。 ptc 把 Python 脚本写成程序化产物再执行。 应用补丁 多文件结构化编辑的主力工具。 读图工具 把本地图片注入到多模态后续消息里，而不是按文本读取。 LSP 查询 定义跳转、引用搜索、符号树与调用层级。 技能调用 按技能名读取完整 SKILL.md 和技能目录结构。 网页与桌面 网页抓取 直接抓网页正文，不等于浏览器自动化。 浏览器 desktop 下的页面导航、点击、输入、截图和读页。 桌面控制 桌面控制器和桌面监视器的动作说明。 界面与自动化 界面协同工具 a2ui、计划面板和问询面板如何驱动前端界面。 定时任务 把延迟执行、周期执行和唤醒式任务做成正式工具。 会话、协作与系统桥接 会话线程控制 管理线程树、主线程和派生会话，不只是“切换对话”。 子智能体控制 查看、发送和派生单个子会话运行。 智能体蜂群 单目标发送、多目标并发派发和等待聚合结果。 记忆管理 结构化记忆碎片的 list/add/update/delete/recall。 渠道工具 联系人发现与渠道消息发送。 用户世界工具 系统内用户目录查询与站内消息发送。 A2A 工具 调用 a2a@服务名，并用观察/等待工具跟踪任务。 节点调用 列出可用节点并向指定节点发送命令。 最容易搞错的点 工具页讲“怎么用”，概念页讲“为什么这么设计”。 server 和 desktop 下的可见工具并不完全一样。 同一个系统里的两个会话，可见工具集也可能不同。 原因通常来自这些地方： 请求级 toolnames 智能体默认挂载 用户级 MCP / Skills / 知识库配置 运行形态和环境能力过滤 其他常见轻量工具 最终回复 休眠等待 可以这样理解： 最终回复 把最终文本落回用户轮次。 休眠等待 负责短暂等待，不等于 cron 或 A2A 轮询。 相关文档 工具体系 MCP 入口 API 索引 工具 这组页面解决什么 工具从哪里来 工具页怎么读 先看这些 文件与代码 网页与桌面 界面与自动化 会话、协作与系统桥接 最容易搞错的点 其他常见轻量工具 相关文档"
   },
   {
     "slug": "zh-CN/tools/workspace-files",
@@ -575,7 +586,7 @@
       "你最需要记住的点",
       "相关文档"
     ],
-    "text": "网页抓取 网页抓取 直接获取网页正文内容，适合读文本，不适合代替真正的浏览器自动化。 # 网页抓取 网页抓取 是 Wunder 当前的轻量网页读取工具。 它解决什么 它用于： 抓取一个 URL 提取网页正文 以更适合模型消费的文本返回 常用参数 url extractmode maxchars 其中 extractmode 当前主要是： markdown text 什么时候优先用它 你只想读文章、帮助页、说明页正文 你不需要点击、输入和交互 目标页面主要是静态内容 什么时候不要用它 如果你要： 点按钮 填表单 登录 处理强交互页面 那应该看： 浏览器 为什么它不等于浏览器 因为它不维护真实交互状态，只做页面抓取和正文提取。 所以它更轻，也更快，但能力边界更窄。 开关在哪里 当前它受： tools.webfetch.enabled 控制。 你最需要记住的点 网页抓取 适合读网页，不适合操控网页。 静态正文优先用它，交互页面优先用浏览器。 抓取结果仍会受正文提取和字符预算限制。 相关文档 浏览器 接入概览 网页抓取 它解决什么 常用参数 什么时候优先用它 什么时候不要用它 为什么它不等于浏览器 开关在哪里 你最需要记住的点 相关文档"
+    "text": "网页抓取 网页抓取 直接获取网页正文内容，适合读文本，不适合代替真正的浏览器自动化。 # 网页抓取 网页抓取 是 Wunder 当前的轻量网页读取工具。 它解决什么 它用于： 抓取一个 URL 提取网页正文 以更适合模型消费的文本返回 常用参数 url extractmode maxchars 其中 extractmode 当前主要是： markdown text 什么时候优先用它 你只想读文章、帮助页、说明页正文 你不需要点击、输入和交互 目标页面主要是静态内容 什么时候不要用它 如果你要： 点按钮 填表单 登录 处理强交互页面 那应该看： 浏览器 为什么它不等于浏览器 因为它不维护真实交互状态，只做页面抓取和正文提取。 所以它更轻，也更快，但能力边界更窄。 开关在哪里 当前它受： tools.web.fetch.enabled 控制。 你最需要记住的点 网页抓取 适合读网页，不适合操控网页。 静态正文优先用它，交互页面优先用浏览器。 抓取结果仍会受正文提取和字符预算限制。 相关文档 浏览器 接入概览 网页抓取 它解决什么 常用参数 什么时候优先用它 什么时候不要用它 为什么它不等于浏览器 开关在哪里 你最需要记住的点 相关文档"
   },
   {
     "slug": "zh-CN/tools/browser",
@@ -650,13 +661,18 @@
       "常用参数",
       "它怎么运行",
       "什么时候该用它",
+      "用循环定时任务实现“心跳式巡检”",
+      "推荐做法",
+      "为什么推荐 isolated",
+      "这种方式适合什么",
+      "这种方式不等于专门 heartbeat",
       "最容易混淆的点",
       "它不是 休眠等待",
       "scheduletext 和结构化 schedule",
       "你最需要记住的点",
       "相关文档"
     ],
-    "text": "定时任务 定时任务 把 cron 能力做成正式工具，支持新增、更新、禁用、运行、查看状态，并把任务持久化到系统存储里。 # 定时任务 定时任务 是 Wunder 的内置 cron 工具。 它不是简单的前端提醒，而是会落到系统存储、由调度器持续执行的正式任务。 核心动作 add update remove enable disable get list run status 常用参数 action job.jobid job.name job.schedule job.scheduletext job.session job.payload.message job.deliver job.enabled job.deleteafterrun job.dedupekey 其中： schedule.kind 支持 at、every、cron session 支持 main、isolated payload.message 是最关键的执行载荷 它怎么运行 任务会被持久化到 cron 任务表中，由调度器按时间领取并执行。 如果 session 设为： main：沿用主会话语境 isolated：新开隔离会话执行 如果 deleteafterrun=true，任务成功后会自动删除。 什么时候该用它 固定时间提醒 周期性巡检 延迟触发某段消息或任务 后台定时执行用户任务 最容易混淆的点 它不是 休眠等待 休眠等待 只是在当前链路里短暂停顿。 定时任务 是持久化调度。 scheduletext 和结构化 schedule 这两个字段都在描述调度规则，但真正落地时最终都会归一到系统的调度结构中。 如果你已经能明确表达 at/every/cron，直接给结构化 schedule 通常更稳。 你最需要记住的点 定时任务 是持久化的系统调度工具，不是一次性等待。 最重要的载荷是 payload.message。 isolated 会新开运行语境，deleteafterrun 会在成功后自动清理任务。 相关文档 wunder API 聊天会话 部署与运行 定时任务 核心动作 常用参数 它怎么运行 什么时候该用它 最容易混淆的点 它不是 休眠等待 scheduletext 和结构化 schedule 你最需要记住的点 相关文档"
+    "text": "定时任务 定时任务 把 cron 能力做成正式工具，支持新增、更新、禁用、运行、查看状态，并把任务持久化到系统存储里。 # 定时任务 定时任务 是 Wunder 的内置 cron 工具。 它不是简单的前端提醒，而是会落到系统存储、由调度器持续执行的正式任务。 核心动作 add update remove enable disable get list run status 常用参数 action job.jobid job.name job.schedule job.scheduletext job.session job.payload.message job.deliver job.enabled job.deleteafterrun job.dedupekey 其中： schedule.kind 支持 at、every、cron session 支持 main、isolated payload.message 是最关键的执行载荷 它怎么运行 任务会被持久化到 cron 任务表中，由调度器按时间领取并执行。 如果 session 设为： main：沿用主会话语境 isolated：新开隔离会话执行 如果 deleteafterrun=true，任务成功后会自动删除。 什么时候该用它 固定时间提醒 周期性巡检 延迟触发某段消息或任务 后台定时执行用户任务 用循环定时任务实现“心跳式巡检” 如果你想要的是类似 heartbeat 的效果，当前在 Wunder 里可以直接用： 一个 schedule.kind=every 的循环定时任务 智能体工作目录里的一个巡检清单文件 一条固定提示词，让智能体每次被唤醒时先检查清单，再决定是否继续执行、记录结果或提醒用户 这是一种很实用的实现方式： 不需要额外引入专门的 heartbeat 机制 直接复用现有 定时任务 调度能力 清单状态放在工作目录里，用户和智能体都能直接查看和更新 推荐做法 建议把任务配置成： schedule.kind = every session = isolated payload.message 写成固定巡检提示 例如： 对应的工作目录清单可以保持简短、稳定、可持续更新，例如： 为什么推荐 isolated 如果这类巡检任务总是跑在 main 会话里，长期下来会不断累积无意义的巡检轮次，增加上下文占用。 因此更推荐： 周期巡检跑在 isolated 真正需要通知用户时，再输出简洁结果 这样更接近 heartbeat 的用途：定期检查，而不是不断污染主聊天上下文。 这种方式适合什么 周期性检查某个目录、文件或状态清单 每隔一段时间做一次“是否还有未完成事项”的回看 用工作目录里的 Markdown 文件驱动智能体做持续性维护 这种方式不等于专门 heartbeat 这种方案已经可以实现 heartbeat 风格的巡检，但它本质上仍然是： cron 调度 固定提示词 文件驱动状态 它不是独立的系统级 heartbeat runner，因此： 更简单 更容易理解 也更依赖你写给智能体的提示词和清单质量 如果你的目标只是“让智能体周期性看一眼清单并继续推进”，这种做法通常已经够用。 最容易混淆的点 它不是 休眠等待 休眠等待 只是在当前链路里短暂停顿。 定时任务 是持久化调度。 scheduletext 和结构化 schedule 这两个字段都在描述调度规则，但真正落地时最终都会归一到系统的调度结构中。 如果你已经能明确表达 at/every/cron，直接给结构化 schedule 通常更稳。 你最需要记住的点 定时任务 是持久化的系统调度工具，不是一次性等待。 最重要的载荷是 payload.message。 isolated 会新开运行语境，deleteafterrun 会在成功后自动清理任务。 相关文档 wunder API 聊天会话 部署与运行 定时任务 核心动作 常用参数 它怎么运行 什么时候该用它 用循环定时任务实现“心跳式巡检” 推荐做法 为什么推荐 isolated 这种方式适合什么 这种方式不等于专门 heartbeat 最容易混淆的点 它不是 休眠等待 scheduletext 和结构化 schedule 你最需要记住的点 相关文档"
   },
   {
     "slug": "zh-CN/tools/thread-control",
@@ -827,15 +843,16 @@
     "headings": [
       "接入概览",
       "先看这些",
+      "先判断你要接哪一层",
       "按目标找页面",
       "你要接一个通用调用方",
       "你要做聊天界面",
       "你要做文件与产物流转",
       "你要接外部系统或平台",
-      "你最需要记住的点",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "接入概览 Wunder 的接入面不是只有 /wunder，还包括聊天域、工作区、渠道、A2A、MCP 和临时文件入口。 # 接入概览 如果你把 Wunder 当成外部能力服务接入，先不要急着翻完整 API 文档，先从这个入口页确定“你要接哪一层”。 先看这些 wunder API 统一执行入口，最短路径接入。 聊天 WebSocket 聊天主实时通道，适合工作台和桌面会话。 聊天会话 会话创建、消息发送、事件、恢复、取消都在这里。 工作区 API 文件浏览、上传、写入、归档和容器路由入口。 渠道 Webhook 飞书、微信、QQBot、WhatsApp、XMPP 等入口。 MCP 入口 自托管 MCP 与外部工具接入方式。 按目标找页面 你要接一个通用调用方 wunder API 流式执行 你要做聊天界面 聊天 WebSocket 聊天会话 你要做文件与产物流转 工作区 API 临时目录与文档转换 你要接外部系统或平台 用户世界接口 渠道 Webhook 外部登录与免登嵌入 A2A 接口 你最需要记住的点 /wunder 是统一执行入口，但不是完整聊天域。 真正做聊天 UI 时，通常要一起使用聊天会话接口和 WebSocket。 文件路径治理要先分清工作区和 tempdir。 渠道接入、A2A、MCP 都是正式接入面，不是附属功能。 相关文档 参考概览 API 索引 故障排查 接入概览 先看这些 按目标找页面 你要接一个通用调用方 你要做聊天界面 你要做文件与产物流转 你要接外部系统或平台 你最需要记住的点 相关文档"
+    "text": "接入概览 Wunder 的接入面不是只有 /wunder，还包括聊天域、工作区、渠道、A2A、MCP 和临时文件入口。 # 接入概览 如果你把 wunder 当成外部能力服务接入，先不要急着翻完整 API 文档。 先在这页判断：你要接的是哪一层。 先看这些 wunder API 统一执行入口，适合最短路径接入。 聊天 WebSocket 聊天主实时通道，适合工作台和桌面会话。 聊天会话 会话创建、消息发送、恢复和取消都在这里。 工作区 API 文件浏览、上传、写入、归档和容器路由入口。 渠道 Webhook 飞书、微信、QQBot、WhatsApp、XMPP 等入口。 MCP 入口 自托管 MCP 和外部工具接入方式。 先判断你要接哪一层 只想发起一次执行请求：看 wunder API 要做完整聊天界面：看 聊天会话 和 聊天 WebSocket 要操作文件和产物：看 工作区 API 要接渠道、用户体系或外部系统：看 用户世界接口、渠道 Webhook 和 A2A 接口 按目标找页面 你要接一个通用调用方 wunder API 流式执行 你要做聊天界面 聊天 WebSocket 聊天会话 你要做文件与产物流转 工作区 API 临时目录与文档转换 你要接外部系统或平台 用户世界接口 渠道 Webhook 外部登录与免登嵌入 A2A 接口 最容易搞错的点 /wunder 是统一执行入口，但不是完整聊天域。 真正做聊天 UI 时，通常要一起使用会话接口和 WebSocket。 文件链路要先分清工作区和 tempdir。 渠道接入、A2A、MCP 都是正式接入面，不是附属能力。 相关文档 参考概览 API 索引 故障排查 接入概览 先看这些 先判断你要接哪一层 按目标找页面 你要接一个通用调用方 你要做聊天界面 你要做文件与产物流转 你要接外部系统或平台 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/integration/wunder-api",
@@ -843,20 +860,22 @@
     "tab": "接入",
     "group": "核心接口",
     "title": "wunder API",
-    "summary": "`/wunder` 是 Wunder 的底层执行入口；如果你要稳定调用独立人格智能体，优先走 `/wunder/chat/*`。",
+    "summary": "`/wunder` 是底层执行入口；如果你要稳定绑定某个智能体或做完整聊天产品，优先走 `/wunder/chat/*`。",
     "url": "/docs/zh-CN/integration/wunder-api/",
     "headings": [
       "wunder API",
-      "/wunder 负责什么",
-      "/wunder 当前不负责什么",
-      "推荐的开发者接入流程",
+      "这页解决什么",
+      "先做这个判断",
+      "什么时候直接调 /wunder",
+      "什么时候不要先调 /wunder",
+      "一条更稳的接入链路",
       "需要传哪些身份字段",
       "最小请求示例",
+      "最容易搞错的点",
       "相关接口",
-      "什么时候优先不用 /wunder",
       "相关文档"
     ],
-    "text": "wunder API /wunder 是 Wunder 的底层执行入口；如果你要稳定调用独立人格智能体，优先走 /wunder/chat/。 # wunder API POST /wunder 现在更适合作为底层执行内核和调试入口，不应再把它理解为“调用任意独立人格智能体的唯一公开接口”。 推荐链路： GET /wunder/agents -> POST /wunder/chat/sessions -> POST /wunder/chat/sessions/{sessionid}/messages /wunder 负责什么 承接 userid + question 形式的直接执行请求 支持 SSE 流式输出和非流式 JSON 返回 允许调用方显式覆盖 toolnames、modelname、configoverrides 可接受 agentid，但当前主要用于主会话绑定和工作区/容器路由 /wunder 当前不负责什么 不会像 /wunder/chat/ 一样按 agentid 自动补齐完整智能体快照 不会自动解析目标智能体当前的 systemprompt、模型、工具默认集和审批模式 不应被当成“对外发布单个智能体人格”的稳定调用协议 如果你必须直调 /wunder，又想尽量贴近某个智能体当前行为，需要自己传入 agentprompt 等覆盖字段；更稳妥的方式仍然是改走聊天域。 推荐的开发者接入流程 1. GET /wunder/agents 2. 从返回的 data.items[].id 里选出目标 agentid 3. POST /wunder/chat/sessions 创建该智能体下的新会话 4. POST /wunder/chat/sessions/{sessionid}/messages 发送消息 这条链路的意义是：服务端会在聊天域里按会话绑定的 agentid 自动补齐该智能体的配置快照。 需要传哪些身份字段 userid：表示调用者和隔离空间，可以是注册用户，也可以是在 API Key/管理员场景下使用的虚拟用户 agentid：表示目标智能体应用 外部调用方当前不需要显式传“智能体拥有者的 userid”或额外的 owner 标识。 最小请求示例 常用补充字段： sessionid：复用已有会话 agentid：绑定目标智能体作用域 modelname：临时指定模型配置 toolnames：显式启用工具 agentprompt：仅适合高级集成的低层提示词覆盖 attachments：附件列表 相关接口 POST /wunder POST /wunder/systemprompt GET /wunder/tools GET /wunder/agents POST /wunder/chat/sessions POST /wunder/chat/sessions/{sessionid}/messages 什么时候优先不用 /wunder 如果你的目标是下面这些场景，优先使用 /wunder/chat/： 完整聊天 UI 需要稳定复用某个独立人格智能体 需要会话列表、取消、恢复、事件回放 需要读取“该会话当前实际使用的系统提示词” /wunder 更像底层执行入口；/wunder/chat/ 更像完整聊天域和智能体会话控制面。 相关文档 聊天会话 聊天 WebSocket A2A 接口 API 索引 wunder API /wunder 负责什么 /wunder 当前不负责什么 推荐的开发者接入流程 需要传哪些身份字段 最小请求示例 相关接口 什么时候优先不用 /wunder 相关文档"
+    "text": "wunder API /wunder 是底层执行入口；如果你要稳定绑定某个智能体或做完整聊天产品，优先走 /wunder/chat/。 # wunder API 如果你只是想把 Wunder 当能力服务接进去，这页先看。 先记一条：/wunder 是底层执行入口；如果你要稳定绑定某个智能体人格，或者你在做完整聊天产品，优先走 /wunder/chat/。 这页解决什么 什么时候直接调 /wunder 什么时候不要先调 /wunder 一条更稳的智能体接入链路是什么 先做这个判断 你要“把 Wunder 当能力服务调用”，可以先看 /wunder 你要“把 Wunder 当聊天系统接入”，先看 /wunder/chat/ 你要稳定绑定某个独立人格智能体，也优先走聊天域 什么时候直接调 /wunder 承接 userid + question 形式的直接执行请求 支持 SSE 流式输出和非流式 JSON 返回 允许调用方显式覆盖 toolnames、modelname、configoverrides 可接受 agentid，但当前主要用于主会话绑定和工作区/容器路由 什么时候不要先调 /wunder 你要按 agentid 自动补齐完整智能体快照 你要读取该会话当前实际冻结的 systemprompt 你要会话列表、取消、恢复、事件回放和聊天工作台能力 你要把某个独立人格智能体作为稳定产品接口发布 一条更稳的接入链路 推荐链路： GET /wunder/agents -> POST /wunder/chat/sessions -> POST /wunder/chat/sessions/{sessionid}/messages 1. GET /wunder/agents 2. 从返回的 data.items[].id 里选出目标 agentid 3. POST /wunder/chat/sessions 创建该智能体下的新会话 4. POST /wunder/chat/sessions/{sessionid}/messages 发送消息 这条链路的意义是：服务端会在聊天域里按会话绑定的 agentid 自动补齐该智能体的配置快照。 需要传哪些身份字段 userid：表示调用者和隔离空间，可以是注册用户，也可以是在 API Key/管理员场景下使用的虚拟用户 agentid：表示目标智能体应用 外部调用方当前不需要显式传“智能体拥有者的 userid”或额外的 owner 标识。 最小请求示例 常用补充字段： sessionid：复用已有会话 agentid：绑定目标智能体作用域 modelname：临时指定模型配置 toolnames：显式启用工具 agentprompt：仅适合高级集成的低层提示词覆盖 attachments：附件列表 最容易搞错的点 /wunder 能传 agentid，不等于它就是最稳的智能体发布协议。 直调 /wunder 时，如果想贴近某个智能体当前配置，很多默认项要你自己补。 userid 用来表示调用者和隔离空间，不要求一定是已注册用户。 相关接口 POST /wunder POST /wunder/systemprompt GET /wunder/tools GET /wunder/agents POST /wunder/chat/sessions POST /wunder/chat/sessions/{sessionid}/messages 相关文档 聊天会话 聊天 WebSocket A2A 接口 API 索引 wunder API 这页解决什么 先做这个判断 什么时候直接调 /wunder 什么时候不要先调 /wunder 一条更稳的接入链路 需要传哪些身份字段 最小请求示例 最容易搞错的点 相关接口 相关文档"
   },
   {
     "slug": "zh-CN/integration/chat-ws",
@@ -864,28 +883,26 @@
     "tab": "接入",
     "group": "核心接口",
     "title": "聊天 WebSocket",
-    "summary": "`/wunder/chat/ws` 是 Wunder 对话态的主实时通道，支持 start、resume、watch、cancel 与审批回传。",
+    "summary": "`/wunder/chat/ws` 是 Wunder 聊天域的主实时通道；实时会话优先走它，SSE 只做兜底。",
     "url": "/docs/zh-CN/integration/chat-ws/",
     "headings": [
       "聊天 WebSocket",
+      "这页解决什么",
+      "先记这条",
       "端点",
-      "为什么这条链路比直接 SSE 更适合聊天",
-      "典型接入顺序",
-      "客户端消息类型",
-      "服务端消息类型",
+      "什么时候优先接 WebSocket",
+      "为什么它比直接 SSE 更适合聊天",
+      "最短接入顺序",
+      "客户端会发什么",
+      "服务端会回什么",
       "最小握手示例",
       "启动一次执行",
-      "续传与观察",
-      "resume",
-      "watch",
-      "取消与审批",
-      "cancel",
-      "approval",
-      "建议你重点消费的事件",
+      "最容易搞错的点",
+      "建议重点消费这些事件",
       "失败回退",
       "相关文档"
     ],
-    "text": "聊天 WebSocket /wunder/chat/ws 是 Wunder 对话态的主实时通道，支持 start、resume、watch、cancel 与审批回传。 # 聊天 WebSocket Wunder 的实时对话链路默认优先走 WebSocket，SSE 作为兜底。 如果你在做： 聊天页 桌面端会话 需要 resume/watch/cancel 的长任务面板 那你应该优先接 /wunder/chat/ws。 端点 GET /wunder/chat/ws 为什么这条链路比直接 SSE 更适合聊天 它不只是把事件推给你，还把“会话控制”也放进了同一条连接： 启动会话执行 续传历史事件 只观察某个会话 取消当前执行 回传审批决策 心跳保活 这比纯 SSE 更适合消息工作台。 典型接入顺序 1. 先通过 /wunder/chat/sessions 创建或拿到 sessionid 2. 建立 WebSocket /wunder/chat/ws 3. 发送 connect 4. 收到 ready 5. 发送 start 6. 处理后续 event / error / pong 客户端消息类型 connect start resume watch cancel approval ping 服务端消息类型 ready event error pong 最小握手示例 收到 ready 后，可以开始发送业务消息。 启动一次执行 这里有两个关键点： start 需要明确 sessionid payload 里的文本字段是 content，不是 /wunder 里的 question 续传与观察 resume 用于“我之前断线了，现在从某个事件之后继续补回”。 最常用字段： sessionid aftereventid watch 用于“我当前只观察某个会话的事件流，不一定要主动 start 一次新执行”。 这在多面板、多会话切换时很有用。 取消与审批 cancel 可以取消当前 request，也可以按 sessionid 取消会话中的正在执行任务。 approval 当工具链进入审批等待态时，前端可以通过 WebSocket 把审批结果回传。 当前实现里，WebSocket 只会处理 source=chatws 的审批项，不会误操作渠道侧审批。 建议你重点消费的事件 虽然 event.data 里会有很多业务事件，但对实时会话面板来说，这几个最关键： queued approvalresolved error turnterminal 尤其是 turnterminal，它是单轮执行的最终终态信号。 失败回退 如果 WebSocket 不可用： 聊天链路可以回退到 /wunder SSE 或回退到 /wunder/chat/sessions/{sessionid}/resume Wunder 的设计不是“只有 WS 能用”，而是“WS 优先，SSE 保底”。 相关文档 wunder API 会话与轮次 故障排查 聊天 WebSocket 端点 为什么这条链路比直接 SSE 更适合聊天 典型接入顺序 客户端消息类型 服务端消息类型 最小握手示例 启动一次执行 续传与观察 resume watch 取消与审批 cancel approval 建议你重点消费的事件 失败回退 相关文档"
+    "text": "聊天 WebSocket /wunder/chat/ws 是 Wunder 聊天域的主实时通道；实时会话优先走它，SSE 只做兜底。 # 聊天 WebSocket 如果你在做实时聊天 UI，这页比 SSE 更该先看。 Wunder 的实时对话链路默认优先走 WebSocket，SSE 作为兜底。 这页解决什么 如何接入 /wunder/chat/ws 为什么聊天产品优先走 WebSocket start、resume、watch、cancel 和审批回传怎么理解 先记这条 WebSocket 不只是事件流，它同时承担会话控制。 你可以在同一条连接里 start、resume、watch、cancel 和 approval。 这比“一个请求 + 一条 SSE”更适合聊天工作台。 端点 GET /wunder/chat/ws 什么时候优先接 WebSocket 你要做聊天页或桌面端会话 你要切换会话后继续 watch 某个 session 你要在一条连接里做启动、取消、恢复和审批 你要长连接保活和更完整的运行态控制 为什么它比直接 SSE 更适合聊天 它不只是把事件推给你，还把“会话控制”也放进了同一条连接： 启动会话执行 续传历史事件 只观察某个会话 取消当前执行 回传审批决策 心跳保活 最短接入顺序 1. 先通过 /wunder/chat/sessions 创建或拿到 sessionid 2. 建立 WebSocket /wunder/chat/ws 3. 发送 connect 4. 收到 ready 5. 发送 start 6. 处理后续 event / error / pong 客户端会发什么 connect start resume watch cancel approval ping 服务端会回什么 ready event error pong 最小握手示例 收到 ready 后，可以开始发送业务消息。 启动一次执行 最容易搞错的点 start 需要明确 sessionid。 payload 里的文本字段是 content，不是 /wunder 里的 question。 resume 是断线补事件，watch 是只观察会话，不要把两者混成一个动作。 当前实现里，WebSocket 只处理 source=chatws 的审批项，不会误操作渠道侧审批。 建议重点消费这些事件 虽然 event.data 里会有很多业务事件，但对实时会话面板来说，这几个最关键： queued approvalresolved error turnterminal 尤其是 turnterminal，它是单轮执行的最终终态信号。 失败回退 如果 WebSocket 不可用： 聊天链路可以回退到 /wunder SSE 或回退到 /wunder/chat/sessions/{sessionid}/resume Wunder 的设计不是“只有 WS 能用”，而是“WS 优先，SSE 保底”。 相关文档 聊天会话 wunder API 会话与轮次 故障排查 聊天 WebSocket 这页解决什么 先记这条 端点 什么时候优先接 WebSocket 为什么它比直接 SSE 更适合聊天 最短接入顺序 客户端会发什么 服务端会回什么 最小握手示例 启动一次执行 最容易搞错的点 建议重点消费这些事件 失败回退 相关文档"
   },
   {
     "slug": "zh-CN/integration/chat-sessions",
@@ -893,23 +910,20 @@
     "tab": "接入",
     "group": "核心接口",
     "title": "聊天会话",
-    "summary": "`/wunder/chat/sessions/*` 是 Wunder 的聊天域，不只是“会话列表接口”，而是一整套会话控制面。",
+    "summary": "`/wunder/chat/sessions/*` 是 Wunder 的聊天主域，不只是“会话列表接口”。",
     "url": "/docs/zh-CN/integration/chat-sessions/",
     "headings": [
       "聊天会话",
       "这页解决什么",
-      "最常用的接口",
+      "先看这些接口",
       "什么时候优先看这组接口",
       "一条典型链路",
       "它和 /wunder 的区别",
-      "你最容易忽略的两个点",
-      "消息接口的文本字段是 content",
-      "会话状态应该看 runtime",
-      "提示词预览为什么重要",
-      "你最需要记住的点",
+      "最容易搞错的点",
+      "为什么还要看提示词预览",
       "相关文档"
     ],
-    "text": "聊天会话 /wunder/chat/sessions/ 是 Wunder 的聊天域，不只是“会话列表接口”，而是一整套会话控制面。 # 聊天会话 如果你要做真正的聊天产品，不要只盯着 /wunder，应该把 /wunder/chat/sessions/ 当成主域。 这页解决什么 这页回答三件事： 如何创建、列出和切换一个聊天会话 如何向指定 sessionid 发送消息、续传历史和取消执行 如何获取会话级 runtime、事件和系统提示词快照 最常用的接口 GET/POST /wunder/chat/sessions GET/DELETE /wunder/chat/sessions/{sessionid} POST /wunder/chat/sessions/{sessionid}/messages GET /wunder/chat/sessions/{sessionid}/events GET /wunder/chat/sessions/{sessionid}/history GET /wunder/chat/sessions/{sessionid}/resume POST /wunder/chat/sessions/{sessionid}/cancel POST /wunder/chat/sessions/{sessionid}/compaction POST /wunder/chat/system-prompt POST /wunder/chat/sessions/{sessionid}/system-prompt 另外还有会话治理接口： POST /wunder/chat/sessions/{sessionid}/archive POST /wunder/chat/sessions/{sessionid}/restore POST /wunder/chat/sessions/{sessionid}/title POST /wunder/chat/sessions/{sessionid}/tools 什么时候优先看这组接口 你要做会话列表、详情页、历史分页 你要在同一个用户下管理多条对话 你要在聊天 UI 里支持取消、恢复、观察和压缩 你要给用户预览当前线程的冻结提示词 一条典型链路 1. POST /wunder/chat/sessions 创建会话 2. POST /wunder/chat/sessions/{sessionid}/messages 发送消息 3. 用 聊天 WebSocket 或 resume 消费流式事件 4. 用 GET /wunder/chat/sessions/{sessionid} 和 events 渲染详情页 5. 需要时调用 cancel、compaction、system-prompt 它和 /wunder 的区别 可以这样记： /wunder：统一执行入口 /wunder/chat/：聊天会话控制面 前者适合“把 Wunder 当能力服务调用”，后者适合“把 Wunder 当聊天系统接入”。 你最容易忽略的两个点 消息接口的文本字段是 content 聊天域消息提交不是传 question，而是传 content。 会话状态应该看 runtime 会话详情和事件接口都会返回 runtime。 这比只看兼容字段 running 更稳定，因为它还能表达： loaded active streaming waiting pendingapprovalcount terminalstatus 提示词预览为什么重要 聊天域单独提供： /wunder/chat/system-prompt /wunder/chat/sessions/{sessionid}/system-prompt 它不仅返回 prompt 文本，还会返回： memorypreview memorypreviewmode memorypreviewcount memorypreviewtotalcount 所以前端可以明确告诉用户： 这是新线程待冻结的提示词 还是当前线程已经冻结的提示词 你最需要记住的点 做聊天产品时，聊天会话接口应该是主入口，不是补充接口。 会话详情、事件和 WebSocket 应共享同一套运行时语义。 当前线程的 system prompt 预览可能是 pending，也可能已经 frozen。 相关文档 聊天 WebSocket wunder API 运行时与在线状态 聊天会话 这页解决什么 最常用的接口 什么时候优先看这组接口 一条典型链路 它和 /wunder 的区别 你最容易忽略的两个点 消息接口的文本字段是 content 会话状态应该看 runtime 提示词预览为什么重要 你最需要记住的点 相关文档"
+    "text": "聊天会话 /wunder/chat/sessions/ 是 Wunder 的聊天主域，不只是“会话列表接口”。 # 聊天会话 如果你要做真正的聊天产品，不要只盯着 /wunder，应该把 /wunder/chat/sessions/ 当成主域。 这页解决什么 如何创建、列出和切换一个聊天会话 如何向指定 sessionid 发送消息、续传历史和取消执行 如何获取会话级 runtime、事件和系统提示词快照 先看这些接口 GET/POST /wunder/chat/sessions GET/DELETE /wunder/chat/sessions/{sessionid} POST /wunder/chat/sessions/{sessionid}/messages GET /wunder/chat/sessions/{sessionid}/events GET /wunder/chat/sessions/{sessionid}/history GET /wunder/chat/sessions/{sessionid}/resume POST /wunder/chat/sessions/{sessionid}/cancel POST /wunder/chat/sessions/{sessionid}/compaction POST /wunder/chat/system-prompt POST /wunder/chat/sessions/{sessionid}/system-prompt POST /wunder/chat/sessions/{sessionid}/archive POST /wunder/chat/sessions/{sessionid}/restore POST /wunder/chat/sessions/{sessionid}/title POST /wunder/chat/sessions/{sessionid}/tools 什么时候优先看这组接口 你要做会话列表、详情页和历史分页 你要在同一个用户下管理多条对话 你要在聊天 UI 里支持取消、恢复、观察和压缩 你要给用户预览当前线程的冻结提示词 一条典型链路 1. POST /wunder/chat/sessions 创建会话 2. POST /wunder/chat/sessions/{sessionid}/messages 发送消息 3. 用 聊天 WebSocket 或 resume 消费流式事件 4. 用 GET /wunder/chat/sessions/{sessionid} 和 events 渲染详情页 5. 需要时调用 cancel、compaction、system-prompt 它和 /wunder 的区别 可以这样记： /wunder：统一执行入口 /wunder/chat/：聊天会话控制面 前者适合“把 Wunder 当能力服务调用”，后者适合“把 Wunder 当聊天系统接入”。 最容易搞错的点 消息接口的文本字段是 content，不是 /wunder 那套 question。 会话状态优先看 runtime，不要只看兼容字段 running。 当前线程的 system prompt 预览可能是 pending，也可能已经 frozen。 为什么还要看提示词预览 聊天域单独提供： /wunder/chat/system-prompt /wunder/chat/sessions/{sessionid}/system-prompt 它不仅返回 prompt 文本，还会返回： memorypreview memorypreviewmode memorypreviewcount memorypreviewtotalcount 所以前端可以明确告诉用户： 这是新线程待冻结的提示词 还是当前线程已经冻结的提示词 相关文档 聊天 WebSocket wunder API 运行时与在线状态 聊天会话 这页解决什么 先看这些接口 什么时候优先看这组接口 一条典型链路 它和 /wunder 的区别 最容易搞错的点 为什么还要看提示词预览 相关文档"
   },
   {
     "slug": "zh-CN/integration/workspace-api",
@@ -917,23 +931,18 @@
     "tab": "接入",
     "group": "核心接口",
     "title": "工作区 API",
-    "summary": "`/wunder/workspace*` 是 Wunder 的文件控制面，负责目录浏览、内容读写、上传下载和容器路由。",
+    "summary": "`/wunder/workspace*` 不只是文件接口，它决定文件到底落在哪个隔离工作区。",
     "url": "/docs/zh-CN/integration/workspace-api/",
     "headings": [
       "工作区 API",
       "这页解决什么",
-      "最常用的接口",
-      "什么时候看这组接口",
-      "路由规则先记这一条",
-      "这组接口最容易用错的地方",
-      "把工作区当临时目录",
-      "直接传真实磁盘绝对路径",
-      "以为只有下载接口才需要 containerid",
-      "最短理解方式",
-      "你最需要记住的点",
+      "先记一条路由规则",
+      "这组接口用在什么地方",
+      "最常用的接口怎么分",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "工作区 API /wunder/workspace 是 Wunder 的文件控制面，负责目录浏览、内容读写、上传下载和容器路由。 # 工作区 API Wunder 的工作区接口不是简单的文件读写接口，而是文件隔离语义的外部控制面。 这页解决什么 这页只回答这些问题： 工作区相关接口有哪些 userid、agentid、containerid 如何共同决定路由 什么时候应该用工作区，而不是 tempdir 最常用的接口 GET/DELETE /wunder/workspace GET /wunder/workspace/content GET /wunder/workspace/search POST /wunder/workspace/upload GET /wunder/workspace/download GET /wunder/workspace/archive POST /wunder/workspace/dir POST /wunder/workspace/move POST /wunder/workspace/copy POST /wunder/workspace/batch POST /wunder/workspace/file 什么时候看这组接口 你要做文件树、文件预览和编辑器 你要把工具产物落盘后继续处理 你要按容器隔离不同智能体的产物 你要给用户提供压缩下载或目录归档 路由规则先记这一条 工作区路由优先级当前很明确： 1. 显式传入 containerid 2. 否则看 agentid 绑定的 sandboxcontainerid 3. 再回退到默认用户工作区或旧兼容路由 所以当你显式传了 containerid，它的优先级高于 agentid。 这组接口最容易用错的地方 把工作区当临时目录 不对。 工作区强调持久化和后续可继续处理，tempdir 强调临时中转。 直接传真实磁盘绝对路径 不对。 这里大多数接口都使用相对工作区路径，而不是宿主机绝对路径。 以为只有下载接口才需要 containerid 不对。 当前 /wunder/workspace 全部接口都支持显式 containerid。 最短理解方式 如果你在做一个文件面板，可以这样配： 目录页：GET /wunder/workspace 文件预览：GET /wunder/workspace/content 搜索：GET /wunder/workspace/search 写文件：POST /wunder/workspace/file 上传：POST /wunder/workspace/upload 导出：GET /wunder/workspace/download 或 archive 你最需要记住的点 工作区的核心不是文件 API，而是隔离后的文件空间。 显式 containerid 会覆盖 agentid 推导。 工作区适合持久产物，tempdir 适合中转与分发。 相关文档 工作区与容器 工作区路由参考 临时目录与文档转换 工作区 API 这页解决什么 最常用的接口 什么时候看这组接口 路由规则先记这一条 这组接口最容易用错的地方 把工作区当临时目录 直接传真实磁盘绝对路径 以为只有下载接口才需要 containerid 最短理解方式 你最需要记住的点 相关文档"
+    "text": "工作区 API /wunder/workspace 不只是文件接口，它决定文件到底落在哪个隔离工作区。 # 工作区 API 如果你要做文件树、编辑器、上传下载或产物面板，这页先看。 /wunder/workspace 不只是文件读写接口，它决定文件到底落在哪个隔离空间。 这页解决什么 工作区相关接口有哪些 userid、agentid、containerid 如何共同决定路由 什么时候应该用工作区，而不是 tempdir 先记一条路由规则 工作区路由优先级当前很明确： 1. 显式传入 containerid 2. 否则看 agentid 绑定的 sandboxcontainerid 3. 再回退到默认用户工作区或旧兼容路由 所以当你显式传了 containerid，它的优先级高于 agentid。 这组接口用在什么地方 文件树和目录浏览 文件预览和编辑 上传下载和压缩打包 工具产物的持久化回传 按容器隔离不同智能体的文件空间 最常用的接口怎么分 GET/DELETE /wunder/workspace GET /wunder/workspace/content GET /wunder/workspace/search POST /wunder/workspace/upload GET /wunder/workspace/download GET /wunder/workspace/archive POST /wunder/workspace/dir POST /wunder/workspace/move POST /wunder/workspace/copy POST /wunder/workspace/batch POST /wunder/workspace/file 如果你在做一个文件面板，可以这样理解： 目录页：GET /wunder/workspace 文件预览：GET /wunder/workspace/content 搜索：GET /wunder/workspace/search 写文件：POST /wunder/workspace/file 上传：POST /wunder/workspace/upload 导出：GET /wunder/workspace/download 或 archive 最容易搞错的点 把工作区当临时目录。工作区适合持久产物，tempdir 适合中转。 直接传真实磁盘绝对路径。这里大多数接口都使用相对工作区路径。 以为只有下载接口才需要 containerid。实际上整组 /wunder/workspace 都支持显式 containerid。 相关文档 工作区与容器 工作区路由参考 临时目录与文档转换 工作区 API 这页解决什么 先记一条路由规则 这组接口用在什么地方 最常用的接口怎么分 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/integration/temp-dir",
@@ -1084,14 +1093,15 @@
     "headings": [
       "界面概览",
       "先看这些",
+      "三块界面的职责",
       "按角色看",
       "普通用户",
       "管理员",
       "集成开发者",
-      "你最需要记住的点",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "界面概览 Wunder 当前同时维护用户侧前端、管理端前端和桌面端三块界面表面，它们共享同一套后端能力，但职责不同。 # 界面概览 Wunder 不是一个单页聊天产品，而是三块界面一起工作。 先看这些 用户侧前端 聊天、用户世界、工作区、工具和设置的统一工作台。 管理端界面 模型、用户、渠道、工具、监控与 benchmark 治理入口。 Desktop 界面 本地主交付形态，强调端云协同和桌面工作台体验。 按角色看 普通用户 优先看： 用户侧前端 Desktop 界面 管理员 优先看： 管理端界面 管理端面板索引 集成开发者 除了界面页，还应该一起看： 聊天会话 工作区 API 你最需要记住的点 用户端强调会话体验和文件工作流。 管理端强调治理、监控、配置和评估。 Desktop 是当前主交付形态，但底层仍复用 Wunder 同一套主链路。 相关文档 开始 运维概览 帮助 界面概览 先看这些 按角色看 普通用户 管理员 集成开发者 你最需要记住的点 相关文档"
+    "text": "界面概览 Wunder 当前同时维护用户侧前端、管理端前端和桌面端三块界面表面，它们共享同一套后端能力，但职责不同。 # 界面概览 wunder 不是单页聊天产品，而是三块界面一起工作。 如果你在找“某个功能应该去哪看”，先从这里分流。 先看这些 用户侧前端 聊天、用户世界、工作区、工具和设置的统一工作台。 管理端界面 模型、用户、渠道、工具、监控和 benchmark 治理入口。 Desktop 界面 本地主交付形态，强调端云协同和桌面工作台体验。 三块界面的职责 用户端：偏会话、文件、联系人和工具操作 管理端：偏治理、配置、监控和评估 Desktop：偏本地优先、桌面能力和端云协同 按角色看 普通用户 优先看： 用户侧前端 Desktop 界面 管理员 优先看： 管理端界面 管理端面板索引 集成开发者 除了界面页，还应该一起看： 聊天会话 工作区 API 最容易搞错的点 用户端强调会话体验和文件工作流。 管理端强调治理、监控、配置和评估。 Desktop 是当前主交付形态，但底层仍复用 Wunder 同一套主链路。 相关文档 开始 运维概览 帮助 界面概览 先看这些 三块界面的职责 按角色看 普通用户 管理员 集成开发者 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/surfaces/frontend",
@@ -1164,15 +1174,16 @@
     "headings": [
       "运维概览",
       "先看这些",
+      "运维通常在做什么",
       "按问题找页面",
       "你在做上线",
       "你在做权限和治理",
       "你在做可观测",
       "你在排查渠道",
-      "你最需要记住的点",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "运维概览 Wunder 的运维面要同时处理部署、存储、安全、渠道运行态、观测和 benchmark，不只是把服务启动起来。 # 运维概览 如果你在做 Wunder 的上线、观测和治理，这里是总入口。 先看这些 部署与运行 先把 server、desktop、本地开发三条运行路径分清。 数据与存储 区分 PostgreSQL、SQLite、Weaviate、workspaces 和 tempdir。 认证与安全 API Key、用户 Token、外链鉴权和沙盒边界。 监控与 Benchmark 会话监控、工具统计、性能采样和能力评估入口。 渠道运行态 账号状态、长连接、入出站和运行日志的排障入口。 Desktop 本地模式 本地运行时的存储、工作区和能力边界。 按问题找页面 你在做上线 部署与运行 数据与存储 你在做权限和治理 认证与安全 提示词模板参考 你在做可观测 监控与 Benchmark 流式事件参考 你在排查渠道 渠道运行态 渠道 Webhook 你最需要记住的点 Wunder 的运维不只是进程运维，还包括会话治理、渠道运行态和模型链路观测。 工作区、数据库、向量库和临时目录必须分开治理。 监控、吞吐、性能采样和 benchmark 各自解决的问题不同，不要混用。 相关文档 参考概览 帮助 运维概览 先看这些 按问题找页面 你在做上线 你在做权限和治理 你在做可观测 你在排查渠道 你最需要记住的点 相关文档"
+    "text": "运维概览 Wunder 的运维面要同时处理部署、存储、安全、渠道运行态、观测和 benchmark，不只是把服务启动起来。 # 运维概览 如果你在做 wunder 的上线、观测和治理，这里是总入口。 这页不是只讲“把服务启动起来”，而是讲运维到底要看哪些面。 先看这些 部署与运行 先把 server、desktop、本地开发三条运行路径分清。 数据与存储 区分 PostgreSQL、SQLite、Weaviate、workspaces 和 tempdir。 认证与安全 API Key、用户 Token、外链鉴权和沙盒边界。 监控与 Benchmark 会话监控、工具统计、性能采样和能力评估入口。 渠道运行态 账号状态、长连接、入出站和运行日志的排障入口。 Desktop 本地模式 本地运行时的存储、工作区和能力边界。 运维通常在做什么 把服务和依赖跑起来 处理数据库、工作区和临时目录 处理鉴权、权限和安全边界 看渠道长连接、运行态和错误日志 做监控、吞吐、性能和 benchmark 按问题找页面 你在做上线 部署与运行 数据与存储 你在做权限和治理 认证与安全 提示词模板参考 你在做可观测 监控与 Benchmark 流式事件参考 你在排查渠道 渠道运行态 渠道 Webhook 最容易搞错的点 Wunder 的运维不只是进程运维，还包括会话治理、渠道运行态和模型链路观测。 工作区、数据库、向量库和临时目录必须分开治理。 监控、吞吐、性能采样和 benchmark 各自解决的问题不同，不要混用。 相关文档 参考概览 帮助 运维概览 先看这些 运维通常在做什么 按问题找页面 你在做上线 你在做权限和治理 你在做可观测 你在排查渠道 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/ops/deployment",
@@ -1180,24 +1191,25 @@
     "tab": "运维",
     "group": "部署与治理",
     "title": "部署与运行",
-    "summary": "Wunder 的部署要先分清 desktop、本地开发和 server 三条路径。",
+    "summary": "部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。",
     "url": "/docs/zh-CN/ops/deployment/",
     "headings": [
       "部署与运行",
-      "三条部署路径",
+      "这页解决什么",
+      "先定这四件事",
+      "按目标选部署路径",
       "Desktop",
       "Server",
       "本地开发",
-      "Server 侧推荐组成",
-      "数据与存储要点",
+      "如果你部署 Server，最少要准备什么",
+      "对外路径怎么规划",
+      "启动后先查这几项",
       "关键配置文件",
       "常见环境变量",
-      "单端口与路径规划",
-      "启动后至少检查什么",
       "最容易忽略的部署问题",
       "相关文档"
     ],
-    "text": "部署与运行 Wunder 的部署要先分清 desktop、本地开发和 server 三条路径。 # 部署与运行 部署 Wunder 之前，先不要问“怎么启动”，先问“我要哪种运行形态”。 三条部署路径 Desktop 适合个人直接使用。 特点： 本地优先 自带桌面壳 不要求先搭完整 server Server 适合团队、组织与统一治理。 特点： 多用户 多租户 管理端与用户端协同 可接 sandbox、MCP、A2A、渠道 本地开发 适合开发者联调。 特点： Rust 后端 前端 dev server 可单独调某一层 Server 侧推荐组成 典型部署里，至少会涉及这些组件： wunder-server wunder-sandbox extra-mcp PostgreSQL 如果需要用户侧生产前端，通常还会有静态资源服务。 数据与存储要点 网页端 server 使用 PostgreSQL desktop 本地模式使用 SQLite 用户工作区需要持久化 data/ 是临时目录，不要把长期业务资料沉进去 关键配置文件 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 常见环境变量 WUNDERHOST WUNDERPORT WUNDERAPIKEY WUNDERPOSTGRESDSN WUNDERSANDBOXENDPOINT WUNDERMCPHOST WUNDERCONFIGPATH WUNDERCONFIGOVERRIDEPATH 单端口与路径规划 当前系统已经支持把这些对外入口收口： /wunder /a2a /.well-known/agent-card.json /docs/ 这意味着你可以把业务 API、协议入口和文档站统一挂在同一服务域名下。 启动后至少检查什么 建议按这个顺序检查： 1. /wunder 是否可返回 2. /wunder/chat/ws 是否可建连 3. /a2a/agentCard 是否可读 4. /wunder/mcp 是否可达 5. /docs/ 是否能打开文档站 最容易忽略的部署问题 只启动了 server，但没准备好 Postgres 开启了 MCP 配置，但目标服务没通 工作区没有持久化，导致产物丢失 把长期业务数据放进了 data/ 误把 desktop 本地模式当成 server 部署方式 相关文档 Server 部署 认证与安全 配置说明 部署与运行 三条部署路径 Desktop Server 本地开发 Server 侧推荐组成 数据与存储要点 关键配置文件 常见环境变量 单端口与路径规划 启动后至少检查什么 最容易忽略的部署问题 相关文档"
+    "text": "部署与运行 部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。 # 部署与运行 部署 Wunder 之前，先不要急着问“怎么启动”，先问“我要哪种运行形态”。 这页解决什么 怎么先选对部署路径 server 侧最少要准备哪些东西 启动后应该先查哪些入口 先定这四件事 你是个人本地使用，还是团队上线 数据库该用 PostgreSQL 还是 SQLite 工作区放在哪，是否持久化 sandbox、MCP、静态前端要不要一起上线 按目标选部署路径 Desktop 适合个人直接使用 本地优先 自带桌面壳 不要求先搭完整 server Server 适合团队、组织和统一治理 多用户、多租户 管理端与用户端协同 可接 sandbox、MCP、A2A 和外部渠道 本地开发 适合开发者联调 Rust 后端和前端 dev server 分层调试 可以只启动某一层做局部验证 如果你部署 Server，最少要准备什么 典型部署里，至少会涉及这些组件： wunder-server PostgreSQL 持久化用户工作区 如果你需要更完整的能力，再按需接入： wunder-sandbox extra-mcp 用户侧或管理侧静态资源服务 对外路径怎么规划 /wunder /wunder/chat/ /a2a /.well-known/agent-card.json /docs/ 这些入口可以统一挂到同一服务域名下，别等上线前再临时拼接。 启动后先查这几项 1. /wunder 是否可返回 2. /wunder/chat/ws 是否可建连 3. /a2a/agentCard 是否可读 4. /wunder/mcp 是否可达 5. /docs/ 是否能正常打开 关键配置文件 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 常见环境变量 WUNDERHOST WUNDERPORT WUNDERAPIKEY WUNDERPOSTGRESDSN WUNDERSANDBOXENDPOINT WUNDERMCPHOST WUNDERCONFIGPATH WUNDERCONFIGOVERRIDEPATH 最容易忽略的部署问题 只启动了 server，但没准备好 Postgres 开启了 MCP 配置，但目标服务没通 工作区没有持久化，导致产物丢失 把长期业务数据放进了 data/ 误把 desktop 本地模式当成 server 部署方式 相关文档 Server 部署 认证与安全 配置说明 部署与运行 这页解决什么 先定这四件事 按目标选部署路径 Desktop Server 本地开发 如果你部署 Server，最少要准备什么 对外路径怎么规划 启动后先查这几项 关键配置文件 常见环境变量 最容易忽略的部署问题 相关文档"
   },
   {
     "slug": "zh-CN/ops/data-and-storage",
@@ -1334,14 +1346,15 @@
     "headings": [
       "参考概览",
       "先看这些",
+      "这组页面适合什么时候看",
       "按问题找页面",
       "你在找接口",
       "你在找配置或模板",
       "你在找管理入口",
-      "你最需要记住的点",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "参考概览 参考页不是再讲一遍产品故事，而是给你稳定的接口、配置、事件和面板索引。 # 参考概览 如果你已经知道 Wunder 是什么，现在需要的是“稳定查表页”，从这里开始。 先看这些 API 索引 先按接口族找入口，再决定是否翻完整 API 手册。 配置说明 运行配置、模型、存储和安全项的总入口。 流式事件参考 流式状态机最容易依赖的一页。 工作区路由 明确 containerid、agentid 和 scoped userid 的优先级。 提示词模板 模板包、分段文件和生效时机的参考页。 管理端面板索引 按面板快速找管理端能力。 按问题找页面 你在找接口 API 索引 流式事件参考 你在找配置或模板 配置说明 提示词模板参考 你在找管理入口 管理端面板索引 工作区路由参考 你最需要记住的点 参考页偏“稳定查表”，不是概念页。 接入状态机优先配合流式事件参考阅读。 工作区路由和提示词模板都值得单独看，不要只靠概念页理解。 相关文档 概念概览 接入概览 帮助 参考概览 先看这些 按问题找页面 你在找接口 你在找配置或模板 你在找管理入口 你最需要记住的点 相关文档"
+    "text": "参考概览 参考页不是再讲一遍产品故事，而是给你稳定的接口、配置、事件和面板索引。 # 参考概览 如果你已经知道 wunder 是什么，现在需要的是“稳定查表页”，从这里开始。 先看这些 API 索引 先按接口族找入口，再决定是否翻完整 API 手册。 配置说明 运行配置、模型、存储和安全项的总入口。 流式事件参考 做流式状态机时最容易依赖的一页。 工作区路由 明确 containerid、agentid 和 scoped userid 的优先级。 提示词模板 模板包、分段文件和生效时机的参考页。 管理端面板索引 按面板快速找管理端能力。 这组页面适合什么时候看 你已经知道问题大概在哪一层 你现在缺的是字段、事件、配置项或路由规则 你不想直接翻整份长文档 按问题找页面 你在找接口 API 索引 流式事件参考 你在找配置或模板 配置说明 提示词模板参考 你在找管理入口 管理端面板索引 工作区路由参考 最容易搞错的点 参考页偏“稳定查表”，不是概念页。 接入状态机优先配合流式事件参考阅读。 工作区路由和提示词模板都值得单独看，不要只靠概念页理解。 相关文档 概念概览 接入概览 帮助 参考概览 先看这些 这组页面适合什么时候看 按问题找页面 你在找接口 你在找配置或模板 你在找管理入口 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/reference/api-index",
@@ -1370,26 +1383,24 @@
     "tab": "参考",
     "group": "系统参考",
     "title": "配置说明",
-    "summary": "Wunder 的稳定配置入口主要集中在 `config/wunder.yaml`、override 文件和 extra_mcp 配置。",
+    "summary": "配置不生效时，先确认你改的是哪一层，而不是先怀疑程序没读到。",
     "url": "/docs/zh-CN/reference/config/",
     "headings": [
       "配置说明",
-      "先看这几个文件",
+      "这页解决什么",
+      "先记住这几个配置入口",
       "它们分别负责什么",
       "config/wunder.yaml",
       "config/wunder-example.yaml",
       "data/config/wunder.override.yaml",
       "extramcp/mcpconfig.json",
-      "最常见的配置块",
-      "你最可能先改哪些项",
-      "服务基础",
-      "安全",
-      "MCP",
-      "A2A",
-      "一个实际建议",
+      "按问题找配置",
+      "你最可能先改这些项",
+      "配置不生效时先查这三件事",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "配置说明 Wunder 的稳定配置入口主要集中在 config/wunder.yaml、override 文件和 extramcp 配置。 # 配置说明 Wunder 的配置不是一个文件包打天下，而是分层组织的。 先看这几个文件 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 它们分别负责什么 config/wunder.yaml 正式基础配置。 如果你在部署 server，这通常是第一入口。 config/wunder-example.yaml 示例配置和兜底模板。 如果正式配置缺失，系统会按当前逻辑回退到这里。 data/config/wunder.override.yaml 运行时覆盖配置。 这通常对应管理端保存后的内容，不建议手工和基础配置混着改。 extramcp/mcpconfig.json 独立 MCP 服务配置，尤其是数据库和知识库相关工具。 最常见的配置块 server security mcp a2a channels storage vectorstore 你最可能先改哪些项 服务基础 server.host server.port server.chatstreamchannel server.maxactivesessions 安全 security.apikey security.externalauthkey security.allowcommands security.allowpaths security.denyglobs MCP mcp.timeouts mcp.servers[] A2A a2a.timeouts a2a.services[] 一个实际建议 如果你在排查“配置改了怎么没生效”，优先确认三件事： 1. 你改的是基础配置还是 override 配置 2. 当前运行实例实际读取的是哪个路径 3. 这个配置到底是 server、desktop 还是 extramcp 在消费 相关文档 部署与运行 MCP 入口 A2A 接口 配置说明 先看这几个文件 它们分别负责什么 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 最常见的配置块 你最可能先改哪些项 服务基础 安全 MCP A2A 一个实际建议 相关文档"
+    "text": "配置说明 配置不生效时，先确认你改的是哪一层，而不是先怀疑程序没读到。 # 配置说明 Wunder 的配置不是一个文件包打天下，而是分层组织的。 先记一条：排查配置问题时，先分清“基础配置、运行时覆盖、外部 MCP 配置”三层。 这页解决什么 具体配置应该改到哪里 哪些配置是 server 在读，哪些是 extramcp 在读 为什么你改了配置却可能没生效 先记住这几个配置入口 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 它们分别负责什么 config/wunder.yaml 正式基础配置 部署 server 时通常先看这里 config/wunder-example.yaml 示例配置和兜底模板 正式配置缺失时，系统会按当前逻辑回退到这里 data/config/wunder.override.yaml 运行时覆盖配置 通常对应管理端保存后的内容 不建议手工和基础配置混着改 extramcp/mcpconfig.json 独立 MCP 服务配置 尤其是数据库和知识库相关工具 按问题找配置 服务监听和并发限制，看 server. 鉴权、命令和路径控制，看 security. 外部 MCP 服务接入，看 mcp. A2A 服务接入，看 a2a. 存储与向量能力，看 storage. 和 vectorstore. 你最可能先改这些项 服务基础：server.host、server.port、server.chatstreamchannel、server.maxactivesessions 安全控制：security.apikey、security.externalauthkey、security.allowcommands、security.allowpaths、security.denyglobs MCP：mcp.timeouts、mcp.servers[] A2A：a2a.timeouts、a2a.services[] 配置不生效时先查这三件事 1. 你改的是基础配置还是 override 配置 2. 当前运行实例实际读取的是哪个路径 3. 这个配置到底是 server、desktop 还是 extramcp 在消费 最容易搞错的点 把 wunder-example.yaml 当正式配置长期改。 管理端写入的 override 和手工改的基础配置相互打架。 以为所有配置都由 server 进程读取，实际上 extramcp 有自己的配置文件。 相关文档 部署与运行 MCP 入口 A2A 接口 配置说明 这页解决什么 先记住这几个配置入口 它们分别负责什么 config/wunder.yaml config/wunder-example.yaml data/config/wunder.override.yaml extramcp/mcpconfig.json 按问题找配置 你最可能先改这些项 配置不生效时先查这三件事 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/reference/stream-events",
@@ -1500,15 +1511,16 @@
     "headings": [
       "帮助",
       "先看这些",
+      "最先判断什么",
       "按问题找入口",
       "接口或状态机异常",
       "文件或下载链路异常",
       "渠道接入异常",
       "配置或治理问题",
-      "你最需要记住的点",
+      "最容易搞错的点",
       "相关文档"
     ],
-    "text": "帮助 如果你想更快地修问题，先从这里选正确的排障入口，而不是到处翻整站文档。 # 帮助 如果你的目标是“尽快定位问题”，从这里开始。 先看这些 故障排查：从这里开始 常见问题：FAQ 术语说明：术语表 按问题找入口 接口或状态机异常 流式事件参考 聊天会话 文件或下载链路异常 工作区 API 临时目录与文档转换 渠道接入异常 渠道运行态 渠道 Webhook 配置或治理问题 配置说明 管理端面板索引 你最需要记住的点 先判断问题属于概念问题、接入问题还是运行问题。 很多“模型异常”其实是渠道、工作区或状态机问题。 FAQ 适合快速判断，troubleshooting 适合按链路排查。 相关文档 文档总览 参考概览 帮助 先看这些 按问题找入口 接口或状态机异常 文件或下载链路异常 渠道接入异常 配置或治理问题 你最需要记住的点 相关文档"
+    "text": "帮助 如果你想更快地修问题，先从这里选正确的排障入口，而不是到处翻整站文档。 # 帮助 如果你的目标是“尽快定位问题”，从这里开始。 这页不负责解释所有原理，只负责把你送到正确的排障入口。 先看这些 故障排查：从这里开始 常见问题：FAQ 术语说明：术语表 最先判断什么 这是使用疑问，还是系统故障 这是接入问题，还是运行问题 这是文件链路问题，还是聊天/渠道问题 按问题找入口 接口或状态机异常 流式事件参考 聊天会话 文件或下载链路异常 工作区 API 临时目录与文档转换 渠道接入异常 渠道运行态 渠道 Webhook 配置或治理问题 配置说明 管理端面板索引 最容易搞错的点 先判断问题属于概念问题、接入问题还是运行问题。 很多“模型异常”其实是渠道、工作区或状态机问题。 FAQ 适合快速判断，troubleshooting 适合按链路排查。 相关文档 文档总览 参考概览 帮助 先看这些 最先判断什么 按问题找入口 接口或状态机异常 文件或下载链路异常 渠道接入异常 配置或治理问题 最容易搞错的点 相关文档"
   },
   {
     "slug": "zh-CN/help/troubleshooting",
@@ -1520,17 +1532,20 @@
     "url": "/docs/zh-CN/help/troubleshooting/",
     "headings": [
       "故障排查",
-      "1. 入口是否通",
-      "2. 鉴权是否对",
-      "3. 配置是否生效",
-      "4. 依赖服务是否就绪",
-      "5. 实时通道是否异常",
-      "6. 工具为什么没出现",
-      "7. 为什么模型一直报权限或审批",
-      "8. Desktop 本地模式常见问题",
-      "什么时候该回完整文档"
+      "最先看什么",
+      "入口是否通",
+      "常见的“它坏了”情况",
+      "接口直接 401 / 403",
+      "配置改了但系统没反应",
+      "服务启动了，但核心能力还是不可用",
+      "聊天收不到中间过程或实时状态",
+      "工具为什么没出现",
+      "模型一直报权限或审批",
+      "Desktop 本地模式看起来坏了",
+      "如果你还没定位到问题",
+      "提交问题时带什么"
     ],
-    "text": "故障排查 排查 Wunder 问题时，优先从入口、鉴权、配置、依赖服务和实时通道五个方向切。 # 故障排查 排查 Wunder，不要一上来翻所有日志。 先按下面顺序切问题。 1. 入口是否通 先检查这些入口： /wunder /wunder/chat/ws /a2a/agentCard /wunder/mcp /docs/ 如果入口都不通，先不要继续查上层逻辑。 2. 鉴权是否对 常见问题： 管理端接口却用了用户 Token 用户侧接口却用了 API Key /a2a 或 /wunder/mcp 没带 API Key 外链嵌入没有配置 externalauthkey 3. 配置是否生效 优先确认： 实际读取的是 config/wunder.yaml 还是 example 管理端是否写入了 data/config/wunder.override.yaml 你改的是 server 配置还是 extramcp 配置 4. 依赖服务是否就绪 服务端部署最常见的问题是依赖没起来： PostgreSQL 未就绪 sandbox 不可达 extramcp 未启动 外部 MCP/A2A 目标不可达 5. 实时通道是否异常 如果聊天收不到过程： 1. 先看 /wunder/chat/ws 是否能建连 2. 再看是否已自动回退 SSE 3. 再看 resume/watch 是否传错 sessionid 或 aftereventid 6. 工具为什么没出现 优先检查： 工具是否在配置里启用 MCP server 是否 enabled A2A 服务是否 enabled 当前智能体或会话是否真的挂载了目标工具 7. 为什么模型一直报权限或审批 排查这几个方向： 当前 approvalmode 命令与路径白名单 sandbox 是否开启 工具是否进入了等待审批态但前端没正确回传 8. Desktop 本地模式常见问题 最常见的是这几类： 误以为必须先部署 server 本地工作目录没持久化 远端接入配置错误后以为本地模式也坏了 以为可以自定义 Python 路径，但当前默认是附带运行时优先 什么时候该回完整文档 如果你排查到这里还没定位，下一步通常回这几类文档： 部署与运行 认证与安全 配置说明 故障排查 1. 入口是否通 2. 鉴权是否对 3. 配置是否生效 4. 依赖服务是否就绪 5. 实时通道是否异常 6. 工具为什么没出现 7. 为什么模型一直报权限或审批 8. Desktop 本地模式常见问题 什么时候该回完整文档"
+    "text": "故障排查 排查 Wunder 问题时，优先从入口、鉴权、配置、依赖服务和实时通道五个方向切。 # 故障排查 排查 wunder，不要一上来翻所有日志。 先按下面顺序切问题。 最先看什么 先做这几步： 1. 确认你访问的是对的运行形态和地址 2. 确认核心入口能通 3. 再去看鉴权、配置和依赖服务 入口是否通 先检查这些入口： /wunder /wunder/chat/ws /a2a/agentCard /wunder/mcp /docs/ 如果入口都不通，先不要继续查上层逻辑。 常见的“它坏了”情况 接口直接 401 / 403 优先检查鉴权： 管理端接口却用了用户 Token 用户侧接口却用了 API Key /a2a 或 /wunder/mcp 没带 API Key 外链嵌入没有配置 externalauthkey 配置改了但系统没反应 优先确认这些事： 实际读取的是 config/wunder.yaml 还是 example 管理端是否写入了 data/config/wunder.override.yaml 你改的是 server 配置还是 extramcp 配置 服务启动了，但核心能力还是不可用 服务端部署最常见的问题是依赖没起来： PostgreSQL 未就绪 sandbox 不可达 extramcp 未启动 外部 MCP/A2A 目标不可达 聊天收不到中间过程或实时状态 优先按这个顺序看： 1. 先看 /wunder/chat/ws 是否能建连 2. 再看是否已自动回退 SSE 3. 再看 resume/watch 是否传错 sessionid 或 aftereventid 工具为什么没出现 优先检查： 工具是否在配置里启用 MCP server 是否 enabled A2A 服务是否 enabled 当前智能体或会话是否真的挂载了目标工具 模型一直报权限或审批 排查这几个方向： 当前 approvalmode 命令与路径白名单 sandbox 是否开启 工具是否进入了等待审批态但前端没正确回传 Desktop 本地模式看起来坏了 最常见的是这几类： 误以为必须先部署 server 本地工作目录没持久化 远端接入配置错误后以为本地模式也坏了 以为可以自定义 Python 路径，但当前默认是附带运行时优先 如果你还没定位到问题 下一步通常回这些页面： 部署与运行 认证与安全 配置说明 提交问题时带什么 至少带上这些信息： 你跑的是 desktop、server 还是 cli 出问题的具体入口或页面 相关日志片段 是否涉及 WebSocket、SSE、渠道、MCP 或 A2A 故障排查 最先看什么 入口是否通 常见的“它坏了”情况 接口直接 401 / 403 配置改了但系统没反应 服务启动了，但核心能力还是不可用 聊天收不到中间过程或实时状态 工具为什么没出现 模型一直报权限或审批 Desktop 本地模式看起来坏了 如果你还没定位到问题 提交问题时带什么"
   },
   {
     "slug": "zh-CN/help/faq",

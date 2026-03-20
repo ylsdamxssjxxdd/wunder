@@ -3,7 +3,18 @@
     "name": "wunder 文档",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
     "default_language": "zh-CN",
-    "home_page": "zh-CN/index"
+    "home_page": "zh-CN/index",
+    "logo": "/docs/assets/eva01-head.svg",
+    "header_links": [
+      {
+        "label": "控制台",
+        "url": "/"
+      },
+      {
+        "label": "PPT",
+        "url": "/wunder/ppt/"
+      }
+    ]
   },
   "navigation": {
     "languages": [

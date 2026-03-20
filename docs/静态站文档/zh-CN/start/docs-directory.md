@@ -10,6 +10,17 @@ source_docs:
 
 # 常用文档目录
 
+这页适合两种人：
+
+- 你不想慢慢翻左侧导航
+- 你只想先找到最常用的几篇文档
+
+## 如果你只看三页
+
+- [快速开始](/docs/zh-CN/start/quickstart/)
+- [系统架构](/docs/zh-CN/concepts/architecture/)
+- [wunder API](/docs/zh-CN/integration/wunder-api/)
+
 ## 第一次使用
 
 - [快速开始](/docs/zh-CN/start/quickstart/)
@@ -43,7 +54,7 @@ source_docs:
 - [管理端界面](/docs/zh-CN/surfaces/web-admin/)
 - [桌面端界面](/docs/zh-CN/surfaces/desktop-ui/)
 
-## 部署与治理
+## 部署、治理与排障
 
 - [部署与运行](/docs/zh-CN/ops/deployment/)
 - [数据与存储](/docs/zh-CN/ops/data-and-storage/)
@@ -56,6 +67,14 @@ source_docs:
 - [FAQ](/docs/zh-CN/help/faq/)
 - [故障排查](/docs/zh-CN/help/troubleshooting/)
 - [术语表](/docs/zh-CN/help/glossary/)
+
+## 一个实用建议
+
+如果你不知道某个问题应该先从哪一层看，按这个顺序：
+
+1. 先看开始页或概念页，确认问题属于哪一层。
+2. 再看接入页、工具页或界面页，确认具体入口。
+3. 最后再回参考页或故障排查页查字段、事件和异常路径。
 
 ## 相关文档
 

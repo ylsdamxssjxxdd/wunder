@@ -62,7 +62,7 @@ source_docs:
 
 当前它受：
 
-- `tools.web_fetch.enabled`
+- `tools.web.fetch.enabled`
 
 控制。
 

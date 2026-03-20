@@ -21,9 +21,13 @@ ROOT_GENERATED_FILES = [
     "site.css",
     "manifest.json",
     "search.json",
+    "assets",
 ]
+LOGO_SOURCE_PATH = REPO_ROOT / "images" / "eva01-head.svg"
+LOGO_TARGET_PATH = Path("assets") / "eva01-head.svg"
 FENCE_PATTERN = re.compile(r"^(```|~~~)")
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def read_text(path: Path) -> str:
@@ -177,6 +181,29 @@ def ensure_list(value: Any) -> list[str]:
     return [text] if text else []
 
 
+def ensure_header_links(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    links: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        url = str(item.get("url") or item.get("href") or "").strip()
+        if not label or not url:
+            continue
+        links.append({"label": label, "url": url})
+    return links
+
+
+def resolve_updated_at(source_path: Path, metadata: dict[str, Any]) -> str:
+    for key in ("updated_at", "last_updated", "updated"):
+        raw_value = str(metadata.get(key) or "").strip()
+        if DATE_PATTERN.fullmatch(raw_value):
+            return raw_value
+    return datetime.fromtimestamp(source_path.stat().st_mtime).astimezone().strftime("%Y-%m-%d")
+
+
 def resolve_output(slug: str, home_slug: str) -> tuple[Path, str]:
     if slug == home_slug:
         return Path("index.html"), "/docs/"
@@ -240,6 +267,7 @@ def load_pages(site_config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], 
             "slug": slug,
             "title": title,
             "summary": summary,
+            "updated_at": resolve_updated_at(source_path, metadata),
             "read_when": ensure_list(metadata.get("read_when")),
             "source_docs": ensure_list(metadata.get("source_docs")),
             "url": page_url,
@@ -299,11 +327,22 @@ def load_pages(site_config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], 
 
 
 def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
+    header_links = site_meta.get("header_links", [])
+    rendered_header_links: list[str] = []
+    for link in header_links:
+        href = html.escape(str(link["url"]), quote=True)
+        label = html.escape(str(link["label"]), quote=False)
+        target_attrs = ""
+        if str(link["url"]).startswith(("http://", "https://")):
+            target_attrs = ' target="_blank" rel="noopener noreferrer"'
+        rendered_header_links.append(f'<a class="docs-header-link" href="{href}"{target_attrs}>{label}</a>')
+    header_links_html = "".join(rendered_header_links)
     page_data = {
         "slug": page["slug"],
         "language": page["language"],
         "title": page["title"],
         "summary": page["summary"],
+        "updated_at": page["updated_at"],
         "read_when": page["read_when"],
         "source_docs": page["source_docs"],
         "tab": page["tab"],
@@ -320,6 +359,7 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
     description = html.escape(page["summary"] or site_meta["description"], quote=True)
     language = html.escape(page["language"], quote=True)
     site_name = html.escape(site_meta["name"], quote=False)
+    logo_url = html.escape(site_meta["logo_url"], quote=True)
     page_json = inline_json(page_data)
     return f"""<!doctype html>
 <html lang="{language}">
@@ -335,37 +375,46 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="{logo_url}" alt="">
             <span class="docs-brand-text">{site_name}</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links">{header_links_html}</div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
@@ -407,6 +456,11 @@ def copy_site_assets() -> None:
         if not asset_path.exists():
             raise FileNotFoundError(f"缺少站点资源模板: {asset_path}")
         write_text(OUTPUT_DIR / asset_name, read_text(asset_path))
+    if not LOGO_SOURCE_PATH.exists():
+        raise FileNotFoundError(f"缺少站点品牌图标: {LOGO_SOURCE_PATH}")
+    logo_output = OUTPUT_DIR / LOGO_TARGET_PATH
+    logo_output.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(LOGO_SOURCE_PATH, logo_output)
 
 
 def build() -> None:
@@ -419,6 +473,8 @@ def build() -> None:
         "default_language": str(site_config["site"].get("default_language") or "zh-CN"),
         "home_page": home_slug,
         "home_url": pages[home_slug]["url"],
+        "logo_url": str(site_config["site"].get("logo") or f"/docs/{LOGO_TARGET_PATH.as_posix()}"),
+        "header_links": ensure_header_links(site_config["site"].get("header_links")),
     }
 
     cleanup_previous_build()
@@ -442,6 +498,7 @@ def build() -> None:
                 "language": page["language"],
                 "title": page["title"],
                 "summary": page["summary"],
+                "updated_at": page["updated_at"],
                 "read_when": page["read_when"],
                 "source_docs": page["source_docs"],
                 "tab": page["tab"],

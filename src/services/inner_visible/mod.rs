@@ -771,7 +771,7 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
-    fn build_service() -> (
+    async fn build_service() -> (
         tempfile::TempDir,
         Arc<UserStore>,
         Arc<InnerVisibleService>,
@@ -788,9 +788,15 @@ mod tests {
             0,
             &HashMap::new(),
         ));
-        let mut config = Config::default();
-        config.workspace.root = workspace_root.to_string_lossy().to_string();
         let config_store = ConfigStore::new(temp.path().join("override.yaml"));
+        let workspace_root_value = workspace_root.to_string_lossy().to_string();
+        let config = config_store
+            .update(|config| {
+                config.workspace.root = workspace_root_value.clone();
+                config.tools.builtin.enabled = vec!["读取文件".to_string()];
+            })
+            .await
+            .expect("configure config store");
         let skills = Arc::new(RwLock::new(load_skills(&config, true, true, true)));
         let user_tool_store =
             Arc::new(UserToolStore::new(&config, workspace.clone()).expect("tool store"));
@@ -847,7 +853,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_user_state_materializes_and_applies_agent_files() {
-        let (_temp, user_store, service, workspace) = build_service();
+        let (_temp, user_store, service, workspace) = build_service().await;
         let now = now_ts();
         let record = UserAgentRecord {
             agent_id: "agent_demo".to_string(),
@@ -913,7 +919,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_user_state_seeds_minimal_inner_visible_dirs() {
-        let (_temp, _user_store, service, _workspace) = build_service();
+        let (_temp, _user_store, service, _workspace) = build_service().await;
 
         service.sync_user_state("bob").await.expect("sync");
         let private_root = service.private_root("bob");
@@ -927,7 +933,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_user_state_applies_worker_card_self_updates_for_prompt_tools_and_skills() {
-        let (_temp, user_store, service, _workspace) = build_service();
+        let (_temp, user_store, service, _workspace) = build_service().await;
         let user_id = "alice";
         let agent_id = "agent_self_update";
         let now = now_ts();
@@ -1026,7 +1032,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_user_state_keeps_last_good_when_worker_card_becomes_invalid() {
-        let (_temp, user_store, service, _workspace) = build_service();
+        let (_temp, user_store, service, _workspace) = build_service().await;
         let user_id = "alice";
         let agent_id = "agent_invalid_card";
         let now = now_ts();
@@ -1093,7 +1099,7 @@ mod tests {
 
     #[tokio::test]
     async fn sync_user_state_applies_default_agent_worker_card_updates() {
-        let (_temp, user_store, service, _workspace) = build_service();
+        let (_temp, user_store, service, _workspace) = build_service().await;
         let user_id = "alice";
         let now = now_ts();
         user_store

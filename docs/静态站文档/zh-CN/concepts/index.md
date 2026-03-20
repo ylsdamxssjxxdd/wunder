@@ -12,7 +12,7 @@ source_docs:
 
 # 概念概览
 
-如果你只想先看一页概念入口，就看这里。
+如果你还没分清线程、会话、工作区、工具和运行时状态，先看这页。
 
 ## 先看这些
 
@@ -35,13 +35,21 @@ source_docs:
   </a>
   <a class="docs-card" href="/docs/zh-CN/concepts/tools/">
     <strong>工具体系</strong>
-    <span>内置工具、MCP、技能和用户工具如何共同挂载。</span>
+    <span>看内置工具、MCP、技能和用户工具如何共同挂载。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/concepts/prompt-and-skills/">
     <strong>提示词与技能</strong>
-    <span>线程冻结、模板包和 skill_call 的最短入口。</span>
+    <span>看线程冻结、模板包和 skill_call 的边界。</span>
   </a>
 </div>
+
+## 最容易混淆的几个概念
+
+- 工作区不是会话。
+- 会话不是线程。
+- 线程不是智能体。
+- 流式事件不是最终结果。
+- Token 统计不是账单总消耗。
 
 ## 按问题找页面
 

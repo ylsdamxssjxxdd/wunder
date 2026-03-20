@@ -12,42 +12,51 @@
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
             <span class="docs-brand-text">wunder 文档</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links"><a class="docs-header-link" href="/">控制台</a><a class="docs-header-link" href="/wunder/ppt/">PPT</a></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/ops/benchmark-and-observability","language":"zh-CN","title":"监控与 Benchmark","summary":"Wunder 的观测面不是单一监控页，而是由会话监控、工具统计、性能采样、吞吐压测和 benchmark 共同组成。","read_when":["你在排查线程、工具或模型链路问题","你要区分 monitor、throughput、performance 和 benchmark 的职责"],"source_docs":["docs/API文档.md","docs/设计方案.md","src/api/admin.rs"],"tab":"运维","group":"部署与治理","group_path":["部署与治理"],"url":"/docs/zh-CN/ops/benchmark-and-observability/","headings":[{"id":"section-1","level":1,"text":"监控与 Benchmark"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"先分四类能力"},{"id":"section-4","level":3,"text":"会话监控"},{"id":"section-5","level":3,"text":"工具使用统计"},{"id":"section-6","level":3,"text":"性能与吞吐"},{"id":"section-7","level":3,"text":"Benchmark"},{"id":"section-8","level":2,"text":"为什么要分开"},{"id":"section-9","level":2,"text":"观测时最值得记住的字段"},{"id":"section-10","level":2,"text":"最容易犯的错"},{"id":"section-11","level":3,"text":"用 benchmark 代替线上监控"},{"id":"section-12","level":3,"text":"用吞吐压测代替能力评估"},{"id":"section-13","level":3,"text":"只看一层日志"},{"id":"section-14","level":2,"text":"你最需要记住的点"},{"id":"section-15","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/ops/auth-and-security","next_slug":"zh-CN/ops/channel-runtime","markdown":"# 监控与 Benchmark\n\nWunder 已经把“能不能看到问题”和“能不能量化问题”分成了几条独立链路。\n\n## 这页解决什么\n\n这页只讲清楚：\n\n- 线上线程和工具问题去哪看\n- 性能采样和吞吐压测有什么区别\n- benchmark 为什么不是简单压测\n\n## 先分四类能力\n\n### 会话监控\n\n主要入口：\n\n- `GET /wunder/admin/monitor`\n- `GET /wunder/admin/monitor/{session_id}`\n- `POST /wunder/admin/monitor/{session_id}/cancel`\n- `POST /wunder/admin/monitor/{session_id}/compaction`\n\n这条链路解决的是：\n\n- 线程现在在干什么\n- 最近发生了哪些事件\n- 当前 token 占用、阶段和耗时是多少\n\n### 工具使用统计\n\n主要入口：\n\n- `GET /wunder/admin/monitor/tool_usage`\n\n它解决的是：\n\n- 某个工具最近被谁用得最多\n- 工具调用与线程状态之间是否相关\n\n### 性能与吞吐\n\n主要入口：\n\n- `/wunder/admin/throughput/*`\n- `/wunder/admin/performance/sample`\n\n它们不是一回事：\n\n- throughput 更偏并发压测\n- performance sample 更偏链路基线采样，不涉及模型能力评分\n\n### Benchmark\n\n主要入口：\n\n- `/wunder/admin/benchmark/*`\n\n它更接近“能力评估”，关注任务完成质量与结果结构，而不是只看速度。\n\n## 为什么要分开\n\n因为这几类问题本来就不同：\n\n- 线上线程异常：看 monitor\n- 某工具是否成了热点或瓶颈：看 tool_usage\n- 服务在高并发下能不能扛住：看 throughput\n- 某次改动是否让能力退化：看 benchmark\n\n## 观测时最值得记住的字段\n\n- `trace_id`：跨模块追踪\n- `log_profile`：`normal` 或 `debug`\n- `token_usage.input_tokens`：实际上下文占用\n- `prefill_*` / `decode_*`：速度与耗时拆分\n\n## 最容易犯的错\n\n### 用 benchmark 代替线上监控\n\nbenchmark 不能替代真实线程监控。\n\n### 用吞吐压测代替能力评估\n\nthroughput 只告诉你“扛不扛得住”，不告诉你“答得好不好”。\n\n### 只看一层日志\n\n很多问题需要把 monitor、tool_usage 和渠道运行态一起看。\n\n## 你最需要记住的点\n\n- `monitor` 看线上线程。\n- `tool_usage` 看工具热点和调用面。\n- `throughput/performance` 看系统链路承压能力。\n- `benchmark` 看任务质量与能力回归。\n\n## 相关文档\n\n- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n","source_path":"静态站文档/zh-CN/ops/benchmark-and-observability.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/ops/benchmark-and-observability","language":"zh-CN","title":"监控与 Benchmark","summary":"Wunder 的观测面不是单一监控页，而是由会话监控、工具统计、性能采样、吞吐压测和 benchmark 共同组成。","updated_at":"2026-03-19","read_when":["你在排查线程、工具或模型链路问题","你要区分 monitor、throughput、performance 和 benchmark 的职责"],"source_docs":["docs/API文档.md","docs/设计方案.md","src/api/admin.rs"],"tab":"运维","group":"部署与治理","group_path":["部署与治理"],"url":"/docs/zh-CN/ops/benchmark-and-observability/","headings":[{"id":"section-1","level":1,"text":"监控与 Benchmark"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"先分四类能力"},{"id":"section-4","level":3,"text":"会话监控"},{"id":"section-5","level":3,"text":"工具使用统计"},{"id":"section-6","level":3,"text":"性能与吞吐"},{"id":"section-7","level":3,"text":"Benchmark"},{"id":"section-8","level":2,"text":"为什么要分开"},{"id":"section-9","level":2,"text":"观测时最值得记住的字段"},{"id":"section-10","level":2,"text":"最容易犯的错"},{"id":"section-11","level":3,"text":"用 benchmark 代替线上监控"},{"id":"section-12","level":3,"text":"用吞吐压测代替能力评估"},{"id":"section-13","level":3,"text":"只看一层日志"},{"id":"section-14","level":2,"text":"你最需要记住的点"},{"id":"section-15","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/ops/auth-and-security","next_slug":"zh-CN/ops/channel-runtime","markdown":"# 监控与 Benchmark\n\nWunder 已经把“能不能看到问题”和“能不能量化问题”分成了几条独立链路。\n\n## 这页解决什么\n\n这页只讲清楚：\n\n- 线上线程和工具问题去哪看\n- 性能采样和吞吐压测有什么区别\n- benchmark 为什么不是简单压测\n\n## 先分四类能力\n\n### 会话监控\n\n主要入口：\n\n- `GET /wunder/admin/monitor`\n- `GET /wunder/admin/monitor/{session_id}`\n- `POST /wunder/admin/monitor/{session_id}/cancel`\n- `POST /wunder/admin/monitor/{session_id}/compaction`\n\n这条链路解决的是：\n\n- 线程现在在干什么\n- 最近发生了哪些事件\n- 当前 token 占用、阶段和耗时是多少\n\n### 工具使用统计\n\n主要入口：\n\n- `GET /wunder/admin/monitor/tool_usage`\n\n它解决的是：\n\n- 某个工具最近被谁用得最多\n- 工具调用与线程状态之间是否相关\n\n### 性能与吞吐\n\n主要入口：\n\n- `/wunder/admin/throughput/*`\n- `/wunder/admin/performance/sample`\n\n它们不是一回事：\n\n- throughput 更偏并发压测\n- performance sample 更偏链路基线采样，不涉及模型能力评分\n\n### Benchmark\n\n主要入口：\n\n- `/wunder/admin/benchmark/*`\n\n它更接近“能力评估”，关注任务完成质量与结果结构，而不是只看速度。\n\n## 为什么要分开\n\n因为这几类问题本来就不同：\n\n- 线上线程异常：看 monitor\n- 某工具是否成了热点或瓶颈：看 tool_usage\n- 服务在高并发下能不能扛住：看 throughput\n- 某次改动是否让能力退化：看 benchmark\n\n## 观测时最值得记住的字段\n\n- `trace_id`：跨模块追踪\n- `log_profile`：`normal` 或 `debug`\n- `token_usage.input_tokens`：实际上下文占用\n- `prefill_*` / `decode_*`：速度与耗时拆分\n\n## 最容易犯的错\n\n### 用 benchmark 代替线上监控\n\nbenchmark 不能替代真实线程监控。\n\n### 用吞吐压测代替能力评估\n\nthroughput 只告诉你“扛不扛得住”，不告诉你“答得好不好”。\n\n### 只看一层日志\n\n很多问题需要把 monitor、tool_usage 和渠道运行态一起看。\n\n## 你最需要记住的点\n\n- `monitor` 看线上线程。\n- `tool_usage` 看工具热点和调用面。\n- `throughput/performance` 看系统链路承压能力。\n- `benchmark` 看任务质量与能力回归。\n\n## 相关文档\n\n- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)\n- [流式事件参考](/docs/zh-CN/reference/stream-events/)\n- [管理端面板索引](/docs/zh-CN/reference/admin-panels/)\n","source_path":"静态站文档/zh-CN/ops/benchmark-and-observability.md"}</script>
 </body>
 </html>

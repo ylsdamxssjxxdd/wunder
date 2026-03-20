@@ -18,7 +18,11 @@ fn ability_source_key(source: AbilitySourceKey) -> &'static str {
     }
 }
 
-fn build_ability_id(source: AbilitySourceKey, owner_id: Option<&str>, runtime_name: &str) -> String {
+fn build_ability_id(
+    source: AbilitySourceKey,
+    owner_id: Option<&str>,
+    runtime_name: &str,
+) -> String {
     let normalized_runtime_name = runtime_name.trim();
     match owner_id.map(str::trim).filter(|value| !value.is_empty()) {
         Some(owner) => format!(
@@ -63,7 +67,11 @@ fn build_shared_ability(
 ) -> AbilityDescriptor {
     let runtime_name = spec.name.trim().to_string();
     AbilityDescriptor {
-        id: build_ability_id(AbilitySourceKey::Shared, Some(&spec.owner_id), &runtime_name),
+        id: build_ability_id(
+            AbilitySourceKey::Shared,
+            Some(&spec.owner_id),
+            &runtime_name,
+        ),
         name: runtime_name.clone(),
         runtime_name: runtime_name.clone(),
         display_name: runtime_name,
@@ -240,7 +248,7 @@ mod tests {
         };
 
         let items = build_ability_items(&response);
-        assert_eq!(items.len(), 8);
+        assert_eq!(items.len(), 9);
         assert!(items.iter().any(|item| {
             item.runtime_name == "read_file"
                 && item.group == AbilityGroupKey::Builtin
@@ -251,6 +259,18 @@ mod tests {
             item.runtime_name == "planner_skill"
                 && item.group == AbilityGroupKey::Skills
                 && item.kind == AbilityKind::Skill
+        }));
+        assert!(items.iter().any(|item| {
+            item.runtime_name == "alice@writer_skill"
+                && item.group == AbilityGroupKey::User
+                && item.source == AbilitySourceKey::UserSkill
+                && item.kind == AbilityKind::Skill
+        }));
+        assert!(items.iter().any(|item| {
+            item.runtime_name == "alice@kb_search"
+                && item.group == AbilityGroupKey::User
+                && item.source == AbilitySourceKey::UserKnowledge
+                && item.kind == AbilityKind::Tool
         }));
         assert!(items.iter().any(|item| {
             item.runtime_name == "bob@shared_tool"

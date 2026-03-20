@@ -1,6 +1,6 @@
 ---
 title: 部署与运行
-summary: Wunder 的部署要先分清 desktop、本地开发和 server 三条路径。
+summary: 部署 Wunder 前先分清 desktop、本地开发和 server 三条路径，再谈启动命令。
 read_when:
   - 你要部署 Wunder
   - 你要确认数据库、MCP、sandbox 和工作区怎么放
@@ -13,58 +13,74 @@ source_docs:
 
 # 部署与运行
 
-部署 Wunder 之前，先不要问“怎么启动”，先问“我要哪种运行形态”。
+部署 Wunder 之前，先不要急着问“怎么启动”，先问“我要哪种运行形态”。
 
-## 三条部署路径
+## 这页解决什么
+
+- 怎么先选对部署路径
+- server 侧最少要准备哪些东西
+- 启动后应该先查哪些入口
+
+## 先定这四件事
+
+- 你是个人本地使用，还是团队上线
+- 数据库该用 PostgreSQL 还是 SQLite
+- 工作区放在哪，是否持久化
+- sandbox、MCP、静态前端要不要一起上线
+
+## 按目标选部署路径
 
 ### Desktop
 
-适合个人直接使用。
-
-特点：
-
+- 适合个人直接使用
 - 本地优先
 - 自带桌面壳
 - 不要求先搭完整 server
 
 ### Server
 
-适合团队、组织与统一治理。
-
-特点：
-
-- 多用户
-- 多租户
+- 适合团队、组织和统一治理
+- 多用户、多租户
 - 管理端与用户端协同
-- 可接 sandbox、MCP、A2A、渠道
+- 可接 sandbox、MCP、A2A 和外部渠道
 
 ### 本地开发
 
-适合开发者联调。
+- 适合开发者联调
+- Rust 后端和前端 dev server 分层调试
+- 可以只启动某一层做局部验证
 
-特点：
-
-- Rust 后端
-- 前端 dev server
-- 可单独调某一层
-
-## Server 侧推荐组成
+## 如果你部署 Server，最少要准备什么
 
 典型部署里，至少会涉及这些组件：
 
 - `wunder-server`
+- PostgreSQL
+- 持久化用户工作区
+
+如果你需要更完整的能力，再按需接入：
+
 - `wunder-sandbox`
 - `extra-mcp`
-- PostgreSQL
+- 用户侧或管理侧静态资源服务
 
-如果需要用户侧生产前端，通常还会有静态资源服务。
+## 对外路径怎么规划
 
-## 数据与存储要点
+- `/wunder`
+- `/wunder/chat/*`
+- `/a2a`
+- `/.well-known/agent-card.json`
+- `/docs/`
 
-- 网页端 server 使用 PostgreSQL
-- desktop 本地模式使用 SQLite
-- 用户工作区需要持久化
-- `data/` 是临时目录，不要把长期业务资料沉进去
+这些入口可以统一挂到同一服务域名下，别等上线前再临时拼接。
+
+## 启动后先查这几项
+
+1. `/wunder` 是否可返回
+2. `/wunder/chat/ws` 是否可建连
+3. `/a2a/agentCard` 是否可读
+4. `/wunder/mcp` 是否可达
+5. `/docs/` 是否能正常打开
 
 ## 关键配置文件
 
@@ -83,27 +99,6 @@ source_docs:
 - `WUNDER_MCP_HOST`
 - `WUNDER_CONFIG_PATH`
 - `WUNDER_CONFIG_OVERRIDE_PATH`
-
-## 单端口与路径规划
-
-当前系统已经支持把这些对外入口收口：
-
-- `/wunder`
-- `/a2a`
-- `/.well-known/agent-card.json`
-- `/docs/`
-
-这意味着你可以把业务 API、协议入口和文档站统一挂在同一服务域名下。
-
-## 启动后至少检查什么
-
-建议按这个顺序检查：
-
-1. `/wunder` 是否可返回
-2. `/wunder/chat/ws` 是否可建连
-3. `/a2a/agentCard` 是否可读
-4. `/wunder/mcp` 是否可达
-5. `/docs/` 是否能打开文档站
 
 ## 最容易忽略的部署问题
 

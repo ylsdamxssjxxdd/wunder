@@ -199,6 +199,8 @@
 - `渠道工具.send_message` 附件投递能力（2026-03-18）：Feishu/XMPP/QQBot 优先走渠道原生附件链路；若目标渠道不支持对应类型则自动回退为文本链接，不阻断投递。
 - 测试开放态（2026-03-11）：`channel_tool` 默认放开账号归属限制，`list_contacts` 可读取当前系统内所有已配置渠道账号；渠道请求默认覆盖 `security.approval_mode=full_auto` 与 `security.exec_policy_mode=allow`，不再进入渠道审批提示链路。
 - 新增内置工具 `浏览器`（英文别名 `browser`），通过 `action=navigate|click|type|screenshot|read_page|close` 统一操作，仅 desktop 模式可用。
+- 新增内置工具 `网页抓取`（英文别名 `web_fetch`），参数 `url` 必填，支持 `extract_mode=markdown|text` 与 `max_chars`；直接通过 HTTP 抓取网页并输出低噪声正文，不依赖浏览器状态。
+- `网页抓取` 默认执行正文清洗与去噪，移除导航、页脚、广告、评论等低价值片段；同时内置私网地址拦截、重定向复校验、响应体大小限制与短 TTL 缓存，配置位于 `tools.web.fetch.*`。
 - 新增内置工具 `桌面控制器`（英文别名 `desktop_controller`/`controller`），通过 bbox+action 执行桌面操作，执行后自动附加桌面截图，仅 desktop 模式可用。
 - 新增内置工具 `桌面监视器`（英文别名 `desktop_monitor`/`monitor`），等待 wait_ms 后返回桌面截图并自动附加，仅 desktop 模式可用。
 - `桌面控制器/桌面监视器` 在同一会话内会额外返回 `previous_screenshot_path`；工具 followup 会按“上一帧 -> 当前帧”顺序自动回灌图片（首帧仅回灌当前帧）。

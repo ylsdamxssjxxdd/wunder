@@ -3,10 +3,23 @@ const MANIFEST_URL = `${DOCS_BASE}manifest.json`;
 const SEARCH_URL = `${DOCS_BASE}search.json`;
 const THEME_KEY = "wunder-docs-theme";
 
+const THEME_ICONS = {
+  light: `
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="10" cy="10" r="3.5"></circle>
+      <path d="M10 1.8v2.1M10 16.1v2.1M18.2 10h-2.1M3.9 10H1.8M15.8 4.2l-1.5 1.5M5.7 14.3l-1.5 1.5M15.8 15.8l-1.5-1.5M5.7 5.7 4.2 4.2"></path>
+    </svg>
+  `,
+  dark: `
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M15.8 11.7A6.9 6.9 0 0 1 8.3 4.2a7.2 7.2 0 1 0 7.5 7.5Z"></path>
+    </svg>
+  `,
+};
+
 const elements = {
   tabs: document.getElementById("docs-tabs"),
   sidebar: document.getElementById("docs-sidebar"),
-  breadcrumbs: document.getElementById("docs-breadcrumbs"),
   pageHeader: document.getElementById("docs-page-header"),
   content: document.getElementById("docs-content"),
   pageFooter: document.getElementById("docs-page-footer"),
@@ -16,7 +29,6 @@ const elements = {
   searchResults: document.getElementById("docs-search-results"),
   themeToggle: document.getElementById("docs-theme-toggle"),
   languageSwitcher: document.getElementById("docs-language-switcher"),
-  sidebarToggle: document.getElementById("docs-sidebar-toggle"),
 };
 
 const state = {
@@ -116,7 +128,11 @@ const applyTheme = (theme) => {
   const nextTheme = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset.theme = nextTheme;
   if (elements.themeToggle) {
-    elements.themeToggle.textContent = nextTheme === "dark" ? "浅色" : "深色";
+    elements.themeToggle.innerHTML = nextTheme === "dark" ? THEME_ICONS.dark : THEME_ICONS.light;
+    const label = nextTheme === "dark" ? "切换到浅色模式" : "切换到深色模式";
+    elements.themeToggle.setAttribute("aria-label", label);
+    elements.themeToggle.setAttribute("title", label);
+    elements.themeToggle.setAttribute("aria-pressed", String(nextTheme === "dark"));
   }
 };
 
@@ -160,7 +176,7 @@ const renderTabs = () => {
     .map((tab) => {
       const isActive = tab.tab === state.pageData.tab;
       const className = isActive ? "docs-tab is-active" : "docs-tab";
-      return `<a class="${className}" href="${escapeHtml(tab.entry_url)}">${escapeHtml(tab.tab)}</a>`;
+      return `<a class="${className}" href="${escapeHtml(tab.entry_url)}"${isActive ? ' aria-current="page"' : ""}>${escapeHtml(tab.tab)}</a>`;
     })
     .join("");
 };
@@ -179,8 +195,9 @@ const renderSidebar = () => {
     .map((group) => {
       const pageLinks = (group.pages || [])
         .map((page) => {
-          const className = page.slug === state.pageData.slug ? "docs-sidebar-link is-active" : "docs-sidebar-link";
-          return `<a class="${className}" href="${escapeHtml(page.url)}">${escapeHtml(page.title)}</a>`;
+          const isActive = page.slug === state.pageData.slug;
+          const className = isActive ? "docs-sidebar-link is-active" : "docs-sidebar-link";
+          return `<a class="${className}" href="${escapeHtml(page.url)}"${isActive ? ' aria-current="page"' : ""}>${escapeHtml(page.title)}</a>`;
         })
         .join("");
       return `
@@ -212,58 +229,26 @@ const renderLanguageSwitcher = () => {
         : state.manifest?.site?.home_page;
       const targetPage = getPageBySlug(targetSlug) || getPageBySlug(state.manifest?.site?.home_page);
       const className = isActive ? "docs-language-chip is-active" : "docs-language-chip";
-      return `<a class="${className}" href="${escapeHtml(targetPage?.url || DOCS_BASE)}">${escapeHtml(language.label)}</a>`;
+      return `
+        <a class="${className}" href="${escapeHtml(targetPage?.url || DOCS_BASE)}"${isActive ? ' aria-current="page"' : ""}>
+          <span class="docs-language-chip-dot" aria-hidden="true"></span>
+          <span>${escapeHtml(language.label)}</span>
+          ${isActive ? '<span class="docs-language-chip-caret" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4 6 4 4 4-4"></path></svg></span>' : ""}
+        </a>
+      `;
     })
     .join("");
-};
-
-const renderBreadcrumbs = () => {
-  if (!elements.breadcrumbs) {
-    return;
-  }
-  const items = [
-    { label: "文档", url: DOCS_BASE },
-    { label: state.pageData.tab, url: null },
-    { label: state.pageData.group, url: null },
-    { label: state.pageData.title, url: null },
-  ];
-  elements.breadcrumbs.innerHTML = items
-    .map((item, index) => {
-      const isLast = index === items.length - 1;
-      if (isLast || !item.url) {
-        return `<span class="docs-breadcrumb-item is-current">${escapeHtml(item.label)}</span>`;
-      }
-      return `<a class="docs-breadcrumb-item" href="${escapeHtml(item.url)}">${escapeHtml(item.label)}</a>`;
-    })
-    .join('<span class="docs-breadcrumb-sep">/</span>');
 };
 
 const renderPageHeader = () => {
   if (!elements.pageHeader) {
     return;
   }
-  const readWhen = (state.pageData.read_when || [])
-    .map((item) => `<li>${escapeHtml(item)}</li>`)
-    .join("");
-  const sourceDocs = (state.pageData.source_docs || [])
-    .map((item) => `<li><code>${escapeHtml(item)}</code></li>`)
-    .join("");
   elements.pageHeader.innerHTML = `
-    <div class="docs-page-kicker">${escapeHtml(state.pageData.tab)} / ${escapeHtml(state.pageData.group)}</div>
+    <div class="docs-page-kicker">${escapeHtml(state.pageData.tab)}</div>
     <h1>${escapeHtml(state.pageData.title)}</h1>
+    ${state.pageData.updated_at ? `<div class="docs-page-updated">最后更新：${escapeHtml(state.pageData.updated_at)}</div>` : ""}
     ${state.pageData.summary ? `<p class="docs-page-summary">${escapeHtml(state.pageData.summary)}</p>` : ""}
-    <div class="docs-page-meta">
-      ${
-        readWhen
-          ? `<section class="docs-page-meta-block"><div class="docs-page-meta-title">适合什么时候读</div><ul>${readWhen}</ul></section>`
-          : ""
-      }
-      ${
-        sourceDocs
-          ? `<section class="docs-page-meta-block"><div class="docs-page-meta-title">来源文档</div><ul>${sourceDocs}</ul></section>`
-          : ""
-      }
-    </div>
   `;
 };
 
@@ -316,7 +301,7 @@ const renderToc = () => {
   }
   const headings = (state.pageData.headings || []).filter((item) => Number(item.level) <= 3);
   if (!headings.length) {
-    elements.toc.innerHTML = '<div class="docs-toc-empty">当前页没有二级目录</div>';
+    elements.toc.innerHTML = '<div class="docs-toc-empty">当前页没有目录</div>';
     return;
   }
   elements.toc.innerHTML = headings
@@ -483,28 +468,16 @@ const bindSearch = () => {
       elements.searchInput.blur();
     }
   });
+  document.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      elements.searchInput.focus();
+      elements.searchInput.select();
+    }
+  });
   document.addEventListener("click", (event) => {
     if (!elements.searchResults?.contains(event.target) && event.target !== elements.searchInput) {
       hideSearchResults();
-    }
-  });
-};
-
-const bindSidebarToggle = () => {
-  if (!elements.sidebarToggle) {
-    return;
-  }
-  elements.sidebarToggle.addEventListener("click", () => {
-    document.body.classList.toggle("docs-sidebar-open");
-  });
-  document.addEventListener("click", (event) => {
-    if (window.innerWidth > 1180) {
-      return;
-    }
-    const clickedInsideSidebar = elements.sidebar?.contains(event.target);
-    const clickedToggle = elements.sidebarToggle?.contains(event.target);
-    if (!clickedInsideSidebar && !clickedToggle) {
-      document.body.classList.remove("docs-sidebar-open");
     }
   });
 };
@@ -516,7 +489,6 @@ const bootstrap = async () => {
   }
   initializeTheme();
   bindSearch();
-  bindSidebarToggle();
   try {
     state.manifest = await fetchJson(MANIFEST_URL);
   } catch (error) {
@@ -528,7 +500,6 @@ const bootstrap = async () => {
   renderTabs();
   renderSidebar();
   renderLanguageSwitcher();
-  renderBreadcrumbs();
   renderPageHeader();
   await renderContent();
   renderToc();

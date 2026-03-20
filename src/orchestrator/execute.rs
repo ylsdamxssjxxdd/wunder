@@ -1,9 +1,9 @@
-use super::tool_calls::ToolCall;
-use super::*;
 use super::thread_runtime::{
     thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
     ThreadRuntimeUpdate,
 };
+use super::tool_calls::ToolCall;
+use super::*;
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
@@ -1628,7 +1628,12 @@ impl Orchestrator {
         let unresolved_approvals = self
             .active_turns
             .finish_turn(session_id, turn_id)
-            .map(|snapshot| snapshot.pending_approval_ids.into_iter().collect::<HashSet<_>>())
+            .map(|snapshot| {
+                snapshot
+                    .pending_approval_ids
+                    .into_iter()
+                    .collect::<HashSet<_>>()
+            })
             .unwrap_or_default();
         let pending_entries = self
             .approval_registry
@@ -2178,7 +2183,7 @@ mod tests {
         let answer = build_max_rounds_user_guidance(Some(10));
         assert!(!answer.trim().is_empty());
         assert!(answer.contains("10"));
-        assert!(answer.contains("缁х画") || answer.to_ascii_lowercase().contains("continue"));
+        assert!(!answer.contains("{max_rounds}"));
     }
 
     #[test]
@@ -2285,8 +2290,8 @@ mod tests {
             timestamp: Utc::now(),
             meta: None,
         };
-        let signature = build_tool_failure_signature("鎵ц鍛戒护", &result);
-        assert!(signature.contains("鎵ц鍛戒护"));
+        let signature = build_tool_failure_signature("read_file", &result);
+        assert!(signature.contains("read_file"));
         assert!(signature.contains("command failed"));
     }
 
@@ -2302,8 +2307,11 @@ mod tests {
         };
         let answer = build_tool_failure_guard_answer("read_file", &result, 3, 5);
         assert!(answer.contains("read_file"));
+        assert!(answer.contains("3"));
         assert!(answer.contains("5"));
-        assert!(answer.contains("缁х画") || answer.to_ascii_lowercase().contains("continue"));
+        assert!(!answer.contains("{tool_name}"));
+        assert!(!answer.contains("{repeat_count}"));
+        assert!(!answer.contains("{threshold}"));
     }
 
     #[test]

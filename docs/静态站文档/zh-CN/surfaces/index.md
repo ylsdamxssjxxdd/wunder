@@ -12,7 +12,9 @@ source_docs:
 
 # 界面概览
 
-Wunder 不是一个单页聊天产品，而是三块界面一起工作。
+wunder 不是单页聊天产品，而是三块界面一起工作。
+
+如果你在找“某个功能应该去哪看”，先从这里分流。
 
 ## 先看这些
 
@@ -23,13 +25,19 @@ Wunder 不是一个单页聊天产品，而是三块界面一起工作。
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/web-admin/">
     <strong>管理端界面</strong>
-    <span>模型、用户、渠道、工具、监控与 benchmark 治理入口。</span>
+    <span>模型、用户、渠道、工具、监控和 benchmark 治理入口。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/surfaces/desktop-ui/">
     <strong>Desktop 界面</strong>
     <span>本地主交付形态，强调端云协同和桌面工作台体验。</span>
   </a>
 </div>
+
+## 三块界面的职责
+
+- 用户端：偏会话、文件、联系人和工具操作
+- 管理端：偏治理、配置、监控和评估
+- Desktop：偏本地优先、桌面能力和端云协同
 
 ## 按角色看
 
@@ -54,7 +62,7 @@ Wunder 不是一个单页聊天产品，而是三块界面一起工作。
 - [聊天会话](/docs/zh-CN/integration/chat-sessions/)
 - [工作区 API](/docs/zh-CN/integration/workspace-api/)
 
-## 你最需要记住的点
+## 最容易搞错的点
 
 - 用户端强调会话体验和文件工作流。
 - 管理端强调治理、监控、配置和评估。

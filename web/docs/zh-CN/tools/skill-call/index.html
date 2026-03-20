@@ -12,42 +12,51 @@
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
             <span class="docs-brand-text">wunder 文档</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links"><a class="docs-header-link" href="/">控制台</a><a class="docs-header-link" href="/wunder/ppt/">PPT</a></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/skill-call","language":"zh-CN","title":"技能调用","summary":"`技能调用` 会按技能名返回完整 SKILL.md 和技能目录结构，是模型读取技能正文的正式入口。","read_when":["你要理解技能为什么不是只在提示词里露一个名字","你在排查 `{{SKILL_ROOT}}` 为什么会被替换"],"source_docs":["docs/API文档.md","src/services/tools/skill_call.rs","docs/设计方案.md"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/skill-call/","headings":[{"id":"section-1","level":1,"text":"技能调用"},{"id":"section-2","level":2,"text":"它解决什么"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"{{SKILLROOT}} 为什么重要"},{"id":"section-5","level":2,"text":"为什么这比只在 prompt 里写技能名更好"},{"id":"section-6","level":2,"text":"你最需要记住的点"},{"id":"section-7","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/lsp","next_slug":"zh-CN/tools/web-fetch","markdown":"# 技能调用\n\n`技能调用` 的核心价值，是让技能从“一个名称”变成“模型可主动读取的操作手册”。\n\n## 它解决什么\n\n传入技能名后，工具会返回：\n\n- 完整 `SKILL.md`\n- 技能目录结构\n\n所以模型不必反复猜某个技能到底怎么用。\n\n## 常用参数\n\n- `name`\n\n它本身非常简单，但结果很重要。\n\n## `{{SKILL_ROOT}}` 为什么重要\n\n技能文档里建议用：\n\n- `{{SKILL_ROOT}}`\n\n来引用脚本、示例和工作流文件。\n\n当 `技能调用` 返回正文时，这个占位符会被替换成当前可见的真实技能根目录路径。\n\n这能避免：\n\n- server、desktop、cli 下路径不一致\n- 技能迁移后文档路径失效\n\n## 为什么这比只在 prompt 里写技能名更好\n\n因为很多复杂技能真正重要的是：\n\n- 细节步骤\n- 资源路径\n- 约束条件\n\n如果只把技能名丢给模型，模型很容易误用。\n\n## 你最需要记住的点\n\n- `技能调用` 是读取技能正文的正式工具入口。\n- `{{SKILL_ROOT}}` 会在返回时被替换成真实路径。\n- 技能不只是元信息，应该被看作模型可读取的执行手册。\n\n## 相关文档\n\n- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n","source_path":"静态站文档/zh-CN/tools/skill-call.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/tools/skill-call","language":"zh-CN","title":"技能调用","summary":"`技能调用` 会按技能名返回完整 SKILL.md 和技能目录结构，是模型读取技能正文的正式入口。","updated_at":"2026-03-19","read_when":["你要理解技能为什么不是只在提示词里露一个名字","你在排查 `{{SKILL_ROOT}}` 为什么会被替换"],"source_docs":["docs/API文档.md","src/services/tools/skill_call.rs","docs/设计方案.md"],"tab":"工具","group":"文件与代码","group_path":["文件与代码"],"url":"/docs/zh-CN/tools/skill-call/","headings":[{"id":"section-1","level":1,"text":"技能调用"},{"id":"section-2","level":2,"text":"它解决什么"},{"id":"section-3","level":2,"text":"常用参数"},{"id":"section-4","level":2,"text":"{{SKILLROOT}} 为什么重要"},{"id":"section-5","level":2,"text":"为什么这比只在 prompt 里写技能名更好"},{"id":"section-6","level":2,"text":"你最需要记住的点"},{"id":"section-7","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/tools/lsp","next_slug":"zh-CN/tools/web-fetch","markdown":"# 技能调用\n\n`技能调用` 的核心价值，是让技能从“一个名称”变成“模型可主动读取的操作手册”。\n\n## 它解决什么\n\n传入技能名后，工具会返回：\n\n- 完整 `SKILL.md`\n- 技能目录结构\n\n所以模型不必反复猜某个技能到底怎么用。\n\n## 常用参数\n\n- `name`\n\n它本身非常简单，但结果很重要。\n\n## `{{SKILL_ROOT}}` 为什么重要\n\n技能文档里建议用：\n\n- `{{SKILL_ROOT}}`\n\n来引用脚本、示例和工作流文件。\n\n当 `技能调用` 返回正文时，这个占位符会被替换成当前可见的真实技能根目录路径。\n\n这能避免：\n\n- server、desktop、cli 下路径不一致\n- 技能迁移后文档路径失效\n\n## 为什么这比只在 prompt 里写技能名更好\n\n因为很多复杂技能真正重要的是：\n\n- 细节步骤\n- 资源路径\n- 约束条件\n\n如果只把技能名丢给模型，模型很容易误用。\n\n## 你最需要记住的点\n\n- `技能调用` 是读取技能正文的正式工具入口。\n- `{{SKILL_ROOT}}` 会在返回时被替换成真实路径。\n- 技能不只是元信息，应该被看作模型可读取的执行手册。\n\n## 相关文档\n\n- [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/)\n- [工具体系](/docs/zh-CN/concepts/tools/)\n","source_path":"静态站文档/zh-CN/tools/skill-call.md"}</script>
 </body>
 </html>

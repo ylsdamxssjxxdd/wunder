@@ -211,9 +211,21 @@ tools: # 内置工具配置
       - 列出文件       # 列出目录下文件
       - 搜索内容       # 搜索文件内容
       - 读取文件       # 读取文件内容
+      - 网页抓取       # 抓取网页正文并输出低噪声内容
       - 技能调用       # 按技能名返回 SKILL.md 与目录结构
       - 写入文件       # 写入文件内容
       - 应用补丁       # 多文件补丁编辑
+
+  web:
+    fetch:
+      enabled: true
+      timeout_secs: 20
+      max_redirects: 3
+      max_response_bytes: 2097152
+      max_chars: 12000
+      max_chars_cap: 30000
+      cache_ttl_secs: 600
+      user_agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36
 
   swarm:
     runner: legacy

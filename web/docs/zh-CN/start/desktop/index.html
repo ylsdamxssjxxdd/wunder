@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Desktop 入门 | wunder 文档</title>
-  <meta name="description" content="wunder-desktop 是当前主推形态，适合个人用户与本地优先使用。">
+  <meta name="description" content="先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。">
   <link rel="stylesheet" href="/docs/site.css">
   <script defer src="/third/marked.min.js"></script>
   <script type="module" src="/docs/site.js"></script>
@@ -12,42 +12,51 @@
 <body>
   <div class="docs-app">
     <header class="docs-header">
-      <div class="docs-header-row">
-        <div class="docs-brand-wrap">
-          <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" type="button" aria-label="切换目录">目录</button>
+      <div class="docs-topbar">
+        <div class="docs-topbar-start">
           <a class="docs-brand" href="/docs/">
-            <span class="docs-brand-mark"></span>
+            <img class="docs-brand-mark" src="/docs/assets/eva01-head.svg" alt="">
             <span class="docs-brand-text">wunder 文档</span>
           </a>
+          <div class="docs-language-switcher" id="docs-language-switcher"></div>
         </div>
-        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
-        <div class="docs-header-actions">
+        <div class="docs-topbar-center">
           <label class="docs-search">
-            <span class="docs-search-label">搜索</span>
-            <input id="docs-search-input" type="search" placeholder="搜索文档">
+            <span class="docs-search-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="8.5" cy="8.5" r="5.75"></circle>
+                <path d="M12.7 12.7 17 17"></path>
+              </svg>
+            </span>
+            <input id="docs-search-input" type="search" placeholder="搜索..." aria-label="搜索文档">
+            <span class="docs-search-shortcut">Ctrl K</span>
             <div class="docs-search-results" id="docs-search-results" hidden></div>
           </label>
-          <div class="docs-language-switcher" id="docs-language-switcher"></div>
-          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button">深色</button>
         </div>
+        <div class="docs-topbar-end">
+          <div class="docs-header-links"><a class="docs-header-link" href="/">控制台</a><a class="docs-header-link" href="/wunder/ppt/">PPT</a></div>
+          <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
+        </div>
+      </div>
+      <div class="docs-nav-row">
+        <nav class="docs-tabs" id="docs-tabs" aria-label="主导航"></nav>
       </div>
     </header>
     <div class="docs-layout">
       <aside class="docs-sidebar" id="docs-sidebar"></aside>
       <main class="docs-main">
-        <nav class="docs-breadcrumbs" id="docs-breadcrumbs" aria-label="面包屑"></nav>
         <section class="docs-page-header" id="docs-page-header"></section>
         <article class="docs-content" id="docs-content"></article>
         <section class="docs-page-footer" id="docs-page-footer"></section>
       </main>
       <aside class="docs-toc" id="docs-toc-wrap">
         <div class="docs-toc-card">
-          <div class="docs-toc-title">本页目录</div>
+          <div class="docs-toc-title">在此页面</div>
           <nav id="docs-toc"></nav>
         </div>
       </aside>
     </div>
   </div>
-  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/desktop","language":"zh-CN","title":"Desktop 入门","summary":"wunder-desktop 是当前主推形态，适合个人用户与本地优先使用。","read_when":["你要先把 wunder 用起来","你更关心桌面工作台，而不是先搭整套服务"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"开始","group":"入门","group_path":["入门"],"url":"/docs/zh-CN/start/desktop/","headings":[{"id":"section-1","level":1,"text":"Desktop 入门"},{"id":"section-2","level":2,"text":"适合谁"},{"id":"section-3","level":2,"text":"Desktop 的核心特点"},{"id":"section-4","level":2,"text":"你会看到什么"},{"id":"section-5","level":2,"text":"Desktop 模式下的重要约定"},{"id":"section-6","level":2,"text":"什么时候切远端"},{"id":"section-7","level":2,"text":"推荐下一步"},{"id":"section-8","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/start/quickstart","next_slug":"zh-CN/start/server","markdown":"# Desktop 入门\n\n`wunder-desktop` 是当前 wunder 的主交付形态。\n\n它强调本地优先、桌面工作台、低门槛启动，以及在需要时接入远端 server。\n\n## 适合谁\n\n- 想直接使用智能体而不是先部署整套服务的人\n- 需要本地文件、桌面窗口和聊天工作台的人\n- 希望未来再接远端网关的人\n\n## Desktop 的核心特点\n\n- 默认优先本地运行\n- 提供完整用户侧界面\n- 支持工作区与本地目录映射\n- 支持在本地模式与远端 gateway 之间切换\n- 桌面端依旧复用统一的 `/wunder` 调度内核\n\n## 你会看到什么\n\nDesktop 打开后，主要是一个统一消息工作台：\n\n- 左侧：导航与功能入口\n- 中间：会话、联系人、智能体或列表视图\n- 右侧：聊天主区域、工作流、设置与扩展面板\n\n这套界面不是单纯聊天，而是承载：\n\n- 用户与智能体会话\n- 用户世界通信\n- 工作区与文件\n- 智能体设置\n- 本地模式与远端接入设置\n\n## Desktop 模式下的重要约定\n\n- 本地模式优先使用附带的 Python 运行时\n- 本地工作目录与容器目录默认按持久目录处理，不做 24 小时自动清理\n- 用户私有工作目录与智能体容器目录是不同的作用域\n- 工作区文件能力会直接影响聊天中的智能体可操作范围\n\n## 什么时候切远端\n\n如果你只是个人使用，本地模式通常已经够用。\n\n如果你遇到这些需求，再考虑接远端：\n\n- 需要组织级用户管理\n- 需要统一管理员后台\n- 需要团队协作和多租户治理\n- 需要把桌面端作为 server 的一个接入端\n\n## 推荐下一步\n\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [管理端界面](/docs/zh-CN/surfaces/web-admin/)\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n\n## 相关文档\n\n- [快速开始](/docs/zh-CN/start/quickstart/)\n- [桌面界面](/docs/zh-CN/surfaces/desktop-ui/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"静态站文档/zh-CN/start/desktop.md"}</script>
+  <script id="docs-page-data" type="application/json">{"slug":"zh-CN/start/desktop","language":"zh-CN","title":"Desktop 入门","summary":"先把 Wunder 用起来时，优先看 desktop；它是个人用户和本地优先场景的默认入口。","updated_at":"2026-03-20","read_when":["你要先把 wunder 用起来","你更关心桌面工作台，而不是先搭整套服务"],"source_docs":["README.md","docs/系统介绍.md","docs/设计方案.md"],"tab":"开始","group":"入门","group_path":["入门"],"url":"/docs/zh-CN/start/desktop/","headings":[{"id":"section-1","level":1,"text":"Desktop 入门"},{"id":"section-2","level":2,"text":"这页解决什么"},{"id":"section-3","level":2,"text":"先看这几条"},{"id":"section-4","level":2,"text":"什么时候先选 Desktop"},{"id":"section-5","level":2,"text":"你会在 Desktop 里看到什么"},{"id":"section-6","level":2,"text":"本地模式下要记住什么"},{"id":"section-7","level":2,"text":"什么时候不要先看这页"},{"id":"section-8","level":2,"text":"最容易搞错的点"},{"id":"section-9","level":2,"text":"相关文档"}],"prev_slug":"zh-CN/start/quickstart","next_slug":"zh-CN/start/server","markdown":"# Desktop 入门\n\n如果你现在只是想先把 Wunder 用起来，不要先去搭 server，先看 `wunder-desktop`。\n\n它是面向个人用户和本地优先场景的主入口，打开就能进入消息工作台、文件工作区和桌面交互壳。\n\n## 这页解决什么\n\n- 什么时候应该先用 desktop\n- desktop 和 cli、server 的分工差别\n- 本地模式下有哪些关键约定\n\n## 先看这几条\n\n- `desktop` 适合个人使用、演示、桌面工作台和本地文件协作。\n- 它默认优先本地运行，但需要时也能接远端 gateway 或 server。\n- 你看到的不只是聊天窗口，而是一整套工作台。\n\n## 什么时候先选 Desktop\n\n- 你想直接开始用，而不是先部署一套服务\n- 你需要本地文件、窗口和工作区\n- 你更习惯图形界面，不想从命令行开始\n- 你后面可能会接远端，但今天先想跑起来\n\n## 你会在 Desktop 里看到什么\n\nDesktop 打开后，主要是一个统一消息工作台：\n\n- 左侧：导航与功能入口\n- 中间：会话、联系人、智能体或列表视图\n- 右侧：聊天主区域、工作流、设置与扩展面板\n\n这意味着 desktop 不只是“聊一句回一句”，它还承载：\n\n- 用户与智能体会话\n- 工作区与文件\n- 桌面能力和本地目录映射\n- 本地模式与远端接入切换\n\n## 本地模式下要记住什么\n\n- 本地模式优先使用附带的 Python 运行时\n- 本地工作目录与容器目录默认按持久目录处理，不做 24 小时自动清理\n- 用户私有工作目录与智能体容器目录是不同的作用域\n- 工作区文件能力会直接影响聊天中的智能体可操作范围\n\n## 什么时候不要先看这页\n\n- 你在做团队部署、多用户治理或管理员后台\n- 你要统一对外提供 `/wunder`、`/a2a` 和聊天接口\n- 你主要做脚本、终端自动化和开发调试\n\n## 最容易搞错的点\n\n- `desktop` 不是“简化版 server”，它是本地优先的独立运行形态。\n- 本地模式够个人使用，但不等于适合团队治理。\n- 工作区文件会影响工具可见范围，所以不要把它当纯展示目录。\n\n## 相关文档\n\n- [系统架构](/docs/zh-CN/concepts/architecture/)\n- [部署与运行](/docs/zh-CN/ops/deployment/)\n- [快速开始](/docs/zh-CN/start/quickstart/)\n- [桌面界面](/docs/zh-CN/surfaces/desktop-ui/)\n- [故障排查](/docs/zh-CN/help/troubleshooting/)\n","source_path":"静态站文档/zh-CN/start/desktop.md"}</script>
 </body>
 </html>

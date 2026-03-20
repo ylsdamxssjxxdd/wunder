@@ -1107,6 +1107,62 @@
     "en-US": "The specified file is not a supported image.",
     "zh-CN": "指定文件不是受支持的图片格式。"
   },
+  "tool.web_fetch.invalid_url": {
+    "en-US": "Invalid URL.",
+    "zh-CN": "无效的 URL。"
+  },
+  "tool.web_fetch.unsupported_scheme": {
+    "en-US": "Only http/https URLs are supported.",
+    "zh-CN": "仅支持 http/https URL。"
+  },
+  "tool.web_fetch.blocked_host": {
+    "en-US": "Blocked host: {host}.",
+    "zh-CN": "目标主机被阻止：{host}。"
+  },
+  "tool.web_fetch.dns_failed": {
+    "en-US": "DNS resolution failed.",
+    "zh-CN": "DNS 解析失败。"
+  },
+  "tool.web_fetch.timeout": {
+    "en-US": "Web fetch timed out.",
+    "zh-CN": "网页抓取超时。"
+  },
+  "tool.web_fetch.too_many_redirects": {
+    "en-US": "Too many redirects.",
+    "zh-CN": "重定向次数过多。"
+  },
+  "tool.web_fetch.redirect_loop": {
+    "en-US": "Redirect loop detected.",
+    "zh-CN": "检测到重定向循环。"
+  },
+  "tool.web_fetch.redirect_missing_location": {
+    "en-US": "Redirect response is missing the Location header.",
+    "zh-CN": "重定向响应缺少 Location 头。"
+  },
+  "tool.web_fetch.redirect_invalid_location": {
+    "en-US": "Redirect location is invalid.",
+    "zh-CN": "重定向地址无效。"
+  },
+  "tool.web_fetch.http_error": {
+    "en-US": "Request failed with HTTP status {status}.",
+    "zh-CN": "请求失败，HTTP 状态码为 {status}。"
+  },
+  "tool.web_fetch.http_error_with_detail": {
+    "en-US": "Request failed with HTTP status {status}: {detail}",
+    "zh-CN": "请求失败，HTTP 状态码为 {status}：{detail}"
+  },
+  "tool.web_fetch.unsupported_content_type": {
+    "en-US": "Unsupported content type: {content_type}.",
+    "zh-CN": "不支持的内容类型：{content_type}。"
+  },
+  "tool.web_fetch.invalid_json": {
+    "en-US": "The response body is not valid JSON.",
+    "zh-CN": "响应内容不是合法 JSON。"
+  },
+  "tool.web_fetch.no_content": {
+    "en-US": "No meaningful content could be extracted from the page.",
+    "zh-CN": "未能从页面中提取到有效内容。"
+  },
   "tool.desktop_controller.disabled": {
     "en-US": "Desktop controller is disabled.",
     "zh-CN": "桌面控制器未启用。"
@@ -1566,6 +1622,22 @@
   "tool.spec.browser_close.description": {
     "en-US": "Close the current browser session.",
     "zh-CN": "关闭当前浏览器会话"
+  },
+  "tool.spec.web_fetch.description": {
+    "en-US": "Fetch a web page directly over HTTP and return cleaned low-noise content.",
+    "zh-CN": "直接抓取网页并返回清洗后的低噪声正文内容。"
+  },
+  "tool.spec.web_fetch.args.url": {
+    "en-US": "The target URL to fetch (http/https only).",
+    "zh-CN": "要抓取的目标 URL（仅支持 http/https）。"
+  },
+  "tool.spec.web_fetch.args.extract_mode": {
+    "en-US": "Output format: markdown or text. Defaults to markdown.",
+    "zh-CN": "输出格式：markdown 或 text，默认 markdown。"
+  },
+  "tool.spec.web_fetch.args.max_chars": {
+    "en-US": "Optional maximum number of characters to return after cleaning.",
+    "zh-CN": "清洗后返回内容的最大字符数，可选。"
   },
   "tool.spec.desktop_controller.description": {
     "en-US": "Desktop controller. Use bbox + action + description in normalized screenshot space (default 1000x1000). One call = one atomic action; multi-step actions should use multiple rounds with the latest screenshot.",

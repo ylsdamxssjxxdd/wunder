@@ -446,6 +446,8 @@ pub struct ToolsConfig {
     #[serde(default)]
     pub swarm: AgentSwarmConfig,
     #[serde(default)]
+    pub web: WebToolsConfig,
+    #[serde(default)]
     pub browser: BrowserToolConfig,
     #[serde(default)]
     pub desktop_controller: DesktopControllerConfig,
@@ -495,6 +497,50 @@ pub struct BuiltinToolsConfig {
     pub enabled: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WebToolsConfig {
+    #[serde(default)]
+    pub fetch: WebFetchToolConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebFetchToolConfig {
+    #[serde(default = "default_web_fetch_enabled")]
+    pub enabled: bool,
+    #[serde(
+        default = "default_web_fetch_timeout_secs",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub timeout_secs: u64,
+    #[serde(
+        default = "default_web_fetch_max_redirects",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_redirects: usize,
+    #[serde(
+        default = "default_web_fetch_max_response_bytes",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_response_bytes: usize,
+    #[serde(
+        default = "default_web_fetch_max_chars",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_chars: usize,
+    #[serde(
+        default = "default_web_fetch_max_chars_cap",
+        deserialize_with = "deserialize_usize_from_any"
+    )]
+    pub max_chars_cap: usize,
+    #[serde(
+        default = "default_web_fetch_cache_ttl_secs",
+        deserialize_with = "deserialize_u64_from_any"
+    )]
+    pub cache_ttl_secs: u64,
+    #[serde(default = "default_web_fetch_user_agent")]
+    pub user_agent: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserToolConfig {
     #[serde(default)]
@@ -540,6 +586,21 @@ impl Default for BrowserToolConfig {
             idle_timeout_secs: default_browser_idle_timeout_secs(),
             max_sessions: default_browser_max_sessions(),
             python_path: None,
+        }
+    }
+}
+
+impl Default for WebFetchToolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_web_fetch_enabled(),
+            timeout_secs: default_web_fetch_timeout_secs(),
+            max_redirects: default_web_fetch_max_redirects(),
+            max_response_bytes: default_web_fetch_max_response_bytes(),
+            max_chars: default_web_fetch_max_chars(),
+            max_chars_cap: default_web_fetch_max_chars_cap(),
+            cache_ttl_secs: default_web_fetch_cache_ttl_secs(),
+            user_agent: default_web_fetch_user_agent(),
         }
     }
 }
@@ -611,6 +672,38 @@ fn default_agent_swarm_max_depth() -> u32 {
 
 fn default_browser_headless() -> bool {
     true
+}
+
+fn default_web_fetch_enabled() -> bool {
+    true
+}
+
+fn default_web_fetch_timeout_secs() -> u64 {
+    20
+}
+
+fn default_web_fetch_max_redirects() -> usize {
+    3
+}
+
+fn default_web_fetch_max_response_bytes() -> usize {
+    2 * 1024 * 1024
+}
+
+fn default_web_fetch_max_chars() -> usize {
+    12_000
+}
+
+fn default_web_fetch_max_chars_cap() -> usize {
+    30_000
+}
+
+fn default_web_fetch_cache_ttl_secs() -> u64 {
+    600
+}
+
+fn default_web_fetch_user_agent() -> String {
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36".to_string()
 }
 
 fn default_browser_viewport_width() -> u32 {

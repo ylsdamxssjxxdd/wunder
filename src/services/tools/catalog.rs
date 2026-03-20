@@ -1,5 +1,6 @@
 use super::{
     browser_tool, channel_tool, desktop_control, read_image_tool, sleep_tool, thread_control_tool,
+    web_fetch_tool,
 };
 use crate::config::Config;
 use crate::core::json_schema::normalize_tool_input_schema;
@@ -707,6 +708,27 @@ pub(crate) fn builtin_tool_specs_with_language(language: &str) -> Vec<ToolSpec> 
             }),
         },
         ToolSpec {
+            name: web_fetch_tool::TOOL_WEB_FETCH.to_string(),
+            description: t("tool.spec.web_fetch.description"),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "description": t("tool.spec.web_fetch.args.url") },
+                    "extract_mode": {
+                        "type": "string",
+                        "description": t("tool.spec.web_fetch.args.extract_mode"),
+                        "enum": ["markdown", "text"]
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "description": t("tool.spec.web_fetch.args.max_chars")
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
+        ToolSpec {
             name: browser_tool::TOOL_BROWSER.to_string(),
             description: t("tool.spec.browser.description"),
             input_schema: json!({
@@ -891,6 +913,10 @@ pub fn builtin_aliases() -> HashMap<String, String> {
     map.insert("node.invoke".to_string(), "节点调用".to_string());
     map.insert("node_invoke".to_string(), "节点调用".to_string());
     map.insert(
+        web_fetch_tool::TOOL_WEB_FETCH_ALIAS.to_string(),
+        web_fetch_tool::TOOL_WEB_FETCH.to_string(),
+    );
+    map.insert(
         "browser".to_string(),
         browser_tool::TOOL_BROWSER.to_string(),
     );
@@ -982,6 +1008,10 @@ fn is_desktop_mode(config: &Config) -> bool {
 }
 
 fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
+    if web_fetch_tool::is_web_fetch_tool_name(canonical) && !web_fetch_tool::web_fetch_enabled(config)
+    {
+        return false;
+    }
     if browser_tool::is_browser_tool_name(canonical) && !browser_tool::browser_tools_enabled(config)
     {
         return false;
@@ -1044,6 +1074,7 @@ fn preferred_english_alias(canonical: &str) -> Option<&'static str> {
         "用户世界工具" => Some("user_world"),
         channel_tool::TOOL_CHANNEL => Some("channel_tool"),
         "记忆管理" => Some("memory_manager"),
+        web_fetch_tool::TOOL_WEB_FETCH => Some(web_fetch_tool::TOOL_WEB_FETCH_ALIAS),
         browser_tool::TOOL_BROWSER => Some("browser"),
         desktop_control::TOOL_DESKTOP_CONTROLLER => Some("desktop_controller"),
         desktop_control::TOOL_DESKTOP_MONITOR => Some("desktop_monitor"),

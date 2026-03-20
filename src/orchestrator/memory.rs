@@ -1517,10 +1517,22 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
     if total_tokens > limit {
         if let Some(last_index) = messages.len().checked_sub(1) {
             let last_tokens = estimate_message_tokens(&messages[last_index]);
+            let current_user_index = messages
+                .iter()
+                .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+            let trimming_current_user = current_user_index == Some(last_index);
+            if trimming_current_user && stats.current_user_tokens_before == 0 {
+                stats.current_user_tokens_before = last_tokens;
+            }
             let remaining_for_last = (limit - (total_tokens - last_tokens)).max(1);
             if let Some(trimmed) =
                 trim_message_to_fit_tokens(&messages[last_index], remaining_for_last)
             {
+                let trimmed_tokens = estimate_message_tokens(&trimmed);
+                if trimming_current_user {
+                    stats.current_user_tokens_after = trimmed_tokens;
+                    stats.current_user_trimmed |= trimmed_tokens < stats.current_user_tokens_before;
+                }
                 messages[last_index] = trimmed;
                 total_tokens = estimate_messages_tokens(messages);
             }

@@ -23,6 +23,7 @@ mod skill_call;
 mod sleep_tool;
 mod swarm_realtime;
 mod thread_control_tool;
+mod web_fetch_tool;
 pub(crate) mod tool_error;
 
 #[cfg(test)]
