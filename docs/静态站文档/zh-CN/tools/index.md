@@ -1,6 +1,6 @@
 ---
 title: 工具
-summary: Wunder 的工具页专门讲“具体工具怎么用”，尽量按 OpenClaw 的短页方式拆开，而不是把所有工具堆在一个总表里。
+summary: 这组页面只讲工具怎么选、怎么用；如果你现在就要读网页，先看 `web_fetch`，不要先打开浏览器。
 read_when:
   - 你要查某个内置工具的动作、参数和适用场景
   - 你想按 OpenClaw 风格浏览 Wunder 的工具清单
@@ -21,30 +21,42 @@ source_docs:
 ## 这组页面解决什么
 
 - 某个工具具体能做什么
-- 什么情况下该用它
-- 它大概会处理什么参数或输入
+- 你现在该先用哪个工具
+- 什么时候该换另一条工具链
 
-## 工具从哪里来
+## 先记这几条
 
-Wunder 当前会把这些能力统一暴露给模型：
+- 工具页讲“怎么选、怎么用”，概念页讲“为什么这么设计”。
+- 同一个任务里，通常只需要先选对一条工具链，不需要一上来把所有工具都打开。
+- `server`、`cli`、`desktop` 下的可见工具并不完全一样。
 
-- 内置工具
-- MCP 工具
-- Skills
-- 知识库工具
-- 用户自建工具
+## 先按问题找工具
 
-但这组页面主要聚焦内置工具，因为它们最稳定、最常用，也最适合按 OpenClaw 的短页结构来写。
+### 只想读网页正文
 
-## 工具页怎么读
+先看 [网页抓取](/docs/zh-CN/tools/web-fetch/)。
 
-- 先看这页判断你要找的是哪一类工具。
-- 再进具体页面看动作、输入和典型场景。
-- 如果你想知道为什么这个工具会出现或消失，再回概念页。
+它的英文别名就是 `web_fetch`。
 
-## 先看这些
+适合这些情况：
 
-### 文件与代码
+- 你只想抓一篇文章、帮助页或说明页
+- 你不需要点击、输入和登录
+- 你想尽量少噪声、少上下文占用
+
+### 要真实操作网页
+
+先看 [浏览器](/docs/zh-CN/tools/browser/)。
+
+适合这些情况：
+
+- 你要导航、点击、输入和截图
+- 你要在真实页面会话里继续读页
+- 你当前就在 desktop 语境里做网页交互
+
+### 要读写文件、代码和工作区
+
+先看这些：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/tools/workspace-files/">
@@ -77,24 +89,9 @@ Wunder 当前会把这些能力统一暴露给模型：
   </a>
 </div>
 
-### 网页与桌面
+### 要界面协同或自动化
 
-<div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/zh-CN/tools/web-fetch/">
-    <strong>网页抓取</strong>
-    <span>直接抓网页正文，不等于浏览器自动化。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/tools/browser/">
-    <strong>浏览器</strong>
-    <span>desktop 下的页面导航、点击、输入、截图和读页。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/tools/desktop-control/">
-    <strong>桌面控制</strong>
-    <span>桌面控制器和桌面监视器的动作说明。</span>
-  </a>
-</div>
-
-### 界面与自动化
+先看这些：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/tools/panels-and-a2ui/">
@@ -107,7 +104,9 @@ Wunder 当前会把这些能力统一暴露给模型：
   </a>
 </div>
 
-### 会话、协作与系统桥接
+### 要会话协作、节点和系统桥接
+
+先看这些：
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/tools/thread-control/">
@@ -146,11 +145,11 @@ Wunder 当前会把这些能力统一暴露给模型：
 
 ## 最容易搞错的点
 
-- 工具页讲“怎么用”，概念页讲“为什么这么设计”。
-- `server` 和 `desktop` 下的可见工具并不完全一样。
+- `web_fetch` 不是浏览器的轻量别名，它是另一条工具链。
+- 浏览器更偏 desktop 本地能力，不是所有 server 环境都天然可用。
 - 同一个系统里的两个会话，可见工具集也可能不同。
 
-原因通常来自这些地方：
+这些差异通常来自：
 
 - 请求级 `tool_names`
 - 智能体默认挂载
@@ -162,7 +161,7 @@ Wunder 当前会把这些能力统一暴露给模型：
 - `最终回复`
 - `休眠等待`
 
-可以这样理解：
+可以这样记：
 
 - `最终回复` 把最终文本落回用户轮次。
 - `休眠等待` 负责短暂等待，不等于 cron 或 A2A 轮询。

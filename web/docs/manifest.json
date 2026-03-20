@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-03-20T01:21:42.054954+00:00",
+  "generated_at": "2026-03-20T01:35:54.253432+00:00",
   "site": {
     "name": "wunder 文档",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -139,7 +139,7 @@
                   {
                     "slug": "zh-CN/concepts/tools",
                     "title": "工具体系",
-                    "summary": "wunder 把内置工具、MCP、Skills、知识库与用户工具统一放进同一调度体系。",
+                    "summary": "Wunder 的核心不是只让模型回答，而是让模型在同一调度层里选择并编排工具。",
                     "url": "/docs/zh-CN/concepts/tools/"
                   },
                   {
@@ -180,7 +180,7 @@
                   {
                     "slug": "zh-CN/tools/index",
                     "title": "工具",
-                    "summary": "Wunder 的工具页专门讲“具体工具怎么用”，尽量按 OpenClaw 的短页方式拆开，而不是把所有工具堆在一个总表里。",
+                    "summary": "这组页面只讲工具怎么选、怎么用；如果你现在就要读网页，先看 `web_fetch`，不要先打开浏览器。",
                     "url": "/docs/zh-CN/tools/"
                   }
                 ]
@@ -238,13 +238,13 @@
                   {
                     "slug": "zh-CN/tools/web-fetch",
                     "title": "网页抓取",
-                    "summary": "`网页抓取` 直接获取网页正文内容，适合读文本，不适合代替真正的浏览器自动化。",
+                    "summary": "`网页抓取` 的英文别名是 `web_fetch`。它适合读网页正文，不适合代替真实浏览器交互。",
                     "url": "/docs/zh-CN/tools/web-fetch/"
                   },
                   {
                     "slug": "zh-CN/tools/browser",
                     "title": "浏览器",
-                    "summary": "`浏览器` 是 Wunder 在 desktop 模式下提供的页面交互工具，支持导航、点击、输入、截图和读页。",
+                    "summary": "`浏览器` 是 Wunder 在 desktop 模式下提供的交互型工具；需要真实页面会话时用它，不要用 `web_fetch` 硬顶。",
                     "url": "/docs/zh-CN/tools/browser/"
                   },
                   {
@@ -1715,8 +1715,8 @@
       "slug": "zh-CN/concepts/tools",
       "language": "zh-CN",
       "title": "工具体系",
-      "summary": "wunder 把内置工具、MCP、Skills、知识库与用户工具统一放进同一调度体系。",
-      "updated_at": "2026-03-19",
+      "summary": "Wunder 的核心不是只让模型回答，而是让模型在同一调度层里选择并编排工具。",
+      "updated_at": "2026-03-20",
       "read_when": [
         "你要理解 wunder 的能力为什么不只是聊天",
         "你要知道工具来源、边界与编排方式"
@@ -1741,40 +1741,50 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "工具来源"
+          "text": "这页解决什么"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "内置工具"
+          "text": "先记这几条"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "MCP"
+          "text": "工具从哪里来"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "Skills"
+          "text": "内置工具先看什么"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "知识库"
+          "text": "MCP 负责什么"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "用户工具"
+          "text": "Skills 负责什么"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "为什么要统一工具体系"
+          "text": "知识库和用户工具分别解决什么"
         },
         {
           "id": "section-9",
+          "level": 2,
+          "text": "为什么一定要统一工具体系"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
           "level": 2,
           "text": "相关文档"
         }
@@ -2099,7 +2109,7 @@
       "slug": "zh-CN/tools/index",
       "language": "zh-CN",
       "title": "工具",
-      "summary": "Wunder 的工具页专门讲“具体工具怎么用”，尽量按 OpenClaw 的短页方式拆开，而不是把所有工具堆在一个总表里。",
+      "summary": "这组页面只讲工具怎么选、怎么用；如果你现在就要读网页，先看 `web_fetch`，不要先打开浏览器。",
       "updated_at": "2026-03-20",
       "read_when": [
         "你要查某个内置工具的动作、参数和适用场景",
@@ -2132,37 +2142,37 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "工具从哪里来"
+          "text": "先记这几条"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "工具页怎么读"
+          "text": "先按问题找工具"
         },
         {
           "id": "section-5",
-          "level": 2,
-          "text": "先看这些"
+          "level": 3,
+          "text": "只想读网页正文"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "文件与代码"
+          "text": "要真实操作网页"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "网页与桌面"
+          "text": "要读写文件、代码和工作区"
         },
         {
           "id": "section-8",
           "level": 3,
-          "text": "界面与自动化"
+          "text": "要界面协同或自动化"
         },
         {
           "id": "section-9",
           "level": 3,
-          "text": "会话、协作与系统桥接"
+          "text": "要会话协作、节点和系统桥接"
         },
         {
           "id": "section-10",
@@ -2709,7 +2719,7 @@
       "slug": "zh-CN/tools/web-fetch",
       "language": "zh-CN",
       "title": "网页抓取",
-      "summary": "`网页抓取` 直接获取网页正文内容，适合读文本，不适合代替真正的浏览器自动化。",
+      "summary": "`网页抓取` 的英文别名是 `web_fetch`。它适合读网页正文，不适合代替真实浏览器交互。",
       "updated_at": "2026-03-20",
       "read_when": [
         "你要让模型读取网页正文",
@@ -2735,40 +2745,50 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "它解决什么"
+          "text": "这页解决什么"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "常用参数"
+          "text": "先记这几条"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "什么时候优先用它"
+          "text": "什么时候先用它"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "什么时候不要用它"
+          "text": "什么时候不要先用它"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "为什么它不等于浏览器"
+          "text": "最常用的入参"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "开关在哪里"
+          "text": "返回里你最该看什么"
         },
         {
           "id": "section-8",
           "level": 2,
-          "text": "你最需要记住的点"
+          "text": "它为什么比直接读原始 HTML 更适合模型"
         },
         {
           "id": "section-9",
+          "level": 2,
+          "text": "配置开关在哪里"
+        },
+        {
+          "id": "section-10",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-11",
           "level": 2,
           "text": "相关文档"
         }
@@ -2782,8 +2802,8 @@
       "slug": "zh-CN/tools/browser",
       "language": "zh-CN",
       "title": "浏览器",
-      "summary": "`浏览器` 是 Wunder 在 desktop 模式下提供的页面交互工具，支持导航、点击、输入、截图和读页。",
-      "updated_at": "2026-03-19",
+      "summary": "`浏览器` 是 Wunder 在 desktop 模式下提供的交互型工具；需要真实页面会话时用它，不要用 `web_fetch` 硬顶。",
+      "updated_at": "2026-03-20",
       "read_when": [
         "你在做桌面自动化或网页交互",
         "你要区分浏览器和网页抓取"
@@ -2813,30 +2833,40 @@
         {
           "id": "section-3",
           "level": 2,
-          "text": "当前动作"
+          "text": "先记这几条"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "什么时候用它"
+          "text": "什么时候先用它"
         },
         {
           "id": "section-5",
           "level": 2,
-          "text": "为什么它通常是 desktop 工具"
+          "text": "当前动作"
         },
         {
           "id": "section-6",
           "level": 2,
-          "text": "readpage 和网页抓取的区别"
+          "text": "什么时候不要先用它"
         },
         {
           "id": "section-7",
           "level": 2,
-          "text": "你最需要记住的点"
+          "text": "它为什么通常只在 desktop 下可用"
         },
         {
           "id": "section-8",
+          "level": 2,
+          "text": "readpage 和 webfetch 的区别"
+        },
+        {
+          "id": "section-9",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-10",
           "level": 2,
           "text": "相关文档"
         }
