@@ -134,7 +134,7 @@ outbox 是出站缓冲层。
 - 长连接配置了但 worker 没起来
 - 文件链接没改写，导致外部客户端打不开
 
-## 相关文档
+## 延伸阅读
 
 - [管理端界面](/docs/zh-CN/surfaces/web-admin/)
 - [认证与安全](/docs/zh-CN/ops/auth-and-security/)

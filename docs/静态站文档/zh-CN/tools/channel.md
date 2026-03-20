@@ -66,13 +66,13 @@ source_docs:
 
 两者属于同一渠道系统，但方向不同。
 
-## 你最需要记住的点
+## 实施建议
 
 - `渠道工具` 当前重点是联系人发现和发送消息。
 - 它属于模型侧出站工具，不等于管理员侧渠道治理接口。
 - 真正排查渠道故障时，还要一起看渠道运行态和 outbox。
 
-## 相关文档
+## 延伸阅读
 
 - [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)
 - [渠道运行态](/docs/zh-CN/ops/channel-runtime/)

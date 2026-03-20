@@ -79,7 +79,7 @@ Wunder 的管理端不是普通用户入口。
 - 你要调整模型、鉴权、组织和配额
 - 你要看渠道账号状态、错误和批量治理能力
 
-## 相关文档
+## 延伸阅读
 
 - [部署与运行](/docs/zh-CN/ops/deployment/)
 - [认证与安全](/docs/zh-CN/ops/auth-and-security/)

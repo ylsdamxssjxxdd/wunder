@@ -128,14 +128,14 @@ source_docs:
 3. 向量库有持久卷
 4. `temp_dir` 不被当成长存储
 
-## 最常见误区
+## 常见误区
 
 - 以为 SQLite 和 PostgreSQL 只是“性能差异”
 - 把工作区产物只写进 temp_dir
 - 忘记给 `/workspaces` 做持久化
 - 以为 Weaviate 里会自动保存全部业务数据
 
-## 相关文档
+## 延伸阅读
 
 - [部署与运行](/docs/zh-CN/ops/deployment/)
 - [工作区与容器](/docs/zh-CN/concepts/workspaces/)

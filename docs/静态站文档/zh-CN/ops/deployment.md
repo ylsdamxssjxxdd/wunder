@@ -15,7 +15,7 @@ source_docs:
 
 部署 Wunder 之前，先不要急着问“怎么启动”，先问“我要哪种运行形态”。
 
-## 这页解决什么
+## 本页重点
 
 - 怎么先选对部署路径
 - server 侧最少要准备哪些东西
@@ -108,7 +108,7 @@ source_docs:
 - 把长期业务数据放进了 `data/`
 - 误把 desktop 本地模式当成 server 部署方式
 
-## 相关文档
+## 延伸阅读
 
 - [Server 部署](/docs/zh-CN/start/server/)
 - [认证与安全](/docs/zh-CN/ops/auth-and-security/)

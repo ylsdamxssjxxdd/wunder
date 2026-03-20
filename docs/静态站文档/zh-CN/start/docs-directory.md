@@ -76,7 +76,7 @@ source_docs:
 2. 再看接入页、工具页或界面页，确认具体入口。
 3. 最后再回参考页或故障排查页查字段、事件和异常路径。
 
-## 相关文档
+## 延伸阅读
 
 - [文档总览](/docs/zh-CN/start/hubs/)
 - [配置说明](/docs/zh-CN/reference/config/)

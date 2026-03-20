@@ -67,13 +67,13 @@ source_docs:
 
 如果目标是跨外部 IM 平台发消息，优先看渠道工具。
 
-## 你最需要记住的点
+## 实施建议
 
 - `用户世界工具` 只处理系统内用户，不处理外部渠道联系人。
 - `list_users` 查目录，`send_message` 发站内消息。
 - 它支持把工作区文件引用整理成可发送的暂存文件。
 
-## 相关文档
+## 延伸阅读
 
 - [渠道工具](/docs/zh-CN/tools/channel/)
 - [用户世界接入](/docs/zh-CN/integration/user-world/)

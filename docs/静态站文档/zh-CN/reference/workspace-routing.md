@@ -14,7 +14,7 @@ source_docs:
 
 这页不是讲“工作区是什么”，而是讲“请求最后会路由到哪一块工作区”。
 
-## 这页解决什么
+## 本页重点
 
 这页只回答这些问题：
 
@@ -88,13 +88,13 @@ source_docs:
 
 本地模式只是把容器映射到真实目录，不会取消容器语义。
 
-## 你最需要记住的点
+## 实施建议
 
 - 显式 `container_id` 优先级最高。
 - `container_id=0` 和 `1~10` 的职责不同。
 - 公共路径和真实目录名不是同一个概念。
 
-## 相关文档
+## 延伸阅读
 
 - [工作区与容器](/docs/zh-CN/concepts/workspaces/)
 - [工作区 API](/docs/zh-CN/integration/workspace-api/)

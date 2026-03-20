@@ -1,9 +1,9 @@
 ---
 title: 快速开始
-summary: 用最短路径跑通 wunder 的第一条主链路，优先推荐 desktop。
+summary: 用最短路径跑通 wunder 的第一条可用链路；默认推荐 desktop，其次按 server 或 cli 分流。
 read_when:
   - 你第一次使用 wunder
-  - 你想在 desktop、server、cli 中先跑通一条可用链路
+  - 你需要在 10 分钟内跑通一个可验证结果
 source_docs:
   - README.md
   - docs/系统介绍.md
@@ -12,82 +12,61 @@ source_docs:
 
 # 快速开始
 
-这页只解决一件事：
+这页只做一件事：帮你选对起步路径，并快速跑通第一条主链路。
 
-- 用最短路径把 wunder 跑起来
+## 第一步：选运行形态
 
-如果你不想先研究架构，直接按这里走。
+1. 个人直接使用：走 [Desktop 入门](/docs/zh-CN/start/desktop/)
+2. 团队服务部署：走 [Server 部署](/docs/zh-CN/start/server/)
+3. 终端与自动化：走 [CLI 使用](/docs/zh-CN/start/cli/)
 
-## 推荐顺序
-
-1. 普通用户优先从 [Desktop 入门](/docs/zh-CN/start/desktop/) 开始
-2. 团队部署或接口接入从 [Server 部署](/docs/zh-CN/start/server/) 开始
-3. 开发者调试或脚本任务从 [CLI 使用](/docs/zh-CN/start/cli/) 开始
-
-## 最短可用路径：Desktop
-
-如果你只是想尽快用起来，建议走这条路径：
+## 最短路径：Desktop
 
 1. 启动 `wunder-desktop`
-2. 确认本地模式可以打开聊天界面
-3. 选择或配置一个可用模型
-4. 在输入框里直接提出任务
-5. 观察模型回复、工具调用、工作区产物与会话状态
+2. 打开聊天界面，确认本地模式可用
+3. 配置可用模型
+4. 发一条测试消息
+5. 检查是否能看到：中间过程、工具调用、最终回复
 
-为什么优先推荐 desktop：
+如果这 5 步都通过，说明你的核心执行链路已经可用。
 
-- 模型调用链路
-- 用户侧前端交互
-- 工作区与本地文件能力
-- 智能体设置与对话执行主链路
+## 团队路径：Server
 
-## 如果你要部署 Server
+适合这些场景：
 
-Server 更适合这些场景：
+- 多用户与多单位
+- 管理员治理、应用发布、权限控制
+- 渠道接入（Webhook/长连接）
 
-- 多用户、多单位、多租户
-- 网页端统一访问
-- 需要管理员侧治理能力
-- 需要渠道、蜂群、用户管理、MCP 统一接入
+建议阅读顺序：
 
-直接阅读：
+1. [Server 部署](/docs/zh-CN/start/server/)
+2. [部署与运行](/docs/zh-CN/ops/deployment/)
+3. [认证与安全](/docs/zh-CN/ops/auth-and-security/)
 
-- [Server 部署](/docs/zh-CN/start/server/)
-- [部署与运行](/docs/zh-CN/ops/deployment/)
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
+## 开发路径：CLI
 
-## 如果你要用 CLI
+适合这些场景：
 
-CLI 适合这些场景：
+- 本地研发和脚本任务
+- 工具链调试
+- 自动化执行
 
-- 本地终端任务
-- 脚本化调用
-- 开发者调试
-- 工作区驱动任务执行
+建议阅读顺序：
 
-直接阅读：
+1. [CLI 使用](/docs/zh-CN/start/cli/)
+2. [工具总览](/docs/zh-CN/tools/)
+3. [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
 
-- [CLI 使用](/docs/zh-CN/start/cli/)
-- [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
-- [工具体系](/docs/zh-CN/concepts/tools/)
+## 验收清单
 
-## 运行前你最需要知道的点
+- 可以成功发起一次执行
+- 可以看到流式过程与终态
+- 能区分当前运行形态是 `desktop / server / cli`
+- 能定位下一步要看的文档入口
 
-- wunder 有三种运行形态：`server / cli / desktop`
-- `server` 是核心能力底座
-- `desktop` 是当前主交付产品
-- `cli` 适合开发与自动化
-- 用户请求优先走 WebSocket，SSE 作为兜底
+## 延伸阅读
 
-## 跑起来之后看什么
-
-- [Desktop 入门](/docs/zh-CN/start/desktop/)
-- [系统架构](/docs/zh-CN/concepts/architecture/)
-- [wunder API](/docs/zh-CN/integration/wunder-api/)
-- [故障排查](/docs/zh-CN/help/troubleshooting/)
-
-## 相关文档
-
-- [Desktop 入门](/docs/zh-CN/start/desktop/)
-- [Server 部署](/docs/zh-CN/start/server/)
-- [CLI 使用](/docs/zh-CN/start/cli/)
+- [文档总览](/docs/zh-CN/start/hubs/)
+- [接入概览](/docs/zh-CN/integration/)
+- [故障排查](/docs/zh-CN/help/troubleshooting/)

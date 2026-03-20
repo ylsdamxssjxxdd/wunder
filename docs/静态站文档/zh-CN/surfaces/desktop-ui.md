@@ -69,7 +69,7 @@ Desktop 尽量复用用户侧前端的同构页面结构。
 - 组织级部署
 - 渠道与网关统一接入
 
-## 相关文档
+## 延伸阅读
 
 - [Desktop 入门](/docs/zh-CN/start/desktop/)
 - [用户侧前端](/docs/zh-CN/surfaces/frontend/)

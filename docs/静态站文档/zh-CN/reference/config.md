@@ -14,15 +14,15 @@ source_docs:
 
 Wunder 的配置不是一个文件包打天下，而是分层组织的。
 
-先记一条：排查配置问题时，先分清“基础配置、运行时覆盖、外部 MCP 配置”三层。
+核心结论：排查配置问题时，先分清“基础配置、运行时覆盖、外部 MCP 配置”三层。
 
-## 这页解决什么
+## 本页重点
 
 - 具体配置应该改到哪里
 - 哪些配置是 server 在读，哪些是 extra_mcp 在读
 - 为什么你改了配置却可能没生效
 
-## 先记住这几个配置入口
+## 关键配置入口
 
 - `config/wunder.yaml`
 - `config/wunder-example.yaml`
@@ -73,13 +73,13 @@ Wunder 的配置不是一个文件包打天下，而是分层组织的。
 2. 当前运行实例实际读取的是哪个路径
 3. 这个配置到底是 server、desktop 还是 extra_mcp 在消费
 
-## 最容易搞错的点
+## 常见误区
 
 - 把 `wunder-example.yaml` 当正式配置长期改。
 - 管理端写入的 override 和手工改的基础配置相互打架。
 - 以为所有配置都由 server 进程读取，实际上 `extra_mcp` 有自己的配置文件。
 
-## 相关文档
+## 延伸阅读
 
 - [部署与运行](/docs/zh-CN/ops/deployment/)
 - [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)

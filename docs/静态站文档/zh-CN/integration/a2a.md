@@ -106,7 +106,7 @@ a2a:
 - 单机内建能力
 - 没有必要跨系统的同步调用
 
-## 相关文档
+## 延伸阅读
 
 - [wunder API](/docs/zh-CN/integration/wunder-api/)
 - [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/)

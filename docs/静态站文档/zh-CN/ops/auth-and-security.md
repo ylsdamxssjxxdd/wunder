@@ -123,7 +123,7 @@ Wunder 的安全边界不只在 HTTP 层，还在工具层。
 - `deny_globs`
 - sandbox 是否启用
 
-## 相关文档
+## 延伸阅读
 
 - [部署与运行](/docs/zh-CN/ops/deployment/)
 - [wunder API](/docs/zh-CN/integration/wunder-api/)

@@ -15,7 +15,7 @@ source_docs:
 
 在 Wunder 里，`temp_dir` 是中转层，不是正式工作区。
 
-## 这页解决什么
+## 本页重点
 
 这页只解释三件事：
 
@@ -62,7 +62,7 @@ source_docs:
 
 这样渠道客户端或外部网页才能真正点开。
 
-## 最容易犯的错
+## 常见误区
 
 ### 把 `temp_dir` 当长期存储
 
@@ -82,13 +82,13 @@ source_docs:
 
 它是正式公共中转层，很多外部渠道链路都会用到。
 
-## 你最需要记住的点
+## 实施建议
 
 - `temp_dir` 适合中转和分发，不适合长期沉淀业务文件。
 - `doc2md` 负责把多种文档变成模型更容易消费的 Markdown。
 - 外部渠道能点击打开文件，通常依赖的是 `temp_dir` 下载链接。
 
-## 相关文档
+## 延伸阅读
 
 - [工作区 API](/docs/zh-CN/integration/workspace-api/)
 - [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)

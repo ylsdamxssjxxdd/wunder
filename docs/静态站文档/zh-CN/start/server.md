@@ -16,13 +16,13 @@ source_docs:
 
 `wunder-server` 是 Wunder 的核心运行形态，负责多用户、多单位、多租户治理，以及 `/wunder`、`/wunder/chat/*`、`/a2a` 等公开入口。
 
-## 这页解决什么
+## 本页重点
 
 - 什么时候必须上 server
 - server 负责哪些能力
 - 部署前要先定哪些关键项
 
-## 先记这几条
+## 关键结论
 
 - `server` 是团队和组织场景的主入口，不是个人本地模式的替代叫法。
 - 网页端 server 形态使用 PostgreSQL，不是 SQLite。
@@ -53,21 +53,21 @@ source_docs:
 - 需不需要同时部署 sandbox、MCP、A2A 和静态文档站
 - 对外域名下准备暴露哪些路径
 
-## 对外访问先记住这些
+## 对外访问关键约束
 
 - 业务方可以把 `/wunder` 当成底层执行入口
 - 如果要稳定调用某个独立人格智能体，优先走 `/wunder/chat/*`
 - `user_id` 不要求一定是注册用户
 - A2A 当前暴露的是系统级路由卡，不是每个智能体一张独立卡
 
-## 最容易搞错的点
+## 常见误区
 
 - 把 `desktop` 当成 server 的部署方式，这是两条线。
 - 只暴露了 `/wunder`，却没规划聊天域和 WebSocket。
 - 误以为 `user_id` 必须先在用户管理里注册。
 - 把长期业务数据放进 `data/`，后面很容易被清理或覆盖。
 
-## 相关文档
+## 延伸阅读
 
 - [部署与运行](/docs/zh-CN/ops/deployment/)
 - [认证与安全](/docs/zh-CN/ops/auth-and-security/)

@@ -99,7 +99,7 @@ Wunder 记录的是 token 占用量，也就是当前上下文实际占了多少
 - 当前线程 runtime 是否还在 active
 - 当前这轮是否已经发出终结事件
 
-## 相关文档
+## 延伸阅读
 
 - [流式执行](/docs/zh-CN/concepts/streaming/)
 - [运行时与在线状态](/docs/zh-CN/concepts/presence-and-runtime/)

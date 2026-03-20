@@ -62,13 +62,13 @@ source_docs:
 
 这类场景都比直接贴文字描述更稳定。
 
-## 你最需要记住的点
+## 实施建议
 
 - `读图工具` 的核心不是返回像素内容，而是构造后续多模态消息。
 - 它只适合图片，不适合一般二进制文件。
 - 真正的文本文件仍然应该走 [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)。
 
-## 相关文档
+## 延伸阅读
 
 - [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)
 - [浏览器](/docs/zh-CN/tools/browser/)

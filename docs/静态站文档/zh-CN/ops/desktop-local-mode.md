@@ -109,7 +109,7 @@ Desktop 本地模式是 Wunder 当前最贴近真实个人使用的形态。
 - 以为改系统提示词会回写当前老线程
 - 把它和远端治理能力混成一个概念
 
-## 相关文档
+## 延伸阅读
 
 - [Desktop 入门](/docs/zh-CN/start/desktop/)
 - [工作区与容器](/docs/zh-CN/concepts/workspaces/)

@@ -15,7 +15,7 @@ source_docs:
 
 在 Wunder 里，流式的重点不是“文字一点点出来”，而是“整个线程状态被连续投影出来”。
 
-## 这页解决什么
+## 本页重点
 
 这页只回答三件事：
 
@@ -87,14 +87,14 @@ Wunder 当前有两条主流式路径：
 
 SSE 可以看结果，但 WebSocket 才更适合会话控制。
 
-## 你最需要记住的点
+## 实施建议
 
 - 判断一轮是否结束，看 `turn_terminal`。
 - 判断线程当前处于什么状态，看 `thread_status` 或会话 `runtime`。
 - 审批是否彻底闭环，看 `approval_resolved`。
 - 聊天面板默认应优先接 WebSocket，SSE 作为兜底。
 
-## 相关文档
+## 延伸阅读
 
 - [流式事件参考](/docs/zh-CN/reference/stream-events/)
 - [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)

@@ -132,7 +132,7 @@ source_docs:
 2. 再看接口页有没有明确字段
 3. 再回到对应治理面板做验证
 
-## 相关文档
+## 延伸阅读
 
 - [管理端界面](/docs/zh-CN/surfaces/web-admin/)
 - [配置说明](/docs/zh-CN/reference/config/)

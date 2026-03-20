@@ -1,9 +1,9 @@
 ---
 title: 运维概览
-summary: Wunder 的运维面要同时处理部署、存储、安全、渠道运行态、观测和 benchmark，不只是把服务启动起来。
+summary: Wunder 运维包含部署、存储、安全、渠道运行态与可观测；目标是让系统可持续稳定运行，而不只是“启动成功”。
 read_when:
   - 你在部署或接手 Wunder 运行环境
-  - 你要快速找到监控、性能、渠道和数据治理入口
+  - 你要快速定位运维与治理入口
 source_docs:
   - docs/系统介绍.md
   - docs/设计方案.md
@@ -12,76 +12,34 @@ source_docs:
 
 # 运维概览
 
-如果你在做 wunder 的上线、观测和治理，这里是总入口。
+把 Wunder 运维理解成五条主线会更清晰：部署、存储、安全、渠道、观测。
 
-这页不是只讲“把服务启动起来”，而是讲运维到底要看哪些面。
-
-## 先看这些
+## 运维入口
 
 <div class="docs-card-grid docs-card-grid-compact">
-  <a class="docs-card" href="/docs/zh-CN/ops/deployment/">
-    <strong>部署与运行</strong>
-    <span>先把 server、desktop、本地开发三条运行路径分清。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/ops/data-and-storage/">
-    <strong>数据与存储</strong>
-    <span>区分 PostgreSQL、SQLite、Weaviate、workspaces 和 temp_dir。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/ops/auth-and-security/">
-    <strong>认证与安全</strong>
-    <span>API Key、用户 Token、外链鉴权和沙盒边界。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/ops/benchmark-and-observability/">
-    <strong>监控与 Benchmark</strong>
-    <span>会话监控、工具统计、性能采样和能力评估入口。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/ops/channel-runtime/">
-    <strong>渠道运行态</strong>
-    <span>账号状态、长连接、入出站和运行日志的排障入口。</span>
-  </a>
-  <a class="docs-card" href="/docs/zh-CN/ops/desktop-local-mode/">
-    <strong>Desktop 本地模式</strong>
-    <span>本地运行时的存储、工作区和能力边界。</span>
-  </a>
+  <a class="docs-card" href="/docs/zh-CN/ops/deployment/"><strong>部署与运行</strong><span>启动路径、依赖与健康检查。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/ops/data-and-storage/"><strong>数据与存储</strong><span>Postgres/SQLite/Weaviate/workspaces/temp_dir。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/ops/auth-and-security/"><strong>认证与安全</strong><span>令牌体系、边界与审批策略。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/ops/channel-runtime/"><strong>渠道运行态</strong><span>Webhook、长连接、outbox 与恢复。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/ops/benchmark-and-observability/"><strong>监控与 Benchmark</strong><span>吞吐、延迟、错误和容量评估。</span></a>
+  <a class="docs-card" href="/docs/zh-CN/ops/desktop-local-mode/"><strong>Desktop 本地模式</strong><span>本地运行边界与治理要点。</span></a>
 </div>
 
-## 运维通常在做什么
+## 排障优先级建议
 
-- 把服务和依赖跑起来
-- 处理数据库、工作区和临时目录
-- 处理鉴权、权限和安全边界
-- 看渠道长连接、运行态和错误日志
-- 做监控、吞吐、性能和 benchmark
+1. 入口是否可达（HTTP/WS）
+2. 鉴权是否匹配（API Key / 用户 Token）
+3. 依赖是否就绪（数据库、sandbox、MCP）
+4. 运行态是否健康（会话 runtime、渠道状态、outbox）
+5. 指标是否异常（吞吐、延迟、错误率）
 
-## 按问题找页面
+## 常见误区
 
-### 你在做上线
+- 进程活着不等于服务可用，必须看入口和依赖。
+- 渠道问题常在接入层，不一定是模型问题。
+- `temp_dir` 不是长期存储目录，不能当业务仓库。
 
-- [部署与运行](/docs/zh-CN/ops/deployment/)
-- [数据与存储](/docs/zh-CN/ops/data-and-storage/)
+## 延伸阅读
 
-### 你在做权限和治理
-
-- [认证与安全](/docs/zh-CN/ops/auth-and-security/)
-- [提示词模板参考](/docs/zh-CN/reference/prompt-templates/)
-
-### 你在做可观测
-
-- [监控与 Benchmark](/docs/zh-CN/ops/benchmark-and-observability/)
-- [流式事件参考](/docs/zh-CN/reference/stream-events/)
-
-### 你在排查渠道
-
-- [渠道运行态](/docs/zh-CN/ops/channel-runtime/)
-- [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/)
-
-## 最容易搞错的点
-
-- Wunder 的运维不只是进程运维，还包括会话治理、渠道运行态和模型链路观测。
-- 工作区、数据库、向量库和临时目录必须分开治理。
-- 监控、吞吐、性能采样和 benchmark 各自解决的问题不同，不要混用。
-
-## 相关文档
-
-- [参考概览](/docs/zh-CN/reference/)
-- [帮助](/docs/zh-CN/help/)
+- [帮助中心](/docs/zh-CN/help/)
+- [参考概览](/docs/zh-CN/reference/)

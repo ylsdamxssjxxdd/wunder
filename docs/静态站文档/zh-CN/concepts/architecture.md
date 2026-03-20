@@ -103,7 +103,7 @@ wunder 当前至少有三套用户可见界面：
 - [部署拓扑图](/docs/diagrams/system-intro/07-deployment-topology.svg)
 - [层级结构图（心舰 -> 用户 -> 蜂群 -> 智能体 -> 线程）](/docs/diagrams/system-intro/08-hierarchy-structure.svg)
 
-## 相关文档
+## 延伸阅读
 
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
 - [工具体系](/docs/zh-CN/concepts/tools/)

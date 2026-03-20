@@ -59,7 +59,7 @@ source_docs:
 - 想找所有调用点，用 `references`
 - 想看文件结构，用 `documentSymbol`
 
-## 最容易犯的错
+## 常见误区
 
 ### 把它当成全文检索
 
@@ -69,13 +69,13 @@ source_docs:
 
 这个工具的 `line` 和 `character` 都是从 1 开始计。
 
-## 你最需要记住的点
+## 实施建议
 
 - `LSP查询` 是语义导航，不是字符串搜索。
 - 不同操作对位置参数的要求不同。
 - 返回结果可能来自多个 LSP 服务端，不一定只有一份。
 
-## 相关文档
+## 延伸阅读
 
 - [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)
 - [应用补丁](/docs/zh-CN/tools/apply-patch/)

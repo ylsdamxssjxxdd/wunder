@@ -78,7 +78,7 @@ Desktop 并没有重新发明一套页面，而是尽量复用这套用户侧前
 - 你要理解普通用户究竟看到什么
 - 你要判断某个能力应该落在聊天区、工作区还是设置区
 
-## 相关文档
+## 延伸阅读
 
 - [Desktop 界面](/docs/zh-CN/surfaces/desktop-ui/)
 - [管理端界面](/docs/zh-CN/surfaces/web-admin/)

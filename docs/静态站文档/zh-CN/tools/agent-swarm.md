@@ -63,13 +63,13 @@ source_docs:
 
 如果你只盯一个子运行，不必上蜂群。
 
-## 你最需要记住的点
+## 实施建议
 
 - `智能体蜂群` 最核心的路径是 `list -> send/batch_send -> wait -> history/status`。
 - `send` 适合单目标，`batch_send` 适合多目标。
 - `wait` 的输入是运行 ID，不是普通会话标题。
 
-## 相关文档
+## 延伸阅读
 
 - [子智能体控制](/docs/zh-CN/tools/subagent-control/)
 - [会话线程控制](/docs/zh-CN/tools/thread-control/)

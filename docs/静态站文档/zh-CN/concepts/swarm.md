@@ -57,7 +57,7 @@ source_docs:
 - 它和工具、技能、工作区、会话状态都有关系
 - 它适合复杂任务，不适合每个简单问题都强行拆分
 
-## 相关文档
+## 延伸阅读
 
 - [系统架构](/docs/zh-CN/concepts/architecture/)
 - [工具体系](/docs/zh-CN/concepts/tools/)

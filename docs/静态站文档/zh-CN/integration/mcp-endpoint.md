@@ -98,7 +98,7 @@ Wunder 不会把 MCP 当成“旁路系统”。
 
 所以对模型来说，MCP 最终还是工具目录的一部分。
 
-## 相关文档
+## 延伸阅读
 
 - [工具体系](/docs/zh-CN/concepts/tools/)
 - [A2A 接口](/docs/zh-CN/integration/a2a/)

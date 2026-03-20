@@ -90,7 +90,7 @@ source_docs:
 - 鉴权细节
 - 历史兼容字段
 
-## 相关文档
+## 延伸阅读
 
 - [wunder API](/docs/zh-CN/integration/wunder-api/)
 - [配置说明](/docs/zh-CN/reference/config/)

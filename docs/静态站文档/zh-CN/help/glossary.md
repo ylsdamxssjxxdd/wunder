@@ -134,7 +134,7 @@ Wunder 的持久文件空间。
 
 表示待审批请求已经进入终态。
 
-## 相关文档
+## 延伸阅读
 
 - [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
 - [工作区与容器](/docs/zh-CN/concepts/workspaces/)

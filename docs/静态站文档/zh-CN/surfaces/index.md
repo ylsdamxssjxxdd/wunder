@@ -16,7 +16,7 @@ wunder 不是单页聊天产品，而是三块界面一起工作。
 
 如果你在找“某个功能应该去哪看”，先从这里分流。
 
-## 先看这些
+## 快速入口
 
 <div class="docs-card-grid docs-card-grid-compact">
   <a class="docs-card" href="/docs/zh-CN/surfaces/frontend/">
@@ -62,13 +62,13 @@ wunder 不是单页聊天产品，而是三块界面一起工作。
 - [聊天会话](/docs/zh-CN/integration/chat-sessions/)
 - [工作区 API](/docs/zh-CN/integration/workspace-api/)
 
-## 最容易搞错的点
+## 常见误区
 
 - 用户端强调会话体验和文件工作流。
 - 管理端强调治理、监控、配置和评估。
 - Desktop 是当前主交付形态，但底层仍复用 Wunder 同一套主链路。
 
-## 相关文档
+## 延伸阅读
 
 - [开始](/docs/zh-CN/start/desktop/)
 - [运维概览](/docs/zh-CN/ops/)

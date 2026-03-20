@@ -152,7 +152,7 @@ source_docs:
 
 如果你的目标只是“让智能体周期性看一眼清单并继续推进”，这种做法通常已经够用。
 
-## 最容易混淆的点
+## 常见误区
 
 ### 它不是 `休眠等待`
 
@@ -166,13 +166,13 @@ source_docs:
 
 如果你已经能明确表达 `at/every/cron`，直接给结构化 `schedule` 通常更稳。
 
-## 你最需要记住的点
+## 实施建议
 
 - `定时任务` 是持久化的系统调度工具，不是一次性等待。
 - 最重要的载荷是 `payload.message`。
 - `isolated` 会新开运行语境，`delete_after_run` 会在成功后自动清理任务。
 
-## 相关文档
+## 延伸阅读
 
 - [wunder API](/docs/zh-CN/integration/wunder-api/)
 - [聊天会话](/docs/zh-CN/integration/chat-sessions/)

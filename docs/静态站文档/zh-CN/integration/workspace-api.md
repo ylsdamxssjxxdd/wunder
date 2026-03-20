@@ -16,13 +16,13 @@ source_docs:
 
 `/wunder/workspace*` 不只是文件读写接口，它决定文件到底落在哪个隔离空间。
 
-## 这页解决什么
+## 本页重点
 
 - 工作区相关接口有哪些
 - `user_id`、`agent_id`、`container_id` 如何共同决定路由
 - 什么时候应该用工作区，而不是 `temp_dir`
 
-## 先记一条路由规则
+## 路由规则（先看）
 
 工作区路由优先级当前很明确：
 
@@ -63,13 +63,13 @@ source_docs:
 - 上传：`POST /wunder/workspace/upload`
 - 导出：`GET /wunder/workspace/download` 或 `archive`
 
-## 最容易搞错的点
+## 常见误区
 
 - 把工作区当临时目录。工作区适合持久产物，`temp_dir` 适合中转。
 - 直接传真实磁盘绝对路径。这里大多数接口都使用相对工作区路径。
 - 以为只有下载接口才需要 `container_id`。实际上整组 `/wunder/workspace*` 都支持显式 `container_id`。
 
-## 相关文档
+## 延伸阅读
 
 - [工作区与容器](/docs/zh-CN/concepts/workspaces/)
 - [工作区路由参考](/docs/zh-CN/reference/workspace-routing/)

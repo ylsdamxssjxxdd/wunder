@@ -144,7 +144,7 @@ Wunder 不只有“用户和智能体聊天”这一种通信。
 3. 建立 `/wunder/user_world/ws`
 4. 收到 `uw.message` 和 `uw.read` 后增量更新界面
 
-## 相关文档
+## 延伸阅读
 
 - [用户侧前端](/docs/zh-CN/surfaces/frontend/)
 - [聊天 WebSocket](/docs/zh-CN/integration/chat-ws/)
