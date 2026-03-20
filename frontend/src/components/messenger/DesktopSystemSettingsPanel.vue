@@ -17,6 +17,58 @@
       <div class="desktop-system-settings-runtime-subhint">
         {{ t('desktop.system.pythonRuntimeBundledOnlyHint') }}
       </div>
+      <div class="desktop-system-settings-runtime-meta">
+        <div class="desktop-system-settings-runtime-meta-item">
+          <span class="desktop-system-settings-runtime-meta-label">{{ t('messenger.settings.versionNumber') }}</span>
+          <span class="desktop-system-settings-runtime-meta-value">
+            {{ pythonRuntimeVersion || '-' }}
+          </span>
+        </div>
+        <div class="desktop-system-settings-runtime-meta-item">
+          <span class="desktop-system-settings-runtime-meta-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
+          <span
+            class="desktop-system-settings-runtime-meta-value desktop-system-settings-runtime-meta-value--mono"
+            :title="pythonRuntimeBin || '-'"
+          >
+            {{ pythonRuntimeBin || '-' }}
+          </span>
+        </div>
+        <div class="desktop-system-settings-runtime-meta-item">
+          <span class="desktop-system-settings-runtime-meta-label">{{ t('desktop.system.pythonInterpreterTitle') }}</span>
+          <span class="desktop-system-settings-runtime-meta-value">
+            {{ pythonRuntimeSourceLabel }}
+          </span>
+        </div>
+      </div>
+      <label v-if="launchAtLoginSupported" class="desktop-system-settings-field desktop-system-settings-field--full">
+        <span class="desktop-system-settings-field-label">{{ t('desktop.system.startAtLogin') }}</span>
+        <div class="desktop-system-settings-runtime-control">
+          <span class="desktop-system-settings-runtime-control-hint">{{ t('desktop.system.startAtLoginHint') }}</span>
+          <el-switch
+            v-model="launchAtLoginEnabled"
+            :loading="launchAtLoginLoading"
+            :disabled="launchAtLoginLoading"
+            @change="handleLaunchAtLoginChange"
+          />
+        </div>
+      </label>
+      <label v-if="windowCloseBehaviorSupported" class="desktop-system-settings-field desktop-system-settings-field--full">
+        <span class="desktop-system-settings-field-label">{{ t('messenger.settings.windowCloseBehavior') }}</span>
+        <div class="desktop-system-settings-runtime-control">
+          <span class="desktop-system-settings-runtime-control-hint">
+            {{ t('messenger.settings.windowCloseBehaviorHint') }}
+          </span>
+          <el-select
+            v-model="windowCloseBehavior"
+            class="desktop-system-settings-input"
+            :disabled="windowCloseBehaviorLoading"
+            @change="handleWindowCloseBehaviorChange"
+          >
+            <el-option :label="t('messenger.settings.windowCloseBehaviorHide')" value="tray" />
+            <el-option :label="t('messenger.settings.windowCloseBehaviorQuit')" value="quit" />
+          </el-select>
+        </div>
+      </label>
     </section>
   </section>
 
@@ -442,7 +494,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { ElMessage } from 'element-plus';
 import { useRouter } from 'vue-router';
 
@@ -471,9 +523,21 @@ import {
 type ModelType = 'llm' | 'embedding';
 type ToolCallMode = 'tool_call' | 'function_call' | 'freeform_call';
 type HistoryCompactionReset = 'zero' | 'current' | 'keep';
+type WindowCloseBehavior = 'tray' | 'quit';
 type SelectedModelPreference = {
   key: string;
   modelType: ModelType;
+};
+type DesktopLaunchAtLoginState = {
+  supported: boolean;
+  enabled: boolean;
+};
+type DesktopRuntimeBridge = {
+  getWindowCloseBehavior?: () => Promise<string | null> | string | null;
+  setWindowCloseBehavior?: (behavior: string) => Promise<string | null> | string | null;
+  getLaunchAtLogin?: () => Promise<unknown> | unknown;
+  setLaunchAtLogin?: (enabled: boolean) => Promise<unknown> | unknown;
+  getPythonRuntimeInfo?: () => Promise<unknown> | unknown;
 };
 type ModelRow = {
   uid: string;
@@ -538,6 +602,16 @@ const lanDenySubnetsText = ref('');
 const lanPeerBlacklistText = ref('');
 const lanSharedSecret = ref('');
 const lanPeers = ref<DesktopLanPeer[]>([]);
+const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
+const windowCloseBehaviorLoading = ref(false);
+const launchAtLoginEnabled = ref(false);
+const launchAtLoginLoading = ref(false);
+const launchAtLoginSupported = ref(false);
+const pythonRuntimeBin = ref('');
+const pythonRuntimeVersion = ref('');
+const pythonRuntimeSource = ref('');
+const pythonRuntimeBundled = ref(true);
+let runtimePanelDisposed = false;
 let nextModelUid = 1;
 const DEFAULT_PROVIDER_ID = 'openai_compatible';
 const PROVIDER_PRESETS: Array<{ id: string; label: string; baseUrl: string }> = [
@@ -558,10 +632,30 @@ const PROVIDER_PRESET_MAP = new Map(PROVIDER_PRESETS.map((item) => [item.id, ite
 
 const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
 
-const showRuntimePanel = computed(() => props.panel === 'all' || props.panel === 'system');
+const showRuntimePanel = computed(
+  () => props.panel === 'all' || props.panel === 'system' || props.panel === 'models'
+);
 const showModelPanel = computed(() => props.panel === 'all' || props.panel === 'models');
 const showRemotePanel = computed(() => props.panel === 'all' || props.panel === 'remote');
 const showLanPanel = computed(() => props.panel === 'all' || props.panel === 'lan');
+const windowCloseBehaviorSupported = computed(() => {
+  const bridge = getDesktopRuntimeBridge();
+  return Boolean(
+    bridge &&
+      typeof bridge.getWindowCloseBehavior === 'function' &&
+      typeof bridge.setWindowCloseBehavior === 'function'
+  );
+});
+const pythonRuntimeSourceLabel = computed(() => {
+  const source = String(pythonRuntimeSource.value || '').trim().toLowerCase();
+  if (source === 'env') return t('desktop.system.pythonInterpreterSource.env');
+  if (source === 'path') return t('desktop.system.pythonInterpreterSource.path');
+  if (source === 'venv') return t('desktop.system.pythonInterpreterSource.venv');
+  if (source === 'bundled' || pythonRuntimeBundled.value) {
+    return t('desktop.system.pythonInterpreterSource.bundled');
+  }
+  return t('desktop.system.pythonInterpreterSource.path');
+});
 
 const embeddingModelRows = computed(() =>
   modelRows.value.filter((item) => item.model_type === 'embedding')
@@ -646,6 +740,40 @@ const setCurrentDefaultLabel = computed(() => {
     ? t('desktop.system.setDefaultEmbeddingModel')
     : t('desktop.system.setDefaultChatModel');
 });
+
+const normalizeWindowCloseBehavior = (value: unknown): WindowCloseBehavior => {
+  const text = String(value || '')
+    .trim()
+    .toLowerCase();
+  if (text === 'quit') return 'quit';
+  return 'tray';
+};
+
+const normalizeLaunchAtLoginState = (value: unknown): DesktopLaunchAtLoginState => {
+  if (typeof value === 'boolean') {
+    return {
+      supported: true,
+      enabled: value
+    };
+  }
+  if (value && typeof value === 'object') {
+    const source = value as Record<string, unknown>;
+    return {
+      supported: source.supported !== false,
+      enabled: source.enabled === true
+    };
+  }
+  return {
+    supported: false,
+    enabled: false
+  };
+};
+
+const getDesktopRuntimeBridge = (): DesktopRuntimeBridge | null => {
+  if (typeof window === 'undefined') return null;
+  const candidate = (window as Window & { wunderDesktop?: DesktopRuntimeBridge }).wunderDesktop;
+  return candidate && typeof candidate === 'object' ? candidate : null;
+};
 
 const normalizeModelType = (value: unknown): ModelType => {
   const raw = String(value || '').trim().toLowerCase();
@@ -1069,6 +1197,138 @@ const probeMaxContext = async () => {
   }
 };
 
+const loadPythonRuntimeInfo = async () => {
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.getPythonRuntimeInfo !== 'function') {
+    pythonRuntimeBin.value = '';
+    pythonRuntimeVersion.value = '';
+    pythonRuntimeSource.value = '';
+    pythonRuntimeBundled.value = true;
+    return;
+  }
+  try {
+    const payload = (await bridge.getPythonRuntimeInfo()) as Record<string, unknown> | null;
+    if (runtimePanelDisposed) return;
+    const source = payload && typeof payload === 'object' ? payload : {};
+    pythonRuntimeBin.value = String(source.bin || '').trim();
+    pythonRuntimeVersion.value = String(source.version || '').trim();
+    pythonRuntimeSource.value = String(source.source || '').trim();
+    pythonRuntimeBundled.value = source.bundled !== false;
+  } catch (error) {
+    if (runtimePanelDisposed) return;
+    console.error(error);
+    pythonRuntimeVersion.value = '';
+  }
+};
+
+const loadLaunchAtLoginState = async () => {
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.getLaunchAtLogin !== 'function') {
+    launchAtLoginSupported.value = false;
+    return;
+  }
+  launchAtLoginLoading.value = true;
+  try {
+    const state = normalizeLaunchAtLoginState(await bridge.getLaunchAtLogin());
+    if (runtimePanelDisposed) return;
+    launchAtLoginSupported.value = state.supported;
+    launchAtLoginEnabled.value = state.enabled;
+  } catch (error) {
+    if (runtimePanelDisposed) return;
+    console.error(error);
+    launchAtLoginSupported.value = false;
+    ElMessage.error(t('desktop.system.startAtLoginLoadFailed'));
+  } finally {
+    if (!runtimePanelDisposed) {
+      launchAtLoginLoading.value = false;
+    }
+  }
+};
+
+const handleLaunchAtLoginChange = async (value: boolean) => {
+  launchAtLoginEnabled.value = value === true;
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.setLaunchAtLogin !== 'function' || launchAtLoginLoading.value) {
+    return;
+  }
+  launchAtLoginLoading.value = true;
+  try {
+    const state = normalizeLaunchAtLoginState(await bridge.setLaunchAtLogin(launchAtLoginEnabled.value));
+    if (runtimePanelDisposed) return;
+    launchAtLoginSupported.value = state.supported;
+    launchAtLoginEnabled.value = state.enabled;
+  } catch (error) {
+    if (runtimePanelDisposed) return;
+    console.error(error);
+    ElMessage.error(t('desktop.system.startAtLoginSaveFailed'));
+    await loadLaunchAtLoginState();
+  } finally {
+    if (!runtimePanelDisposed) {
+      launchAtLoginLoading.value = false;
+    }
+  }
+};
+
+const loadWindowCloseBehavior = async () => {
+  if (!windowCloseBehaviorSupported.value) return;
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.getWindowCloseBehavior !== 'function') return;
+  windowCloseBehaviorLoading.value = true;
+  try {
+    const rawBehavior = await bridge.getWindowCloseBehavior();
+    if (runtimePanelDisposed) return;
+    const normalized = normalizeWindowCloseBehavior(rawBehavior);
+    windowCloseBehavior.value = normalized;
+    const source = String(rawBehavior || '')
+      .trim()
+      .toLowerCase();
+    if ((source === 'ask' || source === 'hide') && typeof bridge.setWindowCloseBehavior === 'function') {
+      await bridge.setWindowCloseBehavior(normalized);
+    }
+  } catch (error) {
+    if (runtimePanelDisposed) return;
+    console.error(error);
+    windowCloseBehavior.value = 'tray';
+  } finally {
+    if (!runtimePanelDisposed) {
+      windowCloseBehaviorLoading.value = false;
+    }
+  }
+};
+
+const handleWindowCloseBehaviorChange = async () => {
+  if (!windowCloseBehaviorSupported.value || windowCloseBehaviorLoading.value) {
+    return;
+  }
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.setWindowCloseBehavior !== 'function') {
+    return;
+  }
+  const target = normalizeWindowCloseBehavior(windowCloseBehavior.value);
+  windowCloseBehaviorLoading.value = true;
+  try {
+    const next = await bridge.setWindowCloseBehavior(target);
+    if (runtimePanelDisposed) return;
+    windowCloseBehavior.value = normalizeWindowCloseBehavior(next || target);
+  } catch (error) {
+    if (runtimePanelDisposed) return;
+    console.error(error);
+    await loadWindowCloseBehavior();
+  } finally {
+    if (!runtimePanelDisposed) {
+      windowCloseBehaviorLoading.value = false;
+    }
+  }
+};
+
+const loadRuntimePanelState = async () => {
+  await Promise.all([
+    loadPythonRuntimeInfo(),
+    loadLaunchAtLoginState(),
+    loadWindowCloseBehavior()
+  ]);
+};
+
 const refreshRemoteConnected = () => {
   const override = getDesktopRemoteApiBaseOverride();
   remoteConnected.value = isDesktopRemoteAuthMode() && Boolean(override);
@@ -1354,6 +1614,11 @@ const disconnectRemoteServer = async () => {
 onMounted(() => {
   refreshRemoteConnected();
   void loadSettings();
+  void loadRuntimePanelState();
+});
+
+onBeforeUnmount(() => {
+  runtimePanelDisposed = true;
 });
 </script>
 
@@ -1590,6 +1855,49 @@ onMounted(() => {
   font-size: 12px;
   color: var(--portal-muted);
   line-height: 1.6;
+}
+
+.desktop-system-settings-runtime-meta {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.desktop-system-settings-runtime-meta-item {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.desktop-system-settings-runtime-meta-label {
+  font-size: 12px;
+  color: var(--portal-muted);
+}
+
+.desktop-system-settings-runtime-meta-value {
+  font-size: 12px;
+  color: var(--portal-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-system-settings-runtime-meta-value--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+.desktop-system-settings-runtime-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.desktop-system-settings-runtime-control-hint {
+  font-size: 12px;
+  color: var(--portal-muted);
+  line-height: 1.5;
 }
 
 .desktop-system-settings-runtime-candidates {
@@ -2073,6 +2381,8 @@ onMounted(() => {
     grid-template-columns: 1fr;
   }
 
+  .desktop-system-settings-runtime-meta-item,
+  .desktop-system-settings-runtime-control,
   .desktop-system-settings-runtime-input,
   .desktop-system-settings-runtime-candidate {
     grid-template-columns: 1fr;

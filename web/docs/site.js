@@ -2,7 +2,6 @@ const DOCS_BASE = "/docs/";
 const MANIFEST_URL = `${DOCS_BASE}manifest.json`;
 const SEARCH_URL = `${DOCS_BASE}search.json`;
 const THEME_KEY = "wunder-docs-theme";
-const EMBED_MODE_KEY = "wunder-docs-embed-mode";
 
 const THEME_ICONS = {
   light: `
@@ -36,33 +35,6 @@ const state = {
   manifest: null,
   searchIndex: null,
   pageData: null,
-};
-
-const resolveEmbedMode = () => {
-  const queryMode = new URLSearchParams(window.location.search).get("embed");
-  const normalizedQueryMode = String(queryMode || "").trim().toLowerCase();
-  if (normalizedQueryMode) {
-    try {
-      sessionStorage.setItem(EMBED_MODE_KEY, normalizedQueryMode);
-    } catch (error) {
-      // ignore storage failures
-    }
-    return normalizedQueryMode;
-  }
-  try {
-    return String(sessionStorage.getItem(EMBED_MODE_KEY) || "").trim().toLowerCase();
-  } catch (error) {
-    return "";
-  }
-};
-
-const applyEmbedMode = () => {
-  const mode = resolveEmbedMode();
-  if (!mode) {
-    delete document.documentElement.dataset.embedMode;
-    return;
-  }
-  document.documentElement.dataset.embedMode = mode;
 };
 
 const escapeHtml = (value) =>
@@ -515,7 +487,6 @@ const bootstrap = async () => {
   if (!state.pageData) {
     return;
   }
-  applyEmbedMode();
   initializeTheme();
   bindSearch();
   try {

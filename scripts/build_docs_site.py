@@ -327,16 +327,6 @@ def load_pages(site_config: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], 
 
 
 def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
-    header_links = site_meta.get("header_links", [])
-    rendered_header_links: list[str] = []
-    for link in header_links:
-        href = html.escape(str(link["url"]), quote=True)
-        label = html.escape(str(link["label"]), quote=False)
-        target_attrs = ""
-        if str(link["url"]).startswith(("http://", "https://")):
-            target_attrs = ' target="_blank" rel="noopener noreferrer"'
-        rendered_header_links.append(f'<a class="docs-header-link" href="{href}"{target_attrs}>{label}</a>')
-    header_links_html = "".join(rendered_header_links)
     page_data = {
         "slug": page["slug"],
         "language": page["language"],
@@ -397,7 +387,6 @@ def render_page_html(site_meta: dict[str, Any], page: dict[str, Any]) -> str:
           </label>
         </div>
         <div class="docs-topbar-end">
-          <div class="docs-header-links">{header_links_html}</div>
           <button class="docs-theme-toggle" id="docs-theme-toggle" type="button" aria-label="切换主题"></button>
         </div>
       </div>

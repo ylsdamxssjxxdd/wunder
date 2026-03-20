@@ -136,6 +136,7 @@ export default defineConfig({
     port: 18001,
     proxy: {
       '/docs': makeProxyRule(),
+      '/third': makeProxyRule(),
       '/wunder': makeProxyRule(),
       '/a2a': makeProxyRule(),
       '/.well-known/agent-card.json': makeProxyRule()

@@ -574,11 +574,30 @@ const hasPrimarySendModifier = (event: KeyboardEvent): boolean =>
 const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
   Boolean(event.altKey && !hasPrimarySendModifier(event));
 const normalizeTokenCount = (value: unknown): number | null => {
-  const parsed = Number(value);
+  if (value === null || value === undefined) {
+    return null;
+  }
+  const normalizedValue = typeof value === 'string' ? value.trim() : value;
+  if (normalizedValue === '') {
+    return null;
+  }
+  const parsed = Number(normalizedValue);
   if (!Number.isFinite(parsed) || parsed < 0) {
     return null;
   }
   return Math.round(parsed);
+};
+const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): number | null => {
+  if (!stats) {
+    return null;
+  }
+  return normalizeTokenCount(
+    stats.contextTokens ??
+      stats.context_tokens ??
+      stats.context_tokens_total ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
+  );
 };
 const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | null => {
   for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
@@ -593,24 +612,8 @@ const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | n
         ? (current.stats as Record<string, unknown>)
         : null;
     if (!stats) continue;
-    const usage =
-      stats.usage && typeof stats.usage === 'object'
-        ? (stats.usage as Record<string, unknown>)
-        : null;
-    const providerTotalTokens = normalizeTokenCount(
-      usage?.total ?? usage?.total_tokens ?? usage?.totalTokens
-    );
-    if (providerTotalTokens !== null && providerTotalTokens > 0) {
-      return providerTotalTokens;
-    }
-    const normalized = normalizeTokenCount(
-      stats.contextTokens ??
-        stats.context_tokens ??
-        stats.context_tokens_total ??
-        (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
-        (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
-    );
-    if (normalized !== null && normalized > 0) {
+    const normalized = resolveAssistantContextTokens(stats);
+    if (normalized !== null) {
       return normalized;
     }
   }

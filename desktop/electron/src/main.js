@@ -13,7 +13,7 @@ const {
   session,
   systemPreferences
 } = require('electron')
-const { spawn } = require('child_process')
+const { spawn, spawnSync } = require('child_process')
 const fs = require('fs')
 const net = require('net')
 const Module = require('module')
@@ -663,6 +663,66 @@ const resolveBundledPythonBin = (appDir) => {
         path.join(appDir, 'opt', 'python', 'bin', 'python')
       ]
   return candidates.find((candidate) => fs.existsSync(candidate)) || ''
+}
+
+const resolveBundledVenvPythonBin = (appDir) => {
+  const candidates = process.platform === 'win32'
+    ? [
+        path.join(appDir, 'opt', 'venv', 'Scripts', 'python.exe'),
+        path.join(appDir, 'opt', 'venv', 'python.exe')
+      ]
+    : [
+        path.join(appDir, 'opt', 'venv', 'bin', 'python3'),
+        path.join(appDir, 'opt', 'venv', 'bin', 'python')
+      ]
+  return candidates.find((candidate) => fs.existsSync(candidate)) || ''
+}
+
+const resolveDesktopPythonRuntimeInfo = () => {
+  const appDir = resolveDesktopAppDir()
+  const configuredBin = String(process.env.WUNDER_PYTHON_BIN || '').trim()
+  const bundledBin = resolveBundledPythonBin(appDir)
+  const venvBin = resolveBundledVenvPythonBin(appDir)
+  const preferredBin = configuredBin || bundledBin || venvBin
+  const normalizedBin = preferredBin && fs.existsSync(preferredBin) ? preferredBin : ''
+  const normalizedAppDir = String(appDir || '')
+    .trim()
+    .replace(/\\/g, '/')
+    .toLowerCase()
+  const normalizedRuntimeBin = normalizedBin.replace(/\\/g, '/').toLowerCase()
+  const bundledRoot = normalizedAppDir ? `${normalizedAppDir}/opt/python` : ''
+  const venvRoot = normalizedAppDir ? `${normalizedAppDir}/opt/venv` : ''
+  const bundled = Boolean(normalizedRuntimeBin && bundledRoot && normalizedRuntimeBin.startsWith(bundledRoot))
+  const venv = Boolean(normalizedRuntimeBin && venvRoot && normalizedRuntimeBin.startsWith(venvRoot))
+  const source = bundled ? 'bundled' : venv ? 'venv' : configuredBin ? 'env' : normalizedBin ? 'path' : 'none'
+
+  let version = ''
+  if (normalizedBin) {
+    try {
+      const result = spawnSync(normalizedBin, ['--version'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 2000
+      })
+      const raw = `${String(result.stdout || '')}\n${String(result.stderr || '')}`.trim()
+      if (raw) {
+        const firstLine = raw
+          .split(/\r?\n/)
+          .map((item) => item.trim())
+          .find((item) => item.length > 0)
+        version = firstLine || ''
+      }
+    } catch {
+      version = ''
+    }
+  }
+
+  return {
+    bin: normalizedBin,
+    version,
+    source,
+    bundled
+  }
 }
 
 const registerBundledToolPaths = () => {
@@ -2441,6 +2501,7 @@ if (!gotLock) {
           payload && typeof payload === 'object' ? payload.enabled === true : payload === true
         return setLaunchAtLoginState(enabled)
       })
+      ipcMain.handle('wunder:python-runtime-info', () => resolveDesktopPythonRuntimeInfo())
       ipcMain.handle('wunder:window-start-drag', () => false)
       ipcMain.handle('wunder:clipboard-write-text', (_event, payload) => {
         const text =

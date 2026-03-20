@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('wunderDesktop', {
     ipcRenderer.invoke('wunder:window-close-behavior-set', { behavior }),
   getLaunchAtLogin: () => ipcRenderer.invoke('wunder:launch-at-login-get'),
   setLaunchAtLogin: (enabled) => ipcRenderer.invoke('wunder:launch-at-login-set', { enabled }),
+  getPythonRuntimeInfo: () => ipcRenderer.invoke('wunder:python-runtime-info'),
   startWindowDrag: () => ipcRenderer.invoke('wunder:window-start-drag'),
   checkForUpdates: () => ipcRenderer.invoke('wunder:update-check'),
   getUpdateState: () => ipcRenderer.invoke('wunder:update-status'),

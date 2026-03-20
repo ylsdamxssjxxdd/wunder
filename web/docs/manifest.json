@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-03-20T01:35:54.253432+00:00",
+  "generated_at": "2026-03-20T10:01:51.722275+00:00",
   "site": {
     "name": "wunder 文档",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -35,7 +35,7 @@
                   {
                     "slug": "zh-CN/index",
                     "title": "wunder",
-                    "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；当前对外调用分为底层执行入口和完整智能体会话入口两层。",
+                    "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；核心执行结构为“心舰 -> 用户 -> 蜂群 -> 智能体 -> 线程”。",
                     "url": "/docs/"
                   }
                 ]
@@ -707,10 +707,11 @@
       "slug": "zh-CN/index",
       "language": "zh-CN",
       "title": "wunder",
-      "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；当前对外调用分为底层执行入口和完整智能体会话入口两层。",
+      "summary": "wunder 是统一承载 server、cli、desktop 三种运行形态的智能体调度系统；核心执行结构为“心舰 -> 用户 -> 蜂群 -> 智能体 -> 线程”。",
       "updated_at": "2026-03-20",
       "read_when": [
         "你第一次了解 wunder",
+        "你要先分清系统结构再决定阅读路径",
         "你要快速找到 desktop、server、cli、接入和运维入口"
       ],
       "source_docs": [
@@ -733,50 +734,55 @@
         {
           "id": "section-2",
           "level": 2,
-          "text": "是什么"
+          "text": "这页解决什么"
         },
         {
           "id": "section-3",
           "level": 2,
-          "text": "先从哪里开始"
+          "text": "系统结构示意图"
         },
         {
           "id": "section-4",
           "level": 2,
-          "text": "不同人下一步看什么"
+          "text": "先看这些"
         },
         {
           "id": "section-5",
-          "level": 3,
-          "text": "你是普通用户"
+          "level": 2,
+          "text": "按角色找页面"
         },
         {
           "id": "section-6",
           "level": 3,
-          "text": "你是管理员或交付人员"
+          "text": "你是普通用户"
         },
         {
           "id": "section-7",
           "level": 3,
-          "text": "你是开发者或集成人员"
+          "text": "你是管理员或交付人员"
         },
         {
           "id": "section-8",
-          "level": 2,
-          "text": "如果你要理解结构"
+          "level": 3,
+          "text": "你是开发者或集成人员"
         },
         {
           "id": "section-9",
           "level": 2,
-          "text": "如果你要做接入"
+          "text": "如果你要理解结构"
         },
         {
           "id": "section-10",
           "level": 2,
-          "text": "你最需要记住的点"
+          "text": "如果你要做接入"
         },
         {
           "id": "section-11",
+          "level": 2,
+          "text": "最容易搞错的点"
+        },
+        {
+          "id": "section-12",
           "level": 2,
           "text": "相关文档"
         }
@@ -1287,7 +1293,7 @@
       "language": "zh-CN",
       "title": "系统架构",
       "summary": "wunder 通过统一调度内核承载 server、cli、desktop 三种运行形态。",
-      "updated_at": "2026-03-19",
+      "updated_at": "2026-03-20",
       "read_when": [
         "你要理解 wunder 的整体结构",
         "你要知道 API、调度、工具、前端与存储之间如何协作"
