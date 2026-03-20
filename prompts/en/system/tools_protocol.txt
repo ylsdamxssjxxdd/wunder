@@ -57,6 +57,15 @@ Tool results will come back as a user message with prefix "tool_response: ".
 - When results are incomplete, do not finalize directly; continue tool calls to fill gaps (prefer pagination/cursor, then `limit+offset`, then narrower columns/time windows/filters).
 - If `continuation_required=true` is present, follow `continuation_hint` first; only provide a conclusion on partial data when the user explicitly accepts a partial answer.
 
+[Scheduled Task Methodology]
+- When a request involves delayed execution, periodic checks, continuous monitoring, deadline reminders, condition-based follow-up, or retry-based follow-through, prefer using the scheduled task tool ("定时任务" / `schedule_task`) instead of only making a verbal promise.
+- Collect the minimum required parameters first: trigger time/interval, timezone, monitoring target, completion criteria, stop condition, and delivery session (`main`/`isolated`); ask the user when key parameters are missing.
+- Optimize for executability: use `at` for one-off tasks, use `every`/`cron` for ongoing monitoring, and include clear objective/check steps/result format/failure handling in the task message.
+- For long-running or high-frequency monitoring, prefer `isolated` sessions to prevent main-thread context growth; once the goal is met, promptly `disable` or `remove` stale jobs.
+- After add/update, explicitly report key fields to the user: `job_id`, `next_run_at`, schedule cadence, timezone, and stop condition; if user goals change, promptly `update` or `remove`.
+- Do not overuse scheduling: if the task can be completed in the current turn, do it now instead of creating a cron job.
+- You can leverage scheduled task tools to implement a heartbeat mechanism for completing extremely long-running or periodic tasks. For example, if a user has a massive task, you can first compile a to-do list, save it to the working directory, and then set up a scheduled task to prompt itself to repeatedly execute this list until full completion.
+
 [[HAS_PLAN_TOOL]]
 [Plan Board]
 When the plan board tool ("计划面板" / update_plan) is available, start by publishing a concise plan (2-6 steps) with it. Keep the plan updated: only one step should be in_progress at a time, mark completed steps as completed, and keep explanations brief.
