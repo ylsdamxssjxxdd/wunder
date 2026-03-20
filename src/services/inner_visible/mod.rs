@@ -4,6 +4,7 @@ mod worker_card;
 use crate::config::Config;
 use crate::config_store::ConfigStore;
 use crate::core::atomic_write::atomic_write_text;
+use crate::services::agent_abilities::normalize_ability_items;
 use crate::services::default_agent_sync::{DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME};
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::inner_visible::layout::{
@@ -277,6 +278,7 @@ impl InnerVisibleService {
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
+            ability_items: Vec::new(),
             tool_names: Vec::new(),
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
@@ -300,6 +302,7 @@ impl InnerVisibleService {
         record.description = parsed.description;
         record.system_prompt = parsed.system_prompt;
         record.model_name = parsed.model_name;
+        record.ability_items = parsed.ability_items;
         record.declared_tool_names = parsed.declared_tool_names;
         record.declared_skill_names = parsed.declared_skill_names;
         record.tool_names = filter_allowed_tools(&parsed.tool_names, allowed_tool_names);
@@ -362,6 +365,7 @@ impl InnerVisibleService {
                 name: record.name,
                 description: record.description,
                 system_prompt: record.system_prompt,
+                ability_items: record.ability_items,
                 tool_names: record.tool_names,
                 preset_questions: record.preset_questions,
                 approval_mode: record.approval_mode,
@@ -379,6 +383,7 @@ impl InnerVisibleService {
             name: DEFAULT_AGENT_NAME.to_string(),
             description: String::new(),
             system_prompt: String::new(),
+            ability_items: Vec::new(),
             tool_names: curated_default_tool_names(allowed_tool_names),
             preset_questions: Vec::new(),
             approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
@@ -527,6 +532,8 @@ struct DefaultAgentConfigMirror {
     #[serde(default)]
     system_prompt: String,
     #[serde(default)]
+    ability_items: Vec<crate::schemas::AbilityDescriptor>,
+    #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
     preset_questions: Vec<String>,
@@ -559,6 +566,7 @@ fn normalize_default_agent_config(
     }
     config.description = config.description.trim().to_string();
     config.system_prompt = config.system_prompt.trim().to_string();
+    config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
     config.tool_names = filter_allowed_tools(
         &normalize_tool_list(std::mem::take(&mut config.tool_names)),
         allowed_tool_names,
@@ -588,6 +596,7 @@ fn record_from_default_config(user_id: &str, config: &DefaultAgentConfigMirror) 
         description: config.description.clone(),
         system_prompt: config.system_prompt.clone(),
         model_name: None,
+        ability_items: config.ability_items.clone(),
         tool_names: config.tool_names.clone(),
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
@@ -863,6 +872,7 @@ mod tests {
             description: "desc".to_string(),
             system_prompt: "initial prompt".to_string(),
             model_name: Some("gpt-5".to_string()),
+            ability_items: Vec::new(),
             tool_names: Vec::new(),
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
@@ -946,6 +956,7 @@ mod tests {
                 description: "desc".to_string(),
                 system_prompt: "initial prompt".to_string(),
                 model_name: None,
+                ability_items: Vec::new(),
                 tool_names: Vec::new(),
                 declared_tool_names: Vec::new(),
                 declared_skill_names: Vec::new(),
@@ -1045,6 +1056,7 @@ mod tests {
                 description: "desc".to_string(),
                 system_prompt: "stable prompt".to_string(),
                 model_name: None,
+                ability_items: Vec::new(),
                 tool_names: Vec::new(),
                 declared_tool_names: Vec::new(),
                 declared_skill_names: Vec::new(),
@@ -1111,6 +1123,7 @@ mod tests {
                 description: "default desc".to_string(),
                 system_prompt: "default prompt".to_string(),
                 model_name: None,
+                ability_items: Vec::new(),
                 tool_names: Vec::new(),
                 declared_tool_names: Vec::new(),
                 declared_skill_names: Vec::new(),

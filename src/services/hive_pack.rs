@@ -706,6 +706,7 @@ async fn run_import_job_inner(
             description: snapshot.description.clone(),
             system_prompt: snapshot.role_prompt.clone(),
             model_name: None,
+            ability_items: Vec::new(),
             tool_names,
             declared_tool_names: snapshot.declared_tool_names.clone(),
             declared_skill_names: snapshot.declared_skill_names.clone(),
@@ -1204,35 +1205,9 @@ fn normalize_string_items(values: &[String]) -> Vec<String> {
     items
 }
 
-fn build_worker_card_ability_items(
-    declared_tool_names: &[String],
-    declared_skill_names: &[String],
-) -> Vec<WorkerCardAbilityItem> {
-    let mut items = Vec::new();
-    for name in normalize_string_items(declared_tool_names) {
-        items.push(WorkerCardAbilityItem {
-            id: format!("tool:{name}"),
-            name: name.clone(),
-            runtime_name: name.clone(),
-            display_name: name,
-            description: String::new(),
-            kind: AbilityKind::Tool,
-        });
-    }
-    for name in normalize_string_items(declared_skill_names) {
-        items.push(WorkerCardAbilityItem {
-            id: format!("skill:{name}"),
-            name: name.clone(),
-            runtime_name: name.clone(),
-            display_name: name,
-            description: String::new(),
-            kind: AbilityKind::Skill,
-        });
-    }
-    items
-}
-
-fn collect_worker_card_declared_abilities(abilities: &WorkerCardAbilities) -> (Vec<String>, Vec<String>) {
+fn collect_worker_card_declared_abilities(
+    abilities: &WorkerCardAbilities,
+) -> (Vec<String>, Vec<String>) {
     if abilities.tool_names_present || abilities.skills_present {
         return (
             normalize_string_items(&abilities.tool_names),
@@ -1351,7 +1326,7 @@ fn build_worker_card_manifest(
                 .filter(|value| !value.is_empty()),
         },
         abilities: WorkerCardAbilities {
-            items: build_worker_card_ability_items(declared_tool_names, attached_skill_names),
+            items: Vec::new(),
             tool_names: normalize_string_items(declared_tool_names),
             skills: normalize_string_items(attached_skill_names),
             tool_names_present: true,
@@ -2698,6 +2673,7 @@ mod tests {
             tool_names: vec!["鎷涜仒鍔╂墜".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
+            ability_items: Vec::new(),
             preset_questions: Vec::new(),
             access_level: "private".to_string(),
             approval_mode: "suggest".to_string(),
@@ -2732,6 +2708,7 @@ mod tests {
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
+            ability_items: Vec::new(),
             tool_names: vec!["report_writer".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),
@@ -2780,6 +2757,7 @@ mod tests {
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
+            ability_items: Vec::new(),
             tool_names: Vec::new(),
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),

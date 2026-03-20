@@ -235,6 +235,11 @@
 - 与模型选择相关字段：
   - `configured_model_name`：该智能体显式配置的模型；为空表示跟随默认模型
   - `model_name`：当前生效模型（优先取 `configured_model_name`，否则回退到默认模型）
+- 与能力模型相关字段：
+  - `ability_items`：结构化能力列表，字段包括 `id/name/runtime_name/display_name/description/input_schema/group/source/kind/owner_id/available/selected`
+  - `abilities.items`：与 `ability_items` 等价的嵌套兼容字段
+  - `tool_names`：当前运行时启用的能力名列表（兼容字段）
+  - `declared_tool_names` / `declared_skill_names`：仅表示 worker-card 导入时声明的工具/技能依赖；普通智能体不要求写入
 
 #### `POST /wunder/agents`
 
@@ -243,11 +248,14 @@
 - 入参（JSON）：
   - `name`：智能体名称（必填）
   - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示使用默认模型）
+  - `ability_items`：结构化能力列表（可选）
+  - `abilities.items`：结构化能力列表的嵌套写法（可选，等价于 `ability_items`）
   - `declared_tool_names`：工蜂卡声明的非技能工具依赖（可选）
   - `declared_skill_names`：工蜂卡声明的技能依赖（可选）
   - 其余字段同现有智能体创建接口（如 `description/system_prompt/tool_names/...`）
 - 说明：
   - 工蜂卡导入/导出时，技能声明应落在 `declared_skill_names`，不要混入 `declared_tool_names`
+  - 当提交 `ability_items`/`abilities.items` 时，后端会把它作为结构化能力主数据持久化；`tool_names` 继续作为运行时兼容字段保留
 
 #### `PUT /wunder/agents/{agent_id}`
 
@@ -255,6 +263,7 @@
 - 入参（Query）：`user_id`
 - 入参（JSON）：
   - `model_name`：模型配置名（可选，支持 `modelName`/`model_name`；空值表示清除显式配置并回退默认模型）
+  - `ability_items` / `abilities.items`：结构化能力列表（可选，增量更新时可单独提交）
   - 其余字段按需增量更新
 - 说明：预设智能体实例使用稳定 `preset_binding` 跟踪模板关系；用户侧重命名不会丢失绑定，也不会触发同名预设副本再次自动补种。
 - 工蜂卡相关说明：

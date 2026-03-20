@@ -14,6 +14,20 @@ export type WorkerCardAbilityItem = {
   kind: WorkerCardAbilityKind;
 };
 
+type AgentAbilityDescriptor = {
+  id: string;
+  name: string;
+  runtime_name: string;
+  display_name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  group: 'builtin' | 'skills';
+  source: 'builtin' | 'skill';
+  kind: WorkerCardAbilityKind;
+  available: boolean;
+  selected: boolean;
+};
+
 export type WorkerCardDocument = {
   schema_version: WorkerCardSchemaVersion;
   kind: 'WorkerCard';
@@ -29,7 +43,7 @@ export type WorkerCardDocument = {
     system_prompt?: string;
   };
   abilities: {
-    items: WorkerCardAbilityItem[];
+    items?: WorkerCardAbilityItem[];
     tool_names: string[];
     skills: string[];
   };
@@ -172,6 +186,66 @@ const buildWorkerCardAbilityItems = (
   }))
 ];
 
+const buildMergedWorkerCardAbilityItems = (
+  items: WorkerCardAbilityItem[],
+  toolNames: string[],
+  skillNames: string[]
+): WorkerCardAbilityItem[] => {
+  const expected = buildWorkerCardAbilityItems(toolNames, skillNames);
+  if (!items.length) {
+    return expected;
+  }
+  const byKey = new Map<string, WorkerCardAbilityItem>();
+  items.forEach((item) => {
+    const runtimeName = trimString(item.runtime_name || item.name);
+    if (!runtimeName) return;
+    byKey.set(`${item.kind}:${runtimeName}`, item);
+  });
+  return expected.map((item) => byKey.get(`${item.kind}:${item.runtime_name}`) || item);
+};
+
+const isLegacyEquivalentWorkerCardItem = (
+  item: WorkerCardAbilityItem,
+  expected: WorkerCardAbilityItem
+): boolean => {
+  const runtimeName = trimString(item.runtime_name || item.name);
+  const name = trimString(item.name || runtimeName);
+  const displayName = trimString(item.display_name || runtimeName);
+  const description = trimString(item.description);
+  return (
+    runtimeName === expected.runtime_name &&
+    normalizeAbilityKind(item.kind) === expected.kind &&
+    name === expected.name &&
+    displayName === expected.display_name &&
+    !description
+  );
+};
+
+const shouldEmitWorkerCardItems = (
+  items: WorkerCardAbilityItem[],
+  toolNames: string[],
+  skillNames: string[]
+): boolean => {
+  if (!items.length) {
+    return false;
+  }
+  const expected = buildWorkerCardAbilityItems(toolNames, skillNames);
+  if (items.length !== expected.length) {
+    return true;
+  }
+  return items.some((item, index) => !isLegacyEquivalentWorkerCardItem(item, expected[index]));
+};
+
+const buildWorkerCardAbilitiesPayload = (
+  items: WorkerCardAbilityItem[],
+  toolNames: string[],
+  skillNames: string[]
+) => ({
+  items: shouldEmitWorkerCardItems(items, toolNames, skillNames) ? items : undefined,
+  tool_names: toolNames,
+  skills: skillNames
+});
+
 const normalizeWorkerCardAbilities = (value: unknown) => {
   const source = asRecord(value);
   const hasLegacyToolNames = hasOwn(source, 'tool_names') || hasOwn(source, 'toolNames');
@@ -193,15 +267,34 @@ const normalizeWorkerCardAbilities = (value: unknown) => {
   };
 };
 
+const normalizeAgentAbilityItems = (value: unknown): AgentAbilityDescriptor[] =>
+  normalizeWorkerCardAbilityItems(value).map((item) => ({
+    id: item.id,
+    name: item.name,
+    runtime_name: item.runtime_name,
+    display_name: item.display_name,
+    description: item.description,
+    input_schema: {},
+    group: item.kind === 'skill' ? 'skills' : 'builtin',
+    source: item.kind === 'skill' ? 'skill' : 'builtin',
+    kind: item.kind,
+    available: true,
+    selected: true
+  }));
+
 export const buildWorkerCardDocument = (
   value: Record<string, unknown> | null | undefined
 ): WorkerCardDocument => {
   const source = value || {};
+  const sourceAbilityItems =
+    source.ability_items ?? source.abilityItems ?? asRecord(source.abilities).items;
   const explicitDeclaredToolNames = normalizeStringList(source.declared_tool_names ?? source.declaredToolNames);
   const explicitDeclaredSkillNames = normalizeStringList(
     source.declared_skill_names ?? source.declaredSkillNames ?? source.skills
   );
-  const sourceAbilities = normalizeWorkerCardAbilities(source.abilities);
+  const sourceAbilities = normalizeWorkerCardAbilities(
+    hasOwn(source, 'abilities') ? source.abilities : { items: sourceAbilityItems }
+  );
   const hasExplicitDeclaredDependencies =
     explicitDeclaredToolNames.length > 0 ||
     explicitDeclaredSkillNames.length > 0 ||
@@ -217,6 +310,11 @@ export const buildWorkerCardDocument = (
   const declaredSkillNames = hasExplicitDeclaredDependencies
     ? explicitDeclaredSkillNames
     : sourceAbilities.skills;
+  const abilityItems = buildMergedWorkerCardAbilityItems(
+    sourceAbilities.items,
+    declaredToolNames,
+    declaredSkillNames
+  );
   return {
     schema_version: WORKER_CARD_SCHEMA_VERSION,
     kind: 'WorkerCard',
@@ -230,11 +328,7 @@ export const buildWorkerCardDocument = (
     prompt: {
       extra_prompt: joinPromptSections(source.system_prompt, source.extra_prompt)
     },
-    abilities: {
-      items: buildWorkerCardAbilityItems(declaredToolNames, declaredSkillNames),
-      tool_names: declaredToolNames,
-      skills: declaredSkillNames
-    },
+    abilities: buildWorkerCardAbilitiesPayload(abilityItems, declaredToolNames, declaredSkillNames),
     interaction: {
       preset_questions: normalizeAgentPresetQuestions(source.preset_questions)
     },
@@ -309,13 +403,11 @@ const normalizeWorkerCardDocument = (
     prompt: {
       extra_prompt: joinPromptSections(prompt.system_prompt, prompt.extra_prompt)
     },
-    abilities: {
-      items: abilities.items.length
-        ? abilities.items
-        : buildWorkerCardAbilityItems(abilities.tool_names, abilities.skills),
-      tool_names: abilities.tool_names,
-      skills: abilities.skills
-    },
+    abilities: buildWorkerCardAbilitiesPayload(
+      buildMergedWorkerCardAbilityItems(abilities.items, abilities.tool_names, abilities.skills),
+      abilities.tool_names,
+      abilities.skills
+    ),
     interaction: {
       preset_questions: normalizeAgentPresetQuestions(interaction.preset_questions)
     },
@@ -365,6 +457,7 @@ export const parseWorkerCardText = (raw: string): WorkerCardDocument[] => {
 
 export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<string, unknown> => {
   const abilities = normalizeWorkerCardAbilities(document.abilities);
+  const abilityItems = normalizeAgentAbilityItems(abilities.items);
   const declaredToolNames = normalizeStringList(abilities.tool_names);
   const declaredSkillNames = normalizeStringList(abilities.skills);
   const payload: Record<string, unknown> = {
@@ -372,6 +465,10 @@ export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<s
     description: trimString(document.metadata.description),
     icon: trimString(document.metadata.icon),
     system_prompt: joinPromptSections(document.prompt.system_prompt, document.prompt.extra_prompt),
+    ability_items: abilityItems,
+    abilities: {
+      items: abilityItems
+    },
     tool_names: normalizeStringList([...declaredToolNames, ...declaredSkillNames]),
     declared_tool_names: declaredToolNames,
     declared_skill_names: declaredSkillNames,

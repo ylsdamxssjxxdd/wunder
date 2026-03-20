@@ -151,6 +151,27 @@ const inferContextFromModelId = (value: unknown): number | null => {
 export const getProviderModelPresets = (provider: unknown): ProviderModelPreset[] =>
   PROVIDER_MODEL_PRESETS[normalizeProviderId(provider)] || [];
 
+export const resolveAnyProviderModelPresetMaxContext = (model: unknown): number | null => {
+  const modelId = normalizeModelId(model);
+  if (!modelId) return null;
+  let matchedMaxContext: number | null = null;
+  Object.values(PROVIDER_MODEL_PRESETS).forEach((presets) => {
+    presets.forEach((item) => {
+      if (normalizeModelId(item.id) !== modelId) return;
+      const parsed = Number(item.maxContext);
+      if (!Number.isFinite(parsed) || parsed <= 0) return;
+      const normalized = Math.round(parsed);
+      if (matchedMaxContext === null || normalized > matchedMaxContext) {
+        matchedMaxContext = normalized;
+      }
+    });
+  });
+  if (matchedMaxContext !== null) {
+    return matchedMaxContext;
+  }
+  return inferContextFromModelId(modelId);
+};
+
 export const resolveProviderModelPresetMaxContext = (provider: unknown, model: unknown): number | null => {
   const modelId = normalizeModelId(model);
   if (!modelId) return null;

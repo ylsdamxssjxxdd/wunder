@@ -1008,7 +1008,8 @@ fn is_desktop_mode(config: &Config) -> bool {
 }
 
 fn runtime_builtin_tool_allowed(config: &Config, canonical: &str) -> bool {
-    if web_fetch_tool::is_web_fetch_tool_name(canonical) && !web_fetch_tool::web_fetch_enabled(config)
+    if web_fetch_tool::is_web_fetch_tool_name(canonical)
+        && !web_fetch_tool::web_fetch_enabled(config)
     {
         return false;
     }

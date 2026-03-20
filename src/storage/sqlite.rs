@@ -1,5 +1,6 @@
 use super::{TOOL_LOG_EXCLUDED_NAMES, TOOL_LOG_SKILL_READ_MARKER};
 use crate::i18n;
+use crate::schemas::AbilityDescriptor;
 use crate::services::output_quality;
 use crate::storage::{
     normalize_hive_id, normalize_sandbox_container_id, AgentTaskRecord, AgentThreadRecord,
@@ -203,6 +204,15 @@ impl SqliteStorage {
         Self::parse_string_list(value)
     }
 
+    fn parse_ability_items(value: Option<String>) -> Vec<AbilityDescriptor> {
+        value
+            .as_deref()
+            .map(str::trim)
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| serde_json::from_str::<Vec<AbilityDescriptor>>(raw).ok())
+            .unwrap_or_default()
+    }
+
     fn parse_preset_binding(value: Option<String>) -> Option<UserAgentPresetBinding> {
         value
             .as_deref()
@@ -221,21 +231,22 @@ impl SqliteStorage {
             description: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
             system_prompt: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
             model_name: row.get::<_, Option<String>>(6)?,
+            ability_items: Self::parse_ability_items(row.get(10)?),
             tool_names: tool_names.clone(),
             declared_tool_names: Self::parse_declared_tool_names(row.get(8)?),
             declared_skill_names: Self::parse_string_list(row.get(9)?),
-            preset_questions: Self::parse_string_list(row.get(18)?),
-            access_level: row.get(10)?,
-            approval_mode: row.get(11)?,
-            is_shared: row.get::<_, Option<i64>>(12)?.unwrap_or(0) != 0,
-            status: row.get(13)?,
-            icon: row.get(14)?,
+            preset_questions: Self::parse_string_list(row.get(19)?),
+            access_level: row.get(11)?,
+            approval_mode: row.get(12)?,
+            is_shared: row.get::<_, Option<i64>>(13)?.unwrap_or(0) != 0,
+            status: row.get(14)?,
+            icon: row.get(15)?,
             sandbox_container_id: normalize_sandbox_container_id(
-                row.get::<_, Option<i64>>(15)?.unwrap_or(1) as i32,
+                row.get::<_, Option<i64>>(16)?.unwrap_or(1) as i32,
             ),
-            created_at: row.get(16)?,
-            updated_at: row.get(17)?,
-            preset_binding: Self::parse_preset_binding(row.get(19)?),
+            created_at: row.get(17)?,
+            updated_at: row.get(18)?,
+            preset_binding: Self::parse_preset_binding(row.get(20)?),
         })
     }
 
@@ -444,6 +455,9 @@ impl SqliteStorage {
                 "ALTER TABLE user_agents ADD COLUMN declared_skill_names TEXT",
                 [],
             )?;
+        }
+        if !columns.contains("ability_items") {
+            conn.execute("ALTER TABLE user_agents ADD COLUMN ability_items TEXT", [])?;
         }
         if !columns.contains("preset_binding") {
             conn.execute("ALTER TABLE user_agents ADD COLUMN preset_binding TEXT", [])?;
@@ -1373,6 +1387,7 @@ impl StorageBackend for SqliteStorage {
               tool_names TEXT,
               declared_tool_names TEXT,
               declared_skill_names TEXT,
+              ability_items TEXT,
               access_level TEXT NOT NULL,
               approval_mode TEXT NOT NULL DEFAULT 'full_auto',
               is_shared INTEGER NOT NULL DEFAULT 0,
@@ -7531,6 +7546,11 @@ impl StorageBackend for SqliteStorage {
         } else {
             Some(Self::string_list_to_json(&record.declared_skill_names))
         };
+        let ability_items = if record.ability_items.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&record.ability_items).ok()
+        };
         let preset_questions = if record.preset_questions.is_empty() {
             None
         } else {
@@ -7542,10 +7562,10 @@ impl StorageBackend for SqliteStorage {
             .and_then(|value| serde_json::to_string(value).ok());
         let hive_id = normalize_hive_id(&record.hive_id);
         conn.execute(
-            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+            "INSERT INTO user_agents (agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(agent_id) DO UPDATE SET user_id = excluded.user_id, hive_id = excluded.hive_id, name = excluded.name, description = excluded.description, \
-             system_prompt = excluded.system_prompt, model_name = excluded.model_name, tool_names = excluded.tool_names, declared_tool_names = excluded.declared_tool_names, declared_skill_names = excluded.declared_skill_names, access_level = excluded.access_level, approval_mode = excluded.approval_mode, \
+             system_prompt = excluded.system_prompt, model_name = excluded.model_name, tool_names = excluded.tool_names, declared_tool_names = excluded.declared_tool_names, declared_skill_names = excluded.declared_skill_names, ability_items = excluded.ability_items, access_level = excluded.access_level, approval_mode = excluded.approval_mode, \
              is_shared = excluded.is_shared, status = excluded.status, icon = excluded.icon, sandbox_container_id = excluded.sandbox_container_id, updated_at = excluded.updated_at, preset_questions = excluded.preset_questions, preset_binding = excluded.preset_binding",
             params![
                 record.agent_id,
@@ -7558,6 +7578,7 @@ impl StorageBackend for SqliteStorage {
                 tool_names,
                 declared_tool_names,
                 declared_skill_names,
+                ability_items,
                 record.access_level,
                 record.approval_mode,
                 if record.is_shared { 1 } else { 0 },
@@ -7583,7 +7604,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? AND agent_id = ?",
+                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? AND agent_id = ?",
                 params![cleaned_user, cleaned_agent],
                 Self::read_user_agent_row,
             )
@@ -7600,7 +7621,7 @@ impl StorageBackend for SqliteStorage {
         let conn = self.open()?;
         let row = conn
             .query_row(
-                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE agent_id = ?",
+                "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE agent_id = ?",
                 params![cleaned_agent],
                 Self::read_user_agent_row,
             )
@@ -7616,7 +7637,7 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user], Self::read_user_agent_row)?
@@ -7637,7 +7658,7 @@ impl StorageBackend for SqliteStorage {
         let normalized_hive_id = normalize_hive_id(hive_id);
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? AND hive_id = ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE user_id = ? AND hive_id = ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(
@@ -7656,7 +7677,7 @@ impl StorageBackend for SqliteStorage {
         }
         let conn = self.open()?;
         let mut stmt = conn.prepare(
-            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE is_shared = 1 AND user_id <> ? ORDER BY updated_at DESC",
+            "SELECT agent_id, user_id, hive_id, name, description, system_prompt, model_name, tool_names, declared_tool_names, declared_skill_names, ability_items, access_level, approval_mode, is_shared, status, icon, sandbox_container_id, created_at, updated_at, preset_questions, preset_binding FROM user_agents WHERE is_shared = 1 AND user_id <> ? ORDER BY updated_at DESC",
         )?;
         let rows = stmt
             .query_map(params![cleaned_user], Self::read_user_agent_row)?

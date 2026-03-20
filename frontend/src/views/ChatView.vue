@@ -435,7 +435,7 @@
                       :key="item.label"
                       class="message-stat"
                     >
-                      <span class="message-stat-label">{{ item.label }}锛?/span>
+                      <span class="message-stat-label">{{ item.label }}：</span>
                       <span class="message-stat-value">{{ item.value }}</span>
                     </span>
                   </div>
@@ -724,7 +724,7 @@ const currentUserUnitLabel = computed(() => {
   const unit = currentUser.value?.unit;
   return unit?.path_name || unit?.pathName || unit?.name || currentUser.value?.unit_id || '-';
 });
-// 婕旂ず妯″紡鐢ㄤ簬蹇€熶綋楠?
+// Demo mode is used for quick product walkthroughs.
 const demoMode = computed(() => route.path.startsWith('/demo') || isDemoMode());
 const basePath = computed(() => resolveUserBasePath(route.path));
 const desktopMode = computed(() => basePath.value === '/desktop');
@@ -749,7 +749,7 @@ const inquirySelection = ref([]);
 const historyListRef = ref(null);
 const historyScrollTop = ref(0);
 const messagesContainerRef = ref(null);
-// 绯荤粺鎻愮ず璇嶉瑙堢姸鎬?
+// System prompt preview dialog state.
 const promptPreviewVisible = ref(false);
 const promptPreviewLoading = ref(false);
 const promptPreviewContent = ref('');
@@ -940,7 +940,7 @@ const promptPreviewHtml = computed(() => {
   const content = promptPreviewContent.value || t('chat.systemPrompt.empty');
   return renderSystemPromptHighlight(content, effectiveToolSummary.value || {});
 });
-// 鑳藉姏鎮诞鎻愮ず浣跨敤鐨勫伐鍏?鎶€鑳芥槑缁?
+// Ability tooltip sections share the same tool and skill summary payload.
 const abilitySections = computed(() => {
   const groups = collectAbilityGroupDetails(effectiveToolSummary.value || {});
   return [
@@ -1430,7 +1430,7 @@ const isAssistantStreaming = (message) => {
   return Boolean(message.workflowStreaming || message.reasoningStreaming || message.stream_incomplete);
 };
 
-// AI 鍥炲浣跨敤 Markdown 娓叉煋锛屼富瑕佺敤浜庤〃鏍肩瓑瀵屾枃鏈睍绀?
+// Assistant replies render through Markdown so tables and rich text stay readable.
 const renderAssistantMarkdown = (message) => {
   const content = prepareMessageMarkdownContent(
     normalizeChatMessageContentForMarkdown(message?.content),
@@ -2291,7 +2291,7 @@ const buildInquiryReply = (panel, routes) => {
   const header = t('chat.askPanelPrefix');
   const question = panel?.question ? t('chat.askPanelQuestion', { question: panel.question }) : '';
   const lines = routes.map((route) => {
-    const detail = route.description ? `锛?{route.description}` : '';
+    const detail = route.description ? `：${route.description}` : '';
     return `- ${route.label}${detail}`;
   });
   return [header, question, ...lines].filter(Boolean).join('\n');
@@ -2594,7 +2594,7 @@ const handleBeforeUnload = () => {
   flushChatSnapshot();
 };
 
-// 瑙﹀彂 Popper 閲嶆柊璁＄畻锛岄伩鍏嶉甯у唴瀹瑰彉鍖栧鑷存孩鍑?
+// Force Popper to recalculate after content changes so the first frame does not overflow.
 const updateAbilityTooltip = async () => {
   await nextTick();
   const tooltip = abilityTooltipRef.value;
@@ -2612,7 +2612,7 @@ const updateAbilityTooltip = async () => {
   });
 };
 
-// 璇诲彇宸ュ叿涓庢妧鑳芥眹鎬讳俊鎭紝渚涙彁绀鸿瘝棰勮涓庢偓娴彁绀轰娇鐢?
+// Load the shared tool summary for prompt preview and ability tooltip rendering.
 const loadToolSummary = async () => {
   if (toolSummaryLoading.value || promptToolSummary.value) {
     return promptToolSummary.value;
@@ -2647,7 +2647,7 @@ const handleAbilityTooltipHide = () => {
   abilityTooltipVisible.value = false;
 };
 
-// 鎵撳紑绯荤粺鎻愮ず璇嶉瑙堬紝浼樺厛璇诲彇浼氳瘽蹇収
+// Open the system prompt preview and prefer the current session snapshot.
 const openPromptPreview = async () => {
   promptPreviewVisible.value = true;
   promptPreviewLoading.value = true;

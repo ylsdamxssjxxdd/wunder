@@ -805,6 +805,7 @@ async fn resolve_or_create_external_embed_agent(
         description: preset.description.trim().to_string(),
         system_prompt: preset.system_prompt.trim().to_string(),
         model_name: None,
+        ability_items: Vec::new(),
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
         tool_names,

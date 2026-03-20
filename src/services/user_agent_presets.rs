@@ -1,4 +1,5 @@
 use crate::config::UserAgentPresetConfig;
+use crate::services::agent_abilities::{build_ability_items_from_legacy, normalize_ability_items};
 use crate::services::default_tool_profile::{
     curated_default_skill_names, curated_default_tool_names,
 };
@@ -198,6 +199,19 @@ pub fn snapshot_from_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot
         description: record.description.clone(),
         system_prompt: record.system_prompt.clone(),
         model_name: record.model_name.clone(),
+        ability_items: {
+            let ability_items = normalize_ability_items(record.ability_items.clone());
+            if ability_items.is_empty() {
+                build_ability_items_from_legacy(
+                    &record.tool_names,
+                    &record.declared_tool_names,
+                    &record.declared_skill_names,
+                    &HashSet::new(),
+                )
+            } else {
+                ability_items
+            }
+        },
         tool_names: normalize_tool_list(record.tool_names.clone()),
         declared_tool_names: normalize_tool_list(record.declared_tool_names.clone()),
         declared_skill_names: normalize_tool_list(record.declared_skill_names.clone()),
@@ -229,6 +243,12 @@ pub async fn build_target_snapshot(
         description: preset.description.clone(),
         system_prompt: preset.system_prompt.clone(),
         model_name: normalize_optional_model_name(preset.model_name.as_deref()),
+        ability_items: build_ability_items_from_legacy(
+            &requested_tool_names,
+            &preset.declared_tool_names,
+            &preset.declared_skill_names,
+            &HashSet::new(),
+        ),
         tool_names: requested_tool_names,
         declared_tool_names: preset.declared_tool_names.clone(),
         declared_skill_names: preset.declared_skill_names.clone(),
@@ -333,6 +353,7 @@ fn plan_snapshot_sync(
     compare_field!(description);
     compare_field!(system_prompt);
     compare_field!(model_name);
+    compare_field!(ability_items);
     compare_field!(tool_names);
     compare_field!(declared_tool_names);
     compare_field!(declared_skill_names);
@@ -367,6 +388,7 @@ fn apply_sync_mode(
     sync_field!(description);
     sync_field!(system_prompt);
     sync_field!(model_name);
+    sync_field!(ability_items);
     sync_field!(tool_names);
     sync_field!(declared_tool_names);
     sync_field!(declared_skill_names);
@@ -400,6 +422,7 @@ pub async fn create_preset_agent_record(
         description: target.description.clone(),
         system_prompt: target.system_prompt.clone(),
         model_name: target.model_name.clone(),
+        ability_items: target.ability_items.clone(),
         tool_names: target.tool_names.clone(),
         declared_tool_names: target.declared_tool_names.clone(),
         declared_skill_names: target.declared_skill_names.clone(),

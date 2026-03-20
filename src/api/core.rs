@@ -8,8 +8,8 @@ use crate::schemas::{
     AvailableToolsResponse, I18nConfigResponse, ToolSpec, WunderPromptRequest,
     WunderPromptResponse, WunderRequest,
 };
-use crate::services::agent_runtime::AgentSubmitOutcome;
 use crate::services::abilities::populate_ability_items;
+use crate::services::agent_runtime::AgentSubmitOutcome;
 use crate::skills::load_skills;
 use crate::state::AppState;
 use crate::tools::{a2a_service_schema, builtin_tool_specs};
@@ -339,11 +339,12 @@ async fn wunder_tools(
         let mut used_names = blocked_names.clone();
 
         {
-            let mut append_user_tool = |bucket: &mut Vec<ToolSpec>,
-                                        owner_id: &str,
-                                        tool_name: &str,
-                                        description: String,
-                                        input_schema: Value| {
+            let mut append_user_tool =
+                |bucket: &mut Vec<ToolSpec>,
+                 owner_id: &str,
+                 tool_name: &str,
+                 description: String,
+                 input_schema: Value| {
                     let alias = state.user_tool_store.build_alias_name(owner_id, tool_name);
                     if used_names.contains(&alias) {
                         return;

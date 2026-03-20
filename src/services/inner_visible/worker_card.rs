@@ -1,7 +1,12 @@
-use crate::schemas::AbilityKind;
+use crate::schemas::{AbilityDescriptor, AbilityGroupKey, AbilityKind, AbilitySourceKey};
+use crate::services::agent_abilities::{
+    build_ability_items_from_names, normalize_ability_items, resolve_record_ability_items,
+    resolve_record_declared_names,
+};
 use crate::storage::{UserAgentRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER_ID};
 use chrono::Utc;
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::Value;
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -145,6 +150,7 @@ pub struct WorkerCardRecordUpdate {
     pub description: String,
     pub system_prompt: String,
     pub model_name: Option<String>,
+    pub ability_items: Vec<AbilityDescriptor>,
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,
@@ -162,8 +168,25 @@ pub fn build_worker_card(
     hive_description: Option<&str>,
     skill_name_keys: &HashSet<String>,
 ) -> WorkerCardDocument {
-    let (declared_tool_names, declared_skill_names) =
-        split_record_worker_card_abilities(record, skill_name_keys);
+    let ability_items = resolve_record_ability_items(
+        &record.ability_items,
+        &record.tool_names,
+        &record.declared_tool_names,
+        &record.declared_skill_names,
+        skill_name_keys,
+    );
+    let (declared_tool_names, declared_skill_names) = resolve_record_declared_names(
+        &record.ability_items,
+        &record.tool_names,
+        &record.declared_tool_names,
+        &record.declared_skill_names,
+        skill_name_keys,
+    );
+    let worker_card_items = compact_worker_card_ability_items(
+        build_worker_card_ability_items_from_descriptors(&ability_items),
+        &declared_tool_names,
+        &declared_skill_names,
+    );
     WorkerCardDocument {
         schema_version: "wunder/worker-card@2".to_string(),
         kind: "WorkerCard".to_string(),
@@ -180,7 +203,7 @@ pub fn build_worker_card(
                 .filter(|value| !value.is_empty()),
         },
         abilities: WorkerCardAbilities {
-            items: build_worker_card_ability_items(&declared_tool_names, &declared_skill_names),
+            items: worker_card_items,
             tool_names: declared_tool_names,
             skills: declared_skill_names,
             tool_names_present: true,
@@ -211,6 +234,7 @@ pub fn parse_worker_card(
     document: WorkerCardDocument,
     system_prompt_override: Option<String>,
 ) -> WorkerCardRecordUpdate {
+    let ability_items = parse_document_ability_items(&document.abilities);
     let (declared_tool_names, declared_skill_names) =
         split_document_worker_card_abilities(&document.abilities);
     let mut tool_names = declared_tool_names.clone();
@@ -227,6 +251,7 @@ pub fn parse_worker_card(
             .model_name
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
+        ability_items,
         tool_names: normalize_names(tool_names),
         declared_tool_names,
         declared_skill_names,
@@ -237,29 +262,6 @@ pub fn parse_worker_card(
         hive_id: normalize_hive_id(&document.hive.id),
         sandbox_container_id: normalize_container_id(document.runtime.sandbox_container_id),
     }
-}
-
-fn split_record_worker_card_abilities(
-    record: &UserAgentRecord,
-    skill_name_keys: &HashSet<String>,
-) -> (Vec<String>, Vec<String>) {
-    if !record.declared_tool_names.is_empty() || !record.declared_skill_names.is_empty() {
-        return (
-            normalize_names(record.declared_tool_names.clone()),
-            normalize_names(record.declared_skill_names.clone()),
-        );
-    }
-
-    let mut tool_names = Vec::new();
-    let mut skill_names = Vec::new();
-    for name in normalize_names(record.tool_names.clone()) {
-        if skill_name_keys.contains(&name) {
-            skill_names.push(name);
-        } else {
-            tool_names.push(name);
-        }
-    }
-    (tool_names, skill_names)
 }
 
 fn build_worker_card_ability_items(
@@ -288,6 +290,138 @@ fn build_worker_card_ability_items(
         });
     }
     items
+}
+
+fn build_worker_card_ability_items_from_descriptors(
+    ability_items: &[AbilityDescriptor],
+) -> Vec<WorkerCardAbilityItem> {
+    let mut items = Vec::new();
+    for item in ability_items {
+        let runtime_name = item.runtime_name.trim();
+        let fallback_name = item.name.trim();
+        let name = if runtime_name.is_empty() {
+            fallback_name
+        } else {
+            runtime_name
+        };
+        if name.is_empty() {
+            continue;
+        }
+        items.push(WorkerCardAbilityItem {
+            id: item.id.trim().to_string(),
+            name: if fallback_name.is_empty() {
+                name.to_string()
+            } else {
+                fallback_name.to_string()
+            },
+            runtime_name: name.to_string(),
+            display_name: item.display_name.trim().to_string(),
+            description: item.description.trim().to_string(),
+            kind: item.kind,
+        });
+    }
+    if items.is_empty() {
+        return build_worker_card_ability_items(&[], &[]);
+    }
+    items
+}
+
+fn worker_card_item_matches_legacy_shape(
+    item: &WorkerCardAbilityItem,
+    expected: &WorkerCardAbilityItem,
+) -> bool {
+    let runtime_name = item.runtime_name.trim();
+    let fallback_name = item.name.trim();
+    let resolved_name = if runtime_name.is_empty() {
+        fallback_name
+    } else {
+        runtime_name
+    };
+    let normalized_name = if fallback_name.is_empty() {
+        resolved_name
+    } else {
+        fallback_name
+    };
+    let display_name = item.display_name.trim();
+    let normalized_display_name = if display_name.is_empty() {
+        resolved_name
+    } else {
+        display_name
+    };
+    resolved_name == expected.runtime_name
+        && item.kind == expected.kind
+        && normalized_name == expected.name
+        && normalized_display_name == expected.display_name
+        && item.description.trim().is_empty()
+}
+
+fn compact_worker_card_ability_items(
+    items: Vec<WorkerCardAbilityItem>,
+    declared_tool_names: &[String],
+    declared_skill_names: &[String],
+) -> Vec<WorkerCardAbilityItem> {
+    if items.is_empty() {
+        return items;
+    }
+    let expected = build_worker_card_ability_items(declared_tool_names, declared_skill_names);
+    if items.len() != expected.len() {
+        return items;
+    }
+    if items
+        .iter()
+        .zip(expected.iter())
+        .all(|(item, expected)| worker_card_item_matches_legacy_shape(item, expected))
+    {
+        Vec::new()
+    } else {
+        items
+    }
+}
+
+fn parse_document_ability_items(abilities: &WorkerCardAbilities) -> Vec<AbilityDescriptor> {
+    let items = abilities
+        .items
+        .iter()
+        .map(worker_card_item_to_ability_descriptor)
+        .collect::<Vec<_>>();
+    let normalized = normalize_ability_items(items);
+    if !normalized.is_empty() {
+        return normalized;
+    }
+    let (tool_names, skill_names) = split_document_worker_card_abilities(abilities);
+    build_ability_items_from_names(&tool_names, &skill_names)
+}
+
+fn worker_card_item_to_ability_descriptor(item: &WorkerCardAbilityItem) -> AbilityDescriptor {
+    let (group, source) = match item.kind {
+        AbilityKind::Tool => (AbilityGroupKey::Builtin, AbilitySourceKey::Builtin),
+        AbilityKind::Skill => (AbilityGroupKey::Skills, AbilitySourceKey::Skill),
+    };
+    let runtime_name = item.runtime_name.trim();
+    let fallback_name = item.name.trim();
+    let name = if runtime_name.is_empty() {
+        fallback_name
+    } else {
+        runtime_name
+    };
+    AbilityDescriptor {
+        id: item.id.trim().to_string(),
+        name: if fallback_name.is_empty() {
+            name.to_string()
+        } else {
+            fallback_name.to_string()
+        },
+        runtime_name: name.to_string(),
+        display_name: item.display_name.trim().to_string(),
+        description: item.description.trim().to_string(),
+        input_schema: Value::Null,
+        group,
+        source,
+        kind: item.kind,
+        owner_id: None,
+        available: true,
+        selected: true,
+    }
 }
 
 fn split_document_worker_card_abilities(
@@ -420,6 +554,7 @@ mod tests {
             description: "desc".to_string(),
             system_prompt: "prompt".to_string(),
             model_name: Some("gpt".to_string()),
+            ability_items: Vec::new(),
             tool_names: vec!["read_file".to_string(), "planner".to_string()],
             declared_tool_names: vec!["read_file".to_string()],
             declared_skill_names: vec!["planner".to_string()],
@@ -443,15 +578,54 @@ mod tests {
         assert_eq!(document.schema_version, "wunder/worker-card@2");
         assert_eq!(document.abilities.tool_names, vec!["read_file".to_string()]);
         assert_eq!(document.abilities.skills, vec!["planner".to_string()]);
-        assert_eq!(document.abilities.items.len(), 2);
-        assert!(document
-            .abilities
-            .items
-            .iter()
-            .any(|item| { item.runtime_name == "planner" && item.kind == AbilityKind::Skill }));
+        assert!(document.abilities.items.is_empty());
         assert_eq!(document.prompt.system_prompt, None);
         assert_eq!(document.prompt.extra_prompt, Some("prompt".to_string()));
         assert_eq!(document.runtime.model_name, Some("gpt".to_string()));
+    }
+
+    #[test]
+    fn build_worker_card_keeps_items_when_metadata_is_non_default() {
+        let record = UserAgentRecord {
+            agent_id: "agent-2".to_string(),
+            user_id: "u1".to_string(),
+            hive_id: "default".to_string(),
+            name: "Agent".to_string(),
+            description: "desc".to_string(),
+            system_prompt: String::new(),
+            model_name: None,
+            ability_items: vec![crate::schemas::AbilityDescriptor {
+                id: "builtin:read_file".to_string(),
+                name: "read_file".to_string(),
+                runtime_name: "read_file".to_string(),
+                display_name: "Read File".to_string(),
+                description: "Reads text files".to_string(),
+                input_schema: serde_json::Value::Null,
+                group: crate::schemas::AbilityGroupKey::Builtin,
+                source: crate::schemas::AbilitySourceKey::Builtin,
+                kind: AbilityKind::Tool,
+                owner_id: None,
+                available: true,
+                selected: true,
+            }],
+            tool_names: vec!["read_file".to_string()],
+            declared_tool_names: vec!["read_file".to_string()],
+            declared_skill_names: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 1.0,
+            updated_at: 2.0,
+            preset_binding: None,
+        };
+        let document = build_worker_card(&record, Some("Default"), Some("Hive"), &HashSet::new());
+        assert_eq!(document.abilities.items.len(), 1);
+        assert_eq!(document.abilities.items[0].display_name, "Read File");
+        assert_eq!(document.abilities.items[0].description, "Reads text files");
     }
 
     #[test]
@@ -464,6 +638,7 @@ mod tests {
             description: "desc".to_string(),
             system_prompt: String::new(),
             model_name: None,
+            ability_items: Vec::new(),
             tool_names: vec![
                 "read_file".to_string(),
                 "技能创建器".to_string(),

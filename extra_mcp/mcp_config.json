@@ -6,7 +6,8 @@
   },
   "database": {
     "default_key": "local_hr_mysql",
-    "description": "HR promotion simulation database (single-tool mode)",
+    "description": "公司全量人员信息数据库（50000人）",
+    "export_root": "exports/extra_mcp",
     "targets": {
       "local_hr_mysql": {
         "type": "mysql",
@@ -16,13 +17,13 @@
         "password": "rootpass123!",
         "database": "hr_promotion_sim",
         "connect_timeout": 8,
-        "description": "local mysql for hr simulation"
+        "description": "本地 MySQL 演示库（人力资源晋升场景）"
       }
     },
     "tables": {
-      "promotion_mid_candidates_202607": {
-        "table": "promotion_mid_candidates_202607",
-        "description": "final candidates table for 2026-07 mid-level promotion"
+      "company_all_personnel": {
+        "table": "人员信息",
+        "description": "公司所有人员信息（全量50000），用于让模型自主筛选符合晋升条件的人选"
       }
     }
   },

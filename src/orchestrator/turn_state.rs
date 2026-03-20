@@ -41,9 +41,7 @@ impl ActiveTurnRegistry {
             pending_approval_ids: Vec::new(),
             waiting_for_user_input: false,
         };
-        self.inner
-            .lock()
-            .insert(cleaned_session.to_string(), entry);
+        self.inner.lock().insert(cleaned_session.to_string(), entry);
         snapshot
     }
 
@@ -147,7 +145,10 @@ mod tests {
         let snapshot = registry
             .add_pending_approval("sess_1", &turn.turn_id, "approval_1")
             .expect("turn snapshot");
-        assert_eq!(snapshot.pending_approval_ids, vec!["approval_1".to_string()]);
+        assert_eq!(
+            snapshot.pending_approval_ids,
+            vec!["approval_1".to_string()]
+        );
 
         let snapshot = registry
             .resolve_pending_approval("sess_1", &turn.turn_id, "approval_1")

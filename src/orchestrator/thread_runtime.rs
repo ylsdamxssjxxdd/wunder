@@ -69,13 +69,14 @@ impl ThreadRuntimeRegistry {
             return None;
         }
         let mut guard = self.inner.lock();
-        let entry = guard
-            .entry(cleaned_session.to_string())
-            .or_insert_with(|| ThreadRuntimeEntry {
-                status: ThreadRuntimeStatus::Idle,
-                subscriber_count: 0,
-                active_turn_id: None,
-            });
+        let entry =
+            guard
+                .entry(cleaned_session.to_string())
+                .or_insert_with(|| ThreadRuntimeEntry {
+                    status: ThreadRuntimeStatus::Idle,
+                    subscriber_count: 0,
+                    active_turn_id: None,
+                });
         entry.subscriber_count = entry.subscriber_count.saturating_add(1);
         Some(snapshot_from_entry(cleaned_session, entry))
     }
@@ -116,7 +117,12 @@ impl ThreadRuntimeRegistry {
     }
 
     pub(super) fn begin_turn(&self, session_id: &str, turn_id: &str) -> ThreadRuntimeUpdate {
-        self.transition(session_id, Some(turn_id), ThreadRuntimeStatus::Running, true)
+        self.transition(
+            session_id,
+            Some(turn_id),
+            ThreadRuntimeStatus::Running,
+            true,
+        )
     }
 
     pub(super) fn set_status(
@@ -196,13 +202,14 @@ impl ThreadRuntimeRegistry {
             };
         }
         let mut guard = self.inner.lock();
-        let entry = guard
-            .entry(cleaned_session.to_string())
-            .or_insert_with(|| ThreadRuntimeEntry {
-                status: ThreadRuntimeStatus::Idle,
-                subscriber_count: 0,
-                active_turn_id: None,
-            });
+        let entry =
+            guard
+                .entry(cleaned_session.to_string())
+                .or_insert_with(|| ThreadRuntimeEntry {
+                    status: ThreadRuntimeStatus::Idle,
+                    subscriber_count: 0,
+                    active_turn_id: None,
+                });
         let previous = snapshot_from_entry(cleaned_session, entry);
         let Some(turn_id) = turn_id.map(str::trim).filter(|value| !value.is_empty()) else {
             return ThreadRuntimeUpdate {

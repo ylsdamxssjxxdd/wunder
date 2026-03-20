@@ -5268,7 +5268,7 @@ const buildAgentInquiryReply = (panel: AgentInquiryPanelData, routes: AgentInqui
   const header = t('chat.askPanelPrefix');
   const question = panel?.question ? t('chat.askPanelQuestion', { question: panel.question }) : '';
   const lines = routes.map((route) => {
-    const detail = route.description ? `锛?{route.description}` : '';
+    const detail = route.description ? `：${route.description}` : '';
     return `- ${route.label}${detail}`;
   });
   return [header, question, ...lines].filter(Boolean).join('\n');
@@ -5475,7 +5475,7 @@ const resolveWorkspaceResource = (publicPath: string): WorkspaceResolvedResource
       allowed: true
     };
   }
-  // 闈炵鐞嗗憳浠嶄紭鍏堝皾璇曟寜褰撳墠鐧诲綍鐢ㄦ埛涓婁笅鏂囪鍙栵紝閬垮厤涓嶅悓灞曠ずID瀵艰嚧鐨勮鎷︽埅銆?
+  // Non-admin requests should prefer the current login context to avoid cross-display ID mismatches.
   return {
     ...parsed,
     requestUserId: null,

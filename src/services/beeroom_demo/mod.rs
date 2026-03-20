@@ -1391,6 +1391,7 @@ mod tests {
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
+            ability_items: Vec::new(),
             tool_names: vec!["list_files".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),

@@ -194,19 +194,35 @@
             v-if="composerModelDisplayName && composerModelActionable"
             class="chat-composer-world-model chat-composer-world-model--action"
             type="button"
-            :title="composerModelDisplayName"
+            :title="composerModelWithContextTooltip"
             :aria-label="composerModelAriaLabel"
             @click="emit('open-model-settings')"
           >
             <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
+            <span
+              v-if="composerContextUsageDisplay"
+              class="chat-composer-world-context-usage"
+              :title="composerContextUsageTooltip"
+              :aria-label="composerContextUsageTooltip"
+            >
+              {{ composerContextUsageDisplay }}
+            </span>
           </button>
           <div
             v-else-if="composerModelDisplayName"
             class="chat-composer-world-model"
-            :title="composerModelDisplayName"
+            :title="composerModelWithContextTooltip"
             :aria-label="composerModelAriaLabel"
           >
             <span class="chat-composer-world-model-text">{{ composerModelDisplayName }}</span>
+            <span
+              v-if="composerContextUsageDisplay"
+              class="chat-composer-world-context-usage"
+              :title="composerContextUsageTooltip"
+              :aria-label="composerContextUsageTooltip"
+            >
+              {{ composerContextUsageDisplay }}
+            </span>
           </div>
           <div
             v-if="showApprovalLabel && approvalLabelText"
@@ -331,7 +347,9 @@ import {
   type ComposerDraftAttachment
 } from '@/components/chat/composerDraftCache';
 import { useI18n } from '@/i18n';
+import { useChatStore } from '@/stores/chat';
 import { normalizeAgentPresetQuestions } from '@/utils/agentPresetQuestions';
+import { resolveAnyProviderModelPresetMaxContext } from '@/views/messenger/providerModelPresets';
 
 const props = defineProps({
   loading: {
@@ -394,6 +412,14 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  contextUsedTokens: {
+    type: [Number, String],
+    default: null
+  },
+  contextTotalTokens: {
+    type: [Number, String],
+    default: null
+  },
   presetQuestions: {
     type: Array,
     default: () => []
@@ -423,6 +449,7 @@ const commandMenuDismissed = ref(false);
 let worldComposerResizeRuntime: { startY: number; startHeight: number } | null = null;
 let worldCommandPanelCloseTimer: ReturnType<typeof setTimeout> | null = null;
 const { t } = useI18n();
+const chatStore = useChatStore();
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'svg']);
 
@@ -542,6 +569,53 @@ const hasPrimarySendModifier = (event: KeyboardEvent): boolean =>
   );
 const hasBackupSendModifier = (event: KeyboardEvent): boolean =>
   Boolean(event.altKey && !hasPrimarySendModifier(event));
+const normalizeTokenCount = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return Math.round(parsed);
+};
+const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | null => {
+  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
+    const current =
+      messages[cursor] && typeof messages[cursor] === 'object'
+        ? (messages[cursor] as Record<string, unknown>)
+        : null;
+    if (!current) continue;
+    if (String(current.role || '').trim().toLowerCase() !== 'assistant') continue;
+    const stats =
+      current.stats && typeof current.stats === 'object'
+        ? (current.stats as Record<string, unknown>)
+        : null;
+    if (!stats) continue;
+    const normalized = normalizeTokenCount(
+      stats.contextTokens ??
+        stats.context_tokens ??
+        stats.context_tokens_total ??
+        (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
+        (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
+    );
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+  return null;
+};
+const tokenNumberFormatter = (() => {
+  let formatter: Intl.NumberFormat | null = null;
+  return (): Intl.NumberFormat => {
+    if (!formatter) {
+      formatter = new Intl.NumberFormat();
+    }
+    return formatter;
+  };
+})();
+const formatContextTokenCount = (value: unknown): string => {
+  const normalized = normalizeTokenCount(value);
+  if (normalized === null) return '--';
+  return tokenNumberFormatter().format(normalized);
+};
 
 const showUploadArea = computed(() => attachments.value.length > 0 || attachmentBusy.value > 0);
 const composerModelName = computed(() => String(props.modelName || '').trim());
@@ -570,6 +644,43 @@ const composerModelAriaLabel = computed(() => {
     return composerModelJumpHint.value;
   }
   return `${t('desktop.system.modelName')}: ${label}`;
+});
+const composerContextUsedTokens = computed(() => {
+  const fromProps = normalizeTokenCount(props.contextUsedTokens);
+  if (fromProps !== null) {
+    return fromProps;
+  }
+  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  return resolveLatestContextTokensFromMessages(messages);
+});
+const composerContextTotalTokens = computed(() => {
+  const fromProps = normalizeTokenCount(props.contextTotalTokens);
+  if (fromProps !== null && fromProps > 0) {
+    return fromProps;
+  }
+  const fromPreset = resolveAnyProviderModelPresetMaxContext(composerModelName.value);
+  const normalizedPreset = normalizeTokenCount(fromPreset);
+  return normalizedPreset !== null && normalizedPreset > 0 ? normalizedPreset : null;
+});
+const composerContextUsageDisplay = computed(() => {
+  if (!props.worldStyle) return '';
+  const used = composerContextUsedTokens.value;
+  const total = composerContextTotalTokens.value;
+  if (used === null && total === null) return '';
+  const usedText = formatContextTokenCount(used ?? 0);
+  const totalText = formatContextTokenCount(total);
+  return `${usedText}/${totalText}`;
+});
+const composerContextUsageTooltip = computed(() => {
+  const usage = composerContextUsageDisplay.value;
+  if (!usage) return '';
+  return `${t('profile.stats.contextTokens')}: ${usage}`;
+});
+const composerModelWithContextTooltip = computed(() => {
+  if (!composerContextUsageDisplay.value) {
+    return composerModelDisplayName.value;
+  }
+  return `${composerModelDisplayName.value} | ${composerContextUsageDisplay.value}`;
 });
 const getDesktopScreenshotBridge = (): DesktopScreenshotBridge | null => {
   if (typeof window === 'undefined') return null;

@@ -1,3 +1,4 @@
+use crate::services::agent_abilities::{build_ability_items_from_legacy, normalize_ability_items};
 use crate::services::default_tool_profile::{
     curated_default_skill_names, curated_default_tool_names,
 };
@@ -36,6 +37,8 @@ struct DefaultAgentConfig {
     description: String,
     #[serde(default)]
     system_prompt: String,
+    #[serde(default)]
+    ability_items: Vec<crate::schemas::AbilityDescriptor>,
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
@@ -98,6 +101,7 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     }
     config.description = config.description.trim().to_string();
     config.system_prompt = config.system_prompt.trim().to_string();
+    config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
     config.tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
     config.preset_questions =
         normalize_preset_questions(std::mem::take(&mut config.preset_questions));
@@ -118,6 +122,7 @@ fn config_from_record(record: &UserAgentRecord) -> DefaultAgentConfig {
         name: record.name.clone(),
         description: record.description.clone(),
         system_prompt: record.system_prompt.clone(),
+        ability_items: normalize_ability_items(record.ability_items.clone()),
         tool_names: record.tool_names.clone(),
         preset_questions: record.preset_questions.clone(),
         approval_mode: record.approval_mode.clone(),
@@ -140,6 +145,7 @@ fn record_from_config(user_id: &str, config: &DefaultAgentConfig) -> UserAgentRe
         description: config.description.clone(),
         system_prompt: config.system_prompt.clone(),
         model_name: None,
+        ability_items: config.ability_items.clone(),
         tool_names: config.tool_names.clone(),
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
@@ -189,6 +195,12 @@ async fn build_default_agent_config(
         name: DEFAULT_AGENT_NAME.to_string(),
         description: String::new(),
         system_prompt: String::new(),
+        ability_items: build_ability_items_from_legacy(
+            &tool_names,
+            &[],
+            &[],
+            &std::collections::HashSet::new(),
+        ),
         tool_names,
         preset_questions: Vec::new(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
@@ -237,6 +249,19 @@ fn snapshot_from_default_record(record: &UserAgentRecord) -> UserAgentPresetSnap
         description: record.description.trim().to_string(),
         system_prompt: record.system_prompt.trim().to_string(),
         model_name: None,
+        ability_items: {
+            let ability_items = normalize_ability_items(record.ability_items.clone());
+            if ability_items.is_empty() {
+                build_ability_items_from_legacy(
+                    &record.tool_names,
+                    &[],
+                    &[],
+                    &std::collections::HashSet::new(),
+                )
+            } else {
+                ability_items
+            }
+        },
         tool_names: normalize_tool_list(record.tool_names.clone()),
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
@@ -268,6 +293,12 @@ async fn build_target_snapshot(
         description: template.description.clone(),
         system_prompt: template.system_prompt.clone(),
         model_name: None,
+        ability_items: build_ability_items_from_legacy(
+            &tool_names,
+            &[],
+            &[],
+            &std::collections::HashSet::new(),
+        ),
         tool_names,
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
@@ -300,6 +331,7 @@ fn plan_snapshot_sync(
     compare_field!(name);
     compare_field!(description);
     compare_field!(system_prompt);
+    compare_field!(ability_items);
     compare_field!(tool_names);
     compare_field!(preset_questions);
     compare_field!(approval_mode);
@@ -333,6 +365,7 @@ fn apply_sync_mode(
     sync_field!(name);
     sync_field!(description);
     sync_field!(system_prompt);
+    sync_field!(ability_items);
     sync_field!(tool_names);
     sync_field!(preset_questions);
     sync_field!(approval_mode);

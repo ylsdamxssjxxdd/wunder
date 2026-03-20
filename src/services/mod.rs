@@ -1,5 +1,6 @@
 pub mod a2a_store;
 pub mod abilities;
+pub mod agent_abilities;
 pub mod agent_runtime;
 pub mod attachment;
 pub mod beeroom_demo;

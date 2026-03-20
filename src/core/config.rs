@@ -1532,7 +1532,7 @@ pub fn load_config() -> Config {
     expand_yaml_env(&mut merged);
 
     serde_yaml::from_value::<Config>(merged).unwrap_or_else(|err| {
-        warn!("閰嶇疆瑙ｆ瀽澶辫触锛屼娇鐢ㄩ粯璁ら厤缃? {err}");
+        warn!("failed to parse merged config, falling back to defaults: {err}");
         Config::default()
     })
 }
@@ -1550,12 +1550,12 @@ fn read_yaml(path: &str) -> Value {
     let content = match read_yaml_content_with_fallback(path) {
         Ok(text) => text,
         Err(err) => {
-            warn!("璇诲彇閰嶇疆澶辫触: {path}, {err}");
+            warn!("failed to read config file: {path}, {err}");
             return Value::Null;
         }
     };
     serde_yaml::from_str(&content).unwrap_or_else(|err| {
-        warn!("瑙ｆ瀽 YAML 澶辫触: {path}, {err}");
+        warn!("failed to parse YAML: {path}, {err}");
         Value::Null
     })
 }
@@ -1565,12 +1565,12 @@ fn read_yaml_path(path: &Path) -> Value {
     let content = match read_yaml_content_with_fallback(&path_display) {
         Ok(text) => text,
         Err(err) => {
-            warn!("璇诲彇閰嶇疆澶辫触: {path_display}, {err}");
+            warn!("failed to read config file: {path_display}, {err}");
             return Value::Null;
         }
     };
     serde_yaml::from_str(&content).unwrap_or_else(|err| {
-        warn!("瑙ｆ瀽 YAML 澶辫触: {path_display}, {err}");
+        warn!("failed to parse YAML: {path_display}, {err}");
         Value::Null
     })
 }
@@ -1578,14 +1578,14 @@ fn read_yaml_path(path: &Path) -> Value {
 fn read_yaml_content_with_fallback(path: &str) -> Result<String, std::io::Error> {
     let resolved_path = resolve_yaml_variant_path(Path::new(path));
     match fs::read_to_string(&resolved_path) {
-        Ok(text) => Ok(text),
+        Ok(text) => Ok(strip_utf8_bom(text)),
         Err(err) if err.kind() == ErrorKind::NotFound => {
             let Some(example_path) = resolve_example_config_path(&resolved_path) else {
                 return Err(err);
             };
-            let text = fs::read_to_string(&example_path)?;
+            let text = strip_utf8_bom(fs::read_to_string(&example_path)?);
             warn!(
-                "閰嶇疆鏂囦欢涓嶅瓨鍦紝鍥為€€浣跨敤绀轰緥閰嶇疆: {} -> {}",
+                "config file missing, falling back to example config: {} -> {}",
                 resolved_path.display(),
                 example_path.display()
             );
@@ -1593,6 +1593,14 @@ fn read_yaml_content_with_fallback(path: &str) -> Result<String, std::io::Error>
         }
         Err(err) => Err(err),
     }
+}
+
+fn strip_utf8_bom(text: String) -> String {
+    // Windows editors often save UTF-8 YAML with BOM; serde_yaml rejects it,
+    // so normalize the content before parsing.
+    text.strip_prefix('\u{feff}')
+        .map(str::to_string)
+        .unwrap_or(text)
 }
 
 fn resolve_example_config_path(path: &Path) -> Option<PathBuf> {
@@ -1862,6 +1870,27 @@ sandbox:
         let content = read_yaml_content_with_fallback(&yaml_path.display().to_string())
             .expect("read yaml variant content");
         assert!(content.contains("DEBUG"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_read_yaml_tolerates_utf8_bom() {
+        let root = std::env::temp_dir().join(format!(
+            "wunder-config-bom-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&root).expect("create temp dir");
+        let yaml_path = root.join("wunder.override.yaml");
+        fs::write(&yaml_path, "\u{feff}observability:\n  log_level: DEBUG\n")
+            .expect("write bom yaml");
+
+        let value = read_yaml_path(&yaml_path);
+        let log_level = value
+            .get("observability")
+            .and_then(|item| item.get("log_level"))
+            .and_then(Value::as_str);
+        assert_eq!(log_level, Some("DEBUG"));
 
         let _ = fs::remove_dir_all(&root);
     }

@@ -158,7 +158,7 @@ pub enum AbilitySourceKey {
     Shared,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct AbilityDescriptor {
     pub id: String,
     pub name: String,

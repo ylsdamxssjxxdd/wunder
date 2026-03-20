@@ -2,6 +2,11 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::monitor::MonitorState;
+use crate::schemas::AbilityDescriptor;
+use crate::services::agent_abilities::{
+    normalize_ability_items, resolve_agent_ability_selection, resolve_record_ability_items,
+};
+use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::llm::is_llm_model;
 use crate::state::AppState;
 use crate::storage::{
@@ -87,12 +92,14 @@ async fn list_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
+    let tool_context = build_user_tool_context(&state, &user_id).await;
+    let skill_name_keys = collect_context_skill_names(&tool_context);
     let app_config = state.config_store.get().await;
     let configured_model_name = resolve_default_model_name(&app_config);
     let items = filtered
         .into_iter()
         .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
-        .map(|record| agent_payload(&record, configured_model_name.as_deref()))
+        .map(|record| agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys))
         .collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
@@ -116,12 +123,14 @@ async fn list_shared_agents(
         .get_user_agent_access(&user_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     let filtered = filter_user_agents_by_access(&resolved.user, access.as_ref(), agents);
+    let tool_context = build_user_tool_context(&state, &user_id).await;
+    let skill_name_keys = collect_context_skill_names(&tool_context);
     let app_config = state.config_store.get().await;
     let configured_model_name = resolve_default_model_name(&app_config);
     let items = filtered
         .into_iter()
         .filter(|agent| !is_default_agent_alias_value(&agent.agent_id))
-        .map(|record| agent_payload(&record, configured_model_name.as_deref()))
+        .map(|record| agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys))
         .collect::<Vec<_>>();
     Ok(Json(
         json!({ "data": { "total": items.len(), "items": items } }),
@@ -565,10 +574,12 @@ async fn get_agent(
     let normalized_agent_id = normalize_agent_id(cleaned);
     if normalized_agent_id.is_empty() {
         let config = resolve_default_agent_config(&state, &resolved.user).await?;
+        let tool_context = build_user_tool_context(&state, &user_id).await;
+        let skill_name_keys = collect_context_skill_names(&tool_context);
         let app_config = state.config_store.get().await;
         let configured_model_name = resolve_default_model_name(&app_config);
         return Ok(Json(
-            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref()) }),
+            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys) }),
         ));
     }
     let record = state
@@ -586,10 +597,12 @@ async fn get_agent(
             i18n::t("error.agent_not_found"),
         ));
     }
+    let tool_context = build_user_tool_context(&state, &user_id).await;
+    let skill_name_keys = collect_context_skill_names(&tool_context);
     let app_config = state.config_store.get().await;
     let configured_model_name = resolve_default_model_name(&app_config);
     Ok(Json(
-        json!({ "data": agent_payload(&record, configured_model_name.as_deref()) }),
+        json!({ "data": agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys) }),
     ))
 }
 
@@ -935,31 +948,30 @@ async fn create_agent(
     } else {
         normalize_tool_list(payload.tool_names.clone())
     };
-    let mut tool_names = requested_tool_names.clone();
-    if !tool_names.is_empty() {
-        tool_names = filter_allowed_tools(&tool_names, &allowed_tool_names);
-    }
-    let (declared_tool_names, declared_skill_names) = if let Some(source) = copy_source.as_ref() {
-        (
-            source.declared_tool_names.clone(),
-            source.declared_skill_names.clone(),
+    let ability_selection = if let Some(source) = copy_source.as_ref() {
+        resolve_agent_ability_selection(
+            &requested_tool_names,
+            Some(source.ability_items.clone()),
+            Some(source.declared_tool_names.clone()),
+            Some(source.declared_skill_names.clone()),
+            &skill_name_keys,
         )
     } else {
-        split_declared_agent_dependencies(
+        resolve_agent_ability_selection(
             &requested_tool_names,
-            if payload.declared_tool_names.is_empty() {
-                None
-            } else {
-                Some(payload.declared_tool_names.clone())
-            },
-            if payload.declared_skill_names.is_empty() {
-                None
-            } else {
-                Some(payload.declared_skill_names.clone())
-            },
+            requested_create_ability_items(&payload),
+            payload.declared_tool_names.clone().map(normalize_tool_list),
+            payload
+                .declared_skill_names
+                .clone()
+                .map(normalize_tool_list),
             &skill_name_keys,
         )
     };
+    let mut tool_names = ability_selection.tool_names.clone();
+    if !tool_names.is_empty() {
+        tool_names = filter_allowed_tools(&tool_names, &allowed_tool_names);
+    }
 
     let access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
     let approval_mode = if let Some(source) = copy_source.as_ref() {
@@ -1009,9 +1021,10 @@ async fn create_agent(
                 .as_ref()
                 .and_then(|item| normalize_request_model_name(item.model_name.as_deref()))
         }),
+        ability_items: ability_selection.ability_items,
         tool_names,
-        declared_tool_names,
-        declared_skill_names,
+        declared_tool_names: ability_selection.declared_tool_names,
+        declared_skill_names: ability_selection.declared_skill_names,
         preset_questions,
         access_level,
         approval_mode,
@@ -1031,7 +1044,7 @@ async fn create_agent(
     let app_config = state.config_store.get().await;
     let configured_model_name = resolve_default_model_name(&app_config);
     Ok(Json(
-        json!({ "data": agent_payload(&record, configured_model_name.as_deref()) }),
+        json!({ "data": agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys) }),
     ))
 }
 
@@ -1053,8 +1066,12 @@ async fn update_agent(
     }
     let normalized_agent_id = normalize_agent_id(cleaned);
     if normalized_agent_id.is_empty() {
+        let requested_ability_items = requested_update_ability_items(&payload);
         let mut config = resolve_default_agent_config(&state, &resolved.user).await?;
-        if let Some(name) = payload.name {
+        let tool_context = build_user_tool_context(&state, &user_id).await;
+        let allowed = compute_allowed_tool_names(&resolved.user, &tool_context);
+        let skill_name_keys = collect_context_skill_names(&tool_context);
+        if let Some(name) = payload.name.as_deref() {
             let cleaned = name.trim();
             if !cleaned.is_empty() {
                 config.name = cleaned.to_string();
@@ -1066,14 +1083,24 @@ async fn update_agent(
         if let Some(system_prompt) = payload.system_prompt {
             config.system_prompt = system_prompt;
         }
-        if let Some(tool_names) = payload.tool_names {
-            let mut normalized = normalize_tool_list(tool_names);
-            if !normalized.is_empty() {
-                let context = build_user_tool_context(&state, &user_id).await;
-                let allowed = compute_allowed_tool_names(&resolved.user, &context);
-                normalized = filter_allowed_tools(&normalized, &allowed);
-            }
-            config.tool_names = normalized;
+        if payload.tool_names.is_some()
+            || payload.ability_items.is_some()
+            || payload.abilities.is_some()
+        {
+            let requested_tool_names = payload
+                .tool_names
+                .clone()
+                .map(normalize_tool_list)
+                .unwrap_or_else(|| config.tool_names.clone());
+            let selection = resolve_agent_ability_selection(
+                &requested_tool_names,
+                requested_ability_items,
+                Some(Vec::new()),
+                Some(Vec::new()),
+                &skill_name_keys,
+            );
+            config.tool_names = filter_allowed_tools(&selection.tool_names, &allowed);
+            config.ability_items = selection.ability_items;
         }
         if let Some(preset_questions) = payload.preset_questions {
             config.preset_questions = normalize_preset_questions(preset_questions);
@@ -1099,7 +1126,7 @@ async fn update_agent(
         let app_config = state.config_store.get().await;
         let configured_model_name = resolve_default_model_name(&app_config);
         return Ok(Json(
-            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref()) }),
+            json!({ "data": default_agent_payload(&config, configured_model_name.as_deref(), &skill_name_keys) }),
         ));
     }
     let mut record = state
@@ -1107,7 +1134,8 @@ async fn update_agent(
         .get_user_agent(&user_id, &normalized_agent_id)
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
         .ok_or_else(|| error_response(StatusCode::NOT_FOUND, i18n::t("error.agent_not_found")))?;
-    if let Some(name) = payload.name {
+    let requested_ability_items = requested_update_ability_items(&payload);
+    if let Some(name) = payload.name.as_deref() {
         let cleaned = name.trim();
         if !cleaned.is_empty() {
             record.name = cleaned.to_string();
@@ -1126,6 +1154,8 @@ async fn update_agent(
         record.is_shared = is_shared;
     }
     if payload.tool_names.is_some()
+        || payload.ability_items.is_some()
+        || payload.abilities.is_some()
         || payload.declared_tool_names.is_some()
         || payload.declared_skill_names.is_some()
     {
@@ -1137,9 +1167,9 @@ async fn update_agent(
         let context = build_user_tool_context(&state, &user_id).await;
         let allowed = compute_allowed_tool_names(&resolved.user, &context);
         let skill_name_keys = collect_context_skill_names(&context);
-        record.tool_names = filter_allowed_tools(&requested_tool_names, &allowed);
-        let (declared_tool_names, declared_skill_names) = split_declared_agent_dependencies(
+        let selection = resolve_agent_ability_selection(
             &requested_tool_names,
+            requested_ability_items,
             payload
                 .declared_tool_names
                 .clone()
@@ -1150,8 +1180,10 @@ async fn update_agent(
                 .or_else(|| Some(record.declared_skill_names.clone())),
             &skill_name_keys,
         );
-        record.declared_tool_names = declared_tool_names;
-        record.declared_skill_names = declared_skill_names;
+        record.tool_names = filter_allowed_tools(&selection.tool_names, &allowed);
+        record.ability_items = selection.ability_items;
+        record.declared_tool_names = selection.declared_tool_names;
+        record.declared_skill_names = selection.declared_skill_names;
     }
     if let Some(preset_questions) = payload.preset_questions {
         record.preset_questions = normalize_preset_questions(preset_questions);
@@ -1184,9 +1216,11 @@ async fn update_agent(
         .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
     sync_inner_visible_after_user_change(&state, &user_id).await;
     let app_config = state.config_store.get().await;
+    let tool_context = build_user_tool_context(&state, &user_id).await;
+    let skill_name_keys = collect_context_skill_names(&tool_context);
     let configured_model_name = resolve_default_model_name(&app_config);
     Ok(Json(
-        json!({ "data": agent_payload(&record, configured_model_name.as_deref()) }),
+        json!({ "data": agent_payload(&record, configured_model_name.as_deref(), &skill_name_keys) }),
     ))
 }
 
@@ -1355,11 +1389,19 @@ async fn set_default_session(
 fn agent_payload(
     record: &crate::storage::UserAgentRecord,
     default_model_name: Option<&str>,
+    skill_name_keys: &HashSet<String>,
 ) -> Value {
     let configured_model_name = normalize_request_model_name(record.model_name.as_deref());
     let effective_model_name = configured_model_name
         .clone()
         .or_else(|| normalize_request_model_name(default_model_name));
+    let ability_items = resolve_record_ability_items(
+        &record.ability_items,
+        &record.tool_names,
+        &record.declared_tool_names,
+        &record.declared_skill_names,
+        skill_name_keys,
+    );
     json!({
         "id": record.agent_id,
         "name": record.name,
@@ -1367,6 +1409,8 @@ fn agent_payload(
         "system_prompt": record.system_prompt,
         "configured_model_name": configured_model_name,
         "model_name": effective_model_name,
+        "ability_items": ability_items.clone(),
+        "abilities": { "items": ability_items },
         "tool_names": record.tool_names,
         "declared_tool_names": record.declared_tool_names,
         "declared_skill_names": record.declared_skill_names,
@@ -1488,22 +1532,22 @@ fn collect_context_skill_names(context: &crate::user_access::UserToolContext) ->
     output
 }
 
-fn split_declared_agent_dependencies(
-    requested_tool_names: &[String],
-    explicit_tool_names: Option<Vec<String>>,
-    explicit_skill_names: Option<Vec<String>>,
-    skill_name_keys: &HashSet<String>,
-) -> (Vec<String>, Vec<String>) {
-    // Declared dependencies represent worker-card imports only.
-    // Do not synthesize them from a normal agent's selected tools.
-    let _ = requested_tool_names;
-    let _ = skill_name_keys;
-    let declared_tool_names = explicit_tool_names.unwrap_or_default();
-    let declared_skill_names = explicit_skill_names.unwrap_or_default();
-    (
-        normalize_tool_list(declared_tool_names),
-        normalize_tool_list(declared_skill_names),
-    )
+fn requested_create_ability_items(payload: &AgentCreateRequest) -> Option<Vec<AbilityDescriptor>> {
+    payload.ability_items.clone().or_else(|| {
+        payload
+            .abilities
+            .as_ref()
+            .map(|abilities| abilities.items.clone())
+    })
+}
+
+fn requested_update_ability_items(payload: &AgentUpdateRequest) -> Option<Vec<AbilityDescriptor>> {
+    payload.ability_items.clone().or_else(|| {
+        payload
+            .abilities
+            .as_ref()
+            .map(|abilities| abilities.items.clone())
+    })
 }
 
 fn normalize_preset_questions(values: Vec<String>) -> Vec<String> {
@@ -2073,6 +2117,8 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     if config.sandbox_container_id <= 0 {
         config.sandbox_container_id = DEFAULT_SANDBOX_CONTAINER_ID;
     }
+    config.tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
+    config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
     config.preset_questions =
         normalize_preset_questions(std::mem::take(&mut config.preset_questions));
 }
@@ -2107,13 +2153,14 @@ async fn build_default_agent_config(
 ) -> DefaultAgentConfig {
     let context = build_user_tool_context(state, &user.user_id).await;
     let allowed = compute_allowed_tool_names(user, &context);
-    let mut tool_names = allowed.into_iter().collect::<Vec<_>>();
-    tool_names.sort();
+    let skill_name_keys = collect_context_skill_names(&context);
+    let tool_names = curated_default_tool_names(&allowed);
     let now = now_ts();
     let mut config = DefaultAgentConfig {
         name: DEFAULT_AGENT_NAME.to_string(),
         description: String::new(),
         system_prompt: String::new(),
+        ability_items: resolve_record_ability_items(&[], &tool_names, &[], &[], &skill_name_keys),
         tool_names,
         preset_questions: Vec::new(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
@@ -2150,6 +2197,7 @@ async fn resolve_default_agent_config(
             name: record.name,
             description: record.description,
             system_prompt: record.system_prompt,
+            ability_items: record.ability_items,
             tool_names: record.tool_names,
             preset_questions: record.preset_questions,
             approval_mode: record.approval_mode,
@@ -2165,8 +2213,19 @@ async fn resolve_default_agent_config(
     Ok(build_default_agent_config(state, user).await)
 }
 
-fn default_agent_payload(config: &DefaultAgentConfig, model_name: Option<&str>) -> Value {
+fn default_agent_payload(
+    config: &DefaultAgentConfig,
+    model_name: Option<&str>,
+    skill_name_keys: &HashSet<String>,
+) -> Value {
     let effective_model_name = normalize_request_model_name(model_name);
+    let ability_items = resolve_record_ability_items(
+        &config.ability_items,
+        &config.tool_names,
+        &[],
+        &[],
+        skill_name_keys,
+    );
     json!({
         "id": DEFAULT_AGENT_ID_ALIAS,
         "name": config.name,
@@ -2174,6 +2233,8 @@ fn default_agent_payload(config: &DefaultAgentConfig, model_name: Option<&str>) 
         "system_prompt": config.system_prompt,
         "configured_model_name": Value::Null,
         "model_name": effective_model_name,
+        "ability_items": ability_items.clone(),
+        "abilities": { "items": ability_items },
         "tool_names": config.tool_names,
         "declared_tool_names": Vec::<String>::new(),
         "declared_skill_names": Vec::<String>::new(),
@@ -2267,6 +2328,12 @@ fn error_response(status: StatusCode, message: String) -> Response {
 }
 
 #[derive(Debug, Deserialize)]
+struct AgentAbilitiesRequest {
+    #[serde(default)]
+    items: Vec<AbilityDescriptor>,
+}
+
+#[derive(Debug, Deserialize)]
 struct AgentCreateRequest {
     name: String,
     #[serde(default)]
@@ -2277,10 +2344,14 @@ struct AgentCreateRequest {
     model_name: Option<String>,
     #[serde(default)]
     tool_names: Vec<String>,
+    #[serde(default, alias = "abilityItems", alias = "ability_items")]
+    ability_items: Option<Vec<AbilityDescriptor>>,
+    #[serde(default)]
+    abilities: Option<AgentAbilitiesRequest>,
     #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]
-    declared_tool_names: Vec<String>,
+    declared_tool_names: Option<Vec<String>>,
     #[serde(default, alias = "declaredSkillNames", alias = "declared_skill_names")]
-    declared_skill_names: Vec<String>,
+    declared_skill_names: Option<Vec<String>>,
     #[serde(default, alias = "presetQuestions", alias = "preset_questions")]
     preset_questions: Vec<String>,
     #[serde(default)]
@@ -2351,6 +2422,10 @@ struct AgentUpdateRequest {
     model_name: Option<String>,
     #[serde(default)]
     tool_names: Option<Vec<String>>,
+    #[serde(default, alias = "abilityItems", alias = "ability_items")]
+    ability_items: Option<Vec<AbilityDescriptor>>,
+    #[serde(default)]
+    abilities: Option<AgentAbilitiesRequest>,
     #[serde(default, alias = "declaredToolNames", alias = "declared_tool_names")]
     declared_tool_names: Option<Vec<String>>,
     #[serde(default, alias = "declaredSkillNames", alias = "declared_skill_names")]
@@ -2405,6 +2480,8 @@ struct DefaultAgentConfig {
     #[serde(default)]
     system_prompt: String,
     #[serde(default)]
+    ability_items: Vec<AbilityDescriptor>,
+    #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
     preset_questions: Vec<String>,
@@ -2424,37 +2501,52 @@ struct DefaultAgentConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::split_declared_agent_dependencies;
-    use std::collections::HashSet;
+    use super::{requested_create_ability_items, AgentCreateRequest};
+    use serde_json::json;
 
     #[test]
-    fn split_declared_dependencies_stays_empty_without_explicit_worker_card_data() {
-        let requested = vec!["read_file".to_string(), "skill_get".to_string()];
-        let skill_names = HashSet::from(["skill_get".to_string()]);
-
-        let actual = split_declared_agent_dependencies(&requested, None, None, &skill_names);
-
-        assert_eq!(actual, (Vec::<String>::new(), Vec::<String>::new()));
+    fn create_request_reads_top_level_ability_items() {
+        let payload: AgentCreateRequest = serde_json::from_value(json!({
+            "name": "demo",
+            "ability_items": [{
+                "id": "builtin:read_file",
+                "name": "read_file",
+                "runtime_name": "read_file",
+                "display_name": "read_file",
+                "description": "",
+                "input_schema": {},
+                "group": "builtin",
+                "source": "builtin",
+                "kind": "tool"
+            }]
+        }))
+        .expect("parse payload");
+        let items = requested_create_ability_items(&payload).expect("ability items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].runtime_name, "read_file");
     }
 
     #[test]
-    fn split_declared_dependencies_keeps_explicit_worker_card_data() {
-        let requested = vec!["read_file".to_string()];
-        let skill_names = HashSet::from(["skill_get".to_string()]);
-
-        let actual = split_declared_agent_dependencies(
-            &requested,
-            Some(vec!["read_file".to_string(), "write_file".to_string()]),
-            Some(vec!["skill_get".to_string()]),
-            &skill_names,
-        );
-
-        assert_eq!(
-            actual,
-            (
-                vec!["read_file".to_string(), "write_file".to_string()],
-                vec!["skill_get".to_string()],
-            )
-        );
+    fn create_request_reads_nested_ability_items() {
+        let payload: AgentCreateRequest = serde_json::from_value(json!({
+            "name": "demo",
+            "abilities": {
+                "items": [{
+                    "id": "skill:planner",
+                    "name": "planner",
+                    "runtime_name": "planner",
+                    "display_name": "planner",
+                    "description": "",
+                    "input_schema": {},
+                    "group": "skills",
+                    "source": "skill",
+                    "kind": "skill"
+                }]
+            }
+        }))
+        .expect("parse payload");
+        let items = requested_create_ability_items(&payload).expect("ability items");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].runtime_name, "planner");
     }
 }

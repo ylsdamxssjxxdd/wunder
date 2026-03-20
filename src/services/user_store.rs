@@ -44,6 +44,8 @@ struct DefaultAgentConfigSnapshot {
     #[serde(default)]
     system_prompt: String,
     #[serde(default)]
+    ability_items: Vec<crate::schemas::AbilityDescriptor>,
+    #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
     preset_questions: Vec<String>,
@@ -1014,6 +1016,7 @@ pub(crate) fn build_default_agent_record_from_storage(
         description: snapshot.description,
         system_prompt: snapshot.system_prompt,
         model_name: None,
+        ability_items: snapshot.ability_items,
         tool_names: snapshot.tool_names.clone(),
         declared_tool_names: Vec::new(),
         declared_skill_names: Vec::new(),
@@ -1040,6 +1043,9 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     if config.approval_mode.trim().is_empty() {
         config.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
     }
+    config.ability_items = crate::services::agent_abilities::normalize_ability_items(
+        std::mem::take(&mut config.ability_items),
+    );
     config.sandbox_container_id = normalize_sandbox_container_id(config.sandbox_container_id);
     let now = now_ts();
     if config.created_at <= 0.0 {
@@ -1212,6 +1218,7 @@ mod tests {
             description: String::new(),
             system_prompt: String::new(),
             model_name: None,
+            ability_items: Vec::new(),
             tool_names: vec!["file_read".to_string()],
             declared_tool_names: Vec::new(),
             declared_skill_names: Vec::new(),

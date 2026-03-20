@@ -23,8 +23,8 @@ mod skill_call;
 mod sleep_tool;
 mod swarm_realtime;
 mod thread_control_tool;
-mod web_fetch_tool;
 pub(crate) mod tool_error;
+mod web_fetch_tool;
 
 #[cfg(test)]
 pub(crate) use catalog::builtin_tool_specs_with_language;

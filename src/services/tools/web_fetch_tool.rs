@@ -51,17 +51,8 @@ const PRIMARY_CONTENT_SELECTORS: &[(&str, f64)] = &[
 ];
 
 const ALWAYS_DROP_SELECTORS: &[&str] = &[
-    "script",
-    "style",
-    "noscript",
-    "template",
-    "svg",
-    "canvas",
-    "iframe",
-    "object",
-    "embed",
-    "meta",
-    "link",
+    "script", "style", "noscript", "template", "svg", "canvas", "iframe", "object", "embed",
+    "meta", "link",
 ];
 
 const STRONG_NOISE_KEYWORDS: &[&str] = &[
@@ -106,21 +97,8 @@ const STRONG_NOISE_KEYWORDS: &[&str] = &[
 ];
 
 const POSITIVE_HINT_KEYWORDS: &[&str] = &[
-    "article",
-    "content",
-    "main",
-    "post",
-    "entry",
-    "detail",
-    "doc",
-    "docs",
-    "markdown",
-    "prose",
-    "正文",
-    "内容",
-    "文章",
-    "详情",
-    "文档",
+    "article", "content", "main", "post", "entry", "detail", "doc", "docs", "markdown", "prose",
+    "正文", "内容", "文章", "详情", "文档",
 ];
 
 const NOISE_BLOCK_PHRASES: &[&str] = &[
@@ -262,12 +240,19 @@ pub async fn tool_web_fetch(context: &ToolContext<'_>, args: &Value) -> Result<V
     let decoded = decode_body_text(&fetched.body, fetched.content_type.as_deref());
     let content_type = normalize_content_type(fetched.content_type.as_deref())
         .unwrap_or_else(|| "application/octet-stream".to_string());
-    let warning = fetched
-        .body_truncated
-        .then(|| format!("Response body truncated after {} bytes.", config.max_response_bytes));
+    let warning = fetched.body_truncated.then(|| {
+        format!(
+            "Response body truncated after {} bytes.",
+            config.max_response_bytes
+        )
+    });
 
     let payload = if !status_is_success(fetched.status) {
-        let detail = truncate_chars(&extract_error_detail(&decoded, &content_type), MAX_ERROR_DETAIL_CHARS).0;
+        let detail = truncate_chars(
+            &extract_error_detail(&decoded, &content_type),
+            MAX_ERROR_DETAIL_CHARS,
+        )
+        .0;
         let message = if detail.is_empty() {
             let mut params = HashMap::new();
             params.insert("status".to_string(), fetched.status.to_string());
@@ -486,10 +471,13 @@ async fn validate_remote_target(url: &Url, timeout_secs: u64) -> Result<()> {
 
     let resolver = TokioAsyncResolver::tokio_from_system_conf()
         .map_err(|err| anyhow!(format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed"))))?;
-    let lookup = timeout(Duration::from_secs(timeout_secs), resolver.lookup_ip(ascii_host.clone()))
-        .await
-        .map_err(|_| anyhow!(i18n::t("tool.web_fetch.timeout")))?
-        .map_err(|err| anyhow!(format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed"))))?;
+    let lookup = timeout(
+        Duration::from_secs(timeout_secs),
+        resolver.lookup_ip(ascii_host.clone()),
+    )
+    .await
+    .map_err(|_| anyhow!(i18n::t("tool.web_fetch.timeout")))?
+    .map_err(|err| anyhow!(format!("{}: {err}", i18n::t("tool.web_fetch.dns_failed"))))?;
     let mut resolved_any = false;
     for ip in lookup.iter() {
         resolved_any = true;
@@ -546,7 +534,9 @@ fn ipv6_mapped_ipv4(value: Ipv6Addr) -> Option<Ipv4Addr> {
     let segments = value.segments();
     if segments[..5] == [0, 0, 0, 0, 0] && matches!(segments[5], 0 | 0xffff) {
         let octets = value.octets();
-        return Some(Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]));
+        return Some(Ipv4Addr::new(
+            octets[12], octets[13], octets[14], octets[15],
+        ));
     }
     None
 }
@@ -682,9 +672,7 @@ fn looks_like_text(bytes: &[u8]) -> bool {
     let control = bytes
         .iter()
         .take(sample)
-        .filter(|byte| {
-            **byte < 0x20 && !matches!(**byte, b'\n' | b'\r' | b'\t')
-        })
+        .filter(|byte| **byte < 0x20 && !matches!(**byte, b'\n' | b'\r' | b'\t'))
         .count();
     (control as f64) / (sample as f64) < 0.12
 }
@@ -772,7 +760,10 @@ fn build_tool_result(
 }
 
 fn merge_warnings(primary: Option<&str>, secondary: Option<String>) -> Option<String> {
-    match (primary.map(str::trim).filter(|value| !value.is_empty()), secondary) {
+    match (
+        primary.map(str::trim).filter(|value| !value.is_empty()),
+        secondary,
+    ) {
         (Some(left), Some(right)) => Some(format!("{left} {right}")),
         (Some(left), None) => Some(left.to_string()),
         (None, Some(right)) => Some(right),
@@ -798,7 +789,10 @@ fn extract_html_content(html: &str, mode: ExtractMode) -> Result<HtmlExtraction>
     let title = extract_title(&document);
     sanitize_document(&document);
 
-    let body_node = document.select_first("body").ok().map(|node| node.as_node().clone());
+    let body_node = document
+        .select_first("body")
+        .ok()
+        .map(|node| node.as_node().clone());
     let selected_node = select_main_container(&document).or_else(|| body_node.clone());
     let mut extractor = "main-content".to_string();
     let mut markdown = selected_node
@@ -933,7 +927,8 @@ fn should_detach_node(node: &NodeRef) -> bool {
         return true;
     }
 
-    let hint_text = format!("{} {}", class_name, attrs.get("id").unwrap_or("")).to_ascii_lowercase();
+    let hint_text =
+        format!("{} {}", class_name, attrs.get("id").unwrap_or("")).to_ascii_lowercase();
     has_strong_noise_keyword(&hint_text) && !has_positive_hint_keyword(&hint_text)
 }
 
@@ -941,7 +936,13 @@ fn has_hidden_class(class_name: &str) -> bool {
     class_name.split_whitespace().any(|name| {
         matches!(
             name.to_ascii_lowercase().as_str(),
-            "hidden" | "sr-only" | "visually-hidden" | "screen-reader-only" | "offscreen" | "invisible" | "d-none"
+            "hidden"
+                | "sr-only"
+                | "visually-hidden"
+                | "screen-reader-only"
+                | "offscreen"
+                | "invisible"
+                | "d-none"
         )
     })
 }
@@ -960,11 +961,15 @@ fn is_hidden_style(style: &str) -> bool {
 }
 
 fn has_strong_noise_keyword(text: &str) -> bool {
-    STRONG_NOISE_KEYWORDS.iter().any(|keyword| text.contains(keyword))
+    STRONG_NOISE_KEYWORDS
+        .iter()
+        .any(|keyword| text.contains(keyword))
 }
 
 fn has_positive_hint_keyword(text: &str) -> bool {
-    POSITIVE_HINT_KEYWORDS.iter().any(|keyword| text.contains(keyword))
+    POSITIVE_HINT_KEYWORDS
+        .iter()
+        .any(|keyword| text.contains(keyword))
 }
 
 fn extract_title(document: &NodeRef) -> Option<String> {
@@ -1046,7 +1051,11 @@ fn summarize_candidate(node: &NodeRef) -> CandidateStats {
         .flat_map(|selection| selection.map(|item| normalize_text_block(&item.text_contents())))
         .filter(|text| text.chars().count() >= 8)
         .count();
-    let heading_count = node.select("h1, h2, h3").ok().map(|value| value.count()).unwrap_or(0);
+    let heading_count = node
+        .select("h1, h2, h3")
+        .ok()
+        .map(|value| value.count())
+        .unwrap_or(0);
     let hint_text = node
         .as_element()
         .map(|element| {
@@ -1194,7 +1203,9 @@ fn is_noise_block(block: &str) -> bool {
 
     let lower = plain.to_lowercase();
     if plain.chars().count() <= 180
-        && NOISE_BLOCK_PHRASES.iter().any(|phrase| lower.contains(phrase))
+        && NOISE_BLOCK_PHRASES
+            .iter()
+            .any(|phrase| lower.contains(phrase))
     {
         return true;
     }
@@ -1220,12 +1231,18 @@ fn canonicalize_block_for_dedupe(block: &str) -> String {
 
 fn markdown_to_text(markdown: &str) -> String {
     let mut stripped = markdown.to_string();
-    stripped = markdown_image_regex().replace_all(&stripped, "").into_owned();
-    stripped = markdown_link_regex().replace_all(&stripped, "$1").into_owned();
+    stripped = markdown_image_regex()
+        .replace_all(&stripped, "")
+        .into_owned();
+    stripped = markdown_link_regex()
+        .replace_all(&stripped, "$1")
+        .into_owned();
     stripped = markdown_inline_code_regex()
         .replace_all(&stripped, "$1")
         .into_owned();
-    stripped = markdown_heading_regex().replace_all(&stripped, "").into_owned();
+    stripped = markdown_heading_regex()
+        .replace_all(&stripped, "")
+        .into_owned();
     stripped = markdown_unordered_list_regex()
         .replace_all(&stripped, "")
         .into_owned();
@@ -1270,12 +1287,19 @@ fn normalize_text_block(text: &str) -> String {
 
 fn count_punctuation(text: &str) -> usize {
     text.chars()
-        .filter(|ch| matches!(ch, '.' | ',' | ';' | ':' | '!' | '?' | '，' | '。' | '！' | '？' | '；' | '：'))
+        .filter(|ch| {
+            matches!(
+                ch,
+                '.' | ',' | ';' | ':' | '!' | '?' | '，' | '。' | '！' | '？' | '；' | '：'
+            )
+        })
         .count()
 }
 
 fn strip_invisible_unicode(text: &str) -> String {
-    text.chars().filter(|ch| !is_invisible_unicode(*ch)).collect()
+    text.chars()
+        .filter(|ch| !is_invisible_unicode(*ch))
+        .collect()
 }
 
 fn is_invisible_unicode(ch: char) -> bool {
@@ -1389,7 +1413,9 @@ mod tests {
     fn noise_block_filters_footer_and_breadcrumbs() {
         assert!(is_noise_block("Home > Docs > Tools"));
         assert!(is_noise_block("All rights reserved"));
-        assert!(!is_noise_block("This is an actual paragraph with enough content to keep."));
+        assert!(!is_noise_block(
+            "This is an actual paragraph with enough content to keep."
+        ));
     }
 
     #[test]
@@ -1414,11 +1440,19 @@ mod tests {
 
     #[test]
     fn private_ip_detection_blocks_internal_ranges() {
-        assert!(ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
-        assert!(ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(10, 1, 2, 3))));
-        assert!(ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(
+            127, 0, 0, 1
+        ))));
+        assert!(ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(
+            10, 1, 2, 3
+        ))));
+        assert!(ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(
+            100, 64, 0, 1
+        ))));
         assert!(ip_is_private_or_internal(IpAddr::V6(Ipv6Addr::LOCALHOST)));
-        assert!(!ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34))));
+        assert!(!ip_is_private_or_internal(IpAddr::V4(Ipv4Addr::new(
+            93, 184, 216, 34
+        ))));
     }
 
     #[test]

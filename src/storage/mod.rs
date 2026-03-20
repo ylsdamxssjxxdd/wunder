@@ -4,6 +4,7 @@ mod postgres;
 mod sqlite;
 
 use crate::config::StorageConfig;
+use crate::schemas::AbilityDescriptor;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -121,6 +122,8 @@ pub struct UserAgentPresetSnapshot {
     pub system_prompt: String,
     #[serde(default)]
     pub model_name: Option<String>,
+    #[serde(default)]
+    pub ability_items: Vec<AbilityDescriptor>,
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,
@@ -155,6 +158,7 @@ pub struct UserAgentRecord {
     pub description: String,
     pub system_prompt: String,
     pub model_name: Option<String>,
+    pub ability_items: Vec<AbilityDescriptor>,
     pub tool_names: Vec<String>,
     pub declared_tool_names: Vec<String>,
     pub declared_skill_names: Vec<String>,

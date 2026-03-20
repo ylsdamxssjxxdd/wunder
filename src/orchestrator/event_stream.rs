@@ -1,5 +1,5 @@
-use super::*;
 use super::thread_runtime::{thread_closed_payload, thread_not_loaded_payload};
+use super::*;
 
 pub(super) enum StreamSignal {
     Event(StreamEvent),
