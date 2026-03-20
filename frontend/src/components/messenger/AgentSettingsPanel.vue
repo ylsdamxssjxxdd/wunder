@@ -578,6 +578,17 @@ const reloadAgent = async () => {
   await loadAgent(requestId);
 };
 
+const refreshAgentFromExternalChange = () => {
+  if (!panelMounted.value || panelDisposed || !canView.value) return;
+  if (document.visibilityState !== 'visible') return;
+  void loadAgent();
+};
+
+const handleAgentSettingsVisibilityChange = () => {
+  if (document.visibilityState !== 'visible') return;
+  refreshAgentFromExternalChange();
+};
+
 const saveAgent = async () => {
   if (!canEdit.value) return;
   const name = String(form.name || '').trim();
@@ -669,6 +680,8 @@ onMounted(() => {
     }
     void loadToolSummary();
   });
+  window.addEventListener('focus', refreshAgentFromExternalChange);
+  document.addEventListener('visibilitychange', handleAgentSettingsVisibilityChange);
   void reloadAgent();
   scheduleFocusTargetIfNeeded();
 });
@@ -691,6 +704,8 @@ watch(
 onBeforeUnmount(() => {
   panelDisposed = true;
   latestAgentLoadRequestId += 1;
+  window.removeEventListener('focus', refreshAgentFromExternalChange);
+  document.removeEventListener('visibilitychange', handleAgentSettingsVisibilityChange);
   if (stopUserToolsUpdatedListener) {
     stopUserToolsUpdatedListener();
     stopUserToolsUpdatedListener = null;

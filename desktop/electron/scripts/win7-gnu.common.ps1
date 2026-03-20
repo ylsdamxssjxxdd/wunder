@@ -86,6 +86,75 @@ function Assert-Win7GnuPath {
   }
 }
 
+function Get-Win7GnuDefaultCargoHome {
+  if ($env:CARGO_HOME -and (Test-Path $env:CARGO_HOME)) {
+    return [System.IO.Path]::GetFullPath($env:CARGO_HOME)
+  }
+
+  $defaultCargoHome = Join-Path $env:USERPROFILE '.cargo'
+  if (Test-Path $defaultCargoHome) {
+    return $defaultCargoHome
+  }
+
+  return $null
+}
+
+function Test-Win7GnuDirectoryHasEntries {
+  param([string]$Path)
+
+  if (-not (Test-Path $Path)) {
+    return $false
+  }
+
+  return [bool](Get-ChildItem -Path $Path -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
+}
+
+function Seed-Win7GnuCargoHome {
+  param([hashtable]$Context)
+
+  $defaultCargoHome = Get-Win7GnuDefaultCargoHome
+  if (-not $defaultCargoHome) {
+    return
+  }
+
+  $defaultCargoHome = [System.IO.Path]::GetFullPath($defaultCargoHome)
+  $targetCargoHome = [System.IO.Path]::GetFullPath($Context.CargoHome)
+  if ($defaultCargoHome -eq $targetCargoHome) {
+    return
+  }
+
+  # Reuse the local Cargo cache to reduce Win7 bootstrap dependence on crates.io.
+  foreach ($entryName in @('registry', 'git')) {
+    $sourcePath = Join-Path $defaultCargoHome $entryName
+    $targetPath = Join-Path $targetCargoHome $entryName
+    if (-not (Test-Path $sourcePath)) {
+      continue
+    }
+    if (Test-Win7GnuDirectoryHasEntries -Path $targetPath) {
+      continue
+    }
+
+    Write-Win7GnuStep "seeding Cargo cache: $sourcePath -> $targetPath"
+    Ensure-Win7GnuDirectory -Path $targetPath
+    $robocopyArgs = @(
+      $sourcePath,
+      $targetPath,
+      '/E',
+      '/R:1',
+      '/W:1',
+      '/NFL',
+      '/NDL',
+      '/NJH',
+      '/NJS',
+      '/NP'
+    )
+    & robocopy.exe @robocopyArgs | Out-Null
+    if ($LASTEXITCODE -gt 7) {
+      throw "robocopy failed while seeding Cargo cache ($entryName) with exit code $LASTEXITCODE"
+    }
+  }
+}
+
 function Resolve-WindowsTargetsCompatLibDir {
   param(
     [string]$CargoHome,
@@ -219,6 +288,7 @@ function Initialize-Win7GnuToolchain {
   Ensure-Win7GnuDirectory -Path $Context.LabRoot
   Ensure-Win7GnuDirectory -Path $Context.CargoHome
   Ensure-Win7GnuDirectory -Path $Context.BridgeTargetDir
+  Seed-Win7GnuCargoHome -Context $Context
 
   Test-Win7GnuPrerequisites -Context $Context
   Write-Win7GnuPatchConfig -Context $Context

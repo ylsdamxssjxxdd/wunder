@@ -5,6 +5,7 @@ use crate::monitor::MonitorState;
 use crate::schemas::AbilityDescriptor;
 use crate::services::agent_abilities::{
     normalize_ability_items, resolve_agent_ability_selection, resolve_record_ability_items,
+    resolve_record_declared_names,
 };
 use crate::services::default_tool_profile::curated_default_tool_names;
 use crate::services::llm::is_llm_model;
@@ -1086,6 +1087,8 @@ async fn update_agent(
         if payload.tool_names.is_some()
             || payload.ability_items.is_some()
             || payload.abilities.is_some()
+            || payload.declared_tool_names.is_some()
+            || payload.declared_skill_names.is_some()
         {
             let requested_tool_names = payload
                 .tool_names
@@ -1095,12 +1098,20 @@ async fn update_agent(
             let selection = resolve_agent_ability_selection(
                 &requested_tool_names,
                 requested_ability_items,
-                Some(Vec::new()),
-                Some(Vec::new()),
+                payload
+                    .declared_tool_names
+                    .clone()
+                    .or_else(|| Some(config.declared_tool_names.clone())),
+                payload
+                    .declared_skill_names
+                    .clone()
+                    .or_else(|| Some(config.declared_skill_names.clone())),
                 &skill_name_keys,
             );
             config.tool_names = filter_allowed_tools(&selection.tool_names, &allowed);
             config.ability_items = selection.ability_items;
+            config.declared_tool_names = selection.declared_tool_names;
+            config.declared_skill_names = selection.declared_skill_names;
         }
         if let Some(preset_questions) = payload.preset_questions {
             config.preset_questions = normalize_preset_questions(preset_questions);
@@ -2119,6 +2130,10 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     }
     config.tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
     config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
+    config.declared_tool_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_tool_names));
+    config.declared_skill_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_skill_names));
     config.preset_questions =
         normalize_preset_questions(std::mem::take(&mut config.preset_questions));
 }
@@ -2162,6 +2177,8 @@ async fn build_default_agent_config(
         system_prompt: String::new(),
         ability_items: resolve_record_ability_items(&[], &tool_names, &[], &[], &skill_name_keys),
         tool_names,
+        declared_tool_names: Vec::new(),
+        declared_skill_names: Vec::new(),
         preset_questions: Vec::new(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
         status: DEFAULT_AGENT_STATUS.to_string(),
@@ -2170,6 +2187,15 @@ async fn build_default_agent_config(
         created_at: now,
         updated_at: now,
     };
+    let (declared_tool_names, declared_skill_names) = resolve_record_declared_names(
+        &config.ability_items,
+        &config.tool_names,
+        &config.declared_tool_names,
+        &config.declared_skill_names,
+        &skill_name_keys,
+    );
+    config.declared_tool_names = declared_tool_names;
+    config.declared_skill_names = declared_skill_names;
     normalize_default_agent_config(&mut config);
     config
 }
@@ -2199,6 +2225,8 @@ async fn resolve_default_agent_config(
             system_prompt: record.system_prompt,
             ability_items: record.ability_items,
             tool_names: record.tool_names,
+            declared_tool_names: record.declared_tool_names,
+            declared_skill_names: record.declared_skill_names,
             preset_questions: record.preset_questions,
             approval_mode: record.approval_mode,
             status: record.status,
@@ -2219,11 +2247,18 @@ fn default_agent_payload(
     skill_name_keys: &HashSet<String>,
 ) -> Value {
     let effective_model_name = normalize_request_model_name(model_name);
+    let (declared_tool_names, declared_skill_names) = resolve_record_declared_names(
+        &config.ability_items,
+        &config.tool_names,
+        &config.declared_tool_names,
+        &config.declared_skill_names,
+        skill_name_keys,
+    );
     let ability_items = resolve_record_ability_items(
         &config.ability_items,
         &config.tool_names,
-        &[],
-        &[],
+        &declared_tool_names,
+        &declared_skill_names,
         skill_name_keys,
     );
     json!({
@@ -2236,8 +2271,8 @@ fn default_agent_payload(
         "ability_items": ability_items.clone(),
         "abilities": { "items": ability_items },
         "tool_names": config.tool_names,
-        "declared_tool_names": Vec::<String>::new(),
-        "declared_skill_names": Vec::<String>::new(),
+        "declared_tool_names": declared_tool_names,
+        "declared_skill_names": declared_skill_names,
         "preset_questions": config.preset_questions,
         "access_level": DEFAULT_AGENT_ACCESS_LEVEL,
         "approval_mode": normalize_agent_approval_mode(Some(&config.approval_mode)),
@@ -2484,6 +2519,10 @@ struct DefaultAgentConfig {
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
+    declared_tool_names: Vec<String>,
+    #[serde(default)]
+    declared_skill_names: Vec<String>,
+    #[serde(default)]
     preset_questions: Vec<String>,
     #[serde(default)]
     approval_mode: String,
@@ -2501,8 +2540,12 @@ struct DefaultAgentConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{requested_create_ability_items, AgentCreateRequest};
+    use super::{
+        default_agent_payload, requested_create_ability_items, AgentCreateRequest,
+        DefaultAgentConfig,
+    };
     use serde_json::json;
+    use std::collections::HashSet;
 
     #[test]
     fn create_request_reads_top_level_ability_items() {
@@ -2548,5 +2591,33 @@ mod tests {
         let items = requested_create_ability_items(&payload).expect("ability items");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].runtime_name, "planner");
+    }
+
+    #[test]
+    fn default_agent_payload_keeps_declared_dependencies() {
+        let payload = default_agent_payload(
+            &DefaultAgentConfig {
+                name: "Default Agent".to_string(),
+                description: String::new(),
+                system_prompt: String::new(),
+                ability_items: Vec::new(),
+                tool_names: vec!["read_file".to_string(), "planner".to_string()],
+                declared_tool_names: vec!["read_file".to_string()],
+                declared_skill_names: vec!["planner".to_string()],
+                preset_questions: Vec::new(),
+                approval_mode: "full_auto".to_string(),
+                status: "active".to_string(),
+                icon: None,
+                sandbox_container_id: 1,
+                created_at: 1.0,
+                updated_at: 1.0,
+            },
+            None,
+            &HashSet::from(["planner".to_string()]),
+        );
+
+        assert_eq!(payload["tool_names"], json!(["read_file", "planner"]));
+        assert_eq!(payload["declared_tool_names"], json!(["read_file"]));
+        assert_eq!(payload["declared_skill_names"], json!(["planner"]));
     }
 }

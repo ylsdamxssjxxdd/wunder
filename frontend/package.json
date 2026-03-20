@@ -13,7 +13,7 @@
     "test:chat-pending": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/chat-pending-regression.test.js",
     "test:chat-timing": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/chat-timing-regression.test.js",
     "test:message-render": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-render-regression.test.js",
-    "typecheck:vue": "vue-tsc --noEmit",
+    "typecheck:vue": "node ./scripts/run-vue-tsc.mjs --noEmit",
     "typecheck:ts": "tsc --noEmit",
     "typecheck:api": "tsc -p tsconfig.api-strict.json --pretty false",
     "test:realtime-pulse": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/realtime-pulse-regression.test.js"

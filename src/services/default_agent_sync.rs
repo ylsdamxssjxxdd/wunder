@@ -42,6 +42,10 @@ struct DefaultAgentConfig {
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
+    declared_tool_names: Vec<String>,
+    #[serde(default)]
+    declared_skill_names: Vec<String>,
+    #[serde(default)]
     preset_questions: Vec<String>,
     #[serde(default)]
     approval_mode: String,
@@ -103,6 +107,10 @@ fn normalize_default_agent_config(config: &mut DefaultAgentConfig) {
     config.system_prompt = config.system_prompt.trim().to_string();
     config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
     config.tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
+    config.declared_tool_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_tool_names));
+    config.declared_skill_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_skill_names));
     config.preset_questions =
         normalize_preset_questions(std::mem::take(&mut config.preset_questions));
     config.approval_mode = normalize_agent_approval_mode(Some(&config.approval_mode));
@@ -124,6 +132,8 @@ fn config_from_record(record: &UserAgentRecord) -> DefaultAgentConfig {
         system_prompt: record.system_prompt.clone(),
         ability_items: normalize_ability_items(record.ability_items.clone()),
         tool_names: record.tool_names.clone(),
+        declared_tool_names: record.declared_tool_names.clone(),
+        declared_skill_names: record.declared_skill_names.clone(),
         preset_questions: record.preset_questions.clone(),
         approval_mode: record.approval_mode.clone(),
         status: record.status.clone(),
@@ -147,8 +157,8 @@ fn record_from_config(user_id: &str, config: &DefaultAgentConfig) -> UserAgentRe
         model_name: None,
         ability_items: config.ability_items.clone(),
         tool_names: config.tool_names.clone(),
-        declared_tool_names: Vec::new(),
-        declared_skill_names: Vec::new(),
+        declared_tool_names: config.declared_tool_names.clone(),
+        declared_skill_names: config.declared_skill_names.clone(),
         preset_questions: config.preset_questions.clone(),
         access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
         approval_mode: config.approval_mode.clone(),
@@ -202,6 +212,8 @@ async fn build_default_agent_config(
             &std::collections::HashSet::new(),
         ),
         tool_names,
+        declared_tool_names: Vec::new(),
+        declared_skill_names: Vec::new(),
         preset_questions: Vec::new(),
         approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
         status: DEFAULT_AGENT_STATUS.to_string(),
@@ -254,8 +266,8 @@ fn snapshot_from_default_record(record: &UserAgentRecord) -> UserAgentPresetSnap
             if ability_items.is_empty() {
                 build_ability_items_from_legacy(
                     &record.tool_names,
-                    &[],
-                    &[],
+                    &record.declared_tool_names,
+                    &record.declared_skill_names,
                     &std::collections::HashSet::new(),
                 )
             } else {
@@ -263,8 +275,8 @@ fn snapshot_from_default_record(record: &UserAgentRecord) -> UserAgentPresetSnap
             }
         },
         tool_names: normalize_tool_list(record.tool_names.clone()),
-        declared_tool_names: Vec::new(),
-        declared_skill_names: Vec::new(),
+        declared_tool_names: normalize_tool_list(record.declared_tool_names.clone()),
+        declared_skill_names: normalize_tool_list(record.declared_skill_names.clone()),
         preset_questions: normalize_preset_questions(record.preset_questions.clone()),
         approval_mode: normalize_agent_approval_mode(Some(&record.approval_mode)),
         status: normalize_agent_status(Some(&record.status)),
@@ -295,13 +307,13 @@ async fn build_target_snapshot(
         model_name: None,
         ability_items: build_ability_items_from_legacy(
             &tool_names,
-            &[],
-            &[],
+            &template.declared_tool_names,
+            &template.declared_skill_names,
             &std::collections::HashSet::new(),
         ),
         tool_names,
-        declared_tool_names: Vec::new(),
-        declared_skill_names: Vec::new(),
+        declared_tool_names: template.declared_tool_names.clone(),
+        declared_skill_names: template.declared_skill_names.clone(),
         preset_questions: template.preset_questions.clone(),
         approval_mode: template.approval_mode.clone(),
         status: template.status.clone(),
@@ -454,8 +466,8 @@ fn persist_default_agent_state(
         legacy.agent_id = DEFAULT_AGENT_ID_ALIAS.to_string();
         legacy.hive_id = DEFAULT_HIVE_ID.to_string();
         legacy.model_name = None;
-        legacy.declared_tool_names = Vec::new();
-        legacy.declared_skill_names = Vec::new();
+        legacy.declared_tool_names = config.declared_tool_names.clone();
+        legacy.declared_skill_names = config.declared_skill_names.clone();
         legacy.access_level = DEFAULT_AGENT_ACCESS_LEVEL.to_string();
         legacy.is_shared = false;
         legacy.preset_binding = None;

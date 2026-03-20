@@ -457,9 +457,11 @@ export const parseWorkerCardText = (raw: string): WorkerCardDocument[] => {
 
 export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<string, unknown> => {
   const abilities = normalizeWorkerCardAbilities(document.abilities);
-  const abilityItems = normalizeAgentAbilityItems(abilities.items);
   const declaredToolNames = normalizeStringList(abilities.tool_names);
   const declaredSkillNames = normalizeStringList(abilities.skills);
+  const abilityItems = normalizeAgentAbilityItems(
+    buildMergedWorkerCardAbilityItems(abilities.items, declaredToolNames, declaredSkillNames)
+  );
   const payload: Record<string, unknown> = {
     name: trimString(document.metadata.name),
     description: trimString(document.metadata.description),

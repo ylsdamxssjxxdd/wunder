@@ -48,6 +48,10 @@ struct DefaultAgentConfigSnapshot {
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
+    declared_tool_names: Vec<String>,
+    #[serde(default)]
+    declared_skill_names: Vec<String>,
+    #[serde(default)]
     preset_questions: Vec<String>,
     #[serde(default)]
     approval_mode: String,
@@ -1018,8 +1022,8 @@ pub(crate) fn build_default_agent_record_from_storage(
         model_name: None,
         ability_items: snapshot.ability_items,
         tool_names: snapshot.tool_names.clone(),
-        declared_tool_names: Vec::new(),
-        declared_skill_names: Vec::new(),
+        declared_tool_names: snapshot.declared_tool_names,
+        declared_skill_names: snapshot.declared_skill_names,
         preset_questions: snapshot.preset_questions,
         access_level: DEFAULT_AGENT_ACCESS_LEVEL.to_string(),
         approval_mode: snapshot.approval_mode,
@@ -1043,8 +1047,17 @@ fn normalize_default_agent_snapshot(config: &mut DefaultAgentConfigSnapshot) {
     if config.approval_mode.trim().is_empty() {
         config.approval_mode = DEFAULT_AGENT_APPROVAL_MODE.to_string();
     }
+    config.tool_names = crate::services::user_agent_presets::normalize_tool_list(std::mem::take(
+        &mut config.tool_names,
+    ));
     config.ability_items = crate::services::agent_abilities::normalize_ability_items(
         std::mem::take(&mut config.ability_items),
+    );
+    config.declared_tool_names = crate::services::user_agent_presets::normalize_tool_list(
+        std::mem::take(&mut config.declared_tool_names),
+    );
+    config.declared_skill_names = crate::services::user_agent_presets::normalize_tool_list(
+        std::mem::take(&mut config.declared_skill_names),
     );
     config.sandbox_container_id = normalize_sandbox_container_id(config.sandbox_container_id);
     let now = now_ts();

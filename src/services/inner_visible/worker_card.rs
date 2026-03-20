@@ -7,7 +7,7 @@ use crate::storage::{UserAgentRecord, DEFAULT_HIVE_ID, DEFAULT_SANDBOX_CONTAINER
 use chrono::Utc;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkerCardDocument {
@@ -379,6 +379,36 @@ fn compact_worker_card_ability_items(
 }
 
 fn parse_document_ability_items(abilities: &WorkerCardAbilities) -> Vec<AbilityDescriptor> {
+    let (tool_names, skill_names) = split_document_worker_card_abilities(abilities);
+    if abilities.tool_names_present || abilities.skills_present {
+        let mut overrides = HashMap::new();
+        for item in abilities
+            .items
+            .iter()
+            .map(worker_card_item_to_ability_descriptor)
+            .collect::<Vec<_>>()
+        {
+            let normalized_name = item.runtime_name.trim();
+            if normalized_name.is_empty() {
+                continue;
+            }
+            overrides.insert(
+                format!("{:?}:{normalized_name}", item.kind),
+                AbilityDescriptor {
+                    runtime_name: normalized_name.to_string(),
+                    ..item
+                },
+            );
+        }
+        return build_ability_items_from_names(&tool_names, &skill_names)
+            .into_iter()
+            .map(|item| {
+                let key = format!("{:?}:{}", item.kind, item.runtime_name);
+                overrides.remove(&key).unwrap_or(item)
+            })
+            .collect();
+    }
+
     let items = abilities
         .items
         .iter()
@@ -388,7 +418,6 @@ fn parse_document_ability_items(abilities: &WorkerCardAbilities) -> Vec<AbilityD
     if !normalized.is_empty() {
         return normalized;
     }
-    let (tool_names, skill_names) = split_document_worker_card_abilities(abilities);
     build_ability_items_from_names(&tool_names, &skill_names)
 }
 
@@ -694,5 +723,34 @@ mod tests {
             payload.tool_names,
             vec!["read_file".to_string(), "planner".to_string()]
         );
+    }
+
+    #[test]
+    fn parse_worker_card_prefers_explicit_arrays_over_stale_items() {
+        let payload = parse_worker_card(
+            serde_json::from_str(
+                r#"{
+                  "schema_version": "wunder/worker-card@2",
+                  "metadata": { "name": "demo" },
+                  "abilities": {
+                    "items": [
+                      { "runtime_name": "read_file", "kind": "tool" },
+                      { "runtime_name": "planner", "kind": "skill" }
+                    ],
+                    "tool_names": ["read_file"],
+                    "skills": []
+                  }
+                }"#,
+            )
+            .expect("worker card"),
+            None,
+        );
+        assert_eq!(payload.declared_tool_names, vec!["read_file".to_string()]);
+        assert!(payload.declared_skill_names.is_empty());
+        assert_eq!(payload.tool_names, vec!["read_file".to_string()]);
+        assert!(payload
+            .ability_items
+            .iter()
+            .all(|item| item.runtime_name != "planner"));
     }
 }

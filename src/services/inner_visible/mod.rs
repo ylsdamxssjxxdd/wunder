@@ -367,6 +367,8 @@ impl InnerVisibleService {
                 system_prompt: record.system_prompt,
                 ability_items: record.ability_items,
                 tool_names: record.tool_names,
+                declared_tool_names: record.declared_tool_names,
+                declared_skill_names: record.declared_skill_names,
                 preset_questions: record.preset_questions,
                 approval_mode: record.approval_mode,
                 status: record.status,
@@ -385,6 +387,8 @@ impl InnerVisibleService {
             system_prompt: String::new(),
             ability_items: Vec::new(),
             tool_names: curated_default_tool_names(allowed_tool_names),
+            declared_tool_names: Vec::new(),
+            declared_skill_names: Vec::new(),
             preset_questions: Vec::new(),
             approval_mode: DEFAULT_AGENT_APPROVAL_MODE.to_string(),
             status: DEFAULT_AGENT_STATUS.to_string(),
@@ -413,7 +417,10 @@ impl InnerVisibleService {
         }
         config.description = parsed.description;
         config.system_prompt = parsed.system_prompt;
+        config.ability_items = parsed.ability_items;
         config.tool_names = filter_allowed_tools(&parsed.tool_names, allowed_tool_names);
+        config.declared_tool_names = parsed.declared_tool_names;
+        config.declared_skill_names = parsed.declared_skill_names;
         config.preset_questions = normalize_preset_questions(parsed.preset_questions);
         config.approval_mode = normalize_agent_approval_mode(Some(&parsed.approval_mode));
         config.status = normalize_agent_status(Some(DEFAULT_AGENT_STATUS));
@@ -536,6 +543,10 @@ struct DefaultAgentConfigMirror {
     #[serde(default)]
     tool_names: Vec<String>,
     #[serde(default)]
+    declared_tool_names: Vec<String>,
+    #[serde(default)]
+    declared_skill_names: Vec<String>,
+    #[serde(default)]
     preset_questions: Vec<String>,
     #[serde(default)]
     approval_mode: String,
@@ -567,8 +578,27 @@ fn normalize_default_agent_config(
     config.description = config.description.trim().to_string();
     config.system_prompt = config.system_prompt.trim().to_string();
     config.ability_items = normalize_ability_items(std::mem::take(&mut config.ability_items));
+    config.declared_tool_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_tool_names));
+    config.declared_skill_names =
+        normalize_tool_list(std::mem::take(&mut config.declared_skill_names));
+    let mut selected_tool_names = normalize_tool_list(std::mem::take(&mut config.tool_names));
+    selected_tool_names.extend(
+        config
+            .declared_tool_names
+            .iter()
+            .filter(|name| allowed_tool_names.contains(*name))
+            .cloned(),
+    );
+    selected_tool_names.extend(
+        config
+            .declared_skill_names
+            .iter()
+            .filter(|name| allowed_tool_names.contains(*name))
+            .cloned(),
+    );
     config.tool_names = filter_allowed_tools(
-        &normalize_tool_list(std::mem::take(&mut config.tool_names)),
+        &normalize_tool_list(selected_tool_names),
         allowed_tool_names,
     );
     config.preset_questions =
@@ -598,8 +628,8 @@ fn record_from_default_config(user_id: &str, config: &DefaultAgentConfigMirror) 
         model_name: None,
         ability_items: config.ability_items.clone(),
         tool_names: config.tool_names.clone(),
-        declared_tool_names: Vec::new(),
-        declared_skill_names: Vec::new(),
+        declared_tool_names: config.declared_tool_names.clone(),
+        declared_skill_names: config.declared_skill_names.clone(),
         preset_questions: config.preset_questions.clone(),
         access_level: "A".to_string(),
         approval_mode: config.approval_mode.clone(),
@@ -1140,18 +1170,27 @@ mod tests {
             })
             .expect("seed default agent");
 
+        let private_root = service.private_root(user_id);
+        let skill_name = "default_sync_skill";
+        let skill_alias = format!("{user_id}@{skill_name}");
+        write_test_skill(&private_root.join("skills"), skill_name);
+        service
+            .user_tool_store
+            .update_skills(user_id, vec![skill_name.to_string()], Vec::new())
+            .expect("enable test skill");
+        service.user_tool_manager.clear_skill_cache(Some(user_id));
+
         let config = service.config_store.get().await;
         let skills = service.skills.read().await.clone();
         let allowed = service
             .allowed_tool_names(user_id, &config, &skills)
             .expect("allowed tools");
-        let selected_tool = pick_stable_allowed_tool(&allowed, None);
+        let selected_tool = pick_stable_allowed_tool(&allowed, Some(&skill_alias));
 
         service
             .sync_user_state(user_id)
             .await
             .expect("initial sync");
-        let private_root = service.private_root(user_id);
         let default_card = private_root
             .join("agents")
             .join("__default__.worker-card.json");
@@ -1163,6 +1202,7 @@ mod tests {
         document.prompt.system_prompt = None;
         document.prompt.extra_prompt = Some("default prompt updated".to_string());
         document.abilities.tool_names = vec![selected_tool.clone()];
+        document.abilities.skills = vec![skill_alias.clone()];
         document.runtime.approval_mode = "auto_edit".to_string();
         document.runtime.sandbox_container_id = 3;
         atomic_write_text(
@@ -1175,15 +1215,57 @@ mod tests {
             .sync_user_state(user_id)
             .await
             .expect("apply default update");
-        let updated = user_store
+        let updated_with_skill = user_store
             .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)
             .expect("query default agent")
             .expect("default agent exists");
+        assert_eq!(updated_with_skill.name, "Default Updated");
+        assert_eq!(updated_with_skill.system_prompt, "default prompt updated");
+        assert_eq!(
+            updated_with_skill.declared_tool_names,
+            vec![selected_tool.clone()]
+        );
+        assert_eq!(
+            updated_with_skill.declared_skill_names,
+            vec![skill_alias.clone()]
+        );
+        assert!(updated_with_skill.tool_names.contains(&selected_tool));
+        if allowed.contains(&skill_alias) {
+            assert!(updated_with_skill.tool_names.contains(&skill_alias));
+        }
+        assert_eq!(updated_with_skill.approval_mode, "auto_edit");
+        assert_eq!(updated_with_skill.sandbox_container_id, 3);
+
+        let mut document: WorkerCardDocument = serde_json::from_str(
+            &fs::read_to_string(&default_card).expect("read updated default card"),
+        )
+        .expect("parse updated default card");
+        std::thread::sleep(Duration::from_millis(30));
+        document.abilities.skills = Vec::new();
+        atomic_write_text(
+            &default_card,
+            &serde_json::to_string_pretty(&document).expect("serialize default card"),
+        )
+        .expect("rewrite default card without skill");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("remove default skill update");
+        let updated = user_store
+            .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)
+            .expect("query default agent after skill removal")
+            .expect("default agent exists after skill removal");
         assert_eq!(updated.name, "Default Updated");
         assert_eq!(updated.system_prompt, "default prompt updated");
-        assert_eq!(updated.tool_names, vec![selected_tool.clone()]);
-        assert_eq!(updated.approval_mode, "auto_edit");
-        assert_eq!(updated.sandbox_container_id, 3);
+        assert_eq!(updated.declared_tool_names, vec![selected_tool.clone()]);
+        assert!(updated.declared_skill_names.is_empty());
+        assert!(updated.tool_names.contains(&selected_tool));
+        assert!(!updated.tool_names.contains(&skill_alias));
+        assert!(updated
+            .ability_items
+            .iter()
+            .all(|item| item.runtime_name != skill_alias));
 
         let meta = user_store
             .get_meta(&default_agent_meta_key(user_id))
@@ -1193,6 +1275,19 @@ mod tests {
             serde_json::from_str(&meta).expect("parse default meta");
         assert_eq!(mirror.name, "Default Updated");
         assert_eq!(mirror.system_prompt, "default prompt updated");
-        assert_eq!(mirror.tool_names, vec![selected_tool]);
+        assert_eq!(mirror.tool_names, vec![selected_tool.clone()]);
+        assert_eq!(mirror.declared_tool_names, vec![selected_tool.clone()]);
+        assert!(mirror.declared_skill_names.is_empty());
+        assert!(mirror
+            .ability_items
+            .iter()
+            .all(|item| item.runtime_name != skill_alias));
+
+        let rewritten: WorkerCardDocument = serde_json::from_str(
+            &fs::read_to_string(&default_card).expect("read rewritten default card"),
+        )
+        .expect("parse rewritten default card");
+        assert_eq!(rewritten.abilities.tool_names, vec![selected_tool]);
+        assert!(rewritten.abilities.skills.is_empty());
     }
 }
