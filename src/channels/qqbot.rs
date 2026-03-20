@@ -7,11 +7,15 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use ed25519_dalek::{Signer, SigningKey};
 use futures::{SinkExt, StreamExt};
+use regex::Regex;
 use reqwest::Client;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::future::Future;
+use std::sync::OnceLock;
 use tokio::time::{interval, Duration, MissedTickBehavior};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message as WsMessage};
+use url::Url;
 
 pub const QQBOT_CHANNEL: &str = "qqbot";
 const QQ_API_BASE: &str = "https://api.sgroup.qq.com";
@@ -309,9 +313,7 @@ async fn send_ws_json<S>(socket: &mut S, payload: Value) -> Result<()>
 where
     S: futures::Sink<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
-    socket
-        .send(WsMessage::Text(payload.to_string().into()))
-        .await?;
+    socket.send(WsMessage::Text(payload.to_string())).await?;
     Ok(())
 }
 
@@ -389,25 +391,23 @@ pub async fn send_outbound(
         .unwrap_or_default();
     let text_url = resolve_text_message_url(outbound.peer.id.as_str(), peer_kind.as_str());
     let rich_url = resolve_rich_media_url(outbound.peer.id.as_str(), peer_kind.as_str());
+    let outbound_attachments = collect_outbound_attachments(&outbound.attachments, text.as_str());
     let mut fallback_lines: Vec<String> = Vec::new();
+    let mut fallback_line_seen: HashSet<String> = HashSet::new();
     let mut sent_anything = false;
 
     if let Some(url) = rich_url.as_deref() {
-        for attachment in &outbound.attachments {
+        for attachment in &outbound_attachments {
             let Some(payload) = build_rich_media_payload(attachment) else {
-                if let Some(line) = outbound_attachment_line(attachment) {
-                    fallback_lines.push(line);
-                }
+                add_unique_fallback_line(&mut fallback_lines, &mut fallback_line_seen, attachment);
                 continue;
             };
             post_message(http, app_id, access_token.as_str(), url, payload).await?;
             sent_anything = true;
         }
     } else {
-        for attachment in &outbound.attachments {
-            if let Some(line) = outbound_attachment_line(attachment) {
-                fallback_lines.push(line);
-            }
+        for attachment in &outbound_attachments {
+            add_unique_fallback_line(&mut fallback_lines, &mut fallback_line_seen, attachment);
         }
     }
 
@@ -460,6 +460,93 @@ fn resolve_rich_media_url(peer_id: &str, peer_kind: &str) -> Option<String> {
     }
     if matches!(peer_kind, "user" | "dm" | "direct" | "single") {
         return Some(format!("{QQ_API_BASE}/v2/users/{cleaned_peer_id}/files"));
+    }
+    None
+}
+
+fn collect_outbound_attachments(
+    outbound_attachments: &[ChannelAttachment],
+    text: &str,
+) -> Vec<ChannelAttachment> {
+    let mut merged = Vec::new();
+    let mut seen_urls: HashSet<String> = HashSet::new();
+    for attachment in outbound_attachments {
+        add_unique_attachment(&mut merged, &mut seen_urls, attachment.clone());
+    }
+    for url in extract_http_urls_from_text(text) {
+        add_unique_attachment(
+            &mut merged,
+            &mut seen_urls,
+            ChannelAttachment {
+                kind: inferred_attachment_kind_from_url(url.as_str()).to_string(),
+                url,
+                mime: None,
+                size: None,
+                name: None,
+            },
+        );
+    }
+    merged
+}
+
+fn add_unique_attachment(
+    attachments: &mut Vec<ChannelAttachment>,
+    seen_urls: &mut HashSet<String>,
+    mut attachment: ChannelAttachment,
+) {
+    let Some(url) = trimmed_non_empty(Some(attachment.url.as_str())) else {
+        return;
+    };
+    if !seen_urls.insert(url.clone()) {
+        return;
+    }
+    attachment.url = url;
+    attachments.push(attachment);
+}
+
+fn inferred_attachment_kind_from_url(url: &str) -> &'static str {
+    match infer_rich_media_type_from_url(url) {
+        Some(QQBOT_RICH_MEDIA_IMAGE) => "image",
+        Some(QQBOT_RICH_MEDIA_VIDEO) => "video",
+        Some(QQBOT_RICH_MEDIA_AUDIO) => "audio",
+        _ => "file",
+    }
+}
+
+fn extract_http_urls_from_text(text: &str) -> Vec<String> {
+    static HTTP_URL_RE: OnceLock<Regex> = OnceLock::new();
+    let regex = HTTP_URL_RE
+        .get_or_init(|| Regex::new(r#"https?://[^\s<>"']+"#).expect("http url regex is valid"));
+    let mut output = Vec::new();
+    let mut seen_urls: HashSet<String> = HashSet::new();
+    for matched in regex.find_iter(text) {
+        let Some(url) = sanitize_extracted_url(matched.as_str()) else {
+            continue;
+        };
+        if seen_urls.insert(url.clone()) {
+            output.push(url);
+        }
+    }
+    output
+}
+
+fn sanitize_extracted_url(value: &str) -> Option<String> {
+    let mut sanitized = value.trim();
+    if sanitized.is_empty() {
+        return None;
+    }
+    while let Some(ch) = sanitized.chars().last() {
+        if !matches!(
+            ch,
+            ')' | ']' | '}' | ',' | '.' | '!' | '?' | ';' | ':' | '"' | '\''
+        ) {
+            break;
+        }
+        let next_len = sanitized.len().saturating_sub(ch.len_utf8());
+        sanitized = &sanitized[..next_len];
+    }
+    if is_http_url(sanitized) {
+        return Some(sanitized.to_string());
     }
     None
 }
@@ -518,14 +605,30 @@ fn qq_rich_media_type(attachment: &ChannelAttachment) -> Option<u64> {
 }
 
 fn infer_rich_media_type_from_url(value: &str) -> Option<u64> {
-    let lowered = value
+    let path_or_filename = value
         .split('#')
         .next()
         .unwrap_or(value)
         .split('?')
         .next()
-        .unwrap_or(value)
-        .to_ascii_lowercase();
+        .unwrap_or(value);
+    if let Some(file_type) = infer_rich_media_type_from_candidate(path_or_filename) {
+        return Some(file_type);
+    }
+    let parsed = Url::parse(value).ok()?;
+    for (key, query_value) in parsed.query_pairs() {
+        if !key.as_ref().eq_ignore_ascii_case("filename") {
+            continue;
+        }
+        if let Some(file_type) = infer_rich_media_type_from_candidate(query_value.as_ref()) {
+            return Some(file_type);
+        }
+    }
+    None
+}
+
+fn infer_rich_media_type_from_candidate(value: &str) -> Option<u64> {
+    let lowered = value.to_ascii_lowercase();
     if lowered.ends_with(".png")
         || lowered.ends_with(".jpg")
         || lowered.ends_with(".jpeg")
@@ -561,6 +664,19 @@ fn outbound_attachment_line(attachment: &ChannelAttachment) -> Option<String> {
         return Some(url);
     }
     Some(format!("[{kind}] {url}"))
+}
+
+fn add_unique_fallback_line(
+    fallback_lines: &mut Vec<String>,
+    seen_lines: &mut HashSet<String>,
+    attachment: &ChannelAttachment,
+) {
+    let Some(line) = outbound_attachment_line(attachment) else {
+        return;
+    };
+    if seen_lines.insert(line.clone()) {
+        fallback_lines.push(line);
+    }
 }
 
 fn build_final_text(text: &str, fallback_lines: &[String], rich_sent: bool) -> Option<String> {
@@ -1192,6 +1308,52 @@ mod tests {
             name: None,
         };
         assert_eq!(qq_rich_media_type(&unsupported), None);
+    }
+
+    #[test]
+    fn infer_rich_media_type_supports_filename_query() {
+        let image_url = "https://example.com/wunder/temp_dir/download?filename=channels%2Fqqbot%2Fu1%2Fabc_image.png";
+        assert_eq!(
+            infer_rich_media_type_from_url(image_url),
+            Some(QQBOT_RICH_MEDIA_IMAGE)
+        );
+
+        let video_url = "https://example.com/wunder/temp_dir/download?filename=channels%2Fqqbot%2Fu1%2Fabc_video.mp4";
+        assert_eq!(
+            infer_rich_media_type_from_url(video_url),
+            Some(QQBOT_RICH_MEDIA_VIDEO)
+        );
+    }
+
+    #[test]
+    fn extract_http_urls_from_text_supports_markdown_and_plain_urls() {
+        let text = "img ![preview](https://example.com/a.png), doc [file](https://example.com/a.pdf), raw https://example.com/b.mp4.";
+        assert_eq!(
+            extract_http_urls_from_text(text),
+            vec![
+                "https://example.com/a.png".to_string(),
+                "https://example.com/a.pdf".to_string(),
+                "https://example.com/b.mp4".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn collect_outbound_attachments_merges_text_links_and_deduplicates() {
+        let merged = collect_outbound_attachments(
+            &[ChannelAttachment {
+                kind: "file".to_string(),
+                url: "https://example.com/already.pdf".to_string(),
+                mime: None,
+                size: None,
+                name: None,
+            }],
+            "![preview](https://example.com/a.png) [doc](https://example.com/already.pdf)",
+        );
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].url, "https://example.com/already.pdf");
+        assert_eq!(merged[1].url, "https://example.com/a.png");
+        assert_eq!(merged[1].kind, "image");
     }
 
     #[test]

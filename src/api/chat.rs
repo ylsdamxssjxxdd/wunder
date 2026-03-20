@@ -283,9 +283,13 @@ async fn create_session(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
-    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
-        map.insert("model_name".to_string(), json!(model_name));
-    }
+    insert_session_runtime_fields(
+        &mut payload,
+        model_name.as_deref(),
+        state
+            .workspace
+            .load_session_context_tokens(&resolved.user.user_id, &session_id),
+    );
     Ok(Json(json!({ "data": payload })))
 }
 
@@ -342,11 +346,13 @@ async fn list_sessions(
                 .map(|session_id| session_id == &record.session_id)
                 .unwrap_or(false);
             let mut payload = session_payload_with_main(record, is_main);
-            if let (Some(model_name), Value::Object(ref mut map)) =
-                (model_name.as_ref(), &mut payload)
-            {
-                map.insert("model_name".to_string(), json!(model_name));
-            }
+            insert_session_runtime_fields(
+                &mut payload,
+                model_name.as_deref(),
+                state
+                    .workspace
+                    .load_session_context_tokens(&resolved.user.user_id, &record.session_id),
+            );
             payload
         })
         .collect::<Vec<_>>();
@@ -469,6 +475,10 @@ async fn get_session(
 
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
+    let context_tokens = state
+        .workspace
+        .load_session_context_tokens(&resolved.user.user_id, &session_id)
+        .max(0);
     Ok(Json(json!({
         "data": {
             "id": record.session_id,
@@ -481,6 +491,7 @@ async fn get_session(
             "history_incomplete": history_incomplete,
             "messages": messages,
             "model_name": model_name,
+            "context_tokens": context_tokens,
             "history_has_more": history_has_more,
             "history_before_id": history_before_id
         }
@@ -692,9 +703,13 @@ async fn update_session_title(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
-    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
-        map.insert("model_name".to_string(), json!(model_name));
-    }
+    insert_session_runtime_fields(
+        &mut payload,
+        model_name.as_deref(),
+        state
+            .workspace
+            .load_session_context_tokens(&resolved.user.user_id, &session_id),
+    );
     Ok(Json(json!({ "data": payload })))
 }
 
@@ -767,9 +782,13 @@ async fn archive_session(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
-    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
-        map.insert("model_name".to_string(), json!(model_name));
-    }
+    insert_session_runtime_fields(
+        &mut payload,
+        model_name.as_deref(),
+        state
+            .workspace
+            .load_session_context_tokens(&resolved.user.user_id, &session_id),
+    );
     Ok(Json(json!({ "data": payload })))
 }
 
@@ -849,9 +868,13 @@ async fn restore_session(
     let config = state.config_store.get().await;
     let model_name = resolve_default_model_name(&config);
     let mut payload = session_payload_with_main(&record, is_main);
-    if let (Some(model_name), Value::Object(ref mut map)) = (model_name, &mut payload) {
-        map.insert("model_name".to_string(), json!(model_name));
-    }
+    insert_session_runtime_fields(
+        &mut payload,
+        model_name.as_deref(),
+        state
+            .workspace
+            .load_session_context_tokens(&resolved.user.user_id, &session_id),
+    );
     Ok(Json(json!({ "data": payload })))
 }
 
@@ -2031,6 +2054,20 @@ fn session_payload_with_main(record: &crate::storage::ChatSessionRecord, is_main
         map.insert("is_main".to_string(), json!(is_main));
     }
     payload
+}
+
+fn insert_session_runtime_fields(
+    payload: &mut Value,
+    model_name: Option<&str>,
+    context_tokens: i64,
+) {
+    let Value::Object(map) = payload else {
+        return;
+    };
+    if let Some(model_name) = model_name.map(str::trim).filter(|value| !value.is_empty()) {
+        map.insert("model_name".to_string(), json!(model_name));
+    }
+    map.insert("context_tokens".to_string(), json!(context_tokens.max(0)));
 }
 
 fn resolve_default_model_name(config: &crate::config::Config) -> Option<String> {

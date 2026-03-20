@@ -436,3 +436,75 @@ async fn chat_uses_agent_model_override_instead_of_default_model() {
     assert_eq!(models[0], "provider-default");
     assert_eq!(models[1], "provider-agent");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn session_detail_returns_persisted_context_tokens() {
+    let context = build_test_context_with_mock_llm("session_context_tokens_user").await;
+
+    let (status, created_session) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        "/wunder/chat/sessions",
+        Some(json!({
+            "title": "Context token session"
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session_id = created_session["data"]["id"].as_str().expect("session id");
+
+    let (status, reply) = send_json(
+        &context.app,
+        &context.token,
+        Method::POST,
+        &format!("/wunder/chat/sessions/{session_id}/messages"),
+        Some(json!({
+            "content": "Please keep enough context for this thread.",
+            "stream": false
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reply["data"]["answer"], json!("ok"));
+
+    let (status, session_detail) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        &format!("/wunder/chat/sessions/{session_id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        session_detail["data"]["context_tokens"]
+            .as_i64()
+            .unwrap_or_default()
+            > 0,
+        "expected persisted context tokens in session detail, got {session_detail:?}"
+    );
+
+    let (status, session_list) = send_json(
+        &context.app,
+        &context.token,
+        Method::GET,
+        "/wunder/chat/sessions",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let listed_context_tokens = session_list["data"]["items"]
+        .as_array()
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item["id"] == json!(session_id))
+                .and_then(|item| item.get("context_tokens").and_then(Value::as_i64))
+        })
+        .unwrap_or_default();
+    assert!(
+        listed_context_tokens > 0,
+        "expected persisted context tokens in session list, got {session_list:?}"
+    );
+}

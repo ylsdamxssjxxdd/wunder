@@ -86,6 +86,7 @@ type WorkflowProcessorOptions = {
   finalizeWithNow?: boolean;
   streamFlushMs?: number;
   onThreadControl?: (payload: unknown) => void | Promise<void>;
+  onContextUsage?: (contextTokens: number) => void;
 };
 
 type UsageStatsOptions = {
@@ -2547,6 +2548,24 @@ const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
   session.updated_at = resolved || new Date().toISOString();
 };
 
+const syncSessionContextTokens = (store, sessionId, contextTokens) => {
+  if (!store || !Array.isArray(store.sessions)) return;
+  const key = resolveSessionKey(sessionId);
+  const normalized = parseOptionalCount(contextTokens);
+  if (!key || normalized === null) return;
+  const index = store.sessions.findIndex((item) => resolveSessionKey(item?.id) === key);
+  if (index < 0) return;
+  const current = store.sessions[index] || {};
+  const next = {
+    ...current,
+    context_tokens: normalized
+  };
+  store.sessions[index] = next;
+  const agentId = String(next.agent_id || '').trim();
+  writeSessionListCache(agentId, filterSessionsByAgent(agentId, store.sessions));
+  syncDemoChatCache({ sessions: store.sessions });
+};
+
 const notifySessionSnapshot = (store, sessionId, messages, immediate = false, options: { skipWindowing?: boolean } = {}) => {
   const key = resolveSessionKey(sessionId);
   if (!key || !Array.isArray(messages)) return;
@@ -2906,7 +2925,8 @@ const startSessionWatcher = (store, sessionId) => {
           () => notifySessionSnapshot(store, key, sessionMessagesRef),
           {
             streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
-            onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload)
+            onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
+            onContextUsage: (contextTokens) => syncSessionContextTokens(store, key, contextTokens)
           }
         );
         const state = { message: candidate, processor, userInserted: false };
@@ -2933,7 +2953,8 @@ const startSessionWatcher = (store, sessionId) => {
       () => notifySessionSnapshot(store, key, sessionMessagesRef),
       {
         streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
-        onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload)
+        onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
+        onContextUsage: (contextTokens) => syncSessionContextTokens(store, key, contextTokens)
       }
     );
     const state = { message: assistantMessage, processor, userInserted: false };
@@ -3658,6 +3679,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     );
     if (contextTokens !== null) {
       stats.contextTokens = contextTokens;
+      options.onContextUsage?.(contextTokens);
     }
   };
 
@@ -5705,7 +5727,8 @@ export const useChatStore = defineStore('chat', {
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
-          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload)
+          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
+          onContextUsage: (contextTokens) => syncSessionContextTokens(this, sessionId, contextTokens)
         }
       );
       let queued = false;
@@ -6023,7 +6046,8 @@ export const useChatStore = defineStore('chat', {
         () => notifySessionSnapshot(this, sessionId, sessionMessagesRef),
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
-          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload)
+          onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
+          onContextUsage: (contextTokens) => syncSessionContextTokens(this, sessionId, contextTokens)
         }
       );
       abortResumeStream(sessionId);

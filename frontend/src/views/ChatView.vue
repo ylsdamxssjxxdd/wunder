@@ -2857,27 +2857,7 @@ const resolveDurationSeconds = (stats) => {
   return (prefill ?? 0) + (decode ?? 0);
 };
 
-const resolveTokenSpeed = (stats, durationSeconds) => {
-  const averageSpeed = Number(
-    stats?.avg_model_round_speed_tps ??
-      stats?.avgModelRoundSpeedTps ??
-      stats?.average_speed_tps ??
-      stats?.averageSpeedTps
-  );
-  const averageRounds = Number(
-    stats?.avg_model_round_speed_rounds ??
-      stats?.avgModelRoundSpeedRounds ??
-      stats?.average_speed_rounds ??
-      stats?.averageSpeedRounds
-  );
-  if (
-    Number.isFinite(averageSpeed) &&
-    averageSpeed > 0 &&
-    (!Number.isFinite(averageRounds) || averageRounds > 0)
-  ) {
-    const speed = normalizeSpeed(averageSpeed, null);
-    if (speed !== null) return speed;
-  }
+const resolveTokenSpeed = (stats) => {
   const usageOutputTokens = Number(
     stats?.usage?.output ?? stats?.usage?.output_tokens ?? stats?.usage?.outputTokens
   );
@@ -2907,8 +2887,24 @@ const resolveTokenSpeed = (stats, durationSeconds) => {
     const speed = normalizeSpeed(outputTokens / decode, decode);
     if (speed !== null) return speed;
   }
-  if (Number.isFinite(outputTokens) && outputTokens > 0 && durationSeconds && durationSeconds > 0) {
-    const speed = normalizeSpeed(outputTokens / durationSeconds, durationSeconds);
+  const averageSpeed = Number(
+    stats?.avg_model_round_speed_tps ??
+      stats?.avgModelRoundSpeedTps ??
+      stats?.average_speed_tps ??
+      stats?.averageSpeedTps
+  );
+  const averageRounds = Number(
+    stats?.avg_model_round_speed_rounds ??
+      stats?.avgModelRoundSpeedRounds ??
+      stats?.average_speed_rounds ??
+      stats?.averageSpeedRounds
+  );
+  if (
+    Number.isFinite(averageSpeed) &&
+    averageSpeed > 0 &&
+    (!Number.isFinite(averageRounds) || averageRounds > 0)
+  ) {
+    const speed = normalizeSpeed(averageSpeed, null);
     if (speed !== null) return speed;
   }
   return null;
@@ -2920,7 +2916,7 @@ const buildMessageStatsEntries = (message) => {
   const stats = message.stats || null;
   if (!stats) return [];
   const durationSeconds = resolveDurationSeconds(stats);
-  const speed = resolveTokenSpeed(stats, durationSeconds);
+  const speed = resolveTokenSpeed(stats);
   const usageTotalTokens = Number(
     stats?.usage?.total ?? stats?.usage?.total_tokens ?? stats?.usage?.totalTokens
   );

@@ -587,16 +587,41 @@ const normalizeTokenCount = (value: unknown): number | null => {
   }
   return Math.round(parsed);
 };
+const normalizePositiveTokenCount = (value: unknown): number | null => {
+  const normalized = normalizeTokenCount(value);
+  if (normalized === null || normalized <= 0) {
+    return null;
+  }
+  return normalized;
+};
 const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): number | null => {
   if (!stats) {
     return null;
   }
-  return normalizeTokenCount(
+  return normalizePositiveTokenCount(
     stats.contextTokens ??
       stats.context_tokens ??
       stats.context_tokens_total ??
       (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
       (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
+  );
+};
+const resolveCurrentSessionContextTokens = (): number | null => {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (!activeSessionId) {
+    return null;
+  }
+  const session = (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).find(
+    (item) => String((item as Record<string, unknown> | null)?.id || '').trim() === activeSessionId
+  ) as Record<string, unknown> | undefined;
+  if (!session) {
+    return null;
+  }
+  return normalizePositiveTokenCount(
+    session.contextTokens ??
+      session.context_tokens ??
+      (session.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
+      (session.context_usage as Record<string, unknown> | undefined)?.contextTokens
   );
 };
 const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | null => {
@@ -663,12 +688,12 @@ const composerModelAriaLabel = computed(() => {
   return `${t('desktop.system.modelName')}: ${label}`;
 });
 const composerContextUsedTokens = computed(() => {
-  const fromProps = normalizeTokenCount(props.contextUsedTokens);
+  const fromProps = normalizePositiveTokenCount(props.contextUsedTokens);
   if (fromProps !== null) {
     return fromProps;
   }
   const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
-  return resolveLatestContextTokensFromMessages(messages);
+  return resolveLatestContextTokensFromMessages(messages) ?? resolveCurrentSessionContextTokens();
 });
 const composerContextTotalTokens = computed(() => {
   const fromProps = normalizeTokenCount(props.contextTotalTokens);
