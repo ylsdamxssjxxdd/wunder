@@ -5,6 +5,13 @@
     </div>
 
     <template v-else>
+      <el-alert
+        v-if="canEdit && hasUnsavedChanges"
+        :title="t('messenger.agentSettings.unsavedHint')"
+        type="warning"
+        show-icon
+        :closable="false"
+      />
       <el-form :model="form" label-position="top" class="messenger-agent-form messenger-form">
         <el-form-item :label="t('portal.agent.form.name')" class="messenger-agent-form-item">
           <el-input
@@ -169,6 +176,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+import { onBeforeRouteLeave, onBeforeRouteUpdate } from 'vue-router';
 
 import { listAgentModels } from '@/api/agents';
 import { fetchUserToolsCatalog } from '@/api/userTools';
@@ -199,6 +207,7 @@ import {
 } from '@/utils/beeroomGroupDraft';
 import { showApiError } from '@/utils/apiError';
 import { onUserToolsUpdated } from '@/utils/userToolsEvents';
+import { registerUnsavedChangesGuard } from '@/utils/unsavedChangesGuard';
 
 type ToolOption = {
   label: string;
@@ -208,6 +217,20 @@ type ToolOption = {
 };
 
 type ToolSection = AgentToolSection<ToolOption>;
+
+type AgentFormSnapshot = {
+  name: string;
+  description: string;
+  system_prompt: string;
+  model_name: string;
+  tool_names: string[];
+  preset_questions: string[];
+  hive_id: string;
+  hive_name: string;
+  hive_description: string;
+  sandbox_container_id: number;
+  approval_mode: string;
+};
 
 const props = defineProps({
   agentId: {
@@ -296,11 +319,13 @@ const availableModelNames = ref<string[]>([]);
 const defaultModelName = ref('');
 const modelSectionRef = ref<HTMLElement | null>(null);
 const panelMounted = ref(false);
+const loadedSnapshot = ref<AgentFormSnapshot | null>(null);
 let panelDisposed = false;
 let latestAgentLoadRequestId = 0;
 let lastHandledFocusToken = 0;
 let focusAnimationFrame = 0;
 let stopUserToolsUpdatedListener: (() => void) | null = null;
+let stopUnsavedGuard: (() => void) | null = null;
 
 const nextAgentLoadRequestId = (): number => {
   latestAgentLoadRequestId += 1;
@@ -374,6 +399,74 @@ const normalizeApprovalMode = (value: unknown): string => {
   if (raw === 'auto_edit' || raw === 'auto-edit') return 'auto_edit';
   if (raw === 'full_auto' || raw === 'full-auto') return 'full_auto';
   return resolveDefaultApprovalMode();
+};
+
+const normalizeStringArrayForSnapshot = (value: unknown): string[] => {
+  if (!Array.isArray(value)) return [];
+  const unique = new Set<string>();
+  value.forEach((item) => {
+    const text = String(item || '').trim();
+    if (!text) return;
+    unique.add(text);
+  });
+  return Array.from(unique).sort((left, right) => left.localeCompare(right));
+};
+
+const buildFormSnapshot = (): AgentFormSnapshot => {
+  const groupPayload = buildBeeroomGroupPayload(form.group);
+  return {
+    name: String(form.name || '').trim(),
+    description: String(form.description || '').trim(),
+    system_prompt: String(form.system_prompt || ''),
+    model_name: String(form.model_name || '').trim(),
+    tool_names: normalizeStringArrayForSnapshot(form.tool_names),
+    preset_questions: normalizeAgentPresetQuestions(form.preset_questions),
+    hive_id: String(groupPayload.hive_id || '').trim(),
+    hive_name: String(groupPayload.hive_name || '').trim(),
+    hive_description: String(groupPayload.hive_description || '').trim(),
+    sandbox_container_id: normalizeSandboxContainerId(form.sandbox_container_id),
+    approval_mode: normalizeApprovalMode(form.approval_mode)
+  };
+};
+
+const markFormClean = (): void => {
+  loadedSnapshot.value = buildFormSnapshot();
+};
+
+const hasUnsavedChanges = computed(() => {
+  if (!canEdit.value || !loadedSnapshot.value) return false;
+  const current = buildFormSnapshot();
+  return JSON.stringify(current) !== JSON.stringify(loadedSnapshot.value);
+});
+
+const confirmDiscardChanges = async (): Promise<boolean> => {
+  if (!hasUnsavedChanges.value) {
+    return true;
+  }
+  try {
+    await ElMessageBox.confirm(t('messenger.agentSettings.confirmDiscard'), t('common.notice'), {
+      type: 'warning',
+      confirmButtonText: t('common.confirm'),
+      cancelButtonText: t('common.cancel')
+    });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+  if (!hasUnsavedChanges.value) return;
+  event.preventDefault();
+  event.returnValue = '';
+};
+
+const handleGlobalKeydown = (event: KeyboardEvent): void => {
+  if (!canEdit.value || !hasUnsavedChanges.value || saving.value) return;
+  if (!(event.ctrlKey || event.metaKey)) return;
+  if (String(event.key || '').toLowerCase() !== 's') return;
+  event.preventDefault();
+  void saveAgent();
 };
 
 const resolveConfiguredModelName = (agent: Record<string, unknown>): string => {
@@ -521,7 +614,10 @@ const loadModelOptions = async () => {
 };
 
 const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
-  if (!canView.value) return;
+  if (!canView.value) {
+    loadedSnapshot.value = null;
+    return;
+  }
   try {
     if (!beeroomStore.groups.length) {
       await beeroomStore.loadGroups().catch(() => null);
@@ -545,6 +641,7 @@ const loadAgent = async (requestId: number = nextAgentLoadRequestId()) => {
     form.group = resolveBeeroomGroupDraftForAgent(agent.hive_id) as ReturnType<typeof createBeeroomGroupDraft>;
     form.sandbox_container_id = normalizeSandboxContainerId(agent.sandbox_container_id);
     form.approval_mode = normalizeApprovalMode(agent.approval_mode);
+    markFormClean();
   } catch (error) {
     showApiError(error, t('portal.agent.loadingFailed'));
   }
@@ -559,6 +656,7 @@ const reloadAgent = async () => {
 
 const refreshAgentFromExternalChange = () => {
   if (!panelMounted.value || panelDisposed || !canView.value) return;
+  if (hasUnsavedChanges.value) return;
   if (document.visibilityState !== 'visible') return;
   void loadAgent();
 };
@@ -596,6 +694,7 @@ const saveAgent = async () => {
     if (!payload.hive_description) delete payload.hive_description;
     const updated = await agentStore.updateAgent(normalizedAgentId.value, payload);
     currentAgent.value = (updated as Record<string, unknown> | null) || currentAgent.value;
+    markFormClean();
     await beeroomStore.loadGroups().catch(() => null);
     ElMessage.success(t('portal.agent.updateSuccess'));
     emit('saved', normalizedAgentId.value);
@@ -649,15 +748,34 @@ const deleteAgent = async () => {
   }
 };
 
+onBeforeRouteLeave(async () => {
+  const allowed = await confirmDiscardChanges();
+  if (!allowed) {
+    return false;
+  }
+  return true;
+});
+
+onBeforeRouteUpdate(async () => {
+  const allowed = await confirmDiscardChanges();
+  if (!allowed) {
+    return false;
+  }
+  return true;
+});
+
 defineExpose({
   triggerReload: reloadAgent,
   triggerSave: saveAgent,
   triggerDelete: deleteAgent,
-  triggerExportWorkerCard: exportWorkerCard
+  triggerExportWorkerCard: exportWorkerCard,
+  hasUnsavedChanges: () => hasUnsavedChanges.value,
+  confirmDiscardChanges
 });
 
 onMounted(() => {
   panelMounted.value = true;
+  stopUnsavedGuard = registerUnsavedChangesGuard('messenger-agent-settings', confirmDiscardChanges);
   stopUserToolsUpdatedListener = onUserToolsUpdated((event) => {
     const detail = event?.detail || {};
     const scope = String((detail as Record<string, unknown>).scope || '').trim().toLowerCase();
@@ -666,6 +784,8 @@ onMounted(() => {
     }
     void loadToolSummary();
   });
+  window.addEventListener('beforeunload', handleBeforeUnload);
+  window.addEventListener('keydown', handleGlobalKeydown);
   window.addEventListener('focus', refreshAgentFromExternalChange);
   document.addEventListener('visibilitychange', handleAgentSettingsVisibilityChange);
   void reloadAgent();
@@ -690,8 +810,14 @@ watch(
 onBeforeUnmount(() => {
   panelDisposed = true;
   latestAgentLoadRequestId += 1;
+  window.removeEventListener('beforeunload', handleBeforeUnload);
+  window.removeEventListener('keydown', handleGlobalKeydown);
   window.removeEventListener('focus', refreshAgentFromExternalChange);
   document.removeEventListener('visibilitychange', handleAgentSettingsVisibilityChange);
+  if (stopUnsavedGuard) {
+    stopUnsavedGuard();
+    stopUnsavedGuard = null;
+  }
   if (stopUserToolsUpdatedListener) {
     stopUserToolsUpdatedListener();
     stopUserToolsUpdatedListener = null;

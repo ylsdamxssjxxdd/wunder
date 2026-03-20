@@ -2256,6 +2256,7 @@ export default {
   'messenger.groupDock.updateFailed': 'Failed to update announcement',
   'messenger.direct.subtitle': 'Direct conversation',
   'messenger.empty.list': 'No conversations yet',
+  'messenger.empty.listStartDefault': 'Start your first chat with the Default Agent',
   'messenger.empty.swarms': 'No swarms yet',
   'messenger.empty.users': 'No contacts',
   'messenger.empty.groups': 'No groups',
@@ -2270,6 +2271,10 @@ export default {
   'messenger.empty.input': 'Select a conversation to send messages',
   'messenger.error.openConversation': 'Failed to open conversation',
   'messenger.error.agentRequired': 'Please select an agent first',
+  'messenger.agentSettings.unsavedHint':
+    'You have unsaved agent settings. Press Ctrl/Cmd + S to save quickly.',
+  'messenger.agentSettings.confirmDiscard':
+    'You have unsaved changes in agent settings. Leave and discard them?',
   'system.maintenance.title': 'Under maintenance',
   'system.maintenance.desc': 'The service is temporarily unavailable. Please try again later.',
   'system.maintenance.status': 'Status code: {status}',

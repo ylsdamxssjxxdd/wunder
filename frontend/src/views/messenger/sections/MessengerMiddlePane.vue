@@ -168,15 +168,20 @@
 
     <template v-else-if="activeSection === 'messages'">
       <div
-        v-for="item in filteredMixedConversations"
+        v-for="item in displayedMixedConversations"
         :key="item.key"
         class="messenger-list-item messenger-conversation-item"
-        :class="{ active: isMixedConversationActive(item) }"
+        :class="{
+          active: isGuidedDefaultConversation(item)
+            ? selectedAgentId === normalizeAgentId(defaultAgentKey)
+            : isMixedConversationActive(item),
+          'messenger-conversation-item--guided': isGuidedDefaultConversation(item)
+        }"
         role="button"
         tabindex="0"
-        @click="openMixedConversation(item)"
-        @keydown.enter.prevent="openMixedConversation(item)"
-        @keydown.space.prevent="openMixedConversation(item)"
+        @click="openConversationFromList(item)"
+        @keydown.enter.prevent="openConversationFromList(item)"
+        @keydown.space.prevent="openConversationFromList(item)"
       >
         <AgentAvatar
           v-if="item.kind === 'agent'"
@@ -196,7 +201,7 @@
           </div>
         </div>
         <button
-          v-if="canDeleteMixedConversation(item)"
+          v-if="!isGuidedDefaultConversation(item) && canDeleteMixedConversation(item)"
           class="messenger-list-item-action"
           type="button"
           :title="t('chat.history.delete')"
@@ -206,7 +211,7 @@
           <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
         </button>
       </div>
-      <div v-if="!filteredMixedConversations.length" class="messenger-list-empty">
+      <div v-if="!displayedMixedConversations.length" class="messenger-list-empty">
         {{ t('messenger.empty.list') }}
       </div>
     </template>
@@ -471,7 +476,7 @@
         :class="{ active: selectedAgentId === normalizeAgentId(agent.id), selected: isAgentMultiSelected(agent.id) }"
         type="button"
         @click="handleAgentSelectionClick($event, agent.id)"
-        @dblclick="openAgentById(agent.id)"
+        @dblclick="handleAgentOpenById(agent.id)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
       >
         <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
@@ -495,7 +500,7 @@
         :class="{ active: selectedAgentId === normalizeAgentId(agent.id), selected: isAgentMultiSelected(agent.id) }"
         type="button"
         @click="handleAgentSelectionClick($event, agent.id)"
-        @dblclick="openAgentById(agent.id)"
+        @dblclick="handleAgentOpenById(agent.id)"
         @contextmenu.prevent.stop="openAgentContextMenu($event, agent.id)"
       >
         <AgentAvatar size="md" :state="resolveAgentRuntimeState(agent.id)" />
@@ -841,6 +846,7 @@ import { useI18n } from '@/i18n';
 import AgentAvatar from '@/components/messenger/AgentAvatar.vue';
 import BeeroomCreateDialog from '@/components/beeroom/BeeroomCreateDialog.vue';
 import { useBeeroomStore } from '@/stores/beeroom';
+import { runUnsavedChangesGuards } from '@/utils/unsavedChangesGuard';
 
 const { t } = useI18n();
 const beeroomStore = useBeeroomStore();
@@ -1048,6 +1054,33 @@ const showMiddlePaneSearch = computed(
   () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
 );
 
+const GUIDED_DEFAULT_CONVERSATION_KEY = '__guided_default_agent__';
+
+const buildGuidedDefaultConversation = () => ({
+  key: GUIDED_DEFAULT_CONVERSATION_KEY,
+  kind: 'agent',
+  agentId: normalizeAgentId(defaultAgentKey),
+  title: t('messenger.defaultAgent'),
+  preview: t('messenger.empty.listStartDefault'),
+  lastAt: null,
+  unread: 0,
+  guided: true
+});
+
+const isGuidedDefaultConversation = (item: Record<string, unknown> | null | undefined): boolean =>
+  String(item?.key || '').trim() === GUIDED_DEFAULT_CONVERSATION_KEY;
+
+const displayedMixedConversations = computed(() => {
+  const items = Array.isArray(filteredMixedConversations) ? filteredMixedConversations : [];
+  if (items.length > 0) {
+    return items;
+  }
+  if (!showDefaultAgentEntry) {
+    return [];
+  }
+  return [buildGuidedDefaultConversation()];
+});
+
 const selectedAgentIdSet = computed(() => new Set(selectedAgentIds.value));
 const deletableSelectedAgentIds = computed(() =>
   visibleSelectableAgentItems.value
@@ -1058,6 +1091,10 @@ const deletableSelectedAgentIds = computed(() =>
 function closeAgentContextMenu() {
   agentContextMenuVisible.value = false;
 }
+
+const confirmUnsavedChangesBeforeAction = async (): Promise<boolean> => {
+  return runUnsavedChangesGuards();
+};
 
 function applyAgentSelection(nextIds: string[], anchorId: string) {
   selectedAgentIds.value = Array.from(new Set(nextIds.map((item) => normalizeAgentId(item)).filter(Boolean)));
@@ -1098,7 +1135,10 @@ function toggleAgentSelection(targetId: string) {
   applyAgentSelection([...selectedAgentIds.value, targetId], targetId);
 }
 
-function handleAgentSelectionClick(event: MouseEvent, agentId: unknown) {
+async function handleAgentSelectionClick(event: MouseEvent, agentId: unknown) {
+  if (!(await confirmUnsavedChangesBeforeAction())) {
+    return;
+  }
   const normalizedId = normalizeAgentId(agentId);
   if (!normalizedId) return;
   closeAgentContextMenu();
@@ -1112,7 +1152,10 @@ function handleAgentSelectionClick(event: MouseEvent, agentId: unknown) {
   selectAgentForSettings(normalizedId);
 }
 
-function openAgentContextMenu(event: MouseEvent, agentId: unknown) {
+async function openAgentContextMenu(event: MouseEvent, agentId: unknown) {
+  if (!(await confirmUnsavedChangesBeforeAction())) {
+    return;
+  }
   const normalizedId = normalizeAgentId(agentId);
   if (!normalizedId) return;
   if (!selectedAgentIdSet.value.has(normalizedId)) {
@@ -1124,6 +1167,21 @@ function openAgentContextMenu(event: MouseEvent, agentId: unknown) {
     top: `${event.clientY}px`
   };
   agentContextMenuVisible.value = true;
+}
+
+async function handleAgentOpenById(agentId: unknown) {
+  if (!(await confirmUnsavedChangesBeforeAction())) {
+    return;
+  }
+  await Promise.resolve(openAgentById(agentId));
+}
+
+async function openConversationFromList(item: Record<string, unknown>) {
+  if (isGuidedDefaultConversation(item)) {
+    await handleAgentOpenById(defaultAgentKey);
+    return;
+  }
+  await Promise.resolve(openMixedConversation(item));
 }
 
 function handleAgentContextExport() {
@@ -1217,7 +1275,10 @@ const updateSelectedAgentHiveGroupId = (value: string) => {
   emit('update:selectedAgentHiveGroupId', value);
 };
 
-const updateSettingsPanelMode = (value: string) => {
+const updateSettingsPanelMode = async (value: string) => {
+  if (!(await confirmUnsavedChangesBeforeAction())) {
+    return;
+  }
   emit('update:settingsPanelMode', value);
   emit('activate-settings-panel', value);
 };
@@ -1363,11 +1424,17 @@ const resetSwarmPackInput = () => {
   }
 };
 
-const handleAgentPlusCommand = (command: string) => {
+const handleAgentPlusCommand = async (command: string) => {
+  if (!(await confirmUnsavedChangesBeforeAction())) {
+    return;
+  }
   triggerSearchCreateAction(command);
 };
 
-const handlePlusAction = () => {
+const handlePlusAction = async () => {
+  if (!(await confirmUnsavedChangesBeforeAction())) {
+    return;
+  }
   triggerSearchCreateAction();
 };
 
