@@ -184,6 +184,7 @@ impl AppState {
             user_tool_manager.clone(),
             lsp_manager.clone(),
             storage.clone(),
+            approval_registry.clone(),
             gateway.clone(),
             user_world.clone(),
             beeroom_realtime.clone(),

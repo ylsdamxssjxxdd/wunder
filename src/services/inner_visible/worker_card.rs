@@ -374,7 +374,7 @@ pub fn normalize_hive_id(raw: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_worker_card, parse_worker_card, UserAgentRecord};
+    use super::{build_worker_card, parse_worker_card, AbilityKind, UserAgentRecord};
     use std::collections::HashSet;
 
     #[test]

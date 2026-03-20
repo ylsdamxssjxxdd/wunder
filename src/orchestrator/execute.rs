@@ -1,5 +1,9 @@
 use super::tool_calls::ToolCall;
 use super::*;
+use super::thread_runtime::{
+    thread_closed_payload, thread_not_loaded_payload, thread_status_payload, ThreadRuntimeStatus,
+    ThreadRuntimeUpdate,
+};
 use crate::core::approval::{
     ApprovalRequest, ApprovalRequestKind, ApprovalRequestTx, ApprovalResponse,
 };
@@ -78,6 +82,8 @@ impl Orchestrator {
         let user_id = prepared.user_id.clone();
         let question = prepared.question.clone();
         let is_admin = prepared.is_admin;
+        let mut active_turn_id: Option<String> = None;
+        let mut active_turn_round = RoundInfo::default();
 
         let result = async {
             let mut lock_agent_id = prepared.agent_id.clone().unwrap_or_default();
@@ -167,6 +173,16 @@ impl Orchestrator {
                 monitor_debug_payload,
             );
             let request_round = RoundInfo::user_only(user_round);
+            let active_turn = self.active_turns.begin_turn(&session_id);
+            active_turn_id = Some(active_turn.turn_id.clone());
+            active_turn_round = request_round;
+            self.emit_thread_runtime_update(
+                &emitter,
+                request_round,
+                self.thread_runtime
+                    .begin_turn(&session_id, active_turn.turn_id.as_str()),
+            )
+            .await;
             let mut start_payload = json!({
                 "stage": "start",
                 "summary": i18n::t("monitor.summary.received"),
@@ -707,6 +723,7 @@ impl Orchestrator {
                             &tool_context,
                             &allowed_tool_names,
                             &session_id,
+                            active_turn.turn_id.as_str(),
                             is_admin,
                             &emitter,
                             prepared.approval_tx.clone(),
@@ -1100,6 +1117,13 @@ impl Orchestrator {
 
             let stop_reason = stop_reason.unwrap_or_else(|| "unknown".to_string());
             let waiting_question_panel = stop_reason == "question_panel";
+            if waiting_question_panel {
+                if let Some(turn_id) = active_turn_id.as_deref() {
+                    let _ = self
+                        .active_turns
+                        .mark_waiting_user_input(&session_id, turn_id);
+                }
+            }
             round_usage.total =
                 round_usage
                     .total
@@ -1157,6 +1181,20 @@ impl Orchestrator {
                 },
             )
             .await;
+            if let Some(turn_id) = active_turn_id.as_deref() {
+                self.finish_active_turn(
+                    &session_id,
+                    turn_id,
+                    &emitter,
+                    last_round_info,
+                    if waiting_question_panel {
+                        ThreadRuntimeStatus::WaitingUserInput
+                    } else {
+                        ThreadRuntimeStatus::Idle
+                    },
+                )
+                .await;
+            }
             if !waiting_question_panel && !answer.trim().is_empty() {
                 self.spawn_auto_memory_extraction(
                     &user_id,
@@ -1192,7 +1230,7 @@ impl Orchestrator {
                 emitter.emit("error", err.to_payload()).await;
                 emit_turn_terminal_event(
                     &emitter,
-                    RoundInfo::default(),
+                    active_turn_round,
                     TurnTerminalEvent {
                         status: turn_terminal_status_for_error(&err),
                         stop_reason: Some(err.code()),
@@ -1203,6 +1241,16 @@ impl Orchestrator {
                     },
                 )
                 .await;
+                if let Some(turn_id) = active_turn_id.as_deref() {
+                    self.finish_active_turn(
+                        &session_id,
+                        turn_id,
+                        &emitter,
+                        active_turn_round,
+                        ThreadRuntimeStatus::Idle,
+                    )
+                    .await;
+                }
                 if !matches!(err.code(), "USER_BUSY" | "CANCELLED") {
                     self.append_chat(
                         &user_id,
@@ -1240,6 +1288,7 @@ impl Orchestrator {
         tool_context: &ToolContext<'_>,
         allowed_tool_names: &HashSet<String>,
         session_id: &str,
+        turn_id: &str,
         is_admin: bool,
         emitter: &EventEmitter,
         approval_tx: Option<ApprovalRequestTx>,
@@ -1325,10 +1374,31 @@ impl Orchestrator {
                                         round_info.insert_into(map);
                                     }
                                     emitter.emit("approval_request", event_payload).await;
+                                    let _ = orchestrator.active_turns.add_pending_approval(
+                                        session_id,
+                                        turn_id,
+                                        &request_id,
+                                    );
+                                    orchestrator
+                                        .emit_thread_runtime_update(
+                                            &emitter,
+                                            round_info,
+                                            orchestrator.thread_runtime.set_status(
+                                                session_id,
+                                                turn_id,
+                                                ThreadRuntimeStatus::WaitingApproval,
+                                            ),
+                                        )
+                                        .await;
                                     approved = tokio::select! {
                                         res = response_rx => res.ok(),
                                         err = orchestrator.wait_for_cancelled(session_id) => {
                                             if let Some(id) = approval_id.as_deref() {
+                                                let _ = orchestrator.active_turns.resolve_pending_approval(
+                                                    session_id,
+                                                    turn_id,
+                                                    id,
+                                                );
                                                 emit_approval_resolved_event(
                                                     &emitter,
                                                     round_info,
@@ -1353,6 +1423,11 @@ impl Orchestrator {
                         }
 
                         let approval_response = approved.unwrap_or(ApprovalResponse::Deny);
+                        let approval_snapshot = approval_id.as_deref().and_then(|id| {
+                            orchestrator
+                                .active_turns
+                                .resolve_pending_approval(session_id, turn_id, id)
+                        });
                         if let Some(id) = approval_id {
                             let (status, scope) =
                                 approval_resolution_status_and_scope(approval_response);
@@ -1382,6 +1457,23 @@ impl Orchestrator {
                                 },
                             )
                             .await;
+                        }
+                        if let Some(snapshot) = approval_snapshot {
+                            if snapshot.pending_approval_ids.is_empty()
+                                && !snapshot.waiting_for_user_input
+                            {
+                                orchestrator
+                                    .emit_thread_runtime_update(
+                                        &emitter,
+                                        round_info,
+                                        orchestrator.thread_runtime.set_status(
+                                            session_id,
+                                            turn_id,
+                                            ThreadRuntimeStatus::Running,
+                                        ),
+                                    )
+                                    .await;
+                            }
                         }
 
                         let approved = match approval_response {
@@ -1523,6 +1615,79 @@ impl Orchestrator {
             outcomes.push(outcome?);
         }
         Ok(outcomes)
+    }
+
+    async fn finish_active_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        emitter: &EventEmitter,
+        round_info: RoundInfo,
+        next_status: ThreadRuntimeStatus,
+    ) {
+        let unresolved_approvals = self
+            .active_turns
+            .finish_turn(session_id, turn_id)
+            .map(|snapshot| snapshot.pending_approval_ids.into_iter().collect::<HashSet<_>>())
+            .unwrap_or_default();
+        let pending_entries = self
+            .approval_registry
+            .remove_matching(|entry| entry.session_id == session_id.trim())
+            .await;
+        for entry in pending_entries {
+            let _ = entry.respond_to.send(ApprovalResponse::Deny);
+            if unresolved_approvals.contains(&entry.approval_id) {
+                emit_approval_resolved_event(
+                    emitter,
+                    round_info,
+                    ApprovalResolvedEvent {
+                        approval_id: &entry.approval_id,
+                        status: "cancelled",
+                        scope: "none",
+                        kind: Some(entry.kind),
+                        tool_name: &entry.tool,
+                        summary: Some(entry.summary.as_str()),
+                        resolved_by: Some("turn_cleanup"),
+                    },
+                )
+                .await;
+            }
+        }
+        self.emit_thread_runtime_update(
+            emitter,
+            round_info,
+            self.thread_runtime
+                .finish_turn(session_id, turn_id, next_status),
+        )
+        .await;
+    }
+
+    async fn emit_thread_runtime_update(
+        &self,
+        emitter: &EventEmitter,
+        round_info: RoundInfo,
+        update: ThreadRuntimeUpdate,
+    ) {
+        if let Some(snapshot) = update.status {
+            let mut payload = thread_status_payload(&snapshot);
+            if let Value::Object(ref mut map) = payload {
+                round_info.insert_into(map);
+            }
+            emitter.emit("thread_status", payload).await;
+        }
+        if let Some(closed_event) = update.closed {
+            let mut status_payload = thread_not_loaded_payload(&closed_event);
+            if let Value::Object(ref mut map) = status_payload {
+                round_info.insert_into(map);
+            }
+            emitter.emit("thread_status", status_payload).await;
+
+            let mut closed_payload = thread_closed_payload(&closed_event);
+            if let Value::Object(ref mut map) = closed_payload {
+                round_info.insert_into(map);
+            }
+            emitter.emit("thread_closed", closed_payload).await;
+        }
     }
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use super::thread_runtime::{thread_closed_payload, thread_not_loaded_payload};
 
 pub(super) enum StreamSignal {
     Event(StreamEvent),
@@ -156,6 +157,8 @@ fn should_persist_stream_event(event_type: &str) -> bool {
             | "team_error"
             | "final"
             | "turn_terminal"
+            | "thread_status"
+            | "thread_closed"
             | "error"
     )
 }
@@ -438,9 +441,11 @@ impl Orchestrator {
         start_event_id: i64,
     ) {
         let storage = self.storage.clone();
+        let thread_runtime = self.thread_runtime.clone();
         tokio::spawn(async move {
             let mut last_event_id: i64 = start_event_id.max(0);
             let mut closed = false;
+            let mut client_open = true;
             let base_interval = Duration::from_secs_f64(STREAM_EVENT_RESUME_POLL_INTERVAL_S);
             let mut poll_interval = base_interval;
             let mut idle_rounds: usize = 0;
@@ -511,21 +516,38 @@ impl Orchestrator {
                         }
                         Ok(Some(StreamSignal::Event(event))) => {
                             let event_id = parse_stream_event_id(&event);
-                            if let Some(event_id) = event_id {
-                                if event_id > last_event_id + 1
-                                    && !drain_until(
-                                        storage.clone(),
-                                        &session_id,
-                                        &mut last_event_id,
-                                        event_id - 1,
-                                        &event_tx,
-                                        &emitter,
-                                    )
-                                    .await
-                                {
-                                    return;
+                            if client_open {
+                                if let Some(event_id) = event_id {
+                                    if event_id > last_event_id + 1
+                                        && !drain_until(
+                                            storage.clone(),
+                                            &session_id,
+                                            &mut last_event_id,
+                                            event_id - 1,
+                                            &event_tx,
+                                            &emitter,
+                                        )
+                                        .await
+                                    {
+                                        client_open = false;
+                                        emitter.close();
+                                    }
+                                    if event_id <= last_event_id {
+                                        reset_stream_poll_state(
+                                            &mut poll_interval,
+                                            &mut idle_rounds,
+                                            base_interval,
+                                        );
+                                        continue;
+                                    }
                                 }
-                                if event_id <= last_event_id {
+                                if let Err(_err) = event_tx.send(event).await {
+                                    client_open = false;
+                                    emitter.close();
+                                } else {
+                                    if let Some(event_id) = event_id {
+                                        last_event_id = event_id;
+                                    }
                                     reset_stream_poll_state(
                                         &mut poll_interval,
                                         &mut idle_rounds,
@@ -533,10 +555,6 @@ impl Orchestrator {
                                     );
                                     continue;
                                 }
-                            }
-                            if event_tx.send(event).await.is_err() {
-                                emitter.close();
-                                return;
                             }
                             if let Some(event_id) = event_id {
                                 last_event_id = event_id;
@@ -567,9 +585,9 @@ impl Orchestrator {
                         let fetched = overflow.len();
                         for event in overflow {
                             let event_id = parse_stream_event_id(&event);
-                            if event_tx.send(event).await.is_err() {
+                            if client_open && event_tx.send(event).await.is_err() {
+                                client_open = false;
                                 emitter.close();
-                                return;
                             }
                             if let Some(event_id) = event_id {
                                 last_event_id = event_id;
@@ -597,6 +615,15 @@ impl Orchestrator {
                 }
 
                 backoff_stream_poll_interval(&mut poll_interval, &mut idle_rounds, base_interval);
+            }
+            let detach = thread_runtime.detach_subscriber(&session_id);
+            if let Some(closed_event) = detach.closed {
+                emitter
+                    .emit("thread_status", thread_not_loaded_payload(&closed_event))
+                    .await;
+                emitter
+                    .emit("thread_closed", thread_closed_payload(&closed_event))
+                    .await;
             }
             emitter.close();
         });
@@ -851,5 +878,7 @@ mod tests {
     fn exception_persists_turn_terminal_and_approval_resolved_events() {
         assert!(should_persist_stream_event("turn_terminal"));
         assert!(should_persist_stream_event("approval_resolved"));
+        assert!(should_persist_stream_event("thread_status"));
+        assert!(should_persist_stream_event("thread_closed"));
     }
 }

@@ -154,6 +154,7 @@ impl Orchestrator {
             prepared.is_admin,
             start_event_id,
         );
+        let _ = self.thread_runtime.attach_subscriber(&prepared.session_id);
         let runner = {
             let orchestrator = self.clone();
             let emitter = emitter.clone();

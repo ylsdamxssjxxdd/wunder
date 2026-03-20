@@ -2650,6 +2650,8 @@ fn is_workflow_event(event_type: &str) -> bool {
             | "team_error"
             | "final"
             | "turn_terminal"
+            | "thread_status"
+            | "thread_closed"
             | "error"
     )
 }

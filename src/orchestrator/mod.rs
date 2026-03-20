@@ -2,6 +2,7 @@
 use crate::a2a_store::A2aStore;
 use crate::config::{is_debug_log_level, Config, LlmModelConfig};
 use crate::config_store::ConfigStore;
+use crate::core::approval_registry::PendingApprovalRegistry;
 use crate::cron::CronWakeSignal;
 use crate::gateway::GatewayHub;
 use crate::history::HistoryManager;
@@ -74,8 +75,10 @@ mod memory;
 mod prompt;
 mod request;
 mod stream_persist;
+mod thread_runtime;
 mod tool_calls;
 mod tool_exec;
+mod turn_state;
 mod types;
 
 use context::ContextManager;
@@ -84,11 +87,13 @@ use event_stream::EventEmitter;
 use event_stream::StreamSignal;
 use limiter::RequestLimiter;
 pub(crate) use prompt::merge_agent_prompt_with_thread_agents_snapshot;
+use thread_runtime::ThreadRuntimeRegistry;
 use tool_calls::apply_tool_name_map;
 use tool_calls::collect_tool_calls_from_output;
 use tool_calls::compile_regex;
 use tool_calls::strip_tool_calls;
 use tool_exec::ToolResultPayload;
+use turn_state::ActiveTurnRegistry;
 use types::{PreparedRequest, RoundInfo};
 
 #[derive(Clone)]
@@ -104,6 +109,9 @@ pub struct Orchestrator {
     lsp_manager: Arc<LspManager>,
     prompt_composer: Arc<PromptComposer>,
     storage: Arc<dyn StorageBackend>,
+    approval_registry: Arc<PendingApprovalRegistry>,
+    active_turns: Arc<ActiveTurnRegistry>,
+    thread_runtime: Arc<ThreadRuntimeRegistry>,
     user_world: Arc<UserWorldService>,
     beeroom_realtime: Arc<BeeroomRealtimeService>,
     cron_wake_signal: Option<CronWakeSignal>,
@@ -123,6 +131,7 @@ impl Orchestrator {
         user_tool_manager: Arc<UserToolManager>,
         lsp_manager: Arc<LspManager>,
         storage: Arc<dyn StorageBackend>,
+        approval_registry: Arc<PendingApprovalRegistry>,
         gateway: Arc<GatewayHub>,
         user_world: Arc<UserWorldService>,
         beeroom_realtime: Arc<BeeroomRealtimeService>,
@@ -140,6 +149,9 @@ impl Orchestrator {
             lsp_manager,
             prompt_composer: Arc::new(PromptComposer::new(60.0, 256)),
             storage,
+            approval_registry,
+            active_turns: Arc::new(ActiveTurnRegistry::new()),
+            thread_runtime: Arc::new(ThreadRuntimeRegistry::new()),
             user_world,
             beeroom_realtime,
             cron_wake_signal,
