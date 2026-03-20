@@ -168,6 +168,7 @@ impl InnerVisibleService {
         worker_card_skill_names: &HashSet<String>,
     ) -> Result<()> {
         let mut config = self.load_default_agent_config(user_id, allowed_tool_names)?;
+        let has_persisted_state = self.has_persisted_default_agent_state(user_id)?;
         let worker_card_file = resolve_latest_worker_card_file(paths, Some(DEFAULT_AGENT_ID_ALIAS));
         let latest_file_mtime = worker_card_file
             .as_ref()
@@ -175,7 +176,9 @@ impl InnerVisibleService {
             .unwrap_or(0.0);
 
         // File changes win only when they are strictly newer than the runtime snapshot.
-        if latest_file_mtime > config.updated_at + FILE_TIME_EPSILON_S {
+        if latest_file_mtime > config.updated_at + FILE_TIME_EPSILON_S
+            || (!has_persisted_state && latest_file_mtime > 0.0)
+        {
             match self.apply_default_agent_file(
                 user_id,
                 worker_card_file
@@ -195,6 +198,20 @@ impl InnerVisibleService {
 
         self.write_default_agent_files(user_id, paths, &config, worker_card_skill_names)?;
         Ok(())
+    }
+
+    fn has_persisted_default_agent_state(&self, user_id: &str) -> Result<bool> {
+        if self
+            .user_store
+            .get_meta(&default_agent_meta_key(user_id))?
+            .is_some_and(|raw| !raw.trim().is_empty())
+        {
+            return Ok(true);
+        }
+        Ok(self
+            .user_store
+            .get_user_agent(user_id, DEFAULT_AGENT_ID_ALIAS)?
+            .is_some())
     }
 
     fn sync_regular_agents(
@@ -935,7 +952,7 @@ mod tests {
                 .expect("parse card");
         document.metadata.name = "Edited".to_string();
         document.prompt.system_prompt = None;
-        document.prompt.extra_prompt = Some("edited prompt".to_string());
+        document.extra_prompt = Some("edited prompt".to_string());
         atomic_write_text(
             &worker_card_file,
             &serde_json::to_string_pretty(&document).expect("serialize card"),
@@ -1033,7 +1050,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(30));
         document.metadata.name = "Self Updated".to_string();
         document.prompt.system_prompt = None;
-        document.prompt.extra_prompt = Some("updated prompt by self".to_string());
+        document.extra_prompt = Some("updated prompt by self".to_string());
         document.abilities.tool_names = vec![selected_tool.clone()];
         document.abilities.skills = vec![skill_alias.clone()];
         document.interaction.preset_questions = vec!["Q1".to_string(), "Q2".to_string()];
@@ -1132,10 +1149,7 @@ mod tests {
         let repaired: WorkerCardDocument =
             serde_json::from_str(&fs::read_to_string(&worker_card_file).expect("read repaired"))
                 .expect("repaired worker card should be valid json");
-        assert_eq!(
-            repaired.prompt.extra_prompt,
-            Some("stable prompt".to_string())
-        );
+        assert_eq!(repaired.extra_prompt, Some("stable prompt".to_string()));
         assert_eq!(repaired.metadata.name, "Stable");
     }
 
@@ -1200,7 +1214,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(30));
         document.metadata.name = "Default Updated".to_string();
         document.prompt.system_prompt = None;
-        document.prompt.extra_prompt = Some("default prompt updated".to_string());
+        document.extra_prompt = Some("default prompt updated".to_string());
         document.abilities.tool_names = vec![selected_tool.clone()];
         document.abilities.skills = vec![skill_alias.clone()];
         document.runtime.approval_mode = "auto_edit".to_string();
@@ -1289,5 +1303,46 @@ mod tests {
         .expect("parse rewritten default card");
         assert_eq!(rewritten.abilities.tool_names, vec![selected_tool]);
         assert!(rewritten.abilities.skills.is_empty());
+    }
+
+    #[tokio::test]
+    async fn sync_user_state_applies_default_agent_worker_card_updates_without_prior_save() {
+        let (_temp, user_store, service, _workspace) = build_service().await;
+        let user_id = "carol";
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("initial sync without persisted default agent");
+
+        let default_card = service
+            .private_root(user_id)
+            .join("agents")
+            .join("__default__.worker-card.json");
+        let mut document: WorkerCardDocument =
+            serde_json::from_str(&fs::read_to_string(&default_card).expect("read default card"))
+                .expect("parse default card");
+        std::thread::sleep(Duration::from_millis(30));
+        document.metadata.name = "Unsaved Default Updated".to_string();
+        document.extra_prompt = Some("prompt from worker card".to_string());
+        atomic_write_text(
+            &default_card,
+            &serde_json::to_string_pretty(&document).expect("serialize default card"),
+        )
+        .expect("write default card");
+
+        service
+            .sync_user_state(user_id)
+            .await
+            .expect("sync should honor worker card without prior save");
+
+        let meta = user_store
+            .get_meta(&default_agent_meta_key(user_id))
+            .expect("read default meta")
+            .expect("meta should exist");
+        let mirror: DefaultAgentConfigMirror =
+            serde_json::from_str(&meta).expect("parse default meta");
+        assert_eq!(mirror.name, "Unsaved Default Updated");
+        assert_eq!(mirror.system_prompt, "prompt from worker card");
     }
 }

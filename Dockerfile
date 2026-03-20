@@ -39,9 +39,9 @@ RUN apt-get update && apt-get install -y \
 RUN rustup component add rustfmt clippy
 RUN cargo install cargo-watch --version 8.4.0 --locked
 
-ENV CARGO_HOME=/workspaces/.cargo \
-    CARGO_TARGET_DIR=/workspaces/target \
-    PATH="/usr/local/cargo/bin:/workspaces/.cargo/bin:${PATH}"
+ENV CARGO_HOME=/usr/local/cargo \
+    CARGO_TARGET_DIR=/tmp/cargo-target \
+    PATH="/usr/local/cargo/bin:${PATH}"
 
 RUN python3 -m pip install --break-system-packages numpy pandas scipy markdown pypandoc langchain langgraph mcp onnx transformers \
     python-dateutil scikit-learn sqlalchemy psycopg[binary] pymysql pymongo openpyxl xlrd xlwt xlsxwriter PyYAML fastmcp \
@@ -91,7 +91,7 @@ RUN python3 -m pip install --break-system-packages \
 RUN python3 -m pip install --break-system-packages psycopg -i https://pypi.tuna.tsinghua.edu.cn/simple
 
 RUN printf '%s\n' \
-    'export PATH="/usr/local/cargo/bin:${CARGO_HOME:-/workspaces/.cargo}/bin:$PATH"' \
+    'export PATH="/usr/local/cargo/bin:${CARGO_HOME:-/usr/local/cargo}/bin:$PATH"' \
     > /etc/profile.d/cargo-path.sh
 
 # Office skills (ppt/doc/xlsx) offline deps (append-only)

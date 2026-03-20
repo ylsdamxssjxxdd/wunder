@@ -17,8 +17,12 @@ pub struct WorkerCardDocument {
     pub kind: String,
     #[serde(default)]
     pub metadata: WorkerCardMetadata,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "WorkerCardPrompt::is_empty")]
     pub prompt: WorkerCardPrompt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_prompt: Option<String>,
     #[serde(default)]
     pub abilities: WorkerCardAbilities,
     #[serde(default)]
@@ -51,6 +55,18 @@ pub struct WorkerCardPrompt {
     pub system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_prompt: Option<String>,
+}
+
+impl WorkerCardPrompt {
+    fn is_empty(&self) -> bool {
+        self.system_prompt
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .extra_prompt
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -197,11 +213,10 @@ pub fn build_worker_card(
             icon: record.icon.clone().unwrap_or_default(),
             exported_at: Utc::now().to_rfc3339(),
         },
-        prompt: WorkerCardPrompt {
-            system_prompt: None,
-            extra_prompt: Some(record.system_prompt.trim().to_string())
-                .filter(|value| !value.is_empty()),
-        },
+        prompt: WorkerCardPrompt::default(),
+        system_prompt: None,
+        extra_prompt: Some(record.system_prompt.trim().to_string())
+            .filter(|value| !value.is_empty()),
         abilities: WorkerCardAbilities {
             items: worker_card_items,
             tool_names: declared_tool_names,
@@ -243,7 +258,7 @@ pub fn parse_worker_card(
         name: document.metadata.name.trim().to_string(),
         description: document.metadata.description.trim().to_string(),
         system_prompt: system_prompt_override
-            .unwrap_or_else(|| worker_card_prompt_text(&document.prompt))
+            .unwrap_or_else(|| worker_card_prompt_text(&document))
             .trim()
             .to_string(),
         model_name: document
@@ -484,10 +499,16 @@ fn split_document_worker_card_abilities(
     (normalize_names(tool_names), normalize_names(skill_names))
 }
 
-fn worker_card_prompt_text(prompt: &WorkerCardPrompt) -> String {
+fn worker_card_prompt_text(document: &WorkerCardDocument) -> String {
     [
-        prompt.system_prompt.as_deref(),
-        prompt.extra_prompt.as_deref(),
+        document
+            .system_prompt
+            .as_deref()
+            .or(document.prompt.system_prompt.as_deref()),
+        document
+            .extra_prompt
+            .as_deref()
+            .or(document.prompt.extra_prompt.as_deref()),
     ]
     .into_iter()
     .flatten()
@@ -609,7 +630,8 @@ mod tests {
         assert_eq!(document.abilities.skills, vec!["planner".to_string()]);
         assert!(document.abilities.items.is_empty());
         assert_eq!(document.prompt.system_prompt, None);
-        assert_eq!(document.prompt.extra_prompt, Some("prompt".to_string()));
+        assert!(document.prompt.is_empty());
+        assert_eq!(document.extra_prompt, Some("prompt".to_string()));
         assert_eq!(document.runtime.model_name, Some("gpt".to_string()));
     }
 
@@ -752,5 +774,21 @@ mod tests {
             .ability_items
             .iter()
             .all(|item| item.runtime_name != "planner"));
+    }
+
+    #[test]
+    fn parse_worker_card_supports_top_level_extra_prompt() {
+        let payload = parse_worker_card(
+            serde_json::from_str(
+                r#"{
+                  "schema_version": "wunder/worker-card@2",
+                  "metadata": { "name": "demo" },
+                  "extra_prompt": "top level prompt"
+                }"#,
+            )
+            .expect("worker card"),
+            None,
+        );
+        assert_eq!(payload.system_prompt, "top level prompt".to_string());
     }
 }

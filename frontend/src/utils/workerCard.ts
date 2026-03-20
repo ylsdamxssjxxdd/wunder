@@ -38,10 +38,12 @@ export type WorkerCardDocument = {
     icon: string;
     exported_at: string;
   };
-  prompt: {
-    extra_prompt: string;
+  prompt?: {
+    extra_prompt?: string;
     system_prompt?: string;
   };
+  extra_prompt?: string;
+  system_prompt?: string;
   abilities: {
     items?: WorkerCardAbilityItem[];
     tool_names: string[];
@@ -116,6 +118,15 @@ const joinPromptSections = (...parts: unknown[]): string =>
     .map((item) => trimString(item))
     .filter(Boolean)
     .join('\n\n');
+
+const resolveWorkerCardPromptText = (value: unknown): string => {
+  const source = asRecord(value);
+  const prompt = asRecord(source.prompt);
+  return joinPromptSections(
+    source.system_prompt ?? prompt.system_prompt,
+    source.extra_prompt ?? prompt.extra_prompt
+  );
+};
 
 const createDownload = (filename: string, payload: string) => {
   if (typeof window === 'undefined' || typeof document === 'undefined') return;
@@ -325,9 +336,7 @@ export const buildWorkerCardDocument = (
       icon: trimString(source.icon),
       exported_at: new Date().toISOString()
     },
-    prompt: {
-      extra_prompt: joinPromptSections(source.system_prompt, source.extra_prompt)
-    },
+    extra_prompt: resolveWorkerCardPromptText(source) || undefined,
     abilities: buildWorkerCardAbilitiesPayload(abilityItems, declaredToolNames, declaredSkillNames),
     interaction: {
       preset_questions: normalizeAgentPresetQuestions(source.preset_questions)
@@ -381,7 +390,6 @@ const normalizeWorkerCardDocument = (
 ): WorkerCardDocument => {
   const source = value || {};
   const metadata = asRecord(source.metadata);
-  const prompt = asRecord(source.prompt);
   const abilities = normalizeWorkerCardAbilities(source.abilities);
   const interaction = asRecord(source.interaction);
   const runtime = asRecord(source.runtime);
@@ -400,9 +408,7 @@ const normalizeWorkerCardDocument = (
       icon: trimString(metadata.icon),
       exported_at: trimString(metadata.exported_at) || new Date().toISOString()
     },
-    prompt: {
-      extra_prompt: joinPromptSections(prompt.system_prompt, prompt.extra_prompt)
-    },
+    extra_prompt: resolveWorkerCardPromptText(source) || undefined,
     abilities: buildWorkerCardAbilitiesPayload(
       buildMergedWorkerCardAbilityItems(abilities.items, abilities.tool_names, abilities.skills),
       abilities.tool_names,
@@ -466,7 +472,7 @@ export const workerCardToAgentPayload = (document: WorkerCardDocument): Record<s
     name: trimString(document.metadata.name),
     description: trimString(document.metadata.description),
     icon: trimString(document.metadata.icon),
-    system_prompt: joinPromptSections(document.prompt.system_prompt, document.prompt.extra_prompt),
+    system_prompt: resolveWorkerCardPromptText(document),
     ability_items: abilityItems,
     abilities: {
       items: abilityItems

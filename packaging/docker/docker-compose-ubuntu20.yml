@@ -15,7 +15,7 @@
 
 x-build-volumes: &build-volumes
   - ../../:/app
-  - wunder_workspaces:/workspaces
+  - wunder_workspaces:/workspaces:nocopy
   - ../../fonts:/usr/share/fonts/wunder:ro
 
 services:

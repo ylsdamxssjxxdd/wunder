@@ -122,8 +122,12 @@ struct WorkerCardManifest {
     kind: Option<String>,
     #[serde(default)]
     metadata: WorkerCardMetadata,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "WorkerCardPrompt::is_empty")]
     prompt: WorkerCardPrompt,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    system_prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    extra_prompt: Option<String>,
     #[serde(default)]
     abilities: WorkerCardAbilities,
     #[serde(default)]
@@ -156,6 +160,18 @@ struct WorkerCardPrompt {
     system_prompt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     extra_prompt: Option<String>,
+}
+
+impl WorkerCardPrompt {
+    fn is_empty(&self) -> bool {
+        self.system_prompt
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
+            && self
+                .extra_prompt
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -1283,8 +1299,14 @@ fn validate_worker_card_manifest(manifest: &WorkerCardManifest) -> Result<()> {
 
 fn worker_card_prompt_text(worker_card: &WorkerCardManifest) -> String {
     [
-        worker_card.prompt.system_prompt.as_deref(),
-        worker_card.prompt.extra_prompt.as_deref(),
+        worker_card
+            .system_prompt
+            .as_deref()
+            .or(worker_card.prompt.system_prompt.as_deref()),
+        worker_card
+            .extra_prompt
+            .as_deref()
+            .or(worker_card.prompt.extra_prompt.as_deref()),
     ]
     .into_iter()
     .flatten()
@@ -1320,11 +1342,10 @@ fn build_worker_card_manifest(
             icon: agent.icon.clone(),
             exported_at: Some(chrono::Utc::now().to_rfc3339()),
         },
-        prompt: WorkerCardPrompt {
-            system_prompt: None,
-            extra_prompt: Some(agent.system_prompt.trim().to_string())
-                .filter(|value| !value.is_empty()),
-        },
+        prompt: WorkerCardPrompt::default(),
+        system_prompt: None,
+        extra_prompt: Some(agent.system_prompt.trim().to_string())
+            .filter(|value| !value.is_empty()),
         abilities: WorkerCardAbilities {
             items: Vec::new(),
             tool_names: normalize_string_items(declared_tool_names),

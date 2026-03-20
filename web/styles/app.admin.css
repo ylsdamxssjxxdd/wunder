@@ -2123,6 +2123,14 @@
   display: block;
 }
 
+/* Admin preset management keeps only the agent settings section. */
+.preset-agent-sync-card,
+.preset-agent-tabs,
+#presetAgentTabContentCron,
+#presetAgentTabContentChannels {
+  display: none !important;
+}
+
 .preset-agent-inline-actions {
   justify-content: flex-end;
 }

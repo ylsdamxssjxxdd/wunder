@@ -134,7 +134,7 @@ function Invoke-PythonOrgFallbackDownload {
 }
 
 function Resolve-PythonOrgIpv4Address {
-  $lines = & nslookup www.python.org 8.8.8.8 2>$null
+  $lines = & cmd.exe /d /c "nslookup www.python.org 8.8.8.8 2>nul"
   foreach ($line in $lines) {
     if ($line -match '(?<ip>(?:\d{1,3}\.){3}\d{1,3})') {
       return $matches.ip
@@ -418,6 +418,15 @@ function Write-SupplementReadme {
     [string[]]$PythonPackages
   )
 
+  $normalizedPythonPackages = New-Object System.Collections.Generic.List[string]
+  if ($null -ne $PythonPackages) {
+    foreach ($package in $PythonPackages) {
+      if (-not [string]::IsNullOrWhiteSpace($package)) {
+        $normalizedPythonPackages.Add($package)
+      }
+    }
+  }
+
   $content = @(
     'Wunder Windows 7 supplement package',
     '',
@@ -438,11 +447,11 @@ function Write-SupplementReadme {
     '- Git for Windows 2.46.2 is the last official line supporting Windows 7 / 8 / 8.1.',
     '- Python 3.8 embeddable package works best on Windows 7 with KB2533623 and the Universal CRT update installed.'
   )
-  if ($PythonPackages.Count -gt 0) {
+  if ($normalizedPythonPackages.Count -gt 0) {
     $content += ''
     $content += 'Python packages:'
     $content += '- pip / setuptools / wheel'
-    foreach ($package in $PythonPackages) {
+    foreach ($package in $normalizedPythonPackages) {
       $content += ("- {0}" -f $package)
     }
   }
@@ -623,7 +632,11 @@ Install-EmbeddedMatplotlibFonts -PythonRoot $pythonRoot -RepoRoot $repoRoot
 
 Write-Step "extracting Git runtime"
 Expand-ZipArchive -Archive $gitArchivePath -Destination $gitRoot
-Test-StagedRuntime -PythonRoot $pythonRoot -GitRoot $gitRoot -BuildRoot $resolvedBuildRoot -PythonProfile $PythonProfile -ValidateImports @($pythonProfileConfig.validateImports) -PlotProbe:([bool]$pythonProfileConfig.plotProbe)
+$plotProbeEnabled = $false
+if ($pythonProfileConfig.PSObject.Properties['plotProbe']) {
+  $plotProbeEnabled = [bool]$pythonProfileConfig.plotProbe
+}
+Test-StagedRuntime -PythonRoot $pythonRoot -GitRoot $gitRoot -BuildRoot $resolvedBuildRoot -PythonProfile $PythonProfile -ValidateImports @($pythonProfileConfig.validateImports) -PlotProbe:$plotProbeEnabled
 
 $readmePath = Join-Path $packageRoot 'README-win7-supplement.txt'
 $manifestOutPath = Join-Path $packageRoot 'wunder-win7-supplement.json'

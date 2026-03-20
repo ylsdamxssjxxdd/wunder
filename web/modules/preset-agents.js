@@ -15,6 +15,7 @@ const ensureState = () => {
     state.presetAgents = {
       presets: [],
       selectedPresetName: "",
+      selectedPresetId: "",
       activeTab: "preset",
       userAgent: null,
       syncSummary: null,
@@ -29,6 +30,9 @@ const ensureState = () => {
       loading: false,
       initialized: false,
     };
+  }
+  if (typeof state.presetAgents.selectedPresetId !== "string") {
+    state.presetAgents.selectedPresetId = "";
   }
   if (!state.panelLoaded) {
     state.panelLoaded = {};
@@ -158,6 +162,53 @@ const normalizeOptionalModelName = (value) => {
   const cleaned = String(value || "").trim();
   return cleaned || "";
 };
+
+const normalizePresetId = (value) => String(value || "").trim();
+
+const isSamePreset = (left, right) => {
+  if (!left || !right) {
+    return false;
+  }
+  const leftId = normalizePresetId(left.preset_id);
+  const rightId = normalizePresetId(right.preset_id);
+  if (leftId || rightId) {
+    return leftId !== "" && leftId === rightId;
+  }
+  return String(left.name || "").trim() === String(right.name || "").trim();
+};
+
+const setSelectedPreset = (preset) => {
+  if (!preset) {
+    state.presetAgents.selectedPresetName = "";
+    state.presetAgents.selectedPresetId = "";
+    return;
+  }
+  state.presetAgents.selectedPresetName = String(preset.name || "").trim();
+  state.presetAgents.selectedPresetId = normalizePresetId(preset.preset_id);
+};
+
+const findPresetById = (presetId) => {
+  const cleaned = normalizePresetId(presetId);
+  if (!cleaned) {
+    return null;
+  }
+  return state.presetAgents.presets.find((item) => normalizePresetId(item.preset_id) === cleaned) || null;
+};
+
+const findPresetByName = (name) => {
+  const cleaned = String(name || "").trim();
+  if (!cleaned) {
+    return null;
+  }
+  const matches = state.presetAgents.presets.filter((item) => item.name === cleaned);
+  if (!matches.length) {
+    return null;
+  }
+  return matches.find((item) => item.is_default_agent !== true) || matches[0];
+};
+
+const resolvePresetSelection = ({ presetId = "", name = "" } = {}) =>
+  findPresetById(presetId) || findPresetByName(name);
 
 const normalizeModelType = (value) => {
   const raw = String(value || "").trim().toLowerCase();
@@ -416,7 +467,10 @@ const setStatus = (text, kind = "") => {
 };
 
 const selectedPreset = () =>
-  state.presetAgents.presets.find((item) => item.name === state.presetAgents.selectedPresetName) || null;
+  resolvePresetSelection({
+    presetId: state.presetAgents.selectedPresetId,
+    name: state.presetAgents.selectedPresetName,
+  }) || null;
 
 const isDefaultPreset = (preset) =>
   Boolean(preset) &&
@@ -535,11 +589,9 @@ const fillAgentForm = (preset) => {
 };
 
 const renderTabAvailability = () => {
-  const preset = selectedPreset();
-  const locked = isDefaultPreset(preset);
-  elements.presetAgentTabCron.disabled = locked;
-  elements.presetAgentTabChannels.disabled = locked;
-  if (locked && state.presetAgents.activeTab !== "preset") {
+  elements.presetAgentTabCron.disabled = true;
+  elements.presetAgentTabChannels.disabled = true;
+  if (state.presetAgents.activeTab !== "preset") {
     state.presetAgents.activeTab = "preset";
   }
 };
@@ -584,11 +636,12 @@ const renderPresetList = () => {
     return;
   }
   const fragment = document.createDocumentFragment();
+  const activePreset = selectedPreset();
   state.presetAgents.presets.forEach((preset) => {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "preset-agent-item";
-    if (preset.name === state.presetAgents.selectedPresetName) {
+    if (isSamePreset(preset, activePreset)) {
       row.classList.add("is-active");
     }
     const title = document.createElement("div");
@@ -600,7 +653,7 @@ const renderPresetList = () => {
     row.appendChild(title);
     row.appendChild(meta);
     row.addEventListener("click", async () => {
-      state.presetAgents.selectedPresetName = preset.name;
+      setSelectedPreset(preset);
       state.presetAgents.syncSummary = null;
       renderAll();
       await refreshContext({ ensureAgent: true, silent: true });
@@ -642,7 +695,7 @@ const renderPresetDetail = () => {
     `${workspaceLabel}: ${preset.sandbox_container_id}`,
     `hive: ${DEFAULT_HIVE_ID}`,
   ].join(" | ");
-  elements.presetAgentDeleteBtn.disabled = rawPreset.is_default_agent === true;
+  elements.presetAgentDeleteBtn.disabled = isDefaultPreset(rawPreset);
   fillPresetForm(preset);
   fillAgentForm(preset);
 };
@@ -949,17 +1002,13 @@ const refreshContext = async ({ ensureAgent = true, silent = false } = {}) => {
         : sameNameAgent(await listUserAgents(), preset.name);
     }
     fillAgentForm(preset);
-    if (isDefaultPreset(preset)) {
-      state.presetAgents.cronJobs = [];
-      state.presetAgents.channelAccounts = [];
-      state.presetAgents.supportedChannels = [];
-      await loadToolCatalog();
-      renderCronList();
-      renderChannelForms();
-      renderChannelAccounts();
-    } else {
-      await Promise.all([loadCronJobs(), loadChannelAccounts(), loadToolCatalog()]);
-    }
+    state.presetAgents.cronJobs = [];
+    state.presetAgents.channelAccounts = [];
+    state.presetAgents.supportedChannels = [];
+    await loadToolCatalog();
+    renderCronList();
+    renderChannelForms();
+    renderChannelAccounts();
     renderPresetDetail();
     setStatus(t("presetAgents.status.ready", { user: TEMPLATE_USER_ID, agent: state.presetAgents.userAgent?.name || "-" }), "success");
     if (!silent) {
@@ -988,7 +1037,7 @@ const collectPresetForm = () => {
   };
 };
 
-const persistPresets = async (selectedName) => {
+const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {}) => {
   const defaultPreset = state.presetAgents.presets.find((item) => item.is_default_agent === true) || null;
   const payload = {
     items: state.presetAgents.presets
@@ -1017,17 +1066,15 @@ const persistPresets = async (selectedName) => {
     state.presetAgents.presets.unshift(defaultPreset);
   }
   if (!state.presetAgents.presets.length) {
-    state.presetAgents.selectedPresetName = "";
+    setSelectedPreset(null);
     return;
   }
-  const preferred = String(selectedName || "").trim();
-  if (preferred && state.presetAgents.presets.some((item) => item.name === preferred)) {
-    state.presetAgents.selectedPresetName = preferred;
+  const preferred = resolvePresetSelection({ presetId: selectedPresetId, name: selectedName });
+  if (preferred) {
+    setSelectedPreset(preferred);
     return;
   }
-  if (!state.presetAgents.presets.some((item) => item.name === state.presetAgents.selectedPresetName)) {
-    state.presetAgents.selectedPresetName = state.presetAgents.presets[0].name;
-  }
+  setSelectedPreset(state.presetAgents.presets[0]);
 };
 
 const savePreset = async () => {
@@ -1040,12 +1087,17 @@ const savePreset = async () => {
     const draft = collectPresetForm();
     const next = { ...current, ...effective, ...draft };
     const duplicate = state.presetAgents.presets.find(
-      (item) => item.name.toLowerCase() === next.name.toLowerCase() && item.name !== current.name
+      (item) => item.name.toLowerCase() === next.name.toLowerCase() && !isSamePreset(item, current)
     );
     if (duplicate) {
       throw new Error(t("presetAgents.error.duplicateName", { name: next.name }));
     }
-    const currentTemplateAgentId = String(state.presetAgents.userAgent?.id || "").trim();
+    // Only reuse the current template agent for persisted presets to avoid cross-preset updates
+    // when a newly created draft is saved before context refresh.
+    const currentTemplateAgentId =
+      String(current.preset_id || "").trim() && state.presetAgents.userAgent?.name === current.name
+        ? String(state.presetAgents.userAgent?.id || "").trim()
+        : "";
     const agentPayload = collectAgentForm();
     next.tool_names = agentPayload.tool_names;
     next.declared_tool_names = Array.isArray(effective.declared_tool_names) ? [...effective.declared_tool_names] : [];
@@ -1065,9 +1117,9 @@ const savePreset = async () => {
       notify(t("presetAgents.toast.savePresetSuccess"), "success");
       return;
     }
-    state.presetAgents.presets = state.presetAgents.presets.map((item) => (item.name === current.name ? next : item));
-    state.presetAgents.selectedPresetName = next.name;
-    await persistPresets(next.name);
+    state.presetAgents.presets = state.presetAgents.presets.map((item) => (isSamePreset(item, current) ? next : item));
+    setSelectedPreset(next);
+    await persistPresets({ selectedName: next.name, selectedPresetId: next.preset_id });
 
     if (currentTemplateAgentId) {
       await requestJson(`/agents/${encodeURIComponent(currentTemplateAgentId)}`, {
@@ -1096,7 +1148,7 @@ const createPreset = () => {
     index += 1;
     candidate = `${baseName}${index}`;
   }
-  state.presetAgents.presets.push({
+  const createdPreset = {
     preset_id: "",
     revision: 1,
     name: candidate,
@@ -1112,8 +1164,13 @@ const createPreset = () => {
     preset_questions: [],
     approval_mode: "full_auto",
     status: "active",
-  });
-  state.presetAgents.selectedPresetName = candidate;
+  };
+  state.presetAgents.presets.push(createdPreset);
+  setSelectedPreset(createdPreset);
+  state.presetAgents.userAgent = null;
+  state.presetAgents.cronJobs = [];
+  state.presetAgents.channelAccounts = [];
+  state.presetAgents.supportedChannels = [];
   state.presetAgents.syncSummary = null;
   renderAll();
   setTab("preset");
@@ -1128,11 +1185,14 @@ const deletePreset = async () => {
     return;
   }
   try {
-    state.presetAgents.presets = state.presetAgents.presets.filter((item) => item.name !== current.name);
-    state.presetAgents.selectedPresetName = state.presetAgents.presets[0]?.name || "";
+    state.presetAgents.presets = state.presetAgents.presets.filter((item) => !isSamePreset(item, current));
+    setSelectedPreset(state.presetAgents.presets[0] || null);
     state.presetAgents.syncSummary = null;
-    await persistPresets(state.presetAgents.selectedPresetName);
-    if (state.presetAgents.selectedPresetName) {
+    await persistPresets({
+      selectedName: state.presetAgents.selectedPresetName,
+      selectedPresetId: state.presetAgents.selectedPresetId,
+    });
+    if (selectedPreset()) {
       await refreshContext({ ensureAgent: true, silent: true });
       await loadSyncSummary({ silent: true });
     } else {
@@ -1395,12 +1455,14 @@ export const loadPresetAgents = async ({ silent = false, selectedName = "" } = {
     const payload = await requestJson("/admin/preset_agents");
     state.presetAgents.presets = (Array.isArray(payload?.data?.items) ? payload.data.items : []).map(normalizePreset).filter((item) => item.name);
 
-    const preferred = String(selectedName || "").trim();
-    if (preferred && state.presetAgents.presets.some((item) => item.name === preferred)) {
-      state.presetAgents.selectedPresetName = preferred;
-    } else if (!state.presetAgents.presets.some((item) => item.name === state.presetAgents.selectedPresetName)) {
-      state.presetAgents.selectedPresetName = state.presetAgents.presets[0]?.name || "";
-    }
+    const preferredName = String(selectedName || "").trim();
+    const preferredPreset = preferredName
+      ? resolvePresetSelection({ name: preferredName })
+      : resolvePresetSelection({
+          presetId: state.presetAgents.selectedPresetId,
+          name: state.presetAgents.selectedPresetName,
+        });
+    setSelectedPreset(preferredPreset || state.presetAgents.presets[0] || null);
     if (!TAB_KEYS.includes(state.presetAgents.activeTab)) {
       state.presetAgents.activeTab = "preset";
     }

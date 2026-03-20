@@ -189,6 +189,18 @@ fn find_preset_item<'a>(items: &'a [Value], preset_id: &str) -> &'a Value {
         .expect("preset not found by id")
 }
 
+fn read_tool_names(agent: &Value) -> Vec<String> {
+    agent["tool_names"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 async fn list_user_agents(app: &Router, token: &str) -> Vec<Value> {
     let (status, payload) = send_json(app, Some(token), Method::GET, "/wunder/agents", None).await;
     assert_eq!(status, StatusCode::OK);
@@ -206,6 +218,38 @@ async fn list_admin_presets(app: &Router) -> Vec<Value> {
         .as_array()
         .expect("preset list should be array")
         .clone()
+}
+
+async fn list_available_tool_names(app: &Router, user_id: &str) -> Vec<String> {
+    let path = format!("/wunder/tools?user_id={user_id}");
+    let (status, payload) = send_json(app, None, Method::GET, &path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let group_keys = [
+        "builtin_tools",
+        "mcp_tools",
+        "skills",
+        "knowledge_tools",
+        "user_tools",
+        "shared_tools",
+        "admin_builtin_tools",
+        "admin_mcp_tools",
+    ];
+    let mut names = Vec::new();
+    for key in group_keys {
+        if let Some(items) = payload[key].as_array() {
+            for item in items {
+                if let Some(name) = item["name"].as_str() {
+                    let cleaned = name.trim();
+                    if !cleaned.is_empty() {
+                        names.push(cleaned.to_string());
+                    }
+                }
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
 }
 
 async fn get_default_agent(app: &Router, token: Option<&str>, user_id: &str) -> Value {
@@ -709,4 +753,209 @@ async fn preset_model_sync_safe_and_force_respects_user_override() {
         find_agent_by_name(&user_b_v3, PRESET_NAME)["configured_model_name"],
         json!("model-c")
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_tool_sync_safe_and_force_respects_user_override() {
+    let user_a_id = "preset_tool_sync_user_a";
+    let context = build_test_context_with_config(user_a_id, |config| {
+        config.tools.builtin.enabled = vec!["读取文件".to_string(), "写入文件".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_sync_tool_names", None)];
+    })
+    .await;
+
+    let user_b = context
+        .state
+        .user_store
+        .create_user(
+            "preset_tool_sync_user_b",
+            Some("preset_tool_sync_user_b@example.test".to_string()),
+            "password-123",
+            Some("A"),
+            None,
+            vec!["user".to_string()],
+            "active",
+            false,
+        )
+        .expect("create second user");
+    let token_b = context
+        .state
+        .user_store
+        .create_session_token(&user_b.user_id)
+        .expect("create second user token")
+        .token;
+
+    let available_tools = list_available_tool_names(&context.app, user_a_id).await;
+    assert!(
+        available_tools.len() >= 2,
+        "expected at least 2 available tools for tool sync regression"
+    );
+    let tool_a = available_tools[0].clone();
+    let tool_b = available_tools[1].clone();
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_sync_tool_names")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_a.clone()]);
+        }
+    }
+    let updated_v1 = update_admin_presets(&context.app, admin_items).await;
+    assert_eq!(
+        find_preset_item(&updated_v1, &preset_id)["tool_names"],
+        json!([tool_a.clone()])
+    );
+
+    let sync_v1 = sync_preset(&context.app, &preset_id, "safe", None).await;
+    let created_v1 = sync_v1["data"]["summary"]["created_agents"]
+        .as_u64()
+        .expect("created_agents should be number");
+    assert!(
+        created_v1 >= 2,
+        "expected at least 2 created agents for tool sync baseline, got {created_v1}"
+    );
+
+    let user_a_v1 = list_user_agents(&context.app, &context.token).await;
+    let user_b_v1 = list_user_agents(&context.app, &token_b).await;
+    let user_b_agent_id = find_agent_id_by_name(&user_b_v1, PRESET_NAME);
+    let user_a_tools_v1 = read_tool_names(find_agent_by_name(&user_a_v1, PRESET_NAME));
+    let user_b_tools_v1 = read_tool_names(find_agent_by_name(&user_b_v1, PRESET_NAME));
+    assert!(
+        user_a_tools_v1.iter().any(|name| name == &tool_a),
+        "user A should contain preset tool {tool_a} after initial sync"
+    );
+    assert!(
+        user_b_tools_v1.iter().any(|name| name == &tool_a),
+        "user B should contain preset tool {tool_a} after initial sync"
+    );
+
+    let (status, updated_user_b) = send_json(
+        &context.app,
+        Some(&token_b),
+        Method::PUT,
+        &format!("/wunder/agents/{user_b_agent_id}"),
+        Some(json!({ "tool_names": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        read_tool_names(&updated_user_b["data"])
+            .iter()
+            .all(|name| name != &tool_a && name != &tool_b),
+        "user B custom tool override should remove preset tools before sync"
+    );
+
+    let mut admin_items_v2 = list_admin_presets(&context.app).await;
+    for item in &mut admin_items_v2 {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_b.clone()]);
+        }
+    }
+    let updated_v2 = update_admin_presets(&context.app, admin_items_v2).await;
+    assert_eq!(
+        find_preset_item(&updated_v2, &preset_id)["tool_names"],
+        json!([tool_b.clone()])
+    );
+
+    let safe_summary = sync_preset(&context.app, &preset_id, "safe", None).await;
+    let safe_updated = safe_summary["data"]["summary"]["updated_agents"]
+        .as_u64()
+        .expect("updated_agents should be number");
+    let safe_overridden = safe_summary["data"]["summary"]["overridden_agents"]
+        .as_u64()
+        .expect("overridden_agents should be number");
+    assert!(
+        safe_updated >= 1,
+        "expected at least 1 updated agent in safe tool sync, got {safe_updated}"
+    );
+    assert!(
+        safe_overridden >= 1,
+        "expected at least 1 overridden agent in safe tool sync, got {safe_overridden}"
+    );
+
+    let user_a_v2 = list_user_agents(&context.app, &context.token).await;
+    let user_b_v2 = list_user_agents(&context.app, &token_b).await;
+    let user_a_tools_v2 = read_tool_names(find_agent_by_name(&user_a_v2, PRESET_NAME));
+    let user_b_tools_v2 = read_tool_names(find_agent_by_name(&user_b_v2, PRESET_NAME));
+    assert!(
+        user_a_tools_v2.iter().any(|name| name == &tool_b),
+        "safe sync should update non-customized user A to tool {tool_b}"
+    );
+    assert!(
+        user_b_tools_v2.iter().all(|name| name != &tool_b),
+        "safe sync should not override customized user B tools"
+    );
+
+    let force_summary = sync_preset(&context.app, &preset_id, "force", None).await;
+    let force_updated = force_summary["data"]["summary"]["updated_agents"]
+        .as_u64()
+        .expect("updated_agents should be number");
+    assert!(
+        force_updated >= 2,
+        "expected at least 2 updated agents in force tool sync, got {force_updated}"
+    );
+
+    let user_b_v3 = list_user_agents(&context.app, &token_b).await;
+    let user_b_tools_v3 = read_tool_names(find_agent_by_name(&user_b_v3, PRESET_NAME));
+    assert!(
+        user_b_tools_v3.iter().any(|name| name == &tool_b),
+        "force sync should apply preset tool {tool_b} for customized user B"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_duplicate_bound_agents_are_compacted_on_list() {
+    let context = build_test_context_with_config("preset_duplicate_compact_user", |config| {
+        config.user_agents.presets = vec![build_preset_config(
+            "preset_duplicate_compact",
+            None,
+        )];
+    })
+    .await;
+
+    let agents_v1 = list_user_agents(&context.app, &context.token).await;
+    assert_eq!(agents_v1.len(), 1);
+    let base_agent_id = agents_v1[0]["id"].as_str().expect("base agent id").to_string();
+
+    let mut stored_agents = context
+        .state
+        .user_store
+        .list_user_agents("preset_duplicate_compact_user")
+        .expect("list user agents from store");
+    assert_eq!(stored_agents.len(), 1);
+    let mut duplicate = stored_agents.pop().expect("base record");
+    duplicate.agent_id = "agent_duplicate_compacted_newest".to_string();
+    duplicate.description = "newer duplicate".to_string();
+    duplicate.updated_at += 300.0;
+    context
+        .state
+        .user_store
+        .upsert_user_agent(&duplicate)
+        .expect("insert duplicate bound agent");
+
+    let duplicated = context
+        .state
+        .user_store
+        .list_user_agents("preset_duplicate_compact_user")
+        .expect("list duplicated agents");
+    assert_eq!(duplicated.len(), 2, "test precondition: two duplicate agents");
+
+    let agents_v2 = list_user_agents(&context.app, &context.token).await;
+    assert_eq!(agents_v2.len(), 1, "duplicate bound agents should be compacted");
+    assert_ne!(
+        agents_v2[0]["id"],
+        json!(base_agent_id),
+        "newest duplicate should be retained after compaction"
+    );
+    assert_eq!(agents_v2[0]["description"], json!("newer duplicate"));
+
+    let stored_after = context
+        .state
+        .user_store
+        .list_user_agents("preset_duplicate_compact_user")
+        .expect("list agents after compaction");
+    assert_eq!(stored_after.len(), 1);
 }
