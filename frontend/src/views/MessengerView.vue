@@ -786,6 +786,12 @@
               <div v-if="settingsPanelMode === 'prompts'" class="messenger-chat-settings-block">
                 <UserPromptSettingsPanel />
               </div>
+              <div
+                v-else-if="settingsPanelMode === 'help-manual'"
+                class="messenger-chat-settings-block messenger-chat-settings-block--manual"
+              >
+                <MessengerHelpManualPanel />
+              </div>
               <DesktopSystemSettingsPanel
                 v-else-if="
                   desktopMode &&
@@ -1422,6 +1428,7 @@ import {
   DesktopContainerManagerPanel,
   DesktopSystemSettingsPanel,
   GlobeAppPanel,
+  MessengerHelpManualPanel,
   MessengerLocalFileSearchPanel,
   MessengerSettingsPanel,
   MessengerWorldComposer,
@@ -1726,6 +1733,7 @@ type SettingsPanelMode =
   | 'general'
   | 'profile'
   | 'prompts'
+  | 'help-manual'
   | 'desktop-models'
   | 'desktop-remote'
   | 'desktop-lan';
@@ -2132,6 +2140,9 @@ const activeSectionSubtitle = computed(() => {
 const currentLanguageLabel = computed(() =>
   getCurrentLanguage() === 'zh-CN' ? t('language.zh-CN') : t('language.en-US')
 );
+const searchableMiddlePaneSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
+const isSearchableMiddlePaneSection = (section: string): boolean =>
+  searchableMiddlePaneSections.has(String(section || '').trim());
 const searchPlaceholder = computed(() => t(`messenger.search.${sessionHub.activeSection}`));
 const isMiddlePaneOverlay = computed(() => viewportWidth.value <= 960);
 const isRightDockOverlay = computed(() => viewportWidth.value <= 1200);
@@ -2269,20 +2280,16 @@ const agentHiveTreeRows = computed(() => {
     });
 });
 
-const showDefaultAgentEntry = computed(
-  () =>
-    !selectedAgentHiveGroupId.value ||
-    normalizeAgentHiveGroupId(selectedAgentHiveGroupId.value) === defaultBeeroomGroupId.value
-);
-
 const matchesAgentKeyword = (agent: unknown, text: string) => {
   const source = agent && typeof agent === 'object' ? (agent as Record<string, unknown>) : {};
+  const id = String(source.id || '').toLowerCase();
   const name = String(source.name || '').toLowerCase();
   const desc = String(source.description || '').toLowerCase();
+  const hiveId = String(resolveAgentHiveGroupId(source) || '').toLowerCase();
   const hiveLabel = String(
     agentHiveLabelMap.value.get(resolveAgentHiveGroupId(source)) || resolveAgentHiveGroupId(source)
   ).toLowerCase();
-  return !text || name.includes(text) || desc.includes(text) || hiveLabel.includes(text);
+  return !text || id.includes(text) || name.includes(text) || desc.includes(text) || hiveId.includes(text) || hiveLabel.includes(text);
 };
 
 const matchesAgentHiveSelection = (agent: unknown) => {
@@ -2290,6 +2297,25 @@ const matchesAgentHiveSelection = (agent: unknown) => {
   if (!selectedHiveId) return true;
   return resolveAgentHiveGroupId(agent) === normalizeAgentHiveGroupId(selectedHiveId);
 };
+
+const defaultAgentMatchesKeyword = computed(() =>
+  matchesAgentKeyword(
+    {
+      id: DEFAULT_AGENT_KEY,
+      name: t('messenger.defaultAgent'),
+      description: t('messenger.defaultAgentDesc'),
+      hive_id: defaultBeeroomGroupId.value
+    },
+    keyword.value.toLowerCase()
+  )
+);
+
+const showDefaultAgentEntry = computed(
+  () =>
+    defaultAgentMatchesKeyword.value &&
+    (!selectedAgentHiveGroupId.value ||
+      normalizeAgentHiveGroupId(selectedAgentHiveGroupId.value) === defaultBeeroomGroupId.value)
+);
 
 const defaultAgentApprovalMode = computed(() => 'full_auto');
 const agentMap = computed(() => {
@@ -3678,6 +3704,7 @@ const chatPanelTitle = computed(() => {
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return t('user.profile.enter');
     if (settingsPanelMode.value === 'prompts') return t('messenger.prompt.title');
+    if (settingsPanelMode.value === 'help-manual') return t('messenger.settings.helpManual');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llm');
     if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.title');
     if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.title');
@@ -3712,6 +3739,7 @@ const chatPanelSubtitle = computed(() => {
   if (sessionHub.activeSection === 'more') {
     if (settingsPanelMode.value === 'profile') return currentUsername.value;
     if (settingsPanelMode.value === 'prompts') return t('messenger.prompt.desc');
+    if (settingsPanelMode.value === 'help-manual') return t('messenger.settings.helpManualHint');
     if (settingsPanelMode.value === 'desktop-models') return t('desktop.system.llmHint');
     if (settingsPanelMode.value === 'desktop-lan') return t('desktop.system.lan.hint');
     if (settingsPanelMode.value === 'desktop-remote') return t('desktop.system.remote.hint');
@@ -6459,6 +6487,12 @@ const switchSection = (
                 ? 'profile'
                 : panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt'
                   ? 'prompts'
+                  : panelHint === 'help-manual' ||
+                      panelHint === 'manual' ||
+                      panelHint === 'help' ||
+                      panelHint === 'docs' ||
+                      panelHint === 'docs-site'
+                    ? 'help-manual'
                   : 'general';
   }
   if (section !== 'tools') {
@@ -6518,6 +6552,7 @@ const activateSettingsPanel = (panelMode: string) => {
   const panelHint =
     nextPanelMode === 'profile' ||
     nextPanelMode === 'prompts' ||
+    nextPanelMode === 'help-manual' ||
     nextPanelMode === 'desktop-models' ||
     nextPanelMode === 'desktop-lan' ||
     nextPanelMode === 'desktop-remote'
@@ -6719,6 +6754,7 @@ const normalizeSettingsPanelMode = (value: unknown): SettingsPanelMode => {
   if (
     normalized === 'profile' ||
     normalized === 'prompts' ||
+    normalized === 'help-manual' ||
     normalized === 'desktop-models' ||
     normalized === 'desktop-lan' ||
     normalized === 'desktop-remote'
@@ -8933,25 +8969,8 @@ const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
   await sendWorldMessage();
 };
 
-function hasSentUserMessageInActiveAgentSession(): boolean {
-  return (Array.isArray(chatStore.messages) ? chatStore.messages : []).some((message) => {
-    const current = (message || {}) as Record<string, unknown>;
-    if (Boolean(current.isGreeting)) return false;
-    if (String(current.role || '').trim() !== 'user') return false;
-    const hasText = Boolean(String(current.content || '').trim());
-    const hasAttachments = Array.isArray(current.attachments) && current.attachments.length > 0;
-    return hasText || hasAttachments;
-  });
-}
-
 function resolveReusableFreshAgentSessionId(targetAgentId: string): string {
-  const activeSessionId = String(chatStore.activeSessionId || '').trim();
-  if (!activeSessionId) return '';
-  const activeSession = chatStore.sessions.find((item) => String(item?.id || '').trim() === activeSessionId);
-  const activeSessionAgentId = normalizeAgentId(activeSession?.agent_id ?? chatStore.draftAgentId);
-  if (activeSessionAgentId !== targetAgentId) return '';
-  if (hasSentUserMessageInActiveAgentSession()) return '';
-  return activeSessionId;
+  return chatStore.resolveReusableFreshSessionId(targetAgentId);
 }
 
 function requestStopActiveAgentSessionStream() {
@@ -8963,6 +8982,9 @@ function requestStopActiveAgentSessionStream() {
 async function openOrReuseFreshAgentSession(targetAgentId: string): Promise<string> {
   const reusableSessionId = resolveReusableFreshAgentSessionId(targetAgentId);
   if (reusableSessionId) {
+    if (String(chatStore.activeSessionId || '').trim() !== reusableSessionId) {
+      requestStopActiveAgentSessionStream();
+    }
     await chatStore.setMainSession(reusableSessionId);
     return reusableSessionId;
   }
@@ -9866,6 +9888,14 @@ watch(
       settingsPanelMode.value = 'profile';
     } else if (panelHint === 'prompts' || panelHint === 'prompt' || panelHint === 'system-prompt') {
       settingsPanelMode.value = 'prompts';
+    } else if (
+      panelHint === 'help-manual' ||
+      panelHint === 'manual' ||
+      panelHint === 'help' ||
+      panelHint === 'docs' ||
+      panelHint === 'docs-site'
+    ) {
+      settingsPanelMode.value = 'help-manual';
     } else if (desktopMode.value && panelHint === 'desktop-models') {
       settingsPanelMode.value = 'desktop-models';
     } else if (desktopMode.value && panelHint === 'desktop-lan') {
@@ -9952,6 +9982,11 @@ watch(
   () => sessionHub.activeSection,
   (section) => {
     closeFileContainerMenu();
+    if (!isSearchableMiddlePaneSection(section) && (keywordInput.value || sessionHub.keyword)) {
+      clearKeywordDebounce();
+      keywordInput.value = '';
+      sessionHub.setKeyword('');
+    }
     if (section === 'swarms') {
       stopRealtimePulse?.();
       beeroomGroupsLastRefreshAt = 0;
@@ -10061,6 +10096,25 @@ watch(visibleAgentIdsForSelection, () => {
   if (sessionHub.activeSection !== 'agents') return;
   ensureSectionSelection();
 });
+
+watch(
+  () => filteredGroups.value.map((item) => String(item?.group_id || '')).join('|'),
+  () => {
+    if (sessionHub.activeSection !== 'groups') return;
+    ensureSectionSelection();
+  }
+);
+
+watch(
+  () =>
+    filteredBeeroomGroups.value
+      .map((item) => String(item?.group_id || item?.hive_id || ''))
+      .join('|'),
+  () => {
+    if (sessionHub.activeSection !== 'swarms') return;
+    ensureSectionSelection();
+  }
+);
 
 watch(
   () => [

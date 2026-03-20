@@ -1550,6 +1550,11 @@ button.messenger-chat-header-model {
   min-height: 0;
 }
 
+.messenger-chat-settings-block--manual {
+  padding: 0;
+  overflow: hidden;
+}
+
 .messenger-agent-grid-panel {
   gap: 12px;
 }

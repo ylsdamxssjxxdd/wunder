@@ -2121,6 +2121,8 @@ export default {
   'messenger.settings.desktopLanHint': 'Configure subnet rules, blacklist, and discovered peers',
   'messenger.settings.desktopRemote': 'Server connection',
   'messenger.settings.desktopRemoteHint': 'Configure cloud endpoint and connection status',
+  'messenger.settings.helpManual': 'Help Manual',
+  'messenger.settings.helpManualHint': 'Open the wunder docs site for features and integration guides',
   'messenger.prompt.title': 'Prompt Settings',
   'messenger.prompt.desc': 'Manage prompt template packs and preview for current user',
   'messenger.prompt.pack': 'Template Pack',

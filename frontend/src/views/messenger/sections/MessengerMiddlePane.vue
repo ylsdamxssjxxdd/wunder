@@ -4,7 +4,7 @@
     <div class="messenger-middle-subtitle">{{ activeSectionSubtitle }}</div>
   </header>
 
-  <div v-if="activeSection !== 'more' && !showHelperAppsWorkspace" class="messenger-search-row">
+  <div v-if="showMiddlePaneSearch" class="messenger-search-row">
     <label class="messenger-search">
       <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
       <input
@@ -710,6 +710,22 @@
         </div>
       </button>
       <button
+        class="messenger-list-item"
+        :class="{ active: settingsPanelMode === 'help-manual' }"
+        type="button"
+        @click="updateSettingsPanelMode('help-manual')"
+      >
+        <div class="messenger-list-avatar"><i class="fa-solid fa-book-open" aria-hidden="true"></i></div>
+        <div class="messenger-list-main">
+          <div class="messenger-list-row">
+            <span class="messenger-list-name">{{ t('messenger.settings.helpManual') }}</span>
+          </div>
+          <div class="messenger-list-row">
+            <span class="messenger-list-preview">{{ t('messenger.settings.helpManualHint') }}</span>
+          </div>
+        </div>
+      </button>
+      <button
         v-if="desktopMode"
         class="messenger-list-item"
         :class="{ active: settingsPanelMode === 'desktop-models' }"
@@ -1026,6 +1042,11 @@ const visibleSelectableAgentItems = computed<AgentSelectionEntry[]>(() => {
   });
   return output;
 });
+
+const middlePaneSearchableSections = new Set(['messages', 'users', 'groups', 'swarms', 'agents']);
+const showMiddlePaneSearch = computed(
+  () => !showHelperAppsWorkspace && middlePaneSearchableSections.has(String(activeSection || '').trim())
+);
 
 const selectedAgentIdSet = computed(() => new Set(selectedAgentIds.value));
 const deletableSelectedAgentIds = computed(() =>

@@ -1161,26 +1161,8 @@ const init = async () => {
   }
 };
 
-const hasSentUserMessageInActiveSession = () =>
-  chatStore.messages.some((message) => {
-    if (!message || message.isGreeting || message.role !== 'user') {
-      return false;
-    }
-    const hasText = Boolean(String(message.content || '').trim());
-    const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
-    return hasText || hasAttachments;
-  });
-
-const resolveReusableFreshSessionId = () => {
-  const activeSessionId = String(chatStore.activeSessionId || '').trim();
-  if (!activeSessionId) {
-    return '';
-  }
-  if (hasSentUserMessageInActiveSession()) {
-    return '';
-  }
-  return activeSessionId;
-};
+const resolveReusableFreshSessionId = () =>
+  chatStore.resolveReusableFreshSessionId(String(activeAgentId.value || '').trim());
 
 const requestStopActiveSessionStream = () => {
   if (!chatStore.activeSessionId) {
@@ -1193,6 +1175,9 @@ const requestStopActiveSessionStream = () => {
 const openOrReuseFreshSession = async () => {
   const reusableSessionId = resolveReusableFreshSessionId();
   if (reusableSessionId) {
+    if (String(chatStore.activeSessionId || '').trim() !== reusableSessionId) {
+      requestStopActiveSessionStream();
+    }
     await chatStore.setMainSession(reusableSessionId);
     manualDraftPending.value = false;
     return reusableSessionId;

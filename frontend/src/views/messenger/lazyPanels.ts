@@ -26,6 +26,9 @@ export const GlobeAppPanel = lazy(() => import('@/components/globe/GlobeAppPanel
 export const MessengerLocalFileSearchPanel = lazy(
   () => import('@/components/messenger/MessengerLocalFileSearchPanel.vue')
 );
+export const MessengerHelpManualPanel = lazy(
+  () => import('@/components/messenger/MessengerHelpManualPanel.vue')
+);
 export const MessengerSettingsPanel = lazy(
   () => import('@/components/messenger/MessengerSettingsPanel.vue')
 );

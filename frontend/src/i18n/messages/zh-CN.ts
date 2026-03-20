@@ -2106,6 +2106,8 @@ export default {
   'messenger.settings.desktopLanHint': '配置网段、黑名单并查看局域网节点',
   'messenger.settings.desktopRemote': '服务端连接',
   'messenger.settings.desktopRemoteHint': '配置云端接入地址并切换连接状态',
+  'messenger.settings.helpManual': '帮助手册',
+  'messenger.settings.helpManualHint': '查看 wunder 文档站，快速检索功能与接入说明',
   'messenger.prompt.title': '提示词设置',
   'messenger.prompt.desc': '管理当前用户的系统提示词模板与预览',
   'messenger.prompt.pack': '模板包',

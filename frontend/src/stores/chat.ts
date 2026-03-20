@@ -2508,6 +2508,35 @@ const cacheSessionMessages = (sessionId, messages) => {
   sessionMessages.set(key, messages);
 };
 
+const hasSubmittedUserMessage = (messages) =>
+  (Array.isArray(messages) ? messages : []).some((message) => {
+    if (!message || message.isGreeting || String(message.role || '').trim() !== 'user') {
+      return false;
+    }
+    const hasText = Boolean(String(message.content || '').trim());
+    const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
+    return hasText || hasAttachments;
+  });
+
+const isReusableFreshSession = (session, fallbackMessages = null) => {
+  if (!session || typeof session !== 'object') return false;
+  const sessionId = resolveSessionKey(session.id);
+  if (!sessionId) return false;
+  const status = String(session.status || '').trim().toLowerCase();
+  if (status === 'archived') return false;
+  const cachedMessages = getSessionMessages(sessionId);
+  const messages = Array.isArray(cachedMessages) && cachedMessages.length ? cachedMessages : fallbackMessages;
+  if (hasSubmittedUserMessage(messages)) {
+    return false;
+  }
+  const createdAt = resolveTimestampMs(session.created_at);
+  const lastMessageAt = resolveTimestampMs(session.last_message_at);
+  if (createdAt !== null && lastMessageAt !== null && lastMessageAt > createdAt + 1000) {
+    return false;
+  }
+  return true;
+};
+
 const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
   if (!store || !Array.isArray(store.sessions)) return;
   const key = resolveSessionKey(sessionId);
@@ -4946,6 +4975,20 @@ export const useChatStore = defineStore('chat', {
       const cached = readSessionListCache(agentId);
       if (cached) return cached;
       return filterSessionsByAgent(agentId, this.sessions);
+    },
+    resolveReusableFreshSessionId(agentId) {
+      const normalizedAgentId = String(agentId ?? '').trim();
+      const activeSessionId = resolveSessionKey(this.activeSessionId);
+      const sessions = filterSessionsByAgent(normalizedAgentId, this.sessions);
+      for (const session of sessions) {
+        const sessionId = resolveSessionKey(session?.id);
+        if (!sessionId) continue;
+        const fallbackMessages = sessionId === activeSessionId ? this.messages : null;
+        if (isReusableFreshSession(session, fallbackMessages)) {
+          return sessionId;
+        }
+      }
+      return '';
     },
     resolveInitialSessionId(agentId, sourceSessions = null) {
       const targetSessions = Array.isArray(sourceSessions) ? sourceSessions : this.getCachedSessions(agentId);
