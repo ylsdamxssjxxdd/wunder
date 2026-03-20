@@ -284,6 +284,10 @@ pre {
   gap: 12px;
 }
 
+:root[data-embed-mode="admin"] .docs-header-links {
+  display: none;
+}
+
 .docs-header-link {
   color: var(--docs-text-soft);
   font-size: 13px;

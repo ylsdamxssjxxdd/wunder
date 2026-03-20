@@ -211,7 +211,13 @@
     </button>
 
     <section class="messenger-chat chat-shell">
-      <header v-if="sessionHub.activeSection !== 'swarms'" class="messenger-chat-header">
+      <header
+        v-if="
+          sessionHub.activeSection !== 'swarms' &&
+          !(sessionHub.activeSection === 'more' && settingsPanelMode === 'help-manual')
+        "
+        class="messenger-chat-header"
+      >
         <div class="messenger-chat-heading">
           <div class="messenger-chat-title-row">
             <div class="messenger-chat-title">{{ chatPanelTitle }}</div>

@@ -28,12 +28,26 @@ function Resolve-SupplementArtifactPath {
     [string]$PythonProfile
   )
 
-  $fileName = if ($PythonProfile -eq 'common') {
-    "wunder补充包-win7-$Arch-common.zip"
-  } else {
-    "wunder补充包-win7-$Arch.zip"
+  if (-not (Test-Path $DistRoot)) {
+    return ''
   }
-  Join-Path $DistRoot $fileName
+
+  $suffix = if ($PythonProfile -eq 'minimal') {
+    "-win7-$Arch.zip"
+  } else {
+    "-win7-$Arch-$PythonProfile.zip"
+  }
+
+  $matches = @(
+    Get-ChildItem -Path $DistRoot -File -Filter '*.zip' -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -like "*$suffix" } |
+      Sort-Object LastWriteTime -Descending
+  )
+  if ($matches.Count -gt 0) {
+    return $matches[0].FullName
+  }
+
+  return ''
 }
 
 $repoRoot = Resolve-Win7GnuRepoRoot -ScriptPath $MyInvocation.MyCommand.Path
@@ -98,9 +112,10 @@ if ($shouldBuildSupplement) {
     -DistRoot (Join-Path $supplementBuildRoot 'dist') `
     -Arch $Arch `
     -PythonProfile $SupplementPythonProfile
-  if (-not (Test-Path $supplementArtifactPath)) {
-    throw "Win7 supplement artifact missing: $supplementArtifactPath"
+  if (-not $supplementArtifactPath) {
+    throw "Win7 supplement artifact missing under $supplementBuildRoot\\dist for arch=$Arch profile=$SupplementPythonProfile"
   }
+  Write-Win7GnuStep "resolved supplement artifact: $supplementArtifactPath"
 }
 
 Write-Win7GnuStep "packaging Electron shell with Win7 GNU bridge"
