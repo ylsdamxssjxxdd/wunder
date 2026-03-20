@@ -198,7 +198,14 @@ $env:WUNDER_INCLUDE_CLI = '0'
 $env:WUNDER_CLI_BIN = ''
 $env:WUNDER_SKIP_RUNTIME_DEPS_COPY = '1'
 $env:WUNDER_EXTRA_RUNTIME_ROOTS = ''
-$env:WUNDER_EXTRA_RUNTIME_FILES = ''
+$win7SupplementReadme = Resolve-ExistingPath @(
+  (Join-Path $repoRoot 'desktop\electron\assets\README-win7-supplement.txt')
+)
+$env:WUNDER_EXTRA_RUNTIME_FILES = if ($win7SupplementReadme) {
+  $win7SupplementReadme
+} else {
+  ''
+}
 $resolvedSupplementRoot = if ($SupplementRoot -and (Test-Path $SupplementRoot)) {
   (Resolve-Path $SupplementRoot).Path
 } elseif ($env:WUNDER_SUPPLEMENT_ROOT -and (Test-Path $env:WUNDER_SUPPLEMENT_ROOT)) {
@@ -207,8 +214,8 @@ $resolvedSupplementRoot = if ($SupplementRoot -and (Test-Path $SupplementRoot)) 
   $null
 }
 if ($resolvedSupplementRoot) {
-  Write-Step "including supplement root: $resolvedSupplementRoot"
-  $env:WUNDER_EXTRA_RUNTIME_ROOTS = $resolvedSupplementRoot
+  Write-Step "supplement root detected: $resolvedSupplementRoot"
+  Write-Step "Win7 setup.exe no longer embeds supplement runtime; ship the supplement zip separately and extract it into the install directory when Python/Git are needed"
 }
 $env:npm_config_cache = $npmCache
 $env:ELECTRON_CACHE = $electronCache

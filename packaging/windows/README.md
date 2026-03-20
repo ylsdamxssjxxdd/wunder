@@ -7,6 +7,12 @@
 
 补充包设计目标：**直接解压到桌面安装目录即可生效**。
 
+当前约定：
+
+- Win7 `setup.exe` 安装包默认不再内置 Python 与 Git。
+- 如需 Python/Git，请单独分发并解压 `wunder补充包-win7-*.zip` 到安装目录根部。
+- Electron 运行时会自动识别安装目录中的 `opt/python` 与 `opt/git`。
+
 ## 版本选择
 
 - Python：`3.8.10 embeddable package`

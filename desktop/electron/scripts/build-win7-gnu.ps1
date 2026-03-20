@@ -3,6 +3,7 @@ param(
   [string]$Arch = 'x64',
   [string]$LabRoot = '',
   [switch]$StaticRuntime,
+  [switch]$BuildSupplement,
   [switch]$WithSupplement,
   [ValidateSet('minimal', 'common')]
   [string]$SupplementPythonProfile = 'minimal',
@@ -20,6 +21,21 @@ $ErrorActionPreference = 'Stop'
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 . (Join-Path $scriptDir 'win7-gnu.common.ps1')
 
+function Resolve-SupplementArtifactPath {
+  param(
+    [string]$DistRoot,
+    [string]$Arch,
+    [string]$PythonProfile
+  )
+
+  $fileName = if ($PythonProfile -eq 'common') {
+    "wunder补充包-win7-$Arch-common.zip"
+  } else {
+    "wunder补充包-win7-$Arch.zip"
+  }
+  Join-Path $DistRoot $fileName
+}
+
 $repoRoot = Resolve-Win7GnuRepoRoot -ScriptPath $MyInvocation.MyCommand.Path
 $context = New-Win7GnuBuildContext -RepoRoot $repoRoot -Arch $Arch -LabRoot $LabRoot -RustToolchain $RustToolchain
 
@@ -36,8 +52,13 @@ if (-not (Test-Path $env:WUNDER_BRIDGE_BIN)) {
   throw "Win7 GNU bridge binary missing: $env:WUNDER_BRIDGE_BIN"
 }
 
-$supplementRoot = ''
-if ($WithSupplement) {
+$shouldBuildSupplement = $BuildSupplement -or $WithSupplement
+if ($WithSupplement -and -not $BuildSupplement) {
+  Write-Win7GnuStep "legacy -WithSupplement detected; supplement will be built separately and NOT embedded into setup.exe"
+}
+
+$supplementArtifactPath = ''
+if ($shouldBuildSupplement) {
   $supplementBuildRoot = Join-Path $context.LabRoot 'win7-supplement'
   $supplementScript = Join-Path $repoRoot 'packaging\windows\scripts\build_win7_desktop_supplement.ps1'
   if (-not (Test-Path $supplementScript)) {
@@ -73,9 +94,12 @@ if ($WithSupplement) {
   if ($LASTEXITCODE -ne 0) {
     throw "Win7 supplement build failed with exit code $LASTEXITCODE"
   }
-  $supplementRoot = Join-Path $supplementBuildRoot 'stage\package-root'
-  if (-not (Test-Path $supplementRoot)) {
-    throw "Win7 supplement package root missing: $supplementRoot"
+  $supplementArtifactPath = Resolve-SupplementArtifactPath `
+    -DistRoot (Join-Path $supplementBuildRoot 'dist') `
+    -Arch $Arch `
+    -PythonProfile $SupplementPythonProfile
+  if (-not (Test-Path $supplementArtifactPath)) {
+    throw "Win7 supplement artifact missing: $supplementArtifactPath"
   }
 }
 
@@ -83,11 +107,18 @@ Write-Win7GnuStep "packaging Electron shell with Win7 GNU bridge"
 & (Join-Path $scriptDir 'build-win7.ps1') `
   -Arch $Arch `
   -LabRoot $context.LabRoot `
-  -SupplementRoot $supplementRoot `
   -ElectronVersion $context.ElectronVersion `
   -ElectronBuilderVersion $context.ElectronBuilderVersion
 if ($LASTEXITCODE -ne 0) {
   throw "Electron packaging failed with exit code $LASTEXITCODE"
 }
 
+$installerDistRoot = Join-Path $context.LabRoot ("electron-win7-{0}\dist" -f $Arch)
+if ($supplementArtifactPath) {
+  Copy-Item -Path $supplementArtifactPath -Destination (Join-Path $installerDistRoot (Split-Path $supplementArtifactPath -Leaf)) -Force
+  Write-Win7GnuStep "supplement package copied next to installer: $(Join-Path $installerDistRoot (Split-Path $supplementArtifactPath -Leaf))"
+  Write-Win7GnuStep "setup.exe remains slim: Python/Git are NOT embedded and must be extracted from the supplement package if needed"
+}
+
+Write-Win7GnuStep "installer directory: $installerDistRoot"
 Write-Win7GnuStep "toolchain manifest: $($context.ToolchainManifestPath)"

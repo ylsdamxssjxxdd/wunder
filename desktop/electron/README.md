@@ -112,21 +112,22 @@ WUNDER_BRIDGE_BIN=/path/to/wunder-desktop-bridge
 npm run setup:desktop:win7:gnu:x64
 
 # Win7 默认正式出包入口
-npm run build:desktop:win7:gnu:x64:with-supplement:common
+npm run build:desktop:win7:gnu:x64:release:common
 
 # 已初始化后的快速重建入口
 npm run build:desktop:win7:gnu:x64:fast
 ```
 
 - GNU 方案的缓存、staging 与安装包统一隔离在 `temp_dir/win7-gnu-lab/`
-- Win7 版本默认优先使用 `build:desktop:win7:gnu:x64:with-supplement:common` 这条链路出包
-- Win7 版本默认最终交付物为该命令产出的 NSIS 一体安装包，不再优先单独分发补充包 zip
+- Win7 版本默认优先使用 `build:desktop:win7:gnu:x64:release:common` 这条链路出包
+- Win7 安装包默认不再内置 Python 和 Git；若需要这两项运行时，请使用同目录产出的 `wunder补充包` zip 手工解压到安装目录
 - 当前仅 `x64` 路线已完成构建验证
 - 最终安装包路径：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder-desktop-win7-0.1.0-x64-setup.exe`
+- `common` 补充包路径：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder补充包-win7-x64-common.zip`
 
 ### Win7 补充包（Python + Git）
 
-Win7 默认发布时，不再优先单独分发补充包；补充包主要保留给调试和手工兜底。
+Win7 默认发布时，安装包与补充包分开交付。补充包用于按需补齐 Python 与 Git。
 
 如需单独构建补充包，可在仓库根目录执行：
 
@@ -136,6 +137,7 @@ npm run build:desktop:win7:supplement:x64:common
 
 - `common` 档位产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
 - `common` 档位会额外内置 `pip / setuptools / wheel`，并预装精简常用依赖：`requests`、`numpy`、`pandas`、`openpyxl`、`matplotlib`、`Pillow`、`tabulate`
+- 将补充包解压到 Win7 安装目录根部后，目录下应出现 `opt/python` 与 `opt/git`
 - 详细说明见 `packaging/windows/README.md`
 ## 运行行为说明
 

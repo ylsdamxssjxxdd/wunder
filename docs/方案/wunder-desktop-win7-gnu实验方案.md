@@ -10,8 +10,8 @@
 ## 1. 当前结论
 
 - `x86_64-win7-windows-gnu` 的 `wunder-desktop-bridge` 已成功构建并完成 Electron 22 x64 安装包产出。
-- 当前 Win7 方向的默认正式出包流程，固定为 `npm run build:desktop:win7:gnu:x64:with-supplement:common`。
-- 当前 Win7 方向的最终交付物，固定为该流程产出的 **一体安装包**，而不是单独的补充包 zip。
+- 当前 Win7 方向的默认正式出包流程，固定为 `npm run build:desktop:win7:gnu:x64:release:common`。
+- 当前 Win7 方向的最终交付物，固定为 **安装包 + 补充包 zip** 两个文件；安装包本体不再内置 Python/Git。
 - 新 bridge 已移除对 `GetSystemTimePreciseAsFileTime` 的导入，改走 Win7 可用的时间 API 路径。
 - 新 bridge 已移除 `api-ms-win-core-winrt-error-l1-1-0.dll` / `RoOriginateErrorW` 相关依赖链。
 - DPI 感知初始化改为运行时按需加载，避免静态引入 `shcore` 的 Win8+ 入口点。
@@ -24,12 +24,12 @@
 
 ```powershell
 npm run setup:desktop:win7:gnu:x64
-npm run build:desktop:win7:gnu:x64:with-supplement:common
+npm run build:desktop:win7:gnu:x64:release:common
 ```
 
 - 以后 Win7 版本默认优先走这条链路。
-- 该入口会同时完成：Win7 GNU bridge 构建、Win7 `common` Python/Git 补充运行时构建、Electron NSIS 一体安装包产出。
-- 该入口对应的安装包就是默认交付产物。
+- 该入口会同时完成：Win7 GNU bridge 构建、Win7 `common` Python/Git 补充运行时构建、Electron NSIS 安装包产出。
+- 该入口会把补充包 zip 复制到安装包输出目录旁边，但不会把 Python/Git 并入安装包。
 
 ### 快速重建入口
 
@@ -37,13 +37,13 @@ npm run build:desktop:win7:gnu:x64:with-supplement:common
 npm run build:desktop:win7:gnu:x64:fast
 ```
 
-### 带补充包的一体安装包
+### 同时产出补充包
 
 ```powershell
 npm run build:desktop:win7:gnu:x64:with-supplement
 
-# Win7 正式推荐的一体安装包入口
-npm run build:desktop:win7:gnu:x64:with-supplement:common
+# Win7 正式推荐的分离交付入口
+npm run build:desktop:win7:gnu:x64:release:common
 ```
 
 ### 静态 CRT 试探入口
@@ -64,17 +64,17 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - bridge target：`temp_dir/win7-gnu-lab/bridge-build-target-x64-win7-gnu`
 - Electron staging：`temp_dir/win7-gnu-lab/electron-win7-x64/app`
 - 最终交付安装包：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder-desktop-win7-0.1.0-x64-setup.exe`
-- `common` 补充包中间产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
+- 同目录补充包：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder补充包-win7-x64-common.zip`
 - Win7 专用 patch 配置：`temp_dir/win7-gnu-lab/cargo-win7-patch.toml`
 - 工具链快照：`temp_dir/win7-gnu-lab/toolchain-manifest.json`
 
-其中，补充包 zip 保留为排障、手工覆盖或独立验证时使用的中间产物；默认对外分发时，以一体安装包为准。
+其中，补充包 zip 用于按需补齐 Python/Git；默认对外分发时，建议与安装包一起提供，但不再嵌入安装包。
 
 ## 4. 固化点
 
 - `desktop/electron/scripts/win7-gnu-toolchain.json`：统一固化 Win7 GNU 目标、nightly 工具链、Electron 版本与 MinGW 路径。
 - `desktop/electron/scripts/setup-win7-gnu-toolchain.ps1`：首次初始化入口，负责检查 MinGW、安装 Rust nightly、预拉取 Cargo 依赖并生成工具链快照。
-- `desktop/electron/scripts/build-win7-gnu.ps1`：Win7 GNU bridge + Electron 22 Win7 打包的一体化脚本。
+- `desktop/electron/scripts/build-win7-gnu.ps1`：Win7 GNU bridge + Electron 22 Win7 打包脚本，可选同时构建独立补充包。
 - `package.json`：新增 `setup:desktop:win7:gnu:x64`、`doctor:desktop:win7:gnu:x64`、`build:desktop:win7:gnu:x64:fast` 等根命令，便于下次直接重建。
 - `patches/win7/tokio-rustls-0.26.4-win7/`：Win7 GNU 试包专用补丁，将 `tokio-rustls` 默认后端切到 `ring`，避免重新拉入 `aws-lc-sys`。
 - `Cargo.toml`：对 `target_vendor = "win7"` 单独分流 `reqwest` / `sysinfo` 依赖，降低 Win7 运行时阻塞点。
@@ -139,8 +139,8 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - 为 Win7 Electron 试包额外提供一个可直接解压到安装目录根部的 `wunder补充包`，内含 `opt/python` 与 `opt/git`。
 - 构建入口：`npm run build:desktop:win7:supplement:x64`
 - 常用 Python 依赖档位：`npm run build:desktop:win7:supplement:x64:common`
-- 一体安装包入口：`npm run build:desktop:win7:gnu:x64:with-supplement`
-- 带常用 Python 依赖的一体安装包入口：`npm run build:desktop:win7:gnu:x64:with-supplement:common`
+- 同时产出安装包与补充包入口：`npm run build:desktop:win7:gnu:x64:release`
+- 带常用 Python 依赖的分离交付入口：`npm run build:desktop:win7:gnu:x64:release:common`
 - 构建脚本：`packaging/windows/scripts/build_win7_desktop_supplement.ps1`
 - 配置清单：`packaging/windows/scripts/win7-supplement-manifest.json`
 - 说明文档：`packaging/windows/README.md`
@@ -167,9 +167,7 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 这样做的目的，是让用户将补充包直接解压进桌面安装目录后，Electron / bridge 就能自动识别并优先使用内置 Python / Git，而不依赖系统全局安装。
 
-同时，当前 Win7 GNU 构建链也支持把补充包内容直接并入 NSIS 安装包：安装完成后，安装目录会直接带上 `opt/python` 与 `opt/git`，无需再手工解压补充包。
-
-后续若无特殊排障需求，Win7 版本默认不再以单独补充包作为最终发布物，而是统一以 `with-supplement:common` 产出的一体安装包作为最终产物。
+当前 Win7 GNU 构建链已明确改为“安装包不内置 Python/Git，补充包单独分发”的模式。安装完成后，如果需要 Python/Git，只需把对应 `wunder补充包` 解压到安装目录根部。
 
 ## 10. 暂不固化的路径
 

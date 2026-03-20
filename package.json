@@ -20,8 +20,12 @@
     "doctor:desktop:win7:gnu:x64": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/setup-win7-gnu-toolchain.ps1 -Arch x64 -Doctor",
     "build:desktop:win7:gnu:x64": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64",
     "build:desktop:win7:gnu:x64:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -SkipBootstrap",
-    "build:desktop:win7:gnu:x64:with-supplement": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -WithSupplement",
-    "build:desktop:win7:gnu:x64:with-supplement:common": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -WithSupplement -SupplementPythonProfile common",
+    "build:desktop:win7:gnu:x64:release": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -BuildSupplement",
+    "build:desktop:win7:gnu:x64:release:common": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -BuildSupplement -SupplementPythonProfile common",
+    "build:desktop:win7:gnu:x64:release:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -BuildSupplement -SkipBootstrap",
+    "build:desktop:win7:gnu:x64:release:fast:common": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -BuildSupplement -SupplementPythonProfile common -SkipBootstrap",
+    "build:desktop:win7:gnu:x64:with-supplement": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -BuildSupplement",
+    "build:desktop:win7:gnu:x64:with-supplement:common": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -BuildSupplement -SupplementPythonProfile common",
     "build:desktop:win7:gnu:x64:static": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -StaticRuntime",
     "build:desktop:win7:gnu:x64:static:fast": "powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64 -StaticRuntime -SkipBootstrap"
   }
