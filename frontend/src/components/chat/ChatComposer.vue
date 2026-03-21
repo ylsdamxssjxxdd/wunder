@@ -237,6 +237,31 @@
             {{ approvalLabelText }}
           </div>
           <div class="messenger-world-send-group">
+            <label
+              v-if="showApprovalModeSelector"
+              class="messenger-world-approval-select-wrap"
+            >
+              <select
+                class="messenger-world-approval-select"
+                :value="approvalModeValue"
+                :title="approvalModeSelectorTitle"
+                :aria-label="approvalModeSelectorTitle"
+                :disabled="approvalModeSyncing"
+                @change="handleApprovalModeChange"
+              >
+                <option
+                  v-for="option in approvalModeOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+              <i
+                class="fa-solid fa-chevron-down messenger-world-approval-select-caret"
+                aria-hidden="true"
+              ></i>
+            </label>
             <button
               class="messenger-world-send-main"
               type="button"
@@ -404,6 +429,22 @@ const props = defineProps({
     type: String,
     default: ''
   },
+  approvalMode: {
+    type: String,
+    default: ''
+  },
+  approvalModeOptions: {
+    type: Array,
+    default: () => []
+  },
+  approvalModeEditable: {
+    type: Boolean,
+    default: false
+  },
+  approvalModeSyncing: {
+    type: Boolean,
+    default: false
+  },
   modelName: {
     type: String,
     default: ''
@@ -430,7 +471,13 @@ const props = defineProps({
   }
 });
 
-const emit = defineEmits(['send', 'stop', 'toggle-voice-record', 'open-model-settings']);
+const emit = defineEmits([
+  'send',
+  'stop',
+  'toggle-voice-record',
+  'open-model-settings',
+  'update:approval-mode'
+]);
 
 const inputText = ref('');
 const inputRef = ref(null);
@@ -485,6 +532,11 @@ type ScreenshotCaptureOption = {
   hideWindow: boolean;
   region: boolean;
   icon: string;
+  label: string;
+};
+
+type ApprovalModeOption = {
+  value: string;
   label: string;
 };
 
@@ -877,14 +929,48 @@ const voiceRecordingLabel = computed(() =>
   })
 );
 const approvalLabelText = computed(() => String(props.approvalLabel || '').trim());
+const approvalModeOptions = computed<ApprovalModeOption[]>(() => {
+  const source = Array.isArray(props.approvalModeOptions) ? props.approvalModeOptions : [];
+  return source
+    .map((item) => {
+      const record =
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? (item as Record<string, unknown>)
+          : {};
+      const value = String(record.value || '').trim();
+      const label = String(record.label || value).trim();
+      if (!value || !label) return null;
+      return { value, label };
+    })
+    .filter((item): item is ApprovalModeOption => Boolean(item));
+});
+const approvalModeValue = computed(() => {
+  const candidate = String(props.approvalMode || '').trim();
+  if (!candidate) {
+    return approvalModeOptions.value[0]?.value || '';
+  }
+  const matched = approvalModeOptions.value.find((item) => item.value === candidate);
+  return matched?.value || approvalModeOptions.value[0]?.value || '';
+});
+const showApprovalModeSelector = computed(
+  () => props.worldStyle && props.approvalModeEditable && approvalModeOptions.value.length > 0
+);
+const approvalModeSyncing = computed(() => props.approvalModeSyncing);
 const approvalLabelTooltip = computed(() => {
   if (!approvalLabelText.value) return '';
   const hint = t('portal.agent.permission.tooltip');
   if (!hint) return approvalLabelText.value;
   return `${approvalLabelText.value} · ${hint}`;
 });
+const approvalModeSelectorTitle = computed(
+  () => approvalLabelTooltip.value || t('portal.agent.permission.tooltip')
+);
 const showApprovalLabel = computed(
-  () => props.worldStyle && props.showApprovalLabel && Boolean(approvalLabelText.value)
+  () =>
+    props.worldStyle &&
+    props.showApprovalLabel &&
+    Boolean(approvalLabelText.value) &&
+    !showApprovalModeSelector.value
 );
 const voiceSupported = computed(() => props.worldStyle && props.voiceSupported);
 const voiceRecording = computed(() => props.worldStyle && props.voiceRecording);
@@ -1532,6 +1618,13 @@ const handleWorldCommandAnchorFocusOut = (event: FocusEvent) => {
   }
   worldCommandAnchorHovered.value = false;
   scheduleWorldCommandPanelClose();
+};
+
+const handleApprovalModeChange = (event: Event) => {
+  const target = event.target as HTMLSelectElement | null;
+  const value = String(target?.value || '').trim();
+  if (!value) return;
+  emit('update:approval-mode', value);
 };
 
 const sendQuickCommand = async (command: string) => {

@@ -2,7 +2,7 @@
 pub const OBSERVATION_PREFIX: &str = "tool_response: ";
 pub const COMPACTION_META_TYPE: &str = "compaction_summary";
 pub const COMPACTION_RATIO: f64 = 0.9;
-pub const COMPACTION_HISTORY_RATIO: f64 = 0.8;
+pub const COMPACTION_HISTORY_RATIO: f64 = 0.9;
 pub const COMPACTION_OUTPUT_RESERVE: i64 = 1024;
 pub const COMPACTION_SAFETY_MARGIN: i64 = 512;
 pub const COMPACTION_SUMMARY_MAX_OUTPUT: i64 = 1024;

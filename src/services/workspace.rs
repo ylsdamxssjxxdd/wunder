@@ -1973,6 +1973,30 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{effective_temp_cleanup_idle_ttl_s, TEMP_FILES_IDLE_TTL_S};
+    use crate::storage::{SqliteStorage, StorageBackend};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    fn build_workspace_manager() -> (super::WorkspaceManager, tempfile::TempDir) {
+        let dir = tempdir().expect("tempdir");
+        let storage: Arc<dyn StorageBackend> = Arc::new(SqliteStorage::new(
+            dir.path()
+                .join("workspace-tests.db")
+                .to_string_lossy()
+                .to_string(),
+        ));
+        storage
+            .ensure_initialized()
+            .expect("initialize sqlite storage");
+        let manager = super::WorkspaceManager::new(
+            &dir.path().join("workspaces").to_string_lossy(),
+            storage,
+            0,
+            &HashMap::new(),
+        );
+        (manager, dir)
+    }
 
     #[test]
     fn single_root_workspace_never_uses_temp_cleanup_ttl() {
@@ -1984,6 +2008,42 @@ mod tests {
         assert_eq!(
             effective_temp_cleanup_idle_ttl_s(false),
             TEMP_FILES_IDLE_TTL_S
+        );
+    }
+
+    #[test]
+    fn session_context_overflow_flag_roundtrip_and_manual_clear() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "u1";
+        let session_id = "s1";
+
+        assert!(!workspace.load_session_context_overflow(user_id, session_id));
+        workspace.save_session_context_overflow(user_id, session_id, true);
+        assert!(workspace.load_session_context_overflow(user_id, session_id));
+
+        workspace.save_session_context_overflow(user_id, session_id, false);
+        assert!(!workspace.load_session_context_overflow(user_id, session_id));
+    }
+
+    #[test]
+    fn purge_session_data_clears_context_overflow_and_tokens_meta() {
+        let (workspace, _dir) = build_workspace_manager();
+        let user_id = "u2";
+        let session_id = "s-overflow";
+
+        workspace.save_session_context_overflow(user_id, session_id, true);
+        workspace.save_session_context_tokens(user_id, session_id, 98765);
+        assert!(workspace.load_session_context_overflow(user_id, session_id));
+        assert_eq!(
+            workspace.load_session_context_tokens(user_id, session_id),
+            98765
+        );
+
+        workspace.purge_session_data(user_id, session_id);
+        assert!(!workspace.load_session_context_overflow(user_id, session_id));
+        assert_eq!(
+            workspace.load_session_context_tokens(user_id, session_id),
+            0
         );
     }
 }

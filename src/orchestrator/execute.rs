@@ -2207,6 +2207,12 @@ mod tests {
     }
 
     #[test]
+    fn recover_from_context_overflow_when_prompt_too_long_phrase_matches() {
+        let err = OrchestratorError::internal("模型调用失败: prompt too long".to_string());
+        assert!(should_recover_from_context_overflow(&err));
+    }
+
+    #[test]
     fn exception_turn_terminal_status_maps_user_busy_to_rejected() {
         let err = OrchestratorError::user_busy("busy".to_string());
         assert_eq!(turn_terminal_status_for_error(&err), "rejected");

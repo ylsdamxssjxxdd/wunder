@@ -1,6 +1,7 @@
 use super::*;
 
 const COMPACTION_MIN_CURRENT_USER_MESSAGE_TOKENS: i64 = 64;
+const COMPACTION_RECENT_USER_WINDOW_TOKENS: i64 = 20_000;
 const PROMPT_MEMORY_RECALL_LIMIT: usize = 30;
 
 #[derive(Debug, Default)]
@@ -498,10 +499,17 @@ impl Orchestrator {
         let (summary_text, fresh_memory_injected) =
             merge_compaction_summary_with_fresh_memory(&summary_text, &fresh_memory_block);
         let mut summary_text = summary_text;
+        let recent_user_messages = collect_recent_user_messages_for_compaction(
+            &source_messages,
+            COMPACTION_RECENT_USER_WINDOW_TOKENS,
+        );
+        let recent_user_messages_retained = recent_user_messages.len();
+        let recent_user_tokens_retained = estimate_messages_tokens(&recent_user_messages);
         let mut base_messages: Vec<Value> = Vec::new();
         if let Some(system_message) = system_message.clone() {
             base_messages.push(system_message);
         }
+        base_messages.extend(recent_user_messages.iter().cloned());
         if let Some(current_user_message) = current_user_message.clone() {
             base_messages.push(current_user_message);
         } else if !question_text.is_empty() {
@@ -611,6 +619,7 @@ impl Orchestrator {
         if let Some(system_message) = system_message {
             rebuilt.push(system_message);
         }
+        rebuilt.extend(recent_user_messages);
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
         if let Some(current_user_message) = current_user_message_for_history {
             rebuilt.push(current_user_message);
@@ -649,6 +658,9 @@ impl Orchestrator {
             "fresh_memory_injected": fresh_memory_injected,
             "fresh_memory_count": fresh_memory_count,
             "fresh_memory_total_count": fresh_memory_total_count,
+            "recent_user_messages_retained": recent_user_messages_retained,
+            "recent_user_tokens_retained": recent_user_tokens_retained,
+            "recent_user_window_token_limit": COMPACTION_RECENT_USER_WINDOW_TOKENS,
             "summary_tokens": approx_token_count(&summary_text),
             "total_tokens": total_tokens,
             "total_tokens_after": rebuilt_request_tokens,
@@ -1437,10 +1449,7 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
     let mut total_tokens = estimate_messages_tokens(messages);
 
     if total_tokens > limit {
-        if let Some(summary_index) = messages
-            .iter()
-            .position(|message| message.get("role").and_then(Value::as_str) == Some("user"))
-        {
+        if let Some(summary_index) = locate_compaction_summary_message_index(messages) {
             stats.summary_tokens_before = estimate_message_tokens(&messages[summary_index]);
             let remaining_for_summary =
                 (limit - (total_tokens - stats.summary_tokens_before)).max(1);
@@ -1458,9 +1467,7 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
     }
 
     if total_tokens > limit {
-        let summary_index = messages
-            .iter()
-            .position(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let summary_index = locate_compaction_summary_message_index(messages);
         let current_user_index = messages
             .iter()
             .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
@@ -1475,9 +1482,7 @@ fn apply_rebuilt_context_guard(messages: &mut Vec<Value>, limit: i64) -> Rebuilt
     }
 
     if total_tokens > limit {
-        let summary_index = messages
-            .iter()
-            .position(|message| message.get("role").and_then(Value::as_str) == Some("user"));
+        let summary_index = locate_compaction_summary_message_index(messages);
         let current_user_index = messages
             .iter()
             .rposition(|message| message.get("role").and_then(Value::as_str) == Some("user"));
@@ -1696,6 +1701,78 @@ fn is_empty_compaction_summary(summary: &str) -> bool {
         }
     }
     false
+}
+
+fn compaction_prefixes() -> Vec<String> {
+    let mut prefixes = i18n::get_known_prefixes("history.compaction_prefix");
+    if prefixes.is_empty() {
+        prefixes.push(i18n::t("history.compaction_prefix"));
+    }
+    prefixes
+}
+
+fn starts_with_compaction_prefix(text: &str) -> bool {
+    let cleaned = text.trim();
+    if cleaned.is_empty() {
+        return false;
+    }
+    compaction_prefixes()
+        .iter()
+        .map(|prefix| prefix.trim())
+        .any(|prefix| !prefix.is_empty() && cleaned.starts_with(prefix))
+}
+
+fn locate_compaction_summary_message_index(messages: &[Value]) -> Option<usize> {
+    messages.iter().position(|message| {
+        if message.get("role").and_then(Value::as_str) != Some("user") {
+            return false;
+        }
+        let content = message.get("content").unwrap_or(&Value::Null);
+        let text = extract_guard_content_text(content);
+        starts_with_compaction_prefix(&text)
+    })
+}
+
+fn collect_recent_user_messages_for_compaction(messages: &[Value], token_limit: i64) -> Vec<Value> {
+    if token_limit <= 0 {
+        return Vec::new();
+    }
+    let mut remaining = token_limit.max(0);
+    let mut selected_rev: Vec<Value> = Vec::new();
+
+    for message in messages.iter().rev() {
+        if remaining <= 0 {
+            break;
+        }
+        let role = message.get("role").and_then(Value::as_str).unwrap_or("");
+        if role != "user" {
+            continue;
+        }
+        let content = message.get("content").unwrap_or(&Value::Null);
+        if Orchestrator::is_observation_message(role, content) {
+            continue;
+        }
+        let content_text = extract_guard_content_text(content);
+        if content_text.is_empty() || starts_with_compaction_prefix(&content_text) {
+            continue;
+        }
+
+        let message_tokens = estimate_message_tokens(message);
+        if message_tokens <= remaining {
+            selected_rev.push(message.clone());
+            remaining = remaining.saturating_sub(message_tokens);
+            continue;
+        }
+
+        let target_tokens = remaining.max(1);
+        if let Some(trimmed) = trim_message_to_fit_tokens(message, target_tokens) {
+            selected_rev.push(trimmed);
+        }
+        break;
+    }
+
+    selected_rev.reverse();
+    selected_rev
 }
 
 fn should_compact_by_context(
@@ -2014,6 +2091,58 @@ mod tests {
         assert!(stats.applied);
         assert!(stats.summary_trimmed || stats.fallback_trim_applied);
         assert!(estimate_messages_tokens(&messages) <= limit);
+    }
+
+    #[test]
+    fn test_locate_compaction_summary_message_index_prefers_prefixed_summary() {
+        let summary = format!("{}\nsummary", i18n::t("history.compaction_prefix"));
+        let messages = vec![
+            json!({ "role": "system", "content": "system prompt" }),
+            json!({ "role": "user", "content": "older user message" }),
+            json!({ "role": "user", "content": summary }),
+            json!({ "role": "user", "content": "current question" }),
+        ];
+        assert_eq!(locate_compaction_summary_message_index(&messages), Some(2));
+    }
+
+    #[test]
+    fn test_collect_recent_user_messages_for_compaction_excludes_summary_and_observation() {
+        let summary = format!("{}\nsummary", i18n::t("history.compaction_prefix"));
+        let observation = format!("{OBSERVATION_PREFIX}{{\"tool\":\"read_file\"}}");
+        let messages = vec![
+            json!({ "role": "user", "content": summary }),
+            json!({ "role": "user", "content": observation }),
+            json!({ "role": "assistant", "content": "ok" }),
+        ];
+        let kept = collect_recent_user_messages_for_compaction(&messages, 1024);
+        assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn test_collect_recent_user_messages_for_compaction_keeps_latest_user_window() {
+        let latest = json!({ "role": "user", "content": "latest question" });
+        let previous = json!({ "role": "user", "content": "B".repeat(800) });
+        let messages = vec![
+            json!({ "role": "assistant", "content": "answer" }),
+            previous.clone(),
+            latest.clone(),
+        ];
+        let limit = estimate_message_tokens(&latest).saturating_add(4);
+        let kept = collect_recent_user_messages_for_compaction(&messages, limit);
+        assert!(!kept.is_empty());
+        assert_eq!(kept.last(), Some(&latest));
+        assert!(kept.len() <= 2);
+    }
+
+    #[test]
+    fn test_collect_recent_user_messages_for_compaction_trims_oversized_latest_user_message() {
+        let large = json!({ "role": "user", "content": "X".repeat(24_000) });
+        let messages = vec![large];
+        let token_limit = 512;
+        let kept = collect_recent_user_messages_for_compaction(&messages, token_limit);
+        assert_eq!(kept.len(), 1);
+        let kept_tokens = estimate_message_tokens(&kept[0]);
+        assert!(kept_tokens <= token_limit.max(1));
     }
 
     #[test]

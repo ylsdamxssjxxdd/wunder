@@ -306,4 +306,25 @@ mod tests {
             8
         );
     }
+
+    #[test]
+    fn validate_request_text_input_size_rejects_oversized_text_attachment() {
+        let attachments = vec![AttachmentPayload {
+            name: Some("huge.txt".to_string()),
+            content: Some("x".repeat(MAX_USER_INPUT_TEXT_CHARS + 16)),
+            content_type: Some("text/plain".to_string()),
+            public_path: None,
+        }];
+        let err =
+            validate_request_text_input_size("short", Some(&attachments)).expect_err("oversized");
+        assert_eq!(err.code(), "INVALID_REQUEST");
+        let payload = err.to_payload();
+        assert_eq!(payload["detail"]["field"], "input_text");
+        assert_eq!(
+            payload["detail"]["actual_chars"]
+                .as_u64()
+                .unwrap_or_default() as usize,
+            "short".chars().count() + MAX_USER_INPUT_TEXT_CHARS + 16
+        );
+    }
 }

@@ -1241,12 +1241,17 @@
             :voice-duration-ms="agentVoiceDurationMs"
             :show-approval-label="showAgentComposerApprovalHint"
             :approval-label="agentComposerApprovalHintLabel"
+            :approval-mode="composerApprovalMode"
+            :approval-mode-options="agentComposerApprovalModeOptions"
+            :approval-mode-editable="showAgentComposerApprovalSelector"
+            :approval-mode-syncing="composerApprovalModeSyncing"
             :model-name="agentHeaderModelDisplayName"
             :model-jump-enabled="agentHeaderModelJumpEnabled"
             :model-jump-hint="t('messenger.agent.openSettings')"
             @send="sendAgentMessage"
             @stop="stopAgentMessage"
             @toggle-voice-record="toggleAgentVoiceRecord"
+            @update:approval-mode="updateComposerApprovalMode"
             @open-model-settings="openDesktopModelSettingsFromHeader"
           />
         </div>
@@ -1519,6 +1524,12 @@ import {
   isWorldVoiceContentType,
   parseWorldVoicePayload
 } from '@/views/messenger/worldVoice';
+import {
+  buildAgentApprovalOptions,
+  normalizeAgentApprovalMode,
+  useComposerApprovalMode,
+  type AgentApprovalMode
+} from '@/views/messenger/composerApprovalMode';
 import {
   buildUnitTreeFromFlat,
   buildUnitTreeRows,
@@ -2479,18 +2490,6 @@ const activeAgentSession = computed(() => {
 const asObjectRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 
-type AgentApprovalMode = 'suggest' | 'auto_edit' | 'full_auto';
-
-const normalizeAgentApprovalMode = (value: unknown): AgentApprovalMode => {
-  const normalized = String(value || '')
-    .trim()
-    .toLowerCase();
-  if (normalized === 'suggest') return 'suggest';
-  if (normalized === 'auto_edit' || normalized === 'auto-edit') return 'auto_edit';
-  if (normalized === 'full_auto' || normalized === 'full-auto') return 'full_auto';
-  return 'full_auto';
-};
-
 const tryParseJsonRecord = (value: unknown): Record<string, unknown> | null => {
   if (typeof value !== 'string') return null;
   const text = value.trim();
@@ -2618,19 +2617,20 @@ const agentHeaderModelJumpEnabled = computed(
 );
 
 const activeAgentApprovalMode = computed<AgentApprovalMode>(() => {
-  if (!desktopLocalMode.value) {
+  if (activeAgentId.value === DEFAULT_AGENT_KEY) {
     return 'full_auto';
+  }
+  const agent = asObjectRecord(activeAgent.value);
+  const agentMode = String(agent.approval_mode || agent.approvalMode || '').trim();
+  if (agentMode) {
+    return normalizeAgentApprovalMode(agentMode);
   }
   const session = asObjectRecord(activeAgentSession.value);
   const sessionMode = String(session.approval_mode || session.approvalMode || '').trim();
   if (sessionMode) {
     return normalizeAgentApprovalMode(sessionMode);
   }
-  if (activeAgentId.value === DEFAULT_AGENT_KEY && desktopLocalMode.value) {
-    return 'full_auto';
-  }
-  const agent = asObjectRecord(activeAgent.value);
-  return normalizeAgentApprovalMode(agent.approval_mode || agent.approvalMode || 'full_auto');
+  return 'full_auto';
 });
 
 const resolveCompactApprovalOptionLabel = (value: string): string => {
@@ -2643,14 +2643,53 @@ const resolveCompactApprovalOptionLabel = (value: string): string => {
   return typeof splitIndex === 'number' ? source.slice(0, splitIndex).trim() : source;
 };
 
+const agentComposerApprovalModeOptions = computed(() =>
+  buildAgentApprovalOptions((mode) => {
+    const optionLabel = t(`portal.agent.permission.option.${mode}`);
+    return resolveCompactApprovalOptionLabel(optionLabel) || optionLabel;
+  })
+);
+
+const showAgentComposerApprovalSelector = computed(
+  () => isAgentConversationActive.value
+);
+
+const resolveComposerApprovalPersistAgentId = () =>
+  normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId) ||
+  DEFAULT_AGENT_KEY;
+
+const {
+  composerApprovalMode,
+  composerApprovalModeSyncing,
+  updateComposerApprovalMode
+} = useComposerApprovalMode({
+  isAgentConversationActive,
+  activeAgentId,
+  activeAgentApprovalMode,
+  resolvePersistAgentId: resolveComposerApprovalPersistAgentId,
+  persistApprovalMode: async (agentId, mode) => {
+    await agentStore.updateAgent(agentId, { approval_mode: mode });
+    if (agentId === DEFAULT_AGENT_KEY) {
+      await loadDefaultAgentProfile().catch(() => null);
+    }
+  },
+  onPersistError: (error) => {
+    showApiError(error, t('portal.agent.saveFailed'));
+  }
+});
+
+const agentComposerApprovalHintMode = computed<AgentApprovalMode>(() =>
+  showAgentComposerApprovalSelector.value ? composerApprovalMode.value : activeAgentApprovalMode.value
+);
+
 const agentComposerApprovalHintLabel = computed(() => {
-  const optionLabel = t(`portal.agent.permission.option.${activeAgentApprovalMode.value}`);
+  const optionLabel = t(`portal.agent.permission.option.${agentComposerApprovalHintMode.value}`);
   const compactOption = resolveCompactApprovalOptionLabel(optionLabel) || optionLabel;
   return `${t('portal.agent.permission.title')}: ${compactOption}`;
 });
 
 const showAgentComposerApprovalHint = computed(
-  () => desktopLocalMode.value && isAgentConversationActive.value
+  () => isAgentConversationActive.value
 );
 
 const activeSessionApproval = computed(() => {
@@ -8211,7 +8250,9 @@ const sendAgentMessage = async (payload: { content?: string; attachments?: unkno
     await chatStore.sendMessage(finalContent, {
       attachments,
       suppressQueuedNotice: hasInquirySelection,
-      approvalMode: activeAgentApprovalMode.value
+      approvalMode: normalizeAgentApprovalMode(
+        composerApprovalMode.value || activeAgentApprovalMode.value
+      )
     });
     setRuntimeStateOverride(targetAgentId, 'done', 8_000);
     if (chatStore.activeSessionId) {

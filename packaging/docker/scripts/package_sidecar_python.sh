@@ -20,7 +20,7 @@ STAGE_DIR="${STAGE_DIR:-${BUILD_ROOT}/stage}"
 PYTHON_ROOT="${PYTHON_ROOT:-${STAGE_DIR}/opt/python}"
 GIT_ROOT="${GIT_ROOT:-${STAGE_DIR}/opt/git}"
 OUTPUT_DIR="${OUTPUT_DIR:-${TARGET_DIR}/dist}"
-PACKAGE_DIR_NAME="${PACKAGE_DIR_NAME:-wunder琛ュ厖鍖厎"
+PACKAGE_DIR_NAME="${PACKAGE_DIR_NAME:-wunder补充包}"
 OUT_NAME="${OUT_NAME:-${PACKAGE_DIR_NAME}-${ARCH}.tar.zst}"
 INCLUDE_GIT="${INCLUDE_GIT:-1}"
 DEREFERENCE_SYMLINKS="${DEREFERENCE_SYMLINKS:-1}"
@@ -140,7 +140,13 @@ if command -v zstd >/dev/null 2>&1; then
   tar "${TAR_LINK_ARGS[@]}" -C "${STAGE_DIR}" --transform "s,^opt,${PACKAGE_DIR_NAME}/opt," \
     -I 'zstd -19 -T0' -cf "${OUTPUT_DIR}/${OUT_NAME}" "${ITEMS[@]}"
 else
-  OUT_NAME="${OUT_NAME%.tar.zst}.tar.gz"
+  if [[ "${OUT_NAME}" == *.tar.gz ]]; then
+    :
+  elif [[ "${OUT_NAME}" == *.tar.zst ]]; then
+    OUT_NAME="${OUT_NAME%.tar.zst}.tar.gz"
+  else
+    OUT_NAME="${OUT_NAME}.tar.gz"
+  fi
   tar "${TAR_LINK_ARGS[@]}" -C "${STAGE_DIR}" --transform "s,^opt,${PACKAGE_DIR_NAME}/opt," \
     -czf "${OUTPUT_DIR}/${OUT_NAME}" "${ITEMS[@]}"
 fi
@@ -150,4 +156,3 @@ if [[ "${OUT_NAME}" == *.tar.gz ]] && command -v gzip >/dev/null 2>&1; then
 fi
 
 echo "Sidecar extra package: ${OUTPUT_DIR}/${OUT_NAME}"
-
