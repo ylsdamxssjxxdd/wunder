@@ -124,6 +124,7 @@
 - 审批闭环事件：新增 `approval_resolved`，表示待审批请求已进入终态；`approval_result` 保持兼容，但新接入方应优先消费 `approval_resolved`。
 - 线程运行态事件：新增 `thread_status`，用于同步 loaded runtime 状态机；`status` 取值包括 `running/waiting_approval/waiting_user_input/idle/not_loaded/system_error`，并附带 `thread_id/subscriber_count/loaded/active_turn_id`。
 - 线程卸载事件：新增 `thread_closed`，表示当前 loaded runtime 已卸载；当最后一个流式订阅者离开且该线程没有 active turn 时会发出，payload 附带 `last_status` 便于前端做状态收尾。
+- `context_usage` 事件在模型配置存在有效上下文上限时会额外附带 `max_context`，用于前端展示“上下文占用/上限”。
 - 审批作用域：待审批请求现在由共享注册表统一管理，但 `chat/ws` 的 `approval` 与 `cancel` 只会消费 `source=chat_ws` 的待审批项，不会误清理渠道侧审批；渠道内回复 `1/2/3` 也只会作用于 `source=channel` 的审批上下文。
 - 说明：`/wunder` 入口允许传入未注册的 `user_id`，作为线程标识与隔离空间使用。
 

@@ -1,4 +1,4 @@
-import { normalizeChatDurationSeconds } from '@/utils/chatTiming';
+import { normalizeChatDurationSeconds } from './chatTiming';
 
 export type MessageStatsEntry = {
   label: string;
@@ -82,9 +82,11 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
       ? usageOutputTokens
       : derivedOutputTokens;
   const decode = normalizeDurationSeconds(
-    stats?.decode_duration_total_s ??
-      stats?.decodeDurationTotalS ??
-      stats?.decode_duration_s
+    stats?.decode_duration_s ??
+      stats?.decodeDurationS ??
+      stats?.decodeDuration ??
+      stats?.decode_duration_total_s ??
+      stats?.decodeDurationTotalS
   );
   if (Number.isFinite(outputTokens) && outputTokens > 0 && decode !== null && decode > 0) {
     const speed = normalizeSpeed(outputTokens / decode, decode);
@@ -102,11 +104,9 @@ const resolveTokenSpeed = (stats: Record<string, any>): number | null => {
       stats?.average_speed_rounds ??
       stats?.averageSpeedRounds
   );
-  if (
-    Number.isFinite(averageSpeed) &&
-    averageSpeed > 0 &&
-    (!Number.isFinite(averageRounds) || averageRounds > 0)
-  ) {
+  const hasSingleAverageRound =
+    !Number.isFinite(averageRounds) || averageRounds <= 0 || averageRounds === 1;
+  if (Number.isFinite(averageSpeed) && averageSpeed > 0 && hasSingleAverageRound) {
     const speed = normalizeSpeed(averageSpeed, null);
     if (speed !== null) return speed;
   }

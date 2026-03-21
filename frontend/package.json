@@ -10,14 +10,16 @@
     "preview": "vite preview",
     "typecheck": "npm run typecheck:vue",
     "build:check": "npm run typecheck && vite build",
-    "test:chat-pending": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/chat-pending-regression.test.js",
-    "test:chat-timing": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/chat-timing-regression.test.js",
+    "test:chat-pending": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/chat-pending-regression.test.js",
+    "test:beeroom-realtime": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/beeroom-realtime-regression.test.js",
+    "test:chat-timing": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/chat-timing-regression.test.js",
     "test:composer-approval": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/composer-approval-regression.test.js",
-    "test:message-render": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-render-regression.test.js",
+    "test:message-stats": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-stats-regression.test.js",
+    "test:message-render": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/message-render-regression.test.js",
     "typecheck:vue": "node ./scripts/run-vue-tsc.mjs --noEmit",
     "typecheck:ts": "tsc --noEmit",
     "typecheck:api": "tsc -p tsconfig.api-strict.json --pretty false",
-    "test:realtime-pulse": "tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/realtime-pulse-regression.test.js"
+    "test:realtime-pulse": "node ../node_modules/typescript/bin/tsc -p scripts/regression/tsconfig.json --pretty false && node scripts/regression/dist/scripts/regression/realtime-pulse-regression.test.js"
   },
   "dependencies": {
     "@antv/g6": "^5.0.51",

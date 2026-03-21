@@ -15,6 +15,10 @@ import {
   moveBeeroomAgents
 } from '@/api/beeroom';
 import type { QueryParams } from '@/api/types';
+import {
+  isStaleRealtimeUpdate,
+  shouldApplyRealtimeStatusTransition
+} from './beeroomRealtimeStatus';
 
 export type BeeroomMember = {
   agent_id: string;
@@ -526,64 +530,93 @@ export const useBeeroomStore = defineStore('beeroom', {
         missionChanged = true;
       }
       if (mission) {
-        mission.updated_time = Math.max(Number(mission.updated_time || 0), nowSec);
+        const missionUpdatedBefore = Number(mission.updated_time || 0);
+        const staleMissionEvent = isStaleRealtimeUpdate(missionUpdatedBefore, nowSec);
+        const missionTerminalBefore = isTerminalMissionStatus(
+          mission.completion_status || mission.status || ''
+        );
+        mission.updated_time = Math.max(missionUpdatedBefore, nowSec);
         if (!mission.hive_id) {
           mission.hive_id = normalizedGroupId;
         }
-        if (normalizedType === 'team_start' && !mission.started_time) {
+        if (!staleMissionEvent && normalizedType === 'team_start' && !mission.started_time) {
           mission.started_time = nowSec;
         }
-        if (eventStatus) {
+        if (
+          shouldApplyRealtimeStatusTransition({
+            currentStatus: mission.status,
+            currentUpdatedTime: missionUpdatedBefore,
+            incomingStatus: eventStatus,
+            incomingUpdatedTime: nowSec,
+            isTerminalStatus: isTerminalMissionStatus
+          })
+        ) {
           mission.status = eventStatus;
-          if (normalizedType === 'team_finish' || normalizedType === 'team_error' || isTerminalMissionStatus(eventStatus)) {
+          if (
+            normalizedType === 'team_finish' ||
+            normalizedType === 'team_error' ||
+            isTerminalMissionStatus(eventStatus)
+          ) {
             mission.completion_status = eventStatus;
           } else if (!isTerminalMissionStatus(mission.completion_status || '')) {
             mission.completion_status = eventStatus;
           }
         }
-        if (normalizedType === 'team_error' && !eventStatus) {
+        if (
+          !staleMissionEvent &&
+          normalizedType === 'team_error' &&
+          !eventStatus &&
+          !missionTerminalBefore
+        ) {
           mission.status = 'failed';
           mission.completion_status = 'failed';
         }
-        if (normalizedType === 'team_finish' && !eventStatus) {
+        if (
+          !staleMissionEvent &&
+          normalizedType === 'team_finish' &&
+          !eventStatus &&
+          !missionTerminalBefore
+        ) {
           mission.status = mission.task_failed && mission.task_failed > 0 ? 'failed' : 'completed';
           mission.completion_status = mission.status;
         }
-        const summaryText = String(source.summary || source.result_summary || '').trim();
-        if (summaryText) {
-          mission.summary = summaryText;
-        }
         const errorText = String(source.error || '').trim();
-        if (errorText) {
-          mission.error = errorText;
-        }
-        const maybeTaskTotal = parseMaybeNumber(source.task_total);
-        if (maybeTaskTotal !== undefined) {
-          mission.task_total = Math.max(mission.task_total || 0, maybeTaskTotal);
-        }
-        const maybeTaskSuccess = parseMaybeNumber(source.task_success);
-        if (maybeTaskSuccess !== undefined) {
-          mission.task_success = maybeTaskSuccess;
-        }
-        const maybeTaskFailed = parseMaybeNumber(source.task_failed);
-        if (maybeTaskFailed !== undefined) {
-          mission.task_failed = maybeTaskFailed;
-        }
-        const maybeTokensTotal = parseMaybeNumber(source.context_tokens_total);
-        if (maybeTokensTotal !== undefined) {
-          mission.context_tokens_total = maybeTokensTotal;
-        }
-        const maybeTokensPeak = parseMaybeNumber(source.context_tokens_peak);
-        if (maybeTokensPeak !== undefined) {
-          mission.context_tokens_peak = maybeTokensPeak;
-        }
-        const maybeModelRoundTotal = parseMaybeNumber(source.model_round_total);
-        if (maybeModelRoundTotal !== undefined) {
-          mission.model_round_total = maybeModelRoundTotal;
-        }
-        const maybeElapsed = parseMaybeNumber(source.elapsed_s);
-        if (maybeElapsed !== undefined) {
-          mission.elapsed_s = maybeElapsed;
+        if (!staleMissionEvent) {
+          const summaryText = String(source.summary || source.result_summary || '').trim();
+          if (summaryText) {
+            mission.summary = summaryText;
+          }
+          if (errorText) {
+            mission.error = errorText;
+          }
+          const maybeTaskTotal = parseMaybeNumber(source.task_total);
+          if (maybeTaskTotal !== undefined) {
+            mission.task_total = Math.max(mission.task_total || 0, maybeTaskTotal);
+          }
+          const maybeTaskSuccess = parseMaybeNumber(source.task_success);
+          if (maybeTaskSuccess !== undefined) {
+            mission.task_success = maybeTaskSuccess;
+          }
+          const maybeTaskFailed = parseMaybeNumber(source.task_failed);
+          if (maybeTaskFailed !== undefined) {
+            mission.task_failed = maybeTaskFailed;
+          }
+          const maybeTokensTotal = parseMaybeNumber(source.context_tokens_total);
+          if (maybeTokensTotal !== undefined) {
+            mission.context_tokens_total = maybeTokensTotal;
+          }
+          const maybeTokensPeak = parseMaybeNumber(source.context_tokens_peak);
+          if (maybeTokensPeak !== undefined) {
+            mission.context_tokens_peak = maybeTokensPeak;
+          }
+          const maybeModelRoundTotal = parseMaybeNumber(source.model_round_total);
+          if (maybeModelRoundTotal !== undefined) {
+            mission.model_round_total = maybeModelRoundTotal;
+          }
+          const maybeElapsed = parseMaybeNumber(source.elapsed_s);
+          if (maybeElapsed !== undefined) {
+            mission.elapsed_s = maybeElapsed;
+          }
         }
         if (taskId) {
           const tasks = asArray<BeeroomMissionTask>(mission.tasks).map(cloneMissionTask);
@@ -597,54 +630,66 @@ export const useBeeroomStore = defineStore('beeroom', {
             };
             tasks.push(task);
           }
-          if (agentId) {
+          const taskUpdatedBefore = Number(task.updated_time || 0);
+          const staleTaskEvent = isStaleRealtimeUpdate(taskUpdatedBefore, nowSec);
+          if (agentId && (!task.agent_id || !staleTaskEvent)) {
             task.agent_id = agentId;
           }
           // Keep session linkage reactive so canvas workflow previews can follow the latest worker run.
-          if (targetSessionId) {
+          if (targetSessionId && (!task.target_session_id || !staleTaskEvent)) {
             task.target_session_id = targetSessionId;
           }
-          if (spawnedSessionId) {
+          if (spawnedSessionId && (!task.spawned_session_id || !staleTaskEvent)) {
             task.spawned_session_id = spawnedSessionId;
           }
-          if (sessionRunId) {
+          if (sessionRunId && (!task.session_run_id || !staleTaskEvent)) {
             task.session_run_id = sessionRunId;
           }
-          if (eventStatus) {
+          if (
+            shouldApplyRealtimeStatusTransition({
+              currentStatus: task.status,
+              currentUpdatedTime: taskUpdatedBefore,
+              incomingStatus: eventStatus,
+              incomingUpdatedTime: nowSec,
+              isTerminalStatus: isTerminalTaskStatus
+            })
+          ) {
             task.status = eventStatus;
           }
-          const maybeRetryCount = parseMaybeNumber(source.retry_count);
-          if (maybeRetryCount !== undefined) {
-            task.retry_count = maybeRetryCount;
+          if (!staleTaskEvent) {
+            const maybeRetryCount = parseMaybeNumber(source.retry_count);
+            if (maybeRetryCount !== undefined) {
+              task.retry_count = maybeRetryCount;
+            }
+            const maybePriority = parseMaybeNumber(source.priority);
+            if (maybePriority !== undefined) {
+              task.priority = maybePriority;
+            }
+            const maybeTaskStartedTime = parseMaybeNumber(source.started_time);
+            if (maybeTaskStartedTime !== undefined) {
+              task.started_time = maybeTaskStartedTime;
+            } else if (!task.started_time && normalizedType === 'team_task_update') {
+              task.started_time = nowSec;
+            }
+            const maybeTaskFinishedTime = parseMaybeNumber(source.finished_time);
+            if (maybeTaskFinishedTime !== undefined) {
+              task.finished_time = maybeTaskFinishedTime;
+            } else if (normalizedType === 'team_task_result' && isTerminalTaskStatus(task.status)) {
+              task.finished_time = nowSec;
+            }
+            const maybeTaskElapsed = parseMaybeNumber(source.elapsed_s);
+            if (maybeTaskElapsed !== undefined) {
+              task.elapsed_s = maybeTaskElapsed;
+            }
+            const resultSummary = String(source.result_summary || '').trim();
+            if (resultSummary) {
+              task.result_summary = resultSummary;
+            }
+            if (errorText) {
+              task.error = errorText;
+            }
           }
-          const maybePriority = parseMaybeNumber(source.priority);
-          if (maybePriority !== undefined) {
-            task.priority = maybePriority;
-          }
-          const maybeTaskStartedTime = parseMaybeNumber(source.started_time);
-          if (maybeTaskStartedTime !== undefined) {
-            task.started_time = maybeTaskStartedTime;
-          } else if (!task.started_time && normalizedType === 'team_task_update') {
-            task.started_time = nowSec;
-          }
-          const maybeTaskFinishedTime = parseMaybeNumber(source.finished_time);
-          if (maybeTaskFinishedTime !== undefined) {
-            task.finished_time = maybeTaskFinishedTime;
-          } else if (normalizedType === 'team_task_result' && isTerminalTaskStatus(task.status)) {
-            task.finished_time = nowSec;
-          }
-          const maybeTaskElapsed = parseMaybeNumber(source.elapsed_s);
-          if (maybeTaskElapsed !== undefined) {
-            task.elapsed_s = maybeTaskElapsed;
-          }
-          const resultSummary = String(source.result_summary || '').trim();
-          if (resultSummary) {
-            task.result_summary = resultSummary;
-          }
-          if (errorText) {
-            task.error = errorText;
-          }
-          task.updated_time = nowSec;
+          task.updated_time = Math.max(taskUpdatedBefore, nowSec);
           mission.tasks = tasks;
         }
 
@@ -666,6 +711,9 @@ export const useBeeroomStore = defineStore('beeroom', {
           }
         }
         if (isTerminalMissionStatus(mission.completion_status || mission.status || '')) {
+          if (mission.completion_status) {
+            mission.status = mission.completion_status;
+          }
           mission.finished_time = mission.finished_time || nowSec;
         }
         missionChanged = true;

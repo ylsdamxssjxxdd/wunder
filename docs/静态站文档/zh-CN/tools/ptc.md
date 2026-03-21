@@ -1,70 +1,109 @@
 ---
-title: ptc
-summary: `ptc` 会把 Python 脚本内容写入工作区临时目录并执行，适合图表、表格、程序化中间产物这类“先生成再运行”的场景。
+title: ptc (Python 程序化执行)
+summary: ptc 会把 Python 脚本内容写入工作区临时目录并执行，适合图表、表格、程序化中间产物这类先生成再运行的场景。
 read_when:
-  - 你要理解 `ptc` 和 `执行命令` 的分工
+  - 你要理解 ptc 和执行命令的分工
   - 你要生成脚本产物而不是直接跑已有命令
 source_docs:
   - src/services/tools/catalog.rs
   - src/services/tools.rs
-  - src/sandbox/server.rs
 ---
 
-# ptc
+# ptc (Python 程序化执行)
 
-`ptc` 可以理解成 Wunder 的“程序化工具调用”。
+先生成脚本再执行的程序化工具。
 
-它不是让模型自由拼 shell，而是让模型先给出一段 Python 脚本内容，再由系统把脚本写入临时目录并执行。
+---
 
-## 常用参数
+## 功能说明
 
-- `filename`
-- `workdir`
-- `content`
+`ptc` (Programmatic Tool Call) 让模型先给出一段 Python 脚本内容，再由系统把脚本写入临时目录并执行。
 
-其中：
+**别名**：
+- `programmatic_tool_call`
 
-- `filename` 只接受简单文件名，不允许路径段。
-- 没写扩展名时，系统会按 Python 脚本处理。
-- 非 Python 扩展会被拒绝。
+---
 
-## 它适合什么
+## 参数说明
 
-- 生成图表
-- 做临时数据清洗
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| `filename` | string | ❌ | 文件名，不允许路径段 |
+| `workdir` | string | ❌ | 工作目录 |
+| `content` | string | ✅ | Python 脚本内容 |
+
+---
+
+## 使用示例
+
+### 生成图表
+
+```json
+{
+  "filename": "plot.py",
+  "content": "import matplotlib.pyplot as plt\nimport numpy as np\n\nx = np.linspace(0, 10, 100)\ny = np.sin(x)\n\nplt.plot(x, y)\nplt.savefig('plot.png')\nprint('Plot saved to plot.png')"
+}
+```
+
+### 数据处理
+
+```json
+{
+  "content": "import pandas as pd\n\ndata = pd.read_csv('data.csv')\nsummary = data.describe()\nsummary.to_csv('summary.csv')\nprint('Summary saved to summary.csv')"
+}
+```
+
+---
+
+## 与执行命令的对比
+
+| 特性 | ptc | [执行命令](/docs/zh-CN/tools/exec/) |
+|------|-----|--------------------------------|
+| 适用场景 | 先生成脚本再执行 | 运行已有命令 |
+| 输入 | Python 脚本内容 | 命令字符串 |
+| 推荐使用 | 图表、数据处理、程序化 | 编译、测试、脚本 |
+| 文件编辑 | ❌ 不适合 | ❌ 不适合 |
+
+---
+
+## 适用场景
+
+✅ **适合使用 ptc**：
+- 生成图表（matplotlib、plotly）
+- 数据清洗和转换（pandas）
 - 输出结构化中间文件
 - 先形成脚本再继续执行链路
 
-如果你的目标是“跑一个已经存在的命令”，优先用 [执行命令](/docs/zh-CN/tools/exec/)。
+❌ **不适合使用 ptc**：
+- 运行已有命令 → 用 `执行命令`
+- 编辑仓库文件 → 用 `写入文件` 或 `应用补丁`
+- 执行系统命令串 → 用 `执行命令`
 
-如果你的目标是“先生成一段脚本内容，再把结果产出来”，`ptc` 更合适。
+---
 
-## 它实际怎么落地
+## 执行流程
 
-系统会把脚本写到工作区下的 `ptc_temp` 一类临时目录中，再调用 Python 执行。
+1. 系统把脚本写到工作区下的临时目录（如 `ptc_temp`）
+2. 调用 Python 执行脚本
+3. 返回执行结果和输出
 
-所以它的重点不是编辑仓库源码，而是快速产生一次性的程序化产物。
+---
 
-## 常见误区
+## 注意事项
 
-### 它不是普通文件编辑
+1. **文件名限制**：
+   - 只接受简单文件名，不允许路径段
+   - 没写扩展名时，按 Python 脚本处理
+   - 非 Python 扩展会被拒绝
 
-真正要改仓库文件，优先还是：
+2. **用途定位**：
+   - 重点不是编辑仓库源码
+   - 而是快速产生一次性的程序化产物
 
-- [文件与工作区工具](/docs/zh-CN/tools/workspace-files/)
-- [应用补丁](/docs/zh-CN/tools/apply-patch/)
+3. **文件编辑不用 ptc**：
+   - 真正要改仓库文件，优先用文件工具
 
-### 它也不是普通 shell
-
-`ptc` 的输入核心是脚本内容，不是 shell 命令串。
-
-所以它比 `执行命令` 更适合“生成式脚本”，但不适合把很多系统命令混成一团去跑。
-
-## 实施建议
-
-- `ptc` 面向“生成脚本并执行”，不是面向“执行已有命令”。
-- 它只接受受限文件名和 Python 脚本内容。
-- 它更适合图表、转换、程序化中间结果，不适合作为仓库编辑主入口。
+---
 
 ## 延伸阅读
 

@@ -292,6 +292,7 @@ impl TeamRunRunner {
                     "status": updated.status,
                     "task_total": updated.task_total,
                     "strategy": updated.strategy,
+                    "updated_time": updated.updated_time,
                 }),
             );
         }
@@ -451,6 +452,7 @@ impl TeamRunRunner {
                 "hive_id": run.hive_id,
                 "agent_id": task.agent_id,
                 "status": task.status,
+                "updated_time": task.updated_time,
             }),
         );
 
@@ -571,6 +573,7 @@ impl TeamRunRunner {
                 "elapsed_s": task.elapsed_s,
                 "result_summary": task.result_summary,
                 "error": task.error,
+                "updated_time": task.updated_time,
             }),
         );
         Ok(())
@@ -747,6 +750,7 @@ impl TeamRunRunner {
                 "hive_id": run.hive_id,
                 "agent_id": task.agent_id,
                 "status": task.status,
+                "updated_time": task.updated_time,
             }),
         );
         Ok(())
@@ -792,6 +796,7 @@ impl TeamRunRunner {
                 "hive_id": run.hive_id,
                 "agent_id": task.agent_id,
                 "status": task.status,
+                "updated_time": task.updated_time,
             }),
         );
         Ok(())
@@ -851,6 +856,7 @@ impl TeamRunRunner {
                     "hive_id": run.hive_id,
                     "agent_id": task.agent_id,
                     "status": task.status,
+                    "updated_time": task.updated_time,
                 }),
             );
         }
@@ -1103,17 +1109,7 @@ impl TeamRunRunner {
             return;
         }
 
-        let mut realtime_payload = payload;
-        if let Value::Object(ref mut map) = realtime_payload {
-            map.entry("team_run_id".to_string())
-                .or_insert_with(|| Value::String(run.team_run_id.clone()));
-            map.entry("hive_id".to_string())
-                .or_insert_with(|| Value::String(run.hive_id.clone()));
-            map.entry("status".to_string())
-                .or_insert_with(|| Value::String(run.status.clone()));
-            map.entry("updated_time".to_string())
-                .or_insert_with(|| json!(run.updated_time));
-        }
+        let realtime_payload = build_realtime_event_payload(run, payload);
 
         let realtime_service = self.beeroom_realtime.clone();
         let user_id = cleaned_user.to_string();
@@ -1125,6 +1121,21 @@ impl TeamRunRunner {
                 .await;
         });
     }
+}
+
+fn build_realtime_event_payload(run: &TeamRunRecord, payload: Value) -> Value {
+    let mut realtime_payload = payload;
+    if let Value::Object(ref mut map) = realtime_payload {
+        map.entry("team_run_id".to_string())
+            .or_insert_with(|| Value::String(run.team_run_id.clone()));
+        map.entry("hive_id".to_string())
+            .or_insert_with(|| Value::String(run.hive_id.clone()));
+        map.entry("status".to_string())
+            .or_insert_with(|| Value::String(run.status.clone()));
+        map.entry("updated_time".to_string())
+            .or_insert_with(|| json!(run.updated_time));
+    }
+    realtime_payload
 }
 
 fn build_task_request(
@@ -1359,4 +1370,133 @@ enum SessionExecutionOutcome {
 
 fn now_ts() -> f64 {
     chrono::Utc::now().timestamp_millis() as f64 / 1000.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_merge_summary, build_realtime_event_payload, TeamProgress, TeamRunRecord,
+        TeamTaskRecord,
+    };
+    use serde_json::json;
+
+    fn sample_run() -> TeamRunRecord {
+        TeamRunRecord {
+            team_run_id: "run-1".to_string(),
+            user_id: "user-1".to_string(),
+            hive_id: "hive-1".to_string(),
+            parent_session_id: "session-1".to_string(),
+            parent_agent_id: Some("agent-parent".to_string()),
+            mother_agent_id: Some("agent-mother".to_string()),
+            strategy: "parallel".to_string(),
+            status: "running".to_string(),
+            task_total: 2,
+            task_success: 0,
+            task_failed: 0,
+            context_tokens_total: 0,
+            context_tokens_peak: 0,
+            model_round_total: 0,
+            started_time: Some(10.0),
+            finished_time: None,
+            elapsed_s: None,
+            summary: None,
+            error: None,
+            updated_time: 88.0,
+        }
+    }
+
+    fn sample_task(
+        task_id: &str,
+        status: &str,
+        priority: i64,
+        updated_time: f64,
+        result_summary: Option<&str>,
+        error: Option<&str>,
+    ) -> TeamTaskRecord {
+        TeamTaskRecord {
+            task_id: task_id.to_string(),
+            team_run_id: "run-1".to_string(),
+            user_id: "user-1".to_string(),
+            hive_id: "hive-1".to_string(),
+            agent_id: format!("agent-{task_id}"),
+            target_session_id: None,
+            spawned_session_id: None,
+            session_run_id: None,
+            status: status.to_string(),
+            retry_count: 0,
+            priority,
+            started_time: Some(1.0),
+            finished_time: Some(2.0),
+            elapsed_s: Some(1.0),
+            result_summary: result_summary.map(ToString::to_string),
+            error: error.map(ToString::to_string),
+            updated_time,
+        }
+    }
+
+    #[test]
+    fn realtime_payload_keeps_existing_updated_time() {
+        let run = sample_run();
+        let payload = json!({
+            "task_id": "task-1",
+            "status": "completed",
+            "updated_time": 123.0
+        });
+        let normalized = build_realtime_event_payload(&run, payload);
+        assert_eq!(
+            normalized,
+            json!({
+                "task_id": "task-1",
+                "status": "completed",
+                "updated_time": 123.0,
+                "team_run_id": "run-1",
+                "hive_id": "hive-1"
+            })
+        );
+    }
+
+    #[test]
+    fn realtime_payload_falls_back_to_run_defaults() {
+        let run = sample_run();
+        let payload = json!({
+            "task_id": "task-1"
+        });
+        let normalized = build_realtime_event_payload(&run, payload);
+        assert_eq!(
+            normalized,
+            json!({
+                "task_id": "task-1",
+                "team_run_id": "run-1",
+                "hive_id": "hive-1",
+                "status": "running",
+                "updated_time": 88.0
+            })
+        );
+    }
+
+    #[test]
+    fn merge_summary_first_success_prefers_highest_priority_success() {
+        let tasks = vec![
+            sample_task("a", "success", 8, 10.0, Some("primary answer"), None),
+            sample_task("b", "success", 1, 11.0, Some("secondary answer"), None),
+            sample_task("c", "failed", 9, 9.0, None, Some("failed"))
+        ];
+        let summary = build_merge_summary("first_success", &tasks);
+        assert_eq!(summary, "primary answer");
+    }
+
+    #[test]
+    fn team_progress_counts_terminal_statuses() {
+        let tasks = vec![
+            sample_task("a", "success", 1, 1.0, Some("ok"), None),
+            sample_task("b", "timeout", 1, 2.0, None, Some("timeout")),
+            sample_task("c", "cancelled", 1, 3.0, None, Some("cancelled")),
+            sample_task("d", "running", 1, 4.0, None, None),
+        ];
+        let progress = TeamProgress::from_tasks(&tasks);
+        assert_eq!(progress.success, 1);
+        assert_eq!(progress.timeout, 1);
+        assert_eq!(progress.failed, 2);
+        assert_eq!(progress.done, 3);
+    }
 }

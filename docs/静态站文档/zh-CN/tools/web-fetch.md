@@ -1,126 +1,161 @@
 ---
 title: 网页抓取
-summary: "`网页抓取` 的英文别名是 `web_fetch`。它适合读网页正文，不适合代替真实浏览器交互。"
+summary: web_fetch 适合读取网页正文，通过 HTTP/HTTPS 拉取页面，不维护浏览器会话，与浏览器工具分工明确。
 read_when:
   - 你要让模型读取网页正文
   - 你不确定该用网页抓取还是浏览器
 source_docs:
-  - config/wunder-example.yaml
   - src/services/tools/web_fetch_tool.rs
-  - docs/系统介绍.md
+  - src/services/tools/catalog.rs
 ---
 
 # 网页抓取
 
-`网页抓取` 的英文别名就是 `web_fetch`。
+网页正文提取工具，直接通过 HTTP/HTTPS 拉取页面。
 
-如果你现在只想让模型读一个网页，不要先打开浏览器，先看这个工具。
+---
 
-## 本页重点
+## 功能说明
 
-- `web_fetch` 适合什么，不适合什么
-- 它最常见的入参和返回是什么
-- 它和浏览器的边界到底在哪
+`web_fetch` 通过 HTTP/HTTPS 拉取页面，先做正文提取、噪声剔除和字符预算裁剪，再返回给模型。
 
-## 关键结论
+**别名**：
+- `web_fetch`
+- `web_fetch_tool`
 
-- `web_fetch` 直接通过 HTTP/HTTPS 拉取页面，不维护真实浏览器会话。
-- 它会先做正文提取、噪声剔除和字符预算裁剪，再把结果返回给模型。
-- 它会拦截私网或内网目标，并对重定向逐跳复校验。
+---
 
-## 什么时候先用它
+## 参数说明
 
-- 你只想读文章、帮助页、说明页正文
-- 你不需要点击、输入、登录和表单提交
+| 参数名 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| `url` | string | ✅ | 目标 URL |
+| `extract_mode` | string | ❌ | 提取模式：`markdown` 或 `text`，默认 `markdown` |
+| `max_chars` | integer | ❌ | 最大字符数，最小 100 |
+
+---
+
+## 使用示例
+
+### 简单抓取
+
+```json
+{
+  "url": "https://example.com"
+}
+```
+
+### 指定提取模式
+
+```json
+{
+  "url": "https://example.com",
+  "extract_mode": "text"
+}
+```
+
+### 限制输出长度
+
+```json
+{
+  "url": "https://example.com",
+  "max_chars": 5000
+}
+```
+
+---
+
+## 返回字段
+
+| 字段 | 说明 |
+|------|------|
+| `final_url` | 最终 URL（跟随重定向后） |
+| `status` | HTTP 状态码 |
+| `title` | 页面标题 |
+| `content_type` | 内容类型 |
+| `format` | 返回格式 |
+| `extractor` | 使用的提取器 |
+| `truncated` | 是否被截断 |
+| `warning` | 警告信息 |
+| `cached` | 是否命中缓存 |
+| `fetched_at` | 获取时间 |
+| `content` | 正文内容 |
+
+---
+
+## 处理流程
+
+1. 拦截私网或内网目标
+2. 对重定向逐跳复校验
+3. 正文定位和提取
+4. 过滤导航、页脚、相关推荐等噪声
+5. 重复块去重
+6. 字符预算裁剪
+
+---
+
+## 与浏览器的对比
+
+| 特性 | 网页抓取 | [浏览器](/docs/zh-CN/tools/browser/) |
+|------|----------|--------------------------------|
+| 方式 | HTTP/HTTPS 请求 | 真实浏览器会话 |
+| 成本 | 较低 | 较高 |
+| 能力 | 提取正文 | 点击、输入、截图、交互 |
+| 推荐使用 | 只需要读正文 | 需要交互 |
+
+---
+
+## 适用场景
+
+✅ **适合使用 web_fetch**：
+- 读文章、帮助页、说明页正文
+- 不需要点击、输入、登录和表单提交
 - 目标页面主要是静态内容
-- 你希望结果尽量短、干净、适合直接进模型上下文
+- 希望结果尽量短、干净、适合直接进模型上下文
 
-## 什么时候不要先用它
+❌ **不适合使用 web_fetch**：
+- 要点按钮、填表单
+- 要登录后再读页面
+- 要在真实页面状态里连续交互
+- JS 强交互页面
 
-- 你要点按钮
-- 你要填表单
-- 你要登录后再读页面
-- 你要在真实页面状态里连续交互
+这些场景优先用 [浏览器](/docs/zh-CN/tools/browser/)。
 
-这些场景优先看 [浏览器](/docs/zh-CN/tools/browser/)。
+---
 
-## 最常用的入参
+## 配置说明
 
-- `url`
-- `extract_mode`
-- `max_chars`
+核心配置位于 `tools.web.fetch.*`：
 
-兼容别名也已经支持：
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `enabled` | `true` | 是否启用 |
+| `timeout_secs` | `20` | 超时时间（秒） |
+| `max_redirects` | `3` | 最大重定向次数 |
+| `max_response_bytes` | `2MB` | 最大响应字节数 |
+| `max_chars` | `12000` | 默认最大字符数 |
+| `max_chars_cap` | `30000` | 最大字符数上限 |
+| `cache_ttl_secs` | `600` | 缓存 TTL（秒） |
 
-- `extractMode`
-- `maxChars`
+---
 
-`extract_mode` 当前主要是：
+## 注意事项
 
-- `markdown`
-- `text`
+1. **不是浏览器的轻量模式**：
+   - web_fetch 根本不维护交互状态
+   - 不要与浏览器工具混淆
 
-如果你不传，默认会走更适合阅读的 `markdown` 提取。
+2. **max_chars 是结果预算**：
+   - 不代表网页原始大小
+   - 超过会被截断
 
-## 返回里你最该看什么
+3. **JS 强交互页面**：
+   - web_fetch 往往不如浏览器可靠
+   - 建议用浏览器工具
 
-`web_fetch` 返回的不只是正文，一般还会带这些字段：
-
-- `final_url`
-- `status`
-- `title`
-- `content_type`
-- `format`
-- `extractor`
-- `truncated`
-- `warning`
-- `cached`
-- `fetched_at`
-- `content`
-
-最值得先看的通常是：
-
-- `content`：正文结果
-- `truncated`：这次有没有被裁剪
-- `warning`：是否有响应体截断或正文预算截断
-- `cached`：是不是命中了短 TTL 缓存
-
-## 它为什么比直接读原始 HTML 更适合模型
-
-因为它不是简单返回页面源码，而是先做这些事：
-
-- 正文定位
-- 导航、页脚、相关推荐等噪声过滤
-- 重复块去重
-- 字符预算裁剪
-
-所以它更像“网页正文提取器”，不是“网页源码下载器”。
-
-## 配置开关在哪里
-
-核心配置位于 `tools.web.fetch.*`。
-
-当前默认值来自运行配置：
-
-- `enabled=true`
-- `timeout_secs=20`
-- `max_redirects=3`
-- `max_response_bytes=2MB`
-- `max_chars=12000`
-- `max_chars_cap=30000`
-- `cache_ttl_secs=600`
-
-如果你排查“为什么这个工具没出来”或“为什么结果比预期短”，先查这组配置。
-
-## 常见误区
-
-- `web_fetch` 不是浏览器的轻量模式，它根本不维护交互状态。
-- `max_chars` 是结果预算，不代表网页原始大小。
-- 能抓到页面，不等于适合继续做交互；交互任务仍然应该切到浏览器。
-- 目标站点如果是 JS 强交互页面，`web_fetch` 往往不如浏览器可靠。
+---
 
 ## 延伸阅读
 
 - [浏览器](/docs/zh-CN/tools/browser/)
 - [工具总览](/docs/zh-CN/tools/)
-- [接入概览](/docs/zh-CN/integration/)

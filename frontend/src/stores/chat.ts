@@ -86,7 +86,7 @@ type WorkflowProcessorOptions = {
   finalizeWithNow?: boolean;
   streamFlushMs?: number;
   onThreadControl?: (payload: unknown) => void | Promise<void>;
-  onContextUsage?: (contextTokens: number) => void;
+  onContextUsage?: (contextTokens: number, contextTotalTokens?: number | null) => void;
 };
 
 type UsageStatsOptions = {
@@ -180,11 +180,14 @@ const buildMessageStats = () => ({
   usage: null,
   prefill_duration_s: null,
   decode_duration_s: null,
+  prefill_duration_total_s: null,
+  decode_duration_total_s: null,
   avg_model_round_speed_tps: null,
   avg_model_round_speed_rounds: 0,
   quotaConsumed: 0,
   quotaSnapshot: null,
   contextTokens: null,
+  contextTotalTokens: null,
   interaction_start_ms: null,
   interaction_end_ms: null,
   interaction_duration_s: null
@@ -307,6 +310,11 @@ const normalizeQuotaSnapshot = (value) => {
 };
 
 const normalizeContextTokens = (value) => parseOptionalCount(value);
+const normalizeContextTotalTokens = (value) => {
+  const normalized = parseOptionalCount(value);
+  if (normalized === null || normalized <= 0) return null;
+  return normalized;
+};
 
 const normalizeDurationValue = (value) => {
   return normalizeChatDurationSeconds(value);
@@ -377,6 +385,17 @@ const normalizeMessageStats = (stats) => {
       stats.context_usage?.context_tokens ??
       stats.context_usage?.contextTokens
   );
+  const contextTotalTokens = normalizeContextTotalTokens(
+    stats.contextTotalTokens ??
+      stats.context_total_tokens ??
+      stats.context_max_tokens ??
+      stats.context_window ??
+      stats.max_context ??
+      stats.maxContext ??
+      stats.contextUsageTotal ??
+      stats.context_usage?.max_context ??
+      stats.context_usage?.context_max_tokens
+  );
   const interactionStartMs = normalizeInteractionTimestamp(
     stats.interaction_start_ms ?? stats.interactionStartMs ?? stats.interaction_start ?? stats.started_at
   );
@@ -400,6 +419,12 @@ const normalizeMessageStats = (stats) => {
     decode_duration_s: normalizeDurationValue(
       stats.decode_duration_s ?? stats.decodeDurationS ?? stats.decodeDuration
     ),
+    prefill_duration_total_s: normalizeDurationValue(
+      stats.prefill_duration_total_s ?? stats.prefillDurationTotalS
+    ),
+    decode_duration_total_s: normalizeDurationValue(
+      stats.decode_duration_total_s ?? stats.decodeDurationTotalS
+    ),
     avg_model_round_speed_tps: normalizeSpeedValue(
       stats.avg_model_round_speed_tps ??
         stats.avgModelRoundSpeedTps ??
@@ -417,6 +442,7 @@ const normalizeMessageStats = (stats) => {
     ),
     quotaSnapshot,
     contextTokens,
+    contextTotalTokens,
     interaction_start_ms: interactionStartMs,
     interaction_end_ms: interactionEndMs,
     interaction_duration_s: rangedDuration ?? interactionDuration
@@ -483,6 +509,10 @@ const mergeMessageStats = (base, incoming) => {
     right.contextTokens === null || right.contextTokens === undefined
       ? left.contextTokens
       : right.contextTokens;
+  const contextTotalTokens =
+    right.contextTotalTokens === null || right.contextTotalTokens === undefined
+      ? left.contextTotalTokens
+      : right.contextTotalTokens;
   const leftAverageSpeedRounds = normalizeStatsCount(left.avg_model_round_speed_rounds);
   const rightAverageSpeedRounds = normalizeStatsCount(right.avg_model_round_speed_rounds);
   const preferRightAverage = rightAverageSpeedRounds >= leftAverageSpeedRounds;
@@ -497,6 +527,14 @@ const mergeMessageStats = (base, incoming) => {
       right.decode_duration_s === null || right.decode_duration_s === undefined
         ? left.decode_duration_s
         : right.decode_duration_s,
+    prefill_duration_total_s:
+      right.prefill_duration_total_s === null || right.prefill_duration_total_s === undefined
+        ? left.prefill_duration_total_s
+        : right.prefill_duration_total_s,
+    decode_duration_total_s:
+      right.decode_duration_total_s === null || right.decode_duration_total_s === undefined
+        ? left.decode_duration_total_s
+        : right.decode_duration_total_s,
     avg_model_round_speed_tps:
       preferRightAverage && right.avg_model_round_speed_tps !== null
         ? right.avg_model_round_speed_tps
@@ -508,6 +546,7 @@ const mergeMessageStats = (base, incoming) => {
     quotaConsumed: Math.max(left.quotaConsumed, right.quotaConsumed),
     quotaSnapshot,
     contextTokens,
+    contextTotalTokens,
     interaction_start_ms: startMs,
     interaction_end_ms: endMs,
     interaction_duration_s: duration
@@ -2548,17 +2587,19 @@ const touchSessionUpdatedAt = (store, sessionId, timestamp) => {
   session.updated_at = resolved || new Date().toISOString();
 };
 
-const syncSessionContextTokens = (store, sessionId, contextTokens) => {
+const syncSessionContextTokens = (store, sessionId, contextTokens, contextTotalTokens = null) => {
   if (!store || !Array.isArray(store.sessions)) return;
   const key = resolveSessionKey(sessionId);
   const normalized = parseOptionalCount(contextTokens);
+  const normalizedTotal = normalizeContextTotalTokens(contextTotalTokens);
   if (!key || normalized === null) return;
   const index = store.sessions.findIndex((item) => resolveSessionKey(item?.id) === key);
   if (index < 0) return;
   const current = store.sessions[index] || {};
   const next = {
     ...current,
-    context_tokens: normalized
+    context_tokens: normalized,
+    ...(normalizedTotal !== null ? { context_max_tokens: normalizedTotal } : {})
   };
   store.sessions[index] = next;
   const agentId = String(next.agent_id || '').trim();
@@ -2926,7 +2967,8 @@ const startSessionWatcher = (store, sessionId) => {
           {
             streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
             onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
-            onContextUsage: (contextTokens) => syncSessionContextTokens(store, key, contextTokens)
+            onContextUsage: (contextTokens, contextTotalTokens) =>
+              syncSessionContextTokens(store, key, contextTokens, contextTotalTokens)
           }
         );
         const state = { message: candidate, processor, userInserted: false };
@@ -2954,7 +2996,8 @@ const startSessionWatcher = (store, sessionId) => {
       {
         streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
         onThreadControl: (payload) => handleThreadControlWorkflowEvent(store, payload),
-        onContextUsage: (contextTokens) => syncSessionContextTokens(store, key, contextTokens)
+        onContextUsage: (contextTokens, contextTotalTokens) =>
+          syncSessionContextTokens(store, key, contextTokens, contextTotalTokens)
       }
     );
     const state = { message: assistantMessage, processor, userInserted: false };
@@ -3585,8 +3628,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         speedCount += 1;
       }
     });
-    stats.prefill_duration_s = hasPrefill ? prefillTotal : null;
-    stats.decode_duration_s = hasDecode ? decodeTotal : null;
+    stats.prefill_duration_total_s = hasPrefill ? prefillTotal : null;
+    stats.decode_duration_total_s = hasDecode ? decodeTotal : null;
     stats.avg_model_round_speed_tps =
       speedCount > 0 && speedDecodeTotal > 0
         ? speedOutputTotal / speedDecodeTotal
@@ -3602,6 +3645,12 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     }
     const prefill = normalizeDurationValue(prefillDuration);
     const decode = normalizeDurationValue(decodeDuration);
+    if (prefill !== null) {
+      stats.prefill_duration_s = prefill;
+    }
+    if (decode !== null) {
+      stats.decode_duration_s = decode;
+    }
     const roundNumber = normalizeStreamRound(options.round);
     if (roundNumber !== null && (options.accumulateDurations || options.includeInRoundAverage)) {
       const current = roundMetricsMap.get(roundNumber) ?? {
@@ -3621,12 +3670,6 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       roundMetricsMap.set(roundNumber, current);
       recomputeRoundAggregates();
       return;
-    }
-    if (prefill !== null) {
-      stats.prefill_duration_s = prefill;
-    }
-    if (decode !== null) {
-      stats.decode_duration_s = decode;
     }
   };
 
@@ -3677,9 +3720,23 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
         payload?.context_usage?.context_tokens ??
         payload?.context_usage?.contextTokens
     );
+    const contextTotalTokens = normalizeContextTotalTokens(
+      payload?.max_context ??
+        payload?.maxContext ??
+        payload?.context_window ??
+        payload?.context_max_tokens ??
+        payload?.contextTotalTokens ??
+        payload?.context_usage?.max_context ??
+        payload?.context_usage?.context_max_tokens
+    );
     if (contextTokens !== null) {
       stats.contextTokens = contextTokens;
-      options.onContextUsage?.(contextTokens);
+      if (contextTotalTokens !== null) {
+        stats.contextTotalTokens = contextTotalTokens;
+      }
+      options.onContextUsage?.(contextTokens, contextTotalTokens);
+    } else if (contextTotalTokens !== null) {
+      stats.contextTotalTokens = contextTotalTokens;
     }
   };
 
@@ -4646,8 +4703,8 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
           data?.usage ?? payload?.usage ?? data ?? payload,
           null,
           null,
-          // round_usage is whole-turn aggregate; do not inject it into per-round speed map.
-          { round, updateUsage: true, includeInRoundAverage: false }
+          // round_usage is whole-turn aggregate; keep final llm_output usage as primary speed source.
+          { round, updateUsage: !stats?.usage, includeInRoundAverage: false }
         );
         fallbackQuotaUsageFromRound(round);
         break;
@@ -4999,7 +5056,9 @@ export const useChatStore = defineStore('chat', {
       return filterSessionsByAgent(agentId, this.sessions);
     },
     resolveReusableFreshSessionId(agentId) {
-      const normalizedAgentId = String(agentId ?? '').trim();
+      const requestedAgentId = String(agentId ?? '').trim();
+      const normalizedAgentId =
+        requestedAgentId === DEFAULT_AGENT_KEY ? '' : requestedAgentId;
       const activeSessionId = resolveSessionKey(this.activeSessionId);
       const sessions = filterSessionsByAgent(normalizedAgentId, this.sessions);
       for (const session of sessions) {
@@ -5728,7 +5787,8 @@ export const useChatStore = defineStore('chat', {
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
           onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
-          onContextUsage: (contextTokens) => syncSessionContextTokens(this, sessionId, contextTokens)
+          onContextUsage: (contextTokens, contextTotalTokens) =>
+            syncSessionContextTokens(this, sessionId, contextTokens, contextTotalTokens)
         }
       );
       let queued = false;
@@ -6047,7 +6107,8 @@ export const useChatStore = defineStore('chat', {
         {
           streamFlushMs: resolveStreamFlushMsForMessages(sessionMessagesRef),
           onThreadControl: (payload) => handleThreadControlWorkflowEvent(this, payload),
-          onContextUsage: (contextTokens) => syncSessionContextTokens(this, sessionId, contextTokens)
+          onContextUsage: (contextTokens, contextTotalTokens) =>
+            syncSessionContextTokens(this, sessionId, contextTokens, contextTotalTokens)
         }
       );
       abortResumeStream(sessionId);

@@ -3,6 +3,10 @@
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "rootDir": "../..",
     "outDir": "dist",
     "lib": ["ES2022", "DOM"],
@@ -16,15 +20,19 @@
   "include": [
     "../../src/utils/messageMarkdown.ts",
     "../../src/utils/chatTiming.ts",
+    "../../src/utils/messageStats.ts",
     "../../src/utils/messageWorkspacePath.ts",
     "../../src/utils/workspaceResources.ts",
     "../../src/stores/chatPendingMessage.ts",
+    "../../src/stores/beeroomRealtimeStatus.ts",
     "../../src/views/messenger/composerApprovalMode.ts",
     "../../src/views/messenger/realtimePulse.ts",
     "./message-render-regression.test.ts",
     "./chat-timing-regression.test.ts",
     "./chat-pending-regression.test.ts",
+    "./beeroom-realtime-regression.test.ts",
     "./realtime-pulse-regression.test.ts",
-    "./composer-approval-regression.test.ts"
+    "./composer-approval-regression.test.ts",
+    "./message-stats-regression.test.ts"
   ]
 }

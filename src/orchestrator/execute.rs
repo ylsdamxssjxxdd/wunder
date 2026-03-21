@@ -380,6 +380,9 @@ impl Orchestrator {
                     "message_count": messages.len(),
                 });
                 if let Value::Object(ref mut map) = context_payload {
+                    if let Some(max_context) = llm_config.max_context.filter(|value| *value > 0) {
+                        map.insert("max_context".to_string(), json!(max_context));
+                    }
                     round_info.insert_into(map);
                 }
                 emitter.emit("context_usage", context_payload).await;

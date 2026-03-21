@@ -658,6 +658,21 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
       (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
   );
 };
+const resolveAssistantContextTotalTokens = (stats: Record<string, unknown> | null): number | null => {
+  if (!stats) {
+    return null;
+  }
+  return normalizePositiveTokenCount(
+    stats.contextTotalTokens ??
+      stats.context_total_tokens ??
+      stats.context_max_tokens ??
+      stats.max_context ??
+      stats.maxContext ??
+      stats.context_window ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.max_context ??
+      (stats.context_usage as Record<string, unknown> | undefined)?.context_max_tokens
+  );
+};
 const resolveCurrentSessionContextTokens = (): number | null => {
   const activeSessionId = String(chatStore.activeSessionId || '').trim();
   if (!activeSessionId) {
@@ -676,6 +691,28 @@ const resolveCurrentSessionContextTokens = (): number | null => {
       (session.context_usage as Record<string, unknown> | undefined)?.contextTokens
   );
 };
+const resolveCurrentSessionContextTotalTokens = (): number | null => {
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (!activeSessionId) {
+    return null;
+  }
+  const session = (Array.isArray(chatStore.sessions) ? chatStore.sessions : []).find(
+    (item) => String((item as Record<string, unknown> | null)?.id || '').trim() === activeSessionId
+  ) as Record<string, unknown> | undefined;
+  if (!session) {
+    return null;
+  }
+  return normalizePositiveTokenCount(
+    session.contextTotalTokens ??
+      session.context_total_tokens ??
+      session.context_max_tokens ??
+      session.max_context ??
+      session.maxContext ??
+      session.context_window ??
+      (session.context_usage as Record<string, unknown> | undefined)?.max_context ??
+      (session.context_usage as Record<string, unknown> | undefined)?.context_max_tokens
+  );
+};
 const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | null => {
   for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
     const current =
@@ -690,6 +727,26 @@ const resolveLatestContextTokensFromMessages = (messages: unknown[]): number | n
         : null;
     if (!stats) continue;
     const normalized = resolveAssistantContextTokens(stats);
+    if (normalized !== null) {
+      return normalized;
+    }
+  }
+  return null;
+};
+const resolveLatestContextTotalTokensFromMessages = (messages: unknown[]): number | null => {
+  for (let cursor = messages.length - 1; cursor >= 0; cursor -= 1) {
+    const current =
+      messages[cursor] && typeof messages[cursor] === 'object'
+        ? (messages[cursor] as Record<string, unknown>)
+        : null;
+    if (!current) continue;
+    if (String(current.role || '').trim().toLowerCase() !== 'assistant') continue;
+    const stats =
+      current.stats && typeof current.stats === 'object'
+        ? (current.stats as Record<string, unknown>)
+        : null;
+    if (!stats) continue;
+    const normalized = resolveAssistantContextTotalTokens(stats);
     if (normalized !== null) {
       return normalized;
     }
@@ -751,6 +808,12 @@ const composerContextTotalTokens = computed(() => {
   const fromProps = normalizeTokenCount(props.contextTotalTokens);
   if (fromProps !== null && fromProps > 0) {
     return fromProps;
+  }
+  const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
+  const fromStats =
+    resolveLatestContextTotalTokensFromMessages(messages) ?? resolveCurrentSessionContextTotalTokens();
+  if (fromStats !== null && fromStats > 0) {
+    return fromStats;
   }
   const fromPreset = resolveAnyProviderModelPresetMaxContext(composerModelName.value);
   const normalizedPreset = normalizeTokenCount(fromPreset);

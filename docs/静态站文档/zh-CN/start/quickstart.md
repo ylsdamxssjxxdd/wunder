@@ -12,61 +12,146 @@ source_docs:
 
 # 快速开始
 
-这页只做一件事：帮你选对起步路径，并快速跑通第一条主链路。
+这页只做一件事：**帮你在 10 分钟内跑通第一条可用链路**。
 
-## 第一步：选运行形态
+## 第一步：选对你的路径
 
-1. 个人直接使用：走 [Desktop 入门](/docs/zh-CN/start/desktop/)
-2. 团队服务部署：走 [Server 部署](/docs/zh-CN/start/server/)
-3. 终端与自动化：走 [CLI 使用](/docs/zh-CN/start/cli/)
+| 你的情况 | 推荐入口 | 为什么？ |
+|----------|----------|----------|
+| 我只是想马上用起来 | [Desktop 入门](/docs/zh-CN/start/desktop/) | 门槛最低，下载即用 |
+| 我需要团队协作和管理 | [Server 部署](/docs/zh-CN/start/server/) | 多用户、权限、统一治理 |
+| 我是开发者，要做自动化 | [CLI 使用](/docs/zh-CN/start/cli/) | 终端驱动、脚本化、流水线 |
 
-## 最短路径：Desktop
+---
 
-1. 启动 `wunder-desktop`
-2. 打开聊天界面，确认本地模式可用
-3. 配置可用模型
-4. 发一条测试消息
-5. 检查是否能看到：中间过程、工具调用、最终回复
+## 最短路径：Desktop（推荐）
 
-如果这 5 步都通过，说明你的核心执行链路已经可用。
+适合：个人用户、本地演示、桌面工作台
+
+### 5 步跑通
+
+1. **下载安装**
+   - 去 Releases 下载匹配你系统的 `wunder-desktop`
+   - 安装或解压后启动
+
+2. **配置模型**
+   - 打开「系统设置」→「模型配置」
+   - 填入你的 API Key 和端点
+   - 保存并测试连接
+
+3. **发起第一次对话**
+   - 回到聊天界面
+   - 输入：`帮我列出当前目录的文件`
+   - 回车发送
+
+4. **观察执行过程**
+   - 你会看到：
+     - 模型思考
+     - 工具调用（列出文件）
+     - 中间结果
+     - 最终回复
+
+5. **验收通过**
+   - 如果看到了完整的执行过程和结果
+   - 恭喜，你的核心链路已经通了！
+
+### Desktop 特有能力
+
+- **本地优先**：默认本地运行，也可接远端 gateway
+- **桌面控制**：可操作本地窗口、文件、浏览器
+- **持久工作区**：文件不会被 24 小时自动清理
+- **智能体内见**：可直接编辑智能体配置和提示词
+
+---
 
 ## 团队路径：Server
 
-适合这些场景：
+适合：多用户协作、组织治理、统一接入
 
-- 多用户与多单位
-- 管理员治理、应用发布、权限控制
-- 渠道接入（Webhook/长连接）
+### 启动前准备
 
-建议阅读顺序：
+- Docker 和 Docker Compose（推荐）
+- PostgreSQL 数据库（或用 compose 自带）
+- 至少 4GB 可用内存
 
-1. [Server 部署](/docs/zh-CN/start/server/)
-2. [部署与运行](/docs/zh-CN/ops/deployment/)
-3. [认证与安全](/docs/zh-CN/ops/auth-and-security/)
+### 3 步部署
+
+1. **获取代码**
+   ```bash
+   git clone <repo-url>
+   cd wunder
+   ```
+
+2. **启动服务**
+   ```bash
+   # x86 架构
+   docker-compose -f docker-compose-x86.yml up -d
+   
+   # ARM 架构
+   docker-compose -f docker-compose-arm.yml up -d
+   ```
+
+3. **访问系统**
+   - 用户前端：http://localhost:18001
+   - 管理端：http://localhost:18000
+   - 默认管理员：admin / admin
+
+### Server 核心能力
+
+- **多租户**：用户、单位、权限分层治理
+- **统一接口**：`/wunder`、`/wunder/chat/*`、`/a2a`
+- **渠道接入**：飞书、微信、QQ、XMPP 等（三种形态均支持）
+- **可观测性**：监控、压测、能力评估
+
+---
 
 ## 开发路径：CLI
 
-适合这些场景：
+适合：开发者、自动化脚本、终端任务
 
-- 本地研发和脚本任务
-- 工具链调试
-- 自动化执行
+### 安装与运行
 
-建议阅读顺序：
+```bash
+# 编译（需要 Rust）
+cargo build --release
 
-1. [CLI 使用](/docs/zh-CN/start/cli/)
-2. [工具总览](/docs/zh-CN/tools/)
-3. [会话与轮次](/docs/zh-CN/concepts/sessions-and-rounds/)
+# 运行
+./target/release/wunder-cli
+```
+
+### 第一次会话
+
+```bash
+# 启动并进入交互模式
+wunder-cli
+
+# 输入任务
+> 帮我写一个 Hello World 的 Python 脚本
+```
+
+### CLI 特有能力
+
+- **TUI 界面**：类似 Codex 的终端交互
+- **会话管理**：`/fork` 分叉、`/compact` 压缩、`/resume` 恢复
+- **调试工具**：`/debug-config`、`/statusline`
+- **JSONL 输出**：便于管道和自动化集成
+
+---
 
 ## 验收清单
 
-- 可以成功发起一次执行
-- 可以看到流式过程与终态
-- 能区分当前运行形态是 `desktop / server / cli`
-- 能定位下一步要看的文档入口
+不管选哪条路径，确认以下几点：
 
-## 延伸阅读
+- [ ] 可以成功发起一次执行请求
+- [ ] 可以看到流式过程（中间步骤、工具调用）
+- [ ] 可以拿到最终结果
+- [ ] 知道下一步该看什么文档
 
-- [文档总览](/docs/zh-CN/start/hubs/)
-- [接入概览](/docs/zh-CN/integration/)
-- [故障排查](/docs/zh-CN/help/troubleshooting/)
+---
+
+## 下一步
+
+- 想深入理解系统？→ [概念概览](/docs/zh-CN/concepts/)
+- 要接入到你的系统？→ [接入概览](/docs/zh-CN/integration/)
+- 遇到问题了？→ [故障排查](/docs/zh-CN/help/troubleshooting/)
+- 想看所有工具？→ [工具总览](/docs/zh-CN/tools/)
