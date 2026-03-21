@@ -9,6 +9,15 @@ rust-version = "1.92"
 default = []
 desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
 
+[profile.dev]
+# Rust 1.92 on Windows may produce unstable incremental artifacts in this repo.
+# Disable incremental to keep local/CI diagnostics deterministic.
+incremental = false
+
+[profile.test]
+# `cargo test` hit sporadic metadata/link failures with incremental enabled.
+incremental = false
+
 [[bin]]
 name = "wunder-cli"
 path = "wunder-cli/main.rs"
@@ -21,6 +30,27 @@ required-features = ["desktop"]
 [[bin]]
 name = "wunder-desktop-bridge"
 path = "desktop/tauri/bridge_main.rs"
+
+# Simulation binaries are used for local benchmarking only.
+# Keep them out of `cargo test` target builds to avoid unnecessary
+# Windows linker pressure in regular CI and developer validation loops.
+[[bin]]
+name = "backend_sim"
+path = "src/bin/backend_sim.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "swarm_sim"
+path = "src/bin/swarm_sim.rs"
+test = false
+bench = false
+
+[[bin]]
+name = "swarm_flow_sim"
+path = "src/bin/swarm_flow_sim.rs"
+test = false
+bench = false
 
 [dependencies]
 anyhow = "1"
