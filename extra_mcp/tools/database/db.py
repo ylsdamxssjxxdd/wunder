@@ -129,7 +129,7 @@ def _is_read_only_sql(sql: str) -> bool:
 
 
 TABLE_REFERENCE_PATTERN = re.compile(
-    r'\b(?:from|join)\s+((?:`[^`]+`|"[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:`[^`]+`|"[^"]+"|[A-Za-z_][\w$]*))?)',
+    r'\b(?:from|join)\s+((?:`[^`]+`|"[^"]+"|[^\s,()`";]+)(?:\s*\.\s*(?:`[^`]+`|"[^"]+"|[^\s,()`";]+))?)',
     re.IGNORECASE,
 )
 DISALLOWED_KEYWORDS_PATTERN = re.compile(
@@ -147,6 +147,7 @@ EXAMPLE_COLUMN_NAME_PATTERN = re.compile(
     r"(?:status|state|type|level|kind|flag|date|time|mode|category|eligible)",
     re.IGNORECASE,
 )
+SAFE_ASCII_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
 MAX_SCHEMA_EXAMPLE_COLUMNS = 6
 MAX_SCHEMA_EXAMPLE_VALUES = 3
 
@@ -175,7 +176,7 @@ def _strip_single_quoted_literals(sql: str) -> str:
 
 
 def _normalize_identifier_token(token: str) -> tuple[str | None, str] | None:
-    text = token.strip().rstrip(',').strip()
+    text = token.strip().rstrip(",;").strip()
     if not text:
         return None
 
@@ -211,6 +212,24 @@ def _extract_table_references(sql: str) -> list[tuple[str | None, str]]:
     return references
 
 
+def _bound_table_reference_hint(cfg: DbConfig, table: str) -> str:
+    cleaned_table = table.strip()
+    if not cleaned_table or SAFE_ASCII_IDENTIFIER_PATTERN.fullmatch(cleaned_table):
+        return ""
+    quoted = _quote_identifier(cfg, cleaned_table)
+    if cfg.engine == "mysql":
+        return (
+            " MySQL identifiers with non-ASCII/special characters should use backticks, "
+            f"for example FROM {quoted}."
+        )
+    if cfg.engine == "postgres":
+        return (
+            " PostgreSQL identifiers with non-ASCII/special characters should use double quotes, "
+            f"for example FROM {quoted}."
+        )
+    return ""
+
+
 def validate_sql_against_target_table(sql: str, cfg: DbConfig, table: str) -> str | None:
     cleaned = _strip_single_quoted_literals(_strip_sql_comments(sql)).lower()
     if DISALLOWED_KEYWORDS_PATTERN.search(cleaned):
@@ -227,13 +246,19 @@ def validate_sql_against_target_table(sql: str, cfg: DbConfig, table: str) -> st
 
     references = _extract_table_references(sql)
     if not references:
-        return f"SQL must include FROM/JOIN on bound table '{table}'."
+        return f"SQL must include FROM/JOIN on bound table '{table}'." + _bound_table_reference_hint(
+            cfg,
+            table,
+        )
 
     expected_table = table.lower()
     expected_database = cfg.database.lower()
     for schema, actual_table in references:
         if actual_table != expected_table:
-            return f"This tool can only query table '{table}'."
+            return f"This tool can only query table '{table}'." + _bound_table_reference_hint(
+                cfg,
+                table,
+            )
         if schema and cfg.engine == "mysql" and schema != expected_database:
             return (
                 "Cross-database access is blocked for this tool. "

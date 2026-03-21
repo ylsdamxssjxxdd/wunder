@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
 from typing import Annotated, Any, Literal, Sequence
@@ -11,6 +12,10 @@ from ...common.async_utils import run_in_thread
 from .config import DbQueryTarget, get_db_config, load_db_query_targets
 from .db import execute_sql_sync, get_table_schema_compact_sync, validate_sql_against_target_table
 from .exporter import build_query_handle, export_sql_to_file_sync, resolve_query_request
+
+logger = logging.getLogger(__name__)
+SAFE_ASCII_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+SCHEMA_HINT_RETRY_DELAYS_S = (0.0, 0.2, 0.5)
 
 
 def _error_response(exc: Exception) -> dict[str, Any]:
@@ -93,39 +98,80 @@ def _build_schema_hint(columns: Sequence[dict[str, Any]]) -> str:
 
 
 def _resolve_schema_hint(target: DbQueryTarget) -> str:
+    last_error: Exception | None = None
+    for delay_s in SCHEMA_HINT_RETRY_DELAYS_S:
+        if delay_s > 0:
+            time.sleep(delay_s)
+        try:
+            cfg = get_db_config(None, target.db_key)
+            schema = get_table_schema_compact_sync(cfg, target.table)
+        except Exception as exc:  # pragma: no cover - depends on runtime DB availability
+            last_error = exc
+            continue
+        if not schema.get("ok"):
+            message = str(schema.get("error") or "schema query failed")
+            last_error = RuntimeError(message)
+            continue
+        columns = schema.get("columns")
+        if not isinstance(columns, list):
+            last_error = RuntimeError("schema columns payload is invalid")
+            continue
+        compact_columns: list[dict[str, Any]] = []
+        for column in columns:
+            if not isinstance(column, dict):
+                continue
+            name = str(column.get("name") or "").strip()
+            column_type = str(column.get("type") or "").strip()
+            if not name or not column_type:
+                continue
+            entry: dict[str, Any] = {"name": name, "type": column_type}
+            full_type = str(column.get("full_type") or "").strip()
+            if full_type:
+                entry["full_type"] = full_type
+            examples = column.get("examples")
+            if isinstance(examples, list) and examples:
+                entry["examples"] = examples[:3]
+            comment = str(column.get("comment") or "").strip()
+            if comment:
+                entry["comment"] = comment
+            compact_columns.append(entry)
+        return _build_schema_hint(compact_columns)
+    if last_error is not None:
+        logger.warning(
+            "Failed to resolve schema hint for table '%s': %s",
+            target.table,
+            last_error,
+        )
+    return ""
+
+
+def _build_identifier_quote_hint(target: DbQueryTarget) -> str:
+    table = target.table.strip()
+    if not table or SAFE_ASCII_IDENTIFIER_PATTERN.fullmatch(table):
+        return ""
     try:
         cfg = get_db_config(None, target.db_key)
-        schema = get_table_schema_compact_sync(cfg, target.table)
-    except Exception:
+    except Exception:  # pragma: no cover - depends on runtime config
         return ""
-    if not schema.get("ok"):
-        return ""
-    columns = schema.get("columns")
-    if not isinstance(columns, list):
-        return ""
-    compact_columns: list[dict[str, Any]] = []
-    for column in columns:
-        if not isinstance(column, dict):
-            continue
-        name = str(column.get("name") or "").strip()
-        column_type = str(column.get("type") or "").strip()
-        if not name or not column_type:
-            continue
-        entry: dict[str, Any] = {"name": name, "type": column_type}
-        full_type = str(column.get("full_type") or "").strip()
-        if full_type:
-            entry["full_type"] = full_type
-        examples = column.get("examples")
-        if isinstance(examples, list) and examples:
-            entry["examples"] = examples[:3]
-        comment = str(column.get("comment") or "").strip()
-        if comment:
-            entry["comment"] = comment
-        compact_columns.append(entry)
-    return _build_schema_hint(compact_columns)
+    if cfg.engine == "mysql":
+        return (
+            "Identifier hint: this table name contains non-ASCII/special characters; "
+            f"in MySQL use backticks, for example FROM `{table}`. "
+        )
+    if cfg.engine == "postgres":
+        return (
+            "Identifier hint: this table name contains non-ASCII/special characters; "
+            f"in PostgreSQL use double quotes, for example FROM \"{table}\". "
+        )
+    return ""
 
 
-def _build_query_description(target: DbQueryTarget, schema_hint: str, include_db_key: bool) -> str:
+def _build_query_description(
+    target: DbQueryTarget,
+    schema_hint: str,
+    include_db_key: bool,
+    identifier_quote_hint: str,
+) -> str:
     parts = [
         f"Run read-only SQL and return compact rows for table {target.table}. ",
         "Strong constraint: queries can only access this bound table. ",
@@ -137,6 +183,8 @@ def _build_query_description(target: DbQueryTarget, schema_hint: str, include_db
         parts.append(f"Purpose: {target.description}. ")
     if include_db_key and target.db_key:
         parts.append(f"Database target: {target.db_key}. ")
+    if identifier_quote_hint:
+        parts.append(identifier_quote_hint)
     if schema_hint:
         parts.append(schema_hint + ".")
     return "".join(parts).strip()
@@ -545,7 +593,13 @@ def register_tools(mcp: FastMCP) -> None:
     include_db_key = len({target.db_key for target in targets if target.db_key}) > 1
     for target, query_tool_name, export_tool_name in zip(targets, query_tool_names, export_tool_names):
         schema_hint = _resolve_schema_hint(target)
-        query_description = _build_query_description(target, schema_hint, include_db_key)
+        identifier_quote_hint = _build_identifier_quote_hint(target)
+        query_description = _build_query_description(
+            target,
+            schema_hint,
+            include_db_key,
+            identifier_quote_hint,
+        )
         export_description = _build_export_description(
             target,
             query_tool_name=query_tool_name,

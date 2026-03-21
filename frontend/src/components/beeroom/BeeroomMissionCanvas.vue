@@ -335,6 +335,10 @@ import {
   setBeeroomMissionCanvasState,
   type BeeroomCanvasViewportState
 } from '@/components/beeroom/beeroomMissionCanvasStateCache';
+import {
+  shouldForceImmediateTeamRealtimeReconcile,
+  shouldForceWorkflowRefresh
+} from '@/components/beeroom/beeroomRealtimeReconcile';
 import { useBeeroomMissionWorkflowPreview } from '@/components/beeroom/useBeeroomMissionWorkflowPreview';
 
 type CanvasNodeMeta = {
@@ -2787,17 +2791,17 @@ function handleChatRealtimeEvent(
   }
   if (TEAM_RUNTIME_EVENT_TYPES.has(normalizedType)) {
     const accepted = beeroomStore.applyRealtimeEvent(groupId, normalizedType, payload);
-    const forceWorkflowRefresh =
-      normalizedType === 'team_task_dispatch' ||
-      normalizedType === 'team_task_result' ||
-      normalizedType === 'team_finish' ||
-      normalizedType === 'team_error';
+    const forceWorkflowRefresh = shouldForceWorkflowRefresh(normalizedType);
+    const forceImmediateReconcile = shouldForceImmediateTeamRealtimeReconcile({
+      eventType: normalizedType,
+      accepted
+    });
     void nextTick(() => {
       if (canvasDisposed) return;
       return syncMissionWorkflowState(forceWorkflowRefresh);
     });
     // Always run a throttled background reconcile so event loss or partial payloads self-heal quickly.
-    scheduleTeamRealtimeReconcile(!accepted || normalizedType === 'team_finish' || normalizedType === 'team_error');
+    scheduleTeamRealtimeReconcile(forceImmediateReconcile);
     return;
   }
 }

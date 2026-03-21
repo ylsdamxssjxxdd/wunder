@@ -91,6 +91,9 @@ source_docs:
 | 提示词能动态改吗？ | [提示词与技能](/docs/zh-CN/concepts/prompt-and-skills/) |
 | 如何让智能体记住长期信息？ | [长期记忆](/docs/zh-CN/concepts/memory/) |
 | 怎么控制成本和配额？ | [额度与 Token 占用](/docs/zh-CN/concepts/quota-and-token-usage/) |
+| 上下文超限了怎么办？ | [边界处理](/docs/zh-CN/concepts/boundary-handling/) |
+| 网络中断如何恢复？ | [边界处理](/docs/zh-CN/concepts/boundary-handling/) |
+| 工具失败了怎么处理？ | [边界处理](/docs/zh-CN/concepts/boundary-handling/) |
 
 ---
 
@@ -129,6 +132,10 @@ source_docs:
     <strong>蜂群协作</strong>
     <span>多智能体分工与结果归并。</span>
   </a>
+  <a class="docs-card" href="/docs/zh-CN/concepts/boundary-handling/">
+    <strong>边界处理</strong>
+    <span>上下文超限、网络中断、错误恢复。</span>
+  </a>
 </div>
 
 ---
@@ -145,6 +152,9 @@ source_docs:
 | Token 统计 = 账单消耗 | ❌ 记录的是**上下文占用量**，不是总消耗量 |
 | 每次都重写 system prompt | ❌ 首次确定后会**冻结**，后续不再改写 |
 | 长期记忆每轮都注入 | ❌ 只在线程**初始化时注入一次** |
+| 上下文超限就会崩溃 | ❌ 系统有自动压缩机制，不会崩溃 |
+| 网络断开连接就丢失数据 | ❌ 有重连和事件补发机制 |
+| 工具失败就任务失败 | ❌ 有重试和降级策略 |
 
 ---
 
@@ -153,3 +163,5 @@ source_docs:
 - [接入概览](/docs/zh-CN/integration/)
 - [运维概览](/docs/zh-CN/ops/)
 - [工具总览](/docs/zh-CN/tools/)
+- [边界处理](/docs/zh-CN/concepts/boundary-handling/)
+- [故障排查](/docs/zh-CN/help/troubleshooting/)

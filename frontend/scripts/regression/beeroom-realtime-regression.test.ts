@@ -5,6 +5,10 @@ import {
   isStaleRealtimeUpdate,
   shouldApplyRealtimeStatusTransition
 } from '../../src/stores/beeroomRealtimeStatus';
+import {
+  shouldForceImmediateTeamRealtimeReconcile,
+  shouldForceWorkflowRefresh
+} from '../../src/components/beeroom/beeroomRealtimeReconcile';
 
 const terminalTaskStatuses = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
 
@@ -50,3 +54,63 @@ test('stale terminal update is still rejected to avoid rollback jitter', () => {
   assert.equal(accepted, false);
 });
 
+test('terminal task status can accept fresh terminal transition', () => {
+  const accepted = shouldApplyRealtimeStatusTransition({
+    currentStatus: 'failed',
+    currentUpdatedTime: 200,
+    incomingStatus: 'completed',
+    incomingUpdatedTime: 201,
+    isTerminalStatus: isTerminalTaskStatus
+  });
+  assert.equal(accepted, true);
+});
+
+test('empty incoming status is ignored', () => {
+  const accepted = shouldApplyRealtimeStatusTransition({
+    currentStatus: 'running',
+    currentUpdatedTime: 300,
+    incomingStatus: '',
+    incomingUpdatedTime: 301,
+    isTerminalStatus: isTerminalTaskStatus
+  });
+  assert.equal(accepted, false);
+});
+
+test('team runtime event marks workflow refresh only for runtime-critical types', () => {
+  assert.equal(shouldForceWorkflowRefresh('team_task_dispatch'), true);
+  assert.equal(shouldForceWorkflowRefresh('team_task_result'), true);
+  assert.equal(shouldForceWorkflowRefresh('team_finish'), true);
+  assert.equal(shouldForceWorkflowRefresh(' team_error '), true);
+  assert.equal(shouldForceWorkflowRefresh('team_start'), false);
+});
+
+test('team runtime reconcile forces immediate refresh for rejected or terminal events', () => {
+  assert.equal(
+    shouldForceImmediateTeamRealtimeReconcile({
+      eventType: 'team_task_result',
+      accepted: false
+    }),
+    true
+  );
+  assert.equal(
+    shouldForceImmediateTeamRealtimeReconcile({
+      eventType: 'team_finish',
+      accepted: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldForceImmediateTeamRealtimeReconcile({
+      eventType: 'team_error',
+      accepted: true
+    }),
+    true
+  );
+  assert.equal(
+    shouldForceImmediateTeamRealtimeReconcile({
+      eventType: 'team_task_dispatch',
+      accepted: true
+    }),
+    false
+  );
+});

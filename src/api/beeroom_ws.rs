@@ -7,6 +7,7 @@ use crate::api::ws_helpers::{
 };
 use crate::orchestrator_constants::STREAM_EVENT_QUEUE_SIZE;
 use crate::schemas::StreamEvent;
+use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as AxumPath, Query, State};
@@ -115,6 +116,13 @@ async fn beeroom_chat_stream(
         })?;
     let current_event_id = resolve_after_event_id(&headers, after_event_id);
     let normalized_group_id = group.hive_id.clone();
+    let latest_event_id = state
+        .beeroom_realtime
+        .latest_event_id(&user_id, &normalized_group_id)
+        .await
+        .unwrap_or(0);
+    let should_emit_resume_gap_sync =
+        should_emit_resume_gap_sync_required(current_event_id, latest_event_id);
     let (tx, rx) = mpsc::channel::<Result<Event, Infallible>>(STREAM_EVENT_QUEUE_SIZE);
 
     tokio::spawn(async move {
@@ -129,10 +137,25 @@ async fn beeroom_chat_stream(
         if tx.send(Ok(watching_event)).await.is_err() {
             return;
         }
+        if should_emit_resume_gap_sync {
+            let resume_gap_event = Event::default().event("sync_required").data(
+                json!({
+                    "group_id": &normalized_group_id,
+                    "reason": "resume_gap",
+                    "after_event_id": cursor_event_id,
+                    "latest_event_id": latest_event_id,
+                })
+                .to_string(),
+            );
+            if tx.send(Ok(resume_gap_event)).await.is_err() {
+                return;
+            }
+        }
         loop {
             match receiver.recv().await {
                 Ok(event) => {
-                    if event.group_id != normalized_group_id || event.event_id <= cursor_event_id {
+                    if !should_forward_realtime_event(&normalized_group_id, cursor_event_id, &event)
+                    {
                         continue;
                     }
                     cursor_event_id = event.event_id;
@@ -355,6 +378,13 @@ async fn run_watch_loop(
             return;
         }
     };
+    let latest_event_id = state
+        .beeroom_realtime
+        .latest_event_id(&user_id, &group_id)
+        .await
+        .unwrap_or(0);
+    let should_emit_resume_gap_sync =
+        should_emit_resume_gap_sync_required(current_event_id, latest_event_id);
     let watching_event = StreamEvent {
         event: "watching".to_string(),
         data: json!({
@@ -365,6 +395,25 @@ async fn run_watch_loop(
         timestamp: Some(Utc::now()),
     };
     let _ = send_ws_event(&ws_tx, Some(&request_id), watching_event).await;
+    if should_emit_resume_gap_sync {
+        let resume_gap_event = StreamEvent {
+            event: "sync_required".to_string(),
+            data: json!({
+                "group_id": group_id,
+                "reason": "resume_gap",
+                "after_event_id": current_event_id,
+                "latest_event_id": latest_event_id,
+            }),
+            id: None,
+            timestamp: Some(Utc::now()),
+        };
+        if send_ws_event(&ws_tx, Some(&request_id), resume_gap_event)
+            .await
+            .is_err()
+        {
+            return;
+        }
+    }
 
     loop {
         tokio::select! {
@@ -374,7 +423,7 @@ async fn run_watch_loop(
             recv = receiver.recv() => {
                 match recv {
                     Ok(event) => {
-                        if event.group_id != group_id || event.event_id <= current_event_id {
+                        if !should_forward_realtime_event(&group_id, current_event_id, &event) {
                             continue;
                         }
                         current_event_id = event.event_id;
@@ -421,6 +470,18 @@ fn resolve_request_id(value: Option<&str>) -> String {
         .unwrap_or_else(|| format!("req_{}", Uuid::new_v4().simple()))
 }
 
+fn should_forward_realtime_event(
+    expected_group_id: &str,
+    current_event_id: i64,
+    event: &BeeroomRealtimeEvent,
+) -> bool {
+    event.group_id == expected_group_id && event.event_id > current_event_id
+}
+
+fn should_emit_resume_gap_sync_required(after_event_id: i64, latest_event_id: i64) -> bool {
+    after_event_id > 0 && latest_event_id > after_event_id
+}
+
 fn resolve_after_event_id(headers: &HeaderMap, query_after_event_id: Option<i64>) -> i64 {
     query_after_event_id
         .and_then(|value| (value >= 0).then_some(value))
@@ -436,8 +497,23 @@ fn resolve_after_event_id(headers: &HeaderMap, query_after_event_id: Option<i64>
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_after_event_id;
+    use super::{
+        resolve_after_event_id, should_emit_resume_gap_sync_required, should_forward_realtime_event,
+    };
+    use crate::services::beeroom_realtime::BeeroomRealtimeEvent;
     use axum::http::{HeaderMap, HeaderValue};
+    use serde_json::json;
+
+    fn sample_event(group_id: &str, event_id: i64) -> BeeroomRealtimeEvent {
+        BeeroomRealtimeEvent {
+            event_id,
+            user_id: "user-a".to_string(),
+            group_id: group_id.to_string(),
+            event_type: "team_task_result".to_string(),
+            payload: json!({ "ok": true }),
+            created_at: 1.0,
+        }
+    }
 
     #[test]
     fn resolve_after_event_id_prefers_query_value() {
@@ -460,5 +536,28 @@ mod tests {
         assert_eq!(resolve_after_event_id(&headers, None), 0);
         headers.insert("last-event-id", HeaderValue::from_static("bad"));
         assert_eq!(resolve_after_event_id(&headers, None), 0);
+    }
+
+    #[test]
+    fn should_forward_realtime_event_requires_same_group_and_newer_id() {
+        let accepted = sample_event("group-a", 11);
+        let same_group_duplicate = sample_event("group-a", 10);
+        let other_group_newer = sample_event("group-b", 15);
+
+        assert!(should_forward_realtime_event("group-a", 10, &accepted));
+        assert!(!should_forward_realtime_event(
+            "group-a",
+            10,
+            &same_group_duplicate
+        ));
+        assert!(!should_forward_realtime_event("group-a", 10, &other_group_newer));
+    }
+
+    #[test]
+    fn should_emit_resume_gap_sync_required_only_for_resume_gap() {
+        assert!(!should_emit_resume_gap_sync_required(0, 12));
+        assert!(!should_emit_resume_gap_sync_required(9, 9));
+        assert!(!should_emit_resume_gap_sync_required(10, 9));
+        assert!(should_emit_resume_gap_sync_required(8, 12));
     }
 }

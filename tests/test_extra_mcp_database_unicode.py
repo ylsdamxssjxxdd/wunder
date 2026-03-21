@@ -32,6 +32,7 @@ from extra_mcp.tools.database.db import (
     describe_table_sync,
     execute_sql_sync,
     get_table_schema_compact_sync,
+    validate_sql_against_target_table,
 )
 from extra_mcp.tools.database.exporter import export_sql_to_file_sync
 
@@ -166,6 +167,24 @@ class ExtraMcpDatabaseUnicodeTests(unittest.TestCase):
         self.assertEqual(result["columns"], CHINESE_COLUMNS[:3])
         self.assertIn(CHINESE_COLUMNS[0], export_path.read_text(encoding="utf-8-sig"))
         self.assertIn(CHINESE_ROWS[0][1], export_path.read_text(encoding="utf-8-sig"))
+
+    def test_bound_table_validation_accepts_unquoted_chinese_identifier(self) -> None:
+        error = validate_sql_against_target_table(
+            "SELECT COUNT(*) AS total_count FROM 人员信息",
+            self.cfg,
+            "人员信息",
+        )
+        self.assertIsNone(error)
+
+    def test_bound_table_validation_error_includes_mysql_quote_hint(self) -> None:
+        error = validate_sql_against_target_table(
+            "SELECT COUNT(*) AS total_count",
+            self.cfg,
+            "人员信息",
+        )
+        self.assertIsNotNone(error)
+        self.assertIn("SQL must include FROM/JOIN on bound table '人员信息'.", error)
+        self.assertIn("`人员信息`", error)
 
 
 if __name__ == "__main__":

@@ -303,6 +303,7 @@ impl TeamRunRunner {
             b.priority
                 .cmp(&a.priority)
                 .then_with(|| a.updated_time.total_cmp(&b.updated_time))
+                .then_with(|| a.task_id.cmp(&b.task_id))
         });
         let mut pending = tasks
             .into_iter()
@@ -1255,6 +1256,7 @@ fn build_merge_summary(merge_policy: &str, tasks: &[TeamTaskRecord]) -> String {
         b.priority
             .cmp(&a.priority)
             .then_with(|| a.updated_time.total_cmp(&b.updated_time))
+            .then_with(|| a.task_id.cmp(&b.task_id))
     });
 
     let policy = merge_policy.trim().to_ascii_lowercase();
@@ -1479,7 +1481,7 @@ mod tests {
         let tasks = vec![
             sample_task("a", "success", 8, 10.0, Some("primary answer"), None),
             sample_task("b", "success", 1, 11.0, Some("secondary answer"), None),
-            sample_task("c", "failed", 9, 9.0, None, Some("failed"))
+            sample_task("c", "failed", 9, 9.0, None, Some("failed")),
         ];
         let summary = build_merge_summary("first_success", &tasks);
         assert_eq!(summary, "primary answer");
@@ -1498,5 +1500,40 @@ mod tests {
         assert_eq!(progress.timeout, 1);
         assert_eq!(progress.failed, 2);
         assert_eq!(progress.done, 3);
+    }
+
+    #[test]
+    fn merge_summary_collect_orders_by_priority_then_updated_time() {
+        let tasks = vec![
+            sample_task("a", "failed", 1, 30.0, None, Some("failed-a")),
+            sample_task("b", "success", 9, 20.0, Some("result-b"), None),
+            sample_task("c", "success", 9, 10.0, Some("result-c"), None),
+        ];
+        let summary = build_merge_summary("collect", &tasks);
+        assert_eq!(
+            summary,
+            "[agent-c][success] result-c\n[agent-b][success] result-b\n[agent-a][failed] failed-a"
+        );
+    }
+
+    #[test]
+    fn merge_summary_collect_uses_task_id_as_final_tiebreaker() {
+        let tasks = vec![
+            sample_task("b", "success", 5, 10.0, Some("result-b"), None),
+            sample_task("a", "success", 5, 10.0, Some("result-a"), None),
+        ];
+        let summary = build_merge_summary("collect", &tasks);
+        assert_eq!(
+            summary,
+            "[agent-a][success] result-a\n[agent-b][success] result-b"
+        );
+    }
+
+    #[test]
+    fn realtime_payload_keeps_non_object_payload_unchanged() {
+        let run = sample_run();
+        let payload = json!("raw-event");
+        let normalized = build_realtime_event_payload(&run, payload.clone());
+        assert_eq!(normalized, payload);
     }
 }

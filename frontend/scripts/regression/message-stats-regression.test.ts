@@ -58,3 +58,40 @@ test('message stats suppresses multi-round aggregate speed fallback when usage i
   );
   assert.equal(findEntryValue(entries, 'Speed'), '-');
 });
+
+test('message stats context uses usage.total_tokens when available', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        usage: {
+          input_tokens: 4027,
+          output_tokens: 171,
+          total_tokens: 4198
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '4198');
+});
+
+test('message stats context prefers usage.total_tokens over stale context_tokens', () => {
+  const t = createTranslator();
+  const entries = buildAssistantMessageStatsEntries(
+    {
+      role: 'assistant',
+      stats: {
+        context_tokens: 7101,
+        usage: {
+          input_tokens: 7101,
+          output_tokens: 126,
+          total_tokens: 7227
+        }
+      }
+    },
+    t
+  );
+  assert.equal(findEntryValue(entries, 'Context'), '7227');
+});

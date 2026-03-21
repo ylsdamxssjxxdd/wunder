@@ -370,15 +370,56 @@ const normalizeUsagePayload = (payload) => {
   } satisfies NormalizedUsagePayload;
 };
 
+const resolveUsageContextTokens = (usage: NormalizedUsagePayload | null): number | null => {
+  if (!usage) return null;
+  if (Number.isFinite(usage.total) && usage.total > 0) {
+    return usage.total;
+  }
+  if (Number.isFinite(usage.input) && usage.input > 0) {
+    return usage.input;
+  }
+  return null;
+};
+
+const estimateStreamOutputTokens = (text) => {
+  if (!text) return 0;
+  const source = String(text);
+  let asciiVisible = 0;
+  let cjkCount = 0;
+  let otherCount = 0;
+  for (const char of source) {
+    if (!char || /\s/.test(char)) continue;
+    const code = char.charCodeAt(0);
+    if (code <= 0x7f) {
+      asciiVisible += 1;
+      continue;
+    }
+    if (
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0x3400 && code <= 0x4dbf) ||
+      (code >= 0xf900 && code <= 0xfaff)
+    ) {
+      cjkCount += 1;
+      continue;
+    }
+    otherCount += 1;
+  }
+  const estimated = cjkCount + asciiVisible / 4 + otherCount * 0.75;
+  return Math.max(0, Math.round(estimated));
+};
+
 const normalizeMessageStats = (stats) => {
   if (!stats || typeof stats !== 'object') {
     return null;
   }
+  const normalizedUsage = normalizeUsagePayload(stats.usage ?? stats.tokenUsage ?? stats.token_usage);
+  const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
   const quotaSnapshot = normalizeQuotaSnapshot(
     stats.quotaSnapshot ?? stats.quota ?? stats.quota_usage ?? stats.quotaUsage
   );
   const contextTokens = normalizeContextTokens(
-    stats.contextTokens ??
+    usageContextTokens ??
+      stats.contextTokens ??
       stats.context_tokens ??
       stats.context_tokens_total ??
       stats.contextUsage ??
@@ -412,7 +453,7 @@ const normalizeMessageStats = (stats) => {
   const rangedDuration = resolveInteractionDuration(interactionStartMs, interactionEndMs);
   return {
     toolCalls: normalizeStatsCount(stats.toolCalls),
-    usage: normalizeUsagePayload(stats.usage ?? stats.tokenUsage ?? stats.token_usage),
+    usage: normalizedUsage,
     prefill_duration_s: normalizeDurationValue(
       stats.prefill_duration_s ?? stats.prefillDurationS ?? stats.prefillDuration
     ),
@@ -2643,6 +2684,16 @@ const shouldPreferCachedMessages = (cached, server) => {
   return cached.length > server.length;
 };
 
+const clearCompletedAssistantStreamingState = (messages) => {
+  if (!Array.isArray(messages)) return;
+  messages.forEach((message) => {
+    if (!message || message.role !== 'assistant') return;
+    message.workflowStreaming = false;
+    message.stream_incomplete = false;
+    message.reasoningStreaming = false;
+  });
+};
+
 const setSessionLoading = (store, sessionId, value) => {
   const key = resolveSessionKey(sessionId);
   if (!key) return;
@@ -3461,6 +3512,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       });
     }
   }
+  let contextEstimateBaseTokens = normalizeContextTokens(stats?.contextTokens);
   const refreshInteractionDuration = () => {
     if (!stats) return;
     const duration = resolveInteractionDuration(
@@ -3637,11 +3689,23 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     stats.avg_model_round_speed_rounds = speedCount;
   };
 
-  const updateUsageStats = (usagePayload, prefillDuration, decodeDuration, options: UsageStatsOptions = {}) => {
+  const updateUsageStats = (
+    usagePayload,
+    prefillDuration,
+    decodeDuration,
+    usageOptions: UsageStatsOptions = {}
+  ) => {
     if (!stats) return;
     const normalizedUsage = normalizeUsagePayload(usagePayload);
-    if (normalizedUsage && options.updateUsage !== false) {
+    const shouldUpdateUsage = Boolean(normalizedUsage && usageOptions.updateUsage !== false);
+    const usageContextTokens = resolveUsageContextTokens(normalizedUsage);
+    if (shouldUpdateUsage) {
       stats.usage = normalizedUsage;
+    }
+    if (usageContextTokens !== null) {
+      stats.contextTokens = usageContextTokens;
+      contextEstimateBaseTokens = usageContextTokens;
+      options.onContextUsage?.(usageContextTokens, stats.contextTotalTokens ?? null);
     }
     const prefill = normalizeDurationValue(prefillDuration);
     const decode = normalizeDurationValue(decodeDuration);
@@ -3651,8 +3715,11 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     if (decode !== null) {
       stats.decode_duration_s = decode;
     }
-    const roundNumber = normalizeStreamRound(options.round);
-    if (roundNumber !== null && (options.accumulateDurations || options.includeInRoundAverage)) {
+    const roundNumber = normalizeStreamRound(usageOptions.round);
+    if (
+      roundNumber !== null &&
+      (usageOptions.accumulateDurations || usageOptions.includeInRoundAverage)
+    ) {
       const current = roundMetricsMap.get(roundNumber) ?? {
         prefill: null,
         decode: null,
@@ -3664,7 +3731,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       if (decode !== null) {
         current.decode = decode;
       }
-      if (normalizedUsage && options.includeInRoundAverage) {
+      if (normalizedUsage && usageOptions.includeInRoundAverage) {
         current.usage = normalizedUsage;
       }
       roundMetricsMap.set(roundNumber, current);
@@ -3731,6 +3798,7 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
     );
     if (contextTokens !== null) {
       stats.contextTokens = contextTokens;
+      contextEstimateBaseTokens = contextTokens;
       if (contextTotalTokens !== null) {
         stats.contextTotalTokens = contextTotalTokens;
       }
@@ -4161,6 +4229,22 @@ const createWorkflowProcessor = (assistantMessage, workflowState, onSnapshot, op
       pendingContent = '';
       assistantMessage.content = outputContent;
       outputState.streaming = true;
+    }
+    if (hasContentDelta && stats) {
+      const baseTokens =
+        normalizeContextTokens(contextEstimateBaseTokens) ??
+        normalizeContextTokens(stats.contextTokens);
+      if (baseTokens !== null && baseTokens > 0) {
+        const estimatedOutputTokens = estimateStreamOutputTokens(outputContent);
+        if (estimatedOutputTokens > 0) {
+          const estimatedTotal = baseTokens + estimatedOutputTokens;
+          const currentTokens = normalizeContextTokens(stats.contextTokens);
+          if (currentTokens === null || estimatedTotal > currentTokens) {
+            stats.contextTokens = estimatedTotal;
+            options.onContextUsage?.(estimatedTotal, stats.contextTotalTokens ?? null);
+          }
+        }
+      }
     }
     syncReasoningToMessage();
     if (hasContentDelta || hasReasoningDelta) {
@@ -5363,6 +5447,12 @@ export const useChatStore = defineStore('chat', {
       }
       const data = sessionRes?.data;
       const sessionDetail = data?.data || null;
+      const eventsPayload = eventsRes?.data?.data || null;
+      const remoteRunning = eventsPayload?.running === true;
+      const remoteLastEventId = normalizeStreamEventId(
+        eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
+      );
+      updateRuntimeLastEventId(ensureRuntime(sessionId), remoteLastEventId);
       const sessionCreatedAt = sessionDetail?.created_at;
       if (sessionDetail?.id) {
         const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
@@ -5380,7 +5470,7 @@ export const useChatStore = defineStore('chat', {
       writeSessionListCache(resolvedAgentId, filterSessionsByAgent(resolvedAgentId, this.sessions));
       persistActiveSession(sessionId, resolvedAgentId);
       this.draftToolOverrides = null;
-      const rounds = eventsRes?.data?.data?.rounds || [];
+      const rounds = eventsPayload?.rounds || [];
       const workflowState = getSessionWorkflowState(sessionId, { reset: true });
       const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
       let messages = rawMessages.map((message) =>
@@ -5388,8 +5478,14 @@ export const useChatStore = defineStore('chat', {
       );
       messages = mergeSnapshotIntoMessages(messages, snapshot);
       messages = dedupeAssistantMessages(messages);
+      if (!remoteRunning) {
+        clearCompletedAssistantStreamingState(messages);
+      }
       const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(sessionId));
-      if (shouldPreferCachedMessages(finalCachedMessages, messages)) {
+      if (!remoteRunning) {
+        clearCompletedAssistantStreamingState(finalCachedMessages);
+      }
+      if (remoteRunning && shouldPreferCachedMessages(finalCachedMessages, messages)) {
         messages = finalCachedMessages;
       }
       dismissStaleInquiryPanels(messages);
@@ -5397,6 +5493,9 @@ export const useChatStore = defineStore('chat', {
         createdAt: sessionCreatedAt,
         greeting: this.greetingOverride
       });
+      if (!remoteRunning) {
+        clearCompletedAssistantStreamingState(this.messages);
+      }
       clearSupersededPendingAssistantMessages(this.messages);
       applyHistoryMeta(sessionId, sessionDetail, this.messages);
       applyMessageWindow(this, sessionId, this.messages);
@@ -5404,8 +5503,10 @@ export const useChatStore = defineStore('chat', {
       markSessionDetailWarm(sessionId);
       syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
       const pendingMessage = findPendingAssistantMessage(this.messages);
-      if (pendingMessage) {
+      if (pendingMessage && remoteRunning) {
         this.resumeStream(sessionId, pendingMessage);
+      } else if (!remoteRunning) {
+        setSessionLoading(this, sessionId, false);
       }
       this.scheduleSnapshot(true);
       startSessionWatcher(this, sessionId);

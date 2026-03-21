@@ -650,12 +650,23 @@ const resolveAssistantContextTokens = (stats: Record<string, unknown> | null): n
   if (!stats) {
     return null;
   }
+  const usageTotal = normalizePositiveTokenCount(
+    (stats.usage as Record<string, unknown> | undefined)?.total ??
+      (stats.usage as Record<string, unknown> | undefined)?.total_tokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.totalTokens
+  );
+  if (usageTotal !== null) {
+    return usageTotal;
+  }
   return normalizePositiveTokenCount(
     stats.contextTokens ??
       stats.context_tokens ??
       stats.context_tokens_total ??
       (stats.context_usage as Record<string, unknown> | undefined)?.context_tokens ??
-      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens
+      (stats.context_usage as Record<string, unknown> | undefined)?.contextTokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.input ??
+      (stats.usage as Record<string, unknown> | undefined)?.input_tokens ??
+      (stats.usage as Record<string, unknown> | undefined)?.inputTokens
   );
 };
 const resolveAssistantContextTotalTokens = (stats: Record<string, unknown> | null): number | null => {
@@ -796,29 +807,70 @@ const composerModelAriaLabel = computed(() => {
   }
   return `${t('desktop.system.modelName')}: ${label}`;
 });
-const composerContextUsedTokens = computed(() => {
+const composerContextUsedTokensRaw = computed(() => {
   const fromProps = normalizePositiveTokenCount(props.contextUsedTokens);
   if (fromProps !== null) {
     return fromProps;
   }
   const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
-  return resolveLatestContextTokensFromMessages(messages) ?? resolveCurrentSessionContextTokens();
+  const fromMessageStats = resolveLatestContextTokensFromMessages(messages);
+  const fromSession = resolveCurrentSessionContextTokens();
+  if (fromMessageStats !== null && fromSession !== null) {
+    return Math.max(fromMessageStats, fromSession);
+  }
+  return fromMessageStats ?? fromSession;
 });
-const composerContextTotalTokens = computed(() => {
+const composerContextTotalTokensRaw = computed(() => {
   const fromProps = normalizeTokenCount(props.contextTotalTokens);
   if (fromProps !== null && fromProps > 0) {
     return fromProps;
   }
   const messages = Array.isArray(chatStore.messages) ? chatStore.messages : [];
-  const fromStats =
-    resolveLatestContextTotalTokensFromMessages(messages) ?? resolveCurrentSessionContextTotalTokens();
-  if (fromStats !== null && fromStats > 0) {
-    return fromStats;
+  const fromStats = resolveLatestContextTotalTokensFromMessages(messages);
+  const fromSession = resolveCurrentSessionContextTotalTokens();
+  const fromMerged =
+    fromStats !== null && fromSession !== null ? Math.max(fromStats, fromSession) : fromStats ?? fromSession;
+  if (fromMerged !== null && fromMerged > 0) {
+    return fromMerged;
   }
   const fromPreset = resolveAnyProviderModelPresetMaxContext(composerModelName.value);
   const normalizedPreset = normalizeTokenCount(fromPreset);
   return normalizedPreset !== null && normalizedPreset > 0 ? normalizedPreset : null;
 });
+const contextDisplaySessionId = computed(() => String(chatStore.activeSessionId || '').trim());
+const lastContextDisplaySessionId = ref<string>(contextDisplaySessionId.value);
+const composerContextUsedTokensStable = ref<number | null>(null);
+const composerContextTotalTokensStable = ref<number | null>(null);
+watch(
+  [
+    contextDisplaySessionId,
+    () => Boolean(props.loading),
+    composerContextUsedTokensRaw,
+    composerContextTotalTokensRaw
+  ],
+  ([sessionId, loading, rawUsed, rawTotal]) => {
+    const switchedSession = sessionId !== lastContextDisplaySessionId.value;
+    lastContextDisplaySessionId.value = sessionId;
+    if (switchedSession || !loading) {
+      composerContextUsedTokensStable.value = rawUsed;
+      composerContextTotalTokensStable.value = rawTotal;
+      return;
+    }
+    if (rawUsed !== null) {
+      const current = composerContextUsedTokensStable.value;
+      composerContextUsedTokensStable.value =
+        current === null ? rawUsed : Math.max(current, rawUsed);
+    }
+    if (rawTotal !== null) {
+      const current = composerContextTotalTokensStable.value;
+      composerContextTotalTokensStable.value =
+        current === null ? rawTotal : Math.max(current, rawTotal);
+    }
+  },
+  { immediate: true }
+);
+const composerContextUsedTokens = computed(() => composerContextUsedTokensStable.value);
+const composerContextTotalTokens = computed(() => composerContextTotalTokensStable.value);
 const CONTEXT_WARNING_RATIO = 0.7;
 const CONTEXT_DANGER_RATIO = 0.9;
 const composerContextUsageRatio = computed(() => {

@@ -585,11 +585,11 @@
   },
   "memory.prompt_meta.more_hint": {
     "en-US": "- If the injected memory below is not enough, continue with the memory manager tool via recall/list to search the remaining long-term memory.",
-    "zh-CN": "- 濡傛灉涓嬫柟宸叉敞鍏ョ殑璁板繂涓嶈冻浠ユ敮鎸佸綋鍓嶅垽鏂紝鍙户缁皟鐢ㄨ蹇嗙鐞嗗伐鍏风殑 recall/list 妫€绱㈠叾浣欓暱鏈熻蹇嗐€?"
+    "zh-CN": "- 如果下方注入的记忆不足，请继续通过记忆管理工具 recall/list 检索剩余长期记忆。"
   },
   "memory.prompt_meta.summary": {
     "en-US": "- Available long-term memories: {total}. Injected now: {injected} (limit {limit}).",
-    "zh-CN": "- 褰撳墠鍙敤闀挎湡璁板繂鎬绘潯鏁帮細{total}銆傛湰娆℃敞鍏ワ細{injected} 鏉★紙涓婇檺 {limit} 鏉★級銆?"
+    "zh-CN": "- 当前可用长期记忆总条数：{total}。本次注入：{injected} 条（上限 {limit} 条）。"
   },
   "memory.empty_summary": {
     "en-US": "No summary yet.",
