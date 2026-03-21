@@ -1070,6 +1070,18 @@
                     <i class="fa-solid fa-clone" aria-hidden="true"></i>
                   </button>
                 </div>
+                <MessageCompactionDivider
+                  v-if="item.message.role === 'assistant'"
+                  :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
+                  :is-latest-assistant="latestAgentAssistantMessage === item.message"
+                  :is-streaming="
+                    Boolean(
+                      item.message.workflowStreaming ||
+                        item.message.reasoningStreaming ||
+                        item.message.stream_incomplete
+                    )
+                  "
+                />
               </div>
             </div>
             <div
@@ -1418,6 +1430,7 @@ import { useMiddlePaneOverlayPreview } from '@/views/messenger/middlePaneOverlay
 import ChatComposer from '@/components/chat/ChatComposer.vue';
 import {
   InquiryPanel,
+  MessageCompactionDivider,
   MessageKnowledgeCitation,
   MessageThinking,
   MessageToolWorkflow,
@@ -1481,6 +1494,7 @@ import {
   resolveAssistantFailureNotice
 } from '@/utils/assistantFailureNotice';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
+import { isCompactionRunningFromWorkflowItems } from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
   startAudioRecording,
@@ -1803,7 +1817,7 @@ const timelinePreviewLoadingSet = ref<Set<string>>(new Set());
 const timelineDetailDialogVisible = ref(false);
 const timelineDetailSessionId = ref('');
 const approvalResponding = ref(false);
-const messengerSendKey = ref<MessengerSendKeyMode>('ctrl_enter');
+const messengerSendKey = ref<MessengerSendKeyMode>('enter');
 const uiFontSize = ref(14);
 const orgUnitPathMap = ref<Record<string, string>>({});
 const orgUnitTree = ref<UnitTreeNode[]>([]);
@@ -3228,7 +3242,7 @@ const normalizeMessengerSendKey = (value: unknown): MessengerSendKeyMode =>
     const text = String(value || '').trim().toLowerCase();
     if (text === 'enter') return 'enter';
     if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
-    return 'ctrl_enter';
+    return 'enter';
   })();
 
 const applyUiFontSize = (value: number) => {
@@ -5272,6 +5286,16 @@ const messageVirtualBottomSpacerHeight = computed(() =>
 const isGreetingMessage = (message: Record<string, unknown>): boolean =>
   String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
 
+const latestAgentAssistantMessage = computed<Record<string, unknown> | null>(() => {
+  if (!isAgentConversationActive.value) return null;
+  for (let index = chatStore.messages.length - 1; index >= 0; index -= 1) {
+    const message = chatStore.messages[index] as Record<string, unknown> | undefined;
+    if (String(message?.role || '') !== 'assistant') continue;
+    return message || null;
+  }
+  return null;
+});
+
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';
   const questionPanelStatus = String(
@@ -5291,6 +5315,9 @@ const resolveMessageAgentAvatarState = (message: Record<string, unknown>): Agent
     Boolean(message?.workflowStreaming) ||
     Boolean(message?.reasoningStreaming)
   ) {
+    return 'running';
+  }
+  if (isCompactionRunningFromWorkflowItems(message?.workflowItems)) {
     return 'running';
   }
   const messageState = normalizeRuntimeState(message?.state, pendingQuestion);
@@ -7535,10 +7562,12 @@ const submitGroupCreate = async () => {
 
 const openAgentSession = async (sessionId: string, agentId = '') => {
   if (!sessionId) return;
-  const perfTrace = startMessengerPerfTrace('openAgentSession', { sessionId, agentId });
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) return;
+  const perfTrace = startMessengerPerfTrace('openAgentSession', { sessionId: normalizedSessionId, agentId });
   clearMiddlePaneOverlayHide();
   middlePaneOverlayVisible.value = false;
-  const knownSession = chatStore.sessions.find((item) => String(item?.id || '') === sessionId);
+  const knownSession = chatStore.sessions.find((item) => String(item?.id || '') === normalizedSessionId);
   const fallbackAgentId = agentId
     ? normalizeAgentId(agentId)
     : normalizeAgentId(knownSession?.agent_id ?? chatStore.draftAgentId);
@@ -7546,13 +7575,13 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
   selectedAgentId.value = fallbackAgentId || DEFAULT_AGENT_KEY;
   sessionHub.setActiveConversation({
     kind: 'agent',
-    id: sessionId,
+    id: normalizedSessionId,
     agentId: fallbackAgentId || DEFAULT_AGENT_KEY
   });
   const nextQuery = {
     ...route.query,
     section: 'messages',
-    session_id: sessionId,
+    session_id: normalizedSessionId,
     agent_id: fallbackAgentId === DEFAULT_AGENT_KEY ? '' : fallbackAgentId
   } as Record<string, any>;
   delete nextQuery.conversation_id;
@@ -7562,31 +7591,41 @@ const openAgentSession = async (sessionId: string, agentId = '') => {
   }).catch(() => undefined);
   await scrollMessagesToBottom(true);
   markMessengerPerfTrace(perfTrace, 'uiReady');
+  const isForegroundSession = () =>
+    String(chatStore.activeSessionId || '').trim() === normalizedSessionId;
   try {
     markMessengerPerfTrace(perfTrace, 'beforeLoadSessionDetail');
-    const sessionDetail = await chatStore.loadSessionDetail(sessionId);
+    const sessionDetail = await chatStore.loadSessionDetail(normalizedSessionId);
     markMessengerPerfTrace(perfTrace, 'afterLoadSessionDetail');
+    if (!isForegroundSession()) {
+      finishMessengerPerfTrace(perfTrace, 'ok', { stale: true });
+      return;
+    }
     if (!sessionDetail) {
       await openAgentById(fallbackAgentId || DEFAULT_AGENT_KEY);
       finishMessengerPerfTrace(perfTrace, 'ok', { recovered: true });
       return;
     }
-    const session = chatStore.sessions.find((item) => String(item?.id || '') === sessionId);
+    const session = chatStore.sessions.find((item) => String(item?.id || '') === normalizedSessionId);
     const targetAgentId = normalizeAgentId(session?.agent_id ?? fallbackAgentId);
     selectedAgentId.value = targetAgentId || DEFAULT_AGENT_KEY;
     sessionHub.setActiveConversation({
       kind: 'agent',
-      id: sessionId,
+      id: normalizedSessionId,
       agentId: targetAgentId || DEFAULT_AGENT_KEY
     });
     const mainEntry = collectMainAgentSessionEntries().find((item) => item.agentId === targetAgentId);
-    if (mainEntry?.sessionId === sessionId) {
+    if (mainEntry?.sessionId === normalizedSessionId) {
       setAgentMainReadAt(targetAgentId, mainEntry.lastAt || Date.now());
       setAgentMainUnreadCount(targetAgentId, 0);
       persistAgentUnreadState();
     }
     finishMessengerPerfTrace(perfTrace, 'ok');
   } catch (error) {
+    if (!isForegroundSession()) {
+      finishMessengerPerfTrace(perfTrace, 'ok', { stale: true });
+      return;
+    }
     finishMessengerPerfTrace(perfTrace, 'fail', {
       error: (error as { message?: string })?.message || String(error)
     });
@@ -8188,13 +8227,14 @@ const handleAgentLocalCommand = async (command: AgentLocalCommand, rawText: stri
     await scrollMessagesToBottom();
     return;
   }
+  chatStore.appendLocalMessage('user', rawText, { sessionId });
   try {
     await chatStore.compactSession(sessionId);
-    appendAgentLocalCommandMessages(rawText, t('chat.command.compactSuccess'));
   } catch (error) {
-    appendAgentLocalCommandMessages(
-      rawText,
-      t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) })
+    chatStore.appendLocalMessage(
+      'assistant',
+      t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) }),
+      { sessionId }
     );
   }
   await scrollMessagesToBottom();
@@ -9001,12 +9041,11 @@ const handleWorldComposerEnterKeydown = async (event: KeyboardEvent) => {
       event.getModifierState?.('Meta')
   );
   const hasBackupModifier = Boolean(event.altKey && !hasPrimaryModifier);
-  if (hasPrimaryModifier || hasBackupModifier) {
-    event.preventDefault();
-    await sendWorldMessage();
-    return;
-  }
   if (messengerSendKey.value === 'ctrl_enter') {
+    if (hasPrimaryModifier || hasBackupModifier) {
+      event.preventDefault();
+      await sendWorldMessage();
+    }
     return;
   }
   if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {

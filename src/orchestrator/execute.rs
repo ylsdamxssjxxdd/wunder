@@ -552,6 +552,13 @@ impl Orchestrator {
                     } else {
                         answer = self.resolve_final_answer(&content);
                     }
+                    if !answer.trim().is_empty() {
+                        answer = self.reconcile_final_answer_workspace_images(
+                            &prepared.workspace_id,
+                            &session_id,
+                            &answer,
+                        );
+                    }
                     stop_reason = Some("model_response".to_string());
                     let assistant_content = if answer.is_empty() {
                         content.clone()
@@ -1064,6 +1071,13 @@ impl Orchestrator {
                             }
                             TerminalTool::Final => {
                                 answer = self.resolve_final_answer_from_tool(&args);
+                                if !answer.trim().is_empty() {
+                                    answer = self.reconcile_final_answer_workspace_images(
+                                        &prepared.workspace_id,
+                                        &session_id,
+                                        &answer,
+                                    );
+                                }
                                 stop_reason = Some("final_tool".to_string());
                                 self.log_final_tool_call(
                                     &user_id,
@@ -1098,6 +1112,13 @@ impl Orchestrator {
             if answer.is_empty() {
                 if let Some((content, _)) = last_response.as_ref() {
                     answer = self.resolve_final_answer(content);
+                    if !answer.trim().is_empty() {
+                        answer = self.reconcile_final_answer_workspace_images(
+                            &prepared.workspace_id,
+                            &session_id,
+                            &answer,
+                        );
+                    }
                     if stop_reason.is_none() && reached_max_rounds {
                         stop_reason = Some("max_rounds".to_string());
                     }

@@ -5395,16 +5395,18 @@ export const useChatStore = defineStore('chat', {
     },
 
     async loadSessionDetail(sessionId) {
+      const targetSessionId = resolveSessionKey(sessionId);
+      if (!targetSessionId) return null;
       const previousSessionId = this.activeSessionId;
-      if (previousSessionId && previousSessionId !== sessionId) {
+      if (previousSessionId && previousSessionId !== targetSessionId) {
         cacheSessionMessages(previousSessionId, this.messages);
       }
       abortResumeStream(previousSessionId);
       clearSessionWatcher();
-      this.activeSessionId = sessionId;
-      getHistoryState(sessionId, { reset: true });
-      const cachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(sessionId));
-      const snapshot = this.getSnapshotForSession(sessionId);
+      this.activeSessionId = targetSessionId;
+      getHistoryState(targetSessionId, { reset: true });
+      const cachedSessionMessages = dedupeAssistantMessagesInPlace(getSessionMessages(targetSessionId));
+      const snapshot = this.getSnapshotForSession(targetSessionId);
       if (cachedSessionMessages?.length) {
         this.messages = ensureGreetingMessage(cachedSessionMessages, {
           greeting: this.greetingOverride
@@ -5420,18 +5422,18 @@ export const useChatStore = defineStore('chat', {
         });
       }
       if (cachedSessionMessages?.length || snapshot?.messages?.length) {
-        cacheSessionMessages(sessionId, this.messages);
+        cacheSessionMessages(targetSessionId, this.messages);
       }
-      if (!hasKnownSessionInStore(this, sessionId)) {
-        purgeUnavailableSession(this, sessionId);
+      if (!hasKnownSessionInStore(this, targetSessionId)) {
+        purgeUnavailableSession(this, targetSessionId);
         return null;
       }
       let sessionRes = null;
       let eventsRes = null;
       try {
         [sessionRes, eventsRes] = await Promise.all([
-          getSession(sessionId),
-          getSessionEvents(sessionId).catch((error) => {
+          getSession(targetSessionId),
+          getSessionEvents(targetSessionId).catch((error) => {
             if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
               throw error;
             }
@@ -5440,7 +5442,7 @@ export const useChatStore = defineStore('chat', {
         ]);
       } catch (error) {
         if (isSessionUnavailableStatus(resolveChatHttpStatus(error))) {
-          purgeUnavailableSession(this, sessionId);
+          purgeUnavailableSession(this, targetSessionId);
           return null;
         }
         throw error;
@@ -5452,7 +5454,7 @@ export const useChatStore = defineStore('chat', {
       const remoteLastEventId = normalizeStreamEventId(
         eventsPayload?.last_event_id ?? eventsPayload?.lastEventId
       );
-      updateRuntimeLastEventId(ensureRuntime(sessionId), remoteLastEventId);
+      updateRuntimeLastEventId(ensureRuntime(targetSessionId), remoteLastEventId);
       const sessionCreatedAt = sessionDetail?.created_at;
       if (sessionDetail?.id) {
         const index = this.sessions.findIndex((item) => item.id === sessionDetail.id);
@@ -5462,16 +5464,17 @@ export const useChatStore = defineStore('chat', {
           this.sessions.unshift(sessionDetail);
         }
       }
-      this.draftAgentId = String(sessionDetail?.agent_id || '').trim();
       const resolvedAgentId =
         sessionDetail?.agent_id ??
-        this.sessions.find((item) => item.id === sessionId)?.agent_id ??
-        this.draftAgentId;
-      writeSessionListCache(resolvedAgentId, filterSessionsByAgent(resolvedAgentId, this.sessions));
-      persistActiveSession(sessionId, resolvedAgentId);
-      this.draftToolOverrides = null;
+        this.sessions.find((item) => item.id === targetSessionId)?.agent_id ??
+        '';
+      const resolvedAgentIdText = String(resolvedAgentId || '').trim();
+      writeSessionListCache(
+        resolvedAgentIdText,
+        filterSessionsByAgent(resolvedAgentIdText, this.sessions)
+      );
       const rounds = eventsPayload?.rounds || [];
-      const workflowState = getSessionWorkflowState(sessionId, { reset: true });
+      const workflowState = getSessionWorkflowState(targetSessionId, { reset: true });
       const rawMessages = attachWorkflowEvents(sessionDetail?.messages || [], rounds);
       let messages = rawMessages.map((message) =>
         hydrateMessage(message, workflowState)
@@ -5481,7 +5484,7 @@ export const useChatStore = defineStore('chat', {
       if (!remoteRunning) {
         clearCompletedAssistantStreamingState(messages);
       }
-      const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(sessionId));
+      const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
       if (!remoteRunning) {
         clearCompletedAssistantStreamingState(finalCachedMessages);
       }
@@ -5489,27 +5492,35 @@ export const useChatStore = defineStore('chat', {
         messages = finalCachedMessages;
       }
       dismissStaleInquiryPanels(messages);
-      this.messages = ensureGreetingMessage(messages, {
+      const nextMessages = ensureGreetingMessage(messages, {
         createdAt: sessionCreatedAt,
         greeting: this.greetingOverride
       });
       if (!remoteRunning) {
-        clearCompletedAssistantStreamingState(this.messages);
+        clearCompletedAssistantStreamingState(nextMessages);
       }
-      clearSupersededPendingAssistantMessages(this.messages);
-      applyHistoryMeta(sessionId, sessionDetail, this.messages);
-      applyMessageWindow(this, sessionId, this.messages);
-      cacheSessionMessages(sessionId, this.messages);
-      markSessionDetailWarm(sessionId);
-      syncDemoChatCache({ sessionId: sessionId, messages: this.messages });
+      clearSupersededPendingAssistantMessages(nextMessages);
+      applyHistoryMeta(targetSessionId, sessionDetail, nextMessages);
+      cacheSessionMessages(targetSessionId, nextMessages);
+      markSessionDetailWarm(targetSessionId);
+      // Ignore stale async response: keep current foreground conversation state untouched.
+      if (resolveSessionKey(this.activeSessionId) !== targetSessionId) {
+        return data.data;
+      }
+      this.draftAgentId = resolvedAgentIdText;
+      persistActiveSession(targetSessionId, resolvedAgentIdText);
+      this.draftToolOverrides = null;
+      this.messages = nextMessages;
+      applyMessageWindow(this, targetSessionId, this.messages);
+      syncDemoChatCache({ sessionId: targetSessionId, messages: this.messages });
       const pendingMessage = findPendingAssistantMessage(this.messages);
       if (pendingMessage && remoteRunning) {
-        this.resumeStream(sessionId, pendingMessage);
+        this.resumeStream(targetSessionId, pendingMessage);
       } else if (!remoteRunning) {
-        setSessionLoading(this, sessionId, false);
+        setSessionLoading(this, targetSessionId, false);
       }
       this.scheduleSnapshot(true);
-      startSessionWatcher(this, sessionId);
+      startSessionWatcher(this, targetSessionId);
       return data.data;
     },
     async loadOlderHistory(sessionId, options: { limit?: number; beforeId?: number } = {}) {
@@ -5785,8 +5796,109 @@ export const useChatStore = defineStore('chat', {
       if (!targetId) {
         throw new Error(t('chat.command.compactMissingSession'));
       }
-      const { data } = await compactSessionApi(targetId, payload);
-      return data?.data?.message || data?.message || '';
+      const activeSessionId = String(this.activeSessionId || '').trim();
+      const targetMessages =
+        activeSessionId === targetId
+          ? this.messages
+          : getSessionMessages(targetId) || [];
+      const now = Date.now();
+      const workflowRef = `compaction:manual:${now}`;
+      const progressDetail = {
+        stage: 'compacting',
+        summary: t('chat.workflow.compactionRunning'),
+        trigger_mode: 'manual'
+      };
+      const compactionMessage = {
+        ...buildMessage('assistant', '', now),
+        workflowItems: [
+          buildWorkflowItem(
+            t('chat.workflow.compactionRunning'),
+            buildDetail(progressDetail),
+            'loading',
+            {
+              isTool: true,
+              eventType: 'compaction_progress',
+              toolName: '上下文压缩',
+              toolCallId: workflowRef
+            }
+          )
+        ],
+        workflowStreaming: true,
+        reasoningStreaming: false,
+        stream_incomplete: true
+      };
+      targetMessages.push(compactionMessage);
+      if (activeSessionId === targetId) {
+        setSessionLoading(this, targetId, true);
+      }
+      cacheSessionMessages(targetId, targetMessages);
+      touchSessionUpdatedAt(this, targetId, now);
+      notifySessionSnapshot(this, targetId, targetMessages, true);
+      try {
+        const { data } = await compactSessionApi(targetId, payload);
+        const resultData =
+          data?.data && typeof data.data === 'object' ? data.data : {};
+        compactionMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.toolWorkflow.compaction.title'),
+            buildDetail({
+              ...(resultData as Record<string, unknown>),
+              status: 'done',
+              trigger_mode: 'manual'
+            }),
+            'completed',
+            {
+              isTool: true,
+              eventType: 'compaction',
+              toolName: '上下文压缩',
+              toolCallId: workflowRef
+            }
+          )
+        );
+        compactionMessage.workflowStreaming = false;
+        compactionMessage.reasoningStreaming = false;
+        compactionMessage.stream_incomplete = false;
+        return data?.data?.message || data?.message || '';
+      } catch (error) {
+        const detailText = String(
+          error?.response?.data?.detail || error?.message || t('common.requestFailed')
+        ).trim();
+        const failedDetail = buildDetail({
+          stage: 'context_overflow_recovery',
+          status: 'failed',
+          trigger_mode: 'manual',
+          error_code: String(error?.response?.data?.code || 'MANUAL_COMPACTION_FAILED'),
+          error_message: detailText
+        });
+        if (Array.isArray(compactionMessage.workflowItems) && compactionMessage.workflowItems.length > 0) {
+          compactionMessage.workflowItems[0].status = 'failed';
+          compactionMessage.workflowItems[0].detail = failedDetail;
+        }
+        compactionMessage.workflowItems.push(
+          buildWorkflowItem(
+            t('chat.toolWorkflow.compaction.title'),
+            failedDetail,
+            'failed',
+            {
+              isTool: true,
+              eventType: 'compaction',
+              toolName: '上下文压缩',
+              toolCallId: workflowRef
+            }
+          )
+        );
+        compactionMessage.workflowStreaming = false;
+        compactionMessage.reasoningStreaming = false;
+        compactionMessage.stream_incomplete = false;
+        throw error;
+      } finally {
+        if (activeSessionId === targetId) {
+          setSessionLoading(this, targetId, false);
+        }
+        cacheSessionMessages(targetId, targetMessages);
+        touchSessionUpdatedAt(this, targetId, Date.now());
+        notifySessionSnapshot(this, targetId, targetMessages, true);
+      }
     },
 
     async sendMessage(content: string, options: SendMessageOptions = {}) {

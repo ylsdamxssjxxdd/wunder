@@ -444,6 +444,12 @@
                   v-if="message.role === 'assistant'"
                   :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
                 />
+                <MessageCompactionDivider
+                  v-if="message.role === 'assistant'"
+                  :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
+                  :is-latest-assistant="isLatestAssistant(index)"
+                  :is-streaming="isAssistantStreaming(message)"
+                />
               </div>
             </div>
           </div>
@@ -667,6 +673,7 @@ import FeatureAgentSettingsDialog from '@/components/chat/FeatureAgentSettingsDi
 import FeatureChannelDialog from '@/components/chat/FeatureChannelDialog.vue';
 import FeatureCronDialog from '@/components/chat/FeatureCronDialog.vue';
 import InquiryPanel from '@/components/chat/InquiryPanel.vue';
+import MessageCompactionDivider from '@/components/chat/MessageCompactionDivider.vue';
 import MessageKnowledgeCitation from '@/components/chat/MessageKnowledgeCitation.vue';
 import MessageThinking from '@/components/chat/MessageThinking.vue';
 import MessageToolWorkflow from '@/components/chat/MessageToolWorkflow.vue';
@@ -702,6 +709,7 @@ import {
   normalizeWorkspaceRefreshContainerId,
   normalizeWorkspaceRefreshTreeVersion
 } from '@/utils/workspaceRefresh';
+import { isCompactionRunningFromWorkflowItems } from '@/utils/chatCompactionWorkflow';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
@@ -1412,7 +1420,10 @@ const AGENT_AT_PATH_SUFFIX_RE = /^(.*?)([)\]\}>,.;:!?，。；：！？》】」
 
 const isAssistantStreaming = (message) => {
   if (!message || message.role !== 'assistant') return false;
-  return Boolean(message.workflowStreaming || message.reasoningStreaming || message.stream_incomplete);
+  if (Boolean(message.workflowStreaming || message.reasoningStreaming || message.stream_incomplete)) {
+    return true;
+  }
+  return isCompactionRunningFromWorkflowItems(message.workflowItems);
 };
 
 // Assistant replies render through Markdown so tables and rich text stay readable.
@@ -2193,14 +2204,15 @@ const handleLocalCommand = async (command: ChatLocalCommand, rawText) => {
       await scrollMessagesToBottom();
       return;
     }
+    chatStore.appendLocalMessage('user', rawText, { sessionId: activeId });
     try {
       await chatStore.compactSession(activeId);
-      appendLocalCommandMessages(rawText, t('chat.command.compactSuccess'));
       scheduleExternalSessionSync(true);
     } catch (error) {
-      appendLocalCommandMessages(
-        rawText,
-        t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) })
+      chatStore.appendLocalMessage(
+        'assistant',
+        t('chat.command.compactFailed', { message: resolveCommandErrorMessage(error) }),
+        { sessionId: activeId }
       );
     }
     await scrollMessagesToBottom();

@@ -229,7 +229,7 @@ const props = withDefaults(
     voiceSupported?: boolean;
   }>(),
   {
-    sendKey: 'ctrl_enter',
+    sendKey: 'enter',
     screenshotSupported: false,
     voiceRecording: false,
     voiceDurationMs: 0,

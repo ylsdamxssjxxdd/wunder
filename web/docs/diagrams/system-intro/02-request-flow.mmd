@@ -1,0 +1,31 @@
+sequenceDiagram
+  participant U as 用户
+  participant API as API 路由
+  participant AR as AgentRuntime
+  participant O as Orchestrator
+  participant T as 工具层
+  participant S as 存储与监控
+
+  U->>API: POST /wunder (user_id, question, stream)
+  API->>AR: submit_user_request
+  alt 主线程忙且队列开启
+    AR->>S: 写入 agent_tasks pending
+    API-->>U: queued 响应(task_id)
+  else 直接执行
+    AR->>O: execute_stream
+    O->>S: 获取 session_locks 和历史
+    loop 每个 model_round
+      O->>O: 构建上下文与预算检查
+      O->>O: 调用 LLM
+      alt 触发工具调用
+        O->>T: 执行内置/MCP/Skills/知识库/用户工具
+        T-->>O: 工具结果
+      end
+      O->>S: 写入 chat_history tool_logs stream_events
+      O-->>U: WebSocket 事件流
+      opt WebSocket 不可用
+        O-->>U: SSE 事件兜底
+      end
+    end
+    O->>S: 释放会话锁并更新 monitor_sessions
+  end

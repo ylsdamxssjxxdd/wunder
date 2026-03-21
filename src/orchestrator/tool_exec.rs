@@ -517,6 +517,88 @@ impl Orchestrator {
         resolve_final_answer_value(args)
     }
 
+    pub(super) fn reconcile_final_answer_workspace_images(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+        answer: &str,
+    ) -> String {
+        let cleaned_workspace_id = workspace_id.trim();
+        if cleaned_workspace_id.is_empty() || answer.trim().is_empty() {
+            return answer.to_string();
+        }
+        let Some(image_regex) = markdown_image_regex() else {
+            return answer.to_string();
+        };
+        if !image_regex.is_match(answer) {
+            return answer.to_string();
+        }
+
+        let artifact_candidates =
+            collect_existing_artifact_image_paths(&self.workspace, cleaned_workspace_id, session_id);
+        let mut dir_candidates: HashMap<String, Vec<String>> = HashMap::new();
+        let mut used_replacements: HashSet<String> = HashSet::new();
+        let mut changed = false;
+
+        let rewritten = image_regex.replace_all(answer, |caps: &regex::Captures<'_>| {
+            let full = caps.get(0).map(|item| item.as_str()).unwrap_or("");
+            let alt = caps.get(1).map(|item| item.as_str()).unwrap_or("");
+            let raw_target = caps.get(2).map(|item| item.as_str()).unwrap_or("").trim();
+            if raw_target.is_empty() {
+                return full.to_string();
+            }
+            let (path_token, title_suffix) = split_markdown_target(raw_target);
+            if path_token.is_empty() {
+                return full.to_string();
+            }
+            let (path_token_clean, wrapper) = unwrap_markdown_path_token(&path_token);
+            let (path_without_suffix, _) = split_url_suffix(path_token_clean.as_str());
+            let Some(normalized_relative) =
+                normalize_workspace_markdown_relative_path(&path_without_suffix, cleaned_workspace_id)
+            else {
+                return full.to_string();
+            };
+            if workspace_relative_path_exists(
+                &self.workspace,
+                cleaned_workspace_id,
+                normalized_relative.as_str(),
+            ) {
+                return full.to_string();
+            }
+
+            let replacement = find_missing_image_replacement(
+                &self.workspace,
+                cleaned_workspace_id,
+                normalized_relative.as_str(),
+                &artifact_candidates,
+                &mut dir_candidates,
+                &mut used_replacements,
+            );
+            let Some(replacement) = replacement else {
+                return full.to_string();
+            };
+            let replaced_target = format_markdown_path_token(
+                path_token_clean.as_str(),
+                replacement.as_str(),
+                cleaned_workspace_id,
+                wrapper,
+            );
+            let rebuilt_target = if title_suffix.is_empty() {
+                replaced_target
+            } else {
+                format!("{replaced_target} {title_suffix}")
+            };
+            changed = true;
+            format!("![{alt}]({rebuilt_target})")
+        });
+
+        if changed {
+            rewritten.into_owned()
+        } else {
+            answer.to_string()
+        }
+    }
+
     pub(super) fn resolve_a2ui_tool_payload(
         &self,
         args: &Value,
@@ -828,6 +910,317 @@ fn extract_file_paths(args: &Value) -> Vec<String> {
         ordered.push(path);
     }
     ordered
+}
+
+#[derive(Clone, Copy)]
+enum MarkdownPathWrapper {
+    None,
+    Angle,
+    DoubleQuote,
+    SingleQuote,
+}
+
+fn markdown_image_regex() -> Option<&'static Regex> {
+    static REGEX: OnceLock<Option<Regex>> = OnceLock::new();
+    REGEX
+        .get_or_init(|| {
+            // Captures Markdown image links: ![alt](target)
+            compile_regex(r"!\[([^\]]*)\]\(([^)]+)\)", "markdown_image_link")
+        })
+        .as_ref()
+}
+
+fn split_markdown_target(raw: &str) -> (String, String) {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return (String::new(), String::new());
+    }
+    let mut in_angle = false;
+    for (index, ch) in trimmed.char_indices() {
+        if ch == '<' {
+            in_angle = true;
+            continue;
+        }
+        if ch == '>' {
+            in_angle = false;
+            continue;
+        }
+        if ch.is_whitespace() && !in_angle {
+            let path = trimmed[..index].trim().to_string();
+            let suffix = trimmed[index..].trim().to_string();
+            return (path, suffix);
+        }
+    }
+    (trimmed.to_string(), String::new())
+}
+
+fn unwrap_markdown_path_token(token: &str) -> (String, MarkdownPathWrapper) {
+    let trimmed = token.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('<') && trimmed.ends_with('>') {
+        return (
+            trimmed[1..trimmed.len().saturating_sub(1)].trim().to_string(),
+            MarkdownPathWrapper::Angle,
+        );
+    }
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        return (
+            trimmed[1..trimmed.len().saturating_sub(1)].trim().to_string(),
+            MarkdownPathWrapper::DoubleQuote,
+        );
+    }
+    if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
+        return (
+            trimmed[1..trimmed.len().saturating_sub(1)].trim().to_string(),
+            MarkdownPathWrapper::SingleQuote,
+        );
+    }
+    (trimmed.to_string(), MarkdownPathWrapper::None)
+}
+
+fn split_url_suffix(raw: &str) -> (String, String) {
+    if let Some(index) = raw.find(['?', '#']) {
+        return (raw[..index].to_string(), raw[index..].to_string());
+    }
+    (raw.to_string(), String::new())
+}
+
+fn normalize_workspace_markdown_relative_path(raw: &str, workspace_id: &str) -> Option<String> {
+    let mut value = raw.trim().replace('\\', "/");
+    if value.is_empty() {
+        return None;
+    }
+    let lower = value.to_ascii_lowercase();
+    if lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("data:")
+        || lower.starts_with("mailto:")
+    {
+        return None;
+    }
+    if value.len() >= 2 && value.as_bytes()[1] == b':' {
+        return None;
+    }
+
+    if let Some(stripped) = value.strip_prefix("/workspaces/") {
+        value = stripped.to_string();
+    } else if let Some(stripped) = value.strip_prefix("workspaces/") {
+        value = stripped.to_string();
+    }
+    if !value.is_empty() {
+        if value == workspace_id {
+            return Some(String::new());
+        }
+        let workspace_prefix = format!("{workspace_id}/");
+        if let Some(stripped) = value.strip_prefix(workspace_prefix.as_str()) {
+            value = stripped.to_string();
+        } else if value.contains("__c__") || value.contains("__a__") || value.contains("__agent__")
+        {
+            return None;
+        }
+    }
+
+    if let Some(stripped) = value.strip_prefix("/workspace/") {
+        value = stripped.to_string();
+    } else if let Some(stripped) = value.strip_prefix("workspace/") {
+        value = stripped.to_string();
+    }
+
+    if let Some(stripped) = value.strip_prefix('/') {
+        value = stripped.to_string();
+    }
+    if let Some(stripped) = value.strip_prefix("./") {
+        value = stripped.to_string();
+    }
+    let mut normalized_parts = Vec::new();
+    for part in value.split('/') {
+        let cleaned = part.trim();
+        if cleaned.is_empty() || cleaned == "." {
+            continue;
+        }
+        if cleaned == ".." {
+            return None;
+        }
+        normalized_parts.push(cleaned);
+    }
+    if normalized_parts.is_empty() {
+        return Some(String::new());
+    }
+    Some(normalized_parts.join("/"))
+}
+
+fn workspace_relative_path_exists(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    relative_path: &str,
+) -> bool {
+    if relative_path.trim().is_empty() {
+        return false;
+    }
+    match workspace.resolve_path(workspace_id, relative_path) {
+        Ok(path) => path.exists(),
+        Err(_) => false,
+    }
+}
+
+fn is_image_relative_path(path: &str) -> bool {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg"
+    )
+}
+
+fn collect_existing_artifact_image_paths(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    session_id: &str,
+) -> Vec<String> {
+    let artifacts = workspace
+        .load_artifact_logs(workspace_id, session_id, 200)
+        .unwrap_or_default();
+    let mut output = Vec::new();
+    let mut seen = HashSet::new();
+    for item in artifacts {
+        let Some(obj) = item.as_object() else {
+            continue;
+        };
+        if obj.get("kind").and_then(Value::as_str) != Some("file") {
+            continue;
+        }
+        let Some(name) = obj.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(relative) = normalize_workspace_markdown_relative_path(name, workspace_id) else {
+            continue;
+        };
+        if relative.is_empty() || !is_image_relative_path(relative.as_str()) {
+            continue;
+        }
+        if !workspace_relative_path_exists(workspace, workspace_id, relative.as_str()) {
+            continue;
+        }
+        if seen.insert(relative.clone()) {
+            output.push(relative);
+        }
+    }
+    output
+}
+
+fn load_directory_image_candidates(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    directory: &str,
+) -> Vec<String> {
+    let relative_dir = directory.trim_matches('/');
+    let Ok((entries, _, _, _, _)) = workspace.list_workspace_entries(
+        workspace_id,
+        relative_dir,
+        None,
+        0,
+        512,
+        "name",
+        "asc",
+    ) else {
+        return Vec::new();
+    };
+    let mut output = Vec::new();
+    for entry in entries {
+        if entry.entry_type != "file" || !is_image_relative_path(entry.path.as_str()) {
+            continue;
+        }
+        output.push(entry.path);
+    }
+    output
+}
+
+fn find_missing_image_replacement(
+    workspace: &WorkspaceManager,
+    workspace_id: &str,
+    missing_relative: &str,
+    artifact_candidates: &[String],
+    dir_candidates: &mut HashMap<String, Vec<String>>,
+    used_replacements: &mut HashSet<String>,
+) -> Option<String> {
+    if missing_relative.trim().is_empty() || !is_image_relative_path(missing_relative) {
+        return None;
+    }
+    let missing_path = Path::new(missing_relative);
+    let missing_name = missing_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    let missing_dir = missing_path
+        .parent()
+        .map(|value| value.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_default()
+        .trim_matches('/')
+        .to_string();
+
+    let candidates = dir_candidates
+        .entry(missing_dir.clone())
+        .or_insert_with(|| load_directory_image_candidates(workspace, workspace_id, missing_dir.as_str()));
+
+    if !missing_name.is_empty() {
+        for candidate in candidates.iter() {
+            let candidate_name = Path::new(candidate)
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if candidate_name == missing_name && used_replacements.insert(candidate.clone()) {
+                return Some(candidate.clone());
+            }
+        }
+    }
+    for candidate in candidates.iter() {
+        if used_replacements.insert(candidate.clone()) {
+            return Some(candidate.clone());
+        }
+    }
+    for candidate in artifact_candidates {
+        let candidate_dir = Path::new(candidate)
+            .parent()
+            .map(|value| value.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default()
+            .trim_matches('/')
+            .to_string();
+        if !missing_dir.is_empty() && candidate_dir != missing_dir {
+            continue;
+        }
+        if used_replacements.insert(candidate.clone()) {
+            return Some(candidate.clone());
+        }
+    }
+    None
+}
+
+fn format_markdown_path_token(
+    original_clean_path: &str,
+    replacement_relative: &str,
+    workspace_id: &str,
+    wrapper: MarkdownPathWrapper,
+) -> String {
+    let replacement = if original_clean_path.starts_with("/workspaces/") {
+        format!("/workspaces/{workspace_id}/{}", replacement_relative.trim_matches('/'))
+    } else if original_clean_path.starts_with('/') {
+        format!("/{}", replacement_relative.trim_matches('/'))
+    } else if original_clean_path.starts_with("./") {
+        format!("./{}", replacement_relative.trim_matches('/'))
+    } else {
+        replacement_relative.trim_matches('/').to_string()
+    };
+    match wrapper {
+        MarkdownPathWrapper::None => replacement,
+        MarkdownPathWrapper::Angle => format!("<{replacement}>"),
+        MarkdownPathWrapper::DoubleQuote => format!("\"{replacement}\""),
+        MarkdownPathWrapper::SingleQuote => format!("'{replacement}'"),
+    }
 }
 
 fn normalize_compare_path(path: &Path) -> PathBuf {
@@ -1641,5 +2034,32 @@ mod tests {
             "final_response",
         );
         assert_eq!(answer.as_deref(), Some("{\"content\":\"ok\"}"));
+    }
+
+    #[test]
+    fn test_split_markdown_target_keeps_title_suffix() {
+        let (path, suffix) = split_markdown_target("charts/a.png \"title\"");
+        assert_eq!(path, "charts/a.png");
+        assert_eq!(suffix, "\"title\"");
+    }
+
+    #[test]
+    fn test_normalize_workspace_markdown_relative_path_handles_workspace_public_path() {
+        let normalized = normalize_workspace_markdown_relative_path(
+            "/workspaces/alice__c__2/charts/a.png",
+            "alice__c__2",
+        );
+        assert_eq!(normalized.as_deref(), Some("charts/a.png"));
+    }
+
+    #[test]
+    fn test_format_markdown_path_token_preserves_leading_slash() {
+        let formatted = format_markdown_path_token(
+            "/charts/wrong.png",
+            "charts/right.png",
+            "alice__c__2",
+            MarkdownPathWrapper::None,
+        );
+        assert_eq!(formatted, "/charts/right.png");
     }
 }

@@ -8,6 +8,7 @@
 - 注意保持优雅的项目结构和模块组成
 - 始终要考虑系统的运行效率，速度要快，内存占用要低
 - 每次完成任务，将实现内容写入 `docs/功能迭代.md` 的分类区块，使用 `python scripts/update_feature_log.py --type <类型> --scope <范围> ...`；类型仅限：新增/变更/修复/性能/文档/重构/安全/工程/测试/移除/弃用。
+- 更新 `docs/静态站文档` 或 `docs/diagrams` 后，必须手动执行 `python scripts/build_docs_site.py` 并同步 `docs/diagrams` 到 `web/docs/diagrams`，确保管理员侧与用户侧帮助文档使用同一份最新内容。
 - 如果系统结构或重要的部分有变化要及时更新docs/设计方案.md和docs/API文档.md和docs/系统介绍.md等文档。
 - 不要尝试创建git分支或提交，这些交给用户
 - 不要主动使用git除非必须，你git diff时可能会遇到出现了不是你修改的内容，没关系那是用户自己改的不用管他

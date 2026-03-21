@@ -1,74 +1,5 @@
 <template>
   <div v-if="shouldRender" class="message-tool-workflow-shell">
-    <button
-      v-if="compactionBanner"
-      type="button"
-      :class="[
-        'tool-workflow-banner',
-        `is-${compactionBanner.status}`,
-        compactionBanner.tone ? `tone-${compactionBanner.tone}` : ''
-      ]"
-      @click="handleCompactionBannerClick"
-    >
-      <span class="tool-workflow-banner-dot" aria-hidden="true"></span>
-      <span class="tool-workflow-banner-main">
-        <span class="tool-workflow-banner-row">
-          <span class="tool-workflow-banner-copy">
-            <span class="tool-workflow-banner-title">{{ compactionBanner.title }}</span>
-            <span class="tool-workflow-banner-description">{{ compactionBanner.description }}</span>
-          </span>
-          <span v-if="compactionBanner.stageLabel" class="tool-workflow-banner-stage">
-            {{ compactionBanner.stageLabel }}
-          </span>
-          <span
-            v-if="compactionBanner.note"
-            :class="['tool-workflow-banner-note', compactionBanner.tone ? `is-${compactionBanner.tone}` : '']"
-          >
-            {{ compactionBanner.note }}
-          </span>
-        </span>
-        <span v-if="compactionBanner.usageBar" :class="['tool-workflow-banner-usage', `is-${compactionBanner.usageBar.tone}`]">
-          <span class="tool-workflow-banner-usage-head">
-            <span class="tool-workflow-banner-usage-limit">{{ compactionBanner.usageBar.limitLabel }}</span>
-            <span class="tool-workflow-banner-usage-hint">{{ compactionBanner.usageBar.hint }}</span>
-          </span>
-          <span class="tool-workflow-banner-usage-track">
-            <span
-              v-if="compactionBanner.usageBar.beforeRatio !== null"
-              class="tool-workflow-banner-usage-fill is-before"
-              :style="{ width: `${Math.max(compactionBanner.usageBar.beforeRatio * 100, 6)}%` }"
-            ></span>
-            <span
-              v-if="compactionBanner.usageBar.afterRatio !== null"
-              class="tool-workflow-banner-usage-fill is-after"
-              :style="{ width: `${Math.max(compactionBanner.usageBar.afterRatio * 100, 6)}%` }"
-            ></span>
-          </span>
-          <span class="tool-workflow-banner-usage-legend">
-            <span v-if="compactionBanner.usageBar.beforeLabel" class="tool-workflow-banner-usage-label is-before">
-              {{ compactionBanner.usageBar.beforeLabel }}
-            </span>
-            <span v-if="compactionBanner.usageBar.afterLabel" class="tool-workflow-banner-usage-label is-after">
-              {{ compactionBanner.usageBar.afterLabel }}
-            </span>
-          </span>
-        </span>
-        <span v-if="compactionBanner.failure" class="tool-workflow-banner-failure">
-          <span class="tool-workflow-banner-failure-title">{{ compactionBanner.failure.title }}</span>
-          <span class="tool-workflow-banner-failure-description">{{ compactionBanner.failure.description }}</span>
-          <span class="tool-workflow-banner-failure-actions">
-            <span
-              v-for="(suggestion, index) in compactionBanner.failure.suggestions"
-              :key="`${index}-${suggestion}`"
-              class="tool-workflow-banner-failure-chip"
-            >
-              {{ suggestion }}
-            </span>
-          </span>
-        </span>
-      </span>
-    </button>
-
     <details
       ref="workflowRef"
       class="message-tool-workflow"
@@ -2833,7 +2764,9 @@ const dedupeAdjacentToolItems = (items: WorkflowItem[]): WorkflowItem[] => {
 };
 
 const buildEntries = (): ToolEntryView[] => {
-  return buildWorkflowToolRuns(props.items).map(buildEntryView);
+  return buildWorkflowToolRuns(props.items)
+    .map(buildEntryView)
+    .filter((entry) => !entry.isCompaction);
 };
 
 const entries = computed<ToolEntryView[]>(() => {
@@ -2885,55 +2818,6 @@ const handleEntryToggle = (key: string, event: Event) => {
   });
 };
 
-const resolveCompactionStageLabel = (view: CompactionView | null): string => {
-  if (!view) return '';
-  const activeStage = view.stages.find((stage) => stage.state === 'active');
-  if (activeStage) return activeStage.label;
-  const warningStage = [...view.stages].reverse().find((stage) => stage.state === 'warning');
-  if (warningStage) return warningStage.label;
-  const doneStage = [...view.stages].reverse().find((stage) => stage.state === 'done');
-  return doneStage?.label || '';
-};
-
-const compactionBanner = computed(() => {
-  for (let index = entries.value.length - 1; index >= 0; index -= 1) {
-    const entry = entries.value[index];
-    if (!entry.isCompaction || !entry.compactionView) continue;
-    const isLatest = index === entries.value.length - 1;
-    const isActive = entry.status === 'loading' || entry.status === 'pending';
-    if (!isActive && !isLatest) continue;
-    return {
-      entryKey: entry.key,
-      status: entry.status,
-      tone: entry.summaryNoteTone,
-      title: entry.compactionView.headline,
-      description: entry.compactionView.description,
-      note: entry.summaryNote,
-      stageLabel: resolveCompactionStageLabel(entry.compactionView),
-      usageBar: entry.compactionView.usageBar,
-      failure: entry.compactionView.failure
-    };
-  }
-  return null;
-});
-
-const handleCompactionBannerClick = () => {
-  const banner = compactionBanner.value;
-  if (!banner) return;
-  if (workflowRef.value && !workflowRef.value.open) {
-    workflowRef.value.open = true;
-  }
-  const nextExpanded = new Set(expandedKeys.value);
-  nextExpanded.add(banner.entryKey);
-  expandedKeys.value = nextExpanded;
-  void nextTick(() => {
-    if (shouldAutoScrollWorkflow()) {
-      scrollWorkflowToBottom();
-    }
-    scheduleWorkflowLayoutChange();
-  });
-};
-
 const latestEntry = computed(() => (entries.value.length > 0 ? entries.value[entries.value.length - 1] : null));
 const shouldRender = computed(() => props.visible && (props.loading || entries.value.length > 0));
 
@@ -2953,6 +2837,17 @@ onBeforeUnmount(() => {
   padding-top: 6px;
 }
 
+.tool-workflow-banner-fade-enter-active,
+.tool-workflow-banner-fade-leave-active {
+  transition: opacity 0.22s ease, transform 0.22s ease;
+}
+
+.tool-workflow-banner-fade-enter-from,
+.tool-workflow-banner-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
 .message-tool-workflow {
   --workflow-term-bg: #0f1622;
   --workflow-term-bg-soft: #141e2e;
@@ -2964,6 +2859,9 @@ onBeforeUnmount(() => {
   --workflow-term-code: #f1f5ff;
   --workflow-term-scroll-track: #0d1420;
   --workflow-term-scroll-thumb: #3b4b63;
+  --workflow-banner-text: var(--chat-text, #0f172a);
+  --workflow-banner-muted: var(--chat-muted, #64748b);
+  --workflow-banner-panel: var(--chat-panel, rgba(255, 255, 255, 0.1));
   border: none;
   background: transparent;
   padding: 0;
@@ -2977,15 +2875,22 @@ onBeforeUnmount(() => {
   width: 100%;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(59, 130, 246, 0.24);
-  background: linear-gradient(180deg, rgba(37, 99, 235, 0.16), rgba(15, 23, 42, 0.24));
-  color: var(--workflow-term-text);
+  border: 1px solid rgba(var(--chat-primary-rgb, 59, 130, 246), 0.3);
+  background: linear-gradient(
+    180deg,
+    rgba(var(--chat-primary-rgb, 59, 130, 246), 0.14),
+    var(--workflow-banner-panel)
+  );
+  color: var(--workflow-banner-text);
   text-align: left;
   cursor: pointer;
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .tool-workflow-banner:hover {
-  border-color: rgba(96, 165, 250, 0.34);
+  border-color: rgba(var(--chat-primary-rgb, 59, 130, 246), 0.42);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+  transform: translateY(-1px);
 }
 
 .tool-workflow-banner-dot {
@@ -2997,9 +2902,18 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.16);
 }
 
+.tool-workflow-banner.is-loading .tool-workflow-banner-dot,
+.tool-workflow-banner.is-pending .tool-workflow-banner-dot {
+  animation: tool-workflow-banner-live-pulse 1.2s ease-in-out infinite;
+}
+
 .tool-workflow-banner.is-completed .tool-workflow-banner-dot {
   background: rgba(34, 197, 94, 0.96);
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.14);
+}
+
+.tool-workflow-banner.is-completed.is-animated {
+  animation: tool-workflow-banner-complete 0.38s ease-out;
 }
 
 .tool-workflow-banner.is-failed .tool-workflow-banner-dot {
@@ -3007,9 +2921,14 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.14);
 }
 
+.tool-workflow-banner.is-completed.tone-info {
+  border-color: rgba(34, 197, 94, 0.3);
+  background: linear-gradient(180deg, rgba(22, 163, 74, 0.12), var(--workflow-banner-panel));
+}
+
 .tool-workflow-banner.tone-warning {
   border-color: rgba(245, 158, 11, 0.26);
-  background: linear-gradient(180deg, rgba(217, 119, 6, 0.16), rgba(15, 23, 42, 0.22));
+  background: linear-gradient(180deg, rgba(217, 119, 6, 0.14), var(--workflow-banner-panel));
 }
 
 .tool-workflow-banner.tone-warning .tool-workflow-banner-dot {
@@ -3046,14 +2965,14 @@ onBeforeUnmount(() => {
 }
 
 .tool-workflow-banner-title {
-  color: var(--workflow-term-text);
+  color: var(--workflow-banner-text);
   font-size: 12px;
   font-weight: 700;
   line-height: 1.35;
 }
 
 .tool-workflow-banner-description {
-  color: var(--workflow-term-muted);
+  color: var(--workflow-banner-muted);
   font-size: 11px;
   line-height: 1.45;
   white-space: pre-wrap;
@@ -3064,9 +2983,9 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 2px 8px;
-  border: 1px solid rgba(148, 163, 184, 0.26);
-  background: rgba(15, 23, 42, 0.24);
-  color: var(--workflow-term-muted);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: rgba(255, 255, 255, 0.56);
+  color: var(--workflow-banner-muted);
   font-size: 10px;
   font-weight: 700;
 }
@@ -3075,23 +2994,29 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 2px 8px;
-  background: rgba(37, 99, 235, 0.18);
-  color: #dbeafe;
-  border: 1px solid rgba(96, 165, 250, 0.3);
+  background: rgba(var(--chat-primary-rgb, 59, 130, 246), 0.14);
+  color: var(--workflow-banner-text);
+  border: 1px solid rgba(var(--chat-primary-rgb, 59, 130, 246), 0.3);
   font-size: 10px;
   font-weight: 700;
+}
+
+.tool-workflow-banner-note.is-info {
+  background: rgba(var(--chat-primary-rgb, 59, 130, 246), 0.14);
+  color: var(--workflow-banner-text);
+  border-color: rgba(var(--chat-primary-rgb, 59, 130, 246), 0.34);
 }
 
 .tool-workflow-banner-note.is-success {
   background: rgba(22, 163, 74, 0.18);
   border-color: rgba(134, 239, 172, 0.3);
-  color: #dcfce7;
+  color: var(--workflow-banner-text);
 }
 
 .tool-workflow-banner-note.is-warning {
   background: rgba(217, 119, 6, 0.18);
   border-color: rgba(252, 211, 77, 0.3);
-  color: #fef3c7;
+  color: var(--workflow-banner-text);
 }
 
 .tool-workflow-banner-usage {
@@ -3100,8 +3025,8 @@ onBeforeUnmount(() => {
   gap: 5px;
   padding: 8px 10px;
   border-radius: 10px;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: rgba(255, 255, 255, 0.56);
 }
 
 .tool-workflow-banner-usage.is-success {
@@ -3127,12 +3052,12 @@ onBeforeUnmount(() => {
 }
 
 .tool-workflow-banner-usage-limit {
-  color: var(--workflow-term-muted);
+  color: var(--workflow-banner-muted);
   font-weight: 700;
 }
 
 .tool-workflow-banner-usage-hint {
-  color: var(--workflow-term-text);
+  color: var(--workflow-banner-text);
   margin-left: auto;
 }
 
@@ -3161,7 +3086,7 @@ onBeforeUnmount(() => {
 }
 
 .tool-workflow-banner-usage-label {
-  color: var(--workflow-term-muted);
+  color: var(--workflow-banner-muted);
 }
 
 .tool-workflow-banner-usage-label.is-before {
@@ -3181,17 +3106,17 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid rgba(248, 113, 113, 0.26);
-  background: rgba(127, 29, 29, 0.2);
+  background: rgba(254, 226, 226, 0.68);
 }
 
 .tool-workflow-banner-failure-title {
-  color: #fee2e2;
+  color: #991b1b;
   font-size: 11px;
   font-weight: 700;
 }
 
 .tool-workflow-banner-failure-description {
-  color: #fecaca;
+  color: #b91c1c;
   font-size: 11px;
   line-height: 1.45;
 }
@@ -3205,9 +3130,9 @@ onBeforeUnmount(() => {
 .tool-workflow-banner-failure-chip {
   border-radius: 999px;
   padding: 2px 8px;
-  border: 1px solid rgba(254, 202, 202, 0.26);
-  background: rgba(255, 255, 255, 0.06);
-  color: #fee2e2;
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  background: rgba(255, 255, 255, 0.72);
+  color: #991b1b;
   font-size: 10px;
   font-weight: 700;
 }
@@ -3423,6 +3348,29 @@ onBeforeUnmount(() => {
   50% {
     opacity: 0.55;
     transform: scale(0.78);
+  }
+}
+
+@keyframes tool-workflow-banner-live-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(0.82);
+    opacity: 0.6;
+  }
+}
+
+@keyframes tool-workflow-banner-complete {
+  0% {
+    transform: translateY(3px);
+    opacity: 0.72;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
   }
 }
 

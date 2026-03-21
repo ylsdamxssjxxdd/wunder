@@ -1085,7 +1085,7 @@ export default {
   'chat.input.send': '发送',
   'chat.input.sendHintEnter': 'Enter 发送',
   'chat.input.sendHintCtrlEnter': 'Ctrl + Enter 发送',
-  'chat.input.sendHintEnterAlt': 'Enter 或 Alt + Enter 发送',
+  'chat.input.sendHintEnterAlt': 'Enter 发送 | Ctrl + Enter 换行',
   'chat.input.sendHintCtrlEnterAlt': 'Ctrl + Enter 发送',
   'chat.sessions.title': '会话列表',
   'chat.sessions.new': '新线程',

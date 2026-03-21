@@ -1,134 +1,90 @@
-﻿<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980" role="img" aria-labelledby="title desc">
-  <title id="title">wunder 分层结构图</title>
-  <desc id="desc">展示心舰到用户、蜂群、智能体、线程的层级关系。</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="600" viewBox="30 140 920 600" role="img" aria-labelledby="title desc">
+  <title id="title">wunder 对象关系图</title>
+  <desc id="desc">金字塔式对象排布：线程、智能体、蜂群、用户、心舰。</desc>
 
   <defs>
     <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#f7fbff"/>
+      <stop offset="0%" stop-color="#f7faff"/>
       <stop offset="100%" stop-color="#eef4ff"/>
     </linearGradient>
-    <linearGradient id="hubGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0f3d91"/>
-      <stop offset="100%" stop-color="#2f6ff7"/>
-    </linearGradient>
-    <linearGradient id="userGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0f766e"/>
-      <stop offset="100%" stop-color="#14b8a6"/>
-    </linearGradient>
-    <linearGradient id="swarmGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#7c3aed"/>
-      <stop offset="100%" stop-color="#a855f7"/>
-    </linearGradient>
-    <linearGradient id="agentGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#2563eb"/>
-      <stop offset="100%" stop-color="#3b82f6"/>
-    </linearGradient>
-    <linearGradient id="threadGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#ea580c"/>
-      <stop offset="100%" stop-color="#f97316"/>
+
+    <linearGradient id="pyramidGrad" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#f97316" stop-opacity="0.16"/>
+      <stop offset="35%" stop-color="#a855f7" stop-opacity="0.14"/>
+      <stop offset="70%" stop-color="#14b8a6" stop-opacity="0.12"/>
+      <stop offset="100%" stop-color="#2d68f4" stop-opacity="0.12"/>
     </linearGradient>
 
-    <filter id="shadowSoft" x="-20%" y="-20%" width="140%" height="160%">
-      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#1e3a8a" flood-opacity="0.12"/>
+    <linearGradient id="axisGrad" x1="0" y1="190" x2="0" y2="680" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#2563eb"/>
+    </linearGradient>
+
+    <filter id="shadowSoft" x="-20%" y="-30%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#1e3a8a" flood-opacity="0.10"/>
     </filter>
 
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-      <path d="M0,0 L10,5 L0,10 z" fill="#5b6b8a"/>
+    <marker id="axisArrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#2563eb"/>
     </marker>
 
     <style><![CDATA[
-      .bg-shape { opacity: 0.65; }
-      .title { font: 700 44px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: #0b1f4a; }
-      .subtitle { font: 500 20px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: #3c4f74; }
-      .lane-label { font: 600 18px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: #50628a; letter-spacing: 0.5px; }
-      .node-title { font: 700 30px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: #ffffff; }
-      .node-sub { font: 500 16px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: rgba(255,255,255,0.9); }
-      .node-mini { font: 700 24px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: #ffffff; }
-      .hint { font: 500 17px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; fill: #60739a; }
-      .link { stroke: #5b6b8a; stroke-width: 3; fill: none; marker-end: url(#arrow); }
-      .link-soft { stroke: #8092b7; stroke-width: 2.5; fill: none; marker-end: url(#arrow); }
-      .dot-line { stroke: #9cb0d8; stroke-width: 2; stroke-dasharray: 6 7; }
-      .node { rx: 22; ry: 22; filter: url(#shadowSoft); }
-      .mini { rx: 18; ry: 18; filter: url(#shadowSoft); }
-      .ellipsis { font: 700 34px 'Segoe UI', sans-serif; fill: #8ca0c5; }
+      .node { rx: 12; ry: 12; fill: none; stroke: #b8c6e6; stroke-width: 1.6; filter: url(#shadowSoft); }
+      .node-text { font: 700 17px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .axis { stroke: url(#axisGrad); stroke-width: 3.6; fill: none; marker-end: url(#axisArrow); }
+      .axis-label { font: 700 24px 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+      .axis-label-top { fill: #f59e0b; }
+      .axis-label-bottom { fill: #2563eb; }
+      .text-core { fill: #f59e0b; }
+      .text-user { fill: #ca8a04; }
+      .text-swarm { fill: #16a34a; }
+      .text-agent { fill: #7c3aed; }
+      .text-thread { fill: #2563eb; }
     ]]></style>
   </defs>
 
-  <rect x="0" y="0" width="1600" height="980" fill="url(#bgGrad)"/>
-  <circle class="bg-shape" cx="1340" cy="130" r="180" fill="#dbe7ff"/>
-  <circle class="bg-shape" cx="230" cy="860" r="190" fill="#d4fff6"/>
-  <circle class="bg-shape" cx="1500" cy="850" r="130" fill="#ffe6d5"/>
+  <rect x="0" y="0" width="1040" height="820" fill="url(#bgGrad)"/>
+  <circle cx="930" cy="115" r="66" fill="#dde8ff" opacity="0.42"/>
+  <circle cx="120" cy="748" r="72" fill="#dcfff8" opacity="0.42"/>
 
-  <text x="800" y="76" text-anchor="middle" class="title">wunder 结构示意图</text>
-  <text x="800" y="110" text-anchor="middle" class="subtitle">心舰 → 用户 → 蜂群 → 智能体 → 线程</text>
+  <path d="M78,190 L78,680" class="axis"/>
+  <text x="78" y="168" text-anchor="middle" class="axis-label axis-label-top">抽象</text>
+  <text x="78" y="716" text-anchor="middle" class="axis-label axis-label-bottom">现实</text>
 
-  <line x1="120" y1="215" x2="1480" y2="215" class="dot-line"/>
-  <line x1="120" y1="350" x2="1480" y2="350" class="dot-line"/>
-  <line x1="120" y1="485" x2="1480" y2="485" class="dot-line"/>
-  <line x1="120" y1="620" x2="1480" y2="620" class="dot-line"/>
-  <line x1="120" y1="755" x2="1480" y2="755" class="dot-line"/>
+  <polygon points="120,680 920,680 650,190 390,190" fill="url(#pyramidGrad)"/>
 
-  <text x="130" y="205" class="lane-label">平台层</text>
-  <text x="130" y="340" class="lane-label">用户层</text>
-  <text x="130" y="475" class="lane-label">蜂群层</text>
-  <text x="130" y="610" class="lane-label">智能体层</text>
-  <text x="130" y="745" class="lane-label">线程层</text>
+  <rect class="node" x="459" y="232" width="122" height="34"/>
+  <text x="520" y="254" text-anchor="middle" class="node-text text-core">心舰</text>
 
-  <rect class="node" x="600" y="145" width="400" height="96" fill="url(#hubGrad)"/>
-  <text x="800" y="198" text-anchor="middle" class="node-title">心舰（wunder）</text>
-  <text x="800" y="224" text-anchor="middle" class="node-sub">统一调度与执行核心</text>
+  <rect class="node" x="390" y="324" width="122" height="34"/>
+  <text x="451" y="346" text-anchor="middle" class="node-text text-user">用户 A</text>
+  <rect class="node" x="528" y="324" width="122" height="34"/>
+  <text x="589" y="346" text-anchor="middle" class="node-text text-user">用户 B</text>
 
-  <rect class="mini" x="250" y="280" width="250" height="92" fill="url(#userGrad)"/>
-  <text x="375" y="333" text-anchor="middle" class="node-mini">用户 1</text>
+  <rect class="node" x="321" y="416" width="122" height="34"/>
+  <text x="382" y="438" text-anchor="middle" class="node-text text-swarm">蜂群 1</text>
+  <rect class="node" x="459" y="416" width="122" height="34"/>
+  <text x="520" y="438" text-anchor="middle" class="node-text text-swarm">蜂群 2</text>
+  <rect class="node" x="597" y="416" width="122" height="34"/>
+  <text x="658" y="438" text-anchor="middle" class="node-text text-swarm">蜂群 N</text>
 
-  <rect class="mini" x="675" y="280" width="250" height="92" fill="url(#userGrad)"/>
-  <text x="800" y="333" text-anchor="middle" class="node-mini">用户 2</text>
+  <rect class="node" x="252" y="508" width="122" height="34"/>
+  <text x="313" y="530" text-anchor="middle" class="node-text text-agent">智能体 1</text>
+  <rect class="node" x="390" y="508" width="122" height="34"/>
+  <text x="451" y="530" text-anchor="middle" class="node-text text-agent">智能体 2</text>
+  <rect class="node" x="528" y="508" width="122" height="34"/>
+  <text x="589" y="530" text-anchor="middle" class="node-text text-agent">智能体 3</text>
+  <rect class="node" x="666" y="508" width="122" height="34"/>
+  <text x="727" y="530" text-anchor="middle" class="node-text text-agent">智能体 N</text>
 
-  <rect class="mini" x="1100" y="280" width="250" height="92" fill="url(#userGrad)"/>
-  <text x="1225" y="333" text-anchor="middle" class="node-mini">用户 ...</text>
-
-  <rect class="mini" x="250" y="415" width="250" height="92" fill="url(#swarmGrad)"/>
-  <text x="375" y="468" text-anchor="middle" class="node-mini">蜂群 1</text>
-
-  <rect class="mini" x="675" y="415" width="250" height="92" fill="url(#swarmGrad)"/>
-  <text x="800" y="468" text-anchor="middle" class="node-mini">蜂群 2</text>
-
-  <rect class="mini" x="1100" y="415" width="250" height="92" fill="url(#swarmGrad)"/>
-  <text x="1225" y="468" text-anchor="middle" class="node-mini">蜂群 ...</text>
-
-  <rect class="mini" x="250" y="550" width="250" height="92" fill="url(#agentGrad)"/>
-  <text x="375" y="603" text-anchor="middle" class="node-mini">智能体 1</text>
-
-  <rect class="mini" x="675" y="550" width="250" height="92" fill="url(#agentGrad)"/>
-  <text x="800" y="603" text-anchor="middle" class="node-mini">智能体 2</text>
-
-  <rect class="mini" x="1100" y="550" width="250" height="92" fill="url(#agentGrad)"/>
-  <text x="1225" y="603" text-anchor="middle" class="node-mini">智能体 ...</text>
-
-  <rect class="mini" x="250" y="685" width="250" height="92" fill="url(#threadGrad)"/>
-  <text x="375" y="738" text-anchor="middle" class="node-mini">线程 1</text>
-
-  <rect class="mini" x="675" y="685" width="250" height="92" fill="url(#threadGrad)"/>
-  <text x="800" y="738" text-anchor="middle" class="node-mini">线程 2</text>
-
-  <rect class="mini" x="1100" y="685" width="250" height="92" fill="url(#threadGrad)"/>
-  <text x="1225" y="738" text-anchor="middle" class="node-mini">线程 ...</text>
-
-  <path class="link" d="M800,241 C800,257 800,266 800,280"/>
-  <path class="link-soft" d="M740,241 C650,258 520,270 375,280"/>
-  <path class="link-soft" d="M860,241 C950,258 1080,270 1225,280"/>
-
-  <path class="link" d="M800,372 C800,392 800,398 800,415"/>
-  <path class="link-soft" d="M735,372 C640,390 510,402 375,415"/>
-  <path class="link-soft" d="M865,372 C960,390 1090,402 1225,415"/>
-
-  <path class="link" d="M800,507 C800,527 800,533 800,550"/>
-  <path class="link-soft" d="M735,507 C640,525 510,537 375,550"/>
-  <path class="link-soft" d="M865,507 C960,525 1090,537 1225,550"/>
-
-  <path class="link" d="M800,642 C800,662 800,668 800,685"/>
-  <path class="link-soft" d="M735,642 C640,660 510,672 375,685"/>
-  <path class="link-soft" d="M865,642 C960,660 1090,672 1225,685"/>
-
-  <text x="800" y="848" text-anchor="middle" class="hint">一个用户可拥有多个蜂群；一个蜂群包含多个智能体；每个智能体可并行维护多个线程。</text>
+  <rect class="node" x="183" y="600" width="122" height="34"/>
+  <text x="244" y="622" text-anchor="middle" class="node-text text-thread">线程 1</text>
+  <rect class="node" x="321" y="600" width="122" height="34"/>
+  <text x="382" y="622" text-anchor="middle" class="node-text text-thread">线程 2</text>
+  <rect class="node" x="459" y="600" width="122" height="34"/>
+  <text x="520" y="622" text-anchor="middle" class="node-text text-thread">线程 3</text>
+  <rect class="node" x="597" y="600" width="122" height="34"/>
+  <text x="658" y="622" text-anchor="middle" class="node-text text-thread">线程 4</text>
+  <rect class="node" x="735" y="600" width="122" height="34"/>
+  <text x="796" y="622" text-anchor="middle" class="node-text text-thread">线程 N</text>
 </svg>

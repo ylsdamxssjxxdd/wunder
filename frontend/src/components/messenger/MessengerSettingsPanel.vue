@@ -131,8 +131,8 @@
         <div class="messenger-settings-row">
           <div class="messenger-settings-label">{{ t('messenger.settings.sendKey') }}</div>
           <select v-model="sendKey" class="messenger-settings-select">
-            <option value="ctrl_enter">Ctrl + Enter</option>
             <option value="enter">Enter</option>
+            <option value="ctrl_enter">Ctrl + Enter</option>
             <option value="none">{{ t('messenger.settings.sendKeyNone') }}</option>
           </select>
         </div>
@@ -391,7 +391,7 @@ const props = withDefaults(
     username: '',
     userId: '',
     languageLabel: '',
-    sendKey: 'ctrl_enter',
+    sendKey: 'enter',
     themePalette: 'eva-orange',
     usernameSaving: false,
     desktopLocalMode: false,
@@ -422,7 +422,7 @@ const { t } = useI18n();
 const authStore = useAuthStore();
 const chatStore = useChatStore();
 const appVersion = APP_VERSION;
-const sendKey = ref<SendKeyMode>('ctrl_enter');
+const sendKey = ref<SendKeyMode>('enter');
 const themePalette = ref<ThemePalette>('eva-orange');
 const usernameDraft = ref('');
 const fontSize = ref(Math.min(20, Math.max(12, Number(props.uiFontSize) || 14)));
@@ -437,7 +437,7 @@ const normalizeSendKey = (value: unknown): SendKeyMode =>
     const text = String(value || '').trim().toLowerCase();
     if (text === 'enter') return 'enter';
     if (text === 'none' || text === 'off' || text === 'disabled') return 'none';
-    return 'ctrl_enter';
+    return 'enter';
   })();
 const allowUsernameEdit = computed(() => true);
 const usernameSaving = computed(() => props.usernameSaving === true);

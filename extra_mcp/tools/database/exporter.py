@@ -425,7 +425,12 @@ def export_sql_to_file_sync(
     actual_sheet_name = None
     try:
         with _open_export_cursor(connection, cfg) as cursor:
-            cursor.execute(sql_text, params or ())
+            if params:
+                cursor.execute(sql_text, params)
+            else:
+                # Avoid driver-side `%` interpolation when SQL includes
+                # patterns like DATE_FORMAT(..., '%Y-%m') without bind params.
+                cursor.execute(sql_text)
             if cursor.description:
                 columns = [str(col[0]) for col in cursor.description]
 

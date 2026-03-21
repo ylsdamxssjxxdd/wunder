@@ -399,7 +399,7 @@ const props = defineProps({
   },
   sendKey: {
     type: String,
-    default: 'ctrl_enter'
+    default: 'enter'
   },
   draftKey: {
     type: String,
@@ -1320,7 +1320,7 @@ const handleInputKeydown = async (event) => {
 };
 
 const resolveSendKeyMode = (): SendKeyMode =>
-  props.sendKey === 'enter' || props.sendKey === 'none' ? props.sendKey : 'ctrl_enter';
+  props.sendKey === 'ctrl_enter' || props.sendKey === 'none' ? props.sendKey : 'enter';
 
 const normalizeDraftAttachment = (value: unknown): ComposerDraftAttachment | null => {
   if (!value || typeof value !== 'object') return null;
@@ -1402,17 +1402,11 @@ const handleEnterKeydown = async (event) => {
   if (mode === 'none') {
     return;
   }
-  if (hasBackupSendModifier(event)) {
-    event.preventDefault();
-    await handleSend();
-    return;
-  }
-  if (hasPrimarySendModifier(event)) {
-    event.preventDefault();
-    await handleSend();
-    return;
-  }
   if (mode === 'ctrl_enter') {
+    if (hasBackupSendModifier(event) || hasPrimarySendModifier(event)) {
+      event.preventDefault();
+      await handleSend();
+    }
     return;
   }
   if (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey) {

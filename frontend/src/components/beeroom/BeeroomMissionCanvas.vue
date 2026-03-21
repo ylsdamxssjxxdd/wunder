@@ -339,6 +339,11 @@ import {
   shouldForceImmediateTeamRealtimeReconcile,
   shouldForceWorkflowRefresh
 } from '@/components/beeroom/beeroomRealtimeReconcile';
+import { resolveNextRealtimeCursor } from '@/components/beeroom/beeroomRealtimeCursor';
+import {
+  resolveSyncRequiredReloadDelayMs,
+  shouldRunSyncRequiredReloadImmediately
+} from '@/components/beeroom/beeroomRealtimeSyncGap';
 import { useBeeroomMissionWorkflowPreview } from '@/components/beeroom/useBeeroomMissionWorkflowPreview';
 
 type CanvasNodeMeta = {
@@ -437,6 +442,7 @@ const CHAT_POLL_INTERVAL_MS = 2000;
 const CHAT_WS_RETRY_DELAY_MS = 1400;
 const CHAT_SSE_RETRY_DELAY_MS = 2200;
 const TEAM_REALTIME_REFRESH_THROTTLE_MS = 360;
+const SYNC_REQUIRED_HISTORY_RELOAD_THROTTLE_MS = 520;
 const CARD_ACCENT_PALETTE = ['#3b82f6', '#8b5cf6', '#22c55e', '#06b6d4', '#eab308', '#f97316', '#ef4444'];
 const TEAM_RUNTIME_EVENT_TYPES = new Set([
   'team_start',
@@ -498,6 +504,7 @@ const dispatchTargetName = ref('');
 const dispatchTargetTone = ref<MissionChatMessage['tone']>('worker');
 const dispatchRespondingApprovalId = ref('');
 const chatRealtimeTransport = ref<'none' | 'ws' | 'sse'>('none');
+const chatRealtimeCursor = ref(0);
 const nodePositionOverrides = ref<Record<string, CanvasPositionOverride>>({});
 const canvasFullscreen = ref(false);
 const canvasMounted = ref(false);
@@ -539,6 +546,8 @@ let chatSseGroupId = '';
 let chatAuthDenied = false;
 let teamRealtimeReconcileTimer: number | null = null;
 let lastTeamRealtimeRefreshAt = 0;
+let syncRequiredHistoryReloadTimer: number | null = null;
+let lastSyncRequiredHistoryReloadAt = 0;
 let dispatchStreamController: AbortController | null = null;
 let dispatchStopRequested = false;
 let dispatchFlowTimer: number | null = null;
@@ -2172,9 +2181,12 @@ const handleActiveGroupChanged = (value: unknown) => {
   if (!canvasMounted.value || canvasDisposed) return;
   const groupId = String(value || '').trim();
   chatAuthDenied = false;
+  chatRealtimeCursor.value = 0;
   chatMessagesClearedAfter.value = 0;
   resetDispatchRuntime();
   lastTeamRealtimeRefreshAt = 0;
+  lastSyncRequiredHistoryReloadAt = 0;
+  clearSyncRequiredHistoryReloadTimer();
   composerText.value = '';
   composerError.value = '';
   void loadManualChatHistory();
@@ -2610,6 +2622,13 @@ function clearTeamRealtimeReconcileTimer() {
   }
 }
 
+function clearSyncRequiredHistoryReloadTimer() {
+  if (syncRequiredHistoryReloadTimer !== null) {
+    window.clearTimeout(syncRequiredHistoryReloadTimer);
+    syncRequiredHistoryReloadTimer = null;
+  }
+}
+
 function scheduleTeamRealtimeReconcile(immediate = false) {
   if (canvasDisposed) return;
   if (typeof window === 'undefined') {
@@ -2630,6 +2649,39 @@ function scheduleTeamRealtimeReconcile(immediate = false) {
   if (teamRealtimeReconcileTimer !== null) return;
   const delayMs = TEAM_REALTIME_REFRESH_THROTTLE_MS - (now - lastTeamRealtimeRefreshAt);
   teamRealtimeReconcileTimer = window.setTimeout(run, Math.max(80, Math.floor(delayMs)));
+}
+
+function scheduleSyncRequiredHistoryReload() {
+  if (canvasDisposed) return;
+  const run = () => {
+    if (canvasDisposed) return;
+    clearSyncRequiredHistoryReloadTimer();
+    lastSyncRequiredHistoryReloadAt = Date.now();
+    void loadManualChatHistory();
+    scheduleTeamRealtimeReconcile(true);
+  };
+  if (typeof window === 'undefined') {
+    run();
+    return;
+  }
+  const now = Date.now();
+  if (
+    shouldRunSyncRequiredReloadImmediately(
+      now,
+      lastSyncRequiredHistoryReloadAt,
+      SYNC_REQUIRED_HISTORY_RELOAD_THROTTLE_MS
+    )
+  ) {
+    run();
+    return;
+  }
+  if (syncRequiredHistoryReloadTimer !== null) return;
+  const delayMs = resolveSyncRequiredReloadDelayMs(
+    now,
+    lastSyncRequiredHistoryReloadAt,
+    SYNC_REQUIRED_HISTORY_RELOAD_THROTTLE_MS
+  );
+  syncRequiredHistoryReloadTimer = window.setTimeout(run, delayMs);
 }
 
 function stopChatSseWatch() {
@@ -2670,7 +2722,7 @@ function startChatSseWatch(groupId: string) {
   try {
     source = openBeeroomChatStream(normalizedGroupId, {
       allowQueryToken: true,
-      params: { after_event_id: 0 }
+      params: { after_event_id: chatRealtimeCursor.value }
     });
   } catch {
     scheduleChatSseRetry(normalizedGroupId);
@@ -2722,6 +2774,7 @@ function stopChatRealtimeWatch() {
   clearChatWatchRetry();
   stopChatSseWatch();
   clearTeamRealtimeReconcileTimer();
+  clearSyncRequiredHistoryReloadTimer();
   if (chatWatchController) {
     chatWatchController.abort();
     chatWatchController = null;
@@ -2740,12 +2793,17 @@ function handleChatRealtimeEvent(
   groupId: string,
   eventType: string,
   dataText: string,
-  _eventId: string,
+  eventId: string,
   transport: 'ws' | 'sse' = 'ws'
 ) {
   if (canvasDisposed) return;
   if (!groupId || groupId !== activeGroupId.value) return;
   const payload = safeJsonParse(dataText);
+  chatRealtimeCursor.value = resolveNextRealtimeCursor({
+    currentCursor: chatRealtimeCursor.value,
+    eventId,
+    payload
+  });
   const normalizedType = String(eventType || '').trim().toLowerCase();
   if (
     (normalizedType === 'chat_message' ||
@@ -2769,8 +2827,7 @@ function handleChatRealtimeEvent(
     return;
   }
   if (normalizedType === 'sync_required') {
-    void loadManualChatHistory();
-    scheduleTeamRealtimeReconcile(true);
+    scheduleSyncRequiredHistoryReload();
     return;
   }
   if (normalizedType === 'chat_cleared') {
@@ -2843,7 +2900,7 @@ function startChatRealtimeWatch(groupId: string) {
         request_id: requestId,
         payload: {
           group_id: normalizedGroupId,
-          after_event_id: 0
+          after_event_id: chatRealtimeCursor.value
         }
       },
       closeOnFinal: false,

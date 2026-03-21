@@ -9,6 +9,11 @@ import {
   shouldForceImmediateTeamRealtimeReconcile,
   shouldForceWorkflowRefresh
 } from '../../src/components/beeroom/beeroomRealtimeReconcile';
+import {
+  resolveSyncRequiredReloadDelayMs,
+  shouldRunSyncRequiredReloadImmediately
+} from '../../src/components/beeroom/beeroomRealtimeSyncGap';
+import { resolveNextRealtimeCursor } from '../../src/components/beeroom/beeroomRealtimeCursor';
 
 const terminalTaskStatuses = new Set(['success', 'completed', 'failed', 'error', 'timeout', 'cancelled']);
 
@@ -112,5 +117,57 @@ test('team runtime reconcile forces immediate refresh for rejected or terminal e
       accepted: true
     }),
     false
+  );
+});
+
+test('sync_required reload throttle runs immediately only when window elapsed', () => {
+  assert.equal(shouldRunSyncRequiredReloadImmediately(1500, 900, 520), true);
+  assert.equal(shouldRunSyncRequiredReloadImmediately(1400, 900, 520), false);
+  assert.equal(shouldRunSyncRequiredReloadImmediately(1500, 1500, 520), false);
+  assert.equal(shouldRunSyncRequiredReloadImmediately('bad', 0, 520), false);
+});
+
+test('sync_required reload delay keeps minimum timer precision', () => {
+  assert.equal(resolveSyncRequiredReloadDelayMs(1500, 900, 520), 0);
+  assert.equal(resolveSyncRequiredReloadDelayMs(1400, 900, 520), 80);
+  assert.equal(resolveSyncRequiredReloadDelayMs(1000, 900, 520), 420);
+  assert.equal(resolveSyncRequiredReloadDelayMs(900, 1000, 520), 520);
+});
+
+test('realtime cursor advances by stream event id and never rolls back', () => {
+  assert.equal(
+    resolveNextRealtimeCursor({
+      currentCursor: 15,
+      eventId: '18',
+      payload: { event_id: 17 }
+    }),
+    18
+  );
+  assert.equal(
+    resolveNextRealtimeCursor({
+      currentCursor: 18,
+      eventId: '16',
+      payload: { event_id: 12 }
+    }),
+    18
+  );
+});
+
+test('realtime cursor accepts payload resume fields for reconnect continuity', () => {
+  assert.equal(
+    resolveNextRealtimeCursor({
+      currentCursor: 0,
+      eventId: '',
+      payload: { after_event_id: 21 }
+    }),
+    21
+  );
+  assert.equal(
+    resolveNextRealtimeCursor({
+      currentCursor: 21,
+      eventId: '',
+      payload: { latest_event_id: 29 }
+    }),
+    29
   );
 });

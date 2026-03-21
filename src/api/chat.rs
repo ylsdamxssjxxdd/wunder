@@ -1424,23 +1424,11 @@ async fn compact_session(
     }
 
     let agent_id = session_record.agent_id.clone();
-    let agent_prompt = agent_id
-        .as_deref()
-        .and_then(|agent_id| {
-            state
-                .user_store
-                .get_user_agent_by_id(agent_id)
-                .ok()
-                .flatten()
-        })
-        .and_then(|record| {
-            let prompt = record.system_prompt.trim();
-            if prompt.is_empty() {
-                None
-            } else {
-                Some(prompt.to_string())
-            }
-        });
+    let agent_record = fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), true).await?;
+    let agent_prompt = agent_record
+        .as_ref()
+        .map(|record| record.system_prompt.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     state
         .orchestrator
@@ -2173,7 +2161,16 @@ async fn fetch_agent_record(
     agent_id: Option<&str>,
     allow_missing: bool,
 ) -> Result<Option<crate::storage::UserAgentRecord>, Response> {
-    let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+    let normalized_agent_id = agent_id.map(str::trim).filter(|value| !value.is_empty());
+    if normalized_agent_id.is_none() || is_default_agent_alias(normalized_agent_id) {
+        let record = crate::user_store::build_default_agent_record_from_storage(
+            state.storage.as_ref(),
+            &user.user_id,
+        )
+        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        return Ok(Some(record));
+    }
+    let Some(agent_id) = normalized_agent_id else {
         return Ok(None);
     };
     let record = state

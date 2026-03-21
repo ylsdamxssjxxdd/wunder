@@ -869,7 +869,12 @@ def execute_sql_sync(
     connection = open_connection(cfg)
     try:
         with connection.cursor() as cursor:
-            cursor.execute(sql, params or ())
+            if params:
+                cursor.execute(sql, params)
+            else:
+                # Avoid driver-side `%` interpolation when SQL contains date formats
+                # (for example DATE_FORMAT(..., '%Y-%m')) but has no bind params.
+                cursor.execute(sql)
             if cursor.description:
                 columns = [col[0] for col in cursor.description]
                 rows = cursor.fetchmany(max_rows + 1)

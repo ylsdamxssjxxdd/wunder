@@ -1096,7 +1096,7 @@ export default {
   'chat.input.send': 'Send',
   'chat.input.sendHintEnter': 'Enter to send',
   'chat.input.sendHintCtrlEnter': 'Ctrl + Enter to send',
-  'chat.input.sendHintEnterAlt': 'Enter or Alt + Enter to send',
+  'chat.input.sendHintEnterAlt': 'Enter to send, Ctrl + Enter for newline',
   'chat.input.sendHintCtrlEnterAlt': 'Ctrl + Enter to send',
   'chat.sessions.title': 'Sessions',
   'chat.sessions.new': 'New Thread',

@@ -247,8 +247,29 @@ impl Orchestrator {
                 .iter()
                 .any(|prefix| content.trim().starts_with(prefix))
         });
-        let mut artifact_content = String::new();
-        if !has_artifact {
+        let mut artifact_content = if has_artifact {
+            source_messages
+                .iter()
+                .find_map(|message| {
+                    let obj = message.as_object()?;
+                    if obj.get("role").and_then(Value::as_str) != Some("system") {
+                        return None;
+                    }
+                    let content = obj.get("content").and_then(Value::as_str).unwrap_or("").trim();
+                    if artifact_prefixes
+                        .iter()
+                        .any(|prefix| content.starts_with(prefix))
+                    {
+                        Some(content.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        if artifact_content.is_empty() {
             let history_manager = HistoryManager;
             artifact_content =
                 history_manager.load_artifact_index_message(&self.workspace, user_id, session_id);
@@ -509,6 +530,9 @@ impl Orchestrator {
         if let Some(system_message) = system_message.clone() {
             base_messages.push(system_message);
         }
+        if !artifact_content.is_empty() {
+            base_messages.push(json!({ "role": "system", "content": artifact_content.clone() }));
+        }
         base_messages.extend(recent_user_messages.iter().cloned());
         if let Some(current_user_message) = current_user_message.clone() {
             base_messages.push(current_user_message);
@@ -618,6 +642,9 @@ impl Orchestrator {
         let mut rebuilt = Vec::new();
         if let Some(system_message) = system_message {
             rebuilt.push(system_message);
+        }
+        if !artifact_content.is_empty() {
+            rebuilt.push(json!({ "role": "system", "content": artifact_content }));
         }
         rebuilt.extend(recent_user_messages);
         rebuilt.push(json!({ "role": "user", "content": summary_text }));
