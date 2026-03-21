@@ -1327,6 +1327,10 @@ export default {
   'chat.workflow.compactionRunning': 'Compacting context to make room for the reply',
   'chat.workflow.compactionRecovering': 'Context limit hit, compacting to recover this turn',
   'chat.workflow.compactionGuard': 'Protecting key context and preserving the current question',
+  'chat.compactionDivider.running': 'Compacting context',
+  'chat.compactionDivider.completed': 'Context compaction completed',
+  'chat.compactionDivider.cancelled': 'Context compaction cancelled',
+  'chat.compactionDivider.failed': 'Context compaction failed',
   'chat.workflow.stage': 'Stage: {stage}',
   'chat.workflow.toolFailureGuardTriggered': 'Tool failure guard triggered',
   'chat.workflow.toolFailureGuardDetail':

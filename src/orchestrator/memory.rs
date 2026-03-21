@@ -825,6 +825,7 @@ impl Orchestrator {
             is_admin,
             0,
         );
+        self.ensure_not_cancelled(session_id)?;
         let messages = self
             .maybe_compact_messages(
                 &config,
@@ -844,6 +845,7 @@ impl Orchestrator {
                 false,
             )
             .await?;
+        self.ensure_not_cancelled(session_id)?;
         let messages = context_manager.normalize_messages(messages);
         let context_tokens = context_manager.estimate_context_tokens(&messages);
         self.workspace

@@ -2,7 +2,8 @@ type UnknownObject = Record<string, unknown>;
 
 export type WorkflowCompactionSnapshot = {
   eventType: 'compaction_progress' | 'compaction';
-  status: 'pending' | 'loading' | 'completed' | 'failed';
+  status: 'pending' | 'loading' | 'completed' | 'failed' | 'cancelled';
+  explicitStatus: boolean;
   detail: UnknownObject | null;
 };
 
@@ -31,6 +32,9 @@ const normalizeCompactionStatus = (value: unknown): WorkflowCompactionSnapshot['
   if (normalized === 'pending') return 'pending';
   if (normalized === 'loading' || normalized === 'running' || normalized === 'in_progress') {
     return 'loading';
+  }
+  if (normalized === 'cancelled' || normalized === 'canceled' || normalized === 'aborted') {
+    return 'cancelled';
   }
   if (normalized === 'failed' || normalized === 'error') return 'failed';
   return 'completed';
@@ -68,9 +72,12 @@ export const resolveLatestCompactionSnapshot = (items: unknown): WorkflowCompact
       || parseDetailObject(item.data)
       || parseDetailObject(item.payload)
       || null;
+    const detailStatusRaw = String(detail?.status ?? '').trim();
+    const itemStatusRaw = String(item.status ?? '').trim();
     return {
       eventType,
-      status: normalizeCompactionStatus(item.status ?? detail?.status),
+      status: normalizeCompactionStatus(detailStatusRaw || itemStatusRaw),
+      explicitStatus: Boolean(detailStatusRaw || itemStatusRaw),
       detail
     };
   }
@@ -80,7 +87,39 @@ export const resolveLatestCompactionSnapshot = (items: unknown): WorkflowCompact
 export const isCompactionRunningFromWorkflowItems = (items: unknown): boolean => {
   const snapshot = resolveLatestCompactionSnapshot(items);
   if (!snapshot) return false;
-  if (snapshot.eventType === 'compaction_progress') return true;
-  return snapshot.status === 'loading' || snapshot.status === 'pending';
+  if (snapshot.status === 'loading' || snapshot.status === 'pending') return true;
+  if (snapshot.eventType !== 'compaction_progress') return false;
+  if (!snapshot.explicitStatus) return true;
+  return false;
 };
 
+const isCompactionWorkflowItem = (item: unknown): boolean => {
+  const record = asObject(item);
+  if (!record) return false;
+  const eventType = String(record.eventType || record.event || '').trim().toLowerCase();
+  if (isCompactionEventType(eventType)) return true;
+  return isCompactionToolName(record.toolName || record.tool || record.name);
+};
+
+export const hasNonCompactionWorkflowItems = (items: unknown): boolean => {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  for (const item of items) {
+    if (!isCompactionWorkflowItem(item)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export const isCompactionOnlyWorkflowItems = (items: unknown): boolean => {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  let hasCompaction = false;
+  for (const item of items) {
+    if (isCompactionWorkflowItem(item)) {
+      hasCompaction = true;
+      continue;
+    }
+    return false;
+  }
+  return hasCompaction;
+};

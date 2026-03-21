@@ -166,7 +166,7 @@
             >
               <div class="history-info">
                 <span
-                  v-if="chatStore.isSessionLoading(session.id)"
+                  v-if="isSessionBusy(session.id)"
                   class="history-status"
                   :title="t('chat.session.running')"
                   :aria-label="t('chat.session.running')"
@@ -241,9 +241,14 @@
             <div
               v-for="(message, index) in chatStore.messages"
               :key="resolveMessageKey(message, index)"
-              :class="['message', message.role === 'user' ? 'from-user' : 'from-ai']"
+              :class="[
+                'message',
+                message.role === 'user' ? 'from-user' : 'from-ai',
+                { 'message-compaction-marker': isCompactionMarkerMessage(message) }
+              ]"
             >
               <div
+                v-if="!isCompactionMarkerMessage(message)"
                 class="avatar"
                 :class="[
                   message.role === 'user' ? 'user-avatar' : 'ai-avatar',
@@ -254,6 +259,13 @@
                 {{ message.role === 'user' ? t('chat.message.user') : t('chat.message.assistantShort') }}
               </div>
               <div class="message-content">
+                <template v-if="isCompactionMarkerMessage(message)">
+                  <MessageCompactionDivider
+                    :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
+                    :is-streaming="isAssistantStreaming(message)"
+                  />
+                </template>
+                <template v-else>
                 <div class="message-header">
                   <div class="message-header-left">
                     <div class="message-role">
@@ -447,9 +459,9 @@
                 <MessageCompactionDivider
                   v-if="message.role === 'assistant'"
                   :items="Array.isArray(message.workflowItems) ? message.workflowItems : []"
-                  :is-latest-assistant="isLatestAssistant(index)"
                   :is-streaming="isAssistantStreaming(message)"
                 />
+                </template>
               </div>
             </div>
           </div>
@@ -468,7 +480,7 @@
             />
             <ChatComposer
               :key="composerKey"
-              :loading="chatStore.isSessionLoading(chatStore.activeSessionId)"
+              :loading="activeSessionBusy"
               :demo-mode="demoMode"
               :inquiry-active="Boolean(activeInquiryPanel)"
               :inquiry-selection="inquirySelection"
@@ -606,7 +618,7 @@
             >
               <div class="history-info">
                 <span
-                  v-if="chatStore.isSessionLoading(session.id)"
+                  v-if="isSessionBusy(session.id)"
                   class="history-status"
                   :title="t('chat.session.running')"
                   :aria-label="t('chat.session.running')"
@@ -709,7 +721,10 @@ import {
   normalizeWorkspaceRefreshContainerId,
   normalizeWorkspaceRefreshTreeVersion
 } from '@/utils/workspaceRefresh';
-import { isCompactionRunningFromWorkflowItems } from '@/utils/chatCompactionWorkflow';
+import {
+  isCompactionOnlyWorkflowItems,
+  isCompactionRunningFromWorkflowItems
+} from '@/utils/chatCompactionWorkflow';
 import { onWorkspaceRefresh } from '@/utils/workspaceEvents';
 import { renderSystemPromptHighlight } from '@/utils/promptHighlight';
 import { isDemoMode } from '@/utils/demo';
@@ -1424,6 +1439,16 @@ const isAssistantStreaming = (message) => {
     return true;
   }
   return isCompactionRunningFromWorkflowItems(message.workflowItems);
+};
+
+const isCompactionMarkerMessage = (message): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
+  if (String(message.content || '').trim()) return false;
+  if (String(message.reasoning || '').trim()) return false;
+  if (hasPlanSteps(message.plan)) return false;
+  const panelStatus = String(message?.questionPanel?.status || '').trim().toLowerCase();
+  return panelStatus !== 'pending';
 };
 
 // Assistant replies render through Markdown so tables and rich text stay readable.
@@ -2488,10 +2513,19 @@ const resolveSessionActivityTimestampMs = (session) => {
   return parsed ? parsed.getTime() : 0;
 };
 
+const isSessionBusy = (sessionId) =>
+  Boolean(chatStore.isSessionBusy?.(sessionId) || chatStore.isSessionLoading?.(sessionId));
+
+const activeSessionBusy = computed(() => {
+  const sessionId = String(chatStore.activeSessionId || '').trim();
+  if (!sessionId) return false;
+  return isSessionBusy(sessionId);
+});
+
 const shouldSkipExternalSessionSync = () => {
   const id = String(chatStore.activeSessionId || '').trim();
   if (!id) return false;
-  if (chatStore.isSessionLoading?.(id)) return true;
+  if (isSessionBusy(id)) return true;
   // Avoid disrupting a locally-initiated stream; wait until it completes.
   const last = chatStore.messages?.[chatStore.messages.length - 1];
   if (last?.role === 'assistant' && (last.workflowStreaming || last.stream_incomplete)) {

@@ -23,6 +23,7 @@ import { setDefaultSession } from '@/api/agents';
 import { consumeSseStream } from '@/utils/sse';
 import { formatStructuredErrorText } from '@/utils/streamError';
 import { resolveCompactionProgressTitle } from '@/utils/chatCompactionUi';
+import { isSessionBusyFromSignals } from '@/utils/chatSessionRuntime';
 import { normalizeChatDurationSeconds, normalizeChatTimestampMs } from '@/utils/chatTiming';
 import { createWsMultiplexer } from '@/utils/ws';
 import { isDemoMode, loadDemoChatState, saveDemoChatState } from '@/utils/demo';
@@ -35,6 +36,10 @@ import {
   findPendingAssistantMessage,
   stopPendingAssistantMessage
 } from './chatPendingMessage';
+import {
+  isCompactionMarkerAssistantMessage,
+  mergeCompactionMarkersIntoMessages
+} from './chatCompactionMarker';
 
 type SnapshotAssistantMessage = {
   role: string;
@@ -2553,6 +2558,7 @@ const ensureRuntime = (sessionId) => {
   if (!sessionRuntime.has(key)) {
     sessionRuntime.set(key, {
       sendController: null,
+      compactController: null,
       resumeController: null,
       sendRequestId: null,
       resumeRequestId: null,
@@ -3389,10 +3395,85 @@ const abortSendStream = (sessionId) => {
   runtime.sendRequestId = null;
 };
 
+const abortCompactRequest = (sessionId) => {
+  const runtime = getRuntime(sessionId);
+  if (!runtime) return;
+  if (runtime.compactController) {
+    runtime.compactController.abort();
+    runtime.compactController = null;
+  }
+};
+
+const isAbortRequestError = (error: unknown): boolean => {
+  const name = String((error as { name?: unknown })?.name || '').trim().toLowerCase();
+  const code = String((error as { code?: unknown })?.code || '').trim().toLowerCase();
+  const message = String((error as { message?: unknown })?.message || '').trim().toLowerCase();
+  if (name === 'aborterror' || name === 'cancelerror' || name === 'cancelederror') {
+    return true;
+  }
+  if (code === 'err_canceled' || code === 'abort_err') {
+    return true;
+  }
+  if (!message) return false;
+  return message === 'canceled' || message === 'cancelled' || message.includes('abort');
+};
+
+const resolveCompactionWorkflowRefFromMessage = (message): string => {
+  const items = Array.isArray(message?.workflowItems) ? message.workflowItems : [];
+  for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+    const item = items[cursor];
+    const ref = String(item?.toolCallId || item?.tool_call_id || '').trim();
+    if (ref) return ref;
+  }
+  return `compaction:manual:${Date.now()}`;
+};
+
+const finalizeManualCompactionAsCancelled = (message): void => {
+  if (!message || message.role !== 'assistant') return;
+  const cancelledDetail = buildDetail({
+    stage: 'compacting',
+    status: 'cancelled',
+    trigger_mode: 'manual',
+    error_code: 'MANUAL_COMPACTION_CANCELLED',
+    error_message: t('chat.workflow.abortedDetail')
+  });
+  if (!Array.isArray(message.workflowItems)) {
+    message.workflowItems = [];
+  }
+  if (message.workflowItems.length > 0) {
+    message.workflowItems[0].status = 'completed';
+    message.workflowItems[0].detail = cancelledDetail;
+  }
+  const hasCompactionTerminal = message.workflowItems.some(
+    (item) => String(item?.eventType || '').trim().toLowerCase() === 'compaction'
+  );
+  if (!hasCompactionTerminal) {
+    message.workflowItems.push(
+      buildWorkflowItem(
+        t('chat.toolWorkflow.compaction.title'),
+        cancelledDetail,
+        'completed',
+        {
+          isTool: true,
+          eventType: 'compaction',
+          toolName: '上下文压缩',
+          toolCallId: resolveCompactionWorkflowRefFromMessage(message)
+        }
+      )
+    );
+  }
+  message.workflowStreaming = false;
+  message.reasoningStreaming = false;
+  message.stream_incomplete = false;
+  message.resume_available = false;
+  message.content = '';
+};
+
 const resetChatRuntimeState = () => {
   Array.from(sessionRuntime.keys()).forEach((sessionId) => {
     abortResumeStream(sessionId);
     abortSendStream(sessionId);
+    abortCompactRequest(sessionId);
     abortWatchStream(sessionId);
   });
   clearSessionWatcher();
@@ -4995,6 +5076,13 @@ export const useChatStore = defineStore('chat', {
       if (!key) return false;
       return Boolean(state.loadingBySession[key]);
     },
+    isSessionBusy: (state) => (sessionId) => {
+      const key = resolveSessionKey(sessionId);
+      if (!key) return false;
+      const activeKey = resolveSessionKey(state.activeSessionId);
+      const messages = activeKey === key ? state.messages : getSessionMessages(key);
+      return isSessionBusyFromSignals(state.loadingBySession[key], messages);
+    },
     historyLoading: () => (sessionId) => {
       const state = getHistoryState(sessionId);
       return Boolean(state?.loading);
@@ -5480,11 +5568,12 @@ export const useChatStore = defineStore('chat', {
         hydrateMessage(message, workflowState)
       );
       messages = mergeSnapshotIntoMessages(messages, snapshot);
+      const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
+      messages = mergeCompactionMarkersIntoMessages(messages, finalCachedMessages);
       messages = dedupeAssistantMessages(messages);
       if (!remoteRunning) {
         clearCompletedAssistantStreamingState(messages);
       }
-      const finalCachedMessages = dedupeAssistantMessages(getSessionMessages(targetSessionId));
       if (!remoteRunning) {
         clearCompletedAssistantStreamingState(finalCachedMessages);
       }
@@ -5796,6 +5885,15 @@ export const useChatStore = defineStore('chat', {
       if (!targetId) {
         throw new Error(t('chat.command.compactMissingSession'));
       }
+      const runtime = ensureRuntime(targetId);
+      if (runtime) {
+        runtime.stopRequested = false;
+        if (runtime.compactController) {
+          runtime.compactController.abort();
+        }
+        runtime.compactController = new AbortController();
+      }
+      const compactController = runtime?.compactController || null;
       const activeSessionId = String(this.activeSessionId || '').trim();
       const targetMessages =
         activeSessionId === targetId
@@ -5828,14 +5926,14 @@ export const useChatStore = defineStore('chat', {
         stream_incomplete: true
       };
       targetMessages.push(compactionMessage);
-      if (activeSessionId === targetId) {
-        setSessionLoading(this, targetId, true);
-      }
+      setSessionLoading(this, targetId, true);
       cacheSessionMessages(targetId, targetMessages);
       touchSessionUpdatedAt(this, targetId, now);
       notifySessionSnapshot(this, targetId, targetMessages, true);
       try {
-        const { data } = await compactSessionApi(targetId, payload);
+        const { data } = await compactSessionApi(targetId, payload, {
+          signal: compactController?.signal
+        });
         const resultData =
           data?.data && typeof data.data === 'object' ? data.data : {};
         compactionMessage.workflowItems.push(
@@ -5860,6 +5958,10 @@ export const useChatStore = defineStore('chat', {
         compactionMessage.stream_incomplete = false;
         return data?.data?.message || data?.message || '';
       } catch (error) {
+        if (isAbortRequestError(error)) {
+          finalizeManualCompactionAsCancelled(compactionMessage);
+          return '';
+        }
         const detailText = String(
           error?.response?.data?.detail || error?.message || t('common.requestFailed')
         ).trim();
@@ -5892,9 +5994,10 @@ export const useChatStore = defineStore('chat', {
         compactionMessage.stream_incomplete = false;
         throw error;
       } finally {
-        if (activeSessionId === targetId) {
-          setSessionLoading(this, targetId, false);
+        if (runtime && runtime.compactController === compactController) {
+          runtime.compactController = null;
         }
+        setSessionLoading(this, targetId, false);
         cacheSessionMessages(targetId, targetMessages);
         touchSessionUpdatedAt(this, targetId, Date.now());
         notifySessionSnapshot(this, targetId, targetMessages, true);
@@ -6266,6 +6369,7 @@ export const useChatStore = defineStore('chat', {
         runtime.stopRequested = true;
       }
       abortSendStream(sessionId);
+      abortCompactRequest(sessionId);
       let cancelled = false;
       try {
         const { data } = await cancelMessageStream(sessionId);
@@ -6277,17 +6381,22 @@ export const useChatStore = defineStore('chat', {
         String(this.activeSessionId || '').trim() === sessionId ? this.messages : getSessionMessages(sessionId);
       const pendingAssistant = findPendingAssistantMessage(targetMessages);
       if (pendingAssistant) {
-        pendingAssistant.workflowStreaming = false;
-        pendingAssistant.reasoningStreaming = false;
-        pendingAssistant.stream_incomplete = false;
-        pendingAssistant.resume_available = true;
-        if (!pendingAssistant.content) {
-          pendingAssistant.content = t('chat.workflow.aborted');
+        if (isCompactionMarkerAssistantMessage(pendingAssistant)) {
+          finalizeManualCompactionAsCancelled(pendingAssistant);
+        } else {
+          pendingAssistant.workflowStreaming = false;
+          pendingAssistant.reasoningStreaming = false;
+          pendingAssistant.stream_incomplete = false;
+          pendingAssistant.resume_available = true;
+          if (!pendingAssistant.content) {
+            pendingAssistant.content = t('chat.workflow.aborted');
+          }
         }
         const panel = normalizeInquiryPanelState(pendingAssistant.questionPanel);
         if (panel && panel.status === 'pending') {
           pendingAssistant.questionPanel = { ...panel, status: 'dismissed' };
         }
+        cancelled = true;
       }
       this.dismissPendingInquiryPanel();
       if (Array.isArray(targetMessages)) {

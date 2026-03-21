@@ -1,4 +1,4 @@
-import { formatStructuredErrorText } from '@/utils/streamError';
+import { formatStructuredErrorText } from './streamError';
 
 type Translator = (key: string, named?: Record<string, unknown>) => string;
 type UnknownRecord = Record<string, unknown>;
@@ -86,6 +86,53 @@ const resolveFailureDetail = (item: UnknownRecord, t: Translator): string => {
   return truncateText(detail);
 };
 
+const collectComparableTexts = (value: string): string[] => {
+  const normalized = normalizeText(value);
+  if (!normalized) return [];
+  const parsed = normalizeText(formatStructuredErrorText(value, normalized));
+  if (!parsed || parsed === normalized) {
+    return [normalized];
+  }
+  return [normalized, parsed];
+};
+
+const matchesFailureText = (candidate: string, expected: string): boolean => {
+  const candidateTexts = collectComparableTexts(candidate);
+  const expectedTexts = collectComparableTexts(expected);
+  if (!candidateTexts.length || !expectedTexts.length) return false;
+  return candidateTexts.some((value) => expectedTexts.includes(value));
+};
+
+const sanitizeFailurePartialContent = (baseContent: string, detail: string, t: Translator): string => {
+  const trimmed = baseContent.trim();
+  if (!trimmed) return '';
+
+  const reasonLine = t('chat.message.failedInlineReason', { detail });
+  if (matchesFailureText(trimmed, detail) || matchesFailureText(trimmed, reasonLine)) {
+    return '';
+  }
+
+  const normalizedPartialHint = normalizeText(t('chat.message.failedInlinePartial'));
+  const isTrailingWrapperLine = (line: string): boolean => {
+    const normalizedLine = normalizeText(line);
+    if (!normalizedLine) return true;
+    if (normalizedLine === normalizedPartialHint || normalizedLine === '---') return true;
+    return matchesFailureText(line, detail) || matchesFailureText(line, reasonLine);
+  };
+
+  const lines = trimmed.split(/\r?\n/);
+  let end = lines.length - 1;
+  while (end >= 0 && isTrailingWrapperLine(lines[end])) {
+    end -= 1;
+  }
+  const cleaned = lines.slice(0, end + 1).join('\n').trim();
+  if (!cleaned) return '';
+  if (matchesFailureText(cleaned, detail) || matchesFailureText(cleaned, reasonLine)) {
+    return '';
+  }
+  return cleaned;
+};
+
 export const resolveAssistantFailureNotice = (
   message: Record<string, unknown>,
   t: Translator
@@ -117,8 +164,9 @@ export const buildAssistantDisplayContent = (
     '',
     t('chat.message.failedInlineReason', { detail: notice.detail })
   ];
-  if (normalizeText(baseContent)) {
-    prefix.push('', t('chat.message.failedInlinePartial'), '', '---', '', baseContent);
+  const partialContent = sanitizeFailurePartialContent(baseContent, notice.detail, t);
+  if (partialContent) {
+    prefix.push('', t('chat.message.failedInlinePartial'), '', '---', '', partialContent);
   }
   return prefix.join('\n');
 };

@@ -866,11 +866,14 @@
               v-for="item in visibleAgentMessages"
               :key="item.key"
               class="messenger-message"
-              :class="{ mine: item.message.role === 'user' }"
+              :class="{
+                mine: item.message.role === 'user',
+                'messenger-message--compaction': isCompactionMarkerMessage(item.message)
+              }"
               :data-virtual-key="item.key"
             >
                 <div
-                  v-if="item.message.role === 'user'"
+                  v-if="!isCompactionMarkerMessage(item.message) && item.message.role === 'user'"
                   class="messenger-message-avatar messenger-message-avatar--mine-profile"
                   :style="currentUserAvatarStyle"
                 >
@@ -883,12 +886,25 @@
                 <span v-else>{{ avatarLabel(currentUsername) }}</span>
               </div>
               <AgentAvatar
-                v-else
+                v-else-if="!isCompactionMarkerMessage(item.message)"
                 size="sm"
                 :state="resolveMessageAgentAvatarState(item.message)"
                 :title="activeAgentName"
               />
               <div class="messenger-message-main">
+                <template v-if="isCompactionMarkerMessage(item.message)">
+                  <MessageCompactionDivider
+                    :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
+                    :is-streaming="
+                      Boolean(
+                        item.message.workflowStreaming ||
+                          item.message.reasoningStreaming ||
+                          item.message.stream_incomplete
+                      )
+                    "
+                  />
+                </template>
+                <template v-else>
                 <div class="messenger-message-meta">
                   <span>{{ item.message.role === 'user' ? t('chat.message.user') : activeAgentName }}</span>
                   <span>{{ formatTime(item.message.created_at) }}</span>
@@ -1073,7 +1089,6 @@
                 <MessageCompactionDivider
                   v-if="item.message.role === 'assistant'"
                   :items="Array.isArray(item.message.workflowItems) ? item.message.workflowItems : []"
-                  :is-latest-assistant="latestAgentAssistantMessage === item.message"
                   :is-streaming="
                     Boolean(
                       item.message.workflowStreaming ||
@@ -1082,6 +1097,7 @@
                     )
                   "
                 />
+                </template>
               </div>
             </div>
             <div
@@ -1494,7 +1510,10 @@ import {
   resolveAssistantFailureNotice
 } from '@/utils/assistantFailureNotice';
 import { buildAssistantMessageStatsEntries } from '@/utils/messageStats';
-import { isCompactionRunningFromWorkflowItems } from '@/utils/chatCompactionWorkflow';
+import {
+  isCompactionOnlyWorkflowItems,
+  isCompactionRunningFromWorkflowItems
+} from '@/utils/chatCompactionWorkflow';
 import {
   isAudioRecordingSupported,
   startAudioRecording,
@@ -2756,21 +2775,32 @@ const pendingApprovalAgentIdSet = computed(() => {
   return result;
 });
 
+const isSessionBusy = (sessionId: unknown): boolean =>
+  Boolean(chatStore.isSessionBusy?.(sessionId) || chatStore.isSessionLoading?.(sessionId));
+
 const streamingAgentIdSet = computed(() => {
+  const sessionAgentMap = buildSessionAgentMap();
   const loadingBySession =
     (chatStore.loadingBySession && typeof chatStore.loadingBySession === 'object'
       ? chatStore.loadingBySession
       : {}) as Record<string, unknown>;
-  const sessionAgentMap = buildSessionAgentMap();
+  const sessionIds = new Set<string>([
+    ...Array.from(sessionAgentMap.keys()),
+    ...Object.keys(loadingBySession).map((id) => String(id || '').trim())
+  ]);
+  const activeSessionId = String(chatStore.activeSessionId || '').trim();
+  if (activeSessionId) {
+    sessionIds.add(activeSessionId);
+  }
   const result = new Set<string>();
-  Object.entries(loadingBySession).forEach(([sessionId, loading]) => {
-    if (!loading) return;
-    const mappedAgentId = sessionAgentMap.get(String(sessionId || '').trim());
+  sessionIds.forEach((sessionId) => {
+    if (!sessionId || !isSessionBusy(sessionId)) return;
+    const mappedAgentId = sessionAgentMap.get(sessionId);
     if (mappedAgentId) {
       result.add(mappedAgentId);
       return;
     }
-    if (sessionId === String(chatStore.activeSessionId || '').trim()) {
+    if (sessionId === activeSessionId) {
       const fallbackAgentId =
         normalizeAgentId(activeAgentId.value || selectedAgentId.value || chatStore.draftAgentId) ||
         DEFAULT_AGENT_KEY;
@@ -3815,7 +3845,7 @@ const agentSessionLoading = computed(() => {
   if (!isAgentConversationActive.value) return false;
   const sessionId = String(chatStore.activeSessionId || '');
   if (!sessionId) return false;
-  return Boolean(chatStore.isSessionLoading(sessionId));
+  return isSessionBusy(sessionId);
 });
 
 const canSendWorldMessage = computed(
@@ -5286,15 +5316,19 @@ const messageVirtualBottomSpacerHeight = computed(() =>
 const isGreetingMessage = (message: Record<string, unknown>): boolean =>
   String(message?.role || '') === 'assistant' && Boolean(message?.isGreeting);
 
-const latestAgentAssistantMessage = computed<Record<string, unknown> | null>(() => {
-  if (!isAgentConversationActive.value) return null;
-  for (let index = chatStore.messages.length - 1; index >= 0; index -= 1) {
-    const message = chatStore.messages[index] as Record<string, unknown> | undefined;
-    if (String(message?.role || '') !== 'assistant') continue;
-    return message || null;
-  }
-  return null;
-});
+const isCompactionMarkerMessage = (message: Record<string, unknown>): boolean => {
+  if (String(message?.role || '') !== 'assistant') return false;
+  if (!isCompactionOnlyWorkflowItems(message?.workflowItems)) return false;
+  if (hasMessageContent(message?.content)) return false;
+  if (hasMessageContent(message?.reasoning)) return false;
+  if (hasPlanSteps(message?.plan)) return false;
+  const panelStatus = String(
+    ((message?.questionPanel as Record<string, unknown> | null)?.status || '')
+  )
+    .trim()
+    .toLowerCase();
+  return panelStatus !== 'pending';
+};
 
 const resolveMessageAgentAvatarState = (message: Record<string, unknown>): AgentRuntimeState => {
   if (String(message?.role || '') !== 'assistant') return 'idle';

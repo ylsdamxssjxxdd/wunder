@@ -1702,6 +1702,12 @@ button.messenger-chat-header-model {
   contain: layout style paint;
 }
 
+.messenger-message.messenger-message--compaction {
+  display: block;
+  width: 100%;
+  margin: 16px 0 18px;
+}
+
 .messenger-message-virtual-spacer {
   width: 100%;
   pointer-events: none;
@@ -1749,6 +1755,12 @@ button.messenger-chat-header-model {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+.messenger-message.messenger-message--compaction .messenger-message-main {
+  max-width: 100%;
+  width: 100%;
+  gap: 0;
 }
 
 .messenger-message-meta {

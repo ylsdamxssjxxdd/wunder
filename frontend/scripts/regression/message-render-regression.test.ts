@@ -7,6 +7,7 @@ import {
   buildWorkspacePublicPathFromScope,
   resolveMarkdownWorkspacePath
 } from '../../src/utils/messageWorkspacePath';
+import { buildAssistantDisplayContent } from '../../src/utils/assistantFailureNotice';
 
 test('repairs malformed markdown image closings', () => {
   const content =
@@ -71,4 +72,60 @@ test('maps local absolute paths back to workspace resources in desktop mode', ()
     workspaceRoot: 'C:\\workspace'
   });
   assert.equal(resolved, '/workspaces/demo-user__c__7/temp_dir/briefing.md');
+});
+
+const failureNoticeMessages: Record<string, string> = {
+  'chat.message.failedInlineTitle': '本次回复未完成',
+  'chat.message.failedInlineReason': '错误原因：{detail}',
+  'chat.message.failedInlinePartial': '以下内容是失败前已生成的部分输出，仅供参考。',
+  'chat.workflow.aborted': '已中止',
+  'chat.workflow.abortedDetail': '本次请求已中止',
+  'chat.workflow.requestFailed': '请求失败',
+  'chat.workflow.error': '错误',
+  'chat.workflow.requestFailedDetail': '请求失败，请稍后重试'
+};
+
+const failureNoticeTranslator = (key: string, named?: Record<string, unknown>): string => {
+  const template = failureNoticeMessages[key] || key;
+  return template.replace(/\{(\w+)\}/g, (_token, name: string) => String(named?.[name] ?? ''));
+};
+
+test('omits partial block when assistant content is only the same failure detail', () => {
+  const detail =
+    '模型调用失败: LLM stream request failed: 429 Too Many Requests {"error":{"message":"quota exceeded"}}';
+  const rendered = buildAssistantDisplayContent(
+    {
+      role: 'assistant',
+      content: detail,
+      workflowItems: [{ status: 'failed', detail }]
+    },
+    failureNoticeTranslator
+  );
+  assert.equal(rendered, `**⚠️ 本次回复未完成**\n\n错误原因：${detail}`);
+});
+
+test('keeps partial block but trims duplicated trailing failure line', () => {
+  const detail = '模型调用失败: LLM stream request failed: 429 Too Many Requests';
+  const rendered = buildAssistantDisplayContent(
+    {
+      role: 'assistant',
+      content: `先给你一份摘要。\n${detail}`,
+      workflowItems: [{ status: 'failed', detail }]
+    },
+    failureNoticeTranslator
+  );
+  assert.equal(
+    rendered,
+    [
+      '**⚠️ 本次回复未完成**',
+      '',
+      `错误原因：${detail}`,
+      '',
+      '以下内容是失败前已生成的部分输出，仅供参考。',
+      '',
+      '---',
+      '',
+      '先给你一份摘要。'
+    ].join('\n')
+  );
 });

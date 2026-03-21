@@ -1,0 +1,186 @@
+type ChatMessage = Record<string, any>;
+type WorkflowItem = Record<string, unknown>;
+
+const CONTEXT_CN = '\u4e0a\u4e0b\u6587';
+const COMPACTION_CN = '\u538b\u7f29';
+
+const normalizeText = (value: unknown): string => String(value ?? '').trim().toLowerCase();
+
+const asObject = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+
+const parseDetailObject = (value: unknown): Record<string, unknown> | null => {
+  const direct = asObject(value);
+  if (direct) return direct;
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return asObject(parsed);
+  } catch {
+    return null;
+  }
+};
+
+const resolveTimestampMs = (value: unknown): number | null => {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const millis = Date.parse(text);
+  return Number.isFinite(millis) ? millis : null;
+};
+
+const hasTextContent = (value: unknown): boolean => String(value ?? '').trim().length > 0;
+
+const hasPlanSteps = (plan: unknown): boolean =>
+  Array.isArray((plan as { steps?: unknown[] } | null)?.steps) &&
+  ((plan as { steps?: unknown[] } | null)?.steps?.length || 0) > 0;
+
+const isCompactionEventType = (value: unknown): boolean => {
+  const text = normalizeText(value);
+  return text === 'compaction' || text === 'compaction_progress';
+};
+
+const isCompactionToolName = (value: unknown): boolean => {
+  const text = normalizeText(value);
+  if (!text) return false;
+  if (text === 'context_compaction' || text === 'context_compact' || text === 'compaction') {
+    return true;
+  }
+  if (text === `${CONTEXT_CN}${COMPACTION_CN}`) {
+    return true;
+  }
+  if (text.includes('context') && text.includes('compact')) {
+    return true;
+  }
+  return text.includes(CONTEXT_CN) && text.includes(COMPACTION_CN);
+};
+
+const isCompactionWorkflowItem = (value: unknown): boolean => {
+  const item = asObject(value);
+  if (!item) return false;
+  if (isCompactionEventType(item.eventType ?? item.event)) return true;
+  return isCompactionToolName(item.toolName ?? item.tool ?? item.name);
+};
+
+const isCompactionOnlyWorkflowItems = (items: unknown): boolean => {
+  if (!Array.isArray(items) || items.length === 0) return false;
+  let hasCompaction = false;
+  for (const item of items) {
+    if (isCompactionWorkflowItem(item)) {
+      hasCompaction = true;
+      continue;
+    }
+    return false;
+  }
+  return hasCompaction;
+};
+
+export const isCompactionMarkerAssistantMessage = (message: ChatMessage | null | undefined): boolean => {
+  if (!message || message.role !== 'assistant') return false;
+  if (!isCompactionOnlyWorkflowItems(message.workflowItems)) return false;
+  if (hasTextContent(message.content) || hasTextContent(message.reasoning)) return false;
+  if (hasPlanSteps(message.plan)) return false;
+  const panelStatus = normalizeText((message.questionPanel as Record<string, unknown> | null)?.status);
+  return panelStatus !== 'pending';
+};
+
+const resolveWorkflowCallRef = (message: ChatMessage): string => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  for (let cursor = items.length - 1; cursor >= 0; cursor -= 1) {
+    const item = asObject(items[cursor]) as WorkflowItem | null;
+    if (!item) continue;
+    const callId = normalizeText(item.toolCallId ?? item.tool_call_id ?? item.callId ?? item.call_id);
+    if (callId) return callId;
+  }
+  return '';
+};
+
+const resolveWorkflowShape = (message: ChatMessage): string => {
+  const items = Array.isArray(message.workflowItems) ? message.workflowItems : [];
+  if (items.length === 0) return '';
+  const first = asObject(items[0]);
+  const last = asObject(items[items.length - 1]);
+  const firstType = normalizeText(first?.eventType ?? first?.event);
+  const lastType = normalizeText(last?.eventType ?? last?.event);
+  const lastStatus = normalizeText(last?.status);
+  const detail = parseDetailObject(last?.detail ?? last?.data ?? last?.payload);
+  const detailStatus = normalizeText(detail?.status);
+  const detailStage = normalizeText(detail?.stage);
+  return [items.length, firstType, lastType, lastStatus, detailStatus, detailStage]
+    .map((part) => String(part))
+    .join(':');
+};
+
+const resolveCompactionMarkerSignature = (message: ChatMessage): string => {
+  const createdAt = String(message.created_at ?? '').trim();
+  const callRef = resolveWorkflowCallRef(message);
+  const shape = resolveWorkflowShape(message);
+  return [createdAt, callRef, shape].join('|');
+};
+
+const cloneCompactionMarker = (message: ChatMessage): ChatMessage => ({
+  ...message,
+  workflowItems: Array.isArray(message.workflowItems)
+    ? message.workflowItems.map((item) => (asObject(item) ? { ...(item as Record<string, unknown>) } : item))
+    : []
+});
+
+const resolveInsertIndexByTimestamp = (messages: ChatMessage[], markerTime: number): number => {
+  for (let index = 0; index < messages.length; index += 1) {
+    const current = messages[index];
+    const currentTime = resolveTimestampMs(current?.created_at);
+    if (currentTime === null) continue;
+    if (currentTime > markerTime) {
+      return index;
+    }
+  }
+  return messages.length;
+};
+
+export const mergeCompactionMarkersIntoMessages = (
+  remoteMessages: ChatMessage[] | null | undefined,
+  cachedMessages: ChatMessage[] | null | undefined
+): ChatMessage[] => {
+  const baseMessages = Array.isArray(remoteMessages) ? remoteMessages : [];
+  if (!Array.isArray(cachedMessages) || cachedMessages.length === 0) {
+    return baseMessages;
+  }
+  const cachedMarkers = cachedMessages
+    .filter((message) => isCompactionMarkerAssistantMessage(message))
+    .map((message, index) => ({
+      index,
+      time: resolveTimestampMs(message.created_at),
+      signature: resolveCompactionMarkerSignature(message),
+      message: cloneCompactionMarker(message)
+    }));
+  if (!cachedMarkers.length) {
+    return baseMessages;
+  }
+  const result = [...baseMessages];
+  const existingSignatures = new Set(
+    result
+      .filter((message) => isCompactionMarkerAssistantMessage(message))
+      .map((message) => resolveCompactionMarkerSignature(message))
+  );
+  let changed = false;
+  const sortableMarkers = [...cachedMarkers].sort((left, right) => {
+    if (left.time !== null && right.time !== null && left.time !== right.time) {
+      return left.time - right.time;
+    }
+    if (left.time !== null && right.time === null) return -1;
+    if (left.time === null && right.time !== null) return 1;
+    return left.index - right.index;
+  });
+  sortableMarkers.forEach((entry) => {
+    const signature = entry.signature;
+    if (existingSignatures.has(signature)) return;
+    const insertIndex =
+      entry.time === null ? result.length : resolveInsertIndexByTimestamp(result, entry.time);
+    result.splice(insertIndex, 0, entry.message);
+    existingSignatures.add(signature);
+    changed = true;
+  });
+  return changed ? result : baseMessages;
+};

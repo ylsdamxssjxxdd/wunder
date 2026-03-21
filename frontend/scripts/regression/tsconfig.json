@@ -20,6 +20,8 @@
   "include": [
     "../../src/utils/messageMarkdown.ts",
     "../../src/utils/chatTiming.ts",
+    "../../src/utils/chatCompactionWorkflow.ts",
+    "../../src/utils/chatSessionRuntime.ts",
     "../../src/utils/messageStats.ts",
     "../../src/utils/messageWorkspacePath.ts",
     "../../src/utils/workspaceResources.ts",

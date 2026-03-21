@@ -167,8 +167,11 @@ export const resumeMessageStream = (id: string, options: ResumeRequestOptions = 
 };
 
 export const cancelMessageStream = (id: string) => api.post(`/chat/sessions/${id}/cancel`);
-export const compactSession = (id: string, payload: unknown = {}) =>
-  api.post(`/chat/sessions/${id}/compaction`, payload);
+export const compactSession = (
+  id: string,
+  payload: unknown = {},
+  options: { signal?: AbortSignal } = {}
+) => api.post(`/chat/sessions/${id}/compaction`, payload, options);
 
 export const openChatSocket = (options: OpenChatSocketOptions = {}): WebSocket => {
   const token = resolveAccessToken();

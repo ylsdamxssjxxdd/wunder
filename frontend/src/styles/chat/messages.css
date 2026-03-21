@@ -86,6 +86,19 @@
   align-items: flex-start;
 }
 
+.chat-shell .message.message-compaction-marker {
+  display: block;
+  margin: 16px 0 18px;
+}
+
+.chat-shell .message.message-compaction-marker .message-content {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  gap: 0;
+}
+
 .chat-shell .avatar {
   width: 34px;
   height: 34px;

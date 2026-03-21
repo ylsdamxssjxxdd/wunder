@@ -1315,6 +1315,10 @@ export default {
   'chat.workflow.compactionRunning': '正在压缩上下文，为继续回复腾出空间',
   'chat.workflow.compactionRecovering': '检测到上下文超限，正在压缩并恢复本轮',
   'chat.workflow.compactionGuard': '正在执行上下文保护，优先保留当前问题',
+  'chat.compactionDivider.running': '压缩中',
+  'chat.compactionDivider.completed': '已完成压缩',
+  'chat.compactionDivider.cancelled': '已取消压缩',
+  'chat.compactionDivider.failed': '压缩失败',
   'chat.workflow.stage': '阶段：{stage}',
   'chat.workflow.toolFailureGuardTriggered': '工具失败保护已触发',
   'chat.workflow.toolFailureGuardDetail':

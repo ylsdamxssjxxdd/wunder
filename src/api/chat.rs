@@ -1441,7 +1441,7 @@ async fn compact_session(
             agent_prompt.as_deref(),
         )
         .await
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
+        .map_err(|err| map_orchestrator_error(Error::new(err)))?;
 
     Ok(Json(json!({
         "data": {
@@ -2817,6 +2817,45 @@ mod tests {
                 .and_then(|value| value.get("message"))
                 .and_then(|value| value.as_str()),
             Some("模型调用失败: prompt too long")
+        );
+    }
+
+    #[test]
+    fn collect_session_event_rounds_preserves_compaction_only_round() {
+        let record = json!({
+            "events": [
+                {
+                    "type": "compaction",
+                    "timestamp": 1.0,
+                    "data": {
+                        "reason": "history",
+                        "status": "done"
+                    }
+                }
+            ]
+        });
+        let rounds = collect_session_event_rounds(&record);
+        assert_eq!(rounds.len(), 1);
+        assert_eq!(
+            rounds[0].get("user_round").and_then(|value| value.as_i64()),
+            Some(1)
+        );
+        let events = rounds[0]
+            .get("events")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].get("event").and_then(|value| value.as_str()),
+            Some("compaction")
+        );
+        assert_eq!(
+            events[0]
+                .get("data")
+                .and_then(|value| value.get("status"))
+                .and_then(|value| value.as_str()),
+            Some("done")
         );
     }
 
