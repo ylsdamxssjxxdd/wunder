@@ -775,6 +775,193 @@ const resolveDesktopPythonRuntimeInfo = () => {
   }
 }
 
+const buildSupplementTempPath = (prefix) =>
+  fs.mkdtempSync(path.join(app.getPath('temp'), `${prefix}-`))
+
+const removePathIfExists = (targetPath) => {
+  if (!targetPath || !fs.existsSync(targetPath)) {
+    return
+  }
+  fs.rmSync(targetPath, { recursive: true, force: true })
+}
+
+const copyDirectoryRecursive = (sourceDir, targetDir) => {
+  const stat = fs.statSync(sourceDir)
+  if (!stat.isDirectory()) {
+    throw new Error(`Supplement source is not a directory: ${sourceDir}`)
+  }
+  fs.mkdirSync(targetDir, { recursive: true })
+  const entries = fs.readdirSync(sourceDir, { withFileTypes: true })
+  for (const entry of entries) {
+    const sourcePath = path.join(sourceDir, entry.name)
+    const targetPath = path.join(targetDir, entry.name)
+    if (entry.isDirectory()) {
+      copyDirectoryRecursive(sourcePath, targetPath)
+      continue
+    }
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true })
+    fs.copyFileSync(sourcePath, targetPath)
+  }
+}
+
+const extractZipArchiveWithPowershell = (zipPath, destinationDir) => {
+  const scriptPath = path.join(
+    app.getPath('temp'),
+    `wunder-supplement-extract-${Date.now()}-${process.pid}.ps1`
+  )
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    'param([string]$ZipPath, [string]$Destination)',
+    'Add-Type -AssemblyName System.IO.Compression.FileSystem',
+    'if (Test-Path -LiteralPath $Destination) {',
+    '  Remove-Item -LiteralPath $Destination -Recurse -Force',
+    '}',
+    'New-Item -ItemType Directory -Path $Destination -Force | Out-Null',
+    '[System.IO.Compression.ZipFile]::ExtractToDirectory($ZipPath, $Destination)'
+  ].join('\r\n')
+  fs.writeFileSync(scriptPath, script, 'utf8')
+  try {
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NoProfile',
+        '-NonInteractive',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        scriptPath,
+        zipPath,
+        destinationDir
+      ],
+      {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 180000
+      }
+    )
+    if (result.error) {
+      throw result.error
+    }
+    if (result.status !== 0) {
+      const detail = `${String(result.stdout || '')}\n${String(result.stderr || '')}`.trim()
+      throw new Error(detail || `zip extraction failed with exit code ${result.status}`)
+    }
+  } finally {
+    removePathIfExists(scriptPath)
+  }
+}
+
+const hasSupplementContent = (rootDir) =>
+  ['opt/python', 'opt/git'].some((relativePath) =>
+    fs.existsSync(path.join(rootDir, ...relativePath.split('/')))
+  )
+
+const resolveSupplementExtractRoot = (stagingDir) => {
+  if (hasSupplementContent(stagingDir)) {
+    return stagingDir
+  }
+  const entries = fs.readdirSync(stagingDir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue
+    }
+    const candidate = path.join(stagingDir, entry.name)
+    if (hasSupplementContent(candidate)) {
+      return candidate
+    }
+  }
+  return ''
+}
+
+const importSupplementPackage = async () => {
+  if (process.platform !== 'win32') {
+    return {
+      supported: false,
+      canceled: false,
+      installed: false
+    }
+  }
+  const result = await withMainWindow(
+    (window) =>
+      dialog.showOpenDialog(window, {
+        title: 'Import Wunder Supplement Package',
+        filters: [{ name: 'Wunder Supplement Package', extensions: ['zip'] }],
+        properties: ['openFile']
+      }),
+    () =>
+      dialog.showOpenDialog({
+        title: 'Import Wunder Supplement Package',
+        filters: [{ name: 'Wunder Supplement Package', extensions: ['zip'] }],
+        properties: ['openFile']
+      })
+  )
+  if (result?.canceled || !Array.isArray(result?.filePaths) || !result.filePaths.length) {
+    return {
+      supported: true,
+      canceled: true,
+      installed: false
+    }
+  }
+
+  const packagePath = String(result.filePaths[0] || '').trim()
+  if (!packagePath) {
+    return {
+      supported: true,
+      canceled: true,
+      installed: false
+    }
+  }
+  if (path.extname(packagePath).toLowerCase() !== '.zip') {
+    throw new Error(`Unsupported supplement package format: ${packagePath}`)
+  }
+
+  const installRoot = resolveDesktopAppDir()
+  const stagingRoot = buildSupplementTempPath('wunder-supplement-stage')
+  try {
+    extractZipArchiveWithPowershell(packagePath, stagingRoot)
+    const extractRoot = resolveSupplementExtractRoot(stagingRoot)
+    if (!extractRoot) {
+      throw new Error('Supplement package is missing opt/python or opt/git')
+    }
+
+    const importedPaths = []
+    for (const relativePath of ['opt/python', 'opt/git']) {
+      const sourcePath = path.join(extractRoot, ...relativePath.split('/'))
+      if (!fs.existsSync(sourcePath)) {
+        continue
+      }
+      const targetPath = path.join(installRoot, ...relativePath.split('/'))
+      removePathIfExists(targetPath)
+      copyDirectoryRecursive(sourcePath, targetPath)
+      importedPaths.push(targetPath)
+    }
+    if (!importedPaths.length) {
+      throw new Error('Supplement package does not contain importable runtime content')
+    }
+
+    for (const fileName of ['README-win7-supplement.txt', 'wunder-win7-supplement.json']) {
+      const sourcePath = path.join(extractRoot, fileName)
+      if (!fs.existsSync(sourcePath) || !fs.statSync(sourcePath).isFile()) {
+        continue
+      }
+      fs.copyFileSync(sourcePath, path.join(installRoot, fileName))
+    }
+
+    registerBundledToolPaths()
+    return {
+      supported: true,
+      canceled: false,
+      installed: true,
+      install_root: installRoot,
+      package_path: packagePath,
+      imported_paths: importedPaths
+    }
+  } finally {
+    removePathIfExists(stagingRoot)
+  }
+}
+
 const registerBundledToolPaths = () => {
   const appDir = resolveDesktopAppDir()
   if (!appDir || !fs.existsSync(appDir)) {
@@ -2552,6 +2739,7 @@ if (!gotLock) {
         return setLaunchAtLoginState(enabled)
       })
       ipcMain.handle('wunder:python-runtime-info', () => resolveDesktopPythonRuntimeInfo())
+      ipcMain.handle('wunder:supplement-import', () => importSupplementPackage())
       ipcMain.handle('wunder:window-start-drag', () => false)
       ipcMain.handle('wunder:clipboard-write-text', (_event, payload) => {
         const text =

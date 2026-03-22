@@ -66,6 +66,14 @@
             {{ t('desktop.common.browse') }}
           </el-button>
           <el-button
+            v-if="supplementImportSupported"
+            class="desktop-runtime-preferences-btn"
+            :loading="importingSupplement"
+            @click="handleImportSupplementPackage"
+          >
+            {{ t('desktop.system.pythonSupplementImport') }}
+          </el-button>
+          <el-button
             class="desktop-runtime-preferences-btn"
             :disabled="!pythonPathDraft.trim() && !configuredPythonPath"
             @click="resetPythonPath"
@@ -76,6 +84,9 @@
       </div>
       <span class="desktop-runtime-preferences-field-hint">
         {{ t('desktop.system.pythonInterpreterHint') }}
+      </span>
+      <span v-if="supplementImportSupported" class="desktop-runtime-preferences-field-hint">
+        {{ t('desktop.system.pythonSupplementImportHint') }}
       </span>
       <span
         class="desktop-runtime-preferences-field-state"
@@ -204,6 +215,15 @@ type DesktopRuntimeBridge = {
   setWindowCloseBehavior?: (behavior: string) => Promise<string | null> | string | null;
   getLaunchAtLogin?: () => Promise<unknown> | unknown;
   setLaunchAtLogin?: (enabled: boolean) => Promise<unknown> | unknown;
+  importSupplementPackage?: () => Promise<unknown> | unknown;
+};
+type DesktopSupplementImportResult = {
+  supported?: boolean;
+  canceled?: boolean;
+  installed?: boolean;
+  install_root?: string;
+  package_path?: string;
+  imported_paths?: string[];
 };
 
 const PYTHON_PICKER_FILE_NAMES = [
@@ -228,6 +248,7 @@ const { t } = useI18n();
 
 const loading = ref(false);
 const savingPythonPath = ref(false);
+const importingSupplement = ref(false);
 const pythonPathDraft = ref('');
 const configuredPythonPath = ref('');
 const configuredPythonPathValid = ref(true);
@@ -264,6 +285,10 @@ const windowCloseBehaviorSupported = computed(() => {
 const showConfiguredPythonWarning = computed(
   () => Boolean(configuredPythonPath.value) && !configuredPythonPathValid.value
 );
+const supplementImportSupported = computed(() => {
+  const bridge = getDesktopRuntimeBridge();
+  return Boolean(bridge && typeof bridge.importSupplementPackage === 'function');
+});
 const pythonInterpreterStateHint = computed(() => {
   if (showConfiguredPythonWarning.value) {
     return t('desktop.system.pythonInterpreterInvalidHint');
@@ -556,6 +581,39 @@ async function savePythonPath(nextPath = pythonPathDraft.value) {
 async function resetPythonPath() {
   pythonPathDraft.value = '';
   await savePythonPath('');
+}
+
+async function handleImportSupplementPackage() {
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.importSupplementPackage !== 'function' || importingSupplement.value) {
+    return;
+  }
+  importingSupplement.value = true;
+  try {
+    const result = (await bridge.importSupplementPackage()) as DesktopSupplementImportResult | null;
+    if (disposed || !result || result.canceled) {
+      return;
+    }
+    await loadPythonRuntimeInfo();
+    const installRoot = String(result.install_root || '').trim();
+    if (installRoot) {
+      ElMessage.success(t('desktop.system.pythonSupplementImportSuccess', { path: installRoot }));
+      return;
+    }
+    ElMessage.success(
+      t('desktop.system.pythonSupplementImportSuccess', {
+        path: t('desktop.system.pythonSupplementInstallRoot')
+      })
+    );
+  } catch (error) {
+    if (disposed) return;
+    console.error(error);
+    ElMessage.error(resolveErrorMessage(error, t('desktop.system.pythonSupplementImportFailed')));
+  } finally {
+    if (!disposed) {
+      importingSupplement.value = false;
+    }
+  }
 }
 
 async function loadPythonPickerDirectory(

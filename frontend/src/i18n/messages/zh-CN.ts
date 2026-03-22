@@ -909,6 +909,12 @@ export default {
   'desktop.system.pythonInterpreterBundledHint': '当前：自动使用桌面端内置 Python 运行时',
   'desktop.system.pythonInterpreterCustomHint': '当前：优先使用你指定的 Python 解释器',
   'desktop.system.pythonInterpreterInvalidHint': '当前保存的 Python 路径已不可用，运行时已回退到内置解释器，请重新指定。',
+  'desktop.system.pythonSupplementImport': '导入补充包',
+  'desktop.system.pythonSupplementImportHint':
+    'Win7 补充包请直接在这里导入，程序会自动解压到安装目录根部，不要手动解压到 resources 目录。',
+  'desktop.system.pythonSupplementImportSuccess': '补充包已导入到 {path}，桌面运行时已刷新。',
+  'desktop.system.pythonSupplementImportFailed': '导入补充包失败',
+  'desktop.system.pythonSupplementInstallRoot': '安装目录根部',
   'desktop.system.pythonInterpreterReset': '恢复内置',
   'desktop.system.pythonInterpreterDetect': '自动探测',
   'desktop.system.pythonInterpreterCandidates': '已探测到的解释器',

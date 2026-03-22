@@ -922,6 +922,13 @@ export default {
   'desktop.system.pythonInterpreterCustomHint': 'Current: prefer the custom Python interpreter you provide',
   'desktop.system.pythonInterpreterInvalidHint':
     'The saved Python interpreter path is no longer available. The runtime has fallen back to the bundled interpreter.',
+  'desktop.system.pythonSupplementImport': 'Import Supplement',
+  'desktop.system.pythonSupplementImportHint':
+    'For Win7 supplement packages, use this button to unpack the zip directly into the desktop install root. Do not extract it into the resources folder.',
+  'desktop.system.pythonSupplementImportSuccess':
+    'Supplement package imported into {path}. The desktop runtime has been refreshed.',
+  'desktop.system.pythonSupplementImportFailed': 'Failed to import supplement package',
+  'desktop.system.pythonSupplementInstallRoot': 'desktop install root',
   'desktop.system.pythonInterpreterReset': 'Use Bundled',
   'desktop.system.pythonInterpreterDetect': 'Auto Detect',
   'desktop.system.pythonInterpreterCandidates': 'Detected interpreters',
