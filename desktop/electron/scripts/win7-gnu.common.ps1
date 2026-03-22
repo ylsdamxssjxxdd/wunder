@@ -44,6 +44,11 @@ function New-Win7GnuBuildContext {
   $resolvedLabRoot = if ($LabRoot) { $LabRoot } else { Join-Path $RepoRoot $data.labRoot }
   $resolvedToolchain = if ($RustToolchain) { $RustToolchain } else { $data.rustToolchain }
   $bridgeTargetDirName = $data.paths.bridgeTargetDirPattern.Replace('{arch}', $Arch)
+  $lockfileRelativePath = if ($data.paths.PSObject.Properties['lockfile']) {
+    [string]$data.paths.lockfile
+  } else {
+    'cargo-win7.lock'
+  }
 
   return @{
     RepoRoot = $RepoRoot
@@ -63,8 +68,46 @@ function New-Win7GnuBuildContext {
     CargoPatchConfigPath = Join-Path $resolvedLabRoot $data.paths.cargoPatchConfig
     ToolchainManifestPath = Join-Path $resolvedLabRoot $data.paths.toolchainManifest
     BridgeTargetDir = Join-Path $resolvedLabRoot $bridgeTargetDirName
+    LockfilePath = Join-Path $resolvedLabRoot $lockfileRelativePath
     TokioRustlsPatchDir = Join-Path $RepoRoot $data.paths.tokioRustlsPatchDir
   }
+}
+
+function Resolve-Win7GnuLockfilePath {
+  param(
+    [hashtable]$Context,
+    [string]$LockfilePath = ''
+  )
+
+  if (-not [string]::IsNullOrWhiteSpace($LockfilePath)) {
+    return [System.IO.Path]::GetFullPath($LockfilePath)
+  }
+
+  return [System.IO.Path]::GetFullPath($Context.LockfilePath)
+}
+
+function Ensure-Win7GnuLockfile {
+  param(
+    [hashtable]$Context,
+    [string]$LockfilePath = ''
+  )
+
+  $resolvedLockfilePath = Resolve-Win7GnuLockfilePath -Context $Context -LockfilePath $LockfilePath
+  $lockfileDir = Split-Path -Parent $resolvedLockfilePath
+  if (-not [string]::IsNullOrWhiteSpace($lockfileDir)) {
+    Ensure-Win7GnuDirectory -Path $lockfileDir
+  }
+
+  if (-not (Test-Path $resolvedLockfilePath)) {
+    $workspaceLockfile = Join-Path $Context.RepoRoot 'Cargo.lock'
+    if (-not (Test-Path $workspaceLockfile)) {
+      throw "workspace lockfile is missing: $workspaceLockfile"
+    }
+    Copy-Item -Path $workspaceLockfile -Destination $resolvedLockfilePath -Force
+    Write-Win7GnuStep "seeded isolated lockfile: $resolvedLockfilePath"
+  }
+
+  return $resolvedLockfilePath
 }
 
 function Assert-Win7GnuCommand {
@@ -232,8 +275,11 @@ tokio-rustls = { path = "$patchPath" }
 function Write-Win7GnuToolchainManifest {
   param(
     [hashtable]$Context,
-    [switch]$StaticRuntime
+    [switch]$StaticRuntime,
+    [string]$LockfilePath = ''
   )
+
+  $resolvedLockfilePath = Resolve-Win7GnuLockfilePath -Context $Context -LockfilePath $LockfilePath
 
   $manifest = [ordered]@{
     generatedAt = (Get-Date).ToString('o')
@@ -248,6 +294,7 @@ function Write-Win7GnuToolchainManifest {
     labRoot = $Context.LabRoot
     cargoHome = $Context.CargoHome
     cargoPatchConfig = $Context.CargoPatchConfigPath
+    lockfilePath = $resolvedLockfilePath
     bridgeTargetDir = $Context.BridgeTargetDir
     mingwBin = $Context.MinGwBin
     tokioRustlsPatchDir = $Context.TokioRustlsPatchDir
@@ -282,7 +329,8 @@ function Initialize-Win7GnuToolchain {
     [hashtable]$Context,
     [switch]$SkipRustup,
     [switch]$SkipFetch,
-    [switch]$StaticRuntime
+    [switch]$StaticRuntime,
+    [string]$LockfilePath = ''
   )
 
   Ensure-Win7GnuDirectory -Path $Context.LabRoot
@@ -292,6 +340,7 @@ function Initialize-Win7GnuToolchain {
 
   Test-Win7GnuPrerequisites -Context $Context
   Write-Win7GnuPatchConfig -Context $Context
+  $resolvedLockfilePath = Ensure-Win7GnuLockfile -Context $Context -LockfilePath $LockfilePath
 
   if (-not $SkipRustup) {
     Write-Win7GnuStep "ensuring Rust toolchain $($Context.RustToolchain)"
@@ -309,7 +358,7 @@ function Initialize-Win7GnuToolchain {
 
   if (-not $SkipFetch) {
     Write-Win7GnuStep "prefetching crates for $($Context.Target)"
-    cargo --config $Context.CargoPatchConfigPath fetch --target $Context.Target
+    cargo --config $Context.CargoPatchConfigPath -Z unstable-options fetch --target $Context.Target --lockfile-path $resolvedLockfilePath
     if ($LASTEXITCODE -ne 0) {
       throw "cargo fetch failed with exit code $LASTEXITCODE"
     }
@@ -318,5 +367,5 @@ function Initialize-Win7GnuToolchain {
   }
 
   Set-Win7GnuRustFlags -Context $Context -StaticRuntime:$StaticRuntime
-  Write-Win7GnuToolchainManifest -Context $Context -StaticRuntime:$StaticRuntime
+  Write-Win7GnuToolchainManifest -Context $Context -StaticRuntime:$StaticRuntime -LockfilePath $resolvedLockfilePath
 }

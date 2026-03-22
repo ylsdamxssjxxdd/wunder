@@ -12,7 +12,8 @@ param(
   [string]$SupplementPythonArchivePath = '',
   [string]$SupplementGitArchivePath = '',
   [switch]$SkipBootstrap,
-  [string]$RustToolchain = ''
+  [string]$RustToolchain = '',
+  [string]$LockfilePath = ''
 )
 
 Set-StrictMode -Version Latest
@@ -52,12 +53,13 @@ function Resolve-SupplementArtifactPath {
 
 $repoRoot = Resolve-Win7GnuRepoRoot -ScriptPath $MyInvocation.MyCommand.Path
 $context = New-Win7GnuBuildContext -RepoRoot $repoRoot -Arch $Arch -LabRoot $LabRoot -RustToolchain $RustToolchain
+$resolvedLockfilePath = Ensure-Win7GnuLockfile -Context $context -LockfilePath $LockfilePath
 
-Initialize-Win7GnuToolchain -Context $context -SkipRustup:$SkipBootstrap -SkipFetch:$SkipBootstrap -StaticRuntime:$StaticRuntime
+Initialize-Win7GnuToolchain -Context $context -SkipRustup:$SkipBootstrap -SkipFetch:$SkipBootstrap -StaticRuntime:$StaticRuntime -LockfilePath $resolvedLockfilePath
 
 $env:WUNDER_BRIDGE_BIN = Join-Path $context.BridgeTargetDir (Join-Path $context.Target 'release\wunder-desktop-bridge.exe')
 Write-Win7GnuStep "building Win7 GNU bridge for $($context.Target)"
-cargo --config $context.CargoPatchConfigPath build --release --bin wunder-desktop-bridge '-Zbuild-std=std,panic_abort' --target $context.Target
+cargo --config $context.CargoPatchConfigPath -Z unstable-options build --release --bin wunder-desktop-bridge '-Zbuild-std=std,panic_abort' --target $context.Target --lockfile-path $resolvedLockfilePath
 if ($LASTEXITCODE -ne 0) {
   throw "Win7 GNU bridge build failed with exit code $LASTEXITCODE"
 }
@@ -137,3 +139,4 @@ if ($supplementArtifactPath) {
 
 Write-Win7GnuStep "installer directory: $installerDistRoot"
 Write-Win7GnuStep "toolchain manifest: $($context.ToolchainManifestPath)"
+Write-Win7GnuStep "isolated lockfile: $resolvedLockfilePath"

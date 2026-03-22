@@ -7,6 +7,7 @@
   "paths": {
     "cargoHome": "cargo-home-win7-target",
     "cargoPatchConfig": "cargo-win7-patch.toml",
+    "lockfile": "cargo-win7.lock",
     "toolchainManifest": "toolchain-manifest.json",
     "bridgeTargetDirPattern": "bridge-build-target-{arch}-win7-gnu",
     "tokioRustlsPatchDir": "patches\\win7\\tokio-rustls-0.26.4-win7"
