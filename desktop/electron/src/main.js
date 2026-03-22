@@ -650,6 +650,44 @@ const resolveDesktopAppDir = () => {
   return repoRoot
 }
 
+const resolveDesktopSettingsPath = () => {
+  const manual = String(process.env.WUNDER_DESKTOP_SETTINGS_PATH || '').trim()
+  if (manual) {
+    return manual
+  }
+  return path.join(app.getPath('userData'), 'WUNDER_TEMPD', 'config', 'desktop.settings.json')
+}
+
+const resolveExistingFilePath = (value, appDir) => {
+  const raw = String(value || '').trim()
+  if (!raw) {
+    return ''
+  }
+  const candidate = path.isAbsolute(raw) ? raw : path.join(appDir, raw)
+  try {
+    return fs.statSync(candidate).isFile() ? candidate : ''
+  } catch {
+    return ''
+  }
+}
+
+const readDesktopSettings = () => {
+  const settingsPath = resolveDesktopSettingsPath()
+  if (!settingsPath || !fs.existsSync(settingsPath)) {
+    return {}
+  }
+  try {
+    const raw = fs.readFileSync(settingsPath, 'utf8')
+    if (!raw.trim()) {
+      return {}
+    }
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 const resolveBundledPythonBin = (appDir) => {
   const candidates = process.platform === 'win32'
     ? [
@@ -680,11 +718,13 @@ const resolveBundledVenvPythonBin = (appDir) => {
 
 const resolveDesktopPythonRuntimeInfo = () => {
   const appDir = resolveDesktopAppDir()
-  const configuredBin = String(process.env.WUNDER_PYTHON_BIN || '').trim()
+  const settings = readDesktopSettings()
+  const settingsBin = resolveExistingFilePath(settings.python_path, appDir)
+  const envBin = resolveExistingFilePath(process.env.WUNDER_PYTHON_BIN, appDir)
   const bundledBin = resolveBundledPythonBin(appDir)
   const venvBin = resolveBundledVenvPythonBin(appDir)
-  const preferredBin = configuredBin || bundledBin || venvBin
-  const normalizedBin = preferredBin && fs.existsSync(preferredBin) ? preferredBin : ''
+  const preferredBin = settingsBin || envBin || bundledBin || venvBin
+  const normalizedBin = resolveExistingFilePath(preferredBin, appDir)
   const normalizedAppDir = String(appDir || '')
     .trim()
     .replace(/\\/g, '/')
@@ -694,7 +734,17 @@ const resolveDesktopPythonRuntimeInfo = () => {
   const venvRoot = normalizedAppDir ? `${normalizedAppDir}/opt/venv` : ''
   const bundled = Boolean(normalizedRuntimeBin && bundledRoot && normalizedRuntimeBin.startsWith(bundledRoot))
   const venv = Boolean(normalizedRuntimeBin && venvRoot && normalizedRuntimeBin.startsWith(venvRoot))
-  const source = bundled ? 'bundled' : venv ? 'venv' : configuredBin ? 'env' : normalizedBin ? 'path' : 'none'
+  const source = settingsBin
+    ? 'settings'
+    : bundled
+      ? 'bundled'
+      : venv
+        ? 'venv'
+        : envBin
+          ? 'env'
+          : normalizedBin
+            ? 'path'
+            : 'none'
 
   let version = ''
   if (normalizedBin) {

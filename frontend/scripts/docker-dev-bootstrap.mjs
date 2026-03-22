@@ -17,6 +17,13 @@ const log = (message) => {
   console.log(`[frontend][docker] ${message}`);
 };
 
+const parseBoolean = (value) => {
+  if (value == null || value === '') {
+    return false;
+  }
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
+};
+
 const hasPath = async (targetPath) => {
   try {
     await fs.access(targetPath);
@@ -24,6 +31,15 @@ const hasPath = async (targetPath) => {
   } catch (_error) {
     return false;
   }
+};
+
+const findFirstExistingPath = async (candidates) => {
+  for (const candidate of candidates) {
+    if (await hasPath(candidate)) {
+      return candidate;
+    }
+  }
+  return '';
 };
 
 const run = (command, args, options = {}) =>
@@ -62,48 +78,99 @@ const resolveLinuxRollupNativePackageName = () => {
   return '';
 };
 
-const hasLinuxRollupNativeDependency = async () => {
-  const packageName = resolveLinuxRollupNativePackageName();
+const resolveLinuxEsbuildNativePackageName = () => {
+  if (process.platform !== 'linux') return '';
+  if (process.arch === 'x64') {
+    return '@esbuild/linux-x64';
+  }
+  if (process.arch === 'arm64') {
+    return '@esbuild/linux-arm64';
+  }
+  if (process.arch === 'arm') {
+    return '@esbuild/linux-arm';
+  }
+  return '';
+};
+
+const hasLinuxNativeDependency = async (packageName, markerRelativePaths = ['package.json']) => {
   if (!packageName) {
     return true;
   }
   const packageSegments = packageName.split('/');
-  const candidates = [
-    path.join(repoRoot, 'node_modules', ...packageSegments),
-    path.join(frontendRoot, 'node_modules', ...packageSegments)
-  ];
-  const checks = await Promise.all(candidates.map((candidate) => hasPath(candidate)));
-  return checks.some(Boolean);
+  const candidates = [];
+  for (const root of [repoRoot, frontendRoot]) {
+    for (const markerRelativePath of markerRelativePaths) {
+      candidates.push(
+        path.join(root, 'node_modules', ...packageSegments, ...markerRelativePath.split('/'))
+      );
+    }
+  }
+  return Boolean(await findFirstExistingPath(candidates));
 };
 
+const hasLinuxRollupNativeDependency = async () =>
+  hasLinuxNativeDependency(resolveLinuxRollupNativePackageName(), [
+    'package.json',
+    `rollup.${process.platform}-${process.arch}${process.arch === 'arm64' ? '-gnu' : ''}.node`
+  ]);
+
+const resolveViteEntry = async () =>
+  findFirstExistingPath([
+    path.join(repoRoot, 'node_modules', 'vite', 'bin', 'vite.js'),
+    path.join(frontendRoot, 'node_modules', 'vite', 'bin', 'vite.js')
+  ]);
+
 const ensureDependencies = async () => {
-  const viteBins = [
-    path.join(repoRoot, 'node_modules', '.bin', 'vite'),
-    path.join(frontendRoot, 'node_modules', '.bin', 'vite')
-  ];
-  const viteReady = (await Promise.all(viteBins.map((candidate) => hasPath(candidate)))).some(Boolean);
+  const viteEntry = await resolveViteEntry();
+  const viteReady = Boolean(viteEntry);
   const rollupNativeReady = await hasLinuxRollupNativeDependency();
-  if (viteReady && rollupNativeReady) {
-    return;
+  const esbuildNativeReady = await hasLinuxNativeDependency(
+    resolveLinuxEsbuildNativePackageName(),
+    ['package.json', 'bin/esbuild']
+  );
+  if (viteReady && rollupNativeReady && esbuildNativeReady) {
+    return viteEntry;
   }
 
   if (!viteReady) {
-    log('vite binary is missing, reinstalling workspace dependencies');
+    log('vite package is missing, reinstalling workspace dependencies');
   } else {
-    log('rollup native dependency is missing, reinstalling workspace dependencies');
+    log('linux native frontend dependency is missing, reinstalling workspace dependencies');
   }
-  await run(
-    'npm',
-    ['ci', '--workspace', 'wunder-frontend', '--include-workspace-root=false', '--include=optional'],
-    {
-      cwd: repoRoot
-    }
-  );
+  try {
+    await run(
+      'npm',
+      [
+        'ci',
+        '--workspace',
+        'wunder-frontend',
+        '--include-workspace-root=false',
+        '--include=optional'
+      ],
+      {
+        cwd: repoRoot
+      }
+    );
+  } catch (error) {
+    throw new Error(
+      `workspace dependency reinstall failed. The mounted node_modules likely came from another OS/arch and this container needs network access to refresh them. ${error.message}`
+    );
+  }
+  const resolvedViteEntry = await resolveViteEntry();
+  if (!resolvedViteEntry) {
+    throw new Error('vite package is unavailable after npm ci; check workspace dependency installation');
+  }
   if (!(await hasLinuxRollupNativeDependency())) {
     throw new Error(
       'rollup native dependency is unavailable after npm ci; check npm optional dependency settings'
     );
   }
+  if (!(await hasLinuxNativeDependency(resolveLinuxEsbuildNativePackageName()))) {
+    throw new Error(
+      'esbuild native dependency is unavailable after npm ci; check npm optional dependency settings'
+    );
+  }
+  return resolvedViteEntry;
 };
 
 const clearCaches = async () => {
@@ -111,15 +178,12 @@ const clearCaches = async () => {
   await fs.rm(tempDistRoot, { recursive: true, force: true });
 };
 
-const buildTempDist = async () => {
+const buildTempDist = async (viteEntry) => {
   log('building static assets into temporary dist');
-  await run(
-    'npm',
-    ['run', 'build', '--workspace', 'wunder-frontend', '--', '--outDir', 'dist.__docker_tmp'],
-    {
-      cwd: repoRoot
-    }
-  );
+  // Call Vite directly so cross-platform npm ci does not depend on `.bin` shims.
+  await run(process.execPath, [viteEntry, 'build', '--outDir', 'dist.__docker_tmp'], {
+    cwd: frontendRoot
+  });
 };
 
 const copyTree = async (sourceRoot, targetRoot, { skipIndex = false } = {}) => {
@@ -208,15 +272,35 @@ const waitBackend = async () => {
 
 const startDevServer = async () => {
   log('starting vite dev server');
-  await run('npm', ['run', 'dev', '--workspace', 'wunder-frontend'], {
-    cwd: repoRoot
+  await run(process.execPath, [path.join(frontendRoot, 'scripts', 'dev-server.mjs')], {
+    cwd: frontendRoot
   });
 };
 
+const keepContainerAlive = async (reason) => {
+  log(reason);
+  await new Promise(() => {});
+};
+
 const main = async () => {
-  await ensureDependencies();
+  let viteEntry = '';
+  try {
+    viteEntry = await ensureDependencies();
+  } catch (error) {
+    if (!parseBoolean(process.env.FRONTEND_ALLOW_PREBUILT_DIST)) {
+      throw error;
+    }
+    if (!(await hasPath(path.join(distRoot, 'index.html')))) {
+      throw error;
+    }
+    console.warn(
+      `[frontend][docker] dependency bootstrap failed, reusing existing dist without vite dev server: ${error.message}`
+    );
+    await keepContainerAlive('reusing existing frontend/dist for nginx static serving');
+    return;
+  }
   await clearCaches();
-  await buildTempDist();
+  await buildTempDist(viteEntry);
   await syncDist();
   await waitBackend();
   await startDevServer();

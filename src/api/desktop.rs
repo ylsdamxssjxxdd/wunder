@@ -75,6 +75,8 @@ struct DesktopSettingsFile {
     workspace_root: String,
     desktop_token: String,
     #[serde(default)]
+    python_path: String,
+    #[serde(default)]
     container_roots: HashMap<i32, String>,
     #[serde(default)]
     container_cloud_workspaces: HashMap<i32, String>,
@@ -94,6 +96,7 @@ impl Default for DesktopSettingsFile {
         Self {
             workspace_root: String::new(),
             desktop_token: String::new(),
+            python_path: String::new(),
             container_roots: HashMap::new(),
             container_cloud_workspaces: HashMap::new(),
             language: String::new(),
@@ -138,6 +141,8 @@ struct DesktopContainerMountInput {
 struct DesktopSettingsUpdateRequest {
     #[serde(default)]
     workspace_root: Option<String>,
+    #[serde(default)]
+    python_path: Option<String>,
     #[serde(default)]
     container_roots: Option<Vec<DesktopContainerRootInput>>,
     #[serde(default)]
@@ -480,7 +485,7 @@ async fn desktop_settings_get(State(state): State<Arc<AppState>>) -> Result<Json
     let config = state.config_store.get().await;
     let seed_statuses = desktop_seed_manager().container_seed_statuses().await;
     Ok(Json(
-        json!({ "data": build_settings_payload(&config, &settings, &seed_statuses) }),
+        json!({ "data": build_settings_payload(&config, &settings, &app_dir, &seed_statuses) }),
     ))
 }
 
@@ -701,6 +706,10 @@ async fn desktop_settings_update(
     settings.container_roots = container_roots.clone();
     settings.container_cloud_workspaces = container_cloud_workspaces.clone();
     settings.workspace_root = resolved_workspace_root.to_string_lossy().to_string();
+    if let Some(python_path) = payload.python_path.as_deref() {
+        settings.python_path =
+            normalize_desktop_python_path(python_path, &app_dir).map_err(bad_request)?;
+    }
 
     if let Some(language) = payload.language.as_deref().map(str::trim) {
         if !language.is_empty() {
@@ -756,7 +765,7 @@ async fn desktop_settings_update(
 
     let seed_statuses = desktop_seed_manager().container_seed_statuses().await;
     Ok(Json(
-        json!({ "data": build_settings_payload(&updated_config, &settings, &seed_statuses) }),
+        json!({ "data": build_settings_payload(&updated_config, &settings, &app_dir, &seed_statuses) }),
     ))
 }
 
@@ -891,6 +900,7 @@ async fn desktop_seed_control(
 fn build_settings_payload(
     config: &Config,
     settings: &DesktopSettingsFile,
+    app_dir: &Path,
     seed_statuses: &HashMap<i32, String>,
 ) -> Value {
     let workspace_root = {
@@ -937,9 +947,12 @@ fn build_settings_payload(
         settings.language.clone()
     };
     let llm = settings.llm.clone().unwrap_or_else(|| config.llm.clone());
+    let (python_path, python_path_valid) = describe_desktop_python_path(settings, app_dir);
 
     json!({
         "workspace_root": workspace_root,
+        "python_path": python_path,
+        "python_path_valid": python_path_valid,
         "container_roots": container_roots,
         "container_mounts": container_mounts,
         "language": language,
@@ -1496,6 +1509,41 @@ fn resolve_workspace_path(raw: &str, app_dir: &Path) -> PathBuf {
     }
 }
 
+fn resolve_desktop_python_path_input(raw: &str, app_dir: &Path) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(resolve_workspace_path(trimmed, app_dir))
+}
+
+fn normalize_desktop_python_path(raw: &str, app_dir: &Path) -> Result<String, String> {
+    let Some(candidate) = resolve_desktop_python_path_input(raw, app_dir) else {
+        return Ok(String::new());
+    };
+    if !candidate.is_file() {
+        return Err(format!(
+            "python interpreter not found: {}",
+            candidate.display()
+        ));
+    }
+    Ok(candidate.to_string_lossy().to_string())
+}
+
+fn describe_desktop_python_path(settings: &DesktopSettingsFile, app_dir: &Path) -> (String, bool) {
+    let raw = settings.python_path.trim();
+    if raw.is_empty() {
+        return (String::new(), true);
+    }
+    let Some(candidate) = resolve_desktop_python_path_input(raw, app_dir) else {
+        return (raw.to_string(), false);
+    };
+    if candidate.is_file() {
+        return (candidate.to_string_lossy().to_string(), true);
+    }
+    (raw.to_string(), false)
+}
+
 fn resolve_desktop_workspace_root(
     settings: &DesktopSettingsFile,
     default_workspace_root: &Path,
@@ -1587,4 +1635,45 @@ fn internal_error(message: String) -> Response {
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{describe_desktop_python_path, normalize_desktop_python_path, DesktopSettingsFile};
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn normalize_desktop_python_path_resolves_relative_path() {
+        let temp = tempdir().expect("tempdir");
+        let app_dir = temp.path().join("desktop-app");
+        let python_bin = app_dir.join("runtime/python.exe");
+        fs::create_dir_all(
+            python_bin
+                .parent()
+                .expect("python interpreter path should have parent"),
+        )
+        .expect("create runtime dir");
+        fs::write(&python_bin, b"").expect("write python stub");
+
+        let normalized =
+            normalize_desktop_python_path("runtime/python.exe", &app_dir).expect("normalize");
+
+        assert_eq!(normalized, python_bin.to_string_lossy().to_string());
+    }
+
+    #[test]
+    fn describe_desktop_python_path_marks_missing_file_invalid() {
+        let temp = tempdir().expect("tempdir");
+        let app_dir = temp.path().join("desktop-app");
+        let settings = DesktopSettingsFile {
+            python_path: "missing/python.exe".to_string(),
+            ..DesktopSettingsFile::default()
+        };
+
+        let (path, valid) = describe_desktop_python_path(&settings, &app_dir);
+
+        assert_eq!(path, "missing/python.exe");
+        assert!(!valid);
+    }
 }

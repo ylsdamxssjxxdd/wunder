@@ -45,7 +45,8 @@ services:
       - RUST_LOG=${WUNDER_LOG_LEVEL:-info}
       - CARGO_HOME=/app/.cargo/arm64
       - CARGO_TARGET_DIR=/app/target/arm64
-    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; echo "wunder-server missing or stale, waiting for sandbox build..." >&2; while true; do if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi; sleep 1; done']
+      - WUNDER_PREFER_PREBUILT_BIN=${WUNDER_PREFER_PREBUILT_BIN:-0}
+    command: ["bash", "/app/scripts/docker-rust-entry.sh", "wait-or-run"]
     depends_on:
       wunder-sandbox:
         condition: service_started
@@ -87,11 +88,12 @@ services:
       - WUNDER_PORT=9001
       - CARGO_HOME=/app/.cargo/arm64
       - CARGO_TARGET_DIR=/app/target/arm64
+      - WUNDER_PREFER_PREBUILT_BIN=${WUNDER_PREFER_PREBUILT_BIN:-0}
     volumes:
       - ./:/app
       - wunder_workspaces:/workspaces:nocopy
       - ./fonts:/usr/share/fonts/wunder:ro
-    command: ["bash", "-lc", 'if [ -x "$$CARGO_TARGET_DIR/release/wunder-server" ] && ! find src Cargo.toml Cargo.lock -type f -newer "$$CARGO_TARGET_DIR/release/wunder-server" -print -quit 2>/dev/null | grep -q .; then exec "$$CARGO_TARGET_DIR/release/wunder-server"; else cargo build --release --bin wunder-server && exec "$$CARGO_TARGET_DIR/release/wunder-server"; fi']
+    command: ["bash", "/app/scripts/docker-rust-entry.sh", "run-or-build"]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9001/health || exit 1"]
       interval: 5s
@@ -193,6 +195,7 @@ services:
       - FRONTEND_STRICT_PORT=${FRONTEND_STRICT_PORT:-1}
       - FRONTEND_WAIT_BACKEND_TIMEOUT_S=${FRONTEND_WAIT_BACKEND_TIMEOUT_S:-900}
       - FRONTEND_WAIT_BACKEND_INTERVAL_MS=${FRONTEND_WAIT_BACKEND_INTERVAL_MS:-1000}
+      - FRONTEND_ALLOW_PREBUILT_DIST=${FRONTEND_ALLOW_PREBUILT_DIST:-0}
     # Force a safe umask so build artifacts remain readable by nginx.
     entrypoint: ["sh", "-lc", "umask ${FRONTEND_UMASK:-022}; exec \"$@\"", "--"]
     command: ["node", "./frontend/scripts/docker-dev-bootstrap.mjs"]

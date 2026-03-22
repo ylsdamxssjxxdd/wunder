@@ -886,9 +886,10 @@ export default {
   'desktop.system.subtitle': 'Manage model configuration and server connection.',
   'desktop.system.runtimeTitle': 'Local runtime',
   'desktop.system.runtimeHint': 'Configure startup behavior, window close behavior, and bundled runtime policy in local mode.',
-  'desktop.system.pythonRuntimeBundledOnly': 'Desktop local mode always prefers the bundled Python runtime.',
+  'desktop.system.pythonRuntimeBundledOnly':
+    'Desktop local mode uses the bundled Python runtime by default, and also supports a manually selected interpreter.',
   'desktop.system.pythonRuntimeBundledOnlyHint':
-    'The desktop app no longer auto-detects system Python interpreters, which keeps startup and runtime initialization faster and more predictable.',
+    'The desktop app no longer scans the whole system for Python automatically. Startup stays fast and predictable, while you can still pin an exact interpreter path when needed.',
   'desktop.system.startAtLogin': 'Launch at login',
   'desktop.system.startAtLoginHint': 'Local mode only. Start wunder automatically after system sign-in.',
   'desktop.system.startAtLoginLoadFailed': 'Failed to load launch-at-login state',
@@ -919,6 +920,8 @@ export default {
     'Absolute paths are supported. Relative paths are resolved against the desktop app directory.',
   'desktop.system.pythonInterpreterBundledHint': 'Current: automatically use the bundled desktop Python runtime',
   'desktop.system.pythonInterpreterCustomHint': 'Current: prefer the custom Python interpreter you provide',
+  'desktop.system.pythonInterpreterInvalidHint':
+    'The saved Python interpreter path is no longer available. The runtime has fallen back to the bundled interpreter.',
   'desktop.system.pythonInterpreterReset': 'Use Bundled',
   'desktop.system.pythonInterpreterDetect': 'Auto Detect',
   'desktop.system.pythonInterpreterCandidates': 'Detected interpreters',
@@ -931,6 +934,7 @@ export default {
   'desktop.system.pythonInterpreterSource.venv': 'Bundled virtual environment',
   'desktop.system.pythonInterpreterSource.path': 'Found in PATH',
   'desktop.system.pythonInterpreterSource.common': 'Detected from common install locations',
+  'desktop.system.pythonInterpreterSource.none': 'Interpreter unavailable',
   'desktop.system.pythonPathPickerTitle': 'Choose Python Interpreter',
   'desktop.system.pythonPathPickerUp': 'Up',
   'desktop.system.pythonPathPickerEmpty': 'No Python executable was found in this folder',

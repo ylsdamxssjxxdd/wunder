@@ -1,9 +1,11 @@
+use serde::Deserialize;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tokio::process::Command;
+use tokio::process::Command as TokioCommand;
 
 const DESKTOP_APP_DIR_ENV: &str = "WUNDER_DESKTOP_APP_DIR";
+const DESKTOP_SETTINGS_PATH_ENV: &str = "WUNDER_DESKTOP_SETTINGS_PATH";
 
 #[derive(Clone, Debug)]
 pub struct PythonRuntime {
@@ -15,7 +17,17 @@ pub struct PythonRuntime {
     pub ssl_cert: Option<PathBuf>,
 }
 
+#[derive(Debug, Deserialize)]
+struct DesktopPythonSettings {
+    #[serde(default)]
+    python_path: String,
+}
+
 pub fn resolve_python_runtime() -> Option<PythonRuntime> {
+    if let Some(configured_bin) = resolve_desktop_settings_python_bin() {
+        return Some(python_runtime_from_bin(configured_bin));
+    }
+
     if let Ok(raw) = env::var("WUNDER_PYTHON_BIN") {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
@@ -40,7 +52,7 @@ pub fn resolve_python_runtime() -> Option<PythonRuntime> {
     None
 }
 
-pub fn apply_python_env(cmd: &mut Command, runtime: &PythonRuntime) {
+pub fn apply_python_env(cmd: &mut TokioCommand, runtime: &PythonRuntime) {
     if !runtime.embedded {
         return;
     }
@@ -112,7 +124,7 @@ fn venv_python_candidates(app_dir: &Path) -> Vec<PathBuf> {
     candidates
 }
 
-fn prepend_path_env(cmd: &mut Command, key: &str, value: &Path) {
+fn prepend_path_env(cmd: &mut TokioCommand, key: &str, value: &Path) {
     let mut entries = vec![value.to_path_buf()];
     if let Some(existing) = env::var_os(key) {
         entries.extend(env::split_paths(&existing));
@@ -131,6 +143,30 @@ fn prepend_path_env(cmd: &mut Command, key: &str, value: &Path) {
             cmd.env(key, merged);
         }
     };
+}
+
+fn resolve_desktop_settings_python_bin() -> Option<PathBuf> {
+    let settings_path = env::var(DESKTOP_SETTINGS_PATH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)?;
+    let text = fs::read_to_string(settings_path).ok()?;
+    if text.trim().is_empty() {
+        return None;
+    }
+    let settings = serde_json::from_str::<DesktopPythonSettings>(&text).ok()?;
+    let raw_path = settings.python_path.trim();
+    if raw_path.is_empty() {
+        return None;
+    }
+    let candidate = PathBuf::from(raw_path);
+    let resolved = if candidate.is_absolute() {
+        candidate
+    } else {
+        resolve_app_dir()?.join(candidate)
+    };
+    resolved.is_file().then_some(resolved)
 }
 
 fn resolve_app_dir() -> Option<PathBuf> {
@@ -271,8 +307,15 @@ fn find_site_packages(home: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{find_site_packages, resolve_python_lib_dir};
+    use super::{
+        find_site_packages, resolve_desktop_settings_python_bin, resolve_python_lib_dir,
+        DESKTOP_APP_DIR_ENV, DESKTOP_SETTINGS_PATH_ENV,
+    };
+    use std::env;
+    use std::sync::Mutex;
     use tempfile::tempdir;
+
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
     fn resolve_python_lib_dir_supports_windows_layout() {
@@ -288,5 +331,43 @@ mod tests {
         let site_packages = temp.path().join("Lib/site-packages");
         std::fs::create_dir_all(&site_packages).expect("create site-packages");
         assert_eq!(find_site_packages(temp.path()), Some(site_packages));
+    }
+
+    #[test]
+    fn resolve_desktop_settings_python_bin_supports_relative_paths() {
+        let _guard = ENV_MUTEX.lock().expect("lock env mutex");
+        let temp = tempdir().expect("tempdir");
+        let app_dir = temp.path().join("app");
+        let python_bin = app_dir.join("runtime/python.exe");
+        std::fs::create_dir_all(
+            python_bin
+                .parent()
+                .expect("relative python path should have parent"),
+        )
+        .expect("create python dir");
+        std::fs::write(&python_bin, b"").expect("write python stub");
+
+        let settings_path = temp.path().join("desktop.settings.json");
+        std::fs::write(&settings_path, r#"{"python_path":"runtime/python.exe"}"#)
+            .expect("write settings");
+
+        let previous_app_dir = env::var_os(DESKTOP_APP_DIR_ENV);
+        let previous_settings_path = env::var_os(DESKTOP_SETTINGS_PATH_ENV);
+
+        env::set_var(DESKTOP_APP_DIR_ENV, &app_dir);
+        env::set_var(DESKTOP_SETTINGS_PATH_ENV, &settings_path);
+
+        let resolved = resolve_desktop_settings_python_bin();
+
+        match previous_app_dir {
+            Some(value) => env::set_var(DESKTOP_APP_DIR_ENV, value),
+            None => env::remove_var(DESKTOP_APP_DIR_ENV),
+        }
+        match previous_settings_path {
+            Some(value) => env::set_var(DESKTOP_SETTINGS_PATH_ENV, value),
+            None => env::remove_var(DESKTOP_SETTINGS_PATH_ENV),
+        }
+
+        assert_eq!(resolved, Some(python_bin));
     }
 }
