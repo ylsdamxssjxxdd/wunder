@@ -1,6 +1,6 @@
 {
   "generator": "wunder-static-docs-v1",
-  "generated_at": "2026-03-21T03:41:52.680040+00:00",
+  "generated_at": "2026-03-22T11:28:45.181969+00:00",
   "site": {
     "name": "wunder 文档",
     "description": "wunder 是一个面向组织与个人的智能体调度系统，统一承载 server、cli、desktop 三种运行形态。",
@@ -4451,7 +4451,7 @@
       "language": "zh-CN",
       "title": "接入概览",
       "summary": "Wunder 的接入面包含统一执行入口、聊天域、工作区、渠道、A2A 与 MCP；先分层选型，接入会更稳。",
-      "updated_at": "2026-03-21",
+      "updated_at": "2026-03-22",
       "read_when": [
         "你准备把 Wunder 接入业务系统",
         "你不确定该从 `/wunder`、聊天域还是工作区接口开始"
@@ -5034,7 +5034,7 @@
       "language": "zh-CN",
       "title": "渠道 Webhook",
       "summary": "Wunder 用 `/wunder/channel/{provider}/webhook` 统一承接外部渠道入站，再交给 ChannelHub 和 outbox 处理。",
-      "updated_at": "2026-03-20",
+      "updated_at": "2026-03-22",
       "read_when": [
         "你要把飞书、企业微信、QQBot、XMPP 等渠道接进 Wunder",
         "你想知道 Webhook、长连接和 outbox 的关系"

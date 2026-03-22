@@ -14,6 +14,8 @@ pub mod service;
 pub mod types;
 pub mod wechat;
 pub mod wechat_mp;
+pub mod weixin;
+pub mod weixin_files;
 pub mod whatsapp_cloud;
 pub mod xmpp;
 pub mod xmpp_tls_connector;

@@ -1,6 +1,6 @@
 param(
   [ValidateSet('x64', 'ia32')]
-  [string]$Arch = 'x64',
+  [string]$Arch = 'ia32',
   [string]$BuildRoot = '',
   [ValidateSet('minimal', 'common')]
   [string]$PythonProfile = 'common',

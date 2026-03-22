@@ -3,19 +3,20 @@
 ## 0. 定位
 
 - 快速发布与日常重建请优先参考：`docs/方案/wunder-desktop-win7-发布SOP.md`
-- 目标：将 **Electron 22 + x64 GNU bridge** 固化为当前仓库里 Win7 方向的首选构建方式。
+- 目标：将 **Electron 22 + ia32 GNU bridge** 固化为当前仓库里 Win7 方向的首选构建方式。
 - 原则：不污染仓库根 `.cargo/`、`target/`、`node_modules/`，所有 GNU 实验与正式构建产物统一落到 `temp_dir/win7-gnu-lab/`。
-- 当前主线：以 `x86_64-win7-windows-gnu` 为 bridge 目标三元组，通过 nightly `-Zbuild-std=std,panic_abort` 构建 Win7 兼容版 Rust `std`。
+- 当前主线：以 `i686-win7-windows-gnu` 为 bridge 目标三元组，通过 nightly `-Zbuild-std=std,panic_abort` 构建 Win7 兼容版 Rust `std`。
 
 ## 1. 当前结论
 
-- `x86_64-win7-windows-gnu` 的 `wunder-desktop-bridge` 已成功构建并完成 Electron 22 x64 安装包产出。
-- 当前 Win7 方向的默认正式出包流程，固定为 `npm run build:desktop:win7:gnu:x64`。
+- `i686-win7-windows-gnu` 的 `wunder-desktop-bridge` 已成功构建并完成 Electron 22 ia32 安装包产出。
+- 当前 Win7 方向的默认正式出包流程，固定为 `npm run build:desktop:win7:gnu`。
 - 当前 Win7 方向的最终交付物，固定为 **安装包 + 补充包 zip** 两个文件；安装包本体不再内置 Python/Git。
 - 新 bridge 已移除对 `GetSystemTimePreciseAsFileTime` 的导入，改走 Win7 可用的时间 API 路径。
 - 新 bridge 已移除 `api-ms-win-core-winrt-error-l1-1-0.dll` / `RoOriginateErrorW` 相关依赖链。
 - DPI 感知初始化改为运行时按需加载，避免静态引入 `shcore` 的 Win8+ 入口点。
-- `i686-win7-windows-gnu` 当前仍受本机 `C:\mingw32` 工具链限制，尚不适合作为固化方案。
+- `i686-win7-windows-gnu` 目前已作为 Win7 默认固化链路（`ia32`），并在当前仓库内保持持续维护。
+- `x64` GNU 路径保留为显式可选入口，用于兼容性对比与专项排障，不作为默认发布方案。
 - Tauri GNU 当前仍阻塞在 `resource.lib` 与 GNU 链接器的资源编译兼容问题，因此暂不作为固化路径。
 
 ## 2. 推荐构建命令
@@ -23,8 +24,8 @@
 ### 默认发布入口
 
 ```powershell
-npm run setup:desktop:win7:gnu:x64
-npm run build:desktop:win7:gnu:x64
+npm run setup:desktop:win7:gnu
+npm run build:desktop:win7:gnu
 ```
 
 - 以后 Win7 版本默认优先走这条链路。
@@ -35,16 +36,16 @@ npm run build:desktop:win7:gnu:x64
 ### 快速重建入口
 
 ```powershell
-npm run build:desktop:win7:gnu:x64:fast
+npm run build:desktop:win7:gnu:fast
 ```
 
 ### 同时产出补充包
 
 ```powershell
-npm run build:desktop:win7:gnu:x64
+npm run build:desktop:win7:gnu
 
 # 如需显式切到 minimal 补充包
-npm run build:desktop:win7:gnu:x64:release:minimal
+npm run build:desktop:win7:supplement:minimal
 ```
 
 ### 静态 CRT 试探入口
@@ -56,16 +57,16 @@ npm run build:desktop:win7:gnu:x64:static
 ### 脚本直跑
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch x64
+powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu.ps1 -Arch ia32
 ```
 
 ## 3. 目录与产物
 
 - Cargo home：`temp_dir/win7-gnu-lab/cargo-home-win7-target`
-- bridge target：`temp_dir/win7-gnu-lab/bridge-build-target-x64-win7-gnu`
-- Electron staging：`temp_dir/win7-gnu-lab/electron-win7-x64/app`
-- 最终交付安装包：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder-desktop-win7-0.1.0-x64-setup.exe`
-- 同目录补充包：`temp_dir/win7-gnu-lab/electron-win7-x64/dist/wunder补充包-win7-x64-common.zip`
+- bridge target：`temp_dir/win7-gnu-lab/bridge-build-target-ia32-win7-gnu`
+- Electron staging：`temp_dir/win7-gnu-lab/electron-win7-ia32/app`
+- 最终交付安装包：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder-desktop-win7-0.1.0-ia32-setup.exe`
+- 同目录补充包：`temp_dir/win7-gnu-lab/electron-win7-ia32/dist/wunder补充包-win7-ia32-common.zip`
 - Win7 专用 patch 配置：`temp_dir/win7-gnu-lab/cargo-win7-patch.toml`
 - 工具链快照：`temp_dir/win7-gnu-lab/toolchain-manifest.json`
 
@@ -76,7 +77,7 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - `desktop/electron/scripts/win7-gnu-toolchain.json`：统一固化 Win7 GNU 目标、nightly 工具链、Electron 版本与 MinGW 路径。
 - `desktop/electron/scripts/setup-win7-gnu-toolchain.ps1`：首次初始化入口，负责检查 MinGW、安装 Rust nightly、预拉取 Cargo 依赖并生成工具链快照。
 - `desktop/electron/scripts/build-win7-gnu.ps1`：Win7 GNU bridge + Electron 22 Win7 打包脚本，可选同时构建独立补充包。
-- `package.json`：新增 `setup:desktop:win7:gnu:x64`、`doctor:desktop:win7:gnu:x64`、`build:desktop:win7:gnu:x64`、`build:desktop:win7:gnu:x64:fast` 等根命令，便于下次直接重建。
+- `package.json`：新增 `setup:desktop:win7:gnu`、`doctor:desktop:win7:gnu`、`build:desktop:win7:gnu`、`build:desktop:win7:gnu:fast` 等根命令，便于下次直接重建。
 - `patches/win7/tokio-rustls-0.26.4-win7/`：Win7 GNU 试包专用补丁，将 `tokio-rustls` 默认后端切到 `ring`，避免重新拉入 `aws-lc-sys`。
 - `Cargo.toml`：对 `target_vendor = "win7"` 单独分流 `reqwest` / `sysinfo` 依赖，降低 Win7 运行时阻塞点。
 - `src/core/dpi.rs`：将 DPI API 改为运行时动态加载，避免在 Win7 上因静态导入高版本入口点而提前失败。
@@ -90,7 +91,7 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 - 旧的 GNU 包虽然可安装启动，但 bridge 在 Win7 上会因 `KERNEL32.dll` 缺少 `GetSystemTimePreciseAsFileTime` 而中止。
 - 根因是当前 Rust `std` 的默认 Windows 基线偏高。
-- 解决方式是改为 `x86_64-win7-windows-gnu`，并通过 nightly `-Zbuild-std` 让 `std` 走 Win7 fallback。
+- 解决方式是改为 `i686-win7-windows-gnu`，并通过 nightly `-Zbuild-std` 让 `std` 走 Win7 fallback。
 
 ### 5.2 `api-ms-win-core-winrt-error-l1-1-0.dll`
 
@@ -105,7 +106,7 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 - 相比 Tauri，Electron 不依赖 WebView2，Win7 上前置条件更少。
 - 相比 MSVC bridge，GNU bridge 更有机会减少 VC++ 运行库缺失带来的启动失败。
-- 相比 `i686` GNU，`x64` GNU 在当前机器和当前工具链上已经实测可走通。
+- 相比 `x64` GNU，`ia32` GNU 在当前机器和当前工具链上已经实测可走通。
 - 相比继续追主线依赖升级，Win7 专用补丁更容易做到对现有发行链零侵入。
 
 ## 7. 功能影响
@@ -122,14 +123,14 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 ### 首次初始化
 
-- 先执行 `npm run setup:desktop:win7:gnu:x64`，一次性准备 nightly、`rust-src`、隔离 Cargo 缓存与 Win7 patch 配置。
-- 如只想检查环境，不做预热，可执行 `npm run doctor:desktop:win7:gnu:x64`。
+- 先执行 `npm run setup:desktop:win7:gnu`，一次性准备 nightly、`rust-src`、隔离 Cargo 缓存与 Win7 patch 配置。
+- 如只想检查环境，不做预热，可执行 `npm run doctor:desktop:win7:gnu`。
 
 ### 日常快速重建
 
-- 代码更新后，优先执行 `npm run build:desktop:win7:gnu:x64:fast`。
+- 代码更新后，优先执行 `npm run build:desktop:win7:gnu:fast`。
 - 该入口会复用 `temp_dir/win7-gnu-lab/` 下已经准备好的 nightly、Cargo 缓存、MinGW 路径与 patch 配置，减少重复准备时间。
-- 如怀疑依赖缓存脏了或补丁配置需要刷新，再回退到完整入口 `npm run build:desktop:win7:gnu:x64`。
+- 如怀疑依赖缓存脏了或补丁配置需要刷新，再回退到完整入口 `npm run build:desktop:win7:gnu`。
 
 ### 配置统一来源
 
@@ -138,16 +139,16 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 ## 9. Win7 补充包
 
 - 为 Win7 Electron 试包额外提供一个可直接解压到安装目录根部的 `wunder补充包`，内含 `opt/python` 与 `opt/git`。
-- 构建入口：`npm run build:desktop:win7:supplement:x64`
-- 基础运行时档位：`npm run build:desktop:win7:supplement:x64:minimal`
-- 同时产出安装包与 `common` 补充包入口：`npm run build:desktop:win7:gnu:x64`
-- 显式指定 `common` 补充包入口：`npm run build:desktop:win7:gnu:x64:release:common`
-- 显式指定 `minimal` 补充包入口：`npm run build:desktop:win7:gnu:x64:release:minimal`
+- 构建入口：`npm run build:desktop:win7:supplement`
+- 基础运行时档位：`npm run build:desktop:win7:supplement:minimal`
+- 同时产出安装包与 `common` 补充包入口：`npm run build:desktop:win7:gnu`
+- 显式指定 `common` 补充包入口：`npm run build:desktop:win7:supplement:common`
+- 显式指定 `minimal` 补充包入口：`npm run build:desktop:win7:supplement:minimal`
 - 构建脚本：`packaging/windows/scripts/build_win7_desktop_supplement.ps1`
 - 配置清单：`packaging/windows/scripts/win7-supplement-manifest.json`
 - 说明文档：`packaging/windows/README.md`
-- 默认产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
-- `minimal` 档位产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64.zip`
+- 默认产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-ia32-common.zip`
+- `minimal` 档位产物：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-ia32.zip`
 
 当前补充包版本固定为：
 
@@ -162,7 +163,7 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 - `python-docx / python-pptx / pypdf2 / lxml`
 - `ffmpeg-python / imageio / imageio-ffmpeg / opencv-python-headless`
 - `matplotlib / seaborn / plotly / pyecharts / Pillow`
-- `folium / pyproj / shapely / netcdf4 / cftime / h5py / arm-pyart / metpy`
+- `folium / pyproj / shapely / netcdf4 / cftime / h5py / metpy`
 - `sqlalchemy / pymysql / aiosqlite`
 
 默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`。如需切回官方源，可在脚本层传 `-PythonPackageIndexUrl https://pypi.org/simple`。
@@ -175,10 +176,10 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 ## 10. 暂不固化的路径
 
-### `i686` GNU
+### `x64` GNU
 
-- 当前最小样例就会在 `GetHostNameW@8` 链接阶段失败。
-- 这更像是本机 32 位 MinGW 工具链问题，不适合直接纳入默认构建链。
+- 当前仓库保留了 `npm run build:desktop:win7:gnu:x64` 系列命令，主要用于专项排障与兼容性对比。
+- 相比 `ia32` 默认链路，`x64` 在目标环境覆盖面与回归样本仍偏少，暂不作为默认发布路径。
 
 ### Tauri GNU
 
@@ -187,8 +188,9 @@ powershell -ExecutionPolicy Bypass -File desktop/electron/scripts/build-win7-gnu
 
 ## 11. 下一步建议
 
-- 在真实 Win7 x64 环境继续验证 LLM 请求、知识库下载、插件联网、XMPP / WebSocket 等所有 `reqwest` 相关链路。
+- 在真实 Win7 ia32 环境继续验证 LLM 请求、知识库下载、插件联网、XMPP / WebSocket 等所有 `reqwest` 相关链路。
 - 若目标环境存在企业代理或私有根证书，需要尽快补一套显式代理与自定义 CA 导入方案。
 - 若要继续压低运行库依赖，可继续验证 `-StaticRuntime` 版本是否值得作为默认变体。
-- 若要继续推进 32 位 GNU，需要先更换一套更稳的 `i686` MinGW / WinLibs / llvm-mingw 工具链。
+- 若要继续推进 `x64` GNU 对外发布，需要补齐真实 Win7 x64 环境的稳定性回归矩阵。
 - 若要继续推进 Tauri GNU，需要单独处理资源编译与链接兼容。
+

@@ -138,4 +138,5 @@ outbox 是出站缓冲层。
 
 - [管理端界面](/docs/zh-CN/surfaces/web-admin/)
 - [认证与安全](/docs/zh-CN/ops/auth-and-security/)
+- [微信 iLink 渠道（新微信接入）](/docs/zh-CN/integration/weixin-channel/)
 - [API 索引](/docs/zh-CN/reference/api-index/)

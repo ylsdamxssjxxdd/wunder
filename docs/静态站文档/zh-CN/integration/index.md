@@ -25,6 +25,7 @@ source_docs:
 | 文件管理、产物落地 | [工作区 API](/docs/zh-CN/integration/workspace-api/) | 上传、下载、路由统一管理 |
 | 文档转换、临时下载 | [临时目录接口](/docs/zh-CN/integration/temp-dir/) | doc/pdf 转 md、临时文件分享 |
 | 外部渠道接入 | [渠道 Webhook](/docs/zh-CN/integration/channel-webhook/) | 飞书、微信、QQ、XMPP 统一入口 |
+| 微信渠道选型（新旧区分） | [微信 iLink 渠道](/docs/zh-CN/integration/weixin-channel/) | 快速区分 `weixin` 与 `wechat/wechat_mp`，并给出扫码接入路径 |
 | 系统嵌入、免登 | [外部登录](/docs/zh-CN/integration/external-login/) | 免登录嵌入到你的系统 |
 | 智能体互联互通 | [A2A 接口](/docs/zh-CN/integration/a2a/) | 标准协议，跨系统协同 |
 | 扩展工具生态 | [MCP 入口](/docs/zh-CN/integration/mcp-endpoint/) | 挂载第三方 MCP 服务 |
@@ -61,6 +62,10 @@ source_docs:
   <a class="docs-card" href="/docs/zh-CN/integration/channel-webhook/">
     <strong>渠道 Webhook</strong>
     <span>外部渠道入站统一入口。</span>
+  </a>
+  <a class="docs-card" href="/docs/zh-CN/integration/weixin-channel/">
+    <strong>微信 iLink 渠道</strong>
+    <span>新微信渠道接入、扫码登录与故障定位。</span>
   </a>
   <a class="docs-card" href="/docs/zh-CN/integration/external-login/">
     <strong>外部登录</strong>

@@ -53,7 +53,6 @@ opencv-python-headless
 
 # Meteorology / Geo
 cinrad
-arm_pyart
 netCDF4
 cftime
 h5py

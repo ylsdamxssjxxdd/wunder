@@ -1,5 +1,5 @@
 {
-  "recommendedArch": "x64",
+  "recommendedArch": "ia32",
   "rustToolchain": "nightly-2026-03-14-x86_64-pc-windows-msvc",
   "electronVersion": "22.3.27",
   "electronBuilderVersion": "24.13.3",

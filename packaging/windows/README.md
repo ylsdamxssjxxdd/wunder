@@ -1,4 +1,4 @@
-# Windows 7 补充包打包说明
+﻿# Windows 7 补充包打包说明
 
 本目录用于构建给 `wunder-desktop` Windows 7 试包配套的 `wunder补充包`，提供：
 
@@ -27,27 +27,27 @@
 在仓库根目录执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64
+powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32
 ```
 
 - 该默认入口会产出 `common` 档位补充包，并默认通过清华 Tuna 简单索引安装 `packaging/python/requirements-win7-common.txt` 中的依赖。
 - 如果只想保留基础 Python + Git，不安装第三方 Python 依赖，请显式切到 `minimal`：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -PythonProfile minimal
+powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -PythonProfile minimal
 ```
 
 如需重新下载官方压缩包：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch x64 -RefreshDownloads
+powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 -Arch ia32 -RefreshDownloads
 ```
 
 如需切回官方 PyPI：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 `
-  -Arch x64 `
+  -Arch ia32 `
   -PythonPackageIndexUrl https://pypi.org/simple
 ```
 
@@ -55,17 +55,17 @@ powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_de
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File packaging/windows/scripts/build_win7_desktop_supplement.ps1 `
-  -Arch x64 `
-  -PythonArchivePath C:\cache\python-3.8.10-embed-amd64.zip `
-  -GitArchivePath C:\cache\MinGit-2.46.2-64-bit.zip
+  -Arch ia32 `
+  -PythonArchivePath C:\cache\python-3.8.10-embed-win32.zip `
+  -GitArchivePath C:\cache\MinGit-2.46.2-32-bit.zip
 ```
 
 ## 默认输出目录
 
 - 下载缓存：`temp_dir/win7-gnu-lab/win7-supplement/downloads/`
 - 展开目录：`temp_dir/win7-gnu-lab/win7-supplement/stage/package-root/`
-- 默认压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64-common.zip`
-- `minimal` 档位压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-x64.zip`
+- 默认压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-ia32-common.zip`
+- `minimal` 档位压缩包：`temp_dir/win7-gnu-lab/win7-supplement/dist/wunder补充包-win7-ia32.zip`
 
 压缩包内部目录结构是：
 
@@ -80,7 +80,7 @@ wunder-win7-supplement.json
 ## 使用方式
 
 1. 关闭已运行的 Wunder Desktop。
-2. 将 `wunder补充包-win7-x64-common.zip` 解压到桌面安装目录根部。
+2. 将 `wunder补充包-win7-ia32-common.zip` 解压到桌面安装目录根部。
 3. 解压后确认安装目录下出现：
    - `opt/python`
    - `opt/git`
@@ -100,3 +100,4 @@ Electron Win7 包启动时会自动：
 - `minimal` 档位提供的是 **基础 Python + 基础 Git**，尽量控制体积。
 - 默认 Python 包索引为清华 Tuna：`https://pypi.tuna.tsinghua.edu.cn/simple`；如需切回官方源，可使用 `-PythonPackageIndexUrl https://pypi.org/simple`。
 - 两个档位都保持 Win7 友好，优先使用二进制 wheel，避免现场编译依赖。
+

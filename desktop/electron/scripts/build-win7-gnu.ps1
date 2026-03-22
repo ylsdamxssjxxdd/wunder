@@ -1,6 +1,6 @@
 param(
   [ValidateSet('x64', 'ia32')]
-  [string]$Arch = 'x64',
+  [string]$Arch = 'ia32',
   [string]$LabRoot = '',
   [switch]$StaticRuntime,
   [switch]$BuildSupplement,
@@ -59,7 +59,20 @@ Initialize-Win7GnuToolchain -Context $context -SkipRustup:$SkipBootstrap -SkipFe
 
 $env:WUNDER_BRIDGE_BIN = Join-Path $context.BridgeTargetDir (Join-Path $context.Target 'release\wunder-desktop-bridge.exe')
 Write-Win7GnuStep "building Win7 GNU bridge for $($context.Target)"
-cargo --config $context.CargoPatchConfigPath -Z unstable-options build --release --bin wunder-desktop-bridge '-Zbuild-std=std,panic_abort' --target $context.Target --lockfile-path $resolvedLockfilePath
+$buildArgs = @(
+  '--config',
+  $context.CargoPatchConfigPath,
+  '-Z',
+  'unstable-options',
+  'build',
+  '--release',
+  '--bin',
+  'wunder-desktop-bridge',
+  '-Zbuild-std=std,panic_abort',
+  '--target',
+  $context.Target
+)
+Invoke-Win7GnuCargo -Context $context -LockfilePath $resolvedLockfilePath -CargoArgs $buildArgs
 if ($LASTEXITCODE -ne 0) {
   throw "Win7 GNU bridge build failed with exit code $LASTEXITCODE"
 }

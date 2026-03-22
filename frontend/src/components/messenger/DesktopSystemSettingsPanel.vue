@@ -632,9 +632,7 @@ const PROVIDER_PRESET_MAP = new Map(PROVIDER_PRESETS.map((item) => [item.id, ite
 
 const makeModelUid = (): string => `desktop-model-${nextModelUid++}`;
 
-const showRuntimePanel = computed(
-  () => props.panel === 'all' || props.panel === 'system' || props.panel === 'models'
-);
+const showRuntimePanel = computed(() => props.panel === 'all' || props.panel === 'system');
 const showModelPanel = computed(() => props.panel === 'all' || props.panel === 'models');
 const showRemotePanel = computed(() => props.panel === 'all' || props.panel === 'remote');
 const showLanPanel = computed(() => props.panel === 'all' || props.panel === 'lan');

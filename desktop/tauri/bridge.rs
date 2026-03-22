@@ -330,6 +330,10 @@ fn build_frontend_router(frontend_root: &Path) -> Router {
             "/desktop-icon.png",
             get_service(ServeFile::new(frontend_root.join("desktop-icon.png"))),
         )
+        .nest_service(
+            "/docs",
+            ServeDir::new(frontend_root.join("docs")).append_index_html_on_directories(true),
+        )
         .nest_service("/assets", ServeDir::new(frontend_root.join("assets")))
         .nest_service("/third", ServeDir::new(frontend_root.join("third")))
         .nest_service("/doc-icons", ServeDir::new(frontend_root.join("doc-icons")))

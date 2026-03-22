@@ -17,8 +17,10 @@ use crate::channels::runtime_log::{
 };
 use crate::channels::types::{
     ChannelAccountConfig, ChannelMessage, ChannelOutboundMessage, FeishuConfig, QqBotConfig,
-    XmppConfig,
+    WeixinConfig, XmppConfig,
 };
+use crate::channels::weixin;
+use crate::channels::weixin_files;
 use crate::channels::xmpp;
 use crate::config::{ChannelRateLimitConfig, Config};
 use crate::core::approval::{
@@ -67,6 +69,8 @@ const QQBOT_LONG_CONN_RETRY_MAX_S: u64 = 30;
 const XMPP_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
 const XMPP_LONG_CONN_RETRY_BASE_S: u64 = 3;
 const XMPP_LONG_CONN_RETRY_MAX_S: u64 = 30;
+const WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S: u64 = 10;
+const WEIXIN_LONG_CONN_RETRY_BASE_MS: u64 = 2_000;
 const CHANNEL_MESSAGE_DEDUPE_TTL_S: f64 = 120.0;
 const CHANNEL_RUNTIME_LOG_CAPACITY: usize = 300;
 const CHANNEL_RUNTIME_LOG_FLOOD_WINDOW_S: f64 = 20.0;
@@ -83,6 +87,7 @@ struct ChannelApprovalContext {
     thread: Option<crate::channels::types::ChannelThread>,
     binding_id: Option<String>,
     source_message_id: Option<String>,
+    weixin_context_token: Option<String>,
     actor_id: String,
 }
 
@@ -110,6 +115,14 @@ struct XmppLongConnTarget {
     config: XmppConfig,
 }
 
+#[derive(Debug, Clone)]
+struct WeixinLongConnTarget {
+    account_id: String,
+    updated_at: f64,
+    inbound_token: Option<String>,
+    config: WeixinConfig,
+}
+
 impl FeishuLongConnTarget {
     fn task_key(&self) -> String {
         format!("{}:{:.3}", self.account_id, self.updated_at)
@@ -123,6 +136,12 @@ impl XmppLongConnTarget {
 }
 
 impl QqBotLongConnTarget {
+    fn task_key(&self) -> String {
+        format!("{}:{:.3}", self.account_id, self.updated_at)
+    }
+}
+
+impl WeixinLongConnTarget {
     fn task_key(&self) -> String {
         format!("{}:{:.3}", self.account_id, self.updated_at)
     }
@@ -285,6 +304,10 @@ impl ChannelHub {
         let xmpp_worker = hub.clone();
         tokio::spawn(async move {
             xmpp_worker.xmpp_long_connection_supervisor_loop().await;
+        });
+        let weixin_worker = hub.clone();
+        tokio::spawn(async move {
+            weixin_worker.weixin_long_connection_supervisor_loop().await;
         });
         let bootstrap_worker = hub.clone();
         tokio::spawn(async move {
@@ -761,6 +784,30 @@ impl ChannelHub {
         if message
             .channel
             .trim()
+            .eq_ignore_ascii_case(weixin::WEIXIN_CHANNEL)
+        {
+            if let Some(weixin_cfg) = account_cfg.weixin.as_ref() {
+                if let Err(err) = weixin_files::download_weixin_attachments_to_workspace(
+                    &self.http,
+                    &self.workspace,
+                    &self.user_store,
+                    weixin_cfg,
+                    &session_info.user_id,
+                    resolved_agent_id.as_deref(),
+                    &mut message,
+                )
+                .await
+                {
+                    warn!(
+                        "download weixin attachments failed: channel={}, account_id={}, session_id={}, error={err}",
+                        message.channel, message.account_id, session_info.session_id
+                    );
+                }
+            }
+        }
+        if message
+            .channel
+            .trim()
             .eq_ignore_ascii_case(xmpp::XMPP_CHANNEL)
         {
             if let Some(xmpp_cfg) = account_cfg.xmpp.as_ref() {
@@ -938,6 +985,7 @@ impl ChannelHub {
                     .as_ref()
                     .and_then(|item| item.binding_id.clone()),
                 source_message_id: message.message_id.clone(),
+                weixin_context_token: weixin::extract_inbound_context_token(&message),
                 actor_id: resolve_channel_actor_id(&message),
             };
             let (approval_tx, approval_rx) = new_approval_channel();
@@ -1007,6 +1055,7 @@ impl ChannelHub {
                 );
             }
         }
+        append_weixin_context_token_from_message(&mut outbound_meta, &message);
         let mut outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -1379,6 +1428,16 @@ impl ChannelHub {
         } else {
             format!("检测到敏感操作需要审批：{summary_preview}\n{CHANNEL_APPROVAL_PROMPT}")
         };
+        let mut outbound_meta = json!({
+            "session_id": context.session_id.clone(),
+            "binding_id": context.binding_id.clone(),
+            "message_id": context.source_message_id.clone(),
+            "approval_id": approval_id.clone(),
+            "approval_kind": kind,
+            "approval_tool": tool,
+            "approval_request": true,
+        });
+        append_weixin_context_token(&mut outbound_meta, context.weixin_context_token.as_deref());
         let outbound = ChannelOutboundMessage {
             channel: context.channel.clone(),
             account_id: context.account_id.clone(),
@@ -1386,15 +1445,7 @@ impl ChannelHub {
             thread: context.thread.clone(),
             text: Some(approval_text),
             attachments: Vec::new(),
-            meta: Some(json!({
-                "session_id": context.session_id.clone(),
-                "binding_id": context.binding_id.clone(),
-                "message_id": context.source_message_id.clone(),
-                "approval_id": approval_id.clone(),
-                "approval_kind": kind,
-                "approval_tool": tool,
-                "approval_request": true,
-            })),
+            meta: Some(outbound_meta),
         };
         let outbox_id = match self.enqueue_outbox(&outbound).await {
             Ok(value) => value,
@@ -1732,6 +1783,7 @@ impl ChannelHub {
                 }
             }
         }
+        append_weixin_context_token_from_message(&mut meta, message);
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -2513,6 +2565,300 @@ impl ChannelHub {
         Ok(())
     }
 
+    async fn weixin_long_connection_supervisor_loop(&self) {
+        let mut workers: HashMap<String, tokio::task::JoinHandle<()>> = HashMap::new();
+        loop {
+            workers.retain(|_, handle| !handle.is_finished());
+            let config = self.config_store.get().await;
+            if !channels_runtime_enabled(&config) {
+                for (_, handle) in workers.drain() {
+                    handle.abort();
+                }
+                sleep(Duration::from_secs(WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+                continue;
+            }
+
+            match self.list_weixin_long_connection_targets().await {
+                Ok(targets) => {
+                    let mut desired_keys = HashSet::new();
+                    for target in targets {
+                        let task_key = target.task_key();
+                        desired_keys.insert(task_key.clone());
+                        if workers.contains_key(&task_key) {
+                            continue;
+                        }
+                        let worker = self.clone();
+                        workers.insert(
+                            task_key,
+                            tokio::spawn(async move {
+                                worker.weixin_long_connection_worker_loop(target).await;
+                            }),
+                        );
+                    }
+
+                    let stale_keys = workers
+                        .keys()
+                        .filter(|key| !desired_keys.contains(*key))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    for task_key in stale_keys {
+                        if let Some(handle) = workers.remove(&task_key) {
+                            handle.abort();
+                        }
+                    }
+                }
+                Err(err) => {
+                    self.record_runtime_warn(
+                        weixin::WEIXIN_CHANNEL,
+                        None,
+                        "long_connection_targets_load_failed",
+                        format!("load weixin long connection targets failed: {err}"),
+                    );
+                    debug!("load weixin long connection targets failed: {err}");
+                }
+            }
+
+            sleep(Duration::from_secs(WEIXIN_LONG_CONN_SUPERVISOR_INTERVAL_S)).await;
+        }
+    }
+
+    async fn list_weixin_long_connection_targets(&self) -> Result<Vec<WeixinLongConnTarget>> {
+        let storage = self.storage.clone();
+        let accounts = tokio::task::spawn_blocking(move || {
+            storage.list_channel_accounts(Some(weixin::WEIXIN_CHANNEL), Some("active"))
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)))?;
+
+        let mut targets = Vec::new();
+        for record in accounts {
+            let account_cfg = ChannelAccountConfig::from_value(&record.config);
+            let Some(weixin_cfg) = account_cfg.weixin else {
+                continue;
+            };
+            if !weixin::long_connection_enabled(&weixin_cfg) {
+                continue;
+            }
+            if !weixin::has_long_connection_credentials(&weixin_cfg) {
+                self.record_runtime_warn(
+                    weixin::WEIXIN_CHANNEL,
+                    Some(&record.account_id),
+                    "long_connection_credentials_missing",
+                    format!(
+                        "skip weixin long connection target without credentials: account_id={}",
+                        record.account_id
+                    ),
+                );
+                debug!(
+                    "skip weixin long connection target without credentials: account_id={}",
+                    record.account_id
+                );
+                continue;
+            }
+            targets.push(WeixinLongConnTarget {
+                account_id: record.account_id,
+                updated_at: record.updated_at,
+                inbound_token: account_cfg.inbound_token,
+                config: weixin_cfg,
+            });
+        }
+        Ok(targets)
+    }
+
+    async fn weixin_long_connection_worker_loop(&self, target: WeixinLongConnTarget) {
+        let max_failures = weixin::resolve_max_consecutive_failures(&target.config);
+        let backoff_ms = weixin::resolve_backoff_ms(&target.config);
+        let mut next_poll_timeout_ms = weixin::resolve_poll_timeout_ms(&target.config);
+        let mut get_updates_buf = String::new();
+        let mut consecutive_failures = 0_u64;
+
+        loop {
+            let response = weixin::get_updates(
+                &self.http,
+                &target.config,
+                &get_updates_buf,
+                next_poll_timeout_ms,
+            )
+            .await;
+
+            match response {
+                Ok(result) => {
+                    if let Some(timeout_ms) =
+                        result.longpolling_timeout_ms.filter(|value| *value > 0)
+                    {
+                        next_poll_timeout_ms = timeout_ms.max(1_000);
+                    }
+                    if let Some(buf) = result
+                        .get_updates_buf
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        get_updates_buf = buf.to_string();
+                    }
+
+                    let errcode = result.errcode.unwrap_or(0);
+                    let has_error = result.ret != 0 || errcode != 0;
+                    if has_error {
+                        let errmsg = result.errmsg.as_deref().unwrap_or("unknown");
+                        self.record_runtime_warn(
+                            weixin::WEIXIN_CHANNEL,
+                            Some(&target.account_id),
+                            "long_connection_poll_failed",
+                            format!(
+                                "weixin getupdates failed: account_id={}, ret={}, errcode={}, errmsg={}",
+                                target.account_id, result.ret, errcode, errmsg
+                            ),
+                        );
+                        if errcode == -14 || result.ret == -14 {
+                            self.record_runtime_error(
+                                weixin::WEIXIN_CHANNEL,
+                                Some(&target.account_id),
+                                "long_connection_session_expired",
+                                format!(
+                                    "weixin login session expired: account_id={}, retry_in={}ms",
+                                    target.account_id, backoff_ms
+                                ),
+                            );
+                            sleep(Duration::from_millis(backoff_ms)).await;
+                            continue;
+                        }
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        if consecutive_failures >= max_failures {
+                            self.record_runtime_warn(
+                                weixin::WEIXIN_CHANNEL,
+                                Some(&target.account_id),
+                                "long_connection_backoff",
+                                format!(
+                                    "weixin getupdates reached failure threshold: account_id={}, failures={}, backoff_ms={}",
+                                    target.account_id, consecutive_failures, backoff_ms
+                                ),
+                            );
+                            consecutive_failures = 0;
+                            sleep(Duration::from_millis(backoff_ms)).await;
+                        } else {
+                            sleep(Duration::from_millis(WEIXIN_LONG_CONN_RETRY_BASE_MS)).await;
+                        }
+                        continue;
+                    }
+
+                    consecutive_failures = 0;
+                    if result.msgs.is_empty() {
+                        continue;
+                    }
+
+                    let messages = weixin::extract_inbound_messages(
+                        &result.msgs,
+                        &target.account_id,
+                        &target.config,
+                    );
+                    if messages.is_empty() {
+                        continue;
+                    }
+
+                    let headers = match build_internal_channel_headers(
+                        target.inbound_token.as_deref(),
+                    ) {
+                        Ok(value) => value,
+                        Err(err) => {
+                            self.record_runtime_error(
+                                weixin::WEIXIN_CHANNEL,
+                                Some(&target.account_id),
+                                "long_connection_header_build_failed",
+                                format!(
+                                    "weixin long connection build headers failed: account_id={}, error={err}",
+                                    target.account_id
+                                ),
+                            );
+                            sleep(Duration::from_millis(WEIXIN_LONG_CONN_RETRY_BASE_MS)).await;
+                            continue;
+                        }
+                    };
+
+                    let raw_payload = json!({
+                        "ret": result.ret,
+                        "errcode": result.errcode,
+                        "errmsg": result.errmsg,
+                        "msgs_count": result.msgs.len(),
+                        "get_updates_buf": result.get_updates_buf,
+                    });
+                    match self
+                        .enqueue_inbound(
+                            weixin::WEIXIN_CHANNEL,
+                            &headers,
+                            messages,
+                            Some(raw_payload),
+                        )
+                        .await
+                    {
+                        Ok(outcome) => {
+                            if outcome.accepted == 0 {
+                                self.record_runtime_warn(
+                                    weixin::WEIXIN_CHANNEL,
+                                    Some(&target.account_id),
+                                    "long_connection_inbound_ignored",
+                                    format!(
+                                        "weixin long connection inbound ignored: account_id={}, accepted=0",
+                                        target.account_id
+                                    ),
+                                );
+                            } else {
+                                self.record_runtime_info(
+                                    weixin::WEIXIN_CHANNEL,
+                                    Some(&target.account_id),
+                                    "long_connection_inbound_received",
+                                    format!(
+                                        "weixin long connection inbound accepted: account_id={}, accepted={}",
+                                        target.account_id, outcome.accepted
+                                    ),
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            self.record_runtime_error(
+                                weixin::WEIXIN_CHANNEL,
+                                Some(&target.account_id),
+                                "long_connection_inbound_enqueue_failed",
+                                format!(
+                                    "weixin long connection inbound enqueue failed: account_id={}, error={err}",
+                                    target.account_id
+                                ),
+                            );
+                            sleep(Duration::from_millis(WEIXIN_LONG_CONN_RETRY_BASE_MS)).await;
+                        }
+                    }
+                }
+                Err(err) => {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    self.record_runtime_warn(
+                        weixin::WEIXIN_CHANNEL,
+                        Some(&target.account_id),
+                        "long_connection_poll_error",
+                        format!(
+                            "weixin getupdates error: account_id={}, failures={}/{}, error={err}",
+                            target.account_id, consecutive_failures, max_failures
+                        ),
+                    );
+                    if consecutive_failures >= max_failures {
+                        self.record_runtime_warn(
+                            weixin::WEIXIN_CHANNEL,
+                            Some(&target.account_id),
+                            "long_connection_backoff",
+                            format!(
+                                "weixin getupdates entered backoff: account_id={}, failures={}, backoff_ms={}",
+                                target.account_id, consecutive_failures, backoff_ms
+                            ),
+                        );
+                        consecutive_failures = 0;
+                        sleep(Duration::from_millis(backoff_ms)).await;
+                    } else {
+                        sleep(Duration::from_millis(WEIXIN_LONG_CONN_RETRY_BASE_MS)).await;
+                    }
+                }
+            }
+        }
+    }
+
     async fn outbox_loop(&self) {
         loop {
             let config = self.config_store.get().await;
@@ -2866,6 +3212,7 @@ impl ChannelHub {
                 );
             }
         }
+        append_weixin_context_token_from_message(&mut outbound_meta, message);
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -3005,6 +3352,12 @@ impl ChannelHub {
         self.append_channel_chat(&user_id, &target_session_id, "assistant", &reply_text)
             .await;
 
+        let mut outbound_meta = json!({
+            "session_id": target_session_id,
+            "command": command.as_str(),
+            "message_id": message.message_id,
+        });
+        append_weixin_context_token_from_message(&mut outbound_meta, message);
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -3012,11 +3365,7 @@ impl ChannelHub {
             thread: message.thread.clone(),
             text: Some(reply_text.clone()),
             attachments: Vec::new(),
-            meta: Some(json!({
-                "session_id": target_session_id,
-                "command": command.as_str(),
-                "message_id": message.message_id,
-            })),
+            meta: Some(outbound_meta),
         };
         let outbox_id = self.enqueue_outbox(&outbound).await?;
         Ok(ChannelInboundResult {
@@ -3209,6 +3558,27 @@ fn build_internal_channel_headers(inbound_token: Option<&str>) -> Result<HeaderM
         headers.insert("x-channel-token", header_value);
     }
     Ok(headers)
+}
+
+fn append_weixin_context_token_from_message(meta: &mut Value, message: &ChannelMessage) {
+    if let Some(token) = weixin::extract_inbound_context_token(message) {
+        append_weixin_context_token(meta, Some(token.as_str()));
+    }
+}
+
+fn append_weixin_context_token(meta: &mut Value, context_token: Option<&str>) {
+    let Some(token) = context_token
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    if let Some(meta_obj) = meta.as_object_mut() {
+        meta_obj.insert(
+            "weixin_context_token".to_string(),
+            Value::String(token.to_string()),
+        );
+    }
 }
 
 fn normalize_message(provider: &str, message: &mut ChannelMessage) -> Result<()> {
@@ -3674,6 +4044,7 @@ fn now_ts() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parse_channel_approval_decision_supports_numbers_and_keywords() {
@@ -3728,5 +4099,89 @@ mod tests {
             meta: None,
         };
         assert_eq!(resolve_channel_actor_id(&message), "user_42".to_string());
+    }
+
+    #[test]
+    fn build_internal_channel_headers_skips_empty_token() {
+        let headers = build_internal_channel_headers(None).expect("headers");
+        assert!(headers.get("x-channel-token").is_none());
+
+        let headers = build_internal_channel_headers(Some("   ")).expect("headers");
+        assert!(headers.get("x-channel-token").is_none());
+    }
+
+    #[test]
+    fn build_internal_channel_headers_sets_trimmed_token() {
+        let headers = build_internal_channel_headers(Some("  token-123  ")).expect("headers");
+        let token = headers
+            .get("x-channel-token")
+            .and_then(|value| value.to_str().ok());
+        assert_eq!(token, Some("token-123"));
+    }
+
+    #[test]
+    fn build_internal_channel_headers_rejects_invalid_token_value() {
+        let err = build_internal_channel_headers(Some("token\nbad")).expect_err("invalid header");
+        let message = err.to_string();
+        assert!(message.contains("invalid inbound token header value"));
+    }
+
+    #[test]
+    fn append_weixin_context_token_trims_and_sets_meta() {
+        let mut meta = json!({});
+        append_weixin_context_token(&mut meta, Some("  ctx-1  "));
+        assert_eq!(
+            meta.get("weixin_context_token")
+                .and_then(|value| value.as_str()),
+            Some("ctx-1")
+        );
+    }
+
+    #[test]
+    fn append_weixin_context_token_ignores_empty_or_non_object_meta() {
+        let mut empty_token_meta = json!({});
+        append_weixin_context_token(&mut empty_token_meta, Some("   "));
+        assert!(empty_token_meta.get("weixin_context_token").is_none());
+
+        let mut non_object_meta = json!("text");
+        append_weixin_context_token(&mut non_object_meta, Some("ctx-2"));
+        assert_eq!(non_object_meta, json!("text"));
+    }
+
+    #[test]
+    fn append_weixin_context_token_from_message_reads_inbound_meta() {
+        let mut message = ChannelMessage {
+            channel: "weixin".to_string(),
+            account_id: "acc".to_string(),
+            peer: crate::channels::types::ChannelPeer {
+                kind: "user".to_string(),
+                id: "u_1".to_string(),
+                name: None,
+            },
+            thread: None,
+            message_id: None,
+            sender: None,
+            message_type: "text".to_string(),
+            text: Some("hello".to_string()),
+            attachments: Vec::new(),
+            location: None,
+            ts: None,
+            meta: Some(json!({ "weixin": { "context_token": "ctx-from-msg" } })),
+        };
+        let mut outbound_meta = json!({});
+        append_weixin_context_token_from_message(&mut outbound_meta, &message);
+        assert_eq!(
+            outbound_meta
+                .get("weixin_context_token")
+                .and_then(|value| value.as_str()),
+            Some("ctx-from-msg")
+        );
+
+        message.meta = None;
+        let mut outbound_meta_without_ctx = json!({});
+        append_weixin_context_token_from_message(&mut outbound_meta_without_ctx, &message);
+        assert!(outbound_meta_without_ctx
+            .get("weixin_context_token")
+            .is_none());
     }
 }

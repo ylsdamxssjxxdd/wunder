@@ -1,7 +1,10 @@
 use crate::api::user_context::resolve_user;
 use crate::channels::catalog;
 use crate::channels::qqbot;
-use crate::channels::types::{ChannelAccountConfig, FeishuConfig, WechatConfig, WechatMpConfig};
+use crate::channels::types::{
+    ChannelAccountConfig, FeishuConfig, WechatConfig, WechatMpConfig, WeixinConfig,
+};
+use crate::channels::weixin;
 use crate::i18n;
 use crate::state::AppState;
 use crate::user_access::is_agent_allowed;
@@ -9,13 +12,14 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{
-    routing::{delete, get},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::time::{sleep, Duration};
 use uuid::Uuid;
 
 const USER_CHANNEL_FEISHU: &str = "feishu";
@@ -23,9 +27,13 @@ const USER_CHANNEL_QQBOT: &str = "qqbot";
 const USER_CHANNEL_WHATSAPP: &str = "whatsapp";
 const USER_CHANNEL_WECHAT: &str = "wechat";
 const USER_CHANNEL_WECHAT_MP: &str = "wechat_mp";
+const USER_CHANNEL_WEIXIN: &str = "weixin";
 const USER_CHANNEL_XMPP: &str = "xmpp";
 const DEFAULT_GROUP_PEER_KIND: &str = "group";
 const WILDCARD_PEER_ID: &str = "*";
+const WEIXIN_QR_SESSION_TTL_MS: u64 = 5 * 60_000;
+const WEIXIN_QR_WAIT_POLL_INTERVAL_MS: u64 = 1_000;
+const WEIXIN_QR_STATUS_LONG_POLL_TIMEOUT_MS: u64 = 35_000;
 
 #[derive(Debug, Deserialize)]
 struct ChannelAccountsQuery {
@@ -66,6 +74,8 @@ struct ChannelAccountUpsertRequest {
     wechat: Option<WechatAccountPayload>,
     #[serde(default)]
     wechat_mp: Option<WechatMpAccountPayload>,
+    #[serde(default)]
+    weixin: Option<WeixinAccountPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +121,36 @@ struct WechatMpAccountPayload {
 }
 
 #[derive(Debug, Deserialize)]
+struct WeixinAccountPayload {
+    #[serde(default, alias = "apiBase")]
+    api_base: Option<String>,
+    #[serde(default, alias = "cdnBase")]
+    cdn_base: Option<String>,
+    #[serde(default, alias = "botToken")]
+    bot_token: Option<String>,
+    #[serde(default, alias = "ilinkBotId")]
+    ilink_bot_id: Option<String>,
+    #[serde(default, alias = "ilinkUserId")]
+    ilink_user_id: Option<String>,
+    #[serde(default, alias = "botType")]
+    bot_type: Option<String>,
+    #[serde(default, alias = "longConnectionEnabled")]
+    long_connection_enabled: Option<bool>,
+    #[serde(default, alias = "pollTimeoutMs")]
+    poll_timeout_ms: Option<u64>,
+    #[serde(default, alias = "apiTimeoutMs")]
+    api_timeout_ms: Option<u64>,
+    #[serde(default, alias = "maxConsecutiveFailures")]
+    max_consecutive_failures: Option<u64>,
+    #[serde(default, alias = "backoffMs")]
+    backoff_ms: Option<u64>,
+    #[serde(default, alias = "routeTag")]
+    route_tag: Option<String>,
+    #[serde(default, alias = "allowFrom")]
+    allow_from: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChannelBindingsQuery {
     #[serde(default)]
     user_id: Option<String>,
@@ -146,6 +186,40 @@ struct ChannelActionQuery {
     user_id: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct WeixinQrStartRequest {
+    #[serde(default, alias = "accountId")]
+    account_id: Option<String>,
+    #[serde(default, alias = "apiBase")]
+    api_base: Option<String>,
+    #[serde(default, alias = "botType")]
+    bot_type: Option<String>,
+    #[serde(default)]
+    force: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct WeixinQrWaitRequest {
+    #[serde(alias = "sessionKey")]
+    session_key: String,
+    #[serde(default, alias = "apiBase")]
+    api_base: Option<String>,
+    #[serde(default, alias = "timeoutMs")]
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct WeixinQrSession {
+    session_key: String,
+    user_id: String,
+    qrcode: String,
+    qrcode_url: String,
+    api_base: String,
+    bot_type: String,
+    route_tag: Option<String>,
+    started_at_ms: u64,
+}
+
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
@@ -167,6 +241,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/wunder/channels/bindings/{channel}/{account_id}/{peer_kind}/{peer_id}",
             delete(delete_channel_binding),
+        )
+        .route(
+            "/wunder/channels/weixin/qr/start",
+            post(start_weixin_qr_login),
+        )
+        .route(
+            "/wunder/channels/weixin/qr/wait",
+            post(wait_weixin_qr_login),
         )
 }
 
@@ -757,6 +839,197 @@ async fn upsert_channel_account(
                 domain: Some(domain),
             }),
         );
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN) {
+        let existing_weixin = ChannelAccountConfig::from_value(&config_value)
+            .weixin
+            .unwrap_or_default();
+
+        let api_base = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.api_base.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_weixin
+                    .api_base
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "https://ilinkai.weixin.qq.com".to_string());
+        let cdn_base = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.cdn_base.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_weixin
+                    .cdn_base
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let bot_token = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.bot_token.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_weixin
+                    .bot_token
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "weixin bot_token is required".to_string(),
+                )
+            })?;
+        let ilink_bot_id = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.ilink_bot_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_weixin
+                    .ilink_bot_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            })
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::BAD_REQUEST,
+                    "weixin ilink_bot_id is required".to_string(),
+                )
+            })?;
+
+        let ilink_user_id = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.ilink_user_id.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_weixin
+                    .ilink_user_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let bot_type = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.bot_type.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_weixin
+                    .bot_type
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let long_connection_enabled = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.long_connection_enabled)
+            .or(existing_weixin.long_connection_enabled)
+            .or(Some(true));
+        let poll_timeout_ms = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.poll_timeout_ms)
+            .or(existing_weixin.poll_timeout_ms);
+        let api_timeout_ms = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.api_timeout_ms)
+            .or(existing_weixin.api_timeout_ms);
+        let max_consecutive_failures = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.max_consecutive_failures)
+            .or(existing_weixin.max_consecutive_failures);
+        let backoff_ms = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.backoff_ms)
+            .or(existing_weixin.backoff_ms);
+        let route_tag = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.route_tag.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                existing_weixin
+                    .route_tag
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+            });
+        let allow_from = payload
+            .weixin
+            .as_ref()
+            .and_then(|value| value.allow_from.as_ref())
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| existing_weixin.allow_from.clone());
+        selected_peer_kind = "user".to_string();
+
+        let map = config_value.as_object_mut().ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid channel config".to_string(),
+            )
+        })?;
+        map.insert(
+            "weixin".to_string(),
+            json!(WeixinConfig {
+                api_base: Some(api_base),
+                cdn_base,
+                bot_token: Some(bot_token),
+                ilink_bot_id: Some(ilink_bot_id),
+                ilink_user_id,
+                bot_type,
+                long_connection_enabled,
+                allow_from,
+                poll_timeout_ms,
+                api_timeout_ms,
+                max_consecutive_failures,
+                backoff_ms,
+                typing_enabled: existing_weixin.typing_enabled,
+                media_enabled: existing_weixin.media_enabled,
+                route_tag,
+            }),
+        );
     } else if existing.is_none() && payload.config.is_none() {
         return Err(error_response(
             StatusCode::BAD_REQUEST,
@@ -786,6 +1059,14 @@ async fn upsert_channel_account(
         return Err(error_response(
             StatusCode::BAD_REQUEST,
             "wechat_mp peer_kind must be user".to_string(),
+        ));
+    }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN)
+        && !matches!(selected_peer_kind.as_str(), "user")
+    {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "weixin peer_kind must be user".to_string(),
         ));
     }
     if selected_peer_kind.trim().is_empty() {
@@ -899,6 +1180,30 @@ async fn upsert_channel_account(
             );
         }
     }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN) {
+        let weixin_cfg = ChannelAccountConfig::from_value(&config_value)
+            .weixin
+            .unwrap_or_default();
+        let long_connection_enabled = weixin::long_connection_enabled(&weixin_cfg);
+        let configured = weixin::has_long_connection_credentials(&weixin_cfg);
+        if configured {
+            state.channels.record_runtime_info(
+                USER_CHANNEL_WEIXIN,
+                Some(&account_id),
+                "weixin_config_ready",
+                format!(
+                    "weixin config ready; runtime_mode=long_poll, long_connection_enabled={long_connection_enabled}"
+                ),
+            );
+        } else {
+            state.channels.record_runtime_warn(
+                USER_CHANNEL_WEIXIN,
+                Some(&account_id),
+                "weixin_config_incomplete",
+                "weixin config incomplete: api_base/bot_token/ilink_bot_id missing".to_string(),
+            );
+        }
+    }
 
     let item = build_user_account_item(
         &channel,
@@ -911,6 +1216,263 @@ async fn upsert_channel_account(
     );
 
     Ok(Json(json!({ "data": item })))
+}
+
+async fn start_weixin_qr_login(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
+    Json(payload): Json<WeixinQrStartRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    let account_id = payload
+        .account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let force = payload.force.unwrap_or(false);
+
+    let mut account_route_tag: Option<String> = None;
+    let mut account_api_base: Option<String> = None;
+    let mut account_bot_type: Option<String> = None;
+
+    if let Some(target_account_id) = account_id.as_deref() {
+        if !user_owns_channel_account(&state, &user_id, USER_CHANNEL_WEIXIN, target_account_id)? {
+            return Err(error_response(
+                StatusCode::FORBIDDEN,
+                i18n::t("error.permission_denied"),
+            ));
+        }
+        let record = state
+            .storage
+            .get_channel_account(USER_CHANNEL_WEIXIN, target_account_id)
+            .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?
+            .ok_or_else(|| {
+                error_response(
+                    StatusCode::NOT_FOUND,
+                    "channel account not found".to_string(),
+                )
+            })?;
+        if let Some(weixin_cfg) = ChannelAccountConfig::from_value(&record.config).weixin {
+            account_route_tag = weixin_cfg
+                .route_tag
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            account_api_base = weixin_cfg
+                .api_base
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            account_bot_type = weixin_cfg
+                .bot_type
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        }
+    }
+
+    let api_base =
+        weixin::normalize_api_base(payload.api_base.as_deref().or(account_api_base.as_deref()))
+            .unwrap_or_else(|| weixin::DEFAULT_API_BASE.to_string());
+    let bot_type =
+        weixin::normalize_bot_type(payload.bot_type.as_deref().or(account_bot_type.as_deref()));
+    let route_tag = account_route_tag;
+    let session_key = account_id
+        .clone()
+        .unwrap_or_else(|| format!("wxqr_{}", Uuid::new_v4().simple()));
+
+    purge_expired_weixin_qr_sessions();
+    if !force {
+        if let Some(existing) = load_weixin_qr_session(&session_key) {
+            if existing.user_id == user_id && !is_weixin_qr_session_expired(&existing) {
+                return Ok(Json(json!({ "data": {
+                    "session_key": existing.session_key,
+                    "qrcode": existing.qrcode,
+                    "qrcode_url": existing.qrcode_url,
+                    "api_base": existing.api_base,
+                    "bot_type": existing.bot_type,
+                    "cached": true,
+                }})));
+            }
+        }
+    }
+
+    let http = reqwest::Client::new();
+    let qr = weixin::get_bot_qrcode(
+        &http,
+        &api_base,
+        &bot_type,
+        route_tag.as_deref(),
+        WEIXIN_QR_STATUS_LONG_POLL_TIMEOUT_MS,
+    )
+    .await
+    .map_err(|err| error_response(StatusCode::BAD_GATEWAY, err.to_string()))?;
+    let qrcode = qr
+        .qrcode
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_GATEWAY,
+                "weixin qr response missing qrcode".to_string(),
+            )
+        })?;
+    let qrcode_url = qr
+        .qrcode_img_content
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            error_response(
+                StatusCode::BAD_GATEWAY,
+                "weixin qr response missing qrcode image".to_string(),
+            )
+        })?;
+
+    let session = WeixinQrSession {
+        session_key: session_key.clone(),
+        user_id: user_id.clone(),
+        qrcode: qrcode.clone(),
+        qrcode_url: qrcode_url.clone(),
+        api_base: api_base.clone(),
+        bot_type: bot_type.clone(),
+        route_tag,
+        started_at_ms: now_ms(),
+    };
+    save_weixin_qr_session(session);
+
+    state.channels.record_runtime_info(
+        USER_CHANNEL_WEIXIN,
+        account_id.as_deref(),
+        "qr_login_started",
+        format!("weixin qr login started: session_key={session_key}"),
+    );
+
+    Ok(Json(json!({ "data": {
+        "session_key": session_key,
+        "qrcode": qrcode,
+        "qrcode_url": qrcode_url,
+        "api_base": api_base,
+        "bot_type": bot_type,
+    }})))
+}
+
+async fn wait_weixin_qr_login(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<ChannelActionQuery>,
+    Json(payload): Json<WeixinQrWaitRequest>,
+) -> Result<Json<Value>, Response> {
+    let resolved = resolve_user(&state, &headers, query.user_id.as_deref()).await?;
+    let user_id = resolved.user.user_id.clone();
+    let session_key = payload.session_key.trim().to_string();
+    if session_key.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "session_key is required".to_string(),
+        ));
+    }
+
+    purge_expired_weixin_qr_sessions();
+    let session = load_weixin_qr_session(&session_key).ok_or_else(|| {
+        error_response(
+            StatusCode::NOT_FOUND,
+            "weixin qr session not found or expired".to_string(),
+        )
+    })?;
+    if session.user_id != user_id {
+        return Err(error_response(
+            StatusCode::FORBIDDEN,
+            i18n::t("error.permission_denied"),
+        ));
+    }
+    if is_weixin_qr_session_expired(&session) {
+        remove_weixin_qr_session(&session_key);
+        return Err(error_response(
+            StatusCode::GONE,
+            "weixin qr session expired".to_string(),
+        ));
+    }
+
+    let api_base = weixin::normalize_api_base(payload.api_base.as_deref())
+        .unwrap_or_else(|| session.api_base.clone());
+    let timeout_ms = payload.timeout_ms.unwrap_or(120_000).clamp(1_000, 480_000);
+    let deadline = now_ms().saturating_add(timeout_ms);
+
+    let http = reqwest::Client::new();
+    loop {
+        let status_resp = weixin::get_qrcode_status(
+            &http,
+            &api_base,
+            &session.qrcode,
+            session.route_tag.as_deref(),
+            WEIXIN_QR_STATUS_LONG_POLL_TIMEOUT_MS,
+        )
+        .await
+        .map_err(|err| error_response(StatusCode::BAD_GATEWAY, err.to_string()))?;
+
+        let status = status_resp
+            .status
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("wait")
+            .to_ascii_lowercase();
+
+        if status == "confirmed" {
+            remove_weixin_qr_session(&session_key);
+            state.channels.record_runtime_info(
+                USER_CHANNEL_WEIXIN,
+                None,
+                "qr_login_confirmed",
+                format!("weixin qr login confirmed: session_key={session_key}"),
+            );
+            return Ok(Json(json!({ "data": {
+                "connected": true,
+                "status": status,
+                "session_key": session_key,
+                "bot_token": status_resp.bot_token,
+                "ilink_bot_id": status_resp.ilink_bot_id,
+                "ilink_user_id": status_resp.ilink_user_id,
+                "api_base": status_resp.baseurl.unwrap_or(api_base),
+            }})));
+        }
+
+        if status == "expired" {
+            remove_weixin_qr_session(&session_key);
+            state.channels.record_runtime_warn(
+                USER_CHANNEL_WEIXIN,
+                None,
+                "qr_login_expired",
+                format!("weixin qr login expired: session_key={session_key}"),
+            );
+            return Ok(Json(json!({ "data": {
+                "connected": false,
+                "status": status,
+                "session_key": session_key,
+                "message": "weixin qr expired",
+            }})));
+        }
+
+        if now_ms() >= deadline {
+            return Ok(Json(json!({ "data": {
+                "connected": false,
+                "status": status,
+                "session_key": session_key,
+                "message": "waiting for weixin qr confirmation timed out",
+            }})));
+        }
+        sleep(Duration::from_millis(WEIXIN_QR_WAIT_POLL_INTERVAL_MS)).await;
+    }
 }
 
 async fn delete_channel_account_by_id(
@@ -1112,6 +1674,12 @@ async fn upsert_channel_binding(
             "wechat_mp peer_kind must be user".to_string(),
         ));
     }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN) && !matches!(peer_kind.as_str(), "user") {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "weixin peer_kind must be user".to_string(),
+        ));
+    }
     if !user_owns_channel_account(&state, &user_id, &channel, &account_id)? {
         return Err(error_response(
             StatusCode::FORBIDDEN,
@@ -1303,6 +1871,8 @@ fn supported_user_channel_items() -> Vec<Value> {
         .map(|item| {
             json!({
                 "channel": item.channel,
+                "name": item.display_name,
+                "label": item.display_name,
                 "display_name": item.display_name,
                 "description": item.description,
                 "webhook_mode": item.webhook_mode,
@@ -1463,7 +2033,8 @@ fn build_user_account_item(
         peer_kind = "group".to_string();
     }
     if (channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT)
-        || channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP))
+        || channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP)
+        || channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN))
         && peer_kind != "user"
     {
         peer_kind = "user".to_string();
@@ -1656,6 +2227,76 @@ fn build_user_account_item(
                 "domain": domain,
             }
         });
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN) {
+        let weixin_cfg = account_cfg.weixin.unwrap_or_default();
+        let api_base = weixin_cfg
+            .api_base
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("https://ilinkai.weixin.qq.com")
+            .to_string();
+        let cdn_base = weixin_cfg
+            .cdn_base
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("https://novac2c.cdn.weixin.qq.com/c2c")
+            .to_string();
+        let bot_token_set = weixin_cfg
+            .bot_token
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        let ilink_bot_id = weixin_cfg
+            .ilink_bot_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let ilink_user_id = weixin_cfg
+            .ilink_user_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_string();
+        let bot_type = weixin_cfg
+            .bot_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("3")
+            .to_string();
+        let allow_from_count = weixin_cfg
+            .allow_from
+            .iter()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .count();
+        long_connection_enabled = weixin::long_connection_enabled(&weixin_cfg);
+        configured = weixin::has_long_connection_credentials(&weixin_cfg);
+        config_preview = json!({
+            "weixin": {
+                "api_base": api_base,
+                "cdn_base": cdn_base,
+                "bot_token_set": bot_token_set,
+                "ilink_bot_id": ilink_bot_id,
+                "ilink_user_id": ilink_user_id,
+                "bot_type": bot_type,
+                "allow_from_count": allow_from_count,
+                "poll_timeout_ms": weixin_cfg.poll_timeout_ms,
+                "api_timeout_ms": weixin_cfg.api_timeout_ms,
+                "max_consecutive_failures": weixin_cfg.max_consecutive_failures,
+                "backoff_ms": weixin_cfg.backoff_ms,
+                "long_connection_enabled": long_connection_enabled,
+                "route_tag_set": weixin_cfg
+                    .route_tag
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_some(),
+            }
+        });
     } else if channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
         let xmpp = account_cfg.xmpp.unwrap_or_default();
         let jid = xmpp
@@ -1739,6 +2380,13 @@ fn build_user_account_item(
             );
         }
     } else if channel.eq_ignore_ascii_case(USER_CHANNEL_QQBOT) {
+        if let Some(meta_map) = meta.as_object_mut() {
+            meta_map.insert(
+                "long_connection_enabled".to_string(),
+                Value::Bool(long_connection_enabled),
+            );
+        }
+    } else if channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN) {
         if let Some(meta_map) = meta.as_object_mut() {
             meta_map.insert(
                 "long_connection_enabled".to_string(),
@@ -1845,6 +2493,9 @@ fn default_peer_kind_for_channel(channel: &str, receive_group_chat: Option<bool>
         return "user".to_string();
     }
     if channel.eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP) {
+        return "user".to_string();
+    }
+    if channel.eq_ignore_ascii_case(USER_CHANNEL_WEIXIN) {
         return "user".to_string();
     }
     if channel.eq_ignore_ascii_case(USER_CHANNEL_XMPP) {
@@ -1966,6 +2617,7 @@ fn normalize_user_peer_kind(channel: &str, peer_kind: &str) -> String {
     if (channel.trim().eq_ignore_ascii_case(USER_CHANNEL_FEISHU)
         || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT)
         || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WECHAT_MP)
+        || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_WEIXIN)
         || channel.trim().eq_ignore_ascii_case(USER_CHANNEL_XMPP))
         && matches!(normalized.as_str(), "dm" | "direct" | "single")
     {
@@ -2048,6 +2700,46 @@ fn is_non_empty_env_var(env_name: Option<&str>) -> bool {
         .is_some_and(|value| !value.trim().is_empty())
 }
 
+fn weixin_qr_sessions() -> &'static Mutex<HashMap<String, WeixinQrSession>> {
+    static STORE: OnceLock<Mutex<HashMap<String, WeixinQrSession>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn is_weixin_qr_session_expired(session: &WeixinQrSession) -> bool {
+    now_ms().saturating_sub(session.started_at_ms) > WEIXIN_QR_SESSION_TTL_MS
+}
+
+fn purge_expired_weixin_qr_sessions() {
+    let store = weixin_qr_sessions();
+    let mut guard = store.lock().expect("weixin qr session lock poisoned");
+    guard.retain(|_, session| !is_weixin_qr_session_expired(session));
+}
+
+fn load_weixin_qr_session(session_key: &str) -> Option<WeixinQrSession> {
+    let store = weixin_qr_sessions();
+    let guard = store.lock().expect("weixin qr session lock poisoned");
+    guard.get(session_key).cloned()
+}
+
+fn save_weixin_qr_session(session: WeixinQrSession) {
+    let store = weixin_qr_sessions();
+    let mut guard = store.lock().expect("weixin qr session lock poisoned");
+    guard.insert(session.session_key.clone(), session);
+}
+
+fn remove_weixin_qr_session(session_key: &str) {
+    let store = weixin_qr_sessions();
+    let mut guard = store.lock().expect("weixin qr session lock poisoned");
+    guard.remove(session_key);
+}
+
 fn error_response(status: StatusCode, message: String) -> Response {
     crate::api::errors::error_response(status, message)
 }
@@ -2057,4 +2749,87 @@ fn now_ts() -> f64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs_f64())
         .unwrap_or(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn qr_session_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn clear_qr_sessions() {
+        let store = weixin_qr_sessions();
+        let mut guard = store.lock().expect("weixin qr session lock poisoned");
+        guard.clear();
+    }
+
+    fn make_qr_session(session_key: &str, started_at_ms: u64) -> WeixinQrSession {
+        WeixinQrSession {
+            session_key: session_key.to_string(),
+            user_id: "u_test".to_string(),
+            qrcode: "qrcode-text".to_string(),
+            qrcode_url: "https://example.com/qr".to_string(),
+            api_base: "https://api.ilinknetwork.com".to_string(),
+            bot_type: "2".to_string(),
+            route_tag: Some("test-tag".to_string()),
+            started_at_ms,
+        }
+    }
+
+    #[test]
+    fn weixin_qr_session_save_and_load_roundtrip() {
+        let _guard = qr_session_test_lock()
+            .lock()
+            .expect("qr session test lock poisoned");
+        clear_qr_sessions();
+
+        let session = make_qr_session("session-roundtrip", now_ms());
+        save_weixin_qr_session(session.clone());
+        let loaded = load_weixin_qr_session("session-roundtrip").expect("session should exist");
+
+        assert_eq!(loaded.session_key, session.session_key);
+        assert_eq!(loaded.user_id, session.user_id);
+        assert_eq!(loaded.qrcode, session.qrcode);
+        assert_eq!(loaded.qrcode_url, session.qrcode_url);
+        assert_eq!(loaded.api_base, session.api_base);
+        assert_eq!(loaded.bot_type, session.bot_type);
+        assert_eq!(loaded.route_tag, session.route_tag);
+        clear_qr_sessions();
+    }
+
+    #[test]
+    fn weixin_qr_session_remove_deletes_entry() {
+        let _guard = qr_session_test_lock()
+            .lock()
+            .expect("qr session test lock poisoned");
+        clear_qr_sessions();
+
+        save_weixin_qr_session(make_qr_session("session-remove", now_ms()));
+        assert!(load_weixin_qr_session("session-remove").is_some());
+
+        remove_weixin_qr_session("session-remove");
+        assert!(load_weixin_qr_session("session-remove").is_none());
+        clear_qr_sessions();
+    }
+
+    #[test]
+    fn purge_expired_weixin_qr_sessions_keeps_only_active_entries() {
+        let _guard = qr_session_test_lock()
+            .lock()
+            .expect("qr session test lock poisoned");
+        clear_qr_sessions();
+
+        let now = now_ms();
+        let expired_started_at_ms = now.saturating_sub(WEIXIN_QR_SESSION_TTL_MS + 10);
+        save_weixin_qr_session(make_qr_session("session-expired", expired_started_at_ms));
+        save_weixin_qr_session(make_qr_session("session-active", now));
+
+        purge_expired_weixin_qr_sessions();
+        assert!(load_weixin_qr_session("session-expired").is_none());
+        assert!(load_weixin_qr_session("session-active").is_some());
+        clear_qr_sessions();
+    }
 }

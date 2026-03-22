@@ -23,6 +23,12 @@ export const writeChannelRuntimeProbe = (payload: ApiPayload) =>
 
 export const upsertChannelBinding = (payload: ApiPayload) => api.post('/channels/bindings', payload);
 
+export const startWeixinQrLogin = (payload: ApiPayload) =>
+  api.post('/channels/weixin/qr/start', payload);
+
+export const waitWeixinQrLogin = (payload: ApiPayload) =>
+  api.post('/channels/weixin/qr/wait', payload);
+
 export const deleteChannelBinding = (
   channel: string,
   accountId: ApiId,

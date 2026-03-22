@@ -124,6 +124,60 @@ pub struct WechatMpConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WeixinConfig {
+    #[serde(default, alias = "apiBase")]
+    pub api_base: Option<String>,
+    #[serde(default, alias = "cdnBase")]
+    pub cdn_base: Option<String>,
+    #[serde(default, alias = "botToken")]
+    pub bot_token: Option<String>,
+    #[serde(default, alias = "ilinkBotId")]
+    pub ilink_bot_id: Option<String>,
+    #[serde(default, alias = "ilinkUserId")]
+    pub ilink_user_id: Option<String>,
+    #[serde(default, alias = "botType")]
+    pub bot_type: Option<String>,
+    #[serde(default, alias = "longConnectionEnabled")]
+    pub long_connection_enabled: Option<bool>,
+    #[serde(
+        default,
+        alias = "allowFrom",
+        deserialize_with = "deserialize_string_vec_from_any"
+    )]
+    pub allow_from: Vec<String>,
+    #[serde(
+        default,
+        alias = "pollTimeoutMs",
+        deserialize_with = "deserialize_option_u64_from_any"
+    )]
+    pub poll_timeout_ms: Option<u64>,
+    #[serde(
+        default,
+        alias = "apiTimeoutMs",
+        deserialize_with = "deserialize_option_u64_from_any"
+    )]
+    pub api_timeout_ms: Option<u64>,
+    #[serde(
+        default,
+        alias = "maxConsecutiveFailures",
+        deserialize_with = "deserialize_option_u64_from_any"
+    )]
+    pub max_consecutive_failures: Option<u64>,
+    #[serde(
+        default,
+        alias = "backoffMs",
+        deserialize_with = "deserialize_option_u64_from_any"
+    )]
+    pub backoff_ms: Option<u64>,
+    #[serde(default, alias = "typingEnabled")]
+    pub typing_enabled: Option<bool>,
+    #[serde(default, alias = "mediaEnabled")]
+    pub media_enabled: Option<bool>,
+    #[serde(default, alias = "routeTag")]
+    pub route_tag: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct XmppConfig {
     #[serde(default)]
     pub jid: Option<String>,
@@ -353,6 +407,8 @@ pub struct ChannelAccountConfig {
     #[serde(default)]
     pub wechat_mp: Option<WechatMpConfig>,
     #[serde(default)]
+    pub weixin: Option<WeixinConfig>,
+    #[serde(default)]
     pub xmpp: Option<XmppConfig>,
 }
 
@@ -447,5 +503,37 @@ mod tests {
         assert_eq!(qqbot.client_secret.as_deref(), Some("qq-secret"));
         assert_eq!(qqbot.token.as_deref(), Some("123456:qq-secret"));
         assert_eq!(qqbot.long_connection_enabled, Some(false));
+    }
+
+    #[test]
+    fn weixin_aliases_are_supported() {
+        let config = ChannelAccountConfig::from_value(&json!({
+            "weixin": {
+                "apiBase": "https://ilinkai.weixin.qq.com",
+                "botToken": "bot-token",
+                "ilinkBotId": "bot-id@im.bot",
+                "longConnectionEnabled": true,
+                "allowFrom": "u1,u2",
+                "pollTimeoutMs": "35000",
+                "apiTimeoutMs": 12000,
+                "maxConsecutiveFailures": "5",
+                "backoffMs": 30000,
+                "routeTag": "internal"
+            }
+        }));
+        let weixin = config.weixin.expect("weixin config should exist");
+        assert_eq!(
+            weixin.api_base.as_deref(),
+            Some("https://ilinkai.weixin.qq.com")
+        );
+        assert_eq!(weixin.bot_token.as_deref(), Some("bot-token"));
+        assert_eq!(weixin.ilink_bot_id.as_deref(), Some("bot-id@im.bot"));
+        assert_eq!(weixin.long_connection_enabled, Some(true));
+        assert_eq!(weixin.allow_from, vec!["u1".to_string(), "u2".to_string()]);
+        assert_eq!(weixin.poll_timeout_ms, Some(35_000));
+        assert_eq!(weixin.api_timeout_ms, Some(12_000));
+        assert_eq!(weixin.max_consecutive_failures, Some(5));
+        assert_eq!(weixin.backoff_ms, Some(30_000));
+        assert_eq!(weixin.route_tag.as_deref(), Some("internal"));
     }
 }

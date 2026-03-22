@@ -33,9 +33,16 @@ export const useAgentStore = defineStore('agents', {
     async loadAgents() {
       this.loading = true;
       try {
-        const [ownedRes, sharedRes] = await Promise.all([listAgents(), listSharedAgents()]);
-        const ownedItems = ownedRes?.data?.data?.items || [];
-        const sharedItems = sharedRes?.data?.data?.items || [];
+        const [ownedResult, sharedResult] = await Promise.allSettled([listAgents(), listSharedAgents()]);
+        if (ownedResult.status !== 'fulfilled') {
+          throw ownedResult.reason;
+        }
+        if (sharedResult.status !== 'fulfilled') {
+          console.warn('[agents] load shared agents failed, fallback to empty list', sharedResult.reason);
+        }
+        const ownedItems = ownedResult.value?.data?.data?.items || [];
+        const sharedItems =
+          sharedResult.status === 'fulfilled' ? (sharedResult.value?.data?.data?.items || []) : [];
         this.agents = ownedItems;
         this.sharedAgents = sharedItems;
         this.hydrateMap(ownedItems, sharedItems);

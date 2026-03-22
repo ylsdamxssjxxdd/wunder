@@ -41,6 +41,17 @@ function New-Win7GnuBuildContext {
   $profile = Read-Win7GnuToolchainProfile -RepoRoot $RepoRoot
   $data = $profile.Data
   $archProfile = if ($Arch -eq 'ia32') { $data.architectures.ia32 } else { $data.architectures.x64 }
+  $resolvedMingwBin = [string]$archProfile.mingwBin
+  $archMingwOverride = if ($Arch -eq 'ia32') {
+    [string]$env:WUNDER_WIN7_IA32_MINGW_BIN
+  } else {
+    [string]$env:WUNDER_WIN7_X64_MINGW_BIN
+  }
+  if (-not [string]::IsNullOrWhiteSpace($archMingwOverride)) {
+    $resolvedMingwBin = $archMingwOverride
+  } elseif (-not [string]::IsNullOrWhiteSpace([string]$env:WUNDER_WIN7_MINGW_BIN)) {
+    $resolvedMingwBin = [string]$env:WUNDER_WIN7_MINGW_BIN
+  }
   $resolvedLabRoot = if ($LabRoot) { $LabRoot } else { Join-Path $RepoRoot $data.labRoot }
   $resolvedToolchain = if ($RustToolchain) { $RustToolchain } else { $data.rustToolchain }
   $bridgeTargetDirName = $data.paths.bridgeTargetDirPattern.Replace('{arch}', $Arch)
@@ -57,7 +68,7 @@ function New-Win7GnuBuildContext {
     LabRoot = $resolvedLabRoot
     RustToolchain = $resolvedToolchain
     Target = $archProfile.target
-    MinGwBin = $archProfile.mingwBin
+    MinGwBin = $resolvedMingwBin
     Gcc = $archProfile.gcc
     Gxx = $archProfile.gxx
     Ar = $archProfile.ar
@@ -108,6 +119,91 @@ function Ensure-Win7GnuLockfile {
   }
 
   return $resolvedLockfilePath
+}
+
+function Test-Win7GnuCargoLockfilePathSupport {
+  $cached = Get-Variable -Scope Script -Name Win7GnuCargoLockfilePathSupported -ErrorAction SilentlyContinue
+  if ($null -ne $cached) {
+    return [bool]$script:Win7GnuCargoLockfilePathSupported
+  }
+
+  $helpOutput = ''
+  try {
+    $helpOutput = cargo -Z unstable-options build --help 2>&1 | Out-String
+  }
+  catch {
+    $helpOutput = ''
+  }
+  $script:Win7GnuCargoLockfilePathSupported = $helpOutput -match '(?m)--lockfile-path'
+  return [bool]$script:Win7GnuCargoLockfilePathSupported
+}
+
+function Get-Win7GnuCargoLockfileArgs {
+  param(
+    [string]$LockfilePath
+  )
+
+  if (Test-Win7GnuCargoLockfilePathSupport) {
+    return @('--lockfile-path', $LockfilePath)
+  }
+
+  Write-Win7GnuStep "cargo does not support --lockfile-path, fallback to --locked"
+  return @('--locked')
+}
+
+function Invoke-Win7GnuCargo {
+  param(
+    [hashtable]$Context,
+    [string]$LockfilePath,
+    [string[]]$CargoArgs
+  )
+
+  $lockArgs = Get-Win7GnuCargoLockfileArgs -LockfilePath $LockfilePath
+  $supportsLockfilePath = $lockArgs.Length -ge 2 -and $lockArgs[0] -eq '--lockfile-path'
+  if ($supportsLockfilePath) {
+    & cargo @CargoArgs @lockArgs
+    return
+  }
+
+  $workspaceLockfile = Join-Path $Context.RepoRoot 'Cargo.lock'
+  $workspaceHadLockfile = Test-Path $workspaceLockfile
+  $lockfileDir = Split-Path -Parent $LockfilePath
+  Ensure-Win7GnuDirectory -Path $lockfileDir
+
+  $backupLockfile = if ($workspaceHadLockfile) {
+    Join-Path $lockfileDir ("cargo-workspace-backup-{0}.lock" -f ([guid]::NewGuid().ToString('N')))
+  } else {
+    ''
+  }
+
+  if ($workspaceHadLockfile) {
+    Copy-Item -Path $workspaceLockfile -Destination $backupLockfile -Force
+  }
+
+  if (Test-Path $LockfilePath) {
+    Copy-Item -Path $LockfilePath -Destination $workspaceLockfile -Force
+  } elseif ($workspaceHadLockfile) {
+    Copy-Item -Path $workspaceLockfile -Destination $LockfilePath -Force
+  } else {
+    throw "isolated lockfile is missing and workspace lockfile is not available: $LockfilePath"
+  }
+
+  try {
+    & cargo @CargoArgs
+    $cargoExitCode = $LASTEXITCODE
+    if (Test-Path $workspaceLockfile) {
+      Copy-Item -Path $workspaceLockfile -Destination $LockfilePath -Force
+    }
+    $global:LASTEXITCODE = $cargoExitCode
+  }
+  finally {
+    if ($workspaceHadLockfile) {
+      Copy-Item -Path $backupLockfile -Destination $workspaceLockfile -Force
+      Remove-Item -Path $backupLockfile -Force -ErrorAction SilentlyContinue
+    } elseif (Test-Path $workspaceLockfile) {
+      Remove-Item -Path $workspaceLockfile -Force -ErrorAction SilentlyContinue
+    }
+  }
 }
 
 function Assert-Win7GnuCommand {
@@ -358,7 +454,16 @@ function Initialize-Win7GnuToolchain {
 
   if (-not $SkipFetch) {
     Write-Win7GnuStep "prefetching crates for $($Context.Target)"
-    cargo --config $Context.CargoPatchConfigPath -Z unstable-options fetch --target $Context.Target --lockfile-path $resolvedLockfilePath
+    $fetchArgs = @(
+      '--config',
+      $Context.CargoPatchConfigPath,
+      '-Z',
+      'unstable-options',
+      'fetch',
+      '--target',
+      $Context.Target
+    )
+    Invoke-Win7GnuCargo -Context $Context -LockfilePath $resolvedLockfilePath -CargoArgs $fetchArgs
     if ($LASTEXITCODE -ne 0) {
       throw "cargo fetch failed with exit code $LASTEXITCODE"
     }

@@ -534,8 +534,11 @@ impl Orchestrator {
             return answer.to_string();
         }
 
-        let artifact_candidates =
-            collect_existing_artifact_image_paths(&self.workspace, cleaned_workspace_id, session_id);
+        let artifact_candidates = collect_existing_artifact_image_paths(
+            &self.workspace,
+            cleaned_workspace_id,
+            session_id,
+        );
         let mut dir_candidates: HashMap<String, Vec<String>> = HashMap::new();
         let mut used_replacements: HashSet<String> = HashSet::new();
         let mut changed = false;
@@ -553,9 +556,10 @@ impl Orchestrator {
             }
             let (path_token_clean, wrapper) = unwrap_markdown_path_token(&path_token);
             let (path_without_suffix, _) = split_url_suffix(path_token_clean.as_str());
-            let Some(normalized_relative) =
-                normalize_workspace_markdown_relative_path(&path_without_suffix, cleaned_workspace_id)
-            else {
+            let Some(normalized_relative) = normalize_workspace_markdown_relative_path(
+                &path_without_suffix,
+                cleaned_workspace_id,
+            ) else {
                 return full.to_string();
             };
             if workspace_relative_path_exists(
@@ -958,19 +962,25 @@ fn unwrap_markdown_path_token(token: &str) -> (String, MarkdownPathWrapper) {
     let trimmed = token.trim();
     if trimmed.len() >= 2 && trimmed.starts_with('<') && trimmed.ends_with('>') {
         return (
-            trimmed[1..trimmed.len().saturating_sub(1)].trim().to_string(),
+            trimmed[1..trimmed.len().saturating_sub(1)]
+                .trim()
+                .to_string(),
             MarkdownPathWrapper::Angle,
         );
     }
     if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
         return (
-            trimmed[1..trimmed.len().saturating_sub(1)].trim().to_string(),
+            trimmed[1..trimmed.len().saturating_sub(1)]
+                .trim()
+                .to_string(),
             MarkdownPathWrapper::DoubleQuote,
         );
     }
     if trimmed.len() >= 2 && trimmed.starts_with('\'') && trimmed.ends_with('\'') {
         return (
-            trimmed[1..trimmed.len().saturating_sub(1)].trim().to_string(),
+            trimmed[1..trimmed.len().saturating_sub(1)]
+                .trim()
+                .to_string(),
             MarkdownPathWrapper::SingleQuote,
         );
     }
@@ -1116,15 +1126,9 @@ fn load_directory_image_candidates(
     directory: &str,
 ) -> Vec<String> {
     let relative_dir = directory.trim_matches('/');
-    let Ok((entries, _, _, _, _)) = workspace.list_workspace_entries(
-        workspace_id,
-        relative_dir,
-        None,
-        0,
-        512,
-        "name",
-        "asc",
-    ) else {
+    let Ok((entries, _, _, _, _)) =
+        workspace.list_workspace_entries(workspace_id, relative_dir, None, 0, 512, "name", "asc")
+    else {
         return Vec::new();
     };
     let mut output = Vec::new();
@@ -1164,7 +1168,9 @@ fn find_missing_image_replacement(
 
     let candidates = dir_candidates
         .entry(missing_dir.clone())
-        .or_insert_with(|| load_directory_image_candidates(workspace, workspace_id, missing_dir.as_str()));
+        .or_insert_with(|| {
+            load_directory_image_candidates(workspace, workspace_id, missing_dir.as_str())
+        });
 
     if !missing_name.is_empty() {
         for candidate in candidates.iter() {
@@ -1207,7 +1213,10 @@ fn format_markdown_path_token(
     wrapper: MarkdownPathWrapper,
 ) -> String {
     let replacement = if original_clean_path.starts_with("/workspaces/") {
-        format!("/workspaces/{workspace_id}/{}", replacement_relative.trim_matches('/'))
+        format!(
+            "/workspaces/{workspace_id}/{}",
+            replacement_relative.trim_matches('/')
+        )
     } else if original_clean_path.starts_with('/') {
         format!("/{}", replacement_relative.trim_matches('/'))
     } else if original_clean_path.starts_with("./") {

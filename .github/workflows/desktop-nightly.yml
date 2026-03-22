@@ -1,4 +1,4 @@
-name: Desktop Nightly
+﻿name: Desktop Nightly
 
 on:
   push:
@@ -130,10 +130,10 @@ jobs:
         id: msys2
         with:
           location: ${{ runner.temp }}\wunder-win7-msys2
-          msystem: MINGW64
+          msystem: MINGW32
           update: true
           install: >-
-            mingw-w64-x86_64-gcc
+            mingw-w64-i686-gcc
 
       - name: Prepare Win7 GNU toolchain paths
         shell: pwsh
@@ -142,14 +142,14 @@ jobs:
           if (-not $msysRoot) {
             throw 'MSYS2 location output is empty'
           }
-          $mingw64 = Join-Path $msysRoot 'mingw64'
-          if (-not (Test-Path $mingw64)) {
-            throw "MSYS2 mingw64 directory not found: $mingw64"
+          $mingw32 = Join-Path $msysRoot 'mingw32'
+          if (-not (Test-Path $mingw32)) {
+            throw "MSYS2 mingw32 directory not found: $mingw32"
           }
-          if (Test-Path 'C:\mingw64') {
-            Remove-Item 'C:\mingw64' -Force -Recurse
+          if (Test-Path 'C:\mingw32') {
+            Remove-Item 'C:\mingw32' -Force -Recurse
           }
-          New-Item -ItemType Junction -Path 'C:\mingw64' -Target $mingw64 | Out-Null
+          New-Item -ItemType Junction -Path 'C:\mingw32' -Target $mingw32 | Out-Null
 
       - name: Build frontend
         shell: pwsh
@@ -157,26 +157,26 @@ jobs:
           npm ci --workspaces --include-workspace-root=false
           npm run build --workspace wunder-frontend
 
-      - name: Build Win7 compatibility installer (GNU x64 + common supplement)
+      - name: Build Win7 compatibility installer (GNU ia32 + common supplement)
         shell: pwsh
         run: |
-          npm run build:desktop:win7:gnu:x64
+          npm run build:desktop:win7:gnu
 
       - name: Rename Win7 compatibility artifacts
         shell: pwsh
         run: |
           $date = "${{ needs.prepare.outputs.build_date }}"
-          $installerDist = Join-Path $env:GITHUB_WORKSPACE 'temp_dir\win7-gnu-lab\electron-win7-x64\dist'
+          $installerDist = Join-Path $env:GITHUB_WORKSPACE 'temp_dir\win7-gnu-lab\electron-win7-ia32\dist'
           $out = Join-Path $env:GITHUB_WORKSPACE 'release-assets\windows-win7-compat'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
 
           $installer = Get-ChildItem -Path $installerDist -File -Filter '*.exe' | Sort-Object Length -Descending | Select-Object -First 1
           if (-not $installer) { throw "No Win7 compatibility installer found in $installerDist" }
-          Copy-Item $installer.FullName (Join-Path $out "Wunder-Desktop-win7-compat-x64-$date-setup.exe")
+          Copy-Item $installer.FullName (Join-Path $out "Wunder-Desktop-win7-compat-ia32-$date-setup.exe")
 
           $supplement = Get-ChildItem -Path $installerDist -File -Filter '*common*.zip' | Sort-Object Length -Descending | Select-Object -First 1
           if ($supplement) {
-            Copy-Item $supplement.FullName (Join-Path $out "Wunder-Desktop-win7-compat-x64-$date-supplement-common.zip")
+            Copy-Item $supplement.FullName (Join-Path $out "Wunder-Desktop-win7-compat-ia32-$date-supplement-common.zip")
           }
 
           $manifest = Join-Path $env:GITHUB_WORKSPACE 'temp_dir\win7-gnu-lab\toolchain-manifest.json'
@@ -533,7 +533,7 @@ jobs:
           ### 支持系统与安装方式
 
           - **Windows x64**：下载 `.exe` 安装包，双击运行并按向导安装。
-          - **Windows 7 x64 兼容版**：下载 `Wunder-Desktop-win7-compat-*-setup.exe`；如需 Python/Git 与 Win7 常用三方库，再额外下载 `Wunder-Desktop-win7-compat-*-supplement-common.zip` 并解压到安装目录。
+          - **Windows 7 ia32 兼容版**：下载 `Wunder-Desktop-win7-compat-*-setup.exe`；如需 Python/Git 与 Win7 常用三方库，再额外下载 `Wunder-Desktop-win7-compat-*-supplement-common.zip` 并解压到安装目录。
           - **macOS（Apple Silicon / Intel）**：下载对应 `.dmg`，打开后将应用拖入“应用程序”目录。
           - **Linux x64 / arm64**：下载 `.AppImage`，执行 `chmod +x <文件名>.AppImage` 后运行。
           - **自动更新**：已附带 `latest*.yml` 与 `.blockmap` 文件供桌面端增量更新使用。
@@ -559,7 +559,7 @@ jobs:
 
           ### Windows 7 兼容版说明
 
-          - `Wunder-Desktop-win7-compat-*-setup.exe` 为 **兼容性安装包**，目标环境为 Windows 7 SP1 x64。
+          - `Wunder-Desktop-win7-compat-*-setup.exe` 为 **兼容性安装包**，目标环境为 Windows 7 SP1 ia32。
           - 该安装包默认不内置 `Python`、`Git` 或 Win7 `common` 三方库；安装后可直接运行桌面端基础能力。
           - 如需 `Python/Git`、办公文档、数据库、地图/雷达与绘图等常用能力，请将 `Wunder-Desktop-win7-compat-*-supplement-common.zip` 解压到安装目录，使目录下出现 `opt/python` 与 `opt/git`。
           EOF
@@ -613,3 +613,4 @@ jobs:
             [ -z "${asset}" ] && continue
             retry 3 gh release upload "${TAG}" "${asset}" --repo "${GITHUB_REPOSITORY}" --clobber
           done
+

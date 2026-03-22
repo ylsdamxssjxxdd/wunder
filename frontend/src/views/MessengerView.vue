@@ -2234,9 +2234,7 @@ const leftRailMoreToggleTitle = computed(() =>
 const DEFAULT_BEEROOM_GROUP_ID = 'default';
 
 const ownedAgents = computed(() => (Array.isArray(agentStore.agents) ? agentStore.agents : []));
-const sharedAgents = computed(() =>
-  desktopLocalMode.value ? [] : (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : [])
-);
+const sharedAgents = computed(() => (Array.isArray(agentStore.sharedAgents) ? agentStore.sharedAgents : []));
 
 const normalizeAgentHiveGroupId = (value: unknown): string => {
   const normalized = String(value || '').trim();

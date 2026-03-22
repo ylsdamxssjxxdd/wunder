@@ -788,7 +788,9 @@ const renderChannelForms = () => {
     if (!value) {
       return;
     }
-    const label = String(item?.name || item?.label || value).trim();
+    const label = String(
+      item?.display_name || item?.displayName || item?.name || item?.label || value
+    ).trim();
     const option = document.createElement("option");
     option.value = value;
     option.textContent = label || value;

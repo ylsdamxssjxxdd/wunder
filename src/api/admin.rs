@@ -3,6 +3,7 @@ use crate::attachment::{convert_to_markdown, get_supported_extensions, sanitize_
 use crate::auth;
 use crate::channels::feishu;
 use crate::channels::types::ChannelAccountConfig;
+use crate::channels::weixin;
 use crate::channels::xmpp;
 use crate::config::{
     normalize_chat_stream_channel, normalize_knowledge_base_type, A2aServiceConfig, Config,
@@ -6973,6 +6974,7 @@ fn runtime_connection_status_not_running(runtime: &Value, key: &str) -> bool {
 
 fn runtime_has_issue(runtime: &Value) -> bool {
     runtime_connection_status_not_running(runtime, "feishu_long_connection")
+        || runtime_connection_status_not_running(runtime, "weixin_long_connection")
         || runtime_connection_status_not_running(runtime, "xmpp_long_connection")
 }
 
@@ -7018,6 +7020,50 @@ fn build_channel_account_runtime(
 
         return json!({
             "feishu_long_connection": {
+                "status": status.as_str(),
+                "binding_count": binding_count,
+                "long_connection_enabled": long_connection_enabled,
+                "has_credentials": has_credentials,
+            }
+        });
+    }
+
+    if record
+        .channel
+        .trim()
+        .eq_ignore_ascii_case(weixin::WEIXIN_CHANNEL)
+    {
+        let resolved_binding_count = binding_count.or_else(|| {
+            resolve_channel_binding_count(storage, &record.channel, &record.account_id).ok()
+        });
+        let Some(weixin_cfg) = account_cfg.weixin else {
+            return json!({
+                "weixin_long_connection": {
+                    "status": LongConnectionRuntimeStatus::NotConfigured.as_str(),
+                    "binding_count": resolved_binding_count.unwrap_or(0),
+                    "long_connection_enabled": false,
+                    "has_credentials": false,
+                }
+            });
+        };
+
+        let long_connection_enabled = weixin::long_connection_enabled(&weixin_cfg);
+        let has_credentials = weixin::has_long_connection_credentials(&weixin_cfg);
+        let account_active = record.status.trim().eq_ignore_ascii_case("active");
+        let binding_count = resolved_binding_count;
+
+        let status = if !account_active {
+            LongConnectionRuntimeStatus::AccountInactive
+        } else if !long_connection_enabled {
+            LongConnectionRuntimeStatus::Disabled
+        } else if !has_credentials {
+            LongConnectionRuntimeStatus::MissingCredentials
+        } else {
+            LongConnectionRuntimeStatus::Running
+        };
+
+        return json!({
+            "weixin_long_connection": {
                 "status": status.as_str(),
                 "binding_count": binding_count,
                 "long_connection_enabled": long_connection_enabled,

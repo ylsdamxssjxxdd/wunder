@@ -15,6 +15,16 @@ const FEISHU_LONG_CONNECTION_STATUS_KEYS = {
   unknown: "channels.runtime.feishu.status.unknown",
 };
 
+const WEIXIN_LONG_CONNECTION_STATUS_KEYS = {
+  running: "channels.runtime.weixin.status.running",
+  waiting_binding: "channels.runtime.weixin.status.waitingBinding",
+  missing_credentials: "channels.runtime.weixin.status.missingCredentials",
+  disabled: "channels.runtime.weixin.status.disabled",
+  account_inactive: "channels.runtime.weixin.status.accountInactive",
+  not_configured: "channels.runtime.weixin.status.notConfigured",
+  unknown: "channels.runtime.weixin.status.unknown",
+};
+
 const ACTIVITY_FILTER_WINDOW_SECONDS = {
   "1h": 3600,
   "24h": 24 * 3600,
@@ -217,6 +227,30 @@ const formatFeishuLongConnectionRuntime = (runtime) => {
   return `${t("channels.runtime.feishu.longConnection")}: ${segments.join(" | ")}`;
 };
 
+const formatWeixinLongConnectionRuntime = (runtime) => {
+  if (!isPlainObject(runtime)) {
+    return "";
+  }
+  const status = String(runtime.status || "").trim().toLowerCase() || "unknown";
+  const statusKey = WEIXIN_LONG_CONNECTION_STATUS_KEYS[status] || WEIXIN_LONG_CONNECTION_STATUS_KEYS.unknown;
+  const segments = [t(statusKey)];
+  if (Number.isFinite(runtime.binding_count)) {
+    segments.push(t("channels.runtime.bindingCount", { count: runtime.binding_count }));
+  }
+  return `${t("channels.runtime.weixin.longConnection")}: ${segments.join(" | ")}`;
+};
+
+const formatChannelRuntime = (account) => {
+  const channel = String(account?.channel || "").trim().toLowerCase();
+  if (channel === "feishu") {
+    return formatFeishuLongConnectionRuntime(account.runtime?.feishu_long_connection);
+  }
+  if (channel === "weixin") {
+    return formatWeixinLongConnectionRuntime(account.runtime?.weixin_long_connection);
+  }
+  return "";
+};
+
 const resolveSelectedChannelAccount = () => state.channels.accounts[state.channels.selectedIndex] || null;
 
 const resolvePrimaryOwnerName = (account) => {
@@ -308,10 +342,7 @@ const renderChannelAccountDetail = () => {
   const title = [account.channel, account.account_id].filter(Boolean).join(" / ") || t("channels.detail.empty");
   elements.channelAccountDetailTitle.textContent = title;
 
-  const runtimeText =
-    String(account.channel || "").trim().toLowerCase() === "feishu"
-      ? formatFeishuLongConnectionRuntime(account.runtime?.feishu_long_connection)
-      : "";
+  const runtimeText = formatChannelRuntime(account);
   const statusText = isAccountActive(account) ? t("channels.status.active") : t("channels.status.disabled");
   const issueText = account.has_issue ? t("channels.status.issue") : "";
   elements.channelAccountDetailMeta.textContent = [statusText, issueText, runtimeText].filter(Boolean).join(" | ");
@@ -364,10 +395,7 @@ const renderChannelAccountList = () => {
 
     const statusText = isAccountActive(account) ? t("channels.status.active") : t("channels.status.disabled");
     const issueText = account.has_issue ? t("channels.status.issue") : "";
-    const runtimeText =
-      String(account.channel || "").trim().toLowerCase() === "feishu"
-        ? formatFeishuLongConnectionRuntime(account.runtime?.feishu_long_connection)
-        : "";
+    const runtimeText = formatChannelRuntime(account);
     const ownerText = formatOwnerSummary(account);
     const summarySegments = [
       statusText,

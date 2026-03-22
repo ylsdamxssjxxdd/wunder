@@ -118,7 +118,9 @@ impl BeeroomRealtimeHarness {
             .await
             .context("decode create group response failed")?;
         if !status.is_success() {
-            return Err(anyhow!("create group failed: status={status}, payload={payload}"));
+            return Err(anyhow!(
+                "create group failed: status={status}, payload={payload}"
+            ));
         }
         let created_id = payload
             .get("data")
@@ -333,7 +335,10 @@ async fn wait_for_ws_event(
             ));
         }
         let message = ws_recv_json(stream, remaining).await?;
-        let message_type = message.get("type").and_then(Value::as_str).unwrap_or_default();
+        let message_type = message
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if message_type == "error" {
             return Err(anyhow!("websocket returned error message: {message}"));
         }
@@ -363,7 +368,10 @@ async fn wait_for_ws_any_event_for_request(
         }
         match ws_recv_json(stream, remaining).await {
             Ok(message) => {
-                let message_type = message.get("type").and_then(Value::as_str).unwrap_or_default();
+                let message_type = message
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 if message_type == "error" {
                     return Err(anyhow!("websocket returned error message: {message}"));
                 }
@@ -400,13 +408,8 @@ async fn ws_watch_emits_resume_gap_then_forwards_new_event() -> Result<()> {
 
     ws_send_watch(&mut ws, "watch-gap", &group_id, after_event_id).await?;
 
-    let watching = wait_for_ws_event(
-        &mut ws,
-        "watch-gap",
-        "watching",
-        Duration::from_secs(3),
-    )
-    .await?;
+    let watching =
+        wait_for_ws_event(&mut ws, "watch-gap", "watching", Duration::from_secs(3)).await?;
     assert_eq!(watching["data"]["group_id"], json!(group_id.clone()));
     assert_eq!(watching["data"]["after_event_id"], json!(after_event_id));
 
@@ -418,7 +421,10 @@ async fn ws_watch_emits_resume_gap_then_forwards_new_event() -> Result<()> {
     )
     .await?;
     assert_eq!(sync_required["data"]["reason"], json!("resume_gap"));
-    assert_eq!(sync_required["data"]["after_event_id"], json!(after_event_id));
+    assert_eq!(
+        sync_required["data"]["after_event_id"],
+        json!(after_event_id)
+    );
     assert_eq!(
         sync_required["data"]["latest_event_id"],
         json!(latest_event_id)
@@ -465,22 +471,14 @@ async fn ws_watch_does_not_emit_resume_gap_without_gap_and_ignores_other_group_e
     assert_eq!(ready.get("type"), Some(&json!("ready")));
 
     ws_send_watch(&mut ws, "watch-no-gap", &target_group_id, latest_event_id).await?;
-    let watching = wait_for_ws_event(
-        &mut ws,
-        "watch-no-gap",
-        "watching",
-        Duration::from_secs(3),
-    )
-    .await?;
+    let watching =
+        wait_for_ws_event(&mut ws, "watch-no-gap", "watching", Duration::from_secs(3)).await?;
     assert_eq!(watching["data"]["after_event_id"], json!(latest_event_id));
 
     // No resume gap should be emitted when the cursor already equals latest_event_id.
-    let no_gap_event = wait_for_ws_any_event_for_request(
-        &mut ws,
-        "watch-no-gap",
-        Duration::from_millis(260),
-    )
-    .await?;
+    let no_gap_event =
+        wait_for_ws_any_event_for_request(&mut ws, "watch-no-gap", Duration::from_millis(260))
+            .await?;
     assert!(no_gap_event.is_none());
 
     harness
@@ -492,12 +490,9 @@ async fn ws_watch_does_not_emit_resume_gap_without_gap_and_ignores_other_group_e
         .await;
 
     // Cross-group events must not leak into the target watch stream.
-    let cross_group_event = wait_for_ws_any_event_for_request(
-        &mut ws,
-        "watch-no-gap",
-        Duration::from_millis(260),
-    )
-    .await?;
+    let cross_group_event =
+        wait_for_ws_any_event_for_request(&mut ws, "watch-no-gap", Duration::from_millis(260))
+            .await?;
     assert!(cross_group_event.is_none());
 
     harness

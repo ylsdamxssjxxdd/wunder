@@ -1932,3 +1932,26 @@
 - 方法：`GET`（SSE）
 - 返回：SSE 事件流；事件名包括 `benchmark_started`、`task_attempt_started`、`task_attempt_finished`、`task_aggregated`、`benchmark_progress`、`benchmark_log`、`benchmark_finished`。
 - 说明：仅能订阅仍在运行中的 benchmark；运行结束后需要改用明细接口查询最终结果。
+
+## 2026-03-22 增补：weixin（微信 iLink）渠道接入（P0）
+
+- 新增渠道 provider：`weixin`（独立于 `wechat` / `wechat_mp`）。
+- 运行形态：长轮询 worker（`ilink/bot/getupdates`），不是平台 webhook 回调模式。
+- 出站发送：`ilink/bot/sendmessage`，回复必须携带 `context_token`。
+- 配置入口：`/wunder/channels/accounts`，账号配置键为 `weixin.*`（`api_base`、`bot_token`、`ilink_bot_id` 等）。
+- 管理端运行态：`/wunder/admin/channels/accounts` 增加 `weixin_long_connection` 状态字段。
+
+## 2026-03-22 增补：weixin（微信 iLink）渠道接入（P1）
+
+- 媒体出站链路（已接入）：`ilink/bot/getuploadurl` + CDN `/upload`（AES-128-ECB + PKCS7），再通过 `ilink/bot/sendmessage` 发送 `image/file/video/voice` item。
+- 媒体入站链路（已接入）：`getupdates.msgs[*].item_list` 中的媒体项会下载 CDN `/download`，按 `media.aes_key`（兼容 base64(raw16) 与 base64(hex32)）解密后落地到工作区，并回写附件 URL。
+- `weixin` 新增可选配置键：
+  - `weixin.cdn_base`：CDN 基地址（默认 `https://novac2c.cdn.weixin.qq.com/c2c`）
+  - `weixin.bot_type`：二维码登录 bot_type（默认 `3`）
+- 新增二维码登录接口：
+  - `POST /wunder/channels/weixin/qr/start`
+    - 入参：`account_id?`、`api_base?`、`bot_type?`、`force?`
+    - 返回：`session_key`、`qrcode`、`qrcode_url`、`api_base`、`bot_type`
+  - `POST /wunder/channels/weixin/qr/wait`
+    - 入参：`session_key`、`api_base?`、`timeout_ms?`
+    - 返回：`connected`、`status`，若确认登录则附带 `bot_token`、`ilink_bot_id`、`ilink_user_id`、`api_base`

@@ -7,6 +7,36 @@
       </div>
     </div>
 
+    <div class="desktop-runtime-settings-runtime-hint">
+      {{ t('desktop.system.pythonRuntimeBundledOnly') }}
+    </div>
+    <div class="desktop-runtime-settings-runtime-subhint">
+      {{ t('desktop.system.pythonRuntimeBundledOnlyHint') }}
+    </div>
+    <div class="desktop-runtime-settings-runtime-meta">
+      <div class="desktop-runtime-settings-runtime-meta-item">
+        <span class="desktop-runtime-settings-runtime-meta-label">{{ t('messenger.settings.versionNumber') }}</span>
+        <span class="desktop-runtime-settings-runtime-meta-value">
+          {{ pythonRuntimeVersion || '-' }}
+        </span>
+      </div>
+      <div class="desktop-runtime-settings-runtime-meta-item">
+        <span class="desktop-runtime-settings-runtime-meta-label">{{ t('desktop.system.pythonInterpreterPath') }}</span>
+        <span
+          class="desktop-runtime-settings-runtime-meta-value desktop-runtime-settings-runtime-meta-value--mono"
+          :title="pythonRuntimeBin || '-'"
+        >
+          {{ pythonRuntimeBin || '-' }}
+        </span>
+      </div>
+      <div class="desktop-runtime-settings-runtime-meta-item">
+        <span class="desktop-runtime-settings-runtime-meta-label">{{ t('desktop.system.pythonInterpreterTitle') }}</span>
+        <span class="desktop-runtime-settings-runtime-meta-value">
+          {{ pythonRuntimeSourceLabel }}
+        </span>
+      </div>
+    </div>
+
     <div v-if="launchAtLoginSupported" class="messenger-settings-row">
       <div>
         <div class="messenger-settings-label">{{ t('desktop.system.startAtLogin') }}</div>
@@ -55,6 +85,7 @@ type DesktopLaunchAtLoginState = {
   enabled: boolean;
 };
 type DesktopRuntimeBridge = {
+  getPythonRuntimeInfo?: () => Promise<unknown> | unknown;
   getWindowCloseBehavior?: () => Promise<string | null> | string | null;
   setWindowCloseBehavior?: (behavior: string) => Promise<string | null> | string | null;
   getLaunchAtLogin?: () => Promise<unknown> | unknown;
@@ -74,6 +105,10 @@ const { t } = useI18n();
 
 const windowCloseBehavior = ref<WindowCloseBehavior>('tray');
 const windowCloseBehaviorLoading = ref(false);
+const pythonRuntimeBin = ref('');
+const pythonRuntimeVersion = ref('');
+const pythonRuntimeSource = ref('');
+const pythonRuntimeBundled = ref(true);
 const launchAtLoginEnabled = ref(false);
 const launchAtLoginLoading = ref(false);
 const launchAtLoginSupported = ref(false);
@@ -93,6 +128,16 @@ const windowCloseBehaviorSupported = computed(() => {
       typeof bridge.getWindowCloseBehavior === 'function' &&
       typeof bridge.setWindowCloseBehavior === 'function'
   );
+});
+const pythonRuntimeSourceLabel = computed(() => {
+  const source = String(pythonRuntimeSource.value || '').trim().toLowerCase();
+  if (source === 'env') return t('desktop.system.pythonInterpreterSource.env');
+  if (source === 'path') return t('desktop.system.pythonInterpreterSource.path');
+  if (source === 'venv') return t('desktop.system.pythonInterpreterSource.venv');
+  if (source === 'bundled' || pythonRuntimeBundled.value) {
+    return t('desktop.system.pythonInterpreterSource.bundled');
+  }
+  return t('desktop.system.pythonInterpreterSource.path');
 });
 
 function normalizeWindowCloseBehavior(value: unknown): WindowCloseBehavior {
@@ -127,6 +172,33 @@ function getDesktopRuntimeBridge(): DesktopRuntimeBridge | null {
   if (typeof window === 'undefined') return null;
   const candidate = (window as Window & { wunderDesktop?: DesktopRuntimeBridge }).wunderDesktop;
   return candidate && typeof candidate === 'object' ? candidate : null;
+}
+
+async function loadPythonRuntimeInfo() {
+  const bridge = getDesktopRuntimeBridge();
+  if (!bridge || typeof bridge.getPythonRuntimeInfo !== 'function') {
+    pythonRuntimeBin.value = '';
+    pythonRuntimeVersion.value = '';
+    pythonRuntimeSource.value = '';
+    pythonRuntimeBundled.value = true;
+    return;
+  }
+  try {
+    const payload = (await bridge.getPythonRuntimeInfo()) as Record<string, unknown> | null;
+    if (disposed) return;
+    const source = payload && typeof payload === 'object' ? payload : {};
+    pythonRuntimeBin.value = String(source.bin || '').trim();
+    pythonRuntimeVersion.value = String(source.version || '').trim();
+    pythonRuntimeSource.value = String(source.source || '').trim();
+    pythonRuntimeBundled.value = source.bundled !== false;
+  } catch (error) {
+    if (disposed) return;
+    console.error(error);
+    pythonRuntimeBin.value = '';
+    pythonRuntimeVersion.value = '';
+    pythonRuntimeSource.value = '';
+    pythonRuntimeBundled.value = true;
+  }
 }
 
 async function loadLaunchAtLoginState() {
@@ -233,6 +305,7 @@ async function handleWindowCloseBehaviorChange() {
 }
 
 onMounted(() => {
+  void loadPythonRuntimeInfo();
   void loadLaunchAtLoginState();
   void loadWindowCloseBehavior();
 });
@@ -245,6 +318,51 @@ onBeforeUnmount(() => {
 <style scoped>
 .desktop-runtime-settings-panel {
   min-height: 0;
+}
+
+.desktop-runtime-settings-runtime-hint {
+  margin-top: 2px;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.desktop-runtime-settings-runtime-subhint {
+  margin-top: 2px;
+  margin-bottom: 8px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.desktop-runtime-settings-runtime-meta {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.desktop-runtime-settings-runtime-meta-item {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.desktop-runtime-settings-runtime-meta-label {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.desktop-runtime-settings-runtime-meta-value {
+  color: #1f2937;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-runtime-settings-runtime-meta-value--mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
 .desktop-runtime-settings-row--block {
@@ -404,13 +522,17 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-candidates-title),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-candidate-path) {
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-candidate-path),
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-runtime-hint),
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-runtime-meta-value) {
   color: var(--tech-blue-text);
 }
 
 :global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-candidate-meta),
 :global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-path-picker-current),
-:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-path-picker-empty) {
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-path-picker-empty),
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-runtime-subhint),
+:global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-runtime-meta-label) {
   color: var(--tech-blue-muted);
 }
 
@@ -437,5 +559,11 @@ onBeforeUnmount(() => {
 
 :global(:root[data-user-theme='dark'][data-user-accent='tech-blue'] .desktop-runtime-settings-panel .el-input__inner) {
   color: var(--tech-blue-text);
+}
+
+@media (max-width: 900px) {
+  .desktop-runtime-settings-runtime-meta-item {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

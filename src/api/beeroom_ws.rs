@@ -550,7 +550,11 @@ mod tests {
             10,
             &same_group_duplicate
         ));
-        assert!(!should_forward_realtime_event("group-a", 10, &other_group_newer));
+        assert!(!should_forward_realtime_event(
+            "group-a",
+            10,
+            &other_group_newer
+        ));
     }
 
     #[test]

@@ -255,7 +255,11 @@ impl Orchestrator {
                     if obj.get("role").and_then(Value::as_str) != Some("system") {
                         return None;
                     }
-                    let content = obj.get("content").and_then(Value::as_str).unwrap_or("").trim();
+                    let content = obj
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .trim();
                     if artifact_prefixes
                         .iter()
                         .any(|prefix| content.starts_with(prefix))

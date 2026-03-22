@@ -25,7 +25,7 @@
         "validateImports": []
       },
       "common": {
-        "description": "Slim Win7-friendly common package set with networking, office/video document IO, fonts, map/radar tooling, database access, and plotting.",
+        "description": "Slim Win7-friendly common package set with networking, office/video document IO, fonts, map/weather tooling, database access, and plotting.",
         "requirementsPath": "packaging/python/requirements-win7-common.txt",
         "validateImports": [
           "requests",
@@ -54,7 +54,6 @@
           "netCDF4",
           "cftime",
           "h5py",
-          "pyart",
           "metpy",
           "seaborn",
           "plotly",

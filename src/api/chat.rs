@@ -1424,7 +1424,8 @@ async fn compact_session(
     }
 
     let agent_id = session_record.agent_id.clone();
-    let agent_record = fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), true).await?;
+    let agent_record =
+        fetch_agent_record(&state, &resolved.user, agent_id.as_deref(), true).await?;
     let agent_prompt = agent_record
         .as_ref()
         .map(|record| record.system_prompt.trim().to_string())
