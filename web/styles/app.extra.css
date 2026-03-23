@@ -15,12 +15,11 @@
   color: #f8fafc;
   padding: 10px 14px;
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  box-shadow: none;
   font-size: 13px;
   max-width: 300px;
   opacity: 1;
-  transition: opacity 0.2s ease, transform 0.2s ease;
-  transform: translateY(0);
+  transition: opacity 0.2s ease;
   pointer-events: auto;
 }
 
@@ -47,6 +46,22 @@
   padding: 1px 8px;
   font-size: 12px;
   cursor: pointer;
+  box-shadow: none;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+}
+
+.toast-action:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.92);
+}
+
+.toast-action:active:not(:disabled) {
+  opacity: 0.88;
+}
+
+.toast-action:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.95);
+  outline-offset: 2px;
 }
 
 .toast-hint {
@@ -58,7 +73,6 @@
 
 .toast.hide {
   opacity: 0;
-  transform: translateY(6px);
 }
 
 .toast.success {
@@ -223,6 +237,8 @@
   background: var(--a2ui-primary-color, #2563eb);
   color: #ffffff;
   cursor: pointer;
+  box-shadow: none;
+  transition: opacity 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
 }
 
 .a2ui-button--secondary {
@@ -231,8 +247,17 @@
   color: var(--a2ui-text-color);
 }
 
-.a2ui-button:hover {
-  opacity: 0.9;
+.a2ui-button:hover:not(:disabled) {
+  opacity: 0.95;
+}
+
+.a2ui-button:active:not(:disabled) {
+  opacity: 0.88;
+}
+
+.a2ui-button:focus-visible {
+  outline: 2px solid rgba(191, 219, 254, 0.95);
+  outline-offset: 2px;
 }
 
 .a2ui-image {
@@ -327,6 +352,21 @@
   border-radius: 999px;
   cursor: pointer;
   font-size: 12px;
+  box-shadow: none;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+}
+
+.a2ui-tab-button:hover:not(:disabled) {
+  border-color: rgba(191, 219, 254, 0.45);
+}
+
+.a2ui-tab-button:active:not(:disabled) {
+  opacity: 0.88;
+}
+
+.a2ui-tab-button:focus-visible {
+  outline: 2px solid rgba(191, 219, 254, 0.95);
+  outline-offset: 2px;
 }
 
 .a2ui-tab-button.is-active {
@@ -1117,4 +1157,47 @@
   .simlab-form-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.bridge-center-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.bridge-center-summary-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid #dbe4f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  margin-bottom: 14px;
+}
+
+.bridge-center-summary-note strong {
+  margin-right: 8px;
+}
+
+.bridge-center-list-item {
+  width: 100%;
+  text-align: left;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #e0edff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  font-size: 12px;
+  font-weight: 600;
 }

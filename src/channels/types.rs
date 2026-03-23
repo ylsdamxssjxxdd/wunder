@@ -200,6 +200,8 @@ pub struct XmppConfig {
         alias = "insecureSkipTlsVerify"
     )]
     pub trust_self_signed: Option<bool>,
+    #[serde(default, alias = "tlsEnabled", alias = "useTls")]
+    pub tls_enabled: Option<bool>,
     #[serde(default)]
     pub resource: Option<String>,
     #[serde(default, alias = "mucNick")]
@@ -233,6 +235,8 @@ pub struct XmppConfig {
     pub heartbeat_timeout_s: Option<u64>,
     #[serde(default, alias = "respondPing")]
     pub respond_ping: Option<bool>,
+    #[serde(default, alias = "customMessageFormatEnabled")]
+    pub custom_message_format_enabled: Option<bool>,
 }
 
 fn deserialize_option_u16_from_any<'de, D>(deserializer: D) -> Result<Option<u16>, D::Error>
@@ -486,6 +490,36 @@ mod tests {
         }));
         let xmpp = config.xmpp.expect("xmpp config should exist");
         assert_eq!(xmpp.trust_self_signed, Some(false));
+    }
+
+    #[test]
+    fn xmpp_tls_enabled_aliases_are_supported() {
+        let config = ChannelAccountConfig::from_value(&json!({
+            "xmpp": {
+                "tlsEnabled": false
+            }
+        }));
+        let xmpp = config.xmpp.expect("xmpp config should exist");
+        assert_eq!(xmpp.tls_enabled, Some(false));
+
+        let config = ChannelAccountConfig::from_value(&json!({
+            "xmpp": {
+                "useTls": true
+            }
+        }));
+        let xmpp = config.xmpp.expect("xmpp config should exist");
+        assert_eq!(xmpp.tls_enabled, Some(true));
+    }
+
+    #[test]
+    fn xmpp_custom_message_format_alias_is_supported() {
+        let config = ChannelAccountConfig::from_value(&json!({
+            "xmpp": {
+                "customMessageFormatEnabled": true
+            }
+        }));
+        let xmpp = config.xmpp.expect("xmpp config should exist");
+        assert_eq!(xmpp.custom_message_format_enabled, Some(true));
     }
 
     #[test]

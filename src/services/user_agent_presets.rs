@@ -216,18 +216,20 @@ pub async fn configured_preset_agents(state: &AppState) -> Vec<PresetAgent> {
     presets
 }
 
-pub fn snapshot_from_record(record: &UserAgentRecord) -> UserAgentPresetSnapshot {
-    preset_snapshot_from_record(record, &std::collections::HashSet::new())
+fn snapshot_from_record(
+    record: &UserAgentRecord,
+    skill_name_keys: &HashSet<String>,
+) -> UserAgentPresetSnapshot {
+    preset_snapshot_from_record(record, skill_name_keys)
 }
 
-pub async fn build_target_snapshot(
-    state: &AppState,
+fn build_target_snapshot_from_context(
     user: &UserAccountRecord,
     preset: &PresetAgent,
+    context: &crate::user_access::UserToolContext,
 ) -> UserAgentPresetSnapshot {
-    let context = build_user_tool_context(state, &user.user_id).await;
-    let allowed_tool_names = compute_allowed_tool_names(user, &context);
-    let skill_name_keys = collect_context_skill_names(&context);
+    let allowed_tool_names = compute_allowed_tool_names(user, context);
+    let skill_name_keys = collect_context_skill_names(context);
     let required_skill_names = curated_default_skill_names(&allowed_tool_names);
     let requested_tool_names = build_requested_tool_names_for_sync(
         &preset.tool_names,
@@ -265,6 +267,15 @@ pub async fn build_target_snapshot(
         normalize_optional_model_name(preset.model_name.as_deref()),
         &preset.status,
     )
+}
+
+pub async fn build_target_snapshot(
+    state: &AppState,
+    user: &UserAccountRecord,
+    preset: &PresetAgent,
+) -> UserAgentPresetSnapshot {
+    let context = build_user_tool_context(state, &user.user_id).await;
+    build_target_snapshot_from_context(user, preset, &context)
 }
 
 pub fn build_binding(
@@ -448,20 +459,28 @@ pub async fn sync_preset_across_users(
     for user in users {
         state.user_store.ensure_default_hive(&user.user_id)?;
         let agents = state.user_store.list_user_agents(&user.user_id)?;
-        let target = build_target_snapshot(state, &user, preset).await;
+        let context = build_user_tool_context(state, &user.user_id).await;
+        let skill_name_keys = collect_context_skill_names(&context);
+        let target = build_target_snapshot_from_context(&user, preset, &context);
         let maybe_record = find_preset_agent(&agents, preset).cloned();
         let Some(mut record) = maybe_record else {
             summary.missing_users += 1;
             if !dry_run {
                 let created = create_preset_agent_record(state, &user, preset, now_ts()).await;
                 state.user_store.upsert_user_agent(&created)?;
+                if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+                    tracing::warn!(
+                        "failed to sync inner-visible preset state for {}: {err}",
+                        user.user_id
+                    );
+                }
                 summary.created_agents += 1;
             }
             continue;
         };
 
         summary.linked_users += 1;
-        let current = snapshot_from_record(&record);
+        let current = snapshot_from_record(&record, &skill_name_keys);
         let baseline = baseline_snapshot(&record, preset, &target);
         let decision = plan_snapshot_sync(&current, &baseline, &target);
         let binding_matches = record
@@ -498,6 +517,12 @@ pub async fn sync_preset_across_users(
         if applied || !binding_matches || !was_bound {
             record.updated_at = now_ts();
             state.user_store.upsert_user_agent(&record)?;
+            if let Err(err) = state.inner_visible.sync_user_state(&user.user_id).await {
+                tracing::warn!(
+                    "failed to sync inner-visible preset state for {}: {err}",
+                    user.user_id
+                );
+            }
             if applied {
                 summary.updated_agents += 1;
             } else {
@@ -533,7 +558,57 @@ pub fn configs_by_preset_id(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_preset_id;
+    use super::{resolve_preset_id, snapshot_from_record};
+    use crate::schemas::AbilityKind;
+    use crate::storage::UserAgentRecord;
+    use std::collections::HashSet;
+
+    #[test]
+    fn snapshot_from_record_preserves_declared_skill_names_with_context_keys() {
+        let record = UserAgentRecord {
+            agent_id: "agent_snapshot_skill".to_string(),
+            user_id: "user_snapshot_skill".to_string(),
+            hive_id: "default".to_string(),
+            name: "Snapshot Skill".to_string(),
+            description: String::new(),
+            system_prompt: String::new(),
+            model_name: None,
+            tool_names: vec!["planner".to_string()],
+            declared_tool_names: Vec::new(),
+            declared_skill_names: vec!["planner".to_string()],
+            ability_items: Vec::new(),
+            preset_questions: Vec::new(),
+            access_level: "A".to_string(),
+            approval_mode: "full_auto".to_string(),
+            is_shared: false,
+            status: "active".to_string(),
+            icon: None,
+            sandbox_container_id: 1,
+            created_at: 0.0,
+            updated_at: 0.0,
+            preset_binding: None,
+        };
+        let mut skill_name_keys = HashSet::new();
+        skill_name_keys.insert("planner".to_string());
+
+        let snapshot = snapshot_from_record(&record, &skill_name_keys);
+
+        assert_eq!(snapshot.name, "Snapshot Skill");
+        assert_eq!(snapshot.description, "");
+        assert_eq!(snapshot.system_prompt, "");
+        assert_eq!(snapshot.model_name, None);
+        assert_eq!(snapshot.ability_items.len(), 1);
+        assert_eq!(snapshot.ability_items[0].runtime_name, "planner");
+        assert_eq!(snapshot.ability_items[0].kind, AbilityKind::Skill);
+        assert_eq!(snapshot.tool_names, vec!["planner".to_string()]);
+        assert!(snapshot.declared_tool_names.is_empty());
+        assert_eq!(snapshot.declared_skill_names, vec!["planner".to_string()]);
+        assert!(snapshot.preset_questions.is_empty());
+        assert_eq!(snapshot.approval_mode, "full_auto");
+        assert_eq!(snapshot.status, "active");
+        assert_eq!(snapshot.icon, None);
+        assert_eq!(snapshot.sandbox_container_id, 1);
+    }
 
     #[test]
     fn resolve_preset_id_generates_stable_prefixed_id() {

@@ -3,6 +3,9 @@ use crate::channels::types::{
     ChannelAttachment, ChannelMessage, ChannelOutboundMessage, ChannelPeer, ChannelSender,
     ChannelThread, XmppConfig,
 };
+use crate::channels::xmpp_custom_format::{
+    send_custom_format_message, try_parse_custom_format_message, CustomXmppMessage,
+};
 use crate::channels::xmpp_tls_connector::{XmppTlsSecurityMode, XmppTlsServerConfig};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -95,6 +98,7 @@ struct XmppRuntimeSettings {
     heartbeat_interval_s: u64,
     heartbeat_timeout_s: u64,
     respond_ping: bool,
+    custom_message_format_enabled: bool,
 }
 
 #[derive(Clone)]
@@ -570,7 +574,9 @@ fn build_runtime_settings(config: &XmppConfig) -> Result<XmppRuntimeSettings> {
     let server = {
         let host = optional_trimmed(config.host.as_deref()).map(str::to_string);
         let domain = optional_trimmed(config.domain.as_deref()).map(str::to_string);
-        let security_mode = if config.trust_self_signed.unwrap_or(true) {
+        let security_mode = if config.tls_enabled == Some(false) {
+            XmppTlsSecurityMode::Plain
+        } else if config.trust_self_signed.unwrap_or(true) {
             XmppTlsSecurityMode::TrustSelfSigned
         } else {
             XmppTlsSecurityMode::Strict
@@ -615,6 +621,7 @@ fn build_runtime_settings(config: &XmppConfig) -> Result<XmppRuntimeSettings> {
         heartbeat_interval_s,
         heartbeat_timeout_s,
         respond_ping: config.respond_ping.unwrap_or(true),
+        custom_message_format_enabled: config.custom_message_format_enabled.unwrap_or(false),
     })
 }
 
@@ -676,6 +683,24 @@ async fn send_outbound_stanza(
     settings: &XmppRuntimeSettings,
     outbound: &ChannelOutboundMessage,
 ) -> Result<()> {
+    if settings.custom_message_format_enabled && outbound.attachments.is_empty() {
+        let target = resolve_outbound_target(outbound);
+        let to_jid = resolve_outbound_target_jid(&target, &settings.login_domain)?;
+        let text = outbound_text(outbound)?;
+        if let Err(err) =
+            send_custom_format_message(client, &to_jid, &text, &outbound.peer.kind).await
+        {
+            // Keep interoperability by falling back to normal XMPP message stanza.
+            warn!(
+                "xmpp custom format outbound failed, fallback to standard stanza: account_domain={}, target={}, error={err}",
+                settings.login_domain,
+                to_jid
+            );
+        } else {
+            return Ok(());
+        }
+    }
+
     let stanza = build_outbound_stanza(settings, outbound)?;
 
     client
@@ -913,6 +938,16 @@ fn parse_stanza_message(
     bound_jid: Option<&Jid>,
     active_muc_nick: Option<&str>,
 ) -> Option<ChannelMessage> {
+    if let Some(custom) = try_parse_custom_format_message(&stanza) {
+        return build_channel_message_from_custom(
+            account_id,
+            custom,
+            &stanza,
+            settings,
+            active_muc_nick,
+        );
+    }
+
     let attachments = extract_stanza_attachments(&stanza);
     let message = Message::try_from(stanza).ok()?;
     parse_inbound_message(
@@ -923,6 +958,98 @@ fn parse_stanza_message(
         bound_jid,
         active_muc_nick,
     )
+}
+
+fn build_channel_message_from_custom(
+    account_id: &str,
+    custom: CustomXmppMessage,
+    stanza: &Element,
+    settings: &XmppRuntimeSettings,
+    active_muc_nick: Option<&str>,
+) -> Option<ChannelMessage> {
+    let from = Jid::from_str(&custom.from).ok()?;
+    let msg_type_attr = stanza.attr("type").unwrap_or("chat");
+    let is_group = msg_type_attr == "groupchat";
+
+    if is_group {
+        let sender_nick = from.resource().map(|resource| resource.as_str());
+        if let Some(nick) = sender_nick {
+            if active_muc_nick
+                .and_then(|value| optional_trimmed(Some(value)))
+                .is_some_and(|value| nick.eq_ignore_ascii_case(value))
+            {
+                return None;
+            }
+            if settings
+                .muc_nick
+                .as_deref()
+                .and_then(|value| optional_trimmed(Some(value)))
+                .is_some_and(|value| nick.eq_ignore_ascii_case(value))
+            {
+                return None;
+            }
+        }
+    } else if from
+        .to_bare()
+        .to_string()
+        .eq_ignore_ascii_case(&settings.login_bare)
+    {
+        return None;
+    }
+
+    let peer_kind = if is_group { "group" } else { "user" };
+    let peer_id = from.to_bare().to_string();
+    let sender = if is_group {
+        let sender_id = from
+            .resource()
+            .map(|value| value.as_str().to_string())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| from.to_string());
+        Some(ChannelSender {
+            id: sender_id.clone(),
+            name: Some(sender_id),
+        })
+    } else {
+        let sender_id = from.to_bare().to_string();
+        Some(ChannelSender {
+            id: sender_id,
+            name: from.resource().map(|value| value.as_str().to_string()),
+        })
+    };
+    let to = stanza
+        .attr("to")
+        .and_then(|value| Jid::from_str(value).ok());
+
+    let mut xmpp_meta = json!({
+        "from": from.to_string(),
+        "to": to.map(|jid| jid.to_string()),
+        "type": msg_type_attr,
+        "custom_format": true,
+    });
+    if let Some(file_transfer) = custom.file_transfer {
+        xmpp_meta["file_transfer"] = file_transfer;
+    }
+
+    Some(ChannelMessage {
+        channel: XMPP_CHANNEL.to_string(),
+        account_id: account_id.to_string(),
+        peer: ChannelPeer {
+            kind: peer_kind.to_string(),
+            id: peer_id,
+            name: None,
+        },
+        thread: None,
+        message_id: Some(custom.mid),
+        sender,
+        message_type: "text".to_string(),
+        text: Some(custom.text),
+        attachments: vec![],
+        location: None,
+        ts: None,
+        meta: Some(json!({
+            "xmpp": xmpp_meta,
+        })),
+    })
 }
 
 fn parse_inbound_message(
@@ -1282,6 +1409,7 @@ fn optional_trimmed(value: Option<&str>) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static XMPP_ENV_TEST_SEQ: AtomicU64 = AtomicU64::new(1);
@@ -1303,6 +1431,7 @@ mod tests {
             heartbeat_interval_s: 60,
             heartbeat_timeout_s: 20,
             respond_ping: true,
+            custom_message_format_enabled: false,
         }
     }
 
@@ -1613,5 +1742,59 @@ mod tests {
             }
             _ => panic!("expected srv connector"),
         }
+    }
+
+    #[test]
+    fn build_runtime_settings_supports_plain_mode() {
+        let config = XmppConfig {
+            jid: Some("bot@example.com".to_string()),
+            password: Some("secret".to_string()),
+            tls_enabled: Some(false),
+            ..XmppConfig::default()
+        };
+        let settings = build_runtime_settings(&config).unwrap();
+        match settings.server {
+            XmppTlsServerConfig::UseSrv { security_mode } => {
+                assert_eq!(security_mode, XmppTlsSecurityMode::Plain);
+            }
+            _ => panic!("expected srv connector"),
+        }
+    }
+
+    #[test]
+    fn parse_custom_format_message_builds_channel_message() {
+        let settings = build_test_runtime_settings();
+        let mid = "{550e8400-e29b-41d4-a716-446655440000}";
+        let html = format!("<html><body><p>hello custom</p></body></html>\n[mid]{mid}");
+        let first = BASE64.encode(&html);
+        let second = BASE64.encode(first);
+        let encoded = BASE64.encode(second);
+        let stanza = Element::builder("message", ns::DEFAULT_NS)
+            .attr("type", "chat")
+            .attr("from", "alice@example.com/mobile")
+            .attr("to", "bot@example.com/wunder")
+            .attr("mid", mid)
+            .attr("codec", "base64")
+            .append(
+                Element::builder("body", ns::DEFAULT_NS)
+                    .append(encoded)
+                    .build(),
+            )
+            .build();
+        let parsed = parse_stanza_message("acc1", stanza, &settings, None, None)
+            .expect("custom message should be parsed");
+        assert_eq!(parsed.text.as_deref(), Some("hello custom"));
+        assert_eq!(parsed.message_id.as_deref(), Some(mid));
+        assert_eq!(parsed.message_type, "text");
+        assert_eq!(parsed.peer.id, "alice@example.com");
+        assert_eq!(
+            parsed
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.get("xmpp"))
+                .and_then(|xmpp| xmpp.get("custom_format"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
     }
 }

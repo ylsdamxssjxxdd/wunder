@@ -1,12 +1,9 @@
 use crate::api::user_context::resolve_user;
 use crate::i18n;
 use crate::org_units;
+use crate::services::external as external_service;
 use crate::state::AppState;
-use crate::storage::{
-    normalize_sandbox_container_id, OrgUnitRecord, UserAccountRecord, UserAgentRecord,
-    DEFAULT_HIVE_ID,
-};
-use crate::user_access::{build_user_tool_context, compute_allowed_tool_names};
+use crate::storage::{OrgUnitRecord, UserAccountRecord, UserAgentRecord};
 use crate::user_store::UserStore;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -20,9 +17,9 @@ use serde_json::{json, Value};
 use sha2::Sha256;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
-use uuid::Uuid;
 
-const DEFAULT_EXTERNAL_LAUNCH_PASSWORD: &str = "123456";
+#[cfg(test)]
+const DEFAULT_EXTERNAL_LAUNCH_PASSWORD: &str = external_service::DEFAULT_EXTERNAL_LAUNCH_PASSWORD;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -725,130 +722,28 @@ async fn resolve_or_create_external_embed_agent(
     user: &UserAccountRecord,
     target_agent_name: &str,
 ) -> Result<UserAgentRecord, Response> {
-    let cleaned_name = target_agent_name.trim();
-    if cleaned_name.is_empty() {
-        return Err(error_response(
-            StatusCode::BAD_REQUEST,
-            "external embed agent is empty".to_string(),
-        ));
-    }
-    let all_agents = state
-        .user_store
-        .list_user_agents(&user.user_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let mut candidates = all_agents
-        .into_iter()
-        .filter(|item| item.name.trim() == cleaned_name)
-        .collect::<Vec<_>>();
-    candidates.sort_by(|left, right| right.updated_at.total_cmp(&left.updated_at));
-
-    let config = state.config_store.get().await;
-    let preset = config
-        .user_agents
-        .presets
-        .into_iter()
-        .find(|item| item.name.trim() == cleaned_name);
-
-    // Prefer the user's same-name custom agent before falling back to preset templates.
-    if let Some(preset) = preset.as_ref() {
-        if let Some(custom) = candidates
-            .iter()
-            .find(|item| !is_external_embed_preset_template(item, preset))
-            .cloned()
-        {
-            return Ok(custom);
-        }
-    }
-    if let Some(existing) = candidates.first().cloned() {
-        return Ok(existing);
-    }
-
-    let Some(preset) = preset else {
-        return Err(error_response(
-            StatusCode::NOT_FOUND,
-            format!("agent '{cleaned_name}' not found"),
-        ));
-    };
-
-    state
-        .user_store
-        .ensure_default_hive(&user.user_id)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    let context = build_user_tool_context(state, &user.user_id).await;
-    let mut tool_names = compute_allowed_tool_names(user, &context)
-        .into_iter()
-        .collect::<Vec<_>>();
-    tool_names.sort();
-
-    let icon_name = if preset.icon_name.trim().is_empty() {
-        "spark".to_string()
-    } else {
-        preset.icon_name.trim().to_string()
-    };
-    let icon_color = if preset.icon_color.trim().is_empty() {
-        "#94a3b8".to_string()
-    } else {
-        preset.icon_color.trim().to_string()
-    };
-    let icon = json!({
-        "name": icon_name,
-        "color": icon_color
-    })
-    .to_string();
-    let now = now_ts();
-    let created = UserAgentRecord {
-        agent_id: format!("agent_{}", Uuid::new_v4().simple()),
-        user_id: user.user_id.clone(),
-        hive_id: DEFAULT_HIVE_ID.to_string(),
-        name: cleaned_name.to_string(),
-        description: preset.description.trim().to_string(),
-        system_prompt: preset.system_prompt.trim().to_string(),
-        model_name: None,
-        ability_items: Vec::new(),
-        declared_tool_names: Vec::new(),
-        declared_skill_names: Vec::new(),
-        tool_names,
-        preset_questions: Vec::new(),
-        access_level: "A".to_string(),
-        approval_mode: "full_auto".to_string(),
-        is_shared: false,
-        status: "active".to_string(),
-        icon: Some(icon),
-        sandbox_container_id: normalize_sandbox_container_id(preset.sandbox_container_id),
-        created_at: now,
-        updated_at: now,
-        preset_binding: None,
-    };
-    state
-        .user_store
-        .upsert_user_agent(&created)
-        .map_err(|err| error_response(StatusCode::BAD_REQUEST, err.to_string()))?;
-    Ok(created)
-}
-
-fn is_external_embed_preset_template(
-    candidate: &UserAgentRecord,
-    preset: &crate::config::UserAgentPresetConfig,
-) -> bool {
-    let preset_description = preset.description.trim();
-    let preset_prompt = preset.system_prompt.trim();
-    candidate.description.trim() == preset_description
-        && candidate.system_prompt.trim() == preset_prompt
+    external_service::resolve_or_create_external_embed_agent(state, user, target_agent_name)
+        .await
+        .map_err(|err| {
+            error_response(
+                if err.to_string().contains("not found") {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::BAD_REQUEST
+                },
+                err.to_string(),
+            )
+        })
 }
 
 fn resolve_external_embed_target_agent_name(
     requested_agent_name: Option<&str>,
     default_agent_name: Option<String>,
 ) -> anyhow::Result<String> {
-    if let Some(agent_name) = requested_agent_name
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(agent_name.to_string());
-    }
-
-    default_agent_name
-        .ok_or_else(|| anyhow::anyhow!("external embed preset agent is not configured"))
+    external_service::resolve_external_embed_target_agent_name(
+        requested_agent_name,
+        default_agent_name,
+    )
 }
 
 async fn build_external_launch_result(
@@ -1258,68 +1153,7 @@ fn provision_external_user(
     unit_id: Option<String>,
     desktop_mode: bool,
 ) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
-    let normalized = UserStore::normalize_user_id(username)
-        .ok_or_else(|| anyhow::anyhow!("invalid username"))?;
-    if UserStore::is_default_admin(&normalized) {
-        return Err(anyhow::anyhow!("admin account is protected"));
-    }
-    let password = password.trim();
-    if password.is_empty() {
-        return Err(anyhow::anyhow!("password is empty"));
-    }
-
-    let mut created = false;
-    let mut updated = false;
-
-    let existing = user_store.get_user_by_username(&normalized)?;
-    if let Some(mut user) = existing {
-        if UserStore::is_admin(&user) {
-            return Err(anyhow::anyhow!("admin account is protected"));
-        }
-        if user.status.trim().to_lowercase() != "active" {
-            return Err(anyhow::anyhow!("user disabled"));
-        }
-
-        // Keep wunder password in sync with external system password.
-        if !UserStore::verify_password(&user.password_hash, password) {
-            user.password_hash = UserStore::hash_password(password)?;
-            user.updated_at = now_ts();
-            user_store.update_user(&user)?;
-            updated = true;
-        }
-
-        if sync_external_unit_binding(user_store, &mut user, unit_id.as_deref(), desktop_mode)? {
-            user.updated_at = now_ts();
-            user_store.update_user(&user)?;
-            updated = true;
-        }
-    } else {
-        let create_unit_id = if desktop_mode { None } else { unit_id.clone() };
-        let mut created_user = user_store.create_user(
-            &normalized,
-            None,
-            password,
-            Some("A"),
-            create_unit_id,
-            vec!["user".to_string()],
-            "active",
-            false,
-        )?;
-        if sync_external_unit_binding(
-            user_store,
-            &mut created_user,
-            unit_id.as_deref(),
-            desktop_mode,
-        )? {
-            created_user.updated_at = now_ts();
-            user_store.update_user(&created_user)?;
-            updated = true;
-        }
-        created = true;
-    }
-
-    let session = user_store.login(&normalized, password)?;
-    Ok((session, created, updated))
+    external_service::provision_external_user(user_store, username, password, unit_id, desktop_mode)
 }
 
 fn provision_external_launch_session(
@@ -1329,99 +1163,13 @@ fn provision_external_launch_session(
     unit_id: Option<String>,
     desktop_mode: bool,
 ) -> anyhow::Result<(crate::user_store::UserSession, bool, bool)> {
-    if let Some(password) = password {
-        let cleaned = password.trim();
-        if !cleaned.is_empty() {
-            return provision_external_user(user_store, username, cleaned, unit_id, desktop_mode);
-        }
-    }
-
-    let normalized = UserStore::normalize_user_id(username)
-        .ok_or_else(|| anyhow::anyhow!("invalid username"))?;
-    if UserStore::is_default_admin(&normalized) {
-        return Err(anyhow::anyhow!("admin account is protected"));
-    }
-
-    let mut created = false;
-    let mut updated = false;
-    let existing = user_store.get_user_by_username(&normalized)?;
-    let user = if let Some(mut user) = existing {
-        if UserStore::is_admin(&user) {
-            return Err(anyhow::anyhow!("admin account is protected"));
-        }
-        if user.status.trim().to_lowercase() != "active" {
-            return Err(anyhow::anyhow!("user disabled"));
-        }
-        if sync_external_unit_binding(user_store, &mut user, unit_id.as_deref(), desktop_mode)? {
-            user.updated_at = now_ts();
-            user_store.update_user(&user)?;
-            updated = true;
-        }
-        user
-    } else {
-        let create_unit_id = if desktop_mode { None } else { unit_id.clone() };
-        let mut created_user = user_store.create_user(
-            &normalized,
-            None,
-            DEFAULT_EXTERNAL_LAUNCH_PASSWORD,
-            Some("A"),
-            create_unit_id,
-            vec!["user".to_string()],
-            "active",
-            false,
-        )?;
-        if sync_external_unit_binding(
-            user_store,
-            &mut created_user,
-            unit_id.as_deref(),
-            desktop_mode,
-        )? {
-            created_user.updated_at = now_ts();
-            user_store.update_user(&created_user)?;
-            updated = true;
-        }
-        created = true;
-        created_user
-    };
-    let token = user_store.create_session_token(&user.user_id)?;
-    Ok((
-        crate::user_store::UserSession { user, token },
-        created,
-        updated,
-    ))
-}
-
-fn sync_external_unit_binding(
-    user_store: &UserStore,
-    user: &mut UserAccountRecord,
-    unit_id: Option<&str>,
-    desktop_mode: bool,
-) -> anyhow::Result<bool> {
-    let Some(next_unit_id) = unit_id.map(str::trim).filter(|value| !value.is_empty()) else {
-        return Ok(false);
-    };
-    if user.unit_id.as_deref() == Some(next_unit_id) {
-        return Ok(false);
-    }
-    if desktop_mode {
-        user.unit_id = Some(next_unit_id.to_string());
-        return Ok(true);
-    }
-
-    let previous_level = user
-        .unit_id
-        .as_deref()
-        .and_then(|id| user_store.get_org_unit(id).ok().flatten())
-        .map(|unit| unit.level);
-    let next_unit = user_store
-        .get_org_unit(next_unit_id)?
-        .ok_or_else(|| anyhow::anyhow!("unit not found"))?;
-    let previous_default = UserStore::default_daily_quota_by_level(previous_level);
-    user.unit_id = Some(next_unit.unit_id.clone());
-    if user.daily_quota == previous_default {
-        user.daily_quota = UserStore::default_daily_quota_by_level(Some(next_unit.level));
-    }
-    Ok(true)
+    external_service::provision_external_launch_session(
+        user_store,
+        username,
+        password,
+        unit_id,
+        desktop_mode,
+    )
 }
 
 fn localize_register_error(err: &anyhow::Error) -> String {

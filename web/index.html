@@ -61,6 +61,10 @@
                 <i class="fa-solid fa-link"></i>
                 <span data-i18n="panel.channels">渠道监控</span>
               </button>
+              <button id="navBridgeCenter" class="nav-btn">
+                <i class="fa-solid fa-tower-observation"></i>
+                <span>舰桥中心</span>
+              </button>
             </div>
           </div>
           <div class="nav-group" data-group="agent">
@@ -619,6 +623,10 @@
                   <div id="presetAgentDetailMeta" class="muted"></div>
                 </div>
                 <div class="detail-actions">
+                  <button id="presetAgentSaveBtn" class="btn-with-icon" type="button">
+                    <i class="fa-solid fa-floppy-disk"></i>
+                    <span data-i18n="common.save">保存</span>
+                  </button>
                   <button id="presetAgentExportBtn" class="secondary btn-with-icon" type="button">
                     <i class="fa-solid fa-file-export"></i>
                     <span data-i18n="presetAgents.action.exportWorkerCard">导出工蜂卡</span>
@@ -2140,6 +2148,292 @@
             </div>
           </div>
         </section>
+        <section id="bridgeCenterPanel" class="panel">
+          <div class="list-header">
+            <h1>舰桥中心</h1>
+            <div class="header-actions">
+              <button id="bridgeCenterRefreshBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-arrows-rotate"></i>
+                <span>刷新</span>
+              </button>
+              <button id="bridgeCenterNewBtn" class="secondary btn-with-icon">
+                <i class="fa-solid fa-plus"></i>
+                <span>新建节点</span>
+              </button>
+              <button id="bridgeCenterDeleteBtn" class="danger btn-with-icon">
+                <i class="fa-solid fa-trash"></i>
+                <span>删除节点</span>
+              </button>
+            </div>
+          </div>
+          <div class="tips">
+            管理员只需要在舰桥中心中新建一个舰桥节点，配置默认预设和节点专属接入渠道。外部用户首次发消息时，系统会自动开户、默认密码 123456、自动挂到选定预设智能体，并通过原渠道回送结果。
+          </div>
+          <div class="management-layout">
+            <div class="management-list">
+              <div class="list-header">
+                <label>舰桥节点列表</label>
+                <div id="bridgeCenterSelectionMeta" class="muted">0 个节点</div>
+              </div>
+              <div id="bridgeCenterList" class="list-body"></div>
+            </div>
+            <div class="management-detail">
+              <div class="detail-header">
+                <div>
+                  <div id="bridgeCenterCurrentName" class="detail-title">未选择舰桥节点</div>
+                  <div id="bridgeCenterOwner" class="muted">先创建舰桥节点，再配置接入渠道。</div>
+                </div>
+                <div class="detail-actions">
+                  <button id="bridgeCenterConfigBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>中心配置</span>
+                  </button>
+                  <button id="bridgeCenterChannelsBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-link"></i>
+                    <span>接入渠道</span>
+                  </button>
+                </div>
+              </div>
+              <div class="bridge-center-summary-grid">
+                <div class="metric-card">
+                  <label>节点状态</label>
+                  <strong id="bridgeCenterSummaryStatus">-</strong>
+                </div>
+                <div class="metric-card">
+                  <label>默认预设</label>
+                  <strong id="bridgeCenterSummaryPreset">-</strong>
+                </div>
+                <div class="metric-card">
+                  <label>目标单位</label>
+                  <strong id="bridgeCenterSummaryUnit">-</strong>
+                </div>
+                <div class="metric-card">
+                  <label>接入渠道</label>
+                  <strong id="bridgeCenterSummaryChannels">0</strong>
+                </div>
+                <div class="metric-card">
+                  <label>自动路由</label>
+                  <strong id="bridgeCenterSummaryRoutes">0</strong>
+                </div>
+                <div class="metric-card">
+                  <label>活跃路由</label>
+                  <strong id="bridgeCenterSummaryActiveRoutes">0</strong>
+                </div>
+              </div>
+              <div class="bridge-center-summary-note">
+                <div>
+                  <strong>默认密码</strong>
+                  <span id="bridgeCenterSummaryPassword">123456</span>
+                </div>
+                <div id="bridgeCenterSummaryDescription" class="muted">该节点暂无说明。</div>
+              </div>
+              <div class="channel-detail-section">
+                <div class="detail-header">
+                  <div>
+                    <div class="detail-title">接入渠道</div>
+                    <div class="muted">这里只展示当前舰桥节点的接入状态；新增、编辑和删除都在“接入渠道”弹窗内完成。</div>
+                  </div>
+                </div>
+                <div class="monitor-table-scroll">
+                  <table class="monitor-table">
+                    <thead>
+                      <tr>
+                        <th>渠道</th>
+                        <th>账号</th>
+                        <th>显示名</th>
+                        <th>配置</th>
+                        <th>线程策略</th>
+                        <th>路由数</th>
+                        <th>更新时间</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bridgeCenterAccountList"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="channel-detail-section">
+                <div class="detail-header">
+                  <div class="detail-title">自动分配路由</div>
+                  <div class="detail-actions">
+                    <select id="bridgeCenterRouteStatusFilter">
+                      <option value="">全部状态</option>
+                      <option value="active">active</option>
+                      <option value="paused">paused</option>
+                      <option value="blocked">blocked</option>
+                      <option value="error">error</option>
+                    </select>
+                    <button id="bridgeCenterRoutesRefreshBtn" class="secondary btn-with-icon" type="button">
+                      <i class="fa-solid fa-arrows-rotate"></i>
+                      <span>刷新路由</span>
+                    </button>
+                    <button id="bridgeCenterRouteActivateBtn" class="secondary" type="button">激活</button>
+                    <button id="bridgeCenterRoutePauseBtn" class="secondary" type="button">暂停</button>
+                    <button id="bridgeCenterRouteBlockBtn" class="danger" type="button">封禁</button>
+                  </div>
+                </div>
+                <div class="monitor-table-scroll">
+                  <table class="monitor-table">
+                    <thead>
+                      <tr>
+                        <th>外部用户</th>
+                        <th>Wunder 用户</th>
+                        <th>智能体</th>
+                        <th>状态</th>
+                        <th>最近活动</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bridgeCenterRouteList"></tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="channel-detail-section">
+                <div class="detail-title">最近投递日志</div>
+                <div class="monitor-table-scroll">
+                  <table class="monitor-table">
+                    <thead>
+                      <tr>
+                        <th>方向/阶段</th>
+                        <th>状态</th>
+                        <th>摘要</th>
+                        <th>时间</th>
+                      </tr>
+                    </thead>
+                    <tbody id="bridgeCenterLogList"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <div id="bridgeCenterConfigModal" class="modal">
+          <div class="modal-card">
+            <div class="modal-header">
+              <div id="bridgeCenterConfigModalTitle" class="detail-title">舰桥节点配置</div>
+              <button id="bridgeCenterConfigClose" class="icon-btn" type="button">
+                <i class="fa-solid fa-xmark"></i>
+              </button>
+            </div>
+            <div class="modal-body">
+              <div class="settings-grid settings-grid--auto">
+                <div class="form-row">
+                  <label for="bridgeCenterConfigName">舰桥节点名称</label>
+                  <input id="bridgeCenterConfigName" type="text" placeholder="售前咨询节点" />
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterConfigStatus">状态</label>
+                  <select id="bridgeCenterConfigStatus">
+                    <option value="active">active</option>
+                    <option value="paused">paused</option>
+                    <option value="disabled">disabled</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterConfigPreset">默认预设智能体</label>
+                  <select id="bridgeCenterConfigPreset"></select>
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterConfigUnit">目标单位</label>
+                  <select id="bridgeCenterConfigUnit"></select>
+                </div>
+                <div class="form-row form-row-span">
+                  <label for="bridgeCenterConfigDescription">说明</label>
+                  <textarea id="bridgeCenterConfigDescription" rows="3" placeholder="说明这个舰桥节点面向的业务场景"></textarea>
+                </div>
+              </div>
+              <div id="bridgeCenterConfigOwner" class="muted">保存后即可继续配置该节点接入渠道</div>
+            </div>
+            <div class="modal-actions">
+              <button id="bridgeCenterConfigCancel" class="secondary" type="button">取消</button>
+              <button id="bridgeCenterConfigSaveBtn" class="primary btn-with-icon" type="button">
+                <i class="fa-solid fa-floppy-disk"></i>
+                <span>保存节点</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div id="bridgeCenterChannelModal" class="modal">
+          <div class="modal-card modal-card-lg">
+            <div class="modal-header">
+              <div>
+                <div id="bridgeCenterChannelModalTitle" class="detail-title">接入渠道</div>
+                <div id="bridgeCenterChannelEditorHint" class="muted">直接在这里配置节点专属渠道账号。</div>
+              </div>
+              <div class="modal-header-actions">
+                <span id="bridgeCenterChannelOwnedBadge" class="status-chip">新渠道</span>
+                <button id="bridgeCenterChannelClose" class="icon-btn" type="button">
+                  <i class="fa-solid fa-xmark"></i>
+                </button>
+              </div>
+            </div>
+            <div class="modal-body">
+              <div class="detail-header">
+                <div class="muted">支持所有渠道。字段结构按用户侧渠道设置对齐，复杂渠道直接填写 JSON 配置。</div>
+                <div class="detail-actions">
+                  <button id="bridgeCenterChannelNewBtn" class="secondary btn-with-icon" type="button">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>新增渠道</span>
+                  </button>
+                </div>
+              </div>
+              <div class="settings-grid settings-grid--auto">
+                <div class="form-row">
+                  <label for="bridgeCenterChannelFormChannel">渠道</label>
+                  <select id="bridgeCenterChannelFormChannel"></select>
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterChannelFormAccountId">账号 ID</label>
+                  <input id="bridgeCenterChannelFormAccountId" type="text" placeholder="可留空，保存时自动生成" />
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterChannelFormAccountName">显示名称</label>
+                  <input id="bridgeCenterChannelFormAccountName" type="text" placeholder="例如 客服主账号 / 企业助手" />
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterChannelFormPeerKind">默认会话类型</label>
+                  <select id="bridgeCenterChannelFormPeerKind">
+                    <option value="group">group</option>
+                    <option value="user">user</option>
+                  </select>
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterChannelPresetOverride">预设覆盖</label>
+                  <select id="bridgeCenterChannelPresetOverride"></select>
+                </div>
+                <div class="form-row">
+                  <label for="bridgeCenterChannelThreadStrategy">线程策略</label>
+                  <select id="bridgeCenterChannelThreadStrategy">
+                    <option value="main_thread">main_thread</option>
+                    <option value="per_peer">per_peer</option>
+                    <option value="hybrid">hybrid</option>
+                  </select>
+                </div>
+                <div class="form-row form-row-span">
+                  <label for="bridgeCenterChannelStatusReason">状态说明</label>
+                  <input id="bridgeCenterChannelStatusReason" type="text" placeholder="停用原因 / 备注" />
+                </div>
+                <div class="form-row form-row-span">
+                  <label class="checkbox-row">
+                    <input id="bridgeCenterChannelFormEnabled" type="checkbox" checked />
+                    <span>启用该接入渠道</span>
+                  </label>
+                </div>
+                <div class="form-row form-row-span">
+                  <label for="bridgeCenterChannelConfig">JSON 配置</label>
+                  <textarea id="bridgeCenterChannelConfig" rows="10" placeholder='{\n  "xmpp": {\n    "jid": "bot@example.com",\n    "password": "******"\n  }\n}'></textarea>
+                </div>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button id="bridgeCenterChannelDeleteBtn" class="danger" type="button">删除</button>
+              <button id="bridgeCenterChannelCancel" class="secondary" type="button">关闭</button>
+              <button id="bridgeCenterChannelSaveBtn" class="primary btn-with-icon" type="button">
+                <i class="fa-solid fa-floppy-disk"></i>
+                <span>保存渠道</span>
+              </button>
+            </div>
+          </div>
+        </div>
         <section id="builtinPanel" class="panel">
           <div class="list-header">
             <h1 data-i18n="panel.toolManager">工具管理</h1>

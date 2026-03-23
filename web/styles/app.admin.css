@@ -188,18 +188,16 @@
   border-radius: 8px;
   background: #e2e8f0;
   color: #1f2937;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  box-shadow: none;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 }
 
 #lspPanel .lsp-editor-actions .btn-with-icon.icon-only:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+  opacity: 0.96;
 }
 
 #lspPanel .lsp-editor-actions .btn-with-icon.icon-only:active:not(:disabled) {
-  transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  opacity: 0.88;
 }
 
 #lspPanel .lsp-editor-actions .btn-with-icon.icon-only:focus-visible {
@@ -844,7 +842,7 @@
 
 .api-docs-endpoint:hover {
   border-color: #cbd5f5;
-  box-shadow: 0 2px 8px rgba(30, 64, 175, 0.08);
+  background: #f8fafc;
 }
 
 .api-docs-endpoint:focus-visible {
@@ -855,7 +853,6 @@
 .api-docs-endpoint.is-active {
   border-color: #3a7afe;
   background: #eff6ff;
-  box-shadow: 0 0 0 1px rgba(58, 122, 254, 0.4);
 }
 
 .api-docs-method {
@@ -1673,18 +1670,17 @@
   flex-direction: column;
   gap: 6px;
   color: #1f2937;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .external-link-item:hover {
   border-color: #93c5fd;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
-  transform: translateY(-1px);
+  background: #f8fafc;
 }
 
 .external-link-item.is-active {
   border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+  background: #eff6ff;
 }
 
 .external-link-item-title {
@@ -1908,8 +1904,8 @@
 
 .external-link-icon-option.is-active {
   border-color: #3b82f6;
+  background: #eff6ff;
   color: #2563eb;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
 }
 
 .external-link-icon-option:focus-visible {
@@ -1982,18 +1978,17 @@
   flex-direction: column;
   gap: 6px;
   color: #1f2937;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 }
 
 .preset-agent-item:hover {
   border-color: #93c5fd;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
-  transform: translateY(-1px);
+  background: #f8fafc;
 }
 
 .preset-agent-item.is-active {
   border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18);
+  background: #eff6ff;
 }
 
 .preset-agent-item-title {
@@ -2101,17 +2096,34 @@
   font-weight: 600;
   padding: 6px 12px;
   cursor: pointer;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 
-.preset-agent-tab:hover {
+.preset-agent-tab:hover:not(:disabled) {
   border-color: #93c5fd;
+  background: #ffffff;
+  color: #1e293b;
+}
+
+.preset-agent-tab:active:not(:disabled) {
+  opacity: 0.88;
+}
+
+.preset-agent-tab:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.95);
+  outline-offset: 2px;
+}
+
+.preset-agent-tab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 .preset-agent-tab.is-active {
   border-color: #3b82f6;
   background: #eff6ff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.14);
   color: #1e3a8a;
 }
 
@@ -2464,20 +2476,35 @@
   border: 1px solid #d8e1ef;
   background: #f8fafc;
   color: #334155;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
 }
 
-.tool-manager-shortcuts .tool-manager-shortcut:hover {
+.tool-manager-shortcuts .tool-manager-shortcut:hover:not(:disabled) {
   border-color: #93c5fd;
   background: #f1f5f9;
   color: #1e293b;
+}
+
+.tool-manager-shortcuts .tool-manager-shortcut:active:not(:disabled) {
+  opacity: 0.9;
+}
+
+.tool-manager-shortcuts .tool-manager-shortcut:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.95);
+  outline-offset: 2px;
+}
+
+.tool-manager-shortcuts .tool-manager-shortcut:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
 }
 
 .tool-manager-shortcuts .tool-manager-shortcut.is-active {
   border-color: #3b82f6;
   background: #e8f0ff;
   color: #1d4ed8;
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.2);
 }
 
 .tool-manager-shortcuts .tool-manager-shortcut.is-active i {
@@ -3623,13 +3650,12 @@
 
 .channels-list-pane .list-item:hover {
   border-color: #93c5fd;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12);
+  background: #f8fafc;
 }
 
 .channels-list-pane .list-item.active {
   border-color: #3b82f6;
   background: #eff6ff;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.16);
 }
 
 .channels-detail-pane {
@@ -4536,6 +4562,29 @@
   color: #1f2937;
   cursor: pointer;
   font-size: 13px;
+  box-shadow: none;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+}
+
+.tab-btn:hover:not(:disabled):not(.active) {
+  border-color: #93c5fd;
+  background: #ffffff;
+}
+
+.tab-btn:active:not(:disabled) {
+  opacity: 0.88;
+}
+
+.tab-btn:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.95);
+  outline-offset: 2px;
+}
+
+.tab-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 .tab-btn.active {
@@ -4562,6 +4611,35 @@
   color: #64748b;
   cursor: pointer;
   font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  box-shadow: none;
+  transition: background 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+}
+
+.icon-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.14);
+  color: #1d4ed8;
+}
+
+.icon-btn:active:not(:disabled) {
+  opacity: 0.88;
+}
+
+.icon-btn:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.95);
+  outline-offset: 2px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
 }
 
 /* Debug stability runner */

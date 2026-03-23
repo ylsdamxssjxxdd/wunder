@@ -1,5 +1,6 @@
 // 存储模块：封装 SQLite/Postgres 持久化读写，提供统一的历史/监控/记忆接口。
 
+mod bridge;
 mod postgres;
 mod sqlite;
 
@@ -11,6 +12,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+pub use bridge::*;
 pub use postgres::PostgresStorage;
 pub use sqlite::SqliteStorage;
 
@@ -1365,6 +1367,67 @@ pub trait StorageBackend: Send + Sync {
         &self,
         params: UpdateChannelOutboxStatusParams<'_>,
     ) -> Result<()>;
+
+    fn upsert_bridge_center(&self, record: &BridgeCenterRecord) -> Result<()>;
+    fn get_bridge_center(&self, center_id: &str) -> Result<Option<BridgeCenterRecord>>;
+    fn get_bridge_center_by_code(&self, code: &str) -> Result<Option<BridgeCenterRecord>>;
+    fn list_bridge_centers(
+        &self,
+        query: ListBridgeCentersQuery<'_>,
+    ) -> Result<(Vec<BridgeCenterRecord>, i64)>;
+    fn delete_bridge_center(&self, center_id: &str) -> Result<i64>;
+
+    fn upsert_bridge_center_account(&self, record: &BridgeCenterAccountRecord) -> Result<()>;
+    fn get_bridge_center_account(
+        &self,
+        center_account_id: &str,
+    ) -> Result<Option<BridgeCenterAccountRecord>>;
+    fn get_bridge_center_account_by_channel_account(
+        &self,
+        channel: &str,
+        account_id: &str,
+    ) -> Result<Option<BridgeCenterAccountRecord>>;
+    fn list_bridge_center_accounts(
+        &self,
+        query: ListBridgeCenterAccountsQuery<'_>,
+    ) -> Result<(Vec<BridgeCenterAccountRecord>, i64)>;
+    fn delete_bridge_center_account(&self, center_account_id: &str) -> Result<i64>;
+    fn delete_bridge_center_accounts_by_center(&self, center_id: &str) -> Result<i64>;
+
+    fn upsert_bridge_user_route(&self, record: &BridgeUserRouteRecord) -> Result<()>;
+    fn get_bridge_user_route(&self, route_id: &str) -> Result<Option<BridgeUserRouteRecord>>;
+    fn get_bridge_user_route_by_identity(
+        &self,
+        center_account_id: &str,
+        external_identity_key: &str,
+    ) -> Result<Option<BridgeUserRouteRecord>>;
+    fn list_bridge_user_routes(
+        &self,
+        query: ListBridgeUserRoutesQuery<'_>,
+    ) -> Result<(Vec<BridgeUserRouteRecord>, i64)>;
+    fn delete_bridge_user_route(&self, route_id: &str) -> Result<i64>;
+    fn delete_bridge_user_routes_by_center(&self, center_id: &str) -> Result<i64>;
+    fn delete_bridge_user_routes_by_center_account(&self, center_account_id: &str) -> Result<i64>;
+
+    fn insert_bridge_delivery_log(&self, record: &BridgeDeliveryLogRecord) -> Result<()>;
+    fn list_bridge_delivery_logs(
+        &self,
+        query: ListBridgeDeliveryLogsQuery<'_>,
+    ) -> Result<Vec<BridgeDeliveryLogRecord>>;
+    fn delete_bridge_delivery_logs_by_center(&self, center_id: &str) -> Result<i64>;
+    fn delete_bridge_delivery_logs_by_center_account(&self, center_account_id: &str)
+        -> Result<i64>;
+
+    fn insert_bridge_route_audit_log(&self, record: &BridgeRouteAuditLogRecord) -> Result<()>;
+    fn list_bridge_route_audit_logs(
+        &self,
+        query: ListBridgeRouteAuditLogsQuery<'_>,
+    ) -> Result<Vec<BridgeRouteAuditLogRecord>>;
+    fn delete_bridge_route_audit_logs_by_center(&self, center_id: &str) -> Result<i64>;
+    fn delete_bridge_route_audit_logs_by_center_account(
+        &self,
+        center_account_id: &str,
+    ) -> Result<i64>;
 
     fn upsert_gateway_client(&self, record: &GatewayClientRecord) -> Result<()>;
     fn list_gateway_clients(&self, status: Option<&str>) -> Result<Vec<GatewayClientRecord>>;

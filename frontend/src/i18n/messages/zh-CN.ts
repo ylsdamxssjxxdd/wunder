@@ -672,6 +672,7 @@ export default {
   'channels.form.weixin.routeTag': '路由标签（可选）',
   'channels.form.weixin.routeTagPlaceholder': '用于路由/观测打标',
   'channels.form.weixin.qrTitle': '扫码登录',
+  'channels.form.weixin.advancedToggle': '高级选项',
   'channels.form.weixin.qrGenerate': '生成二维码',
   'channels.form.weixin.qrWait': '等待确认',
   'channels.form.weixin.qrOpenLink': '打开二维码图片',

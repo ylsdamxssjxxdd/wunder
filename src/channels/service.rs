@@ -33,6 +33,10 @@ use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::WunderRequest;
 use crate::services::agent_runtime::AgentRuntime;
+use crate::services::bridge::{
+    append_bridge_meta, log_bridge_delivery, resolve_inbound_bridge_route,
+    touch_bridge_route_after_outbound, BridgeRouteResolution, BridgeRuntime,
+};
 use crate::storage::{
     ChannelAccountRecord, ChannelBindingRecord, ChannelMessageRecord, ChannelOutboxRecord,
     ChannelSessionRecord, ChatSessionRecord, ListChannelUserBindingsQuery, StorageBackend,
@@ -172,13 +176,11 @@ enum ChannelSessionStrategy {
 
 impl ChannelSessionStrategy {
     fn from_config(config: &Config) -> Self {
-        match config
-            .channels
-            .session_strategy
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
+        Self::from_raw(&config.channels.session_strategy)
+    }
+
+    fn from_raw(raw: &str) -> Self {
+        match raw.trim().to_ascii_lowercase().as_str() {
             SESSION_STRATEGY_PER_PEER => Self::PerPeer,
             SESSION_STRATEGY_HYBRID => Self::Hybrid,
             SESSION_STRATEGY_MAIN_THREAD => Self::MainThread,
@@ -228,6 +230,7 @@ pub struct ChannelHandleResult {
 pub struct ChannelHubSharedState {
     pub monitor: Arc<MonitorState>,
     pub approval_registry: Arc<PendingApprovalRegistry>,
+    pub bridge_runtime: BridgeRuntime,
 }
 
 #[derive(Clone)]
@@ -239,6 +242,7 @@ pub struct ChannelHub {
     user_store: Arc<UserStore>,
     workspace: Arc<WorkspaceManager>,
     monitor: Arc<MonitorState>,
+    bridge_runtime: BridgeRuntime,
     rate_limiter: ChannelRateLimiter,
     adapter_registry: ChannelAdapterRegistry,
     http: reqwest::Client,
@@ -268,6 +272,7 @@ impl ChannelHub {
             user_store,
             workspace,
             monitor: shared_state.monitor,
+            bridge_runtime: shared_state.bridge_runtime,
             rate_limiter: ChannelRateLimiter::new(),
             adapter_registry: build_default_channel_adapter_registry(),
             http: reqwest::Client::new(),
@@ -562,6 +567,33 @@ impl ChannelHub {
                 resolved_binding = resolve_binding(&bindings, &fallback_message);
             }
         }
+        let mut bound_user_id = self
+            .get_channel_user_binding(
+                &message.channel,
+                &message.account_id,
+                &message.peer.kind,
+                &message.peer.id,
+            )
+            .await?
+            .map(|record| record.user_id);
+        if bound_user_id.is_none() {
+            if let Some(sender_id) = sender_fallback_id.as_deref() {
+                bound_user_id = self
+                    .get_channel_user_binding(
+                        &message.channel,
+                        &message.account_id,
+                        &message.peer.kind,
+                        sender_id,
+                    )
+                    .await?
+                    .map(|record| record.user_id);
+            }
+        }
+        let bridge_resolution = if resolved_binding.is_none() && bound_user_id.is_none() {
+            resolve_inbound_bridge_route(&self.bridge_runtime, &message).await?
+        } else {
+            None
+        };
         let fallback_agent_id = if resolved_binding
             .as_ref()
             .and_then(|binding| binding.agent_id.as_ref())
@@ -588,6 +620,11 @@ impl ChannelHub {
         let mut resolved_agent_id = resolved_binding
             .as_ref()
             .and_then(|binding| binding.agent_id.clone())
+            .or_else(|| {
+                bridge_resolution
+                    .as_ref()
+                    .map(|route| route.route.agent_id.clone())
+            })
             .or_else(|| account_agent_id.clone())
             .or(fallback_agent_id)
             .or_else(|| config.channels.default_agent_id.clone());
@@ -614,6 +651,9 @@ impl ChannelHub {
         );
 
         let mut session_strategy = ChannelSessionStrategy::from_config(&config);
+        if let Some(route) = bridge_resolution.as_ref() {
+            session_strategy = ChannelSessionStrategy::from_raw(&route.session_strategy);
+        }
         if message
             .channel
             .trim()
@@ -621,27 +661,10 @@ impl ChannelHub {
         {
             session_strategy = ChannelSessionStrategy::MainThread;
         }
-        let mut bound_user_id = self
-            .get_channel_user_binding(
-                &message.channel,
-                &message.account_id,
-                &message.peer.kind,
-                &message.peer.id,
-            )
-            .await?
-            .map(|record| record.user_id);
         if bound_user_id.is_none() {
-            if let Some(sender_id) = sender_fallback_id.as_deref() {
-                bound_user_id = self
-                    .get_channel_user_binding(
-                        &message.channel,
-                        &message.account_id,
-                        &message.peer.kind,
-                        sender_id,
-                    )
-                    .await?
-                    .map(|record| record.user_id);
-            }
+            bound_user_id = bridge_resolution
+                .as_ref()
+                .map(|route| route.route.wunder_user_id.clone());
         }
         if bound_user_id.is_none() {
             bound_user_id = account
@@ -666,10 +689,17 @@ impl ChannelHub {
                 account_cfg.tts_voice.as_deref(),
                 session_strategy,
                 bound_user_id,
+                bridge_resolution
+                    .as_ref()
+                    .map(build_bridge_session_metadata),
             )
             .await?;
         self.touch_chat_session_activity(&session_info.user_id, &session_info.session_id)
             .await;
+        if let Some(route) = bridge_resolution.as_ref() {
+            self.persist_bridge_inbound(route, &message, &session_info.session_id)
+                .await;
+        }
 
         if resolved_agent_id.is_none() {
             if let Some(session_agent_id) = self
@@ -724,6 +754,7 @@ impl ChannelHub {
                     command,
                     &message,
                     &session_info,
+                    bridge_resolution.as_ref(),
                     resolved_agent_id.as_deref(),
                     &tool_names,
                     account_cfg.tts_enabled,
@@ -1032,6 +1063,9 @@ impl ChannelHub {
             "message_id": message.message_id,
             "media": meta,
         });
+        if let Some(resolution) = bridge_resolution.as_ref() {
+            append_bridge_meta(&mut outbound_meta, resolution);
+        }
         if let Some(meta_obj) = outbound_meta.as_object_mut() {
             meta_obj.insert(
                 "user_id".to_string(),
@@ -1150,6 +1184,7 @@ impl ChannelHub {
         tts_voice: Option<&str>,
         session_strategy: ChannelSessionStrategy,
         bound_user_id: Option<String>,
+        session_metadata: Option<Value>,
     ) -> Result<ChannelSessionInfo> {
         let channel = message.channel.clone();
         let account_id = message.account_id.clone();
@@ -1169,6 +1204,10 @@ impl ChannelHub {
         let tts_voice = tts_voice
             .map(|value| value.to_string())
             .or_else(|| existing.as_ref().and_then(|r| r.tts_voice.clone()));
+        let session_metadata = merge_object_values(
+            existing.as_ref().and_then(|record| record.metadata.clone()),
+            session_metadata,
+        );
         let now = now_ts();
         let user_id = bound_user_id
             .or_else(|| existing.as_ref().map(|record| record.user_id.clone()))
@@ -1315,7 +1354,7 @@ impl ChannelHub {
             user_id: user_id.clone(),
             tts_enabled,
             tts_voice: tts_voice.clone(),
-            metadata: None,
+            metadata: session_metadata,
             last_message_at: now,
             created_at: existing.as_ref().map(|r| r.created_at).unwrap_or(now),
             updated_at: now,
@@ -1774,14 +1813,11 @@ impl ChannelHub {
             "binding_id": resolved_binding.and_then(|item| item.binding_id.clone()),
             "message_id": message.message_id,
         });
+        if let Some(bridge_meta) = self.load_channel_session_bridge_metadata(message).await? {
+            merge_object_value_into(&mut meta, bridge_meta);
+        }
         if let Some(extra) = extra_meta {
-            if let Some(meta_obj) = meta.as_object_mut() {
-                if let Some(extra_obj) = extra.as_object() {
-                    for (key, value) in extra_obj {
-                        meta_obj.insert(key.clone(), value.clone());
-                    }
-                }
-            }
+            merge_object_value_into(&mut meta, extra);
         }
         append_weixin_context_token_from_message(&mut meta, message);
         let outbound = ChannelOutboundMessage {
@@ -1807,6 +1843,16 @@ impl ChannelHub {
         let outbound: ChannelOutboundMessage = serde_json::from_value(record.payload.clone())
             .map_err(|err| anyhow!("invalid outbound payload: {err}"))?;
         let mut outbound = outbound;
+        let bridge_resolution = match self.load_bridge_resolution_for_outbox(record).await {
+            Ok(value) => value,
+            Err(err) => {
+                warn!(
+                    "load bridge outbox resolution failed: outbox_id={}, channel={}, account_id={}, error={err}",
+                    record.outbox_id, record.channel, record.account_id
+                );
+                None
+            }
+        };
         if let Err(err) = feishu_files::append_temp_dir_links_for_outbound(
             &self.workspace,
             &self.user_store,
@@ -1828,7 +1874,16 @@ impl ChannelHub {
                 account_config: &account_cfg,
                 outbound: &outbound,
             };
-            adapter.send_outbound(context).await?;
+            if let Err(err) = adapter.send_outbound(context).await {
+                self.on_bridge_outbound_failed(
+                    bridge_resolution.as_ref(),
+                    record,
+                    &outbound,
+                    &err.to_string(),
+                )
+                .await;
+                return Err(err);
+            }
             self.update_outbox_status(record, "sent", None).await?;
             if let Some(session_id) = extract_session_id(&record.payload) {
                 self.monitor.record_event(
@@ -1841,6 +1896,8 @@ impl ChannelHub {
                     }),
                 );
             }
+            self.on_bridge_outbound_sent(bridge_resolution.as_ref(), record, &outbound)
+                .await;
             return Ok(());
         }
         let outbound_url = account_cfg
@@ -1850,6 +1907,8 @@ impl ChannelHub {
             .filter(|value| !value.is_empty());
         let Some(outbound_url) = outbound_url else {
             self.update_outbox_status(record, "sent", None).await?;
+            self.on_bridge_outbound_sent(bridge_resolution.as_ref(), record, &outbound)
+                .await;
             return Ok(());
         };
         let payload = record.payload.clone();
@@ -1877,13 +1936,23 @@ impl ChannelHub {
                     }),
                 );
             }
+            self.on_bridge_outbound_sent(bridge_resolution.as_ref(), record, &outbound)
+                .await;
             Ok(())
         } else {
             let body = match response.text().await {
                 Ok(value) => truncate_text(&value, 2048),
                 Err(err) => format!("(read body failed: {err})"),
             };
-            Err(anyhow!("outbound delivery failed: {status} {body}"))
+            let error = anyhow!("outbound delivery failed: {status} {body}");
+            self.on_bridge_outbound_failed(
+                bridge_resolution.as_ref(),
+                record,
+                &outbound,
+                &error.to_string(),
+            )
+            .await;
+            Err(error)
         }
     }
 
@@ -3201,6 +3270,9 @@ impl ChannelHub {
             "message_id": message.message_id,
             "busy": true,
         });
+        if let Some(bridge_meta) = self.load_channel_session_bridge_metadata(message).await? {
+            merge_object_value_into(&mut outbound_meta, bridge_meta);
+        }
         if let Some(ack_message_id) = processing_ack_message_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -3237,6 +3309,15 @@ impl ChannelHub {
         feishu_cfg: &FeishuConfig,
     ) -> Result<Option<String>> {
         let ack_text = "已收到消息，正在处理中，请稍后。".to_string();
+        let mut meta = json!({
+            "session_id": session_info.session_id,
+            "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
+            "message_id": message.message_id,
+            "processing_ack": true,
+        });
+        if let Some(bridge_meta) = self.load_channel_session_bridge_metadata(message).await? {
+            merge_object_value_into(&mut meta, bridge_meta);
+        }
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -3244,12 +3325,7 @@ impl ChannelHub {
             thread: message.thread.clone(),
             text: Some(ack_text),
             attachments: Vec::new(),
-            meta: Some(json!({
-                "session_id": session_info.session_id,
-                "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
-                "message_id": message.message_id,
-                "processing_ack": true,
-            })),
+            meta: Some(meta),
         };
         let result = feishu::send_outbound(&self.http, &outbound, feishu_cfg).await?;
         Ok(result.message_id)
@@ -3263,6 +3339,15 @@ impl ChannelHub {
         xmpp_cfg: &XmppConfig,
     ) -> Result<()> {
         let ack_text = "已收到消息，正在处理中，请稍后。".to_string();
+        let mut meta = json!({
+            "session_id": session_info.session_id,
+            "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
+            "message_id": message.message_id,
+            "processing_ack": true,
+        });
+        if let Some(bridge_meta) = self.load_channel_session_bridge_metadata(message).await? {
+            merge_object_value_into(&mut meta, bridge_meta);
+        }
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
             account_id: message.account_id.clone(),
@@ -3270,12 +3355,7 @@ impl ChannelHub {
             thread: message.thread.clone(),
             text: Some(ack_text),
             attachments: Vec::new(),
-            meta: Some(json!({
-                "session_id": session_info.session_id,
-                "binding_id": resolved_binding.and_then(|b| b.binding_id.clone()),
-                "message_id": message.message_id,
-                "processing_ack": true,
-            })),
+            meta: Some(meta),
         };
         xmpp::send_outbound(&message.account_id, &outbound, xmpp_cfg).await
     }
@@ -3286,6 +3366,7 @@ impl ChannelHub {
         command: ChannelCommand,
         message: &ChannelMessage,
         session_info: &ChannelSessionInfo,
+        bridge_resolution: Option<&BridgeRouteResolution>,
         agent_id: Option<&str>,
         tool_names: &[String],
         tts_enabled: Option<bool>,
@@ -3317,6 +3398,7 @@ impl ChannelHub {
                         tts_voice,
                         session_strategy,
                         Some(user_id.clone()),
+                        bridge_resolution.map(build_bridge_session_metadata),
                     )
                     .await?;
                 (updated.session_id, "已创建新线程。".to_string())
@@ -3357,6 +3439,9 @@ impl ChannelHub {
             "command": command.as_str(),
             "message_id": message.message_id,
         });
+        if let Some(resolution) = bridge_resolution {
+            append_bridge_meta(&mut outbound_meta, resolution);
+        }
         append_weixin_context_token_from_message(&mut outbound_meta, message);
         let outbound = ChannelOutboundMessage {
             channel: message.channel.clone(),
@@ -3530,6 +3615,234 @@ impl ChannelHub {
         .unwrap_or_else(|err| Err(anyhow!(err)))
     }
 
+    async fn load_channel_session_bridge_metadata(
+        &self,
+        message: &ChannelMessage,
+    ) -> Result<Option<Value>> {
+        Ok(self
+            .get_channel_session(
+                &message.channel,
+                &message.account_id,
+                &message.peer.kind,
+                &message.peer.id,
+                message.thread.as_ref().map(|thread| thread.id.as_str()),
+            )
+            .await?
+            .and_then(|record| record.metadata)
+            .filter(|value| extract_bridge_meta_ids(Some(value)).is_some()))
+    }
+
+    async fn load_bridge_resolution_by_ids(
+        &self,
+        center_id: &str,
+        center_account_id: &str,
+        route_id: &str,
+    ) -> Result<Option<BridgeRouteResolution>> {
+        let storage = self.storage.clone();
+        let center_id = center_id.trim().to_string();
+        let center_account_id = center_account_id.trim().to_string();
+        let route_id = route_id.trim().to_string();
+        tokio::task::spawn_blocking(move || {
+            let Some(center) = storage.get_bridge_center(&center_id)? else {
+                return Ok(None);
+            };
+            let Some(center_account) = storage.get_bridge_center_account(&center_account_id)?
+            else {
+                return Ok(None);
+            };
+            let Some(route) = storage.get_bridge_user_route(&route_id)? else {
+                return Ok(None);
+            };
+            let session_strategy = center_account
+                .thread_strategy
+                .as_deref()
+                .unwrap_or(SESSION_STRATEGY_MAIN_THREAD)
+                .to_string();
+            Ok(Some(BridgeRouteResolution {
+                center,
+                center_account,
+                route,
+                session_strategy,
+            }))
+        })
+        .await
+        .unwrap_or_else(|err| Err(anyhow!(err)))
+    }
+
+    async fn load_bridge_resolution_for_outbox(
+        &self,
+        record: &ChannelOutboxRecord,
+    ) -> Result<Option<BridgeRouteResolution>> {
+        if let Some((center_id, center_account_id, route_id)) =
+            extract_bridge_meta_ids(record.payload.get("meta"))
+        {
+            return self
+                .load_bridge_resolution_by_ids(&center_id, &center_account_id, &route_id)
+                .await;
+        }
+        let session = self
+            .get_channel_session(
+                &record.channel,
+                &record.account_id,
+                &record.peer_kind,
+                &record.peer_id,
+                record.thread_id.as_deref(),
+            )
+            .await?;
+        let Some((center_id, center_account_id, route_id)) = session
+            .as_ref()
+            .and_then(|item| extract_bridge_meta_ids(item.metadata.as_ref()))
+        else {
+            return Ok(None);
+        };
+        self.load_bridge_resolution_by_ids(&center_id, &center_account_id, &route_id)
+            .await
+    }
+
+    async fn on_bridge_outbound_sent(
+        &self,
+        resolution: Option<&BridgeRouteResolution>,
+        record: &ChannelOutboxRecord,
+        outbound: &ChannelOutboundMessage,
+    ) {
+        let Some(resolution) = resolution else {
+            return;
+        };
+        let session_id = extract_session_id(&record.payload);
+        if let Err(err) = touch_bridge_route_after_outbound(
+            &self.bridge_runtime,
+            &resolution.route.route_id,
+            session_id.as_deref(),
+            None,
+        )
+        .await
+        {
+            warn!(
+                "touch bridge route outbound failed: route_id={}, outbox_id={}, error={err}",
+                resolution.route.route_id, record.outbox_id
+            );
+        }
+        if let Err(err) = log_bridge_delivery(
+            &self.bridge_runtime,
+            resolution,
+            "outbound",
+            "deliver",
+            "sent",
+            None,
+            session_id.as_deref(),
+            &outbound_preview_text(outbound),
+            Some(json!({
+                "outbox_id": record.outbox_id,
+                "channel": record.channel,
+                "account_id": record.account_id,
+            })),
+        )
+        .await
+        {
+            warn!(
+                "log bridge outbound sent failed: route_id={}, outbox_id={}, error={err}",
+                resolution.route.route_id, record.outbox_id
+            );
+        }
+    }
+
+    async fn on_bridge_outbound_failed(
+        &self,
+        resolution: Option<&BridgeRouteResolution>,
+        record: &ChannelOutboxRecord,
+        outbound: &ChannelOutboundMessage,
+        error_text: &str,
+    ) {
+        let Some(resolution) = resolution else {
+            return;
+        };
+        let session_id = extract_session_id(&record.payload);
+        if let Err(err) = touch_bridge_route_after_outbound(
+            &self.bridge_runtime,
+            &resolution.route.route_id,
+            session_id.as_deref(),
+            Some(error_text),
+        )
+        .await
+        {
+            warn!(
+                "touch bridge route outbound failure failed: route_id={}, outbox_id={}, error={err}",
+                resolution.route.route_id, record.outbox_id
+            );
+        }
+        if let Err(err) = log_bridge_delivery(
+            &self.bridge_runtime,
+            resolution,
+            "outbound",
+            "deliver",
+            "failed",
+            None,
+            session_id.as_deref(),
+            &outbound_preview_text(outbound),
+            Some(json!({
+                "outbox_id": record.outbox_id,
+                "channel": record.channel,
+                "account_id": record.account_id,
+                "error": error_text,
+            })),
+        )
+        .await
+        {
+            warn!(
+                "log bridge outbound failed failed: route_id={}, outbox_id={}, error={err}",
+                resolution.route.route_id, record.outbox_id
+            );
+        }
+    }
+
+    async fn persist_bridge_inbound(
+        &self,
+        resolution: &BridgeRouteResolution,
+        message: &ChannelMessage,
+        session_id: &str,
+    ) {
+        let mut route = resolution.route.clone();
+        let now = now_ts();
+        route.last_session_id = Some(session_id.to_string());
+        route.last_seen_at = now;
+        route.last_inbound_at = Some(now);
+        route.updated_at = now;
+        let storage = self.storage.clone();
+        if let Err(err) =
+            tokio::task::spawn_blocking(move || storage.upsert_bridge_user_route(&route))
+                .await
+                .unwrap_or_else(|spawn_err| Err(anyhow!(spawn_err)))
+        {
+            warn!(
+                "persist bridge inbound route failed: route_id={}, session_id={}, error={err}",
+                resolution.route.route_id, session_id
+            );
+        }
+        if let Err(err) = log_bridge_delivery(
+            &self.bridge_runtime,
+            resolution,
+            "inbound",
+            "dispatch",
+            "accepted",
+            message.message_id.as_deref(),
+            Some(session_id),
+            &message_preview_text(message),
+            Some(json!({
+                "channel": message.channel,
+                "account_id": message.account_id,
+                "peer_id": message.peer.id,
+                "peer_kind": message.peer.kind,
+            })),
+        )
+        .await
+        {
+            warn!(
+                "log bridge inbound failed: route_id={}, session_id={}, error={err}",
+                resolution.route.route_id, session_id
+            );
+        }
+    }
+
     async fn get_agent(&self, agent_id: &str) -> Result<Option<UserAgentRecord>> {
         let user_store = self.user_store.clone();
         let agent_id = agent_id.to_string();
@@ -3545,6 +3858,70 @@ struct ChannelSessionInfo {
     user_id: String,
     tts_enabled: Option<bool>,
     tts_voice: Option<String>,
+}
+
+fn build_bridge_session_metadata(resolution: &BridgeRouteResolution) -> Value {
+    let mut meta = json!({});
+    append_bridge_meta(&mut meta, resolution);
+    if let Some(meta_obj) = meta.as_object_mut() {
+        meta_obj.insert(
+            "bridge_channel".to_string(),
+            Value::String(resolution.center_account.channel.clone()),
+        );
+        meta_obj.insert(
+            "bridge_account_id".to_string(),
+            Value::String(resolution.center_account.account_id.clone()),
+        );
+    }
+    meta
+}
+
+fn extract_bridge_meta_ids(meta: Option<&Value>) -> Option<(String, String, String)> {
+    let meta = meta?;
+    let center_id = meta
+        .get("bridge_center_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let center_account_id = meta
+        .get("bridge_center_account_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let route_id = meta
+        .get("bridge_route_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some((
+        center_id.to_string(),
+        center_account_id.to_string(),
+        route_id.to_string(),
+    ))
+}
+
+fn merge_object_values(base: Option<Value>, overlay: Option<Value>) -> Option<Value> {
+    match (base, overlay) {
+        (None, None) => None,
+        (Some(value), None) => Some(value),
+        (None, Some(value)) => Some(value),
+        (Some(mut value), Some(overlay)) => {
+            merge_object_value_into(&mut value, overlay);
+            Some(value)
+        }
+    }
+}
+
+fn merge_object_value_into(target: &mut Value, extra: Value) {
+    let Some(target_obj) = target.as_object_mut() else {
+        return;
+    };
+    let Some(extra_obj) = extra.as_object() else {
+        return;
+    };
+    for (key, value) in extra_obj {
+        target_obj.insert(key.clone(), value.clone());
+    }
 }
 
 fn build_internal_channel_headers(inbound_token: Option<&str>) -> Result<HeaderMap> {
@@ -3709,6 +4086,26 @@ fn message_preview_text(message: &ChannelMessage) -> String {
     let message_type = message.message_type.trim();
     if !message_type.is_empty() {
         return format!("[{message_type}]");
+    }
+    "[empty message]".to_string()
+}
+
+fn outbound_preview_text(outbound: &ChannelOutboundMessage) -> String {
+    if let Some(text) = outbound.text.as_deref().map(str::trim) {
+        if !text.is_empty() {
+            return truncate_text(text, 200);
+        }
+    }
+    if !outbound.attachments.is_empty() {
+        if let Some(kind) = outbound
+            .attachments
+            .first()
+            .map(|item| item.kind.trim())
+            .filter(|value| !value.is_empty())
+        {
+            return format!("[{kind}]");
+        }
+        return "[attachment]".to_string();
     }
     "[empty message]".to_string()
 }
@@ -4183,5 +4580,87 @@ mod tests {
         assert!(outbound_meta_without_ctx
             .get("weixin_context_token")
             .is_none());
+    }
+
+    #[test]
+    fn bridge_metadata_helpers_roundtrip_ids() {
+        let resolution = BridgeRouteResolution {
+            center: crate::storage::BridgeCenterRecord {
+                center_id: "bc_1".to_string(),
+                name: "Bridge".to_string(),
+                code: "bridge".to_string(),
+                description: None,
+                owner_user_id: "admin".to_string(),
+                status: "active".to_string(),
+                default_preset_agent_name: "preset".to_string(),
+                target_unit_id: None,
+                default_identity_strategy: "sender_in_peer".to_string(),
+                username_policy: "namespaced_generated".to_string(),
+                password_policy: "fixed_default_123456".to_string(),
+                settings: json!({}),
+                created_at: 1.0,
+                updated_at: 1.0,
+            },
+            center_account: crate::storage::BridgeCenterAccountRecord {
+                center_account_id: "bca_1".to_string(),
+                center_id: "bc_1".to_string(),
+                channel: "xmpp".to_string(),
+                account_id: "shared".to_string(),
+                enabled: true,
+                default_preset_agent_name_override: None,
+                identity_strategy: None,
+                thread_strategy: Some("main_thread".to_string()),
+                reply_strategy: Some("reply_only".to_string()),
+                fallback_policy: "forbid_owner_fallback".to_string(),
+                provider_caps: None,
+                status_reason: None,
+                created_at: 1.0,
+                updated_at: 1.0,
+            },
+            route: crate::storage::BridgeUserRouteRecord {
+                route_id: "brt_1".to_string(),
+                center_id: "bc_1".to_string(),
+                center_account_id: "bca_1".to_string(),
+                channel: "xmpp".to_string(),
+                account_id: "shared".to_string(),
+                external_identity_key: "xmpp:shared:user".to_string(),
+                external_user_key: Some("user".to_string()),
+                external_display_name: Some("User".to_string()),
+                external_peer_id: Some("peer".to_string()),
+                external_sender_id: Some("sender".to_string()),
+                external_thread_id: None,
+                external_profile: Some(json!({})),
+                wunder_user_id: "user_1".to_string(),
+                agent_id: "agent_1".to_string(),
+                agent_name: "Preset".to_string(),
+                user_created: true,
+                agent_created: true,
+                status: "active".to_string(),
+                last_session_id: None,
+                last_error: None,
+                first_seen_at: 1.0,
+                last_seen_at: 1.0,
+                last_inbound_at: Some(1.0),
+                last_outbound_at: None,
+                created_at: 1.0,
+                updated_at: 1.0,
+            },
+            session_strategy: "main_thread".to_string(),
+        };
+        let meta = build_bridge_session_metadata(&resolution);
+        assert_eq!(
+            extract_bridge_meta_ids(Some(&meta)),
+            Some(("bc_1".to_string(), "bca_1".to_string(), "brt_1".to_string()))
+        );
+    }
+
+    #[test]
+    fn merge_object_values_prefers_overlay_keys() {
+        let merged = merge_object_values(
+            Some(json!({ "a": 1, "b": 2 })),
+            Some(json!({ "b": 3, "c": 4 })),
+        )
+        .expect("merged");
+        assert_eq!(merged, json!({ "a": 1, "b": 3, "c": 4 }));
     }
 }

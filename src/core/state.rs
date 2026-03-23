@@ -15,6 +15,7 @@ use crate::orchestrator::Orchestrator;
 use crate::org_units;
 use crate::services::agent_runtime::AgentRuntime;
 use crate::services::beeroom_realtime::BeeroomRealtimeService;
+use crate::services::bridge::BridgeRuntime;
 use crate::services::external_auth::ExternalAuthCodeStore;
 use crate::services::inner_visible::InnerVisibleService;
 use crate::services::swarm::{SwarmService, TeamRunRunner};
@@ -224,6 +225,13 @@ impl AppState {
             ChannelHubSharedState {
                 monitor: monitor.clone(),
                 approval_registry: approval_registry.clone(),
+                bridge_runtime: BridgeRuntime {
+                    config_store: config_store.clone(),
+                    skills: skills.clone(),
+                    user_tool_manager: user_tool_manager.clone(),
+                    user_store: user_store.clone(),
+                    storage: storage.clone(),
+                },
             },
         ));
         let cron = CronScheduler::new(

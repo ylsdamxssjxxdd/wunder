@@ -18,6 +18,7 @@ pub mod weixin;
 pub mod weixin_files;
 pub mod whatsapp_cloud;
 pub mod xmpp;
+pub mod xmpp_custom_format;
 pub mod xmpp_tls_connector;
 
 pub use service::{ChannelHub, ChannelHubSharedState};

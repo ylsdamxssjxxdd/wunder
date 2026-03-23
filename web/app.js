@@ -47,6 +47,7 @@ import { initExternalLinksPanel, loadExternalLinks } from "./modules/external-li
 import { initPresetAgentsPanel, loadPresetAgents } from "./modules/preset-agents.js?v=20260215-01";
 import { initOrgUnitsPanel, loadOrgUnits } from "./modules/org-units.js?v=20260215-01";
 import { initChannelsPanel, loadChannelAccounts } from "./modules/channels.js?v=20260215-01";
+import { initBridgeCenterPanel, loadBridgeCenters } from "./modules/bridge-center.js?v=20260323-01";
 
 import { initMcpPanel, loadMcpServers } from "./modules/mcp.js?v=20260215-01";
 import {
@@ -160,6 +161,7 @@ const panelMap = {
   orgUnits: { panel: elements.orgUnitsPanel, nav: elements.navOrgUnits },
 
   channels: { panel: elements.channelsPanel, nav: elements.navChannels },
+  bridgeCenter: { panel: elements.bridgeCenterPanel, nav: elements.navBridgeCenter },
 
   llm: { panel: elements.llmPanel, nav: elements.navLlm },
 
@@ -543,6 +545,20 @@ const bindNavigation = () => {
       }
     }
   });
+
+  if (elements.navBridgeCenter) {
+    elements.navBridgeCenter.addEventListener("click", async () => {
+      switchPanel("bridgeCenter");
+      if (!state.panelLoaded.bridgeCenter) {
+        try {
+          await loadBridgeCenters({ silent: true });
+          state.panelLoaded.bridgeCenter = true;
+        } catch (error) {
+          appendLog(`舰桥中心加载失败: ${error.message}`);
+        }
+      }
+    });
+  }
 
   // 点击侧边栏标题进入系统介绍面板
 
@@ -1271,6 +1287,7 @@ const bootstrap = async () => {
   initPresetAgentsPanel();
   initOrgUnitsPanel();
   initChannelsPanel();
+  initBridgeCenterPanel();
 
   initMcpPanel();
 
@@ -1411,6 +1428,16 @@ const bootstrap = async () => {
 
     });
 
+  }
+
+  if (initialPanel === "bridgeCenter") {
+    loadBridgeCenters({ silent: true })
+      .then(() => {
+        state.panelLoaded.bridgeCenter = true;
+      })
+      .catch((error) => {
+        appendLog(`舰桥中心加载失败: ${error.message}`);
+      });
   }
 
   if (initialPanel === "presetAgents") {

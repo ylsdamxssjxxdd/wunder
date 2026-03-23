@@ -37,15 +37,6 @@
             </label>
             <div class="channel-detail-hint">{{ t('channels.create.showLegacyChannelsHint') }}</div>
           </div>
-          <label class="channel-form-field">
-            <span>{{ t('channels.create.name') }}</span>
-            <input
-              v-model.trim="createForm.account_name"
-              class="channel-input"
-              type="text"
-              :placeholder="t('channels.create.namePlaceholder')"
-            />
-          </label>
           <div class="channel-create-checks">
             <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
               <input v-model="createForm.enabled" type="checkbox" />
@@ -59,16 +50,6 @@
               <span>{{ t('channels.config.receiveGroup') }}</span>
             </label>
           </div>
-
-          <template v-if="showCreatePeerKind">
-            <label class="channel-form-field">
-              <span>{{ t('channels.field.peerKind') }}</span>
-              <select v-model="createForm.peer_kind" class="channel-input">
-                <option v-if="!isCreateUserOnlyChannel" value="group">{{ t('channels.peerKind.group') }}</option>
-                <option value="user">{{ t('channels.peerKind.user') }}</option>
-              </select>
-            </label>
-          </template>
 
           <template v-for="field in createChannelFields" :key="`create-${field.key}`">
             <label
@@ -99,34 +80,21 @@
                 @click="startCreateWeixinQr"
               >
                 {{
-                  createWeixinQrState.loadingStart
+                  createWeixinQrState.loadingStart || createWeixinQrState.loadingWait
                     ? t('common.loading')
                     : t('channels.form.weixin.qrGenerate')
                 }}
               </button>
-              <button
-                class="channel-refresh-btn subtle"
-                type="button"
-                :disabled="
-                  createSaving ||
-                  createWeixinQrState.loadingStart ||
-                  createWeixinQrState.loadingWait ||
-                  !createWeixinQrState.sessionKey
-                "
-                @click="waitCreateWeixinQr"
-              >
-                {{ createWeixinQrState.loadingWait ? t('common.loading') : t('channels.form.weixin.qrWait') }}
-              </button>
             </div>
-            <div v-if="createWeixinQrState.qrcodeUrl" class="channel-weixin-qr-preview">
+            <div v-if="createWeixinQrPreviewUrl" class="channel-weixin-qr-preview">
               <img
                 class="channel-weixin-qr-image"
-                :src="createWeixinQrState.qrcodeUrl"
+                :src="createWeixinQrPreviewUrl"
                 :alt="t('channels.form.weixin.qrImageAlt')"
               />
               <a
                 class="channel-weixin-qr-link"
-                :href="createWeixinQrState.qrcodeUrl"
+                :href="createWeixinQrPreviewUrl"
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -143,6 +111,12 @@
               {{ createWeixinQrState.message }}
             </div>
           </div>
+          <div v-if="showCreateWeixinAdvancedToggle" class="channel-advanced-toggle">
+            <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
+              <input v-model="createWeixinAdvancedEnabled" type="checkbox" />
+              <span>{{ t('channels.form.weixin.advancedToggle') }}</span>
+            </label>
+          </div>
 
           <div v-if="showCreateXmppAdvancedToggle" class="channel-advanced-toggle">
             <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
@@ -157,35 +131,7 @@
               <input v-model="createDynamicFields.markdown_support" type="checkbox" />
               <span>{{ t('channels.form.qqbot.markdownSupport') }}</span>
             </label>
-            <label
-              v-if="showCreateAdvancedConfigToggle"
-              class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
-            >
-              <input v-model="createAdvancedEnabled" type="checkbox" />
-              <span>{{ t('channels.config.advancedToggle') }}</span>
-            </label>
           </div>
-
-          <div v-if="showCreateAdvancedConfigToggle && createForm.channel !== 'qqbot'" class="channel-advanced-toggle">
-            <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
-              <input v-model="createAdvancedEnabled" type="checkbox" />
-              <span>{{ t('channels.config.advancedToggle') }}</span>
-            </label>
-          </div>
-          <template v-if="showCreateAdvancedConfigEditor">
-            <label class="channel-form-field channel-form-field-full">
-              <span>{{ t('channels.config.json') }}</span>
-              <textarea
-                v-model="createForm.config_text"
-                class="channel-textarea"
-                :placeholder="t('channels.config.jsonPlaceholder')"
-                rows="5"
-              />
-            </label>
-            <div class="channel-detail-hint">
-              {{ createChannelFields.length ? t('channels.config.jsonHintOptional') : t('channels.config.jsonHint') }}
-            </div>
-          </template>
         </div>
 
         <div class="channel-create-actions">
@@ -258,39 +204,16 @@
                 {{ selectedAccount.configured ? t('channels.detail.configured') : t('channels.detail.unconfigured') }}
               </div>
             </div>
-            <div>
-              <div class="channel-detail-label">{{ t('channels.detail.mode') }}</div>
-              <div class="channel-detail-value">{{ peerKindLabel(selectedAccount.peerKind) }}</div>
-            </div>
           </div>
         </div>
 
         <div class="channel-detail-card">
           <div class="channel-detail-title">{{ t('channels.config.title') }}</div>
           <div class="channel-form">
-            <label class="channel-form-field">
-              <span>{{ t('channels.create.name') }}</span>
-              <input
-                v-model.trim="editForm.account_name"
-                class="channel-input"
-                type="text"
-                :placeholder="t('channels.create.namePlaceholder')"
-              />
-            </label>
             <label class="channel-form-field channel-form-checkbox">
               <input v-model="editForm.enabled" type="checkbox" />
               <span>{{ t('channels.field.enabled') }}</span>
             </label>
-
-            <template v-if="showEditPeerKind">
-              <label class="channel-form-field">
-                <span>{{ t('channels.field.peerKind') }}</span>
-                <select v-model="editForm.peer_kind" class="channel-input">
-                  <option v-if="!isEditUserOnlyChannel" value="group">{{ t('channels.peerKind.group') }}</option>
-                  <option value="user">{{ t('channels.peerKind.user') }}</option>
-                </select>
-              </label>
-            </template>
 
             <label v-if="isFeishuEdit" class="channel-form-field channel-form-checkbox">
               <input v-model="editForm.receive_group_chat" type="checkbox" />
@@ -329,34 +252,21 @@
                   @click="startEditWeixinQr"
                 >
                   {{
-                    editWeixinQrState.loadingStart
+                    editWeixinQrState.loadingStart || editWeixinQrState.loadingWait
                       ? t('common.loading')
                       : t('channels.form.weixin.qrGenerate')
                   }}
                 </button>
-                <button
-                  class="channel-refresh-btn subtle"
-                  type="button"
-                  :disabled="
-                    saving ||
-                    editWeixinQrState.loadingStart ||
-                    editWeixinQrState.loadingWait ||
-                    !editWeixinQrState.sessionKey
-                  "
-                  @click="waitEditWeixinQr"
-                >
-                  {{ editWeixinQrState.loadingWait ? t('common.loading') : t('channels.form.weixin.qrWait') }}
-                </button>
               </div>
-              <div v-if="editWeixinQrState.qrcodeUrl" class="channel-weixin-qr-preview">
+              <div v-if="editWeixinQrPreviewUrl" class="channel-weixin-qr-preview">
                 <img
                   class="channel-weixin-qr-image"
-                  :src="editWeixinQrState.qrcodeUrl"
+                  :src="editWeixinQrPreviewUrl"
                   :alt="t('channels.form.weixin.qrImageAlt')"
                 />
                 <a
                   class="channel-weixin-qr-link"
-                  :href="editWeixinQrState.qrcodeUrl"
+                  :href="editWeixinQrPreviewUrl"
                   target="_blank"
                   rel="noopener noreferrer"
                 >
@@ -373,6 +283,12 @@
                 {{ editWeixinQrState.message }}
               </div>
             </div>
+            <div v-if="showEditWeixinAdvancedToggle" class="channel-advanced-toggle">
+              <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
+                <input v-model="editWeixinAdvancedEnabled" type="checkbox" />
+                <span>{{ t('channels.form.weixin.advancedToggle') }}</span>
+              </label>
+            </div>
 
             <div v-if="showEditXmppAdvancedToggle" class="channel-advanced-toggle">
               <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
@@ -387,35 +303,7 @@
                 <input v-model="editDynamicFields.markdown_support" type="checkbox" />
                 <span>{{ t('channels.form.qqbot.markdownSupport') }}</span>
               </label>
-              <label
-                v-if="showEditAdvancedConfigToggle"
-                class="channel-form-field channel-form-checkbox channel-form-checkbox--inline"
-              >
-                <input v-model="editAdvancedEnabled" type="checkbox" />
-                <span>{{ t('channels.config.advancedToggle') }}</span>
-              </label>
             </div>
-
-            <div v-if="showEditAdvancedConfigToggle && selectedAccount?.channel !== 'qqbot'" class="channel-advanced-toggle">
-              <label class="channel-form-field channel-form-checkbox channel-form-checkbox--inline">
-                <input v-model="editAdvancedEnabled" type="checkbox" />
-                <span>{{ t('channels.config.advancedToggle') }}</span>
-              </label>
-            </div>
-            <template v-if="showEditAdvancedConfigEditor">
-              <label class="channel-form-field channel-form-field-full">
-                <span>{{ t('channels.config.json') }}</span>
-                <textarea
-                  v-model="editForm.config_text"
-                  class="channel-textarea"
-                  :placeholder="t('channels.config.jsonPlaceholder')"
-                  rows="8"
-                />
-              </label>
-              <div class="channel-detail-hint">
-                {{ editChannelFields.length ? t('channels.config.jsonHintOptional') : t('channels.config.jsonHint') }}
-              </div>
-            </template>
           </div>
 
         </div>
@@ -1068,7 +956,22 @@ const FALLBACK_CHANNELS = [
   'xmpp'
 ];
 const USER_ONLY_CHANNELS = ['wechat', 'wechat_mp', 'weixin'];
+const DEFAULT_CREATE_CHANNELS = ['weixin'];
 const LEGACY_CREATE_CHANNELS = ['wechat', 'wechat_mp'];
+const AUTO_ACCOUNT_NAME_PREFIX: Record<string, string> = {
+  weixin: '微信',
+  wechat: '微信',
+  wechat_mp: '微信',
+  qqbot: 'qq',
+  feishu: '飞书',
+  whatsapp: 'wa',
+  telegram: 'tg',
+  discord: 'dc',
+  slack: 'slack',
+  line: 'line',
+  dingtalk: '钉钉',
+  xmpp: 'xmpp'
+};
 const CHANNEL_PRIORITY: Record<string, number> = {
   weixin: 0,
   wechat: 1,
@@ -1098,10 +1001,10 @@ const accounts = ref<ChannelAccountItem[]>([]);
 const supportedChannels = ref<SupportedChannelItem[]>([]);
 const selectedKey = ref('');
 const showLegacyCreateChannels = ref(false);
-const createAdvancedEnabled = ref(false);
-const editAdvancedEnabled = ref(false);
 const createXmppAdvancedEnabled = ref(false);
 const editXmppAdvancedEnabled = ref(false);
+const createWeixinAdvancedEnabled = ref(false);
+const editWeixinAdvancedEnabled = ref(false);
 const createDynamicFields = reactive<Record<string, string | boolean>>({});
 const editDynamicFields = reactive<Record<string, string | boolean>>({});
 const editSecretSaved = reactive<Record<string, boolean>>({});
@@ -1139,19 +1042,13 @@ let runtimeLogsRequestId = 0;
 
 const createForm = reactive({
   channel: 'weixin',
-  account_name: '',
   enabled: true,
-  receive_group_chat: true,
-  peer_kind: 'group',
-  config_text: '{}'
+  receive_group_chat: true
 });
 
 const editForm = reactive({
-  account_name: '',
   enabled: true,
-  receive_group_chat: true,
-  peer_kind: 'group',
-  config_text: '{}'
+  receive_group_chat: true
 });
 
 const selectedAccount = computed(
@@ -1191,20 +1088,35 @@ const hasLegacyCreateOptions = computed(() =>
   supportedChannelOptions.value.some((item) => LEGACY_CREATE_CHANNELS.includes(item.channel))
 );
 const createChannelOptions = computed(() => {
-  if (showLegacyCreateChannels.value) {
-    return supportedChannelOptions.value;
+  const optionMap = new Map(
+    supportedChannelOptions.value.map((item) => [item.channel, item] as const)
+  );
+  const options: Array<{ channel: string; label: string; priority: number }> = [];
+  for (const channel of DEFAULT_CREATE_CHANNELS) {
+    const found = optionMap.get(channel);
+    if (found) {
+      options.push(found);
+      continue;
+    }
+    options.push({
+      channel,
+      label: providerLabel(channel),
+      priority: CHANNEL_PRIORITY[channel] ?? 99
+    });
   }
-  return supportedChannelOptions.value.filter((item) => !LEGACY_CREATE_CHANNELS.includes(item.channel));
+  if (showLegacyCreateChannels.value) {
+    for (const channel of LEGACY_CREATE_CHANNELS) {
+      const found = optionMap.get(channel);
+      if (found) {
+        options.push(found);
+      }
+    }
+  }
+  return options;
 });
 
 const isFeishuCreate = computed(() => createForm.channel === 'feishu');
 const isFeishuEdit = computed(() => selectedAccount.value?.channel === 'feishu');
-const isCreateUserOnlyChannel = computed(() => USER_ONLY_CHANNELS.includes(createForm.channel));
-const isEditUserOnlyChannel = computed(() =>
-  selectedAccount.value ? USER_ONLY_CHANNELS.includes(selectedAccount.value.channel) : false
-);
-const showCreatePeerKind = computed(() => createForm.channel !== 'feishu');
-const showEditPeerKind = computed(() => selectedAccount.value?.channel !== 'feishu');
 const createChannelSchema = computed(() => schemaForChannel(createForm.channel));
 const editChannelSchema = computed(() =>
   selectedAccount.value ? schemaForChannel(selectedAccount.value.channel) : null
@@ -1216,21 +1128,31 @@ const editSchemaFields = computed(() =>
 const filterVisibleChannelFields = (
   channel: string,
   fields: ChannelFieldDef[],
-  xmppAdvancedEnabled: boolean
+  xmppAdvancedEnabled: boolean,
+  weixinAdvancedEnabled: boolean
 ) => {
-  if (channel !== 'xmpp' || xmppAdvancedEnabled) {
-    return fields;
+  if (channel === 'xmpp') {
+    return xmppAdvancedEnabled ? fields : fields.filter((field) => !field.advanced);
   }
-  return fields.filter((field) => !field.advanced);
+  if (channel === 'weixin' && !weixinAdvancedEnabled) {
+    return [];
+  }
+  return fields;
 };
 const createChannelFields = computed(() =>
-  filterVisibleChannelFields(createForm.channel, createSchemaFields.value, createXmppAdvancedEnabled.value)
+  filterVisibleChannelFields(
+    createForm.channel,
+    createSchemaFields.value,
+    createXmppAdvancedEnabled.value,
+    createWeixinAdvancedEnabled.value
+  )
 );
 const editChannelFields = computed(() =>
   filterVisibleChannelFields(
     selectedAccount.value?.channel || '',
     editSchemaFields.value,
-    editXmppAdvancedEnabled.value
+    editXmppAdvancedEnabled.value,
+    editWeixinAdvancedEnabled.value
   )
 );
 const showCreateXmppAdvancedToggle = computed(
@@ -1245,21 +1167,17 @@ const showEditXmppAdvancedToggle = computed(
     editSchemaFields.value.some((field) => field.advanced) &&
     editChannelSchema.value?.mode === 'config'
 );
-const showCreateAdvancedConfigToggle = computed(
-  () => createChannelSchema.value?.mode === 'config' && createChannelFields.value.length > 0
-);
-const showEditAdvancedConfigToggle = computed(
-  () => editChannelSchema.value?.mode === 'config' && editChannelFields.value.length > 0
-);
-const showCreateAdvancedConfigEditor = computed(
+const showCreateWeixinAdvancedToggle = computed(
   () =>
-    createChannelFields.value.length === 0 ||
-    (createChannelSchema.value?.mode === 'config' && createAdvancedEnabled.value)
+    createForm.channel === 'weixin' &&
+    createSchemaFields.value.length > 0 &&
+    createChannelSchema.value?.mode === 'weixin'
 );
-const showEditAdvancedConfigEditor = computed(
+const showEditWeixinAdvancedToggle = computed(
   () =>
-    editChannelFields.value.length === 0 ||
-    (editChannelSchema.value?.mode === 'config' && editAdvancedEnabled.value)
+    selectedAccount.value?.channel === 'weixin' &&
+    editSchemaFields.value.length > 0 &&
+    editChannelSchema.value?.mode === 'weixin'
 );
 
 const providerLabel = (channel: string) => {
@@ -1286,7 +1204,6 @@ const providerDesc = (channel: string) => {
   return translated === key ? t('channels.provider.generic') : translated;
 };
 
-const peerKindLabel = (peerKind) => (peerKind === 'user' ? t('channels.peerKind.user') : t('channels.peerKind.group'));
 const runtimeLevelLabel = (level: string) => {
   const key = `channels.runtime.level.${String(level || '').trim().toLowerCase() || 'info'}`;
   const translated = t(key);
@@ -1350,6 +1267,33 @@ const clearDynamicFields = (target: Record<string, string | boolean>) => {
   Object.keys(target).forEach((key) => {
     delete target[key];
   });
+};
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const buildAutoAccountName = (channel: string): string => {
+  const normalized = String(channel || '').trim().toLowerCase();
+  const prefix = AUTO_ACCOUNT_NAME_PREFIX[normalized] || providerLabel(normalized) || normalized || '账号';
+  const matcher = new RegExp(`^${escapeRegExp(prefix)}(\\d+)$`);
+  let maxSeq = 0;
+  for (const account of accounts.value) {
+    if (account.channel !== normalized) {
+      continue;
+    }
+    const name = trimmedText(account.name);
+    if (!name) {
+      continue;
+    }
+    const matched = name.match(matcher);
+    if (!matched) {
+      continue;
+    }
+    const parsed = Number.parseInt(matched[1], 10);
+    if (Number.isFinite(parsed) && parsed > maxSeq) {
+      maxSeq = parsed;
+    }
+  }
+  return `${prefix}${String(maxSeq + 1).padStart(3, '0')}`;
 };
 
 const clearSecretState = () => {
@@ -1458,23 +1402,6 @@ const normalizeAccount = (record): ChannelAccountItem | null => {
   };
 };
 
-const parseJsonConfig = (rawText: string): Record<string, unknown> | null => {
-  const text = String(rawText || '').trim();
-  if (!text) {
-    return null;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    throw new Error(t('channels.config.jsonInvalid'));
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(t('channels.config.jsonInvalid'));
-  }
-  return parsed;
-};
-
 const selectAccount = (account) => {
   selectedKey.value = account.key;
   resetEditForm();
@@ -1490,17 +1417,14 @@ const resolveDefaultCreateChannel = () => {
 const applyCreateChannelDefaults = () => {
   clearWeixinQrState(createWeixinQrState);
   createForm.receive_group_chat = true;
-  createForm.peer_kind = USER_ONLY_CHANNELS.includes(createForm.channel) ? 'user' : 'group';
-  createForm.config_text = '{}';
-  createAdvancedEnabled.value = false;
   createXmppAdvancedEnabled.value = false;
+  createWeixinAdvancedEnabled.value = false;
   initDynamicFields(createDynamicFields, createForm.channel, {}, true);
 };
 
 const resetCreateForm = () => {
   showLegacyCreateChannels.value = false;
   createForm.channel = resolveDefaultCreateChannel();
-  createForm.account_name = '';
   createForm.enabled = true;
   applyCreateChannelDefaults();
 };
@@ -1510,27 +1434,17 @@ const resetEditForm = () => {
   clearSecretState();
   const account = selectedAccount.value;
   if (!account) {
-    editForm.account_name = '';
     editForm.enabled = true;
     editForm.receive_group_chat = true;
-    editForm.peer_kind = 'group';
-    editForm.config_text = '{}';
-    editAdvancedEnabled.value = false;
     editXmppAdvancedEnabled.value = false;
+    editWeixinAdvancedEnabled.value = false;
     clearDynamicFields(editDynamicFields);
     return;
   }
-  editForm.account_name = account.name || '';
   editForm.enabled = account.active;
   editForm.receive_group_chat = account.receiveGroupChat;
-  editForm.peer_kind = account.peerKind || 'group';
-  try {
-    editForm.config_text = JSON.stringify(account.rawConfig || {}, null, 2);
-  } catch (error) {
-    editForm.config_text = '{}';
-  }
-  editAdvancedEnabled.value = false;
   editXmppAdvancedEnabled.value = false;
+  editWeixinAdvancedEnabled.value = false;
   const schema = schemaForChannel(account.channel);
   initDynamicFields(
     editDynamicFields,
@@ -1633,6 +1547,70 @@ const clearWeixinQrState = (target: WeixinQrState) => {
   target.loadingWait = false;
 };
 
+const normalizeWeixinQrImageValue = (rawValue: unknown, apiBaseRaw?: unknown): string => {
+  let value = trimmedText(rawValue);
+  const apiBase = trimmedText(apiBaseRaw);
+  if (!value) {
+    return '';
+  }
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  value = value
+    .replace(/\\r\\n/g, '')
+    .replace(/\\n/g, '')
+    .replace(/\\r/g, '')
+    .replace(/\r\n/g, '')
+    .replace(/\n/g, '')
+    .replace(/\r/g, '')
+    .trim();
+  if (!value) {
+    return '';
+  }
+
+  if (value.startsWith('data:image/')) {
+    return value;
+  }
+  const compact = value.replace(/\s+/g, '');
+  const base64Candidate = compact.replace(/^data:image\/[a-z0-9.+-]+;base64,/i, '');
+  const looksLikeBase64 =
+    base64Candidate.length > 64 && /^[A-Za-z0-9+/]+=*$/.test(base64Candidate);
+  if (looksLikeBase64) {
+    return `data:image/png;base64,${base64Candidate}`;
+  }
+
+  if (value.startsWith('blob:') || /^https?:\/\//i.test(value)) {
+    return value;
+  }
+  if (value.startsWith('//')) {
+    return `${window.location.protocol}${value}`;
+  }
+  if (value.startsWith('/')) {
+    if (apiBase) {
+      try {
+        return new URL(value, apiBase).toString();
+      } catch (error) {
+        // Fall through to current origin below.
+      }
+    }
+    return `${window.location.origin}${value}`;
+  }
+  return '';
+};
+
+const resolveWeixinQrPreviewUrl = (state: WeixinQrState): string => {
+  const fromUrl = normalizeWeixinQrImageValue(state.qrcodeUrl, state.apiBase);
+  if (fromUrl) {
+    return fromUrl;
+  }
+  return normalizeWeixinQrImageValue(state.qrcode, state.apiBase);
+};
+const createWeixinQrPreviewUrl = computed(() => resolveWeixinQrPreviewUrl(createWeixinQrState));
+const editWeixinQrPreviewUrl = computed(() => resolveWeixinQrPreviewUrl(editWeixinQrState));
+
 const formatWeixinQrStatus = (status: string) => {
   const normalized = String(status || '').trim().toLowerCase();
   if (!normalized) {
@@ -1699,7 +1677,7 @@ const startWeixinQrFlow = async (scope: 'create' | 'edit') => {
     state.status = 'wait';
     state.message = t('channels.form.weixin.qrStartSuccess');
 
-    if (!state.sessionKey || !state.qrcodeUrl) {
+    if (!state.sessionKey || !resolveWeixinQrPreviewUrl(state)) {
       throw new Error(t('channels.form.weixin.qrInvalidResponse'));
     }
     if (!trimmedText(values.api_base)) {
@@ -1709,6 +1687,8 @@ const startWeixinQrFlow = async (scope: 'create' | 'edit') => {
       values.bot_type = botType;
     }
     ElMessage.success(t('channels.form.weixin.qrStartSuccess'));
+    // Auto-poll after QR generation so users only need one click and one scan.
+    void waitWeixinQrFlow(scope);
   } catch (error) {
     showApiError(error, t('channels.form.weixin.qrStartFailed'));
   } finally {
@@ -1774,16 +1754,8 @@ const startCreateWeixinQr = async () => {
   await startWeixinQrFlow('create');
 };
 
-const waitCreateWeixinQr = async () => {
-  await waitWeixinQrFlow('create');
-};
-
 const startEditWeixinQr = async () => {
   await startWeixinQrFlow('edit');
-};
-
-const waitEditWeixinQr = async () => {
-  await waitWeixinQrFlow('edit');
 };
 
 const validateWeixinNumericFields = (values: Record<string, string | boolean>): string | null => {
@@ -1804,6 +1776,19 @@ const validateWeixinNumericFields = (values: Record<string, string | boolean>): 
     }
   }
   return null;
+};
+
+const ensureWeixinCredentialsReady = (
+  values: Record<string, string | boolean>,
+  secretFallback: Record<string, boolean> = {}
+): boolean => {
+  const hasBotToken = Boolean(trimmedText(values.bot_token)) || Boolean(secretFallback.bot_token);
+  const hasIlinkBotId = Boolean(trimmedText(values.ilink_bot_id));
+  if (hasBotToken && hasIlinkBotId) {
+    return true;
+  }
+  ElMessage.warning(t('channels.form.weixin.qrSessionMissing'));
+  return false;
 };
 
 const buildStructuredConfigPatch = (
@@ -1855,20 +1840,6 @@ const buildStructuredConfigPatch = (
     return {};
   }
   return { [configRoot]: baseNode };
-};
-
-const shouldApplyAdvancedJson = (fieldCount: number, advancedEnabled: boolean) =>
-  fieldCount === 0 || advancedEnabled;
-
-const parseAdvancedJsonConfig = (
-  rawText: string,
-  fieldCount: number,
-  advancedEnabled: boolean
-): Record<string, unknown> | null => {
-  if (!shouldApplyAdvancedJson(fieldCount, advancedEnabled)) {
-    return null;
-  }
-  return parseJsonConfig(rawText);
 };
 
 const clearRuntimeLogTimer = () => {
@@ -2122,7 +2093,7 @@ const createAccount = async () => {
   const payload: ChannelAccountPayload = {
     channel,
     create_new: true,
-    account_name: createForm.account_name || undefined,
+    account_name: buildAutoAccountName(channel),
     enabled: Boolean(createForm.enabled)
   };
   if (resolvedAgentId.value) {
@@ -2130,6 +2101,11 @@ const createAccount = async () => {
   }
 
   const schema = schemaForChannel(channel);
+  if (schema?.mode === 'weixin' && !createWeixinAdvancedEnabled.value) {
+    if (!ensureWeixinCredentialsReady(createDynamicFields)) {
+      return;
+    }
+  }
   const fieldError = validateChannelFields(schema, createDynamicFields);
   if (fieldError) {
     ElMessage.warning(fieldError);
@@ -2212,20 +2188,6 @@ const createAccount = async () => {
   if (schema?.mode === 'config') {
     mergeConfigObject(configPayload, buildStructuredConfigPatch(channel, createDynamicFields));
   }
-  let advancedConfig: Record<string, unknown> | null = null;
-  try {
-    advancedConfig = parseAdvancedJsonConfig(
-      createForm.config_text,
-      createChannelFields.value.length,
-      createAdvancedEnabled.value
-    );
-  } catch (error) {
-    ElMessage.warning(error.message || t('channels.config.jsonInvalid'));
-    return;
-  }
-  if (advancedConfig) {
-    mergeConfigObject(configPayload, advancedConfig);
-  }
 
   if (!Object.keys(configPayload).length) {
     ElMessage.warning(t('channels.config.jsonRequired'));
@@ -2233,7 +2195,7 @@ const createAccount = async () => {
   }
 
   payload.config = configPayload;
-  payload.peer_kind = USER_ONLY_CHANNELS.includes(channel) ? 'user' : createForm.peer_kind || 'group';
+  payload.peer_kind = USER_ONLY_CHANNELS.includes(channel) ? 'user' : 'group';
   await submitCreate(payload);
 };
 
@@ -2277,7 +2239,6 @@ const saveAccount = async () => {
   const payload: ChannelAccountPayload = {
     channel: account.channel,
     account_id: account.account_id,
-    account_name: editForm.account_name || undefined,
     enabled: Boolean(editForm.enabled)
   };
   if (resolvedAgentId.value) {
@@ -2294,6 +2255,11 @@ const saveAccount = async () => {
     secretFallback.app_secret = account.wechatMpAppSecretSet;
   } else if (schema?.mode === 'weixin') {
     secretFallback.bot_token = account.weixinBotTokenSet;
+  }
+  if (schema?.mode === 'weixin' && !editWeixinAdvancedEnabled.value) {
+    if (!ensureWeixinCredentialsReady(editDynamicFields, secretFallback)) {
+      return;
+    }
   }
   const fieldError = validateChannelFields(schema, editDynamicFields, secretFallback);
   if (fieldError) {
@@ -2414,28 +2380,13 @@ const saveAccount = async () => {
     );
   }
 
-  let advancedConfig: Record<string, unknown> | null = null;
-  try {
-    advancedConfig = parseAdvancedJsonConfig(
-      editForm.config_text,
-      editChannelFields.value.length,
-      editAdvancedEnabled.value
-    );
-  } catch (error) {
-    ElMessage.warning(error.message || t('channels.config.jsonInvalid'));
-    return;
-  }
-  if (advancedConfig) {
-    mergeConfigObject(configPayload, advancedConfig);
-  }
-
   if (!Object.keys(configPayload).length) {
     ElMessage.warning(t('channels.config.jsonRequired'));
     return;
   }
 
   payload.config = configPayload;
-  payload.peer_kind = USER_ONLY_CHANNELS.includes(account.channel) ? 'user' : editForm.peer_kind || 'group';
+  payload.peer_kind = USER_ONLY_CHANNELS.includes(account.channel) ? 'user' : 'group';
   await submitUpdate(payload);
 };
 

@@ -15,6 +15,7 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use base64::Engine;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -34,6 +35,188 @@ const WILDCARD_PEER_ID: &str = "*";
 const WEIXIN_QR_SESSION_TTL_MS: u64 = 5 * 60_000;
 const WEIXIN_QR_WAIT_POLL_INTERVAL_MS: u64 = 1_000;
 const WEIXIN_QR_STATUS_LONG_POLL_TIMEOUT_MS: u64 = 35_000;
+
+fn normalize_weixin_qr_image_value(raw: &str) -> String {
+    let mut value = raw.trim().to_string();
+    if ((value.starts_with('"') && value.ends_with('"'))
+        || (value.starts_with('\'') && value.ends_with('\'')))
+        && value.len() > 1
+    {
+        value = value[1..value.len() - 1].trim().to_string();
+    }
+    value
+        .replace("\\r\\n", "")
+        .replace("\\n", "")
+        .replace("\\r", "")
+        .replace("\r\n", "")
+        .replace('\n', "")
+        .replace('\r', "")
+        .trim()
+        .to_string()
+}
+
+fn looks_like_base64_image(value: &str) -> bool {
+    if value.len() <= 64 {
+        return false;
+    }
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'=' | b'-' | b'_'))
+}
+
+fn build_absolute_weixin_qr_url(raw: &str, api_base: &str) -> Option<String> {
+    let value = normalize_weixin_qr_image_value(raw);
+    if value.is_empty() {
+        return None;
+    }
+    if value.starts_with("http://") || value.starts_with("https://") {
+        return Some(value);
+    }
+    if value.starts_with("//") {
+        return Some(format!("https:{value}"));
+    }
+    if value.starts_with('/') {
+        let base = reqwest::Url::parse(api_base).ok()?;
+        return base.join(&value).ok().map(|url| url.to_string());
+    }
+    None
+}
+
+fn detect_image_mime(bytes: &[u8], content_type: &str) -> Option<String> {
+    let mime = content_type
+        .split(';')
+        .next()
+        .map(str::trim)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if mime.starts_with("image/") {
+        return Some(mime);
+    }
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png".to_string());
+    }
+    if bytes.len() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF {
+        return Some("image/jpeg".to_string());
+    }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        return Some("image/gif".to_string());
+    }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp".to_string());
+    }
+    let text_prefix = String::from_utf8_lossy(&bytes[..bytes.len().min(200)]).to_ascii_lowercase();
+    if text_prefix.contains("<svg") {
+        return Some("image/svg+xml".to_string());
+    }
+    None
+}
+
+fn extract_data_image_uri(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let start = lower.find("data:image/")?;
+    let tail = &text[start..];
+    let mut end = tail.len();
+    for marker in ['"', '\'', '<', '>', ' ', '\n', '\r', '\t'] {
+        if let Some(index) = tail.find(marker) {
+            end = end.min(index);
+        }
+    }
+    let candidate = tail[..end].trim();
+    if candidate.starts_with("data:image/") {
+        return Some(candidate.to_string());
+    }
+    None
+}
+
+fn extract_first_img_src(text: &str) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    let img_start = lower.find("<img")?;
+    let html = &text[img_start..];
+    let html_lower = &lower[img_start..];
+
+    if let Some(index) = html_lower.find("src=\"") {
+        let start = index + 5;
+        let tail = &html[start..];
+        let end = tail.find('"')?;
+        let src = tail[..end].trim().replace("&amp;", "&");
+        if !src.is_empty() {
+            return Some(src);
+        }
+    }
+    if let Some(index) = html_lower.find("src='") {
+        let start = index + 5;
+        let tail = &html[start..];
+        let end = tail.find('\'')?;
+        let src = tail[..end].trim().replace("&amp;", "&");
+        if !src.is_empty() {
+            return Some(src);
+        }
+    }
+    None
+}
+
+async fn resolve_weixin_qr_preview_url(
+    http: &reqwest::Client,
+    api_base: &str,
+    raw_value: &str,
+) -> Option<String> {
+    let normalized = normalize_weixin_qr_image_value(raw_value);
+    if normalized.is_empty() {
+        return None;
+    }
+    if normalized.starts_with("data:image/") {
+        return Some(normalized);
+    }
+
+    let compact = normalized.chars().filter(|char| !char.is_whitespace()).collect::<String>();
+    let compact_lower = compact.to_ascii_lowercase();
+    let base64_candidate = if compact_lower.starts_with("data:image/") {
+        compact
+            .split_once(',')
+            .map(|(_, payload)| payload.to_string())
+            .unwrap_or(compact)
+    } else {
+        compact
+    };
+    if looks_like_base64_image(&base64_candidate) {
+        return Some(format!("data:image/png;base64,{base64_candidate}"));
+    }
+
+    let mut current_url = build_absolute_weixin_qr_url(&normalized, api_base)?;
+    for _ in 0..2 {
+        let response = http.get(&current_url).send().await.ok()?;
+        if !response.status().is_success() {
+            break;
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("application/octet-stream")
+            .to_string();
+        let bytes = response.bytes().await.ok()?;
+        if bytes.is_empty() {
+            break;
+        }
+        if let Some(mime) = detect_image_mime(&bytes, &content_type) {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            return Some(format!("data:{mime};base64,{encoded}"));
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        if let Some(data_uri) = extract_data_image_uri(&text) {
+            return Some(data_uri);
+        }
+        if let Some(next_src) = extract_first_img_src(&text) {
+            if let Some(next_url) = build_absolute_weixin_qr_url(&next_src, api_base) {
+                current_url = next_url;
+                continue;
+            }
+        }
+        break;
+    }
+
+    Some(current_url)
+}
 
 #[derive(Debug, Deserialize)]
 struct ChannelAccountsQuery {
@@ -1286,15 +1469,25 @@ async fn start_weixin_qr_login(
     let session_key = account_id
         .clone()
         .unwrap_or_else(|| format!("wxqr_{}", Uuid::new_v4().simple()));
+    let http = reqwest::Client::new();
 
     purge_expired_weixin_qr_sessions();
     if !force {
         if let Some(existing) = load_weixin_qr_session(&session_key) {
             if existing.user_id == user_id && !is_weixin_qr_session_expired(&existing) {
+                let preview_qrcode_url =
+                    resolve_weixin_qr_preview_url(&http, &existing.api_base, &existing.qrcode_url)
+                        .await
+                        .unwrap_or_else(|| existing.qrcode_url.clone());
+                if preview_qrcode_url != existing.qrcode_url {
+                    let mut refreshed = existing.clone();
+                    refreshed.qrcode_url = preview_qrcode_url.clone();
+                    save_weixin_qr_session(refreshed);
+                }
                 return Ok(Json(json!({ "data": {
                     "session_key": existing.session_key,
                     "qrcode": existing.qrcode,
-                    "qrcode_url": existing.qrcode_url,
+                    "qrcode_url": preview_qrcode_url,
                     "api_base": existing.api_base,
                     "bot_type": existing.bot_type,
                     "cached": true,
@@ -1303,7 +1496,6 @@ async fn start_weixin_qr_login(
         }
     }
 
-    let http = reqwest::Client::new();
     let qr = weixin::get_bot_qrcode(
         &http,
         &api_base,
@@ -1325,7 +1517,7 @@ async fn start_weixin_qr_login(
                 "weixin qr response missing qrcode".to_string(),
             )
         })?;
-    let qrcode_url = qr
+    let raw_qrcode_url = qr
         .qrcode_img_content
         .as_deref()
         .map(str::trim)
@@ -1337,6 +1529,9 @@ async fn start_weixin_qr_login(
                 "weixin qr response missing qrcode image".to_string(),
             )
         })?;
+    let qrcode_url = resolve_weixin_qr_preview_url(&http, &api_base, &raw_qrcode_url)
+        .await
+        .unwrap_or(raw_qrcode_url);
 
     let session = WeixinQrSession {
         session_key: session_key.clone(),
@@ -2341,6 +2536,8 @@ fn build_user_account_item(
                 "port": xmpp.port,
                 "direct_tls": xmpp.direct_tls,
                 "trust_self_signed": xmpp.trust_self_signed,
+                "tls_enabled": xmpp.tls_enabled,
+                "custom_message_format_enabled": xmpp.custom_message_format_enabled,
                 "muc_rooms": xmpp.muc_rooms.len(),
                 "heartbeat_enabled": xmpp.heartbeat_enabled,
                 "heartbeat_interval_s": xmpp.heartbeat_interval_s,

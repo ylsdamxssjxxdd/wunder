@@ -6,7 +6,10 @@ use sasl::common::ChannelBinding;
 use std::error::Error as StdError;
 use std::fmt;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::client::danger::{
@@ -28,6 +31,7 @@ const XMPP_DEFAULT_SRV_PORT: u16 = 5222;
 pub enum XmppTlsSecurityMode {
     Strict,
     TrustSelfSigned,
+    Plain,
 }
 
 #[derive(Clone, Debug)]
@@ -59,6 +63,37 @@ impl XmppTlsServerConfig {
         match self {
             Self::UseSrv { security_mode } | Self::Manual { security_mode, .. } => *security_mode,
         }
+    }
+
+    fn is_plain(&self) -> bool {
+        matches!(self.security_mode(), XmppTlsSecurityMode::Plain)
+    }
+
+    async fn connect_plain(
+        &self,
+        jid: &Jid,
+        ns_uri: &str,
+    ) -> Result<XMPPStream<XmppStream>, XmppTlsConnectorError> {
+        let tcp_stream = match self {
+            XmppTlsServerConfig::UseSrv { .. } => {
+                connect_with_srv(
+                    jid.domain().as_str(),
+                    "_xmpp-client._tcp",
+                    XMPP_DEFAULT_SRV_PORT,
+                )
+                .await?
+            }
+            XmppTlsServerConfig::Manual { host, port, .. } => connect_to_host(host, *port).await?,
+        };
+
+        // Start XMPP stream directly without STARTTLS for legacy/inner deployments.
+        XMPPStream::start(
+            XmppStream::Plain(tcp_stream),
+            jid.clone(),
+            ns_uri.to_owned(),
+        )
+        .await
+        .map_err(XmppTlsConnectorError::from)
     }
 }
 
@@ -112,6 +147,52 @@ impl ServerCertVerifier for TrustSelfSignedVerifier {
     }
 }
 
+/// Unified stream type for both TLS and plaintext XMPP sessions.
+pub enum XmppStream {
+    Tls(TlsStream<TcpStream>),
+    Plain(TcpStream),
+}
+
+impl AsyncRead for XmppStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            XmppStream::Tls(tls) => Pin::new(tls).poll_read(cx, buf),
+            XmppStream::Plain(tcp) => Pin::new(tcp).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for XmppStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            XmppStream::Tls(tls) => Pin::new(tls).poll_write(cx, buf),
+            XmppStream::Plain(tcp) => Pin::new(tcp).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            XmppStream::Tls(tls) => Pin::new(tls).poll_flush(cx),
+            XmppStream::Plain(tcp) => Pin::new(tcp).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            XmppStream::Tls(tls) => Pin::new(tls).poll_shutdown(cx),
+            XmppStream::Plain(tcp) => Pin::new(tcp).poll_shutdown(cx),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum XmppTlsConnectorError {
     Idna,
@@ -162,7 +243,7 @@ impl From<RustlsError> for XmppTlsConnectorError {
 }
 
 impl ServerConnector for XmppTlsServerConfig {
-    type Stream = TlsStream<TcpStream>;
+    type Stream = XmppStream;
     type Error = XmppTlsConnectorError;
 
     async fn connect(
@@ -170,6 +251,10 @@ impl ServerConnector for XmppTlsServerConfig {
         jid: &Jid,
         ns_uri: &str,
     ) -> Result<XMPPStream<Self::Stream>, Self::Error> {
+        if self.is_plain() {
+            return self.connect_plain(jid, ns_uri).await;
+        }
+
         let tcp_stream = match self {
             XmppTlsServerConfig::UseSrv { .. } => {
                 connect_with_srv(
@@ -210,22 +295,30 @@ impl ServerConnector for XmppTlsServerConfig {
             .connect(server_name, xmpp_stream.into_inner())
             .await
             .map_err(XmppTlsConnectorError::Io)?;
-        XMPPStream::start(tls_stream, jid.clone(), ns_uri.to_owned())
+        XMPPStream::start(XmppStream::Tls(tls_stream), jid.clone(), ns_uri.to_owned())
             .await
             .map_err(XmppTlsConnectorError::from)
     }
 
     fn channel_binding(stream: &Self::Stream) -> Result<ChannelBinding, Self::Error> {
-        let (_, connection) = stream.get_ref();
-        Ok(match connection.protocol_version() {
-            Some(tokio_rustls::rustls::ProtocolVersion::TLSv1_3) => {
-                let data = vec![0_u8; 32];
-                let data =
-                    connection.export_keying_material(data, b"EXPORTER-Channel-Binding", None)?;
-                ChannelBinding::TlsExporter(data)
+        match stream {
+            XmppStream::Tls(tls) => {
+                let (_, connection) = tls.get_ref();
+                Ok(match connection.protocol_version() {
+                    Some(tokio_rustls::rustls::ProtocolVersion::TLSv1_3) => {
+                        let data = vec![0_u8; 32];
+                        let data = connection.export_keying_material(
+                            data,
+                            b"EXPORTER-Channel-Binding",
+                            None,
+                        )?;
+                        ChannelBinding::TlsExporter(data)
+                    }
+                    _ => ChannelBinding::None,
+                })
             }
-            _ => ChannelBinding::None,
-        })
+            XmppStream::Plain(_) => Ok(ChannelBinding::None),
+        }
     }
 }
 
@@ -242,6 +335,9 @@ fn build_tls_config(security_mode: XmppTlsSecurityMode) -> ClientConfig {
         XmppTlsSecurityMode::TrustSelfSigned => ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(TrustSelfSignedVerifier))
+            .with_no_client_auth(),
+        XmppTlsSecurityMode::Plain => ClientConfig::builder()
+            .with_root_certificates(RootCertStore::empty())
             .with_no_client_auth(),
     }
 }

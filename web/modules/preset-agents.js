@@ -9,7 +9,6 @@ const TAB_KEYS = ["preset", "cron", "channels"];
 const DEFAULT_AGENT_ID_ALIAS = "__default__";
 const TEMPLATE_USER_ID = "preset_template";
 const DEFAULT_HIVE_ID = "default";
-const PRESET_AUTO_SAVE_DEBOUNCE_MS = 300;
 
 const ensureState = () => {
   if (!state.presetAgents) {
@@ -32,7 +31,6 @@ const ensureState = () => {
       initialized: false,
       draftDirty: false,
       draftVersion: 0,
-      autoSaveTimer: 0,
       saving: false,
       savePromise: null,
       toolListScrollTopByPresetKey: {},
@@ -56,6 +54,7 @@ const REQUIRED_KEYS = [
   "presetAgentList",
   "presetAgentDetailTitle",
   "presetAgentDetailMeta",
+  "presetAgentSaveBtn",
   "presetAgentExportBtn",
   "presetAgentSyncSafeBtn",
   "presetAgentSyncForceBtn",
@@ -184,6 +183,20 @@ const normalizeQuestionList = (values) => {
 const normalizeOptionalModelName = (value) => {
   const cleaned = String(value || "").trim();
   return cleaned || "";
+};
+
+const normalizeNameList = (values) => {
+  const seen = new Set();
+  const output = [];
+  (Array.isArray(values) ? values : []).forEach((value) => {
+    const cleaned = String(value || "").trim();
+    if (!cleaned || seen.has(cleaned)) {
+      return;
+    }
+    seen.add(cleaned);
+    output.push(cleaned);
+  });
+  return output;
 };
 
 const normalizePresetId = (value) => String(value || "").trim();
@@ -453,38 +466,189 @@ const normalizeChannelBinding = (item) => ({
   enabled: item?.enabled !== false,
 });
 
-const buildToolOptions = (list) =>
+const normalizeAbilityKind = (value) =>
+  String(value || "").trim().toLowerCase() === "skill" ? "skill" : "tool";
+
+const abilityGroupLabel = (groupKey) => {
+  switch (groupKey) {
+    case "builtin":
+      return t("userAccounts.toolGroup.builtin");
+    case "mcp":
+      return t("userAccounts.toolGroup.mcp");
+    case "a2a":
+      return t("userAccounts.toolGroup.a2a");
+    case "skills":
+      return t("userAccounts.toolGroup.skills");
+    case "knowledge":
+      return t("userAccounts.toolGroup.knowledge");
+    case "user":
+      return t("userAccounts.toolGroup.user");
+    case "shared":
+      return t("userAccounts.toolGroup.shared");
+    default:
+      return "";
+  }
+};
+
+const classifyAbilityGroupKey = (item) => {
+  const group = String(item?.group || "").trim().toLowerCase();
+  const source = String(item?.source || "").trim().toLowerCase();
+  if (group === "builtin" || source === "builtin") {
+    return "builtin";
+  }
+  if (group === "mcp" || source === "mcp") {
+    return "mcp";
+  }
+  if (group === "a2a" || source === "a2a") {
+    return "a2a";
+  }
+  if (group === "skills" || source === "skill") {
+    return "skills";
+  }
+  if (group === "knowledge" || source === "knowledge") {
+    return "knowledge";
+  }
+  if (group === "shared" || source === "shared") {
+    return "shared";
+  }
+  return "user";
+};
+
+const buildAbilityOption = (item, fallbackKind = "tool") => {
+  if (!item) {
+    return null;
+  }
+  const runtimeName = item.runtime_name || item.name || item.tool_name || item.toolName;
+  const cleanedRuntimeName = String(runtimeName || "").trim();
+  if (!cleanedRuntimeName) {
+    return null;
+  }
+  const displayName = item.display_name || item.displayName || cleanedRuntimeName;
+  return {
+    value: cleanedRuntimeName,
+    label: String(displayName || cleanedRuntimeName),
+    description: String(item.description || ""),
+    kind: normalizeAbilityKind(item.kind || fallbackKind),
+  };
+};
+
+const buildToolOptions = (list, fallbackKind = "tool") =>
   (Array.isArray(list) ? list : [])
-    .map((item) => {
-      if (!item) return null;
-      const name = item.name || item.tool_name || item.toolName;
-      if (!name) return null;
-      return {
-        value: String(name),
-        label: String(name),
-        description: String(item.description || ""),
-      };
-    })
+    .map((item) => buildAbilityOption(item, fallbackKind))
     .filter(Boolean);
 
-const buildToolGroups = (payload) => [
-  { label: t("userAccounts.toolGroup.builtin"), options: buildToolOptions(payload.builtin_tools) },
-  { label: t("userAccounts.toolGroup.mcp"), options: buildToolOptions(payload.mcp_tools) },
-  { label: t("userAccounts.toolGroup.a2a"), options: buildToolOptions(payload.a2a_tools) },
-  { label: t("userAccounts.toolGroup.skills"), options: buildToolOptions(payload.skills) },
-  { label: t("userAccounts.toolGroup.knowledge"), options: buildToolOptions(payload.knowledge_tools) },
-  { label: t("userAccounts.toolGroup.user"), options: buildToolOptions(payload.user_tools) },
-  { label: t("userAccounts.toolGroup.shared"), options: buildToolOptions(payload.shared_tools) },
-].filter((group) => group.options.length > 0);
+const buildToolGroupsFromItems = (items) => {
+  const groups = new Map(
+    ["builtin", "mcp", "a2a", "skills", "knowledge", "user", "shared"].map((groupKey) => [
+      groupKey,
+      { label: abilityGroupLabel(groupKey), options: [] },
+    ])
+  );
+  const seenByGroup = new Map();
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const groupKey = classifyAbilityGroupKey(item);
+    const option = buildAbilityOption(item, item?.kind);
+    if (!option || !groups.has(groupKey)) {
+      return;
+    }
+    if (!seenByGroup.has(groupKey)) {
+      seenByGroup.set(groupKey, new Set());
+    }
+    const seen = seenByGroup.get(groupKey);
+    if (seen.has(option.value)) {
+      return;
+    }
+    seen.add(option.value);
+    groups.get(groupKey).options.push(option);
+  });
+  return Array.from(groups.values()).filter((group) => group.options.length > 0);
+};
 
-const collectSelectedTools = (list) => {
+const buildToolGroups = (payload) => {
+  const itemGroups = buildToolGroupsFromItems(payload?.items);
+  if (itemGroups.length) {
+    return itemGroups;
+  }
+  const userOptions = [
+    ...buildToolOptions(payload?.user_mcp_tools, "tool"),
+    ...buildToolOptions(payload?.user_skills, "skill"),
+    ...buildToolOptions(payload?.user_knowledge_tools, "tool"),
+  ];
+  if (!userOptions.length) {
+    userOptions.push(...buildToolOptions(payload?.user_tools, "tool"));
+  }
+  return [
+    { label: t("userAccounts.toolGroup.builtin"), options: buildToolOptions(payload?.builtin_tools, "tool") },
+    { label: t("userAccounts.toolGroup.mcp"), options: buildToolOptions(payload?.mcp_tools, "tool") },
+    { label: t("userAccounts.toolGroup.a2a"), options: buildToolOptions(payload?.a2a_tools, "tool") },
+    { label: t("userAccounts.toolGroup.skills"), options: buildToolOptions(payload?.skills, "skill") },
+    { label: t("userAccounts.toolGroup.knowledge"), options: buildToolOptions(payload?.knowledge_tools, "tool") },
+    { label: t("userAccounts.toolGroup.user"), options: userOptions },
+    { label: t("userAccounts.toolGroup.shared"), options: buildToolOptions(payload?.shared_tools, "tool") },
+  ].filter((group) => group.options.length > 0);
+};
+
+const collectSelectedAbilities = (list) => {
   if (!list) {
     return [];
   }
+  const seen = new Set();
   return Array.from(list.querySelectorAll('input[type="checkbox"]'))
     .filter((input) => input.checked)
-    .map((input) => String(input.value || "").trim())
-    .filter(Boolean);
+    .map((input) => ({
+      name: String(input.value || "").trim(),
+      kind: normalizeAbilityKind(input.dataset.kind),
+    }))
+    .filter((item) => {
+      if (!item.name || seen.has(item.name)) {
+        return false;
+      }
+      seen.add(item.name);
+      return true;
+    });
+};
+
+const splitSelectedAbilityNames = (selectedAbilities) => {
+  const declared_tool_names = [];
+  const declared_skill_names = [];
+  (Array.isArray(selectedAbilities) ? selectedAbilities : []).forEach((item) => {
+    if (item.kind === "skill") {
+      declared_skill_names.push(item.name);
+      return;
+    }
+    declared_tool_names.push(item.name);
+  });
+  return {
+    declared_tool_names: normalizeNameList(declared_tool_names),
+    declared_skill_names: normalizeNameList(declared_skill_names),
+  };
+};
+
+const collectSelectedAbilityNames = (list) =>
+  normalizeNameList(collectSelectedAbilities(list).map((item) => item.name));
+
+const selectedAbilityNamesFromPreset = (preset) =>
+  normalizeNameList([
+    ...(Array.isArray(preset?.tool_names) ? preset.tool_names : []),
+    ...(Array.isArray(preset?.declared_tool_names) ? preset.declared_tool_names : []),
+    ...(Array.isArray(preset?.declared_skill_names) ? preset.declared_skill_names : []),
+  ]);
+
+const renderPresetActionState = () => {
+  const preset = selectedPreset();
+  const hasPreset = Boolean(preset);
+  const hasSavedPreset = Boolean(preset?.preset_id);
+  const dirty = state.presetAgents.draftDirty === true;
+  const saving = state.presetAgents.saving === true;
+  if (elements.presetAgentSaveBtn) {
+    elements.presetAgentSaveBtn.disabled = !hasPreset || !dirty || saving;
+  }
+  if (elements.presetAgentExportBtn) {
+    elements.presetAgentExportBtn.disabled = !hasSavedPreset || dirty || saving;
+  }
+  if (elements.presetAgentDeleteBtn) {
+    elements.presetAgentDeleteBtn.disabled = !hasPreset || isDefaultPreset(preset) || saving;
+  }
 };
 
 const renderToolSelector = (selected) => {
@@ -528,10 +692,10 @@ const renderToolSelector = (selected) => {
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.value = option.value;
+      checkbox.dataset.kind = option.kind;
       checkbox.checked = selectedSet.has(option.value);
       checkbox.addEventListener("change", () => {
         markPresetDraftDirty();
-        schedulePresetAutoSave({ immediate: true });
       });
       groupCheckboxes.push(checkbox);
       const label = document.createElement("label");
@@ -543,7 +707,6 @@ const renderToolSelector = (selected) => {
         }
         checkbox.checked = !checkbox.checked;
         markPresetDraftDirty();
-        schedulePresetAutoSave({ immediate: true });
       });
       row.appendChild(checkbox);
       row.appendChild(label);
@@ -557,7 +720,6 @@ const renderToolSelector = (selected) => {
         checkbox.checked = true;
       });
       markPresetDraftDirty();
-      schedulePresetAutoSave({ immediate: true });
     });
   });
   list.scrollTop = resolveToolListScrollTop(presetKey);
@@ -576,19 +738,14 @@ const setStatus = (text, kind = "") => {
   elements.presetAgentsStatusText.dataset.kind = kind;
 };
 
-const clearPresetAutoSaveTimer = () => {
-  const timer = Number(state.presetAgents?.autoSaveTimer) || 0;
-  if (!timer) {
-    return;
-  }
-  clearTimeout(timer);
-  state.presetAgents.autoSaveTimer = 0;
-};
-
 const markPresetDraftDirty = () => {
   ensureState();
   state.presetAgents.draftDirty = true;
   state.presetAgents.draftVersion = (Number(state.presetAgents.draftVersion) || 0) + 1;
+  state.presetAgents.syncSummary = null;
+  setStatus(t("presetAgents.status.dirty"), "warning");
+  renderPresetActionState();
+  renderSyncSummary();
 };
 
 const selectedPreset = () =>
@@ -716,10 +873,6 @@ const renderPresetQuestionEditor = (questions) => {
     textarea.addEventListener("input", () => {
       markPresetDraftDirty();
     });
-    textarea.addEventListener("change", () => {
-      markPresetDraftDirty();
-      schedulePresetAutoSave({ immediate: true });
-    });
 
     const removeBtn = document.createElement("button");
     removeBtn.type = "button";
@@ -732,7 +885,6 @@ const renderPresetQuestionEditor = (questions) => {
       nextDrafts.splice(index, 1);
       renderPresetQuestionEditor(nextDrafts);
       markPresetDraftDirty();
-      schedulePresetAutoSave({ immediate: true });
     });
 
     row.appendChild(badge);
@@ -744,7 +896,7 @@ const renderPresetQuestionEditor = (questions) => {
 };
 
 const fillAgentForm = (preset) => {
-  renderToolSelector(preset?.tool_names || []);
+  renderToolSelector(selectedAbilityNamesFromPreset(preset));
   renderPresetQuestionEditor(preset?.preset_questions || []);
   elements.presetUserAgentApproval.value = preset?.approval_mode || "full_auto";
   elements.presetUserAgentHive.value = t("presetAgents.userAgent.hiveFixed");
@@ -760,12 +912,17 @@ const renderTabAvailability = () => {
 
 const renderSyncSummary = () => {
   const preset = selectedPreset();
-  const canSync = Boolean(preset?.preset_id);
+  const dirty = state.presetAgents.draftDirty === true;
+  const canSync = Boolean(preset?.preset_id) && !dirty && state.presetAgents.saving !== true;
   elements.presetAgentSyncSafeBtn.disabled = !canSync || state.presetAgents.syncLoading;
   elements.presetAgentSyncForceBtn.disabled = !canSync || state.presetAgents.syncLoading;
 
   if (!preset || !preset.preset_id) {
     elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.empty");
+    return;
+  }
+  if (dirty) {
+    elements.presetAgentSyncSummary.textContent = t("presetAgents.sync.saveRequired");
     return;
   }
   if (state.presetAgents.syncLoading) {
@@ -815,8 +972,11 @@ const renderPresetList = () => {
     row.appendChild(title);
     row.appendChild(meta);
     row.addEventListener("click", async () => {
-      const saved = await flushPresetAutoSave();
-      if (!saved) {
+      const draftState = await resolvePresetDraftForReload({
+        selectedName: preset.name,
+        selectedPresetId: preset.preset_id,
+      });
+      if (!draftState.ok || draftState.reloaded) {
         return;
       }
       setSelectedPreset(preset);
@@ -848,10 +1008,9 @@ const renderPresetDetail = () => {
   if (!rawPreset || !preset) {
     elements.presetAgentDetailTitle.textContent = t("presetAgents.detail.empty");
     elements.presetAgentDetailMeta.textContent = "";
-    elements.presetAgentDeleteBtn.disabled = true;
-    elements.presetAgentExportBtn.disabled = true;
     fillPresetForm(null);
     fillAgentForm(null);
+    renderPresetActionState();
     return;
   }
   elements.presetAgentDetailTitle.textContent = rawPreset.name;
@@ -862,10 +1021,9 @@ const renderPresetDetail = () => {
     `${workspaceLabel}: ${preset.sandbox_container_id}`,
     `hive: ${DEFAULT_HIVE_ID}`,
   ].join(" | ");
-  elements.presetAgentDeleteBtn.disabled = isDefaultPreset(rawPreset);
-  elements.presetAgentExportBtn.disabled = false;
   fillPresetForm(preset);
   fillAgentForm(preset);
+  renderPresetActionState();
 };
 
 const renderCronList = () => {
@@ -1069,6 +1227,8 @@ const ensureAgentForPreset = async (preset) => {
     system_prompt: preset.system_prompt,
     model_name: normalizeOptionalModelName(preset.model_name) || undefined,
     tool_names: Array.isArray(preset.tool_names) ? preset.tool_names : [],
+    declared_tool_names: Array.isArray(preset.declared_tool_names) ? preset.declared_tool_names : [],
+    declared_skill_names: Array.isArray(preset.declared_skill_names) ? preset.declared_skill_names : [],
     approval_mode: preset.approval_mode || "full_auto",
     status: preset.status || "active",
     is_shared: false,
@@ -1101,7 +1261,7 @@ const loadToolCatalog = async () => {
   const payload = await requestJson("/tools", { query: { user_id: TEMPLATE_USER_ID } });
   const source = payload?.data && typeof payload.data === "object" ? payload.data : payload || {};
   state.presetAgents.toolGroups = buildToolGroups(source);
-  renderToolSelector(effectiveSelectedPreset()?.tool_names || []);
+  renderToolSelector(selectedAbilityNamesFromPreset(effectiveSelectedPreset()));
 };
 
 const loadCronJobs = async () => {
@@ -1205,32 +1365,47 @@ const collectPresetForm = () => {
   };
 };
 
-const schedulePresetAutoSave = ({ immediate = false } = {}) => {
+const waitForPresetSave = async () => {
   ensureState();
-  clearPresetAutoSaveTimer();
-  if (!state.presetAgents.draftDirty) {
-    return;
+  if (!state.presetAgents.saving) {
+    return true;
   }
-  if (immediate) {
-    void savePreset({ silentSuccess: true });
-    return;
-  }
-  state.presetAgents.autoSaveTimer = window.setTimeout(() => {
-    state.presetAgents.autoSaveTimer = 0;
-    void savePreset({ silentSuccess: true });
-  }, PRESET_AUTO_SAVE_DEBOUNCE_MS);
+  return (await state.presetAgents.savePromise) !== false;
 };
 
-const flushPresetAutoSave = async () => {
-  ensureState();
-  clearPresetAutoSaveTimer();
-  if (state.presetAgents.saving) {
-    return (await state.presetAgents.savePromise) !== false;
+const resolvePresetDraftForReload = async ({ selectedName = "", selectedPresetId = "" } = {}) => {
+  const settled = await waitForPresetSave();
+  if (!settled) {
+    return { ok: false, reloaded: false };
+  }
+  if (!state.presetAgents.draftDirty) {
+    return { ok: true, reloaded: false };
+  }
+  if (!window.confirm(t("presetAgents.confirmDiscard"))) {
+    return { ok: false, reloaded: false };
+  }
+  state.presetAgents.draftDirty = false;
+  state.presetAgents.syncSummary = null;
+  await loadPresetAgents({
+    silent: true,
+    selectedName,
+    selectedPresetId,
+    flushDraft: false,
+  });
+  return { ok: true, reloaded: true };
+};
+
+const ensurePresetDraftSaved = async (errorKey) => {
+  const settled = await waitForPresetSave();
+  if (!settled) {
+    return false;
   }
   if (!state.presetAgents.draftDirty) {
     return true;
   }
-  return savePreset({ silentSuccess: true });
+  setStatus(t("presetAgents.status.dirty"), "warning");
+  notify(t(errorKey), "warning");
+  return false;
 };
 
 const persistPresets = async ({ selectedName = "", selectedPresetId = "" } = {}) => {
@@ -1273,10 +1448,8 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
   if (state.presetAgents.saving) {
     return state.presetAgents.savePromise || false;
   }
-  clearPresetAutoSaveTimer();
   const draftVersion = Number(state.presetAgents.draftVersion) || 0;
   const saveTask = (async () => {
-    let resaveNeeded = false;
     try {
       const current = selectedPreset();
       const effective = effectiveSelectedPreset() || current;
@@ -1293,21 +1466,37 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
       }
       const agentPayload = collectAgentForm();
       next.tool_names = agentPayload.tool_names;
-      next.declared_tool_names = [];
-      next.declared_skill_names = [];
+      next.declared_tool_names = agentPayload.declared_tool_names;
+      next.declared_skill_names = agentPayload.declared_skill_names;
       next.preset_questions = agentPayload.preset_questions;
       next.approval_mode = agentPayload.approval_mode;
       next.status = agentPayload.status || effective.status || current.status || "active";
       next.model_name = normalizeOptionalModelName(agentPayload.model_name);
       next.sandbox_container_id = agentPayload.sandbox_container_id;
-      setStatus(t("presetAgents.status.autoSaving"), "warning");
+      setStatus(t("presetAgents.status.saving"), "warning");
+      renderPresetActionState();
+      renderSyncSummary();
       if (isDefaultPreset(current)) {
-        await requestJson(`/agents/${encodeURIComponent(DEFAULT_AGENT_ID_ALIAS)}`, {
+        const savedDefaultPayload = await requestJson(`/agents/${encodeURIComponent(DEFAULT_AGENT_ID_ALIAS)}`, {
           method: "PUT",
           query: { user_id: TEMPLATE_USER_ID },
           body: { ...agentPayload, name: next.name },
         });
-        await loadPresetAgents({ silent: true, selectedName: next.name, flushDraft: false });
+        const nextDefaultPreset = {
+          ...current,
+          ...next,
+          is_default_agent: true,
+          preset_id: current.preset_id,
+          revision: Math.max(1, Number(current.revision) || 1),
+        };
+        state.presetAgents.presets = state.presetAgents.presets.map((item) =>
+          isSamePreset(item, current) ? nextDefaultPreset : item
+        );
+        setSelectedPreset(nextDefaultPreset);
+        state.presetAgents.userAgent = normalizeUserAgent(savedDefaultPayload?.data || {});
+        await refreshContext({ ensureAgent: true, silent: true });
+        await loadSyncSummary({ silent: true });
+        renderAll();
       } else {
         state.presetAgents.presets = state.presetAgents.presets.map((item) =>
           isSamePreset(item, current) ? next : item
@@ -1321,24 +1510,26 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
       if ((Number(state.presetAgents.draftVersion) || 0) === draftVersion) {
         state.presetAgents.draftDirty = false;
       } else {
-        resaveNeeded = true;
+        state.presetAgents.draftDirty = true;
       }
-      setStatus(t("presetAgents.status.autoSaved"), "success");
+      setStatus(
+        t(state.presetAgents.draftDirty ? "presetAgents.status.dirty" : "presetAgents.status.saved"),
+        state.presetAgents.draftDirty ? "warning" : "success"
+      );
       if (!silentSuccess) {
         notify(t("presetAgents.toast.savePresetSuccess"), "success");
       }
       return true;
     } catch (error) {
       state.presetAgents.draftDirty = true;
-      setStatus(t("presetAgents.status.autoSaveFailed", { message: error.message || "-" }), "error");
+      setStatus(t("presetAgents.status.saveFailed", { message: error.message || "-" }), "error");
       notify(t("presetAgents.toast.savePresetFailed", { message: error.message || "-" }), "error");
       return false;
     } finally {
       state.presetAgents.saving = false;
       state.presetAgents.savePromise = null;
-      if (resaveNeeded && state.presetAgents.draftDirty) {
-        schedulePresetAutoSave({ immediate: true });
-      }
+      renderPresetActionState();
+      renderSyncSummary();
     }
   })();
   state.presetAgents.saving = true;
@@ -1348,7 +1539,7 @@ const savePreset = async ({ silentSuccess = false } = {}) => {
 
 const exportPresetWorkerCard = async () => {
   try {
-    const saved = await flushPresetAutoSave();
+    const saved = await ensurePresetDraftSaved("presetAgents.error.saveBeforeExport");
     if (!saved) {
       return;
     }
@@ -1407,7 +1598,6 @@ const createPreset = () => {
   renderAll();
   setTab("preset");
   markPresetDraftDirty();
-  schedulePresetAutoSave({ immediate: true });
 };
 
 const deletePreset = async () => {
@@ -1447,7 +1637,9 @@ const collectAgentForm = () => {
     throw new Error(t("presetAgents.error.agentNameRequired"));
   }
   const sandbox = Number.parseInt(elements.presetAgentFormContainerId.value, 10);
-  const tool_names = collectSelectedTools(elements.presetUserAgentTools);
+  const selectedAbilities = collectSelectedAbilities(elements.presetUserAgentTools);
+  const tool_names = normalizeNameList(selectedAbilities.map((item) => item.name));
+  const { declared_tool_names, declared_skill_names } = splitSelectedAbilityNames(selectedAbilities);
   const preset = effectiveSelectedPreset() || selectedPreset();
   return {
     name,
@@ -1455,6 +1647,8 @@ const collectAgentForm = () => {
     system_prompt: String(elements.presetAgentFormPrompt.value || "").trim(),
     model_name: normalizeOptionalModelName(elements.presetAgentFormModelName?.value),
     tool_names,
+    declared_tool_names,
+    declared_skill_names,
     preset_questions: collectPresetQuestionValues(),
     approval_mode:
       String(elements.presetUserAgentApproval.value || effectiveSelectedPreset()?.approval_mode || "full_auto").trim() ||
@@ -1645,7 +1839,7 @@ const loadSyncSummary = async ({ silent = false } = {}) => {
 };
 
 const runPresetSync = async (mode = "safe") => {
-  const saved = await flushPresetAutoSave();
+  const saved = await ensurePresetDraftSaved("presetAgents.error.saveBeforeSync");
   if (!saved) {
     return;
   }
@@ -1686,16 +1880,22 @@ const runPresetSync = async (mode = "safe") => {
   await loadSyncSummary({ silent: true });
 };
 
-export const loadPresetAgents = async ({ silent = false, selectedName = "", flushDraft = true } = {}) => {
+export const loadPresetAgents = async ({
+  silent = false,
+  selectedName = "",
+  selectedPresetId = "",
+  flushDraft = true,
+} = {}) => {
   ensureState();
   if (!ensureElements()) {
     return;
   }
-  if (flushDraft) {
-    const saved = await flushPresetAutoSave();
-    if (!saved) {
-      return;
-    }
+  if (!(await waitForPresetSave())) {
+    return;
+  }
+  if (flushDraft && state.presetAgents.draftDirty) {
+    setStatus(t("presetAgents.status.dirty"), "warning");
+    return;
   }
   state.presetAgents.loading = true;
   try {
@@ -1705,9 +1905,9 @@ export const loadPresetAgents = async ({ silent = false, selectedName = "", flus
 
     const preferredName = String(selectedName || "").trim();
     const preferredPreset = preferredName
-      ? resolvePresetSelection({ name: preferredName })
+      ? resolvePresetSelection({ presetId: selectedPresetId, name: preferredName })
       : resolvePresetSelection({
-          presetId: state.presetAgents.selectedPresetId,
+          presetId: normalizePresetId(selectedPresetId) || state.presetAgents.selectedPresetId,
           name: state.presetAgents.selectedPresetName,
         });
     setSelectedPreset(preferredPreset || state.presetAgents.presets[0] || null);
@@ -1743,7 +1943,7 @@ const bindTabs = () => {
   });
 };
 
-const bindPresetAutoSaveFields = () => {
+const bindPresetDraftFields = () => {
   const textFields = [
     elements.presetAgentFormName,
     elements.presetAgentFormDescription,
@@ -1756,10 +1956,6 @@ const bindPresetAutoSaveFields = () => {
     field.dataset.autosaveBound = "1";
     field.addEventListener("input", () => {
       markPresetDraftDirty();
-    });
-    field.addEventListener("change", () => {
-      markPresetDraftDirty();
-      schedulePresetAutoSave({ immediate: true });
     });
   });
 
@@ -1775,7 +1971,6 @@ const bindPresetAutoSaveFields = () => {
     field.dataset.autosaveBound = "1";
     field.addEventListener("change", () => {
       markPresetDraftDirty();
-      schedulePresetAutoSave({ immediate: true });
     });
   });
 };
@@ -1793,16 +1988,34 @@ const bindActions = () => {
   }
   if (elements.presetAgentsRefreshBtn.dataset.bound !== "1") {
     elements.presetAgentsRefreshBtn.dataset.bound = "1";
-    elements.presetAgentsRefreshBtn.addEventListener("click", async () => loadPresetAgents());
+    elements.presetAgentsRefreshBtn.addEventListener("click", async () => {
+      const draftState = await resolvePresetDraftForReload({
+        selectedName: state.presetAgents.selectedPresetName,
+        selectedPresetId: state.presetAgents.selectedPresetId,
+      });
+      if (!draftState.ok || draftState.reloaded) {
+        return;
+      }
+      await loadPresetAgents();
+    });
   }
   if (elements.presetAgentCreateBtn.dataset.bound !== "1") {
     elements.presetAgentCreateBtn.dataset.bound = "1";
     elements.presetAgentCreateBtn.addEventListener("click", async () => {
-      const saved = await flushPresetAutoSave();
-      if (!saved) {
+      const draftState = await resolvePresetDraftForReload({
+        selectedName: state.presetAgents.selectedPresetName,
+        selectedPresetId: state.presetAgents.selectedPresetId,
+      });
+      if (!draftState.ok) {
         return;
       }
       createPreset();
+    });
+  }
+  if (elements.presetAgentSaveBtn.dataset.bound !== "1") {
+    elements.presetAgentSaveBtn.dataset.bound = "1";
+    elements.presetAgentSaveBtn.addEventListener("click", async () => {
+      await savePreset();
     });
   }
   if (elements.presetAgentExportBtn.dataset.bound !== "1") {
@@ -1849,7 +2062,7 @@ export const initPresetAgentsPanel = () => {
     return;
   }
   bindTabs();
-  bindPresetAutoSaveFields();
+  bindPresetDraftFields();
   bindActions();
   renderAll();
   state.presetAgents.initialized = true;

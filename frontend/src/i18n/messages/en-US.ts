@@ -680,6 +680,7 @@ export default {
   'channels.form.weixin.routeTag': 'Route Tag (optional)',
   'channels.form.weixin.routeTagPlaceholder': 'For routing or observability labels',
   'channels.form.weixin.qrTitle': 'QR Login',
+  'channels.form.weixin.advancedToggle': 'Advanced options',
   'channels.form.weixin.qrGenerate': 'Generate QR',
   'channels.form.weixin.qrWait': 'Wait for Confirm',
   'channels.form.weixin.qrOpenLink': 'Open QR image',

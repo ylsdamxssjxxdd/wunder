@@ -1,0 +1,55 @@
+[package]
+name = "tokio-xmpp"
+version = "4.0.0"
+authors = ["Astro <astro@spaceboyz.net>", "Emmanuel Gil Peyrot <linkmauve@linkmauve.fr>", "pep <pep+code@bouah.net>", "O01eg <o01eg@yandex.ru>", "SonnyX <randy@vonderweide.nl>", "Paul Fariello <paul@fariello.eu>"]
+description = "Asynchronous XMPP for Rust with tokio"
+license = "MPL-2.0"
+homepage = "https://gitlab.com/xmpp-rs/xmpp-rs"
+repository = "https://gitlab.com/xmpp-rs/xmpp-rs"
+documentation = "https://docs.rs/tokio-xmpp"
+categories = ["asynchronous", "network-programming"]
+keywords = ["xmpp", "tokio"]
+edition = "2021"
+
+[dependencies]
+bytes = "1"
+futures = "0.3"
+log = "0.4"
+tokio = { version = "1", features = ["net", "rt", "rt-multi-thread", "macros"] }
+tokio-stream = { version = "0.1", features = [] }
+tokio-util = { version = "0.7", features = ["codec"] }
+webpki-roots = { version = "0.26", optional = true }
+rxml = { version = "0.11.1", features = ["compact_str"] }
+rand = "0.8"
+syntect = { version = "5", optional = true }
+# same repository dependencies
+sasl = { version = "0.5" }
+xmpp-parsers = { version = "0.21" }
+minidom = { version = "0.16" }
+
+# these are only needed for starttls ServerConnector support
+hickory-resolver = { version = "0.24", optional = true}
+idna = { version = "1.0", optional = true}
+native-tls = { version = "0.2", optional = true }
+tokio-native-tls = { version = "0.3", optional = true }
+tokio-rustls = { version = "0.26", optional = true }
+
+[dev-dependencies]
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+# this is needed for echo-component example
+tokio-xmpp = { path = ".", features = ["insecure-tcp"]}
+
+[features]
+default = ["starttls-rust"]
+starttls = ["hickory-resolver", "idna"]
+tls-rust = ["tokio-rustls", "webpki-roots"]
+tls-native = ["tokio-native-tls", "native-tls"]
+starttls-native = ["starttls", "tls-native"]
+starttls-rust = ["starttls", "tls-rust"]
+insecure-tcp = []
+syntax-highlighting = ["syntect"]
+# Enable serde support in jid crate
+serde = [ "xmpp-parsers/serde" ]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(xmpprs_doc_build)'] }

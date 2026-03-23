@@ -4,7 +4,7 @@ use axum::{
     Router,
 };
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 use tempfile::TempDir;
 use tower::ServiceExt;
 use wunder_server::{
@@ -357,6 +357,35 @@ async fn export_admin_preset_worker_card(app: &Router, preset_id: &str) -> Value
     .await;
     assert_eq!(status, StatusCode::OK);
     payload["data"].clone()
+}
+
+fn find_worker_card_document_by_agent_id(search_root: &Path, agent_id: &str) -> Option<Value> {
+    fn visit(path: &Path, agent_id: &str) -> Option<Value> {
+        for entry in std::fs::read_dir(path).ok()? {
+            let entry = entry.ok()?;
+            let child_path = entry.path();
+            if entry.file_type().ok()?.is_dir() {
+                if let Some(found) = visit(&child_path, agent_id) {
+                    return Some(found);
+                }
+                continue;
+            }
+            let Some(file_name) = child_path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !file_name.ends_with(".worker-card.json") {
+                continue;
+            }
+            let document: Value =
+                serde_json::from_str(&std::fs::read_to_string(&child_path).ok()?).ok()?;
+            if document["metadata"]["agent_id"] == json!(agent_id) {
+                return Some(document);
+            }
+        }
+        None
+    }
+
+    visit(search_root, agent_id)
 }
 
 async fn sync_preset(
@@ -1250,6 +1279,66 @@ async fn preset_force_sync_repairs_declared_skills_for_users() {
             "{label} should keep preset declared skills after force sync"
         );
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preset_force_sync_updates_inner_visible_worker_card_skills() {
+    let user_id = "preset_skill_inner_visible_user";
+    let context = build_test_context_with_config(user_id, |config| {
+        config.tools.builtin.enabled = vec!["璇诲彇鏂囦欢".to_string(), "鍐欏叆鏂囦欢".to_string()];
+        config.skills.enabled = vec!["鎶€鑳藉垱寤哄櫒".to_string()];
+        config.user_agents.presets = vec![build_preset_config("preset_skill_inner_visible", None)];
+    })
+    .await;
+
+    let tool_name = "璇诲彇鏂囦欢".to_string();
+    let skill_name = "鎶€鑳藉垱寤哄櫒".to_string();
+
+    let mut admin_items = list_admin_presets(&context.app).await;
+    let preset_id = find_preset_item(&admin_items, "preset_skill_inner_visible")["preset_id"]
+        .as_str()
+        .expect("preset id")
+        .to_string();
+    for item in &mut admin_items {
+        if item["preset_id"] == json!(preset_id.as_str()) {
+            item["tool_names"] = json!([tool_name.clone(), skill_name.clone()]);
+            item["declared_tool_names"] = json!([tool_name.clone()]);
+            item["declared_skill_names"] = json!([skill_name.clone()]);
+        }
+    }
+    update_admin_presets(&context.app, admin_items).await;
+
+    let sync_result = sync_preset(&context.app, &preset_id, "force", None).await;
+    let created_agents = sync_result["data"]["summary"]["created_agents"]
+        .as_u64()
+        .expect("created_agents should be number");
+    assert!(
+        created_agents >= 1,
+        "expected at least 1 created preset agent after force sync, got {created_agents}"
+    );
+
+    let user_agents = list_user_agents(&context.app, &context.token).await;
+    let agent_id = find_agent_id_by_name(&user_agents, PRESET_NAME);
+    let synced_agent = find_agent_by_name(&user_agents, PRESET_NAME);
+    assert_eq!(
+        read_declared_skill_names(synced_agent),
+        vec![skill_name.clone()],
+        "preset force sync should persist declared skills before inner-visible mirroring"
+    );
+    let search_root = context._temp_dir.path().join("workspaces");
+    let worker_card = find_worker_card_document_by_agent_id(&search_root, &agent_id)
+        .expect("preset sync should refresh inner-visible worker card");
+
+    assert_eq!(
+        worker_card["abilities"]["tool_names"],
+        json!([tool_name.clone()]),
+        "worker card should keep declared tools after preset force sync"
+    );
+    assert_eq!(
+        worker_card["abilities"]["skills"],
+        json!([skill_name.clone()]),
+        "worker card should keep declared skills after preset force sync"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

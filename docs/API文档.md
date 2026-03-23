@@ -1376,6 +1376,7 @@
 - 模型配置/系统设置：`/wunder/admin/llm`、`/wunder/admin/llm/context_window`、`/wunder/admin/system`、`/wunder/admin/server`、`/wunder/admin/security`、`/wunder/i18n`。
 - 内置工具/MCP/LSP/A2A/技能/知识库：`/wunder/admin/tools`、`/wunder/admin/mcp`、`/wunder/admin/mcp/tools`、`/wunder/admin/mcp/tools/call`、`/wunder/admin/lsp`、`/wunder/admin/lsp/test`、`/wunder/admin/a2a`、`/wunder/admin/a2a/card`、`/wunder/admin/skills`、`/wunder/admin/skills/content`、`/wunder/admin/skills/files`、`/wunder/admin/skills/file`、`/wunder/admin/skills/upload`、`/wunder/admin/knowledge/*`。
 - 渠道监控与治理：`/wunder/admin/channels/accounts`、`/wunder/admin/channels/accounts/batch`、`/wunder/admin/channels/accounts/{channel}/{account_id}`、`/wunder/admin/channels/accounts/{channel}/{account_id}/impact`、`/wunder/admin/channels/bindings`、`/wunder/admin/channels/user_bindings`、`/wunder/admin/channels/sessions`。
+- 舰桥中心治理：`/wunder/admin/bridge/metadata`、`/wunder/admin/bridge/supported_channels`、`/wunder/admin/bridge/centers`、`/wunder/admin/bridge/centers/{center_id}`、`/wunder/admin/bridge/centers/{center_id}/accounts`、`/wunder/admin/bridge/accounts/{center_account_id}`、`/wunder/admin/bridge/routes`、`/wunder/admin/bridge/routes/{route_id}`、`/wunder/admin/bridge/delivery_logs`。
 - 吞吐量/性能/benchmark/模拟：`/wunder/admin/throughput/*`、`/wunder/admin/performance/sample`、`/wunder/admin/benchmark/*`、`/wunder/admin/sim_lab/*`。
 - 调试面板接口：`/wunder`、`/wunder/system_prompt`、`/wunder/tools`、`/wunder/attachments/convert`、`/wunder/workspace/*`、`/wunder/user_tools/*`、`/wunder/cron/*`。
 - 文档/幻灯片：`/wunder/ppt`、`/wunder/ppt-en`。
@@ -1485,6 +1486,104 @@
 - 返回（JSON）：
   - `data.items[]`：会话列表（`channel/account_id/peer_kind/peer_id/thread_id/session_id/agent_id/user_id/tts_enabled/tts_voice/metadata/last_message_at/created_at/updated_at`）
   - `data.total`：总数
+
+### 4.1.25.6 `/wunder/admin/bridge/metadata`
+
+- 方法：`GET`
+- 返回（JSON）：
+  - `data.default_password`：舰桥节点自动开户默认密码（当前固定 `123456`）
+  - `data.supported_channels[]`：支持挂入舰桥节点的渠道清单（含 `channel/display_name/webhook_mode/adapter_registered/provider_caps`）
+  - `data.preset_agents[]`：可选默认预设智能体（`name/description`）
+  - `data.channel_accounts[]`：当前系统已激活的共享渠道账号（`channel/account_id/status`）
+  - `data.org_units[]`：可选目标单位（`unit_id/name/path_name/level`）
+
+### 4.1.25.7 `/wunder/admin/bridge/centers`
+
+- 方法：`GET/POST`
+- `GET` 入参（Query，可选）：
+  - `status`：中心状态过滤
+  - `keyword`：名称/编码模糊搜索
+  - `offset`、`limit`
+- `GET` 返回：
+  - `data.items[]`：舰桥节点列表，字段包括 `center_id/name/code/status/default_preset_agent_name/default_identity_strategy/username_policy/account_count/shared_channel_count/route_count/active_route_count/owner_user_id/owner_username`
+- `POST` 入参（JSON）：
+  - `center_id`：可选，传入时为更新
+  - `name`、`code`
+  - `status`
+  - `default_preset_agent_name`
+  - `target_unit_id`
+  - `default_identity_strategy`
+  - `username_policy`
+  - `description`
+  - `shared_channels[]`：内嵌接入渠道配置，字段与 `POST /wunder/admin/bridge/centers/{center_id}/accounts` 基本一致；管理端页面通过它把“节点配置 + 接入渠道”一次性保存
+- 说明：管理员用它创建或更新一个“共享渠道入口 -> 默认预设智能体”的舰桥节点。共享账号绑定已收敛进节点配置，不再作为独立产品概念暴露。
+
+### 4.1.25.8 `/wunder/admin/bridge/centers/{center_id}`
+
+- 方法：`GET/DELETE`
+- `GET` 返回：
+  - `data.center`：中心详情
+  - `data.shared_channels[]`：该中心下的接入渠道配置
+  - `data.accounts[]`：该中心下的共享渠道账号配置
+- `DELETE` 返回：
+  - `data.deleted`：删除中心记录数；关联 `bridge_center_accounts / bridge_user_routes / bridge_delivery_logs / bridge_route_audit_logs` 会同步清理
+
+### 4.1.25.9 `/wunder/admin/bridge/centers/{center_id}/accounts`
+
+- 方法：`GET/POST`
+- `GET` 返回：
+  - `data.items[]`：共享渠道账号列表（`center_account_id/channel/account_id/enabled/identity_strategy/thread_strategy/default_preset_agent_name_override/route_count/active_route_count/provider_caps`）
+- `POST` 入参（JSON）：
+  - `channel`、`account_id`
+  - `enabled`
+  - `identity_strategy`
+  - `thread_strategy`
+  - `reply_strategy`
+  - `default_preset_agent_name_override`
+  - `status_reason`
+- 说明：底层仍保留独立接入渠道接口，便于脚本化接线；管理端页面默认不再把它呈现为单独的“共享账号绑定”产品步骤，而是作为中心配置中的内嵌列表统一提交。
+
+### 4.1.25.10 `/wunder/admin/bridge/accounts/{center_account_id}`
+
+- 方法：`PATCH/DELETE`
+- `PATCH`：更新某个共享渠道账号配置，入参与 `POST /wunder/admin/bridge/centers/{center_id}/accounts` 相同。
+- `DELETE`：删除该共享账号，并清理其名下 bridge routes、delivery logs、audit logs。
+
+### 4.1.25.11 `/wunder/admin/bridge/routes`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `center_id`、`center_account_id`
+  - `channel`、`account_id`
+  - `status`
+  - `keyword`
+  - `wunder_user_id`、`agent_id`
+  - `offset`、`limit`
+- 返回（JSON）：
+  - `data.items[]`：自动分配路由列表，字段包括 `route_id/external_identity_key/external_display_name/wunder_user_id/wunder_username/agent_id/agent_name/status/last_session_id/last_error/last_inbound_at/last_outbound_at`
+
+### 4.1.25.12 `/wunder/admin/bridge/routes/{route_id}`
+
+- 方法：`GET/PATCH`
+- `GET` 返回：
+  - `data.route`：单条 bridge route 详情
+  - `data.delivery_logs[]`：最近投递日志
+  - `data.audit_logs[]`：最近治理审计日志
+- `PATCH` 入参（JSON）：
+  - `status`：可切换到 `active/paused/blocked/error`
+  - `clear_last_error`：是否清空 `last_error`
+- 说明：用于暂停、恢复或封禁某条外部用户自动分配路由。
+
+### 4.1.25.13 `/wunder/admin/bridge/delivery_logs`
+
+- 方法：`GET`
+- 入参（Query，可选）：
+  - `center_id`、`center_account_id`、`route_id`
+  - `direction`：`inbound/outbound`
+  - `status`
+  - `limit`
+- 返回（JSON）：
+  - `data.items[]`：投递日志列表（`delivery_id/direction/stage/status/provider_message_id/session_id/summary/payload/created_at`）
 
 ### 4.1.26 `/wunder/admin/knowledge`
 
