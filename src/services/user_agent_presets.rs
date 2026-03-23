@@ -71,15 +71,33 @@ pub struct PresetSyncSummary {
 }
 
 pub fn resolve_preset_id(raw_preset_id: &str, name: &str) -> String {
-    let cleaned = raw_preset_id.trim();
-    if !cleaned.is_empty() {
-        return cleaned.to_string();
+    if let Some(explicit) = normalize_explicit_preset_id(raw_preset_id) {
+        return explicit;
     }
     let stable_name = name.trim().to_lowercase();
     format!(
-        "preset_{}",
+        "agent_{}",
         Uuid::new_v5(&Uuid::NAMESPACE_URL, stable_name.as_bytes()).simple()
     )
+}
+
+fn normalize_explicit_preset_id(raw_preset_id: &str) -> Option<String> {
+    let cleaned = raw_preset_id.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    if cleaned == "agent" {
+        return None;
+    }
+    if cleaned.starts_with("agent_") {
+        return Some(cleaned.to_string());
+    }
+    let suffix = cleaned.strip_prefix("preset_").unwrap_or(cleaned).trim();
+    if suffix.is_empty() {
+        None
+    } else {
+        Some(format!("agent_{suffix}"))
+    }
 }
 
 pub fn normalize_tool_list(values: Vec<String>) -> Vec<String> {
@@ -488,4 +506,33 @@ pub fn configs_by_preset_id(
         output.insert(preset_id, item.clone());
     }
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_preset_id;
+
+    #[test]
+    fn resolve_preset_id_generates_stable_agent_style_id() {
+        assert_eq!(
+            resolve_preset_id("", "公文写作"),
+            "agent_d51d143126ed53de98b628c9ba7c5185"
+        );
+        assert_eq!(
+            resolve_preset_id("", "Policy Analysis / Draft"),
+            "agent_304dd17b6d97555da36f8b6d1b25a90f"
+        );
+    }
+
+    #[test]
+    fn resolve_preset_id_normalizes_explicit_prefixes_to_agent_style() {
+        assert_eq!(
+            resolve_preset_id("preset_existing", "任意名称"),
+            "agent_existing"
+        );
+        assert_eq!(
+            resolve_preset_id("agent_existing", "任意名称"),
+            "agent_existing"
+        );
+    }
 }

@@ -1,7 +1,8 @@
 mod layout;
 mod worker_card;
 pub use worker_card::{
-    build_worker_card, parse_worker_card, WorkerCardDocument, WorkerCardRecordUpdate,
+    build_worker_card, parse_worker_card, WorkerCardDocument, WorkerCardPreset,
+    WorkerCardRecordUpdate,
 };
 
 use crate::config::Config;

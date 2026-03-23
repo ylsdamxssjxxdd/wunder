@@ -1,6 +1,7 @@
 use crate::monitor::MonitorState;
 use crate::orchestrator::Orchestrator;
 use crate::schemas::{TokenUsage, WunderRequest};
+use crate::token_utils::approx_token_count;
 use chrono::{DateTime, Local, Utc};
 use futures::future::join_all;
 use parking_lot::Mutex as ParkingMutex;
@@ -1286,18 +1287,41 @@ fn has_stream_output_chunk(data: &Value) -> bool {
         || has_text(data.get("reasoning"))
 }
 
+fn estimate_stream_chunk_tokens(data: &Value) -> i64 {
+    let parse_non_empty_text = |key: &str| {
+        data.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+    };
+    let mut tokens = 0i64;
+    if let Some(text) = parse_non_empty_text("delta").or_else(|| parse_non_empty_text("content")) {
+        tokens = tokens.saturating_add(approx_token_count(text).max(0));
+    }
+    if let Some(text) =
+        parse_non_empty_text("reasoning_delta").or_else(|| parse_non_empty_text("reasoning"))
+    {
+        tokens = tokens.saturating_add(approx_token_count(text).max(0));
+    }
+    tokens
+}
+
 fn count_stream_chunk_tokens(events: &[Value]) -> Option<i64> {
-    let mut count = 0i64;
+    let mut total = 0i64;
     for event in events {
         if event.get("type").and_then(Value::as_str) != Some("llm_output_delta") {
             continue;
         }
         let data = event.get("data").unwrap_or(&Value::Null);
-        if has_stream_output_chunk(data) {
-            count = count.saturating_add(1);
+        let token_estimate = estimate_stream_chunk_tokens(data);
+        if token_estimate > 0 {
+            total = total.saturating_add(token_estimate);
+        } else if has_stream_output_chunk(data) {
+            // Keep a minimal fallback for malformed or legacy payloads.
+            total = total.saturating_add(1);
         }
     }
-    (count > 0).then_some(count)
+    (total > 0).then_some(total)
 }
 
 fn extract_session_speed_from_record(record: &Value) -> SessionSpeed {

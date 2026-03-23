@@ -24,6 +24,20 @@ struct TestContext {
 const PRESET_NAME: &str = "Preset Auto Model";
 const DEFAULT_AGENT_ID_ALIAS: &str = "__default__";
 
+fn normalize_test_preset_id(preset_id: &str) -> String {
+    let cleaned = preset_id.trim();
+    if cleaned.is_empty() || cleaned == DEFAULT_AGENT_ID_ALIAS {
+        return cleaned.to_string();
+    }
+    if cleaned.starts_with("agent_") {
+        return cleaned.to_string();
+    }
+    if let Some(stripped) = cleaned.strip_prefix("preset_") {
+        return format!("agent_{stripped}");
+    }
+    format!("agent_{cleaned}")
+}
+
 fn build_llm_model(base_url: &str, model: &str, model_type: &str) -> LlmModelConfig {
     LlmModelConfig {
         enable: Some(true),
@@ -53,7 +67,7 @@ fn build_llm_model(base_url: &str, model: &str, model_type: &str) -> LlmModelCon
 
 fn build_preset_config(preset_id: &str, model_name: Option<&str>) -> UserAgentPresetConfig {
     UserAgentPresetConfig {
-        preset_id: preset_id.to_string(),
+        preset_id: normalize_test_preset_id(preset_id),
         revision: 1,
         name: PRESET_NAME.to_string(),
         description: "preset model test".to_string(),
@@ -190,9 +204,10 @@ fn find_agent_by_name<'a>(items: &'a [Value], name: &str) -> &'a Value {
 }
 
 fn find_preset_item<'a>(items: &'a [Value], preset_id: &str) -> &'a Value {
+    let expected = normalize_test_preset_id(preset_id);
     items
         .iter()
-        .find(|item| item["preset_id"] == json!(preset_id))
+        .find(|item| item["preset_id"] == json!(expected))
         .expect("preset not found by id")
 }
 
@@ -331,11 +346,12 @@ async fn update_admin_presets(app: &Router, items: Vec<Value>) -> Vec<Value> {
 }
 
 async fn export_admin_preset_worker_card(app: &Router, preset_id: &str) -> Value {
+    let normalized_preset_id = normalize_test_preset_id(preset_id);
     let (status, payload) = send_json(
         app,
         None,
         Method::GET,
-        &format!("/wunder/admin/preset_agents/{preset_id}/worker_card"),
+        &format!("/wunder/admin/preset_agents/{normalized_preset_id}/worker_card"),
         None,
     )
     .await;
@@ -349,8 +365,9 @@ async fn sync_preset(
     mode: &str,
     scope_unit_id: Option<&str>,
 ) -> Value {
+    let normalized_preset_id = normalize_test_preset_id(preset_id);
     let mut payload = json!({
-        "preset_id": preset_id,
+        "preset_id": normalized_preset_id,
         "mode": mode,
     });
     if let Some(unit_id) = scope_unit_id {
@@ -1283,7 +1300,7 @@ async fn admin_preset_asset_store_uses_configured_worker_card_directory() {
         .as_str()
         .expect("asset preset id")
         .to_string();
-    let first_path = preset_root.join(format!("Asset Preset--{preset_id}.worker-card.json"));
+    let first_path = preset_root.join("Asset Preset.worker-card.json");
     assert!(
         first_path.exists(),
         "preset worker card should be saved to configured directory"
@@ -1304,9 +1321,7 @@ async fn admin_preset_asset_store_uses_configured_worker_card_directory() {
         }
     }
     update_admin_presets(&context.app, renamed_payload).await;
-    let second_path = preset_root.join(format!(
-        "Asset Preset Renamed--{preset_id}.worker-card.json"
-    ));
+    let second_path = preset_root.join("Asset Preset Renamed.worker-card.json");
     assert!(
         second_path.exists(),
         "renamed preset should use canonical worker-card file name"
@@ -1318,7 +1333,7 @@ async fn admin_preset_asset_store_uses_configured_worker_card_directory() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn admin_preset_worker_card_export_uses_canonical_filename() {
+async fn admin_preset_worker_card_export_hides_internal_ids_in_filename() {
     let context = build_test_context_with_config("preset_export_user", |config| {
         config.user_agents.presets = vec![build_preset_config("preset_export_demo", None)];
     })
@@ -1327,15 +1342,24 @@ async fn admin_preset_worker_card_export_uses_canonical_filename() {
     let preset_export = export_admin_preset_worker_card(&context.app, "preset_export_demo").await;
     assert_eq!(
         preset_export["filename"],
-        json!("Preset Auto Model--preset_export_demo.worker-card.json")
+        json!("Preset Auto Model.worker-card.json")
     );
     assert_eq!(
-        preset_export["document"]["metadata"]["id"],
-        json!("preset_export_demo")
+        preset_export["document"]["metadata"]["agent_id"],
+        json!("agent_export_demo")
+    );
+    assert_eq!(preset_export["document"]["preset"]["revision"], json!(1));
+    assert_eq!(
+        preset_export["document"]["preset"]["status"],
+        json!("active")
     );
     assert_eq!(
         preset_export["document"]["metadata"]["name"],
         json!(PRESET_NAME)
+    );
+    assert!(
+        preset_export["document"].get("extensions").is_none(),
+        "preset worker card export should not emit extension noise"
     );
 
     let default_export =
@@ -1344,8 +1368,9 @@ async fn admin_preset_worker_card_export_uses_canonical_filename() {
         .as_str()
         .expect("default filename");
     assert!(
-        default_filename.ends_with("--__default__.worker-card.json"),
-        "default preset export should keep the canonical stable-id suffix"
+        default_filename.ends_with(".worker-card.json")
+            && !default_filename.contains("__default__"),
+        "default preset export should hide the internal stable-id suffix"
     );
 }
 

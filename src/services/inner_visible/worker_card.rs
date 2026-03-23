@@ -34,14 +34,16 @@ pub struct WorkerCardDocument {
     pub runtime: WorkerCardRuntime,
     #[serde(default)]
     pub hive: WorkerCardHive,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<WorkerCardPreset>,
+    #[serde(default, skip_serializing_if = "worker_card_extensions_is_empty")]
     pub extensions: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkerCardMetadata {
-    #[serde(default)]
-    pub id: String,
+    #[serde(default, alias = "id")]
+    pub agent_id: String,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
@@ -143,6 +145,14 @@ pub struct WorkerCardHive {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkerCardPreset {
+    #[serde(default = "default_worker_card_preset_revision")]
+    pub revision: u64,
+    #[serde(default = "default_worker_card_preset_status")]
+    pub status: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WorkerCardRecordUpdate {
     pub name: String,
@@ -191,7 +201,7 @@ pub fn build_worker_card(
         schema_version: "wunder/worker-card@2".to_string(),
         kind: "WorkerCard".to_string(),
         metadata: WorkerCardMetadata {
-            id: record.agent_id.clone(),
+            agent_id: record.agent_id.clone(),
             name: record.name.clone(),
             description: record.description.clone(),
             icon: record.icon.clone().unwrap_or_default(),
@@ -224,7 +234,24 @@ pub fn build_worker_card(
             name: hive_name.unwrap_or_default().to_string(),
             description: hive_description.unwrap_or_default().to_string(),
         },
+        preset: None,
         extensions: serde_json::Value::Object(Default::default()),
+    }
+}
+
+fn default_worker_card_preset_revision() -> u64 {
+    1
+}
+
+fn default_worker_card_preset_status() -> String {
+    "active".to_string()
+}
+
+fn worker_card_extensions_is_empty(value: &Value) -> bool {
+    match value {
+        Value::Null => true,
+        Value::Object(map) => map.is_empty(),
+        _ => false,
     }
 }
 

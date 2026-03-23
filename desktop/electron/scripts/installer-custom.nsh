@@ -1,6 +1,3 @@
-LangString WunderDataCleanupSectionName 1033 "Delete local temp cache (WUNDER_TEMPD)"
-LangString WunderDataCleanupSectionName 2052 "删除本地临时缓存（WUNDER_TEMPD）"
-
 !macro customInstall
   ${if} ${FileExists} "$INSTDIR\resources\wunder-cli.exe"
     CopyFiles /SILENT "$INSTDIR\resources\wunder-cli.exe" "$INSTDIR\wunder-cli.exe"
@@ -27,7 +24,9 @@ LangString WunderDataCleanupSectionName 2052 "删除本地临时缓存（WUNDER_
 !macroend
 
 !macro customUnInstallSection
-  Section /o "un.$(WunderDataCleanupSectionName)"
+  # Keep a static ASCII label here so NSIS language tables added by electron-builder
+  # do not require per-language LangString entries in CI.
+  Section /o "un.Delete temp cache (WUNDER_TEMPD only)"
     SetShellVarContext current
     # Only remove the temp cache folder. Do not touch workspaces because users may store their own files there.
     RMDir /r "$APPDATA\wunder-desktop-electron\WUNDER_TEMPD"

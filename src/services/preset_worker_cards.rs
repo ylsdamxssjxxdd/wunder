@@ -2,12 +2,11 @@ use crate::config::{Config, UserAgentPresetConfig};
 use crate::core::atomic_write::atomic_write_text;
 use crate::services::default_agent_sync::{DEFAULT_AGENT_ID_ALIAS, DEFAULT_AGENT_NAME};
 use crate::services::inner_visible::{
-    build_worker_card, parse_worker_card, WorkerCardDocument, WorkerCardRecordUpdate,
+    build_worker_card, parse_worker_card, WorkerCardDocument, WorkerCardPreset,
+    WorkerCardRecordUpdate,
 };
 use crate::services::user_agent_presets::resolve_preset_id;
-use crate::services::worker_card_files::{
-    stable_id_from_worker_card_file_name, worker_card_file_name,
-};
+use crate::services::worker_card_files::{worker_card_file_name, WORKER_CARD_FILE_SUFFIX};
 use crate::services::worker_card_settings::{
     canonicalize_preset_config, normalize_agent_approval_mode, normalize_agent_status,
     normalize_optional_model_name, normalize_preset_questions, normalize_tool_list,
@@ -15,15 +14,12 @@ use crate::services::worker_card_settings::{
 };
 use crate::storage::{normalize_hive_id, normalize_sandbox_container_id, UserAgentRecord};
 use anyhow::{Context, Result};
-use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
 const PRESET_WORKER_CARD_USER_ID: &str = "__preset_worker_cards__";
-const PRESET_WORKER_CARD_EXTENSION_ROOT: &str = "wunder";
-const PRESET_WORKER_CARD_EXTENSION_KEY: &str = "preset_agent";
 
 #[derive(Debug, Clone)]
 pub struct PresetWorkerCardAsset {
@@ -89,10 +85,7 @@ pub fn persist_preset_configs(
         else {
             continue;
         };
-        let target_path = root.join(worker_card_file_name(
-            Some(&normalized.name),
-            Some(&normalized.preset_id),
-        ));
+        let target_path = root.join(export_file_name_for_preset(&normalized));
         atomic_write_text(
             &target_path,
             &serde_json::to_string_pretty(&document)
@@ -139,19 +132,13 @@ pub fn load_preset_worker_card_assets(
         .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
-                .and_then(stable_id_from_worker_card_file_name)
-                .is_some()
+                .is_some_and(|name| name.trim().ends_with(WORKER_CARD_FILE_SUFFIX))
         })
         .collect::<Vec<_>>();
     files.sort();
 
     let mut assets_by_id = BTreeMap::new();
     for path in files {
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_string();
         let content = match fs::read_to_string(&path) {
             Ok(content) => content,
             Err(err) => {
@@ -172,8 +159,7 @@ pub fn load_preset_worker_card_assets(
                 continue;
             }
         };
-        let Some(preset) =
-            preset_config_from_worker_card_document(&document, &file_name, skill_name_keys)
+        let Some(preset) = preset_config_from_worker_card_document(&document, skill_name_keys)
         else {
             warn!(
                 "skip preset worker card without valid preset identity: {}",
@@ -199,22 +185,22 @@ pub fn worker_card_document_from_preset_config(
     let update = preset_update_from_config(&normalized, skill_name_keys)?;
     let record = record_from_preset_update(&normalized.preset_id, &update);
     let mut document = build_worker_card(&record, None, None, skill_name_keys);
-    document.metadata.id = normalized.preset_id.clone();
-    document.extensions = preset_extensions_value(normalized.revision, &normalized.status);
+    document.metadata.agent_id = normalized.preset_id.clone();
+    document.preset = Some(WorkerCardPreset {
+        revision: normalized.revision.max(1),
+        status: normalize_agent_status(Some(&normalized.status)),
+    });
     Some(document)
 }
 
 fn preset_config_from_worker_card_document(
     document: &WorkerCardDocument,
-    file_name: &str,
     skill_name_keys: &HashSet<String>,
 ) -> Option<UserAgentPresetConfig> {
     let parsed = parse_worker_card(document.clone(), None);
-    let (extension_preset_id, revision, status) = preset_extensions_meta(&document.extensions);
-    let preset_id = extension_preset_id
-        .or_else(|| normalize_preset_id(Some(&document.metadata.id)))
-        .or_else(|| stable_id_from_worker_card_file_name(file_name))
+    let preset_id = normalize_preset_id(Some(&document.metadata.agent_id))
         .filter(|value| !value.trim().is_empty())?;
+    let (revision, status) = preset_document_meta(document);
     let update = canonicalize_worker_card_update(parsed, skill_name_keys);
     let config = preset_config_from_update(&preset_id, revision, &status, &update);
     canonicalize_preset_config(&config, &preset_id, skill_name_keys)
@@ -259,46 +245,22 @@ fn normalize_preset_id(raw: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-fn preset_extensions_value(revision: u64, status: &str) -> Value {
-    json!({
-        PRESET_WORKER_CARD_EXTENSION_ROOT: {
-            PRESET_WORKER_CARD_EXTENSION_KEY: {
-                "revision": revision.max(1),
-                "status": normalize_agent_status(Some(status)),
-            }
-        }
-    })
-}
-
-fn preset_extensions_meta(extensions: &Value) -> (Option<String>, u64, String) {
-    let preset_meta = extensions
-        .get(PRESET_WORKER_CARD_EXTENSION_ROOT)
-        .and_then(Value::as_object)
-        .and_then(|root| root.get(PRESET_WORKER_CARD_EXTENSION_KEY))
-        .and_then(Value::as_object);
-    let preset_id = preset_meta
-        .and_then(|item| item.get("preset_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    let revision = preset_meta
-        .and_then(|item| item.get("revision"))
-        .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .max(1);
-    let status = preset_meta
-        .and_then(|item| item.get("status"))
-        .and_then(Value::as_str);
-    (
-        preset_id,
-        revision,
-        normalize_agent_status(status).to_string(),
-    )
+fn preset_document_meta(document: &WorkerCardDocument) -> (u64, String) {
+    let revision = document
+        .preset
+        .as_ref()
+        .map(|item| item.revision.max(1))
+        .unwrap_or(1);
+    let status = document
+        .preset
+        .as_ref()
+        .map(|item| normalize_agent_status(Some(&item.status)))
+        .unwrap_or_else(|| normalize_agent_status(Some("active")));
+    (revision, status)
 }
 
 pub fn export_file_name_for_preset(config: &UserAgentPresetConfig) -> String {
-    worker_card_file_name(Some(&config.name), Some(&config.preset_id))
+    worker_card_file_name(Some(&config.name), None)
 }
 
 pub fn export_file_name_for_default_agent(record: &UserAgentRecord) -> String {
@@ -312,7 +274,7 @@ pub fn export_file_name_for_default_agent(record: &UserAgentRecord) -> String {
     } else {
         display_name
     };
-    worker_card_file_name(Some(canonical_name), Some(&record.agent_id))
+    worker_card_file_name(Some(canonical_name), None)
 }
 
 #[cfg(test)]
@@ -323,11 +285,12 @@ mod tests {
         worker_card_document_from_preset_config,
     };
     use crate::config::{Config, UserAgentPresetConfig};
+    use crate::services::inner_visible::WorkerCardPreset;
     use std::collections::HashSet;
 
     fn sample_preset() -> UserAgentPresetConfig {
         UserAgentPresetConfig {
-            preset_id: "preset_demo".to_string(),
+            preset_id: "agent_demo".to_string(),
             revision: 3,
             name: "Demo Preset".to_string(),
             description: "desc".to_string(),
@@ -365,7 +328,7 @@ mod tests {
 
         let loaded = load_preset_worker_card_assets(&root, &skill_keys).expect("load assets");
         assert_eq!(loaded.len(), 1);
-        assert_eq!(loaded[0].preset.preset_id, "preset_demo");
+        assert_eq!(loaded[0].preset.preset_id, "agent_demo");
         assert_eq!(loaded[0].preset.revision, 3);
         assert_eq!(loaded[0].preset.name, "Demo Preset");
         assert_eq!(loaded[0].preset.tool_names, vec!["read_file".to_string()]);
@@ -374,19 +337,36 @@ mod tests {
     }
 
     #[test]
-    fn worker_card_document_uses_metadata_id_as_preset_identity() {
+    fn worker_card_document_uses_metadata_agent_id_as_preset_identity() {
         let skill_keys = HashSet::new();
         let preset = sample_preset();
         let document =
             worker_card_document_from_preset_config(&preset, &skill_keys).expect("build document");
-        assert_eq!(document.metadata.id, "preset_demo");
+        assert_eq!(document.metadata.agent_id, "agent_demo");
+        assert_eq!(
+            document.preset,
+            Some(WorkerCardPreset {
+                revision: 3,
+                status: "active".to_string(),
+            })
+        );
         assert!(
-            document.extensions["wunder"]["preset_agent"]
-                .get("preset_id")
-                .is_none(),
-            "preset worker cards should derive stable id from metadata.id/file name instead of duplicating it in extensions"
+            document
+                .extensions
+                .as_object()
+                .is_some_and(|item| item.is_empty()),
+            "preset worker cards should no longer emit extension noise"
         );
         assert_eq!(document.abilities.tool_names, vec!["read_file".to_string()]);
+    }
+
+    #[test]
+    fn preset_export_file_name_hides_internal_stable_id() {
+        let preset = sample_preset();
+        assert_eq!(
+            export_file_name_for_preset(&preset),
+            "Demo Preset.worker-card.json"
+        );
     }
 
     #[test]
@@ -428,7 +408,7 @@ mod tests {
         let presets =
             load_effective_preset_configs(&config, &HashSet::new()).expect("load effective");
         assert_eq!(presets.len(), 1);
-        assert_eq!(presets[0].preset_id, "preset_demo");
+        assert_eq!(presets[0].preset_id, "agent_demo");
         assert_eq!(
             configured_worker_cards_root(&config).expect("configured root"),
             root

@@ -32,7 +32,7 @@ export type WorkerCardDocument = {
   schema_version: WorkerCardSchemaVersion;
   kind: 'WorkerCard';
   metadata: {
-    id: string;
+    agent_id: string;
     name: string;
     description: string;
     icon: string;
@@ -345,7 +345,7 @@ export const buildWorkerCardDocument = (
     schema_version: WORKER_CARD_SCHEMA_VERSION,
     kind: 'WorkerCard',
     metadata: {
-      id: trimString(source.id),
+      agent_id: trimString(source.agent_id ?? source.id),
       name: trimString(source.name),
       description: trimString(source.description),
       icon: trimString(source.icon),
@@ -377,7 +377,7 @@ export const downloadWorkerCard = (value: Record<string, unknown> | null | undef
 };
 
 const downloadWorkerCardDocument = (document: WorkerCardDocument) => {
-  const filename = buildWorkerCardFilename(document.metadata.name, document.metadata.id);
+  const filename = buildWorkerCardFilename(document.metadata.name, document.metadata.agent_id);
   createDownload(filename, JSON.stringify(document, null, 2));
   return filename;
 };
@@ -417,7 +417,7 @@ const normalizeWorkerCardDocument = (
     schema_version: WORKER_CARD_SCHEMA_VERSION,
     kind: 'WorkerCard',
     metadata: {
-      id: trimString(metadata.id),
+      agent_id: trimString(metadata.agent_id ?? metadata.id),
       name: trimString(metadata.name),
       description: trimString(metadata.description),
       icon: trimString(metadata.icon),
